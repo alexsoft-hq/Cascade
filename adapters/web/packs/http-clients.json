@@ -1,0 +1,36 @@
+{
+  "pack": "http-clients",
+  "platform": [
+    { "name": "fetch", "urlArg": 0, "optionsArg": 1, "methodKey": "method", "defaultMethod": "GET" },
+    { "name": "xhr", "open": { "methodArg": 0, "urlArg": 1 } }
+  ],
+  "libraries": [
+    {
+      "module": "axios",
+      "instanceFactories": ["create"],
+      "verbs": { "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE", "patch": "PATCH", "head": "HEAD", "options": "OPTIONS" },
+      "generic": ["request", "(call)"],
+      "configUrlKey": "url",
+      "configMethodKey": "method",
+      "configBaseUrlKey": "baseURL",
+      "defaultMethod": "GET",
+      "defaultsBaseUrl": "defaults.baseURL"
+    },
+    {
+      "module": "ky",
+      "instanceFactories": ["create", "extend"],
+      "verbs": { "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE", "patch": "PATCH", "head": "HEAD" },
+      "generic": ["(call)"],
+      "configUrlKey": null,
+      "configMethodKey": "method",
+      "configBaseUrlKey": "prefixUrl",
+      "defaultMethod": "GET"
+    },
+    {
+      "module": "superagent",
+      "verbs": { "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE", "del": "DELETE", "patch": "PATCH", "head": "HEAD" },
+      "generic": [],
+      "defaultMethod": "GET"
+    }
+  ]
+}

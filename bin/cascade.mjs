@@ -1,0 +1,3114 @@
+#!/usr/bin/env node
+// cascade — CLI. A thin shell over src/core and src/mcp:
+//   cascade init [--root <dir>] [--project <id>] [--force] [--json]
+//       discover the tree, write `.cascade/manifest.json` + `profile.json` +
+//       `.gitignore`, and register the project in ~/.cascade/registry.json.
+//   cascade analyze [--ddl <f|glob>...|--no-ddl] [--mappers <dir>...|--no-mappers]
+//                   [--java-src <dir>...|--no-java] [--web-src <dir>...|--no-web]
+//                   [--cold|--incremental]
+//       run the lanes end to end and write a pack into the project's `.cascade/`.
+//       Every input is optional: what no flag names comes from the project's
+//       manifest + profile + discovery, and a lane with no input is DECLARED
+//       missing in `pack.meta.axes` instead of killing the run (SPEC §10.4).
+//       `--no-<lane>` switches a lane off even when the project would supply it.
+//       An unflagged run reads MAIN java sources only; the test roots it left
+//       out are named on the lane line, and --java-src still analyzes one.
+//       The WEB lane (--web-src) reads a frontend, traces each HTTP call to the
+//       client that sends it and attaches it to the route this pack serves, as
+//       a CALLS_HTTP edge. Route declarations are still recorded and not turned
+//       into screens; the axis says which of the two you have.
+//       The run is INCREMENTAL whenever a previous `facts-index.json` and its
+//       content-addressed shards are both present and still apply; otherwise it
+//       is cold AND SAYS WHY. `--cold` forces a full recompute, `--incremental`
+//       only asks for one (an impossible one still runs cold, out loud).
+//   cascade estimate [--root <dir>] [--project <id>] [--json]
+//       the coverage estimate: which axes will ship / degrade / not ship on this
+//       tree, and — when a pack exists — the measured EXACT-answerable share.
+//   cascade verify [--project|--root|--pack]
+//       recompute the deployment receipt (SPEC §14.4) from the files on disk and
+//       refuse it on any disagreement or on expiry — exit 4, never a partial pass.
+//   cascade golden <propose|approve|seal|check> [--project|--root|--pack]
+//       the project golden corpus (SPEC §14.1): the tool proposes candidates, a
+//       HUMAN approves them, a hash decides which are held out, and `check`
+//       scores the approved ones through the shipped MCP tools.
+//   cascade catalog discover|fetch [--root <dir>] [--candidate <n>] [--yes]
+//       the DB catalog adapter (SPEC §12): `discover` lists where a database
+//       might be, redacted, connecting to nothing; `fetch` opens ONE read-only
+//       connection — after showing the exact target and being told `--yes` —
+//       and pins the result as a snapshot with provenance. Analysis then reads
+//       that file and never connects (§2.3).
+//   cascade pack --catalog <f> --lineage <f> --out <dir> [--project NAME]
+//       build a content-addressed pack from SQL-lane outputs (catalog + lineage
+//       JSONL) and write it to <dir>/pack.json.
+//   cascade mcp | view [--pack <dir> | --project <id>... | --root <dir>]
+//                      [--memory-budget <MB>]
+//       serve the tool catalog over stdio (mcp) or HTTP (view). With no
+//       --pack/--root/--project every project in ~/.cascade/registry.json is
+//       served, lazily: a pack is parsed on the first call that needs it and the
+//       loaded ones are held in an LRU under the memory budget (default 512 MB
+//       of pack JSON). A call then names its project (`project` argument, or
+//       ?project= over HTTP); on a multi-project server one that does not is
+//       answered `ambiguous`, never guessed.
+//   cascade impact [--pack <dir> | --project <id> | --root <dir>]
+//       query one pack from the shell; the project is located by src/core/resolve.mjs.
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
+import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
+import { addWebFacts } from '../src/adapters/web_bridge.mjs';
+import { readHar, addHarFacts } from '../src/adapters/har_bridge.mjs';
+import { addOpenApiRoutes, readOpenApiDocument } from '../src/adapters/openapi_bridge.mjs';
+import { addJpaFacts, nativeQueryStatements } from '../src/adapters/jpa_bridge.mjs';
+import { annotationMapperXml, restampToJavaSource } from '../src/adapters/mybatis_annotation.mjs';
+import { addMybatisPlusFacts, wrapperFragmentStatements } from '../src/adapters/mp_bridge.mjs';
+import { assembleGraph } from '../src/core/assemble.mjs';
+import { projectPack, loadPack, PACK_SCHEMA } from '../src/core/pack.mjs';
+import { discover, isWebSourceFile, routerDependencyOf } from '../src/core/discover.mjs';
+import { buildManifest, buildProfile, writeInitFiles, lanesOf, slugify } from '../src/core/init.mjs';
+import { validateManifest, loadManifest } from '../src/core/manifest.mjs';
+import { normalizeProfile, loadProfile, profileDiagnostics, sqlDialectOf, trustGapsFor, PROFILE_DEFAULTS } from '../src/core/profile.mjs';
+import { selectLanes, sqlLaneArgs, declareAxes, screenAxisOf } from '../src/core/lanes.mjs';
+import { buildEstimate } from '../src/core/estimate.mjs';
+import { buildChangeset, changedFiles } from '../src/core/changeset.mjs';
+import { overlaySession, shortSessionId } from '../src/core/overlay_session.mjs';
+import { overlayGraph, classifyDirtyFiles } from '../src/core/overlay.mjs';
+import { runOverlayLanes, ephemeralIo, OverlayStaleError } from '../src/core/overlay_lanes.mjs';
+import { planIncremental, underAny, MODE_COLD } from '../src/core/invalidate.mjs';
+import {
+  createFactsStore, nodeFactsIo, validateIndex, serializeIndex, webFactsSummary,
+  catalogDigestOf as catalogDigestForShards,
+} from '../src/core/facts_store.mjs';
+import { runLanesWithShards, runLineageForStatements, INCREMENTAL_ENGINE_VERSION } from '../src/core/incremental.mjs';
+import { workerVersions, CATALOG_LIVE_WORKER_VERSION } from '../src/core/worker_versions.mjs';
+import { ensureProjectDirs, projectPaths, registryPath, cacheDir, ownStateDirRel, isOwnStatePath, withoutOwnState } from '../src/core/paths.mjs';
+import {
+  calibrationMetrics, enginePrint, isEngineSourcePath, pinOf, profileDigestOf,
+  sealBaseline, gateStateOf, gateEvaluate, gateLine, validateBaseline, sqlLaneTallies,
+} from '../src/core/calibration.mjs';
+import { computeTrust } from '../src/core/trust.mjs';
+import { buildDoctorReport, formatDoctorTable, jdkCandidateDirs } from '../src/core/doctor.mjs';
+import {
+  proposeCases, approveCases, sealCases, checkCases, parseCases, serializeCases,
+  inventoryOf, RELATIONS, MIN_CASES,
+} from '../src/core/golden.mjs';
+import { buildReceipt, verifyReceipt, receiptTtlDaysOf, RECEIPT_FILES } from '../src/core/receipt.mjs';
+import { catalogDigestOf } from '../src/core/facts_store.mjs';
+import { digest12 } from '../src/core/canonical.mjs';
+import { readRegistry, upsertProject, writeRegistryAtomic, findProject, projectIds } from '../src/core/registry.mjs';
+import { findConnectionCandidates, describeCandidate, parseConnectionUrl, DEFAULT_PORTS, CONNECTION_DIALECTS } from '../src/core/dbconfig.mjs';
+import { resolveProject, registrationTarget } from '../src/core/resolve.mjs';
+import { makeScratch } from '../src/core/scratch.mjs';
+import { toolList, callTool } from '../src/mcp/catalog.mjs';
+import { serve } from '../src/mcp/stdio.mjs';
+import { serveHttp } from '../src/mcp/http.mjs';
+import { createProjectHost, packDirOf, DEFAULT_BUDGET_MB } from '../src/mcp/projects.mjs';
+import { readSourceFor } from '../src/viewer/source.mjs';
+import http from 'node:http';
+
+const argv = process.argv.slice(2);
+const cmd = argv[0];
+const opt = (name, dflt) => {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : dflt;
+};
+const optAll = (name) => argv.reduce((acc, a, i) => (a === `--${name}` && i + 1 < argv.length ? [...acc, argv[i + 1]] : acc), []);
+const flag = (name) => argv.includes(`--${name}`);
+const die = (m) => { process.stderr.write(m + '\n'); process.exit(2); };
+const jsonl = (f) => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const parseJsonl = (s) => s.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Scratch directories that survive no exit path. Every `.analyze-*` this
+// process creates is removed when the process ends, however it ends — the
+// calibration gate exits 3 from inside the run, and a `finally` never sees it.
+const SCRATCH = makeScratch({
+  mkdtemp: (prefix) => fs.mkdtempSync(prefix),
+  rm: (dir) => fs.rmSync(dir, { recursive: true, force: true }),
+  onExit: (handler) => process.on('exit', handler),
+  warn: (line) => process.stderr.write(line + '\n'),
+});
+
+// Locate a JDK (javac+java) for the Java lane. The ORDER lives in
+// src/core/doctor.mjs (`jdkCandidateDirs`) so `cascade doctor` reports the same
+// search this runs — one lookup, two readers (SPEC §17.9).
+// Returns {javac, java, via} or null.
+function findJdk(env = process.env) {
+  for (const { dir, via } of jdkCandidateDirs(env)) {
+    const javac = path.join(dir, 'javac');
+    const java = path.join(dir, 'java');
+    if (fs.existsSync(javac) && fs.existsSync(java)) return { javac, java, via };
+  }
+  // Fall back to PATH resolution (execFileSync will search PATH for a bare name).
+  try { execFileSync('javac', ['-version'], { stdio: 'ignore' }); return { javac: 'javac', java: 'java', via: 'PATH' }; }
+  catch { return null; }
+}
+
+// Working-tree files that differ from the pack's base commit: tracked
+// modifications (diff vs base) plus untracked files. Repo-root-relative paths.
+// Returns [] when there is no git base or git fails (the overlay then declines).
+function gitChangedFiles(base, ownDirRel = null) {
+  if (!base || !base.repoPath || !base.commit) return [];
+  const run = (args) => {
+    try { return execFileSync('git', ['-C', base.repoPath, ...args], { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 26 }).toString('utf8'); }
+    catch { return ''; }
+  };
+  const tracked = run(['diff', '--name-only', base.commit, '--']);
+  const untracked = run(['ls-files', '--others', '--exclude-standard']);
+  const set = new Set();
+  for (const line of (tracked + '\n' + untracked).split('\n')) { const f = line.trim(); if (f) set.add(f); }
+  // The engine's own `.cascade/` is not source. The overlay has always excluded
+  // it; this path (used by `--mode base-only` and by `ctx.changedFiles`) does the
+  // same, through the SAME helper, so the two cannot describe different diffs.
+  return withoutOwnState([...set].sort(), ownDirRel);
+}
+
+/** The `.cascade/` a served pack belongs to, as a path relative to its repo. */
+function ownStateOf(base, packDir) {
+  if (!base || !base.repoPath) return null;
+  return ownStateDirRel(realPath(base.repoPath), path.dirname(realPath(packDir)));
+}
+
+// ---------------------------------------------------------------------------
+// The LIVE working-tree overlay (SPEC §10, RM4/M7)
+// ---------------------------------------------------------------------------
+// `gitChangedFiles` above answers "which files did you touch" and the base pack
+// answers what they touched BEFORE the edit. This builds the other half: the
+// dirty files are re-parsed and a new in-memory graph is assembled from the
+// cached shards of everything else, so `changed_impact` describes the bytes on
+// disk. Nothing is written — not the pack, not the fact cache (§10.1 MUST NOT).
+//
+// This function is the IMPURE edge only: git, the filesystem and the two worker
+// invocations. Every decision — the session id, the stale rule, which lane
+// claims a file, what counts as provisional — is in src/core/overlay*.mjs.
+
+/**
+ * A provider `() => overlayState` for the tool context, plus the reason it
+ * could not be built. The provider is called ONCE PER REQUEST (the working tree
+ * moves between calls) and memoizes on the overlaySessionId: repeated calls with
+ * the same dirty bytes cost one git diff and a few hashes.
+ */
+function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
+  const indexFile = path.join(packDir, 'facts-index.json');
+  const stale = (msg) => { throw new OverlayStaleError(`${msg}. Run \`cascade analyze\` to rebuild the pack and its fact cache`); };
+
+  let index = null;
+  const load = () => {
+    if (index) return index;
+    if (!fs.existsSync(indexFile)) stale(`no fact index at ${indexFile}: this pack was built before the incremental core, so its shards are not on disk`);
+    try { index = validateIndex(JSON.parse(fs.readFileSync(indexFile, 'utf8'))); }
+    catch (e) { stale(`the fact index at ${indexFile} is unusable (${e.message})`); }
+    if (index.engineVersion !== INCREMENTAL_ENGINE_VERSION) {
+      stale(`the fact index was written by ${index.engineVersion}, this engine is ${INCREMENTAL_ENGINE_VERSION}`);
+    }
+    const now = workerVersions();
+    for (const name of Object.keys(now)) {
+      if (index.workers?.[name] !== now[name]) {
+        stale(`the ${name} worker changed (${index.workers?.[name] ?? 'unrecorded'} -> ${now[name]}), so the cached shards are a different generation`);
+      }
+    }
+    return index;
+  };
+
+  let cache = null; // single-entry LRU: {id, state}
+  let jdk = null;
+
+  return () => {
+    const idx = load();
+    const rootAbs = idx.root;
+    const baseCommit = pack.meta?.base?.commit ?? idx.base?.commit ?? null;
+    if (!baseCommit) stale('the pack records no base commit, so there is nothing to diff the working tree against');
+    if (!fs.existsSync(rootAbs)) stale(`the analyzed root ${rootAbs} is gone`);
+
+    // ---- what differs from the base commit, right now --------------------
+    const gitTopRaw = ((gitText(rootAbs, ['rev-parse', '--show-toplevel']) ?? '').trim()) || null;
+    if (!gitTopRaw) stale(`${rootAbs} is not inside a git repository, so the working-tree diff cannot be read`);
+    const gitTop = realPath(gitTopRaw);
+    const headCommit = ((gitText(rootAbs, ['rev-parse', 'HEAD']) ?? '').trim()) || null;
+    // A path OUTSIDE the analyzed root is normally not an input to this analysis
+    // and is dropped. The web lane is the exception: `--web-src ../front/src` is
+    // the common case, so a path under a declared web root is kept, `../` and
+    // all, exactly as the fact index records it.
+    const webRootsRel = idx.selection?.webRoots ?? [];
+    const toRootRel = (repoRelPath) => {
+      const rel = path.relative(rootAbs, path.resolve(gitTop, repoRelPath));
+      if (path.isAbsolute(rel)) return null;
+      const posix = rel.split(path.sep).join('/');
+      if (!posix.startsWith('..')) return posix;
+      return underAny(posix, webRootsRel) ? posix : null;
+    };
+    const raw = gitText(rootAbs, ['diff', '--name-status', '-z', baseCommit, '--']);
+    // ONE diff parser for the whole engine (src/core/changeset.mjs): an UNKNOWN
+    // changeset is never silently an empty list.
+    const cs = buildChangeset({ repo: rootAbs, fromCommit: raw == null ? null : baseCommit, toCommit: headCommit ?? 'WORKING-TREE', rawNameStatusZ: raw });
+    if (cs.status !== 'OK') {
+      return declined(`the working-tree diff against ${baseCommit.slice(0, 12)} could not be read (${cs.reason}). That commit may no longer be in this repository`, { headCommit, baseCommit });
+    }
+    // The engine's OWN directory is not source. `cascade init` writes
+    // `.cascade/manifest.json` and friends into the tree, so git reports them as
+    // changed on the very first run; listing them as "impact unknown" on every
+    // answer would be noise, and treating them as an edit would be wrong.
+    const dotRel = ownStateDirRel(rootAbs, path.dirname(realPath(packDir)));
+    const isOwnState = (p) => isOwnStatePath(p, dotRel);
+    const byPath = new Map();
+    for (const f of changedFiles(cs)) {
+      const p = toRootRel(f.repoPath);
+      if (p !== null && !isOwnState(p)) byPath.set(p, f.status);
+    }
+    for (const p of splitZ(gitText(rootAbs, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z'])).map(toRootRel)) {
+      if (p !== null && !isOwnState(p)) byPath.set(p, 'A');
+    }
+    // A file the PACK read in a dirty state is not described by baseCommit, so
+    // `git diff baseCommit` cannot see it move back. It is dirty by definition.
+    for (const p of pack.meta?.base?.dirtyFiles ?? []) {
+      if (!byPath.has(p)) byPath.set(p, fs.existsSync(path.resolve(rootAbs, p)) ? 'M' : 'D');
+    }
+    // A FRONTEND OUTSIDE THE ANALYZED ROOT is scanned WHERE IT IS, and it has
+    // to be: `--web-src ../front/src` is the common case, and neither command
+    // above reaches it.
+    //
+    //  - a file git has never seen is only listed for the directory the command
+    //    RUNS IN, so `ls-files --others` at the analyzed root cannot see a new
+    //    `.vue` beside it. That is true whether the frontend is a repository of
+    //    its own or another directory of this one, so this scan runs for both,
+    //    from the web root;
+    //  - a TRACKED change in a SEPARATE repository needs its own diff as well:
+    //    a diff of the backend's root reports nothing about another repository,
+    //    and there is no commit the two share, so that root is diffed against
+    //    ITS OWN HEAD. In the same repository the diff above already covered it.
+    //
+    // Without this an edited or new file over there would be invisible and the
+    // overlay would answer from the base shards while calling itself fresh, and
+    // the session id would not move when the frontend did.
+    for (const rel of webRootsRel) {
+      if (!rel.startsWith('../')) continue;
+      const dirAbs = path.resolve(rootAbs, rel);
+      if (!fs.existsSync(dirAbs)) continue;
+      const topRaw = ((gitText(dirAbs, ['rev-parse', '--show-toplevel']) ?? '').trim()) || null;
+      if (!topRaw) continue;
+      const top = realPath(topRaw);
+      const toRel = (repoRelPath) => path.relative(rootAbs, path.resolve(top, repoRelPath)).split(path.sep).join('/');
+      const names = [
+        ...splitZ(gitText(dirAbs, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z'])),
+        ...(top === gitTop ? [] : splitZ(gitText(dirAbs, ['diff', '--name-only', '-z', 'HEAD', '--']))),
+      ].map(toRel);
+      for (const p of names) {
+        if (!underAny(p, [rel])) continue;
+        if (!byPath.has(p)) byPath.set(p, fs.existsSync(path.resolve(rootAbs, p)) ? 'M' : 'D');
+      }
+    }
+    const entries = [...byPath.entries()].map(([p, status]) => ({ path: p, status })).sort((a, b) => (a.path < b.path ? -1 : 1));
+
+    const session = overlaySession({
+      baseDigest: pack.digest,
+      baseCommit,
+      headCommit,
+      dirtyFiles: entries.map((e) => ({
+        path: e.path,
+        sha256: e.status === 'D' ? null : safeHash(path.resolve(rootAbs, e.path)),
+      })),
+    });
+    const dirtyFiles = entries.map((e) => e.path);
+
+    if (cache && cache.id === session.overlaySessionId) return cache.state;
+
+    // A clean tree needs no overlay at all: the pack already describes this
+    // commit, so the answer is the certified base and the verdict is `current`
+    // (§10.3) rather than a provisional one computed over nothing.
+    if (entries.length === 0 && session.state === 'fresh') {
+      return remember(session, {
+        applied: false, state: 'clean', session, dirtyFiles: [],
+        reason: `the working tree matches ${baseCommit.slice(0, 12)}, the commit this pack was built from, so there is nothing to overlay`,
+        limits: [],
+      });
+    }
+
+    // ---- the two ways an overlay does not happen -------------------------
+    if (session.state !== 'fresh') {
+      return remember(session, {
+        applied: false, state: session.state, session, dirtyFiles,
+        reason: `the pack was built at ${baseCommit.slice(0, 12)} but HEAD is now ${(headCommit ?? 'unknown').slice(0, 12)}, so the overlay is discarded rather than laid onto a base that has moved`,
+        limits: [{ scope: 'overlay', reason: `HEAD moved past the pack's base commit; the answer below is the BASE pack's, not the working tree's. Run \`cascade analyze\` (it is incremental) to certify the new commit` }],
+      });
+    }
+    const selection = idx.selection ?? {};
+    // A pack built before this project had a frontend cannot answer a frontend
+    // question: there are no web shards to lay an edit onto, and an overlay that
+    // quietly skipped the lane would report "no impact" for an edited `.vue`.
+    if ((selection.webRoots ?? []).length === 0 && (profile?.frameworkPacks ?? []).includes('web')) {
+      return declined('this pack was built without a web lane, but the profile now declares the web framework pack, so a frontend edit has no facts to lay over', { headCommit, baseCommit });
+    }
+    const dirty = classifyDirtyFiles(entries, selection);
+    if (dirty.ddl.length > 0) {
+      return remember(session, {
+        applied: false, state: 'declined', session, dirtyFiles,
+        reason: `schema file changed (${dirty.ddl.join(', ')}), and catalog changes need a certified re-analysis`,
+        limits: [{ scope: 'overlay', reason: `the DDL is dirty (${dirty.ddl.join(', ')}); a moved column changes what EVERY statement resolves to, so the overlay declines instead of answering over a stale catalog. Run \`cascade analyze\`` }],
+      });
+    }
+    // The reading convention is folded into every SQL shard key. If it moved,
+    // every statement would be recomputed inside a latency gate meant for one
+    // file — decline out loud instead of taking minutes.
+    const sqlArgs = sqlLaneArgs(profile ?? normalizeProfile({}));
+    const nowArgs = [...sqlArgs.mybatisArgs, ...sqlArgs.lineageArgs];
+    if (JSON.stringify(nowArgs) !== JSON.stringify(selection.sqlArgs ?? [])) {
+      return remember(session, {
+        applied: false, state: 'declined', session, dirtyFiles,
+        reason: `the SQL reading convention changed since this pack was built (${JSON.stringify(selection.sqlArgs ?? [])} -> ${JSON.stringify(nowArgs)})`,
+        limits: [{ scope: 'overlay', reason: 'the profile\'s SQL arguments no longer match the ones the pack was built with, so no cached statement applies. Run `cascade analyze`' }],
+      });
+    }
+
+    // ---- run the lanes over the dirty files ------------------------------
+    const absOf = (rel) => path.resolve(rootAbs, rel);
+    const store = createFactsStore({ io: ephemeralIo(nodeFactsIo(fs)), projectId: idx.project, env: process.env });
+    const mapperDirsAbs = (selection.mapperDirs ?? []).map(absOf);
+    const ddlRels = selection.ddls ?? (selection.ddl ? [selection.ddl] : []);
+    const ddlAbsList = ddlRels.map(absOf);
+    const py = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+    const A = path.join(ENGINE_ROOT, 'adapters', 'sql');
+    const runpy = (script, args) => execFileSync(py, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
+    const needPy = (what) => { if (!fs.existsSync(py)) stale(`the overlay must rerun ${what} but there is no venv python at ${py}`); };
+    const run = {
+      java: (targets) => {
+        if (!jdk) {
+          jdk = findJdk();
+          if (!jdk) stale('the overlay must re-parse Java but no JDK was found (set JAVA_HOME, or see docs/setup/java-lane.md)');
+        }
+        return runJavaLane(jdk, rootAbs, targets);
+      },
+      mybatis: () => { needPy('the MyBatis extractor'); return parseJsonl(runpy('mybatis_extract.py', ['--root', rootAbs, ...sqlArgs.mybatisArgs, ...mapperDirsAbs])); },
+      lineage: (statements, catalogRecords) => {
+        needPy('SQL lineage');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-overlay-'));
+        try {
+          const catFile = path.join(tmp, 'catalog.jsonl');
+          const stmtFile = path.join(tmp, 'statements.jsonl');
+          fs.writeFileSync(catFile, catalogRecords.map((r) => JSON.stringify(r)).join('\n') + '\n');
+          fs.writeFileSync(stmtFile, statements.map((r) => JSON.stringify(r)).join('\n') + '\n');
+          return parseJsonl(runpy('lineage.py', ['--catalog', catFile, '--statements', stmtFile, ...sqlArgs.lineageArgs]));
+        } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+      },
+      catalog: () => { needPy('the DDL catalog'); return parseJsonl(runpy('catalog_ddl.py', ['--identifier-case', sqlArgs.identifierCase, ...ddlAbsList])); },
+      web: (targets) => runWebLane(rootAbs, targets),
+      webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true }),
+    };
+    const webRootsAbs = (selection.webRoots ?? []).map(absOf);
+
+    const lanes = runOverlayLanes({
+      index: idx, store, dirty, run, abs: absOf, hash: sha256File, workers: workerVersions(), webRootsAbs,
+      inputs: {
+        mapperFiles: listMapperXml(mapperDirsAbs).map((p) => ({ rel: path.relative(rootAbs, p).split(path.sep).join('/'), abs: p })),
+        ddlFiles: ddlRels.map((rel, i) => ({ rel, abs: ddlAbsList[i] })),
+        dialect: sqlArgs.dialect, identifierCase: sqlArgs.identifierCase,
+        defaultSchema: sqlArgs.defaultSchema,
+        mybatisArgs: sqlArgs.mybatisArgs, lineageArgs: sqlArgs.lineageArgs,
+        catalogArgs: [`identifier-case=${sqlArgs.identifierCase}`],
+      },
+    });
+    const tBuild = Date.now();
+    const built = overlayGraph({
+      bridges: LANE_BRIDGES,
+      baseShards: lanes.baseShards, dirtyFacts: lanes.dirtyFacts, dropFiles: lanes.dropFiles,
+      webBaseShards: lanes.webBaseShards, webDirtyFacts: lanes.webDirtyFacts,
+      webDropFiles: lanes.webDropFiles, webConfigRecords: lanes.webConfigRecords,
+      // The web bridge's options come from the LIVE profile for the same reason
+      // `generatedSources` does: the overlay describes the bytes on disk, and a
+      // gateway route declared since the pack was built takes effect here first.
+      // The SAME options the certified run used, screen axis included: an
+      // overlay whose gate was off would report `touched.screens: []` on a file
+      // the base pack does put on a screen, and the difference would read as
+      // "your edit changed which screens exist".
+      web: webRootsAbs.length > 0
+        ? {
+          gatewayRoutes: profile?.gatewayRoutes ?? {},
+          packages: [],
+          // The gate is resolved the SAME way the certified run resolved it,
+          // including the third state: `screenAxisOf` reads the frontend
+          // packages this overlay reads, so an out-of-root frontend keeps its
+          // screens here too.
+          screenAxis: {
+            ...(profile?.screenAxis ?? {}),
+            enabled: screenAxisOf(profile, { webPackages: webPackagesRead(webRootsAbs) }).enabled,
+          },
+          codeLength: profile?.moduleAttribution?.codeLength ?? null,
+        }
+        : null,
+      catalogRecords: lanes.catalogRecords, lineageRecords: lanes.lineageRecords,
+      baseGraph, overlaySessionId: session.overlaySessionId,
+      dirtyFiles, packagePrefixes: selection.packagePrefixes ?? [],
+      // Same identity rule as the run that built the base pack — the overlay
+      // declines above when the SQL arguments (which carry it) have moved.
+      identifierCase: sqlArgs.identifierCase,
+      // From the LIVE profile, not the index: the fact index does not record a
+      // generated-source declaration, and the overlay describes the bytes on
+      // disk now. A declaration edited since the pack was built therefore takes
+      // effect on the overlaid files first — visible in `limits` as a changed
+      // skip count, never silently.
+      generatedSources: profile?.generatedSources ?? { annotations: [], pathGlobs: [] },
+    });
+    const timingsMs = { ...lanes.timingsMs, build: Date.now() - tBuild };
+    timingsMs.total = timingsMs.loadBase + timingsMs.java + timingsMs.web + timingsMs.sql + timingsMs.build;
+
+    return remember(session, {
+      applied: true, state: 'fresh', session, graph: built.graph,
+      dirtyFiles, parsedFiles: lanes.parsedFiles, droppedFiles: lanes.dropFiles,
+      parsedWebFiles: lanes.parsedWebFiles, droppedWebFiles: lanes.webDropFiles,
+      webConfigFiles: dirty.webConfig,
+      unmatched: dirty.other, provisional: built.provisional, taggedEdges: built.taggedEdges,
+      reusedShards: lanes.reusedShards, javaStats: built.javaStats, webStats: built.webStats,
+      timingsMs, limits: [],
+    });
+  };
+
+  function remember(session, state) {
+    cache = { id: session.overlaySessionId, state };
+    return state;
+  }
+  function declined(reason, { headCommit, baseCommit }) {
+    return { applied: false, state: 'declined', session: null, dirtyFiles: [], reason, limits: [{ scope: 'overlay', reason: `${reason}. Run \`cascade analyze\`` }], baseCommit, headCommit };
+  }
+}
+
+/**
+ * THE FRONTEND PACKAGES THIS RUN REALLY READS: the nearest `package.json` above
+ * each web source root, with the router it depends on.
+ *
+ * The filesystem edge for `screenAxisOf` (src/core/lanes.mjs). It exists because
+ * discovery walks the ANALYZED ROOT and `--web-src ../front/src` points outside
+ * it: nothing discovery measured can say whether that frontend has a router, and
+ * a run that reads a whole Vue application must not decide "no screens" on a
+ * walk that never went there. Unreadable or absent JSON is no evidence, not a
+ * failure: the switch simply falls through to its next rule.
+ *
+ * @param {string[]} webRootsAbs  the frontend source roots this run will read
+ * @returns {{path:string, router:(string|null)}[]}
+ */
+function webPackagesRead(webRootsAbs) {
+  const out = new Map();
+  for (const start of webRootsAbs ?? []) {
+    let dir = path.resolve(start);
+    for (let i = 0; i < 16; i += 1) {
+      const file = path.join(dir, 'package.json');
+      if (fs.existsSync(file)) {
+        if (!out.has(file)) {
+          let router = null;
+          try {
+            const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+            router = routerDependencyOf({ ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) });
+          } catch { router = null; }
+          out.set(file, { path: file, router });
+        }
+        break;
+      }
+      const up = path.dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  return [...out.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** sha256 of a file that may have vanished between the diff and the hash. */
+function safeHash(abs) {
+  try { return sha256File(abs); } catch { return null; }
+}
+
+// The pack's own metadata, as the `overview` tool reads it back out of ctx:
+// what this pack IS (project, digest, build time, lanes) and what it was built
+// from. One helper, called identically by `mcp` and `view`, so the stdio server
+// and the viewer can never describe the same pack differently.
+function packMeta(pack) {
+  return {
+    project: pack.meta?.project ?? 'project',
+    digest: pack.digest,
+    builtAt: pack.meta?.builtAt ?? null,
+    lanes: pack.meta?.lanes ?? null,
+    base: pack.meta?.base ?? null,
+    ddl: pack.meta?.ddl ?? null,
+    // The identity rule this pack's names were matched under (SPEC §8.1), so a
+    // tool argument can be resolved the way the analyzer resolved the same
+    // spelling. Null on a pack built before the field existed: no fold.
+    identifierCase: pack.meta?.identifierCase ?? null,
+    // What this pack DECLARES it could and could not ship (SPEC §10.4), and the
+    // lane tallies that no edge in the graph can carry (an unresolved call
+    // leaves nothing behind — that is why it is counted at ingest).
+    axes: pack.meta?.axes ?? null,
+    laneStats: pack.meta?.laneStats ?? null,
+  };
+}
+
+/**
+ * The projects a SERVER serves (SPEC §13 MUST, §15 M8). Four ways to say it,
+ * one order:
+ *
+ *   --pack <dir> / --root <dir>   ONE anonymous project, id from the pack meta
+ *   --project a --project b       exactly those registry entries
+ *   (nothing)                     every registered project, lazily
+ *   (nothing, empty registry)     the local `.cascade/`, as one anonymous project
+ *
+ * Nothing here loads a pack: the entries are registry records, and the host
+ * parses a pack only when a tool first asks that project a question.
+ * @param {string} cmdName  for the error messages ("mcp" / "view")
+ */
+function servedEntries(cmdName) {
+  const packFlag = opt('pack');
+  const rootFlag = opt('root');
+  const ids = optAll('project');
+  if (packFlag || rootFlag) {
+    if (ids.length) {
+      die(`cascade ${cmdName}: --pack/--root serve ONE pack, so --project has nothing to select. `
+        + 'Drop it, or drop --pack/--root and name the registered projects with --project');
+    }
+    return [anonymousEntry(resolveProject({ pack: packFlag, root: rootFlag, cwd: process.cwd(), env: process.env }))];
+  }
+  const regFile = registryPath(process.env);
+  let reg;
+  try { reg = readRegistry(regFile); } catch (e) { die(e.message); }
+  if (ids.length) {
+    return ids.map((id) => {
+      const entry = findProject(reg, id);
+      if (!entry) {
+        die(`unknown project ${JSON.stringify(id)}: registered ids are ${projectIds(reg).join(', ') || '(none)'} (registry ${regFile})`);
+      }
+      return entry;
+    });
+  }
+  if (reg.projects.length > 0) return reg.projects;
+  const local = resolveProject({ cwd: process.cwd(), env: process.env });
+  if (!fs.existsSync(path.join(local.packDir, 'pack.json'))) {
+    die(`no project is registered in ${regFile}, and there is no pack at ${path.join(local.packDir, 'pack.json')}. `
+      + 'Run `cascade init` then `cascade analyze`, or serve a built pack with --pack <dir>');
+  }
+  return [anonymousEntry(local)];
+}
+
+/**
+ * WHO THIS RUN IS ABOUT, decided once (SPEC §5.1).
+ *
+ * The same id names the fact cache on disk and goes into `pack.meta.project`,
+ * so a pack and the shards it was built from can never disagree about which
+ * project they belong to. The order is the resolver's: an id the registry
+ * already knows, then the project's own manifest, then `--project`, then the
+ * name of the directory being analyzed. Each candidate is slugified, and
+ * `slugify` returns null for anything that is not a legal id, so the first
+ * usable one wins.
+ *
+ * null means no candidate produced a legal id. That is a real answer, not a
+ * name to invent: the run then has no durable cache and the pack says so.
+ *
+ * @param {...(string|null|undefined)} candidates  in priority order
+ * @returns {string|null}
+ */
+function projectIdFrom(...candidates) {
+  for (const c of candidates) {
+    const slug = typeof c === 'string' ? slugify(c) : null;
+    if (slug) return slug;
+  }
+  return null;
+}
+
+/** The manifest beside a `.cascade/`, or null when there is none to read. */
+function manifestAt(dotCascade) {
+  if (!dotCascade) return null;
+  const file = path.join(dotCascade, 'manifest.json');
+  if (!fs.existsSync(file)) return null;
+  try { return loadManifest(file); } catch { return null; }
+}
+
+/**
+ * One served project that the registry does not name: a `--pack <dir>` (or a
+ * local `.cascade/`) server. The id comes from the pack's own meta, so the
+ * `project` argument still means something to a client. The pack is parsed once
+ * here for that name and then dropped — the host re-reads it lazily, under the
+ * memory budget, when a tool actually needs the graph.
+ */
+function anonymousEntry(resolved) {
+  const file = path.join(resolved.packDir, 'pack.json');
+  if (!fs.existsSync(file)) die(`no pack at ${file}. Run \`cascade analyze\` first`);
+  let meta = {};
+  try { meta = JSON.parse(fs.readFileSync(file, 'utf8')).meta ?? {}; }
+  catch (e) { die(`cannot read ${file}: ${e.message}`); }
+  const id = resolved.projectId || slugify(String(meta.project ?? '')) || 'project';
+  return {
+    id,
+    dotCascadePath: resolved.dotCascade,
+    packDir: resolved.packDir,
+    source: resolved.source,
+    stack: meta.lanes ?? [],
+    lastCertifiedAt: meta.builtAt ?? null,
+  };
+}
+
+/**
+ * Load ONE served project into a tool context: the graph, its basis, its
+ * COMPUTED trust (SPEC §14.3), the pack metadata, the project's profile, the
+ * live git diff and the live working-tree overlay. This is what the project
+ * host calls on a cache miss, so `mcp` and `view` cannot describe the same
+ * project differently. `packJson`/`packDir` ride along for the viewer's
+ * /api/meta and /api/source; the tools never look at them.
+ */
+function loadServedProject(entry) {
+  const dir = packDirOf(entry);
+  const file = path.join(dir, 'pack.json');
+  if (!fs.existsSync(file)) throw new Error(`no pack at ${file}. Run \`cascade analyze\` for project ${entry.id}`);
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (pack.schema !== PACK_SCHEMA) throw new Error(`unexpected pack schema in ${file}: ${pack.schema}`);
+  const graph = loadPack(pack, { verifyDigest: true });
+  const prof = servedProfile(dir, pack);
+  return {
+    graph,
+    basis: {
+      // The id the CLIENT addressed (the registry id / the `project` argument),
+      // not the name the pack happens to carry: on a server holding several
+      // packs those names can collide — an older `analyze` stamped every pack
+      // "project" — and then no answer would say which project it came from.
+      // The pack's own declared name is not hidden; it rides along whenever it
+      // differs, and `overview` relays it in answer.pack.project.
+      project: entry.id,
+      ...(pack.meta?.project && pack.meta.project !== entry.id ? { packProject: pack.meta.project } : {}),
+      buildDigest: pack.digest,
+      builtAt: pack.meta?.builtAt ?? null,
+      // Served from a static pack with no live source check: freshness is
+      // unknown, never "current".
+      freshness: { verdict: 'unknown' },
+    },
+    // COMPUTED (SPEC §14.3 MUST): this project's last gate verdict plus its
+    // approved golden corpus. A bare `--pack` has no `.cascade/` to read and
+    // computes from NO state — UNCERTIFIED with `no-calibration-state`.
+    trust: computeTrust({ ...calibrationStateOf(entry.dotCascadePath ?? null), knownGaps: trustGapsFor(prof, pack.meta?.axes ?? null) }),
+    limits: [],
+    pack: packMeta(pack),
+    profile: prof,
+    changedFiles: () => gitChangedFiles(pack.meta?.base, ownStateOf(pack.meta?.base, dir)),
+    overlay: makeOverlayProvider({ packDir: dir, pack, baseGraph: graph, profile: prof }),
+    packJson: pack,
+    packDir: dir,
+  };
+}
+
+// THE ONE WIRING POINT (SPEC §4, I-3). `src/core/` imports nothing from
+// `src/adapters/` — a lane is a plug-in, and the core is what it plugs into.
+// The CLI is the layer that knows both sides, so this is where the bridges are
+// handed to the core assembler (src/core/assemble.mjs). `analyze` and the
+// working-tree overlay both take this object, which is also what stops the two
+// from assembling a graph by two different routes. A test wires fakes instead.
+const LANE_BRIDGES = Object.freeze({ buildGraphFromSql, addJavaFacts, addJpaFacts, addMybatisPlusFacts, addOpenApiRoutes, addWebFacts });
+
+/** `--memory-budget <MB>` (default 512), as bytes of pack JSON (SPEC §17.6). */
+function memoryBudgetBytes() {
+  const raw = opt('memory-budget', String(DEFAULT_BUDGET_MB));
+  const mb = Number(raw);
+  if (!Number.isFinite(mb) || mb <= 0) die(`--memory-budget must be a positive number of megabytes, got ${JSON.stringify(raw)}`);
+  return Math.floor(mb * 1024 * 1024);
+}
+
+/**
+ * The profile a SERVER answers with: the file the pack recorded at analyze time
+ * when it is still there, else the profile beside the pack. Null when neither
+ * exists — the query layer then falls back to its own defaults rather than
+ * inventing a convention.
+ */
+function servedProfile(packDir, pack) {
+  const candidates = [pack?.meta?.profile, path.join(packDir, '..', 'profile.json')].filter(Boolean);
+  for (const f of candidates) {
+    if (!fs.existsSync(f)) continue;
+    try { return loadProfile(f); } catch (e) { process.stderr.write(`profile ${f} ignored: ${e.message}\n`); }
+  }
+  return null;
+}
+
+/**
+ * The profile a command reads: `--profile <file>`, else `<dotCascade>/profile.json`,
+ * else the documented defaults. Never guesses a convention the project did not
+ * write down — it says which of the three it used.
+ */
+function readProfile(dotCascade) {
+  const explicit = opt('profile');
+  if (explicit) {
+    const file = path.resolve(explicit);
+    try {
+      return { profile: loadProfile(file), profileFile: file, profileNote: `profile: ${file} (--profile)` };
+    } catch (e) { die(e.message); }
+  }
+  const file = dotCascade ? path.join(dotCascade, 'profile.json') : null;
+  if (file && fs.existsSync(file)) {
+    try {
+      return { profile: loadProfile(file), profileFile: file, profileNote: `profile: ${file}` };
+    } catch (e) { die(e.message); }
+  }
+  return {
+    profile: normalizeProfile({}),
+    profileFile: null,
+    profileNote: `profile: none found${file ? ` at ${file}` : ''}, so we use the documented defaults `
+      + `(no package prefixes, no schema default, catalog.source=${PROFILE_DEFAULTS.catalog.source}); run \`cascade init\` to write one`,
+  };
+}
+
+// Compile adapters/java/JavaFacts.java into a build cache (only when stale) and
+// run it over the given source roots. Returns parsed cascade:javafacts:1 records.
+//
+// The build directory is named after the WORKER SOURCE'S CONTENT and is
+// published by an atomic rename, because several `cascade` processes can run at
+// once (the test suite does exactly that) and a shared, mtime-keyed directory
+// let two of them write the same .class files concurrently — the loser then ran
+// a half-written class. Content-addressing also means a checkout that moves the
+// worker back and forth never reuses the wrong generation.
+function runJavaLane(jdk, root, srcRoots) {
+  const src = path.join(ENGINE_ROOT, 'adapters', 'java', 'JavaFacts.java');
+  const build = javaWorkerBuildDir(jdk, src);
+  const out = execFileSync(jdk.java, ['-cp', build, 'JavaFacts', '--root', root, ...srcRoots], { maxBuffer: 1 << 28 }).toString('utf8');
+  return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/**
+ * Run the web lane's worker over the given targets and parse its JSONL
+ * (adapters/web/webfacts.mjs, `cascade:webfacts:1`).
+ *
+ * A target is a source ROOT (a cold run walks it) or a single FILE (an
+ * incremental run re-reads exactly what changed): the worker takes both, and
+ * everything it emits is per file, so the two invocations produce the same
+ * records for the same bytes.
+ *
+ * @param {string} root   the analyzed root, absolute
+ * @param {string[]} targets  frontend source roots or files, absolute
+ * @param {{configsOnly?:boolean}} [opts]  with `configsOnly`, no source file is
+ *        walked and only the package configuration comes back
+ * @returns {Object[]} the worker's records, header and summary included
+ */
+function runWebLane(root, targets, opts = {}) {
+  const worker = path.join(ENGINE_ROOT, 'adapters', 'web', 'webfacts.mjs');
+  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...targets];
+  const out = execFileSync(process.execPath, args, { maxBuffer: 1 << 28 }).toString('utf8');
+  return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/**
+ * EXPAND `--ddl` PATTERNS. Each value is a literal path or a glob; `*` matches
+ * within one path segment, `**` across segments, `?` one character.
+ *
+ * A repository that ships one schema per service asks for all of them with one
+ * pattern, and typing three paths in the right order is the same thing said
+ * longhand — so both are accepted, and the ORDER survives either way: patterns
+ * expand in the order they were typed, and each pattern's own matches come back
+ * sorted, because "in path order" has to mean the same thing on every machine.
+ *
+ * A pattern that matches nothing is passed through UNCHANGED, so the run dies on
+ * "--ddl <that path> does not exist" naming what the user typed, rather than
+ * silently analysing a smaller set than they asked for.
+ *
+ * @param {string[]} patterns
+ * @returns {string[]}
+ */
+function expandDdlPatterns(patterns) {
+  const out = [];
+  for (const pattern of patterns) {
+    if (!/[*?]/.test(pattern)) { out.push(pattern); continue; }
+    const matches = globFiles(pattern);
+    if (matches.length === 0) { out.push(pattern); continue; }
+    out.push(...matches);
+  }
+  return out.filter((p, i) => out.indexOf(p) === i);
+}
+
+/**
+ * Files matching one glob, sorted. Walks only the directories the pattern's
+ * literal prefix allows, so a pattern rooted deep in a tree does not scan the
+ * whole of it.
+ * @param {string} pattern
+ * @returns {string[]}
+ */
+function globFiles(pattern) {
+  const abs = path.resolve(pattern);
+  const parts = abs.split(path.sep);
+  // The longest leading run of literal segments is a real directory to start in.
+  let firstWild = parts.findIndex((p) => /[*?]/.test(p));
+  if (firstWild < 0) return fs.existsSync(abs) ? [abs] : [];
+  const base = parts.slice(0, firstWild).join(path.sep) || path.sep;
+  const body = abs
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\u0000/g, '.*')
+    .replace(/\?/g, '[^/]');
+  const re = new RegExp(`^${body}$`);
+  const found = [];
+  const walk = (dir, depth) => {
+    if (depth > 24) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.') && e.name !== '.') continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.isFile() && re.test(full)) found.push(full);
+    }
+  };
+  walk(base, 0);
+  return found.sort();
+}
+
+/** The compiled worker for THIS source, compiling it first if nobody has yet. */
+function javaWorkerBuildDir(jdk, src) {
+  const key = createHash('sha256').update(fs.readFileSync(src)).digest('hex').slice(0, 12);
+  const build = path.join(ENGINE_ROOT, '.java-build', key);
+  if (fs.existsSync(path.join(build, 'JavaFacts.class'))) return build;
+  // Compile somewhere private, then publish with ONE rename. A rename onto an
+  // existing directory fails, which is the right outcome: another process got
+  // there first, its build is by construction the same bytes, so use it.
+  const tmp = `${build}.tmp-${process.pid}`;
+  fs.mkdirSync(tmp, { recursive: true });
+  try {
+    execFileSync(jdk.javac, ['-d', tmp, src], { stdio: ['ignore', 'ignore', 'inherit'] });
+    try {
+      fs.renameSync(tmp, build);
+    } catch {
+      if (!fs.existsSync(path.join(build, 'JavaFacts.class'))) throw new Error(`could not publish the compiled Java worker to ${build}`);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  return build;
+}
+
+// ---- the filesystem/git edge the incremental core is injected with ---------
+// src/core/{invalidate,incremental,facts_store}.mjs are pure; these four small
+// helpers are the only impure things they are handed.
+
+/** sha256 of a file's BYTES (not its decoded text) — the shard keys' input. */
+function sha256File(absPath) {
+  return createHash('sha256').update(fs.readFileSync(absPath)).digest('hex');
+}
+
+// ---- the calibration layer's impure edges (SPEC §14) -----------------------
+// src/core/{calibration,trust,golden,receipt}.mjs are pure; these helpers are
+// the filesystem they are handed.
+
+const ENGINE_SKIP_DIRS = new Set(['node_modules', '.venv', '__pycache__', '.git', 'vendor']);
+
+/** The engine's own sources, repository-relative and hashed, sorted by path. */
+function engineSourceList() {
+  const out = [];
+  const walk = (absDir, rel) => {
+    let entries;
+    try { entries = fs.readdirSync(absDir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries.slice().sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (ENGINE_SKIP_DIRS.has(e.name)) continue;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      const childAbs = path.join(absDir, e.name);
+      if (e.isDirectory()) walk(childAbs, childRel);
+      else if (e.isFile() && isEngineSourcePath(childRel)) out.push({ path: childRel, sha256: sha256File(childAbs) });
+    }
+  };
+  for (const top of ['src', 'bin', 'adapters']) walk(path.join(ENGINE_ROOT, top), top);
+  return out;
+}
+
+let ENGINE_PRINT_CACHE = null;
+/** sha256 of THIS engine's sources — the fingerprint the gate splits modes on. */
+function runningEnginePrint() {
+  if (ENGINE_PRINT_CACHE === null) ENGINE_PRINT_CACHE = enginePrint({ files: engineSourceList() });
+  return ENGINE_PRINT_CACHE;
+}
+
+/** The durable state directory of a resolved project (`.cascade/`, or the pack's parent). */
+function stateDirOf(resolved, outDir) {
+  if (resolved && typeof resolved.dotCascade === 'string' && resolved.dotCascade.length > 0) return resolved.dotCascade;
+  return path.dirname(path.resolve(outDir));
+}
+
+/** Read + parse a JSON file, or null when it is not there. Throws on bad JSON. */
+function readJsonOrNull(file) {
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/** sha256 of a file's bytes, or null when the file is absent. */
+function hashOrNull(file) {
+  try { return sha256File(file); } catch { return null; }
+}
+
+/**
+ * The calibration state a SERVER answers with: the last gate verdict and the
+ * approved golden corpus. Both are read through the resolver's `.cascade/`;
+ * a bare `--pack` has none, and the trust level then computes from no state
+ * (UNCERTIFIED, `no-calibration-state`) rather than assuming the best.
+ */
+function calibrationStateOf(dotCascade) {
+  if (!dotCascade) return { gateState: null, golden: null };
+  let gateState = null;
+  try { gateState = readJsonOrNull(path.join(dotCascade, 'calibration', 'gate-state.json')); }
+  catch (e) { process.stderr.write(`gate state ignored: ${e.message}\n`); }
+  let golden = null;
+  const casesFile = path.join(dotCascade, 'golden', 'cases.jsonl');
+  if (fs.existsSync(casesFile)) {
+    try {
+      const cases = parseCases(fs.readFileSync(casesFile, 'utf8'));
+      golden = { approvedCases: cases.filter((c) => !!c.approvedAt).length, summary: gateState?.goldenSummary ?? null };
+    } catch (e) { process.stderr.write(`golden corpus ignored: ${e.message}\n`); }
+  }
+  return { gateState, golden };
+}
+
+/** A path inside the project's state directory, as the receipt spells it. */
+function relToState(stateDir, abs) {
+  return path.relative(stateDir, abs).split(path.sep).join('/');
+}
+
+/**
+ * The bound `callTool` the golden corpus asks its questions through. §14.1 is
+ * emphatic that the grader must not see the engine's internals: it scores the
+ * SHIPPED query surface, the same one an AI reaches over MCP, so every case
+ * goes through the dispatcher and never through a private walk.
+ */
+function goldenAsk(graph, pack, profile) {
+  const ctx = {
+    graph,
+    basis: {
+      project: pack.meta?.project ?? 'project', buildDigest: pack.digest,
+      builtAt: pack.meta?.builtAt ?? null, freshness: { verdict: 'unknown' },
+    },
+    trust: computeTrust({ knownGaps: trustGapsFor(profile, pack.meta?.axes ?? null) }),
+    limits: [],
+    pack: packMeta(pack),
+    profile,
+  };
+  return (name, args) => callTool(name, args, ctx);
+}
+
+/** Every *.xml under the given directories (or the files themselves), sorted. */
+function listMapperXml(dirs) {
+  const out = [];
+  const walk = (p) => {
+    let st;
+    try { st = fs.statSync(p); } catch { return; }
+    if (st.isDirectory()) {
+      for (const e of fs.readdirSync(p).sort()) walk(path.join(p, e));
+    } else if (st.isFile() && p.endsWith('.xml')) out.push(p);
+  };
+  for (const d of dirs) walk(d);
+  return [...new Set(out)].sort();
+}
+
+/** `git -C dir …` as text, or null when git fails / this is not a repo. */
+function gitText(dir, args) {
+  try {
+    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 26 }).toString('utf8');
+  } catch { return null; }
+}
+
+/** Split a `-z` (NUL-separated) git list into non-empty entries. */
+function splitZ(raw) {
+  return raw == null ? [] : raw.split(String.fromCharCode(0)).filter((s) => s.length > 0);
+}
+
+// The impure half of discovery (src/core/discover.mjs is pure and takes these).
+const DISCOVER_IO = {
+  readDir: (dir) => fs.readdirSync(dir, { withFileTypes: true })
+    .map((e) => ({ name: e.name, isDir: e.isDirectory(), isFile: e.isFile() })),
+  readFile: (file) => fs.readFileSync(file, 'utf8'),
+  gitHead: (dir) => {
+    try {
+      return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim();
+    } catch { return null; }
+  },
+};
+
+// The registry identifies a project by its `.cascade/` directory, so the SAME
+// directory must always be spelled the same way. path.resolve() does not follow
+// symlinks (on macOS /var is a link to /private/var, and a --root given through
+// one spelling would otherwise register as a second project), so resolve links
+// here, at the filesystem edge. A path that does not exist is returned as given.
+function realPath(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+// Locate the project the command should act on (src/core/resolve.mjs decides;
+// this only supplies the flags). `strictProject` is false for `analyze`, where
+// --project has always also named the pack: an unregistered id there falls back
+// to the root/cwd `.cascade/` with a visible note instead of failing.
+// The `.cascade/` layout for an already-resolved project. `resolveProject`
+// hands back the directory itself; `projectPaths` wants the root beside it.
+function catalogPathsOf(dotCascadeDir) {
+  return projectPaths(path.dirname(dotCascadeDir));
+}
+
+// The environment variable `cascade catalog fetch` reads the DB password from
+// unless --password-env names another. Mirrors catalog_live.py's default.
+const DEFAULT_PASSWORD_ENV = 'CASCADE_DB_PASSWORD';
+
+/**
+ * WHICH TREE `analyze` READS.
+ *
+ * `--root` wins, always: the operator has named the directory. With no --root,
+ * a run that resolved to a REGISTERED project analyzes that project's own tree,
+ * because "analyze mall" can only mean "analyze mall's source":
+ *
+ *   - the manifest lists ONE repository -> that repository (its path is already
+ *     resolved against the manifest's own directory)
+ *   - it lists several -> the directory the manifest's `.cascade/` sits in,
+ *     which is the workspace holding them all
+ *   - there is no manifest -> the same directory, for want of anything better
+ *
+ * cwd is the answer only when nothing resolved, which is the plain
+ * `cd <project> && cascade analyze` case this always handled.
+ *
+ * @param {{dotCascade:(string|null), source:string}} resolved  from resolveProject
+ * @param {(string|undefined)} rootFlag  the raw --root, if one was given
+ * @param {string} cwd
+ * @returns {{root:string, from:string}}  the directory, and why it is that one
+ */
+function analyzeRoot(resolved, rootFlag, cwd) {
+  if (typeof rootFlag === 'string' && rootFlag.length > 0) {
+    return { root: path.resolve(cwd, rootFlag), from: '--root' };
+  }
+  if (resolved && resolved.source === 'registry' && typeof resolved.dotCascade === 'string') {
+    const manifest = manifestAt(resolved.dotCascade);
+    const repos = manifest ? manifest.repositories : [];
+    if (repos.length === 1) {
+      return { root: path.resolve(repos[0].absPath), from: "the registered project's manifest" };
+    }
+    if (repos.length > 1) {
+      return { root: path.dirname(resolved.dotCascade), from: `the registered project's workspace, ${repos.length} repositories` };
+    }
+    return { root: path.dirname(resolved.dotCascade), from: 'the registered project, which has no manifest' };
+  }
+  return { root: path.resolve(cwd), from: 'the current directory' };
+}
+
+function resolveOrDie({ strictProject = true } = {}) {
+  const args = { pack: opt('pack'), project: opt('project'), root: opt('root'), cwd: process.cwd(), env: process.env };
+  try {
+    return resolveProject(args);
+  } catch (e) {
+    if (strictProject) die(e.message);
+    process.stderr.write(`${e.message}\n  -> continuing with the local .cascade/ (the name is used for the pack only)\n`);
+    return resolveProject({ ...args, project: undefined });
+  }
+}
+
+if (cmd === 'doctor') {
+  // The prerequisite pre-flight (SPEC §17.9). THIS block is the impure half —
+  // it runs the probes; src/core/doctor.mjs turns them into the table, and is
+  // tested with fake probes so the states this machine is not in are covered
+  // too.
+  const runOut = (file, args, opts = {}) => {
+    try {
+      return {
+        ok: true,
+        out: execFileSync(file, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000, ...opts })
+          .toString('utf8').trim(),
+      };
+    } catch (e) {
+      // A tool that is absent and one that is broken are DIFFERENT answers, and
+      // the remedy differs too, so the error text is relayed rather than
+      // flattened into "not found". The tool's OWN last line beats node's
+      // "Command failed: <the whole command line>", which says nothing and
+      // pastes an absolute path into the report.
+      if (e && e.code === 'ENOENT') return { ok: false, error: `not found: ${file}` };
+      const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
+      return { ok: false, error: said || String((e && e.message) || 'failed').split('\n')[0] };
+    }
+  };
+
+  const venvPy = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+  const pyProbe = fs.existsSync(venvPy)
+    ? (() => { const r = runOut(venvPy, ['-V']); return { path: venvPy, ok: r.ok, version: r.out, error: r.error }; })()
+    : { path: venvPy, ok: false, error: `no interpreter at ${venvPy}` };
+  const pyModule = (mod) => {
+    if (!pyProbe.ok) return { ok: false, error: `no venv python at ${venvPy}` };
+    const r = runOut(venvPy, ['-c', `import ${mod}, sys; sys.stdout.write(getattr(${mod}, "__version__", "unknown"))`]);
+    return r.ok ? { ok: true, version: r.out } : { ok: false, error: r.error };
+  };
+
+  const jdkCands = jdkCandidateDirs(process.env).map(({ dir, via }) => ({
+    dir, via,
+    javac: fs.existsSync(path.join(dir, 'javac')),
+    java: fs.existsSync(path.join(dir, 'java')),
+  }));
+  const jdk = findJdk();
+  const javacV = jdk ? runOut(jdk.javac, ['-version']) : null;
+
+  // The cache root of a project id that cannot collide with a real one, so the
+  // probe never writes inside somebody's shard directory.
+  const cacheProbeDir = cacheDir('doctor-probe');
+  let cache;
+  try {
+    fs.mkdirSync(cacheProbeDir, { recursive: true });
+    const probeFile = path.join(cacheProbeDir, 'write-probe');
+    fs.writeFileSync(probeFile, 'ok');
+    fs.rmSync(probeFile, { force: true });
+    cache = { path: cacheProbeDir, ok: true };
+  } catch (e) {
+    cache = { path: cacheProbeDir, ok: false, error: e.message };
+  }
+
+  const regFile = registryPath();
+  let registry;
+  if (!fs.existsSync(regFile)) registry = { path: regFile, exists: false };
+  else {
+    try { registry = { path: regFile, exists: true, ok: true, projects: projectIds(readRegistry(regFile)).length }; }
+    catch (e) { registry = { path: regFile, exists: true, ok: false, error: e.message }; }
+  }
+
+  // The web lane's parser: LOADED and USED, not just looked for. A file that is
+  // present and broken is the failure mode a stat cannot see.
+  const webParserFile = path.join(ENGINE_ROOT, 'adapters', 'web', 'vendor', 'babel-parser.cjs');
+  let webParser;
+  try {
+    const probe = execFileSync(process.execPath, [
+      '-e',
+      'const p = require(process.argv[1]); const a = p.parse("const a = 1;", { sourceType: "unambiguous" });'
+      + ' process.stdout.write(a.program.body[0].type);',
+      webParserFile,
+    ], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }).toString('utf8').trim();
+    webParser = probe === 'VariableDeclaration'
+      ? { path: webParserFile, ok: true }
+      : { path: webParserFile, ok: false, error: `the parser loaded but read \`const a = 1;\` as ${probe || 'nothing'}` };
+  } catch (e) {
+    const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
+    webParser = { path: webParserFile, ok: false, error: said || String((e && e.message) || 'failed').split('\n')[0] };
+  }
+
+  const gitV = runOut('git', ['--version']);
+  const dockerV = runOut('docker', ['info', '--format', '{{.ServerVersion}}']);
+
+  const report = buildDoctorReport({
+    node: { version: process.version },
+    git: { ok: gitV.ok, version: gitV.out, error: gitV.error },
+    python: pyProbe,
+    sqlglot: pyModule('sqlglot'),
+    jdk: { candidates: jdkCands, chosen: jdk, version: javacV && javacV.ok ? javacV.out : undefined },
+    webParser,
+    drivers: [
+      { dialect: 'mysql', module: 'pymysql', pip: 'pymysql', ...pyModule('pymysql') },
+      { dialect: 'postgres', module: 'psycopg', pip: 'psycopg[binary]', ...pyModule('psycopg') },
+      { dialect: 'oracle', module: 'oracledb', pip: 'oracledb', ...pyModule('oracledb') },
+    ],
+    docker: { ok: dockerV.ok, version: dockerV.out ? `server ${dockerV.out}` : undefined, error: dockerV.error },
+    registry,
+    cache,
+  });
+
+  if (flag('json')) process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+  else process.stdout.write(formatDoctorTable(report));
+  process.exit(report.ok ? 0 : 1);
+}
+
+if (cmd === 'init') {
+  // discover -> manifest + profile -> .gitignore -> registry (SPEC §15 M1).
+  const root = path.resolve(opt('root', process.cwd()));
+  const force = flag('force');
+  const asJson = flag('json');
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) die(`--root ${root} is not a directory`);
+  const projectId = opt('project') ?? slugify(path.basename(root));
+  if (!projectId) die(`cannot derive a project id from ${JSON.stringify(path.basename(root))}. Pass --project <id> (lower-case, [a-z0-9._-])`);
+
+  const discovery = discover(root, DISCOVER_IO);
+  const p = projectPaths(root);
+  let manifest;
+  let profile;
+  let profileDiagnostics = [];
+  try {
+    manifest = buildManifest(discovery, { projectId, root, manifestDir: p.root });
+    validateManifest(manifest, p.manifest);
+    const built = buildProfile(discovery, { root, manifestDir: p.root });
+    profile = built.profile;
+    profileDiagnostics = built.diagnostics;
+  } catch (e) {
+    die(e.message);
+  }
+  const diagnostics = [...discovery.diagnostics, ...profileDiagnostics];
+
+  ensureProjectDirs(root);
+  const { written, kept } = writeInitFiles({
+    manifestPath: p.manifest, profilePath: p.profile, manifest, profile, force,
+  });
+
+  const lanes = lanesOf(discovery);
+  const regFile = registryPath(process.env);
+  try {
+    writeRegistryAtomic(regFile, upsertProject(readRegistry(regFile), {
+      id: projectId, dotCascadePath: realPath(p.root), source: 'init', stack: lanes, lastCertifiedAt: null,
+    }, { force }));
+  } catch (e) {
+    die(`${e.message}\n  (nothing was written to ${regFile}; the project files above are in place)`);
+  }
+
+  const c = discovery.counts;
+  process.stderr.write(`project ${projectId} at ${root}\n`);
+  process.stderr.write(`repositories (${discovery.repos.length}): ${discovery.repos.map((r) => `${r.path}@${r.commit.slice(0, 8)}`).join(', ')}\n`);
+  process.stderr.write(`files scanned ${discovery.filesScanned}${discovery.capped ? ' (CAPPED: see diagnostics)' : ''}: `
+    + `${c.javaFiles} java (${c.springHandlerFiles} spring handlers, ${c.jpaEntityFiles} JPA entities), `
+    + `${c.mybatisMapperXml} mybatis mapper xml, ${c.ddlFiles} DDL, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json\n`);
+  process.stderr.write(`build tool ${discovery.buildTool ?? 'none detected'}; package prefixes [${discovery.packagePrefixes.join(', ')}]; lanes [${lanes.join(',')}]\n`);
+  for (const f of written) process.stderr.write(`wrote ${f}\n`);
+  for (const f of kept) process.stderr.write(`kept ${f} (already present: re-run with --force to overwrite)\n`);
+  process.stderr.write(`registered ${projectId} -> ${p.root} in ${regFile}\n`);
+  if (diagnostics.length === 0) {
+    process.stderr.write('diagnostics: none\n');
+  } else {
+    const byKind = new Map();
+    for (const d of diagnostics) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1);
+    process.stderr.write(`diagnostics (${diagnostics.length}): ${[...byKind].map(([k, n]) => `${k} x${n}`).join(', ')}\n`);
+    for (const d of diagnostics.slice(0, 5)) process.stderr.write(`  [${d.severity}] ${d.kind} ${d.path}: ${d.reason}\n`);
+    if (diagnostics.length > 5) process.stderr.write(`  … ${diagnostics.length - 5} more (see --json for all of them)\n`);
+  }
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify({
+      schema: 'cascade:init-report:1',
+      project: projectId,
+      root,
+      lanes,
+      discovery: { ...discovery, diagnostics },
+      manifest: p.manifest,
+      profile: p.profile,
+      written,
+      kept,
+      registry: regFile,
+    }, null, 2) + '\n');
+  }
+  process.exit(0);
+}
+
+if (cmd === 'analyze') {
+  // Run the lanes end to end -> pack, one command. Every lane input is OPTIONAL:
+  // what a flag does not name comes from the project's manifest + profile +
+  // discovery, and a lane with no input is DECLARED missing rather than fatal
+  // (SPEC §10.4 MUST — a partial pack, never a die()).
+  // Where the pack goes is decided by the project resolver (SPEC §15 M1), not by
+  // joining a literal onto cwd: --pack > --project (registry) > --root > cwd.
+  const resolved = resolveOrDie({ strictProject: false });
+  const out = opt('out', resolved.packDir);
+  // WHAT GETS ANALYZED. This used to be `--root` or cwd, full stop, so
+  // `cascade analyze --project mall` run from anywhere else analyzed the
+  // directory the shell happened to be in and wrote the result into mall's pack:
+  // a pack named after one project describing another. The resolver already
+  // knows which project this is; `analyzeRoot` asks it where that project lives.
+  //
+  // Symlinks are resolved here, at the filesystem edge: on macOS /var is a link
+  // to /private/var, and git reports the physical path, so a root given through
+  // the other spelling would make every "is this file under a source root?"
+  // comparison fail silently, by returning "nothing changed". Every lane input
+  // below is resolved the same way.
+  const rootChoice = analyzeRoot(resolved, opt('root'), process.cwd());
+  const root = realPath(rootChoice.root);
+  process.stderr.write(`analyzing ${root} (${rootChoice.from})\n`);
+
+  // ---- the reading convention (SPEC §6.2) --------------------------------
+  const { profile, profileFile, profileNote } = readProfile(resolved.dotCascade);
+  if (profileNote) process.stderr.write(profileNote + '\n');
+  let diagnostics;
+  try {
+    diagnostics = profileDiagnostics(profile);
+  } catch (e) { die(e.message); }
+  // Fail closed on a dialect this engine cannot route: a wrong dialect
+  // mis-parses every statement and the result would still look healthy.
+  try { sqlDialectOf(profile); } catch (e) { die(e.message); }
+
+  // ---- project identity (SPEC §6.1): is the pinned commit what we analyze? --
+  const manifestFile = resolved.dotCascade ? path.join(resolved.dotCascade, 'manifest.json') : null;
+  let manifest = null;
+  if (manifestFile && fs.existsSync(manifestFile)) {
+    try { manifest = loadManifest(manifestFile); }
+    catch (e) { process.stderr.write(`manifest ignored: ${e.message}\n`); }
+  }
+
+  // ---- what runs, over what (src/core/lanes.mjs decides) -----------------
+  const flags = {
+    // Repeatable, and each value may be a glob: a schema split over three
+    // services is `--ddl a.sql --ddl b.sql --ddl c.sql` or `--ddl 'db/*/schema.sql'`.
+    ddl: expandDdlPatterns(optAll('ddl')), noDdl: flag('no-ddl'),
+    mappers: optAll('mappers'), noMappers: flag('no-mappers'),
+    javaSrc: optAll('java-src'), noJava: flag('no-java'),
+    webSrc: optAll('web-src'), noWeb: flag('no-web'),
+    // An OpenAPI / Swagger document the project publishes. Repeatable, because a
+    // repository with several services publishes one document per service.
+    openapi: optAll('openapi'), noOpenapi: flag('no-openapi'),
+    // A browser recording, as runtime evidence on the screen axis (RM30). No
+    // `--no-har` sibling and no discovery: nothing reads one unless a person
+    // names it here or in the profile.
+    har: optAll('har'),
+  };
+  for (const [off, on, name] of [[flags.noDdl, flags.ddl.length, 'ddl'], [flags.noMappers, flags.mappers.length, 'mappers'], [flags.noJava, flags.javaSrc.length, 'java-src'], [flags.noWeb, flags.webSrc.length, 'web-src'], [flags.noOpenapi, flags.openapi.length, 'openapi']]) {
+    if (off && on) die(`--no-${name === 'java-src' ? 'java' : name === 'web-src' ? 'web' : name} and --${name} contradict each other. Pass one or the other`);
+  }
+  const needDiscovery = (flags.ddl.length === 0 && !flags.noDdl)
+    || (flags.mappers.length === 0 && !flags.noMappers)
+    || (flags.javaSrc.length === 0 && !flags.noJava)
+    || (flags.webSrc.length === 0 && !flags.noWeb)
+    || (flags.openapi.length === 0 && !flags.noOpenapi);
+  let discovery = null;
+  if (needDiscovery) {
+    process.stderr.write('discovering the tree (no lane flag given for every lane)…\n');
+    discovery = discover(path.resolve(root), DISCOVER_IO);
+  }
+  // The catalog can come from a DDL file or from the PINNED SNAPSHOT that
+  // `cascade catalog fetch` wrote (SPEC §12, §15 M5). This run never connects
+  // to a database either way — §2.3 allows zero network calls in the extraction
+  // path, and a snapshot is a file like any other.
+  const snapshotFile = resolved.dotCascade ? catalogPathsOf(resolved.dotCascade).catalog : null;
+  const sel = selectLanes({
+    flags, profile, discovery, root: path.resolve(root),
+    manifestDir: resolved.dotCascade, cwd: process.cwd(),
+    catalogSnapshot: snapshotFile,
+  });
+  diagnostics = [...diagnostics, ...sel.diagnostics];
+  const ddls = sel.ddls.map(realPath);
+  const ddl = ddls[0] ?? null;
+  const snapshot = sel.snapshot ? realPath(sel.snapshot) : null;
+  const mappers = sel.mappers.map(realPath);
+  const javaSrc = sel.javaSrc.map(realPath);
+  const webSrc = sel.webSrc.map(realPath);
+  for (const f of sel.openapi) if (!fs.existsSync(f)) die(`--openapi ${f} does not exist`);
+  const openapiFiles = sel.openapi.map(realPath);
+  for (const f of sel.har) if (!fs.existsSync(f)) die(`--har ${f} does not exist`);
+  const harFiles = sel.har.map(realPath);
+  for (const f of ddls) if (!fs.existsSync(f)) die(`--ddl ${f} does not exist`);
+  for (const d of webSrc) if (!fs.existsSync(d)) die(`--web-src ${d} does not exist`);
+  // §17.4: a structured, actionable error — not "0 tables" three screens later.
+  if (snapshot && !fs.existsSync(snapshot)) {
+    process.stderr.write(JSON.stringify({
+      error: 'db-catalog-missing',
+      catalogSource: 'jdbc',
+      expected: snapshot,
+      remedy: 'cascade catalog fetch --candidate <n> --password-env <VAR> --yes',
+    }) + '\n');
+    die(`profile catalog.source is "jdbc" but there is no pinned snapshot at ${snapshot}.\n`
+      + '  Analysis never connects to a database. It reads a snapshot you fetched deliberately.\n'
+      + '  Run `cascade catalog discover` to see the connection candidates, then\n'
+      + '  `cascade catalog fetch --candidate <n> --password-env <VAR> --yes` to pin one.\n'
+      + '  Or set catalog.source to "file"/"none" in the profile.');
+  }
+  let snapshotProvenance = null;
+  let snapshotSha256 = null;
+  if (snapshot) {
+    snapshotSha256 = sha256File(snapshot);
+    const provFile = catalogPathsOf(resolved.dotCascade).catalogSnapshot;
+    try { snapshotProvenance = JSON.parse(fs.readFileSync(provFile, 'utf8')); }
+    catch { snapshotProvenance = null; }
+    if (snapshotProvenance && snapshotProvenance.sha256 && snapshotProvenance.sha256 !== snapshotSha256) {
+      // The provenance describes a fetch; the file is what gets analyzed. When
+      // they disagree the file wins and the disagreement is stated — a snapshot
+      // edited by hand must not travel under a fetch's credentials (§17.2).
+      diagnostics.push({
+        kind: 'SNAPSHOT_PROVENANCE_STALE', severity: 'warn', key: 'catalog.source',
+        reason: `${snapshot} no longer hashes to the sha256 recorded in ${provFile} `
+          + `(${snapshotProvenance.sha256.slice(0, 12)}… vs ${snapshotSha256.slice(0, 12)}…). The file on disk is what was analyzed. `
+          + 'Re-run `cascade catalog fetch` to make the provenance describe it again',
+      });
+    }
+  }
+  if (sel.lanes.length === 0) {
+    const c = discovery ? discovery.counts : null;
+    die('nothing to analyze: no DDL, no mapper XML and no Java source were given or found.\n'
+      + (c
+        ? `  discovery under ${path.resolve(root)} found: ${c.javaFiles} java file(s) (${c.springHandlerFiles} with a Spring mapping), `
+          + `${c.mybatisMapperXml} mybatis mapper xml, ${c.ddlFiles} DDL file(s) with CREATE TABLE, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json, ${c.webFiles} frontend source file(s)\n`
+          + `  mapper directories: ${discovery.mapperDirs.length ? discovery.mapperDirs.join(', ') : '(none)'}\n`
+          + `  java source roots: ${discovery.javaSourceRoots.length ? discovery.javaSourceRoots.join(', ') : '(none)'}\n`
+          + `  web source roots: ${(discovery.webSourceRoots ?? []).length ? discovery.webSourceRoots.join(', ') : '(none)'}\n`
+          + `  profile frameworkPacks: [${(profile.frameworkPacks ?? []).join(', ')}], catalog.source: ${profile.catalog?.source}\n`
+        : '')
+      + '  pass --ddl / --mappers / --java-src / --web-src explicitly, or run `cascade init` so the profile declares the lanes.');
+  }
+  // The lane line states BOTH what ran and what was left out: a default that is
+  // never printed is indistinguishable from a hidden filter (SPEC §17.8).
+  const excluded = sel.excludedTestRoots.length > 0
+    ? `; ${sel.excludedTestRoots.length} test root(s) excluded (the standard src/test layout; pass --java-src to include): ${sel.excludedTestRoots.join(', ')}`
+    : '';
+  const catalogLine = snapshot
+    ? `catalog ${snapshot} (pinned snapshot${snapshotProvenance ? `, ${snapshotProvenance.dialect} ${snapshotProvenance.serverIdentity} fetched ${snapshotProvenance.fetchedAt}` : ', provenance file missing'})`
+    : `ddl ${ddls.length > 0 ? `${ddls.length} file(s) (${sel.sources.ddl}): ${ddls.join(', ')}` : 'none'}`;
+  process.stderr.write(`lanes [${sel.lanes.join(',')}]: ${catalogLine}; `
+    + `mappers ${mappers.length} dir(s) (${sel.sources.mappers}); `
+    + `java-src ${javaSrc.length} root(s) (${sel.sources.javaSrc}${excluded}); `
+    + `web ${webSrc.length > 0 ? `${webSrc.map((d) => path.relative(root, d) || '.').join(', ')} (${sel.sources.webSrc})` : 'none'}; `
+    + `openapi ${openapiFiles.length > 0 ? `${openapiFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.openapi})` : 'none'}; `
+    + `har ${harFiles.length > 0 ? `${harFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.har})` : 'none'}\n`);
+
+  // THE SCREEN AXIS SWITCH, resolved once, here, and read nowhere else (I-5).
+  // The third state needs the frontend packages this run will really read, which
+  // is a filesystem question and so cannot live in the pure decision.
+  const screenGate = screenAxisOf(profile, { webPackages: webPackagesRead(webSrc) });
+  if (webSrc.length > 0) {
+    process.stderr.write(`screen axis ${screenGate.enabled ? 'ON' : 'OFF'} (${screenGate.from}): ${screenGate.reason}\n`);
+  }
+
+  // WHICH .sql FILES WERE CLASSIFIED HOW, one line each, whenever the engine —
+  // rather than the user — decided. A catalog assembled from a set nobody named
+  // is only trustworthy if the set is printed.
+  if (sel.ddlChoice) {
+    const ch = sel.ddlChoice;
+    if (ch.chosen.length > 0 || ch.skipped.length > 0) {
+      process.stderr.write(`DDL classification (dialect ${ch.dialect ?? 'undetermined'}`
+        + `${ch.dialectFrom === 'profile' ? ', declared in the profile' : ch.dialectFrom === 'files' ? ', taken from the files themselves' : ''}):\n`);
+      for (const c of ch.chosen) {
+        process.stderr.write(`  applied  ${c.path}: schema, ${c.dialect ?? 'portable'} (${c.createTables} CREATE TABLE, ${c.alters} ALTER TABLE)\n`);
+      }
+      for (const c of ch.skipped) {
+        process.stderr.write(`  left out ${c.path}: ${c.reason}\n`);
+      }
+      if (ch.migrations > 0) {
+        process.stderr.write(`  ${ch.migrations} migration file(s) were NOT applied. To apply them, name them yourself IN ORDER:`
+          + ' `cascade analyze --ddl <schema.sql> --ddl <first-migration.sql> --ddl <next.sql>`\n');
+      }
+      if (ch.testFiles > 0) {
+        process.stderr.write(`  ${ch.testFiles} DDL file(s) under a \`src/test/\` root were left out, the same default that keeps`
+          + ' test sources out of the Java lane. Pass one with --ddl to use it anyway\n');
+      }
+    }
+  }
+
+  const py = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+  const A = path.join(ENGINE_ROOT, 'adapters', 'sql');
+  const needPython = ddls.length > 0 || mappers.length > 0;
+  if (needPython && !fs.existsSync(py)) die(`no venv python at ${py}. See docs/setup/sql-lane.md (python3 -m venv .venv && .venv/bin/pip install sqlglot)`);
+  const runpy = (script, args) => execFileSync(py, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
+  const sqlArgs = sqlLaneArgs(profile);
+
+  // ---- the incremental core (SPEC §11, §15 M6) ---------------------------
+  // Everything that DECIDES is pure and lives in src/core/{changeset,invalidate,
+  // facts_store,incremental}.mjs. This block only supplies the impure edges: git,
+  // the filesystem, and the four worker invocations.
+  const rootAbs = root;
+  const wantCold = flag('cold');
+  const wantIncremental = flag('incremental');
+  if (wantCold && wantIncremental) die('--cold and --incremental contradict each other. Pass one or the other');
+
+  // git prints repo-top-relative paths; the fact index speaks --root-relative,
+  // so every path crosses over here, once, and anything outside --root is
+  // dropped (it cannot be an input to this analysis).
+  const gitTopRaw = ((gitText(rootAbs, ['rev-parse', '--show-toplevel']) ?? '').trim()) || null;
+  const gitTop = gitTopRaw ? realPath(gitTopRaw) : null;
+  const headCommit = ((gitText(rootAbs, ['rev-parse', 'HEAD']) ?? '').trim()) || null;
+  const toRootRel = (repoRelPath) => {
+    if (!gitTop) return null;
+    const rel = path.relative(rootAbs, path.resolve(gitTop, repoRelPath));
+    return rel.startsWith('..') || path.isAbsolute(rel) ? null : rel.split(path.sep).join('/');
+  };
+  const relOf = (absPath) => path.relative(rootAbs, realPath(path.resolve(absPath))).split(path.sep).join('/');
+  const absOf = (relPath) => path.resolve(rootAbs, relPath);
+
+  const selectionRel = {
+    root: rootAbs,
+    javaRoots: javaSrc.map(relOf).sort(),
+    mapperDirs: mappers.map(relOf).sort(),
+    // The web lane's roots. Sharded per file since RM29, and part of the
+    // SELECTION: a project that gains or loses the web lane analyzes a different
+    // set of inputs, and src/core/invalidate.mjs turns that into one cold run
+    // with "the lane selection changed" as the reason.
+    webRoots: webSrc.map(relOf).sort(),
+    // Whichever file feeds the catalog axis. Recording it here is what makes a
+    // switch between a DDL and a snapshot force a cold run instead of quietly
+    // mixing two generations of catalog facts (src/core/invalidate.mjs).
+    ddls: ddls.length > 0 ? ddls.map(relOf) : snapshot ? [relOf(snapshot)] : [],
+    sqlArgs: [...sqlArgs.mybatisArgs, ...sqlArgs.lineageArgs],
+    packagePrefixes: [...(profile.packagePrefixes ?? [])].sort(),
+  };
+
+  const indexFile = path.join(out, 'facts-index.json');
+  let prevIndex = null;
+  if (fs.existsSync(indexFile)) {
+    try { prevIndex = validateIndex(JSON.parse(fs.readFileSync(indexFile, 'utf8'))); }
+    catch (e) { process.stderr.write(`facts index at ${indexFile} is unusable (${e.message}), so this run is cold\n`); }
+  }
+
+  // The changeset: the previous pack's base commit vs the WORKING TREE (this
+  // engine analyzes the tree, not the blob — §2.1 item 2 is the overlay's job).
+  // Untracked files under the analyzed roots count as added.
+  const baseCommit = prevIndex?.base?.commit ?? null;
+  let changeset = buildChangeset({ repo: rootAbs, fromCommit: null, toCommit: headCommit });
+  if (baseCommit && gitTop) {
+    const raw = gitText(rootAbs, ['diff', '--name-status', '-z', baseCommit, '--']);
+    if (raw == null) {
+      changeset = { ...changeset, reason: `git diff against ${baseCommit.slice(0, 12)} failed. The commit is not in this repository any more` };
+    } else {
+      try {
+        const cs = buildChangeset({ repo: rootAbs, fromCommit: baseCommit, toCommit: headCommit ?? 'WORKING-TREE', rawNameStatusZ: raw });
+        changeset = { ...cs, files: cs.files.map((f) => ({ ...f, repoPath: toRootRel(f.repoPath) })).filter((f) => f.repoPath !== null) };
+      } catch (e) {
+        changeset = { ...changeset, reason: `the git diff could not be parsed: ${e.message}` };
+      }
+    }
+  }
+  const untrackedRel = splitZ(gitText(rootAbs, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z']))
+    .map(toRootRel).filter((f) => f !== null);
+
+  // "Dirty" for this pack means an ANALYSIS INPUT differs from HEAD — that is
+  // what makes the pack provisional rather than a commit's certified state
+  // (§2.1 item 2). An unrelated edited file elsewhere in the repo does not.
+  const isAnalysisInput = (f) => (f.endsWith('.java') && underAny(f, selectionRel.javaRoots))
+    || (f.endsWith('.xml') && underAny(f, selectionRel.mapperDirs))
+    || (isWebSourceFile(f) && underAny(f, selectionRel.webRoots))
+    || selectionRel.ddls.includes(f);
+  const dirtyFiles = [...new Set([
+    ...splitZ(gitText(rootAbs, ['diff', '--name-only', '-z', 'HEAD', '--'])).map(toRootRel),
+    ...untrackedRel,
+  ])].filter((f) => f !== null && isAnalysisInput(f)).sort();
+  const base = headCommit
+    ? { repoPath: rootAbs, commit: headCommit, dirty: dirtyFiles.length > 0, dirtyFiles }
+    : null;
+
+  // WHO THIS RUN IS ABOUT (SPEC §5.1), computed once for the whole command.
+  // It addresses the fact cache, and further down it is what the pack records
+  // as `meta.project`. Without a filesystem-safe id there is nowhere durable to
+  // put shards, so the run is cold and nothing is kept.
+  const projectId = projectIdFrom(resolved.projectId, manifest?.project, opt('project'), path.basename(rootAbs));
+
+  let plan;
+  if (!projectId) {
+    plan = {
+      mode: MODE_COLD, notes: [], reparseJava: [], dropJava: [], sqlChanged: true, catalogChanged: true, reuse: { java: 0 },
+      reason: `no filesystem-safe project id could be derived for the fact cache. Run \`cascade init --project <id>\` to make this project's runs incremental`,
+    };
+  } else {
+    plan = planIncremental({
+      requestedMode: wantCold ? 'cold' : 'auto',
+      index: prevIndex,
+      changeset,
+      untracked: untrackedRel,
+      selection: selectionRel,
+      workers: workerVersions(),
+      engineVersion: INCREMENTAL_ENGINE_VERSION,
+      stillExists: (f) => fs.existsSync(absOf(f)),
+    });
+  }
+  if (wantIncremental && plan.mode === MODE_COLD) {
+    process.stderr.write(`--incremental was asked for, but this run must be cold: ${plan.reason}\n`);
+  }
+  // With no usable project id the shards go to a throwaway in-memory store: the
+  // run still works, it just cannot be reused next time — and it says so above.
+  const memFiles = new Map();
+  const storeIo = projectId ? nodeFactsIo(fs) : {
+    readFile: (p) => memFiles.get(p), writeFile: (p, s) => memFiles.set(p, s),
+    exists: (p) => memFiles.has(p), mkdir: () => {},
+  };
+  const store = createFactsStore({ io: storeIo, projectId: projectId ?? 'nocache', env: process.env });
+
+  // The scratch directory is registered with the exit sweeper BEFORE the work
+  // starts: the calibration RED path below calls process.exit(3) from inside
+  // this try, and process.exit does not run `finally`. The eager remove in the
+  // finally keeps the normal path tidy; the handler catches every other exit.
+  const tmpDir = SCRATCH.create(path.join(ENGINE_ROOT, '.analyze-'));
+  try {
+    const catFile = path.join(tmpDir, 'catalog.jsonl');
+    const stmtFile = path.join(tmpDir, 'statements.jsonl');
+    let jdk = null;
+    const run = {
+      catalog: () => {
+        if (snapshot) {
+          // No worker: the snapshot IS catalog records. It was produced once,
+          // by `cascade catalog fetch`, with the user's explicit confirmation.
+          process.stderr.write('SQL lane: catalog (pinned snapshot)…\n');
+          return jsonl(snapshot);
+        }
+        process.stderr.write('SQL lane: catalog…\n');
+        // The SAME identity rule the lineage worker matches statements with
+        // (§8.1): it is what decides whether two files declaring `SUPPLIER` and
+        // `supplier` declare one table or two.
+        return parseJsonl(runpy('catalog_ddl.py', ['--identifier-case', sqlArgs.identifierCase, ...ddls]));
+      },
+      mybatis: () => {
+        process.stderr.write('SQL lane: mybatis statements…\n');
+        return parseJsonl(runpy('mybatis_extract.py', ['--root', root, ...sqlArgs.mybatisArgs, ...mappers]));
+      },
+      lineage: (statements, catalogRecords) => {
+        process.stderr.write(`SQL lane: lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase}) over ${statements.length} statement(s)…\n`);
+        fs.writeFileSync(catFile, catalogRecords.map((r) => JSON.stringify(r)).join('\n') + '\n');
+        fs.writeFileSync(stmtFile, statements.map((r) => JSON.stringify(r)).join('\n') + '\n');
+        return parseJsonl(runpy('lineage.py', ['--catalog', catFile, '--statements', stmtFile, ...sqlArgs.lineageArgs]));
+      },
+      java: (targets) => {
+        if (!jdk) {
+          jdk = findJdk();
+          if (!jdk) die('the Java lane was selected but no JDK was found. Set JAVA_HOME or install one (see docs/setup/java-lane.md).');
+        }
+        process.stderr.write(`Java lane: parsing ${targets.length} ${plan.mode === MODE_COLD ? 'source root(s)' : 'changed file(s)'}…\n`);
+        return runJavaLane(jdk, root, targets);
+      },
+      web: (targets) => {
+        process.stderr.write(`Web lane: reading ${targets.length} ${plan.mode === MODE_COLD ? 'frontend source root(s)' : 'changed frontend file(s)'}…\n`);
+        try {
+          return runWebLane(root, targets);
+        } catch (e) {
+          const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
+          die(`the web lane failed: ${said || (e && e.message) || 'unknown error'}`);
+          return [];
+        }
+      },
+      // Never cached: a package's `.env` values, dev-server proxy rules and path
+      // aliases describe the PACKAGE, so there is no file whose shard could hold
+      // them honestly. Reading them walks no source file.
+      webConfigs: (roots) => {
+        try {
+          return runWebLane(root, roots, { configsOnly: true });
+        } catch (e) {
+          const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
+          die(`the web lane failed to read the frontend package configuration: ${said || (e && e.message) || 'unknown error'}`);
+          return [];
+        }
+      },
+    };
+
+    const shardDiagnostics = [];
+    const result = runLanesWithShards({
+      plan,
+      index: prevIndex,
+      store,
+      selection: { ...selectionRel, javaRootsAbs: javaSrc, webRootsAbs: webSrc },
+      inputs: {
+        mapperFiles: listMapperXml(mappers).map((p) => ({ rel: relOf(p), abs: p })),
+        ddlFiles: ddls.length > 0
+          ? ddls.map((f) => ({ rel: relOf(f), abs: path.resolve(f) }))
+          : snapshot ? [{ rel: relOf(snapshot), abs: path.resolve(snapshot) }] : [],
+        dialect: sqlArgs.dialect,
+        identifierCase: sqlArgs.identifierCase,
+        defaultSchema: sqlArgs.defaultSchema,
+        mybatisArgs: sqlArgs.mybatisArgs,
+        lineageArgs: sqlArgs.lineageArgs,
+        // The snapshot's shard is keyed by the LIVE worker's version too, so a
+        // catalog_live.py change cannot be answered from a shard the previous
+        // generation produced (SPEC §17.7). See src/core/worker_versions.mjs
+        // for why this rides in `args` rather than in the index's worker map.
+        catalogArgs: snapshot
+          ? [`worker=${CATALOG_LIVE_WORKER_VERSION}`, 'source=snapshot']
+          : [`identifier-case=${sqlArgs.identifierCase}`],
+      },
+      run,
+      hash: sha256File,
+      abs: absOf,
+      workers: workerVersions(),
+      project: projectId ?? 'nocache',
+      base,
+      diag: (d) => { shardDiagnostics.push(d); },
+    });
+    diagnostics = [...diagnostics, ...shardDiagnostics];
+
+    const catalog = result.catalogRecords;
+    let lineage = result.lineageRecords;
+    const lanes = sel.lanes.slice();
+
+    // ---- MyBatis statements written as ANNOTATIONS (RM20 §4) -------------
+    //
+    // `@Select("select * from t_user")` is a MyBatis statement with no XML
+    // anywhere. It goes through the SAME flattener as a mapper XML statement —
+    // written out as a synthetic mapper file into this run's scratch directory
+    // and read by `mybatis_extract.py` — because the annotation form accepts the
+    // same `<script>` dynamic tags, and one reading of `<foreach>` is the only
+    // way both spellings can stay in step. What comes back is re-stamped onto
+    // the Java file and the annotation's line, so nothing in the pack points at
+    // the scratch file.
+    let annotationStmts = [];
+    let annotationXml = null;
+    if (javaSrc.length > 0) {
+      const existingKeys = result.statementRecords
+        ? result.statementRecords.filter((r) => r && r.kind === 'statement').map((r) => `${r.namespace}.${r.id}`)
+        : [];
+      annotationXml = annotationMapperXml(result.javaFacts, existingKeys);
+      diagnostics = [...diagnostics, ...annotationXml.diagnostics];
+      if (annotationXml.files.length > 0) {
+        if (!fs.existsSync(py)) {
+          diagnostics.push({
+            kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+            reason: `${annotationXml.statements} MyBatis statement annotation(s) were found but there is no venv python at ${py} to read their SQL. See docs/setup/sql-lane.md. Those statements carry no table or column fact in this pack`,
+          });
+        } else {
+          const annDir = path.join(tmpDir, 'annotation-mappers');
+          fs.mkdirSync(annDir, { recursive: true });
+          for (const f of annotationXml.files) fs.writeFileSync(path.join(annDir, f.fileName), f.xml, 'utf8');
+          process.stderr.write(`MyBatis lane: ${annotationXml.statements} annotation statement(s) in ${annotationXml.files.length} mapper(s)`
+            + `${annotationXml.scripts > 0 ? `, ${annotationXml.scripts} with a <script> body` : ''} -> the mapper flattener…\n`);
+          annotationStmts = restampToJavaSource(
+            parseJsonl(runpy('mybatis_extract.py', ['--root', annDir, ...sqlArgs.mybatisArgs, annDir])),
+            annotationXml.files,
+          );
+        }
+      }
+    }
+    if (annotationStmts.length > 0) {
+      const ann = runLineageForStatements({
+        store, index: prevIndex, statements: annotationStmts,
+        catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
+        inputs: {
+          dialect: sqlArgs.dialect,
+          identifierCase: sqlArgs.identifierCase,
+          defaultSchema: sqlArgs.defaultSchema,
+        },
+        run, workerVersion: workerVersions().lineage,
+        force: plan.mode === MODE_COLD,
+        diag: (d) => { diagnostics.push(d); },
+      });
+      lineage = [...lineage, ...ann.lineageRecords];
+      Object.assign(result.index.statements, ann.statementEntries);
+      if (!lanes.includes('sql')) lanes.push('sql');
+    }
+
+    // ---- the JPA lane's NATIVE queries (SPEC §15 M10) --------------------
+    // `@Query(nativeQuery = true)` is SQL, not JPQL, so it belongs to the SQL
+    // analyzer — the same lineage.py, the same content-addressed shards, the
+    // same dialect and default schema as a MyBatis statement. It is run here,
+    // AFTER the Java lane produced the repository facts and BEFORE the graph is
+    // built, so those statements arrive as ordinary lineage records.
+    const nativeStmts = javaSrc.length > 0 ? nativeQueryStatements(result.javaFacts) : [];
+    if (nativeStmts.length > 0) {
+      if (!fs.existsSync(py)) {
+        diagnostics.push({
+          kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+          reason: `${nativeStmts.length} @Query(nativeQuery=true) statement(s) were found but there is no venv python at ${py} to analyze their SQL. See docs/setup/sql-lane.md. Those statements carry no table or column fact in this pack`,
+        });
+      } else {
+        process.stderr.write(`JPA lane: ${nativeStmts.length} native @Query statement(s) -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
+        const nat = runLineageForStatements({
+          store, index: prevIndex, statements: nativeStmts,
+          catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
+          inputs: {
+            dialect: sqlArgs.dialect,
+            identifierCase: sqlArgs.identifierCase,
+            defaultSchema: sqlArgs.defaultSchema,
+          },
+          run, workerVersion: workerVersions().lineage,
+          force: plan.mode === MODE_COLD,
+          diag: (d) => { diagnostics.push(d); },
+        });
+        lineage = [...lineage, ...nat.lineageRecords];
+        Object.assign(result.index.statements, nat.statementEntries);
+      }
+    }
+
+    // WHICH LANES ASSEMBLE. The Java bridge runs when there were Java source
+    // roots; the JPA bridge when the Java lane found entity/repository facts or
+    // the profile asks for the pack by name (SPEC §15 M10 wiring). The decision
+    // is made HERE — the core assembler is handed options, never a profile to
+    // interpret.
+    const runJava = javaSrc.length > 0;
+    const runJpa = runJava && ((profile.frameworkPacks ?? []).includes('jpa')
+      || result.javaFacts.some((r) => r && (r.kind === 'entity' || r.kind === 'repository')));
+    // …and the MyBatis-Plus bridge on the same two witnesses: the profile names
+    // the pack, or the Java lane actually saw a `@TableName` / `BaseMapper<T>` /
+    // `ServiceImpl<M, T>` in the source. A project that has neither pays nothing.
+    const runMp = runJava && ((profile.frameworkPacks ?? []).includes('mybatis-plus')
+      || result.javaFacts.some((r) => r && (r.kind === 'mpEntity' || r.kind === 'mpMapper' || r.kind === 'mpService')));
+
+    // ---- the MyBatis-Plus lane's WRAPPER SQL FRAGMENTS (SPEC §18.2) -------
+    // `apply / last / setSql / inSql / notInSql / exists / notExists / having`
+    // hand MyBatis-Plus raw SQL. It is SQL, so it belongs to the SQL analyzer —
+    // the same lineage.py, the same catalog, dialect and identity rule, the same
+    // content-addressed shards as a mapper statement or a native @Query. Run
+    // here, after the Java lane produced the wrapper facts and BEFORE the graph
+    // is built, so the bridge can attach what came back to the statement the
+    // wrapper feeds.
+    const mpOpts = runMp ? {
+      namingStrategy: profile.mybatisPlus?.namingStrategy ?? null,
+      tablePrefix: profile.mybatisPlus?.tablePrefix ?? null,
+      logicDeleteValue: profile.mybatisPlus?.logicDeleteValue ?? null,
+      logicNotDeleteValue: profile.mybatisPlus?.logicNotDeleteValue ?? null,
+      schema: sqlArgs.defaultSchema,
+      identifierCase: sqlArgs.identifierCase,
+    } : null;
+    let fragmentLineage = [];
+    const fragStmts = runMp ? wrapperFragmentStatements(result.javaFacts, mpOpts) : [];
+    if (fragStmts.length > 0) {
+      if (!fs.existsSync(py)) {
+        diagnostics.push({
+          kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+          reason: `${fragStmts.length} MyBatis-Plus wrapper SQL fragment(s) were found but there is no venv python at ${py} to analyze them. See docs/setup/sql-lane.md. Those fragments stay unresolved on their statements`,
+        });
+      } else {
+        process.stderr.write(`MyBatis-Plus lane: ${fragStmts.length} wrapper SQL fragment(s) -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
+        const frag = runLineageForStatements({
+          store, index: prevIndex, statements: fragStmts,
+          catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
+          inputs: {
+            dialect: sqlArgs.dialect,
+            identifierCase: sqlArgs.identifierCase,
+            defaultSchema: sqlArgs.defaultSchema,
+          },
+          run, workerVersion: workerVersions().lineage,
+          force: plan.mode === MODE_COLD,
+          diag: (d) => { diagnostics.push(d); },
+        });
+        // NOT merged into `lineage`: a fragment is not a statement of its own in
+        // the graph — its facts belong to the wrapper's statement, which is what
+        // the reader called. The shard entries ARE recorded, so the next run
+        // reuses the analysis instead of paying for it twice.
+        fragmentLineage = frag.lineageRecords;
+        Object.assign(result.index.statements, frag.statementEntries);
+      }
+    }
+    // ---- the OpenAPI documents (RM29) -------------------------------------
+    // A document is read HERE, beside the lanes, because it is an input like any
+    // other: bytes on disk that this run turns into facts. It is NOT sharded and
+    // not cached — a document is one file, parsed in milliseconds, and a cache
+    // that could hand back a stale contract would be the one thing a drift
+    // readout must never do.
+    const openapiDocs = [];
+    for (const file of openapiFiles) {
+      const rel = path.relative(root, file).split(path.sep).join('/');
+      let text;
+      try { text = fs.readFileSync(file, 'utf8'); }
+      catch (e) { die(`--openapi ${file} could not be read: ${e.message}`); }
+      const doc = readOpenApiDocument(text, { path: rel });
+      openapiDocs.push(doc);
+      if (doc.unreadable.length > 0) {
+        for (const u of doc.unreadable) {
+          diagnostics.push({
+            kind: 'UNREADABLE_INPUT', severity: 'warn', key: 'openapi.documents',
+            reason: `${rel}: ${u.reason}`,
+          });
+          process.stderr.write(`  [warn] OPENAPI_UNREADABLE ${rel}:${u.line}: ${u.construct}\n`);
+        }
+      } else {
+        process.stderr.write(`OpenAPI lane: ${rel} (${doc.version === 'unknown' ? 'version not declared' : `openapi ${doc.version}`}`
+          + `${doc.basePath ? `, base path ${doc.basePath}` : ''}): ${doc.paths.length} route(s) declared\n`);
+      }
+    }
+
+    // ---- the web lane's FACTS (RM26, sharded in RM29) ---------------------
+    // The worker ran inside `runLanesWithShards` above, over the roots on a cold
+    // run and over the changed files on an incremental one; what arrives here is
+    // the assembled stream, in the byte order a cold worker prints. The counts
+    // are RECOMPUTED from those records rather than read from a `summary`: an
+    // incremental run has no single worker invocation to read one from, and a
+    // number derived from the same records the bridge sees cannot describe a
+    // different run from the facts beside it.
+    const webFacts = result.webFacts ?? [];
+    let webWorkerStats = null;
+    if (webSrc.length > 0) {
+      const summary = webFactsSummary(webFacts);
+      const u = summary.urlByShape;
+      webWorkerStats = {
+        files: summary.files, parseErrors: summary.parseErrors, recoveredErrors: summary.recoveredErrors,
+        vueFiles: summary.vueFiles, tsFiles: summary.tsFiles, jsFiles: summary.jsFiles,
+        calls: summary.calls, callsWithUrl: summary.callsWithUrl,
+        urlByShape: { literal: u.literal, template: u.template, constant: u.constant, unresolved: u.unresolved },
+        methodBySource: summary.methodBySource ?? {},
+        routes: summary.routes, byPack: summary.byPack ?? {},
+        aliases: summary.aliases, proxies: summary.proxies, envFiles: summary.envFiles,
+        platformSinks: summary.platformSinks ?? {},
+        roots: webSrc.map(relOf).sort(),
+      };
+      process.stderr.write(`Web lane: ${webWorkerStats.files} file(s) (${webWorkerStats.vueFiles} .vue, ${webWorkerStats.tsFiles} .ts/.tsx, ${webWorkerStats.jsFiles} .js/.jsx), `
+        + `${webWorkerStats.parseErrors} parse error(s); ${webWorkerStats.callsWithUrl} call site(s) carry a URL `
+        + `(${u.literal} literal, ${u.template} template, ${u.constant} constant, ${u.unresolved} unresolved), `
+        + `${webWorkerStats.routes} route declaration(s), ${webWorkerStats.aliases} alias(es), ${webWorkerStats.proxies} proxy rule(s)\n`);
+      for (const r of webFacts) {
+        if (r.kind !== 'parse_error') continue;
+        // A parse error on a real frontend file is a FINDING: that file's calls
+        // and routes are absent from everything below, and nothing else would
+        // say so.
+        process.stderr.write(`  [warn] WEB_PARSE_ERROR ${r.file}:${r.line}:${r.col}: ${r.message}\n`);
+      }
+    }
+
+    // facts -> Graph through the ONE core-owned seam the working-tree overlay
+    // also goes through (src/core/assemble.mjs), with the bridges injected: the
+    // identity rule handed in is the SAME one the lineage worker matched with,
+    // so the bridge cannot key a table differently from the worker that
+    // resolved it.
+    // The web bridge's own wall time, measured around the bridge and not around
+    // the whole assembly: it is the number the lane line reports, so it has to
+    // be the bridge's and nobody else's. Printed, never written into the pack —
+    // a clock reading in a pack is a byte that changes when nothing did.
+    let webBridgeMs = 0;
+    const bridges = {
+      ...LANE_BRIDGES,
+      addWebFacts: (graph, facts, o) => {
+        const t = Date.now();
+        try { return addWebFacts(graph, facts, o); } finally { webBridgeMs = Date.now() - t; }
+      },
+    };
+    const {
+      graph: g, javaStats: jstats, jpaStats, mpStats, openapiStats, webStats: webBridgeStats,
+    } = assembleGraph({
+      bridges,
+      catalogRecords: catalog, lineageRecords: lineage, javaFacts: result.javaFacts,
+      webFacts, openapiDocuments: openapiDocs,
+      identifierCase: sqlArgs.identifierCase,
+      java: runJava ? {
+        packagePrefixes: profile.packagePrefixes ?? [],
+        generatedSources: profile.generatedSources ?? { annotations: [], pathGlobs: [] },
+      } : null,
+      jpa: runJpa ? {
+        namingStrategy: profile.jpa?.namingStrategy ?? null,
+        schema: sqlArgs.defaultSchema,
+        identifierCase: sqlArgs.identifierCase,
+      } : null,
+      mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
+      // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
+      // frontend call must be able to land on a route only a document declares.
+      openapi: openapiDocs.length > 0 ? {} : null,
+      web: webWorkerStats ? {
+        // I-5: `gatewayRoutes` is read HERE and nowhere else in the engine.
+        gatewayRoutes: profile.gatewayRoutes ?? {},
+        packages: discovery?.webPackages ?? [],
+        // I-5: the `screenAxis` block and `moduleAttribution.codeLength` are
+        // read here and nowhere else. `enabled` is the gate on the whole axis.
+        screenAxis: { ...(profile.screenAxis ?? {}), enabled: screenGate.enabled },
+        codeLength: profile.moduleAttribution?.codeLength ?? null,
+      } : null,
+    });
+    let laneStats = null;
+    if (runJava) {
+      laneStats = jstats;
+      process.stderr.write(`Java lane: ${jstats.endpoints} endpoints, ${jstats.calls} calls, ${jstats.dispatch} dispatch, ${jstats.implementsStmt} stmt-bindings `
+        + `(${jstats.unresolvedCalls} unresolved, ${jstats.externalCalls} external, ${jstats.unboundMapperMethods} mapper method(s) with no statement in this pack)\n`);
+      process.stderr.write(`Java lane: ${jstats.parseErrors} parse error(s) over ${jstats.parsedFiles} file(s) with facts\n`);
+      // WHAT THE INHERITANCE RULES DID (RM20 §1-§2). Both are reported whatever
+      // the numbers, including all-zero: "0 inherited fields" on a project with
+      // no generic base class is an answer, and leaving the line out would make
+      // a rule that never fired indistinguishable from a rule that is not there.
+      const ir = jstats.identifierReceivers ?? { total: 0, inheritedField: 0, staticReceiver: 0, unresolved: 0 };
+      process.stderr.write(`Java lane: ${ir.total} receiver(s) the file never declares: `
+        + `${ir.inheritedField} resolved to a field inherited from a superclass, `
+        + `${ir.staticReceiver} are a TYPE (a static call, resolved and not followed), `
+        + `${ir.unresolved} unexplained\n`);
+      const im = jstats.inheritedMembers ?? { synthesized: 0, calls: 0 };
+      process.stderr.write(`Java lane: ${jstats.callsByRule['interface-dispatch-inherited'] ?? 0} dispatch edge(s) to a method the implementor only INHERITS: `
+        + `${im.synthesized} member(s) instantiated for their concrete class, ${im.calls} call(s) carried into them\n`);
+      if (jstats.duplicateFqns.count > 0) {
+        // Not a warning: a multi-module repo declaring one FQN twice is normal
+        // (jeecg-boot's local-api / cloud-api pair). Said out loud so nobody
+        // reading the census concludes the analysis doubled or dropped a type.
+        const d = jstats.duplicateFqns;
+        process.stderr.write(`Java lane: ${d.count} type(s) declared in more than one file (${d.declarations} declarations: `
+          + `${Object.entries(d.byKind).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`).join(', ')}): `
+          + `one node each, the graph keeps the last declaration read: ${d.types.slice(0, 3).map((t) => t.fqn).join(', ')}\n`);
+      }
+
+      if (runJpa) {
+        laneStats = { ...jstats, jpa: jpaStats };
+        const byType = Object.entries(jpaStats.statementsByType).filter(([, n]) => n > 0)
+          .map(([t, n]) => `${t} ${n}`).join(', ') || 'none';
+        process.stderr.write(`JPA lane: ${jpaStats.entities} entities (+${jpaStats.mappedSuperclasses} mapped superclass(es)), `
+          + `${jpaStats.repositories} repositories, ${jpaStats.statements} statements (${byType}), `
+          + `${jpaStats.joins} association join(s), ${jpaStats.unresolvedStatements} statement(s) with an unresolved part, `
+          + `naming strategy ${jpaStats.namingStrategy} (${jpaStats.namingStrategyDeclared ? 'declared' : 'ASSUMED: derived names are HEURISTIC'})\n`);
+        for (const u of jpaStats.unresolved.slice(0, 10)) {
+          process.stderr.write(`  [warn] JPA_UNRESOLVED ${u.statement ?? '(mapping)'}: ${u.reason} (${u.detail})\n`);
+        }
+        if (jpaStats.unresolved.length > 10) {
+          process.stderr.write(`  … ${jpaStats.unresolved.length - 10} more JPA_UNRESOLVED (all of them are on the statement nodes)\n`);
+        }
+      }
+
+      if (runMp) {
+        laneStats = { ...laneStats, mybatisPlus: mpStats };
+        const byVerb = Object.entries(mpStats.statementsByVerb).sort(([a], [b]) => (a < b ? -1 : 1))
+          .map(([t, n]) => `${t} ${n}`).join(', ') || 'none';
+        process.stderr.write(`MyBatis-Plus lane: ${mpStats.entities} entities (${mpStats.entitiesTableDeclared} with @TableName), `
+          + `${mpStats.statements} generic-CRUD statements (${byVerb}), `
+          + `${mpStats.wrappers} condition wrapper(s): ${mpStats.wrappersWithColumns} resolved to columns, `
+          + `${mpStats.wrappersRuntimeOnly} built outside the method (columns decided at run time), `
+          + `${mpStats.logicDeleteRewrites} @TableLogic delete(s) rewritten as writes, `
+          + `naming strategy ${mpStats.namingStrategy} (${mpStats.namingStrategyDeclared ? 'declared' : 'ASSUMED: derived names are HEURISTIC'})\n`);
+        if (mpStats.sqlFragments > 0) {
+          process.stderr.write(`MyBatis-Plus lane: ${mpStats.sqlFragments} raw SQL fragment(s) in wrappers; `
+            + `counted where they LAND, on ${mpStats.fragmentsResolved + mpStats.fragmentsUnresolved} statement(s): `
+            + `${mpStats.fragmentsResolved} read by the SQL analyzer (${mpStats.fragmentColumns} column fact(s)), `
+            + `${mpStats.fragmentsUnresolved} unresolved (the text is on the statement)\n`);
+        }
+        if (mpStats.opsUninterpretedTotal > 0) {
+          process.stderr.write(`  [warn] MP_OP_UNINTERPRETED ${mpStats.opsUninterpretedTotal} wrapper op(s) this lane has no reading for: `
+            + `${Object.entries(mpStats.opsUninterpreted).map(([n, c]) => `${n} x${c}`).join(', ')}. Whatever column they name is NOT in the statements above\n`);
+        }
+        for (const u of mpStats.unresolved.slice(0, 10)) {
+          process.stderr.write(`  [warn] MP_UNRESOLVED ${u.statement ?? '(mapping)'}: ${u.reason} (${u.detail})\n`);
+        }
+        if (mpStats.unresolved.length > 10) {
+          process.stderr.write(`  … ${mpStats.unresolved.length - 10} more MP_UNRESOLVED (all of them are on the statement nodes)\n`);
+        }
+      }
+    }
+    // ---- the web BRIDGE's own line (RM28) ---------------------------------
+    // What the frontend's calls turned into: how many reached a route this pack
+    // serves, at which grade, how many did not and why, and the prefix each
+    // client instance was read (or guessed) to have. The prefix is the number a
+    // reader acts on: a wrong one turns every call in a package into a miss.
+    let webStats = webWorkerStats;
+    if (webWorkerStats && webBridgeStats) {
+      webStats = { ...webWorkerStats, ...webBridgeStats };
+      const w = webBridgeStats;
+      const reasons = Object.entries(w.unresolved.byReason)
+        .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+        .slice(0, 3).map(([k, n]) => `${k} ${n}`).join(', ') || 'none';
+      // One line per DISTINCT answer, not per instance: a package whose four
+      // clients all resolved to the same prefix has one thing to say.
+      const prefixes = [...new Set(Object.entries(w.prefix).sort(([a], [b]) => (a < b ? -1 : 1))
+        .flatMap(([dir, p]) => p.instances.map((i) => `${dir || '.'}: ${i.value === '' ? '(none)' : i.value} (${i.from})`)))]
+        .join('; ') || 'none';
+      process.stderr.write(`Web lane: ${w.calls.withUrl} call site(s), `
+        + `${w.resolved.SOUND_SET + w.resolved.HEURISTIC} resolved (${w.resolved.SOUND_SET} sound, ${w.resolved.HEURISTIC} heuristic), `
+        + `${w.unresolved.total} unresolved (${reasons}), ${w.outboundEndpoints} outside-pack; prefix ${prefixes}\n`);
+      process.stderr.write(`Web lane: ${w.instances} client instance(s), ${w.wrappers.count} wrapper(s) `
+        + `(deepest ${w.wrappers.maxDepth}), ${w.matches.exact} exact and ${w.matches.template} template match(es), `
+        + `${w.assumedAliases} call(s) through an assumed alias; bridge ${webBridgeMs} ms\n`);
+      for (const u of w.unmatchedUrls.slice(0, 5)) {
+        process.stderr.write(`  [warn] WEB_NO_ROUTE ${u.url} (${u.count} call site(s)): nothing in this pack serves it\n`);
+      }
+      const s = webBridgeStats.screens;
+      process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s)` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
+        + `${s.withComponent} with a component (${s.componentUnresolved} unresolved), `
+        + `${s.renders.EXACT} exact and ${s.renders.SOUND_SET} candidate RENDERS edge(s); `
+        + `${w.functions.created} frontend function node(s) (${w.functions.withHttp} send a request, ${w.functions.reachingHttp} lead to one), `
+        + `${w.callsEdges.EXACT + w.callsEdges.SOUND_SET + w.callsEdges.HEURISTIC} CALLS edge(s) `
+        + `(${w.callsEdges.EXACT} exact, ${w.callsEdges.SOUND_SET} sound, ${w.callsEdges.HEURISTIC} heuristic; `
+        + `${w.callsByRule['passed-as-value'] ?? 0} of them a function handed over as a value)\n`);
+      for (const u of s.unresolvedSpecifiers.slice(0, 5)) {
+        process.stderr.write(`  [warn] SCREEN_COMPONENT_UNRESOLVED ${u.specifier} (${u.count} route declaration(s)): this lane read no file at that specifier, so those screens render nothing\n`);
+      }
+      if (s.serverDriven.detected) {
+        process.stderr.write(`  [warn] SCREENS_FROM_SERVER a call fetches the menu (${s.serverDriven.menuEndpoints.join(', ')}) and ${s.declared} route(s) are declared in the source: `
+          + `${s.declared < s.serverDriven.ceiling ? 'most screens arrive when the app runs' : `screens beyond the ${s.declared} declared arrive when the app runs`}, `
+          + 'so the screens here are the ones the source states, not the ones the product has\n');
+      }
+    }
+
+    // ---- the RECORDINGS (RM30 §E) ----------------------------------------
+    // Read AFTER the web bridge, because a recorded path carries the FRONTEND
+    // prefix and the prefix decisions are the web bridge's. Every edge it adds
+    // is RUNTIME_ONLY: shown, never walked.
+    let harStats = null;
+    if (harFiles.length > 0) {
+      const recordings = harFiles.map((f) => readHar(fs.readFileSync(f, 'utf8'), { file: relOf(f) }));
+      harStats = addHarFacts(g, recordings, { prefix: webBridgeStats ? webBridgeStats.prefix : {} });
+      process.stderr.write(`HAR lane: ${harStats.files} recording(s), ${harStats.entries} request(s): `
+        + `${harStats.matched} matched a route this pack serves, ${harStats.unmatched} matched none, ${harStats.assets} static asset(s); `
+        + `${harStats.pairs} screen-to-route pair(s) observed over ${harStats.screensObserved} screen(s) and ${harStats.endpointsObserved} route(s), `
+        + `${harStats.pagesWithoutScreen} page(s) the source never declared\n`);
+      for (const u of harStats.unreadable) {
+        process.stderr.write(`  [warn] HAR_UNREADABLE ${u.file}: ${u.reason}\n`);
+      }
+      for (const u of harStats.unmatchedPaths.slice(0, 5)) {
+        process.stderr.write(`  [warn] HAR_NO_ROUTE ${u.method} ${u.path} (${u.count} request(s)): nothing in this pack serves it, so the recording says the browser asked for something this analysis cannot place\n`);
+      }
+    }
+
+    // ---- the OpenAPI bridge's own line (RM29) -----------------------------
+    // The drift census, in the two directions that matter: routes a document
+    // declares that nothing here serves, and routes this code serves that no
+    // document mentions. Both are findings, and neither is visible from one
+    // source alone.
+    if (openapiStats) {
+      process.stderr.write(`OpenAPI lane: ${openapiStats.paths} declared route(s) over ${openapiStats.documents.length} document(s): `
+        + `${openapiStats.matchedServed} also served by this code, ${openapiStats.onlyInDocument} declared and not served, `
+        + `${openapiStats.onlyInCode} served and not declared\n`);
+      for (const id of openapiStats.drift.onlyInDocument.slice(0, 5)) {
+        process.stderr.write(`  [warn] OPENAPI_NOT_SERVED ${id.slice('endpoint:'.length)}: a document declares it and nothing in this pack handles it\n`);
+      }
+      for (const id of openapiStats.drift.onlyInCode.slice(0, 5)) {
+        process.stderr.write(`  [warn] OPENAPI_NOT_DECLARED ${id.slice('endpoint:'.length)}: this code serves it and no document read here declares it\n`);
+      }
+    }
+
+    const axes = declareAxes(
+      {
+        ddl: ddls.length > 0 || !!snapshot, statements: mappers.length > 0, code: javaSrc.length > 0,
+        jpa: jpaStats, mybatisPlus: mpStats, web: webStats, openapi: openapiStats, har: harStats,
+      },
+      { screenAxisRequested: screenGate.enabled, screenAxisReason: screenGate.reason },
+    );
+    // §6.1: the manifest PIN is advisory in this engine — it analyzes the
+    // working tree. When the two disagree, the pack records the commit it
+    // ACTUALLY read and says so, rather than pretending the pin was analyzed.
+    if (manifest && base) {
+      const pinned = manifest.repositories.find((r) => path.resolve(r.absPath) === path.resolve(root))
+        ?? manifest.repositories[0];
+      if (pinned && pinned.commit !== base.commit) {
+        diagnostics.push({
+          kind: 'PIN_MOVED', severity: 'warn', key: 'manifest.repositories',
+          reason: `manifest pins ${pinned.key} at ${pinned.commit} but HEAD is ${base.commit}. This pack records HEAD, the commit it actually read. Re-run \`cascade init --force\` to move the pin`,
+        });
+      }
+    }
+    for (const d of diagnostics) process.stderr.write(`  [${d.severity}] ${d.kind} ${d.key}: ${d.reason}\n`);
+
+    const st = result.stats;
+    const builtAt = new Date().toISOString();
+    const pack = projectPack(g, {
+      project: projectId, builtAt, lanes, base,
+      // The FIRST DDL file: `meta.ddl` is what the viewer opens for a CREATE
+      // TABLE preview, and it wants one path. The whole set is in `catalog.paths`.
+      ...(ddl ? { ddl: path.resolve(ddl) } : {}),
+      // WHAT A NAME MEANS IN THIS PACK (SPEC §8.1). The identity rule the
+      // lineage worker matched with — the same value the lane summary prints as
+      // `identifierCase` — recorded so the QUERY layer can resolve a `table=` /
+      // `column=` argument the way the analyzer resolved the same spelling
+      // inside a statement, without re-reading the profile. A pack built before
+      // this field existed carries none, and the tools then match exactly, as
+      // they used to (src/core/name_resolve.mjs).
+      identifierCase: sqlArgs.identifierCase,
+      // Everything below is METADATA — outside the digest by construction.
+      // WHERE THE CATALOG CAME FROM (SPEC §17.2). A certified layer stays
+      // deterministic against a live database only if the pack names the exact
+      // snapshot it was built from: dialect, server, fetch time, and the hash
+      // of the bytes. Refetching changes the sha256, which changes the catalog
+      // shard key, which changes the catalog digest inside every lineage shard
+      // key — so a refetch invalidates exactly what the schema change touched.
+      catalog: snapshot
+        ? {
+          source: 'snapshot',
+          fetchedAt: snapshotProvenance?.fetchedAt ?? null,
+          serverIdentity: snapshotProvenance?.serverIdentity ?? null,
+          // MEASURED from the bytes this run actually read, never quoted from
+          // snapshot.json — a provenance file that has drifted from the file
+          // beside it must not be able to make the pack claim a hash of bytes
+          // nobody analyzed. The drift itself is a diagnostic (above).
+          sha256: snapshotSha256,
+        }
+        : ddls.length > 0
+          ? {
+            source: 'file',
+            path: path.basename(ddl),
+            sha256: sha256File(ddl),
+            // Every file, in the order it was applied, each with its own hash:
+            // a catalog folded from three files must not be describable by one.
+            paths: ddls.map((f) => ({ path: path.basename(f), sha256: sha256File(f) })),
+          }
+          : { source: 'none' },
+      axes,
+      laneStats: (webStats || openapiStats || harStats)
+        ? {
+          ...(laneStats ?? {}),
+          ...(webStats ? { web: webStats } : {}),
+          ...(openapiStats ? { openapi: openapiStats } : {}),
+          ...(harStats ? { har: harStats } : {}),
+        }
+        : laneStats,
+      diagnostics,
+      profile: profileFile,
+      // Filled in below, once the calibration gate has judged this run. It is
+      // metadata, so it is outside the digest and can be attached after the
+      // pack has been projected (SPEC §14.2).
+      calibration: null,
+      // What this run recomputed and what it reused (SPEC §11). A reader can
+      // tell an incremental pack from a cold one, and see why a cold one was cold.
+      incremental: {
+        mode: st.mode,
+        base: baseCommit,
+        reparsedJava: st.reparsedJava,
+        reusedJava: st.reusedJava,
+        droppedJava: st.droppedJava,
+        reparsedWeb: st.reparsedWeb,
+        reusedWeb: st.reusedWeb,
+        droppedWeb: st.droppedWeb,
+        recomputedLineage: st.recomputedLineage,
+        reusedLineage: st.reusedLineage,
+        statementsReused: st.statementsReused,
+        catalogReused: st.catalogReused,
+        shardsRecovered: st.tamperedJava + st.tamperedWeb + st.tamperedLineage,
+        reason: st.reason,
+      },
+    });
+    // ---- the calibration gate (SPEC §14.2, §14.3, §15 M3) -----------------
+    // Everything that DECIDES is pure (src/core/calibration.mjs). This block
+    // measures the pack, fingerprints the engine and the analyzed target, asks
+    // the gate, and then FAILS CLOSED: a RED run's pack is written to a
+    // `-rejected` directory and the previously certified pack is left exactly
+    // where it was (§7.2 — a failed run never mixes with the good snapshot).
+    // A pack that does NOT land in the project's own `.cascade/` is a one-off
+    // build (`--out /somewhere/else`, or a bare `--pack`): the same rule that
+    // stops it registering in the home registry stops it here. It is not this
+    // project's certified snapshot, so it neither re-seals the baseline nor is
+    // judged against it — and it says so instead of quietly passing.
+    const calibrated = registrationTarget(resolved, out) !== null;
+    const stateDir = stateDirOf(resolved, out);
+    const calibrationDir = path.join(stateDir, 'calibration');
+    const goldenDir = path.join(stateDir, 'golden');
+    const baselineFile = path.join(calibrationDir, 'baseline.json');
+    const gateStateFile = path.join(calibrationDir, 'gate-state.json');
+    const receiptFile = path.join(stateDir, 'receipt.json');
+
+    const sqlStats = sqlLaneTallies(lineage);
+    const metrics = calibrationMetrics(g, { laneStats, sqlStats });
+    const profileDigest = profileDigestOf(profile);
+    const catalogDigest = catalog.length > 0 ? catalogDigestOf(catalog) : null;
+    const optOuts = [
+      flags.noDdl ? '--no-ddl' : null,
+      flags.noMappers ? '--no-mappers' : null,
+      flags.noJava ? '--no-java' : null,
+    ].filter(Boolean);
+    const pin = pinOf({
+      commit: base?.commit ?? null, dirty: base?.dirty === true,
+      selection: selectionRel, optOuts, profileDigest, catalogDigest,
+    });
+    const enginePrintNow = runningEnginePrint();
+
+    let baseline = null;
+    if (calibrated && fs.existsSync(baselineFile)) {
+      try { baseline = validateBaseline(JSON.parse(fs.readFileSync(baselineFile, 'utf8'))); }
+      catch (e) {
+        // A baseline that exists but cannot be read is NOT the same as no
+        // baseline: silently bootstrapping over it would turn a corrupted (or
+        // edited) seal into a clean bill of health.
+        die(`the sealed baseline at ${baselineFile} is unusable: ${e.message}\n`
+          + '  delete it deliberately to bootstrap a new one, or restore it from version control');
+      }
+    }
+    const gate = gateEvaluate({ baseline, current: { enginePrint: enginePrintNow, pin, profileDigest, catalogDigest, metrics }, profile });
+
+    const acceptBaseline = flag('accept-baseline');
+    const overrideOf = gate.verdict === 'RED' && acceptBaseline ? 'RED' : null;
+    const verdict = overrideOf ? 'GREEN' : gate.verdict;
+    const red = calibrated && verdict === 'RED';
+
+    // The project golden, scored through the SHIPPED tool catalog (SPEC §14.1).
+    let goldenSummaryDoc = null;
+    const casesFile = path.join(goldenDir, 'cases.jsonl');
+    if (fs.existsSync(casesFile)) {
+      try {
+        const cases = parseCases(fs.readFileSync(casesFile, 'utf8'));
+        if (cases.length > 0) {
+          const ask = goldenAsk(g, pack, profile);
+          goldenSummaryDoc = checkCases(cases, { ask }).summary;
+        }
+      } catch (e) {
+        process.stderr.write(`golden check skipped: ${e.message}\n`);
+      }
+    }
+
+    if (!calibrated) {
+      process.stderr.write(`gate: SKIPPED - this pack is a one-off build at ${out}, outside ${resolved.dotCascade ?? 'any project .cascade/'}. `
+        + 'Nothing was compared and nothing was sealed. Run without --out (or with --root/--project) to certify the project\'s pack\n');
+    }
+    const gateState = gateStateOf({
+      evaluatedAt: builtAt,
+      gate: { ...gate, verdict },
+      baselineSealedAt: gate.baselineSealedAt,
+      goldenSummary: goldenSummaryDoc,
+      extra: {
+        enginePrint: enginePrintNow,
+        pin,
+        thresholds: gate.thresholds,
+        ...(overrideOf ? { acceptedByHuman: true, overrideOf } : {}),
+      },
+    });
+    pack.meta.calibration = {
+      mode: gate.mode, verdict, baselineSealedAt: gate.baselineSealedAt,
+      firstRun: profile.calibration?.firstRun ?? null,
+    };
+
+    const writeDir = red ? `${out}-rejected` : out;
+    const writeIndexFile = path.join(writeDir, 'facts-index.json');
+    fs.mkdirSync(writeDir, { recursive: true });
+    fs.writeFileSync(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
+    fs.writeFileSync(writeIndexFile, serializeIndex(result.index));
+    if (calibrated) {
+      fs.mkdirSync(calibrationDir, { recursive: true });
+      fs.writeFileSync(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
+    }
+
+    if (calibrated) process.stderr.write(gateLine({ ...gate, verdict })
+      + (overrideOf ? ' (accepted by --accept-baseline)' : '') + '\n');
+    for (const f of gate.findings.filter((x) => x.severity !== 'info').slice(0, 10)) {
+      process.stderr.write(`  [${f.severity}] ${f.metric}: ${f.reason}\n`);
+    }
+    const infoCount = gate.findings.filter((x) => x.severity === 'info').length;
+    if (infoCount > 0) process.stderr.write(`  ${infoCount} improvement/unmeasurable finding(s) in ${gateStateFile}\n`);
+    if (goldenSummaryDoc) {
+      process.stderr.write(`golden: ${goldenSummaryDoc.status} over ${goldenSummaryDoc.scored} scored case(s)`
+        + `${goldenSummaryDoc.unscorable ? ` (${goldenSummaryDoc.unscorable} unscorable)` : ''}: `
+        + Object.entries(goldenSummaryDoc.relations).map(([r, v]) => `${r} ${v.status}(n=${v.n})`).join(', ') + '\n');
+    }
+
+    // Seal (or re-seal) the baseline: the "previous certified run" moves forward
+    // on every run the gate let through, so tomorrow's comparison is against
+    // today, not against the first run this project ever did.
+    if (calibrated && !red && (gate.reseal || overrideOf)) {
+      const sealed = sealBaseline({ sealedAt: builtAt, enginePrint: enginePrintNow, pin, profileDigest, catalogDigest, metrics });
+      fs.writeFileSync(baselineFile, JSON.stringify(sealed, null, 2) + '\n');
+      process.stderr.write(`baseline ${baseline ? 're-sealed' : 'sealed'} at ${baselineFile} (${Object.keys(metrics.ratios).length} ratios, ${Object.keys(metrics.counts).length} counts)\n`);
+    }
+
+    if (red) {
+      process.stderr.write(`REJECTED: the pack was written to ${path.join(writeDir, 'pack.json')} and the certified pack at ${path.join(out, 'pack.json')} was NOT touched\n`
+        + '  a regression is not a new snapshot: fix it. If this drop is the intended new normal, re-run with `--accept-baseline`,\n'
+        + '  which re-seals the baseline from THIS run. That is the only override, and it is a human decision.\n');
+      process.exit(3);
+    }
+
+    // The receipt (SPEC §14.4): what this certified run produced, hashed.
+    if (calibrated) {
+    const receipt = buildReceipt({
+      builtAt,
+      ttlDays: receiptTtlDaysOf(profile),
+      enginePrint: enginePrintNow,
+      pack: { digest: pack.digest, project: pack.meta?.project ?? null },
+      gate: { mode: gateState.mode, verdict: gateState.verdict, evaluatedAt: builtAt },
+      files: [
+        { name: relToState(stateDir, path.join(writeDir, 'pack.json')), sha256: hashOrNull(path.join(writeDir, 'pack.json')) },
+        { name: relToState(stateDir, writeIndexFile), sha256: hashOrNull(writeIndexFile) },
+        { name: relToState(stateDir, gateStateFile), sha256: hashOrNull(gateStateFile) },
+      ],
+    });
+    fs.writeFileSync(receiptFile, JSON.stringify(receipt, null, 2) + '\n');
+    process.stderr.write(`receipt ${receiptFile}: expires ${receipt.expiresAt} (verify with \`cascade verify\`)\n`);
+    }
+
+    process.stderr.write(`wrote ${path.join(writeDir, 'pack.json')}: ${pack.counts.nodes} nodes, ${pack.counts.edges} edges, lanes [${lanes.join(',')}], digest ${pack.digest}\n`);
+    process.stderr.write(`axes: ${Object.entries(axes).map(([k, v]) => `${k}=${v.status}`).join(' ')}\n`);
+    // The web lane's own reuse line, in the same words as the Java lane's, so a
+    // reader can see which of the two paid for this run.
+    const webLine = webSrc.length === 0 ? '' : (st.mode === MODE_COLD
+      ? `, read ${st.reparsedWeb} web file(s)`
+      : `, reparsed ${st.reparsedWeb} web file(s) (${st.reusedWeb} reused, ${st.droppedWeb} dropped)`);
+    process.stderr.write(st.mode === MODE_COLD
+      ? `cold (${st.reason}): parsed ${st.reparsedJava} java file(s)${webLine}, ${st.recomputedLineage} lineage shard(s) over ${st.statements} statement(s), pack digest ${pack.digest}\n`
+      : `incremental: reparsed ${st.reparsedJava} java files (${st.reusedJava} reused, ${st.droppedJava} dropped)${webLine}, `
+        + `lineage recomputed ${st.recomputedLineage} statements (${st.reusedLineage} reused), `
+        + `mapper statements ${mappers.length === 0 ? 'not run' : st.statementsReused ? 'reused' : 'recomputed'}, `
+        + `catalog ${ddls.length === 0 ? 'not run' : st.catalogReused ? 'reused' : 'recomputed'}, `
+        + `pack digest ${pack.digest}\n`);
+    for (const n of plan.notes ?? []) process.stderr.write(`  note: ${n}\n`);
+    const shardLanes = Object.values(result.index.files);
+    process.stderr.write(`facts index ${writeIndexFile}: ${shardLanes.filter((e) => e.lane !== 'web').length} java shard(s), `
+      + `${shardLanes.filter((e) => e.lane === 'web').length} web shard(s), `
+      + `${Object.keys(result.index.statements).length} lineage shard(s)${projectId ? ` in ${cacheDir(projectId, process.env)}/cas` : ' (IN MEMORY: not reusable, see above)'}\n`);
+    if (base?.dirty) {
+      process.stderr.write(`base ${base.commit.slice(0, 12)} + ${base.dirtyFiles.length} DIRTY analysis input(s): this pack describes the WORKING TREE, not that commit: `
+        + `${base.dirtyFiles.slice(0, 5).join(', ')}${base.dirtyFiles.length > 5 ? `, … ${base.dirtyFiles.length - 5} more` : ''}\n`);
+    }
+    // Keep the home registry current: this project now has a pack, built at
+    // `builtAt`, over these lanes (SPEC §5). Only when the pack landed inside a
+    // project's `.cascade/` — a bare --out elsewhere registers nothing.
+    const target = registrationTarget(resolved, out);
+    if (target) {
+      target.dotCascade = realPath(target.dotCascade);
+      const manifestFile = path.join(target.dotCascade, 'manifest.json');
+      let id = target.projectId;
+      if (!id && fs.existsSync(manifestFile)) {
+        try { id = loadManifest(manifestFile).project; } catch (e) { process.stderr.write(`registry: ignoring ${manifestFile} (${e.message})\n`); }
+      }
+      if (!id) id = slugify(opt('project', '') || path.basename(path.dirname(target.dotCascade)));
+      const regFile = registryPath(process.env);
+      if (!id) {
+        process.stderr.write(`registry not updated: no usable project id for ${target.dotCascade}. Run \`cascade init --project <id>\`\n`);
+      } else {
+        try {
+          writeRegistryAtomic(regFile, upsertProject(readRegistry(regFile), {
+            id, dotCascadePath: target.dotCascade, source: 'analyze', stack: lanes, lastCertifiedAt: builtAt,
+          }));
+          process.stderr.write(`registry: ${id} -> ${target.dotCascade} (${regFile})\n`);
+        } catch (e) {
+          process.stderr.write(`registry not updated: ${e.message}\n`);
+        }
+      }
+    }
+  } finally {
+    SCRATCH.remove(tmpDir);
+  }
+  process.exit(0);
+}
+
+if (cmd === 'catalog') {
+  // SPEC §12 — the DB catalog adapter. TWO subcommands, and the split is the
+  // whole security design (§12.3, §17.5):
+  //
+  //   discover  reads the repository and LISTS where a database might be. It
+  //             connects to nothing and it never reads a password value.
+  //   fetch     connects — once, read-only, and ONLY after the user has seen
+  //             the exact target and typed `--yes`. The connection info comes
+  //             out of the analyzed repository, which is untrusted input: a
+  //             malicious checkout must not be able to make this tool dial a
+  //             host of the attacker's choosing.
+  //
+  // Neither writes a credential anywhere (§17.3). The password is never an
+  // argument; it is read by the worker from the environment variable named by
+  // --password-env, and it never reaches `.cascade/`, the pack, or a log.
+  const sub = argv[1];
+  const asJson = flag('json');
+
+  if (sub === 'discover') {
+    const root = realPath(path.resolve(opt('root', process.cwd())));
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) die(`--root ${root} is not a directory`);
+    const discovery = discover(root, DISCOVER_IO);
+    const candidates = discovery.connectionCandidates ?? [];
+    if (asJson) {
+      process.stdout.write(JSON.stringify({
+        schema: 'cascade:catalog-candidates:1', root, candidates,
+      }, null, 2) + '\n');
+      process.exit(0);
+    }
+    process.stdout.write(`connection-info candidates under ${root}: ${candidates.length}\n`);
+    if (candidates.length === 0) {
+      process.stdout.write('  none: no application.yml / .properties / .env in this tree names a datasource URL.\n'
+        + '  A DDL file works just as well, and needs no connection at all: `cascade analyze --ddl <schema.sql>`.\n');
+    }
+    candidates.forEach((c, i) => {
+      process.stdout.write(`  [${i + 1}] ${c.path}  (${c.kind})\n`
+        + `      ${describeCandidate(c)}\n`
+        + `      ${c.url}\n`);
+    });
+    if (candidates.length > 0) {
+      process.stdout.write('\nNo password VALUE is read, printed or stored, only whether one is there and where it comes from.\n'
+        + 'Nothing above has been connected to. To pin a read-only snapshot of one of them:\n'
+        + `  export ${DEFAULT_PASSWORD_ENV}='…'\n`
+        + `  cascade catalog fetch --candidate 1 --password-env ${DEFAULT_PASSWORD_ENV} --yes\n`);
+    }
+    process.exit(0);
+  }
+
+  if (sub !== 'fetch') {
+    die('usage: cascade catalog discover [--root <dir>] [--json]\n'
+      + '       cascade catalog fetch [--project <id>|--root <dir>]\n'
+      + '                             [--candidate <n> | --url <jdbc url> --user <u>\n'
+      + '                              | --dialect <d> --host <h> [--port <p>] --database <db> --user <u>]\n'
+      + `                             [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]`);
+  }
+
+  // ---- fetch ------------------------------------------------------------
+  const root = realPath(path.resolve(opt('root', process.cwd())));
+  const resolved = resolveOrDie({ strictProject: false });
+  if (!resolved.dotCascade) {
+    die('no project state directory (.cascade/) for this target. Run `cascade init` first, so the snapshot has a home that is already gitignored');
+  }
+  const passwordEnv = opt('password-env', DEFAULT_PASSWORD_ENV);
+
+  // Where the target comes from: a discovered candidate, or flags the user typed.
+  let target = null;
+  let candidatePath = null;
+  const candidateOpt = opt('candidate');
+  if (candidateOpt !== undefined) {
+    const discovery = discover(root, DISCOVER_IO);
+    const candidates = discovery.connectionCandidates ?? [];
+    const n = Number(candidateOpt);
+    if (!Number.isInteger(n) || n < 1 || n > candidates.length) {
+      die(`--candidate ${JSON.stringify(candidateOpt)} is not one of the ${candidates.length} candidate(s) under ${root}. Run \`cascade catalog discover\` to see them`);
+    }
+    const c = candidates[n - 1];
+    candidatePath = c.path;
+    target = {
+      dialect: c.dialect, host: c.host, port: c.port ?? (c.dialect ? DEFAULT_PORTS[c.dialect] : null),
+      database: c.database, user: opt('user', c.usernameRef ?? null),
+    };
+    if (target.user && /^\$\{/.test(target.user)) {
+      die(`candidate ${n} names its user as the unresolved placeholder ${target.user}. Pass --user <name> explicitly`);
+    }
+  } else if (opt('url')) {
+    // The same URL forms `discover` reads, typed by hand. Parsed by the SAME
+    // code, so a URL that works in a config file works here — and a password
+    // smuggled into it is stripped out rather than used (the password comes
+    // from the environment, always).
+    const parsed = parseConnectionUrl(opt('url'));
+    if (!parsed) die(`--url ${JSON.stringify(opt('url'))} is not a connection URL (jdbc:mysql://…, jdbc:postgresql://…, jdbc:oracle:thin:@…, postgres://…, mysql://…)`);
+    for (const note of parsed.notes) process.stderr.write(`note: ${note}\n`);
+    target = {
+      dialect: opt('dialect', parsed.dialect), host: opt('host', parsed.host),
+      port: opt('port') ? Number(opt('port')) : parsed.port,
+      database: opt('database', parsed.database),
+      user: opt('user', parsed.usernameRef && !/^\$\{/.test(parsed.usernameRef) ? parsed.usernameRef : null),
+    };
+    if (target.dialect && !target.port) target.port = DEFAULT_PORTS[target.dialect] ?? null;
+  } else {
+    target = {
+      dialect: opt('dialect'), host: opt('host'),
+      port: opt('port') ? Number(opt('port')) : null,
+      database: opt('database'), user: opt('user'),
+    };
+    if (target.dialect && !target.port) target.port = DEFAULT_PORTS[target.dialect] ?? null;
+  }
+
+  const missing = ['dialect', 'host', 'port', 'database', 'user'].filter((k) => !target[k]);
+  if (missing.length > 0) {
+    die(`the connection target is incomplete (missing: ${missing.join(', ')}).\n`
+      + '  Pass --candidate <n> (see `cascade catalog discover`), or --url with --user, or spell it out:\n'
+      + '  cascade catalog fetch --url jdbc:mysql://h:3306/db --user u --password-env VAR --yes\n'
+      + '  cascade catalog fetch --dialect mysql --host h --port 3306 --database db --user u --password-env VAR --yes');
+  }
+  if (!CONNECTION_DIALECTS.includes(target.dialect)) {
+    die(`--dialect ${target.dialect} is not one of ${CONNECTION_DIALECTS.join('|')}`);
+  }
+
+  // THE CONFIRMATION (SPEC §12.3, §17.5). What is about to happen, in full,
+  // before it happens — and it does not happen without --yes.
+  const identity = `${target.host}:${target.port}/${target.database}`;
+  process.stderr.write(
+    'cascade catalog fetch would open a READ-ONLY connection to:\n'
+    + `  ${target.dialect} ${identity}\n`
+    + `  as user      ${target.user}\n`
+    + `  password     from the environment variable ${passwordEnv} (never from the command line, never stored)\n`
+    + `  read from    ${candidatePath ?? 'flags you typed'}\n`
+    + `  writes       ${catalogPathsOf(resolved.dotCascade).catalog}\n`
+    + `               ${catalogPathsOf(resolved.dotCascade).catalogSnapshot}\n`
+    + '  queries      metadata SELECTs only (tables, columns, comments, primary keys)\n');
+  if (!flag('yes')) {
+    process.stderr.write(
+      '\nRefusing to connect: pass --yes to confirm this exact target.\n'
+      + '  The connection info above came out of the analyzed repository, which this tool treats as\n'
+      + '  untrusted input. A checkout must not be able to make it dial a host by itself.\n');
+    process.exit(2);
+  }
+  if (!process.env[passwordEnv]) {
+    die(`the environment variable ${passwordEnv} is empty. Put the password there (\`export ${passwordEnv}='…'\`) or name another one with --password-env`);
+  }
+
+  const paths = ensureProjectDirs(path.dirname(resolved.dotCascade));
+  const catalogDir = path.dirname(paths.catalog);
+  const partial = path.join(catalogDir, '.columns.jsonl.partial');
+
+  const workerArgs = [
+    '--dialect', target.dialect, '--host', target.host, '--port', String(target.port),
+    '--database', target.database, '--user', target.user,
+    '--password-env', passwordEnv, '--out', partial,
+  ];
+  if (opt('schema')) workerArgs.push('--schema', opt('schema'));
+  if (opt('stamp-schema')) workerArgs.push('--stamp-schema', opt('stamp-schema'));
+
+  // The worker is overridable so the credential-non-leak test can run the whole
+  // path end to end without a database (test/catalog_fetch.test.mjs).
+  const override = process.env.CASCADE_CATALOG_WORKER;
+  let cmdPath;
+  let cmdArgs;
+  if (override) {
+    const isNodeScript = /\.(mjs|cjs|js)$/.test(override);
+    cmdPath = isNodeScript ? process.execPath : override;
+    cmdArgs = isNodeScript ? [override, ...workerArgs] : workerArgs;
+  } else {
+    const py = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+    if (!fs.existsSync(py)) die(`no venv python at ${py}. See docs/setup/sql-lane.md`);
+    cmdPath = py;
+    cmdArgs = [path.join(ENGINE_ROOT, 'adapters', 'sql', 'catalog_live.py'), ...workerArgs];
+  }
+
+  process.stderr.write(`connecting (read-only) to ${target.dialect} ${identity}…\n`);
+  try {
+    execFileSync(cmdPath, cmdArgs, { stdio: ['ignore', 'inherit', 'inherit'], env: process.env, maxBuffer: 1 << 28 });
+  } catch (e) {
+    try { fs.unlinkSync(partial); } catch { /* nothing to clean up */ }
+    die(`the catalog worker failed (exit ${e.status ?? '?'}). Nothing was written.\n`
+      + '  A missing driver, a refused login and an unreachable host are all reported above as a structured line.');
+  }
+
+  let records;
+  try { records = jsonl(partial); }
+  catch (e) { die(`the catalog worker produced no readable JSONL at ${partial}: ${e.message}`); }
+  const header = records[0];
+  if (!header || header.kind !== 'header' || header.schema !== 'cascade:catalog-snapshot:1') {
+    try { fs.unlinkSync(partial); } catch { /* best effort */ }
+    die(`the catalog worker's first record is not a cascade:catalog-snapshot:1 header. Refusing to pin it`);
+  }
+  const tables = records.filter((r) => r.kind === 'table').length;
+  const columns = records.filter((r) => r.kind === 'column').length;
+  const commented = records.filter((r) => r.kind === 'column' && r.comment != null).length;
+
+  fs.renameSync(partial, paths.catalog);
+  const sha256 = sha256File(paths.catalog);
+  const provenance = {
+    schema: 'cascade:catalog-provenance:1',
+    dialect: header.dialect ?? target.dialect,
+    serverVersion: header.serverVersion ?? null,
+    // host:port/db. No user, no password — a provenance record is a fact about
+    // the SCHEMA, not a way back into the database (§17.3).
+    serverIdentity: header.serverIdentity ?? identity,
+    fetchedAt: header.fetchedAt ?? null,
+    sha256,
+    file: path.basename(paths.catalog),
+    candidate: candidatePath,
+    worker: header.version ?? null,
+    rowCounts: { tables, columns, commented },
+  };
+  fs.writeFileSync(paths.catalogSnapshot, JSON.stringify(provenance, null, 2) + '\n', 'utf8');
+
+  process.stderr.write(
+    `wrote ${paths.catalog}: ${tables} table(s), ${columns} column(s), ${commented} with a comment\n`
+    + `wrote ${paths.catalogSnapshot}: sha256 ${sha256.slice(0, 12)}…, fetched ${provenance.fetchedAt}\n`
+    + 'both are inside the gitignored catalog/ directory; no credential was written anywhere.\n\n'
+    + 'The profile was NOT changed. To analyze against this snapshot, set in '
+    + `${path.join(resolved.dotCascade, 'profile.json')}:\n`
+    + '  "catalog": { "source": "jdbc" }\n');
+  if (asJson) process.stdout.write(JSON.stringify(provenance, null, 2) + '\n');
+  process.exit(0);
+}
+
+if (cmd === 'estimate') {
+  // The coverage estimate: what this tree WILL support, and — when a pack
+  // already exists — what it measurably does. Both halves, always.
+  //
+  // WHICH TREE. The same rule `analyze` uses, and for the same reason. This
+  // used to be `--root` or cwd, so `cascade estimate --project mall` read the
+  // registered project's PACK for the measured half and the directory the shell
+  // happened to be in for the "before analysis" half: one report about two
+  // different projects, with nothing on it saying so.
+  const resolved = resolveOrDie({ strictProject: false });
+  const rootChoice = analyzeRoot(resolved, opt('root'), process.cwd());
+  const root = rootChoice.root;
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    die(`the tree to estimate, ${root} (${rootChoice.from}), is not a directory`);
+  }
+  // The profile describes the TREE, the resolver locates the PACK: an explicit
+  // --pack must not cost the estimate its reading convention.
+  const { profile, profileNote } = readProfile(resolved.dotCascade ?? path.join(root, '.cascade'));
+  const asJson = flag('json');
+  if (!asJson) process.stderr.write(profileNote + '\n');
+
+  const discovery = discover(root, DISCOVER_IO);
+  let graph = null;
+  let packMetaForEstimate = null;
+  const packFile = path.join(resolved.packDir, 'pack.json');
+  if (fs.existsSync(packFile)) {
+    try {
+      const p = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+      graph = loadPack(p, { verifyDigest: true });
+      packMetaForEstimate = { digest: p.digest, builtAt: p.meta?.builtAt ?? null, lanes: p.meta?.lanes ?? null, axes: p.meta?.axes ?? null, laneStats: p.meta?.laneStats ?? null };
+    } catch (e) {
+      process.stderr.write(`pack at ${packFile} could not be read (${e.message}), so the measured half is left out rather than guessed\n`);
+    }
+  }
+
+  const est = buildEstimate({
+    discovery, profile, graph, pack: packMetaForEstimate,
+    root, project: resolved.projectId ?? null,
+  });
+  if (asJson) {
+    process.stdout.write(JSON.stringify(est, null, 2) + '\n');
+    process.exit(0);
+  }
+  // The banner names the tree AND why it is that tree, so a reader can tell a
+  // report about the registered project from a report about the shell's cwd.
+  process.stdout.write(`estimate for ${root} (${rootChoice.from})${est.project ? `, project ${est.project}` : ''}\n\nBEFORE ANALYSIS. What a run over this tree would ship:\n`);
+  for (const a of est.before.axes) {
+    process.stdout.write(`  ${a.axis.padEnd(11)} ${a.status.padEnd(12)} ${a.reason}\n`);
+  }
+  // The web axis's numbers, spelled out rather than left inside its sentence:
+  // "how much frontend is there" is the first thing anyone asks of a lane that
+  // reads one, and it is the same number the lane line will print.
+  const webAxis = est.before.axes.find((a) => a.axis === 'web');
+  if (webAxis && (webAxis.counts.webFiles > 0 || webAxis.counts.frontendPackages > 0)) {
+    process.stdout.write(`  web files: ${webAxis.counts.webFiles} frontend source file(s) (${webAxis.counts.vueFiles} .vue) `
+      + `in ${webAxis.counts.webSourceRoots} source root(s), from ${webAxis.counts.frontendPackages} frontend package(s)\n`);
+  }
+  if (est.before.notCovered.length === 0) process.stdout.write('  not covered: nothing found that this engine has no lane for\n');
+  for (const n of est.before.notCovered) process.stdout.write(`  not covered: ${n.technology} (${n.files} file(s)): ${n.reason}\n`);
+
+  process.stdout.write('\nMEASURED. What the pack that exists actually answers:\n');
+  if (!est.measured) {
+    process.stdout.write(`  ${est.measuredNote}\n`);
+  } else {
+    process.stdout.write(`  pack ${est.measured.pack.digest} built ${est.measured.pack.builtAt} lanes [${(est.measured.pack.lanes ?? []).join(',')}]\n`);
+    const j = est.measured.jpa;
+    if (j && (j.entities > 0 || j.repositories > 0)) {
+      process.stdout.write(`  jpa: ${j.entities} entity table(s), ${j.repositories} repository(ies), ${j.statements} statement(s), `
+        + `${j.unresolvedStatements} with an unresolved derived/JPQL part\n`);
+    }
+    for (const [name, r] of Object.entries(est.measured.ratios)) {
+      const pct = r.pct == null ? 'n/a (nothing to measure)' : `${r.pct.toFixed(1)}%`;
+      process.stdout.write(`  ${name.padEnd(28)} ${String(r.num).padStart(6)} / ${String(r.den).padEnd(6)} ${pct}${r.note ? `  (${r.note})` : ''}\n`);
+    }
+  }
+  process.exit(0);
+}
+
+if (cmd === 'pack') {
+  const catalog = opt('catalog'); const lineage = opt('lineage'); const out = opt('out', '.cascade/pack');
+  if (!catalog || !lineage) die('usage: cascade pack --catalog <f> --lineage <f> --out <dir> [--project NAME]');
+  const g = buildGraphFromSql(jsonl(catalog), jsonl(lineage));
+  // The same identity rule `analyze` uses (SPEC §5.1). A pack built next to a
+  // project's `.cascade/` belongs to that project whether or not --project was
+  // typed; with no manifest to read, the flag is all there is, and with neither
+  // the pack says it does not know rather than calling itself "project".
+  const packResolved = resolveProject({ cwd: process.cwd(), env: process.env });
+  const packProject = projectIdFrom(packResolved.projectId, manifestAt(packResolved.dotCascade)?.project, opt('project'));
+  const pack = projectPack(g, { project: packProject, builtAt: new Date().toISOString() });
+  fs.mkdirSync(out, { recursive: true });
+  const file = path.join(out, 'pack.json');
+  fs.writeFileSync(file, JSON.stringify(pack));
+  process.stderr.write(`wrote ${file}: ${pack.counts.nodes} nodes, ${pack.counts.edges} edges, digest ${pack.digest}\n`);
+  process.exit(0);
+}
+
+if (cmd === 'verify') {
+  // SPEC §14.4. Recompute every digest the receipt claims, from the bytes on
+  // disk, and cross-check the receipt against the gate state it hashed. There is
+  // no "mostly verified": a file the receipt names and the disk cannot produce
+  // is a disagreement, and any disagreement at all is exit 4.
+  const resolved = resolveOrDie();
+  const stateDir = stateDirOf(resolved, resolved.packDir);
+  const asJson = flag('json');
+  const receiptFile = path.join(stateDir, 'receipt.json');
+  let receipt = null;
+  let receiptError = null;
+  try { receipt = readJsonOrNull(receiptFile); }
+  catch (e) { receiptError = e.message; }
+
+  const files = {};
+  const names = new Set([...RECEIPT_FILES, ...((receipt && receipt.files) || []).map((f) => f.name)]);
+  for (const name of [...names].sort()) {
+    const h = hashOrNull(path.resolve(stateDir, name));
+    if (h !== null) files[name] = h;
+  }
+  let gateState = null;
+  try { gateState = readJsonOrNull(path.join(stateDir, 'calibration', 'gate-state.json')); }
+  catch (e) { gateState = { verdict: null, unreadable: e.message }; }
+
+  let packContentDigest;
+  const packFile = path.join(resolved.packDir, 'pack.json');
+  if (fs.existsSync(packFile)) {
+    try {
+      const p = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+      packContentDigest = digest12({ nodes: p.nodes, edges: p.edges });
+    } catch (e) { packContentDigest = null; }
+  }
+
+  const now = new Date().toISOString();
+  const result = receiptError
+    ? { ok: false, checked: 1, expiresAt: null, disagreements: [{ check: 'receipt', expected: 'a readable cascade:receipt:1 document', found: receiptFile, reason: `the receipt could not be read: ${receiptError}` }] }
+    : verifyReceipt({ receipt, actual: { files, enginePrint: runningEnginePrint(), gateState, packContentDigest, now } });
+
+  const report = {
+    schema: 'cascade:verify-report:1',
+    verified: result.ok,
+    project: resolved.projectId ?? null,
+    stateDir,
+    receipt: receiptFile,
+    checkedAt: now,
+    expiresAt: result.expiresAt,
+    checks: result.checked,
+    enginePrint: runningEnginePrint(),
+    gate: gateState ? { mode: gateState.mode ?? null, verdict: gateState.verdict ?? null } : null,
+    disagreements: result.disagreements,
+  };
+  if (!result.ok) {
+    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    process.stderr.write(`NOT VERIFIED: ${result.disagreements.length} disagreement(s): ${result.disagreements.map((d) => d.check).join(', ')}\n`);
+    process.exit(4);
+  }
+  if (asJson) process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+  else {
+    process.stdout.write(`verified ${stateDir}: ${result.checked} check(s) agreed: pack, fact index and gate state match the receipt, `
+      + `the running engine is the one that signed it, and it is valid until ${result.expiresAt}\n`);
+    process.stdout.write(`gate ${report.gate?.mode ?? 'unknown'} -> ${report.gate?.verdict ?? 'unknown'}\n`);
+  }
+  process.exit(0);
+}
+
+if (cmd === 'golden') {
+  // SPEC §14.1 — the PROJECT golden. The tool proposes; a human approves. This
+  // command never crosses that line: `propose` writes candidates and nothing
+  // else, and only `approve` (with --ids or an explicit --all) stamps approval.
+  const sub = argv[1];
+  const SUBS = ['propose', 'approve', 'seal', 'check'];
+  if (!SUBS.includes(sub)) {
+    die(`usage: cascade golden <${SUBS.join('|')}> [--pack <dir> | --project <id> | --root <dir>]\n`
+      + '  propose [--per-relation N]   sample candidates from the CURRENT pack into golden/proposed.jsonl.\n'
+      + '                               They are PROPOSALS: built from the engine\'s own answers, so they are\n'
+      + '                               right by construction and prove nothing until a human has read them.\n'
+      + '                               This tool never approves its own proposals.\n'
+      + '  approve --ids <id>... | --all   move proposals into golden/cases.jsonl with approvedAt.\n'
+      + '  seal                         hide the labels of the held-out share (~20%, chosen by id hash, not by you).\n'
+      + '  check [--json]               score the approved cases through the shipped MCP tools.');
+  }
+  const resolved = resolveOrDie();
+  const stateDir = stateDirOf(resolved, resolved.packDir);
+  const goldenDir = path.join(stateDir, 'golden');
+  const proposedFile = path.join(goldenDir, 'proposed.jsonl');
+  const casesFile = path.join(goldenDir, 'cases.jsonl');
+  const readCases = (file) => (fs.existsSync(file) ? parseCases(fs.readFileSync(file, 'utf8')) : []);
+
+  if (sub === 'propose' || sub === 'check') {
+    const packFile = path.join(resolved.packDir, 'pack.json');
+    if (!fs.existsSync(packFile)) die(`no pack at ${packFile}. Run \`cascade analyze\` first`);
+    const pack = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+    const graph = loadPack(pack, { verifyDigest: true });
+    const prof = servedProfile(resolved.packDir, pack);
+    const ask = goldenAsk(graph, pack, prof);
+
+    if (sub === 'propose') {
+      const perRelation = Number(opt('per-relation', String(MIN_CASES)));
+      if (!Number.isInteger(perRelation) || perRelation < 1) die('--per-relation must be a positive whole number');
+      const { cases, perRelation: stats, notes } = proposeCases({ inventory: inventoryOf(graph), ask, packDigest: pack.digest, perRelation });
+      fs.mkdirSync(goldenDir, { recursive: true });
+      fs.writeFileSync(proposedFile, serializeCases(cases));
+      for (const rel of RELATIONS) {
+        const st = stats[rel];
+        process.stdout.write(`${rel.padEnd(20)} proposed ${String(st.proposed).padStart(4)} of ${perRelation} `
+          + `(${st.candidates} candidate(s) in the pack, ${st.skippedEmpty} answered nothing, ${st.skippedTruncated} truncated)\n`);
+      }
+      for (const n of notes) process.stdout.write(`note: ${n}\n`);
+      process.stdout.write(`wrote ${cases.length} PROPOSAL(s) to ${proposedFile}\n`);
+      process.stdout.write('these are candidates, not evidence: they were built from this engine\'s own answers, so they pass by construction.\n'
+        + `read them, then approve the ones you agree with: \`cascade golden approve --ids <id> ...\` (or --all, explicitly).\n`);
+      process.exit(0);
+    }
+
+    const cases = readCases(casesFile);
+    if (cases.length === 0) die(`no approved cases at ${casesFile}. Run \`cascade golden propose\` and then \`cascade golden approve\``);
+    const { results, summary } = checkCases(cases, { ask });
+    if (flag('json')) {
+      process.stdout.write(JSON.stringify({ schema: 'cascade:golden-check:1', summary, results }, null, 2) + '\n');
+    } else {
+      for (const rel of RELATIONS) {
+        const r = summary.relations[rel];
+        const fmt = (b) => (b.target == null
+          ? 'no target is declared for this relation'
+          : `${b.lowerBound == null ? 'n/a' : b.lowerBound.toFixed(4)} vs ${b.target}`
+            + (b.meets ? '' : ` (a flawless corpus needs n>=${b.nForTarget} to reach it)`));
+        process.stdout.write(`${rel.padEnd(20)} ${String(r.status).padEnd(20)} n=${String(r.n).padStart(4)}\n`
+          + `  recall    ${r.recallHits}/${r.n} wilson ${fmt(r.recall)}\n`
+          + `  precision ${r.precisionHits}/${r.n} wilson ${fmt(r.precision)}\n`);
+      }
+      const failed = results.filter((r) => r.status === 'FAIL');
+      for (const f of failed.slice(0, 10)) process.stdout.write(`  FAIL ${f.id} ${f.relation}: ${f.reason}\n`);
+      if (failed.length > 10) process.stdout.write(`  … ${failed.length - 10} more failing case(s)\n`);
+      process.stdout.write(`golden ${summary.status}: ${summary.scored} scored, ${summary.unscorable} unscorable, `
+        + `${MIN_CASES} cases per relation are the minimum before a relation can PASS\n`);
+    }
+    process.exit(summary.status === 'FAIL' ? 5 : 0);
+  }
+
+  if (sub === 'approve') {
+    const proposed = readCases(proposedFile);
+    if (proposed.length === 0) die(`nothing to approve: ${proposedFile} is empty or absent. Run \`cascade golden propose\` first`);
+    const ids = optAll('ids').flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+    const all = flag('all');
+    if (!all && ids.length === 0) die('cascade golden approve needs --ids <id>[,<id>…] or an explicit --all. This tool never approves its own proposals, because a corpus a tool scored itself against measures nothing');
+    let moved;
+    try { moved = approveCases(proposed, { ids, all, approvedAt: new Date().toISOString() }); }
+    catch (e) { die(e.message); }
+    if (moved.unknownIds.length > 0) die(`these ids are not in ${proposedFile}: ${moved.unknownIds.join(', ')}`);
+    const existing = readCases(casesFile);
+    const byId = new Map(existing.map((c) => [c.id, c]));
+    for (const c of moved.approved) byId.set(c.id, c);
+    fs.mkdirSync(goldenDir, { recursive: true });
+    fs.writeFileSync(casesFile, serializeCases([...byId.values()]));
+    fs.writeFileSync(proposedFile, serializeCases(moved.remaining));
+    process.stdout.write(`approved ${moved.approved.length} case(s) into ${casesFile} (${byId.size} total), `
+      + `${moved.remaining.length} proposal(s) left in ${proposedFile}\n`);
+    process.exit(0);
+  }
+
+  // seal
+  const cases = readCases(casesFile);
+  if (cases.length === 0) die(`no approved cases at ${casesFile}`);
+  const { cases: sealed, sealed: count } = sealCases(cases);
+  fs.writeFileSync(casesFile, serializeCases(sealed));
+  process.stdout.write(`sealed ${count} of ${cases.length} case(s) in ${casesFile}. The held-out share is decided by sha256(id), never by hand. `
+    + 'Their labels are now a hash, so the checker classifies the probe ids without seeing which side they are on\n');
+  process.exit(0);
+}
+
+if (cmd === 'mcp') {
+  // The MCP server (SPEC §13). It serves ONE OR MANY projects: `--pack`/`--root`
+  // pick a single pack, `--project a --project b` picks registry entries, and
+  // with no flag at all every registered project is served. Packs are LAZY —
+  // nothing is parsed until a tool asks a project a question — and the loaded
+  // ones live in an LRU under `--memory-budget` MB (§17.6).
+  const host = createProjectHost({
+    registry: servedEntries('mcp'),
+    loadProject: loadServedProject,
+    budgetBytes: memoryBudgetBytes(),
+  });
+  const served = host.list();
+  process.stderr.write(`cascade mcp: serving ${served.length} project(s) [${served.map((p) => p.id).join(', ')}]: `
+    + `packs load on first use, budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
+  if (served.length > 1) process.stderr.write('more than one project: every tool call must name one (`project`), or it is answered with `ambiguous`. Call `projects` to list them\n');
+  serve({ deps: { toolList, callTool: (name, args) => host.callTool(name, args) } })
+    .then(() => process.exit(0));
+} else if (cmd === 'view') {
+  // The web viewer over the SAME tool catalog and the SAME project host (no
+  // reimplemented queries, and no second idea of which projects exist). The
+  // page itself shows ONE project: it passes `?project=<id>` through to the
+  // API, and without it a multi-project server answers `ambiguous` rather than
+  // picking one.
+  const host = createProjectHost({
+    registry: servedEntries('view'),
+    loadProject: loadServedProject,
+    budgetBytes: memoryBudgetBytes(),
+  });
+  const served = host.list();
+  const contextOf = (project) => {
+    const { projectId } = host.resolveProjectArg(project ? { project } : {});
+    return { projectId, ctx: host.ctxFor(projectId) };
+  };
+  const html = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'index.html'), 'utf8');
+  // The mark, read once and answered by name at /cascade-mark.svg (and its
+  // dark-ground variant at /cascade-mark-dark.svg). The page inlines the light
+  // geometry, so these routes exist for everything OUTSIDE the page that wants
+  // the file itself.
+  const mark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark.svg'), 'utf8');
+  const markDark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark-dark.svg'), 'utf8');
+  const deps = {
+    toolList,
+    callTool: (name, args) => host.callTool(name, args),
+    meta: (project) => {
+      const { projectId, ctx } = contextOf(project);
+      const pack = ctx.packJson;
+      const repoRoot = pack.meta?.base?.repoPath ?? null;
+      return {
+        project: ctx.basis.project, projectId, digest: pack.digest, lanes: pack.meta?.lanes ?? null,
+        builtAt: ctx.basis.builtAt, freshness: ctx.basis.freshness, base: pack.meta?.base ?? null,
+        canSource: !!repoRoot, projects: served.map((p) => p.id),
+      };
+    },
+    // The two vendored MIT browser bundles the Graph tab's map renderers load
+    // (viewer/vendor — see NOTICE). Served from THIS directory only; nothing
+    // else on disk is reachable through /vendor.
+    vendorDir: path.join(ENGINE_ROOT, 'viewer', 'vendor'),
+    // The translation catalogues (SPEC §17.11). English is compiled into the
+    // page; every other language is a JSON file fetched on demand from here,
+    // which is why no non-English text lives in the page or in src/.
+    i18nDir: path.join(ENGINE_ROOT, 'viewer', 'i18n'),
+    // Live source preview, read from the working tree on demand (real-time).
+    // A pack that records no repository path has no preview to give, and says
+    // so as a structured 404 rather than a blank panel.
+    source: (nodeId, project, opts) => {
+      const { projectId, ctx } = contextOf(project);
+      const repoRoot = ctx.packJson.meta?.base?.repoPath ?? null;
+      if (!repoRoot) {
+        const e = new Error(`source preview not available for ${projectId} (its pack records no repository path)`);
+        e.code = 'unknown-key';
+        throw e;
+      }
+      return readSourceFor(ctx.graph, repoRoot, nodeId, {
+        readFile: (f) => fs.readFileSync(f, 'utf8'),
+        ddlPath: ctx.packJson.meta?.ddl,
+        whole: !!(opts && opts.whole),
+      });
+    },
+  };
+  const port = Number(opt('port', '4319'));
+  serveHttp({ http, port, deps, html, mark, markDark }).then(({ port: p }) => {
+    process.stderr.write(`cascade viewer at http://127.0.0.1:${p}/  serving ${served.length} project(s) [${served.map((x) => x.id).join(', ')}], `
+      + `budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
+    if (served.length > 1) {
+      process.stderr.write(`the page shows ONE project: open http://127.0.0.1:${p}/?project=${served[0].id} (or another id above). `
+        + 'Without it the API answers `ambiguous`\n');
+    }
+  });
+} else if (cmd === 'impact') {
+  // Local convenience: the working-tree overlay from the shell. By default the
+  // dirty files are RE-PARSED (SPEC §10.2) so the answer describes the bytes on
+  // disk; `--mode base-only` asks the old question — what those files touched
+  // as the pack last saw them — and is labelled as such in the output.
+  const resolvedFor = resolveOrDie();
+  const dir = resolvedFor.packDir;
+  const file = path.join(dir, 'pack.json');
+  if (!fs.existsSync(file)) die(`no pack at ${file}. Run cascade analyze first`);
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const graph = loadPack(pack, { verifyDigest: true });
+  const filesArg = optAll('file');
+  const impactProfile = servedProfile(dir, pack);
+  const modeArg = opt('mode', 'conservative');
+  const baseOnly = modeArg === 'base-only';
+  const verbose = flag('verbose');
+
+  let overlayProvider = null;
+  let ov = null;
+  if (!baseOnly) {
+    overlayProvider = makeOverlayProvider({ packDir: dir, pack, baseGraph: graph, profile: impactProfile });
+    try {
+      ov = overlayProvider();
+    } catch (e) {
+      if (e instanceof OverlayStaleError) {
+        die(`overlay unavailable [${e.code}]: ${e.message}\n`
+          + '  (`cascade impact --mode base-only` still answers from the pack: the PRE-EDIT structure, clearly labelled)');
+      }
+      throw e;
+    }
+  }
+  const files = filesArg.length ? filesArg : (ov ? ov.dirtyFiles : gitChangedFiles(pack.meta?.base, ownStateOf(pack.meta?.base, dir)));
+  if (!files.length) die('no changed files. Pass --file <path> [--file …], or edit the repo the pack was built from');
+  const ctx = {
+    graph,
+    basis: { project: pack.meta?.project ?? 'project', buildDigest: pack.digest, builtAt: pack.meta?.builtAt ?? null, freshness: { verdict: 'unknown' } },
+    trust: computeTrust({ ...calibrationStateOf(resolvedFor.dotCascade), knownGaps: trustGapsFor(impactProfile, pack.meta?.axes ?? null) }),
+    limits: [], pack: packMeta(pack), profile: impactProfile,
+    ...(overlayProvider ? { overlay: overlayProvider } : {}),
+  };
+  const resp = callTool('changed_impact', { files, mode: baseOnly ? 'conservative' : modeArg }, ctx);
+  const a = resp.answer;
+  const o = a.overlay ?? null;
+  if (baseOnly) {
+    process.stdout.write('mode base-only: this is the BASE pack\'s answer: what these files touched as they were LAST ANALYZED, not as they are on disk\n');
+  } else if (o && o.applied) {
+    const t = o.timingsMs ?? {};
+    process.stdout.write(`overlay ${shortSessionId(o.overlaySessionId)} (fresh): re-parsed ${o.parsedFiles.length} java + ${(o.parsedWebFiles ?? []).length} frontend file(s), `
+      + `dropped ${o.droppedFiles.length + (o.droppedWebFiles ?? []).length}, `
+      + `provisional ${o.provisionalIds.symbols.length + o.provisionalIds.endpoints.length + o.provisionalIds.statements.length} node(s) / ${o.provisionalEdges} edge(s)\n`);
+    process.stdout.write(`timings ms: load-base ${t.loadBase} + java ${t.java} + web ${t.web} + sql ${t.sql} + graph ${t.build} = ${t.total}\n`);
+    if (verbose) {
+      process.stdout.write(`  reused ${ov.reusedShards} cached java shard(s); dirty documents: ${Object.entries(o.docVersions).map(([f, h]) => `${f}@${h ? h.slice(0, 8) : 'absent'}`).join(', ')}\n`);
+      process.stdout.write(`  parsed: ${o.parsedFiles.join(', ') || '(none)'}\n`);
+      if (o.unmatchedLanes.length) process.stdout.write(`  no lane claims: ${o.unmatchedLanes.join(', ')}\n`);
+    }
+  } else if (o) {
+    process.stdout.write(`overlay NOT applied (${o.state}): ${o.reason}\n`);
+  }
+  process.stdout.write(`changed files: ${a.changedFiles}  (matched ${a.files.matched.length}, unmatched ${a.files.unmatched.length})\n`);
+  process.stdout.write(`touched: ${a.touched.symbols.length} symbols, ${a.touched.statements.length} statements, ${a.touched.endpoints.length} endpoints\n`);
+  process.stdout.write(`\nupstream endpoints affected (${resp.truncated.fields[0].total}):\n`);
+  for (const e of a.upstreamEndpoints) process.stdout.write(`  ${e.id}  [${e.grade}]${e.provisional ? '  PROVISIONAL (only in the overlay)' : ''}\n`);
+  process.stdout.write(`\ndownstream columns affected (${resp.truncated.fields[1].total}):\n`);
+  for (const c of a.downstreamColumns) process.stdout.write(`  ${c.id}  [${c.grade}]${c.provisional ? '  PROVISIONAL (only in the overlay)' : ''}\n`);
+  if (a.files.unmatched.length) process.stdout.write(`\nchanged but not in graph (impact unknown, not zero):\n${a.files.unmatched.map((f) => '  ' + f).join('\n')}\n`);
+  for (const l of resp.limits) process.stdout.write(`\nlimit [${l.scope}]: ${l.reason}\n`);
+  process.stdout.write(`\n(${resp.basis.freshness.verdict}) ${a.note}\n`);
+  process.exit(0);
+} else if (cmd !== 'pack' && cmd !== 'analyze' && cmd !== 'estimate') {
+  die('usage: cascade <doctor|init|analyze|estimate|verify|golden|catalog|pack|mcp|impact|view> …\n'
+    + '  cascade doctor [--json]\n'
+    + '      (pre-flight every prerequisite at once: node, git, the SQL lane\'s venv and sqlglot,\n'
+    + '       a JDK (naming which candidate won and why the others did not), the optional DB\n'
+    + '       drivers, docker, the registry and the cache directory. Exit 0 only when every\n'
+    + '       REQUIRED prerequisite is ok; the optional ones are reported, never fatal.)\n'
+    + '  cascade init [--root <dir>] [--project <id>] [--force] [--json]\n'
+    + '  cascade analyze [--root <repo>] [--out <dir>] [--profile <f>] [--cold | --incremental] [--accept-baseline]\n'
+    + '                  [--ddl <schema.sql|glob>... | --no-ddl] [--mappers <dir>... | --no-mappers] [--java-src <dir>... | --no-java]\n'
+    + '                  [--web-src <dir>... | --no-web] [--openapi <file>... | --no-openapi] [--har <file>...]\n'
+    + '      (with no lane flag the inputs come from the project manifest + profile + discovery;\n'
+    + '       --no-<lane> switches a lane off even then. An unflagged run reads MAIN java sources\n'
+    + '       only. The src/test roots it skipped are printed, and --java-src includes one.)\n'
+    + '      (--web-src reads a frontend source root: the web lane traces each HTTP call to the client\n'
+    + '       that sends it and attaches it to the route this pack serves, as a graded CALLS_HTTP edge.\n'
+    + '       The `web` axis says what had to be guessed. See docs/setup/web-lane.md)\n'
+    + '      (--openapi reads an OpenAPI 3 / Swagger 2 document, JSON or YAML: every route it declares\n'
+    + '       becomes an endpoint, one the code also serves is corroborated, and the routes the two\n'
+    + '       disagree about are reported as drift. Repeatable. See docs/setup/web-lane.md)\n'
+    + '      (--har reads a browser recording (HAR 1.2, what DevTools saves): every request in it that\n'
+    + '       matches a route this pack serves becomes a screen-to-route edge graded RUNTIME_ONLY, which\n'
+    + '       is SHOWN as `observed` and never walked. Repeatable; the profile can name them instead in\n'
+    + '       runtimeEvidence.har. Nothing is discovered: a recording is made on purpose.)\n'
+    + '      (every run is judged against the previous certified run sealed in .cascade/calibration/:\n'
+    + '       a regression writes the pack to <packDir>-rejected/ and exits 3, leaving the certified\n'
+    + '       pack untouched. --accept-baseline re-seals the baseline FROM THIS RUN: the one override,\n'
+    + '       and a human decision.)\n'
+    + '  cascade estimate [--root <dir>] [--project <id>] [--json]\n'
+    + '  cascade verify [--pack <dir> | --project <id> | --root <dir>] [--json]\n'
+    + '      (recompute every digest in .cascade/receipt.json from the files, check the running engine\n'
+    + '       against the one that signed it, and refuse an expired receipt. Exit 4 on any disagreement)\n'
+    + '  cascade golden <propose|approve|seal|check> [--pack <dir> | --project <id> | --root <dir>]\n'
+    + '      (the project golden corpus. propose SUGGESTS cases from the current pack; only\n'
+    + '       `approve --ids …` / an explicit `--all` makes one evidence. The tool never approves itself.)\n'
+    + '  cascade catalog discover [--root <dir>] [--json]\n'
+    + '      (list the datasource connection info this tree carries: host, port, database, dialect,\n'
+    + '       and WHETHER a password is there. No password value is read, printed or stored, and\n'
+    + '       nothing is connected to.)\n'
+    + '  cascade catalog fetch [--project <id>|--root <dir>]\n'
+    + '                        [--candidate <n> | --url <jdbc url> --user <u>\n'
+    + '                         | --dialect <d> --host <h> [--port <p>] --database <db> --user <u>]\n'
+    + '                        [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]\n'
+    + '      (pin a READ-ONLY catalog snapshot into .cascade/catalog/. It prints the exact target and\n'
+    + '       refuses to connect without --yes: the connection info comes from the analyzed repository,\n'
+    + '       which is untrusted input. The password is read only from the named environment variable,\n'
+    + '       never from the command line, and is never written anywhere.)\n'
+    + '  cascade pack --catalog <f> --lineage <f> --out <dir>\n'
+    + '  cascade mcp [--pack <dir> | --project <id> ... | --root <dir>] [--memory-budget <MB>]\n'
+    + '      (with no --pack/--root/--project it serves EVERY registered project, lazily: a pack is\n'
+    + '       parsed on the first call that needs it, and the loaded ones are held in an LRU under\n'
+    + '       the memory budget: 512 MB of pack JSON by default. Each tool takes a `project`\n'
+    + '       argument; on a multi-project server a call without one is answered `ambiguous`.)\n'
+    + '  cascade impact [--pack <dir> | --project <id> | --root <dir>] [--file <path>...] [--verbose]\n'
+    + '                 [--mode strict|conservative|heuristic|base-only]\n'
+    + '      (default: the dirty files are re-parsed and the answer describes the working tree;\n'
+    + '       --mode base-only answers from the pack alone: the PRE-EDIT structure, labelled as such)\n'
+    + '  cascade view [--pack <dir> | --project <id> ... | --root <dir>] [--port 4319] [--memory-budget <MB>]\n'
+    + '      (same project selection as `mcp`; the page shows one project at a time. Open it with\n'
+    + '       ?project=<id> when the server serves several)\n'
+    + '\n'
+    + 'A pack is located by: --pack > --project (~/.cascade/registry.json) > --root/.cascade > ./.cascade');
+}

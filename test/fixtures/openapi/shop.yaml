@@ -1,0 +1,45 @@
+# An OpenAPI 3 document that uses every construct the YAML subset accepts:
+# block mappings and sequences, plain and quoted scalars, comments, a flow
+# sequence, a flow mapping, and both block-scalar styles.
+openapi: 3.0.1
+info:
+  title: "Shop API"
+  version: '1.2.0'
+  description: >
+    A synthetic contract.
+    It exists so the reader has something to read.
+servers:
+  - url: https://api.example.com/api
+    description: production
+  - url: http://localhost:8080/api
+tags: [items, orders]
+externalDocs: { description: none, url: 'https://example.com/docs' }
+paths:
+  /item/get:            # the route the code also serves
+    get:
+      operationId: getItem
+      summary: Read one item
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: ok
+  /item/price:
+    post:
+      operationId: setPrice
+      summary: Change the price of an item
+      responses:
+        '200':
+          description: ok
+  /report/daily:        # declared here and served by nothing
+    get:
+      operationId: dailyReport
+      summary: |
+        A report the code does not serve.
+        Two lines of it.
+    delete:
+      operationId: dropReport
+  /health: {}

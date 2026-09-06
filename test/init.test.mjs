@@ -1,0 +1,469 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { buildManifest, buildProfile, lanesOf, slugify, writeInitFiles, InitError } from '../src/core/init.mjs';
+import { validateManifest, MANIFEST_SCHEMA, REPO_KINDS } from '../src/core/manifest.mjs';
+import { validateProfile } from '../src/core/profile.mjs';
+
+const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
+const SHA = (c) => c.repeat(40).slice(0, 40);
+
+// ---------------------------------------------------------------------------
+// Pure builders
+// ---------------------------------------------------------------------------
+
+const discovery = (over = {}) => ({
+  root: '/p/app',
+  repos: [{ path: '.', commit: SHA('a'), javaFiles: 3, frontendPackageJson: 0 }],
+  counts: { javaFiles: 3, springHandlerFiles: 1, mybatisMapperXml: 2, ddlFiles: 1, jpaEntityFiles: 0, kotlinFiles: 0, frontendPackageJson: 0 },
+  buildTool: 'maven',
+  packagePrefixes: ['com.example.app'],
+  ddlPaths: ['db/schema.sql'],
+  ddlDialectHint: 'mysql',
+  filesScanned: 9,
+  capped: false,
+  diagnostics: [],
+  ...over,
+});
+
+test('slugify makes a filesystem-safe id, or null when nothing usable is left', () => {
+  assert.equal(slugify('My App'), 'my-app');
+  assert.equal(slugify('mall'), 'mall');
+  assert.equal(slugify('app_v2.1'), 'app_v2.1');
+  assert.equal(slugify('---'), null);
+  assert.equal(slugify(''), null);
+  assert.equal(slugify(42), null);
+});
+
+test('lanesOf reports only the lanes the tree can feed', () => {
+  assert.deepEqual(lanesOf(discovery()), ['sql', 'java']);
+  assert.deepEqual(lanesOf(discovery({ counts: { javaFiles: 0, ddlFiles: 1, mybatisMapperXml: 0 } })), ['sql']);
+  assert.deepEqual(lanesOf(discovery({ counts: { javaFiles: 2, ddlFiles: 0, mybatisMapperXml: 0 } })), ['java']);
+  assert.deepEqual(lanesOf(discovery({ counts: {} })), []);
+});
+
+test('buildManifest points the root repo at ".." — relative to the manifest FILE, not the root', () => {
+  const m = buildManifest(discovery(), { projectId: 'app', root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.equal(m.schema, MANIFEST_SCHEMA);
+  assert.equal(m.project, 'app');
+  assert.equal(m.profile, './profile.json');
+  assert.deepEqual(m.repositories, [{ key: 'app', path: '..', commit: SHA('a'), kind: 'backend-java' }]);
+  assert.doesNotThrow(() => validateManifest(m, '/p/app/.cascade/manifest.json'));
+  // …and it resolves back to the repo it came from.
+  const norm = validateManifest(m, '/p/app/.cascade/manifest.json');
+  assert.equal(norm.repositories[0].absPath, '/p/app');
+});
+
+test('buildManifest gives a nested repo a path relative to the manifest dir and its own key', () => {
+  const d = discovery({
+    repos: [
+      { path: '.', commit: SHA('a'), javaFiles: 0, frontendPackageJson: 0 },
+      { path: 'services/api', commit: SHA('b'), javaFiles: 5, frontendPackageJson: 0 },
+      { path: 'web', commit: SHA('c'), javaFiles: 0, frontendPackageJson: 1 },
+    ],
+  });
+  const m = buildManifest(d, { projectId: 'app', root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(m.repositories.map((r) => [r.key, r.path, r.kind]), [
+    ['app', '..', 'unknown'],
+    ['services-api', '../services/api', 'backend-java'],
+    ['web', '../web', 'frontend-web'],
+  ]);
+  assert.doesNotThrow(() => validateManifest(m, '/p/app/.cascade/manifest.json'));
+});
+
+test('"unknown" is an accepted repo kind (a repo whose stack was not identified is listed, not dropped)', () => {
+  assert.ok(REPO_KINDS.includes('unknown'));
+  const m = {
+    schema: MANIFEST_SCHEMA, project: 'app', profile: './profile.json',
+    repositories: [{ key: 'app', path: '..', commit: SHA('a'), kind: 'unknown' }],
+  };
+  assert.doesNotThrow(() => validateManifest(m, '/p/app/.cascade/manifest.json'));
+});
+
+test('buildManifest refuses a tree with no committed repository, and says why', () => {
+  assert.throws(() => buildManifest(discovery({ repos: [] }), { projectId: 'app', root: '/p/app', manifestDir: '/p/app/.cascade' }), (e) => {
+    assert.ok(e instanceof InitError);
+    assert.match(e.message, /no git repository with a HEAD commit/);
+    return true;
+  });
+});
+
+test('buildManifest refuses an unusable project id', () => {
+  assert.throws(() => buildManifest(discovery(), { projectId: 'Bad Id', root: '/p/app', manifestDir: '/p/app/.cascade' }), InitError);
+});
+
+test('buildProfile carries the discovered hints and passes validateProfile', () => {
+  const { profile, diagnostics } = buildProfile(discovery(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.equal(profile.build.tool, 'maven');
+  assert.deepEqual(profile.packagePrefixes, ['com.example.app']);
+  assert.deepEqual(profile.frameworkPacks, ['spring-mvc', 'mybatis-xml']);
+  // A backend with no frontend package IN THIS TREE leaves the switch at its
+  // third state, not at false: discovery walked this root, and a frontend
+  // checked out beside it is not something this walk could have seen. Saying
+  // `false` here would put a word in the user's mouth that the run would obey.
+  assert.equal(profile.screenAxis.enabled, null);
+  assert.deepEqual(profile.runtimeEvidence, { har: [] });
+  assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql' });
+  assert.deepEqual(profile.sqlDialects, { main: 'mysql' });
+  assert.equal(profile.schema.default, null, 'invariant I-4: no invented schema name');
+  assert.deepEqual(diagnostics, []);
+  assert.doesNotThrow(() => validateProfile(profile));
+});
+
+test('buildProfile leaves the catalog at "none" and reports the candidates when several DDL files exist', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({ ddlPaths: ['db/a.sql', 'db/b.sql'], counts: { ...discovery().counts, ddlFiles: 2 } }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].kind, 'AMBIGUOUS_CATALOG_SOURCE');
+  assert.match(diagnostics[0].reason, /db\/a\.sql, db\/b\.sql/);
+});
+
+test('buildProfile records the OpenAPI documents discovery found, manifest-relative and sorted', () => {
+  const { profile } = buildProfile(
+    discovery({ openapiDocuments: [{ path: 'api/openapi.yaml', version: '3' }, { path: 'api/legacy.json', version: '2' }] }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.openapi.documents, ['../api/legacy.json', '../api/openapi.yaml']);
+  validateProfile(profile);
+});
+
+test('buildProfile leaves openapi.documents empty when the tree ships no document', () => {
+  const { profile } = buildProfile(discovery(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(profile.openapi.documents, []);
+});
+
+test('buildProfile omits framework packs and dialects it did not see', () => {
+  const { profile } = buildProfile(
+    discovery({ counts: { javaFiles: 1, springHandlerFiles: 0, mybatisMapperXml: 0, ddlFiles: 0 }, ddlPaths: [], ddlDialectHint: null, buildTool: null, packagePrefixes: [] }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.frameworkPacks, []);
+  assert.deepEqual(profile.sqlDialects, {});
+  assert.equal(profile.build.tool, null);
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+});
+
+// --- the connection-info half of the catalog decision (SPEC §12.1, §12.3) ---
+
+const candidate = (over = {}) => ({
+  path: 'src/main/resources/application.yml', kind: 'spring-yml',
+  url: 'jdbc:mysql://db.example.com:3306/shop', host: 'db.example.com', port: 3306,
+  database: 'shop', dialect: 'mysql', usernameRef: 'shop_app',
+  passwordPresent: true, passwordRef: '<literal in file>', ...over,
+});
+
+test('buildProfile RECORDS a single connection candidate but never turns the source on', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      ddlPaths: [], counts: { ...discovery().counts, ddlFiles: 0 },
+      connectionCandidates: [candidate()],
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  // The path is recorded; the SOURCE stays "none". Switching it on would mean
+  // the tool decided by itself to connect to a host named by the analyzed
+  // repository — which is untrusted input (SPEC §12.3, §17.5).
+  assert.deepEqual(profile.catalog, {
+    source: 'none', connectionFrom: '../src/main/resources/application.yml',
+  });
+  validateProfile(profile);
+  const hit = diagnostics.find((d) => d.kind === 'CATALOG_CONNECTION_FOUND');
+  assert.ok(hit, 'the find must be reported');
+  assert.match(hit.reason, /mysql at db\.example\.com:3306\/shop/);
+  assert.match(hit.reason, /cascade catalog fetch --yes/);
+  assert.match(hit.reason, /Nothing connects until you do/);
+  assert.equal(JSON.stringify(diagnostics).includes('<literal in file>'), false,
+    'the diagnostic states THAT a password is there, not where its text sits');
+});
+
+test('buildProfile prefers a DDL file over a connection candidate', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({ connectionCandidates: [candidate()] }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql' });
+  assert.equal(diagnostics.find((d) => d.kind === 'CATALOG_CONNECTION_FOUND'), undefined);
+});
+
+test('buildProfile records NOTHING when several files carry connection info', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      ddlPaths: [], counts: { ...discovery().counts, ddlFiles: 0 },
+      connectionCandidates: [candidate(), candidate({ path: 'b/application-prod.yml' })],
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+  const hit = diagnostics.find((d) => d.kind === 'AMBIGUOUS_CATALOG_SOURCE');
+  assert.ok(hit);
+  assert.match(hit.reason, /2 files carry datasource connection info/);
+  assert.match(hit.reason, /cascade catalog discover/);
+});
+
+test('writeInitFiles keeps existing files unless forced', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-init-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const manifestPath = path.join(dir, 'manifest.json');
+  const profilePath = path.join(dir, 'profile.json');
+
+  const first = writeInitFiles({ manifestPath, profilePath, manifest: { a: 1 }, profile: { b: 1 } });
+  assert.deepEqual(first, { written: [manifestPath, profilePath], kept: [] });
+
+  const second = writeInitFiles({ manifestPath, profilePath, manifest: { a: 2 }, profile: { b: 2 } });
+  assert.deepEqual(second, { written: [], kept: [manifestPath, profilePath] });
+  assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).a, 1, 'the existing file must not be overwritten');
+
+  const forced = writeInitFiles({ manifestPath, profilePath, manifest: { a: 3 }, profile: { b: 3 }, force: true });
+  assert.deepEqual(forced, { written: [manifestPath, profilePath], kept: [] });
+  assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).a, 3);
+});
+
+// ---------------------------------------------------------------------------
+// Integration: the real CLI over two independent projects
+// ---------------------------------------------------------------------------
+
+// A tmp dir under its REAL path: on macOS os.tmpdir() is a symlink (/var ->
+// /private/var), and the registry stores the resolved directory.
+function tmpDir(t, prefix) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function gitRepo(dir, files) {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content, 'utf8');
+  }
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.email=dev@example.com', '-c', 'user.name=dev', 'commit', '-qm', 'init');
+  return git('rev-parse', 'HEAD').toString('utf8').trim();
+}
+
+const JAVA_CONTROLLER = `package com.example.web;
+@RestController
+public class UserController { @GetMapping("/u") public String u() { return "u"; } }
+`;
+const MAPPER_XML = '<mapper namespace="com.example.web.UserMapper"><select id="u">select 1</select></mapper>\n';
+const DDL = 'CREATE TABLE `users` (`id` bigint NOT NULL) ENGINE=InnoDB;\n';
+
+function runInit(args, env) {
+  return execFileSync(process.execPath, [CLI, 'init', ...args], {
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).toString('utf8');
+}
+
+test('cascade init: two projects, two .cascade dirs, one registry with both — and the pack is gitignored', (t) => {
+  const base = tmpDir(t, 'cascade-init-cli-');
+  const home = path.join(base, 'home');
+
+  const zuluDir = path.join(base, 'zulu');
+  const alphaDir = path.join(base, 'alpha');
+  const zuluHead = gitRepo(zuluDir, {
+    'pom.xml': '<project/>',
+    'src/main/java/com/example/web/UserController.java': JAVA_CONTROLLER,
+    'src/main/resources/mapper/UserMapper.xml': MAPPER_XML,
+    'db/schema.sql': DDL,
+  });
+  const alphaHead = gitRepo(alphaDir, {
+    'build.gradle': 'plugins {}',
+    'src/main/java/com/example/svc/Svc.java': 'package com.example.svc;\npublic class Svc {}\n',
+  });
+
+  const out = runInit(['--root', zuluDir, '--json'], { CASCADE_HOME: home });
+  const report = JSON.parse(out);
+  assert.equal(report.schema, 'cascade:init-report:1');
+  assert.equal(report.project, 'zulu');
+  assert.deepEqual(report.lanes, ['sql', 'java']);
+  assert.equal(report.discovery.repos[0].commit, zuluHead);
+  assert.equal(report.discovery.counts.springHandlerFiles, 1);
+  assert.equal(report.discovery.counts.mybatisMapperXml, 1);
+  assert.equal(report.written.length, 2);
+  assert.deepEqual(report.kept, []);
+  assert.equal(report.registry, path.join(home, 'registry.json'));
+
+  runInit(['--root', alphaDir], { CASCADE_HOME: home });
+
+  // Two separate durable tiers, no cross-talk.
+  for (const [dir, head, tool] of [[zuluDir, zuluHead, 'maven'], [alphaDir, alphaHead, 'gradle']]) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'manifest.json'), 'utf8'));
+    assert.equal(manifest.repositories.length, 1);
+    assert.equal(manifest.repositories[0].commit, head);
+    assert.equal(manifest.repositories[0].path, '..');
+    const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
+    assert.equal(profile.build.tool, tool);
+    assert.doesNotThrow(() => validateProfile(profile));
+    // The pack carries the user's SQL: it MUST be ignored by git (SPEC §5.1/§17.1).
+    const code = execFileSync('git', ['-C', dir, 'check-ignore', '.cascade/pack/pack.json'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.match(code.toString('utf8'), /\.cascade\/pack\/pack\.json/);
+  }
+
+  // One registry, both projects, sorted by id.
+  const reg = JSON.parse(fs.readFileSync(path.join(home, 'registry.json'), 'utf8'));
+  assert.equal(reg.schema, 'cascade:registry:1');
+  assert.deepEqual(reg.projects.map((p) => p.id), ['alpha', 'zulu']);
+  assert.deepEqual(reg.projects.map((p) => p.dotCascadePath), [path.join(alphaDir, '.cascade'), path.join(zuluDir, '.cascade')]);
+  assert.deepEqual(reg.projects.map((p) => p.source), ['init', 'init']);
+  assert.deepEqual(reg.projects.find((p) => p.id === 'zulu').stack, ['sql', 'java']);
+  assert.deepEqual(reg.projects.find((p) => p.id === 'alpha').stack, ['java']);
+  assert.equal(reg.projects[0].lastCertifiedAt, null);
+});
+
+test('cascade init: a second run keeps hand-edited files unless --force', (t) => {
+  const base = tmpDir(t, 'cascade-init-keep-');
+  const home = path.join(base, 'home');
+  const dir = path.join(base, 'app');
+  gitRepo(dir, { 'src/A.java': 'package com.example.a;\npublic class A {}\n' });
+
+  runInit(['--root', dir], { CASCADE_HOME: home });
+  const profilePath = path.join(dir, '.cascade', 'profile.json');
+  const edited = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+  edited.packagePrefixes = ['com.example.handwritten'];
+  fs.writeFileSync(profilePath, JSON.stringify(edited, null, 2));
+
+  const second = JSON.parse(runInit(['--root', dir, '--json'], { CASCADE_HOME: home }));
+  assert.deepEqual(second.written, []);
+  assert.equal(second.kept.length, 2);
+  assert.deepEqual(JSON.parse(fs.readFileSync(profilePath, 'utf8')).packagePrefixes, ['com.example.handwritten']);
+
+  const third = JSON.parse(runInit(['--root', dir, '--json', '--force'], { CASCADE_HOME: home }));
+  assert.equal(third.written.length, 2);
+  assert.deepEqual(third.kept, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(profilePath, 'utf8')).packagePrefixes, ['com.example.a']);
+});
+
+test('cascade init: --project sets the id, and a second directory claiming it is refused without --force', (t) => {
+  const base = tmpDir(t, 'cascade-init-clash-');
+  const home = path.join(base, 'home');
+  const one = path.join(base, 'one');
+  const two = path.join(base, 'two');
+  gitRepo(one, { 'a.txt': 'a' });
+  gitRepo(two, { 'b.txt': 'b' });
+
+  runInit(['--root', one, '--project', 'shared'], { CASCADE_HOME: home });
+  assert.throws(
+    () => runInit(['--root', two, '--project', 'shared'], { CASCADE_HOME: home }),
+    (e) => {
+      assert.match(e.stderr.toString('utf8'), /ambiguous project id "shared"/);
+      return true;
+    },
+  );
+  let reg = JSON.parse(fs.readFileSync(path.join(home, 'registry.json'), 'utf8'));
+  assert.equal(reg.projects[0].dotCascadePath, path.join(one, '.cascade'));
+
+  runInit(['--root', two, '--project', 'shared', '--force'], { CASCADE_HOME: home });
+  reg = JSON.parse(fs.readFileSync(path.join(home, 'registry.json'), 'utf8'));
+  assert.equal(reg.projects.length, 1);
+  assert.equal(reg.projects[0].dotCascadePath, path.join(two, '.cascade'));
+});
+
+test('cascade init: the same directory reached through a symlink is the SAME project, not a clash', (t) => {
+  const base = tmpDir(t, 'cascade-init-link-');
+  const home = path.join(base, 'home');
+  const real = path.join(base, 'app');
+  const link = path.join(base, 'link-to-app');
+  gitRepo(real, { 'src/A.java': 'package com.example.a;\npublic class A {}\n' });
+  fs.symlinkSync(real, link, 'dir');
+
+  runInit(['--root', real, '--project', 'app'], { CASCADE_HOME: home });
+  // Same directory, different spelling: this must UPDATE the entry. Comparing
+  // the two spellings textually would report a false "ambiguous project id".
+  runInit(['--root', link, '--project', 'app'], { CASCADE_HOME: home });
+
+  const reg = JSON.parse(fs.readFileSync(path.join(home, 'registry.json'), 'utf8'));
+  assert.equal(reg.projects.length, 1, JSON.stringify(reg.projects, null, 2));
+  assert.equal(reg.projects[0].dotCascadePath, fs.realpathSync(path.join(real, '.cascade')));
+});
+
+test('cascade init: a tree with no git repository fails with an explanation and writes nothing', (t) => {
+  const base = tmpDir(t, 'cascade-init-nogit-');
+  const dir = path.join(base, 'plain');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+
+  assert.throws(
+    () => runInit(['--root', dir], { CASCADE_HOME: path.join(base, 'home') }),
+    (e) => {
+      assert.match(e.stderr.toString('utf8'), /no git repository with a HEAD commit/);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(path.join(dir, '.cascade')), false, 'nothing is written when identity cannot be established');
+});
+
+test('cascade init: unsupported technologies reach the report as diagnostics', (t) => {
+  const base = tmpDir(t, 'cascade-init-diag-');
+  const dir = path.join(base, 'poly');
+  gitRepo(dir, {
+    'src/Main.kt': 'package com.example\nfun main() {}\n',
+    'web/package.json': JSON.stringify({ dependencies: { react: '18.0.0' } }),
+    'db/a.sql': DDL,
+    'db/b.sql': DDL,
+  });
+  const report = JSON.parse(runInit(['--root', dir, '--json'], { CASCADE_HOME: path.join(base, 'home') }));
+  const kinds = report.discovery.diagnostics.map((d) => d.kind).sort();
+  // Kotlin is still uncovered. The React package is NOT: RM26 ships the lane
+  // that reads it, and what the lane does not do is stated on the `web` axis.
+  assert.deepEqual(kinds, ['AMBIGUOUS_CATALOG_SOURCE', 'UNSUPPORTED_TECHNOLOGY']);
+  const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+});
+
+test('cascade init: a frontend package declares the web pack, plus the router pack its deps name', (t) => {
+  const base = tmpDir(t, 'cascade-init-web-');
+  const dir = path.join(base, 'shop');
+  gitRepo(dir, {
+    'src/main/java/com/example/A.java': 'package com.example;\n@RestController\npublic class A {}\n',
+    'front/package.json': JSON.stringify({ dependencies: { vue: '3.0.0', 'vue-router': '4.0.0', axios: '1.0.0' } }),
+    'front/src/api/thing.js': "import client from '@/utils/http'\nexport function listThings() { return client({ url: '/things' }) }\n",
+    'admin/package.json': JSON.stringify({ dependencies: { react: '18.0.0', 'react-router-dom': '6.0.0' } }),
+    'admin/src/App.jsx': 'export default function App() { return null }\n',
+  });
+  const report = JSON.parse(runInit(['--root', dir, '--json'], { CASCADE_HOME: path.join(base, 'home') }));
+  const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
+  assert.deepEqual(profile.frameworkPacks, ['spring-mvc', 'web', 'vue-router', 'react-router']);
+  // A ROUTER PACK IS THE SCREEN AXIS SWITCH: the packs are what let the worker
+  // recognize a route object at all, so a project that uses one has screens to
+  // build and `init` writes the gate on rather than leaving it to be found.
+  // This is the one case where `init` states a value at all.
+  assert.equal(profile.screenAxis.enabled, true);
+  assert.ok(report.lanes.includes('web'), JSON.stringify(report.lanes));
+  // The manifest still calls the repo backend-java: it holds java sources, and
+  // the `kind` rule is unchanged by the web lane.
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.repositories[0].kind, 'backend-java');
+});
+
+test('cascade init: a frontend with no router dependency declares web and no router pack', (t) => {
+  const base = tmpDir(t, 'cascade-init-web-norouter-');
+  const dir = path.join(base, 'plainfront');
+  gitRepo(dir, {
+    'package.json': JSON.stringify({ dependencies: { svelte: '4.0.0' } }),
+    'src/main.js': "fetch('/health')\n",
+  });
+  const profileText = (() => {
+    runInit(['--root', dir], { CASCADE_HOME: path.join(base, 'home') });
+    return fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8');
+  })();
+  assert.deepEqual(JSON.parse(profileText).frameworkPacks, ['web']);
+  // No router pack in this tree, so `init` writes no word either way and leaves
+  // the third state: a run over this tree alone finds no router and builds no
+  // screen, and a run that is later pointed at a frontend that does have one
+  // builds them without anybody editing the profile.
+  assert.equal(JSON.parse(profileText).screenAxis.enabled, null);
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.repositories[0].kind, 'frontend-web');
+});

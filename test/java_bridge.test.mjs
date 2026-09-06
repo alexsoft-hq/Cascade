@@ -1,0 +1,1193 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { nodeId, Graph } from '../src/core/graph.mjs';
+import {
+  addJavaFacts,
+  endpointsAffectingColumn,
+  symbolId,
+  endpointId,
+  JAVAFACTS_SCHEMA,
+  JavaBridgeError,
+  pathGlobMatcher,
+  classifyRouteHolder,
+} from '../src/adapters/java_bridge.mjs';
+import { chainWalk } from '../src/core/chain.mjs';
+import { handlersOf, primaryHandlerOf } from '../src/core/walks.mjs';
+
+// ---------------------------------------------------------------------------
+// symbolId / endpointId shape
+// ---------------------------------------------------------------------------
+
+test('symbolId: wraps a member fqn as a symbol node id', () => {
+  assert.equal(symbolId('com.x.Foo#bar'), 'symbol:com.x.Foo#bar');
+  assert.equal(symbolId('com.x.Foo#bar'), nodeId('symbol', 'com.x.Foo#bar'));
+});
+
+test('endpointId: joins httpMethod and path with a space, position-independent of route params', () => {
+  assert.equal(endpointId('GET', '/foo'), 'endpoint:GET /foo');
+  assert.equal(endpointId('GET', '/foo'), nodeId('endpoint', 'GET /foo'));
+});
+
+test('JAVAFACTS_SCHEMA: names the cascade:javafacts:1 schema', () => {
+  assert.equal(JAVAFACTS_SCHEMA, 'cascade:javafacts:1');
+});
+
+// ---------------------------------------------------------------------------
+// HANDLES: endpoint -> handler
+// ---------------------------------------------------------------------------
+
+test('addJavaFacts: an endpoint record creates endpoint + handler symbol nodes and a HANDLES/EXACT edge', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'endpoint', httpMethod: 'GET', path: '/foo', handler: 'com.x.FooController#foo' },
+  ]);
+
+  const epId = endpointId('GET', '/foo');
+  const hId = symbolId('com.x.FooController#foo');
+
+  const epNode = g.nodes.get(epId);
+  assert.ok(epNode, 'expected endpoint node to exist');
+  assert.equal(epNode.path, '/foo');
+  assert.equal(epNode.httpMethod, 'GET');
+  assert.equal(epNode.handler, 'com.x.FooController#foo');
+
+  const hNode = g.nodes.get(hId);
+  assert.ok(hNode, 'expected handler symbol node to exist');
+  assert.equal(hNode.symbol, 'com.x.FooController#foo');
+  assert.equal(hNode.owner, 'com.x.FooController');
+
+  const edge = g.edges.find((e) => e.type === 'HANDLES' && e.from === epId && e.to === hId);
+  assert.ok(edge, 'expected HANDLES edge endpoint -> handler');
+  assert.equal(edge.grade, 'EXACT');
+
+  assert.equal(stats.endpoints, 1);
+  assert.equal(stats.handles, 1);
+});
+
+// ---------------------------------------------------------------------------
+// A route two controllers declare (RM13)
+// ---------------------------------------------------------------------------
+//
+// mall declares `GET /order/list` twice: OmsOrderController#list (admin) and
+// OmsPortalOrderController#list (portal). One node, two HANDLES edges. RM11
+// made every WALK start at every handler; the node's own attributes were still
+// written once per fact, so the last one ingested won — and ingest order is a
+// property of the shard cache, not of the code.
+
+const TWO_CONTROLLERS = {
+  admin: [
+    { kind: 'type', fqn: 'com.x.admin.OmsOrderController', pkg: 'com.x.admin', name: 'OmsOrderController', file: 'admin/src/main/java/com/x/admin/OmsOrderController.java', implementsSimple: [] },
+    { kind: 'method', fqn: 'com.x.admin.OmsOrderController#list', owner: 'com.x.admin.OmsOrderController', line: 41 },
+    { kind: 'endpoint', httpMethod: 'GET', path: '/order/list', handler: 'com.x.admin.OmsOrderController#list', line: 40, file: 'admin/src/main/java/com/x/admin/OmsOrderController.java' },
+  ],
+  portal: [
+    { kind: 'type', fqn: 'com.x.portal.OmsPortalOrderController', pkg: 'com.x.portal', name: 'OmsPortalOrderController', file: 'portal/src/main/java/com/x/portal/OmsPortalOrderController.java', implementsSimple: [] },
+    { kind: 'method', fqn: 'com.x.portal.OmsPortalOrderController#list', owner: 'com.x.portal.OmsPortalOrderController', line: 77 },
+    { kind: 'endpoint', httpMethod: 'GET', path: '/order/list', handler: 'com.x.portal.OmsPortalOrderController#list', line: 76, file: 'portal/src/main/java/com/x/portal/OmsPortalOrderController.java' },
+  ],
+};
+const EP_TWO = endpointId('GET', '/order/list');
+
+test('addJavaFacts: a route declared by two controllers gets IDENTICAL node attributes in either ingest order', () => {
+  const attrsFor = (facts) => {
+    const g = new Graph();
+    addJavaFacts(g, facts, { packagePrefixes: ['com.x'] });
+    return g.nodes.get(EP_TWO);
+  };
+  const adminFirst = attrsFor([...TWO_CONTROLLERS.admin, ...TWO_CONTROLLERS.portal]);
+  const portalFirst = attrsFor([...TWO_CONTROLLERS.portal, ...TWO_CONTROLLERS.admin]);
+  assert.deepEqual(adminFirst, portalFirst,
+    'the endpoint node must not depend on which controller the analyzer ingested last');
+
+  // …and the attributes name a handler that REALLY handles the route: the
+  // primary one, by the same lowest-id rule core/walks.mjs applies to the edges.
+  assert.equal(adminFirst.handler, 'com.x.admin.OmsOrderController#list');
+  assert.equal(adminFirst.file, 'admin/src/main/java/com/x/admin/OmsOrderController.java');
+  assert.equal(adminFirst.line, 40);
+  // …and the node SAYS the route is declared twice, where a reader sees it.
+  assert.deepEqual(adminFirst.handlers,
+    ['com.x.admin.OmsOrderController#list', 'com.x.portal.OmsPortalOrderController#list']);
+});
+
+test('addJavaFacts: the node attributes agree with primaryHandlerOf, in either order', () => {
+  for (const facts of [[...TWO_CONTROLLERS.admin, ...TWO_CONTROLLERS.portal],
+    [...TWO_CONTROLLERS.portal, ...TWO_CONTROLLERS.admin]]) {
+    const g = new Graph();
+    addJavaFacts(g, facts, { packagePrefixes: ['com.x'] });
+    const node = g.nodes.get(EP_TWO);
+    assert.equal(symbolId(node.handler), primaryHandlerOf(g, EP_TWO));
+    assert.deepEqual(handlersOf(g, EP_TWO).map((id) => id.slice('symbol:'.length)), node.handlers);
+    // Both declarations are still edges — nothing was merged away.
+    assert.equal(g.edges.filter((e) => e.type === 'HANDLES' && e.from === EP_TWO).length, 2);
+  }
+});
+
+test('addJavaFacts: a single-handler route carries NO handlers list (the field is the disclosure)', () => {
+  const g = new Graph();
+  addJavaFacts(g, TWO_CONTROLLERS.admin, { packagePrefixes: ['com.x'] });
+  const node = g.nodes.get(EP_TWO);
+  assert.equal('handlers' in node, false);
+  assert.equal(node.handler, 'com.x.admin.OmsOrderController#list');
+});
+
+test('addJavaFacts: two mappings on ONE method take the lowest line, whichever arrived first', () => {
+  const facts = (lines) => [
+    { kind: 'type', fqn: 'com.x.RootController', pkg: 'com.x', name: 'RootController', file: 'src/main/java/com/x/RootController.java', implementsSimple: [] },
+    { kind: 'method', fqn: 'com.x.RootController#home', owner: 'com.x.RootController', line: 20 },
+    ...lines.map((line) => ({ kind: 'endpoint', httpMethod: 'GET', path: '/', handler: 'com.x.RootController#home', line })),
+  ];
+  const lineOf = (ls) => { const g = new Graph(); addJavaFacts(g, facts(ls), { packagePrefixes: ['com.x'] }); return g.nodes.get(endpointId('GET', '/')).line; };
+  assert.equal(lineOf([18, 19]), 18);
+  assert.equal(lineOf([19, 18]), 18);
+});
+
+test('addJavaFacts: an endpoint record with no handler is skipped entirely (no node, no edge, no count)', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [{ kind: 'endpoint', httpMethod: 'GET', path: '/nohandler', handler: null }]);
+  assert.equal(g.nodes.size, 0);
+  assert.equal(stats.endpoints, 0);
+  assert.equal(stats.handles, 0);
+});
+
+// ---------------------------------------------------------------------------
+// call resolution — all four resolveType paths, each landing on MAY_CALL/SOUND_SET
+// ---------------------------------------------------------------------------
+
+test('addJavaFacts: call resolution via explicit import, same package, wildcard import, and globally-unique simple name', () => {
+  const g = new Graph();
+  const facts = [
+    // owner of every call below: com.x.FooController, package com.x
+    { kind: 'type', fqn: 'com.x.FooController', typeKind: 'class', package: 'com.x', implements: [] },
+
+    // (a) explicit import
+    { kind: 'type', fqn: 'com.y.BarService', typeKind: 'class', package: 'com.y', implements: [] },
+    { kind: 'import', owner: 'com.x.FooController', simple: 'BarService', fqn: 'com.y.BarService' },
+    { kind: 'call', from: 'com.x.FooController#foo1', method: 'bar', toTypeSimple: 'BarService' },
+
+    // (b) same package (com.x.BazService, no import needed)
+    { kind: 'type', fqn: 'com.x.BazService', typeKind: 'class', package: 'com.x', implements: [] },
+    { kind: 'call', from: 'com.x.FooController#foo2', method: 'baz', toTypeSimple: 'BazService' },
+
+    // (c) wildcard (on-demand) import
+    { kind: 'type', fqn: 'com.z.QuxService', typeKind: 'class', package: 'com.z', implements: [] },
+    { kind: 'import', owner: 'com.x.FooController', simple: '*', fqn: 'com.z' },
+    { kind: 'call', from: 'com.x.FooController#foo3', method: 'qux', toTypeSimple: 'QuxService' },
+
+    // (d) globally-unique simple name (no import, different package, not same package)
+    { kind: 'type', fqn: 'com.w.UniqueService', typeKind: 'class', package: 'com.w', implements: [] },
+    { kind: 'call', from: 'com.x.FooController#foo4', method: 'doIt', toTypeSimple: 'UniqueService' },
+  ];
+
+  const stats = addJavaFacts(g, facts);
+  assert.equal(stats.calls, 4);
+  assert.equal(stats.unresolvedCalls, 0);
+
+  const cases = [
+    ['com.x.FooController#foo1', 'com.y.BarService#bar'],
+    ['com.x.FooController#foo2', 'com.x.BazService#baz'],
+    ['com.x.FooController#foo3', 'com.z.QuxService#qux'],
+    ['com.x.FooController#foo4', 'com.w.UniqueService#doIt'],
+  ];
+
+  for (const [from, to] of cases) {
+    const fromId = symbolId(from);
+    const toId = symbolId(to);
+    const edge = g.edges.find((e) => e.type === 'MAY_CALL' && e.from === fromId && e.to === toId);
+    assert.ok(edge, `expected MAY_CALL edge ${from} -> ${to}`);
+    assert.equal(edge.grade, 'SOUND_SET');
+    // Honesty invariant: a resolved call is NEVER dressed up as EXACT.
+    assert.notEqual(edge.grade, 'EXACT');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// unresolved call
+// ---------------------------------------------------------------------------
+
+test('addJavaFacts: a call whose type cannot be resolved (ambiguous simple name) creates no edge and counts unresolvedCalls', () => {
+  const g = new Graph();
+  const facts = [
+    { kind: 'type', fqn: 'com.x.FooController', typeKind: 'class', package: 'com.x', implements: [] },
+    // Two app types share the simple name "Ambiguous" in different packages —
+    // neither imported, neither same-package as the caller — so the global
+    // fallback (step 4) must refuse to guess.
+    { kind: 'type', fqn: 'com.a.Ambiguous', typeKind: 'class', package: 'com.a', implements: [] },
+    { kind: 'type', fqn: 'com.b.Ambiguous', typeKind: 'class', package: 'com.b', implements: [] },
+    { kind: 'call', from: 'com.x.FooController#foo', method: 'go', toTypeSimple: 'Ambiguous' },
+  ];
+
+  const stats = addJavaFacts(g, facts);
+  assert.equal(stats.calls, 0);
+  assert.equal(stats.unresolvedCalls, 1);
+
+  const fromId = symbolId('com.x.FooController#foo');
+  const outEdges = g.edges.filter((e) => e.from === fromId);
+  assert.equal(outEdges.length, 0, 'expected no MAY_CALL edge for an unresolved call');
+});
+
+// ---------------------------------------------------------------------------
+// dispatch: interfaceMethod -> implMethod (only for interface targets actually called)
+// ---------------------------------------------------------------------------
+
+test('addJavaFacts: dispatch creates interfaceMethod -> implMethod MAY_CALL/SOUND_SET only for a called interface method', () => {
+  const g = new Graph();
+  const facts = [
+    { kind: 'type', fqn: 'com.x.FooController', typeKind: 'class', package: 'com.x', implements: [] },
+    { kind: 'type', fqn: 'com.x.GreeterService', typeKind: 'interface', package: 'com.x', implements: [] },
+    { kind: 'type', fqn: 'com.x.GreeterServiceImpl', typeKind: 'class', package: 'com.x', implements: ['GreeterService'] },
+    // Register the interface's "other" method as a symbol via a method record,
+    // WITHOUT ever calling it — dispatch must not fire for it.
+    { kind: 'method', fqn: 'com.x.GreeterService#other', owner: 'com.x.GreeterService' },
+    { kind: 'call', from: 'com.x.FooController#foo', method: 'greet', toTypeSimple: 'GreeterService' },
+  ];
+
+  const stats = addJavaFacts(g, facts);
+  assert.equal(stats.dispatch, 1);
+
+  const ifaceGreet = symbolId('com.x.GreeterService#greet');
+  const implGreet = symbolId('com.x.GreeterServiceImpl#greet');
+  const dispatchEdge = g.edges.find((e) => e.type === 'MAY_CALL' && e.from === ifaceGreet && e.to === implGreet);
+  assert.ok(dispatchEdge, 'expected dispatch edge interfaceMethod -> implMethod for the called method');
+  assert.equal(dispatchEdge.grade, 'SOUND_SET');
+  assert.notEqual(dispatchEdge.grade, 'EXACT');
+
+  // The interface method that was never called gets no dispatch edge, even
+  // though its symbol node exists (registered via the method record above).
+  const ifaceOther = symbolId('com.x.GreeterService#other');
+  assert.ok(g.nodes.has(ifaceOther), 'sanity: the uncalled method symbol should still exist');
+  const otherOutEdges = g.edges.filter((e) => e.from === ifaceOther);
+  assert.equal(otherOutEdges.length, 0, 'expected no dispatch edge for an interface method that was never called');
+});
+
+// ---------------------------------------------------------------------------
+// IMPLEMENTS_STMT: mapperMethod -> statement, only when the statement node pre-exists
+// ---------------------------------------------------------------------------
+
+test('addJavaFacts: a method whose member fqn matches an existing statement node gets an IMPLEMENTS_STMT/EXACT edge', () => {
+  const g = new Graph();
+  // Pre-add the statement node, as sql_bridge would have (owner#method -> owner.method).
+  const stmtId = nodeId('statement', 'com.x.FooMapper.selectFoo');
+  g.addNode({ id: stmtId, statementType: 'select' });
+
+  const stats = addJavaFacts(g, [
+    { kind: 'method', fqn: 'com.x.FooMapper#selectFoo', owner: 'com.x.FooMapper' },
+    // No statement node exists for selectBar — must NOT get an edge.
+    { kind: 'method', fqn: 'com.x.FooMapper#selectBar', owner: 'com.x.FooMapper' },
+  ]);
+
+  const mapperId = symbolId('com.x.FooMapper#selectFoo');
+  const edge = g.edges.find((e) => e.type === 'IMPLEMENTS_STMT' && e.from === mapperId && e.to === stmtId);
+  assert.ok(edge, 'expected IMPLEMENTS_STMT edge mapperMethod -> statement');
+  assert.equal(edge.grade, 'EXACT');
+  assert.equal(stats.implementsStmt, 1);
+
+  const noStmtId = symbolId('com.x.FooMapper#selectBar');
+  const missingEdge = g.edges.find((e) => e.type === 'IMPLEMENTS_STMT' && e.from === noStmtId);
+  assert.equal(missingEdge, undefined, 'expected NO IMPLEMENTS_STMT edge when the statement node is absent');
+});
+
+// ---------------------------------------------------------------------------
+// end-to-end stitch + weakest link
+// ---------------------------------------------------------------------------
+
+test('endpointsAffectingColumn: stitches endpoint -> handler -> (MAY_CALL) -> mapper -> statement -> column and reports weakest-link SOUND_SET', () => {
+  const g = new Graph();
+
+  // Pre-existing SQL-lane chain: statement --WRITES(EXACT)--> column.
+  const stmtId = nodeId('statement', 'com.x.FooMapper.selectFoo');
+  const colId = nodeId('column', 'main.T.C');
+  g.addNode({ id: stmtId, statementType: 'update' });
+  g.addEdge({ from: stmtId, to: colId, type: 'WRITES', grade: 'EXACT' });
+
+  // Java-lane facts: endpoint -> handler -> (call, same package) -> mapper method.
+  const facts = [
+    { kind: 'endpoint', httpMethod: 'GET', path: '/foo', handler: 'com.x.FooController#foo' },
+    { kind: 'type', fqn: 'com.x.FooController', typeKind: 'class', package: 'com.x', implements: [] },
+    { kind: 'type', fqn: 'com.x.FooMapper', typeKind: 'class', package: 'com.x', implements: [] },
+    { kind: 'call', from: 'com.x.FooController#foo', method: 'selectFoo', toTypeSimple: 'FooMapper' },
+    { kind: 'method', fqn: 'com.x.FooMapper#selectFoo', owner: 'com.x.FooMapper' },
+  ];
+  const stats = addJavaFacts(g, facts);
+  assert.equal(stats.handles, 1);
+  assert.equal(stats.calls, 1);
+  assert.equal(stats.implementsStmt, 1);
+
+  const result = endpointsAffectingColumn(g, colId);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].endpoint, endpointId('GET', '/foo'));
+  assert.equal(result[0].httpMethod, 'GET');
+  assert.equal(result[0].path, '/foo');
+  // Weakest link on the path is the MAY_CALL(SOUND_SET) hop — never EXACT,
+  // even though every other hop on this path is EXACT.
+  assert.equal(result[0].pathGrade, 'SOUND_SET');
+  assert.notEqual(result[0].pathGrade, 'EXACT');
+});
+
+test('endpointsAffectingColumn: a column with no reachable endpoint returns an empty array', () => {
+  const g = new Graph();
+  const colId = nodeId('column', 'main.T.Lonely');
+  g.addNode({ id: colId, name: 'Lonely' });
+  const result = endpointsAffectingColumn(g, colId);
+  assert.deepEqual(result, []);
+});
+
+test('endpointsAffectingColumn: DECLARES and JOINS are schema, not flow — only the column the SQL writes carries the endpoint', () => {
+  const g = new Graph();
+  // Same stitch as above, with the SCHEMA around it: table main.T declares two
+  // columns (the statement writes only C), and main.T is joined to main.U.
+  const stmtId = nodeId('statement', 'com.x.FooMapper.selectFoo');
+  const tableId = nodeId('table', 'main.T');
+  const colId = nodeId('column', 'main.T.C');
+  const siblingId = nodeId('column', 'main.T.Other');
+  const joinedTable = nodeId('table', 'main.U');
+  const joinedCol = nodeId('column', 'main.U.K');
+  g.addNode({ id: stmtId, statementType: 'update' });
+  g.addEdge({ from: stmtId, to: tableId, type: 'EXECUTES', grade: 'EXACT', evidence: { access: 'write' } });
+  g.addEdge({ from: stmtId, to: colId, type: 'WRITES', grade: 'EXACT' });
+  g.addEdge({ from: tableId, to: colId, type: 'DECLARES', grade: 'EXACT' });
+  g.addEdge({ from: tableId, to: siblingId, type: 'DECLARES', grade: 'EXACT' });
+  g.addEdge({ from: tableId, to: joinedTable, type: 'JOINS', grade: 'EXACT', evidence: { columns: ['C=K'], count: 1 } });
+  g.addEdge({ from: joinedTable, to: joinedCol, type: 'DECLARES', grade: 'EXACT' });
+  addJavaFacts(g, [
+    { kind: 'endpoint', httpMethod: 'GET', path: '/foo', handler: 'com.x.FooController#foo' },
+    { kind: 'type', fqn: 'com.x.FooController', typeKind: 'class', package: 'com.x', implements: [] },
+    { kind: 'type', fqn: 'com.x.FooMapper', typeKind: 'class', package: 'com.x', implements: [] },
+    { kind: 'call', from: 'com.x.FooController#foo', method: 'selectFoo', toTypeSimple: 'FooMapper' },
+    { kind: 'method', fqn: 'com.x.FooMapper#selectFoo', owner: 'com.x.FooMapper' },
+  ]);
+
+  const ep = endpointId('GET', '/foo');
+  assert.deepEqual(endpointsAffectingColumn(g, colId).map((e) => e.endpoint), [ep]);
+  assert.deepEqual(endpointsAffectingColumn(g, siblingId), [], 'the statement never writes Other');
+  assert.deepEqual(endpointsAffectingColumn(g, joinedCol), [], 'no statement here executes main.U at all');
+  // The edges really are in the graph — an unfiltered backward walk climbs them
+  // and hands both columns an endpoint that never touched them. That is the
+  // inflation the flow filter removes, not a gap in this fixture.
+  assert.ok(g.impactOf(siblingId, { mode: 'conservative' }).has(ep));
+  assert.ok(g.impactOf(joinedCol, { mode: 'conservative' }).has(ep));
+});
+
+// ---------------------------------------------------------------------------
+// input validation
+// ---------------------------------------------------------------------------
+
+test('addJavaFacts: throws JavaBridgeError when g is not a Graph', () => {
+  assert.throws(() => addJavaFacts({}, []), JavaBridgeError);
+  assert.throws(() => addJavaFacts(null, []), JavaBridgeError);
+});
+
+test('addJavaFacts: throws JavaBridgeError when javaFacts is not an array', () => {
+  const g = new Graph();
+  assert.throws(() => addJavaFacts(g, null), JavaBridgeError);
+  assert.throws(() => addJavaFacts(g, {}), JavaBridgeError);
+});
+
+test('addJavaFacts: header records and unknown record kinds are ignored without error', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'header', tool: 'java-facts', version: 1 },
+    { kind: 'mystery', foo: 'bar' },
+    null,
+    'not-an-object',
+  ]);
+  assert.equal(g.nodes.size, 0);
+  assert.deepEqual(stats, {
+    endpoints: 0, handles: 0, calls: 0, dispatch: 0, implementsStmt: 0, unresolvedCalls: 0,
+    externalCalls: 0, externalSymbols: 0,
+    mapperMethods: 0, mapperMethodsBound: 0, unboundMapperMethods: 0, transactional: 0,
+    parseErrors: 0, parsedFiles: 0,
+    callsByRule: {
+      'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
+      'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
+      'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
+    },
+    unresolvedCallsByRule: {
+      'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
+      'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
+    },
+    identifierReceivers: { total: 0, inheritedField: 0, staticReceiver: 0, unresolved: 0 },
+    unresolvedIdentifiers: [],
+    inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
+    routeContracts: 0, contractOnlyRoutes: 0,
+    httpCalls: 0, httpCallsResolved: 0, httpCallsUnresolved: 0,
+    // Nothing was declared generated, so nothing was classified — and
+    // `generatedDeclared:false` says which of the two it is.
+    generatedDeclared: false,
+    generatedTypes: 0, generatedTypesByAnnotation: 0, generatedTypesByPath: 0, generatedSymbols: 0,
+    // No type record at all, so no FQN can be declared twice.
+    duplicateFqns: { count: 0, declarations: 0, byKind: {}, types: [] },
+  });
+});
+
+// ---------------------------------------------------------------------------
+// the same FQN declared in two files (SPEC §3.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * jeecg-boot's shape, in miniature. `api.IBaseApi` is declared TWICE: a plain
+ * interface in the local module, and a @FeignClient with a mapping in the cloud
+ * module. Two Maven modules that are never on one classpath, so this is a fact
+ * about the repository, not a mistake in it.
+ */
+function twoDeclarations() {
+  const local = {
+    kind: 'type', fqn: 'api.IBaseApi', typeKind: 'interface', package: 'api',
+    annotations: [], implements: [], declaredMethods: ['byId/1'],
+    file: 'local-api/src/main/java/api/IBaseApi.java',
+  };
+  const cloud = {
+    kind: 'type', fqn: 'api.IBaseApi', typeKind: 'interface', package: 'api',
+    annotations: ['FeignClient'], implements: [], declaredMethods: ['byId/1'],
+    client: { kind: 'FeignClient', service: 'base-service', serviceLiteral: true, url: null, path: null },
+    file: 'cloud-api/src/main/java/api/IBaseApi.java',
+  };
+  const rest = [
+    { kind: 'type', fqn: 'biz.BaseApiImpl', typeKind: 'class', package: 'biz', annotations: ['Service'], implements: ['IBaseApi'], declaredMethods: ['byId/1'], file: 'biz/BaseApiImpl.java' },
+    { kind: 'import', owner: 'biz.BaseApiImpl', simple: 'IBaseApi', fqn: 'api.IBaseApi', file: 'biz/BaseApiImpl.java' },
+    { kind: 'type', fqn: 'biz.OrderController', typeKind: 'class', package: 'biz', annotations: ['RestController'], implements: [], declaredMethods: ['detail/1'], file: 'biz/OrderController.java' },
+    { kind: 'import', owner: 'biz.OrderController', simple: 'IBaseApi', fqn: 'api.IBaseApi', file: 'biz/OrderController.java' },
+    { kind: 'field', owner: 'biz.OrderController', name: 'api', typeSimple: 'IBaseApi', file: 'biz/OrderController.java' },
+    { kind: 'endpoint', httpMethod: 'GET', path: '/order/{id}', handler: 'biz.OrderController#detail', handlerType: 'biz.OrderController', line: 11, file: 'biz/OrderController.java' },
+    // the @FeignClient declaration's own mapping — a route this pack CALLS
+    { kind: 'endpoint', httpMethod: 'GET', path: '/base/{id}', handler: 'api.IBaseApi#byId', handlerType: 'api.IBaseApi', line: 7, file: 'cloud-api/src/main/java/api/IBaseApi.java' },
+    { kind: 'call', from: 'biz.OrderController#detail', receiver: 'api', method: 'byId', toTypeSimple: 'IBaseApi', via: 'field', file: 'biz/OrderController.java' },
+    { kind: 'method', fqn: 'biz.BaseApiImpl#byId', owner: 'biz.BaseApiImpl', name: 'byId', paramCount: 1, line: 4, file: 'biz/BaseApiImpl.java' },
+  ];
+  return { local, cloud, rest };
+}
+
+const edgeKeys = (g) => g.edges
+  .map((e) => `${e.type} ${e.from} -> ${e.to} ${e.grade} ${JSON.stringify(e.evidence ?? null)}`)
+  .sort();
+
+test('a duplicated FQN is COUNTED, by kind, and every declaration is included', () => {
+  const { local, cloud, rest } = twoDeclarations();
+  const g = new Graph();
+  const stats = addJavaFacts(g, [local, cloud, ...rest]);
+  assert.deepEqual(stats.duplicateFqns, {
+    count: 1,
+    declarations: 2,
+    // The union of both declarations' annotations decides the kind: one of the
+    // two IS a @FeignClient, and that is the more specific thing to say.
+    byKind: { 'http-client': 1 },
+    types: [{
+      fqn: 'api.IBaseApi',
+      kind: 'http-client',
+      files: ['cloud-api/src/main/java/api/IBaseApi.java', 'local-api/src/main/java/api/IBaseApi.java'],
+    }],
+  });
+  // ONE node per member — the census is a disclosure, not a doubling: two
+  // declarations of `api.IBaseApi#byId` are one symbol, reached from both modules.
+  assert.deepEqual([...g.nodes.keys()].filter((id) => id.includes('api.IBaseApi')),
+    ['symbol:api.IBaseApi#byId']);
+});
+
+test('ingest order does not decide any edge when one FQN is declared twice', () => {
+  const { local, cloud, rest } = twoDeclarations();
+  const a = new Graph();
+  const b = new Graph();
+  // `types` keeps whichever declaration the stream ends with, so feed them both
+  // ways round. If any decision leaned on that choice, the edge sets would part.
+  addJavaFacts(a, [local, cloud, ...rest]);
+  addJavaFacts(b, [cloud, local, ...rest]);
+  assert.deepEqual(edgeKeys(a), edgeKeys(b), 'the same records in the other order must build the same edges');
+  assert.deepEqual([...a.nodes.keys()].sort(), [...b.nodes.keys()].sort());
+
+  // …and the one decision that DOES depend on which file a fact came from is
+  // still right in both: the @FeignClient's mapping is a call this pack makes,
+  // never a route it serves, because the endpoint is classified by its FILE
+  // (`typeAt(fqn, file)`), not by whichever type record survived.
+  for (const g of [a, b]) {
+    const route = nodeId('endpoint', 'GET /base/{id}');
+    assert.deepEqual(g.outEdges(route).filter((e) => e.type === 'HANDLES'), [],
+      'the client mapping serves nothing');
+    assert.equal(g.inEdges(route).filter((e) => e.type === 'CALLS_HTTP').length, 1);
+  }
+});
+
+test('addJavaFacts: symbol and endpoint nodes carry the source line from method/endpoint facts', () => {
+  const g = new Graph();
+  addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.C', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [] },
+    { kind: 'endpoint', httpMethod: 'GET', path: '/p', handler: 'com.x.C#list', handlerType: 'com.x.C', line: 42 },
+    { kind: 'method', fqn: 'com.x.C#list', owner: 'com.x.C', name: 'list', paramCount: 0, line: 42 },
+  ]);
+  assert.equal(g.nodes.get(nodeId('endpoint', 'GET /p')).line, 42);
+  assert.equal(g.nodes.get(nodeId('symbol', 'com.x.C#list')).line, 42);
+});
+
+// ---------------------------------------------------------------------------
+// which RULE made an edge (RM9b)
+// ---------------------------------------------------------------------------
+
+test('every MAY_CALL edge names the rule that produced it', () => {
+  const g = new Graph();
+  const facts = [
+    { kind: 'type', fqn: 'com.example.Ctl', typeKind: 'class', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'type', fqn: 'com.example.Svc', typeKind: 'interface', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'type', fqn: 'com.example.SvcImpl', typeKind: 'class', package: 'com.example', annotations: [], implements: ['Svc'] },
+    { kind: 'field', owner: 'com.example.Ctl', name: 'svc', typeSimple: 'Svc', file: 'Ctl.java' },
+    { kind: 'call', from: 'com.example.Ctl#a', receiver: 'svc', method: 'run', toTypeSimple: 'Svc', via: 'field', file: 'Ctl.java' },
+    { kind: 'call', from: 'com.example.Ctl#b', receiver: 'svc', method: 'run', toTypeSimple: 'Svc', via: 'this-field', file: 'Ctl.java' },
+    { kind: 'call', from: 'com.example.Ctl#c', receiver: 'this', method: 'helper', toTypeSimple: 'Ctl', via: 'unqualified', file: 'Ctl.java' },
+  ];
+  const stats = addJavaFacts(g, facts);
+  const rules = g.edges.filter((e) => e.type === 'MAY_CALL').map((e) => e.evidence.rule).sort();
+  assert.deepEqual(rules, ['field-receiver', 'interface-dispatch', 'this-field', 'unqualified-enclosing']);
+  for (const e of g.edges.filter((x) => x.type === 'MAY_CALL')) {
+    assert.equal(typeof e.evidence.basis, 'string', `${e.evidence.rule} must carry a basis`);
+    assert.ok(e.evidence.basis.length > 20);
+  }
+  assert.deepEqual(stats.callsByRule, {
+    'field-receiver': 1, 'this-field': 1, 'unqualified-enclosing': 1, 'interface-dispatch': 1,
+    'super-enclosing': 0, 'type-param-binding': 0,
+    'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
+  });
+  // The `this.field` spelling resolves through the SAME field, so it must reach
+  // the same target as the bare one — only the recorded rule differs.
+  const targets = new Set(g.edges.filter((e) => ['field-receiver', 'this-field'].includes(e.evidence?.rule)).map((e) => e.to));
+  assert.deepEqual([...targets], ['symbol:com.example.Svc#run']);
+});
+
+test('a call record with no `via` is read as a field receiver, not dropped', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.example.Ctl', typeKind: 'class', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'type', fqn: 'com.example.Svc', typeKind: 'class', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'field', owner: 'com.example.Ctl', name: 'svc', typeSimple: 'Svc', file: 'Ctl.java' },
+    { kind: 'call', from: 'com.example.Ctl#a', receiver: 'svc', method: 'run', toTypeSimple: 'Svc', file: 'Ctl.java' },
+  ]);
+  assert.equal(stats.callsByRule['field-receiver'], 1);
+  assert.equal(g.edges.find((e) => e.type === 'MAY_CALL').evidence.rule, 'field-receiver');
+});
+
+test('an UNRESOLVED call is counted under the rule that failed', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.example.Ctl', typeKind: 'class', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'field', owner: 'com.example.Ctl', name: 'log', typeSimple: 'Logger', file: 'Ctl.java' },
+    { kind: 'call', from: 'com.example.Ctl#a', receiver: 'log', method: 'info', toTypeSimple: 'Logger', via: 'field', file: 'Ctl.java' },
+    { kind: 'call', from: 'com.example.Nope$1#a', receiver: 'this', method: 'x', toTypeSimple: 'Nope$1', via: 'unqualified', file: 'Ctl.java' },
+  ]);
+  assert.equal(stats.unresolvedCalls, 2);
+  assert.deepEqual(stats.unresolvedCallsByRule, {
+    'field-receiver': 1, 'this-field': 0, 'unqualified-enclosing': 1,
+    'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
+  });
+});
+
+test('an unqualified call in a NESTED class resolves to that class, not by simple name', () => {
+  // mall has 76 generated `…Example.GeneratedCriteria` classes. Resolving such a
+  // call by its simple name is ambiguous 76 ways and (correctly) refuses — but
+  // the target was never in doubt: it is the type the CALLER is in.
+  const g = new Graph();
+  const facts = [
+    { kind: 'type', fqn: 'com.example.AExample.GeneratedCriteria', typeKind: 'class', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'type', fqn: 'com.example.BExample.GeneratedCriteria', typeKind: 'class', package: 'com.example', annotations: [], implements: [] },
+    { kind: 'call', from: 'com.example.AExample.GeneratedCriteria#andIdEqualTo', receiver: 'this', method: 'addCriterion', toTypeSimple: 'GeneratedCriteria', via: 'unqualified', file: 'AExample.java' },
+  ];
+  const stats = addJavaFacts(g, facts);
+  assert.equal(stats.unresolvedCalls, 0, 'the enclosing type needs no name resolution');
+  assert.deepEqual(
+    g.edges.filter((e) => e.type === 'MAY_CALL').map((e) => [e.from, e.to]),
+    [['symbol:com.example.AExample.GeneratedCriteria#andIdEqualTo', 'symbol:com.example.AExample.GeneratedCriteria#addCriterion']],
+    'it must bind to the CALLER\'s own class, never to the other one',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Generated sources (RM11, SPEC §8.4). The engine never decides on its own that
+// somebody's code is machine-written: the profile declares an ANNOTATION or a
+// PATH, and both are evidence the worker already records.
+// ---------------------------------------------------------------------------
+
+function generatedFacts() {
+  const type = (fqn, file, anns = []) => ({
+    kind: 'type', fqn, typeKind: 'class', package: fqn.slice(0, fqn.lastIndexOf('.')),
+    file, annotations: anns, implements: [],
+  });
+  const method = (fqn) => ({ kind: 'method', fqn, owner: fqn.slice(0, fqn.lastIndexOf('#')), name: fqn.slice(fqn.lastIndexOf('#') + 1), paramCount: 1, line: 1 });
+  return [
+    // hand-written
+    type('com.demo.Svc', 'src/main/java/com/demo/Svc.java'),
+    method('com.demo.Svc#run'),
+    // machine-written by ANNOTATION (no telltale path)
+    type('com.demo.ByAnn', 'src/main/java/com/demo/ByAnn.java', ['Generated']),
+    method('com.demo.ByAnn#a'), method('com.demo.ByAnn#b'),
+    // machine-written by PATH (no annotation at all — mall's generator leaves none)
+    type('com.demo.gen.ByPath', 'mbg/src/main/java/com/demo/gen/ByPath.java'),
+    method('com.demo.gen.ByPath#c'),
+    // a real chain into the generated code, and the generated interior
+    { kind: 'call', from: 'com.demo.Svc#run', receiver: 'g', method: 'a', toTypeSimple: 'ByAnn' },
+    { kind: 'field', owner: 'com.demo.Svc', name: 'g', typeSimple: 'ByAnn', file: 'src/main/java/com/demo/Svc.java' },
+    { kind: 'call', from: 'com.demo.ByAnn#a', receiver: 'this', method: 'b', toTypeSimple: 'ByAnn' },
+    { kind: 'field', owner: 'com.demo.ByAnn', name: 'this', typeSimple: 'ByAnn', file: 'src/main/java/com/demo/ByAnn.java' },
+  ];
+}
+
+test('addJavaFacts: a profile that declares NOTHING classifies nothing — silence is not a guess', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, generatedFacts());
+  assert.equal(stats.generatedDeclared, false);
+  assert.equal(stats.generatedTypes, 0);
+  assert.equal(stats.generatedSymbols, 0);
+  for (const n of g.nodes.values()) assert.equal(n.generated, undefined, `${n.id} was flagged with no declaration`);
+});
+
+test('addJavaFacts: generatedSources marks by ANNOTATION and by PATH, and says which found what', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, generatedFacts(), {
+    generatedSources: { annotations: ['Generated'], pathGlobs: ['mbg/**'] },
+  });
+  assert.equal(stats.generatedDeclared, true);
+  assert.equal(stats.generatedTypes, 2);
+  assert.equal(stats.generatedTypesByAnnotation, 1);
+  assert.equal(stats.generatedTypesByPath, 1);
+  assert.equal(stats.generatedSymbols, 3, 'every member of a generated type is generated');
+  assert.equal(g.nodes.get(nodeId('symbol', 'com.demo.ByAnn#a')).generated, true);
+  assert.equal(g.nodes.get(nodeId('symbol', 'com.demo.gen.ByPath#c')).generated, true);
+  // The hand-written service is untouched, and the flag is never written false.
+  assert.equal(g.nodes.get(nodeId('symbol', 'com.demo.Svc#run')).generated, undefined);
+});
+
+test('addJavaFacts: the rule reads the OWNER, never a class NAME — a *Example outside the declared path is not generated', () => {
+  const g = new Graph();
+  const facts = [
+    { kind: 'type', fqn: 'com.demo.PmsBrandExample', typeKind: 'class', package: 'com.demo', file: 'src/main/java/com/demo/PmsBrandExample.java', annotations: [], implements: [] },
+    { kind: 'method', fqn: 'com.demo.PmsBrandExample#andIdEqualTo', owner: 'com.demo.PmsBrandExample', name: 'andIdEqualTo', paramCount: 1, line: 1 },
+  ];
+  const stats = addJavaFacts(g, facts, { generatedSources: { annotations: ['Generated'], pathGlobs: ['mbg/**'] } });
+  assert.equal(stats.generatedTypes, 0, 'the name Example proves nothing — only the declaration does');
+  assert.equal(g.nodes.get(nodeId('symbol', 'com.demo.PmsBrandExample#andIdEqualTo')).generated, undefined);
+});
+
+test('pathGlobMatcher: * stays inside a segment, ** crosses them, and nothing else is a wildcard', () => {
+  const m = pathGlobMatcher(['mall-mbg/**', '**/model/generated/*.java', 'src/a+b/*.java']);
+  assert.equal(m('mall-mbg/src/x/Y.java'), true);
+  assert.equal(m('mall-admin/src/Y.java'), false);
+  assert.equal(m('src/main/java/com/x/model/generated/A.java'), true);
+  assert.equal(m('src/main/java/com/x/model/generated/deep/A.java'), false, '* must not cross a separator');
+  assert.equal(m('src/a+b/A.java'), true, '+ is a literal, not a quantifier');
+  assert.equal(m(null), false);
+  assert.equal(pathGlobMatcher([])('anything'), false);
+});
+
+test('the generated walk rule: a real caller still reaches generated code; the interior below it is not walked', () => {
+  const g = new Graph();
+  addJavaFacts(g, generatedFacts(), { generatedSources: { annotations: ['Generated'], pathGlobs: ['mbg/**'] } });
+  const w = chainWalk(g, { start: nodeId('symbol', 'com.demo.Svc#run'), direction: 'down', mode: 'conservative', maxDepth: 6 });
+  const reached = w.services.map((r) => r.id).sort();
+  assert.deepEqual(reached, ['com.demo.ByAnn#a'], 'the generated method a real caller reaches IS on the picture');
+  assert.equal(w.cut.generated, 1, 'and the one interior step it did not take is counted, not hidden');
+  // Turning the rule off walks the interior too — same graph, declared choice.
+  const all = chainWalk(g, { start: nodeId('symbol', 'com.demo.Svc#run'), direction: 'down', mode: 'conservative', maxDepth: 6, walkGenerated: true });
+  assert.deepEqual(all.services.map((r) => r.id).sort(), ['com.demo.ByAnn#a', 'com.demo.ByAnn#b']);
+  assert.equal(all.cut.generated, 0);
+});
+
+// ---------------------------------------------------------------------------
+// RM14 — what a mapping annotation MEANS, and the two calls the lane used to drop
+// ---------------------------------------------------------------------------
+
+test('classifyRouteHolder: the table is TOTAL — controller, client, contract, and the residue', () => {
+  assert.equal(classifyRouteHolder({ typeKind: 'class', annotations: ['RestController'] }), 'handler');
+  assert.equal(classifyRouteHolder({ typeKind: 'class', annotations: ['Controller'] }), 'handler');
+  assert.equal(classifyRouteHolder({ typeKind: 'interface', annotations: ['FeignClient'], client: { kind: 'FeignClient' } }), 'client');
+  // A @Controller that ALSO carries a client annotation is a client: the client
+  // annotation is the specific claim, and Spring would not map its methods twice.
+  assert.equal(classifyRouteHolder({ typeKind: 'class', annotations: ['Controller', 'HttpExchange'], client: { kind: 'HttpExchange' } }), 'client');
+  assert.equal(classifyRouteHolder({ typeKind: 'interface', annotations: [] }), 'contract');
+  assert.equal(classifyRouteHolder({ typeKind: 'class', abstract: true, annotations: [] }), 'contract');
+  // An abstract class that IS annotated a controller keeps its routes.
+  assert.equal(classifyRouteHolder({ typeKind: 'class', abstract: true, annotations: ['RestController'] }), 'handler');
+  // The residue: a concrete class with a mapping and no controller annotation
+  // (a meta-annotated controller this engine does not know) keeps its routes.
+  assert.equal(classifyRouteHolder({ typeKind: 'class', annotations: ['MyApiController'] }), 'handler');
+  assert.equal(classifyRouteHolder(undefined), 'handler');
+});
+
+test('a route contract: HANDLES goes to the implementer, and the grade says it was RESOLVED', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.OrderApi', typeKind: 'interface', package: 'com.x', annotations: [], implements: [], declaredMethods: ['list/1'], file: 'x/OrderApi.java' },
+    { kind: 'type', fqn: 'com.x.OrderController', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: ['OrderApi'], declaredMethods: ['list/1'], file: 'x/OrderController.java' },
+    { kind: 'endpoint', httpMethod: 'GET', path: '/order/list', handler: 'com.x.OrderApi#list', handlerType: 'com.x.OrderApi', line: 8, file: 'x/OrderApi.java' },
+    { kind: 'method', fqn: 'com.x.OrderApi#list', owner: 'com.x.OrderApi', name: 'list', paramCount: 1, line: 8, file: 'x/OrderApi.java' },
+  ]);
+  const route = nodeId('endpoint', 'GET /order/list');
+  const handles = g.outEdges(route).filter((e) => e.type === 'HANDLES');
+  assert.equal(handles.length, 1, 'ONE handler — the controller, not the contract as well');
+  assert.equal(handles[0].to, nodeId('symbol', 'com.x.OrderController#list'));
+  assert.equal(handles[0].grade, 'SOUND_SET', 'matched by name+arity through `implements`, not defined');
+  const ev = g.edgeAt(handles[0].idx).evidence;
+  assert.equal(ev.rule, 'route-contract-impl');
+  assert.equal(ev.contract, 'com.x.OrderApi#list');
+  assert.equal(ev.match, 'name+arity');
+  assert.equal(g.nodes.get(route).contractOnly, undefined);
+  assert.deepEqual([stats.routeContracts, stats.contractOnlyRoutes], [1, 0]);
+});
+
+test('a route contract nobody implements HERE is emitted and SAYS SO', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.OrderApi', typeKind: 'interface', package: 'com.x', annotations: [], implements: [], declaredMethods: ['list/1'], file: 'x/OrderApi.java' },
+    { kind: 'endpoint', httpMethod: 'GET', path: '/order/list', handler: 'com.x.OrderApi#list', handlerType: 'com.x.OrderApi', line: 8, file: 'x/OrderApi.java' },
+    { kind: 'method', fqn: 'com.x.OrderApi#list', owner: 'com.x.OrderApi', name: 'list', paramCount: 1, line: 8, file: 'x/OrderApi.java' },
+  ]);
+  const route = nodeId('endpoint', 'GET /order/list');
+  assert.equal(g.nodes.get(route).contractOnly, true);
+  const handles = g.outEdges(route).filter((e) => e.type === 'HANDLES');
+  assert.equal(handles[0].to, nodeId('symbol', 'com.x.OrderApi#list'));
+  assert.equal(g.edgeAt(handles[0].idx).evidence.contractOnly, true);
+  assert.deepEqual([stats.routeContracts, stats.contractOnlyRoutes], [1, 1]);
+  // …and it is NOT outbound: nobody calls it over HTTP, it is declared here.
+  assert.equal(g.nodes.get(route).outbound, undefined);
+});
+
+test('`super.m()` climbs the extends chain to the type that DECLARES m', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.Base', typeKind: 'class', package: 'com.x', annotations: [], implements: [], declaredMethods: ['exportXls/2'], file: 'x/Base.java' },
+    // Middle declares NOTHING: a walk that stopped at the immediate superclass
+    // would point at `Middle#exportXls`, a method that does not exist.
+    { kind: 'type', fqn: 'com.x.Middle', typeKind: 'class', package: 'com.x', annotations: [], implements: [], extends: 'Base', declaredMethods: [], file: 'x/Middle.java' },
+    { kind: 'type', fqn: 'com.x.Sub', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [], extends: 'Middle', declaredMethods: ['exportXls/2'], file: 'x/Sub.java' },
+    { kind: 'call', from: 'com.x.Sub#exportXls', receiver: 'super', method: 'exportXls', toTypeSimple: 'Middle', via: 'super-method', file: 'x/Sub.java' },
+  ]);
+  const e = g.edges.find((x) => x.type === 'MAY_CALL');
+  assert.equal(e.to, nodeId('symbol', 'com.x.Base#exportXls'));
+  assert.equal(e.evidence.rule, 'super-enclosing');
+  assert.equal(e.evidence.declaredBy, 'com.x.Base');
+  assert.equal(e.evidence.hops, 1, 'one type was skipped on the way up');
+  assert.equal(stats.callsByRule['super-enclosing'], 1);
+});
+
+test('`super.m()` into a superclass the lane never parsed is UNRESOLVED under its own rule', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.Sub', typeKind: 'class', package: 'com.x', annotations: [], implements: [], extends: 'HttpServlet', declaredMethods: ['doGet/2'], file: 'x/Sub.java' },
+    { kind: 'call', from: 'com.x.Sub#doGet', receiver: 'super', method: 'doGet', toTypeSimple: 'HttpServlet', via: 'super-method', file: 'x/Sub.java' },
+  ]);
+  assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0);
+  assert.equal(stats.unresolvedCallsByRule['super-enclosing'], 1);
+  assert.equal(stats.unresolvedCalls, 1);
+});
+
+test('`this.m()` is the same call as the unqualified one — one rule, one target', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.C', typeKind: 'class', package: 'com.x', annotations: [], implements: [], declaredMethods: ['a/0', 'helper/1'], file: 'x/C.java' },
+    { kind: 'call', from: 'com.x.C#a', receiver: 'this', method: 'helper', toTypeSimple: 'C', via: 'this-method', file: 'x/C.java' },
+  ]);
+  const e = g.edges.find((x) => x.type === 'MAY_CALL');
+  assert.equal(e.to, nodeId('symbol', 'com.x.C#helper'));
+  assert.equal(e.evidence.rule, 'unqualified-enclosing');
+  assert.equal(stats.callsByRule['unqualified-enclosing'], 1);
+});
+
+test('a receiver typed by a TYPE PARAMETER resolves once per binding a subclass makes', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type',
+      fqn: 'com.x.BaseController',
+      typeKind: 'class',
+      package: 'com.x',
+      annotations: [],
+      implements: [],
+      typeParams: ['T', 'S'],
+      typeParamBounds: [null, 'IService'],
+      declaredMethods: ['exportXls/1'],
+      file: 'x/BaseController.java' },
+    { kind: 'type', fqn: 'com.x.IOrderService', typeKind: 'interface', package: 'com.x', annotations: [], implements: [], declaredMethods: ['list/1'], file: 'x/IOrderService.java' },
+    { kind: 'type', fqn: 'com.x.IUserService', typeKind: 'interface', package: 'com.x', annotations: [], implements: [], declaredMethods: ['list/1'], file: 'x/IUserService.java' },
+    { kind: 'type', fqn: 'com.x.OrderController', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [], extends: 'BaseController', extendsArgs: ['Order', 'IOrderService'], declaredMethods: [], file: 'x/OrderController.java' },
+    { kind: 'type', fqn: 'com.x.UserController', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [], extends: 'BaseController', extendsArgs: ['User', 'IUserService'], declaredMethods: [], file: 'x/UserController.java' },
+    { kind: 'field', owner: 'com.x.BaseController', name: 'service', typeSimple: 'S', file: 'x/BaseController.java' },
+    { kind: 'call', from: 'com.x.BaseController#exportXls', receiver: 'service', method: 'list', toTypeSimple: 'S', via: 'field', file: 'x/BaseController.java' },
+  ]);
+  const targets = g.edges.filter((e) => e.evidence?.rule === 'type-param-binding').map((e) => e.to).sort();
+  assert.deepEqual(targets, [nodeId('symbol', 'com.x.IOrderService#list'), nodeId('symbol', 'com.x.IUserService#list')],
+    'the base method body is SHARED, so both bindings are genuine possible callees');
+  const one = g.edges.find((e) => e.to === nodeId('symbol', 'com.x.IOrderService#list'));
+  assert.equal(one.evidence.receiver, 'S');
+  assert.equal(one.evidence.binding, 'IOrderService');
+  assert.equal(one.evidence.boundAt, 'com.x.OrderController', 'the evidence names WHERE the binding was made');
+  assert.equal(stats.callsByRule['type-param-binding'], 2);
+  assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 0);
+});
+
+test('a type parameter NO subclass binds is unresolved under `type-param-unbound`, not under the field rule', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    { kind: 'type', fqn: 'com.x.BaseController', typeKind: 'class', package: 'com.x', annotations: [], implements: [], typeParams: ['S'], typeParamBounds: [null], declaredMethods: ['exportXls/1'], file: 'x/BaseController.java' },
+    { kind: 'field', owner: 'com.x.BaseController', name: 'service', typeSimple: 'S', file: 'x/BaseController.java' },
+    { kind: 'call', from: 'com.x.BaseController#exportXls', receiver: 'service', method: 'list', toTypeSimple: 'S', via: 'field', file: 'x/BaseController.java' },
+  ]);
+  assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0);
+  assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 1);
+  assert.equal(stats.unresolvedCallsByRule['field-receiver'], 0, 'the failure is named for what actually failed');
+});
+
+// ---------------------------------------------------------------------------
+// A RECEIVER THAT IS A FIELD INHERITED FROM A SUPERCLASS (RM20 §1).
+//
+// The shape is a template, not a project: an abstract generic base holds the
+// collaborator, and every subclass binds it to its own. The worker cannot see
+// past the file it is parsing, so it emits the receiver NAME with no type
+// (`via:'identifier'`) and this bridge — which holds every type record — walks
+// the `extends` chain.
+// ---------------------------------------------------------------------------
+
+/** `class Base<E, M> { protected M mapper; }` + two subclasses binding M. */
+function inheritedFieldFacts() {
+  return [
+    {
+      kind: 'type', fqn: 'com.example.Base', typeKind: 'class', package: 'com.example',
+      abstract: true, annotations: [], implements: [], implementsArgs: [],
+      extends: null, extendsArgs: [], typeParams: ['E', 'M'], typeParamBounds: [null, null],
+      declaredMethods: ['insert/1'], file: 'com/example/Base.java',
+    },
+    { kind: 'field', owner: 'com.example.Base', name: 'mapper', typeSimple: 'M', file: 'com/example/Base.java' },
+    {
+      kind: 'type', fqn: 'com.example.AaaDaoImpl', typeKind: 'class', package: 'com.example',
+      annotations: [], implements: [], implementsArgs: [],
+      extends: 'Base', extendsArgs: ['Aaa', 'AaaMapper'], typeParams: [], typeParamBounds: [],
+      declaredMethods: ['findAaa/1'], file: 'com/example/AaaDaoImpl.java',
+    },
+    {
+      kind: 'type', fqn: 'com.example.BbbDaoImpl', typeKind: 'class', package: 'com.example',
+      annotations: [], implements: [], implementsArgs: [],
+      extends: 'Base', extendsArgs: ['Bbb', 'BbbMapper'], typeParams: [], typeParamBounds: [],
+      declaredMethods: ['findBbb/1'], file: 'com/example/BbbDaoImpl.java',
+    },
+    { kind: 'type', fqn: 'com.example.AaaMapper', typeKind: 'interface', package: 'com.example', annotations: ['Mapper'], implements: [], implementsArgs: [], declaredMethods: ['findAaa/1'], file: 'com/example/AaaMapper.java' },
+    { kind: 'type', fqn: 'com.example.BbbMapper', typeKind: 'interface', package: 'com.example', annotations: ['Mapper'], implements: [], implementsArgs: [], declaredMethods: ['findBbb/1'], file: 'com/example/BbbMapper.java' },
+    { kind: 'call', from: 'com.example.AaaDaoImpl#findAaa', receiver: 'mapper', method: 'findAaa', toTypeSimple: null, via: 'identifier', file: 'com/example/AaaDaoImpl.java' },
+    { kind: 'call', from: 'com.example.BbbDaoImpl#findBbb', receiver: 'mapper', method: 'findBbb', toTypeSimple: null, via: 'identifier', file: 'com/example/BbbDaoImpl.java' },
+  ];
+}
+
+test('a receiver inherited from a generic superclass is bound IN THE SUBCLASS — each reaches only its own', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, inheritedFieldFacts());
+  const edges = g.edges
+    .filter((e) => e.evidence?.rule === 'inherited-field')
+    .map((e) => [e.from, e.to])
+    .sort();
+  assert.deepEqual(edges, [
+    ['symbol:com.example.AaaDaoImpl#findAaa', 'symbol:com.example.AaaMapper#findAaa'],
+    ['symbol:com.example.BbbDaoImpl#findBbb', 'symbol:com.example.BbbMapper#findBbb'],
+  ], 'the base is shared but each subclass binds M to one mapper — never to both');
+  assert.equal(stats.callsByRule['inherited-field'], 2);
+  assert.equal(stats.identifierReceivers.inheritedField, 2);
+  assert.equal(stats.unresolvedCallsByRule['inherited-field'], 0);
+  const ev = g.edges.find((e) => e.evidence?.rule === 'inherited-field').evidence;
+  assert.equal(ev.declaredBy, 'com.example.Base');
+  assert.equal(ev.boundThrough, 'com.example.AaaDaoImpl');
+  assert.equal(ev.hops, 1);
+  assert.ok(ev.basis.length > 20);
+});
+
+test('two levels of inheritance: the binding is carried through the middle class', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    {
+      kind: 'type', fqn: 'com.example.Top', typeKind: 'class', package: 'com.example', abstract: true,
+      annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+      typeParams: ['M'], typeParamBounds: [null], declaredMethods: [], file: 'com/example/Top.java',
+    },
+    { kind: 'field', owner: 'com.example.Top', name: 'mapper', typeSimple: 'M', file: 'com/example/Top.java' },
+    {
+      kind: 'type', fqn: 'com.example.Mid', typeKind: 'class', package: 'com.example', abstract: true,
+      annotations: [], implements: [], implementsArgs: [], extends: 'Top', extendsArgs: ['X'],
+      typeParams: ['X'], typeParamBounds: [null], declaredMethods: [], file: 'com/example/Mid.java',
+    },
+    {
+      kind: 'type', fqn: 'com.example.Leaf', typeKind: 'class', package: 'com.example',
+      annotations: [], implements: [], implementsArgs: [], extends: 'Mid', extendsArgs: ['LeafMapper'],
+      typeParams: [], typeParamBounds: [], declaredMethods: ['run/0'], file: 'com/example/Leaf.java',
+    },
+    { kind: 'type', fqn: 'com.example.LeafMapper', typeKind: 'interface', package: 'com.example', annotations: ['Mapper'], implements: [], implementsArgs: [], declaredMethods: ['pick/0'], file: 'com/example/LeafMapper.java' },
+    { kind: 'call', from: 'com.example.Leaf#run', receiver: 'mapper', method: 'pick', toTypeSimple: null, via: 'identifier', file: 'com/example/Leaf.java' },
+  ]);
+  const e = g.edges.find((x) => x.evidence?.rule === 'inherited-field');
+  assert.equal(e.to, 'symbol:com.example.LeafMapper#pick');
+  assert.equal(e.evidence.declaredBy, 'com.example.Top');
+  assert.equal(e.evidence.hops, 2, 'the field is two hops up, and the type argument came down two hops');
+  assert.equal(stats.callsByRule['inherited-field'], 1);
+});
+
+test('a subclass that SHADOWS an inherited field keeps its own — the worker never emits an identifier for it', () => {
+  // The rule cannot mis-fire on a shadowing declaration because the worker only
+  // emits `via:'identifier'` for a name the FILE never declares. The bridge's
+  // half of the promise: a call the worker DID type resolves through that type,
+  // and no inherited-field edge is created for it.
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...inheritedFieldFacts().filter((r) => r.kind !== 'call'),
+    { kind: 'type', fqn: 'com.example.CccMapper', typeKind: 'interface', package: 'com.example', annotations: ['Mapper'], implements: [], implementsArgs: [], declaredMethods: ['findAaa/1'], file: 'com/example/CccDaoImpl.java' },
+    { kind: 'field', owner: 'com.example.AaaDaoImpl', name: 'mapper', typeSimple: 'CccMapper', file: 'com/example/AaaDaoImpl.java' },
+    { kind: 'call', from: 'com.example.AaaDaoImpl#findAaa', receiver: 'mapper', method: 'findAaa', toTypeSimple: 'CccMapper', via: 'field', file: 'com/example/AaaDaoImpl.java' },
+  ]);
+  assert.deepEqual(
+    g.edges.filter((e) => e.type === 'MAY_CALL').map((e) => [e.evidence.rule, e.to]),
+    [['field-receiver', 'symbol:com.example.CccMapper#findAaa']],
+  );
+  assert.equal(stats.callsByRule['inherited-field'], 0);
+});
+
+test('an identifier that is neither a field nor a type is UNRESOLVED under `inherited-field`, with the chain searched', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...inheritedFieldFacts().filter((r) => r.kind !== 'call'),
+    // `log` is what a code generator adds after this worker has parsed the file.
+    { kind: 'call', from: 'com.example.AaaDaoImpl#findAaa', receiver: 'log', method: 'info', toTypeSimple: null, via: 'identifier', file: 'com/example/AaaDaoImpl.java' },
+  ]);
+  assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0);
+  assert.equal(stats.unresolvedCallsByRule['inherited-field'], 1);
+  assert.equal(stats.identifierReceivers.unresolved, 1);
+  assert.equal(stats.identifierReceivers.staticReceiver, 0);
+  assert.deepEqual(stats.unresolvedIdentifiers, [{
+    from: 'com.example.AaaDaoImpl#findAaa', receiver: 'log', method: 'info',
+    chain: ['com.example.AaaDaoImpl', 'com.example.Base'],
+  }]);
+});
+
+test('an identifier that names a TYPE is a static call — counted apart, never as a failed field lookup', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...inheritedFieldFacts().filter((r) => r.kind !== 'call'),
+    { kind: 'import', owner: 'com.example.AaaDaoImpl', simple: 'StringUtils', fqn: 'org.apache.commons.lang3.StringUtils', file: 'com/example/AaaDaoImpl.java' },
+    { kind: 'call', from: 'com.example.AaaDaoImpl#findAaa', receiver: 'StringUtils', method: 'isEmpty', toTypeSimple: null, via: 'identifier', file: 'com/example/AaaDaoImpl.java' },
+  ]);
+  assert.equal(stats.identifierReceivers.staticReceiver, 1);
+  assert.equal(stats.identifierReceivers.unresolved, 0);
+  assert.equal(stats.unresolvedCallsByRule['inherited-field'], 0);
+  assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0, 'this round does not follow static calls');
+});
+
+test('an inherited field is looked for NEAREST ancestor first — the closer declaration wins', () => {
+  const g = new Graph();
+  addJavaFacts(g, [
+    {
+      kind: 'type', fqn: 'com.example.Far', typeKind: 'class', package: 'com.example', abstract: true,
+      annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+      typeParams: [], typeParamBounds: [], declaredMethods: [], file: 'com/example/Far.java',
+    },
+    { kind: 'field', owner: 'com.example.Far', name: 'store', typeSimple: 'FarStore', file: 'com/example/Far.java' },
+    {
+      kind: 'type', fqn: 'com.example.Near', typeKind: 'class', package: 'com.example', abstract: true,
+      annotations: [], implements: [], implementsArgs: [], extends: 'Far', extendsArgs: [],
+      typeParams: [], typeParamBounds: [], declaredMethods: [], file: 'com/example/Near.java',
+    },
+    { kind: 'field', owner: 'com.example.Near', name: 'store', typeSimple: 'NearStore', file: 'com/example/Near.java' },
+    {
+      kind: 'type', fqn: 'com.example.Leaf', typeKind: 'class', package: 'com.example',
+      annotations: [], implements: [], implementsArgs: [], extends: 'Near', extendsArgs: [],
+      typeParams: [], typeParamBounds: [], declaredMethods: ['run/0'], file: 'com/example/Leaf.java',
+    },
+    { kind: 'type', fqn: 'com.example.FarStore', typeKind: 'class', package: 'com.example', annotations: [], implements: [], implementsArgs: [], declaredMethods: ['put/1'], file: 'com/example/FarStore.java' },
+    { kind: 'type', fqn: 'com.example.NearStore', typeKind: 'class', package: 'com.example', annotations: [], implements: [], implementsArgs: [], declaredMethods: ['put/1'], file: 'com/example/NearStore.java' },
+    { kind: 'call', from: 'com.example.Leaf#run', receiver: 'store', method: 'put', toTypeSimple: null, via: 'identifier', file: 'com/example/Leaf.java' },
+  ]);
+  const e = g.edges.find((x) => x.evidence?.rule === 'inherited-field');
+  assert.equal(e.to, 'symbol:com.example.NearStore#put');
+  assert.equal(e.evidence.declaredBy, 'com.example.Near');
+});
+
+// ---------------------------------------------------------------------------
+// DISPATCH TO A METHOD THE IMPLEMENTOR INHERITS AND DOES NOT OVERRIDE (RM20 §2)
+//
+// `IDao<E>` declares the CRUD; `Base<E,M> implements IDao<E>` writes it once;
+// `XDaoImpl extends Base<X, XMapper> implements XDao` declares NOTHING. Dispatch
+// used to land on an empty symbol and the chain stopped there.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string[]} names  the concrete DAOs to build, one per binding
+ */
+function inheritedDispatchFacts(names = ['Aaa', 'Bbb']) {
+  const facts = [
+    // the root interface: the contract every DAO answers
+    {
+      kind: 'type', fqn: 'com.example.IDao', typeKind: 'interface', package: 'com.example',
+      annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+      typeParams: ['E'], typeParamBounds: [null],
+      declaredMethods: ['deleteById/1', 'insertBatch/1', 'insert/1'],
+      declaredMethodLines: [11, 12, 13], file: 'com/example/IDao.java',
+    },
+    { kind: 'method', fqn: 'com.example.IDao#deleteById', owner: 'com.example.IDao', name: 'deleteById', paramCount: 1, line: 11, file: 'com/example/IDao.java' },
+    { kind: 'method', fqn: 'com.example.IDao#insertBatch', owner: 'com.example.IDao', name: 'insertBatch', paramCount: 1, line: 12, file: 'com/example/IDao.java' },
+    { kind: 'method', fqn: 'com.example.IDao#insert', owner: 'com.example.IDao', name: 'insert', paramCount: 1, line: 13, file: 'com/example/IDao.java' },
+    // the generic base: it declares the members, and holds the collaborator
+    {
+      kind: 'type', fqn: 'com.example.Base', typeKind: 'class', package: 'com.example', abstract: true,
+      annotations: [], implements: ['IDao'], implementsArgs: [['E']], extends: null, extendsArgs: [],
+      typeParams: ['E', 'M'], typeParamBounds: [null, null],
+      declaredMethods: ['deleteById/1', 'insertBatch/1', 'insert/1'],
+      declaredMethodLines: [40, 50, 60], file: 'com/example/Base.java',
+    },
+    { kind: 'field', owner: 'com.example.Base', name: 'mapper', typeSimple: 'M', file: 'com/example/Base.java' },
+    { kind: 'call', from: 'com.example.Base#deleteById', receiver: 'mapper', method: 'deleteById', toTypeSimple: 'M', via: 'field', file: 'com/example/Base.java' },
+    { kind: 'call', from: 'com.example.Base#insert', receiver: 'mapper', method: 'insert', toTypeSimple: 'M', via: 'field', file: 'com/example/Base.java' },
+    // `insertBatch` calls `insert(model)` unqualified: at run time that is the
+    // CONCRETE object's `insert`, not the base's.
+    { kind: 'call', from: 'com.example.Base#insertBatch', receiver: 'this', method: 'insert', toTypeSimple: 'Base', via: 'unqualified', file: 'com/example/Base.java' },
+    // the caller: a service holding the per-entity interface
+    {
+      kind: 'type', fqn: 'com.example.Svc', typeKind: 'class', package: 'com.example',
+      annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+      typeParams: [], typeParamBounds: [], declaredMethods: ['drop/1'],
+      declaredMethodLines: [9], file: 'com/example/Svc.java',
+    },
+  ];
+  for (const n of names) {
+    facts.push(
+      {
+        kind: 'type', fqn: `com.example.${n}Dao`, typeKind: 'interface', package: 'com.example',
+        annotations: [], implements: ['IDao'], implementsArgs: [[n]], extends: null, extendsArgs: [],
+        typeParams: [], typeParamBounds: [], declaredMethods: [], declaredMethodLines: [],
+        file: `com/example/${n}Dao.java`,
+      },
+      {
+        kind: 'type', fqn: `com.example.${n}DaoImpl`, typeKind: 'class', package: 'com.example',
+        annotations: [], implements: [`${n}Dao`], implementsArgs: [[]],
+        extends: 'Base', extendsArgs: [n, `${n}Mapper`],
+        typeParams: [], typeParamBounds: [], declaredMethods: [], declaredMethodLines: [],
+        file: `com/example/${n}DaoImpl.java`,
+      },
+      {
+        kind: 'type', fqn: `com.example.${n}Mapper`, typeKind: 'interface', package: 'com.example',
+        annotations: ['Mapper'], implements: [], implementsArgs: [],
+        declaredMethods: ['deleteById/1', 'insert/1'], declaredMethodLines: [5, 6],
+        file: `com/example/${n}Mapper.java`,
+      },
+      { kind: 'field', owner: 'com.example.Svc', name: `${n.toLowerCase()}Dao`, typeSimple: `${n}Dao`, file: 'com/example/Svc.java' },
+      { kind: 'call', from: `com.example.Svc#drop${n}`, receiver: `${n.toLowerCase()}Dao`, method: 'deleteById', toTypeSimple: `${n}Dao`, via: 'field', file: 'com/example/Svc.java' },
+    );
+  }
+  return facts;
+}
+
+test('dispatch reaches a method the implementor only INHERITS, and each subclass reaches only its own mapper', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, inheritedDispatchFacts());
+
+  // THE FAN-OUT CHECK. One `AaaDao#deleteById` must reach exactly one mapper.
+  const out = (member) => g.outEdges(symbolId(member)).filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(out('com.example.AaaDao#deleteById'), ['symbol:com.example.AaaDaoImpl#deleteById']);
+  assert.deepEqual(out('com.example.AaaDaoImpl#deleteById'), ['symbol:com.example.AaaMapper#deleteById']);
+  assert.deepEqual(out('com.example.BbbDaoImpl#deleteById'), ['symbol:com.example.BbbMapper#deleteById']);
+
+  // The dispatch edge says the implementor inherits it, and from where.
+  const disp = g.edges.find((e) => e.from === symbolId('com.example.AaaDao#deleteById'));
+  assert.equal(disp.evidence.rule, 'interface-dispatch-inherited');
+  assert.equal(disp.evidence.inheritedFrom, 'com.example.Base#deleteById');
+  assert.equal(disp.evidence.hops, 1);
+
+  // The synthesized node carries the ANCESTOR's file and line: a reader who
+  // opens `AaaDaoImpl#deleteById` must land on the code that runs.
+  const n = g.nodes.get(symbolId('com.example.AaaDaoImpl#deleteById'));
+  assert.equal(n.inherited, true);
+  assert.equal(n.inheritedFrom, 'com.example.Base#deleteById');
+  assert.equal(n.file, 'com/example/Base.java');
+  assert.equal(n.line, 40);
+
+  assert.equal(stats.inheritedMembers.synthesized, 2, 'one per concrete class');
+  assert.equal(stats.callsByRule['interface-dispatch-inherited'], 2);
+  assert.equal(stats.callsByRule['inherited-member-call'], 2);
+});
+
+test('an OVERRIDE in the subclass wins over the ancestor — nothing is synthesized for it', () => {
+  const g = new Graph();
+  const facts = inheritedDispatchFacts(['Aaa']).map((r) => (
+    r.kind === 'type' && r.fqn === 'com.example.AaaDaoImpl'
+      ? { ...r, declaredMethods: ['deleteById/1'], declaredMethodLines: [77] }
+      : r));
+  facts.push({ kind: 'call', from: 'com.example.AaaDaoImpl#deleteById', receiver: 'mapper', method: 'wipe', toTypeSimple: null, via: 'identifier', file: 'com/example/AaaDaoImpl.java' });
+  const stats = addJavaFacts(g, facts);
+  const disp = g.edges.find((e) => e.from === symbolId('com.example.AaaDao#deleteById'));
+  assert.equal(disp.evidence.rule, 'interface-dispatch', 'the class declares it: the plain rule, not the inherited one');
+  assert.equal(stats.inheritedMembers.synthesized, 0);
+  const n = g.nodes.get(symbolId('com.example.AaaDaoImpl#deleteById'));
+  assert.equal(n.inherited, undefined, 'a declared method is not an inherited one');
+  // …and its own body still resolves: the override calls its own mapper.
+  assert.deepEqual(
+    g.outEdges(symbolId('com.example.AaaDaoImpl#deleteById')).map((e) => e.to),
+    ['symbol:com.example.AaaMapper#wipe'],
+  );
+});
+
+test('an unqualified call inside an inherited body stays in the CONCRETE class, and chains on', () => {
+  const g = new Graph();
+  const facts = inheritedDispatchFacts(['Aaa']);
+  facts.push({ kind: 'call', from: 'com.example.Svc#addAll', receiver: 'aaaDao', method: 'insertBatch', toTypeSimple: 'AaaDao', via: 'field', file: 'com/example/Svc.java' });
+  addJavaFacts(g, facts);
+  const step = (member) => g.outEdges(symbolId(member)).filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(step('com.example.AaaDao#insertBatch'), ['symbol:com.example.AaaDaoImpl#insertBatch']);
+  // `insertBatch` calls `insert(model)`: the CONCRETE class's insert…
+  assert.deepEqual(step('com.example.AaaDaoImpl#insertBatch'), ['symbol:com.example.AaaDaoImpl#insert']);
+  // …which the class also only inherits, and which reaches its own mapper.
+  assert.deepEqual(step('com.example.AaaDaoImpl#insert'), ['symbol:com.example.AaaMapper#insert']);
+  assert.equal(g.nodes.get(symbolId('com.example.AaaDaoImpl#insert')).inherited, true);
+});
+
+test('an unqualified call in a SUBCLASS to a method only the base declares is instantiated too', () => {
+  const g = new Graph();
+  const facts = inheritedDispatchFacts(['Aaa']).filter((r) => !(r.kind === 'call' && r.from.startsWith('com.example.Svc')));
+  // `XDaoImpl` writes `insert(entity)` in a method of its own.
+  facts.push(
+    { kind: 'type', fqn: 'com.example.AaaDaoImpl2', typeKind: 'class', package: 'com.example', annotations: [], implements: [], implementsArgs: [], extends: 'Base', extendsArgs: ['Aaa', 'AaaMapper'], typeParams: [], typeParamBounds: [], declaredMethods: ['save/1'], declaredMethodLines: [30], file: 'com/example/AaaDaoImpl2.java' },
+    { kind: 'call', from: 'com.example.AaaDaoImpl2#save', receiver: 'this', method: 'insert', toTypeSimple: 'AaaDaoImpl2', via: 'unqualified', file: 'com/example/AaaDaoImpl2.java' },
+  );
+  const stats = addJavaFacts(g, facts);
+  assert.deepEqual(
+    g.outEdges(symbolId('com.example.AaaDaoImpl2#insert')).map((e) => e.to),
+    ['symbol:com.example.AaaMapper#insert'],
+  );
+  assert.ok(stats.inheritedMembers.synthesized >= 1);
+});
+
+test('a DIAMOND — a default method on a second interface — is reported, not guessed', () => {
+  // The class inherits `deleteById` from its `extends` chain AND from an
+  // interface default method. Java resolves that by rule; this lane only ever
+  // sees `implements`/`extends` names, so it takes the CLASS chain (which Java
+  // does too) and SAYS the other candidate exists rather than silently picking.
+  const g = new Graph();
+  const facts = inheritedDispatchFacts(['Aaa']);
+  facts.push({
+    kind: 'type', fqn: 'com.example.Soft', typeKind: 'interface', package: 'com.example',
+    annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+    typeParams: [], typeParamBounds: [], declaredMethods: ['deleteById/1'], declaredMethodLines: [8],
+    file: 'com/example/Soft.java',
+  });
+  const withSoft = facts.map((r) => (
+    r.kind === 'type' && r.fqn === 'com.example.AaaDaoImpl'
+      ? { ...r, implements: ['AaaDao', 'Soft'], implementsArgs: [[], []] }
+      : r));
+  // …and somebody really calls it through the second interface, so both routes
+  // into the class exist and neither is invented.
+  withSoft.push(
+    { kind: 'field', owner: 'com.example.Svc', name: 'soft', typeSimple: 'Soft', file: 'com/example/Svc.java' },
+    { kind: 'call', from: 'com.example.Svc#wipe', receiver: 'soft', method: 'deleteById', toTypeSimple: 'Soft', via: 'field', file: 'com/example/Svc.java' },
+  );
+  const stats = addJavaFacts(g, withSoft);
+  const n = g.nodes.get(symbolId('com.example.AaaDaoImpl#deleteById'));
+  // Java's own rule: a method inherited from a CLASS always beats an interface
+  // default. So this is the language's answer, not a preference invented here —
+  // and the node says which body it took.
+  assert.equal(n.inheritedFrom, 'com.example.Base#deleteById');
+
+  // BOTH interfaces dispatch into that one node, each edge naming the interface
+  // it came from. The second candidate is therefore visible to a reader instead
+  // of being merged away or silently dropped.
+  const into = g.edges
+    .filter((e) => e.to === symbolId('com.example.AaaDaoImpl#deleteById') && e.type === 'MAY_CALL')
+    .map((e) => [e.evidence.iface, e.evidence.rule, e.evidence.inheritedFrom])
+    .sort();
+  assert.deepEqual(into, [
+    ['com.example.AaaDao', 'interface-dispatch-inherited', 'com.example.Base#deleteById'],
+    ['com.example.Soft', 'interface-dispatch-inherited', 'com.example.Base#deleteById'],
+  ]);
+  assert.equal(stats.inheritedMembers.synthesized, 1, 'one body, instantiated once for this class');
+});

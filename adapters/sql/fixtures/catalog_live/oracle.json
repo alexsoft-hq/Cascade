@@ -1,0 +1,23 @@
+{
+  "dialect": "oracle",
+  "schema": "COM_EXAMPLE",
+  "stampSchema": "COM_EXAMPLE",
+  "serverIdentity": "ora.example.com:1521/ORCLPDB1",
+  "fetchedAt": "2026-01-02T03:04:05Z",
+  "responses": [
+    [["19.0.0.0.0"]],
+    [
+      ["COM_EXAMPLE", "SHOP_ORDER", "Customer order header"],
+      ["COM_EXAMPLE", "SHOP_ORDER_ITEM", null]
+    ],
+    [
+      ["COM_EXAMPLE", "SHOP_ORDER", "ID", 1, "NUMBER", 22, 19, 0, "N", "Order id", 1],
+      ["COM_EXAMPLE", "SHOP_ORDER", "ORDER_SN", 2, "VARCHAR2", 64, null, null, "N", "Order code (SKU-like) — unique", 0],
+      ["COM_EXAMPLE", "SHOP_ORDER", "TOTAL_AMOUNT", 3, "NUMBER", 22, 10, 2, "Y", "Order total in €", 0],
+      ["COM_EXAMPLE", "SHOP_ORDER", "DELETE_STATUS", 4, "NUMBER", 22, 1, 0, "Y", null, 0],
+      ["COM_EXAMPLE", "SHOP_ORDER_ITEM", "ID", 1, "NUMBER", 22, 19, 0, "N", null, 1],
+      ["COM_EXAMPLE", "SHOP_ORDER_ITEM", "ORDER_ID", 2, "NUMBER", 22, 19, 0, "N", "Owning order", 0],
+      ["COM_EXAMPLE", "SHOP_ORDER_ITEM", "QUANTITY", 3, "NUMBER", 22, 10, 0, "Y", null, 0]
+    ]
+  ]
+}

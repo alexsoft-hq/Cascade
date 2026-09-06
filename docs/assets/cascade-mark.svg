@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cascade">
+  <!-- The mark: a fall in three steps whose stroke thins and whose blue lightens
+       as it descends — the chain from an endpoint down to a column, losing
+       certainty on the way — landing on a blue dot. One hue family (the page's
+       read blue and its tints) over ink; never the write red or the join ochre,
+       never a gradient, never rotated. Light-ground palette; see
+       cascade-mark-dark.svg for a dark ground. -->
+  <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"/>
+  <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"/>
+  <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"/>
+  <circle cx="20.5" cy="16.5" r="1.9" fill="#2B5FA5"/>
+</svg>

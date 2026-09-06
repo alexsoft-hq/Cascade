@@ -1,0 +1,23 @@
+# GitHub Pages configuration for the docs site.
+#
+# Zero build tooling on purpose: `jekyll-theme-minimal` is one of the themes
+# GitHub Pages builds natively, so there is no Gemfile, no bundler and no npm
+# here. Point Pages at "main / docs" in the repository settings and the site is
+# whatever is in this directory.
+#
+# The engine itself has no dependencies; its documentation should not be the
+# thing that introduces a toolchain.
+
+theme: jekyll-theme-minimal
+title: Cascade
+description: >-
+  A code-to-column change-impact knowledge graph for AI coding agents.
+
+# Pages are plain Markdown; nothing here is generated.
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+
+exclude:
+  - .cascade

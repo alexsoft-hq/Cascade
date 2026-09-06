@@ -1,0 +1,23 @@
+{
+  "dialect": "mysql",
+  "schema": "com_example_shop",
+  "stampSchema": null,
+  "serverIdentity": "db.example.com:3306/com_example_shop",
+  "fetchedAt": "2026-01-02T03:04:05Z",
+  "responses": [
+    [["8.0.36"]],
+    [
+      ["com_example_shop", "shop_order", "Customer order header"],
+      ["com_example_shop", "shop_order_item", ""]
+    ],
+    [
+      ["com_example_shop", "shop_order", "id", 1, "bigint(20)", "NO", "PRI", "Order id"],
+      ["com_example_shop", "shop_order", "order_sn", 2, "varchar(64)", "NO", "UNI", "Order code (SKU-like) — unique"],
+      ["com_example_shop", "shop_order", "total_amount", 3, "decimal(10,2)", "YES", "", "Order total in €"],
+      ["com_example_shop", "shop_order", "delete_status", 4, "int(1)", "YES", "", ""],
+      ["com_example_shop", "shop_order_item", "id", 1, "bigint(20)", "NO", "PRI", null],
+      ["com_example_shop", "shop_order_item", "order_id", 2, "bigint(20)", "NO", "MUL", "Owning order"],
+      ["com_example_shop", "shop_order_item", "quantity", 3, "int unsigned", "YES", "", "  "]
+    ]
+  ]
+}

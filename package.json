@@ -1,0 +1,40 @@
+{
+  "name": "cascade",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Code-to-column change-impact knowledge graph for AI coding agents: the round trip from a screen to a database column and back, over MCP.",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=20" },
+  "bin": { "cascade": "bin/cascade.mjs" },
+  "files": [
+    "bin/",
+    "src/",
+    "adapters/",
+    "viewer/",
+    "docs/",
+    "LICENSE",
+    "NOTICE",
+    "DCO",
+    "README.md",
+    "README.ko.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-test-coverage test/*.test.mjs",
+    "test:quick": "node --test test/*.test.mjs",
+    "doctor": "node bin/cascade.mjs doctor",
+    "dco": "node scripts/check-dco.mjs"
+  },
+  "keywords": [
+    "static-analysis",
+    "impact-analysis",
+    "code-to-column",
+    "knowledge-graph",
+    "mcp",
+    "vibe-coding"
+  ]
+}

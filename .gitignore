@@ -1,0 +1,38 @@
+# Dependencies / build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Python venv for the SQL lane (engine runtime, not source)
+.venv/
+__pycache__/
+*.pyc
+
+# Java lane build cache (compiled JavaFacts) and analyze temp dirs
+.java-build/
+.analyze-*/
+
+# Regenerable analysis cache (content-addressed) — never committed
+.cache/
+$XDG_CACHE_HOME/
+
+# Per-project analysis state lives in a project's own .cascade/, and its pack/
+# holds the user's raw SQL. cascade init auto-writes .gitignore into that dir,
+# but guard here too so this engine repo never accidentally tracks one.
+.cascade/pack/
+.cascade/catalog/
+
+# OS / editor
+.DS_Store
+*.log
+
+# Local credentials — MUST never be tracked (SPEC §17.3)
+*.env
+pg.env
+!*.example.env
+
+# Optional local literals for the "no internal coordinates" gate
+# (test/gates.test.mjs). Never committed: it exists so a contributor can grep
+# for names that must not enter this repository.
+.cascade-denylist

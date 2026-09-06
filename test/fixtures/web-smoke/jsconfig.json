@@ -1,0 +1,10 @@
+{
+  // the alias the editor and the bundler agree on
+  "compilerOptions": {
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["src/*"],
+    },
+  },
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,24 @@
+{
+  "dialect": "postgres",
+  "schema": "public",
+  "stampSchema": null,
+  "serverIdentity": "pg.example.com:5432/com_example_shop",
+  "fetchedAt": "2026-01-02T03:04:05Z",
+  "responses": [
+    [["PostgreSQL 16.2 on x86_64-pc-linux-gnu"]],
+    [
+      ["public", "shop_order", "Customer order header"],
+      ["public", "shop_order_item", null]
+    ],
+    [
+      ["public", "shop_order", "id", 1, "bigint", null, 64, 0, "NO", "Order id", "YES"],
+      ["public", "shop_order", "order_sn", 2, "character varying", 64, null, null, "NO", "Order code (SKU-like) — unique", "NO"],
+      ["public", "shop_order", "total_amount", 3, "numeric", null, 10, 2, "YES", "Order total in €", "NO"],
+      ["public", "shop_order", "delete_status", 4, "integer", null, 32, 0, "YES", null, "NO"],
+      ["public", "shop_order_item", "id", 1, "bigint", null, 64, 0, "NO", null, "YES"],
+      ["public", "shop_order_item", "order_id", 2, "bigint", null, 64, 0, "NO", "Owning order", "NO"],
+      ["public", "shop_order_item", "quantity", 3, "integer", null, 32, 0, "YES", null, "NO"],
+      ["public", "v_shop_order_totals", "order_id", 1, "bigint", null, 64, 0, "YES", null, "NO"]
+    ]
+  ]
+}

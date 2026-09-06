@@ -1,0 +1,277 @@
+# CI — eight INDEPENDENT jobs (SPEC §16.3):
+#   node · python · db · java · petclinic · dco · fixtures · gate
+#
+# There is no `needs:` between them and the node matrix does not fail fast, so a
+# missing or broken lane never hides the state of the others. Each job builds
+# what it needs itself rather than skipping on an existence check — a permanent
+# self-omission on a fresh clone would be a defect, not a pass.
+#
+# `gate` is the one job that does NOT run on every push: it clones about a
+# gigabyte of other people's source. It runs weekly and on demand, which is the
+# right cadence for a question about generality — nothing in a single PR moves
+# eleven repositories' reach, and a job that took ten minutes on every push
+# would be turned off within a month.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Mondays, 04:17 UTC. Off the hour on purpose: the whole world schedules
+    # things at :00 and the runners are busiest then.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x', '22.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: unit tests
+        run: npm run test:quick
+      - name: unit tests with coverage
+        if: matrix.node == '22.x'
+        run: npm test
+
+  python:
+    name: python (SQL lane)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install SQL lane requirements
+        run: pip install -r adapters/sql/requirements.txt
+      - name: unit tests
+        run: python -m unittest discover -s adapters/sql -p 'test_*.py' -v
+
+  # The live DB catalog adapter (SPEC §12). It needs a real database, so it is
+  # its own job with NO `needs:` — a dialect that stops working must not be able
+  # to hide behind another lane's failure. The test starts and removes its own
+  # `mysql:8` container through the Docker daemon the runner already has; on a
+  # developer machine without one, the SAME file skips OUT LOUD with the reason
+  # (adapters/sql/test_catalog_live_container.py).
+  db:
+    name: db (live catalog, MySQL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install the SQL lane and the optional MySQL driver
+        run: |
+          pip install -r adapters/sql/requirements.txt
+          pip install pymysql==1.1.1
+      - name: the docker daemon must be reachable in THIS job
+        run: docker info --format '{{.ServerVersion}}'
+      - name: live catalog dialect tests (unit + container)
+        run: python -m unittest discover -s adapters/sql -p 'test_catalog_live*.py' -v
+
+  java:
+    name: java (source lane)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: compile the java adapter
+        run: javac -d .java-build adapters/java/JavaFacts.java
+      # The assertions live in a script, not in a shell one-liner, so the same
+      # check runs from `node --test` on a developer machine.
+      - name: smoke the java adapter over test/fixtures/java-smoke
+        run: node scripts/ci-java-smoke.mjs
+
+  # The JPA lane against a REAL project (SPEC §14, §15 M10). Its own job, with no
+  # `needs:`, because it is the only check that runs BOTH lanes over somebody
+  # else's source: a JPA regression must not be able to hide behind the unit
+  # suite, and the unit suite must not go red because GitHub could not clone a
+  # fixture. The commit is PINNED — the goldens describe that source, not
+  # whatever upstream's main branch holds today.
+  petclinic:
+    name: petclinic (JPA lane, real project)
+    runs-on: ubuntu-latest
+    env:
+      PETCLINIC_COMMIT: 818c4136ea971c21674525f9053de0d9c7ad8cfe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: the SQL lane's venv (the DDL catalog is parsed by it)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r adapters/sql/requirements.txt
+      - name: clone spring-petclinic at the pinned commit
+        run: |
+          git clone --quiet https://github.com/spring-projects/spring-petclinic.git "$RUNNER_TEMP/spring-petclinic"
+          git -C "$RUNNER_TEMP/spring-petclinic" checkout --quiet "$PETCLINIC_COMMIT"
+      - name: the golden e2e + the native-@Query lane (they must RUN here, not skip)
+        env:
+          CASCADE_PETCLINIC: ${{ runner.temp }}/spring-petclinic
+        run: |
+          node --test test/petclinic.test.mjs test/jpa_native.test.mjs 2>&1 | tee petclinic.log
+          grep -q 'skipped 0' petclinic.log || { echo 'a JPA golden SKIPPED in CI — that is a failure, not a pass'; exit 1; }
+
+  # Every commit in the pull request carries a Signed-off-by trailer whose
+  # e-mail is the author's (the DCO, ./DCO). Its own job, with no `needs:` — a
+  # sign-off problem is the contributor's to fix and must not read as a broken
+  # build, and a broken build must not hide it either. `fetch-depth: 0` is
+  # load-bearing: a shallow clone has no base ref, and the check exits 2 rather
+  # than reporting "nothing unsigned".
+  dco:
+    name: dco (sign-off)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: every commit in this PR is signed off
+        run: node scripts/check-dco.mjs --range "origin/${{ github.base_ref }}..HEAD"
+
+  # The two real-project goldens (SPEC §15 M11). Its own job, with no `needs:`,
+  # for the same reason as `petclinic`: these are the only checks that run BOTH
+  # lanes over somebody else's source, and a regression in them must not be able
+  # to hide behind the unit suite — nor take the unit suite red because GitHub
+  # could not clone a fixture.
+  #
+  # Both commits are PINNED. The goldens describe THAT source, not whatever
+  # upstream's default branch holds today.
+  #
+  # The mall pack is BUILT here, by the documented no-flag path, and its digest
+  # is asserted by test/mall_demo.test.mjs. That is the cross-machine
+  # determinism claim actually being run: a different OS, a different absolute
+  # path, a different cache root, and the same twelve hex characters.
+  fixtures:
+    name: fixtures (jpetstore-6 + mall goldens)
+    runs-on: ubuntu-latest
+    env:
+      JPETSTORE_COMMIT: ebb36b392f0c0fdec10e2e7b364b03b88c08c184
+      MALL_COMMIT: 0504e86b1f1b6f1b8aa6a734d37a90fb67346be7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: the SQL lane's venv
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r adapters/sql/requirements.txt
+      - name: every prerequisite, before anything is run
+        run: node bin/cascade.mjs doctor
+      - name: clone mybatis/jpetstore-6 at the pinned commit
+        run: |
+          git clone --quiet https://github.com/mybatis/jpetstore-6.git "$RUNNER_TEMP/jpetstore-6"
+          git -C "$RUNNER_TEMP/jpetstore-6" checkout --quiet "$JPETSTORE_COMMIT"
+      - name: clone macrozheng/mall at the pinned commit (that commit only)
+        run: |
+          mkdir -p "$RUNNER_TEMP/mall"
+          git -C "$RUNNER_TEMP/mall" init --quiet
+          git -C "$RUNNER_TEMP/mall" remote add origin https://github.com/macrozheng/mall.git
+          git -C "$RUNNER_TEMP/mall" fetch --quiet --depth 1 origin "$MALL_COMMIT"
+          git -C "$RUNNER_TEMP/mall" checkout --quiet FETCH_HEAD
+      - name: build the mall pack the documented way (no lane flags)
+        env:
+          CASCADE_HOME: ${{ runner.temp }}/cascade-home
+        run: |
+          node bin/cascade.mjs init --root "$RUNNER_TEMP/mall" --project mall
+          node bin/cascade.mjs analyze --root "$RUNNER_TEMP/mall"
+      - name: the goldens must RUN here, not skip
+        env:
+          CASCADE_HOME: ${{ runner.temp }}/cascade-home
+          CASCADE_JPETSTORE: ${{ runner.temp }}/jpetstore-6
+          CASCADE_MALL_REPO: ${{ runner.temp }}/mall
+          CASCADE_MALL_PACK: ${{ runner.temp }}/mall/.cascade/pack/pack.json
+        run: |
+          node --test test/jpetstore.test.mjs test/mall_demo.test.mjs \
+                      test/flow.test.mjs test/overview.test.mjs \
+                      test/map.test.mjs test/coupling.test.mjs 2>&1 | tee fixtures.log
+          grep -q 'skipped 0' fixtures.log || { echo 'a real-project golden SKIPPED in CI — that is a failure, not a pass'; exit 1; }
+
+  # THE GENERALITY GATE (RM20 §5). The engine, unchanged and with no per-project
+  # configuration, over a pinned corpus of eleven real repositories — and the
+  # floor it must not fall below (test/fixtures/generality-gate.baseline.json).
+  #
+  # Not on push: the clones are ~1 GB. `workflow_dispatch` runs it on demand and
+  # the weekly schedule runs it whether or not anybody remembers to.
+  gate:
+    name: gate (generality corpus)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: the SQL lane's venv
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r adapters/sql/requirements.txt
+      - name: every prerequisite, before anything is run
+        run: node bin/cascade.mjs doctor
+      - name: clone the pinned corpus (~1 GB)
+        env:
+          CASCADE_GATE_DIR: ${{ runner.temp }}/gate
+        run: node scripts/generality-gate.mjs --fetch --no-run
+      - name: the gate must RUN here, not skip
+        env:
+          CASCADE_GATE_DIR: ${{ runner.temp }}/gate
+          CASCADE_HOME: ${{ runner.temp }}/cascade-home
+        run: |
+          node --test test/generality_gate.test.mjs 2>&1 | tee gate.log
+          grep -q 'skipped 0' gate.log || { echo 'the generality gate SKIPPED in CI — that is a failure, not a pass'; exit 1; }
+      - name: the table, for the run log
+        if: always()
+        env:
+          CASCADE_GATE_DIR: ${{ runner.temp }}/gate
+        run: node scripts/generality-gate.mjs --json "$RUNNER_TEMP/gate.json" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generality-gate
+          path: ${{ runner.temp }}/gate.json
+          if-no-files-found: ignore

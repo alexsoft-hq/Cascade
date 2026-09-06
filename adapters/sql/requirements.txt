@@ -1,0 +1,12 @@
+sqlglot==30.17.0
+
+# optional, live catalog: `cascade catalog fetch` (SPEC §12) opens ONE read-only
+# connection to read tables, columns and comments. The engine's extraction path
+# never connects (§2.3), so none of these is needed to analyze a project — the
+# DDL path (catalog_ddl.py) and `catalog.source: "none"` both work without them.
+# catalog_live.py imports the driver LAZILY and, when it is absent, says which
+# line below to uncomment. Install only the dialect you actually read.
+#
+#   pymysql==1.1.1          # MySQL / MariaDB
+#   psycopg[binary]==3.2.3  # PostgreSQL
+#   oracledb==2.5.1         # Oracle

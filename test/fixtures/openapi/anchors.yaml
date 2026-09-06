@@ -1,0 +1,12 @@
+openapi: 3.0.0
+info:
+  title: Anchored
+  version: '1.0'
+defaults: &common
+  responses:
+    '200':
+      description: ok
+paths:
+  /item/get:
+    get:
+      <<: *common

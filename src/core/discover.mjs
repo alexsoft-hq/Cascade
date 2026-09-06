@@ -1,0 +1,745 @@
+// discover.mjs — fast project discovery for `cascade init` (SPEC §7.3).
+//
+// Answers "what is this tree, and what can the engine actually read?" in one
+// capped walk: repositories (including nested git checkouts), file counts per
+// technology, build tool, package prefixes, SQL dialect hint.
+//
+// SPEC rules honored here:
+//  - §7.3: what the engine has NO lane for is never silently ignored — every
+//    such finding becomes an `UNSUPPORTED_TECHNOLOGY` diagnostic. A truncated
+//    walk says so (`FILE_CAP_REACHED`) instead of pretending it saw everything.
+//  - §5: repositories are reported relative to the scanned root ('.' for the
+//    root repo); the caller re-bases them onto the manifest file's directory.
+//  - §6: nothing here hardcodes a product name or a default package prefix —
+//    `packagePrefixes` is measured from the sources.
+//
+// This module is PURE: every filesystem touch arrives as an injected function
+// (`readDir`, `readFile`, `gitHead`), so it is unit-testable on a synthetic tree
+// and cannot write anything. `bin/cascade.mjs` supplies the impure versions.
+
+import path from 'node:path';
+import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
+
+// Directories that never carry first-party source. Skipped wholesale, so a
+// vendored `node_modules` cannot dominate the counts or the file cap.
+export const SKIP_DIRS = Object.freeze([
+  '.git', 'node_modules', 'target', 'build', 'dist', 'out', '.cascade', '.venv', '.gradle', '.idea',
+]);
+
+// Default walk cap. A tree bigger than this is reported as capped, never
+// silently truncated (§7.3).
+export const DEFAULT_MAX_FILES = 50000;
+
+// Share of java files that the reported package prefixes must cover.
+const PREFIX_COVERAGE = 0.95;
+
+const SPRING_HANDLER_RE = /@RestController|@Controller|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping/;
+const MYBATIS_MAPPER_RE = /<mapper\s+namespace\s*=/;
+const CREATE_TABLE_RE = /create\s+table/i;
+const ALTER_TABLE_RE = /alter\s+table/i;
+const JPA_ENTITY_RE = /@Entity\b/;
+// MyBatis-Plus, in its two unmistakable spellings: the generic mapper every MP
+// project extends, and the annotation that names a table. Either one means the
+// persistence this project uses is declared in the mapping and in generic CRUD
+// rather than written as SQL — the `mybatis-plus` pack's lane (RM15).
+const MYBATIS_PLUS_RE = /extends\s+BaseMapper\s*<|@TableName\b/;
+const PACKAGE_DECL_RE = /^[ \t]*package[ \t]+([A-Za-z_$][A-Za-z0-9_$]*(?:[ \t]*\.[ \t]*[A-Za-z_$][A-Za-z0-9_$]*)*)[ \t]*;/m;
+const FRONTEND_DEPS = Object.freeze(['react', 'vue', 'angular', '@angular/core', 'svelte']);
+
+// An OpenAPI / Swagger document says so in a TOP-LEVEL key, in the first few
+// hundred bytes: `openapi: 3.0.1` (or `"openapi": "3.0.1"` in JSON), or the
+// Swagger 2 spelling. Only the first 4 KB is examined, so a 2 MB generated
+// document is classified without reading it twice, and a file that merely
+// mentions the word deeper down is not mistaken for one.
+const OPENAPI_HEAD_BYTES = 4096;
+// 2 MB. Bigger than that is a generated bundle; the document is reported as a
+// candidate this run did NOT read rather than parsed at unbounded cost.
+const OPENAPI_MAX_BYTES = 2 * 1024 * 1024;
+const OPENAPI_YAML_KEY = /^[ \t]*(openapi|swagger)[ \t]*:/m;
+const OPENAPI_JSON_KEY = /"(openapi|swagger)"[ \t]*:/;
+// A `paths` section, in either spelling. Only consulted when the file declares
+// the key WITHOUT a version this engine recognises: a Spring Boot
+// `application.yml` with a `swagger:\n  production: false` block says `swagger`
+// and is a configuration file, not a contract. Requiring a version OR a `paths`
+// section keeps it out without turning the rule into a parser.
+const OPENAPI_PATHS_KEY = /^[ \t]*paths[ \t]*:|"paths"[ \t]*:/m;
+const OPENAPI_EXTENSIONS = Object.freeze(['.json', '.yaml', '.yml']);
+
+/**
+ * The OpenAPI version a document's head declares: '3', '2', or 'unknown' when it
+ * says `openapi`/`swagger` without a version this engine recognises.
+ * @param {string} head  the document's first bytes
+ * @returns {('3'|'2'|'unknown'|null)} null when the head declares neither key
+ */
+export function openApiVersionOf(head) {
+  const text = String(head ?? '');
+  const yaml = OPENAPI_YAML_KEY.test(text);
+  const json = OPENAPI_JSON_KEY.test(text);
+  if (!yaml && !json) return null;
+  if (/["']?openapi["']?[ \t]*:[ \t]*["']?3/.test(text)) return '3';
+  if (/["']?swagger["']?[ \t]*:[ \t]*["']?2/.test(text)) return '2';
+  return 'unknown';
+}
+
+// The web lane's own file list, kept in step with adapters/web/webfacts.mjs.
+// `.d.ts` is a type declaration with no code in it, and a test file is a
+// different program, so neither is counted as a source the lane will read.
+const WEB_EXTENSIONS = Object.freeze(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue']);
+
+/**
+ * Which framework a frontend package declares, and what it talks to the backend
+ * with. Read from the package's own dependencies, never guessed from the code:
+ * a package that depends on `vue` is a Vue project because it says so.
+ */
+const FRAMEWORK_DEPS = Object.freeze([
+  ['vue', ['vue']],
+  ['react', ['react']],
+  ['angular', ['@angular/core', 'angular']],
+  ['svelte', ['svelte']],
+]);
+const ROUTER_DEPS = Object.freeze([
+  ['vue-router', ['vue-router']],
+  ['react-router', ['react-router', 'react-router-dom']],
+]);
+
+/** The router declaration packs this engine ships, in the order they are tried. */
+export const ROUTER_PACKS = Object.freeze(ROUTER_DEPS.map(([name]) => name));
+
+/**
+ * Which router declaration pack a package's dependencies name, or null.
+ *
+ * ONE table, read from two places: discovery walks the analyzed tree with it,
+ * and `cascade analyze` reads it again for a frontend that lives OUTSIDE that
+ * tree, which no walk of the root could ever have seen. Duplicating the list
+ * would let the two disagree about the same package.json.
+ *
+ * @param {Object|null} dependencies  a merged dependencies + devDependencies map
+ * @returns {string|null}
+ */
+export function routerDependencyOf(dependencies) {
+  if (!dependencies || typeof dependencies !== 'object') return null;
+  const hit = ROUTER_DEPS.find(([, names]) =>
+    names.some((n) => Object.prototype.hasOwnProperty.call(dependencies, n)));
+  return hit ? hit[0] : null;
+}
+
+/**
+ * Whether a file name is one the web lane reads. Mirrors the worker's own rule.
+ * @param {string} name  a bare file name
+ * @returns {boolean}
+ */
+export function isWebSourceFile(name) {
+  const n = String(name ?? '');
+  if (n.endsWith('.d.ts')) return false;
+  if (n.endsWith('.min.js')) return false;
+  if (/\.(?:test|spec)\./.test(n)) return false;
+  return WEB_EXTENSIONS.some((e) => n.endsWith(e));
+}
+const MYSQL_DDL_RE = /`|ENGINE\s*=/;
+
+/**
+ * WHICH DIALECT A .sql FILE IS WRITTEN IN, from spellings only that dialect has.
+ *
+ * A repository that ships its schema three times — MySQL, PostgreSQL, H2 — has
+ * three files that describe the SAME tables, and applying all three would
+ * declare every table two or three times over. The file has to say which one it
+ * is, and it does: the syntax is not portable.
+ *
+ * Order matters: the more distinctive spellings are tested first, because a
+ * PostgreSQL dump can contain `ENGINE` inside a comment and an Oracle one can
+ * contain a backtick in a string. Each entry is (dialect, pattern).
+ */
+const DDL_DIALECT_MARKERS = Object.freeze([
+  // A backtick-quoted identifier is MySQL's alone, and a MySQL dump is full of
+  // them — tested first so a stray `NUMBER(` in a comment cannot call it Oracle.
+  ['mysql', /`/],
+  ['oracle', /\bVARCHAR2\s*\(|\bNUMBER\s*\(/i],
+  ['postgres', /\b(?:BIG)?SERIAL\b|::\s*[A-Za-z]|\bOWNER\s+TO\b/i],
+  ['h2', /\bCACHED\s+TABLE\b|\bGENERATED\s+BY\s+DEFAULT\s+AS\s+IDENTITY\b|\bIDENTITY\b/i],
+  // `engine=InnoDB` is written in every case there is; the hint regex above is
+  // deliberately left alone, because other things read it.
+  ['mysql', /\bENGINE\s*=/i],
+]);
+
+/**
+ * DIALECT NAMES AS THEY APPEAR IN PATHS. A repository that ships its schema for
+ * several databases says so where it is easiest to read: `dolphinscheduler_h2.sql`
+ * next to `dolphinscheduler_mysql.sql`, or `db/mysql/schema.sql` next to
+ * `db/hsqldb/schema.sql`.
+ *
+ * The PATH WINS over the content markers, and it has to: an H2 file written in
+ * H2's MySQL compatibility mode is full of backticks, so its text says `mysql`
+ * while its name says `h2` — and applying both would declare every table twice.
+ * A name is the project stating which database a file is for; a marker is this
+ * engine inferring it.
+ *
+ * Each entry is (canonical dialect, the spellings that name it in a path).
+ */
+const DDL_DIALECT_PATH_NAMES = Object.freeze([
+  ['mysql', ['mysql', 'mariadb']],
+  ['postgres', ['postgres', 'postgresql', 'pgsql', 'pg']],
+  ['oracle', ['oracle']],
+  ['hsqldb', ['hsqldb', 'hsql']],
+  ['h2', ['h2']],
+  ['sqlserver', ['sqlserver', 'mssql']],
+  ['db2', ['db2']],
+  ['sqlite', ['sqlite']],
+]);
+
+/**
+ * The dialect a path NAMES, or null. Matched on whole tokens only, so `pg` in
+ * `pgadmin-notes.sql` is not a match and `dm` never is (too short to be a token
+ * anyone means).
+ * @param {string} relPath
+ * @returns {string|null}
+ */
+export function ddlDialectFromPath(relPath) {
+  const lower = String(relPath ?? '').toLowerCase();
+  for (const [canonical, spellings] of DDL_DIALECT_PATH_NAMES) {
+    for (const name of spellings) {
+      if (new RegExp(`(^|[^a-z0-9])${name}([^a-z0-9]|$)`).test(lower)) return canonical;
+    }
+  }
+  return null;
+}
+
+/**
+ * A path segment that says, on its own, that a file is a MIGRATION rather than
+ * a schema — the four tool conventions plus the two words projects use when
+ * they roll their own.
+ */
+const MIGRATION_PATH_RE = /(^|\/)(?:flyway|liquibase|migration|migrations|upgrade|upgrades|patch|patches)(\/|$)/i;
+
+const CREATE_TABLE_G = /\bcreate\s+table\b/gi;
+const ALTER_TABLE_G = /\balter\s+table\b/gi;
+const DML_G = /\b(?:insert\s+into|update\s+[`"\w]|delete\s+from)\b/gi;
+
+/**
+ * WHAT A .sql FILE IS, from its text and its path. Pure.
+ *
+ * Two questions, answered separately because they fail separately:
+ *
+ *   `dialect`  which database's syntax it is written in — null when nothing in
+ *              the file is distinctive enough to say (a portable dump).
+ *   `role`     'schema' when the file mostly DECLARES tables; 'migration' when
+ *              it mostly CHANGES them, or when it sits under a path segment that
+ *              names a migration tool. A migration is not applied by default:
+ *              it means nothing without the schema it amends and without its
+ *              siblings in the right order.
+ *
+ * The counts ride along so the classification can be PRINTED rather than
+ * asserted — a reader who disagrees can see what it counted.
+ *
+ * @param {string} relPath  root-relative POSIX path
+ * @param {string} text     the file's text
+ * @returns {{path:string, dialect:(string|null), dialectFrom:('path'|'content'|null),
+ *            role:('schema'|'migration'), createTables:number, alters:number,
+ *            dml:number, byPath:boolean, testPath:boolean}}
+ */
+export function classifyDdlFile(relPath, text) {
+  const body = String(text ?? '');
+  const createTables = (body.match(CREATE_TABLE_G) ?? []).length;
+  const alters = (body.match(ALTER_TABLE_G) ?? []).length;
+  const dml = (body.match(DML_G) ?? []).length;
+  // The path first: a name is a statement, a marker is an inference.
+  let dialect = ddlDialectFromPath(relPath);
+  let dialectFrom = dialect ? 'path' : null;
+  if (!dialect) {
+    for (const [name, re] of DDL_DIALECT_MARKERS) {
+      if (re.test(body)) { dialect = name; dialectFrom = 'content'; break; }
+    }
+  }
+  const byPath = MIGRATION_PATH_RE.test(String(relPath ?? ''));
+  // WHAT MAKES A FILE A MIGRATION is that it CHANGES tables somebody else
+  // declared — not that it is long, and not that it seeds rows. A schema dump
+  // that ends with 250 INSERTs is still the schema: `catalog_ddl.py` reads no
+  // INSERT at all, so the seed data is invisible to the catalog either way, and
+  // counting it would misfile the main DDL of most projects that ship one.
+  //
+  //   nothing declared at all  -> it can only be amending something
+  //   more ALTER than CREATE   -> it is amending more than it declares
+  //   a migration-tool path    -> the tool owns the order, and it is not ours
+  const testPath = isTestPath(String(relPath ?? ''));
+  const role = (byPath || createTables === 0 || alters > createTables) ? 'migration' : 'schema';
+  return { path: relPath, dialect, dialectFrom, role, createTables, alters, dml, byPath, testPath };
+}
+
+/**
+ * Walk `root` and describe what is there. Pure — all I/O is injected.
+ *
+ * @param {string} root  absolute path of the tree to scan
+ * @param {{
+ *   readDir: (absDir:string) => {name:string, isDir:boolean, isFile:boolean}[],
+ *   readFile: (absFile:string) => string,
+ *   gitHead: (absDir:string) => (string|null),
+ *   maxFiles?: number
+ * }} io
+ * @returns {{
+ *   root:string,
+ *   repos:{path:string, commit:string, javaFiles:number, frontendPackageJson:number}[],
+ *   counts:{javaFiles:number, javaTestFiles:number, springHandlerFiles:number, mybatisMapperXml:number, ddlFiles:number, jpaEntityFiles:number, mybatisPlusFiles:number, kotlinFiles:number, frontendPackageJson:number, webFiles:number, vueFiles:number},
+ *   buildTool:('maven'|'gradle'|null),
+ *   packagePrefixes:string[],
+ *   mapperDirs:string[],
+ *   webSourceRoots:string[],
+ *   webPackages:{path:string, root:string, framework:string, router:(string|null), http:string[]}[],
+ *   openapiDocuments:{path:string, version:('3'|'2'|'unknown')}[],
+ *   javaSourceRoots:string[],
+ *   javaTestRoots:string[],
+ *   ddlPaths:string[],
+ *   ddlCandidates:{path:string, dialect:(string|null), dialectFrom:(string|null), role:string, createTables:number, alters:number, dml:number, byPath:boolean, testPath:boolean}[],
+ *   ddlDialectHint:('mysql'|null),
+ *   connectionCandidates:Object[],
+ *   filesScanned:number,
+ *   capped:boolean,
+ *   diagnostics:{kind:string, severity:string, path:string, reason:string}[]
+ * }}
+ */
+export function discover(root, io = {}) {
+  const { readDir, readFile, gitHead } = io;
+  const maxFiles = io.maxFiles ?? DEFAULT_MAX_FILES;
+  if (typeof root !== 'string' || root.length === 0) {
+    throw new DiscoverError('root must be a non-empty string');
+  }
+  for (const [name, fn] of [['readDir', readDir], ['readFile', readFile], ['gitHead', gitHead]]) {
+    if (typeof fn !== 'function') throw new DiscoverError(`discover requires an injected ${name} function`);
+  }
+
+  const diagnostics = [];
+  const counts = {
+    javaFiles: 0,
+    javaTestFiles: 0,
+    springHandlerFiles: 0,
+    mybatisMapperXml: 0,
+    ddlFiles: 0,
+    jpaEntityFiles: 0,
+    mybatisPlusFiles: 0,
+    kotlinFiles: 0,
+    frontendPackageJson: 0,
+    // The web lane's inputs (RM26): every source file it would read, and how
+    // many of those are single-file components.
+    webFiles: 0,
+    vueFiles: 0,
+  };
+  // One entry per frontend package.json, with what its dependencies declare.
+  const webPackages = [];
+  // Every OpenAPI / Swagger document in the tree, with the version it declares.
+  const openapiDocuments = [];
+  const ddlPaths = [];
+  // Every .sql that declares or amends a table, with its dialect and its role.
+  const ddlCandidates = [];
+  // Connection-info candidates (SPEC §12.1 ①). Discovery only LISTS them; it
+  // never dials one, and it never reads a password value — src/core/dbconfig.mjs
+  // returns references, not secrets.
+  const connectionCandidates = [];
+  // The two lane inputs `cascade analyze` needs when it is run with no flags:
+  // which directories hold MyBatis mapper XML, and which directories are Java
+  // source roots (measured from each file's own `package` declaration, never
+  // assumed to be `src/main/java`).
+  const mapperDirs = new Set();
+  const javaRoots = new Set();
+  const javaTestRoots = new Set();
+  // repoRel -> per-repo tallies; the walk attributes each file to the deepest
+  // enclosing repository so the manifest can give every repo an honest `kind`.
+  const repoStats = new Map();
+  const packageCounts = new Map();
+  let javaWithPackage = 0;
+  let ddlDialectHint = null;
+  let filesScanned = 0;
+  let capped = false;
+  let sawPom = false;
+  let sawGradle = false;
+
+  const rel = (abs) => {
+    const r = path.relative(root, abs);
+    return r === '' ? '.' : r.split(path.sep).join('/');
+  };
+
+  // The repository stack: the innermost entry owns the files being walked.
+  const repoOf = (stack) => (stack.length ? stack[stack.length - 1] : null);
+
+  const noteRepo = (absDir) => {
+    const key = rel(absDir);
+    const commit = gitHead(absDir);
+    if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)) {
+      diagnostics.push({
+        kind: 'REPOSITORY_WITHOUT_HEAD',
+        severity: 'warn',
+        path: key,
+        reason: 'git repository has no resolvable HEAD commit (empty repository?); excluded from the manifest, which pins every repo to a full commit',
+      });
+      return null;
+    }
+    if (!repoStats.has(key)) {
+      repoStats.set(key, { path: key, commit, javaFiles: 0, frontendPackageJson: 0 });
+    }
+    return key;
+  };
+
+  const walk = (absDir, repoStack, isRepoRoot) => {
+    if (capped) return;
+    let entries;
+    try {
+      entries = readDir(absDir);
+    } catch (e) {
+      diagnostics.push({
+        kind: 'UNREADABLE_DIRECTORY', severity: 'warn', path: rel(absDir),
+        reason: `cannot list directory: ${e.message}`,
+      });
+      return;
+    }
+    entries = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+    // A directory holding `.git` (a dir, or a file for linked worktrees) is a
+    // repository — the root included (§5, nested repos are listed separately).
+    const hasGit = entries.some((e) => e.name === '.git');
+    let stack = repoStack;
+    if (hasGit) {
+      const key = noteRepo(absDir);
+      if (key !== null) stack = [...repoStack, key];
+    }
+
+    if (isRepoRoot || hasGit) {
+      if (entries.some((e) => e.isFile && e.name === 'pom.xml')) sawPom = true;
+      if (entries.some((e) => e.isFile && (e.name === 'build.gradle' || e.name === 'build.gradle.kts'))) sawGradle = true;
+    }
+
+    for (const entry of entries) {
+      if (capped) return;
+      if (entry.isDir) {
+        if (SKIP_DIRS.includes(entry.name)) continue;
+        walk(path.join(absDir, entry.name), stack, false);
+        continue;
+      }
+      if (!entry.isFile) continue; // symlinks and specials: not walked, not counted
+      filesScanned += 1;
+      if (filesScanned > maxFiles) {
+        capped = true;
+        diagnostics.push({
+          kind: 'FILE_CAP_REACHED', severity: 'warn', path: rel(absDir),
+          reason: `walk stopped after ${maxFiles} files; the discovery below describes only the part of the tree that was scanned`,
+        });
+        return;
+      }
+      classify(path.join(absDir, entry.name), entry.name, repoOf(stack), entries);
+    }
+  };
+
+  // A root under the standard Maven/Gradle test layout goes on the TEST list,
+  // not the main one. It is reported either way — never dropped (§7.3).
+  const addRoot = (relRoot) => {
+    (isTestPath(relRoot) ? javaTestRoots : javaRoots).add(relRoot);
+  };
+
+  const read = (absFile) => {
+    try {
+      return readFile(absFile);
+    } catch (e) {
+      diagnostics.push({
+        kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
+        reason: `cannot read file: ${e.message}`,
+      });
+      return null;
+    }
+  };
+
+  const classify = (absFile, name, repoKey, dirEntries) => {
+    const lower = name.toLowerCase();
+    const stats = repoKey === null ? null : repoStats.get(repoKey);
+
+    // Counted BEFORE the java/xml/sql branches so a `.vue` or `.ts` never falls
+    // through to nothing. The web lane reads these files (RM26), so they are an
+    // input, not an uncovered technology.
+    if (isWebSourceFile(name)) {
+      counts.webFiles += 1;
+      if (lower.endsWith('.vue')) counts.vueFiles += 1;
+      return;
+    }
+
+    if (lower.endsWith('.java')) {
+      counts.javaFiles += 1;
+      if (isTestPath(rel(absFile))) counts.javaTestFiles += 1;
+      if (stats) stats.javaFiles += 1;
+      const text = read(absFile);
+      if (text === null) return;
+      const pkg = PACKAGE_DECL_RE.exec(text);
+      const dir = path.dirname(absFile);
+      if (pkg) {
+        javaWithPackage += 1;
+        const declared = pkg[1].replace(/[ \t]/g, '');
+        const prefix = prefixOf(declared);
+        packageCounts.set(prefix, (packageCounts.get(prefix) ?? 0) + 1);
+        addRoot(rel(sourceRootOf(dir, declared, root)));
+      } else {
+        // No package declaration: the file's own directory IS the source root.
+        addRoot(rel(dir));
+      }
+      if (SPRING_HANDLER_RE.test(text)) counts.springHandlerFiles += 1;
+      // A JPA entity is a LANE as of M10, not an uncovered technology: the count
+      // is what makes `cascade init` declare the `jpa` framework pack.
+      if (JPA_ENTITY_RE.test(text)) counts.jpaEntityFiles += 1;
+      // Same rule, same reason: the count is what makes `cascade init` declare
+      // the `mybatis-plus` framework pack.
+      if (MYBATIS_PLUS_RE.test(text)) counts.mybatisPlusFiles += 1;
+      return;
+    }
+
+    // Kotlin build scripts (build.gradle.kts) are configuration, not sources;
+    // only `.kt` counts as a Kotlin source here.
+    if (lower.endsWith('.kt')) {
+      counts.kotlinFiles += 1;
+      diagnostics.push({
+        kind: 'UNSUPPORTED_TECHNOLOGY', severity: 'info', path: rel(absFile),
+        reason: 'Kotlin source: the engine ships no Kotlin lane, so this file contributes nothing to the graph',
+      });
+      return;
+    }
+
+    if (lower.endsWith('.xml')) {
+      const text = read(absFile);
+      if (text === null) return;
+      if (MYBATIS_MAPPER_RE.test(text)) {
+        counts.mybatisMapperXml += 1;
+        mapperDirs.add(rel(path.dirname(absFile)));
+      }
+      return;
+    }
+
+    // An OpenAPI / Swagger document is an EVIDENCE LAYER, not a technology this
+    // engine has no lane for: it declares routes, and RM29's bridge reads them.
+    //
+    // TESTED BEFORE THE CONNECTION-FILE RULE, and it has to be: that rule claims
+    // every `.yml`/`.yaml` in the tree, so a document tested after it would never
+    // be seen. A file whose head says `openapi:` is a contract, not a datasource
+    // configuration, and no file is both.
+    if (name !== 'package.json' && OPENAPI_EXTENSIONS.some((e) => lower.endsWith(e))) {
+      const text = read(absFile);
+      if (text !== null) {
+        const head = text.slice(0, OPENAPI_HEAD_BYTES);
+        const version = openApiVersionOf(head);
+        if (version !== null && (version !== 'unknown' || OPENAPI_PATHS_KEY.test(head))) {
+          if (text.length > OPENAPI_MAX_BYTES) {
+            diagnostics.push({
+              kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
+              reason: `this OpenAPI document is ${Math.round(text.length / 1024)} KB, over the ${OPENAPI_MAX_BYTES / 1024 / 1024} MB this engine reads. Its routes are not in the pack; point --openapi at a smaller document if one is published`,
+            });
+          } else {
+            openapiDocuments.push({ path: rel(absFile), version });
+          }
+          return;
+        }
+      }
+    }
+
+    // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
+    // `locale*/` is a presentation resource, and reading it produced diagnostics
+    // about files that were never connection candidates (see dbconfig.mjs).
+    if (looksLikeConnectionFile(rel(absFile))) {
+      const text = read(absFile);
+      if (text === null) return;
+      connectionCandidates.push(...findConnectionCandidates(
+        [{ path: rel(absFile), text }], diagnostics,
+      ));
+      return;
+    }
+
+    if (lower.endsWith('.sql')) {
+      const text = read(absFile);
+      if (text === null) return;
+      if (CREATE_TABLE_RE.test(text)) {
+        counts.ddlFiles += 1;
+        ddlPaths.push(rel(absFile));
+        if (ddlDialectHint === null && MYSQL_DDL_RE.test(text)) ddlDialectHint = 'mysql';
+      }
+      // EVERY candidate, classified — including the ones that only ALTER, which
+      // `ddlPaths` (CREATE TABLE only) never listed. Without them the run cannot
+      // say how many migration files it left out, and a silent omission is the
+      // one thing a catalog decision must not be.
+      if (CREATE_TABLE_RE.test(text) || ALTER_TABLE_RE.test(text)) {
+        ddlCandidates.push(classifyDdlFile(rel(absFile), text));
+      }
+      return;
+    }
+
+    if (name === 'package.json') {
+      const text = read(absFile);
+      if (text === null) return;
+      let pkg;
+      try {
+        pkg = JSON.parse(text);
+      } catch (e) {
+        diagnostics.push({
+          kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
+          reason: `package.json is not valid JSON: ${e.message}`,
+        });
+        return;
+      }
+      const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
+      if (FRONTEND_DEPS.some((d) => Object.prototype.hasOwnProperty.call(deps, d))) {
+        counts.frontendPackageJson += 1;
+        if (stats) stats.frontendPackageJson += 1;
+        // NO `UNSUPPORTED_TECHNOLOGY` here any more: as of RM26 there IS a web
+        // lane, and it reads this package. What it does not yet do is attach a
+        // frontend call to an endpoint, and that is stated on the `web` axis
+        // (src/core/lanes.mjs) rather than as a discovery diagnostic.
+        //
+        // Angular and Svelte get no diagnostic either: their HTTP calls carry
+        // URL literals like anyone else's, so the lane reads them too. What the
+        // record says is which framework the package DECLARED, and nothing more.
+        const dir = path.dirname(absFile);
+        const framework = FRAMEWORK_DEPS.find(([, names]) =>
+          names.some((n) => Object.prototype.hasOwnProperty.call(deps, n)));
+        const router = routerDependencyOf(deps);
+        const http = [];
+        if (Object.prototype.hasOwnProperty.call(deps, 'axios')) http.push('axios');
+        if (http.length === 0) http.push('fetch-only');
+        // `<dir>/src` when the package keeps its sources there, which is the
+        // near-universal layout; otherwise the package directory itself, so a
+        // flat package is still read rather than skipped.
+        const hasSrc = (dirEntries ?? []).some((e) => e.isDir && e.name === 'src');
+        webPackages.push({
+          path: rel(absFile),
+          root: rel(hasSrc ? path.join(dir, 'src') : dir),
+          framework: framework ? framework[0] : 'unknown',
+          router,
+          http,
+        });
+      }
+    }
+  };
+
+  walk(root, [], true);
+
+  const repos = [...repoStats.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+  return {
+    root,
+    repos,
+    counts,
+    buildTool: sawPom ? 'maven' : sawGradle ? 'gradle' : null,
+    packagePrefixes: coveringPrefixes(packageCounts, javaWithPackage),
+    mapperDirs: minimalRoots(mapperDirs),
+    // The web lane's roots and packages (RM26). `minimalRoots` for the same
+    // reason the mapper and java roots use it: the lane walks recursively, so
+    // listing a directory and one of its children would read the child twice.
+    webSourceRoots: minimalRoots(webPackages.map((p) => p.root)),
+    webPackages: webPackages.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    // Sorted by path, like every other list here: a walk's order must not decide
+    // which document a run reads first.
+    openapiDocuments: openapiDocuments.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    javaSourceRoots: minimalRoots(javaRoots),
+    javaTestRoots: minimalRoots(javaTestRoots),
+    ddlPaths: ddlPaths.slice().sort(),
+    // Sorted by path: "applied in path order" has to mean the same thing on
+    // every machine, and a directory walk's order does not.
+    ddlCandidates: ddlCandidates.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    ddlDialectHint,
+    connectionCandidates: connectionCandidates
+      .slice()
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),
+    filesScanned: Math.min(filesScanned, maxFiles),
+    capped,
+    diagnostics,
+  };
+}
+
+/**
+ * Whether a root-relative path sits under the standard Maven/Gradle TEST source
+ * layout — a `src/test/…` segment, at any depth (so `app/src/test/java` and
+ * `modules/x/src/test` both match, while `src/main/java/.../testing/` does not).
+ *
+ * This is a LAYOUT CONVENTION the build tools document, not a guess about the
+ * code: it decides only which roots an UNFLAGGED run reads by default, it is
+ * printed on every run, and `--java-src <that root>` still analyzes it.
+ *
+ * @param {string} relPath  a POSIX path relative to the scanned root
+ * @returns {boolean}
+ */
+export function isTestPath(relPath) {
+  const p = String(relPath ?? '');
+  return p === 'src/test' || p.startsWith('src/test/') || p.includes('/src/test/') || p.endsWith('/src/test');
+}
+
+/**
+ * The Java source root a file belongs to: its directory with the package's own
+ * segments removed, but ONLY when the directory really ends with those segments
+ * (a file whose directory layout disagrees with its package keeps its own
+ * directory — the engine does not invent a layout it did not see). Never climbs
+ * above `stopAt`.
+ *
+ * @param {string} dir       absolute directory holding the .java file
+ * @param {string} pkg       the declared package, e.g. "com.example.shop"
+ * @param {string} stopAt    absolute scan root; the walk never rises above it
+ * @returns {string} an absolute directory
+ */
+export function sourceRootOf(dir, pkg, stopAt) {
+  const segs = pkg.split('.').filter(Boolean);
+  let cur = dir;
+  for (let i = segs.length - 1; i >= 0; i -= 1) {
+    if (path.basename(cur) !== segs[i]) return dir; // layout disagrees with the package
+    const up = path.dirname(cur);
+    if (up === cur || !isWithin(stopAt, up)) return dir; // would leave the scanned tree
+    cur = up;
+  }
+  return cur;
+}
+
+/**
+ * Sorted, with every path that is a strict descendant of another path dropped:
+ * `--mappers`/`--java-src` walk recursively, so listing both a directory and one
+ * of its children would analyze the child's files twice.
+ * @param {Iterable<string>} paths  root-relative POSIX paths ('.' for the root)
+ * @returns {string[]}
+ */
+export function minimalRoots(paths) {
+  const all = [...new Set(paths)].sort();
+  return all.filter((p) => !all.some((q) => q !== p && (q === '.' || p.startsWith(q + '/'))));
+}
+
+function isWithin(rootAbs, candidate) {
+  const r = path.resolve(rootAbs);
+  const c = path.resolve(candidate);
+  return c === r || c.startsWith(r + path.sep);
+}
+
+/**
+ * The prefix a package declaration contributes: its first three segments, or the
+ * whole package when it has fewer (a two-segment `com.example` stays as it is).
+ * @param {string} pkg
+ * @returns {string}
+ */
+export function prefixOf(pkg) {
+  const parts = pkg.split('.');
+  return parts.slice(0, 3).join('.');
+}
+
+/**
+ * The minimal set of package prefixes covering >= 95% of the java files that
+ * declare a package, sorted alphabetically. Empty when no java file declares one
+ * — the engine never invents a default package prefix (SPEC §6, MUST NOT).
+ * @param {Map<string, number>} packageCounts
+ * @param {number} total  java files that carry a package declaration
+ * @returns {string[]}
+ */
+export function coveringPrefixes(packageCounts, total) {
+  if (total <= 0 || packageCounts.size === 0) return [];
+  // Greedy by descending count (ties broken by name, for determinism) until the
+  // covered share reaches the threshold — that is the minimal covering set.
+  const ranked = [...packageCounts.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1));
+  const need = total * PREFIX_COVERAGE;
+  const chosen = [];
+  let covered = 0;
+  for (const [prefix, n] of ranked) {
+    if (covered >= need) break;
+    chosen.push(prefix);
+    covered += n;
+  }
+  return chosen.sort();
+}
+
+export class DiscoverError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'DiscoverError';
+  }
+}

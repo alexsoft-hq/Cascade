@@ -1,0 +1,343 @@
+# The CLI — every command and every flag
+
+`cascade` is a thin shell over `src/core` and `src/mcp`. Run it as
+`node bin/cascade.mjs <command>` from the engine root (or as `cascade` once the
+`bin` entry is on your PATH).
+
+Running it with no command prints the usage text. **That text is the source of
+truth for this page**: `test/docs.test.mjs` runs the binary, reads the commands
+and flags out of what it printed, and fails if any of them is missing here.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | the command did what it was asked |
+| `1` | `doctor` only — a required prerequisite is missing |
+| `2` | bad usage, or an input the command refuses (this is what `die()` exits with) |
+| `3` | `analyze` only — the calibration gate judged the run a regression. The pack is written to `<packDir>-rejected/` and the certified pack is left untouched |
+| `4` | `verify` only — a digest, the engine identity, or the expiry disagreed |
+
+## Finding the project
+
+Four commands (`analyze`, `mcp`, `view`, `impact`, and also `verify`,
+`estimate`, `golden`) locate a project the same way, in this order:
+
+```
+--pack <dir>      an explicit pack directory
+--project <id>    looked up in ~/.cascade/registry.json (written by `init`)
+--root <dir>      that directory's .cascade/
+(nothing)         the current directory's .cascade/
+```
+
+An unknown `--project` lists the ids that *are* registered rather than guessing
+one.
+
+---
+
+## `cascade doctor`
+
+```
+cascade doctor [--json]
+```
+
+Pre-flight every prerequisite at once instead of discovering them
+one error at a time: Node's version, `git`, the SQL lane's venv and `sqlglot`,
+a JDK — naming which candidate directory won and why each of the others did not
+— the three optional DB drivers, Docker, the registry file and the cache
+directory. Each line carries a status (`ok` / `warn` / `missing`) and, when it
+is not ok, the remedy.
+
+- `--json` — the whole report as `cascade:doctor:1` instead of the table.
+
+Exit `0` only when every **required** prerequisite is ok. The optional lines
+(DB drivers, Docker) are reported and never fatal.
+
+## `cascade init`
+
+```
+cascade init [--root <dir>] [--project <id>] [--force] [--json]
+```
+
+Discover what is in a tree and write the project's own state: `.cascade/manifest.json`
+(repositories pinned to full commits), `.cascade/profile.json` (the reading
+convention), `.cascade/.gitignore` (which ignores `pack/` and `catalog/`,
+because they carry your SQL and your column comments), and an entry in
+`~/.cascade/registry.json`.
+
+It reports what it found — java/mapper/DDL counts, build tool, package
+prefixes, the mapper directories and Java source roots the lanes will read — and
+**what it has no lane for**: Kotlin sources and frontend packages come back as
+`UNSUPPORTED_TECHNOLOGY` diagnostics rather than being silently ignored.
+
+- `--root <dir>` — the tree to discover (default: the current directory).
+- `--project <id>` — the id to register it under (default: derived from the
+  directory name).
+- `--force` — overwrite an existing manifest/profile. Without it, a second run
+  keeps your edits.
+- `--json` — the whole discovery report as JSON.
+
+## `cascade analyze`
+
+```
+cascade analyze [--root <repo>] [--out <dir>] [--profile <f>]
+                [--cold | --incremental] [--accept-baseline]
+                [--ddl <schema.sql|glob>... | --no-ddl]
+                [--mappers <dir>... | --no-mappers]
+                [--java-src <dir>... | --no-java]
+                [--web-src <dir>... | --no-web]
+                [--openapi <file>... | --no-openapi]
+                [--har <file>...]
+```
+
+Run the lanes end to end and write a content-addressed pack
+(`<packDir>/pack.json`). **With no lane flag the inputs come from the project
+itself** — the DDL from the profile's `catalog.connectionFrom` (one path or an
+ordered list) or, failing that, from the classification below; the mapper
+directories and Java source roots from discovery — and the run prints which lane
+got what, and from where.
+
+Every lane input is optional and a missing axis is **declared, not fatal**: the
+pack records `meta.axes` with `shipped` / `degraded` / `not-shipped` and why.
+
+A run is **incremental** whenever a previous `facts-index.json` and its shards
+both apply; otherwise it is cold **and says why**.
+
+- `--root <repo>` — the tree to analyze (default: the current directory).
+- `--out <dir>` — where the pack goes (default: the resolved `.cascade/pack`).
+- `--profile <f>` — a profile file other than `<dotCascade>/profile.json`.
+- `--cold` — recompute everything.
+- `--incremental` — ask for an incremental run. One that cannot be incremental
+  still runs, and still says why it could not.
+- `--accept-baseline` — re-seal the calibration baseline **from this run**. The
+  one override there is, and a human decision.
+- `--ddl <schema.sql|glob>` — a DDL file the catalog is parsed from. **Repeatable,
+  and each value may be a glob** (`*` inside a path segment, `**` across them):
+  a schema split one file per service is `--ddl a.sql --ddl b.sql --ddl c.sql`
+  or `--ddl 'svc-*/db/mysql/schema.sql'`. The files are applied **in the order
+  given**, so a base schema followed by its migrations reads as the history it
+  is: `CREATE TABLE` declares, `ALTER TABLE ADD/DROP/MODIFY/CHANGE COLUMN` and
+  `RENAME TABLE` amend, and two files declaring the same table are reported
+  (`DUPLICATE_TABLE_DECLARATION`) with the first kept, never merged.
+
+  With no `--ddl` at all, discovery classifies every `.sql` it found by
+  **dialect** (from the path — `db/mysql/…`, `schema_h2.sql` — and otherwise from
+  spellings only one database has) and by **role** (`schema` when it declares
+  tables, `migration` when it changes more than it declares or sits under a
+  `flyway`/`liquibase`/`migration`/`upgrade`/`patch` path). The default is every
+  `schema` file of the project's dialect, in path order; migrations and files
+  under `src/test/` are **not** applied. Every file is printed with the reason it
+  was applied or left out, and naming one with `--ddl` overrides the lot.
+- `--no-ddl` — run with no DB catalog at all (the column axis then declares
+  itself degraded). It overrides `--ddl`, the profile and the classification.
+- `--mappers <dir>` — a MyBatis mapper directory; repeat for several.
+- `--no-mappers` — no SQL statements (a schema with nothing over it).
+- `--java-src <dir>` — a Java source root; repeat for several. An unflagged run
+  reads **main** sources only and prints the `src/test` roots it skipped;
+  passing one here includes it.
+- `--no-java` — a SQL-only pack.
+- `--web-src <dir>` — a frontend source root; repeat for several. An unflagged
+  run reads the roots discovery found, but only when the profile declares the
+  `web` framework pack. The lane traces every HTTP call to the client that sends
+  it, derives the prefix that client goes through, matches the URL against the
+  routes this pack knows, and adds a graded `CALLS_HTTP` edge from the frontend
+  function to the endpoint. The `web` axis says what had to be guessed. Its facts
+  are cached per file, so a second run re-reads only what changed.
+  See [the web lane setup page](setup/web-lane.md).
+- `--no-web` — do not read the frontend even when the profile declares it.
+- `--openapi <file>` — an OpenAPI 3 or Swagger 2 document, JSON or YAML; repeat
+  for several. Every `(method, path)` it declares becomes an endpoint with the
+  same id the Java lane would give it: a route the code also serves is
+  **corroborated** (the node gains `declaredBy`, and the `operationId` and
+  `summary` when the document carries them), and a route nothing here serves is
+  added with **no handler edge**, because a declaration says a route exists and
+  says nothing about what runs below it. The two drift lists — declared and not
+  served, served and not declared — are on `meta.laneStats.openapi` and in the
+  overview's `openapi-drift` gap. With no flag, the documents come from the
+  profile's `openapi.documents`, and failing that from discovery.
+- `--no-openapi` — read no document even when the profile or discovery names one.
+- `--har <file>` — a browser recording (HAR 1.2, what Chrome DevTools saves from
+  the Network panel); repeat for several. Every request in it whose path matches
+  a route this pack serves becomes a `screen --CALLS_HTTP--> endpoint` edge
+  graded **RUNTIME_ONLY**, which is below every query mode's floor: it is
+  **shown** (`observed: true` on the screen, the route and every row that names
+  them) and **never walked**. A recording never raises a grade and never
+  replaces the static reading; where a page it saw matches no screen the source
+  declares, a screen is added with `source: "har"` and no `RENDERS` edge.
+  Requests that match no route are counted by path, static assets are counted
+  apart, and neither is dropped. With no flag the recordings come from the
+  profile's `runtimeEvidence.har` (manifest-relative). **There is no discovery
+  step**: a recording is something you made on purpose, and picking one up
+  because it happens to be in the tree would let an unrelated capture decide what
+  this pack claims was observed. See [the web lane setup page](setup/web-lane.md).
+
+Each `--no-<lane>` overrides whatever the manifest, profile or discovery would
+otherwise have supplied, so "run without this" is always expressible.
+
+## `cascade estimate`
+
+```
+cascade estimate [--root <dir>] [--project <id>] [--json]
+```
+
+What this tree will ship, degrade, or not ship — **before** you analyze it. Once
+a pack exists it also reports the measured share of questions that can be
+answered `EXACT`.
+
+**Which tree it reads** is decided exactly as `analyze` decides it, and the
+banner says which rule won: `--root` always, then the registered project's own
+source (its manifest's single repository, or the workspace holding several),
+then the current directory when nothing resolved. So `estimate --project mall`
+from anywhere describes mall, not the directory your shell happens to be in.
+
+```
+estimate for /path/to/mall (the registered project's manifest), project mall
+```
+
+- `--root <dir>` / `--project <id>` — which project (see *Finding the project*).
+- `--json` — the raw estimate object.
+
+## `cascade verify`
+
+```
+cascade verify [--pack <dir> | --project <id> | --root <dir>] [--json]
+```
+
+Recompute every digest in `.cascade/receipt.json` from the files on disk, check
+the running engine against the one that signed the receipt, and refuse an
+expired receipt. Exit `4` on any disagreement — never a partial pass.
+
+- `--pack` / `--project` / `--root` — which project.
+- `--json` — the verification result as JSON.
+
+## `cascade golden`
+
+```
+cascade golden <propose|approve|seal|check> [--pack <dir> | --project <id> | --root <dir>]
+```
+
+The project's golden corpus. The split is the point: **the tool
+proposes, a human approves**.
+
+- `propose` — suggest candidate cases from the current pack. Writes candidates
+  and nothing else.
+- `approve` — make candidates evidence. Requires `--ids <id>…` or an explicit
+  `--all`; the tool never approves itself.
+- `seal` — hash the approved set, deciding which cases are held out.
+- `check` — score the approved cases through the shipped MCP tools.
+
+Flags: `--ids <id>…`, `--all`, plus `--pack` / `--project` / `--root`.
+
+## `cascade catalog discover`
+
+```
+cascade catalog discover [--root <dir>] [--json]
+```
+
+List the datasource configuration a tree carries — host, port, database,
+dialect, and **whether** a password is there. No password value is read,
+printed or stored, and **nothing is connected to**.
+
+- `--root <dir>` — the tree to read.
+- `--json` — the candidates as JSON.
+
+## `cascade catalog fetch`
+
+```
+cascade catalog fetch [--project <id> | --root <dir>]
+                      [--candidate <n> | --url <jdbc url> --user <u>
+                       | --dialect <d> --host <h> [--port <p>] --database <db> --user <u>]
+                      [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]
+```
+
+Pin a **read-only** catalog snapshot into `.cascade/catalog/`. It prints the
+exact target and **refuses to connect without `--yes`**: the connection info
+came out of the analyzed repository, which is untrusted input. The password is
+read only from the named environment variable — never from the command line,
+where `ps` would show it — and is never written anywhere.
+
+Analysis itself never connects; it reads the pinned snapshot, so a pack stays
+reproducible against a database that keeps moving.
+
+- `--candidate <n>` — one of the candidates `catalog discover` listed.
+- `--url <jdbc url>` `--user <u>` — or name the target by URL.
+- `--dialect <d>` `--host <h>` `--port <p>` `--database <db>` `--user <u>` — or
+  spell it out.
+- `--password-env NAME` — the environment variable holding the password.
+- `--schema NAME` — the schema to read.
+- `--stamp-schema NAME` — the schema name to stamp on the records.
+- `--yes` — confirm the exact target printed above. Without it nothing connects.
+- `--project` / `--root` — which project the snapshot belongs to.
+
+## `cascade pack`
+
+```
+cascade pack --catalog <f> --lineage <f> --out <dir> [--project NAME]
+```
+
+Build a pack directly from SQL-lane outputs (catalog + lineage JSONL) — the low
+level under `analyze`, useful when you have run the workers yourself.
+
+- `--catalog <f>` — the catalog JSONL.
+- `--lineage <f>` — the lineage JSONL.
+- `--out <dir>` — where `pack.json` is written.
+- `--project NAME` — the project name stamped in the pack meta.
+
+## `cascade mcp`
+
+```
+cascade mcp [--pack <dir> | --project <id> ... | --root <dir>] [--memory-budget <MB>]
+```
+
+Serve the tool catalog over **stdio** as an MCP server. With no
+`--pack`/`--root`/`--project` it serves **every** registered project, lazily: a
+pack is parsed on the first call that needs it, and the loaded ones are held in
+an LRU under the memory budget.
+
+Each tool takes an optional `project` argument; on a multi-project server a call
+without one is answered `ambiguous`, listing the ids. Nothing is guessed. See
+[mcp.md](mcp.md).
+
+- `--project <id>` — repeat to narrow the served set.
+- `--pack <dir>` / `--root <dir>` — serve one pack.
+- `--memory-budget <MB>` — MB of pack JSON held in memory (default 512).
+
+## `cascade impact`
+
+```
+cascade impact [--pack <dir> | --project <id> | --root <dir>] [--file <path>...]
+               [--verbose] [--mode strict|conservative|heuristic|base-only]
+```
+
+The edit loop, from the shell: what did my uncommitted edits touch? By default
+the dirty files (the working-tree diff against the commit the pack was built
+from, plus untracked ones) are **re-parsed on every call**, so the answer
+describes the bytes on disk rather than the last analysis. Nothing is written —
+not the pack, not the fact cache.
+
+- `--file <path>` — restrict the question to these files; repeat for several.
+- `--verbose` — also print the reused shard count, the dirty document hashes and
+  the files that were parsed.
+- `--mode strict|conservative|heuristic` — which edge grades the walk may use.
+- `--mode base-only` — answer from the pack alone: what these files touched as
+  they were **last analyzed**, labelled as such.
+- `--pack` / `--project` / `--root` — which project.
+
+A row marked `PROVISIONAL` exists only in the overlay — no certified run has
+seen it. After a commit the overlay is discarded and the answer is `behind`,
+naming `cascade analyze` as the cure.
+
+## `cascade view`
+
+```
+cascade view [--pack <dir> | --project <id> ... | --root <dir>] [--port 4319] [--memory-budget <MB>]
+```
+
+Serve the local web viewer over HTTP on `127.0.0.1`. Same project selection as
+`mcp`; the page shows one project at a time — open it with `?project=<id>` when
+the server serves several. See [viewer.md](viewer.md).
+
+- `--port 4319` — the port to bind (default 4319).
+- `--project <id>` — repeat to narrow the served set.
+- `--pack <dir>` / `--root <dir>` — serve one pack.
+- `--memory-budget <MB>` — MB of pack JSON held in memory (default 512).

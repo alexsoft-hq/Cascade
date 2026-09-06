@@ -1,0 +1,11 @@
+{
+  "name": "web-smoke-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "react-router-dom": "^6.26.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.4.0"
+  }
+}

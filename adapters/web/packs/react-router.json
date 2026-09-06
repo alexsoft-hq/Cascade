@@ -1,0 +1,15 @@
+{
+  "pack": "react-router",
+  "routeObject": {
+    "pathKey": "path",
+    "componentKeys": ["element", "Component", "component", "lazy"],
+    "childrenKey": "children",
+    "indexKey": "index"
+  },
+  "registrars": ["createBrowserRouter", "createHashRouter", "createMemoryRouter", "createRoutesFromElements"],
+  "jsx": {
+    "element": "Route",
+    "pathAttr": "path",
+    "componentAttrs": ["element", "component", "Component"]
+  }
+}

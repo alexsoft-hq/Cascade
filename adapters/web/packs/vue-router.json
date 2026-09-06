@@ -1,0 +1,15 @@
+{
+  "pack": "vue-router",
+  "routeObject": {
+    "pathKey": "path",
+    "componentKeys": ["component", "components"],
+    "childrenKey": "children",
+    "nameKey": "name",
+    "metaKey": "meta",
+    "titleKey": "title",
+    "redirectKey": "redirect",
+    "hiddenKey": "hidden"
+  },
+  "registrars": ["createRouter", "VueRouter", "Router"],
+  "routesKey": "routes"
+}

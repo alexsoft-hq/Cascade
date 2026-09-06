@@ -1,0 +1,46 @@
+# The routes the web fixture's frontend calls, declared by a document instead of
+# served by any code here. This is the case the OpenAPI lane exists for: a
+# backend written in something this engine has no lane for, whose contract is the
+# only thing the frontend's calls can land on.
+openapi: 3.0.3
+info:
+  title: Things API
+  version: '2.0'
+paths:
+  /things/list:
+    get:
+      operationId: listThings
+      summary: Every thing
+  /things/save:
+    get:
+      operationId: saveThing
+  /things/{id}:
+    get:
+      operationId: getThing
+  /things/{id}/tags:
+    get:
+      operationId: thingTags
+  /u/thing:
+    post:
+      operationId: postThing
+  /catalog/list:
+    get:
+      operationId: listCatalog
+  /catalog/save:
+    post:
+      operationId: saveCatalog
+  /catalog/edit:
+    post:
+      operationId: editCatalog
+  /v/items:
+    get:
+      operationId: versionedItems
+  /legacy/ping:
+    get:
+      operationId: legacyPing
+  /health:
+    post:
+      operationId: healthPost
+  /orders/{id}:
+    get:
+      operationId: getOrder

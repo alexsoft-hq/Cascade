@@ -1,0 +1,103 @@
+Cascade
+Copyright 2026 The Cascade Authors
+
+This product includes software developed by the Cascade Authors,
+licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------------
+Third-party components, and the license boundary
+--------------------------------------------------------------------------------
+
+The pure-JavaScript engine core (src/core, src/mcp, src/harness) is
+Apache-2.0. The following native analysis lanes are OPTIONAL and, when
+present, live in SEPARATE subprojects under their own licenses. They are
+NOT linked into the Apache-2.0 core and MUST be distributed in a relinkable
+form: no fat or shadow jar, no single Docker image, so that a recipient can
+replace one of them without rebuilding the core.
+
+  - Java source lane (Eclipse JDT Core)         EPL-2.0
+  - JVM dataflow lane (SootUp)                   LGPL-2.1   [separate subproject]
+  - SQL lane (SQLGlot)                           MIT
+
+Comparator/PoC components (e.g. WALA) are excluded from the public scope.
+
+The web lane does NOT use the TypeScript Compiler API, and an earlier version
+of this file said it did. It parses with @babel/parser, which is pure
+JavaScript under the MIT license and is VENDORED into this repository at
+adapters/web/vendor/babel-parser.cjs (credited below).
+
+The Java and the SQL lanes resolve nothing from a package registry at build
+time either: the Java lane compiles one source file with the JDK the user
+already has, and the SQL lane runs in a Python virtual environment the user
+creates. So this repository fetches nothing to build and nothing to analyze,
+and the two things it does carry from somebody else are the viewer's browser
+bundles and the web lane's parser, both listed below.
+
+--------------------------------------------------------------------------------
+Vendored third-party components (viewer/vendor)
+--------------------------------------------------------------------------------
+
+The local web viewer (viewer/index.html, served by `cascade view`) ships two
+pre-built MIT browser bundles. They are vendored, not fetched: the page is
+served by a local process with no network access. They run only in the
+browser — nothing in the engine, the MCP servers or the CLI imports them.
+
+  - 3d-force-graph  1.80.0   MIT   Copyright (c) 2017 Vasco Asturiano
+        viewer/vendor/3d-force-graph.min.js
+        https://github.com/vasturiano/3d-force-graph
+        licence: viewer/vendor/LICENSE-3d-force-graph.txt
+
+  - force-graph      1.51.4  MIT   Copyright (c) 2018 Vasco Asturiano
+        viewer/vendor/force-graph.min.js
+        https://github.com/vasturiano/force-graph
+        licence: viewer/vendor/LICENSE-force-graph.txt
+
+  - three (three.js)  r183   MIT   Copyright (c) 2010-2025 three.js authors
+        BUNDLED INSIDE viewer/vendor/3d-force-graph.min.js — there is no
+        separate file. https://github.com/mrdoob/three.js — the MIT text is
+        the same as the two above, with the three.js authors as copyright
+        holders.
+
+Both bundles also carry their own smaller MIT dependencies inline (d3-*,
+kapsule, accessor-fn, bezier-js, @tweenjs/tween.js, canvas-color-tracker,
+index-array-by, lodash-es, three-forcegraph, three-render-objects). Exact
+versions, sizes and upstream URLs: viewer/vendor/README.md.
+
+The viewer also ships three Latin web-font subsets, for the same reason as the
+bundles: the page is read on a machine that may have no network, and a typeface
+must not depend on somebody else's uptime. They are used only by the browser.
+
+  - IBM Plex Sans   OFL-1.1   Copyright 2017 IBM Corp.
+        viewer/vendor/fonts/IBM-Plex-Sans-latin.woff2
+        (a VARIABLE font: one file covers weights 400-600)
+        https://github.com/IBM/plex
+        licence: viewer/vendor/fonts/OFL-IBM-Plex.txt
+
+  - IBM Plex Mono   OFL-1.1   Copyright 2017 IBM Corp.
+        viewer/vendor/fonts/IBM-Plex-Mono-400-latin.woff2
+        viewer/vendor/fonts/IBM-Plex-Mono-500-latin.woff2
+        https://github.com/IBM/plex
+        licence: viewer/vendor/fonts/OFL-IBM-Plex.txt
+
+--------------------------------------------------------------------------------
+Vendored third-party components (adapters/web/vendor)
+--------------------------------------------------------------------------------
+
+The web lane's worker (adapters/web/webfacts.mjs) parses JavaScript,
+TypeScript, JSX, TSX and Vue single-file component script blocks. It does that
+with one vendored, pure-JavaScript parser. It is vendored, not fetched: this
+engine has no npm install step, and analysis makes no network call at all.
+The bundle runs inside the worker process and nothing else in the engine
+imports it.
+
+  - @babel/parser  7.29.8  MIT  Copyright (C) 2012-2014 by various contributors
+        adapters/web/vendor/babel-parser.cjs
+        https://github.com/babel/babel (packages/babel-parser)
+        the published tarball's package/lib/index.js, copied byte for byte; the
+        .cjs extension is the only change, because this repository's
+        package.json is "type": "module"
+        licence: adapters/web/vendor/LICENSE-babel-parser.txt
+
+The tarball URL it was copied from, the exact size, the sha256 and the reason
+for the version choice are in adapters/web/vendor/README.md, and
+test/gates.test.mjs holds the file to that hash.

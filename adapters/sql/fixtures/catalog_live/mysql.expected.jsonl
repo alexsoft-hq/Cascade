@@ -1,0 +1,10 @@
+{"dialect":"mysql","fetchedAt":"2026-01-02T03:04:05Z","kind":"header","rowCounts":{"columns":7,"commented":4,"tables":2},"schema":"cascade:catalog-snapshot:1","serverIdentity":"db.example.com:3306/com_example_shop","serverVersion":"8.0.36","source":"jdbc","version":"catalog-live/1"}
+{"comment":"Customer order header","kind":"table","schema":null,"table":"shop_order"}
+{"column":"id","comment":"Order id","kind":"column","nullable":false,"ordinal":1,"pk":true,"schema":null,"table":"shop_order","type":"BIGINT"}
+{"column":"order_sn","comment":"Order code (SKU-like) — unique","kind":"column","nullable":false,"ordinal":2,"pk":false,"schema":null,"table":"shop_order","type":"VARCHAR(64)"}
+{"column":"total_amount","comment":"Order total in €","kind":"column","nullable":true,"ordinal":3,"pk":false,"schema":null,"table":"shop_order","type":"DECIMAL(10, 2)"}
+{"column":"delete_status","comment":null,"kind":"column","nullable":true,"ordinal":4,"pk":false,"schema":null,"table":"shop_order","type":"INT"}
+{"comment":null,"kind":"table","schema":null,"table":"shop_order_item"}
+{"column":"id","comment":null,"kind":"column","nullable":false,"ordinal":1,"pk":true,"schema":null,"table":"shop_order_item","type":"BIGINT"}
+{"column":"order_id","comment":"Owning order","kind":"column","nullable":false,"ordinal":2,"pk":false,"schema":null,"table":"shop_order_item","type":"BIGINT"}
+{"column":"quantity","comment":null,"kind":"column","nullable":true,"ordinal":3,"pk":false,"schema":null,"table":"shop_order_item","type":"INT UNSIGNED"}
