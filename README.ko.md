@@ -23,10 +23,12 @@ AI 코딩 에이전트와 그 옆에서 일하는 사람을 위한, 코드에서
 
 ## 그림부터 봅니다
 
-![Cascade 뷰어의 Overview 탭. 상단에 SQL 까지 닿는 엔드포인트, 닿은 SQL
-statement, 닿은 테이블, 닿은 컬럼, 테이블까지 닿는 화면의 다섯 개 다이얼이
-있고 그 아래에 프로젝트 전체 지도와 못 본 것을 나열한 패널이
-있습니다](docs/assets/screens/overview-ko.png)
+![Cascade 뷰어 둘러보기. litemall 의 개요 다이얼, 이어서 컬럼 하나가 닿는 SQL
+statement 와 HTTP 엔드포인트로 뻗어 나가는 모습, statement 하나의 소스, 프로젝트
+전체 그래프, 그리고 mall 에서 SQL 의 조인으로 복원한 스키마](docs/assets/cascade-demo.gif)
+
+컬럼 하나를 바꿨을 때의 답을 양방향으로, 실제 오픈소스 프로젝트 두 곳에서 본
+것입니다. 아래 정지 화면은 같은 뷰를 하나씩 다시 짚습니다.
 
 Cascade 는 하나의 질문에 양방향으로 답합니다. **이 DB 컬럼을 바꾸면 어떤 SQL
 statement, 서비스 메서드, HTTP 엔드포인트, 사용자 화면이 영향을 받는가. 그리고

@@ -23,10 +23,13 @@ people who work beside them. Apache-2.0.
 
 ## A picture first
 
-![The Cascade viewer's Overview tab: five dials across the top reading endpoints
-that reach SQL, SQL statements reached, tables reached, columns reached and
-screens that reach a table, with the whole-project map underneath and a panel
-listing what the engine could not see](docs/assets/screens/overview.png)
+![A tour of the Cascade viewer: the overview dials on litemall, then a column
+fanning out to the SQL statements and HTTP endpoints it touches, the source of
+one statement, the whole-project graph, and the schema recovered from the joins
+the SQL makes on mall](docs/assets/cascade-demo.gif)
+
+That is one column changed and the answer read in both directions, on two real
+open-source projects. The still shots below walk the same views one at a time.
 
 Cascade answers one question in both directions: **if I change this database
 column, which SQL statements, service methods, HTTP endpoints and user-facing

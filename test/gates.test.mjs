@@ -43,7 +43,7 @@ const isExcluded = (rel) => EXCLUDED_PATHS.some((x) => rel === x || rel.startsWi
 // could match by accident. So they are skipped by extension rather than by path,
 // because the rule is about the KIND of file and not about one directory. SVG is
 // deliberately absent: it is text, it is written by hand here, and it is scanned.
-const BINARY_ASSET = /\.(png|jpg|jpeg|gif|webp|ico|pdf|woff2?|ttf|otf|zip|gz)$/i;
+const BINARY_ASSET = /\.(png|jpg|jpeg|gif|webp|ico|pdf|woff2?|ttf|otf|zip|gz|mp4|mov|webm|m4v)$/i;
 const isBinaryAsset = (rel) => BINARY_ASSET.test(rel);
 
 /** Every file under the given roots, sorted, as {rel, text}. */
