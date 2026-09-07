@@ -746,14 +746,19 @@ test('the page boots against a two-project server, picks a project and says whic
   assert.ok(calls.some((c) => c.url.startsWith('/api/meta?project=alpha')));
 
   // The masthead's DATELINE says which pack answered, from /api/meta: the pack
-  // id is its first field (the selector), then the digest, the lanes and the
-  // base commit. The freshness verdict is a chip beside it.
+  // id is its first field (the selector), then which analyzers ran. Since RM36
+  // the BUILD identity is one click behind it, closed at rest, and the values
+  // are written into it whether it is open or not.
   assert.equal(byId.get('projsel').value, 'alpha');
-  assert.match(byId.get('mdigest').textContent, /^\w/);
   assert.equal(byId.get('mlanes').textContent, 'sql');
-  assert.equal(byId.get('mfresh').textContent, 'unknown');
-  assert.ok(byId.get('mbase'), 'the dateline carries a base-commit field');
-  assert.equal(byId.get('mbase').closest('#mline') != null, true, '...on the dateline itself');
+  assert.equal(byId.get('mbuild').classList.contains('hidden'), true, 'the build detail is closed at rest');
+  assert.match(byId.get('mdigest').textContent, /^\w/, 'and the digest is written into it all the same');
+  assert.ok(byId.get('mbase'), 'the build detail carries a base-commit field');
+  assert.equal(byId.get('mbase').closest('#mbuild') != null, true, '...inside the build detail');
+  // And the freshness chip says nothing when there is nothing to warn about:
+  // `unknown` is a pack with no git base to compare against, not a failure.
+  assert.equal(byId.get('mfresh').textContent, '', 'the resting verdict is not printed at all');
+  assert.match(byId.get('mfreshchip').title, /freshness unknown/, "the engine's verdict is in the tooltip");
   assert.equal(byId.get('proj').textContent, '', 'the note under the line is for loading and refusals only');
 });
 
@@ -1356,22 +1361,25 @@ test('the "This pack" card is gone, and every field it printed is still on the O
   assert.equal(ev(ctx, "typeof ovPackPanel"), 'undefined', 'and so is the function that drew it');
 
   // RM21: the ruled TITLE BLOCK is gone too. Its five facts are the masthead's
-  // one mono DATELINE (project, digest, lanes, base commit) and the chips
-  // beside it (freshness, trust, the limits).
+  // one mono DATELINE (project, lanes, and the build detail behind them) and
+  // the chips beside it (freshness, trust, the limits).
   assert.equal(ev(ctx, "document.getElementById('meta')"), null, 'the title block is gone');
   // THE PARTS, IN ORDER — not the concatenation. The dateline's separators are
-  // `aria-hidden` middle dots, so gluing the four values into one string tested
-  // the punctuation as much as the order, and the string changed shape the day
-  // the stub started keeping text nodes.
+  // `aria-hidden` middle dots, so gluing the values into one string tested the
+  // punctuation as much as the order, and the string changed shape the day the
+  // stub started keeping text nodes.
   assert.match(byId.get('projsel').value, /^alpha$/, 'the dateline begins with which pack answered');
-  assert.match(byId.get('mdigest').textContent, /^\w/);
   assert.equal(byId.get('mlanes').textContent, 'sql');
+  assert.match(byId.get('mdigest').textContent, /^\w/);
   assert.ok(byId.get('mbase'), 'the base-commit field is there even when this pack has no commit for it');
   assert.deepEqual(byId.get('mline').all().filter((n) => n.id && n.id !== 'mline').map((n) => n.id),
-    ['projsel', 'projone', 'projnone', 'mdigest', 'mlanes', 'mbase'],
-    'the dateline reads project, then digest, then lanes, then the base commit');
-  assert.equal(byId.get('mfresh').textContent, 'unknown');
-  assert.match(byId.get('mtrust').textContent, /^\w/, 'the trust level is a chip of its own');
+    ['projsel', 'projone', 'projnone', 'mlanes', 'mbuildbtn', 'mbuild', 'mdigest', 'mbase'],
+    'the dateline reads project, then lanes, then the control that opens the build identity');
+  // RM36: the resting freshness verdict is not printed, and the trust level is
+  // said in words a first-time reader knows.
+  assert.equal(byId.get('mfresh').textContent, '');
+  assert.equal(byId.get('mtrust').textContent, 'not certified', 'the trust level is a chip of its own');
+  assert.match(byId.get('mtrustchip').title, /UNCERTIFIED/, "...and the engine's own term is one hover away");
 
   // built: the evidence rail's `basis` block, one activation away.
   const rail = byId.get('ovside');
@@ -1478,9 +1486,11 @@ test('the theme toggle sets data-theme, persists, re-renders the chips — and a
   assert.equal(store.get('cascade.viewer.theme'), 'signal');
 
   // Emptied on purpose: if the switch really re-renders the masthead, the chips
-  // it writes come back on their own.
+  // it writes come back on their own. The freshness chip is checked through its
+  // TOOLTIP, because on this pack the verdict is the resting one and the chip
+  // deliberately prints no word for that.
   byId.get('mtrust').textContent = '';
-  byId.get('mfresh').textContent = '';
+  byId.get('mfreshchip').title = '';
   calls.length = 0;
   seg.children[1].onclick();
 
@@ -1488,7 +1498,7 @@ test('the theme toggle sets data-theme, persists, re-renders the chips — and a
   assert.equal(store.get('cascade.viewer.theme'), 'drawing');
   assert.deepEqual(calls, [], `the theme switch asked the server for: ${calls.map((c) => c.url).join(', ')}`);
   assert.match(byId.get('mtrust').textContent, /^\w/, 'the trust chip was re-rendered');
-  assert.equal(byId.get('mfresh').textContent, 'unknown', 'and so was the freshness chip');
+  assert.match(byId.get('mfreshchip').title, /freshness unknown/, 'and so was the freshness chip');
   assert.deepEqual(byId.get('themeseg').children.map((b) => b.className), ['', 'on']);
   assert.equal(ev(ctx, 'themeNow()'), 'drawing');
 
@@ -1586,25 +1596,42 @@ test('the KPI dials are drawn from the ribbon\'s own inputs, field for field', a
 test('the masthead carries the five facts the title block used to rule into a box', async (t) => {
   const { byId } = await bootPage(t);
   // (1) project — the first field of the dateline, and the control when there
-  //     is a choice; (2) digest; (3) lanes; (4) base commit — all on one line.
+  //     is a choice; (2) lanes. (3) digest and (4) base commit are the BUILD
+  //     identity, and since RM36 they wait inside the detail the `build`
+  //     control opens instead of standing on the always-on line.
   const line = byId.get('mline');
   assert.equal(byId.get('projsel').closest('#mline') != null, true, 'project');
   assert.equal(byId.get('projsel').value, 'alpha');
-  assert.equal(byId.get('mdigest').closest('#mline') != null, true, 'digest');
-  assert.match(byId.get('mdigest').textContent, /^\w/);
   assert.equal(byId.get('mlanes').closest('#mline') != null, true, 'lanes');
   assert.equal(byId.get('mlanes').textContent, 'sql');
-  assert.equal(byId.get('mbase').closest('#mline') != null, true, 'base commit');
+  assert.equal(byId.get('mdigest').closest('#mbuild') != null, true, 'digest');
+  assert.match(byId.get('mdigest').textContent, /^\w/);
+  assert.equal(byId.get('mbase').closest('#mbuild') != null, true, 'base commit');
   assert.equal(line.querySelectorAll('.msep').length, 3, 'four fields, three dots');
+  // Closed at rest, and ONE click puts the old line back — with the reader's
+  // choice remembered, like every other fold on this page.
+  assert.equal(byId.get('mbuild').classList.contains('hidden'), true, 'closed at rest');
+  assert.equal(byId.get('mbuildbtn').getAttribute('aria-expanded'), 'false');
+  byId.get('mbuildbtn').onclick();
+  assert.equal(byId.get('mbuild').classList.contains('hidden'), false, 'one click opens it');
+  assert.equal(byId.get('mbuildbtn').getAttribute('aria-expanded'), 'true');
+  byId.get('mbuildbtn').onclick();
+  assert.equal(byId.get('mbuild').classList.contains('hidden'), true, 'and one more closes it');
 
   // (5) freshness — a chip. Beside it the trust level and the limits, which the
-  //     evidence rail also carries: one source, said once at the top.
-  const chips = byId.get('mchips');
+  //     evidence rail also carries: one source, said once at the top. Neither
+  //     chip labels itself any more IN INK: it prints the STATE, in plain words,
+  //     and the engine's own verdict is in the tooltip. What it labels is the
+  //     clipped span a screen reader gets, which has no row of chips to read
+  //     the state in context.
   assert.equal(byId.get('mfresh').closest('#mchips') != null, true, 'freshness');
-  assert.equal(byId.get('mfresh').textContent, 'unknown');
-  assert.match(byId.get('mtrust').textContent, /^\w/, 'trust');
-  assert.match(chips.textContent, /freshness/);
-  assert.match(chips.textContent, /trust/);
+  assert.equal(byId.get('mfresh').textContent, '');
+  assert.match(byId.get('mfreshchip').title, /freshness unknown/);
+  assert.equal(byId.get('mtrust').textContent, 'not certified', 'trust');
+  assert.match(byId.get('mtrustchip').title, /trust UNCERTIFIED/);
+  const inked = [byId.get('mfresh'), byId.get('mtrust')].map((n) => n.textContent).join(' ');
+  assert.equal(/freshness|trust/.test(inked), false,
+    'the chips print the state, not the name of the thing they measure');
   // The language and theme segments live here now too.
   assert.equal(byId.get('langseg').closest('#mchips') != null, true);
   assert.equal(byId.get('themeseg').closest('#mchips') != null, true);
@@ -1617,6 +1644,157 @@ test('the masthead carries the five facts the title block used to rule into a bo
   const dots = byId.get('proj').parentNode.parentNode.all()
     .filter((n) => ownText(n).includes('·') && n.closest('#mline') == null);
   assert.deepEqual(dots.map((n) => n.tagName), [], 'a middle dot escaped the dateline');
+});
+
+// ---------------------------------------------------------------------------
+// RM36: the answer leads, and how much to trust it is one quiet layer behind
+// ---------------------------------------------------------------------------
+
+test('the freshness chip speaks only when it has a warning, and the verdict is always in the tooltip', async (t) => {
+  const { ctx, byId } = await bootPage(t);
+
+  // `unknown` is the resting state of a pack with no git base to compare
+  // against. It is not a failure, and it is the FIRST word a cold reader used
+  // to meet, so the chip prints nothing at all for it.
+  assert.equal(ev(ctx, "(STATE.meta.freshness && STATE.meta.freshness.verdict) || 'unknown'"), 'unknown');
+  assert.equal(byId.get('mfresh').textContent, '');
+  assert.equal(byId.get('mfreshchip').className.includes('warn'), false, 'and it is not tinted either');
+  assert.match(byId.get('mfreshchip').title, /freshness unknown/, "the engine's verdict, verbatim");
+  assert.match(byId.get('mfreshchip').title, /basis\.freshness\.verdict/, '...beside the field it came from');
+
+  // `behind` is the one a reader can act on, so it gets a sentence and the
+  // amber. The engine's word is still the tooltip's, never the chip's.
+  ev(ctx, "STATE.meta.freshness = { verdict: 'behind' }; renderMastChrome();");
+  assert.equal(byId.get('mfresh').textContent, 'older than the code you have now');
+  assert.equal(byId.get('mfresh').textContent.includes('behind'), false, 'the verdict word is not the label');
+  assert.equal(byId.get('mfreshchip').className.includes('warn'), true);
+  assert.match(byId.get('mfreshchip').title, /freshness behind/);
+
+  // An overlay is the other one. `current` is quiet and positive.
+  ev(ctx, "STATE.meta.freshness = { verdict: 'provisional-overlay' }; renderMastChrome();");
+  assert.equal(byId.get('mfresh').textContent, 'edits folded in on top of this build');
+  assert.match(byId.get('mfreshchip').title, /freshness provisional-overlay/);
+  ev(ctx, "STATE.meta.freshness = { verdict: 'current' }; renderMastChrome();");
+  assert.equal(byId.get('mfresh').textContent, 'up to date');
+  assert.equal(byId.get('mfreshchip').className.includes('warn'), false);
+  assert.match(byId.get('mfreshchip').title, /freshness current/);
+
+  // A verdict this page has no sentence for is not invented and not swallowed:
+  // the chip says nothing and the tooltip still names it.
+  ev(ctx, "STATE.meta.freshness = { verdict: 'something-new' }; renderMastChrome();");
+  assert.equal(byId.get('mfresh').textContent, '');
+  assert.match(byId.get('mfreshchip').title, /freshness something-new/);
+});
+
+test('the state a dot stands for is also written for a screen reader, clipped to a pixel', async (t) => {
+  const { ctx, byId, html } = await bootPage(t);
+
+  // A coloured dot and a `title` are a pointer's affordances. The same state is
+  // in the document as text, so a reader who is being read to gets it without
+  // hovering anything — and it names what it is about, because in speech there
+  // is no row of chips to read it in context.
+  assert.equal(byId.get('mfreshsr').classList.contains('sronly'), true);
+  assert.equal(byId.get('mtrustsr').classList.contains('sronly'), true);
+  assert.equal(byId.get('mfreshsr').closest('#mfreshchip') != null, true);
+  assert.equal(byId.get('mtrustsr').closest('#mtrustchip') != null, true);
+  assert.equal(byId.get('mfreshsr').textContent, 'freshness unknown',
+    'the resting verdict is silent in ink and spoken here');
+  assert.equal(byId.get('mtrustsr').textContent, 'trust not certified');
+
+  // It moves with the state, and it is never left saying the last one.
+  ev(ctx, "STATE.meta.freshness = { verdict: 'behind' }; renderMastChrome();");
+  assert.equal(byId.get('mfreshsr').textContent, 'freshness older than the code you have now');
+  ev(ctx, "STATE.meta.freshness = { verdict: 'current' }; renderMastChrome();");
+  assert.equal(byId.get('mfreshsr').textContent, 'freshness up to date');
+  ev(ctx, "OV.resp.trust.trustLevel = 'SOMETHING_NEW'; renderMastChrome();");
+  assert.equal(byId.get('mtrustsr').textContent, 'trust SOMETHING_NEW',
+    'a level with no wording is spoken as it arrived');
+
+  // It costs the layout nothing: taken out of flow, clipped to a pixel, no
+  // border and no padding. A rule that ever grew a size would be a visual change
+  // nobody asked for.
+  const css = styleBlock(html);
+  const rule = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((m) => ({ sel: m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim(), decl: m[2].replace(/\s+/g, ' ').trim() }))
+    .find((r) => r.sel === '.sronly');
+  assert.ok(rule, 'no .sronly rule in the stylesheet');
+  for (const want of ['position:absolute', 'width:1px', 'height:1px', 'overflow:hidden', 'border:0']) {
+    assert.ok(rule.decl.replace(/\s*:\s*/g, ':').includes(want), `.sronly is missing ${want}: ${rule.decl}`);
+  }
+  assert.match(rule.decl, /clip-path:\s*inset\(50%\)/);
+});
+
+test('the trust chip is quiet and plain, and the engine\'s own level is one hover behind it', async (t) => {
+  const { ctx, byId } = await bootPage(t);
+  assert.equal(ev(ctx, 'OV.resp.trust.trustLevel'), 'UNCERTIFIED', 'this pack has no golden set');
+
+  // De-shouted, not renamed: the pill says what UNCERTIFIED MEANS, and the
+  // tooltip carries the engine's own term verbatim beside the contract field.
+  assert.equal(byId.get('mtrust').textContent, 'not certified');
+  assert.match(byId.get('mtrustchip').title, /trust UNCERTIFIED/);
+  assert.match(byId.get('mtrustchip').title, /no approved golden set/);
+  assert.match(byId.get('mtrustchip').title, /trust\.trustLevel/);
+
+  // NEITHER the error red nor the passing green. An uncertified pack is not a
+  // broken one, and it is not a certified one either.
+  const cls = () => byId.get('mtrustchip').className.split(/\s+/);
+  assert.equal(cls().includes('bad'), false, 'an uncertified pack is never painted as an error');
+  assert.equal(cls().includes('ok'), false, 'and never as a passing build');
+
+  // With nothing held back it is plain. This is the line that changed: the same
+  // state used to take the `ok` tint and read like a certified pack.
+  ev(ctx, 'OV.resp.trust.gatesNotShown = []; OV.resp.trust.knownGaps = []; renderMastChrome();');
+  assert.deepEqual(cls(), ['mchip', 'quiet']);
+  assert.equal(byId.get('mtrust').textContent, 'not certified');
+
+  // A gate it could not show, or a gap it knows about, is the soft amber — read
+  // off the engine's own REASONS, never off the level's name. Still not red.
+  ev(ctx, "OV.resp.trust.knownGaps = ['the sql lane was read without the java one']; renderMastChrome();");
+  assert.equal(cls().includes('warn'), true, 'a held gap is disclosed');
+  assert.equal(cls().includes('bad'), false, 'a known blind spot is still not an error');
+  assert.match(byId.get('mtrustchip').title, /the sql lane was read without the java one/);
+  assert.equal(byId.get('mtrust').textContent, 'not certified', 'and the level itself has not moved');
+
+  // A level with no plain wording here is printed exactly as it arrived: the
+  // page never renames a value it does not recognise.
+  ev(ctx, "OV.resp.trust.trustLevel = 'SOMETHING_NEW'; OV.resp.trust.knownGaps = []; renderMastChrome();");
+  assert.equal(byId.get('mtrust').textContent, 'SOMETHING_NEW');
+});
+
+test('a blind spot has a plain name, keeps the engine\'s kind on its tooltip, and is never red', async (t) => {
+  const { ctx, byId } = await bootPage(t);
+  const kinds = JSON.parse(ev(ctx, 'JSON.stringify(OV.resp.answer.gaps.map((g)=>g.kind))'));
+  assert.ok(kinds.length > 0, 'this fixture is expected to disclose blind spots');
+
+  const chips = byId.get('ovherocol').querySelectorAll('button.foldlead.ovchip');
+  assert.equal(chips.length, kinds.length, 'one chip per gap the answer carries');
+  for (const c of chips) {
+    assert.equal(c.classList.contains('bad'), false, `a blind spot is painted as an error: ${c.textContent}`);
+  }
+  // The engine's own kind stays on every chip's tooltip beside the count, so
+  // the plain label never becomes the only name a reader can quote.
+  for (const [i, c] of chips.entries()) {
+    assert.ok(c.title.includes(kinds[i]), `${kinds[i]} lost its kind: ${c.title}`);
+  }
+
+  // Every kind this pack discloses reads in the reader's words, and none of
+  // them still shows the slug. Every kind the engine can emit has a label now,
+  // so there is nothing on this panel left to fall back.
+  for (const k of kinds) {
+    const key = `ov.gap.${k}.label`;
+    assert.ok(Object.hasOwn(VIEWER_STRINGS.en, key), `${k} has no plain label`);
+    const want = VIEWER_STRINGS.en[key];
+    const chip = chips[kinds.indexOf(k)];
+    assert.ok(chip.textContent.includes(want), `${k} did not read as "${want}": ${chip.textContent}`);
+    assert.equal(chip.textContent.includes(k.replace(/-/g, ' ')), false, `${k} still shows its slug`);
+  }
+
+  // The fallback is still there for the kind nobody has written yet: it reads
+  // as its own slug rather than throwing or printing a catalogue key.
+  assert.equal(ev(ctx, "ovGapLabel('a-kind-nobody-has-written-yet')"), 'a kind nobody has written yet');
+  assert.equal(ev(ctx, "ovGapLabel('mode-floor')"), VIEWER_STRINGS.en['ov.gap.mode-floor.label']);
+  assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.missing])'), '[]',
+    'the fallback is by design, so it never files a key in the missing-key ledger');
 });
 
 test('the masthead limits chip is the SAME fold as the evidence rail\'s', async (t) => {
@@ -3555,13 +3733,17 @@ test('the Overview grows a fifth dial and a screens list, both from an answer', 
   assert.match(byId.get('ovcards').querySelectorAll('.kpinote')[0].textContent, /fills this router in at run time/);
 
   // The three blind spots a screen axis brings with it are chips like every
-  // other, in the engine's own words — this pack's recording is one of them.
+  // other — this pack's recording is one of them. The chip reads the plain
+  // label (RM36) and the engine's own kind is on its tooltip beside the count.
   ev(ctx, 'OV.resp.answer.screens.serverDriven = false; renderOverview();');
   await settle(ctx, 4);
   const gaps = JSON.parse(ev(ctx, 'JSON.stringify(OV.resp.answer.gaps.map((g)=>g.kind))'));
   assert.ok(gaps.includes('screens-seen-at-run-time'), gaps.join(', '));
   const gapChips = byId.get('ovherocol').querySelectorAll('.ovchip').map((c) => c.textContent);
-  assert.ok(gapChips.some((c) => /screens seen at run time/.test(c)), gapChips.join(' | '));
+  assert.ok(gapChips.some((c) => c.includes(VIEWER_STRINGS.en['ov.gap.screens-seen-at-run-time.label'])),
+    gapChips.join(' | '));
+  assert.ok(byId.get('ovherocol').querySelectorAll('button.foldlead.ovchip')
+    .some((c) => c.title.includes('screens-seen-at-run-time')), 'the engine kind left the tooltip');
 
   // The list is ONE browse request, and a click walks the chain from that screen.
   const browses = toolCalls(calls, 'browse').filter((c) => c.args.kind === 'screen');

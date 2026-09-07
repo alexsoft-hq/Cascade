@@ -133,6 +133,38 @@ export const VIEWER_STRINGS = {
     'mast.freshness': 'freshness',
     'mast.trust': 'trust',
     'mast.limits': '{n} limits',
+    // BUILD IDENTITY, one click behind the line. The digest and the base commit
+    // are what you need to tell two builds apart or to chase a mismatch, and
+    // they are the first thing a reader who has never seen this tool has to
+    // skip past. So the line says which project and which analyzers, and this
+    // little control opens the rest. Nothing is dropped, only demoted.
+    'mast.build': 'build',
+    'mast.build.title': 'the fingerprint of this build and the commit it was made from',
+    // FRESHNESS, said only when there is something to act on. The verdict word
+    // itself is the engine's and is never rewritten: these are the plain
+    // sentences that go BESIDE it, and every one of them carries the verdict
+    // verbatim in its tooltip.
+    'mast.fresh.behind': 'older than the code you have now',
+    'mast.fresh.behind.title': 'this pack was built from an older commit than the one you have checked out. Run the analysis again to see what changed.',
+    'mast.fresh.overlay': 'edits folded in on top of this build',
+    'mast.fresh.overlay.title': 'your working edits sit on top of the last full analysis, so anything they touch is provisional until you build again.',
+    'mast.fresh.current': 'up to date',
+    'mast.fresh.current.title': 'this pack was built from the commit you have checked out, so nothing here is older than your code.',
+    'mast.fresh.unknown.title': 'there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.',
+    // TRUST, in the reader's words. The level itself is computed by the engine
+    // and is relayed verbatim in the tooltip; these strings only say what it
+    // means, at speaking volume instead of shouting volume. Each key is the
+    // level LOWER-CASED, because the page looks the gloss up from the value it
+    // was handed rather than holding a list of levels of its own (SPEC §14.3:
+    // only src/core/trust.mjs writes those names). A level with no key here is
+    // printed exactly as it arrived.
+    'mast.trust.uncertified': 'not certified',
+    'mast.trust.uncertified.title': 'there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.',
+    'mast.trust.golden_pass': 'checks passing',
+    'mast.trust.golden_pass.title': 'this project has an approved golden set and the last run matched it, so the answer as a whole was scored.',
+    'mast.trust.golden_fail': 'checks failing',
+    'mast.trust.golden_fail.title': 'this project has an approved golden set and the last run did not match it, so read what is here against that.',
+    'mast.trust.none.title': 'no answer has come back yet, so there is no trust level to show.',
     'legend.grade': 'how sure each line is:',
     // ---- the cascade rail (the header's second line) ---------------------
     // The six steps of the chain this engine follows, in the order it walks it.
@@ -200,6 +232,37 @@ export const VIEWER_STRINGS = {
     // is the `overview` answer's own.
     'ov.gaps.title': 'What we could not see',
     'ov.gaps.note': '{n} kinds of blind spot',
+    // THE NAME OF A BLIND SPOT, in the reader's words. The engine's own kind
+    // slug stays on the chip's tooltip beside the count, so nothing is renamed
+    // away: this is the label a person can read without the docs open. A kind
+    // with no label here falls back to its slug, so a new one the engine starts
+    // emitting shows up as itself rather than breaking the panel.
+    //
+    // Every label names what the COUNT counts, because the count stands beside
+    // it: `mode-floor 412` has to read as 412 connections, not as 412 modes.
+    // Each one was written against that kind's own note in src/core/overview.mjs
+    // and says the same thing in one line. test/i18n.test.mjs reads the kinds
+    // out of that file, so a kind added there without a label here fails.
+    'ov.gap.unresolved-calls.label': 'calls we could not follow',
+    'ov.gap.external-symbols.label': 'code outside this project',
+    'ov.gap.http-calls-leaving-pack.label': 'API calls to other services',
+    'ov.gap.screen-components-unresolved.label': 'screens with no component found',
+    'ov.gap.endpoints-without-statement.label': 'endpoints that reach no SQL',
+    'ov.gap.statements-not-reached.label': 'SQL no endpoint reaches',
+    'ov.gap.duplicate-types.label': 'types declared twice',
+    'ov.gap.mode-floor.label': 'connections this mode leaves out',
+    'ov.gap.not-shipped.label': 'SQL with no Java side to call it',
+    'ov.gap.multi-handler-routes.label': 'routes two controllers both declare',
+    'ov.gap.tables-not-reached.label': 'tables no endpoint reaches',
+    'ov.gap.openapi-drift.label': 'routes the API document disagrees on',
+    'ov.gap.screens-from-server.label': 'screens the server adds at run time',
+    'ov.gap.screens-seen-at-run-time.label': 'screens known only from a recording',
+    'ov.gap.generated-code.label': 'machine-written code',
+    'ov.gap.generated-walk-skip.label': 'steps inside generated code we skipped',
+    'ov.gap.node-cap.label': 'chains too big to walk in one go',
+    'ov.gap.depth-cap.label': 'chains we stopped at the depth limit',
+    'ov.gap.jpa-statements-unresolved.label': 'JPA queries we could only partly read',
+    'ov.gap.mp-columns-runtime-only.label': 'columns decided when the query runs',
     'ov.nodes.title': 'What we found',
     'ov.nodes.count': '({n} kinds)',
     'ov.edges.title': 'Connections, by type and certainty',

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, interpolate, richText, VIEWER_STRINGS } from '../src/viewer/i18n.mjs';
+import { TRUST_LEVELS } from '../src/core/trust.mjs';
 
 // The viewer's i18n shell (SPEC §17.11, §15 M9). What is under test here is the
 // SHELL, not the translation: that English is the default and the fallback,
@@ -193,6 +194,81 @@ test('the round\'s new chrome is keyed and translated: the theme toggle, the chi
   for (const k of ['theme.dark', 'theme.light']) {
     assert.ok(VIEWER_STRINGS.en[k].length <= 12, `${k} (en) is too long for a segment`);
     assert.ok(KO[k].length <= 12, `${k} (ko) is too long for a segment`);
+  }
+});
+
+// EVERY blind spot the engine can disclose, read out of the file that emits
+// them (RM36). The list is not typed here on purpose: a gap kind added to
+// src/core/overview.mjs with no label would otherwise reach the panel as a raw
+// slug and nobody would find out until a reader saw it. The page still falls
+// back to the slug rather than throwing (test/viewer_page.test.mjs holds that),
+// so a missing label is a wording defect and not a broken screen.
+const OVERVIEW_SRC = fs.readFileSync(path.join(ROOT, 'src/core/overview.mjs'), 'utf8');
+const GAP_LABEL_KINDS = [...new Set(
+  [...OVERVIEW_SRC.matchAll(/\bkind: '([a-z0-9-]+)'/g)].map((m) => m[1]),
+)].sort();
+
+test('every blind spot the overview can emit has a plain label in both catalogues', () => {
+  assert.ok(GAP_LABEL_KINDS.length >= 20,
+    `expected the overview to disclose many kinds, found ${GAP_LABEL_KINDS.length}`);
+  for (const kind of GAP_LABEL_KINDS) {
+    const k = `ov.gap.${kind}.label`;
+    assert.equal(typeof VIEWER_STRINGS.en[k], 'string', `${k} is missing from en`);
+    assert.equal(typeof KO[k], 'string', `${k} is missing from ko`);
+    assert.match(KO[k], /[가-힣]/, `${k} is not translated`);
+    // A label is a chip head, so it stays short, and it is the reader's words:
+    // a label that is still the slug would be this round doing nothing.
+    assert.ok(VIEWER_STRINGS.en[k].length <= 40, `${k} (en) is too long for a chip: ${VIEWER_STRINGS.en[k]}`);
+    assert.notEqual(VIEWER_STRINGS.en[k], kind.replace(/-/g, ' '), `${k} (en) is still the engine's slug`);
+    // A label is a phrase on a chip, not a sentence: no full stop, and it never
+    // carries the hyphenated slug it replaces.
+    assert.equal(/[.]$/.test(VIEWER_STRINGS.en[k]), false, `${k} (en) is a sentence, not a label`);
+    assert.equal(VIEWER_STRINGS.en[k].includes(kind), false, `${k} (en) still carries the raw kind`);
+  }
+});
+
+// The masthead's quiet layer (RM36). The verdict words themselves are the
+// engine's and are never keyed; these are the sentences that say what they mean.
+test('the masthead\'s plain-language layer is keyed and translated, in both languages', () => {
+  const added = [
+    'mast.build', 'mast.build.title',
+    'mast.fresh.behind', 'mast.fresh.behind.title',
+    'mast.fresh.overlay', 'mast.fresh.overlay.title',
+    'mast.fresh.current', 'mast.fresh.current.title',
+    'mast.fresh.unknown.title',
+    'mast.trust.uncertified', 'mast.trust.uncertified.title',
+    'mast.trust.golden_pass', 'mast.trust.golden_pass.title',
+    'mast.trust.golden_fail', 'mast.trust.golden_fail.title',
+    'mast.trust.none.title',
+  ];
+  for (const k of added) {
+    assert.equal(typeof VIEWER_STRINGS.en[k], 'string', `${k} is missing from en`);
+    assert.equal(typeof KO[k], 'string', `${k} is missing from ko`);
+    assert.match(KO[k], /[가-힣]/, `${k} is not translated`);
+    assert.ok(HTML.includes(`'${k}'`), `${k} is in the catalogue but nothing in the page asks for it`);
+  }
+  // The four chip labels are what a masthead pill prints, so they stay short.
+  for (const k of ['mast.build', 'mast.fresh.behind', 'mast.fresh.overlay', 'mast.fresh.current',
+    'mast.trust.uncertified', 'mast.trust.golden_pass', 'mast.trust.golden_fail']) {
+    assert.ok(VIEWER_STRINGS.en[k].length <= 40, `${k} (en) is too long for a chip: ${VIEWER_STRINGS.en[k]}`);
+  }
+  // The gloss key is DERIVED from the engine's value at run time, so the three
+  // it can derive today really are the three the engine can emit. If that enum
+  // grows, this is where it is noticed: an unglossed level still renders, as
+  // itself, but nobody meant it to stay that way.
+  for (const lvl of TRUST_LEVELS) {
+    const k = `mast.trust.${lvl.toLowerCase()}`;
+    assert.equal(typeof VIEWER_STRINGS.en[k], 'string', `${lvl} has no plain wording (${k})`);
+    assert.equal(typeof VIEWER_STRINGS.en[`${k}.title`], 'string', `${lvl} has no explanation (${k}.title)`);
+  }
+  // And none of them says the verdict word it stands beside: a chip that reads
+  // `behind` or `UNCERTIFIED` is the shouting this round took out.
+  for (const [lang, cat] of [['en', VIEWER_STRINGS.en], ['ko', KO]]) {
+    for (const k of ['mast.fresh.behind', 'mast.fresh.current', 'mast.trust.uncertified']) {
+      for (const word of ['behind', 'unknown', 'UNCERTIFIED']) {
+        assert.equal(cat[k].includes(word), false, `${lang}/${k} prints the verdict word ${word}`);
+      }
+    }
   }
 });
 

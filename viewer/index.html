@@ -163,6 +163,16 @@
     white-space:normal; }
   .projnone code { font-family:var(--mono); border:1px solid var(--write);
     border-radius:var(--r-tag); padding:0 4px; }
+  /* BUILD IDENTITY, closed at rest. The control is a word on the line, not a
+     box: it reads as one more field of the dateline until you use it, and the
+     dashed rule under it is the only thing that says it can be used. Opened,
+     the digest and the base commit take the places they used to hold, so a
+     reader who lived on those two values gets the old line back with one
+     click and keeps it. */
+  .mbuildbtn { font:inherit; color:var(--t3); background:none; border:0; padding:0;
+    cursor:pointer; border-bottom:1px dashed var(--hair); line-height:1.2; }
+  .mbuildbtn:hover { color:var(--t1); border-bottom-color:var(--frame); }
+  .mbuild { display:inline-flex; align-items:center; gap:8px; min-width:0; }
   /* The chips: what this answer is worth, and the two toggles. */
   .mchips { grid-column:3; grid-row:1 / span 2; justify-self:end; align-self:center;
     display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
@@ -173,6 +183,24 @@
   button.mchip:hover { border-color:var(--frame); color:var(--t1); }
   .mchip.warn { border-color:var(--warn); color:var(--warn); background:none; }
   .mchip.ok { border-color:var(--ok); color:var(--ok); background:none; }
+  /* THE VERDICT CHIPS (RM36). A state with nothing to warn about is a DOT and
+     no words: the dot says the page has an opinion and the tooltip carries the
+     engine's own verdict, so nothing is hidden and nothing is shouted. The dot
+     is DRAWN, never a character, for the same reason the fold chevron is: a
+     character comes out of the reader's font and gets read aloud. */
+  .mchip.quiet { display:inline-flex; align-items:center; gap:7px; }
+  /* The state, for a reader who is being read to. A chip whose whole message is
+     a coloured dot says nothing to a screen reader, and the tooltip that carries
+     the rest needs a pointer to exist at all. So the state is also written here,
+     clipped to a pixel: no width, no height, no gap in the flex row (it is out
+     of flow), and no visual change of any kind. */
+  .sronly { position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+    overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0; }
+  .mdot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--t3); }
+  .mchip.warn .mdot { background:var(--warn); }
+  .mchip.ok .mdot { background:var(--ok); }
+  /* A chip with a dot and no words is a dot, not a dot and a gap. */
+  .mchip.quiet > span:not(.mdot):empty { display:none; }
   /* The limits list, when the chip above is opened: a full-width row under the
      masthead, so it pushes nothing sideways. */
   .mfolds { grid-column:1 / -1; grid-row:3; font-size:12px; color:var(--t2); }
@@ -471,17 +499,19 @@
   button.ovchip { padding:2px 9px; font:400 11px var(--mono); border-radius:var(--r-chip);
     max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   button.ovchip:hover { border-color:var(--t1); color:var(--t1); }
-  /* A gap chip is a fold LEAD wearing the chip's box: `kind count` at a glance,
-     the engine's sentence about it one click away. A gap the answer calls out
-     as a LOSS is tinted `bad`, one that is a boundary of what the analyzer can
-     see is tinted `warn`, and the rest are plain — the tint is a reading of the
-     gap's own kind, never of its count. */
+  /* A gap chip is a fold LEAD wearing the chip's box: what we could not see at
+     a glance, the engine's sentence about it one click away. TWO TINTS ONLY,
+     and neither of them is the error red (RM36): plain for a count of the pack
+     itself, soft amber for a boundary of what the analyzer can see at all. A
+     blind spot is this tool doing its job and saying so, not a fault, and the
+     red we paint a broken thing in would have told a first-time reader the
+     opposite. The tint is still a reading of the gap's KIND, never of its
+     count. */
   button.foldlead.ovchip { display:inline-flex; width:auto; border:1px solid var(--hair);
     align-items:center; gap:5px; }
-  button.ovchip.bad { border-color:var(--bad); color:var(--bad); }
   button.ovchip.warn { border-color:var(--warn); color:var(--warn); }
-  button.ovchip.bad:hover, button.ovchip.warn:hover { color:inherit; }
-  button.ovchip.bad .foldchev, button.ovchip.warn .foldchev { color:inherit; }
+  button.ovchip.warn:hover { color:inherit; }
+  button.ovchip.warn .foldchev { color:inherit; }
   .ovgapbodies { margin-top:7px; }
   .ovhubmore { margin-top:7px; font-size:12px; }
 
@@ -977,20 +1007,29 @@
 </svg>
 <header>
   <h1><svg class="mark" aria-hidden="true" focusable="false"><use href="#cascade-mark"></use></svg>Cascade</h1>
-  <!-- THE DATELINE: project, digest, lanes, base commit — the four facts the
-       old title block ruled into a box, on one mono line. The project cell is
-       the SELECTOR when this server holds several packs, because the first
-       field of the line IS which pack answered; printing the name here and the
-       control somewhere else would print the project twice. -->
+  <!-- THE DATELINE: which pack answered and which analyzers ran, on one mono
+       line. The project cell is the SELECTOR when this server holds several
+       packs, because the first field of the line IS which pack answered;
+       printing the name here and the control somewhere else would print the
+       project twice.
+       BUILD IDENTITY IS ONE CLICK BEHIND IT (RM36). The digest and the base
+       commit are the two facts a reader needs when two builds disagree, and
+       the two a reader meeting this tool has to look past on every other day.
+       So they sit in `#mbuild`, closed at rest, opened by the `build` control
+       and remembered like every other fold on this page. Nothing left the
+       page: the values are here, verbatim, one activation away. -->
   <div class="mline" id="mline">
     <span class="mval" data-t-title="mast.project">
       <select id="projsel" class="proj hidden" data-t-title="project.select.title"></select>
       <span id="projone" class="projone hidden"></span>
       <span id="projnone" class="projnone hidden"></span>
     </span>
-    <span class="msep" aria-hidden="true">·</span><span class="mval" id="mdigest" data-t-title="mast.digest"></span>
     <span class="msep" aria-hidden="true">·</span><span class="mval" id="mlanes" data-t-title="mast.lanes"></span>
-    <span class="msep" aria-hidden="true">·</span><span class="mval" data-t-title="mast.base">base <span id="mbase"></span></span>
+    <span class="msep" aria-hidden="true">·</span><button type="button" class="mbuildbtn" id="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title">build</button>
+    <span class="mbuild hidden" id="mbuild">
+      <span class="mval" id="mdigest" data-t-title="mast.digest"></span>
+      <span class="msep" aria-hidden="true">·</span><span class="mval" data-t-title="mast.base">base <span id="mbase"></span></span>
+    </span>
   </div>
   <!-- The cascade rail: the six lanes of the chain this product walks, in the
        order it walks them, joined by hairlines. Every count is the `overview`
@@ -998,10 +1037,18 @@
   <div class="crail" id="crail"></div>
   <!-- What this answer is worth, and the two things the reader may change:
        freshness, trust, the limits (the same fold the evidence rail carries),
-       the interface language and the theme. Built in renderMastChrome(). -->
+       the interface language and the theme. Built in renderMastChrome().
+       The two verdict chips carry NO static label since RM36: a chip that
+       always printed `freshness` and `trust` had to print a word after it on
+       every load, and the resting word for both is the one that frightens a
+       first-time reader. Now each chip is a drawn dot plus whatever the state
+       actually has to say, and the engine's own verdict is in the tooltip.
+       `#mfreshsr` and `#mtrustsr` are that same state written for a screen
+       reader: a dot and a tooltip are a pointer's affordances, and the state
+       has to reach a reader who has neither. -->
   <div class="mchips" id="mchips">
-    <span class="mchip" id="mfreshchip"><span data-t="mast.freshness">freshness</span> <span id="mfresh"></span></span>
-    <span class="mchip" id="mtrustchip"><span data-t="mast.trust">trust</span> <span id="mtrust"></span></span>
+    <span class="mchip quiet" id="mfreshchip"><span class="mdot" aria-hidden="true"></span><span class="sronly" id="mfreshsr"></span><span id="mfresh"></span></span>
+    <span class="mchip quiet" id="mtrustchip"><span class="mdot" aria-hidden="true"></span><span class="sronly" id="mtrustsr"></span><span id="mtrust"></span></span>
     <span id="mlimitcell"></span>
     <span class="seg mini" id="langseg" data-t-title="lang.title"></span>
     <span class="seg mini" id="themeseg" data-t-title="theme.title"></span>
@@ -1564,6 +1611,38 @@ const VIEWER_STRINGS = {
     'mast.freshness': 'freshness',
     'mast.trust': 'trust',
     'mast.limits': '{n} limits',
+    // BUILD IDENTITY, one click behind the line. The digest and the base commit
+    // are what you need to tell two builds apart or to chase a mismatch, and
+    // they are the first thing a reader who has never seen this tool has to
+    // skip past. So the line says which project and which analyzers, and this
+    // little control opens the rest. Nothing is dropped, only demoted.
+    'mast.build': 'build',
+    'mast.build.title': 'the fingerprint of this build and the commit it was made from',
+    // FRESHNESS, said only when there is something to act on. The verdict word
+    // itself is the engine's and is never rewritten: these are the plain
+    // sentences that go BESIDE it, and every one of them carries the verdict
+    // verbatim in its tooltip.
+    'mast.fresh.behind': 'older than the code you have now',
+    'mast.fresh.behind.title': 'this pack was built from an older commit than the one you have checked out. Run the analysis again to see what changed.',
+    'mast.fresh.overlay': 'edits folded in on top of this build',
+    'mast.fresh.overlay.title': 'your working edits sit on top of the last full analysis, so anything they touch is provisional until you build again.',
+    'mast.fresh.current': 'up to date',
+    'mast.fresh.current.title': 'this pack was built from the commit you have checked out, so nothing here is older than your code.',
+    'mast.fresh.unknown.title': 'there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.',
+    // TRUST, in the reader's words. The level itself is computed by the engine
+    // and is relayed verbatim in the tooltip; these strings only say what it
+    // means, at speaking volume instead of shouting volume. Each key is the
+    // level LOWER-CASED, because the page looks the gloss up from the value it
+    // was handed rather than holding a list of levels of its own (SPEC §14.3:
+    // only src/core/trust.mjs writes those names). A level with no key here is
+    // printed exactly as it arrived.
+    'mast.trust.uncertified': 'not certified',
+    'mast.trust.uncertified.title': 'there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.',
+    'mast.trust.golden_pass': 'checks passing',
+    'mast.trust.golden_pass.title': 'this project has an approved golden set and the last run matched it, so the answer as a whole was scored.',
+    'mast.trust.golden_fail': 'checks failing',
+    'mast.trust.golden_fail.title': 'this project has an approved golden set and the last run did not match it, so read what is here against that.',
+    'mast.trust.none.title': 'no answer has come back yet, so there is no trust level to show.',
     'legend.grade': 'how sure each line is:',
     // ---- the cascade rail (the header's second line) ---------------------
     // The six steps of the chain this engine follows, in the order it walks it.
@@ -1631,6 +1710,37 @@ const VIEWER_STRINGS = {
     // is the `overview` answer's own.
     'ov.gaps.title': 'What we could not see',
     'ov.gaps.note': '{n} kinds of blind spot',
+    // THE NAME OF A BLIND SPOT, in the reader's words. The engine's own kind
+    // slug stays on the chip's tooltip beside the count, so nothing is renamed
+    // away: this is the label a person can read without the docs open. A kind
+    // with no label here falls back to its slug, so a new one the engine starts
+    // emitting shows up as itself rather than breaking the panel.
+    //
+    // Every label names what the COUNT counts, because the count stands beside
+    // it: `mode-floor 412` has to read as 412 connections, not as 412 modes.
+    // Each one was written against that kind's own note in src/core/overview.mjs
+    // and says the same thing in one line. test/i18n.test.mjs reads the kinds
+    // out of that file, so a kind added there without a label here fails.
+    'ov.gap.unresolved-calls.label': 'calls we could not follow',
+    'ov.gap.external-symbols.label': 'code outside this project',
+    'ov.gap.http-calls-leaving-pack.label': 'API calls to other services',
+    'ov.gap.screen-components-unresolved.label': 'screens with no component found',
+    'ov.gap.endpoints-without-statement.label': 'endpoints that reach no SQL',
+    'ov.gap.statements-not-reached.label': 'SQL no endpoint reaches',
+    'ov.gap.duplicate-types.label': 'types declared twice',
+    'ov.gap.mode-floor.label': 'connections this mode leaves out',
+    'ov.gap.not-shipped.label': 'SQL with no Java side to call it',
+    'ov.gap.multi-handler-routes.label': 'routes two controllers both declare',
+    'ov.gap.tables-not-reached.label': 'tables no endpoint reaches',
+    'ov.gap.openapi-drift.label': 'routes the API document disagrees on',
+    'ov.gap.screens-from-server.label': 'screens the server adds at run time',
+    'ov.gap.screens-seen-at-run-time.label': 'screens known only from a recording',
+    'ov.gap.generated-code.label': 'machine-written code',
+    'ov.gap.generated-walk-skip.label': 'steps inside generated code we skipped',
+    'ov.gap.node-cap.label': 'chains too big to walk in one go',
+    'ov.gap.depth-cap.label': 'chains we stopped at the depth limit',
+    'ov.gap.jpa-statements-unresolved.label': 'JPA queries we could only partly read',
+    'ov.gap.mp-columns-runtime-only.label': 'columns decided when the query runs',
     'ov.nodes.title': 'What we found',
     'ov.nodes.count': '({n} kinds)',
     'ov.edges.title': 'Connections, by type and certainty',
@@ -9442,12 +9552,33 @@ function ovCodePanel(a){
 // that gap — and the sample ids under it, each still a handoff to the view that
 // can answer "so what IS this one?". Nothing is dropped; the count is outside
 // the fold, because a count is what a glance is for.
-// A gap's TINT is a reading of its kind, not of its count: `bad` for the calls
-// the analyzer dropped (evidence that is simply gone), `warn` for the two
-// boundaries of what it can see at all, and plain for the rest — which are
-// counts of the pack, not of the analysis. The count itself never folds.
-const OV_GAP_TINT = { 'unresolved-calls':'bad', 'external-symbols':'warn',
+// A gap's TINT is a reading of its kind, not of its count: `warn`, the soft
+// amber, for the boundaries of what the analyzer can see at all, and plain for
+// the rest — which are counts of the pack, not of the analysis. The count
+// itself never folds.
+//
+// NOTHING HERE IS RED (RM36). `unresolved-calls` wore the error red until this
+// round, and it is the first chip on the panel: a reader meeting this tool was
+// told in the colour of a broken build that the honest disclosure at the top of
+// the page was a fault. It is not. A blind spot named and counted is the thing
+// this product exists to do, so the worst any of them wears is amber.
+const OV_GAP_TINT = { 'unresolved-calls':'warn', 'external-symbols':'warn',
   'multi-handler-routes':'warn' };
+// THE NAME OF A GAP, in the reader's words. `unresolved-calls` is what the
+// engine calls it and stays on the tooltip beside the count; this is what a
+// person who has not read the docs can read off the chip. A kind with no label
+// in the catalogue falls back to its own slug, so the day the engine emits a
+// new one the panel says its name rather than a catalogue key or nothing.
+//
+// The existence check is against the ENGLISH catalogue and not against t(),
+// because English is the key set every translation is held to and because
+// asking t() for a key nobody wrote would file it in the missing-key ledger.
+// That ledger is how a real dropped string is found, and a fallback we designed
+// on purpose is not a dropped string.
+function ovGapLabel(kind){
+  const key='ov.gap.'+kind+'.label';
+  return Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : String(kind).replace(/-/g,' ');
+}
 function ovGapsPanel(a){
   const gaps=a.gaps||[];
   const kids=[ el('h2',{},[t('ov.gaps.title')+' ', el('span',{className:'count',textContent:'('+gaps.length+')'})]),
@@ -9458,7 +9589,7 @@ function ovGapsPanel(a){
   for(const g of gaps){
     const tint=OV_GAP_TINT[g.kind];
     const [head, body]=foldParts('ov.gap.'+g.kind,
-      [ String(g.kind).replace(/-/g,' '), el('span',{className:'ovnum',style:'margin-left:6px',textContent:g.count==null?'unknown':ovNum(g.count)}) ],
+      [ ovGapLabel(g.kind), el('span',{className:'ovnum',style:'margin-left:6px',textContent:g.count==null?'unknown':ovNum(g.count)}) ],
       ()=>{ const out=[el('div',{className:'ovgapnote',textContent:g.note})];
         const c=ovGapChips(a,g.kind); if(c) out.push(c); return out; },
       'ovchip'+(tint?' '+tint:''));
@@ -9837,35 +9968,94 @@ function renderLangChrome(){
     className: code===I18N.lang ? 'on' : '',
     onclick: ()=> setLang(code) })));
 }
+// BUILD IDENTITY, opened and closed by the reader. It uses the fold's own
+// memory, so a reader who wants the digest on screen has it on every page they
+// load until they close it again — the same bargain every other fold on this
+// page makes. `mast.build` is a static id, not a per-answer key: which pack is
+// on screen does not change whether this reader wants to see digests.
+const MAST_BUILD_FOLD='mast.build';
+function paintBuildFold(open){
+  byId('mbuild').classList.toggle('hidden', !open);
+  byId('mbuildbtn').setAttribute('aria-expanded', String(open));
+}
+function wireBuildFold(){
+  const btn=byId('mbuildbtn');
+  btn.onclick=()=>{ const open=!foldIsOpen(MAST_BUILD_FOLD); foldSetOpen(MAST_BUILD_FOLD, open); paintBuildFold(open); };
+  paintBuildFold(foldIsOpen(MAST_BUILD_FOLD));
+}
+// FRESHNESS, in the reader's words. The verdict is a COMPUTED value the engine
+// emits and this page never types one: what changes here is only how loud it is
+// said. `behind` and `provisional-overlay` are the two a reader can act on, so
+// they get a sentence; `current` gets a quiet two words; `unknown` gets the dot
+// and nothing else, because `unknown` is the resting state of a pack with no git
+// base to compare against and printing the word made it read as a failure.
+// EVERY one of the four keeps the engine's own verdict, verbatim, in the chip's
+// tooltip beside the contract field it came from.
+const MAST_FRESH = {
+  'behind': { say:'mast.fresh.behind', why:'mast.fresh.behind.title', tint:'warn' },
+  'provisional-overlay': { say:'mast.fresh.overlay', why:'mast.fresh.overlay.title', tint:'warn' },
+  'current': { say:'mast.fresh.current', why:'mast.fresh.current.title', tint:'' },
+  'unknown': { say:'', why:'mast.fresh.unknown.title', tint:'' },
+};
+// TRUST, the same bargain. The GLOSS is a rewording of the engine's own value
+// and nothing more: a level with no gloss here is printed exactly as it arrived,
+// so an unknown level can never be silently renamed to a known one.
+//
+// THIS PAGE HOLDS NO LIST OF LEVELS. A trust level is computed by the engine
+// (SPEC §14.3), and only the module that computes it may write those names, so
+// the key is DERIVED from whatever value arrived rather than looked up in a
+// table the page typed. `mastSay` is the whole rule: use the plain wording if
+// we wrote one for this value, and otherwise say the value itself.
+const mastTrustKey=(lvl)=> 'mast.trust.'+String(lvl).toLowerCase();
+const mastSay=(key, fallback)=> Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : fallback;
 // THE MASTHEAD CHIPS: what this answer is worth, and the two things a reader may
-// change. The freshness verdict and the trust level are the ENGINE's own words
-// and are printed as they arrived; the limits chip is the SAME fold as the one
-// in the evidence rail (it shares its key, so opening either opens both), and
-// its body drops under the masthead rather than beside a tab.
+// change. The limits chip is the SAME fold as the one in the evidence rail (it
+// shares its key, so opening either opens both), and its body drops under the
+// masthead rather than beside a tab.
 function renderMastChrome(){
   const now=themeNow();
   byId('themeseg').replaceChildren(...THEMES.map((name)=> el('button',{
     textContent: t(name==='signal' ? 'theme.dark' : 'theme.light'),
     className: name===now ? 'on' : '',
     onclick: ()=> setTheme(name) })));
+  wireBuildFold();
   const m=STATE.meta;
   const fresh=(m && !m.error && m.freshness && m.freshness.verdict) || 'unknown';
-  byId('mfresh').textContent=fresh;
-  byId('mfreshchip').title='basis.freshness.verdict';
+  const fs=MAST_FRESH[fresh] || { say:'', why:'', tint:'' };
+  const fchip=byId('mfreshchip');
+  byId('mfresh').textContent=fs.say ? t(fs.say) : '';
+  fchip.className='mchip quiet'+(fs.tint ? ' '+fs.tint : '');
+  // SAID OUT LOUD, for a reader who is being read to. The visible chip leans on
+  // a coloured dot and a tooltip, and neither of those reaches a screen reader,
+  // so the state is written again here and clipped to a pixel. It names what it
+  // is about, because in speech there is no row of chips to read it in context.
+  // Where the page has no plain wording, this says the engine's own verdict:
+  // that is exactly the parity a hover already gives.
+  byId('mfreshsr').textContent=t('mast.freshness')+' '+(fs.say ? t(fs.say) : fresh);
+  // A verdict this page has no sentence for still says WHICH verdict it is: the
+  // tooltip is where the engine's word lives, so it is never the missing half.
+  fchip.title=[ fs.why ? t(fs.why) : '', t('mast.freshness')+' '+fresh,
+    'basis.freshness.verdict' ].filter((x)=>x).join('  ');
   // The trust level rides with the landing answer, which every tab's rail also
   // carries: one source, printed once at the top of the page. The NAME is the
-  // engine's and is relayed; the TINT is read off the engine's own reasons and
-  // never off that name — a trust level is a computed value (SPEC §14.3), and a
-  // page that typed one would be a second source of truth for it. An answer
-  // that names a gate it could not show, or a gap it knows about, is warned
-  // about; one that names neither is not.
+  // engine's and is relayed verbatim in the tooltip; the TINT is read off the
+  // engine's own reasons and never off that name — a trust level is a computed
+  // value (SPEC §14.3), and a page that typed one would be a second source of
+  // truth for it. An answer that names a gate it could not show, or a gap it
+  // knows about, wears the soft amber; one that names neither wears nothing.
+  // NOT the green it used to wear: an uncertified pack painted like a passing
+  // build is the page telling the reader something the engine never said.
   const tt=(OV.resp && OV.resp.trust) || null;
   const lvl=(tt && tt.trustLevel) || null;
   const held=tt ? ((tt.gatesNotShown||[]).length + (tt.knownGaps||[]).length) : 0;
   const chip=byId('mtrustchip');
-  byId('mtrust').textContent=lvl||'unknown';
-  chip.className='mchip'+(held ? ' warn' : lvl ? ' ok' : '');
-  chip.title = held ? [...(tt.gatesNotShown||[]), ...(tt.knownGaps||[])].join('  ') : 'trust.trustLevel';
+  const key=lvl ? mastTrustKey(lvl) : '';
+  byId('mtrust').textContent=lvl ? mastSay(key, lvl) : '';
+  byId('mtrustsr').textContent=t('mast.trust')+' '+(lvl ? mastSay(key, lvl) : t('mast.trust.none.title'));
+  chip.className='mchip quiet'+(held ? ' warn' : '');
+  chip.title=[ lvl ? mastSay(key+'.title', '') : t('mast.trust.none.title'),
+    lvl ? t('mast.trust')+' '+lvl : '', 'trust.trustLevel',
+    ...(held ? [...(tt.gatesNotShown||[]), ...(tt.knownGaps||[])] : []) ].filter((x)=>x).join('  ');
   const lim=(OV.resp && OV.resp.limits) || [];
   const cell=byId('mlimitcell'), body=byId('mfolds');
   if(!lim.length){ cell.replaceChildren(); body.replaceChildren(); return; }
