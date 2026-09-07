@@ -37,21 +37,22 @@ screens are affected, and if I open this screen, which column does it end at?**
 It answers over MCP so an AI coding agent can ask before it edits, and it draws
 the same answers in a local viewer so a person can read them.
 
-It refuses to claim more than it proved. Every edge in the graph carries a
-grade, so an answer says which parts were proved and which are a candidate set.
-An axis nobody could build is **declared** rather than returned as an empty
-list. Runtime wiring, reflection and AOP proxies are outside what a parser can
-see, so nothing about them is in the graph at all.
+Every edge carries its own grade, so an answer tells you exactly how far to
+trust it: what was proved, what is a sound candidate set, what is a hint. An AI
+agent reads that grade and knows whether it can act on an answer or should check
+it first, which is what makes an impact graph safe to hand to something that
+edits code on its own. What a parser cannot see, Cascade leaves out and says so:
+runtime wiring, reflection and AOP proxies are marked absent, never guessed.
+That calibration is the product, not a caveat.
 
-### What it does not claim
+### Where it fits
 
-SAST and CodeQL look for vulnerabilities; this looks for what a change reaches.
-Neither of them answers the question on this page, and this does not answer
-theirs.
-
-Not a SAST or CodeQL replacement. Not "complete" impact. Not "safe refactoring
-guaranteed". Not language-agnostic, not 100% accurate. It publishes measured
-lower bounds; it cannot honestly claim any of those.
+SAST and CodeQL look for vulnerabilities. Cascade looks for what a change
+reaches, the round trip from a screen to a database column and back, with a
+grade on every edge and no build to run. No SAST or dependency scanner answers
+that round trip. Where the source does not settle a call, Cascade marks it
+rather than inventing an edge, because an answer you can calibrate is one an
+agent can act on, and that is the whole point.
 
 ## What it answers
 

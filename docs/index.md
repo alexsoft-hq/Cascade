@@ -5,9 +5,10 @@ people who work beside them. Apache-2.0.
 
 [English README](../README.md) | [한국어 README](../README.ko.md)
 
-![The Cascade viewer's Overview tab: five dials reading endpoints that reach
-SQL, statements, tables and columns reached, and screens that reach a table,
-with the whole-project map underneath](assets/screens/overview.png)
+![A tour of the Cascade viewer: the overview dials, a column fanning out to the
+SQL statements and HTTP endpoints it touches, the source of one statement, the
+whole-project graph, and the schema recovered from the joins the SQL
+makes](assets/cascade-demo.gif)
 
 ## The round trip
 
@@ -48,11 +49,14 @@ An empty list says *why* it is empty: `not-shipped` (the axis was never built),
 `degraded` (built without something it needed), or `none` (looked, found
 nothing). Those are three different answers and they do not collapse into `[]`.
 
-### What it does not claim
+### Where it fits
 
-Not a SAST or CodeQL replacement. Not "complete" impact. Not "safe refactoring
-guaranteed". Not language-agnostic, not 100% accurate. It publishes measured
-lower bounds; it cannot honestly claim any of those.
+SAST and CodeQL look for vulnerabilities. Cascade looks for what a change
+reaches, the round trip from a screen to a database column and back, with a
+grade on every edge and no build to run. No SAST or dependency scanner answers
+that round trip. Where the source does not settle a call, Cascade marks it
+rather than inventing an edge: an answer you can calibrate is one an agent can
+act on, and that is the whole point.
 
 ## Quickstart
 
