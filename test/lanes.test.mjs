@@ -293,6 +293,46 @@ test('declareAxes: java alone ships only the code axis', () => {
   assert.equal(axes.column.status, 'not-shipped');
 });
 
+// RM35: a SHIPPED code axis can still carry a note. "the code axis is shipped"
+// and "and here is the one thing in it we could not see" are both true, and
+// calling the whole axis degraded would be a bigger claim than the evidence.
+test('declareAxes: a shipped code axis NAMES the packages no source root holds, and what to pass', () => {
+  const axes = declareAxes({
+    ddl: true,
+    statements: true,
+    code: true,
+    java: {
+      typesOutsideRoots: [
+        { package: 'org.acme.common.util', simple: 'RedisUtil', calls: 74 },
+        { package: 'org.acme.common.api', simple: 'Sender', calls: 9 },
+      ],
+    },
+  });
+  assert.equal(axes.code.status, 'shipped');
+  assert.equal(axes.code.notes.length, 1);
+  assert.match(axes.code.notes[0], /83 call\(s\)/);
+  assert.match(axes.code.notes[0], /org\.acme\.common\.api, org\.acme\.common\.util/);
+  assert.match(axes.code.notes[0], /--java-src/);
+  // A note is a limit even on a shipped axis, so the tool layer reports it.
+  const limits = axisLimits(axes).filter((l) => l.scope === 'axis:code');
+  assert.equal(limits.length, 1);
+  assert.equal(limits[0].reason, axes.code.notes[0]);
+  // …and the axis is still SHIPPED, so `axisKnownGaps` says nothing about it.
+  assert.equal(axisKnownGaps(axes).some((g) => g.startsWith('code-')), false);
+});
+
+test('declareAxes: one package outside the roots is under the threshold, so no note', () => {
+  const axes = declareAxes({
+    ddl: true, statements: true, code: true,
+    java: { typesOutsideRoots: [{ package: 'org.acme.util', simple: 'RedisUtil', calls: 3 }] },
+  });
+  assert.equal(axes.code.notes, undefined);
+  assert.deepEqual(axisLimits(axes).filter((l) => l.scope === 'axis:code'), []);
+  // A pack from an engine that recorded none (an older one) is not a claim that
+  // there are none: it is silence, and silence adds no sentence.
+  assert.equal(declareAxes({ ddl: true, statements: true, code: true }).code.notes, undefined);
+});
+
 test('declareAxes: a profile that ASKED for the screen axis gets a reason that says why not', () => {
   const on = declareAxes({ ddl: true, statements: true, code: true }, { screenAxisRequested: true });
   assert.match(on.screen.reason, /the profile enables the screen axis/);

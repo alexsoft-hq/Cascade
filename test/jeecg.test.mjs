@@ -261,14 +261,32 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
     assert.equal(ev.receiver, 'S');
     assert.equal(ev.boundAt, sub, 'the evidence names the subclass whose extends clause bound S');
   }
-  // 30 `super.m()` calls resolve and 43 do not — `grep -rcE "super\\.[a-zA-Z_]"`
-  // finds 73 in all, and the 43 climb into framework classes (ServiceImpl,
-  // HttpServlet, JsonSerializer …) that this parse-only lane never sees. The
-  // failure is named for what failed, not folded into the field-receiver rule.
-  assert.equal(stats.callsByRule['super-enclosing'], 30);
-  assert.equal(stats.unresolvedCallsByRule['super-enclosing'], 43);
+  // 70 `super.m()` calls resolve and 3 do not — `grep -rcE "super\\.[a-zA-Z_]"`
+  // finds 73 in all, and 70 + 3 is still 73.
+  //
+  // RM35 MOVED 40 OF THEM FROM THE SECOND NUMBER TO THE FIRST. The 43 that used
+  // to fail climbed into framework classes (ServiceImpl, HttpServlet,
+  // JsonSerializer …) this parse-only lane never sees — but the file's own
+  // `import` line NAMES those classes, and `super.list(…)` really does run
+  // `ServiceImpl#list`. So the edge is made and lands outside the project,
+  // which is where the chain ends at run time too. Only a base the imports do
+  // not name at all is still a failure, and jeecg-boot has 3.
+  assert.equal(stats.callsByRule['super-enclosing'], 70);
+  assert.equal(stats.unresolvedCallsByRule['super-enclosing'], 3);
   assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 0);
   assert.equal(stats.callsByRule['type-param-binding'], 168);
+  // …and 27 of the 40 land on one base: MyBatis-Plus's `ServiceImpl`, which
+  // every jeecg service extends. The edge names it, `isExternalType` marks the
+  // symbol external, so no walk follows it and nothing is claimed about what it
+  // does — the honest end of the chain rather than a missing one.
+  const outside = graph.edges.filter((e) => e.type === 'MAY_CALL'
+    && e.evidence?.rule === 'super-enclosing' && e.evidence.outsideRoots === true);
+  assert.equal(outside.length, 40);
+  assert.equal(
+    outside.filter((e) => e.to.startsWith('symbol:com.baomidou.mybatisplus.extension.service.impl.ServiceImpl#')).length,
+    27,
+  );
+  assert.equal(graph.nodes.get('symbol:com.baomidou.mybatisplus.extension.service.impl.ServiceImpl#list').external, true);
 
   // ---- 6b. a receiver INHERITED from a generic base (RM20 §1) ------------
   //

@@ -10,6 +10,8 @@ import {
   JavaBridgeError,
   pathGlobMatcher,
   classifyRouteHolder,
+  JAVA_LANG_TYPES,
+  LOMBOK_LOGGERS,
 } from '../src/adapters/java_bridge.mjs';
 import { chainWalk } from '../src/core/chain.mjs';
 import { handlersOf, primaryHandlerOf } from '../src/core/walks.mjs';
@@ -400,12 +402,19 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
       'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
       'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
+      'generated-field': 0, 'wildcard-jdk': 0,
     },
     unresolvedCallsByRule: {
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
       'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
     },
-    identifierReceivers: { total: 0, inheritedField: 0, staticReceiver: 0, unresolved: 0 },
+    // RM35: WHY a call stayed unresolved, beside WHICH rule failed.
+    unresolvedCallsByReason: {
+      'project-type-outside-roots': 0, 'superclass-outside-roots': 0,
+      'type-param-unbound': 0, unknown: 0,
+    },
+    typesOutsideRoots: [],
+    identifierReceivers: { total: 0, inheritedField: 0, generatedField: 0, staticReceiver: 0, unresolved: 0 },
     unresolvedIdentifiers: [],
     inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
     routeContracts: 0, contractOnlyRoutes: 0,
@@ -542,6 +551,7 @@ test('every MAY_CALL edge names the rule that produced it', () => {
     'field-receiver': 1, 'this-field': 1, 'unqualified-enclosing': 1, 'interface-dispatch': 1,
     'super-enclosing': 0, 'type-param-binding': 0,
     'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
+    'generated-field': 0, 'wildcard-jdk': 0,
   });
   // The `this.field` spelling resolves through the SAME field, so it must reach
   // the same target as the bare one — only the recorded rule differs.
@@ -940,15 +950,20 @@ test('an identifier that is neither a field nor a type is UNRESOLVED under `inhe
   const g = new Graph();
   const stats = addJavaFacts(g, [
     ...inheritedFieldFacts().filter((r) => r.kind !== 'call'),
-    // `log` is what a code generator adds after this worker has parsed the file.
-    { kind: 'call', from: 'com.example.AaaDaoImpl#findAaa', receiver: 'log', method: 'info', toTypeSimple: null, via: 'identifier', file: 'com/example/AaaDaoImpl.java' },
+    // `tracer` is what a code generator adds after this worker has parsed the
+    // file. NOT spelled `log`: RM35 knows Lombok's `log`, and a receiver this
+    // test wants left unexplained must not be one the engine can explain.
+    { kind: 'call', from: 'com.example.AaaDaoImpl#findAaa', receiver: 'tracer', method: 'info', toTypeSimple: null, via: 'identifier', file: 'com/example/AaaDaoImpl.java' },
   ]);
   assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0);
   assert.equal(stats.unresolvedCallsByRule['inherited-field'], 1);
   assert.equal(stats.identifierReceivers.unresolved, 1);
   assert.equal(stats.identifierReceivers.staticReceiver, 0);
+  // RM35: nothing in the file's imports explains the name, so the reason is
+  // `unknown` — the honest answer, and not one of the three a reader can act on.
+  assert.equal(stats.unresolvedCallsByReason.unknown, 1);
   assert.deepEqual(stats.unresolvedIdentifiers, [{
-    from: 'com.example.AaaDaoImpl#findAaa', receiver: 'log', method: 'info',
+    from: 'com.example.AaaDaoImpl#findAaa', receiver: 'tracer', method: 'info', reason: 'unknown',
     chain: ['com.example.AaaDaoImpl', 'com.example.Base'],
   }]);
 });
@@ -1190,4 +1205,229 @@ test('a DIAMOND — a default method on a second interface — is reported, not 
     ['com.example.Soft', 'interface-dispatch-inherited', 'com.example.Base#deleteById'],
   ]);
   assert.equal(stats.inheritedMembers.synthesized, 1, 'one body, instantiated once for this class');
+});
+
+// ---------------------------------------------------------------------------
+// RM35 — a call that LEAVES the project is external, not unresolved
+//
+// Five things a parse-only lane used to report as a failure and is not: a
+// nested class reading its file's imports, `java.lang`, the field Lombok
+// writes, an on-demand import of the JDK, and a `super.m()` into a base class
+// the imports name and the tree does not hold. Each is one synthetic fact set,
+// because the point is the RULE, not the fixture.
+// ---------------------------------------------------------------------------
+
+/** One top-level type in `com.example`, with whatever extra records a test needs. */
+function typeRec(fqn, extra = {}) {
+  return {
+    kind: 'type', fqn, typeKind: 'class', package: 'com.example', abstract: false,
+    annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+    typeParams: [], typeParamBounds: [], declaredMethods: [], declaredMethodLines: [],
+    file: 'com/example/Outer.java', ...extra,
+  };
+}
+
+test('RM35 A: a NESTED type resolves through its top-level type\'s imports', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.Outer'),
+    // The nested class: dotted fqn, the OUTER's package. That is all the worker
+    // records, and it is enough to rebuild the scope chain.
+    typeRec('com.example.Outer.Criteria'),
+    // The import belongs to the FILE, so the worker keys it by the top-level type.
+    { kind: 'import', owner: 'com.example.Outer', simple: 'List', fqn: 'java.util.List', file: 'com/example/Outer.java' },
+    { kind: 'field', owner: 'com.example.Outer.Criteria', name: 'criteria', typeSimple: 'List', file: 'com/example/Outer.java' },
+    { kind: 'call', from: 'com.example.Outer.Criteria#add', receiver: 'criteria', method: 'add', toTypeSimple: 'List', via: 'field', file: 'com/example/Outer.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(stats.unresolvedCalls, 0, 'the enclosing file imported it');
+  assert.equal(stats.externalCalls, 1, 'java.util is outside com.example, so the call leaves the project');
+  const e = g.edges.find((x) => x.type === 'MAY_CALL');
+  assert.equal(e.to, symbolId('java.util.List#add'));
+  assert.equal(g.nodes.get(e.to).external, true);
+});
+
+test('RM35 A: a nested SIBLING wins over anything the imports or the package offer', () => {
+  const g = new Graph();
+  addJavaFacts(g, [
+    typeRec('com.example.Outer'),
+    typeRec('com.example.Outer.Criteria'),
+    // A nested enum AND an unrelated top-level type share the simple name.
+    typeRec('com.example.Outer.Column', { typeKind: 'enum', declaredMethods: ['values/0'] }),
+    typeRec('com.example.Column', { file: 'com/example/Column.java', declaredMethods: ['values/0'] }),
+    { kind: 'field', owner: 'com.example.Outer.Criteria', name: 'col', typeSimple: 'Column', file: 'com/example/Outer.java' },
+    { kind: 'call', from: 'com.example.Outer.Criteria#f', receiver: 'col', method: 'values', toTypeSimple: 'Column', via: 'field', file: 'com/example/Outer.java' },
+  ], { packagePrefixes: ['com.example'] });
+  const e = g.edges.find((x) => x.type === 'MAY_CALL');
+  assert.equal(e.to, symbolId('com.example.Outer.Column#values'),
+    'Java resolves a member type before it looks at the package');
+});
+
+test('RM35 B: `java.lang` is imported by every file whether it says so or not', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.Svc', { file: 'com/example/Svc.java' }),
+    { kind: 'field', owner: 'com.example.Svc', name: 'code', typeSimple: 'Integer', file: 'com/example/Svc.java' },
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'code', method: 'intValue', toTypeSimple: 'Integer', via: 'field', file: 'com/example/Svc.java' },
+    // …and the static spelling, which the worker records as an `identifier`
+    // receiver because nothing in the file declares the name.
+    { kind: 'call', from: 'com.example.Svc#g', receiver: 'System', method: 'currentTimeMillis', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(stats.unresolvedCalls, 0);
+  assert.equal(g.edges.find((x) => x.type === 'MAY_CALL').to, symbolId('java.lang.Integer#intValue'));
+  assert.equal(stats.identifierReceivers.staticReceiver, 1,
+    '`System.currentTimeMillis()` is a static call on a type, resolved and not followed');
+});
+
+test('RM35 B: the java.lang list is exported and holds the names every project uses', () => {
+  for (const name of ['String', 'System', 'Integer', 'Thread', 'Math', 'Object', 'Long', 'Boolean', 'Class']) {
+    assert.ok(JAVA_LANG_TYPES.includes(name), `${name} must be in JAVA_LANG_TYPES`);
+  }
+  assert.ok(Object.isFrozen(JAVA_LANG_TYPES));
+  assert.equal(new Set(JAVA_LANG_TYPES).size, JAVA_LANG_TYPES.length, 'no name twice');
+  // It is a LIST and not a prefix test: a name that is not in it stays unplaced
+  // rather than being invented into java.lang.
+  assert.equal(JAVA_LANG_TYPES.includes('RedisUtil'), false);
+});
+
+test('RM35 B: an IMPORT still beats java.lang — the language\'s order, not ours', () => {
+  const g = new Graph();
+  addJavaFacts(g, [
+    typeRec('com.example.Svc', { file: 'com/example/Svc.java' }),
+    { kind: 'import', owner: 'com.example.Svc', simple: 'Process', fqn: 'com.other.Process', file: 'com/example/Svc.java' },
+    { kind: 'field', owner: 'com.example.Svc', name: 'p', typeSimple: 'Process', file: 'com/example/Svc.java' },
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'p', method: 'destroy', toTypeSimple: 'Process', via: 'field', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(g.edges.find((x) => x.type === 'MAY_CALL').to, symbolId('com.other.Process#destroy'));
+});
+
+test('RM35 C: a @Slf4j class has a `log` field the source never declares', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.Svc', { annotations: ['Slf4j'], file: 'com/example/Svc.java' }),
+    // A nested class reads the outer class's `private static log`.
+    typeRec('com.example.Svc.Inner', { file: 'com/example/Svc.java' }),
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'log', method: 'info', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+    { kind: 'call', from: 'com.example.Svc.Inner#g', receiver: 'log', method: 'error', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(stats.unresolvedCalls, 0);
+  assert.equal(stats.identifierReceivers.generatedField, 2);
+  assert.equal(stats.callsByRule['generated-field'], 2);
+  const edges = g.edges.filter((e) => e.type === 'MAY_CALL').map((e) => [e.to, e.evidence.rule, e.evidence.annotation]).sort();
+  assert.deepEqual(edges, [
+    [symbolId('org.slf4j.Logger#error'), 'generated-field', 'Slf4j'],
+    [symbolId('org.slf4j.Logger#info'), 'generated-field', 'Slf4j'],
+  ]);
+  assert.equal(g.nodes.get(symbolId('org.slf4j.Logger#info')).external, true);
+  assert.ok(g.edges.find((e) => e.type === 'MAY_CALL').evidence.basis.includes('Lombok'));
+});
+
+test('RM35 C: every Lombok logging annotation names the logger it generates', () => {
+  for (const [annotation, logger] of Object.entries(LOMBOK_LOGGERS)) {
+    const g = new Graph();
+    addJavaFacts(g, [
+      typeRec('com.example.Svc', { annotations: [annotation], file: 'com/example/Svc.java' }),
+      { kind: 'call', from: 'com.example.Svc#f', receiver: 'log', method: 'info', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+    ], { packagePrefixes: ['com.example'] });
+    assert.equal(g.edges.find((e) => e.type === 'MAY_CALL').to, symbolId(`${logger}#info`), annotation);
+  }
+  // @CustomLog's logger type is declared in lombok.config, which is not source
+  // this lane reads: the edge says so instead of passing a guess off as a
+  // reading.
+  const g = new Graph();
+  addJavaFacts(g, [
+    typeRec('com.example.Svc', { annotations: ['CustomLog'], file: 'com/example/Svc.java' }),
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'log', method: 'info', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(g.edges.find((e) => e.type === 'MAY_CALL').evidence.loggerTypeDeclaredOutsideSource, true);
+});
+
+test('RM35 C: a class that declares its OWN log field keeps it', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.Svc', { annotations: ['Slf4j'], file: 'com/example/Svc.java' }),
+    typeRec('com.example.MyLogger', { file: 'com/example/MyLogger.java' }),
+    { kind: 'field', owner: 'com.example.Svc', name: 'log', typeSimple: 'MyLogger', file: 'com/example/Svc.java' },
+    // The worker resolves a field the file DECLARES itself, so this arrives as
+    // `field`, not `identifier` — and the generated field must not shadow it.
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'log', method: 'info', toTypeSimple: 'MyLogger', via: 'field', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(g.edges.find((e) => e.type === 'MAY_CALL').to, symbolId('com.example.MyLogger#info'));
+  assert.equal(stats.identifierReceivers.generatedField, 0);
+});
+
+test('RM35 D: a JDK on-demand import places the type, and the call leaves the project', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.Svc', { file: 'com/example/Svc.java' }),
+    { kind: 'import', owner: 'com.example.Svc', simple: '*', fqn: 'java.util', file: 'com/example/Svc.java' },
+    { kind: 'field', owner: 'com.example.Svc', name: 'ring', typeSimple: 'Map', file: 'com/example/Svc.java' },
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'ring', method: 'computeIfAbsent', toTypeSimple: 'Map', via: 'field', file: 'com/example/Svc.java' },
+    // …and the static spelling: `Arrays.asList(…)` is a TYPE, so it is a static
+    // call, counted apart and followed no further.
+    { kind: 'call', from: 'com.example.Svc#g', receiver: 'Arrays', method: 'asList', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+    // A CONSTANT under the same import is not a type and must not be invented
+    // into one.
+    { kind: 'call', from: 'com.example.Svc#h', receiver: 'ADD_STRING', method: 'equals', toTypeSimple: null, via: 'identifier', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  const e = g.edges.find((x) => x.type === 'MAY_CALL');
+  assert.equal(e.to, symbolId('java.util.Map#computeIfAbsent'));
+  assert.equal(e.evidence.rule, 'wildcard-jdk');
+  assert.equal(stats.externalCalls, 1);
+  assert.equal(stats.identifierReceivers.staticReceiver, 1, 'Arrays');
+  assert.equal(stats.unresolvedCalls, 1, 'ADD_STRING is a constant, and java.util.ADD_STRING does not exist');
+  assert.equal(stats.unresolvedCallsByReason.unknown, 1);
+});
+
+test('RM35 D: a wildcard of THIS project that no root holds is named, not invented', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.Svc', { file: 'com/example/Svc.java' }),
+    // The file offers two homes for `RedisUtil`, and one of them is a package of
+    // this project.
+    { kind: 'import', owner: 'com.example.Svc', simple: '*', fqn: 'java.util', file: 'com/example/Svc.java' },
+    { kind: 'import', owner: 'com.example.Svc', simple: '*', fqn: 'com.example.util', file: 'com/example/Svc.java' },
+    // …and ANOTHER file in this project writes the single-type import, which is
+    // the evidence that says which package really holds it.
+    typeRec('com.example.Other', { file: 'com/example/Other.java' }),
+    { kind: 'import', owner: 'com.example.Other', simple: 'RedisUtil', fqn: 'com.example.util.RedisUtil', file: 'com/example/Other.java' },
+    { kind: 'field', owner: 'com.example.Svc', name: 'redis', typeSimple: 'RedisUtil', file: 'com/example/Svc.java' },
+    { kind: 'call', from: 'com.example.Svc#f', receiver: 'redis', method: 'set', toTypeSimple: 'RedisUtil', via: 'field', file: 'com/example/Svc.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0,
+    'java.util.RedisUtil is a type that does not exist, so no edge is invented');
+  assert.equal(stats.unresolvedCalls, 1);
+  assert.equal(stats.unresolvedCallsByReason['project-type-outside-roots'], 1);
+  assert.deepEqual(stats.typesOutsideRoots, [{ package: 'com.example.util', simple: 'RedisUtil', calls: 1 }]);
+});
+
+test('RM35 E: `super.m()` into a base the imports NAME and the tree does not hold', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.SvcImpl', {
+      file: 'com/example/SvcImpl.java', extends: 'ServiceImpl', extendsArgs: ['Mapper', 'Ent'],
+      declaredMethods: ['list/0'],
+    }),
+    { kind: 'import', owner: 'com.example.SvcImpl', simple: 'ServiceImpl', fqn: 'com.baomidou.ServiceImpl', file: 'com/example/SvcImpl.java' },
+    { kind: 'call', from: 'com.example.SvcImpl#list', receiver: 'super', method: 'list', toTypeSimple: 'ServiceImpl', via: 'super-method', file: 'com/example/SvcImpl.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(stats.unresolvedCalls, 0);
+  assert.equal(stats.callsByRule['super-enclosing'], 1);
+  const e = g.edges.find((x) => x.type === 'MAY_CALL');
+  assert.equal(e.to, symbolId('com.baomidou.ServiceImpl#list'));
+  assert.equal(e.evidence.outsideRoots, true);
+  assert.equal(g.nodes.get(e.to).external, true);
+});
+
+test('RM35 E: a base the imports do NOT name at all stays unresolved, and says why', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.SvcImpl', {
+      file: 'com/example/SvcImpl.java', extends: 'Nowhere', declaredMethods: ['list/0'],
+    }),
+    { kind: 'call', from: 'com.example.SvcImpl#list', receiver: 'super', method: 'list', toTypeSimple: 'Nowhere', via: 'super-method', file: 'com/example/SvcImpl.java' },
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(g.edges.filter((e) => e.type === 'MAY_CALL').length, 0);
+  assert.equal(stats.unresolvedCalls, 1);
+  assert.equal(stats.unresolvedCallsByRule['super-enclosing'], 1);
+  assert.equal(stats.unresolvedCallsByReason['superclass-outside-roots'], 1);
 });

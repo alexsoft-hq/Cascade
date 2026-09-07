@@ -286,6 +286,24 @@ test('buildOverview: with lane stats the unresolved-call count is reported as a 
   const g = gapOf(buildOverview(fixtureGraph(), { laneStats: { unresolvedCalls: 12 } }), 'unresolved-calls');
   assert.equal(g.count, 12);
   assert.match(g.note, /^we couldn't tell what 12 method calls point to/);
+  assert.equal(g.note.includes('Of those'), false, 'a pack that records no reason split says nothing about one');
+});
+
+// RM35: the count says how big the gap is; the split says what it is made of,
+// and one of the four reasons is a thing a reader can fix.
+test('buildOverview: the unresolved-call gap names WHY, when the pack records it', () => {
+  const g = gapOf(buildOverview(fixtureGraph(), {
+    laneStats: {
+      unresolvedCalls: 12,
+      unresolvedCallsByReason: {
+        'project-type-outside-roots': 7, 'superclass-outside-roots': 1,
+        'type-param-unbound': 0, unknown: 4,
+      },
+    },
+  }), 'unresolved-calls');
+  assert.match(g.note, /Of those, 7 name a type in a package of this project that no analyzed source root holds; 1 (?:are|is) `super/);
+  assert.match(g.note, /4 we could not place at all/);
+  assert.equal(g.note.includes('type parameter'), false, 'a reason with a zero count is left out, not padded in');
 });
 
 // ---------------------------------------------------------------------------
@@ -473,8 +491,11 @@ test('callTool: the pack metadata survives the dispatcher — both transports an
 
 test('overview on the mall pack: the node and edge census', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), {});
+  // RM35: symbol 10784 -> 10869. Seven are EXTERNAL members (java.util,
+  // java.lang, org.slf4j, mybatis-generator) and 78 are project methods that
+  // had no edge at all before, so no node either.
   assert.deepEqual(Object.fromEntries(r.answer.nodes.map((n) => [n.kind, n.count])), {
-    column: 669, endpoint: 239, statement: 906, symbol: 10784, table: 76,
+    column: 669, endpoint: 239, statement: 906, symbol: 10869, table: 76,
   });
   // MAY_CALL rose by ONE in RM14 (10126 -> 10127) and nothing else moved. The
   // reason is in mall's source, not in this engine's output: the tree holds a
@@ -483,15 +504,23 @@ test('overview on the mall pack: the node and edge census', { skip: skipUnlessMa
   // (Its two `super.<method>(...)` calls, both in mall-mbg/CommentGenerator.java,
   // climb into MyBatis Generator's DefaultCommentGenerator, which is outside the
   // pack: counted UNRESOLVED, no edge.) See test/helpers/mall_fixture.mjs.
+  // RM35: MAY_CALL 10127 -> 10446. The +319 all LEAVE the project: 304 to
+  // java.util.List (the `criteria` field of the generated
+  // `…Example.GeneratedCriteria` classes, whose own file imports it and which a
+  // nested type could not see before), 7 to org.slf4j.Logger (Lombok's `log`),
+  // 3 to an ElasticsearchTemplate reached through `java.util.*`, 3 to
+  // java.lang.String and 2 to MyBatis Generator's DefaultCommentGenerator,
+  // which CommentGenerator.java imports by name. Every other edge population is
+  // byte-for-byte what it was.
   assert.deepEqual(r.answer.edges.map((e) => [`${e.type}/${e.grade}`, e.count]), [
-    ['MAY_CALL/SOUND_SET', 10127], ['WRITES/EXACT', 3984], ['READS/EXACT', 2362], ['EXECUTES/EXACT', 950],
+    ['MAY_CALL/SOUND_SET', 10446], ['WRITES/EXACT', 3984], ['READS/EXACT', 2362], ['EXECUTES/EXACT', 950],
     ['IMPLEMENTS_STMT/EXACT', 904], ['DECLARES/EXACT', 669], ['HANDLES/EXACT', 246], ['JOINS/EXACT', 27],
   ]);
   // MAY_CALL is now the largest edge population: since javafacts/4 the lane also
   // resolves unqualified (`helper(x)`) call sites, and mall's 76 generated
   // `…Example.GeneratedCriteria` classes call `addCriterion` 8257 times between
   // them. Every one is a candidate call, so the SOUND_SET total overtakes EXACT.
-  assert.deepEqual(r.answer.grades, [{ grade: 'EXACT', count: 9142 }, { grade: 'SOUND_SET', count: 10127 }]);
+  assert.deepEqual(r.answer.grades, [{ grade: 'EXACT', count: 9142 }, { grade: 'SOUND_SET', count: 10446 }]);
   assert.deepEqual(r.answer.statementTypes, [
     { type: 'update', count: 322 }, { type: 'select', count: 266 }, { type: 'insert', count: 167 }, { type: 'delete', count: 151 },
   ]);
@@ -530,7 +559,10 @@ test('overview on the mall pack: 208 of 906 statements and 49 of 76 tables are r
 
 test('overview on the mall pack: the code axis, and the hubs the endpoints converge on', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), {});
-  assert.deepEqual(r.answer.code, { symbols: 10784, external: 26, transactional: 35, mapperMethods: 904, statementsWithoutMapper: 2,
+  // RM35: symbols 10784 -> 10869, of which external 26 -> 33.
+  // `transactional` and `mapperMethods` did not move, which is the check that
+  // nothing already connected did.
+  assert.deepEqual(r.answer.code, { symbols: 10869, external: 33, transactional: 35, mapperMethods: 904, statementsWithoutMapper: 2,
     // mall is MyBatis-generator, not MyBatis-Plus: `grep -rl "BaseMapper\|@TableName"`
     // over its sources finds nothing, so this lane adds nothing to it.
     mpEntities: 0, mpBuiltinStatements: 0, mpStatementsRuntimeOnlyColumns: 0,
@@ -552,7 +584,7 @@ test('overview on the mall pack: the gaps are computed, and five chains are stil
   const r = call(mallGraph(), {});
   const by = Object.fromEntries(r.answer.gaps.map((g) => [g.kind, g.count]));
   assert.deepEqual(by, {
-    'unresolved-calls': null, 'external-symbols': 26, 'multi-handler-routes': 7,
+    'unresolved-calls': null, 'external-symbols': 33, 'multi-handler-routes': 7,
     'endpoints-without-statement': 34,
     'statements-not-reached': 698, 'tables-not-reached': 27, 'depth-cap': 5, 'mode-floor': 0,
   });

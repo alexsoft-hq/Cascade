@@ -710,9 +710,12 @@ test('coupling on the mall pack: the four item classes add up to `items`', { ski
 test('coupling on the mall pack: depth 4 cuts the walk and loses pairs; depth 8 runs to the end', { skip: skipUnlessMall() }, () => {
   const shallow = call(mallGraph(), { axis: 'column', depth: 4 });
   assert.equal(shallow.answer.cells.length, 36);
-  assert.equal(shallow.answer.walk.depthCut, 70);
+  // RM35 moved this from 70: two more calls exist at depth 4 to cut, both of
+  // them a `super.m()` into MyBatis Generator's DefaultCommentGenerator, which
+  // the file imports by name and this lane does not parse.
+  assert.equal(shallow.answer.walk.depthCut, 72);
   assert.equal(shallow.answer.walk.depthCutStarts, 30);
-  assert.ok(shallow.limits.some((l) => /depth cap 4 reached at 70 call\(s\) across 30 endpoint chain\(s\)/.test(l.reason)));
+  assert.ok(shallow.limits.some((l) => /depth cap 4 reached at 72 call\(s\) across 30 endpoint chain\(s\)/.test(l.reason)));
   const deep = call(mallGraph(), { axis: 'column', depth: 8 });
   assert.equal(deep.answer.cells.length, 61, 'twenty-five pairs were past the cap, not absent');
   // Five chains are STILL open at depth 8 — the census says so instead of
@@ -758,7 +761,17 @@ test('coupling on the mall pack: depth 4 cuts the walk and loses pairs; depth 8 
 // before hashing, which reproduces 1f26c49be9a6… byte for byte, so no group,
 // pair, cell or summary number moved (mall declares no HTTP client, and the
 // field is 0 on every one of the 27 runs above).
-const COUPLING_BYTES_SHA256 = '189ab12ddbac99841125e63b80636ea4262514863bf509a60a9b0c48ef5f3baf';
+//
+// RM35 re-pin (pack 99141d55e969 -> 9f01dfcbb8ed), from 189ab12ddbac…. The pack
+// gained 85 EXTERNAL symbols and 319 MAY_CALL edges into them: a nested class
+// now reads its file's imports, `java.lang` is implicit, Lombok's `log` is a
+// field, and a `super.m()` into a base the imports name is an edge. An external
+// symbol has no outgoing edge, so no walk gets past one and no column or table
+// is reached that was not reached before — the ONE number that moved in all 27
+// runs is `walk.depthCut` at depth 4, 70 -> 72, which counts calls the cap cut
+// rather than anything the answer contains. Every group, pair, cell and summary
+// figure this file pins is asserted separately above and none of them moved.
+const COUPLING_BYTES_SHA256 = '33d0f543f28c12ebd9993c2fb1e6b1e24d62bd184f3b8cef3c574ff8268d278c';
 
 test('buildCoupling on the mall pack is byte-identical to the pre-walk-refactor engine', { skip: skipUnlessMall() }, () => {
   const out = [];

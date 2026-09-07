@@ -395,12 +395,13 @@ export function selectLanes(input = {}) {
  *                things that make it DEGRADED are spelled out in `screenAxis`.
  *
  * @param {{ddl:boolean, statements:boolean, code:boolean,
+ *          java?:{typesOutsideRoots?:object[]}|null,
  *          jpa?:{entities:number, repositories:number, namingStrategyDeclared:boolean}|null,
  *          mybatisPlus?:{entities:number, statements:number, namingStrategyDeclared:boolean}|null,
  *          web?:{files:number, parseErrors:number, calls:number, callsWithUrl:number, routes:number}|null,
  *          openapi?:{paths:number, documents:object[]}|null}} ran
  * @param {{screenAxisRequested?:boolean, screenAxisReason?:string}} [opts]
- * @returns {Object} axis name -> {status, reason}
+ * @returns {Object} axis name -> {status, reason, notes?}
  */
 export function declareAxes(ran, opts = {}) {
   const hasCatalog = ran.ddl === true;
@@ -412,6 +413,7 @@ export function declareAxes(ran, opts = {}) {
   const web = ran.web && typeof ran.web === 'object' ? ran.web : null;
   const openapi = ran.openapi && typeof ran.openapi === 'object' ? ran.openapi : null;
   const declaredOnly = !hasCode && !!openapi && (openapi.paths ?? 0) > 0;
+  const codeNotes = codeAxisNotes(ran.java);
   const mp = ran.mybatisPlus && typeof ran.mybatisPlus === 'object' ? ran.mybatisPlus : null;
   const mpStatements = mp ? (mp.statements ?? 0) : 0;
   const mpNamingDeclared = !!(mp && mp.namingStrategyDeclared === true);
@@ -478,7 +480,7 @@ export function declareAxes(ran, opts = {}) {
     // DEGRADED, not not-shipped, and the reason says exactly where the answer
     // stops so a frontend call is never read as a chain to a table.
     code: hasCode
-      ? { status: 'shipped', reason: null }
+      ? { status: 'shipped', reason: null, ...(codeNotes.length > 0 ? { notes: codeNotes } : {}) }
       : declaredOnly
         ? {
           status: 'degraded',
@@ -655,10 +657,52 @@ function webAxis(web) {
 }
 
 /**
+ * WHAT A SHIPPED CODE AXIS STILL COULD NOT SEE (RM35 §G).
+ *
+ * A shipped axis is not a perfect one, and until this round the only way the
+ * pack could say so was to call the whole axis degraded — which would be a
+ * bigger claim than the evidence supports and would fire on every project.
+ * A `note` says the smaller true thing instead: the axis shipped, AND here is
+ * the one gap in it, with what to do about it.
+ *
+ * The gap this returns is the only one on the code axis a reader can ACT on: a
+ * wildcard import names a package of this project and no root the run analyzed
+ * holds the type, so the type exists in a module nobody passed. Anything else
+ * that stayed unresolved is a boundary of a parse-only lane, and the overview's
+ * `unresolved-calls` gap is where those are told.
+ *
+ * @param {{typesOutsideRoots?:{package:string, simple:string, calls:number}[]}|null|undefined} java
+ *        `pack.meta.laneStats` (the Java bridge's stats)
+ * @returns {string[]}
+ */
+export function codeAxisNotes(java) {
+  const outside = java && Array.isArray(java.typesOutsideRoots) ? java.typesOutsideRoots : [];
+  // One is a single type in one package: a note that fires on one call site
+  // would appear on nearly every project and stop being read.
+  if (outside.length <= 1) return [];
+  const packages = [...new Set(outside.map((t) => t.package))].sort();
+  const calls = outside.reduce((n, t) => n + (t.calls ?? 0), 0);
+  const named = packages.slice(0, CODE_NOTE_PACKAGES).join(', ');
+  return [
+    `${calls} call(s) name a type from ${packages.length} package(s) of this project that no analyzed source root holds `
+    + `(${named}${packages.length > CODE_NOTE_PACKAGES ? `, and ${packages.length - CODE_NOTE_PACKAGES} more` : ''}). `
+    + 'Those calls are counted as unresolved and are in no chain here. If the module is in this tree, pass '
+    + '`--java-src <module>/src/main/java` and they resolve; if it is a dependency, they leave the project and this is where the chain really ends',
+  ];
+}
+
+/** How many packages the code-axis note NAMES; the count always covers them all. */
+const CODE_NOTE_PACKAGES = 5;
+
+/**
  * The `limits` entries a declared axis map implies: one per axis that is NOT
- * shipped, in AXES order. A pack that declares nothing (an older pack) yields
- * nothing — the tool layer then falls back to inferring the axis from the graph
- * shape, as it always did.
+ * shipped, plus every `note` an axis carries, in AXES order. A pack that
+ * declares nothing (an older pack) yields nothing — the tool layer then falls
+ * back to inferring the axis from the graph shape, as it always did.
+ *
+ * A NOTE IS EMITTED EVEN WHEN THE AXIS SHIPPED, which is the point of having
+ * one: "the code axis is shipped" and "and here is the one thing in it we could
+ * not see" are both true, and only the second is worth a sentence.
  * @param {Object|null} axes  `pack.meta.axes`
  * @returns {{scope:string, reason:string}[]}
  */
@@ -667,11 +711,16 @@ export function axisLimits(axes) {
   const out = [];
   for (const axis of AXES) {
     const a = axes[axis];
-    if (!a || a.status === 'shipped') continue;
-    out.push({
-      scope: `axis:${axis}`,
-      reason: `the ${axis} axis of this pack is ${a.status}${a.reason ? `: ${a.reason}` : ''}`,
-    });
+    if (!a) continue;
+    if (a.status !== 'shipped') {
+      out.push({
+        scope: `axis:${axis}`,
+        reason: `the ${axis} axis of this pack is ${a.status}${a.reason ? `: ${a.reason}` : ''}`,
+      });
+    }
+    for (const note of Array.isArray(a.notes) ? a.notes : []) {
+      out.push({ scope: `axis:${axis}`, reason: note });
+    }
   }
   return out;
 }

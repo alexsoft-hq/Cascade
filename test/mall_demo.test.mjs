@@ -118,7 +118,10 @@ test('macrozheng/mall: the documented no-flag path reproduces the README golden'
 
   // ---- 2. the census the README prints ------------------------------------
   const census = Object.fromEntries(ask('overview', {}).answer.nodes.map((n) => [n.kind, n.count]));
-  assert.deepEqual(census, { column: 669, endpoint: 239, statement: 906, symbol: 10784, table: 76 });
+  // RM35: 10784 -> 10869, and the 85 are 7 external members plus 78 project
+  // methods whose only call used to be unresolved (see
+  // test/helpers/mall_fixture.mjs). Nothing else in the census moved.
+  assert.deepEqual(census, { column: 669, endpoint: 239, statement: 906, symbol: 10869, table: 76 });
 
   // ---- 3. "change pms_product.price -> 8 statements write it, 10 read it" --
   // The statement axis. Every one of these edges comes from SQL the lineage

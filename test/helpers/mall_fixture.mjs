@@ -38,8 +38,37 @@ import { loadPack } from '../../src/core/pack.mjs';
  * whose superclass (MyBatis Generator's DefaultCommentGenerator) is outside the
  * pack, so both are counted UNRESOLVED under `super-enclosing` and add no edge.
  * 1 edge added, 0 removed: 19268 -> 19269, node count unchanged at 12674.
+ *
+ * RM35 moved it from 99141d55e969. A NESTED class now resolves a simple name
+ * through its own compilation unit, which is the file's — and mall is 76
+ * generated `…Example.GeneratedCriteria` classes, each of which calls
+ * `criteria.add(…)` on a `List` its file imports. Those 304 calls used to be
+ * reported unresolved (the imports are keyed by the TOP-LEVEL type, and a
+ * nested type looked itself up) and are now the same external edge a top-level
+ * class in the same file already got. `unresolvedCalls` fell 358 -> 15; most of
+ * the rest of that fall makes no edge, because a `java.lang` receiver like
+ * `Integer.valueOf(s)` is a STATIC call, which this lane resolves and does not
+ * follow.
+ *
+ * 19269 -> 19588 edges, ALL of them MAY_CALL and all of them additions:
+ * 304 `field-receiver` to java.util.List, 7 `generated-field` to
+ * org.slf4j.Logger, 3 `wildcard-jdk` to an ElasticsearchTemplate reached
+ * through `java.util.*` (see the residue note in java_bridge.mjs
+ * `placeByWildcard`), 3 field receivers to java.lang.String and 2
+ * `super-enclosing` to DefaultCommentGenerator. NOT ONE edge was removed or
+ * retargeted: the whole corpus was diffed edge by edge and lost none.
+ *
+ * 12674 -> 12759 nodes (+85). Seven are the EXTERNAL members those edges point
+ * at; the other 78 are project methods that had no edge at all before, because
+ * their only call was the unresolved one — 76 `…Example.GeneratedCriteria#isValid`,
+ * whose body is `criteria.size() > 0`, and the 2 CommentGenerator methods whose
+ * body is a bare `super.…`. `external` in the code census: 26 -> 33.
+ *
+ * Nothing that was already connected moved: the endpoint, statement, table and
+ * column counts below are unchanged, every reach figure is unchanged, and
+ * `unresolvedCalls` went 358 -> 15.
  */
-export const MALL_DIGEST = '99141d55e969';
+export const MALL_DIGEST = '9f01dfcbb8ed';
 
 /**
  * The upstream commit the pinned pack was built from. `pack.meta.base.commit`

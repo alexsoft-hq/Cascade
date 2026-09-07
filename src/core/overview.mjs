@@ -37,6 +37,34 @@ const DUPLICATE_TYPES_NAMED = 3;
 // `reach.samples.multiHandlerEndpoints`; the note is a sentence, not a table.
 const MULTI_HANDLER_NAMED = 3;
 
+/** What each `unresolvedCallsByReason` key MEANS, for the gap sentence. */
+const UNRESOLVED_REASON_WORDS = Object.freeze({
+  'project-type-outside-roots': 'name a type in a package of this project that no analyzed source root holds',
+  'superclass-outside-roots': 'are `super.m()` into a base class this run could neither read nor name',
+  'type-param-unbound': 'are on a receiver typed by a type parameter no class in this pack binds',
+  unknown: 'we could not place at all',
+});
+
+/**
+ * The reason split behind `unresolvedCalls`, as one sentence, or '' when the
+ * pack records none (an older pack) or has nothing left unresolved.
+ *
+ * WRITTEN AS A CONTINUATION, not a paragraph: the count already said how big
+ * the gap is, and this says what it is made of, which is the difference between
+ * a number a reader distrusts and a number they can act on.
+ * @param {Object|null} laneStats
+ * @returns {string}
+ */
+function unresolvedReasonSentence(laneStats) {
+  const by = laneStats && laneStats.unresolvedCallsByReason;
+  if (!by || typeof by !== 'object') return '';
+  const parts = Object.keys(UNRESOLVED_REASON_WORDS)
+    .filter((k) => Number.isInteger(by[k]) && by[k] > 0)
+    .map((k) => `${by[k]} ${UNRESOLVED_REASON_WORDS[k]}`);
+  if (parts.length === 0) return '';
+  return `. Of those, ${parts.join('; ')}`;
+}
+
 /**
  * The whole-pack census.
  *
@@ -296,7 +324,13 @@ export function buildOverview(graph, opts = {}) {
       kind: 'unresolved-calls', count: unresolved,
       note: unresolved == null
         ? 'this pack kept no lane statistics, so we cannot say how many method calls we failed to resolve. It is not zero: a call we could not resolve never entered the graph, and any chain that needed one is shorter here than it really is'
-        : `we couldn't tell what ${unresolved} method call${unresolved === 1 ? '' : 's'} point to, so they aren't in the graph. Any chain that needed one of them is shorter than it really is`,
+        : `we couldn't tell what ${unresolved} method call${unresolved === 1 ? '' : 's'} point to, so they aren't in the graph. Any chain that needed one of them is shorter than it really is`
+          // WHY, not just how many. A call into a library is resolved and
+          // followed no further, and it is NOT here: this number is what the
+          // analyzer could not place at all, and the split says what is behind
+          // it — one of the four is a module nobody passed, and that one somebody
+          // can fix.
+          + unresolvedReasonSentence(laneStats),
     });
   }
   if (external > 0) {

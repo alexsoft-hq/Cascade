@@ -91,14 +91,54 @@ Every resolved call shape, all by NAME, all graded SOUND_SET:
 | `super.exportXls(…)` | `super-enclosing` | the first ancestor up the `extends` chain that **declares** the method |
 | `service.list(…)` where `service` is typed by a **type parameter** | `type-param-binding` | one edge per concrete binding a subclass makes (`class C extends B<A, IAService>`), with `evidence.boundAt` naming the subclass |
 | an interface method | `interface-dispatch` | every implementor (a class-hierarchy over-approximation) |
+| `log.info(…)` in a `@Slf4j` class | `generated-field` | the logger type that Lombok's annotation generates (`org.slf4j.Logger` …). The field is real at run time and in no parse tree, so nothing but the annotation can explain the receiver |
+| `ringData.computeIfAbsent(…)` where the field's type came in through `import java.util.*` | `wildcard-jdk` | `<that package>.<Simple>`. The JDK is a closed world this lane never reads, so the call leaves the project |
 
-Two of these can fail in their own way, and the failure is named for what
+#### Which name means which type
+
+A simple name is resolved the way the language resolves it, in this order:
+
+1. a **member type in scope** — this type's own nested types, then each
+   enclosing type's. A nested class has no compilation unit of its own, so its
+   imports are the top-level type's;
+2. a **single-type import** of the file;
+3. the **same package**;
+4. an **on-demand import** whose package holds a type this lane analyzed;
+5. **`java.lang`**, which every compilation unit imports whether it says so or
+   not (`String`, `System`, `Integer`, `Math`, `Thread` …);
+6. a globally **unique** simple name — this engine's own last resort, and the
+   only step the language does not have.
+
+Step 5 sits where it does because that is the language's precedence: a project
+class called `Process` in another package is not what `Process.x()` means in a
+file that never imported it.
+
+When a name is left over and the file carries wildcard imports, which one it
+came from is decided by the **project's own import lines**: somewhere in a tree
+this size another file writes `import org.jeecg.common.util.RedisUtil;`, and
+that line proves which package holds that type. Only when nothing witnesses the
+name does the category decide (a package of this project first, then the JDK).
+
+#### What is left, and why
+
+Three of the rules can fail in their own way, and the failure is named for what
 failed rather than folded into the field rule:
 
 | `unresolvedCallsByRule` key | means |
 |---|---|
-| `super-enclosing` | no ancestor **this lane parsed** declares the method — the superclass is a framework class (measured on jeecg-boot: 43 of 73 `super.` calls) |
+| `super-enclosing` | `super.m()` whose base class this lane neither parsed nor could name (measured on jeecg-boot: 3 of 73 `super.` calls; 40 more name a base the imports do name, and those become an edge that leaves the project) |
 | `type-param-unbound` | no subclass in this pack binds that type parameter, so the call site has no callee here |
+| `inherited-field` | a receiver no field, no type and no annotation explains |
+
+…and beside the rule that failed, `unresolvedCallsByReason` says what was
+**missing**, which is the half a reader can act on:
+
+| `unresolvedCallsByReason` key | means |
+|---|---|
+| `project-type-outside-roots` | a wildcard import names a package of this project and no analyzed source root holds the type. **Pass `--java-src <module>/src/main/java`** and the calls resolve — or the module is a dependency, and the chain really does end there. `laneStats.typesOutsideRoots` names the packages |
+| `superclass-outside-roots` | the `extends` chain ended at a name this lane could not resolve at all |
+| `type-param-unbound` | as above |
+| `unknown` | a third-party type behind a wildcard, a constant somebody static-imported, a field a code generator adds after parsing |
 
 `type-param-binding` is an over-approximation of **one call site**, not a guess:
 the base method's body is literally shared by every subclass, so every target it
@@ -180,10 +220,17 @@ node count.
 ### Known limits (measured on macrozheng/mall)
 
 - A method call whose receiver is a **local variable or parameter** (not an
-  instance field) is not resolved — the worker counts these (`skippedCalls`) and
-  emits nothing rather than guessing.
-- A call to a type the source tree never contains (a third-party library) is
-  **unresolved** (`unresolvedCalls`) — no dependency classpath is consulted.
+  instance field) is not resolved — the worker counts these
+  (`skippedLocalReceivers` on its own header, 4786 on litemall) and emits
+  nothing rather than guessing. **A chain that passes through one of them is not
+  in this graph.** The number is a per-run tally on the worker's header, which
+  the per-file fact shards do not carry, so the pack cannot report it yet.
+- A call to a type the source tree never contains (a third-party library) whose
+  **name the file imports** is an edge that leaves the project, counted under
+  `externalCalls`; the walks stop there, which is where the chain really stops.
+  A call whose target this lane could not name at all is **unresolved**
+  (`unresolvedCalls`, split by `unresolvedCallsByReason`) — no dependency
+  classpath is consulted either way.
 - An unqualified call to an **inherited** method is attributed to the enclosing
   type, not to the class that declares it — a name-resolution over-approximation,
   which is why the edge is SOUND_SET and its evidence says so.

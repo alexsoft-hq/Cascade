@@ -425,7 +425,11 @@ test('the catalogue lists browse, requires `kind`, and its answer goes through t
 test('mall: the kind census is the pack\'s own node counts', { skip: skipUnlessMall() }, () => {
   const g = mallGraph();
   const r = call(g, { kind: 'table' });
-  assert.deepEqual(r.answer.counts, { table: 76, column: 669, statement: 906, endpoint: 239, symbol: 10784, screen: 0 });
+  // RM35: 10784 -> 10869. Seven of the 85 are EXTERNAL members mall's code calls
+  // and this lane never parses; the other 78 are project methods whose ONLY call
+  // used to be unresolved, so they had no edge and no node (see
+  // test/helpers/mall_fixture.mjs). Nothing vanished.
+  assert.deepEqual(r.answer.counts, { table: 76, column: 669, statement: 906, endpoint: 239, symbol: 10869, screen: 0 });
   assert.equal(r.answer.total, 76);
   assert.equal(mallPack().digest.length > 0, true);
 });

@@ -44,6 +44,12 @@ export const JAVAFACTS_SCHEMA = 'cascade:javafacts:1';
  */
 const SUPER_CHAIN_LIMIT = 32;
 
+/** The empty enclosing chain of a top-level type, shared so it is never rebuilt. */
+const EMPTY_CHAIN = Object.freeze([]);
+
+/** "no on-demand import explains this name", shared so it is never rebuilt. */
+const UNKNOWN_PLACE = Object.freeze({ kind: 'unknown' });
+
 /**
  * How many unexplained `identifier` receivers the lane stats list by name. The
  * COUNT is always exact; the list is a sample, so a project with thousands of
@@ -58,7 +64,143 @@ const IDENTIFIER_SAMPLE_LIMIT = 20;
  */
 const INHERITED_FIXPOINT_LIMIT = 64;
 
+/**
+ * How many (package, simple name) pairs the "outside the analyzed roots" list
+ * NAMES. The count is always exact; naming a few is what turns it into advice.
+ */
+const TYPES_OUTSIDE_ROOTS_LISTED = 25;
+
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * THE TYPES `java.lang` PUTS IN EVERY FILE, WITH NO IMPORT.
+ *
+ * `java.lang.*` is an on-demand import the language adds to every compilation
+ * unit, so `Integer.valueOf(s)`, `System.currentTimeMillis()` and `String.format(f)`
+ * name types no source line mentions. Without this list the resolver saw a
+ * receiver it had never heard of and reported the call UNRESOLVED — 877 of them
+ * on dolphinscheduler, 524 on jeecg-boot — which reads as "the analysis lost a
+ * call" when in fact the call leaves the project by definition: the JDK is not
+ * source this lane ever reads.
+ *
+ * IT IS A LIST AND NOT A PREFIX TEST, and that matters: `resolveType` returns
+ * `java.lang.<Simple>` for a name IN THIS LIST and null for anything else, so a
+ * receiver the lane cannot place is still reported as unplaced rather than
+ * quietly invented into a package that has no such type.
+ *
+ * WHERE IT SITS IN THE ORDER is the language's own precedence — after a single
+ * import, after the same package, after an explicit on-demand import, and
+ * BEFORE this engine's "a globally unique simple name is probably that type"
+ * rule. A project class called `Process` in some other package is not what
+ * `Process.x()` means in a file that never imported it.
+ *
+ * Frozen and exported so a test can read the list instead of re-deriving it.
+ */
+export const JAVA_LANG_TYPES = Object.freeze([
+  'AbstractMethodError', 'Appendable', 'ArithmeticException', 'ArrayIndexOutOfBoundsException',
+  'ArrayStoreException', 'AssertionError', 'AutoCloseable', 'Boolean', 'BootstrapMethodError',
+  'Byte', 'Character', 'CharSequence', 'Class', 'ClassCastException', 'ClassCircularityError',
+  'ClassFormatError', 'ClassLoader', 'ClassNotFoundException', 'ClassValue',
+  'CloneNotSupportedException', 'Cloneable', 'Comparable', 'Deprecated', 'Double',
+  'EnumConstantNotPresentException', 'Enum', 'Error', 'Exception', 'ExceptionInInitializerError',
+  'Float', 'FunctionalInterface', 'IllegalAccessError', 'IllegalAccessException',
+  'IllegalArgumentException', 'IllegalCallerException', 'IllegalMonitorStateException',
+  'IllegalStateException', 'IllegalThreadStateException', 'IncompatibleClassChangeError',
+  'IndexOutOfBoundsException', 'InheritableThreadLocal', 'InstantiationError',
+  'InstantiationException', 'Integer', 'InternalError', 'InterruptedException', 'Iterable',
+  'LayerInstantiationException', 'LinkageError', 'Long', 'Math', 'Module', 'ModuleLayer',
+  'NegativeArraySizeException', 'NoClassDefFoundError', 'NoSuchFieldError', 'NoSuchFieldException',
+  'NoSuchMethodError', 'NoSuchMethodException', 'NullPointerException', 'Number',
+  'NumberFormatException', 'Object', 'OutOfMemoryError', 'Override', 'Package', 'Process',
+  'ProcessBuilder', 'ProcessHandle', 'Readable', 'Record', 'ReflectiveOperationException',
+  'Runnable', 'Runtime', 'RuntimeException', 'RuntimePermission', 'SafeVarargs', 'ScopedValue',
+  'SecurityException', 'SecurityManager', 'Short', 'StackOverflowError', 'StackTraceElement',
+  'StackWalker', 'StrictMath', 'String', 'StringBuffer', 'StringBuilder',
+  'StringIndexOutOfBoundsException', 'SuppressWarnings', 'System', 'Thread', 'ThreadDeath',
+  'ThreadGroup', 'ThreadLocal', 'Throwable', 'TypeNotPresentException', 'UnknownError',
+  'UnsatisfiedLinkError', 'UnsupportedClassVersionError', 'UnsupportedOperationException',
+  'VerifyError', 'VirtualMachineError', 'Void', 'WrongThreadException',
+]);
+const JAVA_LANG = new Set(JAVA_LANG_TYPES);
+
+/**
+ * THE FIELD LOMBOK WRITES THAT THE SOURCE DOES NOT.
+ *
+ * `@Slf4j` on a class makes the compiler's annotation processor add
+ * `private static final org.slf4j.Logger log = …`. The field is real at run
+ * time and absent from every parse tree, so `log.info(…)` was a receiver
+ * nothing declared — 1502 call sites on dolphinscheduler, 1147 on jeecg-boot,
+ * every one of them reported as an unresolved call.
+ *
+ * Annotation simple name -> the FQN of the logger it generates. `CustomLog` is
+ * the one that cannot be answered from source: its logger type is declared in
+ * `lombok.config`, which is not a file this lane reads, so the edge names the
+ * annotation that generates the field. It is outside the project either way, so
+ * the call leaves it at exactly the same place — and the evidence says the
+ * logger type itself was not knowable rather than pretending it was read.
+ */
+export const LOMBOK_LOGGERS = Object.freeze({
+  Slf4j: 'org.slf4j.Logger',
+  Log4j2: 'org.apache.logging.log4j.Logger',
+  Log4j: 'org.apache.log4j.Logger',
+  Log: 'java.util.logging.Logger',
+  CommonsLog: 'org.apache.commons.logging.Log',
+  XSlf4j: 'org.slf4j.ext.XLogger',
+  JBossLog: 'org.jboss.logging.Logger',
+  Flogger: 'com.google.common.flogger.FluentLogger',
+  CustomLog: 'lombok.extern.CustomLog',
+});
+
+/** The name of the field every one of those annotations generates. */
+const LOMBOK_LOG_FIELD = 'log';
+
+/**
+ * The on-demand import packages whose contents this lane will never parse.
+ *
+ * `import java.util.*;` then `Arrays.asList(…)` names `java.util.Arrays`, and
+ * no amount of reading this project's source will ever turn that into a type
+ * record. The JDK is a closed world: a call into it LEAVES the project, which
+ * is a different fact from a call the analysis could not place, and it is the
+ * one the reader should see.
+ */
+export const JDK_WILDCARD_PACKAGES = Object.freeze(['java', 'javax', 'jakarta']);
+
+/**
+ * WHY A CALL IS STILL UNRESOLVED, in the four words a reader can act on.
+ *
+ * `unresolvedCallsByRule` says which RULE failed; that is a fact about the
+ * engine. This says what was MISSING, which is a fact about the run — and only
+ * one of them is something a reader can fix.
+ */
+export const UNRESOLVED_REASONS = Object.freeze([
+  // A wildcard import names a package of THIS project and the type it would
+  // bring in is under no root this run analyzed. Pass the module's source root
+  // and the call resolves.
+  'project-type-outside-roots',
+  // `super.m()` whose base class this lane never parsed AND whose name it could
+  // not resolve either, so there is nothing to point an edge at.
+  'superclass-outside-roots',
+  // The receiver's type is a type parameter no subclass in this pack binds.
+  'type-param-unbound',
+  // Everything else: a third-party type behind a wildcard, a constant brought
+  // in by a static import, a field a code generator adds after parsing.
+  'unknown',
+]);
+
+/**
+ * Whether a simple name is spelled like a TYPE rather than like a constant.
+ *
+ * Used only where the alternative is a guess: `Arrays.asList()` under
+ * `import java.util.*` is a type, and `ADD_STRING.equals(x)` under the same
+ * import is a constant somebody static-imported or inherited. Both start with a
+ * capital; only the first has a lower-case letter in it, and guessing
+ * `java.util.ADD_STRING` would be inventing a type that does not exist.
+ * @param {string|null|undefined} simple
+ * @returns {boolean}
+ */
+export function looksLikeTypeName(simple) {
+  return typeof simple === 'string' && /^[A-Z]/.test(simple) && /[a-z]/.test(simple);
+}
 
 /** symbol node id for a Java member "fqn#method". */
 export function symbolId(memberFqn) {
@@ -127,6 +269,8 @@ export const CALL_RULE_BASIS = Object.freeze({
   'interface-dispatch': 'interface→impl class-hierarchy dispatch (an over-approximation: every implementor is a candidate)',
   'inherited-field': 'the receiver names no variable the file declares, so it is a member INHERITED from a supertype: the `extends` chain was walked to the nearest ancestor that declares a field of that name (first declaration wins), and a field typed by one of that ancestor\'s type parameters was bound through the subclass\'s `extends` arguments, IN THE CONTEXT OF THIS SUBCLASS, so the edge names that subclass\'s binding and no other\'s',
   'interface-dispatch-inherited': 'interface→impl dispatch where the implementor does not DECLARE the method: the `extends` chain was walked to the nearest ancestor that declares it (name + arity), and the inherited member was instantiated as a symbol of the concrete class whose calls carry that class\'s type-parameter bindings. This is the same over-approximation as interface-dispatch on the implementor set, but no longer blind to a method a class only inherits',
+  'generated-field': 'the receiver names no variable the file declares and no field any ancestor declares, but the enclosing type carries a Lombok logging annotation, which GENERATES a `log` field no line of source spells. The edge names the logger type that annotation creates, which is outside this project, so the chain ends here. That is where it really ends at run time too',
+  'wildcard-jdk': 'the receiver\'s type is named by an on-demand import of a `java.*`, `javax.*` or `jakarta.*` package and no analyzed type declares it, so the target is that package\'s type: the JDK is a closed world this lane never reads, and the call leaves the project whichever of those packages it is in',
   'inherited-member-call': 'a call in the body of a method this class only INHERITS, instantiated for this class: the ancestor wrote the call site, and the ancestor\'s type parameters were replaced by what this subclass binds them to, so the edge names this subclass\'s collaborator and not every subclass\'s. Same standing (SOUND_SET) as the rule that resolved the call in the ancestor, plus one assumption the compiler would check: that this class really inherits that body rather than an intervening one this lane never parsed',
 });
 
@@ -321,6 +465,7 @@ function namespaceOfStatementKey(key) {
  *            filesByFqn:Map<string,Set<string>>,
  *            importsByOwner:Map<string,Map<string,string>>,
  *            wildcardsByOwner:Map<string,string[]>, simpleIndex:Map<string,Set<string>>,
+ *            enclosingChainOf:(fqn:string)=>string[], topLevelOf:(fqn:string)=>string,
  *            resolveType:(ownerFqn:string, simple:string)=>(string|null)}}
  */
 export function buildTypeIndex(javaFacts) {
@@ -387,34 +532,88 @@ export function buildTypeIndex(javaFacts) {
     s.add(fqn); simpleIndex.set(simple, s);
   }
 
-  // Resolve a simple type name seen inside `ownerFqn` to a fully-qualified app
-  // type, in order of decreasing certainty:
-  //   1. an explicit single-type import              (exact)
-  //   2. the same package, if that type is known     (exact)
-  //   3. an on-demand (wildcard) import package that contains a known type
-  //   4. a globally UNIQUE app type with that simple name (sound: no ambiguity)
-  // All four yield an app type; none is compiler-verified, so callers still
-  // grade the resulting edge SOUND_SET. Returns null when it cannot resolve to a
-  // type the lane actually saw (we never invent a package).
+  // THE ENCLOSING TYPES OF A NESTED TYPE, rebuilt from its own record.
+  //
+  // A nested type has no compilation unit of its own: the worker keys every
+  // import and wildcard by the TOP-LEVEL type, because that is where the file's
+  // `import` lines belong, and it stamps the FILE's package on every type it
+  // sees. So `a.b.Outer.Inner` carries `pkg = "a.b"`, and everything after the
+  // package is the nesting — `Outer.Inner`. That is all it takes to rebuild the
+  // scope chain, which is why the worker needs no new record for this.
+  //
+  // Innermost first; the LAST entry is the top-level type, which is the key the
+  // imports are under. EMPTY for a top-level type, so a caller can tell the two
+  // apart without asking again.
+  //
+  // WHAT IT COST TO NOT HAVE THIS: every call inside one of litemall's 76
+  // generated `…Example.GeneratedCriteria` classes looked up `List` under the
+  // key `…Example.GeneratedCriteria`, where there are no imports at all, and
+  // 288 calls came back unresolved that a top-level class in the same file
+  // resolves without trouble.
+  const enclosingChainOf = (fqn) => {
+    const t = types.get(fqn);
+    if (!t) return EMPTY_CHAIN;
+    const pkg = t.pkg ?? '';
+    const nest = pkg ? (fqn.startsWith(`${pkg}.`) ? fqn.slice(pkg.length + 1) : null) : fqn;
+    if (nest == null || !nest.includes('.')) return EMPTY_CHAIN;
+    const segs = nest.split('.');
+    const out = [];
+    for (let i = segs.length - 1; i >= 1; i -= 1) {
+      const outer = segs.slice(0, i).join('.');
+      out.push(pkg ? `${pkg}.${outer}` : outer);
+    }
+    return out;
+  };
+  /** The top-level type a (possibly nested) type belongs to — the imports' key. */
+  const topLevelOf = (fqn) => {
+    const chain = enclosingChainOf(fqn);
+    return chain.length > 0 ? chain[chain.length - 1] : fqn;
+  };
+
+  // Resolve a simple type name seen inside `ownerFqn` to a fully-qualified type,
+  // in the order the LANGUAGE resolves it, which is also decreasing certainty:
+  //   1. a member type in scope — this type's own nested types, then each
+  //      enclosing type's                              (exact)
+  //   2. an explicit single-type import of the FILE    (exact)
+  //   3. the same package, if that type is known       (exact)
+  //   4. an on-demand (wildcard) import package that contains a known type
+  //   5. java.lang, which every compilation unit imports on demand
+  //   6. a globally UNIQUE app type with that simple name (sound: no ambiguity)
+  // None is compiler-verified, so callers still grade the resulting edge
+  // SOUND_SET. Rules 1, 3, 4 and 6 yield a type the lane really parsed; rules 2
+  // and 5 can yield one it never saw (an imported library class, a JDK class),
+  // which is how a call OUT of the project gets an edge that says so instead of
+  // being reported as a failure. Returns null when none of the six applies — we
+  // never invent a package.
   const resolveType = (ownerFqn, simple) => {
     if (!simple) return null;
-    const imp = importsByOwner.get(ownerFqn);
+    const chain = enclosingChainOf(ownerFqn);
+    for (const scope of [ownerFqn, ...chain]) {
+      const guess = `${scope}.${simple}`;
+      if (types.has(guess)) return guess;
+    }
+    const top = chain.length > 0 ? chain[chain.length - 1] : ownerFqn;
+    const imp = importsByOwner.get(top);
     if (imp && imp.has(simple)) return imp.get(simple);
     const t = types.get(ownerFqn);
     if (t && t.pkg) {
       const guess = `${t.pkg}.${simple}`;
       if (types.has(guess)) return guess;
     }
-    for (const pkg of wildcardsByOwner.get(ownerFqn) ?? []) {
+    for (const pkg of wildcardsByOwner.get(top) ?? []) {
       const guess = `${pkg}.${simple}`;
       if (types.has(guess)) return guess;
     }
+    if (JAVA_LANG.has(simple)) return `java.lang.${simple}`;
     const uniq = simpleIndex.get(simple);
     if (uniq && uniq.size === 1) return [...uniq][0];
     return null;
   };
 
-  return { types, typesByFile, filesByFqn, importsByOwner, wildcardsByOwner, simpleIndex, resolveType };
+  return {
+    types, typesByFile, filesByFqn, importsByOwner, wildcardsByOwner, simpleIndex,
+    enclosingChainOf, topLevelOf, resolveType,
+  };
 }
 
 /**
@@ -654,7 +853,9 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     ? opts.generatedSources : { annotations: [], pathGlobs: [] };
 
   // ---- indices -----------------------------------------------------------
-  const { types, typesByFile, filesByFqn, resolveType } = buildTypeIndex(javaFacts);
+  const {
+    types, typesByFile, filesByFqn, importsByOwner, wildcardsByOwner, enclosingChainOf, topLevelOf, resolveType,
+  } = buildTypeIndex(javaFacts);
   // The type record a FACT came from: same fqn AND same file, so a duplicated
   // FQN cannot make one module's declaration answer for another's.
   const typeAt = (fqn, file) => (file ? typesByFile.get(`${fqn} ${file}`) : undefined) ?? types.get(fqn);
@@ -724,18 +925,33 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
       'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
       'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
+      'generated-field': 0, 'wildcard-jdk': 0,
     },
     unresolvedCallsByRule: {
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
       'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
     },
+    // …AND WHY, which is the half a reader can act on. The rule split above
+    // names the piece of THIS ENGINE that failed; this names what was MISSING
+    // from the run. One of the four is a thing somebody can fix in a minute (a
+    // module that was never passed as a source root) and the other three are
+    // boundaries of what a parse-only lane can see, and a single total buries
+    // the difference.
+    unresolvedCallsByReason: Object.fromEntries(UNRESOLVED_REASONS.map((r) => [r, 0])),
+    // The `project-type-outside-roots` reason, NAMED: which package, which
+    // simple name, how many call sites. Up to TYPES_OUTSIDE_ROOTS_LISTED of
+    // them — "pass --java-src <module>/src/main/java" is only advice if it says
+    // which module.
+    typesOutsideRoots: [],
     // WHAT THE WORKER'S `identifier` RECEIVERS TURNED OUT TO BE (javafacts/7).
     // The worker emits the NAME of every receiver its compilation unit never
     // declares; most of them are not inherited fields at all but TYPES —
     // `StringUtils.isEmpty(x)` is a static call, not a field access. Reporting
     // the whole stream as "unresolved" would bury the rule's real failures
     // under thousands of static calls, so the two are counted apart.
-    identifierReceivers: { total: 0, inheritedField: 0, staticReceiver: 0, unresolved: 0 },
+    // `generatedField` is the third kind: a field an ANNOTATION PROCESSOR adds,
+    // which no parse tree can ever hold (Lombok's `log`).
+    identifierReceivers: { total: 0, inheritedField: 0, generatedField: 0, staticReceiver: 0, unresolved: 0 },
     // Up to IDENTIFIER_SAMPLE_LIMIT of the receivers nothing explained, with the
     // ancestor chain that was searched: the counter says how big the gap is, the
     // sample says what it is made of.
@@ -1014,9 +1230,146 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     const t = types.get(targetFqn);
     if (t && t.typeKind === 'interface') calledIfaceMethods.add(targetMember);
   };
-  const countUnresolved = (rule) => {
+  const countUnresolved = (rule, reason) => {
     stats.unresolvedCalls += 1;
     stats.unresolvedCallsByRule[rule] = (stats.unresolvedCallsByRule[rule] ?? 0) + 1;
+    const r = UNRESOLVED_REASONS.includes(reason) ? reason : 'unknown';
+    stats.unresolvedCallsByReason[r] += 1;
+  };
+
+  // ---- what a name that did not resolve was missing ----------------------
+  //
+  // A FIELD LOMBOK WROTE (RM35 §C). `@Slf4j` on a class makes the annotation
+  // processor add `private static final Logger log`; the field is real at run
+  // time and in no parse tree, so `log.info(…)` reached the inherited-field
+  // rule as a receiver nothing declares and was reported as an unresolved call
+  // — 1502 of them on dolphinscheduler alone. The annotation IS the evidence,
+  // so the field is synthesized here rather than left to the worker, which sees
+  // one file and cannot know the annotation is Lombok's.
+  //
+  // Kept OUT of `fieldsByOwner` on purpose: Lombok's field is `private static`,
+  // so a SUBCLASS does not inherit it, and putting it in the map the
+  // inherited-field walk reads would hand it to every subclass in the tree.
+  const generatedFieldsOf = new Map(); // typeFqn -> Map<name, {typeFqn, annotation}>
+  for (const [fqn, t] of types) {
+    // A class that declares its own `log` keeps it: Lombok refuses to generate
+    // over a field the source already writes, and so do we.
+    if (fieldsByOwner.get(fqn)?.has(LOMBOK_LOG_FIELD)) continue;
+    for (const a of t.annotations ?? []) {
+      const logger = LOMBOK_LOGGERS[a];
+      if (!logger) continue;
+      generatedFieldsOf.set(fqn, new Map([[LOMBOK_LOG_FIELD, { typeFqn: logger, annotation: a }]]));
+      break;
+    }
+  }
+  /**
+   * The generated field this receiver name refers to, looked up in the type
+   * itself and then in its enclosing types — a nested class reads the outer
+   * class's `private static log`, which is how dolphinscheduler's
+   * `PlaceholderUtils.PropertyPlaceholderResolver` logs.
+   */
+  const generatedFieldFor = (ownerFqn, name) => {
+    if (!name) return null;
+    for (const scope of [ownerFqn, ...enclosingChainOf(ownerFqn)]) {
+      const hit = generatedFieldsOf.get(scope)?.get(name);
+      if (hit) return { ...hit, declaredBy: scope };
+    }
+    return null;
+  };
+
+  // EVERY TYPE THIS PROJECT EVER IMPORTS BY NAME. A single-type import is a
+  // line somebody wrote, so it is the one piece of evidence in the fact set
+  // that says a given package really holds a given type — which is what
+  // decides between two wildcards that both offer a name (see
+  // `placeByWildcard`).
+  const importedFqns = new Set();
+  for (const byName of importsByOwner.values()) for (const fqn of byName.values()) importedFqns.add(fqn);
+
+  // The (package, simple) pairs a wildcard of THIS PROJECT names and no
+  // analyzed root holds. Counted in full, listed in part.
+  const outsideRoots = new Map(); // "pkg simple" -> {package, simple, calls}
+
+  /**
+   * WHERE A SIMPLE NAME NOTHING RESOLVED COULD HAVE COME FROM (RM35 §D).
+   *
+   * Only on-demand imports are left to ask: a single import, the same package,
+   * and an analyzed type in a wildcard package have all already been tried. So
+   * the question is which `import x.y.*` line put this name in the file, and
+   * there are three answers worth telling apart:
+   *
+   *   'outside-roots'  a wildcard names a package of THIS PROJECT and no root
+   *                    this run analyzed holds the type. The type EXISTS; the
+   *                    run did not read the module it is in. This is the only
+   *                    one a reader can act on.
+   *   'jdk'            a wildcard names a `java.*`, `javax.*` or `jakarta.*`
+   *                    package. The JDK is a closed world this lane never
+   *                    reads, so the call LEAVES the project, and an edge that
+   *                    says so is worth more than a count that says the
+   *                    analysis failed. Which of several JDK packages holds it
+   *                    is not always knowable — `java.util.*` and
+   *                    `java.util.concurrent.*` in one file both offer
+   *                    `ThreadPoolExecutor` — so the lowest package name is
+   *                    taken and EVERY candidate rides on the evidence.
+   *   'unknown'        anything else: a third-party type behind a wildcard, a
+   *                    constant somebody static-imported, a field a code
+   *                    generator adds after parsing.
+   *
+   * WHICH WILDCARD, WHEN SEVERAL COULD ANSWER. A file that carries both
+   * `org.jeecg.common.util.*` and `java.util.*` offers two homes for every
+   * unplaced name, and picking by category alone is wrong in one direction or
+   * the other: `RedisUtil` is jeecg's and `Arrays` is the JDK's. Measured on
+   * the corpus, taking the project wildcard first misfiled 123 JDK types as a
+   * module nobody passed, and taking the JDK wildcard first invented 83
+   * `java.util.RedisUtil`s — a package that has no such type, which this engine
+   * does not do.
+   *
+   * So the file is not asked; the PROJECT is. Somewhere in a tree this size,
+   * some other file writes the single-type import, and that line is evidence
+   * rather than a guess: `import org.jeecg.common.util.RedisUtil;` proves that
+   * package holds that type, and `import java.util.Arrays;` proves the other
+   * one does. A candidate package WITNESSED by a real import line anywhere in
+   * this project wins; only when nothing witnesses the name does the category
+   * order (project, then JDK) decide.
+   *
+   * Names not spelled like a type are never placed: `ADD_STRING.equals(x)`
+   * under `import java.util.*` is a static-imported constant, and
+   * `java.util.ADD_STRING` is a type that does not exist.
+   *
+   * @returns {{kind:'outside-roots', package:string}
+   *          |{kind:'jdk', fqn:string, packages:string[]}
+   *          |{kind:'unknown'}}
+   */
+  const placeByWildcard = (ownerFqn, simple) => {
+    if (!looksLikeTypeName(simple)) return UNKNOWN_PLACE;
+    const wildcards = wildcardsByOwner.get(topLevelOf(ownerFqn)) ?? [];
+    const isProject = (pkg) => packagePrefixes.length > 0 && isProjectPackage(pkg, packagePrefixes)
+      && !types.has(`${pkg}.${simple}`);
+    const isJdk = (pkg) => JDK_WILDCARD_PACKAGES.includes(pkg.split('.')[0]);
+    const jdk = wildcards.filter(isJdk).sort(cmp);
+    const asJdk = () => (jdk.length > 0 ? { kind: 'jdk', fqn: `${jdk[0]}.${simple}`, packages: jdk } : UNKNOWN_PLACE);
+    // The witness first: an import line somewhere in this project that names
+    // exactly this package and this type.
+    for (const pkg of wildcards) {
+      if (!importedFqns.has(`${pkg}.${simple}`)) continue;
+      if (isJdk(pkg)) return { kind: 'jdk', fqn: `${pkg}.${simple}`, packages: [pkg] };
+      if (isProject(pkg)) return { kind: 'outside-roots', package: pkg };
+      return UNKNOWN_PLACE;
+    }
+    for (const pkg of wildcards) if (isProject(pkg)) return { kind: 'outside-roots', package: pkg };
+    return asJdk();
+  };
+
+  /**
+   * WHY this name did not resolve, in the vocabulary of UNRESOLVED_REASONS —
+   * and, for the one reason somebody can act on, WHICH package and name.
+   */
+  const reasonFor = (place, simple) => {
+    if (place.kind !== 'outside-roots') return 'unknown';
+    const key = `${place.package} ${simple}`;
+    const seen = outsideRoots.get(key);
+    if (seen) seen.calls += 1;
+    else outsideRoots.set(key, { package: place.package, simple, calls: 1 });
+    return 'project-type-outside-roots';
   };
 
   // ---- members a class only INHERITS (RM20 §2) ---------------------------
@@ -1115,13 +1468,34 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
       let cur = superOf.get(ownerFqn) ?? null;
       let hops = 0;
       let target = null;
+      // The last type the walk actually READ, so a walk that ran out can say
+      // whether it ran out at a base it could name or at one it could not.
+      let last = ownerFqn;
       while (cur && types.has(cur) && hops < SUPER_CHAIN_LIMIT) {
         if (declares(cur, c.method, null)) { target = cur; break; }
+        last = cur;
         cur = superOf.get(cur) ?? null;
         hops += 1;
       }
-      if (!target) { countUnresolved('super-enclosing'); continue; }
-      emitCall(c.from, target, c.method, 'super-enclosing', { receiver: 'super', declaredBy: target, hops });
+      if (target) {
+        emitCall(c.from, target, c.method, 'super-enclosing', { receiver: 'super', declaredBy: target, hops });
+        continue;
+      }
+      // THE CHAIN RAN OFF THE EDGE OF THE TREE (RM35 §E). `cur` is a base class
+      // an import NAMES and this lane never parsed — MyBatis-Plus's
+      // `ServiceImpl`, `java.lang.Thread`. `super.list(…)` really does run that
+      // class's method, so the edge is made and lands outside the project,
+      // which is exactly where the chain ends at run time. Reporting it as
+      // unresolved said the analysis had failed when it had not.
+      if (cur) {
+        emitCall(c.from, cur, c.method, 'super-enclosing', {
+          receiver: 'super', declaredBy: cur, hops, outsideRoots: true,
+        });
+        continue;
+      }
+      // …or the base cannot be named at all: the last class the lane read has
+      // an `extends` clause whose simple name resolves to nothing here.
+      countUnresolved('super-enclosing', types.get(last)?.extendsSimple ? 'superclass-outside-roots' : 'unknown');
       continue;
     }
 
@@ -1131,6 +1505,21 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     // a field of `BaseDao`, in another file. Here the whole tree is in hand.
     if (rule === 'inherited-field') {
       stats.identifierReceivers.total += 1;
+      // A FIELD AN ANNOTATION PROCESSOR ADDS (RM35 §C). Checked FIRST, because
+      // Lombok's `log` is the class's OWN field and a class's own field shadows
+      // anything an ancestor declares — which is also Java's rule.
+      const gen = generatedFieldFor(ownerFqn, c.receiver);
+      if (gen) {
+        stats.identifierReceivers.generatedField += 1;
+        emitCall(c.from, gen.typeFqn, c.method, 'generated-field', {
+          receiver: c.receiver, declaredBy: gen.declaredBy, annotation: gen.annotation,
+          // @CustomLog's logger type is declared in `lombok.config`, which is
+          // not source this lane reads: the edge names the annotation instead,
+          // and says so rather than passing a placeholder off as a reading.
+          ...(gen.annotation === 'CustomLog' ? { loggerTypeDeclaredOutsideSource: true } : {}),
+        });
+        continue;
+      }
       const found = resolveInheritedField(ownerFqn, c.receiver, { types, superOf, fieldsByOwner, resolveType });
       if (found && found.typeFqn) {
         stats.identifierReceivers.inheritedField += 1;
@@ -1151,15 +1540,20 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
       // this rule, and this round does not follow static calls, so it makes no
       // edge and is counted under its own name rather than as an unresolved
       // inherited field.
-      if (!found && resolveType(ownerFqn, c.receiver)) {
+      // …and an on-demand import the lane will never read answers the same
+      // question: `Arrays.asList(…)` under `import java.util.*` names
+      // `java.util.Arrays`, a TYPE, so this is a static call like any other.
+      const place = found ? UNKNOWN_PLACE : placeByWildcard(ownerFqn, c.receiver);
+      if (!found && (resolveType(ownerFqn, c.receiver) || place.kind === 'jdk')) {
         stats.identifierReceivers.staticReceiver += 1;
         continue;
       }
       stats.identifierReceivers.unresolved += 1;
-      countUnresolved('inherited-field');
+      const reason = reasonFor(place, c.receiver);
+      countUnresolved('inherited-field', reason);
       if (stats.unresolvedIdentifiers.length < IDENTIFIER_SAMPLE_LIMIT) {
         stats.unresolvedIdentifiers.push({
-          from: c.from, receiver: c.receiver, method: c.method,
+          from: c.from, receiver: c.receiver, method: c.method, reason,
           // The chain that WAS searched — the honest answer to "why not?" is the
           // list of ancestors the lane could see, which is often just the class
           // itself (a base class outside the analyzed tree, or a field a code
@@ -1188,7 +1582,7 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
         if (prev) prev.bindings += 1;
         else bound.set(argFqn, { boundAt: b.sub, binding: argSimple, bindings: 1 });
       }
-      if (bound.size === 0) { countUnresolved('type-param-unbound'); continue; }
+      if (bound.size === 0) { countUnresolved('type-param-unbound', 'type-param-unbound'); continue; }
       for (const targetFqn of [...bound.keys()].sort(cmp)) {
         const b = bound.get(targetFqn);
         emitCall(c.from, targetFqn, c.method, 'type-param-binding', {
@@ -1208,7 +1602,26 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     const targetFqn = rule === 'unqualified-enclosing' && types.has(ownerFqn)
       ? ownerFqn
       : resolveType(ownerFqn, c.toTypeSimple);
-    if (!targetFqn) { countUnresolved(rule); continue; }
+    if (!targetFqn) {
+      // THE FIELD'S TYPE CAME IN THROUGH A JDK ON-DEMAND IMPORT (RM35 §D).
+      // `Map<Integer, List<Integer>> ringData` under `import java.util.*` is
+      // `java.util.Map`: the call leaves the project, and an edge that says so
+      // is worth more than a count that says the analysis failed. The rule is
+      // its own, because its failure mode is its own — the package is read off
+      // an import and the type is assumed to exist in it.
+      const place = placeByWildcard(ownerFqn, c.toTypeSimple);
+      if (place.kind === 'jdk') {
+        emitCall(c.from, place.fqn, c.method, 'wildcard-jdk', {
+          receiver: c.toTypeSimple, spelling: c.via ?? null,
+          // More than one JDK package could hold it: the edge names one and
+          // lists them all rather than presenting a coin toss as a reading.
+          ...(place.packages.length > 1 ? { wildcards: place.packages } : {}),
+        });
+        continue;
+      }
+      countUnresolved(rule, reasonFor(place, c.toTypeSimple));
+      continue;
+    }
     // ONE grade, but the evidence names the RULE that produced the edge: the
     // rules can be wrong in different ways, and a reader deciding how far to
     // trust a chain needs to know which one it rested on.
@@ -1220,6 +1633,12 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     // dispatch path needs, reached by a different spelling.
     if (rule === 'unqualified-enclosing') queueIfInherited(targetFqn, c.method);
   }
+
+  // The actionable reason, NAMED. Ordered by how much of the gap each one is,
+  // then by name, so the list does not depend on the order the calls arrived.
+  stats.typesOutsideRoots = [...outsideRoots.values()]
+    .sort((a, b) => (b.calls - a.calls) || cmp(a.package, b.package) || cmp(a.simple, b.simple))
+    .slice(0, TYPES_OUTSIDE_ROOTS_LISTED);
 
   // ---- dispatch: interfaceMethod --MAY_CALL--> implMethod (CHA over-approx)
   //

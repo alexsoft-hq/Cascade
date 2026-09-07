@@ -2203,11 +2203,24 @@ if (cmd === 'analyze') {
       // the numbers, including all-zero: "0 inherited fields" on a project with
       // no generic base class is an answer, and leaving the line out would make
       // a rule that never fired indistinguishable from a rule that is not there.
-      const ir = jstats.identifierReceivers ?? { total: 0, inheritedField: 0, staticReceiver: 0, unresolved: 0 };
+      const ir = jstats.identifierReceivers ?? { total: 0, inheritedField: 0, generatedField: 0, staticReceiver: 0, unresolved: 0 };
       process.stderr.write(`Java lane: ${ir.total} receiver(s) the file never declares: `
         + `${ir.inheritedField} resolved to a field inherited from a superclass, `
+        + `${ir.generatedField ?? 0} to a field a Lombok annotation generates, `
         + `${ir.staticReceiver} are a TYPE (a static call, resolved and not followed), `
         + `${ir.unresolved} unexplained\n`);
+      // WHY the calls that are still unresolved are, not just how many. The
+      // count above is what a reader calibrates trust on, and one of these four
+      // reasons is a thing they can fix in a minute.
+      const byReason = Object.entries(jstats.unresolvedCallsByReason ?? {}).filter(([, n]) => n > 0);
+      if (byReason.length > 0) {
+        process.stderr.write(`Java lane: ${jstats.unresolvedCalls} call(s) still unresolved (`
+          + `${byReason.map(([k, n]) => `${k} ${n}`).join(', ')})\n`);
+      }
+      for (const t of (jstats.typesOutsideRoots ?? []).slice(0, 3)) {
+        process.stderr.write(`  [warn] TYPE_OUTSIDE_ROOTS ${t.package}.${t.simple}: ${t.calls} call(s) name it and no analyzed source root holds it. `
+          + 'If the module is in this tree, pass --java-src <module>/src/main/java\n');
+      }
       const im = jstats.inheritedMembers ?? { synthesized: 0, calls: 0 };
       process.stderr.write(`Java lane: ${jstats.callsByRule['interface-dispatch-inherited'] ?? 0} dispatch edge(s) to a method the implementor only INHERITS: `
         + `${im.synthesized} member(s) instantiated for their concrete class, ${im.calls} call(s) carried into them\n`);
@@ -2349,6 +2362,10 @@ if (cmd === 'analyze') {
     const axes = declareAxes(
       {
         ddl: ddls.length > 0 || !!snapshot, statements: mappers.length > 0, code: javaSrc.length > 0,
+        // The Java bridge's own stats, so a SHIPPED code axis can still declare
+        // the one gap in it a reader can act on (RM35 §G: a wildcard import
+        // naming a package of this project that no analyzed root holds).
+        java: jstats,
         jpa: jpaStats, mybatisPlus: mpStats, web: webStats, openapi: openapiStats, har: harStats,
       },
       { screenAxisRequested: screenGate.enabled, screenAxisReason: screenGate.reason },
