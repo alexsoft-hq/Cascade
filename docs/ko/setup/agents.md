@@ -36,6 +36,80 @@ cascade mcp: serving 1 project(s) [mall]: packs load on first use, budget 512 MB
 이 줄은 stderr 로 나갑니다. stdout 에는 JSON-RPC 스트림만 흐르고 그 밖에는
 아무것도 없으며, 그래서 클라이언트가 그것을 읽을 수 있습니다.
 
+## 언제 물어야 하는지를 에이전트에게 알려 줍니다
+
+이 아래의 설정은 전부 서버를 연결하는 절반입니다. **언제 물어야 하는지**는
+어디에도 없고, 이 도구의 값어치는 그 나머지 절반에 걸려 있습니다. 서버만 붙어
+있고 그에 대한 규칙이 없는 모델은 매퍼를 묻지 않고 고칩니다. 지금 질문할 때라고
+말해 주는 것이 문맥에 하나도 없기 때문입니다.
+
+명령 하나가 둘 다 씁니다. 프로젝트 안에서 실행합니다.
+
+```bash
+cascade agent --write                     # Claude Code 용 .mcp.json + CLAUDE.md
+cascade agent --client cursor --write     # .cursor/mcp.json + .cursor/rules/cascade.mdc
+cascade agent --client codex --write      # AGENTS.md, 그리고 붙여 넣을 TOML 블록
+```
+
+`--write` 없이 실행하면 쓸 파일을 내용까지 그대로 출력만 하고 아무것도 건드리지
+않습니다. `bin/cascade.mjs` 의 절대 경로와 프로젝트 id 는 도구가 스스로
+채웁니다. 둘 다 알고 있기 때문입니다. 플래그 전체는
+[CLI 문서](../../cli.md#cascade-agent) 에 있습니다.
+
+규칙 쪽은 아래와 같고, `CLAUDE.md` 나 `AGENTS.md` 안에 마커 두 줄 사이로
+들어갑니다. 그래서 다시 실행해도 그 자리에서 교체되고 위아래에 쓴 여러분의
+글은 그대로 남습니다. Cursor 는 같은 본문을 `alwaysApply: true` 가 붙은 `.mdc`
+파일 하나로 받습니다.
+
+```markdown
+<!-- cascade:begin -->
+## Cascade: ask the impact graph before touching data-facing code
+
+This project has a change-impact graph served over MCP by the `cascade` server
+(project `mall`). It knows which SQL statements, HTTP endpoints and screens reach
+every table and column, with a grade on each edge.
+
+Ask before you edit any of these:
+- a MyBatis mapper XML or an annotated mapper, a JPA entity or repository, a DDL file
+- a controller, a route, or a service method a controller reaches
+- a frontend screen, or a frontend function that calls the backend
+
+How to ask:
+1. `changed_impact` with the files you are about to change, or have changed and
+   not committed. It lists the endpoints, screens, tables and columns in the
+   blast radius, and it reads your working tree, so it is never behind.
+2. Before renaming or retyping a column, run `column_impact`, then
+   `endpoint_impact` and `screen_impact` on it, and put every reader AND writer
+   they name into your plan.
+3. `flow` on an endpoint or a screen shows the whole path down to the tables it
+   ends at. `overview` first when you do not know what is in the pack.
+
+How to read an answer:
+- `trust`, `limits` and `truncated` come with every answer. Read them before
+  the list. Each `limits` entry names something the graph could not see.
+- `EXACT` is proved. `SOUND_SET` is a candidate set, so check each member.
+  `HEURISTIC` and `RUNTIME_ONLY` are hints, not evidence.
+- An empty list means "none" only when `empty` says `none`. `not-shipped` and
+  `degraded` mean unknown, which is not the same as zero.
+- A `basis.freshness` of `behind` means the pack predates the code you see.
+  `changed_impact` still answers from the working tree.
+
+After the edit, run `changed_impact` again and put the endpoints and screens it
+names into the commit message or the pull request, so a reviewer sees the same
+radius you did.
+<!-- cascade:end -->
+```
+
+블록은 에이전트가 읽는 지시문이므로 영어 그대로 씁니다.
+
+그다음 Claude Code 에서는 승인이 한 번 필요합니다. 프로젝트 `.mcp.json` 으로
+들어온 서버는 그 디렉터리에서 `claude` 를 한 번 실행하고 `cascade` 를 승인하기
+전까지 *Pending approval* 상태로 있고, `claude mcp get cascade` 가 그 상태를
+출력합니다.
+
+이 아래는 손으로 직접 하고 싶을 때 이 명령이 무엇을 쓰는지, 그리고 이 명령이
+아직 다루지 않는 클라이언트를 설명합니다.
+
 ## Claude Code
 
 서버를 쓰고 싶은 저장소 안에서 셸로 실행합니다.

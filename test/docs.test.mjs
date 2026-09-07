@@ -17,6 +17,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { toolList } from '../src/mcp/catalog.mjs';
+import { rulesBlock, rulesBody } from '../src/core/agent_setup.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ROOT, 'bin', 'cascade.mjs');
@@ -91,6 +92,40 @@ test('docs/mcp.md names every tool in the catalog — and no tool the catalog do
   assert.ok(names.length >= 12, `expected the catalog to carry the tools, got ${names.length}`);
   const missing = names.filter((n) => !new RegExp(`\`${n}\``).test(mcp));
   assert.deepEqual(missing, [], `docs/mcp.md never names: ${missing.join(' ')}`);
+});
+
+// The rules block `cascade agent` writes is documentation too — the kind that
+// is read by a model rather than by a person, on every turn, inside somebody
+// else's repository. It rots the same way a page does: a tool gets renamed and
+// the block keeps naming the old one, and the agent's call comes back
+// `unknown-tool` at the moment it mattered. So the catalog is the authority
+// here as well.
+test('the rules block names only tools the catalog has, and still names the six the README promises', () => {
+  const block = rulesBody('demo');
+  const names = new Set(toolList().tools.map((t) => t.name));
+  const mentioned = [...block.matchAll(/`([a-z][a-z_]*)`/g)].map((m) => m[1]);
+
+  // Every backticked token SHAPED like a tool name (lower case, an underscore
+  // in it) must be one. That is the shape a rename leaves behind.
+  const toolShaped = [...new Set(mentioned.filter((n) => n.includes('_')))];
+  assert.ok(toolShaped.length >= 4, `expected the block to name tools, found ${toolShaped.join(', ')}`);
+  const gone = toolShaped.filter((n) => !names.has(n));
+  assert.deepEqual(gone, [], `the block names tools the catalog does not have: ${gone.join(', ')}`);
+
+  // ...and the six the README puts in front of a reader are all still there, in
+  // the catalog and in the block. `flow` and `overview` carry no underscore, so
+  // only this half covers them.
+  for (const n of ['changed_impact', 'column_impact', 'endpoint_impact', 'screen_impact', 'flow', 'overview']) {
+    assert.ok(names.has(n), `the catalog no longer publishes ${n}`);
+    assert.ok(mentioned.includes(n), `the rules block no longer tells the agent about ${n}`);
+  }
+
+  // It lands in a file the model reads before every turn, so its length is part
+  // of its contract.
+  const lines = rulesBlock('demo').split('\n');
+  assert.ok(lines.length < 40, `the block is ${lines.length} lines; under 40 is the budget`);
+  assert.equal(lines[0], '<!-- cascade:begin -->');
+  assert.equal(lines[lines.length - 1], '<!-- cascade:end -->');
 });
 
 test('every docs page a docs page links to exists', () => {

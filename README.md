@@ -307,6 +307,28 @@ That is a normal MCP server speaking JSON-RPC over stdio: `initialize`, then
 
 ## Set it up for your AI agent
 
+```bash
+cascade agent --write                     # Claude Code: .mcp.json + CLAUDE.md
+cascade agent --client cursor --write     # Cursor: .cursor/mcp.json + a rule file
+```
+
+Run it in the project. It writes two things: the MCP server configuration, with
+the absolute path and the project id filled in from the registry, and a short
+block that tells the agent **when to ask** (before it edits a mapper, an entity,
+a controller or a screen), which tool to ask with, and how to read the `trust`,
+`limits` and grade fields that come back. That block is the half people forget,
+and it is the half the value sits on: a server with no rule attached is a server
+the model never calls, because nothing in its context says a question is due.
+
+The block goes into `CLAUDE.md` (or `AGENTS.md` for Codex) between two markers,
+so a second run replaces it in place and your own text around it survives.
+Without `--write` the command prints every file it would write instead of
+writing one. Claude Code then needs one approval: a server that arrives in a
+project `.mcp.json` sits at *Pending approval* until you run `claude` there once
+and approve `cascade`.
+
+### What the command writes, if you would rather do it by hand
+
 Every configuration below runs the same command, `node <path>/bin/cascade.mjs
 mcp --project <id>`. Use an absolute path to `bin/cascade.mjs`: an MCP client
 starts the server from a working directory you do not control.

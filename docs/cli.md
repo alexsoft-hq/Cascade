@@ -110,6 +110,74 @@ prefixes, the mapper directories and Java source roots the lanes will read — a
   keeps your edits.
 - `--json` — the whole discovery report as JSON.
 
+## `cascade agent`
+
+```
+cascade agent [--client claude-code|cursor|codex|all] [--write]
+              [--project <id>] [--root <dir>]
+```
+
+Put the MCP server **and the rule that gets it used** into a project, in one
+command. The configuration is the easy half: an absolute path to
+`bin/cascade.mjs`, the project id out of the registry, one JSON shape per
+client. The rule is the half that gets forgotten, and it is the one that
+matters. An agent with the server attached and nothing telling it *when* to ask
+edits a mapper without a question, because nothing in its context says a
+question is due.
+
+The project is the one registered for `--root` (default: the current
+directory), found by comparing the real path of `<root>/.cascade` against the
+registry, or the one `--project <id>` names, whose root then comes from its
+manifest. A root nothing is registered for exits `2` and names `cascade init`.
+No pack is needed: wiring the agent up before the first `analyze` is a normal
+thing to do.
+
+What each client gets:
+
+| `--client` | MCP config | rules |
+|---|---|---|
+| `claude-code` (default) | `<root>/.mcp.json`, key `mcpServers.cascade` | `<root>/CLAUDE.md`, a managed block |
+| `cursor` | `<root>/.cursor/mcp.json`, key `mcpServers.cascade` | `<root>/.cursor/rules/cascade.mdc`, the whole file, `alwaysApply: true` |
+| `codex` | not written: a `[mcp_servers.cascade]` TOML block is **printed** for `~/.codex/config.toml` | `<root>/AGENTS.md`, a managed block |
+| `all` | the three above | |
+
+- `--client <name>` — one of `claude-code`, `cursor`, `codex`, or `all`
+  (default: `claude-code`).
+- `--write` — write the files. Without it the command prints every file it
+  would write, each under a `--- <relative path> ---` header, with the exact
+  content, and touches nothing.
+- `--project <id>` — the registered project to configure, instead of the one at
+  `--root`.
+- `--root <dir>` — the project directory to write into (default: the current
+  directory).
+
+**The command in the config is always absolute**: `command` is the running
+`node` binary and the first argument is the real path of `bin/cascade.mjs`,
+resolved through the symlink a global install leaves behind. A client starts the
+server from a working directory you do not control, and a relative path there is
+the single most common reason a client reports the server as failed.
+
+**How the merge works.** A JSON config is read, parsed, and given the one key:
+every other key and every other server stays where it was, and the file is
+written back with a two-space indent and a trailing newline. A file that exists
+and does **not** parse is not touched at all. The command exits `2` naming it,
+with nothing written, because a tool that overwrites what it could not read has
+thrown away work it never looked at.
+
+The rules block sits between `<!-- cascade:begin -->` and `<!-- cascade:end -->`
+on their own lines. A file that has the block gets it replaced **in place**, so
+your own text above and below it survives. A file without it gets the block
+after one blank line, and a file that does not exist is created holding only the
+block. Running the command twice is byte-identical the second time, and the
+`unchanged` line says so.
+
+With `--write`, each file is reported as `created`, `updated` or `unchanged`.
+
+**Claude Code needs one approval.** A server that arrives in a project
+`.mcp.json` sits at *Pending approval* until you run `claude` in that directory
+once and approve `cascade` when it asks, and `claude mcp get cascade` prints
+that state.
+
 ## `cascade analyze`
 
 ```

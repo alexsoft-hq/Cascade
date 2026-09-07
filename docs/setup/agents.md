@@ -34,6 +34,78 @@ cascade mcp: serving 1 project(s) [mall]: packs load on first use, budget 512 MB
 That line goes to stderr; stdout carries the JSON-RPC stream and nothing else,
 which is what lets a client read it.
 
+## Tell the agent when to ask
+
+Everything below this section wires the server up. None of it tells the agent
+**when to ask**, and that is the half the tool's value sits on: a model with the
+server attached and no rule about it edits a mapper without a question, because
+nothing in its context says a question is due.
+
+One command writes both, in the project you run it in:
+
+```bash
+cascade agent --write                     # .mcp.json + CLAUDE.md, for Claude Code
+cascade agent --client cursor --write     # .cursor/mcp.json + .cursor/rules/cascade.mdc
+cascade agent --client codex --write      # AGENTS.md, plus a TOML block to paste
+```
+
+Without `--write` it prints every file it would write, with the exact content,
+and touches nothing. It fills in the absolute path to `bin/cascade.mjs` and the
+project id itself, because it knows both. The full flag list is on
+[the CLI page](../cli.md#cascade-agent).
+
+The rules half is this, written into `CLAUDE.md` or `AGENTS.md` between two
+markers so a second run replaces it in place and your own text around it
+survives. Cursor gets the same body as a whole `.mdc` file with
+`alwaysApply: true` on it.
+
+```markdown
+<!-- cascade:begin -->
+## Cascade: ask the impact graph before touching data-facing code
+
+This project has a change-impact graph served over MCP by the `cascade` server
+(project `mall`). It knows which SQL statements, HTTP endpoints and screens reach
+every table and column, with a grade on each edge.
+
+Ask before you edit any of these:
+- a MyBatis mapper XML or an annotated mapper, a JPA entity or repository, a DDL file
+- a controller, a route, or a service method a controller reaches
+- a frontend screen, or a frontend function that calls the backend
+
+How to ask:
+1. `changed_impact` with the files you are about to change, or have changed and
+   not committed. It lists the endpoints, screens, tables and columns in the
+   blast radius, and it reads your working tree, so it is never behind.
+2. Before renaming or retyping a column, run `column_impact`, then
+   `endpoint_impact` and `screen_impact` on it, and put every reader AND writer
+   they name into your plan.
+3. `flow` on an endpoint or a screen shows the whole path down to the tables it
+   ends at. `overview` first when you do not know what is in the pack.
+
+How to read an answer:
+- `trust`, `limits` and `truncated` come with every answer. Read them before
+  the list. Each `limits` entry names something the graph could not see.
+- `EXACT` is proved. `SOUND_SET` is a candidate set, so check each member.
+  `HEURISTIC` and `RUNTIME_ONLY` are hints, not evidence.
+- An empty list means "none" only when `empty` says `none`. `not-shipped` and
+  `degraded` mean unknown, which is not the same as zero.
+- A `basis.freshness` of `behind` means the pack predates the code you see.
+  `changed_impact` still answers from the working tree.
+
+After the edit, run `changed_impact` again and put the endpoints and screens it
+names into the commit message or the pull request, so a reviewer sees the same
+radius you did.
+<!-- cascade:end -->
+```
+
+Claude Code needs one approval after that: a server that arrives in a project
+`.mcp.json` sits at *Pending approval* until you run `claude` in that directory
+once and approve `cascade` when it asks, and `claude mcp get cascade` prints
+that state.
+
+The rest of this page is what the command writes, if you would rather do it by
+hand, plus the clients it has no writer for.
+
 ## Claude Code
 
 From a shell, in the repository you want the server available in:

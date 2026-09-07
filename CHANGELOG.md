@@ -8,6 +8,32 @@ number carries a change that would be a major one after 1.0. Published as
 Each dated section below is one round of work. The round protocol is in
 [CONTRIBUTING.md](CONTRIBUTING.md#how-a-change-gets-in-the-round).
 
+## [Unreleased]
+
+### Added
+
+- **`cascade agent`: one command puts the server and the rule into a project.**
+  The MCP server was wireable from a dozen places in the documentation, and not
+  one of them said *when* the agent should ask. An agent with the server
+  attached and no rule about it edits a mapper without a question, because
+  nothing in its context says a question is due, and half of what this tool is
+  worth sits on that rule. So `cascade agent --write`, run in the project,
+  writes both: the MCP configuration with the absolute path to `bin/cascade.mjs`
+  and the project id filled in from the registry, and a short block that names
+  what to ask before editing (`changed_impact` first, `column_impact` before a
+  rename, `flow` and `overview` for orientation) and how to read `trust`,
+  `limits` and the grades that come back.
+
+  `--client claude-code` (the default) writes `.mcp.json` and `CLAUDE.md`,
+  `--client cursor` writes `.cursor/mcp.json` and an always-applied
+  `.cursor/rules/cascade.mdc`, `--client codex` writes `AGENTS.md` and prints
+  the TOML block for `~/.codex/config.toml`, which it does not own. Without
+  `--write` every file is printed with its exact content and nothing is
+  touched. A JSON config keeps every other key and every other server, and one
+  that does not parse is refused by name with nothing written. The rules block
+  lives between two markers, so a second run replaces it in place and the text
+  around it survives, byte for byte.
+
 ## [0.1.0] - 2026-09-07
 
 The first published release. Everything below was built and measured before it;
@@ -1252,4 +1278,5 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/alexsoft-hq/Cascade/releases/tag/v0.1.0
