@@ -15,6 +15,7 @@
    "webCallsResolved": 219,
    "screens": 44,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 6216,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -31,7 +32,7 @@
    "endpoints": 969,
    "endpointsReachingAStatement": 744,
    "statements": 839,
-   "statementsReached": 796,
+   "statementsReached": 748,
    "tables": 177,
    "tablesReached": 73,
    "columns": 2092,
@@ -40,6 +41,7 @@
    "webCallsResolved": 538,
    "screens": 166,
    "screensReachingATable": 19,
+   "endpointColumnPairs": 15997,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -65,6 +67,7 @@
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 3554,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -90,6 +93,7 @@
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 243,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -115,6 +119,7 @@
    "webCallsResolved": 165,
    "screens": 7,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 13179,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -140,6 +145,7 @@
    "webCallsResolved": 172,
    "screens": 89,
    "screensReachingATable": 40,
+   "endpointColumnPairs": 4223,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -166,6 +172,7 @@
    "webCallsResolved": 145,
    "screens": 54,
    "screensReachingATable": 44,
+   "endpointColumnPairs": 3868,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -191,6 +198,7 @@
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 52,
    "axes": {
     "catalog": "shipped",
     "statements": "not-shipped",
@@ -217,6 +225,7 @@
    "webCallsResolved": 122,
    "screens": 21,
    "screensReachingATable": 8,
+   "endpointColumnPairs": 1613,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",
@@ -242,6 +251,7 @@
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 83,
    "axes": {
     "catalog": "shipped",
     "statements": "not-shipped",
@@ -267,6 +277,7 @@
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
+   "endpointColumnPairs": 528,
    "axes": {
     "catalog": "shipped",
     "statements": "shipped",

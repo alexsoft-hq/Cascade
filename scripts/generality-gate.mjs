@@ -18,6 +18,11 @@
 // runs `--accept`, which rewrites the baseline and prints the diff: a number
 // that improves silently is a number nobody checked.
 //
+// ONE NUMBER IS GUARDED THE OTHER WAY UP. `endpointColumnPairs` counts what each
+// endpoint reaches ON ITS OWN, added up, and there a RISE past the budget is the
+// failure. Reach that smears sideways leaves every union count exactly where it
+// was, so the five floors above cannot see it and this one can.
+//
 // WHAT IT IS NOT. It is not a benchmark and it is not a claim of correctness.
 // "123 of 147 endpoints reach a statement" says the engine connected 123 chains;
 // whether the 24 it did not have SQL behind them at all is a question only
@@ -44,6 +49,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadPack } from '../src/core/pack.mjs';
+import { FLOW_EDGE_TYPES } from '../src/core/graph.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
 import { TRUST_LEVELS } from '../src/core/trust.mjs';
 
@@ -97,18 +103,104 @@ export const CORPUS = Object.freeze([
 ]);
 
 /**
- * The numbers the regression test guards. A drop in any is a failure.
+ * The numbers the regression test guards. A drop in any is a failure, except
+ * for the ones CEILINGS names, where it is a RISE that fails.
  *
- * The last two are the screen end (RM32): how many of the frontend's own call
- * sites reached a route this pack serves, and how many screens reach a table
- * through them. They are guarded for the same reason as the three above — a
- * change that quietly stops following a frontend call would otherwise cost a
+ * The screen end (RM32) is the fourth and fifth: how many of the frontend's own
+ * call sites reached a route this pack serves, and how many screens reach a
+ * table through them. They are guarded for the same reason as the three above:
+ * a change that quietly stops following a frontend call would otherwise cost a
  * third of the round trip and show up as nothing at all.
+ *
+ * The sixth is the per-endpoint fan-out (RM38), and it is the only one that is
+ * not a union. Read `endpointColumnPairs` below for why a union count could not
+ * see the defect it is here for.
  */
 export const GUARDED = Object.freeze([
   'endpointsReachingAStatement', 'tablesReached', 'columnsReached',
-  'webCallsResolved', 'screensReachingATable',
+  'webCallsResolved', 'screensReachingATable', 'endpointColumnPairs',
 ]);
+
+/**
+ * The guarded numbers that are a CEILING rather than a floor, and the fraction
+ * a run may exceed the baseline by before the gate calls it a regression.
+ *
+ * WHY A BUDGET AND NOT A HARD CEILING. Fan-out rises for an honest reason too:
+ * a rule that resolves one more call adds every column that call reaches to
+ * every endpoint above it, so a good round moves this number by a few tenths of
+ * a percent and a gate that failed on that would be re-accepted unread within a
+ * month. The defect it is here for is not subtle: a smear multiplies one
+ * endpoint's reach by the number of siblings that share a base class, and RM37's
+ * moved jeecg by 37 percent. Five percent sits between the two with room on
+ * both sides, and a rise inside it is still PRINTED, so nothing moves unseen.
+ */
+export const CEILINGS = Object.freeze({ endpointColumnPairs: 0.05 });
+
+/**
+ * How many nodes ONE endpoint's fan-out walk may visit. A bound, not a budget:
+ * the visited set cannot outgrow the pack, and the widest walk in the pinned
+ * corpus reaches 452 nodes, so this never binds on anything measured here. It
+ * is here so a pathological pack cannot hang the gate, and when it does bind
+ * the run SAYS SO rather than reporting a quietly smaller number.
+ */
+export const FANOUT_NODE_CAP = 20_000;
+
+/**
+ * The per-endpoint fan-out: for every endpoint in the pack, how many DISTINCT
+ * columns it reaches, added up over the endpoints.
+ *
+ * WHY A SUM AND NOT A UNION. Every other guarded number is a union over the
+ * whole pack, and a union is blind to the defect this one is here for. RM37
+ * removed a rule that let one generic base method resolve in every subclass at
+ * once, so each subclass's export endpoint appeared to reach every sibling
+ * service's SQL. This count over the jeecg pack falls from 25,397 to 15,997
+ * across that fix, so 9,400 of those pairs, 37 percent of them, were false, and
+ * not one of them named a column some other endpoint did not already reach
+ * honestly. Every union count stayed exactly where it was and the gate stayed
+ * green over the lot. A sum over endpoints moves the moment reach smears
+ * sideways, which is the whole point.
+ *
+ * GRADE-AGNOSTIC, on purpose. The walk takes every flow edge whatever its
+ * grade, so the number describes the SHAPE of the graph rather than where a
+ * mode floor happens to sit. It matters: the same count taken in conservative
+ * mode moved jeecg by 0.8 percent across the RM37 fix and would have hidden the
+ * defect a second time, because the smeared edges were graded HEURISTIC.
+ *
+ * @param {import('../src/core/graph.mjs').Graph} graph
+ * @param {{nodeCap?:number}} [opts]
+ * @returns {{pairs:number, endpoints:number, capped:string[]}}
+ */
+export function endpointColumnPairs(graph, opts = {}) {
+  const nodeCap = opts.nodeCap ?? FANOUT_NODE_CAP;
+  const flow = new Set(FLOW_EDGE_TYPES);
+  const capped = [];
+  let pairs = 0;
+  let endpoints = 0;
+  for (const node of graph.nodes.values()) {
+    if (node.kind !== 'endpoint') continue;
+    endpoints += 1;
+    // One breadth-first walk per endpoint, with a visited set of its own: a
+    // column two paths reach from the SAME endpoint is one pair, and the same
+    // column reached from another endpoint is another pair.
+    const seen = new Set([node.id]);
+    const queue = [node.id];
+    let columns = 0;
+    let head = 0;
+    let cut = false;
+    while (head < queue.length && !cut) {
+      for (const edge of graph.outEdges(queue[head++])) {
+        if (!flow.has(edge.type) || seen.has(edge.to)) continue;
+        if (seen.size >= nodeCap) { cut = true; break; }
+        seen.add(edge.to);
+        if (edge.to.startsWith('column:')) columns += 1;
+        queue.push(edge.to);
+      }
+    }
+    if (cut) capped.push(node.id);
+    pairs += columns;
+  }
+  return { pairs, endpoints, capped };
+}
 
 /**
  * Where the clones live. NEVER inside this repository: a gigabyte of other
@@ -262,10 +354,19 @@ export function runOne(entry, opts = {}) {
   const screens = o.screens ?? null;
   const webCalls = web ? (web.calls?.withUrl ?? 0) : 0;
   const webCallsResolved = web ? ((web.resolved?.SOUND_SET ?? 0) + (web.resolved?.HEURISTIC ?? 0)) : 0;
+  // The gate's OWN walk over the pack it just loaded, not a number the pack
+  // reports about itself: the engine has no reason to carry a fan-out census,
+  // and a metric that guards the engine is better computed outside it.
+  const fanout = endpointColumnPairs(graph);
+  if (fanout.capped.length > 0) {
+    log(`  ${entry.id}: the fan-out walk stopped at ${FANOUT_NODE_CAP} nodes on ${fanout.capped.length} endpoint(s), `
+      + `so the pair count below is a floor rather than the whole reach`);
+  }
   log(`  ${entry.id}: ${r.endpoints - r.endpointsWithoutStatement}/${r.endpoints} endpoints -> SQL, `
     + `${r.tablesReached}/${r.tables} tables, ${r.columnsReached}/${r.columns} columns, `
     + `${webCallsResolved}/${webCalls} web calls -> route, `
     + `${screens ? screens.reachingATable : 0}/${screens ? screens.screens : 0} screens -> table, `
+    + `${fanout.pairs} endpoint -> column pairs, `
     + `${Math.round(wallMs / 1000)}s`);
   return {
     id: entry.id,
@@ -284,6 +385,7 @@ export function runOne(entry, opts = {}) {
     webCallsResolved,
     screens: screens ? screens.screens : 0,
     screensReachingATable: screens ? screens.reachingATable : 0,
+    endpointColumnPairs: fanout.pairs,
     axes: Object.fromEntries(Object.entries(packJson.meta.axes ?? {}).map(([k, v]) => [k, v.status])),
     nodes: packJson.counts.nodes,
     edges: packJson.counts.edges,
@@ -299,7 +401,8 @@ function lastLines(s, n = 6) {
 
 /** The table the report prints, from the measurements. */
 export function renderTable(results) {
-  const head = ['repo', 'endpoints -> SQL', 'tables', 'columns', 'web calls -> route', 'screens -> table', 'degraded axes', 'wall'];
+  const head = ['repo', 'endpoints -> SQL', 'tables', 'columns', 'web calls -> route', 'screens -> table',
+    'endpoint -> column pairs', 'degraded axes', 'wall'];
   const rows = results.map((m) => (m.ok
     ? [
       m.id,
@@ -308,10 +411,13 @@ export function renderTable(results) {
       `${m.columnsReached} / ${m.columns}`,
       `${m.webCallsResolved ?? 0} / ${m.webCalls ?? 0}`,
       `${m.screensReachingATable ?? 0} / ${m.screens ?? 0}`,
+      // A sum and not a ratio: it has no denominator, because there is no such
+      // thing as the number of pairs a project ought to have.
+      `${m.endpointColumnPairs ?? 0}`,
       Object.entries(m.axes).filter(([, v]) => v !== 'shipped').map(([k, v]) => `${k}=${v}`).join(' ') || 'all shipped',
       `${Math.max(1, Math.round(m.wallMs / 1000))} s`,
     ]
-    : [m.id, 'FAILED', '', '', '', '', m.error ?? '', '']));
+    : [m.id, 'FAILED', '', '', '', '', '', m.error ?? '', '']));
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
   const line = (cells) => `| ${cells.map((c, i) => String(c).padEnd(widths[i])).join(' | ')} |`;
   return [line(head), `|${widths.map((w) => '-'.repeat(w + 2)).join('|')}|`, ...rows.map(line)].join('\n');
@@ -333,13 +439,22 @@ export function readBaseline(file = BASELINE_FILE) {
  * rather than a side effect. A number that FELL is a regression, named with both
  * values.
  *
+ * A CEILING metric is the same discipline read the other way up. `endpointColumnPairs`
+ * counts what each endpoint reaches, so it falls when the engine gets more
+ * precise and rises when reach smears sideways: a fall is the improvement, a
+ * rise past the budget is the regression, and a rise inside the budget is
+ * `drift`, which fails nothing and is still printed. Nothing about this number
+ * moves in silence, because moving in silence is exactly what it is here to
+ * stop.
+ *
  * @param {object[]} results
  * @param {object|null} baseline
- * @returns {{regressions:string[], improvements:string[], unknown:string[]}}
+ * @returns {{regressions:string[], improvements:string[], drift:string[], unknown:string[]}}
  */
 export function compareToBaseline(results, baseline) {
   const regressions = [];
   const improvements = [];
+  const drift = [];
   const unknown = [];
   const repos = baseline?.repos ?? {};
   for (const m of results) {
@@ -358,11 +473,24 @@ export function compareToBaseline(results, baseline) {
       const was = b[k];
       const now = m[k];
       if (!Number.isInteger(was)) { unknown.push(`${m.id}.${k}: no baseline value`); continue; }
-      if (now < was) regressions.push(`${m.id}.${k}: ${was} -> ${now}`);
-      else if (now > was) improvements.push(`${m.id}.${k}: ${was} -> ${now}`);
+      const budget = CEILINGS[k];
+      if (budget === undefined) {
+        if (now < was) regressions.push(`${m.id}.${k}: ${was} -> ${now}`);
+        else if (now > was) improvements.push(`${m.id}.${k}: ${was} -> ${now}`);
+        continue;
+      }
+      const ceiling = Math.floor(was * (1 + budget));
+      if (now > ceiling) {
+        regressions.push(`${m.id}.${k}: ${was} -> ${now}, over the ${ceiling} this run was allowed `
+          + `(what one endpoint reaches has inflated by more than ${Math.round(budget * 100)} percent)`);
+      } else if (now > was) {
+        drift.push(`${m.id}.${k}: ${was} -> ${now}, inside the ${ceiling} allowed`);
+      } else if (now < was) {
+        improvements.push(`${m.id}.${k}: ${was} -> ${now}, tighter`);
+      }
     }
   }
-  return { regressions, improvements, unknown };
+  return { regressions, improvements, drift, unknown };
 }
 
 /** The baseline document for a set of measurements. */
@@ -384,6 +512,7 @@ export function baselineFrom(results) {
       webCallsResolved: m.webCallsResolved,
       screens: m.screens,
       screensReachingATable: m.screensReachingATable,
+      endpointColumnPairs: m.endpointColumnPairs,
       axes: m.axes,
     };
   }
@@ -439,6 +568,7 @@ function main(argv) {
   const cmp = compareToBaseline(results, baseline);
   for (const u of cmp.unknown) log(`  [unknown]     ${u}`);
   for (const i of cmp.improvements) log(`  [improved]    ${i}`);
+  for (const d of cmp.drift) log(`  [drift]       ${d}`);
   for (const r of cmp.regressions) log(`  [REGRESSION]  ${r}`);
 
   if (has('--accept')) {

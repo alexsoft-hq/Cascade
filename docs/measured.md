@@ -37,21 +37,33 @@ yours.
 
 ### The corpus, and what it reached
 
-Five counts are guarded. A drop in any of them fails the suite.
+Six counts are guarded. Five of them are floors, and a drop in any fails the
+suite.
 
-| Repository | Pinned at | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table |
-|---|---|---|---|---|---|---|
-| [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) | `74364054` | 744 / 969 | 73 / 177 | 836 / 2092 | 538 / 929 | 19 / 166 |
-| [jishenghua/JSH_ERP](https://github.com/jishenghua/JSH_ERP) | `ad6cf886` | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 |
-| [apache/dolphinscheduler](https://github.com/apache/dolphinscheduler) | `499fd068` | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 |
-| [macrozheng/mall](https://github.com/macrozheng/mall) + [mall-admin-web](https://github.com/macrozheng/mall-admin-web) | `0504e86b` + `81fc17e5` | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 |
-| [linlinjava/litemall](https://github.com/linlinjava/litemall) | `a1ef964a` | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 |
-| [yangzongzhuan/RuoYi-Vue](https://github.com/yangzongzhuan/RuoYi-Vue) + [RuoYi-Vue3](https://github.com/yangzongzhuan/RuoYi-Vue3) | `13db1fce` + `838965c5` | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 |
-| [jeequan/jeepay](https://github.com/jeequan/jeepay) | `ba371119` | 126 / 134 | 22 / 23 | 302 / 314 | no frontend read | no frontend read |
-| [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | no frontend read | no frontend read |
-| [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read |
-| [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read |
-| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 12 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read |
+| Repository | Pinned at | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs |
+|---|---|---|---|---|---|---|---|
+| [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) | `74364054` | 744 / 969 | 73 / 177 | 836 / 2092 | 538 / 929 | 19 / 166 | 15997 |
+| [jishenghua/JSH_ERP](https://github.com/jishenghua/JSH_ERP) | `ad6cf886` | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 | 13179 |
+| [apache/dolphinscheduler](https://github.com/apache/dolphinscheduler) | `499fd068` | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 | 6216 |
+| [macrozheng/mall](https://github.com/macrozheng/mall) + [mall-admin-web](https://github.com/macrozheng/mall-admin-web) | `0504e86b` + `81fc17e5` | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 | 3868 |
+| [linlinjava/litemall](https://github.com/linlinjava/litemall) | `a1ef964a` | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 | 4223 |
+| [yangzongzhuan/RuoYi-Vue](https://github.com/yangzongzhuan/RuoYi-Vue) + [RuoYi-Vue3](https://github.com/yangzongzhuan/RuoYi-Vue3) | `13db1fce` + `838965c5` | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 | 1613 |
+| [jeequan/jeepay](https://github.com/jeequan/jeepay) | `ba371119` | 126 / 134 | 22 / 23 | 302 / 314 | no frontend read | no frontend read | 3554 |
+| [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | no frontend read | no frontend read | 528 |
+| [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read | 243 |
+| [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read | 83 |
+| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 12 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read | 52 |
+
+The last column is the sixth, and it is guarded the other way up. It adds up,
+over every endpoint, how many distinct columns that one endpoint reaches, and a
+rise of more than five percent fails the suite. It is here because the five
+floors are all union counts over the whole project, and a union count cannot see
+reach that smears sideways: when one generic base method resolved in every
+subclass at once, jeecg carried 9,400 false endpoint-to-column pairs, not one of
+them naming a column some other endpoint did not already reach on its own. Every
+floor above stayed exactly where it is written, and the gate stayed green. The
+pair sum is the number that moved, 25,397 down to 15,997 when the rule was
+fixed, and it is guarded now so the next one fails instead.
 
 ### The axes each entry declared
 
