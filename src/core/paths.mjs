@@ -42,6 +42,47 @@ export function homeDir(env = process.env) {
 }
 
 /**
+ * WHERE THE SQL LANE'S INTERPRETER MAY LIVE, in the order a run tries them.
+ *
+ * The lane is a Python program (sqlglot), so it needs an interpreter that has
+ * sqlglot in it. There are three honest places for one, and the order is the
+ * order of decreasing explicitness:
+ *
+ *   1. `CASCADE_PYTHON`, when the reader has said which interpreter to use.
+ *   2. `<engine>/.venv`, the development checkout's own — what the setup page
+ *      has always told a contributor to build, and what CI builds.
+ *   3. `<cascade home>/venv`, which is where `cascade setup` puts it when the
+ *      engine is not a checkout. An installed copy lives inside a package
+ *      directory that the next upgrade replaces, so a virtual environment built
+ *      there would vanish with it; the tool home belongs to the reader.
+ *
+ * Pure: it returns candidates. The caller looks at the filesystem.
+ *
+ * @param {{engineRoot:string, env?:NodeJS.ProcessEnv}} a
+ * @returns {{path:string, from:string}[]}
+ */
+export function sqlPythonCandidates({ engineRoot, env = process.env }) {
+  const out = [];
+  if (typeof env.CASCADE_PYTHON === 'string' && env.CASCADE_PYTHON.length > 0) {
+    out.push({ path: env.CASCADE_PYTHON, from: 'CASCADE_PYTHON' });
+  }
+  out.push({ path: path.join(engineRoot, '.venv', 'bin', 'python'), from: "this checkout's own .venv" });
+  out.push({ path: path.join(homeDir(env), 'venv', 'bin', 'python'), from: 'the tool home, where `cascade setup` builds one' });
+  return out;
+}
+
+/**
+ * Where `cascade setup` BUILDS the interpreter it is asked for. A checkout gets
+ * `<engine>/.venv`, which is the path every document and the CI workflow
+ * already name; anything else gets the tool home, which survives an upgrade.
+ * @param {{engineRoot:string, isCheckout:boolean, env?:NodeJS.ProcessEnv}} a
+ * @returns {string} the virtual environment directory
+ */
+export function sqlVenvTarget({ engineRoot, isCheckout, env = process.env }) {
+  return isCheckout ? path.join(engineRoot, '.venv') : path.join(homeDir(env), 'venv');
+}
+
+/**
  * The regenerable, content-addressed cache root for one project — always OUTSIDE
  * the project tree (SPEC §5.1). Base is `$XDG_CACHE_HOME` or `~/.cache`, then
  * `cascade/<projectId>`.

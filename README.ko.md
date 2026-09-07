@@ -93,14 +93,19 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk
 sudo apt-get install default-jdk              # Debian, Ubuntu
 ```
 
-SQL 레인에는 **Python 3 와 가상환경, 그리고 `sqlglot`** 이 필요합니다. 버전은
-설치 시점에 고르지 않고 requirements 파일에 고정되어 있습니다. `sqlglot` 버전이
-다르면 일부 statement 를 다르게 파싱해서 pack 다이제스트가 움직이기 때문입니다.
+SQL 레인에는 **Python 3** 이 필요하고, 연결은 명령 하나로 끝납니다. `sqlglot`
+버전은 설치 시점에 고르지 않고 requirements 파일에 고정되어 있습니다. 버전이
+다르면 일부 statement 를 다르게 파싱해서 pack 다이제스트가 움직이기 때문에,
+고정된 조합을 도구가 직접 설치하게 둡니다.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r adapters/sql/requirements.txt
+node bin/cascade.mjs setup
 ```
+
+`python3` 을 찾아서 실행이 실제로 들여다보는 자리에 가상환경을 만들고, 고정된
+requirements 를 설치한 뒤, 그 인터프리터로 `sqlglot` 을 직접 import 해서
+확인합니다. 이미 `sqlglot` 이 들어 있는 인터프리터가 있다면 `CASCADE_PYTHON` 으로
+가리키고 이 명령은 건너뛰면 됩니다.
 
 웹 레인에는 **아무것도 필요하지 않습니다.** 파서가 `adapters/web/vendor/` 아래에
 동봉되어 있어서, 프런트엔드를 읽는 데 설치도 네트워크 호출도 없습니다.

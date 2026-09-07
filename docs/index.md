@@ -59,7 +59,7 @@ lower bounds; it cannot honestly claim any of those.
 Prerequisites, and one command that tells you which of them you are missing:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r adapters/sql/requirements.txt
+node bin/cascade.mjs setup     # the SQL lane: builds its python and installs the pinned sqlglot
 # plus a JDK 17+ for the Java lane (`brew install openjdk`; set JAVA_HOME)
 # the web lane needs nothing: its parser is vendored
 

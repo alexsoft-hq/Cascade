@@ -35,6 +35,39 @@ one.
 
 ---
 
+## `cascade setup`
+
+```
+cascade setup [--force] [--home]
+```
+
+Build the SQL lane's Python and install its pinned requirements, in one
+command, so reading a setup page is not what stands between you and your first
+answer. It finds a `python3`, creates a virtual environment where a run will
+look for one, installs `adapters/sql/requirements.txt`, and then **proves** it
+by importing `sqlglot` with the interpreter a run will actually use rather than
+trusting that `pip` said ok. Nothing outside that environment is touched.
+
+Where it builds:
+
+| you are in | it builds |
+|---|---|
+| a checkout of this repository (there is a `.git`) | `<engine>/.venv`, the path the setup pages and CI already name |
+| anything else, or `--home` | `<cascade home>/venv`, which survives an upgrade that replaces the package directory |
+
+- `--force` — remove an existing environment and build it again. Also the cure
+  when one exists but cannot import `sqlglot`.
+- `--home` — build in the tool home even inside a checkout.
+
+A run looks for the interpreter in three places, in this order: `CASCADE_PYTHON`
+when you set it, then the checkout's own `.venv`, then the tool home. Whichever
+is found first is the one every command uses, and `cascade doctor` prints which
+one that is. If you already have an interpreter with `sqlglot` in it, point
+`CASCADE_PYTHON` at it and skip this command entirely.
+
+The Java lane's JDK is not something this command can supply: a JDK is not a
+Python package. `cascade doctor` names the directories it looked in.
+
 ## `cascade doctor`
 
 ```

@@ -17,13 +17,23 @@ parse-only lane, and you do not need it to get value out of this one.
 | What | Pin | Why |
 |---|---|---|
 | Python | 3.12.x | the reference stack, and what sqlglot is tested against here |
-| a project-local `.venv` | `.venv/` at the repo root | the worker looks for `.venv/bin/python` first |
+| an interpreter with sqlglot | `CASCADE_PYTHON`, else `.venv/` at the repo root, else `<cascade home>/venv` | a run tries those three in that order, and `cascade doctor` prints which one it found |
 | sqlglot | `sqlglot==30.17.0` | the SQL parser, dialect by dialect, for Oracle, MySQL and PostgreSQL |
+
+```bash
+node bin/cascade.mjs setup       # builds the interpreter and installs the pinned sqlglot
+node bin/cascade.mjs doctor      # tells you what is still missing, and the fix
+```
+
+`setup` builds `<engine>/.venv` inside a checkout of this repository and
+`<cascade home>/venv` anywhere else, because an installed copy lives in a
+directory the next upgrade replaces. `--force` rebuilds one; `--home` puts it in
+the tool home even inside a checkout. Doing it by hand still works and is what
+`setup` runs for you:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r adapters/sql/requirements.txt
-node bin/cascade.mjs doctor      # tells you what is still missing, and the fix
 ```
 
 The version is pinned in `adapters/sql/requirements.txt`, not chosen at install

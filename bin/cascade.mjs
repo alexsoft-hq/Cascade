@@ -85,7 +85,7 @@ import {
 } from '../src/core/facts_store.mjs';
 import { runLanesWithShards, runLineageForStatements, INCREMENTAL_ENGINE_VERSION } from '../src/core/incremental.mjs';
 import { workerVersions, CATALOG_LIVE_WORKER_VERSION } from '../src/core/worker_versions.mjs';
-import { ensureProjectDirs, projectPaths, registryPath, cacheDir, ownStateDirRel, isOwnStatePath, withoutOwnState } from '../src/core/paths.mjs';
+import { ensureProjectDirs, projectPaths, registryPath, cacheDir, ownStateDirRel, isOwnStatePath, withoutOwnState, sqlPythonCandidates, sqlVenvTarget } from '../src/core/paths.mjs';
 import {
   calibrationMetrics, enginePrint, isEngineSourcePath, pinOf, profileDigestOf,
   sealBaseline, gateStateOf, gateEvaluate, gateLine, validateBaseline, sqlLaneTallies,
@@ -123,6 +123,37 @@ const jsonl = (f) => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(
 const parseJsonl = (s) => s.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * THE SQL LANE'S INTERPRETER, resolved once for every command that needs one.
+ *
+ * The candidates and their order are a pure rule (src/core/paths.mjs); this is
+ * the filesystem edge that walks them. When none of them exists the answer
+ * still carries the whole list, because "no python" is not an answer a reader
+ * can act on and "I looked here, here and here" is.
+ *
+ * @returns {{ok:boolean, path:string, from:(string|null), tried:{path:string, from:string}[]}}
+ */
+function sqlPython() {
+  const tried = sqlPythonCandidates({ engineRoot: ENGINE_ROOT, env: process.env });
+  for (const c of tried) {
+    if (fs.existsSync(c.path)) return { ok: true, path: c.path, from: c.from, tried };
+  }
+  return { ok: false, path: tried[tried.length - 1].path, from: null, tried };
+}
+
+/**
+ * What to tell a reader who has no interpreter: what wanted it, the one command
+ * that supplies it, and every place that was looked in. A bare "not found" is
+ * not something anybody can act on.
+ * @param {string} what  the thing that needed it, e.g. "this run"
+ * @param {{tried:{path:string, from:string}[]}} res  from sqlPython()
+ */
+function noSqlPython(what, res) {
+  return `${what} needs the SQL lane's python and there is none. Run \`cascade setup\` to build it, `
+    + 'or set CASCADE_PYTHON to an interpreter that already has sqlglot.\n'
+    + res.tried.map((c) => `  looked in ${c.path} (${c.from})`).join('\n');
+}
 
 // Scratch directories that survive no exit path. Every `.analyze-*` this
 // process creates is removed when the process ends, however it ends — the
@@ -370,10 +401,11 @@ function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
     const mapperDirsAbs = (selection.mapperDirs ?? []).map(absOf);
     const ddlRels = selection.ddls ?? (selection.ddl ? [selection.ddl] : []);
     const ddlAbsList = ddlRels.map(absOf);
-    const py = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+    const pyRes = sqlPython();
+    const py = pyRes.path;
     const A = path.join(ENGINE_ROOT, 'adapters', 'sql');
     const runpy = (script, args) => execFileSync(py, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
-    const needPy = (what) => { if (!fs.existsSync(py)) stale(`the overlay must rerun ${what} but there is no venv python at ${py}`); };
+    const needPy = (what) => { if (!pyRes.ok) stale(noSqlPython(`the overlay must rerun ${what} and`, pyRes)); };
     const run = {
       java: (targets) => {
         if (!jdk) {
@@ -1092,6 +1124,91 @@ function resolveOrDie({ strictProject = true } = {}) {
   }
 }
 
+// `cascade setup` — build the SQL lane's interpreter, in one command.
+//
+// The lane is a Python program, and until now the only way to get one was to
+// read a setup page and type two commands with the right working directory.
+// That is a documentation exercise standing between a reader and their first
+// answer, so this does it: find a python3, build the virtual environment where
+// the resolver will look for it, install the PINNED requirements, and then
+// PROVE it by importing sqlglot rather than trusting that pip said ok.
+//
+// It never touches a system interpreter's packages: everything goes inside the
+// environment it creates, and `--force` is the only way to replace one.
+if (cmd === 'setup') {
+  const already = sqlPython();
+  const isCheckout = fs.existsSync(path.join(ENGINE_ROOT, '.git'));
+  const target = flag('home')
+    ? sqlVenvTarget({ engineRoot: ENGINE_ROOT, isCheckout: false })
+    : sqlVenvTarget({ engineRoot: ENGINE_ROOT, isCheckout });
+  const targetPy = path.join(target, 'bin', 'python');
+  const req = path.join(ENGINE_ROOT, 'adapters', 'sql', 'requirements.txt');
+
+  const sqlglotVersion = (py) => {
+    try {
+      return execFileSync(py, ['-c', 'import sqlglot; print(sqlglot.__version__)'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim();
+    } catch { return null; }
+  };
+
+  // Already done means: the interpreter a run would PICK is the one this
+  // command would build, and it works. `--home` naming a different place, or a
+  // resolved candidate that is not the target, is a reason to build.
+  const targetIsWhatRunsWould = already.ok && path.resolve(already.path) === path.resolve(targetPy);
+  if (targetIsWhatRunsWould && !flag('force')) {
+    const v = sqlglotVersion(already.path);
+    if (v) {
+      process.stdout.write(`the SQL lane is already set up: ${already.path} (${already.from}), sqlglot ${v}\n`);
+      process.stdout.write('pass --force to build it again\n');
+      process.exit(0);
+    }
+    process.stdout.write(`${already.path} exists but cannot import sqlglot, so it is being rebuilt\n`);
+  }
+
+  // A python3 to build WITH. Never the one being built.
+  let base = null;
+  for (const cand of [process.env.CASCADE_PYTHON3, 'python3', 'python'].filter(Boolean)) {
+    try {
+      const v = execFileSync(cand, ['-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim();
+      if (/^3\.(\d+)$/.test(v)) { base = { cmd: cand, version: v }; break; }
+    } catch { /* try the next spelling */ }
+  }
+  if (!base) {
+    die('no python3 on PATH to build the SQL lane with. Install one (macOS: `brew install python`; Debian or Ubuntu: `sudo apt-get install python3 python3-venv`), '
+      + 'or set CASCADE_PYTHON to an interpreter that already has sqlglot and skip this command');
+  }
+
+  if (flag('force') && fs.existsSync(target)) {
+    process.stdout.write(`removing ${target}\n`);
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+  process.stdout.write(`building ${target} with ${base.cmd} (python ${base.version})…\n`);
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    execFileSync(base.cmd, ['-m', 'venv', target], { stdio: ['ignore', 'inherit', 'inherit'] });
+  } catch (e) {
+    die(`could not create a virtual environment at ${target}: ${(e && e.message) || e}. `
+      + 'On Debian or Ubuntu the venv module ships separately: `sudo apt-get install python3-venv`');
+  }
+  process.stdout.write(`installing ${path.relative(ENGINE_ROOT, req)}…\n`);
+  try {
+    execFileSync(path.join(target, 'bin', 'pip'), ['install', '--disable-pip-version-check', '-r', req], { stdio: ['ignore', 'inherit', 'inherit'] });
+  } catch (e) {
+    die(`the requirements did not install into ${target}: ${(e && e.message) || e}`);
+  }
+
+  // Proof, not a claim: the lane's own import, run by the interpreter a run
+  // will actually use.
+  const version = sqlglotVersion(targetPy);
+  if (!version) die(`${targetPy} was built but cannot import sqlglot. Try \`cascade setup --force\`, and see docs/setup/sql-lane.md`);
+  const now = sqlPython();
+  process.stdout.write(`ready: ${targetPy}, sqlglot ${version}\n`);
+  if (now.ok && path.resolve(now.path) !== path.resolve(targetPy)) {
+    process.stdout.write(`note: a run will still prefer ${now.path} (${now.from}), which comes first\n`);
+  }
+  process.stdout.write('next: `cascade doctor` to check every prerequisite, then `cascade init --root <your project>`\n');
+  process.exit(0);
+}
+
 if (cmd === 'doctor') {
   // The prerequisite pre-flight (SPEC §17.9). THIS block is the impure half —
   // it runs the probes; src/core/doctor.mjs turns them into the table, and is
@@ -1116,10 +1233,11 @@ if (cmd === 'doctor') {
     }
   };
 
-  const venvPy = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
-  const pyProbe = fs.existsSync(venvPy)
-    ? (() => { const r = runOut(venvPy, ['-V']); return { path: venvPy, ok: r.ok, version: r.out, error: r.error }; })()
-    : { path: venvPy, ok: false, error: `no interpreter at ${venvPy}` };
+  const pyRes = sqlPython();
+  const venvPy = pyRes.path;
+  const pyProbe = pyRes.ok
+    ? (() => { const r = runOut(venvPy, ['-V']); return { path: venvPy, from: pyRes.from, ok: r.ok, version: r.out, error: r.error }; })()
+    : { path: venvPy, from: null, ok: false, error: `no interpreter in any of: ${pyRes.tried.map((c) => c.path).join(', ')}` };
   const pyModule = (mod) => {
     if (!pyProbe.ok) return { ok: false, error: `no venv python at ${venvPy}` };
     const r = runOut(venvPy, ['-c', `import ${mod}, sys; sys.stdout.write(getattr(${mod}, "__version__", "unknown"))`]);
@@ -1466,10 +1584,11 @@ if (cmd === 'analyze') {
     }
   }
 
-  const py = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+  const pyRes = sqlPython();
+  const py = pyRes.path;
   const A = path.join(ENGINE_ROOT, 'adapters', 'sql');
   const needPython = ddls.length > 0 || mappers.length > 0;
-  if (needPython && !fs.existsSync(py)) die(`no venv python at ${py}. See docs/setup/sql-lane.md (python3 -m venv .venv && .venv/bin/pip install sqlglot)`);
+  if (needPython && !pyRes.ok) die(noSqlPython('this run reads SQL, so it', pyRes));
   const runpy = (script, args) => execFileSync(py, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
   const sqlArgs = sqlLaneArgs(profile);
 
@@ -2570,8 +2689,9 @@ if (cmd === 'catalog') {
     cmdPath = isNodeScript ? process.execPath : override;
     cmdArgs = isNodeScript ? [override, ...workerArgs] : workerArgs;
   } else {
-    const py = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
-    if (!fs.existsSync(py)) die(`no venv python at ${py}. See docs/setup/sql-lane.md`);
+    const pyRes = sqlPython();
+    if (!pyRes.ok) die(noSqlPython('reading a live catalog', pyRes));
+    const py = pyRes.path;
     cmdPath = py;
     cmdArgs = [path.join(ENGINE_ROOT, 'adapters', 'sql', 'catalog_live.py'), ...workerArgs];
   }
@@ -3050,7 +3170,10 @@ if (cmd === 'mcp') {
   process.stdout.write(`\n(${resp.basis.freshness.verdict}) ${a.note}\n`);
   process.exit(0);
 } else if (cmd !== 'pack' && cmd !== 'analyze' && cmd !== 'estimate') {
-  die('usage: cascade <doctor|init|analyze|estimate|verify|golden|catalog|pack|mcp|impact|view> …\n'
+  die('usage: cascade <setup|doctor|init|analyze|estimate|verify|golden|catalog|pack|mcp|impact|view> …\n'
+    + '  cascade setup [--force] [--home]\n'
+    + '      (build the SQL lane\'s python and install its pinned requirements. --force rebuilds an\n'
+    + '       existing one; --home puts it in the tool home even inside a checkout. Nothing else needs it)\n'
     + '  cascade doctor [--json]\n'
     + '      (pre-flight every prerequisite at once: node, git, the SQL lane\'s venv and sqlglot,\n'
     + '       a JDK (naming which candidate won and why the others did not), the optional DB\n'

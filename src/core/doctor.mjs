@@ -108,12 +108,15 @@ export function buildDoctorReport(probes = {}) {
 
   // ---- python venv --------------------------------------------------------
   const pyPath = probes.python?.path ?? '<engine>/.venv/bin/python';
+  // Which of the three candidate places this one came from, so a reader with
+  // two of them can tell which the run will use.
+  const pyFrom = probes.python?.from ? ` (${probes.python.from})` : '';
   checks.push(check(
     'python-venv', 'python venv (SQL lane)', true,
     probes.python?.ok ? 'ok' : 'missing',
-    probes.python?.ok ? `${pyPath}: ${probes.python.version ?? 'version not reported'}`
+    probes.python?.ok ? `${pyPath}${pyFrom}: ${probes.python.version ?? 'version not reported'}`
       : (probes.python?.error ?? `no interpreter at ${pyPath}`),
-    probes.python?.ok ? null : 'python3 -m venv .venv && .venv/bin/pip install -r adapters/sql/requirements.txt (docs/setup/sql-lane.md)',
+    probes.python?.ok ? null : 'run `cascade setup`, which builds it and installs the pinned requirements. Or set CASCADE_PYTHON to an interpreter that already has sqlglot (docs/setup/sql-lane.md)',
   ));
 
   // ---- sqlglot ------------------------------------------------------------
@@ -122,7 +125,7 @@ export function buildDoctorReport(probes = {}) {
     probes.sqlglot?.ok ? 'ok' : 'missing',
     probes.sqlglot?.ok ? `sqlglot ${probes.sqlglot.version ?? '(version not reported)'}`
       : (probes.sqlglot?.error ?? 'import failed'),
-    probes.sqlglot?.ok ? null : '.venv/bin/pip install -r adapters/sql/requirements.txt (docs/setup/sql-lane.md)',
+    probes.sqlglot?.ok ? null : 'run `cascade setup --force`, which rebuilds the interpreter and installs the pinned requirements (docs/setup/sql-lane.md)',
   ));
 
   // ---- JDK ----------------------------------------------------------------
@@ -174,7 +177,7 @@ export function buildDoctorReport(probes = {}) {
       `driver-${d.dialect}`, `${d.dialect} driver (optional, catalog fetch)`, false,
       d.ok ? 'ok' : 'missing',
       d.ok ? `${d.module} ${d.version ?? '(version not reported)'}` : (d.error ?? `${d.module} is not installed`),
-      d.ok ? null : `.venv/bin/pip install ${d.pip}. This is only needed for \`cascade catalog fetch\` against ${d.dialect}`,
+      d.ok ? null : `install ${d.pip} into the interpreter \`cascade doctor\` names above. This is only needed for \`cascade catalog fetch\` against ${d.dialect}`,
     ));
   }
 

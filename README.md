@@ -93,15 +93,19 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk
 sudo apt-get install default-jdk              # Debian or Ubuntu
 ```
 
-**Python 3 with a virtual environment and `sqlglot`** for the SQL lane. The
+**Python 3** for the SQL lane, and one command to wire it up. The `sqlglot`
 version is pinned in the requirements file rather than chosen at install time,
-because a different `sqlglot` parses some statements differently and would move
-the pack digest:
+because a different one parses some statements differently and would move the
+pack digest, so let the tool install the pinned set:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r adapters/sql/requirements.txt
+node bin/cascade.mjs setup
 ```
+
+It finds a `python3`, builds the virtual environment where a run looks for one,
+installs the pinned requirements, and proves it by importing `sqlglot` with the
+interpreter a run will actually use. If you already have an interpreter with
+`sqlglot` in it, point `CASCADE_PYTHON` at it and skip the command.
 
 **Nothing at all for the web lane.** Its parser is vendored under
 `adapters/web/vendor/`, so reading a frontend needs no install and makes no

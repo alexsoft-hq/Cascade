@@ -57,7 +57,7 @@ SAST 나 CodeQL 의 대체품이 아닙니다. "완전한" 영향 분석이 아�
 준비물과, 무엇이 빠졌는지 알려 주는 명령 하나입니다.
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r adapters/sql/requirements.txt
+node bin/cascade.mjs setup     # SQL 레인: python 을 만들고 고정된 sqlglot 을 설치합니다
 # plus a JDK 17+ for the Java lane (`brew install openjdk`; set JAVA_HOME)
 # the web lane needs nothing: its parser is vendored
 

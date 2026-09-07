@@ -15,13 +15,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sqlPythonCandidates } from '../../src/core/paths.mjs';
 
 const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** The interpreter the CLI looks for, and whether it is there. */
+/**
+ * The interpreter the CLI would pick, and whether it is there. The candidate
+ * list is the CLI's own (src/core/paths.mjs), so this can never guard on a
+ * different place from the one the run will look in.
+ */
 export function sqlLaneVenv() {
-  const python = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
-  return { ok: fs.existsSync(python), python };
+  const tried = sqlPythonCandidates({ engineRoot: ENGINE_ROOT, env: process.env });
+  const found = tried.find((c) => fs.existsSync(c.path));
+  return { ok: !!found, python: (found ?? tried[tried.length - 1]).path, tried };
 }
 
 /**
@@ -33,8 +39,8 @@ export function sqlLaneVenv() {
 export function skipWithoutSqlLane(t) {
   const { ok, python } = sqlLaneVenv();
   if (ok) return false;
-  t.skip(`no SQL lane interpreter at ${path.relative(ENGINE_ROOT, python)}: this test drives the real CLI over a tree that has a .sql file in it, `
-    + 'so the run selects the SQL lane and needs sqlglot. Build it with `python3 -m venv .venv && .venv/bin/pip install -r adapters/sql/requirements.txt` '
-    + '(see docs/setup/sql-lane.md). CI builds it in the `node` job, where this test may not skip');
+  t.skip(`no SQL lane interpreter (looked in ${python} and its siblings): this test drives the real CLI over a tree that has a .sql file in it, `
+    + 'so the run selects the SQL lane and needs sqlglot. Build one with `node bin/cascade.mjs setup`. '
+    + 'CI builds it in the `node` job, where this test may not skip');
   return true;
 }

@@ -202,7 +202,15 @@ test('`cascade doctor --json` emits the report, and the exit code follows `ok`',
   for (const c of report.checks) assert.ok(table.stdout.includes(c.label), `${c.label} missing from the table`);
 });
 
-test('`doctor` is in the usage line, so a reader finds it before hitting a prerequisite', () => {
+test('the two commands a reader needs FIRST open the usage line: setup, then doctor', () => {
+  // The point is the order a reader meets them in, not a fixed string: `setup`
+  // supplies the prerequisite and `doctor` says whether it worked, so both come
+  // before the commands that need them. Asserting the whole first word would
+  // break on any new command; asserting the ORDER is the rule itself.
   const r = spawnSync(process.execPath, [CLI], { encoding: 'utf8' });
-  assert.match(r.stderr, /^usage: cascade <doctor\|/);
+  const line = r.stderr.split('\n')[0];
+  assert.match(line, /^usage: cascade </);
+  const names = line.replace(/^usage: cascade </, '').replace(/>.*$/, '').split('|');
+  assert.equal(names[0], 'setup', `setup should open the list, got ${names.join('|')}`);
+  assert.equal(names[1], 'doctor', `doctor should follow it, got ${names.join('|')}`);
 });
