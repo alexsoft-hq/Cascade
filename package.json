@@ -1,18 +1,35 @@
 {
-  "name": "cascade",
+  "name": "@alexsoft-hq/cascade",
   "version": "0.0.1",
-  "private": true,
   "type": "module",
   "description": "Code-to-column change-impact knowledge graph for AI coding agents: the round trip from a screen to a database column and back, over MCP.",
   "license": "Apache-2.0",
-  "engines": { "node": ">=20" },
-  "bin": { "cascade": "bin/cascade.mjs" },
+  "homepage": "https://alexsoft-hq.github.io/Cascade/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexsoft-hq/Cascade.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alexsoft-hq/Cascade/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "cascade": "bin/cascade.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "bin/",
     "src/",
     "adapters/",
     "viewer/",
-    "docs/",
+    "docs/*.md",
+    "docs/setup/*.md",
+    "docs/ko/*.md",
+    "docs/ko/setup/*.md",
     "LICENSE",
     "NOTICE",
     "DCO",
