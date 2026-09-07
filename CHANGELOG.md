@@ -1,14 +1,17 @@
 # Changelog
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versioning: none yet. The project is pre-1.0 and `package.json` stays
-`"private": true` until a registry name is decided, so nothing is published to a
-package registry.
+Versioning: [semantic](https://semver.org/), and pre-1.0, which means the minor
+number carries a change that would be a major one after 1.0. Published as
+[`@alexsoft-hq/cascade`](https://www.npmjs.com/package/@alexsoft-hq/cascade).
 
 Each dated section below is one round of work. The round protocol is in
 [CONTRIBUTING.md](CONTRIBUTING.md#how-a-change-gets-in-the-round).
 
-## [Unreleased]
+## [0.1.0] - 2026-09-07
+
+The first published release. Everything below was built and measured before it;
+this heading only marks where the version numbering starts.
 
 The first eleven milestones (M0–M11) are in. This section says what the engine
 does, and — in the two lists at the end — separates what has been **measured**

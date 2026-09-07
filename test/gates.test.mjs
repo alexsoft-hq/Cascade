@@ -112,6 +112,9 @@ const ALLOWED_HOSTS = new Set([
   'docs.github.com',               // GitHub's private vulnerability reporting docs (SECURITY.md)
   'developercertificate.org',      // the canonical DCO 1.1 text this repository vendors
   'keepachangelog.com',            // the CHANGELOG format this file follows
+  'semver.org',                    // the versioning scheme the CHANGELOG declares
+  'www.npmjs.com',                 // this package's own registry page
+  'registry.npmjs.org',            // the registry itself, cited where a vendored bundle came from
 ]);
 
 // Names that are RESERVED BY STANDARD and can therefore never be somebody's
