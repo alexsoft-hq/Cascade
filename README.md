@@ -81,8 +81,19 @@ beyond the routes the source itself declares.
 
 ## Install
 
+```bash
+npm install -g @alexsoft-hq/cascade     # the command is `cascade`
+cascade doctor                          # says what else, if anything, is missing
+```
+
+Or run it without installing anything: `npx @alexsoft-hq/cascade doctor`. From a
+clone of this repository the same commands are `node bin/cascade.mjs …`, and the
+rest of this page is written that way so it works before you have installed
+anything.
+
 **Node 20 or newer** for the engine itself, and nothing else. The engine and its
-servers have no npm dependencies, so there is no `npm install` step.
+servers have no npm dependencies of their own, so nothing is fetched beyond the
+package.
 
 **A JDK 17 or newer** for the Java lane. The lane uses the JDK's own compiler
 Tree API in parse-only mode, so `javac` and `java` are all it wants:

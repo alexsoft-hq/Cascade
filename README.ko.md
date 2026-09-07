@@ -81,8 +81,18 @@ WebSocket, 그리고 소스가 직접 선언한 라우트를 넘어서 앱 구�
 
 ## 설치
 
-엔진 자체에는 **Node 20 이상**만 있으면 됩니다. 엔진과 서버에는 npm 의존성이
-없으므로 `npm install` 단계 자체가 없습니다.
+```bash
+npm install -g @alexsoft-hq/cascade     # 명령 이름은 `cascade` 입니다
+cascade doctor                          # 그 밖에 빠진 것이 있으면 말해 줍니다
+```
+
+설치 없이 바로 써 보려면 `npx @alexsoft-hq/cascade doctor` 입니다. 이 저장소를
+클론해서 쓰신다면 같은 명령이 `node bin/cascade.mjs …` 이고, 이 문서의 나머지는
+아직 아무것도 설치하지 않은 상태에서도 그대로 따라 할 수 있도록 그 형태로
+적었습니다.
+
+엔진 자체에는 **Node 20 이상**만 있으면 됩니다. 엔진과 서버에는 자체 npm
+의존성이 없으므로 패키지 바깥에서 받아 오는 것이 없습니다.
 
 Java 레인에는 **JDK 17 이상**이 필요합니다. 이 레인은 JDK 자체 컴파일러의 Tree
 API 를 파싱 전용으로 쓰므로 `javac` 와 `java` 면 충분합니다.
