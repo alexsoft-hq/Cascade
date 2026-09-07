@@ -884,7 +884,8 @@ keys, and a test holds that.
   "mybatisPlus": { "namingStrategy": "underscore", "tablePrefix": null,
                    "logicDeleteValue": "1", "logicNotDeleteValue": "0" },
   "openapi": { "documents": ["api/openapi.yaml"] },
-  "runtimeEvidence": { "har": ["evidence/admin-session.har"] },
+  "runtimeEvidence": { "har": ["evidence/admin-session.har"],
+                       "otel": ["evidence/checkout-smoke.json"] },
   "catalog": { "source": "file", "connectionFrom": "../document/sql/mall.sql" },
   "calibration": { "firstRun": "bootstrap", "maxRelativeDrop": 0.05,
                    "maxRelativeDropOnRepin": 0.25, "receiptTtlDays": 30 }
@@ -927,10 +928,22 @@ no discovery step for recordings, on purpose: a recording is something you made
 deliberately, and picking one up because it happens to be in the tree would let
 an unrelated capture decide what this pack claims was observed.
 
+**`runtimeEvidence.otel`** names OpenTelemetry trace exports (OTLP/JSON). A trace
+says which **concrete implementation** really handled a request and which
+statement it ran, which is the one thing no reading of the source can decide: a
+mapper interface has no implementor in the source at all, and an interface call
+is a candidate set whatever the code says. A confirmed hop keeps its grade and
+gains `observed: true` beside it, an unobserved candidate is left exactly where
+it was, and a hop no static rule explains becomes a `RUNTIME_ONLY` edge that is
+shown and never walked. Nothing is promoted, no SQL text or bound parameter
+enters the pack, and there is no discovery step.
+[`docs/setup/runtime-evidence.md`](docs/setup/runtime-evidence.md).
+
 Per-lane detail: [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
 [`docs/setup/java-lane.md`](docs/setup/java-lane.md),
 [`docs/setup/web-lane.md`](docs/setup/web-lane.md),
-[`docs/setup/db-catalog.md`](docs/setup/db-catalog.md).
+[`docs/setup/db-catalog.md`](docs/setup/db-catalog.md),
+[`docs/setup/runtime-evidence.md`](docs/setup/runtime-evidence.md).
 
 ## How it is measured
 

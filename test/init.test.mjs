@@ -107,7 +107,7 @@ test('buildProfile carries the discovered hints and passes validateProfile', () 
   // checked out beside it is not something this walk could have seen. Saying
   // `false` here would put a word in the user's mouth that the run would obey.
   assert.equal(profile.screenAxis.enabled, null);
-  assert.deepEqual(profile.runtimeEvidence, { har: [] });
+  assert.deepEqual(profile.runtimeEvidence, { har: [], otel: [] });
   assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql' });
   assert.deepEqual(profile.sqlDialects, { main: 'mysql' });
   assert.equal(profile.schema.default, null, 'invariant I-4: no invented schema name');

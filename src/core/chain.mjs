@@ -288,6 +288,14 @@ export function chainWalk(graph, opts = {}) {
     let e = run[0];
     for (const cand of run) if (RANK[cand.grade] < RANK[e.grade]) e = cand;
     const ev = e.evidence ?? {};
+    // A DRAWN STEP IS OBSERVED only when a trace saw EVERY edge of the run it
+    // stands for. A run is usually one edge; where several are folded into one
+    // drawn line, "observed" has to mean the whole line ran, not that one of its
+    // hidden hops did. It is a MARKER beside the grade and never a grade: a
+    // RUNTIME_ONLY edge is still below every floor, and a SOUND_SET one that a
+    // trace confirmed is still SOUND_SET.
+    const observed = run.every((c) => c.evidence != null && c.evidence.observed === true);
+    const counts = observed ? run.map((c) => c.evidence.observedCount ?? 0) : [];
     return {
       from: parent,
       fromShort: nodeLabel(graph.nodes.get(parent), parent),
@@ -296,6 +304,7 @@ export function chainWalk(graph, opts = {}) {
       basis: ev.basis ?? null,
       receiver: ev.receiver ?? null,
       iface: ev.iface ?? null,
+      ...(observed ? { observed: true, observedCount: Math.min(...counts) } : {}),
     };
   };
   const linkOf = (rec) => (rec && rec.via != null ? linkFromRun([graph.edgeAt(rec.via)]) : null);
@@ -400,6 +409,10 @@ export function chainWalk(graph, opts = {}) {
         grade,
         external: (n.file ?? null) === null, // a type the lane never saw (library / framework)
         transactional: n.transactional === true,
+        // A trace saw this method RUN. Same marker as on a screen: beside the
+        // grade, never inside it, and its absence means unvisited by that
+        // capture rather than dead.
+        ...(n.observed === true ? { observed: true } : {}),
         file: n.file ?? null,
         line: n.line ?? null,
         link: drawLink(path, rec),
@@ -439,6 +452,10 @@ export function chainWalk(graph, opts = {}) {
         // so, because a reader looking at "reaches sys_user" is entitled to know
         // that WHICH columns is not in this pack.
         ...(n.columnsRuntimeOnly === true ? { columnsRuntimeOnly: true } : {}),
+        // A trace saw this statement RUN, and where its SQL named a table the
+        // source did not, that table is shown beside the static ones.
+        ...(n.observed === true ? { observed: true } : {}),
+        ...(Array.isArray(n.observedTables) ? { observedTables: n.observedTables } : {}),
         file: n.file ?? null,
         line: n.line ?? null,
         hops: rec.hops,

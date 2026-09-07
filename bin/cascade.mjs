@@ -62,6 +62,7 @@ import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
 import { addWebFacts } from '../src/adapters/web_bridge.mjs';
 import { readHar, addHarFacts } from '../src/adapters/har_bridge.mjs';
+import { readOtelTrace, addRuntimeFacts } from '../src/adapters/runtime_bridge.mjs';
 import { addOpenApiRoutes, readOpenApiDocument } from '../src/adapters/openapi_bridge.mjs';
 import { addJpaFacts, nativeQueryStatements } from '../src/adapters/jpa_bridge.mjs';
 import { annotationMapperXml, restampToJavaSource } from '../src/adapters/mybatis_annotation.mjs';
@@ -712,6 +713,12 @@ function loadServedProject(entry) {
       // Served from a static pack with no live source check: freshness is
       // unknown, never "current".
       freshness: { verdict: 'unknown' },
+      // WHAT WAS OBSERVED RUNNING, and how much of it. Present only when a
+      // trace was read, so its absence is "no trace" and never "a trace that
+      // saw nothing". Every answer carries it for the same reason `freshness`
+      // is carried: an `observed` mark on a row is only readable next to the
+      // coverage it came from.
+      ...(runtimeEvidenceBasis(pack) ?? {}),
     },
     // COMPUTED (SPEC §14.3 MUST): this project's last gate verdict plus its
     // approved golden corpus. A bare `--pack` has no `.cascade/` to read and
@@ -733,7 +740,7 @@ function loadServedProject(entry) {
 // handed to the core assembler (src/core/assemble.mjs). `analyze` and the
 // working-tree overlay both take this object, which is also what stops the two
 // from assembling a graph by two different routes. A test wires fakes instead.
-const LANE_BRIDGES = Object.freeze({ buildGraphFromSql, addJavaFacts, addJpaFacts, addMybatisPlusFacts, addOpenApiRoutes, addWebFacts });
+const LANE_BRIDGES = Object.freeze({ buildGraphFromSql, addJavaFacts, addJpaFacts, addMybatisPlusFacts, addOpenApiRoutes, addWebFacts, addRuntimeFacts });
 
 /** `--memory-budget <MB>` (default 512), as bytes of pack JSON (SPEC §17.6). */
 function memoryBudgetBytes() {
@@ -990,6 +997,38 @@ function calibrationStateOf(dotCascade) {
   return { gateState, golden };
 }
 
+/**
+ * The `basis.runtimeEvidence` block, from the trace census the pack carries.
+ *
+ * It is a COVERAGE statement, not a result: which traces were read, how many
+ * spans they held, what window they cover, and how much of the graph they
+ * touched. A reader seeing `observed: true` on a row needs it to know how much
+ * "observed" is worth here, and a reader seeing NO mark needs it to know that
+ * unobserved means unvisited rather than dead.
+ *
+ * @param {Object} pack  the pack as it was read from disk
+ * @returns {{runtimeEvidence:Object}|null}  null when no trace was read
+ */
+function runtimeEvidenceBasis(pack) {
+  const s = pack?.meta?.laneStats?.otel;
+  if (!s || typeof s !== 'object') return null;
+  return {
+    runtimeEvidence: {
+      source: 'otel',
+      files: Array.isArray(s.sources) ? s.sources : [],
+      spans: s.spans ?? 0,
+      observations: s.observations ?? 0,
+      window: s.window ?? null,
+      services: Array.isArray(s.services) ? s.services : [],
+      observedEdges: (s.edgesObserved ?? 0) + (s.edgesAdded ?? 0),
+      observedStatements: s.statementsObserved ?? 0,
+      observedEndpoints: s.endpointsObserved ?? 0,
+      note: 'coverage is only what was exercised. A row marked observed really ran during this capture, a row not marked was not seen by it, '
+        + 'and neither of those raised or lowered a static grade',
+    },
+  };
+}
+
 /** A path inside the project's state directory, as the receipt spells it. */
 function relToState(stateDir, abs) {
   return path.relative(stateDir, abs).split(path.sep).join('/');
@@ -1007,6 +1046,7 @@ function goldenAsk(graph, pack, profile) {
     basis: {
       project: pack.meta?.project ?? 'project', buildDigest: pack.digest,
       builtAt: pack.meta?.builtAt ?? null, freshness: { verdict: 'unknown' },
+      ...(runtimeEvidenceBasis(pack) ?? {}),
     },
     trust: computeTrust({ knownGaps: trustGapsFor(profile, pack.meta?.axes ?? null) }),
     limits: [],
@@ -1573,6 +1613,11 @@ if (cmd === 'analyze') {
     // `--no-har` sibling and no discovery: nothing reads one unless a person
     // names it here or in the profile.
     har: optAll('har'),
+    // An OpenTelemetry trace export, as runtime evidence on the DISPATCH axis:
+    // which implementation really handled a request, and which statement really
+    // ran. Same posture as --har, and for the same reason: no discovery, and
+    // nothing it writes is ever walked.
+    otel: optAll('otel'),
   };
   for (const [off, on, name] of [[flags.noDdl, flags.ddl.length, 'ddl'], [flags.noMappers, flags.mappers.length, 'mappers'], [flags.noJava, flags.javaSrc.length, 'java-src'], [flags.noWeb, flags.webSrc.length, 'web-src'], [flags.noOpenapi, flags.openapi.length, 'openapi']]) {
     if (off && on) die(`--no-${name === 'java-src' ? 'java' : name === 'web-src' ? 'web' : name} and --${name} contradict each other. Pass one or the other`);
@@ -1608,6 +1653,8 @@ if (cmd === 'analyze') {
   const openapiFiles = sel.openapi.map(realPath);
   for (const f of sel.har) if (!fs.existsSync(f)) die(`--har ${f} does not exist`);
   const harFiles = sel.har.map(realPath);
+  for (const f of sel.otel) if (!fs.existsSync(f)) die(`--otel ${f} does not exist`);
+  const otelFiles = sel.otel.map(realPath);
   for (const f of ddls) if (!fs.existsSync(f)) die(`--ddl ${f} does not exist`);
   for (const d of webSrc) if (!fs.existsSync(d)) die(`--web-src ${d} does not exist`);
   // §17.4: a structured, actionable error — not "0 tables" three screens later.
@@ -1669,7 +1716,8 @@ if (cmd === 'analyze') {
     + `java-src ${javaSrc.length} root(s) (${sel.sources.javaSrc}${excluded}); `
     + `web ${webSrc.length > 0 ? `${webSrc.map((d) => path.relative(root, d) || '.').join(', ')} (${sel.sources.webSrc})` : 'none'}; `
     + `openapi ${openapiFiles.length > 0 ? `${openapiFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.openapi})` : 'none'}; `
-    + `har ${harFiles.length > 0 ? `${harFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.har})` : 'none'}\n`);
+    + `har ${harFiles.length > 0 ? `${harFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.har})` : 'none'}; `
+    + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
 
   // THE SCREEN AXIS SWITCH, resolved once, here, and read nowhere else (I-5).
   // The third state needs the frontend packages this run will really read, which
@@ -2163,12 +2211,18 @@ if (cmd === 'analyze') {
         try { return addWebFacts(graph, facts, o); } finally { webBridgeMs = Date.now() - t; }
       },
     };
+    // THE TRACES, read before the graph is assembled and attached at the end of
+    // it (src/core/assemble.mjs runs this bridge last). A trace that cannot be
+    // read does not stop the run: it comes back with `unreadable` set, is
+    // reported as a warning below, and contributes nothing.
+    const otelTraces = otelFiles.map((f) => readOtelTrace(fs.readFileSync(f, 'utf8'), { file: relOf(f) }));
     const {
       graph: g, javaStats: jstats, jpaStats, mpStats, openapiStats, webStats: webBridgeStats,
+      runtimeStats,
     } = assembleGraph({
       bridges,
       catalogRecords: catalog, lineageRecords: lineage, javaFacts: result.javaFacts,
-      webFacts, openapiDocuments: openapiDocs,
+      webFacts, openapiDocuments: openapiDocs, otelTraces,
       identifierCase: sqlArgs.identifierCase,
       java: runJava ? {
         packagePrefixes: profile.packagePrefixes ?? [],
@@ -2192,6 +2246,9 @@ if (cmd === 'analyze') {
         screenAxis: { ...(profile.screenAxis ?? {}), enabled: screenGate.enabled },
         codeLength: profile.moduleAttribution?.codeLength ?? null,
       } : null,
+      // The runtime evidence lane runs LAST: it annotates the dispatch edges,
+      // the statements and the routes every lane above it wrote.
+      runtime: otelFiles.length > 0 ? {} : null,
     });
     let laneStats = null;
     if (runJava) {
@@ -2342,6 +2399,29 @@ if (cmd === 'analyze') {
       }
     }
 
+    // ---- the TRACES: what really ran, beside what could really run --------
+    // The bridge itself ran inside `assembleGraph` above (it needs every node
+    // the other lanes put in the graph). This is its census.
+    if (runtimeStats) {
+      const rs = runtimeStats;
+      process.stderr.write(`Runtime evidence: ${rs.files} trace(s), ${rs.spans} span(s) (${rs.unusable} carried nothing this lane reads), `
+        + `${rs.observations} observation(s): ${rs.matched.dispatch} dispatch, ${rs.matched.statement} statement and ${rs.matched.endpoint} route observation(s) matched this pack, `
+        + `${rs.unmatched.dispatch + rs.unmatched.statement + rs.unmatched.endpoint} matched none\n`);
+      process.stderr.write(`Runtime evidence: ${rs.edgesObserved} static edge(s) marked observed `
+        + `(${rs.dispatchDirect} a call the source states, ${rs.dispatchThroughInterface} a candidate set the trace narrowed), `
+        + `${rs.edgesAdded} RUNTIME_ONLY edge(s) added for a hop no static rule explains, `
+        + `${rs.statementsObserved} statement(s) and ${rs.endpointsObserved} route(s) observed`
+        + `${rs.window ? `, window ${rs.window.from} to ${rs.window.to}` : ''}\n`);
+      process.stderr.write('Runtime evidence: a grade was neither raised nor lowered by any of this. '
+        + 'What the trace did not visit is unknown, not absent\n');
+      for (const u of rs.unreadable) {
+        process.stderr.write(`  [warn] OTEL_UNREADABLE ${u.file}: ${u.reason}\n`);
+      }
+      for (const u of rs.unmatchedKeys.slice(0, 5)) {
+        process.stderr.write(`  [warn] OTEL_NO_MATCH ${u.kind} ${u.key} (${u.count} observation(s)): the trace saw it and nothing in this pack is keyed that way\n`);
+      }
+    }
+
     // ---- the OpenAPI bridge's own line (RM29) -----------------------------
     // The drift census, in the two directions that matter: routes a document
     // declares that nothing here serves, and routes this code serves that no
@@ -2429,12 +2509,13 @@ if (cmd === 'analyze') {
           }
           : { source: 'none' },
       axes,
-      laneStats: (webStats || openapiStats || harStats)
+      laneStats: (webStats || openapiStats || harStats || runtimeStats)
         ? {
           ...(laneStats ?? {}),
           ...(webStats ? { web: webStats } : {}),
           ...(openapiStats ? { openapi: openapiStats } : {}),
           ...(harStats ? { har: harStats } : {}),
+          ...(runtimeStats ? { otel: runtimeStats } : {}),
         }
         : laneStats,
       diagnostics,
@@ -2550,6 +2631,19 @@ if (cmd === 'analyze') {
       firstRun: profile.calibration?.firstRun ?? null,
     };
 
+    // THE TRACES JOIN THE FACT INDEX (I-9). Every other input to a pack is
+    // content-addressed, and evidence must be too: the index records the bytes
+    // of each trace this run read, so a pack and the trace it was built from can
+    // never disagree about which capture is being claimed, and a changed trace
+    // is visible as a changed input rather than as a pack that quietly says
+    // something new. The trace lane is not sharded (it is folded into the graph
+    // at assembly time, cold or incremental alike), so the record is the hash
+    // and nothing else.
+    if (otelFiles.length > 0) {
+      result.index.runtimeEvidence = {
+        otel: otelFiles.map((f) => ({ path: relOf(f), sha256: sha256File(f) })),
+      };
+    }
     const writeDir = red ? `${out}-rejected` : out;
     const writeIndexFile = path.join(writeDir, 'facts-index.json');
     fs.mkdirSync(writeDir, { recursive: true });
@@ -3272,7 +3366,11 @@ if (cmd === 'mcp') {
   if (!files.length) die('no changed files. Pass --file <path> [--file …], or edit the repo the pack was built from');
   const ctx = {
     graph,
-    basis: { project: pack.meta?.project ?? 'project', buildDigest: pack.digest, builtAt: pack.meta?.builtAt ?? null, freshness: { verdict: 'unknown' } },
+    basis: {
+      project: pack.meta?.project ?? 'project', buildDigest: pack.digest,
+      builtAt: pack.meta?.builtAt ?? null, freshness: { verdict: 'unknown' },
+      ...(runtimeEvidenceBasis(pack) ?? {}),
+    },
     trust: computeTrust({ ...calibrationStateOf(resolvedFor.dotCascade), knownGaps: trustGapsFor(impactProfile, pack.meta?.axes ?? null) }),
     limits: [], pack: packMeta(pack), profile: impactProfile,
     ...(overlayProvider ? { overlay: overlayProvider } : {}),
@@ -3325,7 +3423,8 @@ if (cmd === 'mcp') {
     + '       .mcp.json at "Pending approval" until you run `claude` there once and approve it.)\n'
     + '  cascade analyze [--root <repo>] [--out <dir>] [--profile <f>] [--cold | --incremental] [--accept-baseline]\n'
     + '                  [--ddl <schema.sql|glob>... | --no-ddl] [--mappers <dir>... | --no-mappers] [--java-src <dir>... | --no-java]\n'
-    + '                  [--web-src <dir>... | --no-web] [--openapi <file>... | --no-openapi] [--har <file>...]\n'
+    + '                  [--web-src <dir>... | --no-web] [--openapi <file>... | --no-openapi]\n'
+    + '                  [--har <file>...] [--otel <file>...]\n'
     + '      (with no lane flag the inputs come from the project manifest + profile + discovery;\n'
     + '       --no-<lane> switches a lane off even then. An unflagged run reads MAIN java sources\n'
     + '       only. The src/test roots it skipped are printed, and --java-src includes one.)\n'
@@ -3339,6 +3438,11 @@ if (cmd === 'mcp') {
     + '       matches a route this pack serves becomes a screen-to-route edge graded RUNTIME_ONLY, which\n'
     + '       is SHOWN as `observed` and never walked. Repeatable; the profile can name them instead in\n'
     + '       runtimeEvidence.har. Nothing is discovered: a recording is made on purpose.)\n'
+    + '      (--otel reads an OpenTelemetry trace export (OTLP/JSON): which implementation really handled\n'
+    + '       a request and which statement really ran. A confirmed hop keeps its grade and gains\n'
+    + '       `observed`, an unobserved candidate is left exactly as it was, and a hop no static rule\n'
+    + '       explains becomes a RUNTIME_ONLY edge that is shown and never walked. Repeatable; the\n'
+    + '       profile can name them instead in runtimeEvidence.otel. See docs/setup/runtime-evidence.md)\n'
     + '      (every run is judged against the previous certified run sealed in .cascade/calibration/:\n'
     + '       a regression writes the pack to <packDir>-rejected/ and exits 3, leaving the certified\n'
     + '       pack untouched. --accept-baseline re-seals the baseline FROM THIS RUN: the one override,\n'

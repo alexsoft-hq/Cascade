@@ -43,7 +43,7 @@ export const PROFILE_DEFAULTS = deepFreeze({
   },
   generatedSources: { annotations: [], pathGlobs: [] },
   openapi: { documents: [] },
-  runtimeEvidence: { har: [] },
+  runtimeEvidence: { har: [], otel: [] },
   catalog: { source: 'none', connectionFrom: null },
   calibration: {
     firstRun: 'bootstrap',
@@ -231,6 +231,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   'runtimeEvidence.har': {
     status: 'consumed', where: 'src/adapters/har_bridge.mjs',
     note: 'the browser recordings this project keeps, manifest-relative, read when `analyze` runs without --har. Every request in one that matches a route this pack serves becomes a `screen --CALLS_HTTP--> endpoint` edge graded RUNTIME_ONLY, which is below every mode\'s floor: it is SHOWN as `observed` and never walked. Discovery never looks for one, because a recording is something a person makes on purpose',
+  },
+  'runtimeEvidence.otel': {
+    status: 'consumed', where: 'src/adapters/runtime_bridge.mjs',
+    note: 'the OpenTelemetry trace exports (OTLP/JSON) this project keeps, manifest-relative, read when `analyze` runs without --otel. A trace says which CONCRETE implementation handled a request and which statement ran, so the dispatch edge the static lane could only grade SOUND_SET gains `observed: true` and a count BESIDE its grade, never above it, and an unobserved candidate is left exactly where it was. A hop the trace saw and no static rule explains becomes a MAY_CALL edge graded RUNTIME_ONLY, which is below every mode\'s floor: shown, never walked. Discovery never looks for one, because a capture is something a person makes on purpose',
   },
   modelPacks: {
     status: 'recorded-not-acted', where: null,
@@ -577,7 +581,7 @@ export function normalizeProfile(obj = {}) {
  *  - `screenAxis.codeRegex` / `.pathRule` / `.nameSource` present and not a
  *    string or null, or a codeRegex this engine cannot compile;
  *  - `moduleAttribution.codeLength` present and not a positive whole number;
- *  - `runtimeEvidence.har` present and not an array of non-empty paths;
+ *  - `runtimeEvidence.har` / `.otel` present and not an array of non-empty paths;
  *  - `catalog.source` present but not in {jdbc, file, none};
  *  - `build.tool` present but not in {gradle, maven, null};
  *  - `generatedSources.annotations` / `.pathGlobs` present but not an array of
@@ -659,10 +663,11 @@ export function validateProfile(obj) {
     }
   }
 
-  if (isObject(obj.runtimeEvidence) && 'har' in obj.runtimeEvidence) {
-    const v = obj.runtimeEvidence.har;
+  for (const k of ['har', 'otel']) {
+    if (!isObject(obj.runtimeEvidence) || !(k in obj.runtimeEvidence)) continue;
+    const v = obj.runtimeEvidence[k];
     if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
-      throw new ProfileError('profile.runtimeEvidence.har must be an array of non-empty paths, relative to the manifest directory');
+      throw new ProfileError(`profile.runtimeEvidence.${k} must be an array of non-empty paths, relative to the manifest directory`);
     }
   }
 

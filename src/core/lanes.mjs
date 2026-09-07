@@ -138,7 +138,7 @@ export function sqlLaneArgs(profile) {
  * @param {{
  *   flags?: {ddl?:string|string[]|null, noDdl?:boolean, mappers?:string[], noMappers?:boolean,
  *            javaSrc?:string[], noJava?:boolean, webSrc?:string[], noWeb?:boolean,
- *            openapi?:string[], noOpenapi?:boolean, har?:string[]},
+ *            openapi?:string[], noOpenapi?:boolean, har?:string[], otel?:string[]},
  *   profile?: Object,
  *   discovery?: Object|null,
  *   root?: string,
@@ -147,10 +147,10 @@ export function sqlLaneArgs(profile) {
  *   catalogSnapshot?: string|null
  * }} input
  * @returns {{ddl:(string|null), ddls:string[], snapshot:(string|null), mappers:string[], javaSrc:string[],
- *            webSrc:string[], openapi:string[], har:string[],
+ *            webSrc:string[], openapi:string[], har:string[], otel:string[],
  *            ddlChoice:(object|null),
  *            catalog:{kind:('ddl'|'snapshot'|null), path:(string|null), paths:string[], source:string},
- *            sources:{ddl:string, mappers:string, javaSrc:string, webSrc:string, openapi:string, har:string},
+ *            sources:{ddl:string, mappers:string, javaSrc:string, webSrc:string, openapi:string, har:string, otel:string},
  *            excludedTestRoots:string[],
  *            lanes:string[], diagnostics:Object[]}}
  */
@@ -323,6 +323,22 @@ export function selectLanes(input = {}) {
   }
   har = [...new Set(har)].sort();
 
+  // ---- execution traces (runtime evidence on the dispatch axis) ----------
+  // The same rule once more, and for the same reason: the flag wins, then the
+  // profile's `runtimeEvidence.otel`, and there is NO discovery step. A trace is
+  // captured deliberately, and a JSON file that happens to sit in the tree must
+  // never be allowed to decide what this pack claims ran.
+  let otel = (flags.otel ?? []).map((f) => path.resolve(cwd, f));
+  let otelSource = otel.length ? 'flag' : 'none';
+  if (otel.length === 0) {
+    const declared = Array.isArray(profile.runtimeEvidence?.otel) ? profile.runtimeEvidence.otel.filter(nonEmpty) : [];
+    if (declared.length > 0) {
+      otel = declared.map((f) => path.resolve(manifestDir ?? root, f));
+      otelSource = 'profile';
+    }
+  }
+  otel = [...new Set(otel)].sort();
+
   // Deterministic order: the pack digest must not depend on the order the flags
   // were typed in (projectPack sorts nodes and edges, but lane RESOLUTION can
   // otherwise see types in a different order).
@@ -343,12 +359,15 @@ export function selectLanes(input = {}) {
   if (webSrc.length > 0) lanes.push('web');
   // The recordings come LAST: they attach to the screens the web lane built.
   if (har.length > 0) lanes.push('har');
+  // ...and the traces after those, because they annotate what every other lane
+  // put in the graph rather than adding an axis of their own.
+  if (otel.length > 0) lanes.push('otel');
 
   if (snapshot) ddlSource = 'snapshot';
   return {
     // `ddl` is the FIRST of `ddls`, kept because a single-file project is still
     // the common case and every caller that only ever wanted one file reads it.
-    ddl, ddls, snapshot, mappers, javaSrc, webSrc, openapi, har,
+    ddl, ddls, snapshot, mappers, javaSrc, webSrc, openapi, har, otel,
     // How the DDL set was chosen, when discovery chose it: what was picked, what
     // was left out, and why. Null when the user said it themselves.
     ddlChoice,
@@ -360,7 +379,7 @@ export function selectLanes(input = {}) {
       : ddl ? { kind: 'ddl', path: ddl, paths: ddls, source: ddlSource } : { kind: null, path: null, paths: [], source: 'none' },
     sources: {
       ddl: ddlSource, mappers: mapperSource, javaSrc: javaSource, webSrc: webSource,
-      openapi: openapiSource, har: harSource,
+      openapi: openapiSource, har: harSource, otel: otelSource,
     },
     excludedTestRoots,
     lanes, diagnostics,

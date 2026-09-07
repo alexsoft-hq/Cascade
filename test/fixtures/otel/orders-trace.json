@@ -1,0 +1,71 @@
+{
+  "_comment": "The trace the CLI tests analyze beside the tiny java fixture: one request through the controller, the service and the mapper method the fixture declares. Small on purpose, because what it has to prove is that the same trace produces the same pack digest twice and that its content hash lands in the facts index, not how much a trace can carry.",
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "orders-api" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "io.opentelemetry.spring-webmvc" },
+          "spans": [
+            {
+              "traceId": "1f2e3d4c5b6a798877665544332211aa",
+              "spanId": "aa00000000000001",
+              "parentSpanId": "",
+              "name": "GET /orders/{id}",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1767225600000000000",
+              "endTimeUnixNano": "1767225600030000000",
+              "attributes": [
+                { "key": "http.request.method", "value": { "stringValue": "GET" } },
+                { "key": "http.route", "value": { "stringValue": "/orders/{id}" } }
+              ]
+            },
+            {
+              "traceId": "1f2e3d4c5b6a798877665544332211aa",
+              "spanId": "aa00000000000002",
+              "parentSpanId": "aa00000000000001",
+              "name": "OrderController.find",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600002000000",
+              "endTimeUnixNano": "1767225600029000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.example.OrderController" } },
+                { "key": "code.function", "value": { "stringValue": "find" } }
+              ]
+            },
+            {
+              "traceId": "1f2e3d4c5b6a798877665544332211aa",
+              "spanId": "aa00000000000003",
+              "parentSpanId": "aa00000000000002",
+              "name": "OrderService.find",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600004000000",
+              "endTimeUnixNano": "1767225600028000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.example.OrderService" } },
+                { "key": "code.function", "value": { "stringValue": "find" } }
+              ]
+            },
+            {
+              "traceId": "1f2e3d4c5b6a798877665544332211aa",
+              "spanId": "aa00000000000004",
+              "parentSpanId": "aa00000000000003",
+              "name": "OrderMapper.selectById",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600006000000",
+              "endTimeUnixNano": "1767225600026000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.example.OrderMapper" } },
+                { "key": "code.function", "value": { "stringValue": "selectById" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

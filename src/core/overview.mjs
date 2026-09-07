@@ -420,6 +420,24 @@ export function buildOverview(graph, opts = {}) {
         + 'What the recording did not visit is unknown, not absent',
     });
   }
+  // WHAT A TRACE SAW RUN. The same posture as the recording gap above, one lane
+  // further in: a trace resolves the dispatch a static reading could only grade
+  // as a candidate set, and it resolves it for the paths that were EXERCISED and
+  // for no others. So the count is stated as coverage, and the sentence says out
+  // loud that an unobserved candidate was not visited rather than shown dead.
+  const otel = laneStats && laneStats.otel && typeof laneStats.otel === 'object' ? laneStats.otel : null;
+  if (otel) {
+    const narrowed = otel.dispatchThroughInterface ?? 0;
+    gaps.push({
+      kind: 'runtime-evidence',
+      count: (otel.edgesObserved ?? 0) + (otel.edgesAdded ?? 0),
+      note: `a trace of ${otel.spans ?? 0} span(s) confirmed ${otel.edgesObserved ?? 0} edge(s) this analysis already had, `
+        + `${narrowed} of them a candidate set it could only grade SOUND_SET, and added ${otel.edgesAdded ?? 0} edge(s) graded RUNTIME_ONLY for a hop no static rule explains. `
+        + `${otel.statementsObserved ?? 0} statement(s) and ${otel.endpointsObserved ?? 0} route(s) were seen to run. `
+        + 'Not one grade was raised or lowered by any of it, and coverage is only what the capture exercised: '
+        + 'a candidate the trace did not visit is unknown, not dead',
+    });
+  }
   if (screensBlock && screensBlock.componentUnresolved > 0) {
     gaps.push({
       kind: 'screen-components-unresolved', count: screensBlock.componentUnresolved,

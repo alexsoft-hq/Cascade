@@ -83,6 +83,7 @@
   "ov.gap.openapi-drift.label": "API 문서와 어긋나는 경로",
   "ov.gap.screens-from-server.label": "서버가 실행 중에 붙이는 화면",
   "ov.gap.screens-seen-at-run-time.label": "녹화로만 알게 된 화면",
+  "ov.gap.runtime-evidence.label": "트레이스가 실제로 돈 것을 본 자리",
   "ov.gap.generated-code.label": "기계가 쓴 코드",
   "ov.gap.generated-walk-skip.label": "생성 코드 안에서 건너뛴 단계",
   "ov.gap.node-cap.label": "한 번에 다 걷기엔 큰 사슬",

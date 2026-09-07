@@ -19,13 +19,20 @@
 //   4. addMybatisPlusFacts(graph, javaFacts, {...})           the MyBatis-Plus bridge
 //   5. addOpenApiRoutes(graph, documents, {...})              the OpenAPI bridge
 //   6. addWebFacts(graph, webFacts, {...})                    the web bridge
+//   7. addRuntimeFacts(graph, traces, {...})                  the runtime evidence lane
 //
-// The web bridge runs LAST because it needs the routes: a frontend call becomes
-// an edge onto an endpoint node, and the endpoints are what the Java bridge and
-// the OpenAPI bridge put in the graph. Running it earlier would leave every
+// The web bridge runs after the routes because a frontend call becomes an edge
+// onto an endpoint node, and the endpoints are what the Java bridge and the
+// OpenAPI bridge put in the graph. Running it earlier would leave every
 // frontend call unmatched — and running the OpenAPI bridge after it would leave
 // a call that only a DOCUMENT can explain unmatched, which is the whole point of
 // having a document on a project whose backend this engine cannot read.
+//
+// The runtime evidence lane runs LAST OF ALL, because it annotates what every
+// other lane put in the graph: a trace marks a dispatch edge the Java bridge
+// wrote, a statement the SQL lane wrote and a route either the Java or the
+// OpenAPI bridge wrote. It adds nothing a walk can follow (every edge it writes
+// is RUNTIME_ONLY), so nothing downstream of it depends on it either.
 //
 // WHAT THIS FILE DOES NOT DECIDE. Whether a lane RAN at all is the caller's
 // call — it knows whether there were Java source roots and whether the profile
@@ -41,7 +48,8 @@ import { Graph } from './graph.mjs';
  *
  * @param {Object} a
  * @param {{buildGraphFromSql:Function, addJavaFacts?:Function, addJpaFacts?:Function,
- *          addMybatisPlusFacts?:Function, addOpenApiRoutes?:Function, addWebFacts?:Function}} a.bridges
+ *          addMybatisPlusFacts?:Function, addOpenApiRoutes?:Function, addWebFacts?:Function,
+ *          addRuntimeFacts?:Function}} a.bridges
  *        the lane bridges, injected. `buildGraphFromSql` is always required;
  *        the other two only when the matching options are given.
  * @param {object[]} [a.catalogRecords=[]]  catalog records (DDL or snapshot)
@@ -64,14 +72,18 @@ import { Graph } from './graph.mjs';
  * @param {object[]} [a.webFacts=[]]  the whole-project webfacts stream
  * @param {{gatewayRoutes?:object, packages?:object[]}|null} [a.web=null]
  *        options for the web bridge; null runs no web bridge.
+ * @param {object[]} [a.otelTraces=[]]  traces as `readOtelTrace` returns them
+ * @param {{}|null} [a.runtime=null]  options for the runtime evidence lane; null runs none
  * @returns {{graph:Graph, javaStats:(object|null), jpaStats:(object|null),
- *            mpStats:(object|null), openapiStats:(object|null), webStats:(object|null)}}
+ *            mpStats:(object|null), openapiStats:(object|null), webStats:(object|null),
+ *            runtimeStats:(object|null)}}
  */
 export function assembleGraph(a) {
   const {
     bridges, catalogRecords = [], lineageRecords = [], javaFacts = [], webFacts = [],
-    openapiDocuments = [],
+    openapiDocuments = [], otelTraces = [],
     identifierCase = 'exact', java = null, jpa = null, mybatisPlus = null, openapi = null, web = null,
+    runtime = null,
   } = a ?? {};
   if (!bridges || typeof bridges.buildGraphFromSql !== 'function') {
     throw new AssembleError('assembleGraph needs bridges.buildGraphFromSql. The core imports no lane, so the CLI is what wires one in');
@@ -104,7 +116,12 @@ export function assembleGraph(a) {
     if (typeof bridges.addWebFacts !== 'function') throw new AssembleError('web options were given but bridges.addWebFacts is missing');
     webStats = bridges.addWebFacts(graph, webFacts, web);
   }
-  return { graph, javaStats, jpaStats, mpStats, openapiStats, webStats };
+  let runtimeStats = null;
+  if (runtime) {
+    if (typeof bridges.addRuntimeFacts !== 'function') throw new AssembleError('runtime options were given but bridges.addRuntimeFacts is missing');
+    runtimeStats = bridges.addRuntimeFacts(graph, otelTraces, runtime);
+  }
+  return { graph, javaStats, jpaStats, mpStats, openapiStats, webStats, runtimeStats };
 }
 
 export class AssembleError extends Error {

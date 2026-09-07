@@ -271,6 +271,22 @@ both apply; otherwise it is cold **and says why**.
   step**: a recording is something you made on purpose, and picking one up
   because it happens to be in the tree would let an unrelated capture decide what
   this pack claims was observed. See [the web lane setup page](setup/web-lane.md).
+- `--otel <file>` — an OpenTelemetry trace export (OTLP/JSON, the `resourceSpans`
+  shape); repeat for several. A trace says which **concrete implementation**
+  handled a request and which statement it ran, which is the one thing no
+  reading of the source can decide. Where the trace confirms a hop this analysis
+  already had, that edge keeps its grade and gains `observed: true` with a count
+  beside it, so a candidate set the code could only grade `SOUND_SET` now names
+  the member that really ran **without being promoted**. A candidate the trace
+  did not visit is left exactly where it was: absence of observation is not
+  absence of the path. A hop the trace saw and no static rule explains becomes a
+  `MAY_CALL` edge graded **RUNTIME_ONLY**, which is below every query mode's
+  floor, so it is shown and never walked. No SQL text and no bound parameter
+  enters the pack: a statement's SQL is read for the **table names** it touched
+  and then dropped. With no flag the traces come from the profile's
+  `runtimeEvidence.otel` (manifest-relative), and **there is no discovery step**,
+  for the same reason recordings have none. See
+  [the runtime evidence page](setup/runtime-evidence.md).
 
 Each `--no-<lane>` overrides whatever the manifest, profile or discovery would
 otherwise have supplied, so "run without this" is always expressible.

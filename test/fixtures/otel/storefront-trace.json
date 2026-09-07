@@ -1,0 +1,155 @@
+{
+  "_comment": "A hand-written OTLP/JSON trace export, in the shape the OpenTelemetry Java agent's file/OTLP exporter writes. It carries two requests through one Spring Boot storefront: GET /brand/list, whose spans run an aspect, a controller, the CONCRETE service implementation, the mapper method and the JDBC statement under it; and GET /brand/detail/12, whose second span names a driver class no analysis of this source could have seen. One span carries no attribute this lane reads, so it is counted as unusable rather than guessed at. The class and method names are the ones the corpus project this fixture is checked against really has, because a runtime observation only joins the static graph when it keys a symbol the same way.",
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "storefront-api" } },
+          { "key": "telemetry.sdk.language", "value": { "stringValue": "java" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "io.opentelemetry.spring-webmvc", "version": "2.11.0" },
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90201",
+              "parentSpanId": "",
+              "name": "GET /brand/list",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1767225600000000000",
+              "endTimeUnixNano": "1767225600041000000",
+              "attributes": [
+                { "key": "http.request.method", "value": { "stringValue": "GET" } },
+                { "key": "http.route", "value": { "stringValue": "/brand/list" } },
+                { "key": "http.response.status_code", "value": { "intValue": "200" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90202",
+              "parentSpanId": "00f067aa0ba90201",
+              "name": "WebLogAspect.doAround",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600002000000",
+              "endTimeUnixNano": "1767225600040000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.macro.mall.common.log.WebLogAspect" } },
+                { "key": "code.function", "value": { "stringValue": "doAround" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90203",
+              "parentSpanId": "00f067aa0ba90202",
+              "name": "PmsBrandController.getList",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600004000000",
+              "endTimeUnixNano": "1767225600039000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.macro.mall.controller.PmsBrandController" } },
+                { "key": "code.function", "value": { "stringValue": "getList" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90204",
+              "parentSpanId": "00f067aa0ba90203",
+              "name": "PmsBrandServiceImpl.listBrand",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600006000000",
+              "endTimeUnixNano": "1767225600038000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.macro.mall.service.impl.PmsBrandServiceImpl" } },
+                { "key": "code.function", "value": { "stringValue": "listBrand" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90205",
+              "parentSpanId": "00f067aa0ba90204",
+              "name": "PmsBrandMapper.selectByExample",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600008000000",
+              "endTimeUnixNano": "1767225600036000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.macro.mall.mapper.PmsBrandMapper" } },
+                { "key": "code.function", "value": { "stringValue": "selectByExample" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90206",
+              "parentSpanId": "00f067aa0ba90205",
+              "name": "SELECT storefront.pms_brand",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1767225600010000000",
+              "endTimeUnixNano": "1767225600034000000",
+              "attributes": [
+                { "key": "db.system", "value": { "stringValue": "mysql" } },
+                { "key": "db.name", "value": { "stringValue": "storefront" } },
+                { "key": "db.operation", "value": { "stringValue": "SELECT" } },
+                { "key": "db.statement", "value": { "stringValue": "select id, name, first_letter, sort, factory_status, show_status, product_count, product_comment_count, logo, big_pic from pms_brand WHERE ( show_status = ? ) order by sort desc" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba90207",
+              "parentSpanId": "00f067aa0ba90201",
+              "name": "render response",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225600037000000",
+              "endTimeUnixNano": "1767225600040500000",
+              "attributes": []
+            }
+          ]
+        },
+        {
+          "scope": { "name": "io.opentelemetry.tomcat-10.0", "version": "2.11.0" },
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4737",
+              "spanId": "00f067aa0ba90211",
+              "parentSpanId": "",
+              "name": "GET /brand/detail/12",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1767225660000000000",
+              "endTimeUnixNano": "1767225660022000000",
+              "attributes": [
+                { "key": "http.method", "value": { "stringValue": "GET" } },
+                { "key": "http.target", "value": { "stringValue": "/brand/detail/12?withProducts=false" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4737",
+              "spanId": "00f067aa0ba90212",
+              "parentSpanId": "00f067aa0ba90211",
+              "name": "PmsPortalBrandController.detail",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225660002000000",
+              "endTimeUnixNano": "1767225660021000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "com.macro.mall.portal.controller.PmsPortalBrandController" } },
+                { "key": "code.function", "value": { "stringValue": "detail" } }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4737",
+              "spanId": "00f067aa0ba90213",
+              "parentSpanId": "00f067aa0ba90212",
+              "name": "RedisClient.connect",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1767225660004000000",
+              "endTimeUnixNano": "1767225660009000000",
+              "attributes": [
+                { "key": "code.namespace", "value": { "stringValue": "io.lettuce.core.RedisClient" } },
+                { "key": "code.function", "value": { "stringValue": "connect" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

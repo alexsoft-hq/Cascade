@@ -146,10 +146,15 @@ export function endpoint_impact(graph, args, ctx) {
     // some: on a pack with no web lane the field would read as "no screen calls
     // this", when the truth is that no frontend was analyzed.
     const frontend = frontendCallsOf(graph, e.endpoint);
+    const n = graph.nodes.get(e.endpoint);
     return {
       id: e.endpoint.slice('endpoint:'.length), httpMethod: e.httpMethod, path: e.path, grade: e.pathGrade,
       ...(e.viaHttp ? { viaHttp: true, httpHops: e.httpHops } : {}),
       ...(frontend > 0 ? { frontendCalls: frontend } : {}),
+      // A recording or a trace saw this route serve a request. It sits BESIDE
+      // the grade and never inside it: a route nothing observed is a route this
+      // capture did not visit, not a route nothing reaches.
+      ...(n && n.observed === true ? { observed: true } : {}),
     };
   });
   // strongest grade first, then id — mirror the other tools' ordering intent.

@@ -866,7 +866,8 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
   "mybatisPlus": { "namingStrategy": "underscore", "tablePrefix": null,
                    "logicDeleteValue": "1", "logicNotDeleteValue": "0" },
   "openapi": { "documents": ["api/openapi.yaml"] },
-  "runtimeEvidence": { "har": ["evidence/admin-session.har"] },
+  "runtimeEvidence": { "har": ["evidence/admin-session.har"],
+                       "otel": ["evidence/checkout-smoke.json"] },
   "catalog": { "source": "file", "connectionFrom": "../document/sql/mall.sql" },
   "calibration": { "firstRun": "bootstrap", "maxRelativeDrop": 0.05,
                    "maxRelativeDropOnRepin": 0.25, "receiptTtlDays": 30 }
@@ -909,10 +910,21 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 이유로 주워 오면 무관한 캡처가 이 pack 이 무엇을 관측했다고 주장할지를 정하게
 되기 때문입니다.
 
+**`runtimeEvidence.otel`** 은 OpenTelemetry 트레이스 익스포트(OTLP/JSON)를
+지정합니다. 트레이스는 어느 **구체 구현**이 실제로 요청을 처리했고 어느 statement
+를 돌렸는지를 말합니다. 소스를 아무리 읽어도 정할 수 없는 것이 그것입니다. mapper
+인터페이스는 소스에 구현체가 아예 없고, 인터페이스 호출은 코드가 무엇을 말하든
+후보 집합입니다. 확인된 홉은 등급을 그대로 유지한 채 옆에 `observed: true` 를
+얻고, 관측되지 않은 후보는 있던 그대로 남으며, 어떤 정적 규칙으로도 설명되지 않는
+홉은 보여 주기만 하고 걷지 않는 `RUNTIME_ONLY` 엣지가 됩니다. 아무것도 승격되지
+않고, SQL 텍스트나 바인딩된 파라미터는 pack 에 들어가지 않으며, 발견 단계도
+없습니다. [`docs/ko/setup/runtime-evidence.md`](docs/ko/setup/runtime-evidence.md).
+
 레인별 상세는 [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
 [`docs/setup/java-lane.md`](docs/setup/java-lane.md),
 [`docs/ko/setup/web-lane.md`](docs/ko/setup/web-lane.md),
-[`docs/setup/db-catalog.md`](docs/setup/db-catalog.md) 에 있습니다.
+[`docs/setup/db-catalog.md`](docs/setup/db-catalog.md),
+[`docs/ko/setup/runtime-evidence.md`](docs/ko/setup/runtime-evidence.md) 에 있습니다.
 
 ## 무엇을 어떻게 측정했는가
 
