@@ -602,9 +602,16 @@
   .fdiv { font-size:11px; margin:9px 0 5px; padding-top:5px; border-top:1.5px dashed var(--t3);
     color:var(--t2); }
   .fdiv.fheur { border-top-style:dotted; }
+  /* A connector says how sure the hop is (the colour and the dash) and whether
+     the reader is looking at it (`hot` / `dim`). `obs` says one more thing and
+     only with WEIGHT: a capture of the running system saw this hop run. The
+     colour and the dash are untouched, so the mark can never read as a grade.
+     Ordered after `hot` so a hover still wins, and heavier again when both. */
   path.flink { fill:none; stroke-width:1.5; transition:opacity .12s; }
   path.flink.dim { opacity:.07; }
   path.flink.hot { stroke-width:2.4; }
+  path.flink.obs { stroke-width:2.8; }
+  path.flink.hot.obs { stroke-width:3.4; }
   /* The travelling dots. `off` is a connector the reader cannot see (scrolled
      past, or outside the chain they are reading): it comes off the picture
      rather than burning a frame budget behind their back. SMIL has no per-dot
@@ -1049,6 +1056,12 @@
   <div class="mchips" id="mchips">
     <span class="mchip quiet" id="mfreshchip"><span class="mdot" aria-hidden="true"></span><span class="sronly" id="mfreshsr"></span><span id="mfresh"></span></span>
     <span class="mchip quiet" id="mtrustchip"><span class="mdot" aria-hidden="true"></span><span class="sronly" id="mtrustsr"></span><span id="mtrust"></span></span>
+    <!-- WHICH CAPTURE INFORMED THIS PACK. Present only when the landing answer
+         carries `basis.runtimeEvidence`, and as quiet as the two chips before
+         it: the source word and the span count in ink, the capture's own
+         coverage note one hover behind. It carries no dot, because the chip's
+         own text IS the state and there is nothing a colour would add. -->
+    <span class="mchip quiet hidden" id="mtracechip"><span id="mtrace"></span></span>
     <span id="mlimitcell"></span>
     <span class="seg mini" id="langseg" data-t-title="lang.title"></span>
     <span class="seg mini" id="themeseg" data-t-title="theme.title"></span>
@@ -1618,6 +1631,13 @@ const VIEWER_STRINGS = {
     // little control opens the rest. Nothing is dropped, only demoted.
     'mast.build': 'build',
     'mast.build.title': 'the fingerprint of this build and the commit it was made from',
+    // A TRACE INFORMED THIS PACK, said as quietly as freshness and trust are.
+    // The source word and the span count are the capture's own numbers and are
+    // interpolated, never rewritten; the coverage note beside them is the
+    // engine's own sentence and rides in the tooltip verbatim. Nothing shows
+    // when no capture was read.
+    'mast.trace': 'trace: {source}, {n} spans',
+    'mast.trace.title': 'a recording of this system running was read into this pack. A row it saw carries the seen mark, and a row without one was not visited by this recording rather than dead.',
     // FRESHNESS, said only when there is something to act on. The verdict word
     // itself is the engine's and is never rewritten: these are the plain
     // sentences that go BESIDE it, and every one of them carries the verdict
@@ -1660,6 +1680,12 @@ const VIEWER_STRINGS = {
     'crail.degraded.title': 'this part ran but could not see all of it, so the number below it is a lower bound',
     'legend.kind': 'what the dots are:',
     'legend.line': 'what the lines mean:',
+    // The one line of the graph legend that is NOT about a grade. A trace saw
+    // the call happen, so the line is drawn heavier. The dash pattern beside it
+    // still carries the grade, untouched: this says a call ran, not that it is
+    // any surer than the analyzer already said.
+    'legend.observed': 'thicker line = a recording saw it run',
+    'legend.observed.title': 'a recording of this system running saw this call happen. It stands beside the grade and never changes it, so a thin line was not visited by that recording rather than dead.',
     // ---- project selector ----------------------------------------------
     'project.select.title': 'which project this page is about. Switching clears every tab and asks the new project from scratch.',
     'project.none': 'no project is being served',
@@ -1909,8 +1935,14 @@ const VIEWER_STRINGS = {
     'chain.tag.component.title': 'this function is declared in the file the route mounts as its screen',
     'chain.tag.api': 'api',
     'chain.tag.api.title': 'this function is in a module the component imports, not in the component itself',
+    // THE OBSERVED MARK, one word, wherever a capture reached. It began on the
+    // screen-to-route axis a browser recording confirms, and a trace now marks
+    // the service method and the SQL statement a request really ran through, so
+    // the sentence names the capture rather than one of its two shapes. It is a
+    // MARKER beside the grade and never a grade: a row without it was not
+    // visited by that capture, which is a different thing from dead.
     'chain.tag.seen': 'seen',
-    'chain.tag.seen.title': 'a recording confirms the browser really called this route from a screen. Nothing here was walked from it.',
+    'chain.tag.seen.title': 'a recording of this system running saw this really happen. It stands beside the grade and never changes it, and nothing here was walked from it.',
     'chain.tag.frontend': 'web {n}',
     'chain.tag.frontend.title': 'how many frontend functions call this route',
     'chain.nosource': 'no source: we never saw this type in the code',
@@ -4264,6 +4296,30 @@ function flowEmptyNote(v, a, field){
   }
   return el('ul',{className:'list'},[emptyNote(a.empty, field)]);
 }
+// ---------- the observed mark ------------------------------------------------
+// A capture of the running system reaches this page as `observed: true` on a
+// row and on the drawn link beside it, and as one `basis.runtimeEvidence` block
+// saying HOW MUCH was captured. Both halves are needed to read the mark
+// honestly, so the mark is built in one place and the coverage note travels
+// with it: the tag says this row RAN, and the note says a row without the tag
+// was not visited by that capture rather than dead. It is never a grade, so it
+// changes no badge, no dash and no band, and an unmarked sibling is drawn today
+// exactly as it was drawn yesterday.
+/** The capture's own coverage block on an answer, or null when none was read. */
+const runtimeEvidenceOf=(resp)=> (resp && resp.basis && resp.basis.runtimeEvidence) || null;
+/** That block's coverage note, verbatim: the engine's sentence, not the page's. */
+function runtimeNote(resp){
+  const re=runtimeEvidenceOf(resp);
+  return re && re.note ? String(re.note) : '';
+}
+/** The one seen tag this page draws, wherever a capture reached. */
+function seenTag(resp){
+  return el('span',{className:'tag',
+    title:[t('chain.tag.seen.title'), runtimeNote(resp)].filter((x)=>x).join('  '),
+    textContent:t('chain.tag.seen')});
+}
+/** Did a capture see the DRAWN LINK into this row run, end to end? */
+const linkObserved=(o)=> !!(o && o.link && o.link.observed===true);
 function flowMakeRow(v, key, kind, grade, kids, data){
   const e=el('div',{className:'frow',tabIndex:0},kids);
   e.setAttribute('role','button');
@@ -4310,19 +4366,28 @@ function flowEntryRow(v, entry){
       file:entry.file??null, line:entry.line??null, start:entry.start });
 }
 function flowServiceRow(v, s){
-  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'symbol:'+s.id, grade:s.grade});
+  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'symbol:'+s.id, grade:s.grade, observed:linkObserved(s)});
   return flowMakeRow(v, 'symbol:'+s.id,'service',s.grade,[
     el('div',{className:'frowtop'},[kindGlyph('symbol',12), el('span',{className:'fhopn kh-service',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
     el('div',{className:'fsub'},[
       s.handler? el('span',{className:'tag',title:t('chain.tag.handler.title'),textContent:'handler'}) : null,
       s.external? el('span',{className:'tag warn',title:t('chain.tag.ext.title'),textContent:'ext'}) : null,
       s.transactional? el('span',{className:'tag',title:'@Transactional boundary',textContent:'@Tx'}) : null,
+      // A trace saw THIS implementation run. Beside the grade, never inside it:
+      // the candidate band above is untouched and an unmarked sibling stands
+      // where it stood.
+      s.observed? seenTag(v.resp) : null,
       el('span',{className:'comment',title:s.owner||'',textContent:s.owner||''}) ])
   ],s);
 }
 function flowStatementRow(v, s){
-  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'statement:'+s.id, grade:s.grade});
-  const t=String(s.statementType||'').toLowerCase();
+  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'statement:'+s.id, grade:s.grade, observed:linkObserved(s)});
+  // NAMED `stype`, NOT `t`. `t` is the catalogue lookup every row in this file
+  // calls, and a local of that name shadows it for the whole function: the
+  // `columnsRuntimeOnly` tag below asks the catalogue for its words, and with
+  // the shadow in place that call threw `t is not a function` and took the
+  // whole lane strip down with it.
+  const stype=String(s.statementType||'').toLowerCase();
   // A statement type is EITHER a SQL verb the analyzer read (`select`, `update`)
   // or the NAME OF THE RULE that generated it (`derived`, `builtin`, `jpql`,
   // `mp-builtin`). Colouring the second kind as a write was simply wrong — a
@@ -4330,13 +4395,16 @@ function flowStatementRow(v, s){
   // the access comes from the statement's own EXECUTES edges, which say it.
   const verbCls = {select:'tag read', insert:'tag write', update:'tag write', delete:'tag write'};
   const acc = (s.tables||[]).map(x=>x&&x.access).filter(Boolean);
-  const cls = verbCls[t] || (acc.length===0 ? 'tag' : (acc.some(a=>a!=='read') ? 'tag write' : 'tag read'));
+  const cls = verbCls[stype] || (acc.length===0 ? 'tag' : (acc.some(a=>a!=='read') ? 'tag write' : 'tag read'));
   return flowMakeRow(v, 'statement:'+s.id,'statement',s.grade,[
     el('div',{className:'frowtop'},[kindGlyph('statement',12), el('span',{className:'fhopn kh-statement',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
     el('div',{className:'fsub'},[ el('span',{className:cls,textContent:s.statementType||'sql'}),
       el('span',{className:'count',textContent:(s.tables||[]).length+' tbl'}),
       // Never hide a lower bound behind a tidy row.
-      s.columnsRuntimeOnly? el('span',{className:'tag',title:t('chain.tag.runtime.title'),textContent:t('chain.tag.runtime')}) : null ]),
+      s.columnsRuntimeOnly? el('span',{className:'tag',title:t('chain.tag.runtime.title'),textContent:t('chain.tag.runtime')}) : null,
+      // A trace saw this statement RUN. Same mark, same words and the same
+      // coverage note as every other row that carries one.
+      s.observed? seenTag(v.resp) : null ]),
     // the mapper method is folded into this row — name it, or the hop vanishes
     s.symbol? el('div',{className:'fsub'},[el('span',{className:'comment',title:s.symbol,textContent:'via '+shortId('symbol:'+s.symbol)})]) : null
   ],s);
@@ -4361,7 +4429,7 @@ function flowTableRow(v, x){
 function flowEndpointRow(v, e){
   const from = (e.link && e.link.from) || (e.handler ? 'symbol:'+e.handler : null);
   const via = (e.link && e.link.fromShort) || e.handlerShort || (e.handler ? shortId('symbol:'+e.handler) : '');
-  v.linkSpecs.push({from, to:'endpoint:'+e.id, grade:e.grade});
+  v.linkSpecs.push({from, to:'endpoint:'+e.id, grade:e.grade, observed:linkObserved(e)});
   return flowMakeRow(v, 'endpoint:'+e.id,'endpoint',e.grade,[
     el('div',{className:'frowtop'},[kindGlyph('endpoint',12), el('span',{className:'fname',title:e.id,textContent:e.id}), badge(e.grade)]),
     el('div',{className:'fsub'},[el('span',{className:'count',title: from ? ('via '+from.slice(from.indexOf(':')+1)) : '',
@@ -4373,7 +4441,7 @@ function flowEndpointRow(v, e){
     (e.frontendCalls || e.observed) ? el('div',{className:'fsub'},[
       e.frontendCalls? el('span',{className:'count',title:t('chain.tag.frontend.title'),
         textContent:t('chain.tag.frontend',{n:e.frontendCalls})}) : null,
-      e.observed? el('span',{className:'tag',title:t('chain.tag.seen.title'),textContent:t('chain.tag.seen')}) : null,
+      e.observed? seenTag(v.resp) : null,
     ]) : null
   // On an endpoint row the server's `path` is the ROUTE and the walked edges are
   // `walkedPath`; the card draws a path list from `path`, like every other row.
@@ -4385,7 +4453,7 @@ function flowEndpointRow(v, e){
 // the two kinds it is: declared in the file the route mounts as its screen, or
 // in a module that file imports.
 function flowWebFnRow(v, w){
-  v.linkSpecs.push({from:(w.link&&w.link.from)||null, to:'symbol:'+w.id, grade:w.grade});
+  v.linkSpecs.push({from:(w.link&&w.link.from)||null, to:'symbol:'+w.id, grade:w.grade, observed:linkObserved(w)});
   const file=String(w.file||'');
   const base=file.slice(file.lastIndexOf('/')+1);
   return flowMakeRow(v, 'symbol:'+w.id,'webfn',w.grade,[
@@ -4402,13 +4470,13 @@ function flowWebFnRow(v, w){
 // own declaration said: the group its first segment puts it in, and the title
 // its `meta` gave it.
 function flowScreenRow(v, s){
-  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'screen:'+s.id, grade:s.grade});
+  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'screen:'+s.id, grade:s.grade, observed:linkObserved(s)});
   return flowMakeRow(v, 'screen:'+s.id,'screen',s.grade,[
     el('div',{className:'frowtop'},[kindGlyph('screen',12), el('span',{className:'fhopn kh-screen',textContent:String(s.hops)}),
       el('span',{className:'fname',title:s.id,textContent:s.short||s.id}), badge(s.grade)]),
     el('div',{className:'fsub'},[
       s.group? el('span',{className:'tag',textContent:s.group}) : null,
-      s.observed? el('span',{className:'tag',title:t('chain.tag.seen.title'),textContent:t('chain.tag.seen')}) : null,
+      s.observed? seenTag(v.resp) : null,
       el('span',{className:'comment',title:s.title||'',textContent:s.title||''}) ])
   // A screen row's walked edges are `walkedPath`, like an endpoint's: `path` on
   // this row would be the route the browser shows, and one field cannot be both.
@@ -4585,7 +4653,10 @@ function drawChainLinks(v){
     }
     const cy1=y1, cy2=y2;
     d='M'+x1+','+y1+' C'+cx1+','+cy1+' '+cx2+','+cy2+' '+x2+','+y2;
-    const p=svgEl('path',{class:'flink', d, stroke:gradeColor(l.grade)});
+    // The GRADE is the colour and the dash, exactly as before. `obs` adds
+    // WEIGHT and nothing else, so the eye finds the hops a capture really ran
+    // through without any line changing what it claims.
+    const p=svgEl('path',{class:'flink'+(l.observed?' obs':''), d, stroke:gradeColor(l.grade)});
     if(l.grade==='SOUND_SET') p.setAttribute('stroke-dasharray','5 3');
     else if(l.grade==='HEURISTIC') p.setAttribute('stroke-dasharray','1.5 3');
     // The connector needs a name of its own, because an <mpath> can only point
@@ -5851,17 +5922,26 @@ const GTYPEACCESS={READS:'read', WRITES:'write'};
 // keeps the muted ink of its grade and never borrows an access hue: it must not
 // look like one that was proved.
 const GWEAK=new Set(['RUNTIME_ONLY','UNRESOLVED']);
+// A CAPTURE OF THE RUNNING SYSTEM adds a FOURTH thing, and only to the weight:
+// an edge a trace saw run is drawn heavier and less faded, and keeps its
+// grade's colour and its grade's dash. That is the whole rule. A runtime-only
+// edge stays dotted in its muted ink and simply gets that weight on top, so it
+// still reads as the below-every-floor thing it is. Nothing here promotes an
+// edge: `observed` says the call RAN, never that it is surer, and an edge
+// without it was not visited by that capture rather than dead.
 function gEdgeStyle(e){
   const access = e.access || GTYPEACCESS[e.type] || null;
   const weak = GWEAK.has(e.grade);
+  const seen = e.observed===true;
   return { color: (weak? null : gAccessColor(access)) || gradeColor(e.grade),
-    width: e.grade==='EXACT'?1.5:1.2, dash: gradeDash(e.grade), opacity:0.6 };
+    width: (e.grade==='EXACT'?1.5:1.2) + (seen?1.4:0), dash: gradeDash(e.grade),
+    opacity: seen?0.95:0.6, observed: seen };
 }
 // One inline sample of what a grade's line looks like, for the legend the hint
 // points at — drawn with the very table above, so the two cannot disagree.
-function gradeLineSample(grade){
+function gradeLineSample(grade, weight){
   const s=svgEl('svg',{width:30, height:8, viewBox:'0 0 30 8','aria-hidden':'true'});
-  const ln=svgEl('line',{x1:0, y1:4, x2:30, y2:4, stroke:gradeColor(grade), 'stroke-width':1.5});
+  const ln=svgEl('line',{x1:0, y1:4, x2:30, y2:4, stroke:gradeColor(grade), 'stroke-width':weight||1.5});
   if(gradeDash(grade)) ln.setAttribute('stroke-dasharray', gradeDash(grade));
   s.append(ln); return s;
 }
@@ -5994,9 +6074,15 @@ function renderGraph(){
       // `style` is kept so a THEME change can re-read this line's own colour
       // without the answer being walked again.
       style:{ color:()=>gEdgeStyle(e).color, opacity:st.opacity },
-      colOn:gfAlpha(st.color, st.opacity), colLit:gfAlpha(st.color, 0.9), w:st.width,
+      // Lighting a line must never make it FAINTER than it was at rest, and an
+      // observed one already sits at 0.95.
+      colOn:gfAlpha(st.color, st.opacity), colLit:gfAlpha(st.color, Math.max(0.9, st.opacity)), w:st.width,
       dash: st.dash ? st.dash.split(' ').map(Number) : null,
-      tip:shortId(e.from)+' → '+shortId(e.to)+'\u00a0\u00a0'+e.type+'\u00a0\u00a0'+e.grade+(e.access?('\u00a0\u00a0'+e.access):'') }; });
+      observed:st.observed,
+      // The mark is SAID as well as drawn: a heavier line is a hint until the
+      // hover names it, and the capture's own coverage note comes with it.
+      tip:shortId(e.from)+' → '+shortId(e.to)+'\u00a0\u00a0'+e.type+'\u00a0\u00a0'+e.grade+(e.access?('\u00a0\u00a0'+e.access):'')
+        +(st.observed?('\u00a0\u00a0'+t('chain.tag.seen')+(runtimeNote(r)?('\u00a0\u00a0'+runtimeNote(r)):'')):'') }; });
   GA.nodes=nodes; GA.links=links;
   GA.byId=new Map(nodes.map(n=>[n.id,n]));
   GA.incident=new Map(nodes.map(n=>[n.id,[]]));
@@ -8506,7 +8592,23 @@ function renderGraphChrome(){
   const isMap = GRAPHV.mode==='map';
   byId('gload').textContent = isMap ? t('graph.find') : t('btn.draw');
   byId('gfocus').placeholder = isMap ? t('graph.focus.ph.map') : t('graph.focus.ph.around');
+  renderLineLegend();
   renderMapFlowNote();
+}
+// WHAT A LINE ON THE `Around` PICTURE MEANS: one sample per grade, read off the
+// same dash table the canvas draws from, and then the one line that is about
+// WEIGHT rather than dash. It is a render function and not a start-up loop,
+// because half of this row is the page's own words and a language switch has to
+// move them. The head span is the markup's own (`data-t`), so it is kept.
+function renderLineLegend(){
+  const gll=byId('glineleg'); if(!gll) return;
+  const head=gll.children[0]||null;
+  gll.replaceChildren(...(head?[head]:[]));
+  GRADES.forEach(g=> gll.append(el('span',{title:t('mapleg.grade.title',{grade:g})},[ gradeLineSample(g), ' '+g ])));
+  // Drawn at the weight `gEdgeStyle` gives an observed EXACT edge, so the
+  // legend and the picture cannot disagree about what heavier means.
+  gll.append(el('span',{className:'gllobs',title:t('legend.observed.title')},
+    [ gradeLineSample('EXACT', 2.9), ' '+t('legend.observed') ]));
 }
 function renderMapLegend(boxId){
   const box=byId(boxId||'gmapleg');
@@ -10057,6 +10159,18 @@ function renderMastChrome(){
   chip.title=[ lvl ? mastSay(key+'.title', '') : t('mast.trust.none.title'),
     lvl ? t('mast.trust')+' '+lvl : '', 'trust.trustLevel',
     ...(held ? [...(tt.gatesNotShown||[]), ...(tt.knownGaps||[])] : []) ].filter((x)=>x).join('  ');
+  // WHICH CAPTURE INFORMED THIS PACK. `basis.runtimeEvidence` is the engine's
+  // own coverage statement and this chip only puts two of its fields in ink:
+  // the source word and the span count, both relayed and neither rewritten. The
+  // NOTE is the half that keeps the mark honest ("a row without the mark was
+  // not visited, not dead"), so it rides in the tooltip verbatim. No capture,
+  // no chip: an absent trace has nothing to say and says nothing.
+  const re=runtimeEvidenceOf(OV.resp);
+  const tchip=byId('mtracechip');
+  tchip.classList.toggle('hidden', !re);
+  byId('mtrace').textContent = re ? t('mast.trace',{source:re.source??'', n:re.spans??0}) : '';
+  tchip.title = re ? [t('mast.trace.title'), runtimeNote(OV.resp), 'basis.runtimeEvidence']
+    .filter((x)=>x).join('  ') : '';
   const lim=(OV.resp && OV.resp.limits) || [];
   const cell=byId('mlimitcell'), body=byId('mfolds');
   if(!lim.length){ cell.replaceChildren(); body.replaceChildren(); return; }
@@ -10345,8 +10459,7 @@ async function loadProjects(){
   flowPrefLoad();
   const kl = document.getElementById('klegend');
   KINDS.forEach(k=> kl.append(el('span',{},[ kindDot(k, 11), k ])));
-  const gll = document.getElementById('glineleg');
-  GRADES.forEach(g=> gll.append(el('span',{title:t('mapleg.grade.title',{grade:g})},[ gradeLineSample(g), ' '+g ])));
+  renderLineLegend();
   renderMapLegend();
   renderMapLegend('ovmapleg');
   graphPaneWatch();

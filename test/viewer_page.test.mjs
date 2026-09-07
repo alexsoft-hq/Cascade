@@ -3962,3 +3962,292 @@ test('the Graph tab draws a screens layer: the chip, its default, and the screen
   assert.deepEqual(toolCalls(calls, 'map').map((c) => c.args.layers || null), [null]);
   assert.equal(ev(ctx, "GMAP.nodes.filter(n=>n.kind==='screen').length"), 0);
 });
+
+// ---------------------------------------------------------------------------
+// RM40 — the page DRAWS the runtime-observed mark it has been receiving
+//
+// A trace says which implementation actually ran. The engine has said so since
+// RM39: `observed: true` on the row and on the drawn link beside it, and one
+// `basis.runtimeEvidence` block saying how much was captured. These hold the
+// three places the page now shows it, and the one thing it must NOT do: read
+// as a grade. The answers are synthetic, because the page's job here is to draw
+// what it was handed, and a JDK is not needed to hand it one.
+// ---------------------------------------------------------------------------
+
+const TRACE_NOTE = 'coverage is only what was exercised. A row marked observed really ran during this '
+  + 'capture, a row not marked was not seen by it, and neither of those raised or lowered a static grade';
+
+const RUNTIME_EVIDENCE = {
+  source: 'otel', files: ['test/fixtures/otel/storefront-trace.json'], spans: 14, observations: 9,
+  window: { from: '2026-01-01T00:00:00.000Z', to: '2026-01-01T00:00:00.006Z' },
+  services: ['storefront'], observedEdges: 2, observedStatements: 1, observedEndpoints: 1,
+  note: TRACE_NOTE,
+};
+
+/**
+ * One `flow` answer walking DOWN from a route, shaped exactly as src/core/chain.mjs
+ * writes it. With `observed` it is the mall+otel case: ONE of two candidate
+ * implementations ran, and the statement under it ran. Without it, the same
+ * answer with every runtime mark stripped, so the two can be diffed.
+ */
+function tracedFlow(observed) {
+  const link = (from, seen) => ({
+    from, fromShort: from.slice(from.indexOf(':') + 1), type: 'MAY_CALL', grade: 'SOUND_SET',
+    basis: 'a call to an interface method, resolved to every implementation', receiver: null, iface: null,
+    ...(observed && seen ? { observed: true, observedCount: 3 } : {}),
+  });
+  const svc = (id, seen) => ({
+    id, short: id.slice(id.lastIndexOf('.') + 1), owner: id.slice(0, id.indexOf('#')),
+    hops: 1, grade: 'SOUND_SET', external: false, transactional: false,
+    ...(observed && seen ? { observed: true } : {}),
+    file: 'src/main/java/Impl.java', line: 20, link: link('endpoint:GET /brand/list', seen), path: [],
+  });
+  const stmt = (id, from, seen) => ({
+    id, short: id.slice('com.m.'.length), symbol: 'com.m.PmsBrandMapper#selectByExample',
+    statementType: 'select', ...(observed && seen ? { observed: true } : {}),
+    file: 'PmsBrandMapper.xml', line: 12, hops: 2, grade: 'SOUND_SET',
+    link: link(`symbol:${from}`, seen), path: [], tables: [{ table: 'pms_brand', access: 'read' }],
+  });
+  return {
+    answer: {
+      entry: {
+        kind: 'endpoint', id: 'GET /brand/list', start: 'endpoint:GET /brand/list',
+        httpMethod: 'GET', path: '/brand/list', handler: 'com.m.PmsBrandController#listBrand',
+        handlerShort: 'PmsBrandController#listBrand',
+      },
+      // Two candidates at the same hop and the same grade. The trace saw ONE.
+      services: [svc('com.m.PmsBrandServiceImpl#listBrand', true), svc('com.m.PmsBrandServiceOther#listBrand', false)],
+      statements: [
+        stmt('com.m.PmsBrandMapper.selectByExample', 'com.m.PmsBrandServiceImpl#listBrand', true),
+        stmt('com.m.PmsBrandMapper.countByExample', 'com.m.PmsBrandServiceOther#listBrand', false),
+      ],
+      walk: { walked: 5, depth: 6, mode: 'conservative', byLinkGrade: { SOUND_SET: 4 }, other: 0, cut: {} },
+    },
+    basis: {
+      project: 'mall', buildDigest: 'deadbeef', builtAt: '2026-09-04T00:00:00.000Z',
+      freshness: { verdict: 'unknown' },
+      ...(observed ? { runtimeEvidence: RUNTIME_EVIDENCE } : {}),
+    },
+    trust: { trustLevel: 'UNCERTIFIED', axes: [], gatesNotShown: [], knownGaps: [] },
+    limits: [],
+    truncated: { any: false, fields: [] },
+  };
+}
+
+/** Draw one of those on the Flow tab, through the page's own render path. */
+async function drawTraced(t, observed) {
+  const boot = await bootPage(t, { hash: '#p=alpha&tab=flow' });
+  ev(boot.ctx, `FLOWV.resp = ${JSON.stringify(tracedFlow(observed))}; FLOWV.sel = null; renderChain(FLOWV, FLOWV.resp);`);
+  await settle(boot.ctx, 8);
+  return boot;
+}
+
+/** The rows of one lane, as {name, tags} — the two things this round changes. */
+function laneRows(byId) {
+  return byId.get('flowwrap').querySelectorAll('.frow').map((r) => ({
+    name: (r.querySelector('.fname') || { textContent: '' }).textContent,
+    tags: r.querySelectorAll('.tag').map((x) => x.textContent),
+    tips: r.querySelectorAll('.tag').map((x) => x.title),
+    grade: (r.querySelector('.grade') || { textContent: '' }).textContent,
+  }));
+}
+
+test('a Flow row a trace ran through carries the seen tag, and its unobserved sibling is untouched', async (t) => {
+  const { byId } = await drawTraced(t, true);
+  const rows = laneRows(byId);
+  const seen = (n) => rows.find((r) => r.name === n).tags.includes('seen');
+
+  // The service the trace saw, and the statement under it, say so.
+  assert.equal(seen('PmsBrandServiceImpl#listBrand'), true, 'the implementation the trace ran');
+  assert.equal(seen('PmsBrandMapper.selectByExample'), true, 'the statement it ran');
+  // Its sibling at the same hop and the same grade is drawn exactly as before.
+  assert.equal(seen('PmsBrandServiceOther#listBrand'), false, 'an unobserved candidate is not marked');
+  assert.equal(seen('PmsBrandMapper.countByExample'), false);
+
+  // AND IT IS NOT A GRADE. Both candidates still wear SOUND_SET, and the
+  // candidate band that names them is still one band holding both.
+  for (const n of ['PmsBrandServiceImpl#listBrand', 'PmsBrandServiceOther#listBrand']) {
+    assert.equal(rows.find((r) => r.name === n).grade, 'SOUND_SET', `${n} lost or gained a grade`);
+  }
+  const bands = byId.get('flowwrap').querySelectorAll('.fdiv').map((d) => d.textContent);
+  assert.ok(bands.some((b) => /2 .*could/i.test(b) || /2/.test(b)),
+    `the candidate band still counts both: ${bands.join(' | ')}`);
+
+  // The tooltip carries the CAPTURE'S OWN coverage note, so "not marked" cannot
+  // be read as "dead". It is the engine's sentence, relayed and not rewritten.
+  const tip = rows.find((r) => r.name === 'PmsBrandServiceImpl#listBrand').tips.find((x) => x.includes('seen') || x.includes('recording'));
+  assert.match(tip, /a recording of this system running saw this really happen/);
+  assert.match(tip, /coverage is only what was exercised/);
+  assert.equal(tip.includes(TRACE_NOTE), true, "the engine's note, verbatim");
+});
+
+test('the same answer with no runtime marks draws no seen tag at all', async (t) => {
+  const { byId } = await drawTraced(t, false);
+  const rows = laneRows(byId);
+  assert.equal(rows.length > 0, true, 'the lanes really drew rows');
+  for (const r of rows) assert.equal(r.tags.includes('seen'), false, `${r.name} invented a mark`);
+  assert.equal(/seen/.test(byId.get('flowwrap').textContent), false);
+});
+
+test('the drawn connector for an observed hop is heavier, and keeps its grade colour and dash', async (t) => {
+  const { ctx, byId, html } = await drawTraced(t, true);
+  const svg = byId.get('flowwrap').querySelectorAll('svg').at(0);
+  const links = svg.querySelectorAll('path').filter((p) => p.className.split(' ').includes('flink'));
+  assert.equal(links.length, 4, 'entry to two services, each service to its statement');
+  const obs = links.filter((p) => p.className.split(' ').includes('obs'));
+  assert.equal(obs.length, 2, 'exactly the two hops the trace ran end to end');
+
+  // The GRADE is untouched: same stroke, same dash, on the marked line and the
+  // unmarked one. Only the weight differs, and the weight is CSS, not answer.
+  const dashes = new Set(links.map((p) => p.getAttribute('stroke-dasharray')));
+  assert.equal(dashes.size, 1, `a mark changed a dash pattern: ${[...dashes].join(' | ')}`);
+  const strokes = new Set(links.map((p) => p.getAttribute('stroke')));
+  assert.equal(strokes.size, 1, `a mark changed a line colour: ${[...strokes].join(' | ')}`);
+  assert.equal([...strokes][0], ev(ctx, "gradeColor('SOUND_SET')"));
+
+  // The weight lives in the stylesheet, and a hover still wins over it.
+  const css = styleBlock(html);
+  assert.match(cssRule(css, 'path.flink.obs').join(' '), /stroke-width\s*:\s*2\.8/);
+  assert.match(cssRule(css, 'path.flink.hot.obs').join(' '), /stroke-width\s*:\s*3\.4/);
+
+  // …and with no runtime marks the page draws no `obs` line at all.
+  ev(ctx, `FLOWV.resp = ${JSON.stringify(tracedFlow(false))}; renderChain(FLOWV, FLOWV.resp);`);
+  await settle(ctx, 8);
+  const plain = byId.get('flowwrap').querySelectorAll('svg').at(0).querySelectorAll('path');
+  assert.equal(plain.filter((p) => p.className.split(' ').includes('obs')).length, 0);
+});
+
+test('the masthead says a trace informed this pack, and says nothing when none did', async (t) => {
+  const { ctx, byId } = await bootPage(t);
+
+  // Nothing was captured for the alpha pack, so there is no chip. An absent
+  // trace has nothing to say and says nothing.
+  assert.equal(byId.get('mtracechip').classList.contains('hidden'), true);
+  assert.equal(byId.get('mtrace').textContent, '');
+
+  ev(ctx, `OV.resp = { answer:{}, limits:[], trust:{trustLevel:'UNCERTIFIED'},
+    basis:{ project:'mall', freshness:{verdict:'unknown'}, runtimeEvidence:${JSON.stringify(RUNTIME_EVIDENCE)} } };
+    renderMastChrome();`);
+  assert.equal(byId.get('mtracechip').classList.contains('hidden'), false, 'the chip appears');
+  assert.equal(byId.get('mtrace').textContent, 'trace: otel, 14 spans');
+  // The source word and the count are the capture's own and are relayed; the
+  // coverage note is the engine's sentence and rides in the tooltip verbatim,
+  // beside the contract field it came from.
+  assert.match(byId.get('mtracechip').title, /a recording of this system running was read into this pack/);
+  assert.equal(byId.get('mtracechip').title.includes(TRACE_NOTE), true);
+  assert.match(byId.get('mtracechip').title, /basis\.runtimeEvidence/);
+  // It is QUIET: the same chip class the freshness and trust chips wear, and no
+  // tint. A capture is metadata beside the answer, not a verdict on it.
+  assert.equal(byId.get('mtracechip').className.includes('warn'), false);
+  assert.equal(byId.get('mtracechip').className.includes('ok'), false);
+  assert.equal(byId.get('mtracechip').closest('#mchips') != null, true);
+
+  // The label follows the interface language; the engine's own words do not.
+  ev(ctx, "setLang('ko')");
+  await settle(ctx, 6);
+  assert.match(byId.get('mtrace').textContent, /[가-힣]/, 'the chip is still English');
+  assert.match(byId.get('mtrace').textContent, /otel/, "…and the source word is the engine's, untranslated");
+  assert.match(byId.get('mtrace').textContent, /14/);
+
+  // Take the block away and the chip goes with it.
+  ev(ctx, "setLang('en'); delete OV.resp.basis.runtimeEvidence; renderMastChrome();");
+  assert.equal(byId.get('mtracechip').classList.contains('hidden'), true);
+  assert.equal(byId.get('mtrace').textContent, '');
+  assert.equal(byId.get('mtracechip').title, '');
+});
+
+test('the graph line legend gains the observed line, and it moves with the language', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=graph' });
+  const leg = byId.get('glineleg');
+
+  // Every grade still has its sample, and the new line stands after them.
+  const spans = leg.children.slice(1);
+  assert.equal(spans.length, GRADE_NAMES.length + 1, 'one sample per grade, then the observed line');
+  assert.deepEqual(spans.slice(0, GRADE_NAMES.length).map((s) => s.textContent.trim()), GRADE_NAMES);
+  const obs = leg.querySelector('.gllobs');
+  assert.equal(obs, spans.at(-1), 'the observed line stands after the grades');
+  assert.equal(obs.textContent.trim(), 'thicker line = a recording saw it run');
+  assert.match(obs.title, /It stands beside the grade and never changes it/,
+    'the legend says the mark is not a grade');
+  assert.match(obs.title, /was not visited by that recording rather than dead/);
+
+  // The sample is drawn at the weight the canvas gives an observed edge, out of
+  // the same function, so the legend and the picture cannot disagree.
+  const line = obs.querySelector('line');
+  assert.equal(String(line.getAttribute('stroke-width')), '2.9');
+  const seenW = Number(ev(ctx, "gEdgeStyle({type:'MAY_CALL', grade:'EXACT', observed:true}).width"));
+  assert.equal(seenW, 2.9);
+
+  ev(ctx, "setLang('ko')");
+  await settle(ctx, 6);
+  const koObs = byId.get('glineleg').querySelector('.gllobs');
+  assert.match(koObs.textContent, /[가-힣]/, 'the observed legend line is still English');
+  assert.equal(/thicker line/.test(koObs.textContent), false);
+  // The GRADE names beside it are the engine's and are never translated.
+  assert.deepEqual(byId.get('glineleg').children.slice(1, 1 + GRADE_NAMES.length).map((s) => s.textContent.trim()),
+    GRADE_NAMES);
+  assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.missing])'), '[]');
+  assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.fellBack])'), '[]');
+});
+
+const GRADE_NAMES = ['EXACT', 'SOUND_SET', 'HEURISTIC', 'RUNTIME_ONLY', 'UNRESOLVED'];
+
+test('an observed graph edge is drawn heavier and NOT re-graded', async (t) => {
+  const { ctx } = await bootPage(t, { hash: '#p=alpha&tab=graph' });
+  const style = (e) => JSON.parse(ev(ctx, `JSON.stringify(gEdgeStyle(${JSON.stringify(e)}))`));
+
+  const plain = style({ type: 'MAY_CALL', grade: 'SOUND_SET' });
+  const seen = style({ type: 'MAY_CALL', grade: 'SOUND_SET', observed: true });
+  assert.equal(seen.color, plain.color, 'a mark must not recolour a line');
+  assert.equal(seen.dash, plain.dash, 'the dash IS the grade, and the grade did not move');
+  assert.ok(seen.width > plain.width, `heavier: ${plain.width} -> ${seen.width}`);
+  assert.ok(seen.opacity > plain.opacity, `less faded: ${plain.opacity} -> ${seen.opacity}`);
+  assert.equal(seen.observed, true);
+  assert.equal(plain.observed, false);
+
+  // A RUNTIME_ONLY edge the runtime lane added keeps the muted ink and the
+  // dotted stroke of the below-every-floor thing it is, and gets the weight on
+  // top. It must not start looking like a call anyone proved.
+  const ro = style({ type: 'MAY_CALL', grade: 'RUNTIME_ONLY', observed: true });
+  assert.equal(ro.dash, ev(ctx, "gradeDash('RUNTIME_ONLY')"));
+  assert.equal(ro.color, ev(ctx, "gradeColor('RUNTIME_ONLY')"));
+  assert.equal(ro.color, style({ type: 'MAY_CALL', grade: 'RUNTIME_ONLY' }).color);
+  // …and an access hue never leaks onto a weak edge, mark or no mark.
+  assert.equal(style({ type: 'READS', grade: 'RUNTIME_ONLY', observed: true }).color, ro.color);
+});
+
+test('a statement whose columns are only known at run time draws that tag, and the lane strip survives it', async (t) => {
+  // A MyBatis-Plus built-in whose condition wrapper is built at run time
+  // touches a KNOWN table with an UNKNOWN column list, and the row has to say
+  // so. It could not: `flowStatementRow` held a local named `t` for the
+  // statement type, which shadowed the catalogue lookup of the same name, so
+  // the two `t('chain.tag.runtime…')` calls threw and the WHOLE lane strip
+  // failed to render. Reachable on any pack with the MyBatis-Plus lane (jeecg
+  // has 82 such statements, jeepay 20).
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=flow' });
+  const a = tracedFlow(false);
+  a.answer.statements[0].columnsRuntimeOnly = true;
+  a.answer.statements[0].statementType = 'mp-builtin';
+  const out = ev(ctx, `(() => { try {
+      FLOWV.resp = ${JSON.stringify(a)}; FLOWV.sel = null; renderChain(FLOWV, FLOWV.resp);
+      return 'rendered';
+    } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
+  assert.equal(out, 'rendered', 'the render threw instead of drawing the lanes');
+
+  // The strip really is on screen, and the row really says it.
+  const rows = laneRows(byId);
+  assert.ok(rows.length >= 4, `the lanes drew rows: ${rows.length}`);
+  const row = rows.find((r) => r.name === 'PmsBrandMapper.selectByExample');
+  assert.ok(row, `the statement row is missing: ${rows.map((r) => r.name).join(', ')}`);
+  assert.ok(row.tags.includes('columns at run time'), `no runtime tag: ${row.tags.join(' | ')}`);
+  assert.match(row.tips.find((x) => /condition built at run time/.test(x)) || '',
+    /The table is certain/, "the catalogue's own sentence reached the tooltip");
+
+  // The statement TYPE still colours the access tag off its own value, which is
+  // the other thing that local was for.
+  const typeTag = byId.get('flowwrap').querySelectorAll('.frow')
+    .find((r) => (r.querySelector('.fname') || {}).textContent === 'PmsBrandMapper.selectByExample')
+    .querySelectorAll('span').find((x) => x.textContent === 'mp-builtin');
+  assert.ok(typeTag, 'the statement type is still printed');
+  assert.equal(typeTag.className, 'tag read', 'an mp-builtin over a read table is a read, not a write');
+});

@@ -138,3 +138,33 @@ test('neighborhood: a tiny limit trips the node cap — truncated.any is true an
   assert.equal(resp.truncated.any, true);
   assert.ok(resp.limits.some((l) => l.scope === 'neighborhood'), 'expected a neighborhood-cap limits entry');
 });
+
+// ---------------------------------------------------------------------------
+// The runtime lane's mark travels with the edge (RM40)
+// ---------------------------------------------------------------------------
+
+test('neighborhood: an edge a trace saw run carries observed, and keeps the grade it had', () => {
+  const g = buildFixtureGraph();
+  // What src/adapters/runtime_bridge.mjs writes: a NEW evidence object with
+  // `observed` added beside whatever the static lane put there. Nothing about
+  // the grade moves.
+  const target = g.edges.findIndex((e) => e.from === UPDATE_ID && e.to === nodeId('column', 'pms_product.price'));
+  assert.ok(target >= 0, 'fixture must have the writer edge to mark');
+  const before = g.edges[target].grade;
+  g.edges[target].evidence = { ...(g.edges[target].evidence ?? {}), observed: true, observedCount: 3 };
+
+  const resp = neighborhood(g, { column: 'pms_product.price', direction: 'up', hops: 2 }, ctx(g));
+  assert.doesNotThrow(() => assertContract(resp));
+  const marked = resp.answer.edges.filter((e) => e.observed === true);
+  assert.equal(marked.length, 1, 'exactly the edge the trace saw');
+  assert.equal(marked[0].from, UPDATE_ID);
+  assert.equal(marked[0].to, nodeId('column', 'pms_product.price'));
+  assert.equal(marked[0].grade, before, 'a capture must not re-grade an edge');
+  // …and every other edge says nothing at all rather than saying `false`: the
+  // field is written only where it is true, so absence means unvisited by this
+  // capture and never "we checked and it did not run".
+  for (const e of resp.answer.edges) {
+    if (e === marked[0]) continue;
+    assert.equal(Object.hasOwn(e, 'observed'), false, `${e.from} -> ${e.to} invented a mark`);
+  }
+});

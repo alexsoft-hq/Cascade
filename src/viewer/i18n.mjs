@@ -140,6 +140,13 @@ export const VIEWER_STRINGS = {
     // little control opens the rest. Nothing is dropped, only demoted.
     'mast.build': 'build',
     'mast.build.title': 'the fingerprint of this build and the commit it was made from',
+    // A TRACE INFORMED THIS PACK, said as quietly as freshness and trust are.
+    // The source word and the span count are the capture's own numbers and are
+    // interpolated, never rewritten; the coverage note beside them is the
+    // engine's own sentence and rides in the tooltip verbatim. Nothing shows
+    // when no capture was read.
+    'mast.trace': 'trace: {source}, {n} spans',
+    'mast.trace.title': 'a recording of this system running was read into this pack. A row it saw carries the seen mark, and a row without one was not visited by this recording rather than dead.',
     // FRESHNESS, said only when there is something to act on. The verdict word
     // itself is the engine's and is never rewritten: these are the plain
     // sentences that go BESIDE it, and every one of them carries the verdict
@@ -182,6 +189,12 @@ export const VIEWER_STRINGS = {
     'crail.degraded.title': 'this part ran but could not see all of it, so the number below it is a lower bound',
     'legend.kind': 'what the dots are:',
     'legend.line': 'what the lines mean:',
+    // The one line of the graph legend that is NOT about a grade. A trace saw
+    // the call happen, so the line is drawn heavier. The dash pattern beside it
+    // still carries the grade, untouched: this says a call ran, not that it is
+    // any surer than the analyzer already said.
+    'legend.observed': 'thicker line = a recording saw it run',
+    'legend.observed.title': 'a recording of this system running saw this call happen. It stands beside the grade and never changes it, so a thin line was not visited by that recording rather than dead.',
     // ---- project selector ----------------------------------------------
     'project.select.title': 'which project this page is about. Switching clears every tab and asks the new project from scratch.',
     'project.none': 'no project is being served',
@@ -431,8 +444,14 @@ export const VIEWER_STRINGS = {
     'chain.tag.component.title': 'this function is declared in the file the route mounts as its screen',
     'chain.tag.api': 'api',
     'chain.tag.api.title': 'this function is in a module the component imports, not in the component itself',
+    // THE OBSERVED MARK, one word, wherever a capture reached. It began on the
+    // screen-to-route axis a browser recording confirms, and a trace now marks
+    // the service method and the SQL statement a request really ran through, so
+    // the sentence names the capture rather than one of its two shapes. It is a
+    // MARKER beside the grade and never a grade: a row without it was not
+    // visited by that capture, which is a different thing from dead.
     'chain.tag.seen': 'seen',
-    'chain.tag.seen.title': 'a recording confirms the browser really called this route from a screen. Nothing here was walked from it.',
+    'chain.tag.seen.title': 'a recording of this system running saw this really happen. It stands beside the grade and never changes it, and nothing here was walked from it.',
     'chain.tag.frontend': 'web {n}',
     'chain.tag.frontend.title': 'how many frontend functions call this route',
     'chain.nosource': 'no source: we never saw this type in the code',

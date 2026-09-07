@@ -610,7 +610,14 @@ export function neighborhood(graph, args, ctx) {
   const edges = [];
   for (const e of graph.edges) {
     if (nodeSet.has(e.from) && nodeSet.has(e.to)) {
-      edges.push({ from: e.from, to: e.to, type: e.type, grade: e.grade, access: e.evidence?.access ?? null });
+      edges.push({
+        from: e.from, to: e.to, type: e.type, grade: e.grade, access: e.evidence?.access ?? null,
+        // A trace saw this very call happen. Written only where it is true, and
+        // BESIDE the grade the static lane gave the edge: SOUND_SET that a
+        // capture confirmed is still SOUND_SET, and an edge with no mark was
+        // not visited by that capture rather than absent.
+        ...(e.evidence?.observed === true ? { observed: true } : {}),
+      });
     }
   }
   edges.sort((a, b) => (a.from + a.to + a.type < b.from + b.to + b.type ? -1 : 1));
