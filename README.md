@@ -42,6 +42,10 @@ see, so nothing about them is in the graph at all.
 
 ### What it does not claim
 
+SAST and CodeQL look for vulnerabilities; this looks for what a change reaches.
+Neither of them answers the question on this page, and this does not answer
+theirs.
+
 Not a SAST or CodeQL replacement. Not "complete" impact. Not "safe refactoring
 guaranteed". Not language-agnostic, not 100% accurate. It publishes measured
 lower bounds; it cannot honestly claim any of those.
