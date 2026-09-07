@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { skipWithoutSqlLane } from './helpers/lane_prereqs.mjs';
 
 // WHICH TREE `cascade analyze` READS (RM25).
 //
@@ -96,6 +97,7 @@ function analyze(args, env, cwd, t) {
 }
 
 test('analyze --project <id> from an unrelated cwd analyzes the REGISTERED project, not the cwd', (t) => {
+  if (skipWithoutSqlLane(t)) return;
   const base = tmpDir(t, 'cascade-aroot-');
   const home = path.join(base, 'home');
   const mine = repo(path.join(base, 'mine'), 'mine');
@@ -123,6 +125,7 @@ test('analyze --project <id> from an unrelated cwd analyzes the REGISTERED proje
 });
 
 test('--root still wins over the registry, and says so', (t) => {
+  if (skipWithoutSqlLane(t)) return;
   const base = tmpDir(t, 'cascade-aroot-flag-');
   const home = path.join(base, 'home');
   const mine = repo(path.join(base, 'mine'), 'mine');
@@ -141,6 +144,7 @@ test('--root still wins over the registry, and says so', (t) => {
 });
 
 test('a registered project with NO manifest falls back to the directory its .cascade sits in', (t) => {
+  if (skipWithoutSqlLane(t)) return;
   const base = tmpDir(t, 'cascade-aroot-nomanifest-');
   const home = path.join(base, 'home');
   const mine = repo(path.join(base, 'mine'), 'mine');
@@ -159,6 +163,7 @@ test('a registered project with NO manifest falls back to the directory its .cas
 });
 
 test('with nothing to resolve, the current directory is still the answer', (t) => {
+  if (skipWithoutSqlLane(t)) return;
   const base = tmpDir(t, 'cascade-aroot-cwd-');
   const home = path.join(base, 'home');
   const mine = repo(path.join(base, 'mine'), 'mine');
@@ -172,6 +177,7 @@ test('with nothing to resolve, the current directory is still the answer', (t) =
 });
 
 test('the banner is printed before any lane runs, so a run against the wrong tree is visible at once', (t) => {
+  if (skipWithoutSqlLane(t)) return;
   const base = tmpDir(t, 'cascade-aroot-order-');
   const home = path.join(base, 'home');
   const mine = repo(path.join(base, 'mine'), 'mine');

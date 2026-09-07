@@ -1,4 +1,4 @@
-# CI — eight INDEPENDENT jobs (SPEC §16.3):
+# CI — eight INDEPENDENT jobs:
 #   node · python · db · java · petclinic · dco · fixtures · gate
 #
 # There is no `needs:` between them and the node matrix does not fail fast, so a
@@ -39,8 +39,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The same end-to-end tests select the Java lane too, because their
+      # fixture tree has a .java file in it. The runner image happens to carry a
+      # JDK; naming one here is the difference between a job that builds what it
+      # needs and a job that works until the image changes.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      # A handful of tests drive the REAL CLI end to end over a tree that has a
+      # .sql file in it, so the run selects the SQL lane. Without an interpreter
+      # they skip out loud (test/helpers/lane_prereqs.mjs); this job builds one
+      # so they RUN here, and the step below fails if they ever go back to
+      # skipping. Builds what it needs, rather than passing by omission.
+      - name: the SQL lane's venv, so the end-to-end CLI tests are not skipped
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r adapters/sql/requirements.txt
       - name: unit tests
         run: npm run test:quick
+      - name: the end-to-end CLI tests must RUN here, not skip
+        run: |
+          node --test test/analyze_root.test.mjs test/web_lane_cli.test.mjs 2>&1 | tee cli.log
+          grep -q 'skipped 0' cli.log || { echo 'an end-to-end CLI test SKIPPED in CI — that is a failure, not a pass'; exit 1; }
       - name: unit tests with coverage
         if: matrix.node == '22.x'
         run: npm test
@@ -58,7 +82,7 @@ jobs:
       - name: unit tests
         run: python -m unittest discover -s adapters/sql -p 'test_*.py' -v
 
-  # The live DB catalog adapter (SPEC §12). It needs a real database, so it is
+  # The live DB catalog adapter. It needs a real database, so it is
   # its own job with NO `needs:` — a dialect that stops working must not be able
   # to hide behind another lane's failure. The test starts and removes its own
   # `mysql:8` container through the Docker daemon the runner already has; on a
@@ -75,7 +99,10 @@ jobs:
       - name: install the SQL lane and the optional MySQL driver
         run: |
           pip install -r adapters/sql/requirements.txt
-          pip install pymysql==1.1.1
+          # `cryptography` is not optional against a default MySQL 8: its
+          # caching_sha2_password handshake is what pymysql needs it for, and
+          # without it every connection fails before a single query runs.
+          pip install pymysql==1.1.1 'cryptography>=42,<47'
       - name: the docker daemon must be reachable in THIS job
         run: docker info --format '{{.ServerVersion}}'
       - name: live catalog dialect tests (unit + container)
@@ -100,7 +127,7 @@ jobs:
       - name: smoke the java adapter over test/fixtures/java-smoke
         run: node scripts/ci-java-smoke.mjs
 
-  # The JPA lane against a REAL project (SPEC §14, §15 M10). Its own job, with no
+  # The JPA lane against a REAL project. Its own job, with no
   # `needs:`, because it is the only check that runs BOTH lanes over somebody
   # else's source: a JPA regression must not be able to hide behind the unit
   # suite, and the unit suite must not go red because GitHub could not clone a
@@ -158,7 +185,7 @@ jobs:
       - name: every commit in this PR is signed off
         run: node scripts/check-dco.mjs --range "origin/${{ github.base_ref }}..HEAD"
 
-  # The two real-project goldens (SPEC §15 M11). Its own job, with no `needs:`,
+  # The two real-project goldens. Its own job, with no `needs:`,
   # for the same reason as `petclinic`: these are the only checks that run BOTH
   # lanes over somebody else's source, and a regression in them must not be able
   # to hide behind the unit suite — nor take the unit suite red because GitHub
@@ -224,7 +251,7 @@ jobs:
                       test/map.test.mjs test/coupling.test.mjs 2>&1 | tee fixtures.log
           grep -q 'skipped 0' fixtures.log || { echo 'a real-project golden SKIPPED in CI — that is a failure, not a pass'; exit 1; }
 
-  # THE GENERALITY GATE (RM20 §5). The engine, unchanged and with no per-project
+  # THE GENERALITY GATE. The engine, unchanged and with no per-project
   # configuration, over a pinned corpus of eleven real repositories — and the
   # floor it must not fall below (test/fixtures/generality-gate.baseline.json).
   #

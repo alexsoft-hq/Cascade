@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
+import { skipWithoutSqlLane } from './helpers/lane_prereqs.mjs';
 import { loadPack } from '../src/core/pack.mjs';
 import {
   endpoint_impact, flow, search, neighborhood, overview, screen_impact, browse,
@@ -268,6 +269,7 @@ test('cascade estimate prints the web axis and the frontend file counts', (t) =>
 // to land on; with it, they land on the routes the project itself declared.
 
 test('a frontend plus an OpenAPI document and no java lane: the calls reach the declared routes', (t) => {
+  if (skipWithoutSqlLane(t)) return;
   const { base, dir } = frontendRepo(t);
   // The document and a schema live beside the frontend, in the same repo.
   fs.cpSync(path.join(OPENAPI_FIXTURE, 'web-routes.yaml'), path.join(dir, 'api.yaml'));
