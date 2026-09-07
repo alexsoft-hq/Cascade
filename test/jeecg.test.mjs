@@ -254,13 +254,32 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
     const up = graph.outEdges(from).find((e) => e.to === base && graph.edgeAt(e.idx).evidence?.rule === 'super-enclosing');
     assert.ok(up, `${sub}#exportXls --super-enclosing--> JeecgController#exportXls is missing`);
     assert.equal(graph.edgeAt(up.idx).evidence.declaredBy, 'org.jeecg.common.system.base.controller.JeecgController');
-    const down = graph.outEdges(base).find((e) => e.to === `symbol:${service}#list`);
-    assert.ok(down, `JeecgController#exportXls --type-param-binding--> ${service}#list is missing`);
+    // RM37: THE BOUND EDGE LEAVES THE CONTROLLER, NOT THE BASE. The base body
+    // runs as THIS controller, so `service.list(…)` there is this controller's
+    // service. Attaching it to `JeecgController#exportXls`, which all 30 of them
+    // point at, is what made every export endpoint look like it read every
+    // sibling module's tables.
+    const down = graph.outEdges(from).find((e) => e.to === `symbol:${service}#list`);
+    assert.ok(down, `${sub}#exportXls --type-param-binding--> ${service}#list is missing`);
     const ev = graph.edgeAt(down.idx).evidence;
     assert.equal(ev.rule, 'type-param-binding');
     assert.equal(ev.receiver, 'S');
-    assert.equal(ev.boundAt, sub, 'the evidence names the subclass whose extends clause bound S');
+    assert.equal(ev.boundThrough, sub, 'the evidence names the subclass whose extends clause bound S');
+    assert.equal(ev.inheritedFrom, 'org.jeecg.common.system.base.controller.JeecgController#exportXls');
+    // …and NO sibling's service is reachable from it.
+    const siblings = graph.outEdges(from)
+      .map((e) => e.to)
+      .filter((to) => /Service#(list|count|page|saveBatch)$/.test(to) && to !== `symbol:${service}#list`);
+    assert.deepEqual(siblings, [], `${sub}#exportXls reaches a service that is not its own`);
   }
+  // THE SHARED BODY CARRIES NOTHING BOUND ANY MORE. What is left on it are the
+  // calls that were never through a type parameter: `jeecgBaseConfig.getPath()`
+  // and its own overload.
+  assert.deepEqual(
+    graph.outEdges('symbol:org.jeecg.common.system.base.controller.JeecgController#exportXls')
+      .map((e) => graph.edgeAt(e.idx).evidence?.rule).sort(),
+    ['field-receiver', 'unqualified-enclosing'],
+  );
   // 70 `super.m()` calls resolve and 3 do not — `grep -rcE "super\\.[a-zA-Z_]"`
   // finds 73 in all, and 70 + 3 is still 73.
   //
@@ -274,7 +293,18 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   assert.equal(stats.callsByRule['super-enclosing'], 70);
   assert.equal(stats.unresolvedCallsByRule['super-enclosing'], 3);
   assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 0);
-  assert.equal(stats.callsByRule['type-param-binding'], 168);
+  // 31 TYPE-PARAMETER EDGES, ONE PER `super.` CALL SITE THAT RUNS A GENERIC BODY
+  // (RM37; it was 168 when they were pooled on the four base methods). Counted
+  // by hand from the 30 classes that `extends JeecgController`:
+  //   grep -rl 'super.exportXls('      -> 16 files, one `service.list(…)` each
+  //   grep -rl 'super.importExcel('    -> 13 files, one `service.saveBatch(…)` each
+  //   grep -rl 'super.exportXlsSheet(' ->  1 file  (JeecgDemoController), whose
+  //     body calls `service.count()` AND `service.page(…)`, so it is 2 edges
+  // 16 + 13 + 2 = 31. The 19 files that DECLARE `exportXls` and the 18 that
+  // declare `importExcel` are more than that on purpose: an override that never
+  // calls `super` writes its own import logic against its own service, and the
+  // ancestor's call site is not in it.
+  assert.equal(stats.callsByRule['type-param-binding'], 31);
   // …and 27 of the 40 land on one base: MyBatis-Plus's `ServiceImpl`, which
   // every jeecg service extends. The edge names it, `isExternalType` marks the
   // symbol external, so no walk follows it and nothing is claimed about what it
@@ -342,8 +372,17 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   // a prefix nobody declared.
   assert.equal(o.reach.outboundEndpoints, outboundJava + outboundWeb);
   assert.equal(o.reach.endpoints - o.reach.endpointsWithoutStatement, 744);
-  // 743 + the 53 annotation statements, every one of which is reached.
-  assert.equal(o.reach.statementsReached, 796);
+  // 748 STATEMENTS, WHERE RM20 REACHED 796. The 48 that dropped out are RM37's:
+  // every one of them is a MyBatis-Plus built-in (`count`, `list`, `page`,
+  // `saveBatch`) on a service whose controller never calls it from a mapped
+  // method, reached only because the generic base's `service.list(…)` used to
+  // pool all 30 controllers' bindings on one symbol. `OpenApiAuthServiceImpl`
+  // is the plainest of them: `OpenApiAuthController` writes `service.page(…)`,
+  // `save`, `updateById`, `removeById` and `getById`, and neither `list` nor
+  // `count` nor `saveBatch` — so those three had no caller in this repository.
+  // The number of ENDPOINTS that reach a statement is unchanged at 744, which
+  // is the half of this that says nothing was disconnected.
+  assert.equal(o.reach.statementsReached, 748);
   const gap = o.gaps.find((g) => g.kind === 'http-calls-leaving-pack');
   assert.equal(gap.count, outboundJava + outboundWeb);
   assert.match(gap.note, /9 declarative HTTP client call\(s\) name a route no controller here serves/);

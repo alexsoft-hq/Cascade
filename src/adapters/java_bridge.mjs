@@ -65,6 +65,14 @@ const IDENTIFIER_SAMPLE_LIMIT = 20;
 const INHERITED_FIXPOINT_LIMIT = 64;
 
 /**
+ * How many inheriting types one generic base's body is resolved for before the
+ * downward walk gives up. A real hierarchy is far below it (jeecg-boot's widest
+ * is 29 controllers on one base); the guard is against a fact set edited into a
+ * cycle, for the same reason SUPER_CHAIN_LIMIT exists.
+ */
+const INHERITOR_WALK_LIMIT = 4096;
+
+/**
  * How many (package, simple name) pairs the "outside the analyzed roots" list
  * NAMES. The count is always exact; naming a few is what turns it into advice.
  */
@@ -265,7 +273,7 @@ export const CALL_RULE_BASIS = Object.freeze({
   'this-field': 'parse-tree `this.field`→declared type, method-by-name (no binding); the runtime object may be a subtype',
   'unqualified-enclosing': 'an unqualified call resolved to the ENCLOSING type by name; a method the type INHERITS is attributed to the subclass, not to the class that declares it',
   'super-enclosing': '`super.m()` resolved by walking the `extends` chain to the first ancestor that DECLARES m (by name); an ancestor the lane never parsed ends the walk unresolved',
-  'type-param-binding': 'the receiver\'s declared type is a TYPE PARAMETER of the enclosing type, so it has no meaning until a subclass binds it: one edge per concrete binding found in the pack. The base method\'s body is shared by every subclass, so every target here is a genuine possible callee. The set is an over-approximation of one CALL SITE, not a guess',
+  'type-param-binding': 'the receiver\'s declared type is a TYPE PARAMETER of the enclosing type, so it has no meaning until a subclass binds it. The base method\'s body is shared, and it is read once per inheriting subclass IN THAT SUBCLASS\'S SUBSTITUTION: the edge leaves the SUBCLASS\'S OWN copy of the method and names the single collaborator that subclass binds, never the union of what every subclass binds. Still a dispatch through a type parameter and still an over-approximation of one CALL SITE, now bound to one owner',
   'interface-dispatch': 'interface→impl class-hierarchy dispatch (an over-approximation: every implementor is a candidate)',
   'inherited-field': 'the receiver names no variable the file declares, so it is a member INHERITED from a supertype: the `extends` chain was walked to the nearest ancestor that declares a field of that name (first declaration wins), and a field typed by one of that ancestor\'s type parameters was bound through the subclass\'s `extends` arguments, IN THE CONTEXT OF THIS SUBCLASS, so the edge names that subclass\'s binding and no other\'s',
   'interface-dispatch-inherited': 'interface→impl dispatch where the implementor does not DECLARE the method: the `extends` chain was walked to the nearest ancestor that declares it (name + arity), and the inherited member was instantiated as a symbol of the concrete class whose calls carry that class\'s type-parameter bindings. This is the same over-approximation as interface-dispatch on the implementor set, but no longer blind to a method a class only inherits',
@@ -622,6 +630,9 @@ export function buildTypeIndex(javaFacts) {
  *
  *   implementorsOf  interfaceFqn -> Set(implFqn)      interface -> impl dispatch
  *   superOf         fqn -> resolved superclass fqn    `super.m()`
+ *   subclassesOf    fqn -> Set(direct subclass fqn)   the same `extends` relation
+ *                                                     read DOWNWARD, which is what
+ *                                                     "who inherits this body?" asks
  *   bindingsOf      baseFqn -> [{sub, args}]          every place a type is named
  *                                                     WITH type arguments, which is
  *                                                     what binds a type parameter
@@ -635,6 +646,7 @@ export function buildTypeIndex(javaFacts) {
  * @param {Map<string,object>} types  from buildTypeIndex
  * @param {(ownerFqn:string, simple:string)=>(string|null)} resolveType
  * @returns {{implementorsOf:Map<string,Set<string>>, superOf:Map<string,(string|null)>,
+ *            subclassesOf:Map<string,Set<string>>,
  *            bindingsOf:Map<string,{sub:string,args:string[]}[]>,
  *            declaredByType:Map<string,Map<string,Set<number>>>,
  *            declares:(fqn:string,name:string,arity:(number|null))=>boolean}}
@@ -642,6 +654,7 @@ export function buildTypeIndex(javaFacts) {
 export function buildHierarchyIndex(types, resolveType) {
   const implementorsOf = new Map();
   const superOf = new Map();
+  const subclassesOf = new Map();
   const bindingsOf = new Map();
   const addBinding = (baseFqn, sub, args) => {
     if (!baseFqn || !Array.isArray(args) || args.length === 0) return;
@@ -662,6 +675,11 @@ export function buildHierarchyIndex(types, resolveType) {
       const sup = resolveType(fqn, t.extendsSimple);
       superOf.set(fqn, sup);
       addBinding(sup, fqn, t.extendsArgs ?? []);
+      if (sup) {
+        let s = subclassesOf.get(sup);
+        if (!s) { s = new Set(); subclassesOf.set(sup, s); }
+        s.add(fqn);
+      }
     }
   }
   for (const list of bindingsOf.values()) list.sort((a, b) => cmp(a.sub, b.sub));
@@ -691,7 +709,7 @@ export function buildHierarchyIndex(types, resolveType) {
     return arity == null ? true : set.has(arity);
   };
 
-  return { implementorsOf, superOf, bindingsOf, declaredByType, declaredLineOf, declares };
+  return { implementorsOf, superOf, subclassesOf, bindingsOf, declaredByType, declaredLineOf, declares };
 }
 
 /**
@@ -796,6 +814,58 @@ export function resolveInheritedField(startFqn, name, idx) {
 }
 
 /**
+ * EVERY TYPE THAT INHERITS A GENERIC TYPE'S BODY, AND WHAT EACH ONE BINDS ONE OF
+ * ITS TYPE PARAMETERS TO.
+ *
+ * `extendsChainWithBindings` answers this looking UP, from one subclass. A base
+ * method's body is the other direction: `JeecgController<T, S extends IService<T>>`
+ * writes `service.list(...)` ONCE and twenty-nine controllers run it, each with
+ * its own `S`. Asking the question from the base is what lets the answer be
+ * twenty-nine separate edges instead of one node holding all of them.
+ *
+ * The walk goes down the `extends` relation and reads each subclass's binding
+ * back UP with the existing chain walk, so a class that binds through an
+ * intermediate base (`class Leaf extends Mid`, `class Mid extends Base<X, XSvc>`)
+ * is answered with what the intermediate wrote, and a class that binds nothing
+ * (a raw `extends Base`) is simply absent. A type that reaches the base through
+ * `implements` is not on that chain, so its own type arguments are read directly.
+ *
+ * @param {string} baseFqn        the generic type whose body is shared
+ * @param {string} paramSimple    the type parameter the receiver is typed by
+ * @param {{types:Map<string,object>, superOf:Map<string,(string|null)>,
+ *          subclassesOf:Map<string,Set<string>>,
+ *          bindingsOf:Map<string,{sub:string,args:string[]}[]>}} idx
+ * @returns {Map<string,{simple:string, ctx:string}>}  subclass fqn -> its binding
+ */
+export function inheritorsOfTypeParam(baseFqn, paramSimple, idx) {
+  const out = new Map();
+  const base = idx.types.get(baseFqn);
+  if (!base) return out;
+  const paramIndex = (base.typeParams ?? []).indexOf(paramSimple);
+  if (paramIndex < 0) return out;
+  const direct = idx.bindingsOf.get(baseFqn) ?? [];
+  const queue = direct.map((b) => b.sub);
+  const seen = new Set();
+  while (queue.length > 0) {
+    const sub = queue.shift();
+    if (!sub || seen.has(sub) || !idx.types.has(sub)) continue;
+    seen.add(sub);
+    // A fact set assembled from shards can be edited into a cycle, and a walk
+    // that hangs is worse than one that says it stopped.
+    if (seen.size > INHERITOR_WALK_LIMIT) break;
+    for (const d of idx.subclassesOf.get(sub) ?? []) queue.push(d);
+    const at = extendsChainWithBindings(sub, idx.types, idx.superOf).find((e) => e.fqn === baseFqn);
+    let bound = at ? (at.subst.get(paramSimple) ?? null) : null;
+    if (!bound) {
+      const args = direct.find((b) => b.sub === sub)?.args ?? [];
+      if (args[paramIndex]) bound = { simple: args[paramIndex], ctx: sub };
+    }
+    if (bound) out.set(sub, bound);
+  }
+  return out;
+}
+
+/**
  * The nearest ancestor that DECLARES a method of this name (and arity, when one
  * is known), with the substitution that holds there.
  *
@@ -893,7 +963,23 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     }
   }
 
-  const { implementorsOf, superOf, bindingsOf, declaredLineOf, declares } = buildHierarchyIndex(types, resolveType);
+  const {
+    implementorsOf, superOf, subclassesOf, bindingsOf, declaredLineOf, declares,
+  } = buildHierarchyIndex(types, resolveType);
+  // Who inherits a generic base's body, and what each of them binds one of its
+  // parameters to. Asked once per (base, parameter) rather than once per call
+  // site: a base method with three type-parameter calls asks the same question
+  // three times, and the answer is a property of the hierarchy, not of the call.
+  const inheritorCache = new Map();
+  const inheritorsFor = (baseFqn, paramSimple) => {
+    const key = `${baseFqn} ${paramSimple}`;
+    let hit = inheritorCache.get(key);
+    if (!hit) {
+      hit = inheritorsOfTypeParam(baseFqn, paramSimple, { types, superOf, subclassesOf, bindingsOf });
+      inheritorCache.set(key, hit);
+    }
+    return hit;
+  };
 
   // member fqn → definition line, for exact source preview (from method facts).
   const lineOfMember = new Map();
@@ -1392,6 +1478,47 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     if (!list) { list = []; callsFrom.set(c.from, list); }
     list.push(c);
   }
+  /**
+   * A `super.m()` CALL SITE RESOLVES THE ANCESTOR'S TYPE PARAMETERS TOO (RM37).
+   *
+   * `super.exportXls(request, obj, Obj.class, "…")` written in a controller runs
+   * the generic base's body RIGHT HERE, as this subclass, so the
+   * `service.list(…)` inside it means this subclass's service and no other. The
+   * `super-enclosing` edge alone stops at the base method, where the receiver is
+   * still a type parameter with 29 possible bindings; this carries the caller's
+   * substitution into that body and emits the one edge it determines.
+   *
+   * It is deliberately driven by the CALL SITE and not by the method's name: on
+   * jeecg-boot, `JeecgDemoController#exportXls` calls `super.exportXlsSheet(…)`,
+   * so the body that runs is a different method of the base, and only the call
+   * site says which.
+   *
+   * Emitted at most once per (caller member, base member): a method that writes
+   * the same `super.m()` twice runs one body, not two.
+   */
+  const superBodyBound = new Set();
+  const bindSuperBody = (fromMember, callerFqn, baseFqn, method) => {
+    const key = `${fromMember} ${baseFqn}#${method}`;
+    if (superBodyBound.has(key)) return;
+    superBodyBound.add(key);
+    const body = callsFrom.get(`${baseFqn}#${method}`) ?? [];
+    if (body.length === 0) return;
+    const params = types.get(baseFqn)?.typeParams ?? [];
+    if (params.length === 0) return;
+    const at = extendsChainWithBindings(callerFqn, types, superOf).find((e) => e.fqn === baseFqn);
+    if (!at) return;
+    for (const x of body) {
+      if (!x.toTypeSimple || !params.includes(x.toTypeSimple)) continue;
+      const b = at.subst.get(x.toTypeSimple);
+      if (!b) continue;
+      const targetFqn = resolveType(b.ctx, b.simple);
+      if (!targetFqn) continue;
+      emitCall(fromMember, targetFqn, x.method, 'type-param-binding', {
+        receiver: x.toTypeSimple, binding: b.simple, boundThrough: b.ctx,
+        inheritedFrom: `${baseFqn}#${method}`, viaSuper: true,
+      });
+    }
+  };
   const pendingInherited = [];
   const synthesizedMembers = new Set();
   /** Queue `classFqn#method` when the class does not declare it but an ancestor does. */
@@ -1479,6 +1606,10 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
       }
       if (target) {
         emitCall(c.from, target, c.method, 'super-enclosing', { receiver: 'super', declaredBy: target, hops });
+        // …and the body that runs there runs AS THIS CLASS, so a receiver typed
+        // by one of the base's type parameters is resolved here, where the
+        // binding is known, instead of being left on the shared symbol.
+        bindSuperBody(c.from, ownerFqn, target, c.method);
         continue;
       }
       // THE CHAIN RAN OFF THE EDGE OF THE TREE (RM35 §E). `cur` is a base class
@@ -1568,27 +1699,58 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     // A receiver whose declared type is a TYPE PARAMETER of the enclosing type
     // (`class B<T, S extends IService<T>> { S service; }`) means nothing on its
     // own — `service.list(...)` has no callee until a subclass says what S is.
-    // Resolve it PER BINDING: `class C extends B<A, IAService>` binds S, so the
-    // call site in B really can run IAService#list.
+    //
+    // THE SMEAR THIS BLOCK USED TO MAKE (RM37). The bodies of generic base
+    // methods are read ONCE, so collecting every subclass's binding at the call
+    // site put all of them on the BASE's symbol:
+    // `JeecgController#exportXls` reached 27 services at once, and every one of
+    // jeecg-boot's 29 export endpoints, which each carry a `super-enclosing`
+    // edge to that one method, read as touching every sibling module's tables.
+    // Measured: 9748 of 25376 endpoint→column pairs on jeecg-boot were that one
+    // shortcut, and no other project in the corpus lost a single pair to it,
+    // because nothing else routes an endpoint THROUGH a shared generic body.
+    //
+    // The bindings were never in doubt — RM35 already reads them, in the frame
+    // of the subclass that wrote them. So the body is resolved once PER
+    // INHERITING SUBCLASS and the edge leaves THAT subclass's copy of the
+    // method: `AiragMcpController#exportXls -> IAiragMcpService#list`, one edge
+    // each, and no controller reaches another's service. Nothing is claimed
+    // that was not claimed before. The same set of targets is attached where
+    // each of them is true, instead of being pooled on the symbol they share.
     const tpIndex = (types.get(ownerFqn)?.typeParams ?? []).indexOf(c.toTypeSimple);
     if (tpIndex >= 0 && c.toTypeSimple) {
-      const bound = new Map(); // targetFqn -> {boundAt, bindings}
-      for (const b of bindingsOf.get(ownerFqn) ?? []) {
-        const argSimple = b.args[tpIndex];
-        if (!argSimple) continue;
-        const argFqn = resolveType(b.sub, argSimple);
-        if (!argFqn) continue;
-        const prev = bound.get(argFqn);
-        if (prev) prev.bindings += 1;
-        else bound.set(argFqn, { boundAt: b.sub, binding: argSimple, bindings: 1 });
+      const member = c.from.slice(c.from.lastIndexOf('#') + 1);
+      const inheritors = inheritorsFor(ownerFqn, c.toTypeSimple);
+      let resolved = 0;
+      for (const sub of [...inheritors.keys()].sort(cmp)) {
+        const b = inheritors.get(sub);
+        const targetFqn = resolveType(b.ctx, b.simple);
+        if (!targetFqn) continue;
+        resolved += 1;
+        // A CONSTRUCTOR is neither inherited nor overridden: every subclass's
+        // own runs the base's, whether or not it writes `super(…)`. So the
+        // subclass's own constructor is where the base constructor's body is.
+        if (member === '<init>') {
+          emitCall(`${sub}#${member}`, targetFqn, c.method, 'type-param-binding', {
+            receiver: c.toTypeSimple, binding: b.simple, boundThrough: b.ctx, inheritedFrom: c.from,
+          });
+          continue;
+        }
+        // A subclass that DECLARES this method has a body of its own, and
+        // whether the ancestor's also runs is decided by whether it writes
+        // `super.m(…)` — which the `super-enclosing` rule reads at the call site
+        // (`bindSuperBody` above), where it also knows which base method was
+        // called. An override that does not call it is a different method, and
+        // claiming the ancestor's call site for it would be inventing one.
+        //
+        // A subclass that only INHERITS it has no body of its own, so the
+        // ancestor's IS what runs. That member is instantiated for this class by
+        // RM20's synthesis, which resolves this very call in this very
+        // substitution (`inherited-member-call`), so the edge is written there
+        // rather than twice.
+        if (!declares(sub, member, null)) queueIfInherited(sub, member);
       }
-      if (bound.size === 0) { countUnresolved('type-param-unbound', 'type-param-unbound'); continue; }
-      for (const targetFqn of [...bound.keys()].sort(cmp)) {
-        const b = bound.get(targetFqn);
-        emitCall(c.from, targetFqn, c.method, 'type-param-binding', {
-          receiver: c.toTypeSimple, binding: b.binding, boundAt: b.boundAt, bindings: b.bindings,
-        });
-      }
+      if (resolved === 0) countUnresolved('type-param-unbound', 'type-param-unbound');
       continue;
     }
 

@@ -89,7 +89,7 @@ Every resolved call shape, all by NAME, all graded SOUND_SET:
 | `helper(x)` (unqualified) | `unqualified-enclosing` | a method of the **enclosing type** (or one it inherits) |
 | `this.helper(x)` | `unqualified-enclosing` | the same thing — one call, one rule |
 | `super.exportXls(…)` | `super-enclosing` | the first ancestor up the `extends` chain that **declares** the method |
-| `service.list(…)` where `service` is typed by a **type parameter** | `type-param-binding` | one edge per concrete binding a subclass makes (`class C extends B<A, IAService>`), with `evidence.boundAt` naming the subclass |
+| `service.list(…)` where `service` is typed by a **type parameter** | `type-param-binding` | the binding **that subclass** makes (`class C extends B<A, IAService>`), one edge from the subclass's own copy of the method, with `evidence.boundThrough` naming where the binding was spelled and `evidence.inheritedFrom` naming the shared body the call site is in |
 | an interface method | `interface-dispatch` | every implementor (a class-hierarchy over-approximation) |
 | `log.info(…)` in a `@Slf4j` class | `generated-field` | the logger type that Lombok's annotation generates (`org.slf4j.Logger` …). The field is real at run time and in no parse tree, so nothing but the annotation can explain the receiver |
 | `ringData.computeIfAbsent(…)` where the field's type came in through `import java.util.*` | `wildcard-jdk` | `<that package>.<Simple>`. The JDK is a closed world this lane never reads, so the call leaves the project |
@@ -140,9 +140,26 @@ failed rather than folded into the field rule:
 | `type-param-unbound` | as above |
 | `unknown` | a third-party type behind a wildcard, a constant somebody static-imported, a field a code generator adds after parsing |
 
-`type-param-binding` is an over-approximation of **one call site**, not a guess:
-the base method's body is literally shared by every subclass, so every target it
-emits is a genuine possible callee of that line.
+`type-param-binding` is an over-approximation of **one call site**, not a guess,
+and it is resolved **once per subclass**. A generic base writes
+`service.list(…)` once and thirty controllers run it, so the answer is thirty
+separate edges, each leaving the controller that runs that body and naming the
+one service that controller binds. Pooling them on the base method instead is
+the same set of targets attached to the wrong symbol, and it reads as every
+controller touching every sibling's tables: on jeecg-boot that was 9748 of
+25376 endpoint-to-column pairs.
+
+Which subclass carries the edge is read from the code, never assumed:
+
+- a subclass that **inherits** the method outright has no body of its own, so
+  the ancestor's is what runs. The member is instantiated for that class (see
+  `inherited-member-call`) and the copy carries the call;
+- a subclass that **overrides** it carries the call where it writes
+  `super.exportXls(…)`, which is also what says WHICH base method runs —
+  jeecg-boot's `JeecgDemoController#exportXls` calls `super.exportXlsSheet(…)`,
+  a different method with a different body;
+- an override that never calls `super` replaced the body, so the ancestor's
+  call site is not in it and no edge is made.
 
 **Every MAY_CALL edge carries its rule** in `evidence.rule`, with a one-sentence
 `evidence.basis` saying what that rule actually did. They share one grade

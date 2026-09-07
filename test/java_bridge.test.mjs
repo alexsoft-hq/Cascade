@@ -795,35 +795,186 @@ test('`this.m()` is the same call as the unqualified one — one rule, one targe
   assert.equal(stats.callsByRule['unqualified-enclosing'], 1);
 });
 
-test('a receiver typed by a TYPE PARAMETER resolves once per binding a subclass makes', () => {
+// ---------------------------------------------------------------------------
+// A RECEIVER TYPED BY A TYPE PARAMETER (RM37).
+//
+// One generic base, two subclasses, each binding `S` to its own service. The
+// body is written once and runs twice, so the question "who does
+// `service.list()` call?" has two answers — and each of them belongs to ONE of
+// the two subclasses. Putting both on the base method is what let jeecg-boot's
+// 29 export endpoints read as touching each other's tables.
+//
+// `svc` is spelled as the base's own field, which is what the worker records
+// for `service.list(...)` inside the class that declares `service`.
+// ---------------------------------------------------------------------------
+
+/**
+ * A generic base whose body calls through the type parameter, and one subclass
+ * per binding. `overrides` names the subclasses that DECLARE the method (an
+ * override calling `super.m()`), which is what jeecg's controllers do; the rest
+ * inherit the body outright.
+ */
+function typeParamFacts(bindings, overrides = []) {
+  const facts = [
+    {
+      kind: 'type', fqn: 'com.x.Base', typeKind: 'class', package: 'com.x',
+      annotations: [], implements: [], implementsArgs: [], extends: null, extendsArgs: [],
+      typeParams: ['T', 'S'], typeParamBounds: [null, 'ISvc'],
+      declaredMethods: ['m/1'], declaredMethodLines: [40], file: 'x/Base.java',
+    },
+    { kind: 'field', owner: 'com.x.Base', name: 'svc', typeSimple: 'S', file: 'x/Base.java' },
+    { kind: 'call', from: 'com.x.Base#m', receiver: 'svc', method: 'find', toTypeSimple: 'S', via: 'field', file: 'x/Base.java' },
+  ];
+  for (const [sub, svc] of bindings) {
+    const declared = overrides.includes(sub);
+    facts.push(
+      {
+        kind: 'type', fqn: `com.x.${svc}`, typeKind: 'interface', package: 'com.x',
+        annotations: [], implements: [], implementsArgs: [],
+        declaredMethods: ['find/1'], declaredMethodLines: [5], file: `x/${svc}.java`,
+      },
+      {
+        kind: 'type', fqn: `com.x.${sub}`, typeKind: 'class', package: 'com.x',
+        annotations: ['RestController'], implements: [], implementsArgs: [],
+        extends: 'Base', extendsArgs: ['Row', svc], typeParams: [], typeParamBounds: [],
+        declaredMethods: declared ? ['m/1'] : [], declaredMethodLines: declared ? [12] : [],
+        file: `x/${sub}.java`,
+      },
+    );
+    if (declared) {
+      facts.push({ kind: 'call', from: `com.x.${sub}#m`, receiver: 'super', method: 'm', toTypeSimple: null, via: 'super-method', file: `x/${sub}.java` });
+    }
+  }
+  return facts;
+}
+
+test('a call through a TYPE PARAMETER is resolved in each subclass, and neither reaches the other\'s service', () => {
   const g = new Graph();
-  const stats = addJavaFacts(g, [
-    { kind: 'type',
-      fqn: 'com.x.BaseController',
-      typeKind: 'class',
-      package: 'com.x',
-      annotations: [],
-      implements: [],
-      typeParams: ['T', 'S'],
-      typeParamBounds: [null, 'IService'],
-      declaredMethods: ['exportXls/1'],
-      file: 'x/BaseController.java' },
-    { kind: 'type', fqn: 'com.x.IOrderService', typeKind: 'interface', package: 'com.x', annotations: [], implements: [], declaredMethods: ['list/1'], file: 'x/IOrderService.java' },
-    { kind: 'type', fqn: 'com.x.IUserService', typeKind: 'interface', package: 'com.x', annotations: [], implements: [], declaredMethods: ['list/1'], file: 'x/IUserService.java' },
-    { kind: 'type', fqn: 'com.x.OrderController', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [], extends: 'BaseController', extendsArgs: ['Order', 'IOrderService'], declaredMethods: [], file: 'x/OrderController.java' },
-    { kind: 'type', fqn: 'com.x.UserController', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [], extends: 'BaseController', extendsArgs: ['User', 'IUserService'], declaredMethods: [], file: 'x/UserController.java' },
-    { kind: 'field', owner: 'com.x.BaseController', name: 'service', typeSimple: 'S', file: 'x/BaseController.java' },
-    { kind: 'call', from: 'com.x.BaseController#exportXls', receiver: 'service', method: 'list', toTypeSimple: 'S', via: 'field', file: 'x/BaseController.java' },
-  ]);
-  const targets = g.edges.filter((e) => e.evidence?.rule === 'type-param-binding').map((e) => e.to).sort();
-  assert.deepEqual(targets, [nodeId('symbol', 'com.x.IOrderService#list'), nodeId('symbol', 'com.x.IUserService#list')],
-    'the base method body is SHARED, so both bindings are genuine possible callees');
-  const one = g.edges.find((e) => e.to === nodeId('symbol', 'com.x.IOrderService#list'));
-  assert.equal(one.evidence.receiver, 'S');
-  assert.equal(one.evidence.binding, 'IOrderService');
-  assert.equal(one.evidence.boundAt, 'com.x.OrderController', 'the evidence names WHERE the binding was made');
+  const stats = addJavaFacts(g, typeParamFacts(
+    [['A', 'ASvc'], ['B', 'BSvc']],
+    ['A', 'B'],
+  ));
+  const out = (member) => g.outEdges(nodeId('symbol', member))
+    .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+
+  // ONE bound edge each, on the subclass's own copy of the method.
+  assert.deepEqual(out('com.x.A#m'), [nodeId('symbol', 'com.x.ASvc#find'), nodeId('symbol', 'com.x.Base#m')]);
+  assert.deepEqual(out('com.x.B#m'), [nodeId('symbol', 'com.x.BSvc#find'), nodeId('symbol', 'com.x.Base#m')]);
+
+  // …and the base keeps nothing: the union that used to sit here is the whole
+  // defect, because every subclass's `super.m()` edge lands on this one symbol.
+  assert.deepEqual(out('com.x.Base#m'), []);
+
+  const ev = g.edges.find((e) => e.to === nodeId('symbol', 'com.x.ASvc#find')).evidence;
+  assert.equal(ev.rule, 'type-param-binding');
+  assert.equal(ev.receiver, 'S');
+  assert.equal(ev.binding, 'ASvc');
+  assert.equal(ev.boundThrough, 'com.x.A', 'the evidence names WHERE the binding was made');
+  assert.equal(ev.inheritedFrom, 'com.x.Base#m', 'and whose body wrote the call site');
+  assert.equal(g.edges.find((e) => e.to === nodeId('symbol', 'com.x.ASvc#find')).grade, 'SOUND_SET',
+    'still a dispatch through a type parameter, bound to one owner and no more');
   assert.equal(stats.callsByRule['type-param-binding'], 2);
   assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 0);
+});
+
+test('a subclass that only INHERITS the generic body gets the same one bound edge, through its instantiated copy', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, typeParamFacts([['A', 'ASvc'], ['B', 'BSvc']]));
+  const out = (member) => g.outEdges(nodeId('symbol', member))
+    .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(out('com.x.A#m'), [nodeId('symbol', 'com.x.ASvc#find')]);
+  assert.deepEqual(out('com.x.B#m'), [nodeId('symbol', 'com.x.BSvc#find')]);
+  assert.deepEqual(out('com.x.Base#m'), []);
+  // The member is the one RM20 instantiates, so the node opens the ancestor's
+  // code — the body that really runs — and the rule says so.
+  const n = g.nodes.get(nodeId('symbol', 'com.x.A#m'));
+  assert.equal(n.inherited, true);
+  assert.equal(n.inheritedFrom, 'com.x.Base#m');
+  assert.equal(n.file, 'x/Base.java');
+  assert.equal(n.line, 40);
+  assert.equal(g.edges.find((e) => e.to === nodeId('symbol', 'com.x.ASvc#find')).evidence.rule, 'inherited-member-call');
+  assert.equal(stats.callsByRule['type-param-binding'], 0, 'the instantiated copy carries it, so it is not written twice');
+  assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 0);
+});
+
+test('a subclass that binds the parameter to an INTERFACE still fans out to every implementor', () => {
+  // The legitimate over-approximation, untouched: `A` binds `S` to one
+  // interface, and two classes implement it, so the call really can run either.
+  // Only the CROSS-SUBCLASS union was the defect.
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...typeParamFacts([['A', 'ASvc'], ['B', 'BSvc']], ['A', 'B']),
+    { kind: 'type', fqn: 'com.x.ASvcOne', typeKind: 'class', package: 'com.x', annotations: [], implements: ['ASvc'], implementsArgs: [[]], declaredMethods: ['find/1'], declaredMethodLines: [7], file: 'x/ASvcOne.java' },
+    { kind: 'type', fqn: 'com.x.ASvcTwo', typeKind: 'class', package: 'com.x', annotations: [], implements: ['ASvc'], implementsArgs: [[]], declaredMethods: ['find/1'], declaredMethodLines: [7], file: 'x/ASvcTwo.java' },
+  ]);
+  const out = (member) => g.outEdges(nodeId('symbol', member))
+    .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(out('com.x.ASvc#find'), [nodeId('symbol', 'com.x.ASvcOne#find'), nodeId('symbol', 'com.x.ASvcTwo#find')]);
+  // …and B still reaches only its own, through a service nobody implements here.
+  assert.deepEqual(out('com.x.B#m'), [nodeId('symbol', 'com.x.BSvc#find'), nodeId('symbol', 'com.x.Base#m')]);
+});
+
+test('an override that calls a DIFFERENT base method binds THAT body, not the one it shares a name with', () => {
+  // jeecg-boot's `JeecgDemoController#exportXls` calls `super.exportXlsSheet(…)`.
+  // The body that runs is the base's OTHER method, and only the call site says
+  // so — a rule that went by the method's name would bind the wrong one.
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...typeParamFacts([['A', 'ASvc']], ['A']).map((r) => (
+      r.kind === 'call' && r.from === 'com.x.A#m' ? { ...r, method: 'sheet' } : r)),
+    { kind: 'call', from: 'com.x.Base#sheet', receiver: 'svc', method: 'count', toTypeSimple: 'S', via: 'field', file: 'x/Base.java' },
+  ].map((r) => (r.kind === 'type' && r.fqn === 'com.x.Base'
+    ? { ...r, declaredMethods: ['m/1', 'sheet/1'], declaredMethodLines: [40, 55] } : r)));
+  const out = (member) => g.outEdges(nodeId('symbol', member))
+    .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(out('com.x.A#m'), [nodeId('symbol', 'com.x.ASvc#count'), nodeId('symbol', 'com.x.Base#sheet')],
+    'the body that runs is `sheet`, so `count` is what this endpoint reaches');
+  assert.deepEqual(out('com.x.Base#m'), []);
+  assert.deepEqual(out('com.x.Base#sheet'), []);
+});
+
+test('an override that does NOT call super keeps the ancestor\'s call site out of its own body', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, typeParamFacts([['A', 'ASvc'], ['B', 'BSvc']], ['A', 'B'])
+    // A declares `m` and never hands the work back.
+    .filter((r) => !(r.kind === 'call' && r.from === 'com.x.A#m')));
+  const out = (member) => g.outEdges(nodeId('symbol', member))
+    .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(out('com.x.A#m'), [], 'a body that replaces the ancestor\'s does not run it');
+  assert.deepEqual(out('com.x.B#m'), [nodeId('symbol', 'com.x.BSvc#find'), nodeId('symbol', 'com.x.Base#m')]);
+  assert.equal(stats.callsByRule['type-param-binding'], 1);
+  assert.equal(stats.unresolvedCallsByRule['type-param-unbound'], 0, 'the binding resolved, it is the call site that is not there');
+});
+
+test('a CONSTRUCTOR body binds in each subclass: nobody inherits or overrides one', () => {
+  // `<init>` is never in `declaredMethods`, so neither the "declares it" nor the
+  // "only inherits it" branch describes it. Every subclass constructor runs the
+  // base's, written or not, so the subclass's own is where that body belongs.
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...typeParamFacts([['A', 'ASvc'], ['B', 'BSvc']]),
+    { kind: 'call', from: 'com.x.Base#<init>', receiver: 'svc', method: 'warmUp', toTypeSimple: 'S', via: 'field', file: 'x/Base.java' },
+  ]);
+  const out = (member) => g.outEdges(nodeId('symbol', member))
+    .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort();
+  assert.deepEqual(out('com.x.A#<init>'), [nodeId('symbol', 'com.x.ASvc#warmUp')]);
+  assert.deepEqual(out('com.x.B#<init>'), [nodeId('symbol', 'com.x.BSvc#warmUp')]);
+  assert.deepEqual(out('com.x.Base#<init>'), []);
+});
+
+test('a base method a subclass inherits THROUGH an intermediate binds through that intermediate', () => {
+  // `Leaf extends Mid`, `Mid extends Base<Row, MidSvc>`: the binding is Mid's,
+  // and Leaf runs the body, so the edge leaves Leaf and names Mid as where the
+  // binding was spelled.
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...typeParamFacts([['Mid', 'MidSvc']]),
+    { kind: 'type', fqn: 'com.x.Leaf', typeKind: 'class', package: 'com.x', annotations: ['RestController'], implements: [], implementsArgs: [], extends: 'Mid', extendsArgs: [], typeParams: [], typeParamBounds: [], declaredMethods: ['m/1'], declaredMethodLines: [11], file: 'x/Leaf.java' },
+    { kind: 'call', from: 'com.x.Leaf#m', receiver: 'super', method: 'm', toTypeSimple: null, via: 'super-method', file: 'x/Leaf.java' },
+  ]);
+  const e = g.edges.find((x) => x.from === nodeId('symbol', 'com.x.Leaf#m') && x.to === nodeId('symbol', 'com.x.MidSvc#find'));
+  assert.ok(e, 'Leaf#m --type-param-binding--> MidSvc#find is missing');
+  assert.equal(e.evidence.boundThrough, 'com.x.Mid');
 });
 
 test('a type parameter NO subclass binds is unresolved under `type-param-unbound`, not under the field rule', () => {
@@ -1108,9 +1259,19 @@ test('dispatch reaches a method the implementor only INHERITS, and each subclass
   assert.equal(n.file, 'com/example/Base.java');
   assert.equal(n.line, 40);
 
-  assert.equal(stats.inheritedMembers.synthesized, 2, 'one per concrete class');
+  // TWO members per concrete class, not one (RM37). `deleteById` is the one
+  // dispatch asked for; `insert` is instantiated because the base's body calls
+  // the mapper THROUGH the type parameter, and since RM37 that call is resolved
+  // in each subclass rather than pooled on the base. `insertBatch` is not among
+  // them: its only call is unqualified, which needs no binding to resolve.
+  assert.equal(stats.inheritedMembers.synthesized, 4, 'deleteById and insert, for each of the two classes');
   assert.equal(stats.callsByRule['interface-dispatch-inherited'], 2);
-  assert.equal(stats.callsByRule['inherited-member-call'], 2);
+  assert.equal(stats.callsByRule['inherited-member-call'], 4);
+  assert.equal(stats.callsByRule['type-param-binding'], 0, 'no subclass DECLARES either one, so every copy carries it');
+  // …and `Base` itself carries neither, which is the whole point: both mappers
+  // used to hang off the one shared body.
+  assert.deepEqual(out('com.example.Base#deleteById'), []);
+  assert.deepEqual(out('com.example.Base#insert'), []);
 });
 
 test('an OVERRIDE in the subclass wins over the ancestor — nothing is synthesized for it', () => {
@@ -1123,9 +1284,13 @@ test('an OVERRIDE in the subclass wins over the ancestor — nothing is synthesi
   const stats = addJavaFacts(g, facts);
   const disp = g.edges.find((e) => e.from === symbolId('com.example.AaaDao#deleteById'));
   assert.equal(disp.evidence.rule, 'interface-dispatch', 'the class declares it: the plain rule, not the inherited one');
-  assert.equal(stats.inheritedMembers.synthesized, 0);
+  // NOTHING is synthesized for `deleteById` — the class wrote its own. The one
+  // member that is synthesized is `insert`, which the class does NOT declare and
+  // whose base body calls the mapper through the type parameter (RM37).
+  assert.equal(stats.inheritedMembers.synthesized, 1);
   const n = g.nodes.get(symbolId('com.example.AaaDaoImpl#deleteById'));
   assert.equal(n.inherited, undefined, 'a declared method is not an inherited one');
+  assert.equal(g.nodes.get(symbolId('com.example.AaaDaoImpl#insert')).inherited, true);
   // …and its own body still resolves: the override calls its own mapper.
   assert.deepEqual(
     g.outEdges(symbolId('com.example.AaaDaoImpl#deleteById')).map((e) => e.to),
@@ -1204,7 +1369,16 @@ test('a DIAMOND — a default method on a second interface — is reported, not 
     ['com.example.AaaDao', 'interface-dispatch-inherited', 'com.example.Base#deleteById'],
     ['com.example.Soft', 'interface-dispatch-inherited', 'com.example.Base#deleteById'],
   ]);
-  assert.equal(stats.inheritedMembers.synthesized, 1, 'one body, instantiated once for this class');
+  // `deleteById` is instantiated ONCE for this class even though two interfaces
+  // reach it — one body, one copy. (`insert` is the second: the base calls the
+  // mapper through the type parameter there, so RM37 instantiates it too.)
+  assert.equal(stats.inheritedMembers.synthesized, 2);
+  assert.deepEqual(
+    g.outEdges(symbolId('com.example.AaaDaoImpl#deleteById'))
+      .filter((e) => e.type === 'MAY_CALL').map((e) => e.to).sort(),
+    ['symbol:com.example.AaaMapper#deleteById'],
+    'the copy still reaches this class\'s own mapper and no other',
+  );
 });
 
 // ---------------------------------------------------------------------------
