@@ -45,46 +45,177 @@
 
 ## 무엇이 필요한가
 
-**OTLP/JSON 형식의 OpenTelemetry 트레이스 익스포트**입니다. 컬렉터의 파일
-익스포터가 쓰는 `resourceSpans` 모양이고, Jaeger 나 Tempo 의 API 익스포트도 같은
-모양입니다. 그 밖에는 아무것도 필요 없습니다. 우리 쪽 에이전트도, 분석 시점의
-네트워크도, 데이터베이스도 쓰지 않습니다.
+**OpenTelemetry 트레이스 익스포트**입니다. 실제 캡처가 나오는 모양은 둘이고, 둘 다
+그대로 받습니다.
+
+- **OTLP/JSON 문서**(`{"resourceSpans": […]}`). 컬렉터의 파일 익스포터가 쓰는
+  모양이고, Jaeger 나 Tempo 의 API 익스포트도 같은 모양입니다.
+- **애플리케이션 자신의 로그**. Java 에이전트가 `logging-otlp` 로 내보낼 때 나오는
+  것입니다. 이것은 문서가 아닙니다. 익스포트 배치 하나가 `ResourceSpans` 객체
+  하나이고, 그 앞에는 로거가 붙인 접두사가 있으며, 앱이 찍은 다른 모든 줄 사이에
+  섞여 있습니다.
+
+어느 쪽인지는 **파일을 읽어서** 정하고 확장자로 정하지 않으므로, 넣는 방법은
+같습니다. 읽을 수 없는 줄은 건너뛰고 세며, 그것 때문에 실행이 죽지 않습니다. 그
+밖에는 아무것도 필요 없습니다. 우리 쪽 에이전트도, 분석 시점의 네트워크도,
+데이터베이스도 쓰지 않습니다.
 
 ```
 cascade analyze --root . --otel evidence/checkout-smoke.json
+cascade analyze --project petclinic --otel evidence/petclinic.log
 ```
 
 캡처가 여럿이면 `--otel` 을 반복합니다. 함께 접히므로, 같은 체인을 담은 두
 트레이스는 두 횟수를 합한 하나의 표시가 됩니다.
 
-## 어떻게 캡처하는가
+## 처음부터 끝까지, 실제 레시피
 
-보통은 여러분이 통제하는 실행 아래에서 도는 **OpenTelemetry Java 에이전트**가
-출처입니다. 통합 테스트 묶음, 스모크 실행, 스테이징 트래픽의 한 조각 같은 것입니다.
-기본 설정만으로 HTTP 서버 span 과 JDBC span 을 쓰므로 엔드포인트 조인과 statement
-조인에는 그것으로 충분합니다. **디스패치** 조인에는 메서드 span 이 더 필요하고,
-얻는 방법은 둘입니다.
+아래 숫자는 이것을 실제로 돌려서 나온 것입니다. spring-petclinic, 공식 Java
+에이전트, `curl` 요청 몇 개. 애플리케이션 코드는 한 줄도 고치지 않았고 컬렉터도 쓰지
+않았습니다. 그 실행이 이 레시피와 다른 점이 하나 있는데, 두 홉이 `RUNTIME_ONLY` 로
+돌아온 이유가 바로 그것이라 5 단계에서 밝혀 둡니다.
 
-- 관심 있는 메서드에 `@WithSpan` 을 붙이거나,
-- 에이전트의 메서드 계측을 관심 있는 패키지에 대해 켭니다
-  (`otel.instrumentation.methods.include` 에 클래스와 메서드를 지정).
+### 1. 에이전트 받기
 
-그런 다음 파일로 내보냅니다.
+OpenTelemetry 릴리스 페이지에서 한 번 내려받는 것이 전부입니다.
+
+```
+curl -L -o opentelemetry-javaagent.jar \
+  https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar
+```
+
+### 2. 어떤 메서드를 계측할지 pack 에 묻기
+
+기본 설정만으로도 에이전트는 HTTP 서버 span, Spring Data 리포지터리 span, JDBC
+span 을 씁니다. 그래서 첫 실행에서 **라우트**와 **statement** 조인은 채워지고
+**디스패치는 0** 으로 남습니다. 컨트롤러 메서드에도 서비스 메서드에도 span 이
+없으니, 메서드 span 이 다른 메서드 span 안에 중첩되는 일 자체가 없기 때문입니다.
+
+에이전트가 그 span 을 만들어 주기는 하는데, **명시적인 메서드 이름**을 요구합니다.
+`pkg.Class[*]` 는 이름이 아닙니다. 와일드카드는 아무것도 잡지 못하고, 캡처는 앞과
+똑같이 비어서 돌아옵니다. 에이전트가 원하는 이름은 핸들러와 statement 에 닿는
+메서드들이고, 그것은 pack 이 이미 들고 있는 것입니다.
+
+```
+cascade otel-methods --project petclinic
+```
+
+stdout 으로 붙여 넣을 수 있는 한 줄이 나옵니다.
+
+```
+org.springframework.samples.petclinic.owner.OwnerController[findOwner,findPaginatedForOwnersLastName,initCreationForm,…];org.springframework.samples.petclinic.owner.OwnerRepository[findById,…];…
+```
+
+petclinic 에서는 10 개 클래스의 32 개 메서드입니다. 큰 프로젝트에서는 수만 글자가
+되는데, 셸이 감당하기는 하지만 `.properties` 파일이나 JVM 인자 파일에 넣는 편이
+읽기 편합니다.
+
+### 3. 트래픽과 함께 한 번 실행하기
 
 ```
 java -javaagent:opentelemetry-javaagent.jar \
-     -Dotel.traces.exporter=otlp \
-     -Dotel.exporter.otlp.protocol=http/protobuf \
-     -Dotel.service.name=storefront-api \
-     -jar app.jar
+     -Dotel.service.name=petclinic \
+     -Dotel.traces.exporter=logging-otlp \
+     -Dotel.metrics.exporter=none \
+     -Dotel.logs.exporter=none \
+     -Dotel.bsp.schedule.delay=1000 \
+     "-Dotel.instrumentation.methods.include=$(cascade otel-methods --project petclinic)" \
+     -jar target/spring-petclinic-4.0.0-SNAPSHOT.jar > petclinic.log 2>&1
 ```
 
-컬렉터의 **파일 익스포터**로 OTLP/JSON 을 쓰게 하면 됩니다. 같은 트레이스를
-Jaeger 나 Tempo 에서 내보낸 것도 같은 모양이고 같게 읽힙니다.
+`logging-otlp` 가 span 을 그 로그에 쓰므로 컬렉터도, 열어 둘 포트도 없습니다.
+`metrics` 와 `logs` 는 이 레인이 둘 다 읽지 않으므로 껐습니다.
+`bsp.schedule.delay=1000` 은 에이전트가 5 초가 아니라 1 초마다 flush 하게 합니다.
+1 분밖에 돌지 않는 실행에서는 이것이 차이를 만듭니다.
 
-무언가를 말할 수 있게 되고 싶은 대상을 캡처하십시오. 여기서 값을 만드는 것은
-확인된 체인이지 담긴 양이 아니므로, 중요한 화면들을 지나는 5 분짜리 스모크 실행이
-하루치 트래픽보다 훨씬 쓸모 있습니다.
+그다음 무언가를 말할 수 있게 되고 싶은 트래픽을 보냅니다. 통합 테스트 묶음, 스모크
+스크립트, 스테이징 트래픽의 한 조각 같은 것입니다. 아래 캡처는 petclinic 의 화면들을
+지나는 `curl` 요청 13 개이고, 모양은 이렇습니다.
+
+```
+curl -s localhost:8080/ > /dev/null
+curl -s "localhost:8080/owners?lastName=" > /dev/null
+curl -s localhost:8080/owners/1 > /dev/null
+curl -s localhost:8080/vets.html > /dev/null
+```
+
+그리고 **애플리케이션을 멈춥니다.** 그래야 프로세스가 끝나기 전에 마지막 배치가
+로그로 flush 됩니다.
+
+여기서 값을 만드는 것은 확인된 체인이지 담긴 양이 아니므로, 중요한 화면들을 지나는
+5 분짜리 스모크 실행이 하루치 트래픽보다 훨씬 쓸모 있습니다.
+
+### 4. 로그를 그대로 넣기
+
+로그는 있는 그대로 들어갑니다. 감싸는 단계도, `jq` 도 없습니다.
+
+```
+cascade analyze --project petclinic --otel petclinic.log
+```
+
+실행은 파일을 어떻게 읽었는지 말하고, 이어서 집계를 찍습니다.
+
+```
+Runtime evidence: petclinic.log was read as an agent log, one export per line: 169 span(s) in it, 56 line(s) carried none
+Runtime evidence: 1 trace(s), 169 span(s) (25 carried nothing this lane reads), 31 observation(s):
+  5 dispatch, 9 statement and 10 route observation(s) matched this pack, 7 matched none
+Runtime evidence: 8 static edge(s) marked observed (3 a call the source states,
+  0 a candidate set the trace narrowed), 2 RUNTIME_ONLY edge(s) added for a hop no
+  static rule explains, 5 statement(s) and 10 route(s) observed, window
+  2026-09-08T00:39:16.236Z to 2026-09-08T00:39:18.252Z
+Runtime evidence: a grade was neither raised nor lowered by any of this.
+  What the trace did not visit is unknown, not absent
+```
+
+세 가지 질문으로 읽으면 됩니다.
+
+- **파일에 무엇이 있었나.** span 이 몇 개였고, 그중 이 레인이 읽는 속성을 하나도
+  담지 않은 것이 몇 개였나(프레임워크 자신의 span, 트랜잭션 커밋, Hibernate 세션
+  같은 것들입니다).
+- **무엇이 붙었나.** 이 pack 이 들고 있는 심볼, statement, 라우트에 맞은 관측이
+  몇 개이고 아무것에도 맞지 않은 것이 몇 개인가. 여기서 맞지 않은 7 개는 Hibernate
+  의 스키마 부트스트랩과 지연 로딩이 낸 JDBC span 입니다. 리포지터리 메서드 아래에서
+  돌지 않았으므로 붙일 statement 가 없고, 추측해서 붙이지도 않습니다.
+- **무엇이 쓰였나.** 이미 있던 엣지에 붙은 표시와, 새로 더해진 홉입니다.
+
+### 5. 그래서 무엇을 얻었나
+
+spring-petclinic 에서 위 실행의 결과입니다.
+
+| | 관측됨 |
+| --- | --- |
+| 호출된 라우트 | 17 개 중 10 개 |
+| 돌아간 statement | 6 개 중 5 개 |
+| 확인된 디스패치 홉 | 3 개(`showOwner` → `findById`, `processCreationForm` → `save`, `showResourcesVetList` → `findAll`) |
+| `RUNTIME_ONLY` 로 더해진 홉 | 2 개 |
+
+더해진 두 홉은 `OwnerController#processFindForm` →
+`OwnerRepository#findByLastNameStartingWith` 와 `VetController#showVetList` →
+`VetRepository#findAll` 입니다. 둘 다 소스가 하는 호출이 아닙니다. 두 컨트롤러 모두
+**private 헬퍼**(`findPaginatedForOwnersLastName`, `findPaginated`)를 거치는데 이번
+캡처는 그 헬퍼를 계측하지 않았고, 그래서 트레이스에는 컨트롤러가 리포지터리 바로
+위에 있는 것으로 보였습니다. 레인은 본 그대로만 기록했고 정적 엣지를 지어내지
+않았습니다.
+
+**`RUNTIME_ONLY` 홉은 대개 그런 뜻입니다. 중간에 있는, 계측하지 않은 메서드입니다.**
+이 캡처는 라우트 핸들러만 손으로 적은 목록으로 떴고, 그것이 위 2 단계와 다른
+점입니다. `cascade otel-methods` 는 그 두 헬퍼도 이름에 넣습니다. 둘 다 statement 에
+닿기 때문입니다. 그리고 그 주위의 네 홉(`processFindForm` →
+`findPaginatedForOwnersLastName` → `findByLastNameStartingWith`, vet 쪽도 같은 모양)은
+정적 그래프가 이미 들고 있는 엣지입니다. 그러니 그 목록으로 뜬 캡처에는 헬퍼의 span 이
+있고, 관측은 그 엣지들에 붙으며, 레인이 더할 홉은 남지 않습니다.
+
+### 6. 표시를 있는 그대로 읽기
+
+**한 번 관측된 것이 항상은 아닙니다.** 그래서 표시는 등급 **옆에** 그려지고 위에
+그려지지 않습니다. 표시가 없는 라우트는 **이번 캡처가 지나가지 않은** 것이고, 그것은
+"여기서는 아무것도 돌지 않는다"와 다릅니다. 커버리지는 실행된 만큼일 뿐이고, 모든
+답에는 트레이스 이름과 span 수와 기간을 담은 `basis.runtimeEvidence` 가 실려 있어서
+읽는 사람이 둘을 구분할 수 있습니다.
+
+**그리고 여러분의 데이터는 pack 에 들어가지 않습니다.** statement 의 SQL 은 거기
+적힌 테이블 이름을 읽고 버리며, 바인딩된 파라미터는 아예 읽지 않고, 페이로드는
+건드리지 않습니다(아래 *pack 에 절대 들어가지 않는 것*).
 
 ## span 에서 무엇을 읽는가
 
@@ -148,19 +279,7 @@ Jaeger 나 Tempo 에서 내보낸 것도 같은 모양이고 같게 읽힙니다
 
 ## 그다음에 보이는 것
 
-실행이 자기 집계를 찍습니다.
-
-```
-Runtime evidence: 1 trace(s), 10 span(s) (1 carried nothing this lane reads), 7 observation(s):
-  3 dispatch, 1 statement and 2 route observation(s) matched this pack, 1 matched none
-Runtime evidence: 4 static edge(s) marked observed (1 a call the source states,
-  1 a candidate set the trace narrowed), 1 RUNTIME_ONLY edge(s) added for a hop no
-  static rule explains, 1 statement(s) and 2 route(s) observed
-Runtime evidence: a grade was neither raised nor lowered by any of this.
-  What the trace did not visit is unknown, not absent
-```
-
-그리고 답에서는 이렇습니다.
+실행이 찍는 집계(위 4 단계) 옆에서, 답은 이렇습니다.
 
 - `flow` 의 행 중 트레이스가 본 메서드와 statement 에 `observed: true` 가 붙고,
   구간 전체가 관측된 단계의 `link` 에도 붙습니다.

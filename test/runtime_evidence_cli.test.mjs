@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
+import { otelMethodsInclude } from '../src/adapters/runtime_bridge.mjs';
+import { petclinicGraph, petclinicPack } from './helpers/petclinic_graph.mjs';
 
 // The runtime evidence lane through the REAL CLI.
 //
@@ -206,6 +208,50 @@ test('a DIFFERENT trace is a different pack, and no trace at all leaves the basi
   assert.equal(halfPack.meta.laneStats.otel.edgesObserved, 1);
 });
 
+test('the SAME spans in the agent\'s LOG form make the same pack, and the run says how it read them', (t) => {
+  if (skipWithoutJdk(t)) return;
+  const { base, dir, trace } = project(t);
+  const env = { CASCADE_HOME: path.join(base, 'home'), XDG_CACHE_HOME: path.join(base, 'cache') };
+  const lanes = ['--root', dir, '--java-src', path.join(dir, 'src', 'main', 'java'),
+    '--no-ddl', '--no-mappers', '--no-web', '--no-openapi'];
+
+  // The same document, written the way the Java agent's `logging-otlp` exporter
+  // writes it: one ResourceSpans per line, behind the logger's own prefix, in
+  // the middle of the application's log.
+  const doc = JSON.parse(fs.readFileSync(trace, 'utf8'));
+  const prefix = '[otel.javaagent 2026-01-01 00:00:00:000 +0000] [BatchSpanProcessor_WorkerThread-1] INFO '
+    + 'io.opentelemetry.exporter.logging.otlp.OtlpJsonLoggingSpanExporter - ';
+  const log = path.join(dir, 'evidence', 'app.log');
+  fs.writeFileSync(log, [
+    'Starting OrdersApplication using Java 21',
+    ...doc.resourceSpans.map((rs) => prefix + JSON.stringify(rs)),
+    'Commencing graceful shutdown',
+    '',
+  ].join('\n'));
+
+  const asDoc = path.join(base, 'from-document');
+  const asLog = path.join(base, 'from-log');
+  const a = analyze([...lanes, '--otel', trace, '--out', asDoc], base, t, env);
+  assert.equal(a.code, 0, a.stderr);
+  const b = analyze([...lanes, '--otel', log, '--out', asLog], base, t, env);
+  assert.equal(b.code, 0, b.stderr);
+
+  // The run says which form it read and what it could not use, so a reader who
+  // pointed at the wrong log sees a count instead of a silent pass.
+  assert.equal(/was read as an agent log/.test(a.stderr), false, 'a document must not be reported as a log');
+  assert.match(b.stderr, /^Runtime evidence: evidence\/app\.log was read as an agent log, one export per line: 4 span\(s\) in it, 2 line\(s\) carried none$/m);
+
+  // Same spans in, same answer out: the two packs differ only in the file name
+  // the evidence was read from.
+  const packOf = (d) => JSON.parse(fs.readFileSync(path.join(d, 'pack.json'), 'utf8'));
+  const [pd, pl] = [packOf(asDoc), packOf(asLog)];
+  assert.equal(pl.meta.laneStats.otel.observations, pd.meta.laneStats.otel.observations);
+  assert.equal(pl.meta.laneStats.otel.edgesObserved, pd.meta.laneStats.otel.edgesObserved);
+  assert.deepEqual(pl.meta.laneStats.otel.sources, ['evidence/app.log']);
+  const strip = (p) => JSON.stringify(p.edges).split('evidence/app.log').join('evidence/orders.json');
+  assert.equal(strip(pl), strip(pd), 'the same spans read two ways must annotate the graph identically');
+});
+
 test('an unreadable trace is a named warning, not a dead run', (t) => {
   if (skipWithoutJdk(t)) return;
   const { base, dir } = project(t);
@@ -234,4 +280,72 @@ test('--otel names a file that is not there, and the run says so instead of anal
   ], base, t, env);
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, /--otel .*absent\.json does not exist/);
+});
+
+// ---------------------------------------------------------------------------
+// `cascade otel-methods` — the line the agent has to be handed
+// ---------------------------------------------------------------------------
+//
+// No JDK and no analysis here: the command reads a PACK, so the test writes
+// one. The graph it writes is the spring-petclinic shape (test/helpers/
+// petclinic_graph.mjs), which is also what the runtime bridge's unit tests join
+// the real capture against, so both halves of this round are held to the same
+// project.
+
+/** Run the binary and return {code, stdout, stderr}. */
+function run(args, env) {
+  const r = spawnSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 1 << 26,
+  });
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+/** A pack directory holding the petclinic-shaped pack, and a home to go with it. */
+function packDir(t) {
+  const base = tmpDir(t, 'cascade-otel-methods-');
+  const dir = path.join(base, 'pack');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'pack.json'), JSON.stringify(petclinicPack(), null, 2));
+  return { base, dir, env: { CASCADE_HOME: path.join(base, 'home'), XDG_CACHE_HOME: path.join(base, 'cache') } };
+}
+
+test('otel-methods prints the agent value on stdout, and nothing else on it', (t) => {
+  const { dir, env } = packDir(t);
+  const r = run(['otel-methods', '--pack', dir], env);
+  assert.equal(r.code, 0, r.stderr);
+
+  const value = r.stdout.trimEnd();
+  assert.equal(r.stdout.split('\n').filter((l) => l !== '').length, 1, 'stdout must be the value and nothing else, so it can be pasted or piped');
+  assert.equal(value, otelMethodsInclude(petclinicGraph()).value);
+  assert.match(value, /org\.springframework\.samples\.petclinic\.owner\.OwnerController\[[^\]]*showOwner[^\]]*\]/);
+  assert.equal(value.includes(';'), true, 'the classes are joined for the agent');
+  assert.equal(value.includes('[*]'), false, 'the agent gets explicit names, never a wildcard');
+
+  // The count and the instruction go where they cannot get into a pipe.
+  assert.match(r.stderr, /32 method\(s\) in 10 class\(es\): 17 route handler\(s\)/);
+  assert.match(r.stderr, /-Dotel\.instrumentation\.methods\.include=/);
+
+  // Twice is the same, byte for byte.
+  assert.equal(run(['otel-methods', '--pack', dir], env).stdout, r.stdout);
+});
+
+test('otel-methods --json prints the same list as {class: [methods]}', (t) => {
+  const { dir, env } = packDir(t);
+  const r = run(['otel-methods', '--pack', dir, '--json'], env);
+  assert.equal(r.code, 0, r.stderr);
+  const doc = JSON.parse(r.stdout);
+  assert.deepEqual(doc, otelMethodsInclude(petclinicGraph()).classes);
+  assert.ok(doc['org.springframework.samples.petclinic.owner.OwnerController'].includes('showOwner'));
+  // The two halves say the same thing.
+  const value = run(['otel-methods', '--pack', dir], env).stdout.trimEnd();
+  assert.equal(Object.entries(doc).map(([c, m]) => `${c}[${m.join(',')}]`).join(';'), value);
+});
+
+test('otel-methods with no pack says which file it wanted', (t) => {
+  const base = tmpDir(t, 'cascade-otel-methods-empty-');
+  const r = run(['otel-methods', '--pack', path.join(base, 'nothing')], {
+    CASCADE_HOME: path.join(base, 'home'), XDG_CACHE_HOME: path.join(base, 'cache'),
+  });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /no pack at .*pack\.json\. Run cascade analyze first/);
 });

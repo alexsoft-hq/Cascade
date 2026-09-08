@@ -61,7 +61,10 @@ test('docs/cli.md documents every command the binary lists — and no command it
   assert.deepEqual(missing, [], `docs/cli.md has no "## \`cascade <name>\`" section for: ${missing.join(', ')}`);
 
   // ...and the other direction: a section for a command that no longer exists.
-  const documented = [...cli.matchAll(/^## `cascade ([a-z]+)/gm)].map((m) => m[1]);
+  // A command name can carry a hyphen (`otel-methods`), so the capture has to
+  // as well: reading it as `otel` would report a command the binary "no longer
+  // has" the moment somebody documents one correctly.
+  const documented = [...cli.matchAll(/^## `cascade ([a-z][a-z-]*)/gm)].map((m) => m[1]);
   const stale = [...new Set(documented)].filter((c) => !commands.includes(c));
   assert.deepEqual(stale, [], `docs/cli.md documents commands the binary does not have: ${stale.join(', ')}`);
 });

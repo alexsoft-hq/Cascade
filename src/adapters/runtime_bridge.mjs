@@ -29,11 +29,14 @@
 //     `runtimeEvidence.otel` is a person saying "I captured this on purpose";
 //     nothing here goes looking for a trace in the tree.
 //
-// WHAT IT READS. An OpenTelemetry trace export in OTLP/JSON (the `resourceSpans`
-// shape a collector's file exporter writes, and what `otel-cli`, the Java
-// agent's logging exporter and a Jaeger/Tempo API export all produce). Three
-// span shapes carry something this lane can use, and every other span is counted
-// as unusable rather than guessed at:
+// WHAT IT READS. An OpenTelemetry trace export, in either of the two shapes a
+// real capture comes in: an OTLP/JSON DOCUMENT (the `resourceSpans` shape a
+// collector's file exporter, `otel-cli` and a Jaeger/Tempo API export write), or
+// an application LOG with one export per line, which is what the Java agent's
+// `logging-otlp` exporter writes into the app's own stdout. Which one a file is
+// gets decided by reading it, never by its extension. Three span shapes carry
+// something this lane can use, and every other span is counted as unusable
+// rather than guessed at:
 //
 //   code.namespace + code.function     a METHOD ran, in a named concrete class
 //   db.statement / db.query.text       a STATEMENT ran, with its SQL
@@ -173,12 +176,83 @@ export function spanFacets(span) {
 }
 
 /**
+ * The `ResourceSpans` objects one line of an agent log carries, or null when the
+ * line carries none.
+ *
+ * WHY THIS EXISTS. The Java agent's `logging-otlp` exporter does not write an
+ * OTLP document. It writes ONE `ResourceSpans` object per export batch, as a
+ * single line of the application's own log, behind the logger's prefix:
+ *
+ *   [otel.javaagent 2026-01-01 …] [BatchSpanProcessor…] INFO io.opentelemetry.
+ *   exporter.logging.otlp.OtlpJsonLoggingSpanExporter - {"resource":{…},"scopeSpans":[…]}
+ *
+ * So the line is sliced at its FIRST `{` and parsed. Both shapes are accepted
+ * there, because which one a line carries depends on the exporter and not on
+ * anything the reader can see: a bare `ResourceSpans` (`resource` + a
+ * `scopeSpans`/`instrumentationLibrarySpans` array) and a whole
+ * `{"resourceSpans":[…]}` document, which is what a collector on the same line
+ * would write. A prefix that carries a brace of its own gets one more attempt,
+ * from the start of the resource object, and nothing beyond that.
+ *
+ * @param {string} line
+ * @returns {object[]|null}  the ResourceSpans on this line, or null for a line
+ *                           that carries no readable one
+ */
+function resourceSpansOnLine(line) {
+  // The first `{` is where the JSON starts on every line the exporter writes.
+  // The one exception worth handling is a logger whose own prefix contains a
+  // brace (an MDC context, a thread name somebody templated), so if that slice
+  // is not JSON, the start of a resource object is tried once more. Two
+  // attempts, never a scan: a 45 KB line must not be parsed brace by brace.
+  const starts = [];
+  const first = line.indexOf('{');
+  if (first < 0) return null;
+  starts.push(first);
+  for (const marker of ['{"resourceSpans"', '{"resource"']) {
+    const at = line.indexOf(marker);
+    if (at > first) starts.push(at);
+  }
+  for (const at of starts) {
+    let obj;
+    try {
+      obj = JSON.parse(line.slice(at));
+    } catch {
+      continue;
+    }
+    if (!obj || typeof obj !== 'object') continue;
+    if (Array.isArray(obj.resourceSpans)) return obj.resourceSpans;
+    if (Array.isArray(obj.scopeSpans) || Array.isArray(obj.instrumentationLibrarySpans)) return [obj];
+  }
+  return null;
+}
+
+/**
  * Read one OpenTelemetry trace export. Text in, normalised observations out —
  * no filesystem here, so the caller decides what a path means.
  *
  * NEVER THROWS on bad input. A file that is not a trace comes back with
  * `unreadable` set and no observations, the way an unreadable recording does:
  * an analysis must not die because somebody passed the wrong file.
+ *
+ * TWO FORMS, TOLD APART BY CONTENT AND NEVER BY EXTENSION:
+ *
+ *   `form: 'document'`  the whole file is one OTLP/JSON document
+ *                       (`{"resourceSpans":[…]}`), which is what a collector's
+ *                       file exporter and a Jaeger or Tempo export write.
+ *   `form: 'log'`       the file is an application LOG, one export per line,
+ *                       each line prefixed by whatever the logger puts in front
+ *                       of it. This is what the Java agent's `logging-otlp`
+ *                       exporter produces, and it is the file a first user
+ *                       actually has: the app's stdout. A line this reader
+ *                       cannot use is SKIPPED and counted in `skippedLines`
+ *                       (the banner, the framework's own log lines, a batch
+ *                       truncated by a rotation), never fatal.
+ *
+ * The document is tried first, and the log pass runs only when it yields no
+ * `resourceSpans`. `unreadable` is set only when NEITHER form found one. For a
+ * one-line file it is the document reading's reason, because a one-line file is
+ * only ever a document; for a file of several lines it names both readings, so
+ * a reader can tell which of the two they meant to hand over.
  *
  * THE THREE NORMALISED SHAPES:
  *
@@ -203,29 +277,69 @@ export function spanFacets(span) {
  * @param {{file?:string}} [opts]  the name to put on the evidence
  * @returns {{file:string, observations:object[], spans:number, usableSpans:number,
  *            unusable:number, services:string[], window:({from:string,to:string}|null),
+ *            form:('document'|'log'|null), skippedLines:number,
  *            unreadable:(string|null)}}
  */
 export function readOtelTrace(text, opts = {}) {
   const file = typeof opts.file === 'string' ? opts.file : '(otel)';
   const empty = (unreadable) => ({
-    file, observations: [], spans: 0, usableSpans: 0, unusable: 0, services: [], window: null, unreadable,
+    file, observations: [], spans: 0, usableSpans: 0, unusable: 0, services: [], window: null,
+    form: null, skippedLines: 0, unreadable,
   });
-  let doc;
+  const source = String(text);
+
+  // ---- 0. which form is this? --------------------------------------------
+  let resourceSpans = null;
+  let form = null;
+  let skippedLines = 0;
+  let docReason = null;
   try {
-    doc = JSON.parse(String(text));
+    const doc = JSON.parse(source);
+    if (doc && typeof doc === 'object' && Array.isArray(doc.resourceSpans)) {
+      resourceSpans = doc.resourceSpans;
+      form = 'document';
+    } else {
+      docReason = 'no resourceSpans array, so this is not an OTLP/JSON trace export';
+    }
   } catch (e) {
-    return empty(`not JSON: ${e.message}`);
+    docReason = `not JSON: ${e.message}`;
   }
-  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.resourceSpans)) {
-    return empty('no resourceSpans array, so this is not an OTLP/JSON trace export');
+  if (resourceSpans === null) {
+    // THE LOG PASS. Every line stands on its own, so one unreadable line costs
+    // that line and nothing else: a log is a stream somebody may have truncated,
+    // rotated or interleaved with another thread's output.
+    const collected = [];
+    let skipped = 0;
+    let read = 0;
+    for (const line of source.split('\n')) {
+      if (line.trim() === '') continue;
+      read += 1;
+      const found = resourceSpansOnLine(line);
+      if (found === null) { skipped += 1; continue; }
+      for (const rs of found) collected.push(rs);
+    }
+    if (collected.length > 0) {
+      resourceSpans = collected;
+      form = 'log';
+      skippedLines = skipped;
+    } else if (read > 1) {
+      // Several lines and not one export. Reporting only the document reading's
+      // complaint here would be misleading, because a log is not a broken
+      // document: it is a file that was read the other way and still had
+      // nothing in it. Both readings are named, so a reader can tell which file
+      // they pointed at.
+      docReason = `no OTLP export in this file. As one document: ${docReason}. `
+        + `As an agent log: ${read} line(s) read, none of them carrying a ResourceSpans`;
+    }
   }
+  if (resourceSpans === null) return empty(docReason);
 
   // ---- 1. every span, flattened, with its facets read once ----------------
   const spans = new Map(); // spanId -> {id, parentId, facets, at}
   const order = []; // insertion order, so a trace with no ids still reads stably
   const services = new Set();
   let total = 0;
-  for (const rs of doc.resourceSpans) {
+  for (const rs of resourceSpans) {
     if (!rs || typeof rs !== 'object') continue;
     const resAttrs = attributesOf(rs.resource && rs.resource.attributes);
     const service = resAttrs.get('service.name');
@@ -357,6 +471,8 @@ export function readOtelTrace(text, opts = {}) {
     unusable: total - usable,
     services: [...services].sort(),
     window: from !== null && to !== null ? { from, to } : null,
+    form,
+    skippedLines,
     unreadable: null,
   };
 }
@@ -663,6 +779,109 @@ function interfaceHop(g, callerId, calleeId, calleeMethod) {
     }
   }
   return null;
+}
+
+/**
+ * The methods an OpenTelemetry Java agent has to be told to instrument before
+ * the DISPATCH join can see anything, read off the pack itself.
+ *
+ * WHY THE PACK ANSWERS THIS. Out of the box the agent writes HTTP server spans,
+ * repository spans and JDBC spans, so the endpoint and statement joins fill up
+ * on the first run and dispatch stays at zero: no controller and no service
+ * method has a span, so no method span ever nests inside another one. The agent
+ * can add them, through `otel.instrumentation.methods.include`, and it takes
+ * EXPLICIT method names in the form `pkg.Class[m1,m2]`. A wildcard is not a
+ * name: `pkg.Class[*]` matches nothing and the run comes back as empty as
+ * before. So somebody has to write the list, and the pack already holds exactly
+ * the symbols that belong on it.
+ *
+ * WHAT GOES ON THE LIST, and why each half is there:
+ *
+ *   - every HANDLER (a `HANDLES` target). That is the top of a request, and it
+ *     is the caller side of the first hop the join needs.
+ *   - every symbol that REACHES A STATEMENT: the method that implements one
+ *     (`IMPLEMENTS_STMT`), and every symbol with a `MAY_CALL` path down to it.
+ *     That is the service layer between the two, and a hop whose middle is not
+ *     instrumented is the one that comes back RUNTIME_ONLY, because the trace
+ *     saw the controller directly over the repository while the source goes
+ *     through a helper that had no span.
+ *
+ * An EXTERNAL symbol is left off: a JDK or library method is not this project's
+ * to instrument, and naming one only slows the agent down.
+ *
+ * Pure, and deterministic: classes sorted, methods sorted inside each class, so
+ * the same pack prints the same line every time and a diff of two runs is a
+ * diff of the project.
+ *
+ * @param {import('../core/graph.mjs').Graph} g
+ * @returns {{classes:Record<string,string[]>, value:string, classCount:number,
+ *            methodCount:number, handlers:number, statementReachers:number}}
+ */
+export function otelMethodsInclude(g) {
+  const isSymbol = (id) => typeof id === 'string' && id.startsWith('symbol:');
+  const wanted = new Set();
+  const handlers = new Set();
+
+  for (const e of g.edges) {
+    if (e.type !== 'HANDLES' || !isSymbol(e.to)) continue;
+    handlers.add(e.to);
+    wanted.add(e.to);
+  }
+
+  // The statement end of every chain, then everything that can call it. The
+  // walk is over MAY_CALL IN-edges, which is "who could have run this", and it
+  // is bounded by `seen`, so a recursive call cannot loop it.
+  const seeds = [];
+  for (const e of g.edges) {
+    if (e.type === 'IMPLEMENTS_STMT' && isSymbol(e.from)) seeds.push(e.from);
+  }
+  const reachers = new Set();
+  const queue = [...new Set(seeds)];
+  const seen = new Set(queue);
+  while (queue.length > 0) {
+    const id = queue.shift();
+    reachers.add(id);
+    for (const up of g.inEdges(id)) {
+      if (up.type !== 'MAY_CALL' || !isSymbol(up.from) || seen.has(up.from)) continue;
+      seen.add(up.from);
+      queue.push(up.from);
+    }
+  }
+  for (const id of reachers) wanted.add(id);
+
+  const classes = new Map();
+  let methodCount = 0;
+  const kept = new Set();
+  for (const id of [...wanted].sort()) {
+    const node = g.nodes.get(id);
+    // A symbol this pack never read is not a symbol to instrument, and an
+    // external one is somebody else's code.
+    if (!node || node.external === true) continue;
+    const member = id.slice('symbol:'.length);
+    const hash = member.lastIndexOf('#');
+    if (hash <= 0 || hash === member.length - 1) continue;
+    const owner = member.slice(0, hash);
+    const method = member.slice(hash + 1);
+    if (!classes.has(owner)) classes.set(owner, new Set());
+    classes.get(owner).add(method);
+    kept.add(id);
+  }
+
+  const out = {};
+  for (const owner of [...classes.keys()].sort()) {
+    const methods = [...classes.get(owner)].sort();
+    methodCount += methods.length;
+    out[owner] = methods;
+  }
+  const value = Object.entries(out).map(([owner, methods]) => `${owner}[${methods.join(',')}]`).join(';');
+  return {
+    classes: out,
+    value,
+    classCount: Object.keys(out).length,
+    methodCount,
+    handlers: [...handlers].filter((id) => kept.has(id)).length,
+    statementReachers: [...reachers].filter((id) => kept.has(id)).length,
+  };
 }
 
 export class RuntimeBridgeError extends Error {

@@ -291,6 +291,55 @@ both apply; otherwise it is cold **and says why**.
 Each `--no-<lane>` overrides whatever the manifest, profile or discovery would
 otherwise have supplied, so "run without this" is always expressible.
 
+`--otel` reads **either** an OTLP/JSON document **or** the application log the
+OpenTelemetry Java agent writes with `-Dotel.traces.exporter=logging-otlp`: one
+export per line, behind the logger's own prefix. Which one it is is decided by
+reading the file, never by its extension, and a line the reader cannot use is
+skipped and counted rather than fatal. A log is reported as one:
+
+```
+Runtime evidence: app.log was read as an agent log, one export per line: 169 span(s) in it, 54 line(s) carried none
+```
+
+## `cascade otel-methods`
+
+```
+cascade otel-methods [--pack <dir> | --project <id> | --root <dir>] [--json]
+```
+
+Print the `otel.instrumentation.methods.include` value this pack needs, so the
+OpenTelemetry Java agent emits the method spans the **dispatch** join reads.
+
+Out of the box the agent writes HTTP server spans, repository spans and JDBC
+spans, so a first capture observes routes and statements and reports **dispatch
+0**: no controller and no service method has a span, so no method span ever
+nests inside another one. The agent can add them, and it wants **explicit
+method names** — `pkg.Class[m1,m2]`. A wildcard is not a name: `pkg.Class[*]`
+matches nothing and the next capture is as empty as the first.
+
+What goes on the list is read off the pack: every **route handler** (a `HANDLES`
+target) and every symbol that **reaches a statement** (the method that
+implements one, and everything with a `MAY_CALL` path down to it). A symbol
+marked external is left off, because a library method is not yours to
+instrument.
+
+```
+$ cascade otel-methods --project petclinic
+org.springframework.samples.petclinic.owner.OwnerController[findOwner,findPaginatedForOwnersLastName,…];org.springframework.samples.petclinic.owner.OwnerRepository[findById,…];…
+32 method(s) in 10 class(es): 17 route handler(s) and 24 method(s) that reach a statement. …
+```
+
+The **value goes to stdout on its own**, so it can be pasted or piped; the count
+and the instruction go to stderr, where they cannot get into a pipe. Classes are
+sorted and so are the methods inside each one, so the same pack prints the same
+line every time.
+
+- `--pack` / `--project` / `--root` — which pack (see *Finding the project*).
+- `--json` — the same list as `{ "pkg.Class": ["m1", "m2"] }`.
+
+The recipe this belongs to is on
+[the runtime evidence page](setup/runtime-evidence.md).
+
 ## `cascade estimate`
 
 ```

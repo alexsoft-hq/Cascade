@@ -5,10 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Graph, GRADE_SETS } from '../src/core/graph.mjs';
 import {
-  readOtelTrace, addRuntimeFacts, attrValue, attributesOf, spanFacets, tablesInSql, spanTimeIso,
+  readOtelTrace, addRuntimeFacts, otelMethodsInclude, attrValue, attributesOf, spanFacets,
+  tablesInSql, spanTimeIso,
 } from '../src/adapters/runtime_bridge.mjs';
 import { chainWalk } from '../src/core/chain.mjs';
 import { mallGraph, skipUnlessMall } from './helpers/mall_fixture.mjs';
+import { petclinicGraph, PETCLINIC_IDS } from './helpers/petclinic_graph.mjs';
 
 // The runtime evidence lane, driven by ONE hand-written OTLP/JSON trace.
 //
@@ -519,4 +521,243 @@ test('a chain row and the step that reached it say `observed`', { skip: skipUnle
   const stmt = w.statements.find((r) => `statement:${r.id}` === STATEMENT);
   assert.equal(stmt.observed, true);
   assert.deepEqual(stmt.observedTables, ['pms_brand']);
+});
+
+// ---------------------------------------------------------------------------
+// The form the agent really writes, and the pack that tells it what to trace
+// ---------------------------------------------------------------------------
+//
+// Everything above this line runs on hand-written traces. This block runs on a
+// capture that came out of spring-petclinic under the official OpenTelemetry
+// Java agent, with real HTTP requests through it: 169 spans across three export
+// batches, written to the application's own log by `logging-otlp`. It is the
+// file a first user actually has, and it is nothing like an OTLP document.
+//
+// The fixture was SCRUBBED before it entered this repository. Every resource
+// attribute that named the machine, the JVM or the checkout is gone
+// (`host.*`, `os.*`, `process.*`, `telemetry.*`), the random in-memory database
+// name is a fixed word, the two log lines that carried an absolute path were
+// dropped, and `service.name` is all that is left beside the span data. None of
+// that is read by this lane, so the capture reads exactly as it did on the
+// machine it was taken on.
+
+const AGENT_LOG_FILE = path.join(ROOT, 'test', 'fixtures', 'otel', 'petclinic-agent.log');
+const AGENT_LOG = fs.readFileSync(AGENT_LOG_FILE, 'utf8');
+
+/** The same three export batches, hand-wrapped into ONE OTLP document. */
+function wrappedAsDocument(logText) {
+  const resourceSpans = [];
+  for (const line of logText.split('\n')) {
+    const brace = line.indexOf('{');
+    if (brace < 0) continue;
+    let obj;
+    try { obj = JSON.parse(line.slice(brace)); } catch { continue; }
+    if (obj && obj.resource && Array.isArray(obj.scopeSpans)) resourceSpans.push(obj);
+  }
+  return JSON.stringify({ resourceSpans });
+}
+
+test('the agent LOG and the same batches wrapped into one document read identically', () => {
+  const doc = readOtelTrace(wrappedAsDocument(AGENT_LOG), { file: 'wrapped.json' });
+  const log = readOtelTrace(AGENT_LOG, { file: 'petclinic-agent.log' });
+
+  assert.equal(doc.unreadable, null);
+  assert.equal(log.unreadable, null);
+  assert.equal(doc.form, 'document');
+  assert.equal(log.form, 'log');
+  assert.equal(doc.skippedLines, 0, 'a document has no lines to skip');
+  // Everything the exporter did not write JSON on: the banner, Spring's own log
+  // lines, the JVM warnings. Counted, and none of it fatal.
+  assert.equal(log.skippedLines, 54);
+
+  // The whole point: same spans, same reading.
+  assert.equal(log.spans, 169);
+  assert.equal(log.usableSpans, 144);
+  assert.equal(log.unusable, 25);
+  assert.equal(doc.spans, log.spans);
+  assert.deepEqual(log.services, ['petclinic']);
+  assert.deepEqual(doc.window, log.window);
+  assert.deepEqual(doc.observations, log.observations);
+
+  // ...and what those observations are, so a change in the reader is visible
+  // here and not only in a count.
+  const byKind = (recs, kind) => recs.filter((o) => o.kind === kind);
+  assert.equal(byKind(log.observations, 'dispatch').length, 5);
+  assert.equal(byKind(log.observations, 'endpoint').length, 10);
+  assert.equal(byKind(log.observations, 'statement').length, 16);
+  assert.deepEqual(
+    byKind(log.observations, 'dispatch').map((o) => `${o.callerType.split('.').pop()}#${o.callerMethod} -> ${o.calleeType.split('.').pop()}#${o.calleeMethod}`),
+    [
+      'OwnerController#processCreationForm -> OwnerRepository#save',
+      'OwnerController#processFindForm -> OwnerRepository#findByLastNameStartingWith',
+      'OwnerController#showOwner -> OwnerRepository#findById',
+      'VetController#showResourcesVetList -> VetRepository#findAll',
+      'VetController#showVetList -> VetRepository#findAll',
+    ],
+  );
+});
+
+test('the same log read twice reads the same way', () => {
+  const a = readOtelTrace(AGENT_LOG, { file: 'x.log' });
+  const b = readOtelTrace(AGENT_LOG, { file: 'x.log' });
+  assert.deepEqual(a, b);
+});
+
+test('a log with junk between the exports parses, and says how many lines it skipped', () => {
+  const exports = AGENT_LOG.split('\n').filter((l) => l.includes('{"resource"'));
+  assert.equal(exports.length, 3, 'the fixture is three export batches');
+  const interleaved = [
+    'INFO another thread said something',
+    exports[0],
+    '{"this": "is json but not a trace"}',
+    'WARN {truncated batch, the process was killed mid-line',
+    exports[1],
+    '',                       // a blank line is not a line to skip
+    'DEBUG done',
+    exports[2],
+  ].join('\n');
+
+  const rec = readOtelTrace(interleaved, { file: 'noisy.log' });
+  assert.equal(rec.unreadable, null);
+  assert.equal(rec.form, 'log');
+  assert.equal(rec.skippedLines, 4, 'four non-blank lines carried no ResourceSpans');
+  assert.equal(rec.spans, 169, 'and the three that did were read in full');
+  assert.deepEqual(rec.observations, readOtelTrace(AGENT_LOG, { file: 'noisy.log' }).observations);
+});
+
+test('a file with no usable line is unreadable, and does not throw', () => {
+  const junk = ['starting up', 'INFO nothing here', '{"data": []}', 'WARN {broken'].join('\n');
+  const rec = readOtelTrace(junk, { file: 'app.log' });
+  // A log with nothing in it is not a broken document, and the reason says so:
+  // both readings were tried and both are named.
+  assert.match(rec.unreadable, /no OTLP export in this file/);
+  assert.match(rec.unreadable, /4 line\(s\) read/);
+  assert.equal(rec.form, null);
+  assert.deepEqual(rec.observations, []);
+  assert.equal(rec.spans, 0);
+
+  // A file that is not JSON at all keeps saying so.
+  const html = readOtelTrace('<html>\n<body>no</body>\n</html>', { file: 'page.html' });
+  assert.match(html.unreadable, /not JSON/);
+  assert.equal(html.form, null);
+
+  // A ONE-LINE file is only ever a document, so its reason is the document's,
+  // exactly as it was before this reader learned about logs.
+  assert.match(readOtelTrace('<html>', { file: 'a.json' }).unreadable, /^not JSON/);
+  assert.match(readOtelTrace('{"data": []}', { file: 'b.json' }).unreadable, /^no resourceSpans/);
+
+  // ...and neither of them stops the bridge.
+  const g = petclinicGraph();
+  const stats = addRuntimeFacts(g, [rec, html]);
+  assert.deepEqual(stats.unreadable.map((u) => u.file), ['app.log', 'page.html']);
+  assert.equal(stats.observations, 0);
+});
+
+// ---------------------------------------------------------------------------
+// The list the agent has to be handed
+// ---------------------------------------------------------------------------
+
+test('the pack names the methods the agent must instrument, deterministically', () => {
+  const g = petclinicGraph();
+  const inc = otelMethodsInclude(g);
+
+  // The caller side of the hop the dispatch join needs, with the handler that
+  // serves GET /owners/{ownerId} on it.
+  assert.match(inc.value, /owner\.OwnerController\[[^\]]*\bshowOwner\b[^\]]*\]/);
+  assert.ok(inc.classes['org.springframework.samples.petclinic.owner.OwnerController'].includes('showOwner'));
+
+  // Classes sorted, methods sorted inside a class, joined with a semicolon.
+  const classes = inc.value.split(';').map((part) => part.slice(0, part.indexOf('[')));
+  assert.deepEqual(classes, [...classes].sort(), 'the classes are not in sorted order');
+  for (const [, methods] of Object.entries(inc.classes)) {
+    assert.deepEqual(methods, [...methods].sort(), 'the methods of a class are not in sorted order');
+  }
+  assert.equal(inc.value, otelMethodsInclude(petclinicGraph()).value, 'two runs of the same pack disagree');
+
+  // The whole value, so a rule change shows up as a diff of the project and not
+  // as a count that moved.
+  assert.equal(inc.value, [
+    'org.springframework.samples.petclinic.owner.OwnerController[findOwner,findPaginatedForOwnersLastName,initCreationForm,initFindForm,initUpdateOwnerForm,processCreationForm,processFindForm,processUpdateOwnerForm,showOwner]',
+    'org.springframework.samples.petclinic.owner.OwnerRepository[findById,findByLastNameStartingWith,save,saveAndFlush]',
+    'org.springframework.samples.petclinic.owner.PetController[findOwner,findPet,initCreationForm,initUpdateForm,populatePetTypes,processCreationForm,processUpdateForm,updatePetDetails]',
+    'org.springframework.samples.petclinic.owner.PetTypeFormatter[parse]',
+    'org.springframework.samples.petclinic.owner.PetTypeRepository[findPetTypes]',
+    'org.springframework.samples.petclinic.owner.VisitController[initNewVisitForm,loadPetWithVisit,processNewVisitForm]',
+    'org.springframework.samples.petclinic.system.CrashController[triggerException]',
+    'org.springframework.samples.petclinic.system.WelcomeController[welcome]',
+    'org.springframework.samples.petclinic.vet.VetController[findPaginated,showResourcesVetList,showVetList]',
+    'org.springframework.samples.petclinic.vet.VetRepository[findAll]',
+  ].join(';'));
+  assert.equal(inc.classCount, 10);
+  assert.equal(inc.methodCount, 32);
+  assert.equal(inc.handlers, 17);
+
+  // A method that neither serves a route nor reaches a statement is NOT on the
+  // list: `addPaginationModel` only puts a page into the model.
+  assert.equal(inc.classes['org.springframework.samples.petclinic.owner.OwnerController'].includes('addPaginationModel'), false);
+});
+
+test('a symbol from outside the project is never put on the list', () => {
+  const g = petclinicGraph();
+  const external = 'symbol:org.springframework.data.repository.CrudRepository#findById';
+  g.addNode({ id: external, kind: 'symbol', external: true });
+  g.addEdge({ from: external, to: PETCLINIC_IDS.findById, type: 'MAY_CALL', grade: 'SOUND_SET' });
+  const inc = otelMethodsInclude(g);
+  assert.equal(inc.value.includes('CrudRepository'), false, 'a library method is not this project to instrument');
+});
+
+// ---------------------------------------------------------------------------
+// The join, against the real capture
+// ---------------------------------------------------------------------------
+
+test('the real capture marks what ran, keeps every grade, and adds exactly two RUNTIME_ONLY hops', () => {
+  const g = petclinicGraph();
+  const before = g.edges.length;
+  const grades = g.edges.map((e) => e.grade);
+  const stats = addRuntimeFacts(g, [readOtelTrace(AGENT_LOG, { file: 'petclinic-agent.log' })]);
+
+  assert.deepEqual(stats.matched, { dispatch: 5, statement: 9, endpoint: 10 });
+  assert.equal(stats.dispatchDirect, 3);
+  assert.equal(stats.dispatchThroughInterface, 0);
+  assert.equal(stats.edgesObserved, 8);
+  assert.equal(stats.statementsObserved, 5);
+  assert.equal(stats.endpointsObserved, 10);
+
+  // The hop this whole lane exists for: the source states it, the run confirmed
+  // it, and the grade is exactly what it was.
+  const confirmed = edgeOf(g, PETCLINIC_IDS.showOwner, PETCLINIC_IDS.findById);
+  assert.equal(confirmed.grade, 'SOUND_SET');
+  assert.equal(confirmed.evidence.observed, true);
+  assert.equal(confirmed.evidence.observedCount, 1);
+  assert.deepEqual(confirmed.evidence.observedBy, ['petclinic-agent.log']);
+  assert.equal(confirmed.evidence.rule, 'this-field', 'the rule that produced the edge must survive the mark');
+
+  // Not one grade moved, anywhere.
+  assert.deepEqual(g.edges.slice(0, before).map((e) => e.grade), grades);
+
+  // TWO hops the trace saw and no static rule explains, and both are the same
+  // shape: the controller ran the repository directly because the private
+  // helper in between had no span.
+  const added = g.edges.slice(before);
+  assert.equal(stats.edgesAdded, 2);
+  assert.equal(added.length, 2);
+  assert.deepEqual(added.map((e) => `${e.grade} ${e.from} -> ${e.to}`), [
+    `RUNTIME_ONLY ${PETCLINIC_IDS.processFindForm} -> ${PETCLINIC_IDS.findByLastNameStartingWith}`,
+    `RUNTIME_ONLY ${PETCLINIC_IDS.showVetList} -> ${PETCLINIC_IDS.findAll}`,
+  ]);
+  // Both of those methods ARE on the instrument list, so a second capture taken
+  // with it would see the helper and resolve them to the static chain.
+  const inc = otelMethodsInclude(petclinicGraph());
+  assert.ok(inc.classes['org.springframework.samples.petclinic.owner.OwnerController'].includes('findPaginatedForOwnersLastName'));
+  assert.ok(inc.classes['org.springframework.samples.petclinic.vet.VetController'].includes('findPaginated'));
+
+  // The statement side: the node the run touched carries the tables the SQL
+  // really named, and the SQL text itself is nowhere in the graph.
+  const stmt = g.nodes.get(PETCLINIC_IDS.findByIdStatement);
+  assert.equal(stmt.observed, true);
+  assert.deepEqual(stmt.observedTables, ['owners', 'pets', 'types', 'visits']);
+  assert.equal(JSON.stringify([...g.nodes.values()]).includes('select o1_0.id'), false);
+
+  // The endpoint side: a route served, marked on the node.
+  assert.equal(g.nodes.get(PETCLINIC_IDS.ownersEndpoint).observed, true);
 });

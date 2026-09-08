@@ -12,6 +12,26 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **A runtime evidence lane: what actually ran, shown beside the grade and never
+  above it.** No static reading of Java, with or without a build classpath, can
+  raise an endpoint answer above `SOUND_SET`: the hop into a MyBatis mapper or a
+  Spring Data repository is a runtime proxy with no source implementor, and a
+  single static candidate is still not a proof of what runs. The one thing that
+  can settle it is the running program. `cascade analyze --otel <file>` reads an
+  OpenTelemetry trace, either one OTLP document or the log the Java agent writes
+  with `-Dotel.traces.exporter=logging-otlp`, and marks the static edges the
+  trace really crossed with `observed` and a count. It never raises a grade,
+  never removes an unobserved candidate, and any hop it adds that the source
+  does not explain is `RUNTIME_ONLY`, shown and never walked. `cascade
+  otel-methods` prints the `otel.instrumentation.methods.include` list the agent
+  needs (explicit method names, from the pack's own handlers and everything that
+  reaches a statement), because without caller spans the dispatch join is
+  empty. The viewer draws the mark: the seen tag on the rows that ran, a heavier
+  connector on an observed hop, and a quiet trace chip in the masthead. Verified
+  end to end on spring-petclinic under the real agent: 5 dispatch, 9 statement
+  and 10 route observations matched, no grade moved, and a scrubbed capture of
+  that run is now a fixture. The recipe is in `docs/setup/runtime-evidence.md`.
+
 - **`cascade agent`: one command puts the server and the rule into a project.**
   The MCP server was wireable from a dozen places in the documentation, and not
   one of them said *when* the agent should ask. An agent with the server

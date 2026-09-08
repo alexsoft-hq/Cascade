@@ -26,6 +26,10 @@ $XDG_CACHE_HOME/
 # OS / editor
 .DS_Store
 *.log
+# ...except the captured OpenTelemetry agent logs under test/fixtures. Those are
+# test INPUT, not something a run here produced: they are what the Java agent's
+# `logging-otlp` exporter writes, and the runtime lane's tests read them.
+!test/fixtures/otel/*.log
 
 # Local credentials — MUST never be tracked (SPEC §17.3)
 *.env

@@ -44,47 +44,183 @@ that it is the only one, so:
 
 ## What it needs
 
-An **OpenTelemetry trace export in OTLP/JSON** — the `resourceSpans` shape a
-collector's file exporter writes, and what a Jaeger or Tempo API export gives
-you. Nothing else: no agent of ours, no network at analysis time, no database.
+An **OpenTelemetry trace export**, in either of the two shapes a real capture
+comes in:
+
+- an **OTLP/JSON document** (`{"resourceSpans": […]}`) — what a collector's file
+  exporter writes, and what a Jaeger or Tempo API export gives you;
+- the **application's own log**, when the Java agent exports with
+  `logging-otlp`. That is not a document: it is one `ResourceSpans` object per
+  export batch, each on a line behind the logger's own prefix, in among
+  everything else the app printed.
+
+Which one a file is, is decided by **reading it**, not by its extension, so both
+go in the same way. A line the reader cannot use is skipped and counted, never
+fatal. Nothing else is needed: no agent of ours, no network at analysis time, no
+database.
 
 ```
 cascade analyze --root . --otel evidence/checkout-smoke.json
+cascade analyze --project petclinic --otel evidence/petclinic.log
 ```
 
 Repeat `--otel` for several captures. They are folded together, so two traces of
 the same chain make one mark with the sum of both counts on it.
 
-## How to capture one
+## The recipe, end to end
 
-The usual source is the **OpenTelemetry Java agent** under a run you control: an
-integration test suite, a smoke run, or a slice of staging traffic. Out of the
-box it writes HTTP server spans and JDBC spans, which is enough for the endpoint
-and statement joins. The **dispatch** join needs method spans as well, and there
-are two ways to get them:
+The numbers further down came out of a real run of this: spring-petclinic, the
+official Java agent, a handful of `curl` requests, no code change to the
+application and no collector. One thing about that run differs from the recipe
+and is called out in step 5, because it is the reason two hops came back
+`RUNTIME_ONLY`.
 
-- annotate the methods you care about with `@WithSpan`, or
-- turn on the agent's method instrumentation for the packages you care about
-  (`otel.instrumentation.methods.include`), naming the classes and methods to
-  trace.
+### 1. Get the agent
 
-Then export to a file:
+One download from the OpenTelemetry release page, and nothing else:
+
+```
+curl -L -o opentelemetry-javaagent.jar \
+  https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar
+```
+
+### 2. Ask the pack which methods to instrument
+
+Out of the box the agent gives you HTTP server spans, Spring Data repository
+spans and JDBC spans. That fills the **route** and **statement** joins on the
+first run and leaves **dispatch at zero**, because no controller and no service
+method has a span, so no method span ever nests inside another one.
+
+The agent will add them, and it wants **explicit method names**. `pkg.Class[*]`
+is not a name: the wildcard matches nothing and the capture comes back as empty
+as before. The names it wants are the handlers and the methods that reach a
+statement, which is exactly what the pack already holds:
+
+```
+cascade otel-methods --project petclinic
+```
+
+It prints one line on stdout, ready to paste:
+
+```
+org.springframework.samples.petclinic.owner.OwnerController[findOwner,findPaginatedForOwnersLastName,initCreationForm,…];org.springframework.samples.petclinic.owner.OwnerRepository[findById,…];…
+```
+
+On petclinic that is 32 methods in 10 classes. On a large project it is tens of
+thousands of characters, which a shell will still carry but a `.properties` file
+or a JVM argument file reads more comfortably.
+
+### 3. Run it once, with traffic
 
 ```
 java -javaagent:opentelemetry-javaagent.jar \
-     -Dotel.traces.exporter=otlp \
-     -Dotel.exporter.otlp.protocol=http/protobuf \
-     -Dotel.service.name=storefront-api \
-     -jar app.jar
+     -Dotel.service.name=petclinic \
+     -Dotel.traces.exporter=logging-otlp \
+     -Dotel.metrics.exporter=none \
+     -Dotel.logs.exporter=none \
+     -Dotel.bsp.schedule.delay=1000 \
+     "-Dotel.instrumentation.methods.include=$(cascade otel-methods --project petclinic)" \
+     -jar target/spring-petclinic-4.0.0-SNAPSHOT.jar > petclinic.log 2>&1
 ```
 
-and have your collector write the OTLP/JSON out with a **file exporter**. A
-Jaeger or Tempo export of the same trace is the same shape and reads the same.
+`logging-otlp` writes the spans into that log, so there is no collector and no
+port to open. `metrics` and `logs` are off because this lane reads neither.
+`bsp.schedule.delay=1000` makes the agent flush every second instead of every
+five, which matters for a run that only lasts a minute.
 
-Capture what you want to be able to say something about. A five-minute smoke run
-over the screens that matter is far more useful here than a day of traffic,
-because the value of this lane is in the chains it confirms, not in the volume it
-holds.
+Then send the traffic you want to be able to say something about — an
+integration suite, a smoke script, or a slice of staging. The capture below is
+thirteen `curl` requests over the screens petclinic has, of this shape:
+
+```
+curl -s localhost:8080/ > /dev/null
+curl -s "localhost:8080/owners?lastName=" > /dev/null
+curl -s localhost:8080/owners/1 > /dev/null
+curl -s localhost:8080/vets.html > /dev/null
+```
+
+Then **stop the application**, so the last batch is flushed into the log before
+the process exits.
+
+A five-minute smoke run over the screens that matter is worth far more here than
+a day of traffic: the value of this lane is in the chains it confirms, not in the
+volume it holds.
+
+### 4. Feed the log in
+
+The log goes in as it is. There is no wrapping step and no `jq`:
+
+```
+cascade analyze --project petclinic --otel petclinic.log
+```
+
+The run says how it read the file and then prints its census:
+
+```
+Runtime evidence: petclinic.log was read as an agent log, one export per line: 169 span(s) in it, 56 line(s) carried none
+Runtime evidence: 1 trace(s), 169 span(s) (25 carried nothing this lane reads), 31 observation(s):
+  5 dispatch, 9 statement and 10 route observation(s) matched this pack, 7 matched none
+Runtime evidence: 8 static edge(s) marked observed (3 a call the source states,
+  0 a candidate set the trace narrowed), 2 RUNTIME_ONLY edge(s) added for a hop no
+  static rule explains, 5 statement(s) and 10 route(s) observed, window
+  2026-09-08T00:39:16.236Z to 2026-09-08T00:39:18.252Z
+Runtime evidence: a grade was neither raised nor lowered by any of this.
+  What the trace did not visit is unknown, not absent
+```
+
+Read it as three questions:
+
+- **what was in the file** — how many spans, and how many carried no attribute
+  this lane reads (the framework's own spans, a transaction commit, a Hibernate
+  session);
+- **what joined** — how many observations matched a symbol, a statement or a
+  route this pack holds, and how many matched none. The 7 that matched none here
+  are JDBC spans from Hibernate's schema bootstrap and its lazy loads, which ran
+  under no repository method, so there is no statement to attribute them to and
+  none is guessed at;
+- **what was written** — marks on edges that already existed, and the hops that
+  had to be added.
+
+### 5. What it gets you
+
+On spring-petclinic, from the run above:
+
+| | observed |
+| --- | --- |
+| routes exercised | 10 of 17 |
+| statements run | 5 of 6 |
+| dispatch hops confirmed | 3 (`showOwner` → `findById`, `processCreationForm` → `save`, `showResourcesVetList` → `findAll`) |
+| hops added as `RUNTIME_ONLY` | 2 |
+
+The two added hops were `OwnerController#processFindForm` →
+`OwnerRepository#findByLastNameStartingWith` and `VetController#showVetList` →
+`VetRepository#findAll`. Neither is a call the source makes: both controllers go
+through a **private helper** (`findPaginatedForOwnersLastName`, `findPaginated`)
+that this capture did not instrument, so the trace saw the controller directly
+over the repository and the lane recorded exactly that, without inventing a
+static edge.
+
+**That is what a `RUNTIME_ONLY` hop usually means: an intermediate method you did
+not instrument.** This capture was taken with a hand-written list of the route
+handlers only, which is the difference from step 2 above. `cascade otel-methods`
+names both helpers as well, because both reach a statement, and all four hops
+around them (`processFindForm` → `findPaginatedForOwnersLastName` →
+`findByLastNameStartingWith`, and the same shape on the vet side) are edges the
+static graph already holds. So a capture taken with that list has a span on the
+helper, the observations key onto those edges, and there is no hop left for the
+lane to add.
+
+### 6. Read the marks for what they are
+
+**Observed once is not always**, so a mark is drawn **beside** a grade and never
+above it. A route with no mark on it was **not visited by this capture**, which
+is not the same as "nothing runs there": coverage is only what was exercised, and
+every answer carries `basis.runtimeEvidence` naming the traces, the span count
+and the window, so a reader can tell the two apart.
+
+**And nothing of yours enters the pack.** A statement's SQL is read for the table
+names in it and then dropped, bound parameters are not read at all, and no
+payload is touched (*What never enters the pack*, below).
 
 ## What is read off a span
 
@@ -148,19 +284,7 @@ always produces the same pack digest.
 
 ## What you see afterwards
 
-The run prints its census:
-
-```
-Runtime evidence: 1 trace(s), 10 span(s) (1 carried nothing this lane reads), 7 observation(s):
-  3 dispatch, 1 statement and 2 route observation(s) matched this pack, 1 matched none
-Runtime evidence: 4 static edge(s) marked observed (1 a call the source states,
-  1 a candidate set the trace narrowed), 1 RUNTIME_ONLY edge(s) added for a hop no
-  static rule explains, 1 statement(s) and 2 route(s) observed
-Runtime evidence: a grade was neither raised nor lowered by any of this.
-  What the trace did not visit is unknown, not absent
-```
-
-and, in the answers:
+Beside the census the run prints (step 4 above), in the answers:
 
 - `flow` rows carry `observed: true` on the method and statement rows a trace
   saw, and on the `link` of a step whose whole run was observed;

@@ -918,7 +918,12 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 얻고, 관측되지 않은 후보는 있던 그대로 남으며, 어떤 정적 규칙으로도 설명되지 않는
 홉은 보여 주기만 하고 걷지 않는 `RUNTIME_ONLY` 엣지가 됩니다. 아무것도 승격되지
 않고, SQL 텍스트나 바인딩된 파라미터는 pack 에 들어가지 않으며, 발견 단계도
-없습니다. [`docs/ko/setup/runtime-evidence.md`](docs/ko/setup/runtime-evidence.md).
+없습니다. 파일은 OTLP/JSON 문서여도 되고, OpenTelemetry Java 에이전트가
+`logging-otlp` 로 남긴 애플리케이션 로그 그대로여도 됩니다. 그 에이전트가 호출자
+스팬을 남기게 하려면 `otel.instrumentation.methods.include` 값이 먼저 필요한데,
+그 줄은 `cascade otel-methods` 가 출력합니다. 실제 petclinic 실행에서 나온
+숫자와 함께 정리한 전체 레시피는
+[`docs/ko/setup/runtime-evidence.md`](docs/ko/setup/runtime-evidence.md) 에 있습니다.
 
 레인별 상세는 [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
 [`docs/setup/java-lane.md`](docs/setup/java-lane.md),

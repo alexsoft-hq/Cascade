@@ -62,7 +62,7 @@ import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
 import { addWebFacts } from '../src/adapters/web_bridge.mjs';
 import { readHar, addHarFacts } from '../src/adapters/har_bridge.mjs';
-import { readOtelTrace, addRuntimeFacts } from '../src/adapters/runtime_bridge.mjs';
+import { readOtelTrace, addRuntimeFacts, otelMethodsInclude } from '../src/adapters/runtime_bridge.mjs';
 import { addOpenApiRoutes, readOpenApiDocument } from '../src/adapters/openapi_bridge.mjs';
 import { addJpaFacts, nativeQueryStatements } from '../src/adapters/jpa_bridge.mjs';
 import { annotationMapperXml, restampToJavaSource } from '../src/adapters/mybatis_annotation.mjs';
@@ -2404,6 +2404,14 @@ if (cmd === 'analyze') {
     // the other lanes put in the graph). This is its census.
     if (runtimeStats) {
       const rs = runtimeStats;
+      // A file read as an AGENT LOG says so, with the lines it could not use, so
+      // a reader who pointed at the wrong log sees a count of nothing rather
+      // than a silent pass.
+      for (const rec of otelTraces) {
+        if (rec.form !== 'log') continue;
+        process.stderr.write(`Runtime evidence: ${rec.file} was read as an agent log, one export per line: `
+          + `${rec.spans} span(s) in it, ${rec.skippedLines} line(s) carried none\n`);
+      }
       process.stderr.write(`Runtime evidence: ${rs.files} trace(s), ${rs.spans} span(s) (${rs.unusable} carried nothing this lane reads), `
         + `${rs.observations} observation(s): ${rs.matched.dispatch} dispatch, ${rs.matched.statement} statement and ${rs.matched.endpoint} route observation(s) matched this pack, `
         + `${rs.unmatched.dispatch + rs.unmatched.statement + rs.unmatched.endpoint} matched none\n`);
@@ -3243,6 +3251,42 @@ if (cmd === 'golden') {
   process.exit(0);
 }
 
+// `cascade otel-methods` — the one line the OpenTelemetry Java agent needs
+// before the dispatch join can see anything.
+//
+// The agent instruments HTTP, Spring Data and JDBC on its own, so a first run
+// observes routes and statements and reports dispatch 0: no controller and no
+// service method has a span, so no method span ever nests inside another. The
+// fix is `-Dotel.instrumentation.methods.include=`, and the agent takes EXPLICIT
+// method names there. `pkg.Class[*]` matches nothing.
+//
+// Writing that list by hand means reading the project. The pack has already read
+// it, so this prints it: the value on stdout and nothing else, so it can be
+// pasted or piped, with the count on stderr where it does not get in the way.
+if (cmd === 'otel-methods') {
+  const resolved = resolveOrDie();
+  const file = path.join(resolved.packDir, 'pack.json');
+  if (!fs.existsSync(file)) die(`no pack at ${file}. Run cascade analyze first`);
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const g = loadPack(pack, { verifyDigest: true });
+  const inc = otelMethodsInclude(g);
+  if (flag('json')) {
+    process.stdout.write(JSON.stringify(inc.classes, null, 2) + '\n');
+  } else if (inc.value !== '') {
+    process.stdout.write(inc.value + '\n');
+  }
+  if (inc.methodCount === 0) {
+    process.stderr.write(`${resolved.projectId ?? resolved.packDir}: nothing to instrument. This pack holds no route handler `
+      + 'and no method that reaches a statement, so there is no caller for a trace to see\n');
+    process.exit(0);
+  }
+  process.stderr.write(`${inc.methodCount} method(s) in ${inc.classCount} class(es): `
+    + `${inc.handlers} route handler(s) and ${inc.statementReachers} method(s) that reach a statement. `
+    + 'Pass it to the agent as -Dotel.instrumentation.methods.include=<this line>, quoted, and run once with traffic. '
+    + 'See docs/setup/runtime-evidence.md\n');
+  process.exit(0);
+}
+
 if (cmd === 'mcp') {
   // The MCP server (SPEC §13). It serves ONE OR MANY projects: `--pack`/`--root`
   // pick a single pack, `--project a --project b` picks registry entries, and
@@ -3405,7 +3449,7 @@ if (cmd === 'mcp') {
   process.stdout.write(`\n(${resp.basis.freshness.verdict}) ${a.note}\n`);
   process.exit(0);
 } else if (cmd !== 'pack' && cmd !== 'analyze' && cmd !== 'estimate') {
-  die('usage: cascade <setup|doctor|init|agent|analyze|estimate|verify|golden|catalog|pack|mcp|impact|view> …\n'
+  die('usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view> …\n'
     + '  cascade setup [--force] [--home]\n'
     + '      (build the SQL lane\'s python and install its pinned requirements. --force rebuilds an\n'
     + '       existing one; --home puts it in the tool home even inside a checkout. Nothing else needs it)\n'
@@ -3447,6 +3491,13 @@ if (cmd === 'mcp') {
     + '       a regression writes the pack to <packDir>-rejected/ and exits 3, leaving the certified\n'
     + '       pack untouched. --accept-baseline re-seals the baseline FROM THIS RUN: the one override,\n'
     + '       and a human decision.)\n'
+    + '  cascade otel-methods [--pack <dir> | --project <id> | --root <dir>] [--json]\n'
+    + '      (print the `otel.instrumentation.methods.include` value this pack needs: every route\n'
+    + '       handler and every method that reaches a statement, grouped by class as pkg.Class[m1,m2]\n'
+    + '       and joined with semicolons. The Java agent takes explicit method names, never a\n'
+    + '       wildcard, and without them the dispatch join sees nothing because no controller or\n'
+    + '       service method has a span. The value goes to stdout alone, so it can be pasted or\n'
+    + '       piped. --json prints the same as {class: [methods]}. See docs/setup/runtime-evidence.md)\n'
     + '  cascade estimate [--root <dir>] [--project <id>] [--json]\n'
     + '  cascade verify [--pack <dir> | --project <id> | --root <dir>] [--json]\n'
     + '      (recompute every digest in .cascade/receipt.json from the files, check the running engine\n'

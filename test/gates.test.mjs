@@ -103,6 +103,12 @@ const ALLOWED_HOSTS = new Set([
   'opensource.org',    // OSI licence pages (MIT text in NOTICE)
   'spdx.org',          // SPDX licence identifiers
   'mybatis.org',       // the MyBatis mapper DTD every mapper XML declares in its DOCTYPE
+  // The OTLP schema URL every OpenTelemetry export stamps on its resource
+  // (`"schemaUrl": "https://opentelemetry.io/schemas/1.24.0"`). It is in the
+  // real-agent trace fixture because the agent wrote it, and a standard's own
+  // identifier can no more be somebody's internal address than the W3C
+  // namespace above can.
+  'opentelemetry.io',
   // CODE_OF_CONDUCT.md is the Contributor Covenant 2.1 VERBATIM, and its own
   // text carries these three links. Removing them would break the CC BY 4.0
   // attribution the licence requires, so the allowlist grows instead.

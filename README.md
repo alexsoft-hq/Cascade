@@ -936,7 +936,12 @@ is a candidate set whatever the code says. A confirmed hop keeps its grade and
 gains `observed: true` beside it, an unobserved candidate is left exactly where
 it was, and a hop no static rule explains becomes a `RUNTIME_ONLY` edge that is
 shown and never walked. Nothing is promoted, no SQL text or bound parameter
-enters the pack, and there is no discovery step.
+enters the pack, and there is no discovery step. The file may be an OTLP/JSON
+document or the application log the OpenTelemetry Java agent writes with
+`logging-otlp`, and `cascade otel-methods` prints the
+`otel.instrumentation.methods.include` line that agent needs before it emits the
+caller spans at all. The worked recipe, with the numbers a real petclinic run
+produced, is on
 [`docs/setup/runtime-evidence.md`](docs/setup/runtime-evidence.md).
 
 Per-lane detail: [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
