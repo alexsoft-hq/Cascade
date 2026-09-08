@@ -70,9 +70,9 @@ import { addMybatisPlusFacts, wrapperFragmentStatements } from '../src/adapters/
 import { assembleGraph } from '../src/core/assemble.mjs';
 import { projectPack, loadPack, PACK_SCHEMA } from '../src/core/pack.mjs';
 import { discover, isWebSourceFile, routerDependencyOf } from '../src/core/discover.mjs';
-import { buildManifest, buildProfile, writeInitFiles, lanesOf, slugify } from '../src/core/init.mjs';
+import { buildManifest, buildProfile, writeInitFiles, writeStateFile, catalogSignpost, lanesOf, slugify } from '../src/core/init.mjs';
 import { validateManifest, loadManifest } from '../src/core/manifest.mjs';
-import { normalizeProfile, loadProfile, profileDiagnostics, sqlDialectOf, trustGapsFor, PROFILE_DEFAULTS } from '../src/core/profile.mjs';
+import { normalizeProfile, validateProfile, loadProfile, profileDiagnostics, sqlDialectOf, trustGapsFor, PROFILE_DEFAULTS } from '../src/core/profile.mjs';
 import { selectLanes, sqlLaneArgs, declareAxes, screenAxisOf } from '../src/core/lanes.mjs';
 import { buildEstimate } from '../src/core/estimate.mjs';
 import { buildChangeset, changedFiles } from '../src/core/changeset.mjs';
@@ -105,6 +105,10 @@ import {
   AGENT_CLIENTS, codexTomlBlock, filesFor, mcpServerEntry, mergeManagedBlock, mergeMcpConfig,
 } from '../src/core/agent_setup.mjs';
 import { findConnectionCandidates, describeCandidate, parseConnectionUrl, DEFAULT_PORTS, CONNECTION_DIALECTS } from '../src/core/dbconfig.mjs';
+import {
+  credentialsPath, serverKey, readCredentials, findPassword, listCredentials,
+  setCredential, removeCredential, modeVerdict, permissionMessage, isInside, CredentialsError,
+} from '../src/core/credentials.mjs';
 import { resolveProject, registrationTarget } from '../src/core/resolve.mjs';
 import { makeScratch } from '../src/core/scratch.mjs';
 import { toolList, callTool } from '../src/mcp/catalog.mjs';
@@ -1117,6 +1121,71 @@ function catalogPathsOf(dotCascadeDir) {
 // unless --password-env names another. Mirrors catalog_live.py's default.
 const DEFAULT_PASSWORD_ENV = 'CASCADE_DB_PASSWORD';
 
+// ---------------------------------------------------------------------------
+// Asking the person at the keyboard. Both readers are SYNCHRONOUS, because
+// everything else in this file is: a promise here would turn the whole command
+// into an async program for the sake of one question.
+//
+// Neither is ever reached without a TTY. Every caller checks `process.stdin.isTTY`
+// first and takes the non-interactive path otherwise, which is what makes a
+// piped or CI run fail with a sentence instead of hanging on a read.
+// ---------------------------------------------------------------------------
+
+/** One line from the terminal, echoed as typed. Returns '' at end of input. */
+function promptLine(question) {
+  process.stderr.write(question);
+  return readLineFromTty(false);
+}
+
+/**
+ * One line from the terminal with NOTHING echoed: the password reader. The
+ * terminal is put in raw mode so the driver stops echoing, which also means
+ * this loop owns backspace and Ctrl-C.
+ */
+function promptHidden(question) {
+  process.stderr.write(question);
+  const line = readLineFromTty(true);
+  process.stderr.write('\n');
+  return line;
+}
+
+function readLineFromTty(hidden) {
+  const wasRaw = process.stdin.isRaw === true;
+  if (hidden && typeof process.stdin.setRawMode === 'function') process.stdin.setRawMode(true);
+  const byte = Buffer.alloc(1);
+  const typed = [];
+  try {
+    for (;;) {
+      let n = 0;
+      try {
+        n = fs.readSync(process.stdin.fd, byte, 0, 1, null);
+      } catch (e) {
+        // A non-blocking stdin says "nothing yet" rather than blocking; the
+        // read is retried. EOF on some platforms arrives as EOF, not as 0.
+        if (e.code === 'EAGAIN') continue;
+        if (e.code === 'EOF') break;
+        throw e;
+      }
+      if (n === 0) break;
+      const c = byte[0];
+      if (c === 0x0a || c === 0x0d) break;                       // enter
+      if (hidden && c === 0x03) { process.stderr.write('\n'); process.exit(130); }  // ctrl-c
+      if (hidden && (c === 0x7f || c === 0x08)) { typed.pop(); continue; }          // backspace
+      typed.push(c);
+    }
+  } finally {
+    if (hidden && typeof process.stdin.setRawMode === 'function') process.stdin.setRawMode(wasRaw);
+  }
+  // Decoded at the END, so a multi-byte character typed into the prompt survives
+  // being read one byte at a time.
+  return Buffer.from(typed).toString('utf8').replace(/\r$/, '');
+}
+
+/** A yes/no question whose default is NO: anything but y or yes is no. */
+function confirmYesNo(question) {
+  return /^(y|yes)$/i.test(promptLine(question).trim());
+}
+
 /**
  * WHICH TREE `analyze` READS.
  *
@@ -1435,6 +1504,36 @@ if (cmd === 'init') {
       registry: regFile,
     }, null, 2) + '\n');
   }
+
+  // THE SIGNPOST, last, so it is the thing still on screen. A missing schema is
+  // not one diagnostic among a dozen: it decides whether the ERD has any lines
+  // in it and whether a column question can be answered in full, and the reader
+  // has to meet that here rather than three commands later.
+  const noDdl = (discovery.ddlPaths ?? []).length === 0;
+  if (noDdl && (profile.catalog?.source ?? 'none') === 'none') {
+    const candidates = discovery.connectionCandidates ?? [];
+    process.stderr.write('\n' + catalogSignpost({
+      candidates,
+      profilePath: path.relative(root, p.profile) || p.profile,
+    }));
+    // In a terminal the reader can act on it now instead of retyping a command
+    // they just read. Outside one (a script, CI, a pipe) the block IS the
+    // answer: nothing prompts, nothing connects.
+    if (candidates.length > 0 && process.stdin.isTTY) {
+      const pick = promptLine(`\nFetch one of these now? Enter 1-${candidates.length}, or press Enter to skip: `);
+      const n = Number(pick.trim());
+      if (Number.isInteger(n) && n >= 1 && n <= candidates.length) {
+        // The hand-off is literal: the same command the block printed, run with
+        // this terminal attached, so its own confirmation and its own hidden
+        // password prompt are the ones the reader answers.
+        try {
+          execFileSync(process.execPath, [realPath(fileURLToPath(import.meta.url)), 'catalog', 'fetch', '--root', root, '--candidate', String(n)], { stdio: 'inherit' });
+        } catch {
+          process.stderr.write(`\nthe fetch did not finish. \`cascade catalog fetch --candidate ${n}\` runs it again when you are ready.\n`);
+        }
+      }
+    }
+  }
   process.exit(0);
 }
 
@@ -1703,6 +1802,24 @@ if (cmd === 'analyze') {
         : '')
       + '  pass --ddl / --mappers / --java-src / --web-src explicitly, or run `cascade init` so the profile declares the lanes.');
   }
+  // THE ONE REMINDER. This project told `init` where its database is, nobody
+  // has fetched the schema, and the run is about to produce a pack whose ERD
+  // has no relationship lines and whose column answers are partial. That is a
+  // supported answer and the run continues, but it is said HERE, at the top,
+  // rather than left for whoever opens the empty diagram later.
+  const recordedConnection = (profile.catalog?.source ?? 'none') === 'none'
+    && typeof profile.catalog?.connectionFrom === 'string' && profile.catalog.connectionFrom.length > 0;
+  if (recordedConnection && ddls.length === 0 && !snapshot) {
+    // The profile stores that path relative to the manifest directory; the
+    // reader is standing in the repository, so it is shown from there.
+    const from = resolved.dotCascade
+      ? path.relative(path.resolve(root), path.resolve(resolved.dotCascade, profile.catalog.connectionFrom)) || profile.catalog.connectionFrom
+      : profile.catalog.connectionFrom;
+    process.stderr.write(`no schema has been fetched: the profile records a database at ${from} `
+      + 'and nothing has read it, so this pack gets no ERD relationship lines and partial column answers. '
+      + 'Run `cascade catalog fetch --candidate 1` to pin one.\n');
+  }
+
   // The lane line states BOTH what ran and what was left out: a default that is
   // never printed is indistinguishable from a hidden filter (SPEC §17.8).
   const excluded = sel.excludedTestRoots.length > 0
@@ -2765,22 +2882,84 @@ if (cmd === 'analyze') {
 }
 
 if (cmd === 'catalog') {
-  // SPEC §12 — the DB catalog adapter. TWO subcommands, and the split is the
+  // SPEC §12 — the DB catalog adapter. THREE subcommands, and the split is the
   // whole security design (§12.3, §17.5):
   //
-  //   discover  reads the repository and LISTS where a database might be. It
-  //             connects to nothing and it never reads a password value.
-  //   fetch     connects — once, read-only, and ONLY after the user has seen
-  //             the exact target and typed `--yes`. The connection info comes
-  //             out of the analyzed repository, which is untrusted input: a
-  //             malicious checkout must not be able to make this tool dial a
-  //             host of the attacker's choosing.
+  //   discover     reads the repository and LISTS where a database might be. It
+  //                connects to nothing and it never reads a password value.
+  //   fetch        connects — once, read-only, and ONLY after the user has seen
+  //                the exact target and confirmed it. The connection info comes
+  //                out of the analyzed repository, which is untrusted input: a
+  //                malicious checkout must not be able to make this tool dial a
+  //                host of the attacker's choosing.
+  //   credentials  manages the ONE file that holds a password, in the tool home
+  //                at mode 0600, never under a project tree.
   //
-  // Neither writes a credential anywhere (§17.3). The password is never an
-  // argument; it is read by the worker from the environment variable named by
+  // Nothing writes a credential into the project (§17.3). The password is never
+  // an argument; the worker reads it from the environment variable named by
   // --password-env, and it never reaches `.cascade/`, the pack, or a log.
   const sub = argv[1];
   const asJson = flag('json');
+
+  /**
+   * The credentials file for this run, refusing the one place it must never be.
+   * `CASCADE_HOME` is an override for tests and for a reader who keeps tool
+   * state elsewhere; pointed inside an analyzed project it would put the
+   * password in the tree, and a tree travels.
+   */
+  function credentialsFileOrDie() {
+    const file = credentialsPath(process.env);
+    let projectRoot = null;
+    try {
+      const r = resolveProject({ project: opt('project'), root: opt('root'), cwd: process.cwd(), env: process.env });
+      if (r.dotCascade && fs.existsSync(r.dotCascade)) projectRoot = path.dirname(r.dotCascade);
+    } catch { projectRoot = null; }
+    if (projectRoot && isInside(file, projectRoot)) {
+      die(`the credentials file would be ${file}, which is inside the project at ${projectRoot}.\n`
+        + '  A password under an analyzed tree travels with the tree. A zip, a copy to a colleague, a `git add -f`,\n'
+        + '  a cloud-drive sync and a container mount all carry it along, and a gitignore stops none of them.\n'
+        + '  Point CASCADE_HOME somewhere outside the project (the default, ~/.cascade, already is).');
+    }
+    return file;
+  }
+
+  /**
+   * The connection target the flags name: a URL, or the fields spelled out. The
+   * SAME parse `fetch` uses, so a target that works there works here, and a
+   * password smuggled into a URL is stripped rather than used.
+   */
+  function targetFromFlags() {
+    let t;
+    if (opt('url')) {
+      const parsed = parseConnectionUrl(opt('url'));
+      if (!parsed) die(`--url ${JSON.stringify(opt('url'))} is not a connection URL (jdbc:mysql://…, jdbc:postgresql://…, jdbc:oracle:thin:@…, postgres://…, mysql://…)`);
+      for (const note of parsed.notes) process.stderr.write(`note: ${note}\n`);
+      t = {
+        dialect: opt('dialect', parsed.dialect), host: opt('host', parsed.host),
+        port: opt('port') ? Number(opt('port')) : parsed.port,
+        database: opt('database', parsed.database),
+        user: opt('user', parsed.usernameRef && !/^\$\{/.test(parsed.usernameRef) ? parsed.usernameRef : null),
+      };
+    } else {
+      t = {
+        dialect: opt('dialect'), host: opt('host'),
+        port: opt('port') ? Number(opt('port')) : null,
+        database: opt('database'), user: opt('user'),
+      };
+    }
+    if (t.dialect && !t.port) t.port = DEFAULT_PORTS[t.dialect] ?? null;
+    const missing = ['dialect', 'host', 'port', 'database', 'user'].filter((k) => !t[k]);
+    if (missing.length > 0) {
+      die(`the connection target is incomplete (missing: ${missing.join(', ')}).\n`
+        + '  Name it as a URL, or field by field:\n'
+        + '  --url jdbc:mysql://host:3306/db --user u\n'
+        + '  --dialect mysql --host host --port 3306 --database db --user u');
+    }
+    if (!CONNECTION_DIALECTS.includes(t.dialect)) {
+      die(`--dialect ${t.dialect} is not one of ${CONNECTION_DIALECTS.join('|')}`);
+    }
+    return t;
+  }
 
   if (sub === 'discover') {
     const root = realPath(path.resolve(opt('root', process.cwd())));
@@ -2806,9 +2985,80 @@ if (cmd === 'catalog') {
     if (candidates.length > 0) {
       process.stdout.write('\nNo password VALUE is read, printed or stored, only whether one is there and where it comes from.\n'
         + 'Nothing above has been connected to. To pin a read-only snapshot of one of them:\n'
-        + `  export ${DEFAULT_PASSWORD_ENV}='…'\n`
-        + `  cascade catalog fetch --candidate 1 --password-env ${DEFAULT_PASSWORD_ENV} --yes\n`);
+        + '  cascade catalog fetch --candidate 1\n'
+        + 'It shows the target and asks before it connects, and asks for the password without echoing it.\n'
+        + `In a script there is nobody to ask, so pass --yes and put the password in ${DEFAULT_PASSWORD_ENV}.\n`);
     }
+    process.exit(0);
+  }
+
+  // ---- credentials ------------------------------------------------------
+  //
+  // WHY A FILE IN THE HOME AND NOT IN THE PROJECT. A gitignore is a convention,
+  // not a boundary: a project directory gets force-added, zipped, copied to a
+  // colleague, synced to a cloud drive and mounted into a container, and every
+  // one of those carries whatever is inside it along. So the password lives in
+  // the tool home at mode 0600, keyed by server and user, exactly the way
+  // ~/.pgpass and ~/.my.cnf have worked for decades. src/core/credentials.mjs
+  // holds the format and the permission rule; this block is the command.
+  if (sub === 'credentials') {
+    const op = argv[2];
+    if (!['list', 'set', 'remove'].includes(op ?? '')) {
+      die('usage: cascade catalog credentials list\n'
+        + '       cascade catalog credentials set    --url <jdbc url> --user <u> [--password-env NAME]\n'
+        + '       cascade catalog credentials remove --url <jdbc url> --user <u>\n'
+        + '       (--dialect <d> --host <h> [--port <p>] --database <db> --user <u> names the same target field by field)');
+    }
+    const file = credentialsFileOrDie();
+    if (op === 'list') {
+      let held;
+      try { held = listCredentials(file); }
+      catch (e) { die(e instanceof CredentialsError ? e.message : `cannot read ${file}: ${e.message}`); }
+      if (!modeVerdict(file).exists) {
+        process.stdout.write(`no credentials file at ${file} yet.\n`
+          + '  `cascade catalog credentials set --url <jdbc url> --user <u>` creates one, at mode 0600.\n');
+        process.exit(0);
+      }
+      process.stdout.write(`credentials in ${file} (${held.length}):\n`);
+      for (const e of held) process.stdout.write(`  ${e.server}  as user ${e.user}\n`);
+      process.stdout.write('no password is printed here, and none ever will be. This is the whole list of what is stored:\n'
+        + 'a server, a user, and a secret only the fetch reads.\n');
+      process.exit(0);
+    }
+
+    const t = targetFromFlags();
+    const server = serverKey(t);
+    if (op === 'remove') {
+      let result;
+      try { result = removeCredential(file, server, t.user); }
+      catch (e) { die(e instanceof CredentialsError ? e.message : `cannot rewrite ${file}: ${e.message}`); }
+      if (!result.removed) die(`no entry for ${server} as user ${t.user} in ${file}. \`cascade catalog credentials list\` shows what is there`);
+      process.stderr.write(`removed ${server} as user ${t.user} from ${file} (${result.remaining} entry(ies) left)\n`);
+      process.exit(0);
+    }
+
+    // set. The password itself never arrives as an argument, so it comes from
+    // the environment (scriptable) or from a hidden prompt (interactive).
+    const setEnv = opt('password-env');
+    let secret = null;
+    if (setEnv) {
+      secret = process.env[setEnv];
+      if (!secret) die(`the environment variable ${setEnv} is empty. Put the password there (\`export ${setEnv}='…'\`) or drop --password-env and be asked for it`);
+    } else if (process.env[DEFAULT_PASSWORD_ENV]) {
+      secret = process.env[DEFAULT_PASSWORD_ENV];
+    } else if (process.stdin.isTTY) {
+      secret = promptHidden(`password for ${server} as user ${t.user} (not echoed): `);
+      if (!secret) die('nothing was typed, so nothing was stored');
+    } else {
+      die(`there is no password to store and no terminal to ask on.\n`
+        + `  Set ${DEFAULT_PASSWORD_ENV}, or name another variable with --password-env <NAME>,\n`
+        + '  or run this command in a terminal and be asked for it.');
+    }
+    let result;
+    try { result = setCredential(file, { server, user: t.user, password: secret }); }
+    catch (e) { die(e instanceof CredentialsError ? e.message : `cannot write ${file}: ${e.message}`); }
+    process.stderr.write(`${result.replaced ? 'replaced' : 'stored'} the password for ${server} as user ${t.user} in ${file} (mode 0600)\n`
+      + '  It is outside every project tree on purpose, so no copy, zip or push of a repository carries it.\n');
     process.exit(0);
   }
 
@@ -2817,7 +3067,8 @@ if (cmd === 'catalog') {
       + '       cascade catalog fetch [--project <id>|--root <dir>]\n'
       + '                             [--candidate <n> | --url <jdbc url> --user <u>\n'
       + '                              | --dialect <d> --host <h> [--port <p>] --database <db> --user <u>]\n'
-      + `                             [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]`);
+      + '                             [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]\n'
+      + '       cascade catalog credentials <list|set|remove> [--url <jdbc url> --user <u>]');
   }
 
   // ---- fetch ------------------------------------------------------------
@@ -2826,7 +3077,8 @@ if (cmd === 'catalog') {
   if (!resolved.dotCascade) {
     die('no project state directory (.cascade/) for this target. Run `cascade init` first, so the snapshot has a home that is already gitignored');
   }
-  const passwordEnv = opt('password-env', DEFAULT_PASSWORD_ENV);
+  const passwordEnvOpt = opt('password-env');
+  const passwordEnv = passwordEnvOpt ?? DEFAULT_PASSWORD_ENV;
 
   // Where the target comes from: a discovered candidate, or flags the user typed.
   let target = null;
@@ -2883,28 +3135,110 @@ if (cmd === 'catalog') {
     die(`--dialect ${target.dialect} is not one of ${CONNECTION_DIALECTS.join('|')}`);
   }
 
-  // THE CONFIRMATION (SPEC §12.3, §17.5). What is about to happen, in full,
-  // before it happens — and it does not happen without --yes.
+  // WHERE THE PASSWORD WILL COME FROM, decided before anything is printed and
+  // long before anything is typed, so the confirmation below can say it. The
+  // order is the order of decreasing explicitness:
+  //
+  //   1. --password-env NAME     the reader named the variable on this command
+  //   2. CASCADE_DB_PASSWORD     the variable this tool has always read
+  //   3. the credentials file    $CASCADE_HOME/credentials, mode 0600, keyed by
+  //                              server and user
+  //   4. a hidden prompt         only with a terminal to ask on, and it offers
+  //                              to save what it was told
+  //
+  // The VALUE is not fetched yet for 3 and 4: the plan is, the secret is read
+  // after the target is confirmed. Nothing is read out of the analyzed
+  // repository, ever, whatever password that file carries.
+  const credFile = credentialsFileOrDie();
   const identity = `${target.host}:${target.port}/${target.database}`;
+  const server = serverKey(target);
+  let credentialsHolds = false;
+  if (!passwordEnvOpt && !process.env[DEFAULT_PASSWORD_ENV]) {
+    try { credentialsHolds = findPassword(credFile, server, target.user) !== null; }
+    catch (e) { die(e instanceof CredentialsError ? e.message : `cannot read ${credFile}: ${e.message}`); }
+  }
+  const passwordFrom = passwordEnvOpt ? 'env-named'
+    : process.env[DEFAULT_PASSWORD_ENV] ? 'env-default'
+      : credentialsHolds ? 'credentials'
+        : process.stdin.isTTY ? 'prompt' : 'nowhere';
+  const passwordSourceLine = {
+    'env-named': `from the environment variable ${passwordEnv} (never from the command line, never stored)`,
+    'env-default': `from the environment variable ${DEFAULT_PASSWORD_ENV} (never from the command line, never stored)`,
+    credentials: `from ${credFile} (mode 0600, this server and this user)`,
+    prompt: 'asked for here, not echoed, and stored only if you say so',
+    nowhere: 'NOT AVAILABLE YET, see below',
+  }[passwordFrom];
+
+  // THE CONFIRMATION (SPEC §12.3, §17.5). What is about to happen, in full,
+  // before it happens. In a terminal the reader answers it here; outside one,
+  // --yes is the answer, because a script cannot be asked.
   process.stderr.write(
     'cascade catalog fetch would open a READ-ONLY connection to:\n'
     + `  ${target.dialect} ${identity}\n`
     + `  as user      ${target.user}\n`
-    + `  password     from the environment variable ${passwordEnv} (never from the command line, never stored)\n`
+    + `  password     ${passwordSourceLine}\n`
     + `  read from    ${candidatePath ?? 'flags you typed'}\n`
     + `  writes       ${catalogPathsOf(resolved.dotCascade).catalog}\n`
     + `               ${catalogPathsOf(resolved.dotCascade).catalogSnapshot}\n`
     + '  queries      metadata SELECTs only (tables, columns, comments, primary keys)\n');
   if (!flag('yes')) {
-    process.stderr.write(
-      '\nRefusing to connect: pass --yes to confirm this exact target.\n'
-      + '  The connection info above came out of the analyzed repository, which this tool treats as\n'
-      + '  untrusted input. A checkout must not be able to make it dial a host by itself.\n');
-    process.exit(2);
+    if (process.stdin.isTTY) {
+      // The same one-glance confirmation, asked instead of demanded. It stays
+      // because the host above came out of the analyzed repository, and a
+      // saved credential for that host does not make the host trustworthy.
+      if (!confirmYesNo('\nConnect to this target? [y/N] ')) {
+        process.stderr.write('nothing was connected to.\n');
+        process.exit(2);
+      }
+    } else {
+      process.stderr.write(
+        '\nRefusing to connect: pass --yes to confirm this exact target.\n'
+        + '  The connection info above came out of the analyzed repository, which this tool treats as\n'
+        + '  untrusted input. A checkout must not be able to make it dial a host by itself.\n');
+      process.exit(2);
+    }
   }
-  if (!process.env[passwordEnv]) {
-    die(`the environment variable ${passwordEnv} is empty. Put the password there (\`export ${passwordEnv}='…'\`) or name another one with --password-env`);
+
+  // NOW the secret, and only now.
+  let password = null;
+  let offerToSave = false;
+  if (passwordFrom === 'env-named') {
+    password = process.env[passwordEnv];
+    if (!password) die(`the environment variable ${passwordEnv} is empty. Put the password there (\`export ${passwordEnv}='…'\`) or name another one with --password-env`);
+  } else if (passwordFrom === 'env-default') {
+    password = process.env[DEFAULT_PASSWORD_ENV];
+  } else if (passwordFrom === 'credentials') {
+    try { password = findPassword(credFile, server, target.user); }
+    catch (e) { die(e instanceof CredentialsError ? e.message : `cannot read ${credFile}: ${e.message}`); }
+    if (!password) die(`${credFile} no longer holds an entry for ${server} as user ${target.user}`);
+  } else if (passwordFrom === 'prompt') {
+    password = promptHidden(`password for ${target.user} at ${identity} (not echoed): `);
+    if (!password) die('nothing was typed, so nothing was connected to');
+    offerToSave = true;
+  } else {
+    die('there is no password for this connection, and no terminal to ask on. In order, this command reads:\n'
+      + '  1. the variable named by --password-env <NAME>\n'
+      + `  2. the environment variable ${DEFAULT_PASSWORD_ENV}\n`
+      + `  3. an entry in ${credFile} for ${server} as user ${target.user}\n`
+      + '     (\`cascade catalog credentials set --url <jdbc url> --user <u>\` writes one, at mode 0600)\n'
+      + '  4. a hidden prompt, when a terminal is attached\n'
+      + '  This run has none of the four.');
   }
+  if (offerToSave && confirmYesNo(`Save it in ${credFile} for next time? [y/N] `)) {
+    try {
+      setCredential(credFile, { server, user: target.user, password });
+      process.stderr.write(`saved ${server} as user ${target.user} in ${credFile} (mode 0600, outside every project tree)\n`);
+    } catch (e) {
+      process.stderr.write(`could not save it: ${e.message}\n  The fetch below runs anyway.\n`);
+    }
+  }
+  // The worker takes the password from an environment variable it is told the
+  // NAME of, so a password that came from the file or the prompt travels the
+  // same way: into the CHILD's environment only, under the default name, never
+  // into this process's own and never into argv.
+  const workerEnv = { ...process.env };
+  const workerPasswordEnv = passwordFrom === 'env-named' ? passwordEnv : DEFAULT_PASSWORD_ENV;
+  workerEnv[workerPasswordEnv] = password;
 
   const paths = ensureProjectDirs(path.dirname(resolved.dotCascade));
   const catalogDir = path.dirname(paths.catalog);
@@ -2913,7 +3247,7 @@ if (cmd === 'catalog') {
   const workerArgs = [
     '--dialect', target.dialect, '--host', target.host, '--port', String(target.port),
     '--database', target.database, '--user', target.user,
-    '--password-env', passwordEnv, '--out', partial,
+    '--password-env', workerPasswordEnv, '--out', partial,
   ];
   if (opt('schema')) workerArgs.push('--schema', opt('schema'));
   if (opt('stamp-schema')) workerArgs.push('--stamp-schema', opt('stamp-schema'));
@@ -2937,7 +3271,7 @@ if (cmd === 'catalog') {
 
   process.stderr.write(`connecting (read-only) to ${target.dialect} ${identity}…\n`);
   try {
-    execFileSync(cmdPath, cmdArgs, { stdio: ['ignore', 'inherit', 'inherit'], env: process.env, maxBuffer: 1 << 28 });
+    execFileSync(cmdPath, cmdArgs, { stdio: ['ignore', 'inherit', 'inherit'], env: workerEnv, maxBuffer: 1 << 28 });
   } catch (e) {
     try { fs.unlinkSync(partial); } catch { /* nothing to clean up */ }
     die(`the catalog worker failed (exit ${e.status ?? '?'}). Nothing was written.\n`
@@ -2974,13 +3308,36 @@ if (cmd === 'catalog') {
   };
   fs.writeFileSync(paths.catalogSnapshot, JSON.stringify(provenance, null, 2) + '\n', 'utf8');
 
+  // THE PROFILE, FINISHED. A snapshot nothing reads is not a schema, and asking
+  // the reader to hand-edit a JSON key to make the fetch they just confirmed
+  // count was a step that only ever produced an empty ERD and a puzzled reader.
+  // The write is narrow: `catalog.source` and, when a candidate chose it,
+  // `catalog.connectionFrom`. Every other key is left exactly as it was.
+  const profileFile = path.join(resolved.dotCascade, 'profile.json');
+  let profileNote;
+  try {
+    const existing = JSON.parse(fs.readFileSync(profileFile, 'utf8'));
+    const before = { ...(existing.catalog ?? {}) };
+    existing.catalog = {
+      ...before,
+      source: 'jdbc',
+      ...(candidatePath ? { connectionFrom: candidatePath } : {}),
+    };
+    validateProfile(normalizeProfile(existing));
+    writeStateFile(profileFile, existing);
+    profileNote = `wrote "catalog": { "source": "jdbc"${candidatePath ? `, "connectionFrom": "${candidatePath}"` : ''} } into ${profileFile}\n`
+      + `  (it was "${before.source ?? 'none'}"). The next \`cascade analyze\` reads the snapshot above.\n`;
+  } catch (e) {
+    profileNote = `could NOT update ${profileFile} (${e.message}).\n`
+      + '  The snapshot is pinned. To analyze against it, set there by hand:\n'
+      + '  "catalog": { "source": "jdbc" }\n';
+  }
+
   process.stderr.write(
     `wrote ${paths.catalog}: ${tables} table(s), ${columns} column(s), ${commented} with a comment\n`
     + `wrote ${paths.catalogSnapshot}: sha256 ${sha256.slice(0, 12)}…, fetched ${provenance.fetchedAt}\n`
-    + 'both are inside the gitignored catalog/ directory; no credential was written anywhere.\n\n'
-    + 'The profile was NOT changed. To analyze against this snapshot, set in '
-    + `${path.join(resolved.dotCascade, 'profile.json')}:\n`
-    + '  "catalog": { "source": "jdbc" }\n');
+    + 'both are inside the gitignored catalog/ directory, and no password was written to either.\n'
+    + profileNote);
   if (asJson) process.stdout.write(JSON.stringify(provenance, null, 2) + '\n');
   process.exit(0);
 }
@@ -3513,10 +3870,20 @@ if (cmd === 'mcp') {
     + '                        [--candidate <n> | --url <jdbc url> --user <u>\n'
     + '                         | --dialect <d> --host <h> [--port <p>] --database <db> --user <u>]\n'
     + '                        [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]\n'
-    + '      (pin a READ-ONLY catalog snapshot into .cascade/catalog/. It prints the exact target and\n'
-    + '       refuses to connect without --yes: the connection info comes from the analyzed repository,\n'
-    + '       which is untrusted input. The password is read only from the named environment variable,\n'
-    + '       never from the command line, and is never written anywhere.)\n'
+    + '      (pin a READ-ONLY catalog snapshot into .cascade/catalog/, then write catalog.source: "jdbc"\n'
+    + '       into the profile so the next analyze reads it. It prints the exact target first and asks\n'
+    + '       y/N in a terminal, or refuses without --yes outside one: the connection info comes from\n'
+    + '       the analyzed repository, which is untrusted input. The password is read, in order, from\n'
+    + '       --password-env, from CASCADE_DB_PASSWORD, from the credentials file, or from a hidden\n'
+    + '       prompt. It is never an argument and never written to the project.)\n'
+    + '  cascade catalog credentials list\n'
+    + '  cascade catalog credentials set    --url <jdbc url> --user <u> [--password-env NAME]\n'
+    + '  cascade catalog credentials remove --url <jdbc url> --user <u>\n'
+    + '      (the passwords `catalog fetch` may use, in $CASCADE_HOME/credentials at mode 0600: one\n'
+    + '       JSON object per line, keyed by server and user, never under a project tree. A file that\n'
+    + '       group or others can read is REFUSED with the chmod to run. `list` prints servers and\n'
+    + '       users and never a password. --dialect/--host/--port/--database name the same target\n'
+    + '       field by field.)\n'
     + '  cascade pack --catalog <f> --lineage <f> --out <dir>\n'
     + '  cascade mcp [--pack <dir> | --project <id> ... | --root <dir>] [--memory-budget <MB>]\n'
     + '      (with no --pack/--root/--project it serves EVERY registered project, lazily: a pack is\n'

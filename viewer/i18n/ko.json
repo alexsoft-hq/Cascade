@@ -82,6 +82,7 @@
   "ov.gap.duplicate-types.label": "두 번 선언된 타입",
   "ov.gap.mode-floor.label": "이 모드가 빼는 연결",
   "ov.gap.not-shipped.label": "부를 자바 쪽이 없는 SQL",
+  "ov.gap.no-catalog.label": "데이터베이스 스키마를 읽지 못함",
   "ov.gap.multi-handler-routes.label": "컨트롤러 둘이 같이 선언한 경로",
   "ov.gap.tables-not-reached.label": "엔드포인트가 닿지 않는 테이블",
   "ov.gap.openapi-drift.label": "API 문서와 어긋나는 경로",

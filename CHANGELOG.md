@@ -12,6 +12,24 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **A missing database schema is a signpost, not a footnote, and the password
+  lives in your home.** On a tree with no DDL file, `init` used to record the
+  connection it found in `application.yml` as one `[info]` line and tell you to
+  edit the profile yourself, and `analyze` then built a pack whose ERD had no
+  relationship lines and whose column answers were a fraction of what a schema
+  gives (litemall: 4,064 column edges with its DDL, 684 without). Now `init`
+  ends with a block that says what is missing, what it costs, and the three
+  ways forward with exact commands, listing the connection candidates it found;
+  `catalog fetch` writes `catalog.source: "jdbc"` into the profile itself on
+  success; and `analyze` on a recorded but unfetched connection prints one
+  reminder line up front and still ships the pack. The password never goes near
+  the project: `cascade catalog credentials set|list|remove` keeps it in
+  `~/.cascade/credentials`, one JSON entry per server and user, created 0600 and
+  refused with a `chmod 600` remedy if anyone else could read it, never inside
+  an analyzed tree. `fetch` looks in `--password-env`, then `CASCADE_DB_PASSWORD`,
+  then that file, then a hidden prompt, and the target confirmation stays but
+  becomes a `y/N` in a terminal. `list` never prints a password.
+
 - **A runtime evidence lane: what actually ran, shown beside the grade and never
   above it.** No static reading of Java, with or without a build classpath, can
   raise an endpoint answer above `SOUND_SET`: the hop into a MyBatis mapper or a

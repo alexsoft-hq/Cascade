@@ -70,9 +70,12 @@ function unresolvedReasonSentence(laneStats) {
  *
  * @param {import('./graph.mjs').Graph} graph
  * @param {{mode?:'strict'|'conservative'|'heuristic', depth?:number,
- *          lanes?:string[]|null, laneStats?:{unresolvedCalls?:number}|null}} [opts]
- *        lanes/laneStats are pack metadata, passed in when the caller has them:
- *        they only sharpen the notes in `gaps`, never a count.
+ *          lanes?:string[]|null, laneStats?:{unresolvedCalls?:number}|null,
+ *          axes?:Object|null}} [opts]
+ *        lanes/laneStats/axes are pack metadata, passed in when the caller has
+ *        them: they only sharpen the notes in `gaps`, never a count. `axes` is
+ *        the pack's own per-axis declaration, and the catalog entry of it is
+ *        what tells this census that the pack was built with no schema.
  * @returns {{mode:string, depth:number,
  *            nodes:{kind:string,count:number}[], edges:{type:string,grade:string,count:number}[],
  *            grades:{grade:string,count:number}[], statementTypes:{type:string,count:number}[],
@@ -313,6 +316,22 @@ export function buildOverview(graph, opts = {}) {
   // The order is the order the story is told in — fixed here, not data-driven,
   // so the list is deterministic without being alphabetised into nonsense.
   const gaps = [];
+  // NO SCHEMA. This is the gap that changes the shape of every other answer, so
+  // it is told first and it carries its own remedy: without a catalog the ERD
+  // has no relationship lines at all (a join names two columns, and neither can
+  // be attributed to a table), SELECT * cannot be expanded, and a column answer
+  // holds what the SQL spelled out rather than the whole truth. `count` is the
+  // tables that came from statements alone, because that number IS the size of
+  // what is standing in for a schema here.
+  if (opts.axes && opts.axes.catalog && opts.axes.catalog.status === 'not-shipped') {
+    gaps.push({
+      kind: 'no-catalog', count: tableIds.length,
+      note: 'no database schema was read for this pack, so the ERD draws no relationship line, a SELECT * is not expanded '
+        + 'into the columns it reads, and a bare column name is tied to its table only where the SQL says so unambiguously. '
+        + `The ${tableIds.length} table(s) here are the ones a statement named. Run \`cascade catalog fetch --candidate 1\` to pin one `
+        + 'from the database this project already names, or \`cascade analyze --ddl <schema.sql>\` if the schema is a file you have',
+    });
+  }
   if (!codeAxis) {
     gaps.push({
       kind: 'not-shipped', count: statements,

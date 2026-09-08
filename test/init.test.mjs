@@ -178,7 +178,7 @@ test('buildProfile RECORDS a single connection candidate but never turns the sou
   const hit = diagnostics.find((d) => d.kind === 'CATALOG_CONNECTION_FOUND');
   assert.ok(hit, 'the find must be reported');
   assert.match(hit.reason, /mysql at db\.example\.com:3306\/shop/);
-  assert.match(hit.reason, /cascade catalog fetch --yes/);
+  assert.match(hit.reason, /cascade catalog fetch --candidate 1/);
   assert.match(hit.reason, /Nothing connects until you do/);
   assert.equal(JSON.stringify(diagnostics).includes('<literal in file>'), false,
     'the diagnostic states THAT a password is there, not where its text sits');

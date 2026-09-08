@@ -242,11 +242,11 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   'catalog.source': {
     status: 'consumed', where: 'src/core/lanes.mjs',
-    note: 'file → the DDL at catalog.connectionFrom when --ddl is absent; jdbc → the pinned snapshot `cascade catalog fetch` wrote to .cascade/catalog/columns.jsonl (analysis itself never connects to a database); none → a partial pack with no catalog axis',
+    note: 'file → the DDL at catalog.connectionFrom when --ddl is absent; jdbc → the pinned snapshot `cascade catalog fetch` wrote to .cascade/catalog/columns.jsonl (analysis itself never connects to a database), and a successful fetch WRITES this value here itself, so nobody hand-edits the profile to make the snapshot count; none → a partial pack with no catalog axis',
   },
   'catalog.connectionFrom': {
     status: 'consumed', where: 'src/core/lanes.mjs',
-    note: 'with catalog.source=file this is the DDL path: a string, or an ARRAY of paths applied IN THE ORDER WRITTEN when the schema is split across files, resolved relative to the manifest directory; with source=jdbc/none it is the connection-info file `cascade catalog discover` found (recorded for the human, never dialled by itself)',
+    note: 'with catalog.source=file this is the DDL path: a string, or an ARRAY of paths applied IN THE ORDER WRITTEN when the schema is split across files, resolved relative to the manifest directory; with source=jdbc/none it is the connection-info file `cascade catalog discover` found (recorded for the human, never dialled by itself), and a fetch that a --candidate chose writes the candidate path here',
   },
   'calibration.firstRun': {
     status: 'consumed', where: 'src/core/calibration.mjs',

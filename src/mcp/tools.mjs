@@ -1123,7 +1123,13 @@ export function overview(graph, args, ctx) {
     ...(meta?.ddl ? { ddl: meta.ddl } : {}),
   };
 
-  const o = buildOverview(graph, { mode, depth, lanes: pack.lanes, laneStats: meta?.laneStats ?? null });
+  const o = buildOverview(graph, {
+    mode, depth, lanes: pack.lanes, laneStats: meta?.laneStats ?? null,
+    // The pack's own axis declaration, so the census can disclose the one gap
+    // it cannot see in the graph: a pack with no schema still has tables (the
+    // statements named them), and only the axes say the catalog never ran.
+    axes: (meta && meta.axes) || null,
+  });
   const cut = (list) => list.slice(0, OVERVIEW_CAP);
 
   const answer = {

@@ -111,6 +111,10 @@ function makeSandbox() {
     CASCADE_TEST_ARGV_LOG: path.join(base, 'argv.json'),
     [PASSWORD_ENV]: SECRET,
   };
+  // The developer running this suite may have their own password variable
+  // exported; the lookup order would then take a different branch here than in
+  // CI. Every test that wants it sets it itself.
+  delete env.CASCADE_DB_PASSWORD;
   return { base, root, env };
 }
 
@@ -127,6 +131,60 @@ function walk(dir, out = []) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// The signpost: what `cascade init` says when this tree has no schema.
+// ---------------------------------------------------------------------------
+
+test('init ends with the signpost when there is no schema, naming the candidate and all three ways out', () => {
+  const { root, env } = makeSandbox();
+  const r = run(env, ['init', '--root', root, '--project', 'shop']);
+  assert.equal(r.status, 0, r.stderr);
+
+  // What is missing, and what it costs. Not one info line among a dozen.
+  assert.match(r.stderr, /NO DATABASE SCHEMA IN THIS TREE/);
+  assert.match(r.stderr, /draw a single relationship line on the ERD/);
+  assert.match(r.stderr, /expand SELECT \* into the columns it really reads/);
+  assert.match(r.stderr, /answer a column question in full/);
+
+  // The three ways forward, each with the command that does it.
+  assert.match(r.stderr, /cascade analyze --ddl path\/to\/schema\.sql/);
+  assert.match(r.stderr, /cascade catalog fetch --candidate 1/);
+  assert.match(r.stderr, /cascade estimate/);
+
+  // The candidate, named the way `catalog discover` numbers it, and WITHOUT the
+  // password: the signpost is about the schema.
+  assert.match(r.stderr, /\[1\] mysql db\.example\.com:3306\/shop as user shop_app/);
+  assert.match(r.stderr, /read from src\/main\/resources\/application\.yml/);
+  assert.equal(r.stderr.includes(SECRET), false, 'the signpost must not carry the password');
+  assert.equal(r.stdout.includes(SECRET), false);
+
+  // The signpost is LAST: the diagnostic that records the find is still there,
+  // and the block is what the reader is left looking at.
+  assert.match(r.stderr, /CATALOG_CONNECTION_FOUND/);
+  assert.ok(r.stderr.indexOf('NO DATABASE SCHEMA') > r.stderr.indexOf('CATALOG_CONNECTION_FOUND'),
+    'the signpost must come after the diagnostics, not before them');
+
+  // Nothing was connected to, and nothing was turned on.
+  const profile = JSON.parse(fs.readFileSync(path.join(root, '.cascade', 'profile.json'), 'utf8'));
+  assert.equal(profile.catalog.source, 'none');
+  assert.equal(fs.existsSync(env.CASCADE_TEST_ARGV_LOG), false, 'init connects to nothing');
+});
+
+test('init prints NO signpost when the repository ships a schema — there is nothing to point at', () => {
+  const { root, env } = makeSandbox();
+  fs.mkdirSync(path.join(root, 'db'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'db', 'schema.sql'),
+    'CREATE TABLE shop_order (\n  id BIGINT NOT NULL,\n  order_sn VARCHAR(64)\n);\n', 'utf8');
+  execFileSync('git', ['-C', root, 'add', '-A'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...GIT_ENV } });
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'schema'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...GIT_ENV } });
+
+  const r = run(env, ['init', '--root', root, '--project', 'shop']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(/NO DATABASE SCHEMA IN THIS TREE/.test(r.stderr), false, r.stderr);
+  const profile = JSON.parse(fs.readFileSync(path.join(root, '.cascade', 'profile.json'), 'utf8'));
+  assert.equal(profile.catalog.source, 'file');
+});
 
 // ---------------------------------------------------------------------------
 
@@ -200,10 +258,15 @@ test('catalog fetch --yes pins a snapshot with provenance, and never writes a cr
   assert.equal(argv.includes('--password-env'), true);
   assert.equal(argv.some((a) => String(a).includes(SECRET)), false, 'the password reached argv');
 
-  // The profile was NOT edited: turning the source on is the user's sentence.
+  // THE PROFILE IS FINISHED BY THE FETCH. A snapshot nothing reads is not a
+  // schema, and the hand edit that used to be required only ever produced an
+  // empty ERD and a puzzled reader. The write is narrow: the source, and the
+  // candidate file the target came from. Everything else is untouched.
   const profile = JSON.parse(fs.readFileSync(path.join(root, '.cascade', 'profile.json'), 'utf8'));
-  assert.notEqual(profile.catalog.source, 'jdbc');
-  assert.match(r.stderr, /"catalog": \{ "source": "jdbc" \}/);
+  assert.equal(profile.catalog.source, 'jdbc');
+  assert.equal(profile.catalog.connectionFrom, 'src/main/resources/application.yml');
+  assert.deepEqual(profile.frameworkPacks, ['mybatis-xml'], 'the rest of the profile is untouched');
+  assert.match(r.stderr, /wrote "catalog": \{ "source": "jdbc", "connectionFrom": "src\/main\/resources\/application\.yml" \}/);
 
   // …AND THE LEAK TEST: every byte under .cascade/, plus both captured streams.
   const files = walk(path.join(root, '.cascade'));
@@ -378,4 +441,129 @@ test('a refetched snapshot with the same schema changes the file hash but not th
   const after = JSON.parse(fs.readFileSync(path.join(root, '.cascade', 'pack', 'pack.json'), 'utf8'));
   assert.notEqual(after.digest, first.digest, 'a changed column comment must change the pack');
   assert.notEqual(after.meta.catalog.sha256, first.meta.catalog.sha256);
+});
+
+// ---------------------------------------------------------------------------
+// The reminder: a run on a recorded-but-unfetched connection says so, ONCE, at
+// the top, and still produces its pack. A partial answer is a supported answer.
+// ---------------------------------------------------------------------------
+
+const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+
+test('analyze on a recorded-but-unfetched connection prints one reminder and still writes the pack', (t) => {
+  if (!fs.existsSync(VENV_PY)) {
+    t.skip(`no venv python at ${VENV_PY} — the mapper lane cannot run (see docs/setup/sql-lane.md)`);
+    return;
+  }
+  const { root, env } = makeSandbox();
+  assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
+
+  const r = run(env, ['analyze', '--root', root, '--project', 'shop', '--no-java']);
+  assert.equal(r.status, 0, r.stderr);
+  const lines = r.stderr.split('\n').filter((l) => l.startsWith('no schema has been fetched'));
+  assert.equal(lines.length, 1, `expected exactly one reminder, got ${lines.length}:\n${r.stderr}`);
+  assert.match(lines[0], /records a database at src\/main\/resources\/application\.yml/);
+  assert.match(lines[0], /no ERD relationship lines and partial column answers/);
+  assert.match(lines[0], /cascade catalog fetch --candidate 1/);
+  // At the TOP: before the lane census, not after the pack was already built.
+  assert.ok(r.stderr.indexOf('no schema has been fetched') < r.stderr.indexOf('lanes ['),
+    'the reminder must come before the lane line');
+  // And the run finished: a missing schema costs answers, it does not stop one.
+  assert.ok(fs.existsSync(path.join(root, '.cascade', 'pack', 'pack.json')), 'the pack is still written');
+});
+
+test('analyze says nothing of the kind once a snapshot is pinned', (t) => {
+  if (!fs.existsSync(VENV_PY)) {
+    t.skip(`no venv python at ${VENV_PY} — the mapper lane cannot run (see docs/setup/sql-lane.md)`);
+    return;
+  }
+  const { root, env } = makeSandbox();
+  assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
+  assert.equal(run(env, ['catalog', 'fetch', '--root', root, '--candidate', '1', '--password-env', PASSWORD_ENV, '--yes']).status, 0);
+
+  const r = run(env, ['analyze', '--root', root, '--project', 'shop', '--no-java']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr.includes('no schema has been fetched'), false, r.stderr);
+  assert.match(r.stderr, /catalog .*columns\.jsonl \(pinned snapshot/);
+});
+
+// ---------------------------------------------------------------------------
+// Where the password comes from, in order.
+// ---------------------------------------------------------------------------
+
+const CRED_LINE = (password) => JSON.stringify({
+  server: 'mysql://db.example.com:3306/shop', user: 'shop_app', password,
+}) + '\n';
+
+/** Write a credentials file at 0600 into this sandbox's home. */
+function writeCredFile(env, password) {
+  fs.mkdirSync(env.CASCADE_HOME, { recursive: true });
+  const file = path.join(env.CASCADE_HOME, 'credentials');
+  fs.writeFileSync(file, CRED_LINE(password), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return file;
+}
+
+test('fetch takes the password from the credentials file when no variable names one', () => {
+  const { root, env } = makeSandbox();
+  assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
+  const file = writeCredFile(env, SECRET);
+
+  const r = run(env, ['catalog', 'fetch', '--root', root, '--candidate', '1', '--yes']);
+  assert.equal(r.status, 0, r.stderr);
+  // The confirmation names the FILE as the source, and never its contents.
+  assert.match(r.stderr, new RegExp(`password *from ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(mode 0600`));
+  assert.equal(r.stderr.includes(SECRET), false);
+  // The stub exits 9 unless the password arrived through the environment, so a
+  // status of 0 IS the proof that the file's secret reached the worker that way.
+  const argv = JSON.parse(fs.readFileSync(env.CASCADE_TEST_ARGV_LOG, 'utf8'));
+  assert.equal(argv[argv.indexOf('--password-env') + 1], 'CASCADE_DB_PASSWORD');
+  assert.equal(argv.some((a) => String(a).includes(SECRET)), false);
+});
+
+test('the environment beats the file, and --password-env beats both', () => {
+  const { root, env } = makeSandbox();
+  assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
+  // The file holds a DIFFERENT password. The stub fails unless the one that
+  // arrives is SECRET, so "which source won" is not a matter of reading a line.
+  writeCredFile(env, 'pw-FROM-THE-FILE');
+
+  const viaDefault = run({ ...env, CASCADE_DB_PASSWORD: SECRET }, ['catalog', 'fetch', '--root', root, '--candidate', '1', '--yes']);
+  assert.equal(viaDefault.status, 0, viaDefault.stderr);
+  assert.match(viaDefault.stderr, /password *from the environment variable CASCADE_DB_PASSWORD/);
+
+  // ...and the named variable outranks the default variable AND the file.
+  const viaNamed = run(
+    { ...env, CASCADE_DB_PASSWORD: 'pw-FROM-THE-DEFAULT-VARIABLE', [PASSWORD_ENV]: SECRET },
+    ['catalog', 'fetch', '--root', root, '--candidate', '1', '--password-env', PASSWORD_ENV, '--yes'],
+  );
+  assert.equal(viaNamed.status, 0, viaNamed.stderr);
+  assert.match(viaNamed.stderr, new RegExp(`password *from the environment variable ${PASSWORD_ENV}`));
+});
+
+test('with no variable, no entry and no terminal, fetch dies naming all four sources', () => {
+  const { root, env } = makeSandbox();
+  assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
+  const r = run(env, ['catalog', 'fetch', '--root', root, '--candidate', '1', '--yes']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no password for this connection, and no terminal to ask on/);
+  assert.match(r.stderr, /1\. the variable named by --password-env <NAME>/);
+  assert.match(r.stderr, /2\. the environment variable CASCADE_DB_PASSWORD/);
+  assert.match(r.stderr, /3\. an entry in .*credentials for mysql:\/\/db\.example\.com:3306\/shop as user shop_app/);
+  assert.match(r.stderr, /4\. a hidden prompt, when a terminal is attached/);
+  assert.equal(fs.existsSync(env.CASCADE_TEST_ARGV_LOG), false, 'the worker must not have run');
+});
+
+test('a credentials file the group can read stops the fetch, with the chmod to run', () => {
+  const { root, env } = makeSandbox();
+  assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
+  const file = writeCredFile(env, SECRET);
+  fs.chmodSync(file, 0o644);
+
+  const r = run(env, ['catalog', 'fetch', '--root', root, '--candidate', '1', '--yes']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /is mode 0644, which lets other accounts on this machine read it/);
+  assert.match(r.stderr, new RegExp(`Run: chmod 600 ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(r.stderr.includes(SECRET), false);
+  assert.equal(fs.existsSync(env.CASCADE_TEST_ARGV_LOG), false, 'nothing connected');
 });

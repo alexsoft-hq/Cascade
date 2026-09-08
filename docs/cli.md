@@ -416,11 +416,24 @@ cascade catalog fetch [--project <id> | --root <dir>]
                       [--password-env NAME] [--schema NAME] [--stamp-schema NAME] [--yes]
 ```
 
-Pin a **read-only** catalog snapshot into `.cascade/catalog/`. It prints the
-exact target and **refuses to connect without `--yes`**: the connection info
-came out of the analyzed repository, which is untrusted input. The password is
-read only from the named environment variable — never from the command line,
-where `ps` would show it — and is never written anywhere.
+Pin a **read-only** catalog snapshot into `.cascade/catalog/`, then write
+`catalog.source: "jdbc"` into the profile so the next `analyze` reads it.
+
+It prints the exact target first and **asks `y/N` in a terminal**; outside one
+(a script, CI, a pipe) it **refuses without `--yes`**. The confirmation stays
+because the connection info came out of the analyzed repository, which is
+untrusted input, and a saved password for that host does not make the host
+trustworthy.
+
+The password is looked up in this order, and is never a command-line argument
+(`ps` would show it):
+
+1. the variable named by `--password-env NAME`;
+2. the environment variable `CASCADE_DB_PASSWORD`;
+3. the entry for this server and user in `$CASCADE_HOME/credentials`
+   (see [`cascade catalog credentials`](#cascade-catalog-credentials));
+4. a hidden prompt, when a terminal is attached, which offers once to save what
+   you typed (default **No**).
 
 Analysis itself never connects; it reads the pinned snapshot, so a pack stays
 reproducible against a database that keeps moving.
@@ -432,8 +445,33 @@ reproducible against a database that keeps moving.
 - `--password-env NAME` — the environment variable holding the password.
 - `--schema NAME` — the schema to read.
 - `--stamp-schema NAME` — the schema name to stamp on the records.
-- `--yes` — confirm the exact target printed above. Without it nothing connects.
+- `--yes` — confirm the exact target without being asked. Required outside a
+  terminal; nothing connects without it there.
 - `--project` / `--root` — which project the snapshot belongs to.
+
+## `cascade catalog credentials`
+
+```
+cascade catalog credentials list
+cascade catalog credentials set    --url <jdbc url> --user <u> [--password-env NAME]
+cascade catalog credentials remove --url <jdbc url> --user <u>
+```
+
+The passwords `catalog fetch` may use. They live in `$CASCADE_HOME/credentials`
+(`~/.cascade/credentials` by default) as one JSON object per line, keyed by
+server and user, at **mode 0600** — the same shape and the same rule as
+`~/.pgpass`. A file that group or others can read is **refused**, with the
+`chmod 600` to run: a password anyone on the machine can open is not a secret.
+
+The file is never written under a project tree. If `CASCADE_HOME` resolves
+inside the project being analyzed, the command refuses and says why.
+
+- `list` — the servers and users held. **Never a password.**
+- `set` — store one. The password comes from `--password-env NAME`, else from
+  `CASCADE_DB_PASSWORD`, else from a hidden prompt in a terminal.
+- `remove` — delete exactly one entry.
+- `--dialect <d>` `--host <h>` `--port <p>` `--database <db>` `--user <u>` —
+  name the same target field by field instead of as a URL.
 
 ## `cascade pack`
 

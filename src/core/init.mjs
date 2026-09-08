@@ -11,6 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { MANIFEST_SCHEMA } from './manifest.mjs';
 import { normalizeProfile, validateProfile } from './profile.mjs';
+import { DEFAULT_PORTS } from './dbconfig.mjs';
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -178,8 +179,8 @@ export function buildProfile(discovery, opts) {
       path: only.path,
       reason: `${only.path} describes a ${only.dialect ?? 'database'} at ${only.host ?? '?'}:${only.port ?? '?'}/${only.database ?? '?'}`
         + ` (user ${only.usernameRef ?? 'not stated'}, password ${only.passwordPresent ? 'present in that file' : 'absent'}).`
-        + ' It is RECORDED as catalog.connectionFrom and nothing else: run `cascade catalog fetch --yes` to pin a snapshot,'
-        + ' then set catalog.source: "jdbc" yourself. Nothing connects until you do.',
+        + ' It is RECORDED as catalog.connectionFrom and nothing else: run `cascade catalog fetch --candidate 1` to see the exact target,'
+        + ' confirm it, and pin a snapshot the profile then reads. Nothing connects until you do.',
     });
   } else if (catalog.source === 'none' && candidates.length > 1) {
     diagnostics.push({
@@ -230,6 +231,88 @@ function toPosix(p) {
   return p.split(path.sep).join('/');
 }
 
+/**
+ * THE SIGNPOST. A project with no schema is the one gap that changes what every
+ * later answer looks like, and it used to be reported as a single info line
+ * among a dozen. This is the block `cascade init` ends with instead: what is
+ * missing, what it costs, and the three ways forward with the command for each.
+ *
+ * Pure: it returns text. The caller prints it, and decides whether to offer the
+ * interactive hand-off underneath.
+ *
+ * @param {{candidates?:Object[], profilePath?:string|null}} a
+ *        `candidates` are discovery's connection candidates, in the order
+ *        `cascade catalog discover` numbers them (so `--candidate n` here means
+ *        the same thing there). `profilePath` is shown in the "make it
+ *        permanent" line, and may be null.
+ * @returns {string} the block, ending in a newline
+ */
+export function catalogSignpost(a = {}) {
+  const candidates = Array.isArray(a.candidates) ? a.candidates : [];
+  const profilePath = a.profilePath ?? '.cascade/profile.json';
+  const rule = '-'.repeat(72);
+  const out = [];
+  out.push(rule);
+  out.push('NO DATABASE SCHEMA IN THIS TREE');
+  out.push(rule);
+  out.push('No .sql file here declares CREATE TABLE and no schema has been fetched,');
+  out.push('so catalog.source stays "none". Analysis still runs. Three things it');
+  out.push('cannot do without a schema:');
+  out.push('');
+  out.push('  1. draw a single relationship line on the ERD. A join names two');
+  out.push('     columns, and with no catalog neither one can be attributed to a');
+  out.push('     table, so the diagram comes back as tables with nothing between them.');
+  out.push('  2. expand SELECT * into the columns it really reads.');
+  out.push('  3. answer a column question in full. A bare column name is tied to its');
+  out.push('     table only where the SQL says so unambiguously, and what cannot be');
+  out.push('     tied is recorded as unresolved rather than guessed.');
+  out.push('');
+  out.push('Three ways forward. Pick one.');
+  out.push('');
+  out.push('  1. You already have a schema file');
+  out.push('       cascade analyze --ddl path/to/schema.sql');
+  out.push(`     To make that the standing answer, put this in ${profilePath}:`);
+  out.push('       "catalog": { "source": "file", "connectionFrom": "path/to/schema.sql" }');
+  out.push('');
+  if (candidates.length > 0) {
+    out.push('  2. Read the schema from the database this project already names');
+    candidates.forEach((c, i) => {
+      out.push(`       [${i + 1}] ${candidateLine(c)}`);
+      out.push(`           read from ${c.path}`);
+    });
+    out.push(`       cascade catalog fetch --candidate ${candidates.length === 1 ? '1' : '<n>'}`);
+    out.push('     It prints the exact target and asks before it connects. The password');
+    out.push('     comes from your credentials file, from CASCADE_DB_PASSWORD, or from a');
+    out.push('     hidden prompt. No password is read out of the file above.');
+  } else {
+    out.push('  2. Read the schema from a database');
+    out.push('     Nothing in this tree names a datasource, so there is no candidate to');
+    out.push('     point at. Name the target yourself:');
+    out.push('       cascade catalog fetch --url jdbc:mysql://your-host:3306/your-db --user <user>');
+  }
+  out.push('');
+  out.push('  3. Decide later');
+  out.push('       cascade estimate');
+  out.push('     says what a run will and will not ship, and keeps saying this one is');
+  out.push('     missing until a schema is here.');
+  out.push(rule);
+  return out.join('\n') + '\n';
+}
+
+/**
+ * One candidate, as the signpost shows it: dialect, host, port, database and
+ * user. NEVER the password, and never whether one is in the file: the signpost
+ * is about the schema, and the password question belongs to `fetch`.
+ * @param {Object} c
+ * @returns {string}
+ */
+function candidateLine(c) {
+  const port = c.port ?? (c.dialect ? DEFAULT_PORTS[c.dialect] ?? null : null);
+  const target = `${c.dialect ?? 'unknown-dialect'} ${c.host ?? '?'}:${port ?? '?'}/${c.database ?? '?'}`;
+  const user = c.usernameRef && !/^\$\{/.test(c.usernameRef) ? c.usernameRef : null;
+  return `${target} as ${user ? `user ${user}` : 'a user this file does not state'}`;
+}
+
 // ---------------------------------------------------------------------------
 // Filesystem edge. Everything above is pure.
 // ---------------------------------------------------------------------------
@@ -253,10 +336,22 @@ export function writeInitFiles(args) {
       kept.push(file);
       continue;
     }
-    fs.writeFileSync(file, JSON.stringify(content, null, 2) + '\n', 'utf8');
+    writeStateFile(file, content);
     written.push(file);
   }
   return { written, kept };
+}
+
+/**
+ * Write one `.cascade/` state document. The single place the bytes are decided
+ * (two-space JSON, one trailing newline), so a profile `cascade catalog fetch`
+ * edits comes out looking exactly like the one `cascade init` wrote rather than
+ * as a diff nobody asked for.
+ * @param {string} file
+ * @param {Object} content
+ */
+export function writeStateFile(file, content) {
+  fs.writeFileSync(file, JSON.stringify(content, null, 2) + '\n', 'utf8');
 }
 
 export class InitError extends Error {

@@ -22,6 +22,45 @@ There are three paths. Pick one per project; the profile records which.
 > **snapshot**. Every later `cascade analyze` reads that file. That is what
 > makes a pack reproducible against a database that keeps changing.
 
+## When there is no schema at all, `cascade init` says so
+
+A repository with no `CREATE TABLE` anywhere is the common case, and it used to
+be reported as one `[info]` line among a dozen. It is now the last thing `init`
+prints, and it names what is missing, what that costs, and the three ways out:
+
+```
+------------------------------------------------------------------------
+NO DATABASE SCHEMA IN THIS TREE
+------------------------------------------------------------------------
+No .sql file here declares CREATE TABLE and no schema has been fetched,
+so catalog.source stays "none". Analysis still runs. Three things it
+cannot do without a schema:
+
+  1. draw a single relationship line on the ERD. A join names two
+     columns, and with no catalog neither one can be attributed to a
+     table, so the diagram comes back as tables with nothing between them.
+  2. expand SELECT * into the columns it really reads.
+  3. answer a column question in full. A bare column name is tied to its
+     table only where the SQL says so unambiguously, and what cannot be
+     tied is recorded as unresolved rather than guessed.
+
+Three ways forward. Pick one.
+  …
+  2. Read the schema from the database this project already names
+       [1] mysql db.example.com:3306/shop as user shop_app
+           read from src/main/resources/application.yml
+       cascade catalog fetch --candidate 1
+  …
+```
+
+In a terminal it then offers to run that fetch for you. In a script or in CI it
+prints the commands and stops, because nothing here connects by itself.
+
+The same fact follows you: `cascade analyze` on a project that recorded a
+connection and never fetched from it prints one line at the top of the run
+saying the ERD and the column answers will be partial, and then produces the
+pack anyway. A partial answer is a supported answer, not a failure.
+
 ## Path A — a DDL file (start here)
 
 If the repository ships a schema dump with `CREATE TABLE … COMMENT`, you are
@@ -116,31 +155,34 @@ See the commented block at the bottom of `adapters/sql/requirements.txt`.
 ### 3. Fetch — after confirming the exact target
 
 ```bash
-export CASCADE_DB_PASSWORD='…'
-node bin/cascade.mjs catalog fetch --root /path/to/repo --candidate 1 --yes
+node bin/cascade.mjs catalog fetch --root /path/to/repo --candidate 1
 ```
 
-Without `--yes` it prints the target and **refuses**:
+It prints the target and, in a terminal, asks:
 
 ```
 cascade catalog fetch would open a READ-ONLY connection to:
   mysql localhost:3306/mall
   as user      root
-  password     from the environment variable CASCADE_DB_PASSWORD (never from the command line, never stored)
+  password     asked for here, not echoed, and stored only if you say so
   read from    mall-admin/src/main/resources/application-dev.yml
   writes       …/.cascade/catalog/columns.jsonl
                …/.cascade/catalog/snapshot.json
   queries      metadata SELECTs only (tables, columns, comments, primary keys)
 
-Refusing to connect: pass --yes to confirm this exact target.
+Connect to this target? [y/N]
 ```
+
+Outside a terminal — a script, a pipeline, a pipe — there is nobody to ask, so
+it **refuses without `--yes`** and says the same thing in a paragraph.
 
 **Why the confirmation exists**: the host, port and database
 above came out of the analyzed repository, and the analyzed repository is
 untrusted input. Without this step, a checkout could plant an
 `application.yml` pointing at a machine of the attacker's choosing and have your
-tool dial it. So a human reads the target and types `--yes`. There is no
-"remember this" flag.
+tool dial it. So a person reads the target and answers. A saved password for
+that host does not make the host trustworthy, so the question is asked either
+way.
 
 You can also spell the target out instead of picking a candidate — as a URL, or
 field by field:
@@ -156,16 +198,66 @@ node bin/cascade.mjs catalog fetch --root /path/to/repo \
 ```
 
 A password written into `--url` is stripped, not used: the password comes from
-the named environment variable, always.
+one of the four sources below, always.
 
-### 4. Point the profile at the snapshot
+### 4. Where the password comes from
 
-`fetch` does **not** edit your profile — turning the source on is your sentence,
-not the tool's. Add to `.cascade/profile.json`:
+In this order, and the first one that has it wins:
 
-```json
-"catalog": { "source": "jdbc" }
+| # | Source | When to use it |
+|---|---|---|
+| 1 | `--password-env NAME` | a variable you already export for this one database |
+| 2 | `CASCADE_DB_PASSWORD` | the same, under the default name |
+| 3 | `$CASCADE_HOME/credentials` | you fetch this schema again and again |
+| 4 | a hidden prompt | a terminal is attached and none of the above has it |
+
+The prompt does not echo, and it offers **once**, defaulting to **No**, to save
+what you typed for next time. With none of the four and no terminal the command
+dies naming all four rather than hanging on a read.
+
+### 5. The credentials file, and why it is not in your project
+
+```bash
+node bin/cascade.mjs catalog credentials list
+node bin/cascade.mjs catalog credentials set    --url jdbc:mysql://db.example.com:3306/shop --user shop_app
+node bin/cascade.mjs catalog credentials remove --url jdbc:mysql://db.example.com:3306/shop --user shop_app
 ```
+
+The file is `$CASCADE_HOME/credentials`, which is `~/.cascade/credentials`
+unless you have moved the tool home. One JSON object per line:
+
+```
+{"server":"mysql://db.example.com:3306/shop","user":"shop_app","password":"…"}
+```
+
+JSON, rather than the colon-separated `.pgpass` shape, because a password may
+contain any character at all and JSON already says how to write one. The key is
+`server` plus `user`, so the same database under two logins is two entries.
+
+**Mode 0600, enforced.** The file is created that way, and on every read a file
+that group or others can open is **refused** with the exact `chmod 600` to run.
+That is `libpq`'s rule for `~/.pgpass`, and it is the whole reason a file like
+this is acceptable: a password anyone on the machine can read is not a secret.
+`credentials list` prints servers and users and never a password.
+
+**Why the home and not the project.** A `.gitignore` is a convention, not a
+boundary. A project directory gets `git add -f`'d by a hurried commit, zipped
+and mailed, copied to a colleague, synced to a cloud drive, mounted into a
+container and archived by a backup agent, and every one of those carries
+whatever is inside it along without asking. The tool home is none of those
+things. So the credentials file lives there, and if `CASCADE_HOME` is pointed
+inside the project being analyzed the command refuses to write it and says why.
+
+`~/.pgpass` and `~/.my.cnf` have worked exactly this way for decades. The OS
+keychain would be stronger still, and it is not used here because it is three
+different APIs with three different permission dialogs on three platforms, and
+this engine ships zero runtime dependencies.
+
+### 6. The profile is finished for you
+
+A successful fetch writes `catalog.source: "jdbc"` into `.cascade/profile.json`
+itself (and `catalog.connectionFrom`, when a `--candidate` chose the target).
+Nothing else in the profile is touched.
 
 `cascade analyze` then reads `.cascade/catalog/columns.jsonl`. With
 `source: "jdbc"` and no snapshot it fails with the structured error
@@ -202,10 +294,12 @@ already gitignored:
   `serverIdentity` (`host:port/db`), `fetchedAt`, the sha256 of
   `columns.jsonl`, and which candidate file the target came from.
 
-**Never stored, anywhere**: the password. Not in `.cascade/`, not
-in the pack, not in a log, not in the receipt, not in the home registry. It is
-read by the worker from the environment variable you name and passed to the
-driver; it is never a command-line argument (argv is world-readable in `ps`) and
+**Never stored in the project**: the password. Not in `.cascade/`, not
+in the pack, not in a log, not in the receipt, not in the home registry. The one
+place it may be kept is `$CASCADE_HOME/credentials` at mode 0600, and only
+because you asked for it there. It is
+read by the worker from an environment variable it is told the NAME of and passed
+to the driver; it is never a command-line argument (argv is world-readable in `ps`) and
 a driver exception that quotes it back is scrubbed before it is printed. The
 `serverIdentity` in the snapshot and in `pack.meta.catalog` is `host:port/db` —
 no user, no URL, no credentials. Two tests hold this: a Python one that runs the

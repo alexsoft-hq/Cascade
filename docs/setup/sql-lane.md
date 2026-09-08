@@ -92,11 +92,12 @@ This needs nothing but Python and sqlglot, and it is where to start.
 
 **A snapshot you fetch once.** For a schema that lives only in a running
 database, `cascade catalog fetch` opens one read-only connection, reads the
-tables, columns and comments, and writes a snapshot into `.cascade/`. Analysis
-then reads the snapshot, never the server. Set `catalog.source: "jdbc"` and read
-[db-catalog.md](db-catalog.md) for the connection and credential rules.
-Credentials are never committed, and never written into `.cascade/`, the pack or
-a log.
+tables, columns and comments, and writes a snapshot into `.cascade/`. It then
+writes `catalog.source: "jdbc"` into the profile itself, so nothing is left for
+you to hand-edit. Analysis reads the snapshot, never the server. Read
+[db-catalog.md](db-catalog.md) for the connection and credential rules. A
+password is never committed, and never written into `.cascade/`, the pack or a
+log: the one place it may be kept is `~/.cascade/credentials`, at mode 0600.
 
 With no catalog at all, the lane still works: a table or column exists in the
 pack wherever a statement named it. The pack then declares the catalog axis

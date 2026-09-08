@@ -662,3 +662,34 @@ test('overview: the http-calls-leaving-pack gap counts the frontend\'s misses ap
   assert.match(gap.note, /6 matched no route here, 1 name another host/);
   assert.match(gap.note, /check the web axis reason before reading them as external/);
 });
+
+// ---------------------------------------------------------------------------
+// The gap that changes every other answer: no schema was read at all.
+// ---------------------------------------------------------------------------
+
+test('a pack whose catalog axis never shipped discloses it as a gap, with the command that closes it', () => {
+  const withoutCatalog = { ...packMeta(), axes: { catalog: { status: 'not-shipped', reason: 'no catalog was read here' } } };
+  const r = call(fixtureGraph(), {}, withoutCatalog);
+  const gap = r.answer.gaps.find((g) => g.kind === 'no-catalog');
+  assert.ok(gap, `no no-catalog gap: ${r.answer.gaps.map((g) => g.kind).join(', ')}`);
+  // What it costs, in the words the rest of the tool uses.
+  assert.match(gap.note, /no database schema was read for this pack/);
+  assert.match(gap.note, /draws no relationship line/);
+  assert.match(gap.note, /SELECT \* is not expanded/);
+  // …and the way out, which is the half a reader can act on.
+  assert.match(gap.note, /cascade catalog fetch --candidate 1/);
+  assert.match(gap.note, /cascade analyze --ddl/);
+  // The count is the tables that stood in for a schema, so it is a real number
+  // rather than a decoration.
+  assert.equal(gap.count, r.answer.nodes.find((n) => n.kind === 'table').count);
+  // Every gap is also a limit, this one included.
+  assert.ok(overviewLimits(r).some((l) => l.reason.startsWith('no-catalog (')));
+});
+
+test('a pack that DID ship a catalog says nothing of the kind', () => {
+  const shipped = { ...packMeta(), axes: { catalog: { status: 'shipped', reason: null } } };
+  assert.equal(gapOf(call(fixtureGraph(), {}, shipped).answer, 'no-catalog'), undefined);
+  // …and neither does a pack too old to declare an axis at all: this census
+  // infers nothing it was not told.
+  assert.equal(gapOf(call(fixtureGraph(), {}).answer, 'no-catalog'), undefined);
+});
