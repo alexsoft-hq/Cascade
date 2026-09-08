@@ -245,6 +245,10 @@ export const VIEWER_STRINGS = {
     // is the `overview` answer's own.
     'ov.gaps.title': 'What we could not see',
     'ov.gaps.note': '{n} kinds of blind spot',
+    // HOW MUCH OF THIS PROJECT LEAVES IT. A call to a route this project does
+    // not serve stops the chain, unless another registered project serves that
+    // route and the server can carry the answer across.
+    'ov.federation.note': '{n} call(s) leave this project, {k} answered by a registered project and {m} not.',
     // THE NAME OF A BLIND SPOT, in the reader's words. The engine's own kind
     // slug stays on the chip's tooltip beside the count, so nothing is renamed
     // away: this is the label a person can read without the docs open. A kind
@@ -455,6 +459,11 @@ export const VIEWER_STRINGS = {
     'chain.tag.seen.title': 'a recording of this system running saw this really happen. It stands beside the grade and never changes it, and nothing here was walked from it.',
     'chain.tag.frontend': 'web {n}',
     'chain.tag.frontend.title': 'how many frontend functions call this route',
+    // A row from ANOTHER project. The server followed an HTTP call out of this
+    // pack into a project it also serves, so the code below the badge lives in
+    // a different deployable and answers to a different build.
+    'chain.tag.project.title': 'this row is in another registered project, reached over an HTTP call out of this one',
+    'chain.card.otherproject': 'This row is in {p}. This page shows one project at a time, so switch the selector to {p} to open its source or walk it further.',
     'chain.nosource': 'no source: we never saw this type in the code',
     // ---- Impact tab -----------------------------------------------------
     'hint.impact.lead': 'Pick a column, table or method and see which APIs would be affected if you changed it.',

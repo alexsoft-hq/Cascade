@@ -28,6 +28,7 @@ import {
 import { resolveSchemaName } from '../core/name_resolve.mjs';
 import { endpointsAffectingColumn } from '../adapters/java_bridge.mjs';
 import { makeResponse } from './contract.mjs';
+import { makeFederator, packOutboundCalls, routeRef, serversOf } from './federation.mjs';
 import { NO_STATE_TRUST_LEVEL } from '../core/trust.mjs';
 
 /**
@@ -157,8 +158,17 @@ export function endpoint_impact(graph, args, ctx) {
       ...(n && n.observed === true ? { observed: true } : {}),
     };
   });
+  // THE CROSSING (RM44). A route in ANOTHER project that calls one of these is
+  // affected too: the change travels out of this pack over HTTP. The rows come
+  // back carrying `project` and are never folded into this project's own.
+  const fed = makeFederator(ctx, args);
+  const federated = fed.wanted
+    ? fed.crossUpEndpoints(items.map((e) => routeRef(e, { grade: e.grade })), { mode })
+    : [];
+  items.push(...federated);
   // strongest grade first, then id — mirror the other tools' ordering intent.
-  items.sort((a, b) => (a.grade !== b.grade ? gradeRank(b.grade) - gradeRank(a.grade) : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
+  items.sort((a, b) => (a.grade !== b.grade ? gradeRank(b.grade) - gradeRank(a.grade) : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    || cmpStr(a.project ?? '', b.project ?? ''));
 
   const shown = items.slice(offset, offset + limit);
   // WHICH SCREENS ARE ON THE OTHER SIDE of each affected route. Folded per
@@ -168,13 +178,17 @@ export function endpoint_impact(graph, args, ctx) {
   // axis, because `{count: 0}` there would read as "no screen calls this".
   if (axisStatus(graph, ctx, 'screen') !== 'not-shipped') {
     for (const row of shown) {
+      // A row from ANOTHER project names a route that is not in this graph, and
+      // its screens are that project's question. It carries no `screens` field
+      // rather than a 0 that would read as "no screen calls this".
+      if (row.project) continue;
       const epId = nodeId('endpoint', row.id);
       const screens = screensAffecting(graph, epId, { mode }).map((s) => s.path ?? strip(s.screen));
       row.screens = { count: screens.length, sample: screens.slice(0, 5) };
     }
   }
   const node = graph.nodes.get(colId);
-  const answer = { column, comment: node.comment ?? null, endpoints: shown };
+  const answer = { column, comment: node.comment ?? null, endpoints: shown, federation: fed.block() };
   if (shown.length === 0) {
     // Distinguish "this pack carries no code axis" (Java lane not run) from
     // "the code axis is present but nothing reaches this column".
@@ -183,9 +197,9 @@ export function endpoint_impact(graph, args, ctx) {
   const trunc = [truncField('endpoints', shown.length, items.length, offset)];
   return makeResponse({
     answer,
-    basis: ctx.basis,
+    basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['column', 'endpoint']),
-    limits: [...(ctx.limits ?? []), ...col.limits],
+    limits: [...(ctx.limits ?? []), ...col.limits, ...fed.limits()],
     truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
 }
@@ -1168,6 +1182,10 @@ export function overview(graph, args, ctx) {
     ...(o.openapi ? { openapi: o.openapi } : {}),
     hubs: { tables: cut(o.hubs.tables), endpoints: cut(o.hubs.endpoints) },
     gaps: o.gaps,
+    // HOW MUCH OF THIS PACK LEAVES IT (RM44): the calls that go to a route this
+    // project does not serve, and how many of those another registered project
+    // answers. Counted here so the page states it rather than re-deriving it.
+    federation: federationCensus(graph, ctx),
   };
   const empty = {};
   if (answer.nodes.length === 0) empty.nodes = 'none';
@@ -1379,9 +1397,28 @@ export function flow(graph, args, ctx) {
 
   const w = chainWalk(graph, { start, direction, mode, maxDepth: depth });
 
+  // THE CROSSING (RM44). The walk above stopped where this pack stops: an
+  // UNRESOLVED CALLS_HTTP edge onto a route this project calls and does not
+  // serve is below every mode's floor. If another project this server serves
+  // answers that route, the same walk continues over there and its rows join
+  // this answer carrying the project they came from.
+  const fed = makeFederator(ctx, args);
+  let federated = emptyFedLanes();
+  if (fed.wanted) {
+    federated = up
+      ? fed.crossUp(w.endpoints.map((e) => routeRef(e, { hops: e.hops, grade: e.grade, http: e.httpHops ?? 0 })), { mode, depth })
+      : fed.crossDown(graph, [
+        { id: start, hops: 0, grade: 'EXACT', http: 0, project: fed.self },
+        ...[...w.services, ...w.webFunctions].map((s) => ({
+          id: nodeId('symbol', s.id), hops: s.hops, grade: s.grade, http: s.httpHops ?? 0, project: fed.self,
+        })),
+      ], { mode, depth });
+  }
+  const crossedRows = Object.values(federated).reduce((n, rows) => n + rows.length, 0);
+
   // Everything the walk skipped, said once — in limits AND in walk.note, so the
   // page has a single place to read it.
-  const limits = [...(ctx.limits ?? []), ...entryLimits];
+  const limits = [...(ctx.limits ?? []), ...entryLimits, ...fed.limits()];
   const notes = [];
   const note = (reason) => { limits.push({ scope: 'flow', reason }); notes.push(reason); };
   if (handlerNote) note(handlerNote);
@@ -1408,6 +1445,9 @@ export function flow(graph, args, ctx) {
   // cannot mistake this picture for "nothing calls this column".
   const codeAxis = hasCodeAxis(graph, ctx);
   if (!codeAxis) note('this pack has no code axis, because the Java lane did not run. The picture stops at the statements, and the service and endpoint columns are not shipped rather than empty');
+  if (crossedRows > 0) {
+    note(`${crossedRows} row(s) below come from another project, across an HTTP call this server matched to a route that project serves. Each one carries \`project\`, and \`walk\` and \`layers\` describe THIS project's walk only`);
+  }
 
   const answer = {
     entry,
@@ -1431,7 +1471,10 @@ export function flow(graph, args, ctx) {
   const empty = {};
   const trunc = [];
   for (const field of (w.laneNames ?? FLOW_LANES[direction])) {
-    const all = w[field];
+    // A lane is this project's rows plus whatever the crossings added to it.
+    // Sorted by the SAME rule the walk sorts by, with the project as the last
+    // tiebreak so two projects' rows with one name keep a fixed order.
+    const all = (federated[field] ?? []).length > 0 ? sortFlowLane(field, [...w[field], ...federated[field]]) : w[field];
     const shown = all.slice(0, limit);
     answer[field] = shown;
     // A lane the TARGET sits on the wrong side of is "not in this axis", not
@@ -1447,11 +1490,60 @@ export function flow(graph, args, ctx) {
   }
   if (answer.layers.length === 0) empty.layers = 'none'; // a walk that reached nothing has no layers
   if (Object.keys(empty).length) answer.empty = empty;
+  answer.federation = fed.block();
   return makeResponse({
-    answer, basis: ctx.basis,
+    answer, basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['flow']),
     limits, truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
+}
+
+/**
+ * THE OVERVIEW'S ONE SENTENCE about federation: how many calls leave this
+ * project, and how many of them a registered project answers.
+ *
+ * It is a census over the pack's outbound routes, not over one walk, so it says
+ * the same thing whichever question the reader arrived with. No pack is loaded:
+ * matching reads the siblings' sidecars only.
+ * @returns {{calls:number, answered:number, unmatched:number, projects:string[]}}
+ */
+function federationCensus(graph, ctx) {
+  const fed = makeFederator(ctx, {});
+  const calls = packOutboundCalls(graph);
+  let answered = 0;
+  const projects = new Set();
+  for (const c of calls) {
+    const r = serversOf(c, fed.entries, { exclude: fed.self });
+    if (r.chosen.length === 0) continue;
+    answered += 1;
+    for (const x of r.chosen) projects.add(x.project);
+  }
+  return { calls: calls.length, answered, unmatched: calls.length - answered, projects: [...projects].sort() };
+}
+
+// ---- federation plumbing, shared by `flow` and `endpoint_impact` -----------
+
+/** An empty per-lane accumulator, so a caller can merge without testing for it. */
+function emptyFedLanes() {
+  return { webFunctions: [], endpoints: [], services: [], statements: [], tables: [], screens: [] };
+}
+// Which field a lane's rows are named by. Every lane but `tables` uses `id`.
+const FLOW_SORT_KEY = Object.freeze({ tables: 'table' });
+function sortFlowLane(field, rows) {
+  const key = FLOW_SORT_KEY[field] ?? 'id';
+  return rows.slice().sort((a, b) => (a.hops - b.hops)
+    || (gradeRank(b.grade) - gradeRank(a.grade))
+    || cmpStr(String(a[key] ?? ''), String(b[key] ?? ''))
+    || cmpStr(a.project ?? '', b.project ?? ''));
+}
+/**
+ * The basis this answer carries: the project's own, plus every OTHER pack the
+ * answer walked. A row from another project is anchored to that project's
+ * snapshot, and `basis.siblings` is where a reader finds which one.
+ */
+function basisWith(ctx, fed) {
+  const siblings = fed.siblingBasis();
+  return siblings ? { ...ctx.basis, siblings } : ctx.basis;
 }
 
 const FLOW_ORDER = Object.freeze({

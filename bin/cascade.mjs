@@ -115,6 +115,7 @@ import { toolList, callTool } from '../src/mcp/catalog.mjs';
 import { serve } from '../src/mcp/stdio.mjs';
 import { serveHttp } from '../src/mcp/http.mjs';
 import { createProjectHost, packDirOf, DEFAULT_BUDGET_MB } from '../src/mcp/projects.mjs';
+import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../src/mcp/federation.mjs';
 import { readSourceFor } from '../src/viewer/source.mjs';
 import http from 'node:http';
 
@@ -2783,6 +2784,23 @@ if (cmd === 'analyze') {
     fs.mkdirSync(writeDir, { recursive: true });
     fs.writeFileSync(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
     fs.writeFileSync(writeIndexFile, serializeIndex(result.index));
+    // THE ROUTE INDEX (RM44), beside the pack and never inside it. It says what
+    // this project SERVES and what it CALLS and does not serve, so a server
+    // holding several projects can join one project's outbound call to another
+    // project's route without parsing a single pack. It is DERIVED from the
+    // graph, so it is not an input to the digest (I-9): it carries the digest
+    // of the pack it came from instead, and a server refuses an index that no
+    // longer describes the pack beside it.
+    const routesIndex = buildRoutesIndex(g, {
+      project: pack.meta?.project ?? projectId ?? null,
+      buildDigest: pack.digest,
+      // `spring.application.name` is not something this engine reads today, so
+      // nothing cheap knows the logical service name. A call is matched by its
+      // path and method, and by the project id when the evidence names one.
+      serviceNames: [],
+    });
+    const routesFile = path.join(writeDir, ROUTES_FILE);
+    fs.writeFileSync(routesFile, serializeRoutesIndex(routesIndex));
     if (calibrated) {
       fs.mkdirSync(calibrationDir, { recursive: true });
       fs.writeFileSync(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
@@ -2836,6 +2854,7 @@ if (cmd === 'analyze') {
     }
 
     process.stderr.write(`wrote ${path.join(writeDir, 'pack.json')}: ${pack.counts.nodes} nodes, ${pack.counts.edges} edges, lanes [${lanes.join(',')}], digest ${pack.digest}\n`);
+    process.stderr.write(`routes index: ${routesIndex.serves.length} served, ${routesIndex.calls.length} outbound\n`);
     process.stderr.write(`axes: ${Object.entries(axes).map(([k, v]) => `${k}=${v.status}`).join(' ')}\n`);
     // The web lane's own reuse line, in the same words as the Java lane's, so a
     // reader can see which of the two paid for this run.

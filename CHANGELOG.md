@@ -12,6 +12,33 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **One answer across several packs.** One repository per microservice is the
+  normal shape, so each service analyzes into its own pack, and a pack could
+  only say that its code sends `GET /owners/{ownerId}` somewhere: the route it
+  calls is not a route it serves, so the edge onto it is UNRESOLVED and no walk
+  follows one. When another project the same server serves answers that route,
+  `flow` and `endpoint_impact` now keep walking there. Measured on
+  spring-petclinic-microservices split into five packs, one per service:
+  `flow` on the gateway's `GET /api/gateway/owners/{ownerId}` reached **nothing
+  below the two client methods before, and the `owners` and `visits` tables in
+  two other projects after**, each row carrying the project it came from and
+  both packs named in `basis.siblings` with their own digests. The packs are
+  untouched: the join is made when the question is asked, from a small
+  `routes.json` index `analyze` now writes beside each pack (what this project
+  serves, what it calls and does not serve). It is derived from the graph, so
+  it is not an input to the digest, and a server refuses an index that no longer
+  describes the pack beside it. A crossing is SOUND_SET at best, because which
+  deployable answers a service name is not a fact about anybody's source, and
+  HEURISTIC when a method was unreadable or several registered projects serve
+  the route, in which case all of them are crossed and one `limits` sentence
+  names them. A call no registered project serves is listed in
+  `answer.federation.unmatched` rather than swallowed, on a single-project
+  server too, because registering the project that serves it is the remedy. A
+  project with no route index is named in `answer.federation.skipped` and in
+  `projects`, with `cascade analyze` as the fix. Siblings are read from their
+  committed packs, never from their working-tree overlays. `federate: false`
+  answers from one pack alone, and `federationHops` (default 3) bounds how many
+  crossings one question may chain.
 - **The Java lane sees an imperative HTTP call, not only an annotated one.**
   Cascade already turned a `@FeignClient`/`@HttpExchange` method into a
   `CALLS_HTTP` edge, and saw none of the service-to-service calls that dominate

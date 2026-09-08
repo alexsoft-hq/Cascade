@@ -131,12 +131,19 @@ export const TOOLS = Object.freeze({
       + 'there but no endpoint reaches this column. On a pack WITH a screen axis every row also '
       + 'carries `screens: {count, sample}`: the screens on the other side of that route, up to '
       + 'five of them named; ask `screen_impact` for the whole list. mode=strict|conservative|'
-      + 'heuristic (default conservative).',
+      + 'heuristic (default conservative). ON A SERVER THAT SERVES SEVERAL PROJECTS the answer '
+      + 'crosses HTTP: a route in ANOTHER registered project that calls one of these routes is '
+      + 'affected too, and comes back as a row carrying `project`. `answer.federation` says what '
+      + 'was crossed, what was skipped and why, `basis.siblings` names every other pack this '
+      + 'answer walked, and a row from another project carries no `screens` because its screens '
+      + 'are that project\'s question. federate=false answers from this pack alone.',
     inputSchema: {
       type: 'object',
       properties: {
         column: { type: 'string', description: 'schema.table.column or table.column' },
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
+        federate: { type: 'boolean', description: 'default true: follow HTTP calls into the other projects this server serves' },
+        federationHops: { type: 'integer', minimum: 0, maximum: 8, description: 'how many crossings one answer may chain (default 3)' },
         limit: { type: 'integer' }, offset: { type: 'integer' },
       },
       required: ['column'],
@@ -229,7 +236,18 @@ export const TOOLS = Object.freeze({
       + '(--har), which is a marker beside the grade and never a step of the walk. Without '
       + 'endpoint/screen/symbol it lists the walkable endpoints (query=<substring> over "METHOD '
       + 'path handler"), or the walkable screens with kind=screen (query over path, label, title '
-      + 'and component). Lists are cut by limit, and chain mode does not page.',
+      + 'and component). Lists are cut by limit, and chain mode does not page. ON A SERVER THAT '
+      + 'SERVES SEVERAL PROJECTS the chain CROSSES HTTP. A call to a route this pack does not '
+      + 'serve normally stops the walk; when another registered project serves that route, the '
+      + 'same walk continues there and its rows join these lanes carrying `project`, `federated` '
+      + 'and `viaHttp`, with hops continued and the path grade weakened by the crossing, which is '
+      + 'SOUND_SET at best and HEURISTIC when the method or the target project was not certain. '
+      + '`answer.federation` names every crossing, every call that matched no registered project '
+      + '(still listed on a single-project server, because registering that project is the '
+      + 'remedy) and every project that was skipped, `basis.siblings` names every other pack this '
+      + 'answer walked, and `walk` and `layers` describe THIS project\'s walk only. Siblings are '
+      + 'read from their committed packs, never from their working-tree overlays. federate=false '
+      + 'answers from this pack alone.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -246,6 +264,8 @@ export const TOOLS = Object.freeze({
         limit: { type: 'integer', description: 'per-list cut: 1..200 (default 40) in chain mode, 1..500 (default 100) listing endpoints' },
         query: { type: 'string', description: 'list mode only: substring over "METHOD path handler"' },
         offset: { type: 'integer', description: 'list mode only' },
+        federate: { type: 'boolean', description: 'default true: follow HTTP calls into the other projects this server serves' },
+        federationHops: { type: 'integer', minimum: 0, maximum: 8, description: 'how many crossings one answer may chain (default 3)' },
       },
     },
     fn: tools.flow,
@@ -428,9 +448,13 @@ export const TOOLS = Object.freeze({
       + 'is not a freshness check on the pack), whether its pack is currently loaded and how '
       + 'many bytes of pack JSON that is. `cache` is the pack cache itself: loaded / bytes / '
       + 'budgetBytes / evictions / hits / misses. The byte figures are the pack file plus its '
-      + 'fact index, which is a proxy for heap rather than a heap measurement. This tool '
-      + 'describes the SERVER, so its basis carries project "*" and no build digest: nothing '
-      + 'here is an answer about any project\'s code.',
+      + 'fact index, which is a proxy for heap rather than a heap measurement. `federation` is '
+      + 'read from the project\'s route index (`routes.json`, written beside its pack) and never '
+      + 'from the pack itself: `{index: "present", serves, calls}` is how many routes it serves '
+      + 'and how many it calls and does not serve, and `{index: "absent"}` means this project is '
+      + 'not federated at all, so no answer crosses into or out of it until `cascade analyze` '
+      + 'runs there again. This tool describes the SERVER, so its basis carries project "*" and '
+      + 'no build digest: nothing here is an answer about any project\'s code.',
     inputSchema: { type: 'object', properties: {} },
     // Server-level: it answers from the host, not from a pack, so the dispatcher
     // neither routes it to a project nor requires a graph on the context.
@@ -520,6 +544,11 @@ export function callTool(name, args, ctx) {
       // A single-pack server has none, and `projects` then says so rather than
       // inventing a registry (SPEC §15 M8).
       projects: ctx.projects,
+      // SIBLING ACCESS (RM44), for the tools that can cross an HTTP call into
+      // another served project: {self, ids, indexOf, ctxFor}. A single-pack
+      // server has none, and the answer then LISTS the calls that leave the
+      // pack instead of following them.
+      federation: ctx.federation,
     });
   } catch (e) {
     if (e && e.name === 'ToolError') throw new DispatchError(e.code, e.message);

@@ -201,6 +201,13 @@ got what, and from where.
 Every lane input is optional and a missing axis is **declared, not fatal**: the
 pack records `meta.axes` with `shipped` / `degraded` / `not-shipped` and why.
 
+Beside the pack the run also writes **`routes.json`**, a small sorted index of
+what this project serves and what it calls and does not serve, and prints one
+line for it (`routes index: 8 served, 0 outbound`). A server that holds several
+projects reads those sidecars to join one project's outbound call to another
+project's route (see [mcp.md](mcp.md)); nothing else reads it, and it is derived
+from the pack rather than an input to it, so the pack digest is unchanged by it.
+
 A run is **incremental** whenever a previous `facts-index.json` and its shards
 both apply; otherwise it is cold **and says why**.
 

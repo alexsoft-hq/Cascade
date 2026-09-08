@@ -95,6 +95,23 @@ function checkBasis(basis) {
   if (fr.verdict === 'current' && Number(fr.behindTotal || 0) !== 0) {
     fail('basis.freshness.verdict=current but behindTotal != 0');
   }
+  // EVERY OTHER PACK THIS ANSWER WALKED (RM44). A federated answer crosses into
+  // another project's pack, and a row that came from there is anchored to THAT
+  // snapshot, not to this one. So each sibling is held to the same rule the
+  // basis itself is held to: a build digest, and a freshness verdict from the
+  // same closed set. An answer that walked no other pack carries no `siblings`.
+  if (basis.siblings !== undefined) {
+    if (!Array.isArray(basis.siblings)) fail('basis.siblings must be an array of the other packs this answer walked');
+    for (const s of basis.siblings) {
+      if (!s || typeof s !== 'object') fail('basis.siblings entry must be an object');
+      if (typeof s.project !== 'string' || s.project.length === 0) fail('basis.siblings entry needs the project it names');
+      if (s.buildDigest == null) fail(`basis.siblings entry ${s.project} has no buildDigest, so the rows it contributed anchor to no snapshot`);
+      const sf = s.freshness;
+      if (!sf || typeof sf !== 'object' || !FRESHNESS_VERDICTS.includes(sf.verdict)) {
+        fail(`basis.siblings entry ${s.project} needs a freshness verdict, one of ${FRESHNESS_VERDICTS.join('|')}`);
+      }
+    }
+  }
 }
 
 function checkTrust(trust) {

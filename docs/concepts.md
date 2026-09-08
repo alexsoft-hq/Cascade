@@ -247,3 +247,39 @@ closest ones it does have; a name that folds onto *two* declared names is
 ambiguous and is not resolved to either. Under `exact` nothing folds, and a pack
 built before the engine recorded the rule declares none — such a pack matches
 arguments exactly, as it always did.
+
+## 8. Crossings — when the answer leaves the pack
+
+One repository per microservice is the normal shape, so each service analyzes
+into its own pack. That pack knows its code sends `GET /owners/{ownerId}`
+**somewhere** and stops there. The route it calls is not a route it serves, so
+the lane put an outbound endpoint node in the graph and an `UNRESOLVED`
+`CALLS_HTTP` edge onto it, and no mode walks an `UNRESOLVED` edge. The chain
+ends with "leaves the pack", which is the honest answer for one pack alone.
+
+A **crossing** is what happens when the server holding that pack also holds the
+project that answers the route: the same walk continues over there, and the rows
+it brings back carry `project`. The packs are untouched — the join is made when
+the question is asked, from the small `routes.json` index `analyze` writes
+beside each pack.
+
+**A crossing is never better than a candidate.** Which deployable answers the
+service name `customers-service` is not a fact about anybody's source: it is a
+fact about a deployment, and no line of code states it. So a crossing is
+`SOUND_SET` at best, `HEURISTIC` when either side's HTTP method was not readable
+or when more than one registered project serves the route, and it weakens the
+path grade of every row below it exactly as any other edge does. A table reached
+through a crossing is a table this request **may** reach, which is the same claim
+a `MAY_CALL` makes one lane in.
+
+**An unmatched call is listed, not swallowed.** A call that no registered
+project serves leaves the chain exactly where it was before — and the answer
+names it in `federation.unmatched` with how many projects were asked. On a
+server that serves one project the whole list is still there, because the
+remedy is "register the project that serves these", and a reader who never sees
+the list cannot know to do it. The same rule covers a project that could not be
+asked at all: a project with no route index beside its pack is named in
+`federation.skipped`, with `cascade analyze` as the fix.
+
+The wire shapes, `basis.siblings`, the `federate` argument and the rest are in
+[mcp.md](mcp.md).

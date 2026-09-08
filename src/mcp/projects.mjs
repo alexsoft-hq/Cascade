@@ -46,6 +46,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DispatchError, TOOLS, callTool as catalogCallTool } from './catalog.mjs';
 import { computeTrust } from '../core/trust.mjs';
+import { readRoutesIndex } from './federation.mjs';
 
 /** The default memory budget, in bytes (512 MB of pack JSON — see above). */
 export const DEFAULT_BUDGET_MB = 512;
@@ -119,10 +120,32 @@ export function createProjectHost(cfg = {}) {
   const ids = () => entries.map((e) => e.id);
   const totalBytes = () => [...cache.values()].reduce((n, e) => n + e.bytes, 0);
 
-  /** The served projects, from the registry alone — this NEVER loads a pack. */
+  // THE ROUTE INDEX, READ FROM THE SIDECAR AND NEVER FROM THE PACK (RM44).
+  // `routes.json` is a few kilobytes beside pack.json, so a server can answer
+  // "who serves this route?" for twenty projects without parsing one of them.
+  // Read once per project per server and remembered, including the failure: a
+  // project with no sidecar is not federated, and the answer says so rather
+  // than trying the file again on every question.
+  const indexes = new Map(); // id -> {ok:true,index} | {ok:false,reason,detail}
+  const readIndex = typeof cfg.readIndex === 'function' ? cfg.readIndex : (entry) => readRoutesIndex(packDirOf(entry));
+  function indexOf(projectId) {
+    if (indexes.has(projectId)) return indexes.get(projectId);
+    const entry = byId.get(projectId);
+    let r;
+    if (!entry) r = { ok: false, reason: 'unknown', detail: `this server does not serve ${projectId}` };
+    else {
+      try { r = readIndex(entry); }
+      catch (e) { r = { ok: false, reason: 'unreadable', detail: (e && e.message) || String(e) }; }
+    }
+    indexes.set(projectId, r);
+    return r;
+  }
+
+  /** The served projects, from the registry and the sidecars — no pack is parsed. */
   function list() {
     return entries.map((e) => {
       const held = cache.get(e.id);
+      const idx = indexOf(e.id);
       return {
         id: e.id,
         dotCascadePath: e.dotCascadePath ?? null,
@@ -130,6 +153,12 @@ export function createProjectHost(cfg = {}) {
         lastCertifiedAt: e.lastCertifiedAt ?? null,
         loaded: !!held,
         bytes: held ? held.bytes : null,
+        // WHETHER THIS PROJECT CAN BE FEDERATED, from its sidecar alone. A
+        // project with no index is not crossed into and not crossed out of, and
+        // this is where a reader finds out why an answer stopped at a call.
+        federation: idx.ok
+          ? { index: 'present', serves: idx.index.serves.length, calls: idx.index.calls.length }
+          : { index: 'absent', reason: idx.reason },
         // What the pack SAYS about itself — only for a project whose pack is
         // already in memory. Reading it for an unloaded project would mean
         // parsing the pack, which is exactly what listing must not do (§15 M8):
@@ -200,6 +229,13 @@ export function createProjectHost(cfg = {}) {
       if (e instanceof DispatchError) throw e;
       throw new DispatchError('pack-unreadable', `pack of ${projectId} could not be loaded: ${(e && e.message) || e}`);
     }
+    // SIBLING ACCESS (RM44). A tool answering for this project can ask what the
+    // other served projects serve, and can load one when the answer really
+    // crosses into it. It goes through THIS function, so a sibling's pack costs
+    // the same cache slot and the same memory budget as any other project.
+    if (ctx && typeof ctx === 'object' && ctx.federation == null) {
+      ctx.federation = { self: projectId, ids, indexOf, ctxFor };
+    }
     const stamp = now();
     cache.set(projectId, { ctx, bytes, loadedAt: stamp, lastUsedAt: stamp });
     evictToBudget(projectId);
@@ -264,7 +300,7 @@ export function createProjectHost(cfg = {}) {
     return catalogCallTool(name, routed.args, ctxFor(routed.projectId));
   }
 
-  return { list, stats, ctxFor, resolveProjectArg, callTool, serverCtx, ids, budgetBytes };
+  return { list, stats, ctxFor, resolveProjectArg, callTool, serverCtx, ids, indexOf, budgetBytes };
 }
 
 /**

@@ -48,7 +48,8 @@ Its basis says so: `project: "*"`, `scope: "server"`, no build digest.
 { "answer": {
     "projects": [ { "id": "mall", "dotCascadePath": "/…/mall/.cascade",
                     "stack": ["sql","java"], "lastCertifiedAt": "2026-09-04T…",
-                    "loaded": false, "bytes": null } ],
+                    "loaded": false, "bytes": null,
+                    "federation": { "index": "present", "serves": 214, "calls": 3 } } ],
     "cache": { "loaded": 0, "bytes": 0, "budgetBytes": 536870912,
                "evictions": 0, "hits": 0, "misses": 0 } },
   "basis": { "project": "*", "scope": "server", "buildDigest": null,
@@ -91,6 +92,81 @@ above.
 
 Grades, the `mode` floors, and what `limits` / `truncated` mean are in
 [concepts.md](concepts.md).
+
+## Federation — one answer across several projects
+
+One repository per microservice is the normal shape, and each one analyzes into
+its own pack. A pack knows that its code sends `GET /owners/{ownerId}`
+somewhere and stops there: the route it calls is not a route it serves, so the
+lane put an outbound endpoint node in the graph and an `UNRESOLVED CALLS_HTTP`
+edge onto it, which is below every mode's floor.
+
+When another project **this same server serves** answers that route, `flow` and
+`endpoint_impact` keep walking there. Nothing is added to any pack: the join is
+made at query time.
+
+**How a route is matched.** `analyze` writes `routes.json` beside `pack.json`:
+what this project serves, what it calls and does not serve, and the service
+names it answers to. The server reads those sidecars, never the packs, so it
+can answer "who serves this?" for twenty projects without parsing one of them.
+A sibling's pack is loaded only when the answer really crosses into it, through
+the same LRU and the same memory budget as any other project.
+
+| the call matches | what happens |
+|---|---|
+| one project | crossed, `SOUND_SET` (`HEURISTIC` when either side's method is `ANY`) |
+| several, and the call's service name picks exactly one | that one, `SOUND_SET` |
+| several, and nothing picks one | **all** of them, `HEURISTIC`, `ambiguous: true`, one `limits` sentence naming them |
+| none | not crossed. The row still reads "leaves the pack", and the call is listed in `federation.unmatched` |
+
+A crossing never rises above `SOUND_SET`: which deployable answers a service
+name is not a fact about anybody's source. It weakens the path grade of every
+row below it exactly as any other edge does.
+
+**What an answer carries.**
+
+```jsonc
+{ "answer": {
+    "tables": [ { "table": "owners", "project": "customers-service",
+                  "grade": "SOUND_SET", "viaHttp": true, "httpHops": 1,
+                  "federated": true, "hops": 6, … } ],
+    "federation": {
+      "crossed":   [ { "from": { "project": "api-gateway", "symbol": "…CustomersServiceClient#getOwner" },
+                       "route": { "method": "GET", "path": "/owners/{ownerId}" },
+                       "service": "customers-service",
+                       "to": { "project": "customers-service", "endpoint": "GET /owners/{ownerId}" },
+                       "grade": "SOUND_SET", "ambiguous": false } ],
+      "unmatched": [ { "from": { … }, "route": { … }, "checked": 3, "noIndex": 0 } ],
+      "skipped":   [ { "project": "vets-service", "reason": "no-index" } ] } },
+  "basis": { "project": "api-gateway", "buildDigest": "afcbe96e574f", …,
+             "siblings": [ { "project": "customers-service", "buildDigest": "eaeb163146ce",
+                             "builtAt": "…", "freshness": { "verdict": "unknown" } } ] } }
+```
+
+- Every row that came from another project carries `project`, `federated` and
+  `viaHttp`, and its `hops` continue from the caller. `walk` and `layers` on a
+  `flow` answer describe **this** project's walk only, and `walk.note` says so.
+- `basis.siblings` names every other pack the answer walked, each with its own
+  build digest and freshness verdict. A row from over there is anchored to that
+  snapshot, not to this one. It is absent when nothing was crossed.
+- On a server with only one project, `federation` is
+  `{ "available": false, "reason": "single-project", "unmatched": [ … ] }`. The
+  calls that leave the pack are still listed, because registering the project
+  that serves them is the remedy and a reader who never sees the list cannot
+  know to do it.
+- `skipped` names a project that could not be asked: `no-index` (no
+  `routes.json` beside its pack, so it is not federated at all), `stale-index`
+  (its index was built from a different pack than the one this server loads), or
+  `unreadable` (its pack could not be loaded). Each gets one `limits` sentence
+  with the remedy, which is always `cascade analyze` in that project.
+- `federate: false` answers from this pack alone. `federationHops` (default 3)
+  bounds how many crossings one answer may chain, so A to B to C is walked and a
+  ring of services cannot make one question walk forever.
+
+**Siblings are read from their committed packs, never from their working-tree
+overlays.** `changed_impact` and the overlay describe the project you are
+editing; a sibling is whatever its last `cascade analyze` wrote. An edit in
+another project is invisible here until that project is analyzed again.
 
 ## HTTP routes
 

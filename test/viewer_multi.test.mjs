@@ -6,7 +6,9 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
+import { Graph } from '../src/core/graph.mjs';
 import { projectPack, loadPack } from '../src/core/pack.mjs';
+import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../src/mcp/federation.mjs';
 import { createProjectHost } from '../src/mcp/projects.mjs';
 import { toolList } from '../src/mcp/catalog.mjs';
 import { serveHttp } from '../src/mcp/http.mjs';
@@ -240,4 +242,85 @@ test('GET /api/source routes to the named project, and says why a pack with no r
   const j = await r.json();
   assert.equal(j.error.code, 'unknown-key');
   assert.match(j.error.message, /alpha/);
+});
+
+// ---------------------------------------------------------------------------
+// Federation over the same socket (RM44)
+// ---------------------------------------------------------------------------
+
+// The page reads `flow` through `/api/call`, so what a federated answer looks
+// like ON THE WIRE is what the page has to draw. These two projects are wired
+// the way a gateway and a service are: `caller` serves one route and calls a
+// route `served` answers, and each has the `routes.json` sidecar `analyze`
+// writes beside its pack.
+
+/** caller: GET /api/x -> Ctl#get -> Client#fetch --CALLS_HTTP--> GET /things/{*} */
+function callerPack() {
+  const g = new Graph();
+  g.addNode({ id: 'endpoint:GET /api/x', kind: 'endpoint', httpMethod: 'GET', path: '/api/x' });
+  g.addNode({ id: 'symbol:com.gw.Ctl#get', kind: 'symbol', owner: 'com.gw.Ctl', file: 'Ctl.java', line: 4 });
+  g.addNode({ id: 'symbol:com.gw.Client#fetch', kind: 'symbol', owner: 'com.gw.Client', file: 'Client.java', line: 9 });
+  g.addNode({ id: 'endpoint:GET /things/{*}', kind: 'endpoint', httpMethod: 'GET', path: '/things/{*}', outbound: true });
+  g.addEdge({ from: 'endpoint:GET /api/x', to: 'symbol:com.gw.Ctl#get', type: 'HANDLES', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:com.gw.Ctl#get', to: 'symbol:com.gw.Client#fetch', type: 'MAY_CALL', grade: 'SOUND_SET' });
+  g.addEdge({
+    from: 'symbol:com.gw.Client#fetch', to: 'endpoint:GET /things/{*}', type: 'CALLS_HTTP', grade: 'UNRESOLVED',
+    evidence: { rule: 'http-client-call', service: 'served', serviceLiteral: true, url: { template: '/things/{*}' } },
+  });
+  return projectPack(g, { project: 'caller', builtAt: '2026-09-08T00:00:00.000Z', lanes: ['java'] });
+}
+
+/** served: GET /things/{id} -> Ctl#get -> Mapper#select -> stmt -> table things */
+function servedPack() {
+  const g = new Graph();
+  g.addNode({ id: 'endpoint:GET /things/{id}', kind: 'endpoint', httpMethod: 'GET', path: '/things/{id}' });
+  g.addNode({ id: 'symbol:com.th.Ctl#get', kind: 'symbol', owner: 'com.th.Ctl', file: 'Ctl.java', line: 5 });
+  g.addNode({ id: 'symbol:com.th.Mapper#select', kind: 'symbol', owner: 'com.th.Mapper', file: 'Mapper.java', line: 3 });
+  g.addNode({ id: 'statement:com.th.Mapper.select', kind: 'statement', statementType: 'select' });
+  g.addNode({ id: 'table:things', kind: 'table' });
+  g.addEdge({ from: 'endpoint:GET /things/{id}', to: 'symbol:com.th.Ctl#get', type: 'HANDLES', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:com.th.Ctl#get', to: 'symbol:com.th.Mapper#select', type: 'MAY_CALL', grade: 'SOUND_SET' });
+  g.addEdge({ from: 'symbol:com.th.Mapper#select', to: 'statement:com.th.Mapper.select', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+  g.addEdge({ from: 'statement:com.th.Mapper.select', to: 'table:things', type: 'EXECUTES', grade: 'EXACT', evidence: { access: 'read' } });
+  return projectPack(g, { project: 'served', builtAt: '2026-09-08T00:00:00.000Z', lanes: ['java'] });
+}
+
+/** The two of them on disk, each with the sidecar `analyze` writes. */
+function federatedWorkspace(t) {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-viewer-fed-'));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  return [['caller', callerPack()], ['served', servedPack()]].map(([id, pack]) => {
+    const dot = path.join(work, id, '.cascade');
+    fs.mkdirSync(path.join(dot, 'pack'), { recursive: true });
+    fs.writeFileSync(path.join(dot, 'pack', 'pack.json'), JSON.stringify(pack), 'utf8');
+    const index = buildRoutesIndex(loadPack(pack, { verifyDigest: true }), { project: id, buildDigest: pack.digest });
+    fs.writeFileSync(path.join(dot, 'pack', ROUTES_FILE), serializeRoutesIndex(index), 'utf8');
+    return { id, dotCascadePath: dot, source: 'analyze', stack: ['java'], lastCertifiedAt: '2026-09-08T00:00:00.000Z' };
+  });
+}
+
+test('the page gets a federated flow answer over the socket: rows carry their project', async (t) => {
+  const v = await startViewer(t, federatedWorkspace(t));
+  const r = await (await v.call('flow', { endpoint: 'GET /api/x' }, 'caller')).json();
+  assert.deepEqual(r.answer.tables.map((x) => [x.table, x.project, x.grade, x.viaHttp]),
+    [['things', 'served', 'SOUND_SET', true]]);
+  // The one row the page hangs off THIS project's caller, and the project it
+  // hangs off, so the line lands on a drawn row and not on nothing.
+  const handler = r.answer.services.find((s) => s.project === 'served');
+  assert.equal(handler.link.from, 'symbol:com.gw.Client#fetch');
+  assert.equal(handler.link.fromProject, 'caller');
+  assert.deepEqual(r.answer.federation.crossed.map((c) => [c.from.project, c.to.project]), [['caller', 'served']]);
+  assert.deepEqual(r.basis.siblings.map((s) => s.project), ['served']);
+});
+
+test('/api/projects reports each project\'s route index, and the overview counts what leaves', async (t) => {
+  const v = await startViewer(t, federatedWorkspace(t));
+  const list = await (await v.get('/api/projects')).json();
+  assert.deepEqual(list.answer.projects.map((p) => [p.id, p.federation]), [
+    ['caller', { index: 'present', serves: 1, calls: 1 }],
+    ['served', { index: 'present', serves: 1, calls: 0 }],
+  ]);
+  // ...and the sentence the overview panel draws comes from the answer itself.
+  const ov = await (await v.call('overview', {}, 'caller')).json();
+  assert.deepEqual(ov.answer.federation, { calls: 1, answered: 1, unmatched: 0, projects: ['served'] });
 });

@@ -54,6 +54,30 @@ test('basis.freshness.verdict not in FRESHNESS_VERDICTS throws', () => {
   assert.throws(() => makeResponse(shape), ContractError);
 });
 
+// ---- basis.siblings: the other packs a federated answer walked (RM44) ------
+// A row that came from another project is anchored to THAT project's snapshot,
+// so each sibling is held to the same rule the basis itself is held to.
+
+test('basis.siblings: absent is fine, and a well-formed list passes', () => {
+  const shape = validShape();
+  assert.doesNotThrow(() => makeResponse(shape));
+  shape.basis.siblings = [{ project: 'q', buildDigest: 'def', builtAt: null, freshness: { verdict: 'unknown' } }];
+  assert.doesNotThrow(() => makeResponse(shape));
+});
+
+test('basis.siblings: a sibling with no digest, no verdict or no name is refused', () => {
+  const withSiblings = (siblings) => { const s = validShape(); s.basis.siblings = siblings; return s; };
+  assert.throws(() => makeResponse(withSiblings('nope')), /must be an array/);
+  assert.throws(() => makeResponse(withSiblings([{ buildDigest: 'd', freshness: { verdict: 'unknown' } }])),
+    /needs the project it names/);
+  assert.throws(() => makeResponse(withSiblings([{ project: 'q', freshness: { verdict: 'unknown' } }])),
+    /anchor to no snapshot/);
+  assert.throws(() => makeResponse(withSiblings([{ project: 'q', buildDigest: 'd' }])),
+    /needs a freshness verdict/);
+  assert.throws(() => makeResponse(withSiblings([{ project: 'q', buildDigest: 'd', freshness: { verdict: 'probably' } }])),
+    /needs a freshness verdict/);
+});
+
 test('basis.buildDigest null throws — no snapshot anchor', () => {
   const shape = validShape();
   shape.basis.buildDigest = null;

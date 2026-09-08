@@ -1736,6 +1736,10 @@ const VIEWER_STRINGS = {
     // is the `overview` answer's own.
     'ov.gaps.title': 'What we could not see',
     'ov.gaps.note': '{n} kinds of blind spot',
+    // HOW MUCH OF THIS PROJECT LEAVES IT. A call to a route this project does
+    // not serve stops the chain, unless another registered project serves that
+    // route and the server can carry the answer across.
+    'ov.federation.note': '{n} call(s) leave this project, {k} answered by a registered project and {m} not.',
     // THE NAME OF A BLIND SPOT, in the reader's words. The engine's own kind
     // slug stays on the chip's tooltip beside the count, so nothing is renamed
     // away: this is the label a person can read without the docs open. A kind
@@ -1946,6 +1950,11 @@ const VIEWER_STRINGS = {
     'chain.tag.seen.title': 'a recording of this system running saw this really happen. It stands beside the grade and never changes it, and nothing here was walked from it.',
     'chain.tag.frontend': 'web {n}',
     'chain.tag.frontend.title': 'how many frontend functions call this route',
+    // A row from ANOTHER project. The server followed an HTTP call out of this
+    // pack into a project it also serves, so the code below the badge lives in
+    // a different deployable and answers to a different build.
+    'chain.tag.project.title': 'this row is in another registered project, reached over an HTTP call out of this one',
+    'chain.card.otherproject': 'This row is in {p}. This page shows one project at a time, so switch the selector to {p} to open its source or walk it further.',
     'chain.nosource': 'no source: we never saw this type in the code',
     // ---- Impact tab -----------------------------------------------------
     'hint.impact.lead': 'Pick a column, table or method and see which APIs would be affected if you changed it.',
@@ -4321,6 +4330,33 @@ function seenTag(resp){
 }
 /** Did a capture see the DRAWN LINK into this row run, end to end? */
 const linkObserved=(o)=> !!(o && o.link && o.link.observed===true);
+// ---------- a row from ANOTHER project (RM44) --------------------------------
+// A server that serves several projects can follow an HTTP call out of this
+// pack into the project that answers it, and the rows it brings back carry
+// `project`. Two things follow for this page.
+//   IDENTITY. Two projects can both have a `types` table, so a row's key here
+//   is scoped by the project it came from. An in-pack row keeps the bare node
+//   id, so nothing about a single-project page changes.
+//   WHERE THE LINE COMES FROM. A federated row hangs off a row in its own
+//   project, except the first one on the far side of a crossing: that one
+//   hangs off the CALLER over here, and the server says so with
+//   `link.fromProject`.
+const fkey=(row,id)=> (row&&row.project)? row.project+' '+id : id;
+// The node id inside a key, whichever of the two shapes it is. A project id is
+// a slug and carries no colon, so a first word without one is the scope.
+function keyNodeId(k){
+  const s=String(k), i=s.indexOf(' ');
+  return (i>0 && !s.slice(0,i).includes(':')) ? s.slice(i+1) : s;
+}
+function flinkKey(row,id){
+  if(id==null) return null;
+  const p=(row&&row.link&&row.link.fromProject)||(row&&row.project)||null;
+  return p? p+' '+id : id;
+}
+/** The badge a federated row wears before its name. */
+const projTag=(row)=> (row&&row.project)
+  ? el('span',{className:'tag',title:t('chain.tag.project.title'),textContent:row.project})
+  : null;
 function flowMakeRow(v, key, kind, grade, kids, data){
   const e=el('div',{className:'frow',tabIndex:0},kids);
   e.setAttribute('role','button');
@@ -4367,9 +4403,9 @@ function flowEntryRow(v, entry){
       file:entry.file??null, line:entry.line??null, start:entry.start });
 }
 function flowServiceRow(v, s){
-  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'symbol:'+s.id, grade:s.grade, observed:linkObserved(s)});
-  return flowMakeRow(v, 'symbol:'+s.id,'service',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('symbol',12), el('span',{className:'fhopn kh-service',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
+  v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'symbol:'+s.id), grade:s.grade, observed:linkObserved(s)});
+  return flowMakeRow(v, fkey(s,'symbol:'+s.id),'service',s.grade,[
+    el('div',{className:'frowtop'},[kindGlyph('symbol',12), el('span',{className:'fhopn kh-service',textContent:String(s.hops)}), projTag(s), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
     el('div',{className:'fsub'},[
       s.handler? el('span',{className:'tag',title:t('chain.tag.handler.title'),textContent:'handler'}) : null,
       s.external? el('span',{className:'tag warn',title:t('chain.tag.ext.title'),textContent:'ext'}) : null,
@@ -4382,7 +4418,7 @@ function flowServiceRow(v, s){
   ],s);
 }
 function flowStatementRow(v, s){
-  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'statement:'+s.id, grade:s.grade, observed:linkObserved(s)});
+  v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'statement:'+s.id), grade:s.grade, observed:linkObserved(s)});
   // NAMED `stype`, NOT `t`. `t` is the catalogue lookup every row in this file
   // calls, and a local of that name shadows it for the whole function: the
   // `columnsRuntimeOnly` tag below asks the catalogue for its words, and with
@@ -4397,8 +4433,8 @@ function flowStatementRow(v, s){
   const verbCls = {select:'tag read', insert:'tag write', update:'tag write', delete:'tag write'};
   const acc = (s.tables||[]).map(x=>x&&x.access).filter(Boolean);
   const cls = verbCls[stype] || (acc.length===0 ? 'tag' : (acc.some(a=>a!=='read') ? 'tag write' : 'tag read'));
-  return flowMakeRow(v, 'statement:'+s.id,'statement',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('statement',12), el('span',{className:'fhopn kh-statement',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
+  return flowMakeRow(v, fkey(s,'statement:'+s.id),'statement',s.grade,[
+    el('div',{className:'frowtop'},[kindGlyph('statement',12), el('span',{className:'fhopn kh-statement',textContent:String(s.hops)}), projTag(s), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
     el('div',{className:'fsub'},[ el('span',{className:cls,textContent:s.statementType||'sql'}),
       el('span',{className:'count',textContent:(s.tables||[]).length+' tbl'}),
       // Never hide a lower bound behind a tidy row.
@@ -4411,9 +4447,9 @@ function flowStatementRow(v, s){
   ],s);
 }
 function flowTableRow(v, x){
-  v.linkSpecs.push({from:'statement:'+x.via, to:'table:'+x.table, grade:x.grade});
-  return flowMakeRow(v, 'table:'+x.table,'table',x.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('table',12), el('span',{className:'fname',title:x.table,textContent:x.table}), badge(x.grade)]),
+  v.linkSpecs.push({from:fkey(x,'statement:'+x.via), to:fkey(x,'table:'+x.table), grade:x.grade});
+  return flowMakeRow(v, fkey(x,'table:'+x.table),'table',x.grade,[
+    el('div',{className:'frowtop'},[kindGlyph('table',12), projTag(x), el('span',{className:'fname',title:x.table,textContent:x.table}), badge(x.grade)]),
     el('div',{className:'fsub'},[el('span',{className:'count',title:'via '+x.via,
       textContent:t('chain.hop',{n:x.hops})+'\u00a0\u00a0via '+x.viaShort})]),
     el('div',{className:'fsub'},[
@@ -4430,9 +4466,9 @@ function flowTableRow(v, x){
 function flowEndpointRow(v, e){
   const from = (e.link && e.link.from) || (e.handler ? 'symbol:'+e.handler : null);
   const via = (e.link && e.link.fromShort) || e.handlerShort || (e.handler ? shortId('symbol:'+e.handler) : '');
-  v.linkSpecs.push({from, to:'endpoint:'+e.id, grade:e.grade, observed:linkObserved(e)});
-  return flowMakeRow(v, 'endpoint:'+e.id,'endpoint',e.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), el('span',{className:'fname',title:e.id,textContent:e.id}), badge(e.grade)]),
+  v.linkSpecs.push({from:flinkKey(e,from), to:fkey(e,'endpoint:'+e.id), grade:e.grade, observed:linkObserved(e)});
+  return flowMakeRow(v, fkey(e,'endpoint:'+e.id),'endpoint',e.grade,[
+    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), projTag(e), el('span',{className:'fname',title:e.id,textContent:e.id}), badge(e.grade)]),
     el('div',{className:'fsub'},[el('span',{className:'count',title: from ? ('via '+from.slice(from.indexOf(':')+1)) : '',
       textContent:t('chain.hop',{n:e.hops})+'\u00a0\u00a0'+via})]),
     // Two things a route on a pack with a frontend owes the reader: how much of
@@ -4454,11 +4490,11 @@ function flowEndpointRow(v, e){
 // the two kinds it is: declared in the file the route mounts as its screen, or
 // in a module that file imports.
 function flowWebFnRow(v, w){
-  v.linkSpecs.push({from:(w.link&&w.link.from)||null, to:'symbol:'+w.id, grade:w.grade, observed:linkObserved(w)});
+  v.linkSpecs.push({from:flinkKey(w,(w.link&&w.link.from)||null), to:fkey(w,'symbol:'+w.id), grade:w.grade, observed:linkObserved(w)});
   const file=String(w.file||'');
   const base=file.slice(file.lastIndexOf('/')+1);
-  return flowMakeRow(v, 'symbol:'+w.id,'webfn',w.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('webfn',12), el('span',{className:'fhopn kh-webfn',textContent:String(w.hops)}),
+  return flowMakeRow(v, fkey(w,'symbol:'+w.id),'webfn',w.grade,[
+    el('div',{className:'frowtop'},[kindGlyph('webfn',12), el('span',{className:'fhopn kh-webfn',textContent:String(w.hops)}), projTag(w),
       el('span',{className:'fname',title:w.id,textContent:w.short}), badge(w.grade)]),
     el('div',{className:'fsub'},[
       el('span',{className:'tag',title:t(w.component?'chain.tag.component.title':'chain.tag.api.title'),
@@ -4471,9 +4507,9 @@ function flowWebFnRow(v, w){
 // own declaration said: the group its first segment puts it in, and the title
 // its `meta` gave it.
 function flowScreenRow(v, s){
-  v.linkSpecs.push({from:(s.link&&s.link.from)||null, to:'screen:'+s.id, grade:s.grade, observed:linkObserved(s)});
-  return flowMakeRow(v, 'screen:'+s.id,'screen',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('screen',12), el('span',{className:'fhopn kh-screen',textContent:String(s.hops)}),
+  v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'screen:'+s.id), grade:s.grade, observed:linkObserved(s)});
+  return flowMakeRow(v, fkey(s,'screen:'+s.id),'screen',s.grade,[
+    el('div',{className:'frowtop'},[kindGlyph('screen',12), el('span',{className:'fhopn kh-screen',textContent:String(s.hops)}), projTag(s),
       el('span',{className:'fname',title:s.id,textContent:s.short||s.id}), badge(s.grade)]),
     el('div',{className:'fsub'},[
       s.group? el('span',{className:'tag',textContent:s.group}) : null,
@@ -4705,8 +4741,8 @@ const laneDotCount=(len)=> Math.max(1, Math.min(LANE_DOTS_MAX, Math.round((len||
 function laneDotColor(v, rec){
   // Either end: Flow draws statement -> table, Impact draws the same fact the
   // other way round, and it is the same access either way.
-  const tid = String(rec.to).startsWith('table:') ? rec.to
-    : (String(rec.from).startsWith('table:') ? rec.from : null);
+  const tid = keyNodeId(rec.to).startsWith('table:') ? rec.to
+    : (keyNodeId(rec.from).startsWith('table:') ? rec.from : null);
   if(tid){
     const row=v.rows.get(tid);
     return mapAccessColor(row && row.data && row.data.access);
@@ -4885,6 +4921,9 @@ function flowCard(v, key, row){
     (cardKind==='screen'&&d.group)? ('group '+d.group) : null,
     (cardKind==='screen'&&d.title)? d.title : null,
     d.comment||null, d.owner||null,
+    // WHICH PROJECT this row is in. Absent on every row of this project's own
+    // walk, so a single-project page reads exactly as it always did.
+    d.project? ('project '+d.project) : null,
     d.file? (d.file+(d.line?(':'+d.line):'')) : (kind==='service'&&d.external?t('chain.nosource'):null) ].filter(Boolean);
   if(meta.length) panel.append(el('div',{className:'comment',textContent:meta.join('\u00a0\u00a0')}));
   const body=el('div',{});
@@ -4918,7 +4957,12 @@ function flowCard(v, key, row){
       : kind==='table'? {table:d.table} : (kind==='entry'&&d.kind==='symbol')? {symbol:key.slice(key.indexOf(':')+1)} : null;
     if(target) btns.append(el('button',{className:'mini',textContent:'Impact',title:t('btn.impact.title'),onclick:()=>openImpact(target)}));
   }
-  panel.append(btns);
+  // A ROW FROM ANOTHER PROJECT answers to another pack. Its source, its graph
+  // and its impact are that project's questions, and every button here would
+  // ask THIS project and get the wrong file or nothing at all. So the card says
+  // where the row lives and how to go there, instead of offering a wrong answer.
+  if(d.project) panel.append(el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.card.otherproject',{p:d.project})}));
+  else panel.append(btns);
   if(cardKind==='statement' && d.tables && d.tables.length){
     panel.append(el('div',{className:'fsub',style:'margin-top:7px'}, d.tables.map(t=>
       el('span',{className:'tag '+(t.access==='read'?'read':'write'),title:t.access,textContent:t.table}))));
@@ -9685,8 +9729,15 @@ function ovGapLabel(kind){
 }
 function ovGapsPanel(a){
   const gaps=a.gaps||[];
+  // HOW MUCH OF THIS PROJECT LEAVES IT (RM44), counted by the engine on this
+  // same answer and never re-derived here. Drawn only where there IS a call
+  // that leaves: on a project that talks to nobody the sentence would be noise.
+  const fed=a.federation||null;
   const kids=[ el('h2',{},[t('ov.gaps.title')+' ', el('span',{className:'count',textContent:'('+gaps.length+')'})]),
-    el('div',{className:'panelsub',textContent:t('ov.gaps.note',{n:gaps.length})}) ];
+    el('div',{className:'panelsub',textContent:t('ov.gaps.note',{n:gaps.length})}),
+    (fed && fed.calls>0)
+      ? el('div',{className:'panelsub',textContent:t('ov.federation.note',{n:fed.calls, k:fed.answered, m:fed.unmatched})})
+      : null ];
   if(!gaps.length){ kids.push(el('ul',{className:'list'},[emptyNote(a.empty,'gaps')])); return el('div',{className:'panel'},kids); }
   const chips=el('div',{className:'ovchips'});
   const bodies=el('div',{className:'ovgapbodies'});

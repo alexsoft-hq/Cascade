@@ -62,7 +62,13 @@ test('list(): reads the registry only — it loads NO pack, and says nothing is 
   // reading it for an unloaded one would mean parsing the pack, which is the
   // one thing listing must not do.
   assert.deepEqual(list.map((p) => p.meta), [null, null]);
-  assert.deepEqual(Object.keys(list[0]).sort(), ['bytes', 'dotCascadePath', 'id', 'lastCertifiedAt', 'loaded', 'meta', 'stack']);
+  // `federation` comes from the SIDECAR (routes.json), which these fake entries
+  // have no directory for: absent, and the listing says which, without ever
+  // opening a pack.
+  assert.deepEqual(list.map((p) => p.federation), [
+    { index: 'absent', reason: 'no-index' }, { index: 'absent', reason: 'no-index' },
+  ]);
+  assert.deepEqual(Object.keys(list[0]).sort(), ['bytes', 'dotCascadePath', 'federation', 'id', 'lastCertifiedAt', 'loaded', 'meta', 'stack']);
   assert.deepEqual(host.stats(), { loaded: 0, bytes: 0, budgetBytes: DEFAULT_BUDGET_BYTES, evictions: 0, hits: 0, misses: 0 });
 });
 
@@ -76,6 +82,7 @@ test('ctxFor(): loads on FIRST use, then serves the same object from the cache',
   assert.deepEqual(list.find((p) => p.id === 'alpha'), {
     id: 'alpha', dotCascadePath: '/tmp/alpha/.cascade', stack: ['sql'],
     lastCertifiedAt: list.find((p) => p.id === 'alpha').lastCertifiedAt, loaded: true, bytes: 10,
+    federation: { index: 'absent', reason: 'no-index' },
     // Now that the pack IS in memory, the listing relays what it says about
     // itself — read off the loaded context, never recomputed.
     meta: { project: 'alpha', digest: 'd-alpha', builtAt: null, lanes: null, axes: null, freshness: { verdict: 'unknown' } },

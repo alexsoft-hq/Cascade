@@ -4251,3 +4251,104 @@ test('a statement whose columns are only known at run time draws that tag, and t
   assert.ok(typeTag, 'the statement type is still printed');
   assert.equal(typeTag.className, 'tag read', 'an mp-builtin over a read table is a read, not a write');
 });
+
+// ---------------------------------------------------------------------------
+// A row from another project (RM44)
+// ---------------------------------------------------------------------------
+
+/**
+ * A flow answer with a crossing in it: this project's own client method, and
+ * below it the handler, statement and table of the project that answers the
+ * call. The two `types` tables are the case the project-scoped key exists for:
+ * one id, two projects, two rows.
+ */
+function federatedFlow() {
+  const link = (from, fromProject) => ({
+    from, fromShort: from.slice(from.indexOf(':') + 1), type: 'MAY_CALL', grade: 'SOUND_SET',
+    basis: 'a call to an interface method, resolved to every implementation',
+    receiver: null, iface: null, ...(fromProject ? { fromProject } : {}),
+  });
+  return {
+    answer: {
+      entry: {
+        kind: 'endpoint', id: 'GET /api/x', start: 'endpoint:GET /api/x',
+        httpMethod: 'GET', path: '/api/x', handler: 'com.gw.Ctl#get', handlerShort: 'Ctl#get',
+      },
+      services: [
+        { id: 'com.gw.Client#fetch', short: 'Client#fetch', owner: 'com.gw.Client', hops: 1,
+          grade: 'SOUND_SET', external: false, transactional: false,
+          file: 'Client.java', line: 9, link: link('endpoint:GET /api/x'), path: [] },
+        { id: 'com.th.Ctl#get', short: 'Ctl#get', owner: 'com.th.Ctl', hops: 3, grade: 'SOUND_SET',
+          external: false, transactional: false, project: 'served', federated: true, viaHttp: true, httpHops: 1,
+          file: 'Ctl.java', line: 5,
+          link: { ...link('symbol:com.gw.Client#fetch', 'caller'), type: 'CALLS_HTTP' }, path: [] },
+      ],
+      statements: [],
+      tables: [
+        { table: 'types', hops: 2, grade: 'SOUND_SET', via: 'com.gw.M.select', viaShort: 'M.select',
+          statements: 1, access: 'read', reads: 1, writes: 0 },
+        { table: 'types', hops: 5, grade: 'SOUND_SET', via: 'com.th.M.select', viaShort: 'M.select',
+          statements: 1, access: 'read', reads: 2, writes: 0,
+          project: 'served', federated: true, viaHttp: true, httpHops: 1 },
+      ],
+      walk: { walked: 4, depth: 6, mode: 'conservative', byLinkGrade: { SOUND_SET: 4 }, other: 0, cut: {},
+        note: '2 row(s) below come from another project' },
+      empty: { statements: 'none' },
+      federation: { crossed: [], unmatched: [], skipped: [] },
+    },
+    basis: {
+      project: 'caller', buildDigest: 'deadbeef', builtAt: '2026-09-04T00:00:00.000Z',
+      freshness: { verdict: 'unknown' },
+      siblings: [{ project: 'served', buildDigest: 'feedface', builtAt: null, freshness: { verdict: 'unknown' } }],
+    },
+    trust: { trustLevel: 'UNCERTIFIED', axes: [], gatesNotShown: [], knownGaps: [] },
+    limits: [],
+    truncated: { any: false, fields: [] },
+  };
+}
+
+test('a Flow row from another project wears its badge, and two projects\' rows do not collide', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=flow' });
+  const out = ev(ctx, `(() => { try {
+      FLOWV.resp = ${JSON.stringify(federatedFlow())}; FLOWV.sel = null; renderChain(FLOWV, FLOWV.resp);
+      return 'rendered';
+    } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
+  assert.equal(out, 'rendered', 'the render threw instead of drawing the lanes');
+
+  const rows = laneRows(byId);
+  // The badge is a tag on the row, and it carries the project's name.
+  const far = rows.find((r) => r.name === 'Ctl#get');
+  assert.ok(far, `the far handler is missing: ${rows.map((r) => r.name).join(', ')}`);
+  assert.ok(far.tags.includes('served'), `no project badge: ${far.tags.join(' | ')}`);
+  assert.match(far.tips.find((x) => /another registered project/.test(x)) || '', /over an HTTP call/);
+  // This project's own row wears none.
+  assert.equal(rows.find((r) => r.name === 'Client#fetch').tags.includes('served'), false);
+
+  // TWO `types` rows, one per project, each answering to its own key. Before
+  // the key was scoped, the second row overwrote the first in `v.rows` and a
+  // click lit the wrong one.
+  assert.equal(rows.filter((r) => r.name === 'types').length, 2);
+  assert.equal(ev(ctx, "FLOWV.rows.has('table:types')"), true, "this project's row keeps the bare id");
+  assert.equal(ev(ctx, "FLOWV.rows.has('served table:types')"), true, 'the other project\'s row is a row of its own');
+  assert.equal(ev(ctx, "FLOWV.rows.get('served table:types').data.reads"), 2);
+  assert.equal(ev(ctx, "FLOWV.rows.get('table:types').data.reads"), 1);
+
+  // The card for a federated row NAMES the project and offers no button that
+  // would ask this project for another project's file.
+  ev(ctx, "flowSelect(FLOWV, 'served table:types')");
+  const card = byId.get('flowside').querySelectorAll('.fcard')[0];
+  assert.ok(card, 'the card did not open');
+  assert.match(card.textContent, /project served/);
+  assert.match(card.textContent, /switch the selector to served/);
+  assert.equal(card.querySelectorAll('button').filter((b) => b.textContent === 'ERD').length, 0,
+    'an ERD button here would draw THIS project\'s schema for another project\'s table');
+});
+
+test('the overview says how many calls leave this project, and says nothing when none do', async (t) => {
+  const { ctx } = await bootPage(t);
+  const panel = (fed) => ev(ctx, `ovGapsPanel({gaps: [], empty: {gaps: 'none'}, federation: ${JSON.stringify(fed)}}).textContent`);
+  assert.match(panel({ calls: 3, answered: 2, unmatched: 1, projects: ['served'] }),
+    /3 call\(s\) leave this project, 2 answered by a registered project and 1 not\./);
+  assert.equal(/call\(s\) leave/.test(panel({ calls: 0, answered: 0, unmatched: 0, projects: [] })), false,
+    'a project that talks to nobody says nothing');
+});

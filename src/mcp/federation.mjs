@@ -1,0 +1,827 @@
+// federation.mjs — one answer across several packs (RM44).
+//
+// One repository per microservice is the normal shape, so Cascade analyzes each
+// service into its own pack. A pack therefore knows that its code sends
+// `GET /owners/{ownerId}` SOMEWHERE and stops there: the route it calls is not
+// a route it serves, so the lane put an `outbound` endpoint node in the graph
+// and an UNRESOLVED CALLS_HTTP edge onto it, which is below every mode's floor
+// and which no walk follows.
+//
+// When "somewhere" is another project THIS SERVER also serves, the answer can
+// keep walking. That is all federation is: a query-time join between packs,
+// with the packs themselves untouched.
+//
+// THREE RULES DECIDE EVERYTHING HERE.
+//
+//   1. THE SIDECAR, NEVER THE PACK. Which project serves which route is read
+//      from `routes.json`, the small sorted index `analyze` writes beside
+//      pack.json. Reading it costs a stat and a few kilobytes, so a server can
+//      answer "who serves this?" for twenty projects without parsing one pack.
+//      A sibling's pack is loaded only when the answer really crosses into it,
+//      through the SAME cache and the SAME memory budget as any other project.
+//   2. NOTHING RISES ABOVE SOUND_SET. Which deployable answers a service name
+//      is not a fact about anybody's source. A crossing is at best a checked
+//      candidate, and it weakens the path grade of every row below it exactly
+//      as any other edge does.
+//   3. WHAT WAS NOT CROSSED IS SAID. A call that matched no registered project
+//      is listed (`unmatched`), a project with no sidecar is named (`skipped`,
+//      with the remedy), and a call that matched several is crossed to all of
+//      them at HEURISTIC and marked `ambiguous`. A reader who never sees the
+//      list cannot know to register the project that would answer it.
+//
+// Pure except `readRoutesIndex`, which reads one file and takes its `io`
+// injected. The walk itself is `core/chain.mjs`, untouched: the crossing is
+// computed here and the sibling's walk is a NEW walk in the sibling's graph.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { routeMatches, normalizeUrlPath } from '../adapters/web_bridge.mjs';
+import { chainWalk } from '../core/chain.mjs';
+import { FLOW_EDGE_TYPES } from '../core/graph.mjs';
+
+/** The sidecar's schema id. Written by `analyze`, read by the server. */
+export const ROUTES_SCHEMA = 'cascade-routes/1';
+/** Its file name, beside `pack.json`. */
+export const ROUTES_FILE = 'routes.json';
+
+/** How many crossings one answer may chain (A to B to C) unless told otherwise. */
+export const DEFAULT_FEDERATION_HOPS = 3;
+
+const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
+const weaker = (a, b) => (RANK[a] <= RANK[b] ? a : b);
+const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const strip = (id) => String(id).slice(String(id).indexOf(':') + 1);
+
+// ---------------------------------------------------------------------------
+// The sidecar
+// ---------------------------------------------------------------------------
+
+/**
+ * The routes index for one pack: what it SERVES, what it CALLS and does not
+ * serve, and the service names it answers to.
+ *
+ * Derived from the graph, so it is NOT an input to the pack digest (I-9: the
+ * cold digest and the incremental digest must stay equal, and a file derived
+ * from the result cannot be allowed to change the result). It carries the
+ * digest of the pack it was derived from instead, and the server refuses a
+ * sidecar that no longer describes the pack it loads.
+ *
+ * @param {import('../core/graph.mjs').Graph} graph
+ * @param {{project:string, buildDigest:string, serviceNames?:string[]}} meta
+ * @returns {{schema:string, project:(string|null), buildDigest:(string|null),
+ *            serves:{id:string, method:string, path:string}[],
+ *            calls:{id:string, method:string, path:string, service:(string|null)}[],
+ *            serviceNames:string[]}}
+ */
+export function buildRoutesIndex(graph, meta = {}) {
+  const serves = [];
+  const calls = [];
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'endpoint') continue;
+    const method = methodOf(n);
+    const routePath = pathOf(n);
+    if (graph.outEdges(n.id).some((e) => e.type === 'HANDLES')) {
+      serves.push({ id: n.id, method, path: routePath });
+      continue;
+    }
+    // A route this pack CALLS and does not serve. The lane marked the node
+    // `outbound` and put an UNRESOLVED CALLS_HTTP edge on it, and both are
+    // required here: a stub node nothing calls belongs in neither list.
+    if (n.outbound !== true) continue;
+    const services = new Set();
+    let called = false;
+    for (const e of graph.inEdges(n.id)) {
+      if (e.type !== 'CALLS_HTTP' || e.grade !== 'UNRESOLVED') continue;
+      called = true;
+      const s = serviceOf(graph, e.idx);
+      if (s) services.add(s);
+    }
+    if (!called) continue;
+    // Two callers naming two different services for one route is not a name we
+    // may pick from: it is a name we do not know.
+    calls.push({ id: n.id, method, path: routePath, service: services.size === 1 ? [...services][0] : null });
+  }
+  serves.sort((a, b) => cmp(a.id, b.id));
+  calls.sort((a, b) => cmp(a.id, b.id));
+  const names = [...new Set((meta.serviceNames ?? []).filter((s) => typeof s === 'string' && s.length > 0))].sort();
+  return {
+    schema: ROUTES_SCHEMA,
+    project: meta.project ?? null,
+    buildDigest: meta.buildDigest ?? null,
+    serves,
+    calls,
+    serviceNames: names,
+  };
+}
+
+/** The sidecar as bytes: sorted by construction, so two builds write one file. */
+export function serializeRoutesIndex(index) {
+  return JSON.stringify(index) + '\n';
+}
+
+/**
+ * Read one project's sidecar.
+ * @param {string} packDir the directory `pack.json` sits in
+ * @param {{existsSync:Function, readFileSync:Function}} [io]
+ * @returns {{ok:true, index:object}|{ok:false, reason:'no-index'|'unreadable', detail:string}}
+ */
+export function readRoutesIndex(packDir, io = fs) {
+  const file = path.join(packDir, ROUTES_FILE);
+  if (!io.existsSync(file)) {
+    return { ok: false, reason: 'no-index', detail: `no ${ROUTES_FILE} beside the pack at ${packDir}` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(io.readFileSync(file, 'utf8'));
+  } catch (e) {
+    return { ok: false, reason: 'unreadable', detail: `${file} could not be parsed: ${(e && e.message) || e}` };
+  }
+  if (!parsed || typeof parsed !== 'object' || parsed.schema !== ROUTES_SCHEMA) {
+    return { ok: false, reason: 'unreadable', detail: `${file} is not a ${ROUTES_SCHEMA} document` };
+  }
+  if (!Array.isArray(parsed.serves) || !Array.isArray(parsed.calls)) {
+    return { ok: false, reason: 'unreadable', detail: `${file} carries no serves and calls lists` };
+  }
+  return { ok: true, index: parsed };
+}
+
+/**
+ * One route of THIS pack, as the crossing rules want it: the node id, the
+ * method, and the path spelled the one way both sides key a path by.
+ * @param {{id:string, httpMethod?:(string|null), path?:(string|null)}} row  an answer row (id is stripped)
+ * @param {object} [extra]  whatever the caller has to carry with it (hops, grade)
+ */
+export function routeRef(row, extra = {}) {
+  const key = String(row.id);
+  return {
+    id: `endpoint:${key}`,
+    method: typeof row.httpMethod === 'string' && row.httpMethod.length > 0 ? row.httpMethod : 'ANY',
+    path: normalizeUrlPath(row.path ?? key.replace(/^\S+\s+/, '')),
+    ...extra,
+  };
+}
+
+const methodOf = (n) => (typeof n.httpMethod === 'string' && n.httpMethod.length > 0 ? n.httpMethod : 'ANY');
+const pathOf = (n) => normalizeUrlPath(n.path ?? strip(n.id).replace(/^\S+\s+/, ''));
+function serviceOf(graph, edgeIdx) {
+  const ev = graph.edgeAt(edgeIdx)?.evidence ?? null;
+  return ev && typeof ev.service === 'string' && ev.service.length > 0 ? ev.service : null;
+}
+
+// ---------------------------------------------------------------------------
+// Matching
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a route's method can answer a call's method, and how strongly.
+ *
+ * `ANY` on either side is the web lane's own rule for a call whose verb the
+ * worker could not read: the match is real but it was made on the path alone,
+ * so it is HEURISTIC, which is below the conservative floor everywhere else in
+ * this engine and says exactly the same thing here.
+ *
+ * @returns {'SOUND_SET'|'HEURISTIC'|null} null when the two methods cannot meet
+ */
+export function methodMatch(routeMethod, callMethod) {
+  const r = routeMethod == null || routeMethod === '' ? 'ANY' : String(routeMethod);
+  const c = callMethod == null || callMethod === '' ? 'ANY' : String(callMethod);
+  if (r === c && r !== 'ANY') return 'SOUND_SET';
+  if (r === 'ANY' || c === 'ANY') return 'HEURISTIC';
+  return null;
+}
+
+/**
+ * The best route in ONE project's index for one call: an exact path first, then
+ * a template match, then the stronger method rule, then the path itself.
+ * @returns {{route:object, grade:string}|null}
+ */
+function bestRouteIn(index, call) {
+  let best = null;
+  for (const r of index.serves ?? []) {
+    const grade = methodMatch(r.method, call.method);
+    if (!grade) continue;
+    if (!(r.path === call.path || routeMatches(r.path, call.path))) continue;
+    const exact = r.path === call.path;
+    if (!best
+      || (exact && !best.exact)
+      || (exact === best.exact && RANK[grade] > RANK[best.grade])
+      || (exact === best.exact && grade === best.grade && cmp(r.path, best.route.path) < 0)) {
+      best = { route: r, grade, exact };
+    }
+  }
+  return best ? { route: best.route, grade: best.grade } : null;
+}
+
+/** Does this project answer to the service name the call's evidence carried? */
+function answersTo(entry, service) {
+  if (!entry || !service) return false;
+  if (entry.id === service) return true;
+  if (entry.index && entry.index.project === service) return true;
+  return !!(entry.index && Array.isArray(entry.index.serviceNames) && entry.index.serviceNames.includes(service));
+}
+
+/**
+ * WHICH PROJECTS COULD SERVE THIS CALL.
+ *
+ * One candidate is crossed at the grade the method rule gave. Several are
+ * crossed to ALL of them at HEURISTIC unless the call's own service name picks
+ * exactly one, which is the only thing in the evidence that can.
+ *
+ * @param {{method:string, path:string, service:(string|null)}} call
+ * @param {{id:string, index:(object|null)}[]} entries  the projects to consider
+ * @param {{exclude?:string}} [opts]  the project the call is made FROM
+ * @returns {{chosen:{project:string, route:object, grade:string}[],
+ *            candidates:{project:string, route:object, grade:string}[],
+ *            ambiguous:boolean, checked:number, noIndex:number}}
+ */
+export function serversOf(call, entries, opts = {}) {
+  const exclude = opts.exclude ?? null;
+  const candidates = [];
+  let checked = 0;
+  let noIndex = 0;
+  for (const entry of entries) {
+    if (entry.id === exclude) continue;
+    checked += 1;
+    if (!entry.index) { noIndex += 1; continue; }
+    const hit = bestRouteIn(entry.index, call);
+    if (hit) candidates.push({ project: entry.id, route: hit.route, grade: hit.grade });
+  }
+  candidates.sort((a, b) => cmp(a.project, b.project));
+  if (candidates.length <= 1) {
+    return { chosen: candidates, candidates, ambiguous: false, checked, noIndex };
+  }
+  const named = candidates.filter((c) => answersTo(entries.find((e) => e.id === c.project), call.service));
+  if (named.length === 1) return { chosen: named, candidates, ambiguous: false, checked, noIndex };
+  return {
+    chosen: candidates.map((c) => ({ ...c, grade: 'HEURISTIC' })),
+    candidates,
+    ambiguous: true,
+    checked,
+    noIndex,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Reading the crossings off a graph
+// ---------------------------------------------------------------------------
+
+/**
+ * The calls that leave this pack from ONE symbol: its CALLS_HTTP out-edges onto
+ * an `outbound` endpoint node. Those edges are UNRESOLVED, which is why no walk
+ * follows them and why this reads them directly.
+ * @param {import('../core/graph.mjs').Graph} graph
+ * @param {string} symbolId
+ * @returns {{endpoint:string, method:string, path:string, service:(string|null)}[]}
+ */
+export function outboundCallsOf(graph, symbolId) {
+  const out = [];
+  for (const e of graph.outEdges(symbolId)) {
+    if (e.type !== 'CALLS_HTTP') continue;
+    const n = graph.nodes.get(e.to);
+    if (!n || n.outbound !== true) continue;
+    out.push({ endpoint: e.to, method: methodOf(n), path: pathOf(n), service: serviceOf(graph, e.idx) });
+  }
+  out.sort((a, b) => cmp(a.endpoint, b.endpoint));
+  return out;
+}
+
+/**
+ * Every call that leaves this pack, with the symbols that make it. The
+ * pack-wide census behind the overview's one sentence.
+ * @param {import('../core/graph.mjs').Graph} graph
+ */
+export function packOutboundCalls(graph) {
+  const out = [];
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'endpoint' || n.outbound !== true) continue;
+    const callers = [];
+    const services = new Set();
+    for (const e of graph.inEdges(n.id)) {
+      if (e.type !== 'CALLS_HTTP' || e.grade !== 'UNRESOLVED') continue;
+      callers.push(e.from);
+      const s = serviceOf(graph, e.idx);
+      if (s) services.add(s);
+    }
+    if (callers.length === 0) continue;
+    out.push({
+      endpoint: n.id,
+      method: methodOf(n),
+      path: pathOf(n),
+      service: services.size === 1 ? [...services][0] : null,
+      callers: callers.sort(),
+    });
+  }
+  out.sort((a, b) => cmp(a.endpoint, b.endpoint));
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The federator: what one tool holds while it answers one question
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {object} ctx  the project context a tool was handed
+ * @param {{federate?:boolean, federationHops?:number}} [args]  the tool's own arguments
+ * @returns {object} the federator. Never null: a single-project server still
+ *          has to LIST the calls that leave the pack, because "register the
+ *          project that serves these" is the remedy.
+ */
+export function makeFederator(ctx, args = {}) {
+  const host = ctx && ctx.federation && typeof ctx.federation.ids === 'function' ? ctx.federation : null;
+  const self = (host && typeof host.self === 'string' && host.self.length > 0)
+    ? host.self
+    : (ctx && ctx.basis && typeof ctx.basis.project === 'string' ? ctx.basis.project : null);
+  const wanted = args.federate !== false;
+  const maxCrossings = Number.isInteger(args.federationHops) && args.federationHops >= 0
+    ? args.federationHops
+    : DEFAULT_FEDERATION_HOPS;
+
+  // Every federated project and its sidecar, read ONCE per answer. A project
+  // whose sidecar is missing or unreadable stays in the list with a null index:
+  // it is still a project this server serves, and the answer has to say that it
+  // could not be asked.
+  const entries = [];
+  const skippedById = new Map();
+  if (host && wanted) {
+    for (const id of host.ids()) {
+      const r = host.indexOf(id);
+      if (r && r.ok) entries.push({ id, index: r.index });
+      else {
+        entries.push({ id, index: null });
+        if (id !== self) skippedById.set(id, { project: id, reason: r && r.reason === 'unreadable' ? 'unreadable' : 'no-index' });
+      }
+    }
+  }
+  const siblingCount = entries.filter((e) => e.id !== self).length;
+  const available = !!host && wanted && siblingCount > 0;
+
+  const crossed = [];
+  const unmatched = [];
+  const siblings = new Map(); // project id -> the basis entry it contributed
+  const ctxCache = new Map(); // project id -> ctx or null
+
+  /** The sibling's context, loaded through the host's own cache and budget. */
+  function projectCtx(id) {
+    if (id === self) return ctx;
+    if (ctxCache.has(id)) return ctxCache.get(id);
+    let sib = null;
+    try {
+      sib = host.ctxFor(id);
+    } catch (e) {
+      skippedById.set(id, { project: id, reason: 'unreadable', detail: (e && e.message) || String(e) });
+      ctxCache.set(id, null);
+      return null;
+    }
+    // THE SIDECAR MUST STILL DESCRIBE THE PACK. It is derived from the pack and
+    // is not part of its digest, so a pack rebuilt without rewriting the sidecar
+    // would let an old route list answer for a new graph. Refuse it.
+    const entry = entries.find((e) => e.id === id);
+    const digest = sib && sib.basis ? sib.basis.buildDigest : null;
+    if (!entry || !entry.index || entry.index.buildDigest !== digest) {
+      skippedById.set(id, { project: id, reason: 'stale-index' });
+      ctxCache.set(id, null);
+      return null;
+    }
+    siblings.set(id, {
+      project: id,
+      buildDigest: digest,
+      builtAt: sib.basis.builtAt ?? null,
+      freshness: sib.basis.freshness ?? { verdict: 'unknown' },
+    });
+    ctxCache.set(id, sib);
+    return sib;
+  }
+
+  /** The graph node the sidecar promised, or null when the two disagree. */
+  function routeNode(graph, id, project, want) {
+    const n = graph.nodes.get(id);
+    const ok = n && n.kind === 'endpoint' && (want === 'outbound' ? n.outbound === true : n.outbound !== true);
+    if (!ok) {
+      skippedById.set(project, { project, reason: 'stale-index' });
+      return null;
+    }
+    return n;
+  }
+
+  function recordCrossing(from, call, to, grade, ambiguous, extra = {}) {
+    crossed.push({
+      from: { project: from.project, symbol: strip(from.id) },
+      route: { method: call.method, path: call.path },
+      service: call.service ?? null,
+      to: { project: to.project, endpoint: strip(to.endpoint) },
+      grade,
+      ambiguous,
+      ...extra,
+    });
+  }
+
+  function recordUnmatched(from, call, r) {
+    unmatched.push({
+      from: { project: from.project, symbol: strip(from.id) },
+      route: { method: call.method, path: call.path },
+      service: call.service ?? null,
+      checked: r ? r.checked : 0,
+      noIndex: r ? r.noIndex : 0,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Walking DOWN: this project's code calls a route another project serves
+  // -------------------------------------------------------------------------
+
+  /**
+   * @param {import('../core/graph.mjs').Graph} graph  the CALLING project's graph
+   * @param {{id:string, hops:number, grade:string, http?:number, project:string}[]} callers
+   * @param {{mode:string, depth:number}} opts
+   * @returns {object} lane name -> the rows this crossing added
+   */
+  function crossDown(graph, callers, opts) {
+    const lanes = emptyLanes();
+    const visited = new Set();
+    step(graph, callers, maxCrossings);
+    return lanes;
+
+    function step(g, from, budget) {
+      if (budget <= 0) return;
+      for (const caller of from) {
+        for (const call of outboundCallsOf(g, caller.id)) {
+          const r = serversOf(call, entries, { exclude: caller.project });
+          if (r.chosen.length === 0) { recordUnmatched(caller, call, r); continue; }
+          for (const target of r.chosen) {
+            const key = `${target.project} ${target.route.id}`;
+            if (visited.has(key)) continue;
+            visited.add(key);
+            const sib = projectCtx(target.project);
+            if (!sib) continue;
+            if (!routeNode(sib.graph, target.route.id, target.project, 'served')) continue;
+            const grade = weaker(caller.grade, target.grade);
+            const hopsBase = caller.hops + 1;   // the caller, and then the route it called
+            const remaining = opts.depth - hopsBase;
+            const httpBase = (caller.http ?? 0) + 1;
+            recordCrossing(caller, call, { project: target.project, endpoint: target.route.id },
+              grade, r.ambiguous, remaining < 1 ? { depthCut: true } : {});
+            if (remaining < 1) continue;
+            const w = chainWalk(sib.graph, {
+              start: target.route.id, direction: 'down', mode: opts.mode, maxDepth: remaining,
+            });
+            const next = [];
+            for (const field of LANE_FIELDS) {
+              for (const row of (Array.isArray(w[field]) ? w[field] : [])) {
+                const moved = moveRow(row, {
+                  project: target.project, hopsBase, gradeCap: grade, httpBase,
+                  startNodeId: target.route.id, caller, crossGrade: target.grade,
+                });
+                lanes[field].push(moved);
+                if (field === 'services' || field === 'webFunctions') {
+                  next.push({
+                    id: `symbol:${row.id}`, hops: moved.hops, grade: moved.grade,
+                    http: moved.httpHops, project: target.project,
+                  });
+                }
+              }
+            }
+            if (next.length) step(sib.graph, next, budget - 1);
+          }
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Walking UP: another project's code calls a route THIS project serves
+  // -------------------------------------------------------------------------
+
+  /** One project's index reduced to the single route a crossing is about. */
+  function serverEntryFor(project, route) {
+    const own = entries.find((e) => e.id === project);
+    return {
+      id: project,
+      index: {
+        project: own && own.index ? own.index.project : (project === self ? packProjectName() : null),
+        serves: [{ id: route.id, method: route.method, path: route.path }],
+        serviceNames: own && own.index ? (own.index.serviceNames ?? []) : (project === self ? selfServiceNames() : []),
+      },
+    };
+  }
+
+  const packProjectName = () => (ctx && ctx.pack && typeof ctx.pack.project === 'string' ? ctx.pack.project : null);
+  const selfServiceNames = () => (ctx && ctx.pack && Array.isArray(ctx.pack.serviceNames) ? ctx.pack.serviceNames : []);
+
+  /**
+   * The projects that call ONE route, resolved BOTH ways: the caller's call has
+   * to match the route, and that call has to resolve back to the project that
+   * serves it. Without the second half, a call meant for a third project that
+   * happens to serve the same path would read as a caller of this one.
+   *
+   * @param {{id:string, method:string, path:string}} route
+   * @param {string} servedBy  the project that serves it
+   */
+  function callersOf(route, servedBy) {
+    const out = [];
+    if (!available) return out;
+    const server = serverEntryFor(servedBy, route);
+    const pool = [server, ...entries.filter((e) => e.id !== servedBy)];
+    for (const entry of entries) {
+      if (entry.id === servedBy || !entry.index) continue;
+      for (const call of entry.index.calls ?? []) {
+        if (!methodMatch(route.method, call.method)) continue;
+        if (!(route.path === call.path || routeMatches(route.path, call.path))) continue;
+        const r = serversOf(call, pool, { exclude: entry.id });
+        const mine = r.chosen.find((c) => c.project === servedBy);
+        if (!mine) continue;
+        out.push({ project: entry.id, call, grade: mine.grade, ambiguous: r.ambiguous });
+      }
+    }
+    out.sort((a, b) => cmp(a.project, b.project) || cmp(a.call.id, b.call.id));
+    return out;
+  }
+
+  /**
+   * Walk UP out of this project's routes into the projects that call them.
+   *
+   * @param {{id:string, method:string, path:string, hops:number, grade:string, http?:number}[]} routes
+   *        this project's endpoints, as the in-pack walk reported them
+   * @param {{mode:string, depth:number}} opts
+   * @returns {object} lane name -> the rows this crossing added
+   */
+  function crossUp(routes, opts) {
+    const lanes = emptyLanes();
+    const visited = new Set();
+    step(routes, self, maxCrossings);
+    return lanes;
+
+    function step(from, servedBy, budget) {
+      if (budget <= 0) return;
+      for (const route of from) {
+        for (const hit of callersOf(route, servedBy)) {
+          const sib = projectCtx(hit.project);
+          if (!sib) continue;
+          if (!routeNode(sib.graph, hit.call.id, hit.project, 'outbound')) continue;
+          const grade = weaker(route.grade, hit.grade);
+          const hopsBase = route.hops + 1;
+          const httpBase = (route.http ?? 0) + 1;
+          const next = [];
+          for (const callerId of callingSymbols(sib.graph, hit.call.id)) {
+            const key = `${hit.project} ${callerId}`;
+            if (visited.has(key)) continue;
+            visited.add(key);
+            const remaining = opts.depth - hopsBase;
+            recordCrossing({ project: hit.project, id: callerId }, hit.call,
+              { project: servedBy, endpoint: route.id }, grade, hit.ambiguous,
+              remaining < 1 ? { depthCut: true } : {});
+            if (remaining < 1) continue;
+            // The calling method itself is a row. The crossing lands on it and
+            // the sibling's walk starts there, so nothing else would draw it,
+            // and the chain would jump from this route to whatever sits above.
+            lanes.services.push(callerRow(sib.graph, callerId, {
+              project: hit.project, hops: hopsBase, grade, httpBase, route, servedBy,
+            }));
+            const w = chainWalk(sib.graph, {
+              start: callerId, direction: 'up', mode: opts.mode, maxDepth: remaining,
+            });
+            for (const field of LANE_FIELDS) {
+              for (const row of (Array.isArray(w[field]) ? w[field] : [])) {
+                const moved = moveRow(row, {
+                  project: hit.project, hopsBase, gradeCap: grade, httpBase,
+                  startNodeId: callerId, caller: null, crossGrade: hit.grade,
+                });
+                lanes[field].push(moved);
+                if (field === 'endpoints') {
+                  next.push({
+                    id: `endpoint:${row.id}`, method: row.httpMethod ?? 'ANY',
+                    path: normalizeUrlPath(row.path ?? ''), hops: moved.hops,
+                    grade: moved.grade, http: moved.httpHops,
+                  });
+                }
+              }
+            }
+          }
+          if (next.length) step(next, hit.project, budget - 1);
+        }
+      }
+    }
+  }
+
+  /**
+   * The same crossing for `endpoint_impact`: which routes in the OTHER projects
+   * are affected because they call one of ours. `endpoint_impact` reaches with
+   * `impactOf` and no depth bound, so this does too.
+   *
+   * @param {{id:string, method:string, path:string, grade:string}[]} routes
+   * @param {{mode:string}} opts
+   */
+  function crossUpEndpoints(routes, opts) {
+    const out = [];
+    const seen = new Set();
+    const visited = new Set();
+    step(routes, self, maxCrossings);
+    out.sort((a, b) => cmp(a.project, b.project) || cmp(a.id, b.id));
+    return out;
+
+    function step(from, servedBy, budget) {
+      if (budget <= 0) return;
+      for (const route of from) {
+        for (const hit of callersOf(route, servedBy)) {
+          const sib = projectCtx(hit.project);
+          if (!sib) continue;
+          if (!routeNode(sib.graph, hit.call.id, hit.project, 'outbound')) continue;
+          const grade = weaker(route.grade, hit.grade);
+          const next = [];
+          for (const callerId of callingSymbols(sib.graph, hit.call.id)) {
+            const key = `${hit.project} ${callerId}`;
+            if (visited.has(key)) continue;
+            visited.add(key);
+            recordCrossing({ project: hit.project, id: callerId }, hit.call,
+              { project: servedBy, endpoint: route.id }, grade, hit.ambiguous);
+            for (const [id, info] of sib.graph.impactOf(callerId, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES })) {
+              const n = sib.graph.nodes.get(id);
+              if (!n || n.kind !== 'endpoint' || n.outbound === true) continue;
+              const rowKey = `${hit.project} ${id}`;
+              if (seen.has(rowKey)) continue;
+              seen.add(rowKey);
+              const rowGrade = weaker(grade, info.pathGrade);
+              out.push({
+                id: strip(id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
+                grade: rowGrade, project: hit.project, viaHttp: true,
+                httpHops: (info.http ?? 0) + 1, federated: true,
+              });
+              next.push({ id, method: methodOf(n), path: pathOf(n), grade: rowGrade });
+            }
+          }
+          if (next.length) step(next, hit.project, budget - 1);
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // What the answer carries
+  // -------------------------------------------------------------------------
+
+  const sortedSkipped = () => [...skippedById.values()]
+    .map((s) => ({ project: s.project, reason: s.reason }))
+    .sort((a, b) => cmp(a.project, b.project) || cmp(a.reason, b.reason));
+  const sortedUnmatched = () => unmatched.slice()
+    .sort((a, b) => cmp(a.from.symbol, b.from.symbol) || cmp(a.route.path, b.route.path));
+
+  /** The `answer.federation` block. */
+  function block() {
+    if (!wanted) return { available: false, reason: 'turned-off', unmatched: [] };
+    if (!available) {
+      return { available: false, reason: 'single-project', unmatched: sortedUnmatched() };
+    }
+    return {
+      crossed: crossed.slice().sort((a, b) => cmp(a.from.project, b.from.project)
+        || cmp(a.from.symbol, b.from.symbol) || cmp(a.to.project, b.to.project) || cmp(a.to.endpoint, b.to.endpoint)),
+      unmatched: sortedUnmatched(),
+      skipped: sortedSkipped(),
+    };
+  }
+
+  /** `basis.siblings`, or null when this answer walked no other pack. */
+  function siblingBasis() {
+    if (siblings.size === 0) return null;
+    return [...siblings.values()].sort((a, b) => cmp(a.project, b.project));
+  }
+
+  /** One scoped sentence per unmatched, ambiguous or skipped item. */
+  function limits() {
+    if (!wanted) return [];
+    const out = [];
+    const say = (reason) => out.push({ scope: 'federation', reason });
+    for (const u of sortedUnmatched()) {
+      say(!available
+        ? `${u.route.method} ${u.route.path} leaves this project, and this server serves no other project, so where it lands is unknown rather than absent. Register the project that serves it (\`cascade init\` and then \`cascade analyze\` there) and ask again`
+        : `${u.route.method} ${u.route.path} leaves this project and none of the ${u.checked} other registered project(s) serves it`
+          + `${u.noIndex > 0 ? `, and ${u.noIndex} of them carries no route index, so it could not be asked` : ''}. `
+          + 'The chain stops at the call. Register the project that serves this route and ask again');
+    }
+    const amb = new Map();
+    for (const c of crossed) {
+      if (!c.ambiguous) continue;
+      const key = `${c.from.symbol} ${c.route.method} ${c.route.path}`;
+      if (!amb.has(key)) amb.set(key, { call: c, projects: [] });
+      amb.get(key).projects.push(c.to.project);
+    }
+    for (const a of [...amb.values()].sort((x, y) => cmp(x.call.from.symbol, y.call.from.symbol))) {
+      say(`${a.call.route.method} ${a.call.route.path} is served by ${a.projects.slice().sort().join(', ')}, and nothing in the call says which of them it goes to`
+        + `${a.call.service ? `, because the service name it carries (${a.call.service}) matches none of them` : ', because the call carries no service name'}. `
+        + 'All of them are on this answer at HEURISTIC, so the rows below that crossing are candidates rather than one measured chain');
+    }
+    for (const s of sortedSkipped()) {
+      say(s.reason === 'no-index'
+        ? `${s.project} is registered and carries no route index, so this answer could not ask what it serves. Re-run \`cascade analyze\` for ${s.project}`
+        : s.reason === 'stale-index'
+          ? `${s.project} carries a route index built from a different pack than the one this server loads, so it was not crossed. Re-run \`cascade analyze\` for ${s.project}`
+          : `${s.project} is registered and its pack could not be read, so it was not crossed. Re-run \`cascade analyze\` for ${s.project}`);
+    }
+    return out;
+  }
+
+  return {
+    self,
+    available,
+    wanted,
+    entries,
+    crossDown,
+    crossUp,
+    crossUpEndpoints,
+    block,
+    siblingBasis,
+    limits,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Row plumbing
+// ---------------------------------------------------------------------------
+
+/** The lanes a chain walk can produce. */
+const LANE_FIELDS = Object.freeze(['webFunctions', 'endpoints', 'services', 'statements', 'tables', 'screens']);
+
+function emptyLanes() {
+  const o = {};
+  for (const f of LANE_FIELDS) o[f] = [];
+  return o;
+}
+
+/** The symbols that make one outbound call, sorted. */
+function callingSymbols(graph, endpointId) {
+  return graph.inEdges(endpointId)
+    .filter((e) => e.type === 'CALLS_HTTP' && graph.nodes.get(e.from)?.kind === 'symbol')
+    .map((e) => e.from)
+    .sort();
+}
+
+/**
+ * One row of another project's walk, moved onto this answer: hops continued,
+ * the path grade weakened by the crossing, the project named, and the link that
+ * would have pointed at that walk's own start pointed at the caller instead.
+ */
+function moveRow(row, o) {
+  const moved = {
+    ...row,
+    hops: row.hops + o.hopsBase,
+    grade: weaker(row.grade, o.gradeCap),
+    httpHops: (row.httpHops ?? 0) + o.httpBase,
+    project: o.project,
+    federated: true,
+    viaHttp: true,
+  };
+  if (row.link && typeof row.link === 'object') {
+    moved.link = row.link.from === o.startNodeId && o.caller
+      ? crossingLink(o.caller.id, o.caller.project, o.crossGrade,
+        'this project calls a route the other project serves, and the server matched them by method and path')
+      : { ...row.link, fromProject: o.project };
+  }
+  return moved;
+}
+
+/**
+ * The method in another project that MAKES the call, as a service row. Walking
+ * up, the crossing lands on it and the sibling's walk starts there.
+ */
+function callerRow(graph, id, o) {
+  const n = graph.nodes.get(id) ?? {};
+  return {
+    id: strip(id),
+    short: shortSymbol(id),
+    owner: n.owner ?? null,
+    hops: o.hops,
+    grade: o.grade,
+    external: (n.file ?? null) === null,
+    transactional: n.transactional === true,
+    file: n.file ?? null,
+    line: n.line ?? null,
+    project: o.project,
+    federated: true,
+    viaHttp: true,
+    httpHops: o.httpBase,
+    link: crossingLink(o.route.id, o.servedBy, o.grade,
+      'the other project calls this route, and the server matched that call to it by method and path'),
+    path: [],
+  };
+}
+
+function crossingLink(fromId, fromProject, grade, basis) {
+  return {
+    from: fromId,
+    fromShort: shortSymbol(fromId),
+    fromProject,
+    type: 'CALLS_HTTP',
+    grade,
+    basis,
+    receiver: null,
+    iface: null,
+    federated: true,
+  };
+}
+
+/** `Class#method` out of a symbol id, the rule core/chain.mjs nodeLabel uses. */
+function shortSymbol(id) {
+  const key = strip(id);
+  const h = key.lastIndexOf('#');
+  if (h < 0) return key;
+  if (key.includes('/')) return key.slice(key.lastIndexOf('/', h) + 1);
+  return key.slice(key.lastIndexOf('.', h) + 1);
+}

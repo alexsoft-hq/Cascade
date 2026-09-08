@@ -377,3 +377,48 @@ test('the answer says which project ANSWERED — the registry id, with the pack\
   assert.equal(answered.basis.packProject, 'project', 'and does not hide the name the pack carries');
   assert.equal(answered.answer.statements.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Federation through the real CLI server (RM44)
+// ---------------------------------------------------------------------------
+
+// The three packs above serve no HTTP route at all, so nothing here can cross.
+// That is worth pinning as it stands: a server whose projects do not talk to
+// each other must answer exactly as it did before this existed.
+
+test('projects with no route index are reported as such, and no answer claims a crossing', (t) => {
+  const ws = makeWorkspace(t);
+  const out = driveCli(ws.env, [], [
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'projects', arguments: {} } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'endpoint_impact', arguments: { project: 'alpha', column: 'alpha_order.total' } } },
+  ]);
+  assert.equal(out.status, 0, out.stderr);
+  // These fixture packs are written by hand, with no `analyze` and therefore no
+  // sidecar: every one of them is honestly reported as not federated.
+  const listed = JSON.parse(out.lines[0].result.content[0].text).answer.projects;
+  assert.deepEqual(listed.map((p) => [p.id, p.federation.index]), [['alpha', 'absent'], ['beta', 'absent'], ['gamma', 'absent']]);
+
+  const impact = JSON.parse(out.lines[1].result.content[0].text);
+  assert.deepEqual(impact.answer.federation, { crossed: [], unmatched: [], skipped: [
+    { project: 'beta', reason: 'no-index' }, { project: 'gamma', reason: 'no-index' },
+  ] });
+  assert.equal(impact.basis.siblings, undefined, 'nothing was walked, so nothing is claimed');
+  // ...and the projects that could not be asked are named with the remedy.
+  const said = impact.limits.filter((l) => l.scope === 'federation').map((l) => l.reason);
+  assert.equal(said.length, 2);
+  for (const s of said) assert.match(s, /carries no route index.*Re-run `cascade analyze`/);
+});
+
+test('a federated answer is byte-identical on both transports too', (t) => {
+  const ws = makeWorkspace(t);
+  const { host } = hostFor(ws);
+  for (const [name, args] of [
+    ['flow', { project: 'alpha', direction: 'up', column: 'alpha_order.total' }],
+    ['endpoint_impact', { project: 'alpha', column: 'alpha_order.total' }],
+    ['projects', {}],
+  ]) {
+    const overStdio = rpc(host, 'tools/call', { name, arguments: args }).result.content[0].text;
+    const overHttp = JSON.stringify(post(host, name, args).json);
+    assert.equal(overStdio, overHttp, `${name} must be identical on both transports`);
+  }
+});
