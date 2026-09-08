@@ -572,7 +572,16 @@
   .frowtop { display:flex; align-items:center; gap:6px; min-width:0; }
   .frowtop > * { min-width:0; }
   .frowtop .grade, .fhopn, .frowtop .kglyph { flex:none; }
-  .fname { font-family:var(--mono); font-size:12px; flex:1; min-width:0; overflow:hidden;
+  /* THE NAME IS THE ROW. It takes what is left over, and it has a FLOOR: with
+     `flex:1` its basis is 0, so a sibling that keeps its full content width
+     (the project chip on a federated row) took the whole line and the name
+     collapsed to nothing. It grows and shrinks from its own content instead,
+     and never below a few characters. */
+  .fname { font-family:var(--mono); font-size:12px; flex:1 1 auto; min-width:6ch; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  /* ...and the chip that says which project a federated row came from is what
+     gives way: it shrinks, ellipsises, and keeps the whole id in its tooltip. */
+  .tag.fproj { flex:0 1 auto; max-width:45%; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
   .fhopn { font:400 10px var(--mono); color:var(--t3); border:1px solid var(--hair);
     border-radius:var(--r-tag); padding:0 4px; }
@@ -2130,6 +2139,10 @@ const VIEWER_STRINGS = {
     // ---- Graph: the buttons every card offers -----------------------------
     'btn.flow.title': 'follow this call down to the tables',
     'btn.flow.screen.title': 'follow this screen down to the tables it ends at',
+    // This route is served by ANOTHER project, so following it means going
+    // there: the page switches project and draws the chain in the pack that
+    // answers the call.
+    'btn.flow.other.title': 'open this route in {p}, the project that serves it. The page switches to that project.',
     'btn.graph.screen.title': 'put this screen in the middle of the map',
     'btn.impact.title': 'which APIs would be affected if you changed this',
     'btn.impact.column.title': 'which APIs would be affected if you changed this column',
@@ -3111,6 +3124,17 @@ function ruled(heads, rows){
     el('thead',{},[ el('tr',{}, heads.map((h)=> el('th',{className:h.num?'num':'', textContent:h.label}))) ]),
     el('tbody',{}, rows) ]);
 }
+/**
+ * A ROUTE'S NAME ON A LIST, with the chip that says which project serves it.
+ *
+ * The chip is drawn only on a federated row, so a row of this project's own
+ * keeps exactly the DOM it always had. It sits AFTER the name and shrinks
+ * before the name does, the same rule the lane rows follow.
+ */
+function epName(row, name){
+  if(!row || !row.project) return name;
+  return el('span',{style:'display:flex;align-items:center;gap:6px;min-width:0'},[name, projTag(row)]);
+}
 function listPanel(title, total, items, render, emptyReasons, emptyField) {
   const ul = el('ul',{className:'list'});
   if (!items.length) ul.append(emptyNote(emptyReasons, emptyField));
@@ -3140,8 +3164,8 @@ function renderColumnAnswer(key, ci, ei) {
       ci.answer.empty, 'statements');
     const eps = ei.answer.endpoints||[];
     const epPanel = listPanel('HTTP endpoints affected', ei.truncated?.fields?.[0]?.total ?? eps.length, eps,
-      (e)=> el('li',{}, [ el('a',{className:'id clickable', textContent:e.httpMethod+' '+e.path, title:'view handler (controller) source', onclick:()=>showSource('endpoint:'+e.id)}),
-        el('span',{style:'display:flex;align-items:center;gap:6px'},[ el('button',{className:'mini', textContent:'Flow', title:t('btn.flow.title'), onclick:()=>openFlow({endpoint:e.id})}), badge(e.grade) ]) ]), ei.answer.empty, 'endpoints');
+      (e)=> el('li',{}, [ epName(e, el('a',{className:'id clickable', textContent:e.httpMethod+' '+e.path, title:'view handler (controller) source', onclick:()=>showSource('endpoint:'+e.id)})),
+        el('span',{style:'display:flex;align-items:center;gap:6px'},[ flowRowButton(e, e.id), badge(e.grade) ]) ]), ei.answer.empty, 'endpoints');
     const head = el('div',{className:'panel'}, [
       el('h2',{textContent:'column'}),
       el('div',{}, [ el('span',{className:'id', textContent:key}), '  ',
@@ -3231,7 +3255,7 @@ function renderScreenAnswer(path, r) {
         badge(w.grade) ]) ]), a.empty, 'webFunctions');
   const epPanel=listPanel(t('screen.endpoints'), ovTotal(r,'endpoints',(a.endpoints||[]).length), a.endpoints||[],
     (x)=> el('li',{},[
-      el('a',{className:'id clickable',textContent:x.id,title:t('btn.flow.title'),onclick:()=>openFlow({endpoint:x.id})}),
+      epName(x, el('a',{className:'id clickable',textContent:x.id,title:flowRowTitle(x),onclick:()=>openFlowFor(x, x.id)})),
       el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
         x.observed? el('span',{className:'tag',title:t('chain.tag.seen.title'),textContent:t('chain.tag.seen')}) : null,
         badge(x.grade) ]) ]), a.empty, 'endpoints');
@@ -4132,6 +4156,33 @@ function openFlow(arg){
   closeSug(FLOWV);
   drawChain(FLOWV);
 }
+/**
+ * Follow ONE ROUTE down its chain, in the project that SERVES it.
+ *
+ * A federated row on a list names another pack: asking THIS project for that
+ * route gets `unknown-endpoint` back, because this project does not serve it.
+ * So the page goes there instead, through the same hash the address bar
+ * carries: the project switches, the Flow tab opens, and the walk is asked of
+ * the pack that answers the call. A row with no project is this project's own
+ * and is opened exactly as it always was.
+ * @param {object} row  the answer row (its `project`, when it has one)
+ * @param {string} id   the route's key, "METHOD /path"
+ */
+function openFlowFor(row, id){
+  const p = row && row.project;
+  if(!p || p===STATE.project){ openFlow({endpoint:id}); return; }
+  location.hash = hashFor({ project:p, tab:'flow', pick:'endpoint:'+id });
+}
+/** What "follow this route" MEANS on this row: here, or over in that project. */
+function flowRowTitle(row){
+  return (row && row.project && row.project!==STATE.project)
+    ? t('btn.flow.other.title',{p:row.project}) : t('btn.flow.title');
+}
+/** The Flow button on a list row, addressed to whichever project serves it. */
+function flowRowButton(row, id){
+  return el('button',{className:'mini', textContent:'Flow',
+    title:flowRowTitle(row), onclick:()=>openFlowFor(row, id)});
+}
 // The mirror handoff: "what breaks if I change THIS?" — from an Explore head, a
 // Flow row's card, or a transaction boundary. The kind is carried explicitly so
 // the page never has to guess it back out of the name.
@@ -4353,9 +4404,13 @@ function flinkKey(row,id){
   const p=(row&&row.link&&row.link.fromProject)||(row&&row.project)||null;
   return p? p+' '+id : id;
 }
-/** The badge a federated row wears before its name. */
+/**
+ * The chip a federated row wears AFTER its name. The name is what the reader is
+ * looking for, so it comes first and keeps the width; this chip shrinks. The
+ * whole project id is in the tooltip, because the chip itself may be cut.
+ */
 const projTag=(row)=> (row&&row.project)
-  ? el('span',{className:'tag',title:t('chain.tag.project.title'),textContent:row.project})
+  ? el('span',{className:'tag fproj',title:row.project+'  '+t('chain.tag.project.title'),textContent:row.project})
   : null;
 function flowMakeRow(v, key, kind, grade, kids, data){
   const e=el('div',{className:'frow',tabIndex:0},kids);
@@ -4405,7 +4460,7 @@ function flowEntryRow(v, entry){
 function flowServiceRow(v, s){
   v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'symbol:'+s.id), grade:s.grade, observed:linkObserved(s)});
   return flowMakeRow(v, fkey(s,'symbol:'+s.id),'service',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('symbol',12), el('span',{className:'fhopn kh-service',textContent:String(s.hops)}), projTag(s), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('symbol',12), el('span',{className:'fhopn kh-service',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), projTag(s), badge(s.grade)]),
     el('div',{className:'fsub'},[
       s.handler? el('span',{className:'tag',title:t('chain.tag.handler.title'),textContent:'handler'}) : null,
       s.external? el('span',{className:'tag warn',title:t('chain.tag.ext.title'),textContent:'ext'}) : null,
@@ -4434,7 +4489,7 @@ function flowStatementRow(v, s){
   const acc = (s.tables||[]).map(x=>x&&x.access).filter(Boolean);
   const cls = verbCls[stype] || (acc.length===0 ? 'tag' : (acc.some(a=>a!=='read') ? 'tag write' : 'tag read'));
   return flowMakeRow(v, fkey(s,'statement:'+s.id),'statement',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('statement',12), el('span',{className:'fhopn kh-statement',textContent:String(s.hops)}), projTag(s), el('span',{className:'fname',title:s.id,textContent:s.short}), badge(s.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('statement',12), el('span',{className:'fhopn kh-statement',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), projTag(s), badge(s.grade)]),
     el('div',{className:'fsub'},[ el('span',{className:cls,textContent:s.statementType||'sql'}),
       el('span',{className:'count',textContent:(s.tables||[]).length+' tbl'}),
       // Never hide a lower bound behind a tidy row.
@@ -4449,7 +4504,7 @@ function flowStatementRow(v, s){
 function flowTableRow(v, x){
   v.linkSpecs.push({from:fkey(x,'statement:'+x.via), to:fkey(x,'table:'+x.table), grade:x.grade});
   return flowMakeRow(v, fkey(x,'table:'+x.table),'table',x.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('table',12), projTag(x), el('span',{className:'fname',title:x.table,textContent:x.table}), badge(x.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('table',12), el('span',{className:'fname',title:x.table,textContent:x.table}), projTag(x), badge(x.grade)]),
     el('div',{className:'fsub'},[el('span',{className:'count',title:'via '+x.via,
       textContent:t('chain.hop',{n:x.hops})+'\u00a0\u00a0via '+x.viaShort})]),
     el('div',{className:'fsub'},[
@@ -4468,7 +4523,7 @@ function flowEndpointRow(v, e){
   const via = (e.link && e.link.fromShort) || e.handlerShort || (e.handler ? shortId('symbol:'+e.handler) : '');
   v.linkSpecs.push({from:flinkKey(e,from), to:fkey(e,'endpoint:'+e.id), grade:e.grade, observed:linkObserved(e)});
   return flowMakeRow(v, fkey(e,'endpoint:'+e.id),'endpoint',e.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), projTag(e), el('span',{className:'fname',title:e.id,textContent:e.id}), badge(e.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), el('span',{className:'fname',title:e.id,textContent:e.id}), projTag(e), badge(e.grade)]),
     el('div',{className:'fsub'},[el('span',{className:'count',title: from ? ('via '+from.slice(from.indexOf(':')+1)) : '',
       textContent:t('chain.hop',{n:e.hops})+'\u00a0\u00a0'+via})]),
     // Two things a route on a pack with a frontend owes the reader: how much of
@@ -4494,8 +4549,8 @@ function flowWebFnRow(v, w){
   const file=String(w.file||'');
   const base=file.slice(file.lastIndexOf('/')+1);
   return flowMakeRow(v, fkey(w,'symbol:'+w.id),'webfn',w.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('webfn',12), el('span',{className:'fhopn kh-webfn',textContent:String(w.hops)}), projTag(w),
-      el('span',{className:'fname',title:w.id,textContent:w.short}), badge(w.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('webfn',12), el('span',{className:'fhopn kh-webfn',textContent:String(w.hops)}),
+      el('span',{className:'fname',title:w.id,textContent:w.short}), projTag(w), badge(w.grade)]),
     el('div',{className:'fsub'},[
       el('span',{className:'tag',title:t(w.component?'chain.tag.component.title':'chain.tag.api.title'),
         textContent:t(w.component?'chain.tag.component':'chain.tag.api')}),
@@ -4509,8 +4564,8 @@ function flowWebFnRow(v, w){
 function flowScreenRow(v, s){
   v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'screen:'+s.id), grade:s.grade, observed:linkObserved(s)});
   return flowMakeRow(v, fkey(s,'screen:'+s.id),'screen',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('screen',12), el('span',{className:'fhopn kh-screen',textContent:String(s.hops)}), projTag(s),
-      el('span',{className:'fname',title:s.id,textContent:s.short||s.id}), badge(s.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('screen',12), el('span',{className:'fhopn kh-screen',textContent:String(s.hops)}),
+      el('span',{className:'fname',title:s.id,textContent:s.short||s.id}), projTag(s), badge(s.grade)]),
     el('div',{className:'fsub'},[
       s.group? el('span',{className:'tag',textContent:s.group}) : null,
       s.observed? seenTag(v.resp) : null,
@@ -9981,16 +10036,25 @@ function readHash(){
   const q=new URLSearchParams(String(location.hash||'').replace(/^#/,''));
   return { p:q.get('p')||null, tab:q.get('tab')||null, pick:q.get('pick')||null, src:q.get('src')||null };
 }
-function hashNow(){
+/**
+ * The hash for one destination. ONE place knows the format, so a hand-off that
+ * names another project (a federated row's Flow button) builds the same string
+ * the address bar already carries rather than a second spelling of it.
+ * @param {{project:?string, tab:?string, pick:?string, src:?string}} to
+ */
+function hashFor(to){
   // A server with no project has no id to write: the hash then says only which
   // tab is open, rather than carrying an empty `p=`.
   const parts=[];
-  if(STATE.project) parts.push('p='+encodeURIComponent(STATE.project));
-  parts.push('tab='+encodeURIComponent(STATE.tab||'overview'));
-  const pick=PICK[STATE.tab];
-  if(pick) parts.push('pick='+encodeURIComponent(pick));
-  if(SRC.open && SRC.node) parts.push('src='+encodeURIComponent(SRC.node));
+  if(to.project) parts.push('p='+encodeURIComponent(to.project));
+  parts.push('tab='+encodeURIComponent(to.tab||'overview'));
+  if(to.pick) parts.push('pick='+encodeURIComponent(to.pick));
+  if(to.src) parts.push('src='+encodeURIComponent(to.src));
   return '#'+parts.join('&');
+}
+function hashNow(){
+  return hashFor({ project:STATE.project, tab:STATE.tab||'overview',
+    pick:PICK[STATE.tab], src:(SRC.open && SRC.node) ? SRC.node : null });
 }
 function writeHash(push){
   if(HASHLOCK) return;
@@ -10001,7 +10065,7 @@ function writeHash(push){
 }
 function applyHash(){
   const h=readHash();
-  if(h.p && h.p!==STATE.project && STATE.projects.some((x)=>x.id===h.p)){ switchProject(h.p); return; }
+  if(h.p && h.p!==STATE.project && STATE.projects.some((x)=>x.id===h.p)){ switchProject(h.p, { tab:h.tab, pick:h.pick }); return; }
   const was=HASHLOCK; HASHLOCK=true;
   try{
     if(h.tab && h.tab!==STATE.tab && TABNAMES.indexOf(h.tab)>=0) activateTab(h.tab);
@@ -10020,7 +10084,15 @@ window.addEventListener('popstate', applyHash);
 // bumped first (every answer still in flight is now stale and will be dropped),
 // then every tab's cache and every live renderer is torn down, and only then is
 // anything re-asked.
-function switchProject(id){
+/**
+ * @param {string} id
+ * @param {{tab:?string, pick:?string}} [dest] where the reader asked to LAND.
+ *        A deep link, or a federated row's Flow button, names a tab and a pick
+ *        as well as a project, and both belong to the project that is arriving.
+ *        The tab is switched only AFTER the old project's state is gone, so
+ *        nothing is ever asked of the pack that is being left.
+ */
+function switchProject(id, dest){
   if(!id || id===STATE.project) return;
   STATE.project=id;
   STATE.seq++;
@@ -10032,7 +10104,9 @@ function switchProject(id){
   // The Overview is the landing answer for every project, whichever tab is on
   // screen; the visible tab then fills itself, because its cache is now empty.
   loadOverview();
-  loadTab(STATE.tab);
+  const to = dest && dest.tab && TABNAMES.indexOf(dest.tab)>=0 ? dest.tab : STATE.tab;
+  if(to!==STATE.tab) activateTab(to); else loadTab(STATE.tab);
+  if(dest && dest.pick && Object.hasOwn(PICK, STATE.tab)) pickAsk(STATE.tab, dest.pick);
 }
 // Everything the PREVIOUS project left behind. A renderer that is not stopped
 // here keeps its own animation loop and its own canvas alive behind the new

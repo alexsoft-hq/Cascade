@@ -368,6 +368,7 @@
   "load.around": "이웃을 읽는 중…",
   "btn.flow.title": "이 호출을 테이블까지 따라갑니다",
   "btn.flow.screen.title": "이 화면에서 끝에 닿는 테이블까지 따라갑니다",
+  "btn.flow.other.title": "이 경로를 실제로 서비스하는 {p} 프로젝트에서 엽니다. 페이지가 그 프로젝트로 바뀝니다.",
   "btn.graph.screen.title": "이 화면을 지도 한가운데에 놓습니다",
   "btn.impact.title": "이걸 바꾸면 어떤 API가 영향을 받는지 봅니다",
   "btn.impact.column.title": "이 컬럼을 바꾸면 어떤 API가 영향을 받는지 봅니다",

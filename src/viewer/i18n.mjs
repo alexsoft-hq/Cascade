@@ -639,6 +639,10 @@ export const VIEWER_STRINGS = {
     // ---- Graph: the buttons every card offers -----------------------------
     'btn.flow.title': 'follow this call down to the tables',
     'btn.flow.screen.title': 'follow this screen down to the tables it ends at',
+    // This route is served by ANOTHER project, so following it means going
+    // there: the page switches project and draws the chain in the pack that
+    // answers the call.
+    'btn.flow.other.title': 'open this route in {p}, the project that serves it. The page switches to that project.',
     'btn.graph.screen.title': 'put this screen in the middle of the map',
     'btn.impact.title': 'which APIs would be affected if you changed this',
     'btn.impact.column.title': 'which APIs would be affected if you changed this column',

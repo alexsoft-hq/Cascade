@@ -4333,6 +4333,28 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
   assert.equal(ev(ctx, "FLOWV.rows.get('served table:types').data.reads"), 2);
   assert.equal(ev(ctx, "FLOWV.rows.get('table:types').data.reads"), 1);
 
+  // THE NAME COMES FIRST, and the project chip after it. The name is what the
+  // reader is looking for; with the chip in front of it the name had no width
+  // left at all (the chip kept its content width, `.fname` grew from a basis of
+  // 0), and a table row read "customers-service SOUND_SET" with the table's own
+  // name gone.
+  const order = (name) => byId.get('flowwrap').querySelectorAll('.frow')
+    .filter((r) => (r.querySelector('.fname') || {}).textContent === name)
+    .map((r) => r.querySelector('.frowtop').children.map((c) => c.className.split(' ')[0]));
+  assert.deepEqual(order('Ctl#get'), [['kglyph', 'fhopn', 'fname', 'tag', 'grade']],
+    'the name is drawn before the project chip');
+  const tableRows = order('types');
+  assert.equal(tableRows.length, 2);
+  assert.deepEqual(tableRows[1], ['kglyph', 'fname', 'tag', 'grade'], 'and on a table row too');
+  assert.deepEqual(tableRows[0], ['kglyph', 'fname', 'grade'], "this project's own row wears no chip");
+  // The chip carries the whole project id in its tooltip, because the chip
+  // itself is the thing that gets cut.
+  const chip = byId.get('flowwrap').querySelectorAll('.frow')
+    .find((r) => (r.querySelector('.fname') || {}).textContent === 'Ctl#get')
+    .querySelector('.fproj');
+  assert.equal(chip.textContent, 'served');
+  assert.match(chip.title, /^served {2}this row is in another registered project/);
+
   // The card for a federated row NAMES the project and offers no button that
   // would ask this project for another project's file.
   ev(ctx, "flowSelect(FLOWV, 'served table:types')");
@@ -4344,6 +4366,30 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
     'an ERD button here would draw THIS project\'s schema for another project\'s table');
 });
 
+test('the lane row gives the NAME the width and the project chip the ellipsis', async (t) => {
+  // jsdom does no layout, so the rule itself is what is asserted: the name has
+  // a floor and grows from its own content, and the chip is the flex item that
+  // gives way. Without both halves the chip took the line and the name vanished.
+  const { html } = await bootPage(t);
+  const css = html.slice(html.indexOf('<style'), html.indexOf('</style>'));
+  const rule = (sel) => {
+    const at = css.indexOf(sel + ' {');
+    assert.notEqual(at, -1, `no rule for ${sel}`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  const name = rule('.fname');
+  assert.match(name, /flex:1 1 auto/, 'the name grows from its own content, not from a basis of 0');
+  assert.match(name, /min-width:6ch/, 'and it never collapses to nothing');
+  // The rule is NOT lane-only: the same chip is drawn on the Explore lists.
+  const chip = rule('.tag.fproj');
+  assert.match(chip, /flex:0 1 auto/);
+  assert.match(chip, /max-width:45%/);
+  assert.match(chip, /text-overflow:ellipsis/);
+  assert.match(chip, /white-space:nowrap/);
+  // The grade pill is still the one thing that never shrinks.
+  assert.match(rule('.frowtop .grade, .fhopn, .frowtop .kglyph'), /flex:none/);
+});
+
 test('the overview says how many calls leave this project, and says nothing when none do', async (t) => {
   const { ctx } = await bootPage(t);
   const panel = (fed) => ev(ctx, `ovGapsPanel({gaps: [], empty: {gaps: 'none'}, federation: ${JSON.stringify(fed)}}).textContent`);
@@ -4351,4 +4397,106 @@ test('the overview says how many calls leave this project, and says nothing when
     /3 call\(s\) leave this project, 2 answered by a registered project and 1 not\./);
   assert.equal(/call\(s\) leave/.test(panel({ calls: 0, answered: 0, unmatched: 0, projects: [] })), false,
     'a project that talks to nobody says nothing');
+});
+
+// ---------------------------------------------------------------------------
+// A federated route on an Explore list (RM44)
+// ---------------------------------------------------------------------------
+
+/**
+ * `endpoint_impact` for a column of this project, with one route of its own and
+ * one that another registered project serves. The second row is the case the
+ * chip and the project-aware Flow button exist for: this project cannot answer
+ * that route at all, so a Flow button addressed HERE gets `unknown-endpoint`.
+ */
+function federatedColumnAnswer() {
+  const wrap = (answer) => ({
+    answer,
+    basis: { project: 'alpha', buildDigest: 'deadbeef', builtAt: null, freshness: { verdict: 'unknown' } },
+    trust: { trustLevel: 'UNCERTIFIED', axes: [], gatesNotShown: [], knownGaps: [] },
+    limits: [],
+    truncated: { any: false, fields: [] },
+  });
+  return {
+    ci: wrap({ column: 'owners.id', comment: null, type: 'INT', statements: [], empty: { statements: 'none' } }),
+    ei: wrap({
+      column: 'owners.id',
+      comment: null,
+      endpoints: [
+        { id: 'GET /owners/{ownerId}', httpMethod: 'GET', path: '/owners/{ownerId}', grade: 'SOUND_SET' },
+        { id: 'GET /api/gateway/owners/{ownerId}', httpMethod: 'GET', path: '/api/gateway/owners/{ownerId}',
+          grade: 'SOUND_SET', project: 'beta', federated: true, viaHttp: true, httpHops: 1 },
+      ],
+      federation: { crossed: [], unmatched: [], skipped: [] },
+    }),
+  };
+}
+
+/** The `<li>` rows of the "HTTP endpoints affected" panel, as {name, chip, btn}. */
+function epRows(byId) {
+  const panels = byId.get('view').querySelectorAll('.panel');
+  const panel = panels.find((p) => (p.querySelector('h2') || { textContent: '' }).textContent.startsWith('HTTP endpoints affected'));
+  assert.ok(panel, 'the endpoints panel is missing');
+  return panel.querySelectorAll('li').map((li) => ({
+    name: (li.querySelector('a.id') || {}).textContent,
+    chip: li.querySelector('.fproj'),
+    btn: li.querySelectorAll('button').find((b) => b.textContent === 'Flow'),
+    order: (li.querySelector('a.id').parentNode.children || []).map((c) => c.className.split(' ')[0]),
+  }));
+}
+
+test('an Explore endpoint row from another project wears the chip after its name', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=explore' });
+  const { ci, ei } = federatedColumnAnswer();
+  const out = ev(ctx, `(() => { try {
+      renderColumnAnswer('owners.id', ${JSON.stringify(ci)}, ${JSON.stringify(ei)}); return 'rendered';
+    } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
+  assert.equal(out, 'rendered');
+
+  const rows = epRows(byId);
+  assert.deepEqual(rows.map((r) => r.name), ['GET /owners/{ownerId}', 'GET /api/gateway/owners/{ownerId}']);
+  // This project's own row is drawn exactly as it always was: no chip, and the
+  // anchor is a direct child of the row.
+  assert.equal(rows[0].chip, null);
+  // The federated one carries the chip AFTER the name, with the whole id in the
+  // tooltip, the same rule the lane rows follow.
+  assert.ok(rows[1].chip, 'no project chip on the federated row');
+  assert.equal(rows[1].chip.textContent, 'beta');
+  assert.match(rows[1].chip.title, /^beta {2}this row is in another registered project/);
+  assert.deepEqual(rows[1].order, ['id', 'tag'], 'the name comes first, the chip after it');
+  // ...and its Flow button says where it goes.
+  assert.match(rows[1].btn.title, /open this route in beta, the project that serves it/);
+  assert.match(rows[0].btn.title, /follow this call down to the tables/);
+});
+
+test('...and its Flow button opens the route in the project that serves it', async (t) => {
+  const { ctx, byId, calls, fireWindow } = await bootPage(t, { hash: '#p=alpha&tab=explore' });
+  const { ci, ei } = federatedColumnAnswer();
+  ev(ctx, `renderColumnAnswer('owners.id', ${JSON.stringify(ci)}, ${JSON.stringify(ei)})`);
+
+  // A row of THIS project keeps today's behaviour: the Flow tab, same project.
+  epRows(byId)[0].btn.onclick();
+  await settle(ctx, 4);
+  assert.equal(ev(ctx, 'STATE.project'), 'alpha');
+  assert.equal(ev(ctx, 'STATE.tab'), 'flow');
+  assert.match(ev(ctx, 'location.hash'), /^#p=alpha&tab=flow/, 'the project in the hash did not change');
+
+  // The federated row builds a hash for the OTHER project, naming the tab and
+  // the route to land on, and the page follows it there.
+  ev(ctx, `activateTab('explore')`);
+  ev(ctx, `renderColumnAnswer('owners.id', ${JSON.stringify(ci)}, ${JSON.stringify(ei)})`);
+  calls.length = 0;
+  epRows(byId)[1].btn.onclick();
+  assert.equal(ev(ctx, 'location.hash'),
+    '#p=beta&tab=flow&pick=' + encodeURIComponent('endpoint:GET /api/gateway/owners/{ownerId}'));
+  fireWindow('hashchange');
+  await settle(ctx, 10);
+  assert.equal(ev(ctx, 'STATE.project'), 'beta', 'the page went to the project that serves the route');
+  assert.equal(ev(ctx, 'STATE.tab'), 'flow');
+  // ...and every call it then made was asked of THAT project, not of this one.
+  const asked = calls.filter((c) => c.url.startsWith('/api/call'));
+  assert.ok(asked.length > 0, 'the arriving project was asked nothing');
+  for (const c of asked) assert.equal(c.body.project, 'beta', `${c.body.name} was asked of the wrong project`);
+  assert.ok(asked.some((c) => c.body.name === 'flow' && c.body.arguments.endpoint === 'GET /api/gateway/owners/{ownerId}'),
+    `the route was never walked: ${asked.map((c) => c.body.name).join(', ')}`);
 });
