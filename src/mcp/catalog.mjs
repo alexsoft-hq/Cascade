@@ -39,7 +39,13 @@ export const TOOLS = Object.freeze({
       + 'cannot prove. The schema-bounded censuses (nodes, edges, grades, statementTypes) '
       + 'are COMPLETE: one row per kind, type and grade, never cut. `hubs` and the reach '
       + 'samples are cut at 10 with their true totals in `truncated`, so treat them as a '
-      + 'headline and ask `flow`, `erd`, `coupling` or `search` for the rest.',
+      + 'headline and ask `flow`, `erd`, `coupling` or `search` for the rest. '
+      + '`federation` is the census of what LEAVES this pack: `calls` / `answered` / '
+      + '`unmatched` count the ROUTES this project calls and does not serve, `projects` names '
+      + 'the registered projects that answer them, `byProject` breaks that down per project '
+      + '({project, sites, routes}) and `unmatchedRoutes` lists the ones nobody registered '
+      + 'serves. `sites` counts the METHODS in this pack that make the call, so one route '
+      + 'called from two services is one route and two sites.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -280,10 +286,27 @@ export const TOOLS = Object.freeze({
       + '`limit` caps the tables drawn (default 400, max 5000). Past it we keep the '
       + 'most-joined tables and always the focus table, `truncated.tables.total` is the true '
       + 'number in scope and `limits` says how many went. An ERD of a 4 000-table schema is '
-      + 'megabytes, so this answer is bounded rather than silently large.',
+      + 'megabytes, so this answer is bounded rather than silently large. ON A SERVER THAT '
+      + 'SERVES SEVERAL PROJECTS the whole-schema view also carries `federated`: one entry per '
+      + 'registered project a request from THIS project reaches over HTTP, with {project, '
+      + 'buildDigest, tables, relationships, via}. `tables` are only the tables the walk from '
+      + 'the crossed route(s) reaches there, `relationships` are THAT project\'s own joins '
+      + 'between exactly those tables, and `via` names the route each cluster was reached '
+      + 'through ({route, fromEndpoint, grade, ambiguous, tables}). NO RELATIONSHIP EVER JOINS '
+      + 'TWO PROJECTS: two services share no foreign key, so the only thing connecting the '
+      + 'clusters is the HTTP call `via` names. The crossing walk runs at mode=conservative, '
+      + 'depth 8 (this tool takes no mode or depth of its own) and `limits` says so. '
+      + '`answer.federation` says what was crossed, what was skipped and why, and '
+      + '`basis.siblings` names every other pack this answer read. Ask a sibling table\'s '
+      + 'columns of that project (`erd table=<name>` with its `project`). federate=false '
+      + 'answers from this pack alone, byte for byte as it did before federation existed.',
     inputSchema: {
       type: 'object',
-      properties: { table: { type: 'string' }, hops: { type: 'integer' }, limit: { type: 'integer', minimum: 1, maximum: 5000 } },
+      properties: {
+        table: { type: 'string' }, hops: { type: 'integer' }, limit: { type: 'integer', minimum: 1, maximum: 5000 },
+        federate: { type: 'boolean', description: 'default true: follow HTTP calls into the other projects this server serves' },
+        federationHops: { type: 'integer', minimum: 0, maximum: 8, description: 'how many crossings one answer may chain (default 3)' },
+      },
     },
     fn: tools.erd,
   },
@@ -364,12 +387,29 @@ export const TOOLS = Object.freeze({
       + 'best-connected of the kind being cut, and `limits` names exactly how many of each '
       + 'went and which budget cut it (`summary.cutBy`, `summary.bytes`). Tables no endpoint '
       + 'reaches are NOT drawn and their number is disclosed. Empty "not-shipped" means the '
-      + 'pack has no code axis and therefore no endpoints.',
+      + 'pack has no code axis and therefore no endpoints. '
+      + 'ON A SERVER THAT SERVES SEVERAL PROJECTS the map keeps going where a request does: an '
+      + 'endpoint here that calls a route ANOTHER registered project serves gets a `calls` link '
+      + '(`federated: true`) to that project\'s own endpoint node, which is the portal, and '
+      + 'under the portal that route\'s OWN picture (its tables, its statements, its joins). '
+      + 'Every id from another pack is namespaced `<project>|<id>` and every such node and link '
+      + 'carries `project`, so two services that both have an `orders` table are two nodes. One '
+      + 'node per sibling, `id: "project:<id>", kind: "project"`, is the skeleton those portals '
+      + 'hang off; the sibling\'s own groups are not drawn. NOTHING IS MERGED: only what THIS '
+      + 'project\'s requests reach is added, and no line joins two projects\' tables, because '
+      + 'two services share no foreign key. One node cap and one byte budget bound the whole '
+      + 'picture, and a federated node gives way before this pack\'s own node of the same kind. '
+      + '`summary.federated` counts what came from elsewhere, `answer.federation` says what was '
+      + 'crossed, skipped or unmatched, and `basis.siblings` names every other pack this answer '
+      + 'walked. federate=false answers from this pack alone, byte for byte as it did before '
+      + 'federation existed.',
     inputSchema: {
       type: 'object',
       properties: {
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
         depth: { type: 'integer', minimum: 1, maximum: 8, description: 'hops walked from each endpoint (default 8)' },
+        federate: { type: 'boolean', description: 'default true: follow HTTP calls into the other projects this server serves' },
+        federationHops: { type: 'integer', minimum: 0, maximum: 8, description: 'how many crossings one answer may chain (default 3)' },
         layers: {
           type: 'array', items: { type: 'string', enum: ['statements', 'screens'] },
           description: 'optional extra layers: "statements" and "screens" (default: neither)',

@@ -80,6 +80,15 @@ reaches, with a band between bars showing how much carries over. Below that are
 the panels: what is in the pack, edges by type and grade, the Java side, the hub
 tables and endpoints, and what the engine could not see.
 
+**Connected projects.** Where this project calls a route it does not serve, a
+panel beside the blind spots lists who answers it: one row per registered
+project, with the routes and how many methods here make each call, five routes
+and then a count. Clicking a row goes to that project. A last row holds the
+calls no registered project serves, with the one thing you can do about it,
+which is to register the project that serves them. On a project that calls
+nobody the panel is absent, because a panel saying zero about something this
+pack does not do is noise.
+
 ### The browse rail
 
 Explore, Flow and Impact open on a LIST, not on an empty search box: a column
@@ -196,6 +205,20 @@ writes or deletes; thickness is how many statements carry it; a dashed line in
 count; the statements chip re-asks the engine for the SQL layer, because without
 that layer the engine sent no statement at all.
 
+**Where a request leaves this project**, the map keeps going. An endpoint that
+calls a route another registered project serves gets a line to that project's
+own route node, and under it what that route reaches over there. Those nodes
+keep their kind's fill, so a table still reads as a table, and wear a ring in
+their project's own hue with the project name in the label; one node per
+connected project is the skeleton its routes hang off. Each cluster seeds on its
+own band to the right, so the picture reads as "our map, and over there what it
+calls" rather than two systems shuffled together. Nothing is merged: only what
+this project's requests reach is drawn, and no line joins two projects' tables.
+A chip turns the whole layer off, and the count line still says how much came
+from elsewhere. Clicking one of those nodes gives you one action, which is to
+open it in the project that owns it, because every other button would ask the
+pack on screen for something it does not have.
+
 The map does not move at rest. A dot on every line of a map this size is
 speckle, so the lines stay still until you point at something: a node you light
 flows on its own, and **Flow on** runs every line. Past 2500 directed links even
@@ -216,6 +239,18 @@ that join. In the dark theme, tables sharing a name prefix take a desaturated
 tint of their kind's hue and the legend keys it; the light theme stays ink.
 Tables no SQL joins to anything sit in a strip under the map, named as such
 rather than dropped.
+
+**A connected project is its own framed cluster**, off to the right, holding
+only the tables a request from here reaches and only that project's own joins
+between them. From a small route marker a **dashed** line runs to each table
+that route reaches, and the legend says what the dash means: reached over an
+HTTP call, not a foreign key. No relationship on the sheet ever joins two
+projects, because two services share no foreign key. The switch in the legend
+starts ON where this project has no table of its own, since the sheet would
+otherwise be empty and the requests really do end somewhere, and OFF where it
+has a schema of its own; either way it is remembered. Clicking a table over
+there shows that project's own relationships and asks that project for its
+columns, never the pack on screen.
 
 ### Transactions
 

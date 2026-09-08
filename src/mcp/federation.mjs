@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { routeMatches, normalizeUrlPath } from '../adapters/web_bridge.mjs';
 import { chainWalk } from '../core/chain.mjs';
+import { buildMap } from '../core/map.mjs';
 import { FLOW_EDGE_TYPES } from '../core/graph.mjs';
 
 /** The sidecar's schema id. Written by `analyze`, read by the server. */
@@ -46,6 +47,12 @@ export const ROUTES_FILE = 'routes.json';
 
 /** How many crossings one answer may chain (A to B to C) unless told otherwise. */
 export const DEFAULT_FEDERATION_HOPS = 3;
+
+// The node cap the SIBLING's own sub-picture is built with. Deliberately far
+// past anything one route can reach: the cap that bounds a federated answer is
+// the OUTER picture's, applied once over the whole drawing, and a second cap in
+// here would cut a sibling's nodes before the caller ever saw them.
+const SUB_PICTURE_LIMIT = 1000000;
 
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
 const weaker = (a, b) => (RANK[a] <= RANK[b] ? a : b);
@@ -357,6 +364,16 @@ export function makeFederator(ctx, args = {}) {
 
   const crossed = [];
   const unmatched = [];
+  // Calls this answer did not even ASK about, because the crossing cap was
+  // already spent. They are not `unmatched`: nobody looked, so "none of the
+  // registered projects serves it" would be a claim this answer cannot make.
+  const hopCapped = [];
+  // Calls that leave this pack from code NO route on the picture reaches: a
+  // scheduled job, a startup listener, a tool function an AI model calls. They
+  // are real calls (`overview.federation` counts them) and they are not on a
+  // picture drawn from routes, so the picture has to say so rather than let a
+  // reader read the silence as "this project calls nobody".
+  const offPicture = [];
   const siblings = new Map(); // project id -> the basis entry it contributed
   const ctxCache = new Map(); // project id -> ctx or null
 
@@ -655,6 +672,164 @@ export function makeFederator(ctx, args = {}) {
   }
 
   // -------------------------------------------------------------------------
+  // Walking down for a PICTURE: what this pack's requests reach over there
+  // -------------------------------------------------------------------------
+
+  /**
+   * The routes THIS pack serves, by the same rule the per-endpoint walk uses:
+   * an outbound route with no handler is a route somebody else answers.
+   */
+  function servedRoutesOf(graph) {
+    const out = [];
+    for (const n of graph.nodes.values()) {
+      if (n.kind !== 'endpoint') continue;
+      if (n.outbound === true && !graph.outEdges(n.id).some((e) => e.type === 'HANDLES')) continue;
+      out.push(n.id);
+    }
+    return out.sort(cmp);
+  }
+
+  /**
+   * WHICH ROUTE MAKES WHICH OUTBOUND CALL, on one graph.
+   *
+   * The call itself is on a SYMBOL (`packOutboundCalls` / `outboundCallsOf`),
+   * and a picture is drawn from ROUTES, so the two have to be joined: for each
+   * symbol that makes a call, which of the routes we are drawing reaches it.
+   * That is the impact question, asked upward with the same edge set and the
+   * same depth the forward walk used, so a line appears here only where the
+   * picture's own walk would have gone.
+   *
+   * One climb per calling symbol, not one per route: a pack with three Feign
+   * clients pays three walks whatever its endpoint count is.
+   */
+  function callSites(graph, routeIds, opts) {
+    const want = new Set(routeIds);
+    const callers = new Set();
+    for (const c of packOutboundCalls(graph)) for (const id of c.callers) callers.add(id);
+    const sites = [];
+    const unreached = [];
+    for (const symbol of [...callers].sort(cmp)) {
+      if (!graph.nodes.has(symbol)) continue;
+      let reach;
+      try {
+        reach = graph.impactOf(symbol, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES, maxHops: opts.depth });
+      } catch (e) {
+        continue;
+      }
+      let found = false;
+      for (const [id, info] of reach) {
+        if (!want.has(id)) continue;
+        found = true;
+        sites.push({ endpoint: id, symbol, grade: info.pathGrade });
+      }
+      // The symbol IS a route of this pack when it is a handler reached by
+      // nothing above it; `want` holds route nodes, so a caller that is itself
+      // reached from no drawn route has no line on this picture.
+      if (!found) unreached.push(symbol);
+    }
+    sites.sort((a, b) => cmp(a.endpoint, b.endpoint) || cmp(a.symbol, b.symbol));
+    return { sites, unreached };
+  }
+
+  /** The sibling's own picture FROM ONE ROUTE, and nothing else of that pack. */
+  function subPicture(graph, routeId, opts) {
+    const m = buildMap(graph, {
+      mode: opts.mode, depth: opts.depth, layers: opts.layers ?? [],
+      limit: SUB_PICTURE_LIMIT, maxBytes: null, only: [routeId],
+    });
+    return { nodes: m.nodes, links: m.links };
+  }
+
+  /**
+   * EVERY CROSSING A WHOLE-PACK PICTURE MAKES, with the sibling's own picture
+   * of the route it landed on.
+   *
+   * The same crossing rules `flow` walks by (`serversOf`, the same grades, the
+   * same ambiguity and the same unmatched handling); what differs is the shape
+   * of the answer, because a picture needs nodes and lines rather than lanes.
+   *
+   * Nothing here is namespaced or drawn: the caller decides how to put two
+   * packs on one sheet. `picture` is filled the FIRST time a (project, route)
+   * is reached and null on any later crossing to the same portal, so two
+   * callers of one route draw two lines onto one node.
+   *
+   * @param {import('../core/graph.mjs').Graph} graph  this project's graph
+   * @param {{mode:string, depth:number, layers?:string[]}} opts
+   * @returns {{from:{project:string, endpoint:string, symbol:string},
+   *            route:{method:string, path:string}, service:(string|null),
+   *            to:{project:string, endpoint:string}, grade:string, ambiguous:boolean,
+   *            buildDigest:(string|null), picture:({nodes:object[], links:object[]}|null)}[]}
+   */
+  function crossMap(graph, opts) {
+    const out = [];
+    if (!wanted) return out;
+    const built = new Set();   // "<project> <route node id>" — a portal is drawn once
+    step(graph, self, servedRoutesOf(graph), maxCrossings);
+    return out;
+
+    function step(g, project, routeIds, budget) {
+      const { sites, unreached } = callSites(g, routeIds, opts);
+      // Only for the pack the reader asked about. A SIBLING's other routes are
+      // not on this picture by design (only the route we called is drawn), so
+      // listing every call they make would be noise about a pack nobody asked
+      // the whole of.
+      if (project === self) {
+        for (const symbol of unreached) {
+          for (const call of outboundCallsOf(g, symbol)) {
+            offPicture.push({ from: { project, symbol: strip(symbol) }, route: { method: call.method, path: call.path } });
+          }
+        }
+      }
+      if (sites.length === 0) return;
+      if (budget <= 0) {
+        for (const site of sites) {
+          for (const call of outboundCallsOf(g, site.symbol)) {
+            hopCapped.push({ from: { project, symbol: strip(site.symbol) }, route: { method: call.method, path: call.path } });
+          }
+        }
+        return;
+      }
+      const next = new Map();   // project id -> the routes crossed into it this level
+      for (const site of sites) {
+        for (const call of outboundCallsOf(g, site.symbol)) {
+          const r = serversOf(call, entries, { exclude: project });
+          if (r.chosen.length === 0) { recordUnmatched({ project, id: site.symbol }, call, r); continue; }
+          for (const target of r.chosen) {
+            const sib = projectCtx(target.project);
+            if (!sib) continue;
+            if (!routeNode(sib.graph, target.route.id, target.project, 'served')) continue;
+            const grade = weaker(site.grade, target.grade);
+            recordCrossing({ project, id: site.symbol }, call,
+              { project: target.project, endpoint: target.route.id }, grade, r.ambiguous);
+            const key = `${target.project} ${target.route.id}`;
+            const first = !built.has(key);
+            if (first) built.add(key);
+            out.push({
+              from: { project, endpoint: site.endpoint, symbol: strip(site.symbol) },
+              route: { method: call.method, path: call.path },
+              service: call.service ?? null,
+              to: { project: target.project, endpoint: target.route.id },
+              grade,
+              ambiguous: r.ambiguous,
+              buildDigest: sib.basis ? (sib.basis.buildDigest ?? null) : null,
+              picture: first ? subPicture(sib.graph, target.route.id, opts) : null,
+            });
+            if (first) {
+              const set = next.get(target.project);
+              if (set) set.add(target.route.id); else next.set(target.project, new Set([target.route.id]));
+            }
+          }
+        }
+      }
+      for (const [pid, routes] of [...next.entries()].sort((a, b) => cmp(a[0], b[0]))) {
+        const sib = projectCtx(pid);
+        if (!sib) continue;
+        step(sib.graph, pid, [...routes].sort(cmp), budget - 1);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // What the answer carries
   // -------------------------------------------------------------------------
 
@@ -663,6 +838,19 @@ export function makeFederator(ctx, args = {}) {
     .sort((a, b) => cmp(a.project, b.project) || cmp(a.reason, b.reason));
   const sortedUnmatched = () => unmatched.slice()
     .sort((a, b) => cmp(a.from.symbol, b.from.symbol) || cmp(a.route.path, b.route.path));
+
+  const sortedHopCapped = () => hopCapped.slice()
+    .sort((a, b) => cmp(a.from.project, b.from.project) || cmp(a.from.symbol, b.from.symbol) || cmp(a.route.path, b.route.path));
+
+  /**
+   * HAS THIS FEDERATOR ANYTHING TO SAY? A picture on a server that serves one
+   * project and calls nobody must come back exactly as it did before federation
+   * existed: an empty block on it would be a field that says nothing, in an
+   * answer whose shape other tools diff against.
+   */
+  function saysAnything() {
+    return wanted && (available || unmatched.length > 0 || hopCapped.length > 0 || offPicture.length > 0);
+  }
 
   /** The `answer.federation` block. */
   function block() {
@@ -696,6 +884,19 @@ export function makeFederator(ctx, args = {}) {
           + `${u.noIndex > 0 ? `, and ${u.noIndex} of them carries no route index, so it could not be asked` : ''}. `
           + 'The chain stops at the call. Register the project that serves this route and ask again');
     }
+    const off = offPicture.slice().sort((a, b) => cmp(a.from.symbol, b.from.symbol) || cmp(a.route.path, b.route.path));
+    if (off.length) {
+      const routes = [...new Set(off.map((o) => `${o.route.method} ${o.route.path}`))].sort();
+      const symbols = [...new Set(off.map((o) => o.from.symbol))].sort();
+      say(`${routes.length} call(s) leave this project from ${symbols.length} method(s) that no route on this picture reaches (${symbols.slice(0, 3).join(', ')}${symbols.length > 3 ? `, and ${symbols.length - 3} more` : ''}): ${routes.join(', ')}. `
+        + 'A picture drawn from routes cannot show them, and they are real calls: a scheduled job, a startup listener or a tool an AI model calls is code nothing upstream of it names. '
+        + '`overview.federation` counts every call that leaves the pack, and `flow` from the method itself follows this one');
+    }
+    for (const h of sortedHopCapped()) {
+      say(`${h.route.method} ${h.route.path} leaves ${h.from.project} and the crossing cap (federationHops ${maxCrossings}) was already spent, `
+        + 'so this answer never asked which project serves it. That is a bound on this answer, not an absence. '
+        + 'Raise federationHops and ask again');
+    }
     const amb = new Map();
     for (const c of crossed) {
       if (!c.ambiguous) continue;
@@ -723,9 +924,13 @@ export function makeFederator(ctx, args = {}) {
     available,
     wanted,
     entries,
+    maxCrossings,
     crossDown,
     crossUp,
     crossUpEndpoints,
+    crossMap,
+    contextFor: projectCtx,
+    saysAnything,
     block,
     siblingBasis,
     limits,

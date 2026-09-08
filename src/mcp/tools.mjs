@@ -750,11 +750,31 @@ export function erd(graph, args, ctx) {
   relationships.sort((a, b) => (a.from + a.to < b.from + b.to ? -1 : 1));
 
   const answer = { focus: focusKey, hops: focusKey ? hops : null, limit, tables, relationships };
+
+  // THE CONNECTED PROJECTS (RM45). This pack's ERD is untouched. What is added
+  // is one CLUSTER per registered project this project's requests reach: that
+  // project's own tables, its own joins between them, and the HTTP route the
+  // request went through. Nothing joins two clusters. Two services share no
+  // foreign key, so a relationship line between them would be an invention, and
+  // the only thing that connects them is the call, which `via` names.
+  //
+  // Only the whole-schema view federates. `erd table=<name>` answers one table's
+  // join neighbourhood in THIS pack, and a sibling's table is that project's own
+  // question (`erd` with its `project`), so there is nothing to add there.
+  const fed = makeFederator(ctx, args);
+  const federated = focusKey ? [] : erdFederated(graph, fed);
+  if (federated.length) answer.federated = federated;
+  if (fed.saysAnything()) answer.federation = fed.block();
+
   const empty = {};
   if (tables.length === 0) empty.tables = 'none';
   if (relationships.length === 0) empty.relationships = tables.length > 1 ? 'none' : 'not-in-this-axis';
   if (Object.keys(empty).length) answer.empty = empty;
-  const limits = [...(ctx.limits ?? []), ...focusLimits];
+  const limits = [...(ctx.limits ?? []), ...focusLimits, ...fed.limits()];
+  if (federated.length) {
+    limits.push({ scope: 'erd', reason: `${federated.length} other registered project(s) are on this answer under \`federated\` (${federated.map((f) => f.project).join(', ')}), holding only the tables a request from THIS project reaches over an HTTP call. Their relationships are their own joins between those tables. No relationship on this answer joins two projects, because two services share no foreign key: the only thing that connects the clusters is the call, and \`via\` names the route it went through` });
+    limits.push({ scope: 'erd', reason: `the walk into another project runs at mode=${ERD_FEDERATION_MODE}, depth ${ERD_FEDERATION_DEPTH}, which is the default \`map\` and \`flow\` walk. \`erd\` takes no mode or depth of its own, so a table a wider walk would reach there is unknown rather than absent` });
+  }
   if (tablesCut > 0) {
     limits.push({ scope: 'erd', reason: `table cap ${limit} reached, so ${tablesCut} of ${tablesTotal} table(s) in scope are not drawn (we keep the most-joined${focusKey ? ', and the focus table always' : ''}). Every relationship between a kept and a cut table went with them. Raise limit (max ${ERD_LIMIT_MAX}); what is missing is unknown, not absent` });
   }
@@ -764,11 +784,109 @@ export function erd(graph, args, ctx) {
     { field: 'tables', shown: tables.length, total: tablesTotal, order: 'join degree desc, table asc', nextOffset: null },
     { field: 'relationships', shown: relationships.length, total: relationships.length, order: 'from+to asc', nextOffset: null },
   ];
+  // One cluster per connected project, never cut: there are as many as there
+  // are projects this pack's requests reach, which is bounded by the registry.
+  if (federated.length) trunc.push({ field: 'federated', shown: federated.length, total: federated.length, order: 'project asc', nextOffset: null });
   return makeResponse({
-    answer, basis: ctx.basis,
+    answer, basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['erd']),
     limits, truncated: { any: false, fields: trunc },
   });
+}
+
+// The walk a federated ERD cluster is built with. `erd` takes no mode or depth
+// of its own, so the crossing uses the DEFAULT walk `map` and `flow` use, and
+// the answer says so in `limits` rather than leaving the reader to guess.
+const ERD_FEDERATION_MODE = 'conservative';
+const ERD_FEDERATION_DEPTH = 8;
+
+/**
+ * ONE CLUSTER PER CONNECTED PROJECT: the tables a request from this project
+ * really reaches over there, that project's own joins between exactly those
+ * tables, and the route each one came in through.
+ *
+ * @param {import('../core/graph.mjs').Graph} graph  this project's graph
+ * @param {object} fed  the federator
+ * @returns {object[]} one entry per sibling a crossing reaches, sorted by project
+ */
+function erdFederated(graph, fed) {
+  const crossings = fed.crossMap(graph, { mode: ERD_FEDERATION_MODE, depth: ERD_FEDERATION_DEPTH, layers: [] });
+  if (crossings.length === 0) return [];
+  // The tables one route reaches, remembered by (project, route): a second
+  // caller of the same route carries no picture of its own, and it reaches
+  // exactly what the first one did.
+  const reached = new Map();
+  for (const c of crossings) {
+    if (!c.picture) continue;
+    reached.set(`${c.to.project} ${c.to.endpoint}`, c.picture.nodes.filter((n) => n.kind === 'table').map((n) => n.id).sort(cmpStr));
+  }
+  const byProject = new Map();
+  for (const c of crossings) {
+    const tables = reached.get(`${c.to.project} ${c.to.endpoint}`) ?? [];
+    let entry = byProject.get(c.to.project);
+    if (!entry) {
+      entry = { project: c.to.project, buildDigest: c.buildDigest ?? null, ids: new Set(), via: [] };
+      byProject.set(c.to.project, entry);
+    }
+    for (const id of tables) entry.ids.add(id);
+    entry.via.push({
+      route: { method: c.route.method, path: c.route.path },
+      // The endpoint the request left FROM, spelled the way the map spells it:
+      // bare when it is this project's own route, namespaced when a chained
+      // crossing means the caller is itself in another pack.
+      fromEndpoint: c.from.project === fed.self ? c.from.endpoint : `${c.from.project}|${c.from.endpoint}`,
+      grade: c.grade,
+      ambiguous: c.ambiguous,
+      tables: tables.map((id) => strip(id)),
+    });
+  }
+  const out = [];
+  for (const entry of [...byProject.values()].sort((a, b) => cmpStr(a.project, b.project))) {
+    const sib = fed.contextFor(entry.project);
+    if (!sib) continue;
+    const ids = [...entry.ids].sort(cmpStr);
+    out.push({
+      project: entry.project,
+      buildDigest: entry.buildDigest,
+      tables: erdTablesIn(sib.graph, ids),
+      relationships: erdRelationshipsIn(sib.graph, ids),
+      via: entry.via.sort((a, b) => cmpStr(a.fromEndpoint, b.fromEndpoint)
+        || cmpStr(a.route.method + ' ' + a.route.path, b.route.method + ' ' + b.route.path)),
+    });
+  }
+  return out;
+}
+
+/** The table rows of ANOTHER pack: name, comment, how many columns it declares. */
+function erdTablesIn(graph, ids) {
+  const tset = new Set(ids);
+  const count = new Map();
+  for (const e of graph.edges) {
+    if (e.type !== 'DECLARES' || !tset.has(e.from)) continue;
+    count.set(e.from, (count.get(e.from) || 0) + 1);
+  }
+  return [...tset].map((id) => {
+    const n = graph.nodes.get(id) || {};
+    return { table: strip(id), comment: n.comment ?? null, columnCount: count.get(id) || 0 };
+  }).sort((a, b) => cmpStr(a.table, b.table));
+}
+
+/** That pack's OWN joins, and only between the tables this answer lists. */
+function erdRelationshipsIn(graph, ids) {
+  const tset = new Set(ids);
+  const seen = new Set();
+  const out = [];
+  for (const e of graph.edges) {
+    if (e.type !== 'JOINS' || !tset.has(e.from) || !tset.has(e.to)) continue;
+    const k = e.from + '|' + e.to;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const fromT = strip(e.from), toT = strip(e.to);
+    const cols = e.evidence?.columns ?? [];
+    out.push({ from: fromT, to: toT, columns: cols, statements: e.evidence?.count ?? 1, grade: e.grade, cardinality: cardinalityOf(graph, fromT, toT, cols) });
+  }
+  out.sort((a, b) => (a.from + a.to < b.from + b.to ? -1 : 1));
+  return out;
 }
 
 /**
@@ -1011,14 +1129,47 @@ export function map(graph, args, ctx) {
     }
   }
 
-  const m = buildMap(graph, { mode, depth, layers: asked, limit, maxBytes, packageDepth: packageDepthOf(ctx) });
+  // THE CONNECTED PROJECTS (RM45). This map stops where the pack stops: a route
+  // this project CALLS and does not serve is an outbound node nothing walks.
+  // When another registered project serves that route, its own picture OF THAT
+  // ROUTE is drawn beside this one and joined to the calling endpoint by the
+  // line the crossing is. It is never a merge of two packs: two services share
+  // no foreign key, so a relationship line between them would be a lie, and
+  // what is drawn is only what THIS project's requests reach.
+  const fed = makeFederator(ctx, args);
+  const crossings = fed.crossMap(graph, { mode, depth, layers: asked });
+  const drawn = federatedPicture(crossings, fed.self);
+
+  const m = buildMap(graph, {
+    mode, depth, layers: asked, limit, maxBytes, packageDepth: packageDepthOf(ctx),
+    ...(drawn.nodes.length ? { extra: { nodes: drawn.nodes, links: drawn.links } } : {}),
+  });
   const s = m.summary;
+  // The census of what came from another pack, in this answer's own words. The
+  // engine counted it under a neutral name (it does not know what federation
+  // is); the tool is where it gets called what it is.
+  const keptIds = new Set(m.nodes.map((n) => n.id));
+  const cutFederated = drawn.nodes.filter((n) => !keptIds.has(n.id));
+  if (s.extra) delete s.extra;
+  if (fed.available) {
+    s.federated = {
+      projects: [...new Set(m.nodes.filter((n) => n.project && n.kind !== 'project').map((n) => n.project))].sort(cmpStr),
+      // How many nodes on this picture BELONG to another pack. The `project:`
+      // skeleton is this answer's own drawing device, not something another
+      // pack contains, so it is not counted here.
+      nodes: m.nodes.reduce((n, x) => n + (x.project && x.kind !== 'project' ? 1 : 0), 0),
+      // Every line that touches a node from another pack: the sibling's own
+      // lines, the crossings, and the skeleton's own members.
+      links: m.links.reduce((n, l) => n + (l.project ? 1 : 0), 0),
+    };
+  }
   const answer = {
     mode, depth, layers: m.layers, limit, maxBytes,
     nodes: m.nodes,
     links: m.links,
     summary: s,
   };
+  if (fed.saysAnything()) answer.federation = fed.block();
   // No endpoints at all is "the Java lane never ran", not "this system relates
   // nothing" — the difference between not-shipped and none.
   const noAxis = !hasCodeAxis(graph, ctx);
@@ -1030,7 +1181,28 @@ export function map(graph, args, ctx) {
   const limits = [...(ctx.limits ?? []),
     groupingLimit('map', ctx),
     { scope: 'map', reason: `a table is on this map because a walk (${mode}, depth ${depth}) from an endpoint reaches a statement that touches it. It is the same forward walk \`flow\` draws, and what a deeper or wider walk would add is unknown, not absent` },
+    ...fed.limits(),
   ];
+  if (drawn.nodes.length) {
+    limits.push({ scope: 'map', reason: `${drawn.nodes.length} node(s) on this map come from ${drawn.projects.length} other registered project(s) (${drawn.projects.join(', ')}), reached over an HTTP call this server matched to a route they serve. Each carries \`project\`, and only what THIS project's requests reach is drawn: no line here joins two projects' tables, because two services share no foreign key` });
+  }
+  if (cutFederated.length) {
+    const byProject = new Map();
+    for (const n of cutFederated) {
+      const key = n.kind === 'project' ? n.label : n.project;
+      const held = byProject.get(key) ?? { whole: false, kinds: new Map() };
+      // The skeleton node is not a kind a reader counts. Its absence means the
+      // WHOLE of that project's cluster went, which is the fact worth saying.
+      if (n.kind === 'project') held.whole = true;
+      else held.kinds.set(n.kind, (held.kinds.get(n.kind) ?? 0) + 1);
+      byProject.set(key, held);
+    }
+    const said = [...byProject.entries()].sort((a, b) => cmpStr(a[0], b[0])).map(([project, held]) => {
+      const kinds = [...held.kinds.entries()].sort((a, b) => cmpStr(a[0], b[0])).map(([k, n]) => `${n} ${k}`).join(', ');
+      return `${project} (${held.whole ? `the whole cluster: ${kinds}` : kinds})`;
+    });
+    limits.push({ scope: 'map', reason: `the answer budget cut ${cutFederated.length} node(s) that came from another project before it cut any of this project's: ${said.join('; ')}. A federated node gives way first inside its kind, and a cluster goes whole once the route it hangs off goes, because a table with no line to it says nothing. The pack you asked about survives a cut intact. What is missing is unknown, not absent` });
+  }
   if (s.tablesTouched < s.tables) {
     limits.push({ scope: 'map', reason: `${s.tablesTouched} of ${s.tables} table(s) in the pack are reached from an endpoint. The other ${s.tables - s.tablesTouched} are NOT drawn: they are in the schema, and no endpoint we analysed touches them` });
   }
@@ -1092,10 +1264,87 @@ export function map(graph, args, ctx) {
     { field: 'links', shown: m.links.length, total: s.linksTotal, order: 'kind (member, touches, executes, joins) asc, source asc, target asc', nextOffset: null },
   ];
   return makeResponse({
-    answer, basis: ctx.basis,
+    answer, basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['map']),
     limits, truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
+}
+
+/**
+ * TWO PACKS ON ONE SHEET, without pretending they are one pack.
+ *
+ * Every id from another project is namespaced `<project>|<id>`, so two services
+ * that both have an `orders` table are two nodes and never one. The route this
+ * project called IS the portal: the sibling's endpoint node, marked `portal`,
+ * with one `calls` line from the endpoint of this map that made the request.
+ * Under it hangs that route's own picture, and the sibling's GROUPS are left
+ * out: a group is a naming convention inside one pack, and drawing another
+ * pack's conventions here would say this map holds two module trees.
+ *
+ * The skeleton is one `project:<id>` node per sibling with a `member` line to
+ * each portal, which is what makes a cluster read as "that project" rather than
+ * as a stray endpoint.
+ *
+ * @param {object[]} crossings  what `makeFederator(...).crossMap` returned
+ * @param {string|null} self    this project's id, so its own ids stay bare
+ */
+function federatedPicture(crossings, self) {
+  const nodes = [];
+  const links = [];
+  const byId = new Map();
+  const lineOf = new Map();     // "<source>|<target>" -> the one calls line between them
+  const portalsOf = new Map();  // project -> the portal ids drawn for it
+  const ns = (project, id) => `${project}|${id}`;
+  const here = (project, id) => (project === self ? id : ns(project, id));
+  for (const c of crossings) {
+    const project = c.to.project;
+    const portal = ns(project, c.to.endpoint);
+    if (c.picture) {
+      for (const n of c.picture.nodes) {
+        // A group is one pack's own naming convention. It does not travel.
+        if (n.kind === 'group') continue;
+        const id = ns(project, n.id);
+        if (byId.has(id)) continue;
+        const node = { ...n, id, project };
+        if (n.id === c.to.endpoint) node.portal = true;
+        byId.set(id, node);
+        nodes.push(node);
+      }
+      for (const l of c.picture.links) {
+        if (l.kind === 'member') continue;   // the group links go with the groups
+        links.push({ ...l, source: ns(project, l.source), target: ns(project, l.target), project });
+      }
+    }
+    const held = portalsOf.get(project);
+    if (held) held.add(portal); else portalsOf.set(project, new Set([portal]));
+    // The crossing itself. Two methods in one route making the same call is one
+    // line, at the strongest grade either of them earned.
+    const source = here(c.from.project, c.from.endpoint);
+    const key = `${source}|${portal}`;
+    const had = lineOf.get(key);
+    if (had) {
+      if (gradeRank(c.grade) > gradeRank(had.grade)) had.grade = c.grade;
+      if (c.ambiguous) had.ambiguous = true;
+      had.calls += 1;
+      continue;
+    }
+    const line = {
+      source, target: portal, kind: 'calls', grade: c.grade,
+      federated: true, ambiguous: c.ambiguous, project,
+      route: `${c.route.method} ${c.route.path}`, via: c.from.symbol,
+      service: c.service ?? null, calls: 1,
+    };
+    lineOf.set(key, line);
+    links.push(line);
+  }
+  const projects = [...portalsOf.keys()].sort(cmpStr);
+  for (const project of projects) {
+    const portals = [...portalsOf.get(project)].sort(cmpStr);
+    const id = `project:${project}`;
+    nodes.push({ id, kind: 'project', label: project, degree: 0, project, endpoints: portals.length });
+    for (const portal of portals) links.push({ source: id, target: portal, kind: 'member', grade: 'EXACT', project });
+  }
+  return { nodes, links, projects };
 }
 
 // The overview's OPEN-ENDED lists (hubs, the reach samples) are a HEADLINE, not
@@ -1505,20 +1754,50 @@ export function flow(graph, args, ctx) {
  * It is a census over the pack's outbound routes, not over one walk, so it says
  * the same thing whichever question the reader arrived with. No pack is loaded:
  * matching reads the siblings' sidecars only.
- * @returns {{calls:number, answered:number, unmatched:number, projects:string[]}}
+ *
+ * TWO UNITS, AND THE NAMES SAY WHICH IS WHICH. `calls`, `answered` and
+ * `unmatched` count ROUTES that leave this pack. `sites` counts CALL SITES: the
+ * methods in this pack that make the call, so one route called from two
+ * services is one route and two sites. No field named `calls` ever carries the
+ * second unit. A route matched by two projects is listed under both, which is
+ * what `ambiguous` means on a crossing.
+ *
+ * @returns {{calls:number, answered:number, unmatched:number, projects:string[],
+ *            byProject:{project:string, sites:number, routes:{method:string, path:string, sites:number}[]}[],
+ *            unmatchedRoutes:{method:string, path:string, sites:number}[]}}
  */
 function federationCensus(graph, ctx) {
   const fed = makeFederator(ctx, {});
   const calls = packOutboundCalls(graph);
   let answered = 0;
   const projects = new Set();
+  const byProject = new Map();
+  const unmatchedRoutes = [];
   for (const c of calls) {
+    const sites = Array.isArray(c.callers) ? c.callers.length : 0;
     const r = serversOf(c, fed.entries, { exclude: fed.self });
-    if (r.chosen.length === 0) continue;
+    if (r.chosen.length === 0) { unmatchedRoutes.push({ method: c.method, path: c.path, sites }); continue; }
     answered += 1;
-    for (const x of r.chosen) projects.add(x.project);
+    for (const x of r.chosen) {
+      projects.add(x.project);
+      const held = byProject.get(x.project) ?? { project: x.project, sites: 0, routes: [] };
+      held.sites += sites;
+      held.routes.push({ method: c.method, path: c.path, sites });
+      byProject.set(x.project, held);
+    }
   }
-  return { calls: calls.length, answered, unmatched: calls.length - answered, projects: [...projects].sort() };
+  for (const p of byProject.values()) {
+    p.routes.sort((a, b) => (b.sites - a.sites) || cmpStr(a.path, b.path) || cmpStr(a.method, b.method));
+  }
+  unmatchedRoutes.sort((a, b) => (b.sites - a.sites) || cmpStr(a.path, b.path) || cmpStr(a.method, b.method));
+  return {
+    calls: calls.length,
+    answered,
+    unmatched: calls.length - answered,
+    projects: [...projects].sort(),
+    byProject: [...byProject.values()].sort((a, b) => (b.sites - a.sites) || cmpStr(a.project, b.project)),
+    unmatchedRoutes,
+  };
 }
 
 // ---- federation plumbing, shared by `flow` and `endpoint_impact` -----------

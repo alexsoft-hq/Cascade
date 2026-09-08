@@ -10,6 +10,56 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **The whole-pack pictures follow a request into the next project.** `flow` and
+  `endpoint_impact` already kept walking into a registered sibling; the three
+  pictures did not, so on a five-service petclinic the api-gateway's Graph drew
+  two dead-end routes and its ERD was empty, though its requests end at `owners`
+  in customers-service and `visits` in visits-service. `map` now draws the
+  sibling's own endpoint node as the portal, with one `calls` link from the
+  endpoint that made the request and that route's own picture under it, and
+  `erd` carries one `federated` cluster per project reached, with that project's
+  own tables and its own joins between them. Every id from another pack is
+  namespaced `<project>|<id>` and every node and link carries `project`.
+  `overview.federation` gains `byProject` and `unmatchedRoutes`, so the page can
+  list who answers what instead of re-deriving it.
+- **Nothing is merged, and that is the rule the round is built on.** Only what
+  this project's requests reach is added: jeecg alone is 10 601 nodes, and two
+  services never share a foreign key, so a merged picture would be unreadable
+  and a relationship line across two projects would be a lie. No relationship on
+  an `erd` answer ever joins two projects; the only thing connecting the
+  clusters is the HTTP call, which `via` names with its route and its grade.
+- **One node cap and one byte budget for the whole picture.** `buildMap` takes
+  the nodes another pack contributed and cuts them inside the same budget, first
+  within their kind, and a cluster goes whole once the route it hangs off goes,
+  because a table with no line to it says nothing. `limits` names what went and
+  from which project. `buildMap` also takes `only`, which draws the picture of
+  named endpoints alone, so crossing into a sibling costs one route's walk
+  rather than that whole pack's.
+- **The viewer draws all three.** The Overview lists the connected projects with
+  their routes and one row for the calls nobody serves; the Graph rings a node
+  that came from another pack in that project's own hue, seeds each cluster on
+  its own band to the right, and offers one action on it, which is to open it
+  where it lives; the ERD frames each project's cluster and runs a dashed line
+  from the route marker to the tables it reaches, with the legend saying that a
+  dash is an HTTP call and not a foreign key.
+
+### Changed
+
+- **A call that no route reaches is said out loud.** A picture drawn from routes
+  cannot show a call made by a scheduled job, a startup listener or a tool an AI
+  model calls, and on genai-service that is all four of its outbound calls. The
+  map now names those methods and routes in `limits` instead of leaving the
+  reader to read the silence as "this project calls nobody".
+- **`federationHops: 0` says the cap, not "nobody serves it".** A call the
+  crossing budget never let the answer ask about is no longer listed as
+  unmatched: it gets its own sentence naming the cap and the way to raise it.
+- `map` and `erd` accept `federate` and `federationHops` like `flow`. With
+  `federate: false`, and on a server that serves one project and calls nobody,
+  both answers are byte for byte what they were before this round: verified by
+  diffing against a checkout of 0.2.0 on the registered mall pack.
+
 ## [0.2.0] - 2026-09-08
 
 The release that follows a request across services: an imperative HTTP call

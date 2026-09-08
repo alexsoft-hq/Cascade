@@ -326,6 +326,33 @@
   /* The map's line swatches carry the ACCESS hue the lines carry, so this rule
      sets the geometry only and lets the drawing say what colour it is. */
   .gmapleg .swatch { width:20px; height:2px; display:inline-block; vertical-align:middle; }
+  /* The key for a connected project's ring: the ring itself, at legend size. */
+  .fedring { width:11px; height:11px; border-radius:50%; border:1.6px solid var(--edge);
+    display:inline-block; vertical-align:middle; flex:none; }
+  /* A CONNECTED PROJECT'S ROW. The project's NAME is what the reader is looking
+     for, so it takes the width and never falls below a few characters; the
+     counts beside it are what shrinks and ellipsises. Without this the counts
+     kept their full content width and `customers-service` rendered as
+     `custome…`. The specificity is what it is because `.grow .id` sets
+     min-width:0 and would otherwise win. Same lesson as the federated lane
+     row's project chip. */
+  .grow .id.fedname { flex:1 1 auto; min-width:6ch; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; word-break:normal; }
+  /* …and it is CAPPED, not merely shrinkable. Flex shrinks two shrinkable
+     items in proportion to their content width, so the longer counts text kept
+     most of the room and the name still measured 60px and read `custom…`. The
+     cap is the same 45% the RM44 project chip takes. */
+  .count.fedcount { flex:0 1 auto; max-width:45%; min-width:0; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  /* ONE ROW PER CONNECTED PROJECT on the Overview. The whole row is the
+     control: clicking anywhere on it opens that project. */
+  .ovconn { display:block; width:100%; text-align:left; margin-top:8px; padding:8px 10px;
+    background:var(--field-bg); border:1px solid var(--hair); border-radius:var(--r-tag);
+    color:inherit; font:inherit; cursor:pointer; }
+  .ovconn:hover { border-color:var(--frame); }
+  .ovconn-none { cursor:default; }
+  .ovconn-none:hover { border-color:var(--hair); }
+  .ovconnhead { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
   /* The two pan/zoom canvases the vendored renderer mounts into: it owns them
      and sizes them itself, so all this says is where the box is. */
   #garound, #erdcanvas { position:absolute; inset:0; }
@@ -1414,14 +1441,16 @@ const gradeColor=(g)=> cssVar(g==='UNRESOLVED' ? '--t3' : '--edge');
 // draw one circle per node and say the kind in its FILL (`--n-*`, kindFill
 // below), exactly as the ERD already did. Certainty is still the line pattern,
 // which is the part that survives a photocopier.
-const KIND_GLYPH = { domain:'ring', group:'ring', endpoint:'tri', symbol:'circ',
+// A CONNECTED PROJECT is drawn like a group, because that is what it is here:
+// the skeleton the nodes that came from that pack hang off (RM45).
+const KIND_GLYPH = { domain:'ring', group:'ring', project:'ring', endpoint:'tri', symbol:'circ',
   service:'circ', entry:'circ', statement:'diam', table:'rect', column:'dot',
   // A screen is a WINDOW: a frame with a title bar, which is the one shape here
   // that reads as "something a person looks at". A frontend function is a
   // method like any other, so it keeps the method's ring and is told apart by
   // its own hue.
   screen:'win', webfn:'circ' };
-const KIND_TOKEN = { domain:'--k-group', group:'--k-group', endpoint:'--k-endpoint',
+const KIND_TOKEN = { domain:'--k-group', group:'--k-group', project:'--k-group', endpoint:'--k-endpoint',
   symbol:'--k-service', service:'--k-service', entry:'--k-service',
   statement:'--k-statement', table:'--k-table', column:'--k-column',
   // The two lanes of the round trip that live in the browser (RM31).
@@ -1433,13 +1462,29 @@ const kindColor = (kind)=> cssVar(KIND_TOKEN[kind] || '--t1');
 // Each key is spelled out, not built: a key assembled at runtime is a key the
 // catalogue tests cannot see, and a translation nobody can prove is there.
 const KIND_NAME_KEY={ group:'mapleg.group', endpoint:'mapleg.endpoint',
-  table:'mapleg.table', statement:'mapleg.statement', screen:'mapleg.screen' };
+  table:'mapleg.table', statement:'mapleg.statement', screen:'mapleg.screen',
+  project:'mapleg.project' };
 const kindName=(k)=> KIND_NAME_KEY[k] ? t(KIND_NAME_KEY[k]) : String(k);
 // The FILL a node of this kind is drawn with on the three pictures. Four kinds
 // have one; anything else falls back to the ink its name is written in.
-const KIND_FILL = { domain:'--n-group', group:'--n-group', endpoint:'--n-endpoint',
+const KIND_FILL = { domain:'--n-group', group:'--n-group', project:'--n-group', endpoint:'--n-endpoint',
   statement:'--n-statement', table:'--n-table', screen:'--n-screen' };
 const kindFill = (kind)=> KIND_FILL[kind] ? cssVar(KIND_FILL[kind]) : kindColor(kind);
+// ONE HUE PER CONNECTED PROJECT (RM45). A node that came from another pack
+// keeps its KIND's fill - a table is still drawn as a table - and wears a RING
+// in its project's own hue, so the reader can tell two siblings apart without
+// reading a word. The hues are assigned in sorted project order, so the same
+// server draws the same colours every time. In the DRAWING theme every kind is
+// one ink and a coloured ring would be the only hue on a page that has none,
+// so there the ring is the edge ink and the chip on the label is what names
+// the project - the same rule the ERD's family tints already follow.
+const FED_RING_TOKENS=['--k-endpoint','--k-column','--k-statement','--k-service','--k-webfn'];
+function fedRingColor(projects){
+  const at=new Map([...new Set((projects||[]).filter(Boolean))].sort().map((p,i)=>[p,i]));
+  return (p)=> (themeGlows() && at.has(p))
+    ? cssVar(FED_RING_TOKENS[at.get(p)%FED_RING_TOKENS.length])
+    : cssVar('--edge');
+}
 /** One kind as a filled dot, for a legend or a chip beside the pictures. */
 function kindDot(kind, size){
   const s=size||12, r=s/2;
@@ -1749,6 +1794,63 @@ const VIEWER_STRINGS = {
     // not serve stops the chain, unless another registered project serves that
     // route and the server can carry the answer across.
     'ov.federation.note': '{n} call(s) leave this project, {k} answered by a registered project and {m} not.',
+    // WHO THIS PROJECT TALKS TO (RM45). The census above is one sentence; this
+    // panel is the list behind it, one row per registered project that answers
+    // a route this one calls, and one last row for the calls nobody answers.
+    'ov.connected.title': 'Connected projects',
+    'ov.connected.note': 'the routes this project calls and does not serve, and the registered project that answers each one. Click a row to go there.',
+    'ov.connected.calls': '{n} call site(s) over {r} route(s)',
+    'ov.connected.more': '+{n} more',
+    'ov.connected.route.title': '{n} method(s) in this project make this call',
+    'ov.connected.open.title': 'open {p} on this page. Nothing is asked of the project you are leaving.',
+    'ov.connected.unmatched': 'nobody serves these',
+    'ov.connected.unmatched.note': 'these routes leave this project and no registered project serves them, so the chain stops at the call. Register the project that serves them and ask again.',
+    // THE MAP, ONCE IT REACHES INTO ANOTHER PACK. A node from another project
+    // keeps its kind's fill and wears a ring in that project's own hue, and the
+    // skeleton it hangs off is drawn like a group because that is its job here.
+    'mapleg.project': 'connected project',
+    'mapleg.connected': 'connected',
+    'mapleg.fedring.title': 'a ring around a node says it came from another registered project this server serves. The fill still says what kind of node it is, and the ring says which project it is in.',
+    'chip.fed.on': 'connected projects {n}',
+    'chip.fed.off': 'connected projects {n} hidden',
+    'chip.fed.on.title': 'hide the {n} node(s) that came from {k} other registered project(s)',
+    'chip.fed.off.title': 'draw the {n} node(s) that came from {k} other registered project(s)',
+    'gcount.federated': '**{n}** nodes from **{k}** connected project(s)',
+    'gcount.federated.off': '(hidden)',
+    'tip.fedproject': 'in {p}, another registered project on this server',
+    'tip.fedskeleton': 'a connected project. {n} of its routes are on this map, because this project calls them.',
+    'tip.crossing': 'this project calls a route {p} serves',
+    'tip.crossing.ambiguous': 'more than one registered project serves this route, so this line is a candidate',
+    'map.card.fedproject': 'this node is in {p}. Everything about it is that project\'s own answer, so it is opened there.',
+    'map.card.project': 'a connected project. What hangs off it is only what this project reaches by calling it.',
+    'map.card.portal': 'the route this project calls',
+    'map.card.open': 'Open in {p}',
+    'map.card.open.title': 'switch the page to {p} and open this there. Nothing is asked of the project you are leaving.',
+    'map.card.projectlist': 'connected projects ({n})',
+    // THE ERD, ONCE IT REACHES INTO ANOTHER PACK. One framed cluster per
+    // project, its own joins inside it, and a DASHED line from the route this
+    // project called to the tables that route reaches over there.
+    'erdleg.connected.on': 'connected projects {n}',
+    'erdleg.connected.off': 'connected projects {n} hidden',
+    'erdleg.connected.on.title': 'hide the {n} connected project(s) on this sheet',
+    'erdleg.connected.off.title': 'draw the {n} connected project(s) this project reaches over an HTTP call',
+    'erdleg.connected.title': 'the tables in {p} that a request from this project reaches',
+    'erdleg.via': 'dashed: reached over an HTTP call, not a foreign key',
+    'erdleg.via.title': 'a dashed line runs from the route this project called to the tables that route reaches over there. It is a call between two services, and two services share no foreign key, so no relationship on this sheet ever joins two projects.',
+    'erd.via.tip': 'reached over an HTTP call at {grade}, not a foreign key',
+    'erd.via.ambiguous': 'ambiguous',
+    'erd.via.body': 'this project calls this route and another project serves it. The tables below are what that route reaches over there, and the line to each one is the call, not a key.',
+    'erd.via.tables': 'tables this route reaches',
+    'erd.via.reached': 'reached through',
+    'erd.side.connected': 'Connected projects',
+    'erd.side.connected.note': 'the projects a request from this one reaches over an HTTP call. Each keeps its own tables and its own joins, because two services share no foreign key.',
+    'erd.side.connected.counts': '{tables} table(s), {rels} relationship(s)',
+    'erd.side.connected.open': 'open the ERD of {p}',
+    'erd.side.connected.hidden': 'they are not on the sheet right now. The switch in the legend above the picture draws them.',
+    'erd.side.map.fedonly': 'this project has no table of its own. Its requests end in {n} other registered project(s): {p}.',
+    'erd.side.fed.body': 'this table is in {p}. The relationships below are that project\'s own, and the columns come from that project\'s answer.',
+    'erd.side.fed.norels': 'none: no join inside this cluster touches this table',
+    'erd.side.fed.cols': 'asked of {p}, the project that has this table',
     // THE NAME OF A BLIND SPOT, in the reader's words. The engine's own kind
     // slug stays on the chip's tooltip beside the count, so nothing is renamed
     // away: this is the label a person can read without the docs open. A kind
@@ -2476,6 +2578,25 @@ const api = async (name, args={}) => {
   const r = await fetch('/api/call', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
   const j = await r.json();
   if(mine!==STATE.seq || forProject!==STATE.project) throw staleAnswer(forProject);
+  if (j.error) throw new Error(j.error.code+': '+j.error.message);
+  return j;
+};
+/**
+ * Ask ANOTHER registered project one question, without leaving this one.
+ *
+ * `api` always addresses the project on screen, and its own staleness rule then
+ * throws away anything that came back for a different one. This is the single
+ * place that addresses a sibling: a federated table's columns are that
+ * project's own fact, and asking the pack on screen for them comes back
+ * unknown. The page does not MOVE - `STATE.project` is untouched - so the
+ * answer is still dropped if the reader switches while it is in flight.
+ */
+const apiFor = async (project, name, args={}) => {
+  const mine=STATE.seq, was=STATE.project;
+  const r = await fetch('/api/call', { method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({name, arguments:args, project}) });
+  const j = await r.json();
+  if(mine!==STATE.seq || was!==STATE.project) throw staleAnswer(was);
   if (j.error) throw new Error(j.error.code+': '+j.error.message);
   return j;
 };
@@ -6448,7 +6569,8 @@ const GMAP_ROW_CAP=80;   // connections listed per kind in the rail
 const LINK_KIND_KEY={ aggregate:'link.aggregate', member:'link.member',
   touches:'link.touches', executes:'link.executes', joins:'link.joins', calls:'link.calls' };
 const CARD_LIST_KEY={ group:'map.card.group', endpoint:'map.card.endpoint',
-  statement:'map.card.statement', table:'map.card.table', screen:'map.card.screen' };
+  statement:'map.card.statement', table:'map.card.table', screen:'map.card.screen',
+  project:'map.card.projectlist' };
 // ---- ONE size model, for both renderers ------------------------------------
 // A node's radius is sqrt(its degree): the reader's eye compares AREA, so the
 // square root is what makes "twice as connected" look twice as big instead of
@@ -6505,6 +6627,11 @@ function mapFlowDefault(){
 // the same statement — "show me which way the call goes" — so they are the same
 // switch, stored once and honoured by every picture that can move. The three
 // buttons (Graph, Flow, Impact) are three handles on it, not three settings.
+const FED_KEY='cascade.viewer.connected';
+function fedPrefLoad(){
+  const v=lsGet(FED_KEY);
+  if(v==='on' || v==='off') GMAP.fed=(v==='on');
+}
 const FLOW_KEY='cascade.viewer.flow';
 function flowPrefLoad(){
   const v=lsGet(FLOW_KEY);
@@ -6528,6 +6655,12 @@ const GMAP={ where:'graph', mounted:null,
   resp:null, seq:0, findSeq:0, rend:'2d', drawn:null, api:null,
   sel:null, hover:null, lit:null, litLabels:new Set(), restLabels:new Set(),
   hidden:new Set(), layers:false,
+  // THE CONNECTED PROJECTS LAYER (RM45). On by default: an answer that crossed
+  // packs is the answer, and hiding it would leave the reader looking at a map
+  // with two dead-end routes on it. Remembered like the other switches, and
+  // `fedColor` is the one place a sibling's hue is decided, so the nodes, the
+  // lines and the legend can never disagree about it.
+  fed:true, fedColor:()=>null, fedProjects:[],
   // THE SCREENS LAYER (RM31). null means "not decided yet": the default is a
   // COUNT, and the count lives in the overview answer, which may not have
   // landed when a deep link opens straight on this tab. Decided once, by
@@ -6612,7 +6745,9 @@ function mapLinkBaseColor(l){
   // A screen calling a route is neither a read nor a write: it is a REQUEST, so
   // it is drawn in the screen's own hue rather than borrowing the access
   // colours, which mean something else on every other line here.
-  if(l.kind==='calls') return cssVar('--k-screen');
+  // A CROSSING is a request too, and it is drawn in the hue of the project it
+  // lands in, because that is the one thing a reader needs from it.
+  if(l.kind==='calls') return l.federated ? (GMAP.fedColor(l.project) || cssVar('--k-screen')) : cssVar('--k-screen');
   return mapAccessColor(l.access);
 }
 // Width is WEIGHT, in one narrow band (0.6–3 px) so that no line ever shouts
@@ -6628,6 +6763,9 @@ function mapLinkWidth(l){
 }
 function mapNodeTip(n){
   const bits=['<b>'+esc(kindName(n.kind))+'</b> '+esc(n.label)];
+  const fed=mapFedOf(n);
+  if(fed && n.kind!=='project') bits.push(esc(t('tip.fedproject',{p:fed})));
+  if(n.kind==='project') bits.push(esc(t('tip.fedskeleton',{n:n.endpoints||0})));
   if(n.kind==='endpoint'){ if(n.handlerShort) bits.push(esc(n.handlerShort)); bits.push(esc(t('tip.ingroup',{g:n.group}))); }
   if(n.kind==='table'){ if(n.comment) bits.push('“'+esc(n.comment)+'”'); bits.push(esc(t('tip.columns',{n:n.columnCount}))); }
   if(n.kind==='statement'&&n.statementType) bits.push(esc(n.statementType));
@@ -6651,7 +6789,9 @@ function mapLinkTip(l){
   // many — and how the access splits, because "dominant write" is a colour and
   // a colour is not evidence.
   if(l.kind==='aggregate') bits.push(l.endpoints+' endpoint(s) — reads '+l.reads+' / writes '+l.writes);
-  if(l.kind==='calls' && l.routes!=null) bits.push(esc(t('tip.screenapi',{n:l.routes})));
+  if(l.kind==='calls' && l.federated) bits.push(esc(t('tip.crossing',{p:l.project})),
+    ...(l.route ? [esc(l.route)] : []), ...(l.ambiguous ? [esc(t('tip.crossing.ambiguous'))] : []));
+  else if(l.kind==='calls' && l.routes!=null) bits.push(esc(t('tip.screenapi',{n:l.routes})));
   if(l.statements!=null) bits.push(l.statements+' statement(s) carry it');
   if(l.witness!=null) bits.push(l.witness+' statement(s) witness this join');
   bits.push('grade '+esc(l.grade)+(l.grade==='SOUND_SET'?' — a candidate chain, not a proof':''));
@@ -6687,7 +6827,10 @@ function mapIndexAnswer(){
   // with the grade the engine put on that pair. Empty unless the layer is on.
   const screenEps=new Map();
   for(const l of a.links){
-    if(l.kind==='calls'){
+    // A CROSSING is a `calls` line too, and it is not a screen calling a route:
+    // it is this project's endpoint calling another project's. It is folded by
+    // its own rule below, so it must not land in the screen index here.
+    if(l.kind==='calls' && !l.federated){
       let m=screenEps.get(l.source);
       if(!m){ m=new Map(); screenEps.set(l.source, m); }
       m.set(l.target, l.grade);
@@ -6761,6 +6904,25 @@ function mapSeedSpread(m, i, n, W, H){
   m.x=Math.cos(ang)*rad*W*0.42;
   m.y=Math.sin(ang)*rad*H*0.42;
 }
+// WHERE A CONNECTED PROJECT'S CLUSTER STARTS. This project's own map keeps the
+// sheet it has always had, and every node it has already placed holds still
+// (RM25's rule); a sibling's cluster seeds on its own smaller ellipse to the
+// RIGHT of it, one band per sibling down the pane. The picture then reads as
+// "our map, and over there what it calls" instead of two systems shuffled into
+// one. Deterministic, like every other seed here: the same server opens the
+// same way every time.
+const GMAP_FED_CX=0.55, GMAP_FED_RX=0.15, GMAP_FED_RY=0.18, GMAP_FED_SPREAD=0.62;
+function mapSeedFederated(m, band, bands, i, n, W, H){
+  const t=n>1 ? i/(n-1) : 0;
+  const ang=i*2.39996;                 // the golden angle, the same one mapSeedSpread uses
+  const rad=Math.sqrt(t);
+  const cy=bands>1 ? (band/(bands-1)-0.5)*H*GMAP_FED_SPREAD : 0;
+  m.x=W*GMAP_FED_CX+Math.cos(ang)*rad*W*GMAP_FED_RX;
+  m.y=cy+Math.sin(ang)*rad*H*GMAP_FED_RY;
+  m.z=0;
+}
+/** Which connected project a node belongs to, or null for one of our own. */
+const mapFedOf=(n)=> (n.kind==='project' ? (n.label||null) : (n.project||null));
 // Where an endpoint that has never been drawn before starts: on a small ring
 // around ITS OWN group, at an angle derived from its id, so unfolding opens a
 // star rather than flinging 24 nodes in from the origin — and so the same group
@@ -6797,10 +6959,17 @@ function buildMapModel(dim){
     }
   }
   const aggregates=mapAggregates();
+  // WHAT CAME FROM ANOTHER PACK IS NEVER FOLDED. A connected project's cluster
+  // is one route and what that route reaches, which is the whole point of
+  // drawing it; folding it into its skeleton would hide exactly the thing the
+  // reader opened the map for. So it is drawn whole, or not at all.
+  GMAP.fedProjects=[...new Set(a.nodes.map(mapFedOf).filter(Boolean))].sort();
+  GMAP.fedColor=fedRingColor(GMAP.fedProjects);
   const wanted=a.nodes.filter((n)=>
-    n.kind==='group' || n.kind==='table' || n.kind==='screen'
-    || (n.kind==='endpoint' && openEps.has(n.id))
-    || (n.kind==='statement' && openStmts.has(n.id)));
+    mapFedOf(n) ? GMAP.fed
+      : (n.kind==='group' || n.kind==='table' || n.kind==='screen'
+        || (n.kind==='endpoint' && openEps.has(n.id))
+        || (n.kind==='statement' && openStmts.has(n.id))));
   const vis=wanted.filter(n=>!GMAP.hidden.has(n.kind));
   const on=new Set(vis.map(n=>n.id));
   // ---- degree, from what this picture actually DRAWS -----------------------
@@ -6814,6 +6983,13 @@ function buildMapModel(dim){
   for(const x of aggregates) if(!GMAP.open.has(x.source)) touch(x.target, x.source);
   for(const ep of openEps) for(const tid of (GMAP.epTables.get(ep)||new Map()).keys()) touch(tid, ep);
   const degreeOf=(n)=>{
+    // A node from another pack keeps the degree the ANSWER gave it: this
+    // picture never folds that cluster, so the drawing and the answer cannot
+    // disagree about how connected it is. A project skeleton stands for the
+    // routes hanging off it, exactly as a folded group stands for its
+    // endpoints.
+    if(n.kind==='project') return n.endpoints||0;
+    if(n.project) return n.degree||0;
     // A SCREEN'S SIZE IS WHAT IT REACHES, and that is the answer's own number:
     // how many routes the forward walk found, whether or not their groups are
     // open. Counting the LINES instead would shrink a screen every time the
@@ -6828,12 +7004,23 @@ function buildMapModel(dim){
   };
   const pane=mapWrapEl();
   const paneW=(pane&&pane.clientWidth)||900, paneH=(pane&&pane.clientHeight)||620;
+  // One band per connected project, in the order their hues were assigned, and
+  // a running index inside each band so a cluster seeds as one ellipse.
+  const fedBand=new Map(GMAP.fedProjects.map((x, i)=>[x, i]));
+  const fedSize=new Map(), fedSeq=new Map();
+  for(const n of vis){ const f=mapFedOf(n); if(f) fedSize.set(f, (fedSize.get(f)||0)+1); }
   GMAP.nodes=vis.map((n, i)=>{
     const p=cache.get(n.id);
     const degree=degreeOf(n);
     const r=mapNodeRadius(n.kind, degree);
-    const m={ id:n.id, kind:n.kind, label:n.label, degree, data:n,
-      r, val:r*r, val3:r*r*r, col:kindColor(n.kind), fill:kindFill(n.kind), tip:mapNodeTip({...n, degree}) };
+    // THE PROJECT CHIP IS PART OF THE NAME on a picture, because a picture has
+    // no room for a second element beside a five-pixel disc. The skeleton node
+    // is already named after its project and does not repeat it.
+    const fed=mapFedOf(n);
+    const label=(fed && n.kind!=='project') ? n.label+'  ['+fed+']' : n.label;
+    const m={ id:n.id, kind:n.kind, label, degree, data:n, fed,
+      r, val:r*r, val3:r*r*r, col:kindColor(n.kind), fill:kindFill(n.kind),
+      ring:fed ? GMAP.fedColor(fed) : null, tip:mapNodeTip({...n, degree}) };
     // A NODE THIS PICTURE HAS ALREADY PLACED COMES BACK PINNED. That is the
     // whole of the stability rule: the forces cannot move it, so an unfold, a
     // fold, a spotlight or a trip through Around leaves it exactly where the
@@ -6841,6 +7028,10 @@ function buildMapModel(dim){
     if(p){
       m.x=p.x; m.y=p.y; m.z=p.z||0;
       if(p.pin){ m.fx=p.x; m.fy=p.y; if(dim==='3d') m.fz=p.z||0; }
+    }
+    else if(fed){
+      const k=fedSeq.get(fed)||0; fedSeq.set(fed, k+1);
+      mapSeedFederated(m, fedBand.get(fed)||0, fedBand.size, k, fedSize.get(fed)||1, paneW, paneH);
     }
     else if(n.kind==='endpoint') mapSeedSatellite(m, GMAP.epGroup.get(n.id), cache);
     else if(n.kind==='statement') mapSeedSatellite(m, stmtAnchor.get(n.id), cache);
@@ -6876,8 +7067,27 @@ function buildMapModel(dim){
     }
   }
   for(const x of screenLinks.values()) raw.push(x);
+  // A CROSSING FOLDS THE WAY A SCREEN'S LINE DOES. While the calling endpoint's
+  // group is closed, the line leaves the GROUP and says how many routes stand
+  // behind it; opening the group moves it onto the route itself. One rule for
+  // both, so the picture never shows a line leaving a box that is not there.
+  const crossings=new Map();
   for(const l of a.links){
-    if(l.kind==='joins') raw.push(l);
+    if(l.kind!=='calls' || !l.federated) continue;
+    const source = openEps.has(l.source) ? l.source : (GMAP.epGroup.get(l.source) || l.source);
+    const k=source+' '+l.target;
+    let x=crossings.get(k);
+    if(!x){ x={...l, source, routes:0}; crossings.set(k, x); }
+    x.routes+=1;
+    if(mapGradeRank(l.grade)>mapGradeRank(x.grade)) x.grade=l.grade;
+  }
+  for(const x of crossings.values()) raw.push(x);
+  for(const l of a.links){
+    if(l.kind==='calls' && l.federated) continue;   // already folded, above
+    // A connected project's own line is drawn whenever its cluster is, because
+    // that cluster is never folded.
+    if(l.project) raw.push(l);
+    else if(l.kind==='joins') raw.push(l);
     else if(l.kind==='member'){ if(openEps.has(l.target)) raw.push(l); }
     else if(l.kind==='touches'){ if(openEps.has(l.source)) raw.push(l); }
     else if(l.kind==='executes'){ if(openEps.has(l.source) || openStmts.has(l.source)) raw.push(l); }
@@ -6923,7 +7133,14 @@ function mapLabelFloor(nodes){
   if(!radii.length) return 0;
   return radii[Math.min(radii.length-1, Math.floor(radii.length*GMAP_LABEL_PCTL))];
 }
-const mapRestLabel=(n)=> n.kind==='group' || (mapLabelEligible(n) && n.r>=(GMAP.labelR||0));
+// A PORTAL IS ALWAYS NAMED. It is another project's route, and the route string
+// is the whole of what that node says. The label-follows-size rule hides it,
+// because an endpoint is a satellite and satellites are small - which left the
+// one node on the map that explains why a second project is there with no name
+// on it. There is one portal per crossing, so naming every one costs nothing.
+const mapIsPortal=(n)=> !!(n && n.data && n.data.portal === true);
+const mapRestLabel=(n)=> n.kind==='group' || n.kind==='project' || mapIsPortal(n)
+  || (mapLabelEligible(n) && n.r>=(GMAP.labelR||0));
 
 // The highlight: a node, the links that touch it, and the neighbours on their
 // far ends. Everything else is dimmed — never removed, so the picture never
@@ -7479,7 +7696,22 @@ function mapFrameReset(ctx, k){
 function mapDrawNode2D(n, ctx, k){
   const lit=!!(GMAP.lit && GMAP.lit.nodes.has(n.id));
   gfDot(ctx, n.x, n.y, n.r, k, { color:mapNodeFill(n), lit, glow:true });
+  mapDrawFedRing(n, ctx, k);
   mapDrawLabel2D(n, ctx, k);
+}
+// THE RING THAT SAYS "THIS CAME FROM ANOTHER PACK" (RM45). The disc keeps its
+// KIND's fill, so a table still reads as a table; the ring around it carries
+// that project's own hue. It is drawn outside the disc's own ground hairline,
+// so two nodes that have settled against each other still part cleanly, and it
+// dims with everything else under a spotlight.
+function mapDrawFedRing(n, ctx, k){
+  if(!n.ring) return;
+  const on = !GMAP.lit || GMAP.lit.nodes.has(n.id);
+  ctx.save();
+  ctx.globalAlpha = on ? 1 : GMAP_NODE_DIM;
+  ctx.beginPath(); ctx.arc(n.x, n.y, Math.max(0.6, n.r)+2.4/k, 0, 2*Math.PI);
+  ctx.lineWidth=1.6/k; ctx.strokeStyle=n.ring; ctx.stroke();
+  ctx.restore();
 }
 // The glow the signal theme gives a LIT line — the canvas equivalent of the
 // `--glow` shadow the CSS uses. Drawn over the library's own stroke, along the
@@ -7602,10 +7834,14 @@ const GMAP_LABEL_MS=55;        // relayout at most this often while orbiting
 
 function mapLabelOrder3D(){
   const set=GMAP.lit ? GMAP.litLabels : GMAP.restLabels;
-  const KR={group:0, table:1, statement:2, endpoint:3};
+  const KR={group:0, project:1, table:2, statement:3, endpoint:4};
   const out=[];
   for(const id of set){ const n=GMAP.byId.get(id); if(n) out.push(n); }
-  out.sort((a,b)=> (b.degree-a.degree) || ((KR[a.kind]??9)-(KR[b.kind]??9)) || (a.id<b.id?-1:a.id>b.id?1:0));
+  // The skeleton of a connected project and its portals go FIRST, whatever
+  // their degree: they are few, and the cap below is 80. A portal that lost its
+  // name to a busier table would leave the reader a cluster with no route on it.
+  const first=(n)=> (n.kind==='project' || mapIsPortal(n)) ? 0 : 1;
+  out.sort((a,b)=> (first(a)-first(b)) || (b.degree-a.degree) || ((KR[a.kind]??9)-(KR[b.kind]??9)) || (a.id<b.id?-1:a.id>b.id?1:0));
   if(GMAP.lit){ const i=out.findIndex(n=>n.id===GMAP.lit.id); if(i>0) out.unshift(out.splice(i,1)[0]); }
   return out.slice(0, GMAP_REST_CAP);
 }
@@ -8355,6 +8591,22 @@ function renderMapChips(){
      on ? t('chip.sql.on',{n:total.get('statement')||0}) : t('chip.sql.off')]);
   sb.setAttribute('aria-pressed', String(on));
   chips.push(sb);
+  // ...and the CONNECTED PROJECTS, which is a filter and not a re-ask: the
+  // answer already carries them (federate:false would be a different answer,
+  // and this switch is about the drawing). Offered only where a crossing
+  // actually reached something, so a project that talks to nobody has no dead
+  // control on its toolbar.
+  const f=a.summary.federated;
+  if(f && f.nodes>0){
+    const fon=GMAP.fed;
+    const fb=el('button',{className:'chip'+(fon?'':' off'),
+      title:t(fon?'chip.fed.on.title':'chip.fed.off.title',{n:f.nodes, k:f.projects.length}),
+      onclick:()=>{ GMAP.fed=!fon; lsSet(FED_KEY, GMAP.fed?'on':'off'); GMAP.sel=null; renderMap(); }},
+      [kindDot('project', 11),
+       fon ? t('chip.fed.on',{n:f.nodes}) : t('chip.fed.off',{n:f.nodes})]);
+    fb.setAttribute('aria-pressed', String(fon));
+    chips.push(fb);
+  }
   // …and the SCREENS layer, the same kind of control: without it the engine
   // sent no screen at all, so turning it on RE-ASKS. It is offered only where
   // this pack HAS a screen axis, which the overview answer says and this page
@@ -8395,6 +8647,13 @@ function renderMapCounts(){
     kids.push('\u00a0\u00a0', drawnEps
       ? say('gcount.unfolded',{n:drawnEps, g:GMAP.open.size, n2:folded})
       : say('gcount.folded',{n:folded}));
+  }
+  // WHAT CAME FROM SOMEWHERE ELSE. Counted off the answer, so the line says the
+  // same thing whether the layer is drawn or hidden, and it says which it is.
+  const fed=s.federated;
+  if(fed && fed.nodes>0){
+    kids.push('\u00a0\u00a0', say('gcount.federated',{n:fed.nodes, k:fed.projects.length}));
+    if(!GMAP.fed) kids.push(' '+t('gcount.federated.off'));
   }
   kids.push('\u00a0\u00a0',say('gcount.links',{n:GMAP.links.length}));
   const byKind={};
@@ -8455,6 +8714,13 @@ function mapNodeCard(id){
   const n=GMAP.byId.get(id);
   if(!n) return el('div',{className:'panel',textContent:t('map.gone')});
   const d=n.data, key=id.slice(id.indexOf(':')+1);
+  // A NODE FROM ANOTHER PACK IS NOT THIS PROJECT'S TO ANSWER. Every button
+  // below asks the project on screen, and this project does not have that
+  // file, that route or that table: it would come back "unknown". So the card
+  // names the project and offers the one thing that IS true here, which is to
+  // go there. The same handoff `openFlowFor` makes from a federated lane row.
+  const fed=n.fed;
+  if(fed) return mapFedCard(n, id, key, fed);
   const btns=el('div',{style:'margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'});
   if(n.kind!=='group'){
     btns.append(graphSourceButton(id));
@@ -8499,6 +8765,45 @@ function mapNodeCard(id){
     ...mapConnectionLists(id),
   ]);
 }
+/**
+ * The card for a node that came from another registered project.
+ *
+ * @param {object} n    the view model node
+ * @param {string} id   its namespaced id on this picture
+ * @param {string} key  the id it has IN ITS OWN PROJECT (the namespace and the
+ *                      kind prefix stripped), which is what the hash carries
+ * @param {string} project
+ */
+function mapFedCard(n, id, key, project){
+  const d=n.data;
+  // Which tab answers this kind over there. A route is a Flow question, a table
+  // an ERD one, and anything else lands on that project's Overview, which is
+  // the one page every project has.
+  const to = n.kind==='endpoint' ? { tab:'flow', pick:'endpoint:'+key }
+    : n.kind==='table' ? { tab:'erd', pick:'table:'+key }
+      : n.kind==='statement' ? { tab:'explore', pick:'statement:'+key }
+        : { tab:'overview', pick:null };
+  const facts=[el('span',{className:'tag fproj',title:project+'  '+t('chain.tag.project.title'),textContent:project})];
+  if(n.kind==='endpoint' && d.httpMethod) facts.push(el('span',{className:'tag',textContent:d.httpMethod}));
+  if(n.kind==='endpoint' && d.portal) facts.push(el('span',{className:'count',textContent:t('map.card.portal')}));
+  if(n.kind==='table') facts.push(el('span',{className:'count',textContent:t('tip.columns',{n:d.columnCount})}));
+  if(n.kind==='project') facts.push(el('span',{className:'count',textContent:t('tip.fedskeleton',{n:d.endpoints||0})}));
+  return el('div',{className:'panel fcard'},[
+    el('div',{className:'srchead'},[
+      el('span',{className:'count',textContent:t('map.card.head',{kind:kindName(n.kind), n:n.degree})}),
+      el('button',{className:'mini', textContent:t('map.card.clear'), onclick:()=>mapClear()}) ]),
+    el('code',{className:'id', style:'display:block;word-break:break-all;margin:7px 0 4px'},[key]),
+    d.comment ? el('div',{className:'comment',textContent:'\u201c'+d.comment+'\u201d'}) : null,
+    el('div',{className:'comment',textContent:t(n.kind==='project' ? 'map.card.project' : 'map.card.fedproject',{p:project})}),
+    el('div',{className:'fsub'}, facts),
+    el('div',{style:'margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'},[
+      el('button',{className:'mini', textContent:t('map.card.open',{p:project}),
+        title:t('map.card.open.title',{p:project}),
+        onclick:()=>{ location.hash = hashFor({ project, tab:to.tab, pick:to.pick }); }}) ]),
+    ...mapConnectionLists(id),
+  ]);
+}
+
 // What this node is joined to IN THIS PICTURE, grouped by the far end's kind.
 // Each row carries the link's own access and grade, so a candidate chain reads
 // as a candidate here as well as in the tooltip.
@@ -8512,7 +8817,7 @@ function mapConnectionLists(id){
     if(!rows){ rows=[]; groups.set(kind,rows); }
     rows.push({l, other, out, label:on?on.label:shortId(other)});
   }
-  const order=['screen','group','endpoint','statement','table'];
+  const order=['screen','group','project','endpoint','statement','table'];
   const out=[];
   for(const kind of order){
     const rows=groups.get(kind); if(!rows) continue;
@@ -8727,7 +9032,15 @@ function renderMapLegend(boxId){
     // The GRADE in this row is the engine's word and is interpolated, never
     // translated: a translated grade would be a grade this page invented.
     line(cssVar('--write'),t('mapleg.dashed',{grade:'SOUND_SET'}), true,
-      t('mapleg.dashed.title',{grade:'SOUND_SET'})));
+      t('mapleg.dashed.title',{grade:'SOUND_SET'})),
+    // The connected-projects key, drawn only where this picture has one: a
+    // colour with nothing wearing it is decoration.
+    ...((GMAP.fedProjects||[]).length ? [
+      el('b',{style:'margin-left:8px',textContent:t('mapleg.connected')}),
+      el('span',{title:t('mapleg.fedring.title')},[kindDot('project',11), t('mapleg.project')]),
+      ...GMAP.fedProjects.map((p)=> el('span',{title:t('mapleg.fedring.title')},[
+        el('span',{className:'fedring',style:'border-color:'+GMAP.fedColor(p)}), ' '+p])),
+    ] : []));
 }
 
 // ---------- ERD tab — one whole-schema graph; click to spotlight (Obsidian-style) ----------
@@ -8755,6 +9068,10 @@ function erdDegrees(a){ const d=new Map(); a.tables.forEach(t=>d.set(t.table,0))
 // from — derived once per draw, so the three can never disagree about what
 // colour a family is.
 const ERD={ api:null, famColor:null, sideSeq:0, answer:null, iso:[], cols:new Map(),
+  // THE CONNECTED PROJECTS (RM45): one cluster per registered project a request
+  // from this one reaches. `fedColor` is the ONE place a project's hue is
+  // decided, so the frames, the markers and the legend cannot disagree.
+  clusters:[], fedColor:()=>null, fitBox:null, fitMargin:0, fitScale:1,
   nodes:[], links:[], byId:new Map(), incident:new Map(),
   sel:null, hover:null, lit:null, labels:new Map(), always:new Set(), labelAll:false, legend:null,
   // What the placer ACTUALLY drew, the last frame it ran at rest — {wanted,
@@ -8835,6 +9152,84 @@ const ERD_DETAIL_K=1.05;
 // the reader think the unnamed tables have no names.
 const ERD_LABEL_ALL_MAX=60;
 
+// ---- the connected projects on the ERD (RM45) -------------------------------
+// A sibling's tables are ITS tables: they are namespaced here for the same
+// reason the map namespaces its nodes, so two services that both have an
+// `orders` table are two rectangles and never one.
+const erdFedId=(project, table)=> project+'|'+table;
+const erdViaId=(project, route)=> 'via:'+project+'|'+route;
+// The reader's own switch, remembered. The DEFAULT depends on the answer: a
+// project with no table of its own would otherwise open on an empty sheet, so
+// there the connected projects start ON; a project with a schema of its own
+// opens on that schema, because that is what the reader asked to see.
+const ERD_FED_KEY='cascade.viewer.erdconnected';
+function erdFedOn(a){
+  if(!((a && a.federated) || []).length) return false;
+  const v=lsGet(ERD_FED_KEY);
+  if(v==='on' || v==='off') return v==='on';
+  return (a.tables||[]).length===0;
+}
+function erdFedToggle(){
+  const a=ERD.answer; if(!a) return;
+  lsSet(ERD_FED_KEY, erdFedOn(a) ? 'off' : 'on');
+  renderErdGraph(a);
+  renderErdSideOverview();
+}
+/** One entry per connected project the reader has switched on. */
+function erdClusters(a){
+  if(!erdFedOn(a)) return [];
+  return (a.federated||[]).map((f)=>({
+    project:f.project, buildDigest:f.buildDigest||null,
+    tables:f.tables||[], relationships:f.relationships||[], via:f.via||[],
+    color:null, box:null,
+  }));
+}
+/** A cluster's rectangles and its route markers. */
+function erdClusterNodes(c){
+  const deg=new Map((c.tables||[]).map((x)=>[x.table,0]));
+  for(const r of c.relationships){ deg.set(r.from,(deg.get(r.from)||0)+1); deg.set(r.to,(deg.get(r.to)||0)+1); }
+  for(const v of c.via) for(const tb of (v.tables||[])) deg.set(tb,(deg.get(tb)||0)+1);
+  const out=[];
+  for(const x of c.tables){
+    const d=deg.get(x.table)||0, r=erdRadius(d);
+    out.push({ id:erdFedId(c.project, x.table), label:x.table, comment:x.comment, cols:x.columnCount,
+      deg:d, rank:d, r, val:r*r, color:c.color, project:c.project, table:x.table, comp:0, x:0, y:0,
+      fontSize:erdLabelSize(r), fontWeight:d>=3?500:400,
+      tip:x.table+'  ['+c.project+']'+(x.comment?'  '+x.comment:'')+'  ['+x.columnCount+' cols\u00a0\u00a0'+d+' rel]' });
+  }
+  for(const v of c.via){
+    const route=v.route.method+' '+v.route.path;
+    const r=ERD_R_MIN+1;
+    out.push({ id:erdViaId(c.project, route), label:route, comment:null, cols:0,
+      deg:(v.tables||[]).length, rank:0, r, val:r*r, color:c.color, project:c.project,
+      marker:true, route, grade:v.grade, fromEndpoint:v.fromEndpoint, ambiguous:v.ambiguous===true,
+      comp:0, x:0, y:0, fontSize:ERD_LABEL_MIN, fontWeight:500,
+      tip:route+'  ['+c.project+']  '+t('erd.via.tip',{grade:v.grade}) });
+  }
+  return out;
+}
+/** A cluster's own joins, and the dashed connectors that are the HTTP call. */
+function erdClusterLinks(c, topWitness){
+  const out=[];
+  for(const r of c.relationships){
+    const sid=erdFedId(c.project, r.from), tid=erdFedId(c.project, r.to);
+    out.push({ sid, tid, source:sid, target:tid, project:c.project,
+      cardinality:r.cardinality||'?:?', columns:r.columns||[], statements:r.statements,
+      w:witnessWidth(r.statements||1, topWitness, 1, 3),
+      tip:r.from+' '+(r.cardinality||'?:?')+' '+r.to+'  ['+(r.columns||[]).join(', ')+']  ('+r.statements+' stmt)  ['+c.project+']' });
+  }
+  for(const v of c.via){
+    const route=v.route.method+' '+v.route.path;
+    for(const tb of (v.tables||[])){
+      const sid=erdViaId(c.project, route), tid=erdFedId(c.project, tb);
+      out.push({ sid, tid, source:sid, target:tid, project:c.project, via:true, label:route,
+        grade:v.grade, cardinality:null, columns:[], statements:0, w:1.2,
+        tip:route+' \u2192 '+tb+'  ['+c.project+']  '+t('erd.via.tip',{grade:v.grade}) });
+    }
+  }
+  return out;
+}
+
 function renderErdGraph(a){
   const wrap=byId('erdwrap');
   const W=wrap.clientWidth||900, H=wrap.clientHeight||620;
@@ -8852,21 +9247,35 @@ function renderErdGraph(a){
   // the strip under the canvas rather than being dropped on the floor.
   const joined=a.tables.filter(t=>(deg.get(t.table)||0)>0);
   const isolated=a.tables.filter(t=>!(deg.get(t.table)||0));
+  // THE CONNECTED PROJECTS, decided once here so the nodes, the lines, the
+  // frames and the legend all read the same list.
+  const clusters=erdClusters(a);
+  ERD.clusters=clusters;
+  ERD.fedColor=fedRingColor(clusters.map((c)=>c.project));
+  for(const c of clusters) c.color=ERD.fedColor(c.project);
+
   ERD.nodes=joined.map(t=>{ const d=deg.get(t.table)||0, r=erdRadius(d);
     return { id:t.table, label:t.table, comment:t.comment, cols:t.columnCount, deg:d, rank:d,
       r, val:r*r, color:famColor(t.table), comp:0, x:0, y:0,
       fontSize:erdLabelSize(r), fontWeight:d>=3?500:400,
       tip:t.table+(t.comment?' — '+t.comment:'')+'  ['+t.columnCount+' cols\u00a0\u00a0'+d+' rel]' }; });
+  for(const c of clusters) ERD.nodes.push(...erdClusterNodes(c));
   ERD.byId=new Map(ERD.nodes.map(n=>[n.id,n]));
   // How many statements witness a join is evidence, and the line says so: one
   // statement draws the thinnest line, the best-witnessed join the thickest.
-  const topWitness=a.relationships.reduce((m,r)=>Math.max(m, r.statements||1), 1);
-  ERD.links=a.relationships
+  // Counted over EVERY cluster, so one scale reads across the whole sheet.
+  const topWitness=[a.relationships, ...clusters.map((c)=>c.relationships)]
+    .reduce((m,rs)=> rs.reduce((k,r)=>Math.max(k, r.statements||1), m), 1);
+  const rawLinks=a.relationships
     .filter(r=>ERD.byId.has(r.from) && ERD.byId.has(r.to))
-    .map((r,i)=>({ i, sid:r.from, tid:r.to, source:r.from, target:r.to,
+    .map((r)=>({ sid:r.from, tid:r.to, source:r.from, target:r.to,
       cardinality:r.cardinality||'?:?', columns:r.columns||[], statements:r.statements,
       w:witnessWidth(r.statements||1, topWitness, 1, 3),
       tip:r.from+' '+(r.cardinality||'?:?')+' '+r.to+'  ['+(r.columns||[]).join(', ')+']  ('+r.statements+' stmt)' }));
+  for(const c of clusters) {
+    for(const l of erdClusterLinks(c, topWitness)) if(ERD.byId.has(l.sid) && ERD.byId.has(l.tid)) rawLinks.push(l);
+  }
+  ERD.links=rawLinks.map((l,i)=>({ ...l, i }));
   ERD.incident=new Map(ERD.nodes.map(n=>[n.id,[]]));
   for(const l of ERD.links){ ERD.incident.get(l.sid).push(l.i); ERD.incident.get(l.tid).push(l.i); }
   erdLayout();
@@ -8892,13 +9301,159 @@ function renderErdGraph(a){
 // Where every table goes. ONE pure call: the same pack in, the same picture out,
 // on every load — and the renderer is handed the answer as fixed coordinates
 // rather than a simulation to run under the reader.
+// The air a cluster's frame leaves around its own tables, the deeper strip at
+// its TOP that the project's name sits in, and the air between two regions on
+// the sheet. The title is inside its frame, so the frame has to leave room for
+// it: drawn above the frame it was the first thing the canvas edge cut off.
+const ERD_CLUSTER_PAD=22, ERD_CLUSTER_TOP=32, ERD_REGION_GAP=34;
+// Clear air inside the pane, on every side, that no frame may sit in.
+const ERD_FIT_MARGIN=24;
+// The smallest a table may be drawn once the fit has shrunk it. Under this it
+// stops being a rectangle you can point at.
+const ERD_R_MIN_FIT=2;
 function erdLayout(){
+  const clusters=ERD.clusters||[];
+  if(!clusters.length){
+    erdPlaceIn(ERD.nodes, ERD.links, {cx:0, cy:0, w:ERD.W, h:ERD.H});
+    ERD.fitBox=null;
+    return;
+  }
+  // EVERY CLUSTER IS INSIDE THE PANE, exactly as this project's own tables are.
+  // Each region is settled ON ITS OWN - two services share no foreign key, so
+  // there is nothing between them for a layout to solve, and settling them
+  // together would let the collision sweep shuffle two schemas into one cloud -
+  // and then the regions are PACKED and the whole drawing is fitted to the pane
+  // with its frames and its route markers inside the fit. Placing them at fixed
+  // fractions of the pane instead put the second cluster off the bottom edge of
+  // a 1190 by 650 pane and left the middle of the sheet empty.
+  const own=ERD.nodes.filter((n)=>!n.project);
+  const regions=[];
+  if(own.length){
+    erdPlaceIn(own, ERD.links.filter((l)=>!l.project), {cx:0, cy:0, w:ERD.W*0.55, h:ERD.H});
+    regions.push({nodes:own, pad:0, top:0});
+  }
+  for(const c of clusters){
+    const nodes=ERD.nodes.filter((n)=>n.project===c.project);
+    const links=ERD.links.filter((l)=>l.project===c.project);
+    // THE BOX A CLUSTER IS SETTLED IN FOLLOWS ITS OWN SIZE, not a share of the
+    // pane: two tables spread across half a screen is mostly empty screen.
+    const side=Math.max(160, Math.sqrt(Math.max(1, nodes.length))*110);
+    erdPlaceIn(nodes, links, {cx:0, cy:0, w:side, h:side});
+    regions.push({nodes, pad:ERD_CLUSTER_PAD, top:ERD_CLUSTER_TOP, cluster:c});
+  }
+  erdPackRegions(regions, ERD.W, ERD.H);
+}
+/**
+ * Lay the settled regions out beside each other and fit the result to the pane.
+ *
+ * Rows when the pane is wider than it is tall, columns when it is not, wrapping
+ * when a line is full: the same shelf the component packer uses, on regions
+ * rather than components.
+ */
+function erdPackRegions(regions, W, H){
+  const boxes=[];
+  for(const r of regions){
+    const b=erdBoxOf(r.nodes, r.pad, r.top);
+    if(b) boxes.push({ nodes:r.nodes, b, w:b.x2-b.x1, h:b.y2-b.y1 });
+  }
+  if(!boxes.length){
+    ERD.fitBox={x1:-W/2, y1:-H/2, x2:W/2, y2:H/2}; ERD.fitMargin=ERD_FIT_MARGIN; ERD.fitScale=1;
+    return;
+  }
+  const across = W>=H;
+  const limit = across ? W : H;
+  let along=0, line=0, thickest=0;
+  for(const x of boxes){
+    const size = across ? x.w : x.h;
+    if(along>0 && along+ERD_REGION_GAP+size>limit){ line += thickest+ERD_REGION_GAP; along=0; thickest=0; }
+    const tx = across ? along : line;
+    const ty = across ? line : along;
+    const dx = tx-x.b.x1, dy = ty-x.b.y1;
+    for(const n of x.nodes) gfPin(n, n.x+dx, n.y+dy);
+    along += size+ERD_REGION_GAP;
+    thickest = Math.max(thickest, across ? x.h : x.w);
+  }
+  erdFitAll(regions, W, H);
+  // The frames are measured LAST, off the placed and fitted nodes, so what the
+  // canvas draws is what the fit was computed against.
+  for(const r of regions) if(r.cluster) r.cluster.box=erdBoxOf(r.nodes, r.pad, r.top);
+}
+/**
+ * THE WHOLE DRAWING, CENTRED ON THE PANE AND SHRUNK ONLY IF IT HAS TO BE.
+ *
+ * FIT, NEVER MAGNIFY. A drawing smaller than the pane is centred at 1:1 and
+ * left at the size it was laid out to be read at. Blown up to fill the pane
+ * instead, two tiny clusters put their frames on both pane edges at once and
+ * pushed each cluster's own name off the canvas.
+ *
+ * The pads are drawn in graph units and do not scale with the content, so they
+ * are taken OFF the budget rather than scaled with it: that is what keeps a
+ * frame inside the margin however far the content had to shrink. Where it does
+ * shrink, the radii shrink with the distances, so the gaps the collision sweep
+ * opened stay open and "a bigger table has more relationships" still reads.
+ */
+function erdFitAll(regions, W, H){
+  const M=ERD_FIT_MARGIN;
+  ERD.fitBox={x1:-W/2, y1:-H/2, x2:W/2, y2:H/2};
+  ERD.fitMargin=M;
+  ERD.fitScale=1;
+  let x1=Infinity, y1=Infinity, x2=-Infinity, y2=-Infinity;
+  let padX=0, padTop=0, padBottom=0;
+  for(const r of regions){
+    for(const n of r.nodes){
+      x1=Math.min(x1, n.x-n.r); y1=Math.min(y1, n.y-n.r);
+      x2=Math.max(x2, n.x+n.r); y2=Math.max(y2, n.y+n.r);
+    }
+    padX=Math.max(padX, r.pad||0);
+    padTop=Math.max(padTop, r.top||0);
+    padBottom=Math.max(padBottom, r.pad||0);
+  }
+  if(!Number.isFinite(x1)) return;
+  // A node that shrinks past ERD_R_MIN_FIT keeps that much of itself, so the
+  // budget leaves room for it: without the reserve a heavily shrunk cluster
+  // overflowed the margin by exactly the floored radius.
+  const roomW=Math.max(1, W-2*M-2*padX-2*ERD_R_MIN_FIT);
+  const roomH=Math.max(1, H-2*M-padTop-padBottom-2*ERD_R_MIN_FIT);
+  const s=Math.min(1, roomW/Math.max(1, x2-x1), roomH/Math.max(1, y2-y1));
+  const cx=(x1+x2)/2, cy=(y1+y2)/2;
+  // The title strip sits at the TOP of a frame only, so centring the content
+  // would leave the FRAME low by half of it.
+  const shift=(padTop-padBottom)/2;
+  for(const r of regions) for(const n of r.nodes){
+    gfPin(n, (n.x-cx)*s, (n.y-cy)*s+shift);
+    if(s<1){ n.r=Math.max(ERD_R_MIN_FIT, n.r*s); n.val=n.r*n.r; }
+  }
+  ERD.fitScale=s;
+}
+/** Settle these nodes on their own and centre the result on the box. */
+function erdPlaceIn(nodes, links, box){
+  if(!nodes.length) return;
   const lay=settleComponents(
-    ERD.nodes.map(n=>({id:n.id, r:n.r})),
-    ERD.links.map(l=>({from:l.sid, to:l.tid})),
-    {width:ERD.W, height:ERD.H, gap:ERD_GAP, seed:ERD_SEED});
+    nodes.map(n=>({id:n.id, r:n.r})),
+    links.map(l=>({from:l.sid, to:l.tid})),
+    {width:box.w, height:box.h, gap:ERD_GAP, seed:ERD_SEED});
   const at=new Map(lay.nodes.map(p=>[p.id,p]));
-  for(const n of ERD.nodes){ const p=at.get(n.id); if(p){ n.comp=p.comp; gfPin(n, p.x, p.y); } }
+  let x1=Infinity, y1=Infinity, x2=-Infinity, y2=-Infinity;
+  for(const n of nodes){ const p=at.get(n.id); if(!p) continue;
+    x1=Math.min(x1,p.x-n.r); y1=Math.min(y1,p.y-n.r);
+    x2=Math.max(x2,p.x+n.r); y2=Math.max(y2,p.y+n.r); }
+  if(!Number.isFinite(x1)) return;
+  const dx=box.cx-(x1+x2)/2, dy=box.cy-(y1+y2)/2;
+  for(const n of nodes){ const p=at.get(n.id); if(p){ n.comp=p.comp; gfPin(n, p.x+dx, p.y+dy); } }
+}
+/**
+ * The rectangle a set of settled nodes occupies, with `pad` of air around it
+ * and `top` of air above it (the strip a cluster's own name is written in).
+ */
+function erdBoxOf(nodes, pad, top){
+  const p=pad||0, tp=(top==null ? p : top);
+  let x1=Infinity, y1=Infinity, x2=-Infinity, y2=-Infinity;
+  for(const n of nodes){
+    x1=Math.min(x1,n.x-n.r); y1=Math.min(y1,n.y-n.r);
+    x2=Math.max(x2,n.x+n.r); y2=Math.max(y2,n.y+n.r);
+  }
+  if(!Number.isFinite(x1)) return null;
+  return {x1:x1-p, y1:y1-tp, x2:x2+p, y2:y2+p};
 }
 function mountErd(host, w, h){
   const g=gfMount(host, w, h);
@@ -8911,7 +9466,7 @@ function mountErd(host, w, h){
     // there is no simulation to pull it back, and none to fight.
     .onNodeDragEnd((n)=>{ gfPin(n, n.x, n.y); erdRepaint(); })
     .onEngineStop(()=>{ if(ERD.fitDone || ERD.api!==g) return; ERD.fitDone=true;
-      try{ g.zoomToFit(0, 40); }catch(e){} })
+      try{ erdFitView(g); }catch(e){} })
     .graphData({nodes:ERD.nodes, links:ERD.links});
   if(!host.__tipbound){ host.__tipbound=true; gtip.follow(host, ()=>erdHover(null)); }
   ERD.api=g;
@@ -8925,6 +9480,24 @@ function erdStop(){
   ERD.api=null;
   const h=byId('erdcanvas'); if(h) h.replaceChildren();
   gtip.hide();
+}
+/**
+ * FIT THE VIEW, AND NEVER MAGNIFY PAST 1:1 WHERE A CONNECTED PROJECT IS DRAWN.
+ *
+ * `zoomToFit` scales a SMALL drawing up until it fills the pane. On a project
+ * whose whole sheet is two clusters of one table that put both frames on the
+ * pane's own edges and drove each cluster's name off the canvas. The federated
+ * layout is already fitted to the pane in graph units (erdFitAll), so there is
+ * nothing left for a magnification to add.
+ *
+ * A pack drawing its OWN schema keeps the old behaviour exactly: a six-table
+ * schema is meant to fill the sheet, and that picture is unchanged.
+ */
+function erdFitView(g){
+  g.zoomToFit(0, 40);
+  if(!(ERD.clusters||[]).length) return;
+  const k = typeof g.zoom==='function' ? g.zoom() : null;
+  if(typeof k==='number' && k>1) g.zoom(1, 0);
 }
 const erdRepaint=()=> gfRepaint(ERD.api, erdDrawNode);
 // The spotlight: a table, the joins that touch it, and the tables on their far
@@ -8972,10 +9545,37 @@ function erdFramePre(ctx, k){
   ERD.frames++;
   ERD.frame={labels:0, glyphs:0, cards:0};
   ERD.detail = k>=ERD_DETAIL_K || !!ERD.lit;
+  erdDrawClusterFrames(ctx, k);
   ERD.labels=gfPlaceLabels(ctx, k, ERD.nodes,
-    (n)=> ERD.lit ? ERD.lit.nodes.has(n.id) : (ERD.labelAll || ERD.always.has(n.id) || n.r*k>12),
-    (n)=> (ERD.lit && n.id===ERD.lit.id) ? 1e12 : n.rank);
+    // A ROUTE MARKER IS ALWAYS NAMED. It is the only thing on the sheet that
+    // says HOW the cluster beside it was reached, and an unnamed one is a dot
+    // with three dashed lines coming out of it.
+    (n)=> ERD.lit ? ERD.lit.nodes.has(n.id) : (n.marker || ERD.labelAll || ERD.always.has(n.id) || n.r*k>12),
+    (n)=> (ERD.lit && n.id===ERD.lit.id) ? 1e12 : (n.marker ? 1e9 : n.rank));
   erdCountPlaced();
+}
+// THE FRAME AROUND A CONNECTED PROJECT. Drawn UNDER everything (this runs
+// before the links and the nodes), in that project's own hue, with its name at
+// the top left. The frame is what says "these tables are not ours": without it
+// two schemas on one sheet read as one schema in two clouds.
+function erdDrawClusterFrames(ctx, k){
+  for(const c of (ERD.clusters||[])){
+    const b=c.box; if(!b) continue;
+    ctx.save();
+    ctx.globalAlpha = ERD.lit ? ERD_DIM : 0.55;
+    ctx.strokeStyle=c.color; ctx.lineWidth=1.2/k;
+    ctx.setLineDash([6/k, 4/k]);
+    ctx.strokeRect(b.x1, b.y1, b.x2-b.x1, b.y2-b.y1);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = ERD.lit ? ERD_DIM : 1;
+    // THE NAME IS INSIDE ITS OWN FRAME, in the strip the box reserves for it.
+    // Drawn above the frame it was the first thing the canvas edge cut off, and
+    // `customers-service` read as `mers-service`.
+    ctx.font=gfFont(11/k, 600);
+    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=c.color;
+    ctx.fillText(c.project, b.x1+7/k, b.y1+6/k);
+    ctx.restore();
+  }
 }
 // How many of the names this mode PROMISES actually landed, counted off the map
 // the placer just returned. Only at REST: a spotlight asks for a different set
@@ -9014,7 +9614,10 @@ function erdDrawNode(n, ctx, k){
   ctx.beginPath(); ctx.arc(n.x, n.y, n.r+1.4/k, 0, 2*Math.PI);
   ctx.fillStyle=cssVar('--g1'); ctx.fill();
   const lit = sel || !!(ERD.lit && ERD.lit.id===n.id);
-  gfGlyph(ctx, 'table', n.x, n.y, n.r, k, { color:ink, filled:lit, glow:lit });
+  // A ROUTE MARKER IS NOT A TABLE. It is the HTTP call the cluster was reached
+  // through, so it wears the endpoint's own glyph, the one every other picture
+  // on this page draws a route with.
+  gfGlyph(ctx, n.marker ? 'endpoint' : 'table', n.x, n.y, n.r, k, { color:ink, filled:lit || !!n.marker, glow:lit });
   if(sel){
     ctx.beginPath(); ctx.arc(n.x, n.y, n.r+5, 0, 2*Math.PI);
     ctx.strokeStyle=ink; ctx.lineWidth=2/k; ctx.stroke();
@@ -9029,6 +9632,20 @@ function erdDrawLink(l, ctx, k){
   const s=l.source, t=l.target;
   if(!s || !t || !Number.isFinite(s.x) || !Number.isFinite(t.x)) return;
   const on = !ERD.lit || ERD.lit.links.has(l.i);
+  // A `via` connector is NOT a relationship and must never be drawn as one: it
+  // is an HTTP call, so it is DASHED, carries no crow's feet and no
+  // cardinality, and is named by the route it is. The legend says as much in
+  // words, because a dash on its own is not an explanation.
+  if(l.via){
+    ctx.save();
+    ctx.globalAlpha = on ? (ERD.lit ? 1 : ERD_REST_ALPHA) : ERD_DIM;
+    ctx.strokeStyle=ERD.fedColor(l.project) || erdLine(); ctx.lineWidth=l.w/k;
+    ctx.setLineDash([5/k, 4/k]);
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   // Quiet at rest so the TABLES read first; full strength once a neighbourhood
   // is spotlit, and everything else at ERD_DIM - still there, no longer loud.
@@ -9111,6 +9728,24 @@ function renderErdLegend(a, fams, drawn, isolated, topWitness){
   } else {
     kids.push(el('span',{textContent:t('erdleg.nogroups')}));
   }
+  // THE CONNECTED PROJECTS. The switch is offered wherever the answer carries
+  // one, whether it is on or off, because a reader who cannot see the clusters
+  // must still be able to find out that there are some.
+  const fedList=(a && a.federated) || [];
+  if(fedList.length){
+    const on=erdFedOn(a);
+    const b=el('button',{className:'chip'+(on?'':' off'),
+      title:t(on?'erdleg.connected.on.title':'erdleg.connected.off.title',{n:fedList.length}),
+      onclick:()=>erdFedToggle()},
+      [kindDot('project', 11), t(on?'erdleg.connected.on':'erdleg.connected.off',{n:fedList.length})]);
+    b.setAttribute('aria-pressed', String(on));
+    kids.push(b);
+    if(on){
+      for(const c of (ERD.clusters||[])) kids.push(el('span',{title:t('erdleg.connected.title',{p:c.project})},[
+        el('span',{className:'fedring',style:'border-color:'+c.color}), ' '+c.project ]));
+      kids.push(el('span',{title:t('erdleg.via.title'), textContent:t('erdleg.via')}));
+    }
+  }
   box.replaceChildren(...kids);
 }
 // The tables the join layout cannot place. Hiding them made the schema look
@@ -9145,16 +9780,55 @@ function renderErdSideOverview(){
   const a=erdData; const side=document.getElementById('erdside'); side.replaceChildren();
   const deg=erdDegrees(a);
   const iso=a.tables.filter(t=>!(deg.get(t.table)||0)).length;
+  const fedList=(a.federated||[]);
   side.append(el('div',{className:'panel'},[el('h2',{textContent:t('erd.side.map')}),
     // The two counts are the GLANCE and they are the fold's own lead; what the
     // sizes and thicknesses mean is behind it.
     fold('erd.side.map.body', [t('erd.side.map.brief',{tables:a.tables.length, relationships:a.relationships.length})],
       ()=> [el('div',{className:'comment',textContent:t('erd.side.map.body')})]),
-    iso? el('div',{className:'comment',style:'margin-top:6px',textContent:t('erd.side.map.isolated',{n:iso})}) : null ]));
+    iso? el('div',{className:'comment',style:'margin-top:6px',textContent:t('erd.side.map.isolated',{n:iso})}) : null,
+    // A PROJECT WITH NO SCHEMA OF ITS OWN is not a project with nothing to
+    // show: an api gateway holds no table, and its requests still end in two
+    // other projects' tables. Saying "none" alone would be true of this pack
+    // and useless to the reader.
+    (a.tables.length===0 && fedList.length)
+      ? el('div',{className:'comment',style:'margin-top:6px',
+        textContent:t('erd.side.map.fedonly',{n:fedList.length, p:fedList.map((f)=>f.project).join(', ')})})
+      : null ]));
+  if(fedList.length) side.append(erdFedPanel(a, fedList));
   const hp=hubPanel(a); if(hp) side.append(hp);
 }
+/** One row per connected project: what it holds here, and the way in. */
+function erdFedPanel(a, fedList){
+  const on=erdFedOn(a);
+  const color=fedRingColor(fedList.map((f)=>f.project));
+  return el('div',{className:'panel'},[
+    el('h2',{},[t('erd.side.connected')+' ', el('span',{className:'count',textContent:'('+fedList.length+')'})]),
+    el('div',{className:'comment',textContent:t('erd.side.connected.note')}),
+    el('ul',{className:'list'}, fedList.map((f)=>el('li',{},[
+      el('span',{className:'grow'},[
+        el('span',{className:'fedring',style:'border-color:'+color(f.project)}),
+        // The whole id rides in the tooltip, because the name is the thing that
+        // may be cut on a narrow rail.
+        el('a',{className:'id clickable fedname',
+          title:f.project+'  '+t('erd.side.connected.open',{p:f.project}),
+          textContent:f.project, onclick:()=>switchProject(f.project, {tab:'erd'})}) ]),
+      el('span',{className:'count fedcount',
+        title:t('erd.side.connected.counts',{tables:f.tables.length, rels:f.relationships.length}),
+        textContent:t('erd.side.connected.counts',{tables:f.tables.length, rels:f.relationships.length})}) ]))),
+    on ? null : el('div',{className:'cpnote',textContent:t('erd.side.connected.hidden')}),
+  ]);
+}
+
 async function renderErdSideTable(id){
   const a=erdData; const side=document.getElementById('erdside');
+  // A ROUTE MARKER is not a table: its card is the crossing itself.
+  const picked=ERD.byId.get(id);
+  if(picked && picked.marker){ side.replaceChildren(erdViaCard(picked)); return; }
+  // A table from a CONNECTED PROJECT is that project's own: its relationships
+  // live in that cluster, and its columns have to be asked of the pack that
+  // has them. Nothing here is asked of the project on screen.
+  if(picked && picked.project){ await renderErdSideFedTable(picked); return; }
   const rels=a.relationships.filter(r=>r.from===id||r.to===id).map(r=>{ const out=r.from===id; return {other:out?r.to:r.from, card:out?r.cardinality:r.cardinality.split(':').reverse().join(':'), columns:r.columns, statements:r.statements}; }).sort((x,y)=>x.other<y.other?-1:1);
   const t0=a.tables.find(t=>t.table===id);
   const fam=nameFamily(id);
@@ -9199,6 +9873,105 @@ async function renderErdSideTable(id){
   }
   colPanel.replaceChildren(el('h2',{},[t('erd.side.cols')+' ',el('span',{className:'count',textContent:t('erd.side.count',{n:cols.length})})]),
     el('ul',{className:'list'+(cols.length>12?' colgrid2':'')}, cols.map(c=>el('li',{},[ el('span',{className:'id'},[ c.pk?el('span',{className:'pk',title:'primary key',textContent:'✦ '}):'', c.column ]), el('span',{className:'comment',textContent:(c.type||'')+(c.comment?'\u00a0\u00a0'+c.comment:'')}) ]))));
+}
+
+/**
+ * THE CARD FOR ONE CROSSING: the route this project called, where it landed,
+ * and what it reaches over there. It is the only thing on this sheet that
+ * connects two clusters, and it is an HTTP call and not a key.
+ */
+function erdViaCard(n){
+  const cluster=(ERD.clusters||[]).find((c)=>c.project===n.project);
+  const entry=(cluster ? cluster.via : []).find((v)=> (v.route.method+' '+v.route.path)===n.route) || {tables:[]};
+  return el('div',{className:'panel'},[
+    el('div',{className:'srchead',style:'margin-bottom:8px'},[
+      el('span',{className:'grow'},[ kindGlyph('endpoint', 12),
+        el('span',{className:'id',style:'font-weight:500',textContent:n.route}) ]),
+      el('button',{textContent:t('erd.side.clear'),onclick:()=>erdClearFn&&erdClearFn()}) ]),
+    el('div',{className:'fsub'},[
+      el('span',{className:'tag fproj',title:n.project+'  '+t('chain.tag.project.title'),textContent:n.project}),
+      badge(n.grade),
+      n.ambiguous ? el('span',{className:'tag warn',textContent:t('erd.via.ambiguous')}) : null ]),
+    el('div',{className:'comment',style:'margin-top:7px',textContent:t('erd.via.body')}),
+    entry.fromEndpoint ? el('div',{className:'comment',style:'margin-top:6px'},[
+      el('span',{className:'id',textContent:String(entry.fromEndpoint).replace(/^endpoint:/,'')}) ]) : null,
+    el('h2',{style:'margin-top:12px'},[t('erd.via.tables')+' ',
+      el('span',{className:'count',textContent:t('erd.side.count',{n:(entry.tables||[]).length})})]),
+    el('ul',{className:'list'}, (entry.tables||[]).map((tb)=>el('li',{},[
+      el('span',{className:'grow'},[ kindGlyph('table', 12),
+        el('a',{className:'id clickable',textContent:tb,
+          onclick:()=>erdSelectFn&&erdSelectFn(erdFedId(n.project, tb))}) ]) ]))),
+    el('div',{style:'margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'},[
+      el('button',{className:'mini',textContent:t('map.card.open',{p:n.project}),
+        title:t('map.card.open.title',{p:n.project}),
+        onclick:()=>{ location.hash = hashFor({ project:n.project, tab:'flow', pick:'endpoint:'+n.route }); }}) ]),
+  ]);
+}
+
+/**
+ * A TABLE IN ANOTHER PROJECT. Its relationships are the ones inside that
+ * project's cluster, never a line to anything here; its columns come from that
+ * project's own `erd` answer, asked of that project.
+ */
+async function renderErdSideFedTable(n){
+  const side=document.getElementById('erdside');
+  const cluster=(ERD.clusters||[]).find((c)=>c.project===n.project) || {relationships:[], via:[]};
+  const rels=cluster.relationships.filter((r)=>r.from===n.table||r.to===n.table).map((r)=>{
+    const out=r.from===n.table;
+    return { other:out?r.to:r.from, card:out?r.cardinality:String(r.cardinality).split(':').reverse().join(':'),
+      columns:r.columns, statements:r.statements };
+  }).sort((x,y)=>x.other<y.other?-1:1);
+  const routes=cluster.via.filter((v)=>(v.tables||[]).includes(n.table));
+  const relPanel=el('div',{className:'panel'},[
+    el('div',{className:'srchead',style:'margin-bottom:8px'},[
+      el('span',{className:'grow'},[ kindGlyph('table', 12),
+        el('span',{className:'id',style:'font-weight:500',textContent:n.table}) ]),
+      el('button',{textContent:t('erd.side.clear'),onclick:()=>erdClearFn&&erdClearFn()}) ]),
+    el('div',{className:'fsub'},[
+      el('span',{className:'tag fproj',title:n.project+'  '+t('chain.tag.project.title'),textContent:n.project}) ]),
+    el('div',{className:'comment',style:'margin-top:7px',textContent:t('erd.side.fed.body',{p:n.project})}),
+    n.comment ? el('div',{className:'comment',textContent:'\u201c'+n.comment+'\u201d'}) : null,
+    el('div',{style:'margin-top:7px;display:flex;gap:6px;flex-wrap:wrap'},[
+      el('button',{className:'mini',textContent:t('map.card.open',{p:n.project}),
+        title:t('map.card.open.title',{p:n.project}),
+        onclick:()=>{ location.hash = hashFor({ project:n.project, tab:'erd', pick:'table:'+n.table }); }}) ]),
+    el('h2',{style:'margin-top:12px'},[t('erd.side.rels')+' ',
+      el('span',{className:'count',textContent:t('erd.side.count',{n:rels.length})})]),
+    el('ul',{className:'list'}, rels.length? rels.map((r)=>el('li',{},[
+      el('span',{className:'grow'},[ kindGlyph('table', 12),
+        el('a',{className:'id clickable',textContent:r.other,
+          onclick:()=>erdSelectFn&&erdSelectFn(erdFedId(n.project, r.other))}) ]),
+      el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
+        el('span',{className:'card',title:t('erd.card.title'),textContent:r.card}),
+        el('span',{className:'count',textContent:r.statements+'\u00d7'}) ]) ]))
+      : [el('li',{className:'empty',textContent:t('erd.side.fed.norels')})]),
+    el('h2',{style:'margin-top:12px'},[t('erd.via.reached')+' ',
+      el('span',{className:'count',textContent:t('erd.side.count',{n:routes.length})})]),
+    el('ul',{className:'list'}, routes.map((v)=>el('li',{},[
+      el('span',{className:'grow'},[ kindGlyph('endpoint', 12),
+        el('a',{className:'id clickable',textContent:v.route.method+' '+v.route.path,
+          onclick:()=>erdSelectFn&&erdSelectFn(erdViaId(n.project, v.route.method+' '+v.route.path))}) ]),
+      badge(v.grade) ]))),
+  ]);
+  const colPanel=el('div',{className:'panel'},[ el('h2',{textContent:t('erd.side.cols')}),
+    el('div',{className:'comment',textContent:t('erd.side.cols.loading')}) ]);
+  side.replaceChildren(relPanel, colPanel);
+  const mine=++ERD.sideSeq;
+  const key=n.project+'|'+n.table;
+  let cols=ERD.cols.get(key);
+  if(!cols){
+    try { const rr=await apiFor(n.project, 'erd', {table:n.table});
+      const tb=rr.answer.tables.find((x)=>x.table===n.table); cols=(tb&&tb.columns)||[]; }
+    catch(e){ cols=[]; }
+    if(mine!==ERD.sideSeq) return;
+    ERD.cols.set(key, cols);
+  }
+  colPanel.replaceChildren(
+    el('h2',{},[t('erd.side.cols')+' ', el('span',{className:'count',textContent:t('erd.side.count',{n:cols.length})})]),
+    el('div',{className:'comment',textContent:t('erd.side.fed.cols',{p:n.project})}),
+    el('ul',{className:'list'+(cols.length>12?' colgrid2':'')}, cols.map((c)=>el('li',{},[
+      el('span',{className:'id'},[ c.pk?el('span',{className:'pk',title:'primary key',textContent:'\u2726 '}):'', c.column ]),
+      el('span',{className:'comment',textContent:(c.type||'')+(c.comment?'\u00a0\u00a0'+c.comment:'')}) ]))));
 }
 
 // ---------- Coupling tab — which API group writes what another one reads ----------
@@ -9464,7 +10237,7 @@ function renderOverview(){
   const a=r.answer;
   byId('ovcards').replaceChildren(...ovKpis(a));
   byId('ovhero').classList.remove('hidden');
-  byId('ovherocol').replaceChildren(ovHubBars(r,a), ovGapsPanel(a), ovGradesPanel(a));
+  byId('ovherocol').replaceChildren(ovHubBars(r,a), ovGapsPanel(a), ovConnectedPanel(a), ovGradesPanel(a));
   // The ribbon is NOT deleted: it is the drawing theme's own picture of the same
   // four numbers, one click below the dials that replaced it.
   byId('ovfold').replaceChildren(el('div',{className:'panel ovfoldwrap'},[
@@ -9807,6 +10580,61 @@ function ovGapsPanel(a){
     chips.append(head); bodies.append(body);
   }
   kids.push(chips, bodies);
+  return el('div',{className:'panel'},kids);
+}
+// How many routes a connected-project row lists before it says "+n more".
+const OV_CONNECTED_ROUTES=5;
+/**
+ * WHO THIS PROJECT TALKS TO (RM45), from the overview's own census.
+ *
+ * One row per registered project that answers a route this one calls, with the
+ * routes themselves; clicking a row goes there. The last row is the calls
+ * NOBODY registered answers, with the remedy, because "register the project
+ * that serves this" is the one thing a reader can act on.
+ *
+ * Absent on a project that calls nobody: a panel that says "0" about something
+ * this pack does not do is noise. On a server holding one project the sibling
+ * rows are empty and the unmatched row is the whole panel, which is exactly
+ * what that reader needs to see.
+ */
+function ovConnectedPanel(a){
+  const fed=a.federation||null;
+  if(!fed) return null;
+  const rows=fed.byProject||[];
+  const missing=fed.unmatchedRoutes||[];
+  if(!rows.length && !missing.length) return null;
+  const color=fedRingColor(rows.map((p)=>p.project));
+  const routeChips=(routes)=>{
+    const shown=routes.slice(0, OV_CONNECTED_ROUTES);
+    const kids=shown.map((r)=> el('span',{className:'ovchip', title:t('ov.connected.route.title',{n:r.sites}),
+      textContent:r.method+' '+r.path}));
+    if(routes.length>shown.length) {
+      kids.push(el('span',{className:'count',textContent:t('ov.connected.more',{n:routes.length-shown.length})}));
+    }
+    return el('div',{className:'ovchips'}, kids);
+  };
+  const kids=[ el('h2',{},[t('ov.connected.title')+' ',
+    el('span',{className:'count',textContent:'('+rows.length+')'})]),
+    el('div',{className:'panelsub',textContent:t('ov.connected.note')}) ];
+  for(const p of rows){
+    kids.push(el('button',{className:'ovconn', title:t('ov.connected.open.title',{p:p.project}),
+      onclick:()=>switchProject(p.project, {tab:'overview'})},[
+      el('div',{className:'ovconnhead'},[
+        el('span',{className:'grow'},[
+          el('span',{className:'fedring',style:'border-color:'+color(p.project)}), ' ',
+          el('span',{className:'id',textContent:p.project}) ]),
+        el('span',{className:'count',textContent:t('ov.connected.calls',{n:p.sites, r:p.routes.length})}) ]),
+      routeChips(p.routes) ]));
+  }
+  if(missing.length){
+    kids.push(el('div',{className:'ovconn ovconn-none'},[
+      el('div',{className:'ovconnhead'},[
+        el('span',{className:'grow'},[el('span',{className:'tag warn',textContent:t('ov.connected.unmatched')})]),
+        el('span',{className:'count',
+          textContent:t('ov.connected.calls',{n:missing.reduce((n,r)=>n+r.sites,0), r:missing.length})}) ]),
+      routeChips(missing),
+      el('div',{className:'cpnote',textContent:t('ov.connected.unmatched.note')}) ]));
+  }
   return el('div',{className:'panel'},kids);
 }
 function ovGapChips(a,kind){
@@ -10583,6 +11411,7 @@ async function loadProjects(){
   setTheme(lsGet(LS_THEME) || THEMES[0], true);
   // ...and the one flow preference the map and the two lane views share.
   flowPrefLoad();
+  fedPrefLoad();
   const kl = document.getElementById('klegend');
   KINDS.forEach(k=> kl.append(el('span',{},[ kindDot(k, 11), k ])));
   renderLineLegend();

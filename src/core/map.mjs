@@ -55,7 +55,10 @@ const MAX_BYTE_ROUNDS = 4;
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
 // Deterministic ordering. The node order is also the CUT order's frame of
 // reference, so it is written once, here.
-const KIND_RANK = Object.freeze({ group: 0, screen: 1, endpoint: 2, table: 3, statement: 4 });
+// `project` is the skeleton a picture that reaches into ANOTHER pack hangs
+// that pack's nodes off (RM45). It is drawn like a group and, like a group, it
+// is never cut: a map with the skeleton gone has nothing left to read.
+const KIND_RANK = Object.freeze({ group: 0, project: 1, screen: 2, endpoint: 3, table: 4, statement: 5 });
 const LINK_RANK = Object.freeze({ member: 0, calls: 1, touches: 2, executes: 3, joins: 4 });
 // Which kind gives way first when the node cap bites. Groups are absent on
 // purpose: a map with no groups has no skeleton left to read.
@@ -79,9 +82,14 @@ const KEY_SEP = '\u0000';
  * @param {import('./graph.mjs').Graph} graph
  * @param {{mode?:'strict'|'conservative'|'heuristic', depth?:number,
  *          layers?:string[], limit?:number, maxBytes?:number|null,
- *          packageDepth?:number|null}} [opts]
+ *          packageDepth?:number|null, only?:string[],
+ *          extra?:{nodes:object[], links:object[]}}} [opts]
  *        maxBytes (null = unbounded) caps the MEASURED size of the nodes+links
  *        payload; see the byte budget in step 5b.
+ *        `only` draws the picture of THOSE endpoints alone (step 0 below).
+ *        `extra` is nodes and links from outside this graph, put on the same
+ *        picture so that one node cap and one byte budget bound the whole of
+ *        it (step 3b below).
  * @returns {{mode:string, depth:number, layers:{statements:boolean, screens:boolean},
  *            nodes:object[], links:object[], summary:object, limit:number}}
  */
@@ -98,7 +106,31 @@ export function buildMap(graph, opts = {}) {
   const withStatements = asked.includes('statements');
   const withScreens = asked.includes('screens');
 
-  const { endpoints, walk } = walkEndpoints(graph, { mode, depth, packageDepth: opts.packageDepth ?? null });
+  // ---- 0. whose picture this is ------------------------------------------
+  // `only` draws the endpoints it names and nothing else. The caller that needs
+  // it already knows which route it is asking about — a map that crosses into
+  // another project asks that project for the route it called — and there is no
+  // honest way to fake it afterwards: filtering a whole-pack map down to one
+  // route would leave that route's `touches` grades computed against endpoints
+  // that are no longer on the picture.
+  if (opts.only != null && !Array.isArray(opts.only)) throw new MapError('only must be an array of endpoint node ids');
+
+  // NODES FROM OUTSIDE THIS GRAPH. A caller with a second picture to put on
+  // this one hands it in here rather than merging afterwards, because ONE node
+  // cap and ONE byte budget have to bound the whole drawing: two pictures each
+  // cut to the budget make an answer twice the size the caller asked for. They
+  // are drawn, they are the FIRST to give way inside their own kind, and they
+  // are counted in `summary.extra` rather than in the totals, which are
+  // censuses of THIS pack and must stay that.
+  const extraNodes = Array.isArray(opts.extra && opts.extra.nodes) ? opts.extra.nodes : [];
+  const extraLinks = Array.isArray(opts.extra && opts.extra.links) ? opts.extra.links : [];
+  const fromOutside = new Set(extraNodes.map((n) => n.id));
+  const outsideLinks = new Set(extraLinks);
+
+  const { endpoints, walk } = walkEndpoints(graph, {
+    mode, depth, packageDepth: opts.packageDepth ?? null,
+    ...(opts.only != null ? { only: opts.only } : {}),
+  });
 
   // ---- 1. groups (API path prefixes) and their endpoints -------------------
   const groupOf = new Map(); // group name -> endpoint node ids
@@ -221,6 +253,9 @@ export function buildMap(graph, opts = {}) {
     }
   }
 
+  // ---- 3b. what the caller brought with it --------------------------------
+  for (const n of extraNodes) nodes.push(n);
+
   // ---- 4. the link set ----------------------------------------------------
   const links = [];
   for (const [name, eps] of groupOf) for (const epId of eps) {
@@ -252,20 +287,26 @@ export function buildMap(graph, opts = {}) {
     }
   }
   for (const l of joins.values()) links.push(l);
+  for (const l of extraLinks) links.push(l);
 
   // ---- 5. the node cap ----------------------------------------------------
   // Degree over the FULL link set decides who survives: cutting the map must
   // keep the hubs, not whichever ids sort first.
   const fullDegree = degreeOf(nodes, links);
   const totals = { group: 0, screen: 0, endpoint: 0, table: 0, statement: 0 };
-  for (const n of nodes) totals[n.kind] += 1;
+  for (const n of nodes) if (!fromOutside.has(n.id) && totals[n.kind] !== undefined) totals[n.kind] += 1;
   // The cut ORDER, written once: the least-connected node of the first kind that
   // still has members, then the next kind. Used by both budgets below.
   const cutQueue = [];
   for (const kind of CUT_ORDER) {
-    const of = nodes.filter((n) => n.kind === kind)
-      .sort((a, b) => (fullDegree.get(a.id) - fullDegree.get(b.id)) || cmp(b.id, a.id));
-    cutQueue.push(...of.map((n) => n.id));
+    // Inside one kind, what the caller BROUGHT gives way before what this pack
+    // drew. This pack's picture is the answer; the second picture laid over it
+    // is the first thing a budget takes back.
+    for (const outside of [true, false]) {
+      const of = nodes.filter((n) => n.kind === kind && fromOutside.has(n.id) === outside)
+        .sort((a, b) => (fullDegree.get(a.id) - fullDegree.get(b.id)) || cmp(b.id, a.id));
+      cutQueue.push(...of.map((n) => n.id));
+    }
   }
   const dropFirst = (howMany) => {
     const out = new Set();
@@ -275,10 +316,38 @@ export function buildMap(graph, opts = {}) {
   const apply = (dropSet) => {
     const keptNodes = dropSet.size ? nodes.filter((n) => !dropSet.has(n.id)) : nodes;
     const ids = new Set(keptNodes.map((n) => n.id));
-    return { keptNodes, keptLinks: dropSet.size ? links.filter((l) => ids.has(l.source) && ids.has(l.target)) : links };
+    const keptLinks = dropSet.size ? links.filter((l) => ids.has(l.source) && ids.has(l.target)) : links;
+    if (!fromOutside.size) return { keptNodes, keptLinks };
+    // A NODE FROM OUTSIDE THAT LOST EVERY LINE IS NOT DRAWN. The picture it
+    // came on was a route and the things that route reaches; cut the route and
+    // what is left is a disc floating beside this pack's map with nothing
+    // saying why it is there. This pack's own nodes keep the old behaviour: a
+    // group whose endpoints all went is still the group this pack has.
+    // An orphan has no line by definition, so removing it removes no line and
+    // one pass is enough.
+    const linked = new Set();
+    for (const l of keptLinks) { linked.add(l.source); linked.add(l.target); }
+    const orphaned = keptNodes.some((n) => fromOutside.has(n.id) && !linked.has(n.id));
+    if (!orphaned) return { keptNodes, keptLinks };
+    return { keptNodes: keptNodes.filter((n) => !fromOutside.has(n.id) || linked.has(n.id)), keptLinks };
   };
 
-  let drop = dropFirst(Math.max(0, nodes.length - limit));
+  // HOW MANY THE CAP REALLY COSTS. Without outside nodes it is arithmetic: one
+  // node dropped is one node fewer. With them it is not, because dropping a
+  // portal takes the cluster hanging off it too, so the smallest prefix that
+  // fits is SEARCHED rather than computed. The predicate is monotone (a longer
+  // prefix never leaves more nodes), so a binary search finds it in a dozen
+  // passes, and the answer is still the least this budget can take.
+  let dropCount = Math.max(0, nodes.length - limit);
+  if (fromOutside.size && dropCount > 0) {
+    let lo = 0, hi = cutQueue.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (apply(dropFirst(mid)).keptNodes.length <= limit) hi = mid; else lo = mid + 1;
+    }
+    dropCount = lo;
+  }
+  let drop = dropFirst(dropCount);
   let cutBy = drop.size ? 'node-cap' : null;
   let applied = apply(drop);
 
@@ -355,7 +424,7 @@ export function buildMap(graph, opts = {}) {
   keptLinks.sort((a, b) => (LINK_RANK[a.kind] - LINK_RANK[b.kind]) || cmp(a.source, b.source) || cmp(a.target, b.target));
 
   const shown = { group: 0, screen: 0, endpoint: 0, table: 0, statement: 0 };
-  for (const n of kept) shown[n.kind] += 1;
+  for (const n of kept) if (!fromOutside.has(n.id) && shown[n.kind] !== undefined) shown[n.kind] += 1;
   const summary = {
     groups: totals.group,
     endpoints: totals.endpoint,
@@ -373,6 +442,17 @@ export function buildMap(graph, opts = {}) {
     maxBytes,
     walk,
   };
+  // How much of what the caller brought survived. Counted apart from `shown`,
+  // because `shown` answers "how much of THIS pack is on the picture" and an
+  // extra node is not part of this pack.
+  if (extraNodes.length || extraLinks.length) {
+    summary.extra = {
+      nodes: kept.reduce((n, x) => n + (fromOutside.has(x.id) ? 1 : 0), 0),
+      nodesGiven: extraNodes.length,
+      links: keptLinks.reduce((n, l) => n + (outsideLinks.has(l) ? 1 : 0), 0),
+      linksGiven: extraLinks.length,
+    };
+  }
   if (withStatements) summary.statements = totals.statement;
   if (withScreens) {
     // Two numbers, because they answer two different questions: how many screens

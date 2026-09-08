@@ -281,5 +281,14 @@ the list cannot know to do it. The same rule covers a project that could not be
 asked at all: a project with no route index beside its pack is named in
 `federation.skipped`, with `cascade analyze` as the fix.
 
+**A picture crosses, and it is still one project's picture.** The whole-pack
+views (`map`, `erd`) follow the same crossing rules, with one more of their own:
+they add only what **this project's requests reach**, never the other pack. Two
+services share no foreign key, so a relationship line drawn between them would
+be an invention rather than a finding, and a merged picture of two real
+services is unreadable before it is wrong. So the route this project called is
+drawn, what that route reaches over there is drawn under it, and the only thing
+joining the two clusters is the HTTP call itself.
+
 The wire shapes, `basis.siblings`, the `federate` argument and the rest are in
 [mcp.md](mcp.md).

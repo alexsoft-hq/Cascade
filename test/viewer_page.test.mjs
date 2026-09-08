@@ -4500,3 +4500,485 @@ test('...and its Flow button opens the route in the project that serves it', asy
   assert.ok(asked.some((c) => c.body.name === 'flow' && c.body.arguments.endpoint === 'GET /api/gateway/owners/{ownerId}'),
     `the route was never walked: ${asked.map((c) => c.body.name).join(', ')}`);
 });
+
+// ---------------------------------------------------------------------------
+// The three whole-pack pictures, once they reach into another project (RM45)
+//
+// The answers here are SYNTHETIC on purpose: what is under test is the page's
+// own reading of a federated answer, and the engine's side of it is held by
+// test/federation.test.mjs against real packs. No canvas is drawn (the map test
+// mounts the stand-in renderer so the model really runs; the ERD's canvas is
+// nobody's test here either), so what these hold is the model, the chips, the
+// counts, the legend and the cards.
+// ---------------------------------------------------------------------------
+
+/** The overview census a project that calls two others comes back with. */
+function connectedCensus() {
+  return {
+    calls: 7, answered: 6, unmatched: 1, projects: ['beta', 'served'],
+    byProject: [
+      {
+        project: 'beta',
+        sites: 8,
+        routes: [
+          { method: 'GET', path: '/owners/{ownerId}', sites: 3 },
+          { method: 'GET', path: '/owners', sites: 1 },
+          { method: 'POST', path: '/owners', sites: 1 },
+          { method: 'PUT', path: '/owners/{ownerId}', sites: 1 },
+          { method: 'GET', path: '/petTypes', sites: 1 },
+          { method: 'GET', path: '/owners/*/pets/{petId}', sites: 1 },
+        ],
+      },
+      { project: 'served', sites: 1, routes: [{ method: 'GET', path: '/pets/visits', sites: 1 }] },
+    ],
+    unmatchedRoutes: [{ method: 'GET', path: '/vets', sites: 2 }],
+  };
+}
+
+test('the Overview lists the connected projects, their routes, and the calls nobody serves', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  const out = ev(ctx, `(() => { try {
+      OV.resp.answer.federation = ${JSON.stringify(connectedCensus())};
+      renderOverview();
+      return 'rendered';
+    } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
+  assert.equal(out, 'rendered', 'the Overview threw instead of drawing the panel');
+
+  const rows = byId.get('ovherocol').querySelectorAll('.ovconn');
+  assert.equal(rows.length, 3, 'one row per connected project, and one for what nobody serves');
+  // The project's name, and the two numbers behind it: how many methods make
+  // the call, over how many routes.
+  assert.match(rows[0].textContent, /beta/);
+  assert.match(rows[0].textContent, /8 call site\(s\) over 6 route\(s\)/);
+  // FIVE ROUTES, THEN A COUNT. A row that printed all of them would be a list,
+  // not a row, on a project that calls twenty.
+  const chips = rows[0].querySelectorAll('.ovchip').map((c) => c.textContent);
+  assert.equal(chips.length, 5, chips.join(' | '));
+  assert.equal(chips[0], 'GET /owners/{ownerId}', 'the busiest route first');
+  assert.match(rows[0].textContent, /\+1 more/);
+
+  // The last row is the calls no registered project answers, with the remedy.
+  const missing = rows[2];
+  assert.ok(missing.className.includes('ovconn-none'));
+  assert.match(missing.textContent, /nobody serves these/);
+  assert.match(missing.textContent, /GET \/vets/);
+  assert.match(missing.textContent, /Register the project that serves them/);
+
+  // THE WHOLE ROW IS THE CONTROL: clicking it goes to that project, through the
+  // same switchProject a deep link uses.
+  assert.equal(ev(ctx, 'STATE.project'), 'alpha');
+  rows[0].onclick();
+  await settle(ctx, 20);
+  assert.equal(ev(ctx, 'STATE.project'), 'beta');
+});
+
+test('a project that calls nobody gets no connected-projects panel at all', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  ev(ctx, `OV.resp.answer.federation = { calls: 0, answered: 0, unmatched: 0, projects: [], byProject: [], unmatchedRoutes: [] };
+    renderOverview();`);
+  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0);
+});
+
+test('a single-project server with an unanswered call shows the unmatched row alone', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  ev(ctx, `OV.resp.answer.federation = { calls: 1, answered: 0, unmatched: 1, projects: [], byProject: [],
+      unmatchedRoutes: [{ method: 'GET', path: '/owners/{ownerId}', sites: 1 }] };
+    renderOverview();`);
+  const rows = byId.get('ovherocol').querySelectorAll('.ovconn');
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].className.includes('ovconn-none'));
+  assert.match(rows[0].textContent, /GET \/owners\/\{ownerId\}/);
+});
+
+/** A `map` answer whose requests end in another registered project. */
+function federatedMap() {
+  return {
+    answer: {
+      mode: 'conservative', depth: 8, layers: { statements: false, screens: false },
+      limit: 6000, maxBytes: 524288,
+      nodes: [
+        { id: 'group:api', kind: 'group', label: 'api', degree: 1, endpoints: 1 },
+        { id: 'project:served', kind: 'project', label: 'served', degree: 1, project: 'served', endpoints: 1 },
+        {
+          id: 'served|endpoint:GET /owners/{ownerId}', kind: 'endpoint', label: 'GET /owners/{ownerId}',
+          project: 'served', portal: true, degree: 3, httpMethod: 'GET', path: '/owners/{ownerId}',
+          handlerShort: 'OwnerResource#find', handlers: 1,
+        },
+        {
+          id: 'endpoint:GET /api/x', kind: 'endpoint', label: 'GET /api/x', group: 'api', degree: 2,
+          httpMethod: 'GET', path: '/api/x', handlerShort: 'Ctl#get', handlers: 1,
+        },
+        { id: 'served|table:owners', kind: 'table', label: 'owners', project: 'served', degree: 2, comment: null, columnCount: 6 },
+      ],
+      links: [
+        { source: 'group:api', target: 'endpoint:GET /api/x', kind: 'member', grade: 'EXACT' },
+        { source: 'project:served', target: 'served|endpoint:GET /owners/{ownerId}', kind: 'member', grade: 'EXACT', project: 'served' },
+        {
+          source: 'endpoint:GET /api/x', target: 'served|endpoint:GET /owners/{ownerId}', kind: 'calls',
+          grade: 'SOUND_SET', federated: true, ambiguous: false, project: 'served',
+          route: 'GET /owners/{ownerId}', via: 'com.gw.Client#getOwner', service: 'served', calls: 1,
+        },
+        {
+          source: 'served|endpoint:GET /owners/{ownerId}', target: 'served|table:owners', kind: 'touches',
+          grade: 'SOUND_SET', access: 'read', statements: 1, project: 'served',
+        },
+      ],
+      summary: {
+        groups: 1, endpoints: 1, tables: 0, tablesTouched: 0, links: 4, linksTotal: 4, nodesTotal: 5,
+        shown: { groups: 1, endpoints: 1, tables: 0, statements: 0, screens: 0 },
+        cutBy: null, bytes: 900, maxBytes: 524288,
+        walk: {
+          starts: 1, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0,
+          generated: 0, multiHandlerEndpoints: 0, outboundEndpoints: 1,
+        },
+        federated: { projects: ['served'], nodes: 2, links: 3 },
+      },
+      federation: {
+        crossed: [{
+          from: { project: 'alpha', symbol: 'com.gw.Client#getOwner' },
+          route: { method: 'GET', path: '/owners/{ownerId}' }, service: 'served',
+          to: { project: 'served', endpoint: 'GET /owners/{ownerId}' },
+          grade: 'SOUND_SET', ambiguous: false,
+        }],
+        unmatched: [], skipped: [],
+      },
+    },
+    basis: {
+      project: 'alpha', buildDigest: 'deadbeef', builtAt: '2026-09-04T00:00:00.000Z',
+      freshness: { verdict: 'unknown' },
+      siblings: [{ project: 'served', buildDigest: 'feedface', builtAt: null, freshness: { verdict: 'unknown' } }],
+    },
+    trust: { trustLevel: 'UNCERTIFIED', axes: [], gatesNotShown: [], knownGaps: [] },
+    limits: [], truncated: { any: false, fields: [] },
+  };
+}
+
+test('the Graph map namespaces what came from another project, rings it, and its chip hides it', async (t) => {
+  const { ctx, byId, html } = await bootPage(t, { hash: '#p=alpha&tab=graph', renderer: true });
+  await settle(ctx, 20);
+  const out = ev(ctx, `(() => { try {
+      GMAP.resp = ${JSON.stringify(federatedMap())};
+      GMAP.sel = null; mapForgetLayout(); renderMap();
+      return 'rendered';
+    } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
+  assert.equal(out, 'rendered', 'the map render threw');
+
+  // The ids stay NAMESPACED on the picture: two services that both have an
+  // `owners` table have to be two nodes and never one.
+  const ids = JSON.parse(ev(ctx, 'JSON.stringify(GMAP.nodes.map(n=>n.id).sort())'));
+  assert.ok(ids.includes('served|table:owners'), ids.join(' | '));
+  assert.ok(ids.includes('served|endpoint:GET /owners/{ownerId}'));
+  assert.ok(ids.includes('project:served'), 'the skeleton the cluster hangs off');
+  // …and every one of them is STAMPED with the project it came from, with a
+  // ring in that project's own hue and the project in its name.
+  assert.equal(ev(ctx, "GMAP.byId.get('served|table:owners').fed"), 'served');
+  assert.equal(ev(ctx, "GMAP.byId.get('served|table:owners').label"), 'owners  [served]');
+  assert.equal(ev(ctx, "GMAP.byId.get('served|table:owners').ring"),
+    themeTokens(html, 'signal')['--k-endpoint'], 'the first sibling takes the first hue');
+  assert.equal(ev(ctx, "GMAP.byId.get('served|table:owners').fill"),
+    themeTokens(html, 'signal')['--n-table'], 'the fill still says it is a table');
+  // This project's own nodes wear nothing.
+  assert.equal(ev(ctx, "GMAP.byId.get('group:api').ring"), null);
+
+  // THE CROSSING FOLDS LIKE EVERY OTHER LINE. At rest the calling endpoint is
+  // inside its group, so the line leaves the GROUP; nothing points into a box
+  // that is not on the picture.
+  const cross = JSON.parse(ev(ctx, `JSON.stringify(GMAP.links.filter(l=>l.data.federated).map(l=>[l.sid, l.tid, l.data.grade]))`));
+  assert.deepEqual(cross, [['group:api', 'served|endpoint:GET /owners/{ownerId}', 'SOUND_SET']]);
+
+  // The count line says how much of the picture is not ours.
+  assert.match(byId.get('gcounts').textContent, /2 nodes from 1 connected project/);
+
+  // THE CHIP. On by default, and turning it off takes the whole cluster with it
+  // without asking the server for anything.
+  const chipOf = () => byId.get('gchips').querySelectorAll('button').find((b) => /connected projects/.test(b.textContent));
+  assert.ok(chipOf(), byId.get('gchips').textContent);
+  assert.equal(chipOf().getAttribute('aria-pressed'), 'true');
+  chipOf().onclick();
+  await settle(ctx, 10);
+  assert.equal(ev(ctx, "GMAP.nodes.filter(n=>n.fed).length"), 0);
+  assert.equal(ev(ctx, "GMAP.nodes.some(n=>n.kind==='project')"), false);
+  assert.equal(ev(ctx, "GMAP.links.filter(l=>l.data.federated).length"), 0);
+  assert.equal(chipOf().getAttribute('aria-pressed'), 'false');
+  assert.equal(ev(ctx, "localStorage.getItem('cascade.viewer.connected')"), 'off');
+  // …and it is still counted, so the reader is never told a smaller truth.
+  assert.match(byId.get('gcounts').textContent, /2 nodes from 1 connected project/);
+});
+
+test('the card for a node from another project offers open-in-project and nothing else', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=graph', renderer: true });
+  await settle(ctx, 20);
+  ev(ctx, `GMAP.resp = ${JSON.stringify(federatedMap())}; GMAP.sel = null; mapForgetLayout(); renderMap();`);
+  ev(ctx, "GMAP.sel = 'served|table:owners'; renderMapSide();");
+  const side = byId.get('gside');
+  const buttons = side.querySelectorAll('button').map((b) => b.textContent);
+  // The clear button belongs to the card head; the only ACTION is the handoff.
+  // `basis` and `trust` are the honesty block under every card, on every tab.
+  assert.deepEqual(buttons.filter((b) => !/^(clear|basis|trust)$/i.test(b)), ['Open in served'], buttons.join(' | '));
+  assert.equal(side.querySelectorAll('.fproj')[0].textContent, 'served');
+  assert.match(side.textContent, /this node is in served/);
+  // The id on the card is the one that table has IN ITS OWN PROJECT.
+  assert.equal(side.querySelector('code').textContent, 'owners');
+  // And the handoff is the hash the address bar already speaks.
+  side.querySelectorAll('button').find((b) => b.textContent === 'Open in served').onclick();
+  assert.equal(ev(ctx, 'location.hash'), '#p=served&tab=erd&pick=table%3Aowners');
+});
+
+/** An `erd` answer for a project with no schema of its own. */
+function federatedErd() {
+  return {
+    focus: null, hops: null, limit: 400, tables: [], relationships: [],
+    empty: { tables: 'none', relationships: 'not-in-this-axis' },
+    federated: [
+      {
+        project: 'beta', buildDigest: 'feedface',
+        tables: [
+          { table: 'owners', comment: 'one customer', columnCount: 6 },
+          { table: 'pets', comment: null, columnCount: 5 },
+        ],
+        relationships: [{ from: 'owners', to: 'pets', columns: ['id'], statements: 2, grade: 'EXACT', cardinality: '1:N' }],
+        via: [{
+          route: { method: 'GET', path: '/owners/{ownerId}' },
+          fromEndpoint: 'endpoint:GET /api/x', grade: 'SOUND_SET', ambiguous: false,
+          tables: ['owners', 'pets'],
+        }],
+      },
+      {
+        project: 'served', buildDigest: 'cafebabe',
+        tables: [{ table: 'visits', comment: null, columnCount: 4 }],
+        relationships: [],
+        via: [{
+          route: { method: 'GET', path: '/pets/visits' },
+          fromEndpoint: 'endpoint:GET /api/x', grade: 'SOUND_SET', ambiguous: false, tables: ['visits'],
+        }],
+      },
+    ],
+    federation: { crossed: [], unmatched: [], skipped: [] },
+  };
+}
+
+test('the ERD builds one cluster per connected project, dashed connectors, and no relationship across projects', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=erd' });
+  await settle(ctx, 20);
+  const out = ev(ctx, `(() => { try {
+      erdData = ${JSON.stringify(federatedErd())};
+      renderErdGraph(erdData); renderErdSideOverview();
+      return 'rendered';
+    } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
+  assert.equal(out, 'rendered', 'the ERD render threw');
+
+  // A project with no table of its own opens with the clusters ON: the sheet
+  // would otherwise be empty, and its requests really do end somewhere.
+  assert.deepEqual(JSON.parse(ev(ctx, 'JSON.stringify(ERD.clusters.map(c=>c.project))')), ['beta', 'served']);
+  const ids = JSON.parse(ev(ctx, 'JSON.stringify(ERD.nodes.map(n=>n.id).sort())'));
+  assert.deepEqual(ids, [
+    'beta|owners', 'beta|pets', 'served|visits',
+    'via:beta|GET /owners/{ownerId}', 'via:served|GET /pets/visits',
+  ].sort());
+  assert.equal(ev(ctx, "ERD.byId.get('beta|owners').project"), 'beta');
+  assert.equal(ev(ctx, "ERD.byId.get('beta|owners').label"), 'owners');
+  assert.equal(ev(ctx, "ERD.byId.get('via:beta|GET /owners/{ownerId}').marker"), true);
+
+  // THE ONLY THING JOINING TWO CLUSTERS IS A DASHED HTTP CALL. Every
+  // relationship stays inside one project, and every `via` connector runs from
+  // a route marker to a table of the project that marker belongs to.
+  const links = JSON.parse(ev(ctx, 'JSON.stringify(ERD.links.map(l=>({s:l.sid, t:l.tid, via:!!l.via, p:l.project})))'));
+  const projectOf = (id) => String(id).replace(/^via:/, '').split('|')[0];
+  for (const l of links) {
+    assert.equal(projectOf(l.s), projectOf(l.t), `a line crosses two projects: ${l.s} -> ${l.t}`);
+    if (!l.via) assert.ok(!String(l.s).startsWith('via:'), 'a relationship must not start at a route marker');
+  }
+  assert.equal(links.filter((l) => l.via).length, 3, 'two tables under one route, one under the other');
+  assert.equal(links.filter((l) => !l.via).length, 1, "beta's own single join");
+
+  // EACH CLUSTER IS FRAMED AT ITS OWN PLACE, and every frame is INSIDE the pane
+  // the ERD fits its own tables to, with clear air on every side. Placed at
+  // fixed fractions of the pane instead, the second cluster fell off the bottom
+  // of a 1190 by 650 pane and the middle of the sheet was empty.
+  const boxes = JSON.parse(ev(ctx, 'JSON.stringify(ERD.clusters.map(c=>c.box))'));
+  const fit = JSON.parse(ev(ctx, 'JSON.stringify(ERD.fitBox)'));
+  const margin = ev(ctx, 'ERD.fitMargin');
+  assert.ok(margin >= 24, `the pane margin is ${margin}`);
+  assert.ok(boxes.every((b) => b && Number.isFinite(b.x1)), JSON.stringify(boxes));
+  for (const b of boxes) {
+    assert.ok(b.x1 >= fit.x1 + margin && b.x2 <= fit.x2 - margin
+      && b.y1 >= fit.y1 + margin && b.y2 <= fit.y2 - margin,
+    `a cluster frame sits inside the pane margin: ${JSON.stringify(b)} in ${JSON.stringify(fit)} less ${margin}`);
+  }
+  // FIT, NEVER MAGNIFY. These two clusters are far smaller than the pane, so
+  // the drawing is centred at 1:1. Blown up to fill it instead, both frames
+  // landed on the pane's own edges and each cluster's name went off the canvas.
+  assert.equal(ev(ctx, 'ERD.fitScale'), 1);
+  // The frame reserves a DEEPER strip at its top than at its bottom, because
+  // the project's name is written inside it. Drawn above the frame instead, the
+  // name was the first thing the canvas edge cut off.
+  const span = JSON.parse(ev(ctx, `JSON.stringify((() => {
+    const ns = ERD.nodes.filter((n) => n.project === 'beta');
+    return { top: Math.min(...ns.map((n) => n.y - n.r)), bottom: Math.max(...ns.map((n) => n.y + n.r)) };
+  })())`));
+  assert.ok(span.top - boxes[0].y1 > boxes[0].y2 - span.bottom,
+    'the title strip is no deeper than the air under the tables');
+  // …and they do not overlap each other: they are settled separately, because
+  // nothing joins them.
+  const apart = (a, b) => a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1;
+  assert.ok(apart(boxes[0], boxes[1]), `the clusters overlap: ${JSON.stringify(boxes)}`);
+  // The pane is wider than it is tall, so they are laid out side by side rather
+  // than stacked: a column down a wide pane wastes the width it has.
+  assert.ok(boxes[0].x2 <= boxes[1].x1 || boxes[1].x2 <= boxes[0].x1,
+    `the clusters are stacked on a pane that is wider than tall: ${JSON.stringify(boxes)}`);
+
+  // …and a drawing BIGGER than the pane is shrunk to fit it, frames included.
+  const big = federatedErd();
+  big.federated[0].tables = Array.from({ length: 90 }, (_, i) => ({ table: 't' + i, comment: null, columnCount: 2 }));
+  big.federated[0].relationships = Array.from({ length: 89 }, (_, i) => ({
+    from: 't' + i, to: 't' + (i + 1), columns: ['id'], statements: 1, grade: 'EXACT', cardinality: '1:N',
+  }));
+  big.federated[0].via[0].tables = big.federated[0].tables.map((x) => x.table);
+  ev(ctx, `erdData = ${JSON.stringify(big)}; renderErdGraph(erdData);`);
+  const scale = ev(ctx, 'ERD.fitScale');
+  assert.ok(scale < 1 && scale > 0, `a drawing bigger than the pane was not shrunk: ${scale}`);
+  const shrunk = JSON.parse(ev(ctx, 'JSON.stringify(ERD.clusters.map(c=>c.box))'));
+  const fit2 = JSON.parse(ev(ctx, 'JSON.stringify(ERD.fitBox)'));
+  for (const b of shrunk) {
+    assert.ok(b.x1 >= fit2.x1 + margin && b.x2 <= fit2.x2 - margin
+      && b.y1 >= fit2.y1 + margin && b.y2 <= fit2.y2 - margin,
+    `a shrunk cluster frame leaves the margin: ${JSON.stringify(b)} in ${JSON.stringify(fit2)}`);
+  }
+
+  // The legend names the dashed line for what it is, and carries the switch.
+  const leg = byId.get('erdleg').textContent;
+  assert.match(leg, /reached over an HTTP call, not a foreign key/);
+  assert.match(leg, /connected projects 2/);
+
+  // The side panel lists the projects, and the empty state does not say "none".
+  const side = byId.get('erdside').textContent;
+  assert.match(side, /this project has no table of its own/);
+  assert.match(side, /2 table\(s\), 1 relationship\(s\)/);
+});
+
+test('the ERD switch is remembered, and a project WITH tables of its own opens without the clusters', async (t) => {
+  const { ctx, byId } = await bootPage(t, {
+    hash: '#p=alpha&tab=erd', storage: { 'cascade.viewer.erdconnected': 'off' },
+  });
+  await settle(ctx, 20);
+  ev(ctx, `erdData = ${JSON.stringify(federatedErd())}; renderErdGraph(erdData); renderErdSideOverview();`);
+  assert.equal(ev(ctx, 'ERD.clusters.length'), 0, 'the reader turned them off');
+  assert.equal(ev(ctx, 'ERD.nodes.length'), 0);
+  assert.match(byId.get('erdleg').textContent, /connected projects 2 hidden/);
+  // The switch puts them back, and remembers that too.
+  byId.get('erdleg').querySelectorAll('button').find((b) => /connected projects/.test(b.textContent)).onclick();
+  await settle(ctx, 10);
+  assert.equal(ev(ctx, 'ERD.clusters.length'), 2);
+  assert.equal(ev(ctx, "localStorage.getItem('cascade.viewer.erdconnected')"), 'on');
+
+  // …and with a schema of its own the default is OFF: the reader asked to see
+  // THIS project's tables.
+  const own = federatedErd();
+  own.tables = [{ table: 'orders', comment: null, columnCount: 3 }];
+  delete own.empty;
+  ev(ctx, `localStorage.removeItem('cascade.viewer.erdconnected');
+    erdData = ${JSON.stringify(own)}; renderErdGraph(erdData);`);
+  assert.equal(ev(ctx, 'ERD.clusters.length'), 0);
+});
+
+test('the card for a table in another project asks that project, and never this one', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { hash: '#p=alpha&tab=erd' });
+  await settle(ctx, 20);
+  ev(ctx, `erdData = ${JSON.stringify(federatedErd())}; renderErdGraph(erdData);`);
+  calls.length = 0;
+  await ev(ctx, "renderErdSideTable('beta|owners')");
+  await settle(ctx, 20);
+  const side = byId.get('erdside');
+  assert.match(side.textContent, /this table is in beta/);
+  assert.equal(side.querySelectorAll('.fproj')[0].textContent, 'beta');
+  // The columns are asked OF BETA. Asking the project on screen would come back
+  // unknown, because this pack does not have that table.
+  const asked = calls.filter((c) => c.body && c.body.name === 'erd');
+  assert.equal(asked.length, 1, JSON.stringify(calls.map((c) => c.body)));
+  assert.equal(asked[0].body.project, 'beta');
+  assert.deepEqual(asked[0].body.arguments, { table: 'owners' });
+  // Its relationships are the ones inside its own cluster.
+  assert.match(side.textContent, /pets/);
+  const buttons = side.querySelectorAll('button').map((b) => b.textContent);
+  assert.ok(buttons.includes('Open in beta'), buttons.join(' | '));
+});
+
+test('the card for a route marker names the crossing as a call and not a key', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=erd' });
+  await settle(ctx, 20);
+  ev(ctx, `erdData = ${JSON.stringify(federatedErd())}; renderErdGraph(erdData);`);
+  await ev(ctx, "renderErdSideTable('via:beta|GET /owners/{ownerId}')");
+  const side = byId.get('erdside');
+  assert.match(side.textContent, /GET \/owners\/\{ownerId\}/);
+  assert.match(side.textContent, /the line to each one is the call, not a key/);
+  assert.match(side.textContent, /tables this route reaches/);
+  assert.equal(side.querySelectorAll('.fproj')[0].textContent, 'beta');
+});
+
+test('a portal carries its route name at rest, and an own endpoint still does not', async (t) => {
+  const { ctx } = await bootPage(t, { hash: '#p=alpha&tab=graph', renderer: true });
+  await settle(ctx, 20);
+  ev(ctx, `GMAP.resp = ${JSON.stringify(federatedMap())}; GMAP.sel = null; mapForgetLayout(); renderMap();`);
+  // THE PORTAL IS THE ONE NODE THAT SAYS WHY A SECOND PROJECT IS THERE, and the
+  // label-follows-size rule hid it, because an endpoint is a satellite and
+  // satellites are small.
+  assert.equal(ev(ctx, "GMAP.restLabels.has('served|endpoint:GET /owners/{ownerId}')"), true);
+  assert.equal(ev(ctx, "GMAP.byId.get('served|endpoint:GET /owners/{ownerId}').label"),
+    'GET /owners/{ownerId}  [served]', 'the route, with the project chip the tables carry');
+  assert.equal(ev(ctx, "mapWantsLabel(GMAP.byId.get('served|endpoint:GET /owners/{ownerId}'), 1)"), true);
+  // The skeleton is named too, and this project's own routes keep the old rule.
+  assert.equal(ev(ctx, "GMAP.restLabels.has('project:served')"), true);
+  ev(ctx, "GMAP.open = new Set(['group:api']); renderMap();");
+  assert.equal(ev(ctx, "GMAP.byId.has('endpoint:GET /api/x')"), true, 'the group was unfolded');
+  assert.equal(ev(ctx, "GMAP.restLabels.has('endpoint:GET /api/x')"), false,
+    "an own endpoint is still named only when it is lit or zoomed in on");
+  // The 3D label plane orders the portal and the skeleton FIRST, so a busier
+  // table cannot push either of them past the cap.
+  const order = JSON.parse(ev(ctx, 'JSON.stringify(mapLabelOrder3D().map(n=>n.id))'));
+  assert.deepEqual(order.slice(0, 2).sort(), ['project:served', 'served|endpoint:GET /owners/{ownerId}']);
+});
+
+test('a connected-projects row keeps its name and lets the counts give way', async (t) => {
+  const { ctx, byId, html } = await bootPage(t, { hash: '#p=alpha&tab=erd' });
+  await settle(ctx, 20);
+  // …and the stylesheet really carries the rule, at a specificity that beats the
+  // `.grow .id { min-width:0 }` it has to override.
+  assert.match(html, /\.grow \.id\.fedname \{[^}]*flex:1 1 auto;[^}]*min-width:6ch/);
+  // THE COUNTS ARE CAPPED, not merely shrinkable: flex shrinks two shrinkable
+  // items in proportion to their content, so the longer counts text kept most
+  // of the room and the name still read `custom…`.
+  assert.match(html, /\.count\.fedcount \{[^}]*flex:0 1 auto;[^}]*max-width:45%/);
+  ev(ctx, `erdData = ${JSON.stringify(federatedErd())}; renderErdGraph(erdData); renderErdSideOverview();`);
+  const row = byId.get('erdside').querySelectorAll('.list li')
+    .find((li) => (li.querySelector('.fedname') || {}).textContent === 'beta');
+  assert.ok(row, byId.get('erdside').textContent);
+  // THE NAME COMES FIRST and it is the element that grows; the counts are what
+  // shrinks. With the counts keeping their content width, `customers-service`
+  // rendered as `custome…` on the real rail.
+  assert.deepEqual(row.children.map((c) => c.className), ['grow', 'count fedcount']);
+  assert.deepEqual(row.querySelector('.grow').children.map((c) => c.className),
+    ['fedring', 'id clickable fedname']);
+  // The whole id is in the tooltip, because the name is the thing that gets cut.
+  assert.match(row.querySelector('.fedname').title, /^beta {2}open the ERD of beta$/);
+  assert.match(row.querySelector('.fedcount').title, /2 table\(s\), 1 relationship\(s\)/);
+});
+
+test('a drawing smaller than the pane is centred at 1:1, not blown up to fill it', async (t) => {
+  const { ctx } = await bootPage(t, { hash: '#p=alpha&tab=erd' });
+  await settle(ctx, 20);
+  // One table in one connected project: about as small as this sheet gets.
+  const tiny = federatedErd();
+  tiny.federated = [tiny.federated[1]];
+  ev(ctx, `erdData = ${JSON.stringify(tiny)}; renderErdGraph(erdData);`);
+  assert.equal(ev(ctx, 'ERD.fitScale'), 1, 'the fit magnified a drawing that already fits');
+  // …and it is really SMALL on the sheet, not stretched to the margin. Magnified
+  // instead, both frames sat on the pane's own edges and the cluster names went
+  // off the canvas with them.
+  const box = JSON.parse(ev(ctx, 'JSON.stringify(ERD.clusters[0].box)'));
+  const fit = JSON.parse(ev(ctx, 'JSON.stringify(ERD.fitBox)'));
+  assert.ok(box.x2 - box.x1 < (fit.x2 - fit.x1) / 2,
+    `one table takes ${Math.round(box.x2 - box.x1)} of ${Math.round(fit.x2 - fit.x1)} pane widths`);
+  // Centred: the same air on the left as on the right.
+  assert.ok(Math.abs((box.x1 - fit.x1) - (fit.x2 - box.x2)) < 1,
+    `the drawing is not centred: ${JSON.stringify(box)} in ${JSON.stringify(fit)}`);
+});

@@ -249,6 +249,63 @@ export const VIEWER_STRINGS = {
     // not serve stops the chain, unless another registered project serves that
     // route and the server can carry the answer across.
     'ov.federation.note': '{n} call(s) leave this project, {k} answered by a registered project and {m} not.',
+    // WHO THIS PROJECT TALKS TO (RM45). The census above is one sentence; this
+    // panel is the list behind it, one row per registered project that answers
+    // a route this one calls, and one last row for the calls nobody answers.
+    'ov.connected.title': 'Connected projects',
+    'ov.connected.note': 'the routes this project calls and does not serve, and the registered project that answers each one. Click a row to go there.',
+    'ov.connected.calls': '{n} call site(s) over {r} route(s)',
+    'ov.connected.more': '+{n} more',
+    'ov.connected.route.title': '{n} method(s) in this project make this call',
+    'ov.connected.open.title': 'open {p} on this page. Nothing is asked of the project you are leaving.',
+    'ov.connected.unmatched': 'nobody serves these',
+    'ov.connected.unmatched.note': 'these routes leave this project and no registered project serves them, so the chain stops at the call. Register the project that serves them and ask again.',
+    // THE MAP, ONCE IT REACHES INTO ANOTHER PACK. A node from another project
+    // keeps its kind's fill and wears a ring in that project's own hue, and the
+    // skeleton it hangs off is drawn like a group because that is its job here.
+    'mapleg.project': 'connected project',
+    'mapleg.connected': 'connected',
+    'mapleg.fedring.title': 'a ring around a node says it came from another registered project this server serves. The fill still says what kind of node it is, and the ring says which project it is in.',
+    'chip.fed.on': 'connected projects {n}',
+    'chip.fed.off': 'connected projects {n} hidden',
+    'chip.fed.on.title': 'hide the {n} node(s) that came from {k} other registered project(s)',
+    'chip.fed.off.title': 'draw the {n} node(s) that came from {k} other registered project(s)',
+    'gcount.federated': '**{n}** nodes from **{k}** connected project(s)',
+    'gcount.federated.off': '(hidden)',
+    'tip.fedproject': 'in {p}, another registered project on this server',
+    'tip.fedskeleton': 'a connected project. {n} of its routes are on this map, because this project calls them.',
+    'tip.crossing': 'this project calls a route {p} serves',
+    'tip.crossing.ambiguous': 'more than one registered project serves this route, so this line is a candidate',
+    'map.card.fedproject': 'this node is in {p}. Everything about it is that project\'s own answer, so it is opened there.',
+    'map.card.project': 'a connected project. What hangs off it is only what this project reaches by calling it.',
+    'map.card.portal': 'the route this project calls',
+    'map.card.open': 'Open in {p}',
+    'map.card.open.title': 'switch the page to {p} and open this there. Nothing is asked of the project you are leaving.',
+    'map.card.projectlist': 'connected projects ({n})',
+    // THE ERD, ONCE IT REACHES INTO ANOTHER PACK. One framed cluster per
+    // project, its own joins inside it, and a DASHED line from the route this
+    // project called to the tables that route reaches over there.
+    'erdleg.connected.on': 'connected projects {n}',
+    'erdleg.connected.off': 'connected projects {n} hidden',
+    'erdleg.connected.on.title': 'hide the {n} connected project(s) on this sheet',
+    'erdleg.connected.off.title': 'draw the {n} connected project(s) this project reaches over an HTTP call',
+    'erdleg.connected.title': 'the tables in {p} that a request from this project reaches',
+    'erdleg.via': 'dashed: reached over an HTTP call, not a foreign key',
+    'erdleg.via.title': 'a dashed line runs from the route this project called to the tables that route reaches over there. It is a call between two services, and two services share no foreign key, so no relationship on this sheet ever joins two projects.',
+    'erd.via.tip': 'reached over an HTTP call at {grade}, not a foreign key',
+    'erd.via.ambiguous': 'ambiguous',
+    'erd.via.body': 'this project calls this route and another project serves it. The tables below are what that route reaches over there, and the line to each one is the call, not a key.',
+    'erd.via.tables': 'tables this route reaches',
+    'erd.via.reached': 'reached through',
+    'erd.side.connected': 'Connected projects',
+    'erd.side.connected.note': 'the projects a request from this one reaches over an HTTP call. Each keeps its own tables and its own joins, because two services share no foreign key.',
+    'erd.side.connected.counts': '{tables} table(s), {rels} relationship(s)',
+    'erd.side.connected.open': 'open the ERD of {p}',
+    'erd.side.connected.hidden': 'they are not on the sheet right now. The switch in the legend above the picture draws them.',
+    'erd.side.map.fedonly': 'this project has no table of its own. Its requests end in {n} other registered project(s): {p}.',
+    'erd.side.fed.body': 'this table is in {p}. The relationships below are that project\'s own, and the columns come from that project\'s answer.',
+    'erd.side.fed.norels': 'none: no join inside this cluster touches this table',
+    'erd.side.fed.cols': 'asked of {p}, the project that has this table',
     // THE NAME OF A BLIND SPOT, in the reader's words. The engine's own kind
     // slug stays on the chip's tooltip beside the count, so nothing is renamed
     // away: this is the label a person can read without the docs open. A kind

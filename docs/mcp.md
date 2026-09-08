@@ -168,6 +168,111 @@ overlays.** `changed_impact` and the overlay describe the project you are
 editing; a sibling is whatever its last `cascade analyze` wrote. An edit in
 another project is invisible here until that project is analyzed again.
 
+### The whole-pack pictures cross too
+
+`map` and `erd` follow the same rules, with one extra one: **only what this
+project's requests reach is added, never a merge of two packs.** Two services
+share no foreign key, so a relationship line between them would be an
+invention, and jeecg alone is 10 601 nodes, so a merged picture would be
+unreadable.
+
+**`map`.** An endpoint on this map that calls a route another registered
+project serves gets a `calls` link (`federated: true`) to that project's own
+endpoint node, which is the **portal**. Under the portal hangs that route's own
+picture, built by the same walk with the same mode, depth and layers.
+
+```jsonc
+{ "nodes": [
+    { "id": "project:customers-service", "kind": "project", "label": "customers-service",
+      "project": "customers-service", "endpoints": 1 },
+    { "id": "customers-service|endpoint:GET /owners/{ownerId}", "kind": "endpoint",
+      "project": "customers-service", "portal": true, … },
+    { "id": "customers-service|table:owners", "kind": "table", "project": "customers-service", … } ],
+  "links": [
+    { "source": "project:customers-service", "target": "customers-service|endpoint:GET /owners/{ownerId}",
+      "kind": "member", "grade": "EXACT", "project": "customers-service" },
+    { "source": "endpoint:GET /api/gateway/owners/{ownerId}",
+      "target": "customers-service|endpoint:GET /owners/{ownerId}",
+      "kind": "calls", "grade": "SOUND_SET", "federated": true, "ambiguous": false,
+      "project": "customers-service", "route": "GET /owners/{ownerId}", "via": "…#getOwner" },
+    { "source": "customers-service|endpoint:GET /owners/{ownerId}",
+      "target": "customers-service|table:owners", "kind": "touches",
+      "grade": "SOUND_SET", "project": "customers-service" } ],
+  "summary": { …, "federated": { "projects": ["customers-service"], "nodes": 2, "links": 3 } } }
+```
+
+- Every id from another pack is namespaced `<project>|<id>` and every such node
+  and link carries `project`, so two services that both have an `orders` table
+  are two nodes and never one.
+- One node per sibling, `id: "project:<id>", kind: "project"`, is the skeleton
+  the portals hang off. The sibling's own **groups are not drawn**: a group is
+  one pack's naming convention and does not travel.
+- `summary.federated.nodes` counts the nodes that BELONG to another pack (the
+  skeleton is this answer's own drawing device, so it is not counted there);
+  `summary.federated.links` counts every line that touches one.
+- **One node cap and one byte budget bound the whole picture.** A federated node
+  gives way before this pack's own node of the same kind, and a cluster goes
+  whole once the route it hangs off goes, because a table with no line to it
+  says nothing. `limits` names what went and from which project.
+- A call that leaves this pack from a method **no route on the map reaches** (a
+  scheduled job, a startup listener, a tool an AI model calls) cannot be drawn
+  from a picture made of routes. It is not silently dropped: one `limits`
+  sentence names the methods and the routes, and `overview.federation` counts
+  every call that leaves the pack whether a route reaches it or not.
+
+**`erd`.** The own answer is untouched. The whole-schema view gains
+`answer.federated`, one entry per registered project a request reaches:
+
+```jsonc
+{ "federated": [
+    { "project": "customers-service", "buildDigest": "eaeb163146ce",
+      "tables": [ { "table": "owners", "comment": null, "columnCount": 6 } ],
+      "relationships": [ { "from": …, "to": …, "columns": […], "statements": 2,
+                          "grade": "EXACT", "cardinality": "1:N" } ],
+      "via": [ { "route": { "method": "GET", "path": "/owners/{ownerId}" },
+                 "fromEndpoint": "endpoint:GET /api/gateway/owners/{ownerId}",
+                 "grade": "SOUND_SET", "ambiguous": false, "tables": ["owners"] } ] } ] }
+```
+
+- `tables` are only the tables the walk from the crossed route(s) reaches there,
+  and `relationships` are **that project's own** joins between exactly those
+  tables. **No relationship on this answer ever joins two projects.** The only
+  thing connecting the clusters is the HTTP call, which `via` names.
+- `via[].fromEndpoint` is the endpoint the request left from, namespaced
+  `<project>|<id>` when a chained crossing means the caller is itself in another
+  pack.
+- The crossing walk runs at `mode=conservative, depth 8` (the default `map` and
+  `flow` walk), because `erd` takes no mode or depth of its own. `limits` says
+  so, so a table a wider walk would reach is unknown rather than absent.
+- `erd table=<name>` answers one table's join neighbourhood in **this** pack and
+  does not federate. Ask a sibling's table of that project (`erd` with its
+  `project` argument).
+
+Both accept `federate` and `federationHops` like `flow`. With `federate: false`,
+and on a server that serves one project and calls nobody, both answers are
+**byte for byte what they were before federation existed**: the `federation`
+block appears only when there is something to say.
+
+### The overview census
+
+`overview.federation` is a census over the pack's outbound routes, not over one
+walk, so it says the same thing whichever question the reader arrived with. No
+pack is loaded: matching reads the siblings' sidecars only.
+
+```jsonc
+{ "federation": {
+    "calls": 2, "answered": 2, "unmatched": 0,
+    "projects": [ "customers-service", "visits-service" ],
+    "byProject": [ { "project": "customers-service", "sites": 1,
+                     "routes": [ { "method": "GET", "path": "/owners/{ownerId}", "sites": 1 } ] } ],
+    "unmatchedRoutes": [ ] } }
+```
+
+`calls`, `answered` and `unmatched` count ROUTES that leave this pack. `sites`
+counts CALL SITES: the methods in this pack that make the call, so one route
+called from two services is one route and two sites. A route matched by two
+projects is listed under both, which is what `ambiguous` means on a crossing.
+
 ## HTTP routes
 
 | route | what |

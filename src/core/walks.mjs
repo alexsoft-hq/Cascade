@@ -206,10 +206,11 @@ export function multiHandlerRoutes(graph) {
  *
  * @param {import('./graph.mjs').Graph} graph
  * @param {{mode?:'strict'|'conservative'|'heuristic', depth?:number, maxNodes?:number,
- *          packageDepth?:number|null}} [opts]
+ *          packageDepth?:number|null, only?:string[]}} [opts]
  *        packageDepth comes from the profile (`moduleAttribution.packageDepth`)
  *        and only changes how endpoints are GROUPED — never which statements
- *        they reach.
+ *        they reach. `only` narrows the census to the endpoint node ids it
+ *        names; everything else about the walk is unchanged.
  * @returns {{endpoints:{id:string, path:string|null, httpMethod:string|null, group:string,
  *                       handlers:number, depthCut:number,
  *                       statements:{id:string, grade:string}[]}[],
@@ -225,7 +226,7 @@ export function walkEndpoints(graph, opts = {}) {
   const depth = opts.depth ?? 8;
   if (!Number.isInteger(depth) || depth < 1) throw new WalkError(`depth must be a positive integer, got ${depth}`);
 
-  const endpoints = [];
+  let endpoints = [];
   let outboundEndpoints = 0;
   for (const n of graph.nodes.values()) {
     if (n.kind !== 'endpoint') continue;
@@ -245,6 +246,18 @@ export function walkEndpoints(graph, opts = {}) {
       depthCut: 0,
       statements: [],
     });
+  }
+  // ONE ROUTE'S PICTURE, NOT THE WHOLE PACK'S (RM45). `only` narrows this
+  // census to the endpoints it names. The caller that needs it already knows
+  // which route it is asking about - a map that crosses into another project
+  // asks that project for the route it called and nothing else - and walking
+  // every handler in that pack to throw all but one away would cost the whole
+  // pack for one line. An id that is not a served endpoint here is simply
+  // absent: the same silence a route this pack does not serve already gets.
+  if (opts.only != null) {
+    if (!Array.isArray(opts.only)) throw new WalkError('only must be an array of endpoint node ids');
+    const want = new Set(opts.only);
+    endpoints = endpoints.filter((e) => want.has(e.id));
   }
   endpoints.sort((a, b) => cmp(a.id, b.id)); // deterministic walk order
 

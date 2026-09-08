@@ -502,15 +502,27 @@ test('the depth cap stops a crossing, and the crossing says it was cut there', (
 test('overview counts the calls that leave this project and how many are answered', (t) => {
   const { host } = workspace(t, DEFAULTS());
   const gw = host.callTool('overview', { project: 'gateway' }).answer;
-  assert.deepEqual(gw.federation, { calls: 1, answered: 1, unmatched: 0, projects: ['things'] });
+  assert.deepEqual(gw.federation, {
+    calls: 1, answered: 1, unmatched: 0, projects: ['things'],
+    // RM45: the same census broken down, so the page can list the projects and
+    // the routes instead of re-deriving them. `sites` counts the METHODS that
+    // make the call, and no field named `calls` ever carries that unit.
+    byProject: [{ project: 'things', sites: 1, routes: [{ method: 'GET', path: '/things/{*}', sites: 1 }] }],
+    unmatchedRoutes: [],
+  });
   const th = host.callTool('overview', { project: 'things' }).answer;
-  assert.deepEqual(th.federation, { calls: 0, answered: 0, unmatched: 0, projects: [] });
+  assert.deepEqual(th.federation, { calls: 0, answered: 0, unmatched: 0, projects: [], byProject: [], unmatchedRoutes: [] });
 });
 
 test('overview on a single-project server says the call leaves and nobody answers it', (t) => {
   const { host } = workspace(t, [{ id: 'gateway', graph: callerGraph() }]);
   const a = host.callTool('overview', {}).answer;
-  assert.deepEqual(a.federation, { calls: 1, answered: 0, unmatched: 1, projects: [] });
+  assert.deepEqual(a.federation, {
+    calls: 1, answered: 0, unmatched: 1, projects: [], byProject: [],
+    // The remedy needs the route, not just the count: this is what the page
+    // puts in the "nobody serves this" row.
+    unmatchedRoutes: [{ method: 'GET', path: '/things/{*}', sites: 1 }],
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -533,4 +545,150 @@ test('basis.siblings is held to the same rule as basis: a digest and a freshness
   assert.throws(() => build([{ project: 'q', buildDigest: 'e', freshness: { verdict: 'maybe' } }]), /needs a freshness verdict/);
   assert.throws(() => build([{ buildDigest: 'e', freshness: { verdict: 'unknown' } }]), /needs the project it names/);
   assert.throws(() => build('nope'), /must be an array/);
+});
+
+// ---------------------------------------------------------------------------
+// The whole-pack pictures (RM45)
+// ---------------------------------------------------------------------------
+
+test('map: the sibling\'s route is the portal, and its own picture hangs off it', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const r = host.callTool('map', { project: 'gateway' });
+  assertContract(r);
+  const a = r.answer;
+  // The sibling's endpoint node IS the portal, namespaced, stamped and marked.
+  const portal = a.nodes.find((n) => n.id === 'things|endpoint:GET /things/{thingId}');
+  assert.ok(portal, a.nodes.map((n) => n.id).join(' | '));
+  assert.equal(portal.kind, 'endpoint');
+  assert.equal(portal.project, 'things');
+  assert.equal(portal.portal, true);
+  // …with that route's own picture under it, and the skeleton it hangs off.
+  assert.ok(a.nodes.some((n) => n.id === 'things|table:things' && n.project === 'things'));
+  const skeleton = a.nodes.find((n) => n.kind === 'project');
+  assert.deepEqual([skeleton.id, skeleton.label, skeleton.endpoints], ['project:things', 'things', 1]);
+  // A GROUP DOES NOT TRAVEL: it is one pack's naming convention.
+  assert.deepEqual(a.nodes.filter((n) => n.kind === 'group' && n.project).map((n) => n.id), []);
+
+  // One crossing line, from the endpoint that made the call, at the crossing's
+  // own grade, and marked as the crossing it is.
+  const cross = a.links.filter((l) => l.federated);
+  assert.deepEqual(cross.map((l) => [l.source, l.target, l.kind, l.grade, l.ambiguous]),
+    [['endpoint:GET /api/x', 'things|endpoint:GET /things/{thingId}', 'calls', 'SOUND_SET', false]]);
+  assert.equal(cross[0].project, 'things');
+  // The skeleton's member link, and the sibling's own touch, both stamped.
+  assert.ok(a.links.some((l) => l.source === 'project:things' && l.target === portal.id && l.kind === 'member'));
+  assert.ok(a.links.some((l) => l.source === portal.id && l.target === 'things|table:things' && l.kind === 'touches'));
+
+  assert.deepEqual(a.summary.federated, { projects: ['things'], nodes: 2, links: 3 });
+  assert.deepEqual(r.basis.siblings.map((s) => s.project), ['things']);
+  assert.deepEqual(a.federation.crossed.map((c) => [c.from.project, c.to.project]), [['gateway', 'things']]);
+});
+
+test('map: federate=false is the answer this tool gave before federation existed', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const off = host.callTool('map', { project: 'gateway', federate: false });
+  assert.equal(off.answer.federation, undefined, 'an empty block is a field that says nothing');
+  assert.equal(off.answer.summary.federated, undefined);
+  assert.equal(off.basis.siblings, undefined);
+  assert.deepEqual(off.answer.nodes.filter((n) => n.project), []);
+});
+
+test('map: the node cap takes the connected project first, and names it', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const full = host.callTool('map', { project: 'gateway' }).answer;
+  const own = full.nodes.filter((n) => !n.project).length;
+  const cut = host.callTool('map', { project: 'gateway', limit: own }).answer;
+  // Every one of this project's own nodes survived; the cluster went whole,
+  // because a table with no line to it says nothing.
+  assert.deepEqual(cut.nodes.filter((n) => n.project), []);
+  assert.equal(cut.nodes.length, own);
+  assert.deepEqual(cut.summary.federated, { projects: [], nodes: 0, links: 0 });
+  const said = host.callTool('map', { project: 'gateway', limit: own })
+    .limits.find((l) => /came from another project/.test(l.reason));
+  assert.ok(said, 'the cut is not disclosed');
+  assert.match(said.reason, /things \(the whole cluster/);
+});
+
+test('map: federationHops=0 says the cap, not "nobody serves it"', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const r = host.callTool('map', { project: 'gateway', federationHops: 0 });
+  assert.deepEqual(r.answer.nodes.filter((n) => n.project), []);
+  assert.deepEqual(r.answer.federation.crossed, []);
+  // The call is NOT unmatched: nobody looked, so "no registered project serves
+  // it" is a claim this answer cannot make.
+  assert.deepEqual(r.answer.federation.unmatched, []);
+  const said = r.limits.find((l) => l.scope === 'federation');
+  assert.match(said.reason, /crossing cap \(federationHops 0\) was already spent/);
+  assert.match(said.reason, /Raise federationHops and ask again/);
+});
+
+test('map: a chain of crossings draws A, B and C, and federationHops bounds it', (t) => {
+  const b = serverGraph({ pkg: 'th' });
+  b.addNode({ id: 'symbol:com.th.Far#fetch', kind: 'symbol', owner: 'com.th.Far', file: 'th/Far.java', line: 4 });
+  b.addNode({ id: 'endpoint:GET /far/{*}', kind: 'endpoint', httpMethod: 'GET', path: '/far/{*}', outbound: true });
+  b.addEdge({ from: 'symbol:com.th.Svc#load', to: 'symbol:com.th.Far#fetch', type: 'MAY_CALL', grade: 'SOUND_SET' });
+  b.addEdge({
+    from: 'symbol:com.th.Far#fetch', to: 'endpoint:GET /far/{*}', type: 'CALLS_HTTP', grade: 'UNRESOLVED',
+    evidence: { rule: 'http-client-call', service: 'far', serviceLiteral: true, url: { template: '/far/{*}' } },
+  });
+  const { host } = workspace(t, [
+    { id: 'gateway', graph: callerGraph() },
+    { id: 'things', graph: b },
+    { id: 'far', graph: serverGraph({ route: '/far/{farId}', pkg: 'fr', table: 'far_rows' }) },
+  ]);
+  const a = host.callTool('map', { project: 'gateway' }).answer;
+  assert.deepEqual(a.nodes.filter((n) => n.kind === 'project').map((n) => n.id),
+    ['project:far', 'project:things']);
+  assert.ok(a.nodes.some((n) => n.id === 'far|table:far_rows'));
+  // The SECOND crossing leaves the first sibling's own route, not this project's.
+  const chained = a.links.find((l) => l.federated && l.project === 'far');
+  assert.deepEqual([chained.source, chained.target],
+    ['things|endpoint:GET /things/{thingId}', 'far|endpoint:GET /far/{farId}']);
+  assert.deepEqual(a.summary.federated.projects, ['far', 'things']);
+
+  // …and one crossing of budget stops at the first.
+  const one = host.callTool('map', { project: 'gateway', federationHops: 1 }).answer;
+  assert.deepEqual(one.summary.federated.projects, ['things']);
+  assert.deepEqual(one.nodes.filter((n) => n.project === 'far'), []);
+});
+
+test('erd: one cluster per connected project, and no relationship across two', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const r = host.callTool('erd', { project: 'gateway' });
+  assertContract(r);
+  const a = r.answer;
+  // The own answer is untouched: this pack has no schema.
+  assert.deepEqual(a.tables, []);
+  assert.deepEqual(a.relationships, []);
+  assert.equal(a.empty.tables, 'none');
+  assert.equal(a.federated.length, 1);
+  const c = a.federated[0];
+  assert.equal(c.project, 'things');
+  assert.deepEqual(c.tables.map((x) => x.table), ['things']);
+  // One cluster, one table, so it has no join of its own to show.
+  assert.deepEqual(c.relationships, []);
+  // `via` is the ONLY thing joining two clusters, and it is an HTTP call.
+  assert.deepEqual(c.via, [{
+    route: { method: 'GET', path: '/things/{*}' },
+    fromEndpoint: 'endpoint:GET /api/x',
+    grade: 'SOUND_SET', ambiguous: false, tables: ['things'],
+  }]);
+  assert.deepEqual(r.basis.siblings.map((s) => s.project), ['things']);
+  // Both disclosures are made, in the answer's own words.
+  assert.ok(r.limits.some((l) => /No relationship on this answer joins two projects/.test(l.reason)),
+    'the answer does not say that no relationship crosses two projects');
+  assert.ok(r.limits.some((l) => /mode=conservative, depth 8/.test(l.reason)),
+    'the answer does not say which walk built the cluster');
+});
+
+test('erd: federate=false, and a focused table, answer from this pack alone', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const off = host.callTool('erd', { project: 'gateway', federate: false }).answer;
+  assert.equal(off.federated, undefined);
+  assert.equal(off.federation, undefined);
+  // `erd table=` is one table's neighbourhood IN THIS PACK: a sibling's table
+  // is that project's own question, asked of that project.
+  const focus = host.callTool('erd', { project: 'things', table: 'things' }).answer;
+  assert.equal(focus.federated, undefined);
+  assert.deepEqual(focus.tables.map((x) => x.table), ['things']);
 });

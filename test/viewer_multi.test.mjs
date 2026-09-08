@@ -322,5 +322,9 @@ test('/api/projects reports each project\'s route index, and the overview counts
   ]);
   // ...and the sentence the overview panel draws comes from the answer itself.
   const ov = await (await v.call('overview', {}, 'caller')).json();
-  assert.deepEqual(ov.answer.federation, { calls: 1, answered: 1, unmatched: 0, projects: ['served'] });
+  assert.deepEqual(ov.answer.federation, {
+    calls: 1, answered: 1, unmatched: 0, projects: ['served'],
+    byProject: [{ project: 'served', sites: 1, routes: [{ method: 'GET', path: '/things/{*}', sites: 1 }] }],
+    unmatchedRoutes: [],
+  });
 });
