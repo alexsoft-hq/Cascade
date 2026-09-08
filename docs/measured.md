@@ -52,7 +52,7 @@ suite.
 | [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | no frontend read | no frontend read | 528 |
 | [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read | 243 |
 | [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read | 83 |
-| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 12 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read | 52 |
+| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read | 54 |
 
 The last column is the sixth, and it is guarded the other way up. It adds up,
 over every endpoint, how many distinct columns that one endpoint reaches, and a

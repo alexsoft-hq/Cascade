@@ -978,7 +978,7 @@ that improves silently is a number nobody checked.
 | xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | no frontend read | no frontend read |
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read |
 | spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read |
-| spring-petclinic-microservices | 12 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read |
+| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run

@@ -958,7 +958,7 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 | xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
 | spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
-| spring-petclinic-microservices | 12 / 15 | 5 / 7 | 20 / 24 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
+| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run
