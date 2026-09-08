@@ -563,8 +563,10 @@ Packs are **lazy**. Starting the server reads the registry and nothing else:
 
 ```jsonc
 { "answer": {
-    "projects": [ { "id": "jpetstore", "stack": ["sql", "java"], "loaded": false, "bytes": null },
-                  { "id": "mall", "stack": ["sql", "java", "web"], "loaded": false, "bytes": null } ],
+    "projects": [ { "id": "jpetstore", "stack": ["sql", "java"], "loaded": false, "bytes": null,
+                    "federation": { "index": "present", "serves": 22, "calls": 0 } },
+                  { "id": "mall", "stack": ["sql", "java", "web"], "loaded": false, "bytes": null,
+                    "federation": { "index": "present", "serves": 239, "calls": 0 } } ],
     "cache": { "loaded": 0, "bytes": 0, "budgetBytes": 536870912, "evictions": 0, "hits": 0, "misses": 0 } },
   "basis": { "project": "*", "scope": "server", "buildDigest": null } }
 ```
@@ -578,6 +580,22 @@ error [ambiguous]: several projects are registered: jpetstore, mall. Pass "proje
 
 There is no "pick the first one" fallback, because a confident answer about the
 wrong project is exactly the failure this tool exists to prevent.
+
+**Several projects, one answer.** A microservice repository analyzes into one
+pack per service, and a pack alone can only say that its code sends
+`GET /owners/{ownerId}` somewhere. When another registered project serves that
+route, `flow` and `endpoint_impact` keep walking there: the rows from the other
+pack carry `project`, `basis.siblings` names every pack the answer walked with
+its own digest, and `answer.federation` lists each crossing, each call that no
+registered project serves (the remedy is to register it), and each project
+skipped for having no route index. The join is made when the question is
+asked, from the small `routes.json` that `analyze` writes beside each pack; the
+packs and their digests do not change. A crossing is SOUND_SET at best,
+HEURISTIC when several projects serve the same route, and never invented: a
+call nobody serves stays "leaves the pack". `federate: false` asks one pack
+alone. Measured on spring-petclinic-microservices split into five projects,
+the gateway's `GET /api/gateway/owners/{ownerId}` reaches `owners` in
+customers-service and `visits` in visits-service.
 
 **The cache budget.** `--memory-budget <MB>` bounds the pack JSON held in
 memory, 512 MB by default, and eviction is least-recently-used. That number is a

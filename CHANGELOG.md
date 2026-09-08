@@ -10,6 +10,13 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-08
+
+The release that follows a request across services: an imperative HTTP call
+becomes an edge, a registered project's route answers another project's call,
+and a trace of what really ran sits beside the grade. Everything below was
+measured on the corpus in `docs/measured.md`.
+
 ### Added
 
 - **One answer across several packs.** One repository per microservice is the
@@ -1368,5 +1375,6 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/alexsoft-hq/Cascade/releases/tag/v0.1.0

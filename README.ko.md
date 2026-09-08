@@ -560,8 +560,10 @@ pack 은 **지연 로딩**됩니다. 서버를 띄우는 동작은 레지스트�
 
 ```jsonc
 { "answer": {
-    "projects": [ { "id": "jpetstore", "stack": ["sql", "java"], "loaded": false, "bytes": null },
-                  { "id": "mall", "stack": ["sql", "java", "web"], "loaded": false, "bytes": null } ],
+    "projects": [ { "id": "jpetstore", "stack": ["sql", "java"], "loaded": false, "bytes": null,
+                    "federation": { "index": "present", "serves": 22, "calls": 0 } },
+                  { "id": "mall", "stack": ["sql", "java", "web"], "loaded": false, "bytes": null,
+                    "federation": { "index": "present", "serves": 239, "calls": 0 } } ],
     "cache": { "loaded": 0, "bytes": 0, "budgetBytes": 536870912, "evictions": 0, "hits": 0, "misses": 0 } },
   "basis": { "project": "*", "scope": "server", "buildDigest": null } }
 ```
@@ -575,6 +577,22 @@ error [ambiguous]: several projects are registered: jpetstore, mall. Pass "proje
 
 "첫 번째 것을 고른다" 같은 폴백은 없습니다. 엉뚱한 프로젝트에 대해 자신 있게
 답하는 것이야말로 이 도구가 막으려고 존재하는 실패이기 때문입니다.
+
+**여러 프로젝트, 하나의 답.** 마이크로서비스는 서비스마다 pack 이 하나씩
+생기고, pack 혼자서는 "이 코드가 `GET /owners/{ownerId}` 를 어딘가로 보낸다"
+까지만 압니다. 그 라우트를 서빙하는 프로젝트가 같은 서버에 등록돼 있으면
+`flow` 와 `endpoint_impact` 가 거기로 이어서 걷습니다. 다른 pack 에서 온 행에는
+`project` 가 붙고, `basis.siblings` 에는 걸어 다닌 pack 마다 자기 다이제스트가
+실리며, `answer.federation` 에는 건넌 곳, 아무 프로젝트도 서빙하지 않는
+호출(고치는 법은 그 프로젝트를 등록하는 것), 라우트 색인이 없어 건너뛴
+프로젝트가 적힙니다. 이어 붙이는 일은 질문할 때 일어납니다. `analyze` 가 pack
+옆에 써 두는 작은 `routes.json` 을 읽을 뿐, pack 과 다이제스트는 바뀌지
+않습니다. 건너는 엣지는 잘해야 SOUND_SET 이고, 여러 프로젝트가 같은 라우트를
+서빙하면 HEURISTIC 이며, 지어내지는 않습니다. 아무도 서빙하지 않는 호출은
+지금처럼 "pack 을 떠남"으로 남습니다. `federate: false` 면 pack 하나만으로
+답합니다. spring-petclinic-microservices 를 다섯 프로젝트로 나눠 재면
+게이트웨이의 `GET /api/gateway/owners/{ownerId}` 가 customers-service 의
+`owners` 와 visits-service 의 `visits` 에 닿습니다.
 
 **캐시 예산.** `--memory-budget <MB>` 는 메모리에 들고 있는 pack JSON 의 양을
 제한하며 기본값은 512 MB, 축출은 LRU 입니다. 이 숫자는 힙 측정값이 아니라
