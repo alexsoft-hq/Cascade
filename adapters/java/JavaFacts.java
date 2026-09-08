@@ -19,7 +19,7 @@
  * paths, no machine identity). Structured diagnostics + a summary go to stderr.
  *
  * Record kinds: header, parse_error, import, type, entity, repository, field,
- * endpoint, method, transactional, call, mpEntity, mpMapper, mpService, mpWrapper. EVERY record but the header carries a
+ * endpoint, method, transactional, call, httpCall, mpEntity, mpMapper, mpService, mpWrapper. EVERY record but the header carries a
  * `file`, because the incremental core shards the stream by file: a record
  * without one would be silently dropped from the cache (src/core/facts_store.mjs
  * mirrors the sort keys and a test proves the mirror byte-for-byte).
@@ -92,7 +92,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/7";
+    static final String VERSION = "javafacts/8";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -127,6 +127,11 @@ public class JavaFacts {
         // MyBatis statements written as an ANNOTATION on a mapper method
         // rather than in a mapper XML (javafacts/7).
         int mapperAnnotationSql;
+        // IMPERATIVE HTTP calls: a WebClient/RestClient chain or a RestTemplate
+        // request, where the verb is a method name and the url is an argument
+        // (javafacts/8). Counted, never interpreted: whether the url names a
+        // route this pack serves is decided in src/adapters/java_bridge.mjs.
+        int httpCalls;
 
         void add(String key, Map<String, Object> obj) {
             records.add(new Rec(key, toJson(obj)));
@@ -490,9 +495,20 @@ public class JavaFacts {
 
             // --- pass 1: instance fields (class/interface-typed) ---------------
             Map<String, String> fields = new LinkedHashMap<>();
+            // The type of every field AS WRITTEN (`WebClient.Builder`, not
+            // `Builder`), static ones included. A second map on purpose: the
+            // call scan wants the SIMPLE name of an instance field, while the
+            // HTTP scan has to tell `WebClient.Builder` from any other nested
+            // `Builder`, and an imperative client is as often a
+            // `private static final RestTemplate` as an injected field.
+            Map<String, String> fieldTypeWritten = new LinkedHashMap<>();
             for (Tree member : ct.getMembers()) {
                 if (member instanceof VariableTree) {
                     VariableTree v = (VariableTree) member;
+                    String written = typeWrittenName(v.getType());
+                    if (written != null && !fieldTypeWritten.containsKey(v.getName().toString())) {
+                        fieldTypeWritten.put(v.getName().toString(), written);
+                    }
                     if (v.getModifiers().getFlags().contains(Modifier.STATIC)) continue;
                     String typeSimple = typeSimpleName(v.getType());
                     if (typeSimple == null) continue; // primitive/var/unknown: skip
@@ -605,6 +621,7 @@ public class JavaFacts {
                     if (m.getBody() != null) {
                         scanCalls(fqn, mname, fields, ext, m);
                         scanWrappers(fqn, mname, fields, m);
+                        scanHttpCalls(fqn, mname, fieldTypeWritten, m);
                     }
                 }
             }
@@ -1076,6 +1093,177 @@ public class JavaFacts {
         }
 
 
+        // ---- imperative HTTP calls: `httpCall` records (javafacts/8) --------
+        //
+        // A DECLARATIVE client says where it is going in an annotation, and the
+        // `client` field on the type record above carries it. Most
+        // service-to-service traffic is not written that way. It is a fluent
+        // chain (`webClient.get().uri("http://svc.invalid/a/{id}", x).retrieve()`) or a
+        // RestTemplate call (`restTemplate.getForObject(url, X.class)`), where
+        // the VERB is a method name and the URL is an argument. Until
+        // javafacts/8 the lane saw none of it, so a five-service application
+        // whose gateway calls the other four with a WebClient produced no
+        // cross-service edge at all.
+        //
+        // WHAT TRIGGERS THE SCAN, and why it is that and not a name:
+        //   - RestTemplate: the receiver's DECLARED TYPE. `execute` and `put`
+        //     and `delete` are ordinary method names, so a thread pool's
+        //     `pool.execute(task)` must never be read as an HTTP request; only
+        //     a receiver this file declares as a RestTemplate/RestOperations
+        //     gets there.
+        //   - WebClient/RestClient: the SHAPE. A builder chain often starts at
+        //     an expression whose type no single file states
+        //     (`webClientBuilder.build().get()`), so the chain itself is the
+        //     evidence: a verb call, a `.uri(...)`, and the call that sends it.
+        //     Both must be present, which is what keeps it off ordinary code.
+        //
+        // IT DECIDES NOTHING. The url is recorded as far as one file can read
+        // it and no further: a literal, a literal with `{…}` placeholders, or a
+        // concatenation whose literal halves are kept and whose base is named
+        // as unreadable. A url this scan cannot reduce to a path is recorded
+        // `unresolved` WITH THE EXPRESSION AS WRITTEN, never guessed into a
+        // route. Whether the path names a route this pack serves is decided in
+        // src/adapters/java_bridge.mjs (I-1/I-6).
+        void scanHttpCalls(final String fqn, final String mname,
+                           final Map<String, String> fieldTypeWritten, MethodTree m) {
+            final String from = fqn + "#" + mname;
+            // Every name this METHOD binds, by its written type: a client is as
+            // often a local or a parameter as an injected field. Collected in
+            // its own pass so a call before the declaration reads the same as
+            // one after it.
+            final Map<String, String> localTypes = new LinkedHashMap<>();
+            for (VariableTree p : m.getParameters()) {
+                String w = typeWrittenName(p.getType());
+                if (w != null) localTypes.put(p.getName().toString(), w);
+            }
+            m.getBody().accept(new TreeScanner<Void, Void>() {
+                @Override public Void visitVariable(VariableTree v, Void p) {
+                    String w = typeWrittenName(v.getType());
+                    if (w != null) localTypes.put(v.getName().toString(), w);
+                    return super.visitVariable(v, p);
+                }
+            }, null);
+
+            m.getBody().accept(new TreeScanner<Void, Void>() {
+                @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
+                    Tree sel = inv.getMethodSelect();
+                    if (sel instanceof MemberSelectTree) {
+                        MemberSelectTree ms = (MemberSelectTree) sel;
+                        String name = ms.getIdentifier().toString();
+                        ExpressionTree recv = unwrap(ms.getExpression());
+                        String recvName = receiverFieldName(recv);
+                        String recvType = typeOfName(recvName);
+                        if ("resttemplate".equals(httpClientKindOf(recvType))) {
+                            restTemplateCall(inv, name, recvName, recvType);
+                        } else if (FLUENT_TERMINALS.contains(name)) {
+                            fluentChain(inv);
+                        }
+                    }
+                    return super.visitMethodInvocation(inv, p);
+                }
+
+                /** The written type of a name this method or this class binds, or null. */
+                String typeOfName(String name) {
+                    if (name == null) return null;
+                    String local = localTypes.get(name);
+                    return (local != null) ? local : fieldTypeWritten.get(name);
+                }
+
+                /** One RestTemplate request: the method name says the verb, argument 0 the url. */
+                void restTemplateCall(MethodInvocationTree inv, String name, String recvName, String recvType) {
+                    String verb = REST_TEMPLATE_VERBS.get(name);
+                    if (verb == null || inv.getArguments().isEmpty()) return;
+                    String httpMethod = verb;
+                    if (verb.isEmpty()) {
+                        // `exchange(url, HttpMethod.POST, …)` / `execute(url, HttpMethod.GET, …)`:
+                        // the verb is an ARGUMENT, and one this file may not be able to read.
+                        httpMethod = (inv.getArguments().size() > 1)
+                                ? httpMethodArgOf(inv.getArguments().get(1)) : null;
+                    }
+                    emitHttpCall("resttemplate", recvName, recvType, httpMethod,
+                            inv.getArguments().get(0), lineOf(inv));
+                }
+
+                /**
+                 * The fluent chain that ends at the call which SENDS it, read
+                 * from the outside in: the first `.uri(...)` carries the url and
+                 * the first verb call names the method. Both are required.
+                 */
+                void fluentChain(MethodInvocationTree terminal) {
+                    ExpressionTree cur = unwrap(((MemberSelectTree) terminal.getMethodSelect()).getExpression());
+                    String httpMethod = null;
+                    MethodInvocationTree uriCall = null;
+                    ExpressionTree root = null;
+                    for (int i = 0; i < FLUENT_CHAIN_LIMIT && cur != null; i++) {
+                        if (!(cur instanceof MethodInvocationTree)) { root = cur; break; }
+                        MethodInvocationTree step = (MethodInvocationTree) cur;
+                        Tree ssel = step.getMethodSelect();
+                        if (!(ssel instanceof MemberSelectTree)) break;
+                        MemberSelectTree sms = (MemberSelectTree) ssel;
+                        String sname = sms.getIdentifier().toString();
+                        if (uriCall == null && FLUENT_URI_METHODS.contains(sname) && !step.getArguments().isEmpty()) {
+                            uriCall = step;
+                        }
+                        if (httpMethod == null) {
+                            String v = fluentVerbOf(sname, step);
+                            if (v != null) httpMethod = v;
+                        }
+                        cur = unwrap(sms.getExpression());
+                    }
+                    if (uriCall == null || httpMethod == null) return;
+                    String recvName = receiverFieldName(root);
+                    String recvType = typeOfName(recvName);
+                    String kind = httpClientKindOf(recvType);
+                    emitHttpCall(kind, recvName, recvType, httpMethod,
+                            uriCall.getArguments().get(0), lineOf(terminal));
+                }
+
+                void emitHttpCall(String clientKind, String recvName, String recvType,
+                                  String httpMethod, ExpressionTree urlExpr, int line) {
+                    UrlRead u = readUrl(urlExpr);
+                    String host = null;
+                    String query = null;
+                    String pathStr = null;
+                    if (u.value != null) {
+                        String[] hp = splitHost(u.value);
+                        host = hp[0];
+                        String rest = hp[1];
+                        int hash = rest.indexOf('#');
+                        if (hash >= 0) rest = rest.substring(0, hash);
+                        int q = rest.indexOf('?');
+                        if (q >= 0) { query = rest.substring(q + 1); rest = rest.substring(0, q); }
+                        pathStr = joinPath(null, rest);
+                    }
+                    Map<String, Object> rec = new LinkedHashMap<>();
+                    rec.put("kind", "httpCall");
+                    rec.put("from", from);
+                    // Which of the three clients it is, when the receiver's type
+                    // says so; null for a builder chain whose type no line of
+                    // this file states. The SHAPE is the evidence either way.
+                    rec.put("client", clientKind);
+                    rec.put("receiver", recvName);
+                    rec.put("receiverType", recvType);
+                    rec.put("httpMethod", httpMethod);
+                    rec.put("urlKind", u.kind);
+                    rec.put("url", u.value);
+                    // The expression AS WRITTEN, which is the whole of what an
+                    // unresolved url has to show for itself.
+                    rec.put("written", u.written);
+                    rec.put("host", host);
+                    rec.put("hostLiteral", host != null && !host.contains(URL_HOLE));
+                    rec.put("base", u.base);
+                    rec.put("path", pathStr);
+                    rec.put("query", query);
+                    rec.put("line", line);
+                    rec.put("file", rel);
+                    sink.httpCalls++;
+                    sink.add("8httpcall" + SEP + from + SEP + pad(line) + SEP
+                            + (httpMethod == null ? "" : httpMethod) + SEP
+                            + (pathStr == null ? "" : pathStr) + SEP + Integer.toString(sink.httpCalls), rec);
+                }
+            }, null);
+        }
+
         // ---- MyBatis-Plus: `mpWrapper` records (javafacts/6) ----------------
         //
         // A condition WRAPPER is where MyBatis-Plus hides the WHERE clause. There
@@ -1528,6 +1716,208 @@ public class JavaFacts {
         return (c == null) ? null : (String) c.get("path");
     }
 
+    // ---- imperative HTTP clients (javafacts/8) --------------------------------
+
+    /** Type simple names that make a receiver one of the three standard clients. */
+    static final String[][] HTTP_CLIENT_TYPES = {
+        {"WebClient", "webclient"},
+        {"RestClient", "restclient"},
+        {"RestTemplate", "resttemplate"},
+        {"RestOperations", "resttemplate"},
+    };
+
+    /**
+     * The client kind a WRITTEN type name denotes, or null.
+     *
+     * Matched SEGMENT BY SEGMENT, so `WebClient.Builder` and the fully qualified
+     * spelling both name a WebClient, and a package called `restclient` names
+     * nothing. A substring test would do neither.
+     */
+    static String httpClientKindOf(String written) {
+        if (written == null) return null;
+        for (String seg : written.split("\\.")) {
+            for (String[] pair : HTTP_CLIENT_TYPES) if (pair[0].equals(seg)) return pair[1];
+        }
+        return null;
+    }
+
+    /** The calls that SEND a fluent request: what ends a WebClient/RestClient chain. */
+    static final java.util.Set<String> FLUENT_TERMINALS = new java.util.HashSet<>(Arrays.asList(
+        "retrieve", "exchange", "exchangeToMono", "exchangeToFlux"));
+
+    /** The step of a fluent chain that carries the url. */
+    static final java.util.Set<String> FLUENT_URI_METHODS = new java.util.HashSet<>(Arrays.asList("uri", "url"));
+
+    /** How many steps of one fluent chain are read before the walk gives up. */
+    static final int FLUENT_CHAIN_LIMIT = 32;
+
+    /** A fluent verb method and the HTTP method it names. */
+    static final String[][] FLUENT_VERBS = {
+        {"get", "GET"}, {"post", "POST"}, {"put", "PUT"}, {"delete", "DELETE"},
+        {"patch", "PATCH"}, {"head", "HEAD"}, {"options", "OPTIONS"},
+    };
+
+    /** The HTTP methods this worker will name. Anything else is not one. */
+    static final java.util.Set<String> HTTP_METHOD_NAMES = new java.util.HashSet<>(Arrays.asList(
+        "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"));
+
+    /**
+     * The HTTP method an ARGUMENT names (`HttpMethod.POST`), or null.
+     *
+     * The name has to BE an HTTP method. `exchange(url, method, …)` hands the
+     * verb in a variable called `method`, and reading that name as the verb
+     * would put "method" in the record where a verb belongs — a value from the
+     * source that says nothing about which request is sent.
+     */
+    static String httpMethodArgOf(ExpressionTree e) {
+        String name = firstMemberName(e);
+        return (name != null && HTTP_METHOD_NAMES.contains(name)) ? name : null;
+    }
+
+    /**
+     * The HTTP method a chain step names, or null when the step is not a verb.
+     *
+     * A verb call takes NO arguments (`webClient.get()`), which is what keeps
+     * `map.get(k)` out; `method(HttpMethod.X)` names its verb in an argument,
+     * and an argument this file cannot read leaves the method unknown rather
+     * than assumed.
+     */
+    static String fluentVerbOf(String name, MethodInvocationTree step) {
+        if ("method".equals(name)) {
+            return step.getArguments().isEmpty() ? null : httpMethodArgOf(step.getArguments().get(0));
+        }
+        if (!step.getArguments().isEmpty()) return null;
+        for (String[] pair : FLUENT_VERBS) if (pair[0].equals(name)) return pair[1];
+        return null;
+    }
+
+    /**
+     * RestTemplate's request methods and the HTTP method each sends. An EMPTY
+     * value means the verb is named by argument 1 (`exchange(url, HttpMethod.X, …)`,
+     * `execute(url, HttpMethod.X, …)`) rather than by the method name.
+     */
+    static final Map<String, String> REST_TEMPLATE_VERBS = restTemplateVerbs();
+
+    static Map<String, String> restTemplateVerbs() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("getForObject", "GET");
+        m.put("getForEntity", "GET");
+        m.put("postForObject", "POST");
+        m.put("postForEntity", "POST");
+        m.put("postForLocation", "POST");
+        m.put("put", "PUT");
+        m.put("delete", "DELETE");
+        m.put("patchForObject", "PATCH");
+        m.put("headForHeaders", "HEAD");
+        m.put("optionsForAllow", "OPTIONS");
+        m.put("exchange", "");
+        m.put("execute", "");
+        return m;
+    }
+
+    /** What stands in a url where the code interpolated a value this file cannot read. */
+    static final String URL_HOLE = "{*}";
+
+    /** How much of a url expression one record carries, so a record cannot hold a page. */
+    static final int URL_TEXT_LIMIT = 200;
+
+    /** A url as this worker could read it: how much of it is literal, and what it says. */
+    static final class UrlRead {
+        String kind;    // literal | template | concat | unresolved
+        String value;   // the url as text, with {*} where a value was interpolated
+        String base;    // the leading operand that is not a literal, as written
+        String written; // the whole expression, as written
+    }
+
+    /**
+     * One url argument, reduced no further than this file allows.
+     *
+     * A `+` chain is flattened and read left to right. A LEADING operand that is
+     * not a literal is the BASE — a constant or a call holding `scheme://host/`,
+     * which a parse-only, one-file-at-a-time worker cannot resolve — so it is
+     * named as written and left out of the path; every later non-literal is a
+     * value interpolated INTO the path, so it becomes a `{*}` hole the way the
+     * web lane spells one. Nothing literal anywhere means the url is not in this
+     * file at all: `unresolved`, with the expression as written and no path.
+     */
+    static UrlRead readUrl(ExpressionTree e) {
+        UrlRead out = new UrlRead();
+        out.written = writtenText(e);
+        List<ExpressionTree> parts = new ArrayList<>();
+        flattenPlus(e, parts);
+        StringBuilder sb = new StringBuilder();
+        boolean anyLiteral = false;
+        boolean anyHole = false;
+        String base = null;
+        for (int i = 0; i < parts.size(); i++) {
+            ExpressionTree part = parts.get(i);
+            String lit = null;
+            if (part instanceof LiteralTree) {
+                Object v = ((LiteralTree) part).getValue();
+                if (v instanceof String) lit = (String) v;
+            }
+            if (lit != null) { sb.append(lit); anyLiteral = true; continue; }
+            if (i == 0) { base = writtenText(part); continue; }
+            anyHole = true;
+            sb.append(URL_HOLE);
+        }
+        if (!anyLiteral) { out.kind = "unresolved"; return out; }
+        out.value = sb.toString();
+        out.base = base;
+        out.kind = (base != null || anyHole) ? "concat"
+                : (out.value.indexOf('{') >= 0 ? "template" : "literal");
+        return out;
+    }
+
+    /** Flatten a `+` expression into its operands, left to right. */
+    static void flattenPlus(ExpressionTree e, List<ExpressionTree> out) {
+        ExpressionTree x = unwrap(e);
+        if (x instanceof BinaryTree && ((BinaryTree) x).getKind() == Tree.Kind.PLUS) {
+            flattenPlus(((BinaryTree) x).getLeftOperand(), out);
+            flattenPlus(((BinaryTree) x).getRightOperand(), out);
+            return;
+        }
+        out.add(x);
+    }
+
+    /** An expression as the source wrote it, on one line and capped. */
+    static String writtenText(Tree t) {
+        if (t == null) return null;
+        String s = t.toString().replace('\n', ' ').replace('\r', ' ').trim();
+        return (s.length() > URL_TEXT_LIMIT) ? s.substring(0, URL_TEXT_LIMIT) : s;
+    }
+
+    /**
+     * Split `scheme://host/rest` into its host and what follows it. A url with no
+     * `://` is all path, and the host comes back null.
+     */
+    static String[] splitHost(String url) {
+        int i = url.indexOf("://");
+        if (i < 0) return new String[]{null, url};
+        int j = url.indexOf('/', i + 3);
+        String host = (j < 0) ? url.substring(i + 3) : url.substring(i + 3, j);
+        String rest = (j < 0) ? "" : url.substring(j);
+        return new String[]{host, rest};
+    }
+
+    /**
+     * The type as WRITTEN (`WebClient.Builder`, `java.util.List`), so a nested
+     * type is not read as its last segment alone. `typeSimpleName` answers the
+     * other question and both are needed.
+     */
+    static String typeWrittenName(Tree t) {
+        if (t == null) return null;
+        if (t instanceof IdentifierTree) return ((IdentifierTree) t).getName().toString();
+        if (t instanceof MemberSelectTree) {
+            MemberSelectTree ms = (MemberSelectTree) t;
+            String base = typeWrittenName(ms.getExpression());
+            return (base == null) ? ms.getIdentifier().toString() : base + "." + ms.getIdentifier().toString();
+        }
+        if (t instanceof ParameterizedTypeTree) return typeWrittenName(((ParameterizedTypeTree) t).getType());
+        if (t instanceof ArrayTypeTree) return typeWrittenName(((ArrayTypeTree) t).getType());
+        return null;
+    }
+
     /** Every method a type declares, as "name/arity"; constructors excluded, order kept. */
     static List<String> declaredMethodsOf(ClassTree ct) {
         return new ArrayList<>(declaredMethodKeys(ct));
@@ -1959,6 +2349,7 @@ public class JavaFacts {
         header.put("mpServices", sink.mpServices);
         header.put("mpWrappers", sink.mpWrappers);
         header.put("mapperAnnotationSql", sink.mapperAnnotationSql);
+        header.put("httpCalls", sink.httpCalls);
         header.put("parseErrors", sink.parseErrors);
         out.println(toJson(header));
         for (Rec r : sink.records) out.println(r.json);
@@ -1985,6 +2376,7 @@ public class JavaFacts {
         summary.put("mpServices", sink.mpServices);
         summary.put("mpWrappers", sink.mpWrappers);
         summary.put("mapperAnnotationSql", sink.mapperAnnotationSql);
+        summary.put("httpCalls", sink.httpCalls);
         summary.put("parseErrors", sink.parseErrors);
         err.println(toJson(summary));
         err.flush();

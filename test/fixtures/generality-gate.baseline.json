@@ -187,7 +187,7 @@
   "petclinic-ms": {
    "sha": "3858f9c630cf989bb6809a86edf47c2be78dc9f1",
    "endpoints": 15,
-   "endpointsReachingAStatement": 12,
+   "endpointsReachingAStatement": 13,
    "statements": 11,
    "statementsReached": 11,
    "tables": 7,
@@ -198,7 +198,7 @@
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
-   "endpointColumnPairs": 52,
+   "endpointColumnPairs": 54,
    "axes": {
     "catalog": "shipped",
     "statements": "not-shipped",

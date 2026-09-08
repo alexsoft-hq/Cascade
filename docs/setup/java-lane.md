@@ -66,7 +66,7 @@ endpoint_impact { "column": "pms_product.price" }
 |---|---|---|
 | `endpoint → handler` (HANDLES) | **EXACT** | a Spring mapping annotation on a **concrete controller** method *is* its handler — definitional |
 | `endpoint → implementer` (HANDLES) | **SOUND_SET** | a mapping on an interface/abstract *declaration* is a route **contract**; the handler is the implementer matched through `implements` by name (and arity) — a resolution, not a definition |
-| `clientMethod → endpoint` (CALLS_HTTP) | **SOUND_SET** | a `@FeignClient`/`@HttpExchange` method **calls** a route this pack also serves — the internal HTTP hop |
+| `clientMethod → endpoint` (CALLS_HTTP) | **SOUND_SET** | an HTTP client call reaches a route this pack also serves — the internal HTTP hop. Two ways of writing one: a `@FeignClient`/`@HttpExchange` method, and an imperative `WebClient`/`RestClient`/`RestTemplate` call |
 | `clientMethod → endpoint` (CALLS_HTTP) | **UNRESOLVED** | …or one it does not serve: the target is outside the pack, so no walk follows the edge and it is counted instead (`httpCallsUnresolved`) |
 | `mapperMethod → statement` (IMPLEMENTS_STMT) | **EXACT** | a MyBatis statement id *is* the mapper interface FQN + method — definitional |
 | `caller → callee`, `interface → impl` (MAY_CALL) | **SOUND_SET** | calls are resolved from the parse tree (receiver → field → declared type, method-by-name) and interface dispatch is a class-hierarchy over-approximation — a sound candidate set, **not** compiler-verified |
@@ -205,6 +205,41 @@ handlers** — one of which was the caller. Classified, every route has exactly
 one handler, and the 116 mapped methods across the 6 `@FeignClient` interfaces
 become 116 CALLS_HTTP edges: 107 to a route this pack also serves, 9 to a route
 it does not.
+
+### An imperative client call is an HTTP hop too
+
+Most service-to-service traffic is not annotated at all. It is a fluent chain or
+a `RestTemplate` request, where the verb is a method name and the url is an
+argument somebody built:
+
+```java
+webClient.get().uri("http://customers-service.invalid/owners/{ownerId}", ownerId).retrieve()
+restClient.post().uri(baseUri + "/owners/" + id + "/pets").retrieve()
+restTemplate.exchange(url, HttpMethod.POST, body, Result.class)
+```
+
+The lane reads all three, and reads the url only as far as one file allows: a
+literal, a literal with `{…}` placeholders, or a `+` whose literal halves are
+kept and whose base is **named** rather than resolved. A `scheme://host` is
+stripped off the front and the host is kept as evidence, because it is usually
+a logical service name a discovery server resolves, not a machine. The path is then
+matched against the routes this pack serves — exactly, then by template, so a
+call that interpolates an id lands on the route whose `{ownerId}` stands where
+the value went — and the profile's `gatewayRoutes` rewrites the prefix first, the
+same declaration the web lane applies to a frontend call.
+
+A url the lane could **not** reduce to a path (a bare variable, a fully computed
+string) draws **no edge at all** and is counted (`httpCallsUrlUnreadable`). A
+route nobody wrote is not put in the graph to stand in for one. A call whose
+verb was an argument the lane could not read is matched on the path alone and
+graded HEURISTIC, below the conservative floor.
+
+Measured on spring-petclinic-microservices, five services in one repository with
+no `@FeignClient` anywhere: **0 CALLS_HTTP edges before this rule, 6 after** —
+the gateway to `GET /owners/{ownerId}` and `GET /pets/visits`, the genai service
+to `GET /vets`, `GET /owners`, `POST /owners` and `POST /owners/{ownerId}/pets`,
+every one of them SOUND_SET. The gateway's own route then reaches the customers
+and visits tables through the hop instead of stopping at the service boundary.
 
 Which deployable actually answers a client call is **not knowable from source**,
 so it is never claimed. The annotation's service name and url ride as evidence —

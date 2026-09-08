@@ -482,6 +482,9 @@ function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
       catalogRecords: lanes.catalogRecords, lineageRecords: lanes.lineageRecords,
       baseGraph, overlaySessionId: session.overlaySessionId,
       dirtyFiles, packagePrefixes: selection.packagePrefixes ?? [],
+      // From the LIVE profile, for the same reason `generatedSources` below is:
+      // a gateway prefix declared since the pack was built takes effect here first.
+      gatewayRoutes: profile?.gatewayRoutes ?? {},
       // Same identity rule as the run that built the base pack — the overlay
       // declines above when the SQL arguments (which carry it) have moved.
       identifierCase: sqlArgs.identifierCase,
@@ -2344,6 +2347,10 @@ if (cmd === 'analyze') {
       java: runJava ? {
         packagePrefixes: profile.packagePrefixes ?? [],
         generatedSources: profile.generatedSources ?? { annotations: [], pathGlobs: [] },
+        // The SAME declaration the web bridge reads below, applied to the other
+        // half of the same problem: a Java service that calls another service
+        // through a declared gateway prefix has nowhere else to say so.
+        gatewayRoutes: profile.gatewayRoutes ?? {},
       } : null,
       jpa: runJpa ? {
         namingStrategy: profile.jpa?.namingStrategy ?? null,
@@ -2355,7 +2362,9 @@ if (cmd === 'analyze') {
       // frontend call must be able to land on a route only a document declares.
       openapi: openapiDocs.length > 0 ? {} : null,
       web: webWorkerStats ? {
-        // I-5: `gatewayRoutes` is read HERE and nowhere else in the engine.
+        // `gatewayRoutes` reaches the web bridge here and the Java bridge above:
+        // one declaration, applied to a frontend call and to an imperative
+        // service-to-service call, which are the same rewrite either way.
         gatewayRoutes: profile.gatewayRoutes ?? {},
         packages: discovery?.webPackages ?? [],
         // I-5: the `screenAxis` block and `moduleAttribution.codeLength` are

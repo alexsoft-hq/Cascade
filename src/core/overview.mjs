@@ -358,8 +358,9 @@ export function buildOverview(graph, opts = {}) {
       note: `${external} symbol(s) have no source file here. They are library or framework types we only saw referenced, so a chain that runs into one stops there`,
     });
   }
-  // A ROUTE THIS PACK CALLS AND DOES NOT SERVE. The @FeignClient/@HttpExchange
-  // method that calls it is in the graph, the route it names is in the graph,
+  // A ROUTE THIS PACK CALLS AND DOES NOT SERVE. The method that calls it is in
+  // the graph (a @FeignClient/@HttpExchange declaration, or an imperative
+  // WebClient/RestClient/RestTemplate call), the route it names is in the graph,
   // and nothing here answers it: the chain ends at this pack's edge. Said before
   // the reach numbers, because those numbers count only the routes this pack
   // SERVES and a reader comparing them to the node census must know why.
@@ -373,7 +374,7 @@ export function buildOverview(graph, opts = {}) {
     const webMisses = web ? (web.unresolved.byReason.noMatch ?? 0) + (web.unresolved.byReason.outsidePack ?? 0) : 0;
     gaps.push({
       kind: 'http-calls-leaving-pack', count: outboundEndpoints,
-      note: `${outboundEndpoints} HTTP call target(s) leave this pack. ${calls == null ? 'Declarative HTTP client methods' : `${calls} declarative HTTP client call(s)`} name a route no controller here serves, so what they reach is outside this analysis. `
+      note: `${outboundEndpoints} HTTP call target(s) leave this pack. ${calls == null ? 'HTTP client calls in the code' : `${calls} HTTP client call(s) in the code`} name a route no controller here serves, so what they reach is outside this analysis. `
         + `The node census counts them as endpoints; the reach figures below count only the ${endpoints} route(s) this pack serves`
         + (webMisses > 0
           ? `. ${webMisses} of those target(s) are named by the FRONTEND (${web.unresolved.byReason.noMatch ?? 0} matched no route here, ${web.unresolved.byReason.outsidePack ?? 0} name another host), which is as often a prefix nobody declared as a real external service: check the web axis reason before reading them as external`

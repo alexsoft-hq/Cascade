@@ -166,7 +166,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   gatewayRoutes: {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
-    note: 'the web bridge applies it as the FIRST prefix rule: a front-end prefix it names is replaced by the back-end prefix before the call is matched, and the edge records prefix.from=declared. A key of "*" applies to every call. Declaring it is how a project stops the bridge guessing a prefix by counting matches',
+    note: 'the web bridge applies it as the FIRST prefix rule: a front-end prefix it names is replaced by the back-end prefix before the call is matched, and the edge records prefix.from=declared. A key of "*" applies to every call. Declaring it is how a project stops the bridge guessing a prefix by counting matches. src/adapters/java_bridge.mjs applies the same map to an IMPERATIVE Java HTTP call (a WebClient/RestClient/RestTemplate url), which is the same rewrite from the other side of the wire; the "*" key is a front-end base url and is not applied there, because a Java call writes its url at the call site',
   },
   'screenAxis.enabled': {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',

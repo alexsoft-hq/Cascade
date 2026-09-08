@@ -210,6 +210,16 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   const http = graph.edges.filter((e) => e.type === 'CALLS_HTTP' && e.evidence.rule === 'http-client');
   assert.equal(http.length, FEIGN_MAPPED_METHODS, 'one edge per mapped method across the 6 @FeignClient interfaces');
   assert.equal(stats.httpCalls, FEIGN_MAPPED_METHODS);
+  // ...and every one of them is DECLARATIVE. jeecg does write imperative calls
+  // (`grep -rn "restTemplate.exchange\|RT.exchange" --include="*.java"` finds
+  // them in RestUtil and OpenApiController), but each one hands its url to the
+  // client as a variable or a `URI.create(...)`, so the worker reduced none of
+  // them to a path and this bridge drew no edge for any: RM43 adds edges where
+  // a url is really written and nowhere else.
+  assert.equal(stats.httpCallsDeclarative, FEIGN_MAPPED_METHODS);
+  assert.equal(stats.httpCallsImperative, 0);
+  assert.ok(stats.httpCallsUrlUnreadable > 0,
+    `the imperative call sites are counted rather than hidden, got ${stats.httpCallsUrlUnreadable}`);
   assert.deepEqual([...new Set(http.map((e) => ownerOf(e.from)))].sort(), [...FEIGN_INTERFACES].sort());
   // 107 of them name a route this pack also serves; 9 leave it. An UNRESOLVED
   // edge is below every mode's floor, so nothing is claimed about where it lands.
@@ -385,7 +395,11 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   assert.equal(o.reach.statementsReached, 748);
   const gap = o.gaps.find((g) => g.kind === 'http-calls-leaving-pack');
   assert.equal(gap.count, outboundJava + outboundWeb);
-  assert.match(gap.note, /9 declarative HTTP client call\(s\) name a route no controller here serves/);
+  // The sentence counts BOTH producers of a CALLS_HTTP edge in this lane
+  // (RM43 added the imperative one). jeecg's imperative calls all build their
+  // url from a variable, so none of them draws an edge and the number is still
+  // the 9 declarative ones.
+  assert.match(gap.note, /9 HTTP client call\(s\) in the code name a route no controller here serves/);
   assert.match(gap.note, /target\(s\) are named by the FRONTEND/);
 
   // ---- 9. the frontend reaches the endpoints (RM28) -----------------------

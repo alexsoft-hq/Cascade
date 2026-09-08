@@ -236,6 +236,9 @@ export function javaRecordSortKey(rec) {
     // records that agree on everything before it are byte-identical JSON, so
     // their relative order cannot change the assembled bytes.
     case 'mpWrapper': return `7mpwrapper${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${rec.var == null ? '' : rec.var}`;
+    // …and here (javafacts/8): two imperative HTTP calls that agree on the
+    // caller, the line, the verb and the path are byte-identical JSON.
+    case 'httpCall': return `8httpcall${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${rec.httpMethod == null ? '' : rec.httpMethod}${SEP}${rec.path == null ? '' : rec.path}`;
     default: return null; // header, summary, and anything a newer worker adds
   }
 }

@@ -12,6 +12,31 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **The Java lane sees an imperative HTTP call, not only an annotated one.**
+  Cascade already turned a `@FeignClient`/`@HttpExchange` method into a
+  `CALLS_HTTP` edge, and saw none of the service-to-service calls that dominate
+  real microservices: a `WebClient`/`RestClient` chain or a `RestTemplate`
+  request, where the verb is a method name and the url is an argument somebody
+  built. Measured on spring-petclinic-microservices, five services in one
+  repository with no `@FeignClient` anywhere: **0 cross-service edges before,
+  6 after**, every one of them SOUND_SET, and the gateway's own route now
+  reaches the customers and visits tables through the hop instead of stopping
+  at the service boundary. The url is read only as far as one file allows (a
+  literal, a literal with `{…}` placeholders, or a `+` whose literal halves are
+  kept and whose base is named rather than resolved); a `scheme://host` is
+  stripped off and the host kept as evidence, because it is a service name and
+  not a machine; the path is matched against the routes the pack serves with the
+  web lane's own rule, and the profile's `gatewayRoutes` rewrites the prefix
+  first. A url the lane could not reduce to a path draws **no edge** and is
+  counted (`httpCallsUrlUnreadable`) rather than guessed into a route, and a
+  call whose verb was an argument it could not read is matched on the path alone
+  and graded HEURISTIC. Which deployable answers is still not knowable from
+  source, so nothing rises above SOUND_SET.
+- **Worker `javafacts/7` → `javafacts/8`**: the new `httpCall` record kind, and
+  an `httpCalls` count on the header. The version rides in every fact-shard key,
+  so the first run after this upgrade re-parses the Java tree rather than mixing
+  two generations of facts in one graph.
+
 - **A missing database schema is a signpost, not a footnote, and the password
   lives in your home.** On a tree with no DDL file, `init` used to record the
   connection it found in `application.yml` as one `[info]` line and tell you to

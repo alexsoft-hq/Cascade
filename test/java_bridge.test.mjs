@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nodeId, Graph } from '../src/core/graph.mjs';
+import { nodeId, Graph, FLOW_EDGE_TYPES } from '../src/core/graph.mjs';
 import {
   addJavaFacts,
   endpointsAffectingColumn,
@@ -419,6 +419,9 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
     inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
     routeContracts: 0, contractOnlyRoutes: 0,
     httpCalls: 0, httpCallsResolved: 0, httpCallsUnresolved: 0,
+    // The two producers of the edge, and the imperative calls that produced
+    // none because their url was not in the file.
+    httpCallsDeclarative: 0, httpCallsImperative: 0, httpCallsUrlUnreadable: 0,
     // Nothing was declared generated, so nothing was classified — and
     // `generatedDeclared:false` says which of the two it is.
     generatedDeclared: false,
@@ -1604,4 +1607,200 @@ test('RM35 E: a base the imports do NOT name at all stays unresolved, and says w
   assert.equal(stats.unresolvedCalls, 1);
   assert.equal(stats.unresolvedCallsByRule['super-enclosing'], 1);
   assert.equal(stats.unresolvedCallsByReason['superclass-outside-roots'], 1);
+});
+
+// ---------------------------------------------------------------------------
+// CALLS_HTTP from an IMPERATIVE client call (javafacts/8 `httpCall` facts)
+// ---------------------------------------------------------------------------
+//
+// The same edge the declarative rule above draws, from the other way of writing
+// the call. What is under test here is the DECISION, not the parsing: the worker
+// hands over a verb and a path, and this bridge decides whether a route in this
+// pack answers it, at what grade, and what happens when nothing does.
+
+/** A controller serving one route, as the minimum a call can land on. */
+function servedRoute(httpMethod, routePath, member = 'com.example.Api#one') {
+  const owner = member.slice(0, member.indexOf('#'));
+  return [
+    typeRec(owner, { file: 'com/example/Api.java', annotations: ['RestController'], declaredMethods: ['one/1'] }),
+    {
+      kind: 'endpoint', httpMethod, path: routePath, handler: member, handlerType: owner,
+      line: 9, file: 'com/example/Api.java',
+    },
+  ];
+}
+
+/** One `httpCall` fact with the fields the worker always writes. */
+function httpCallRec(extra = {}) {
+  return {
+    kind: 'httpCall', from: 'com.example.Client#fetch', client: 'webclient',
+    receiver: 'webClient', receiverType: 'WebClient', httpMethod: 'GET',
+    urlKind: 'literal', url: 'http://svc.invalid/a', written: '"http://svc.invalid/a"',
+    host: 'svc.invalid', hostLiteral: true, base: null, path: '/a', query: null,
+    line: 12, file: 'com/example/Client.java', ...extra,
+  };
+}
+
+test('an imperative call whose method+path names a route this pack serves is SOUND_SET', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...servedRoute('GET', '/a'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec(),
+  ], { packagePrefixes: ['com.example'] });
+
+  const edges = g.edges.filter((e) => e.type === 'CALLS_HTTP');
+  assert.equal(edges.length, 1);
+  const e = edges[0];
+  assert.equal(e.from, symbolId('com.example.Client#fetch'));
+  assert.equal(e.to, endpointId('GET', '/a'));
+  assert.equal(e.grade, 'SOUND_SET', 'which deployable answers is not knowable from source: never above SOUND_SET');
+  assert.equal(e.evidence.rule, 'http-client-call');
+  assert.equal(e.evidence.client, 'webclient');
+  assert.equal(e.evidence.match, 'exact');
+  assert.equal(e.evidence.target, 'in-pack');
+  // The host is a SERVICE name, and `serviceLiteral` says it was written as one.
+  assert.equal(e.evidence.service, 'svc.invalid');
+  assert.equal(e.evidence.serviceLiteral, true);
+  assert.deepEqual(e.evidence.url, { written: '"http://svc.invalid/a"', template: '/a', kind: 'literal', base: null });
+  assert.equal(stats.httpCalls, 1);
+  assert.equal(stats.httpCallsImperative, 1);
+  assert.equal(stats.httpCallsDeclarative, 0);
+  assert.equal(stats.httpCallsResolved, 1);
+  assert.equal(stats.httpCallsUrlUnreadable, 0);
+  // The route this pack SERVES is not re-marked as one it only calls.
+  assert.equal(g.nodes.get(endpointId('GET', '/a')).outbound, undefined);
+});
+
+test('a call path with a hole lands on the route template it matches', () => {
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...servedRoute('POST', '/owners/{ownerId}/pets'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    // `base + "/owners/" + id + "/pets"`, as the worker reduces it.
+    httpCallRec({
+      httpMethod: 'POST', urlKind: 'concat', url: '/owners/{*}/pets', path: '/owners/{*}/pets',
+      host: null, hostLiteral: false, base: 'serviceUri()', written: 'serviceUri() + "/owners/" + id + "/pets"',
+    }),
+  ], { packagePrefixes: ['com.example'] });
+
+  const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
+  assert.equal(e.to, endpointId('POST', '/owners/{ownerId}/pets'));
+  assert.equal(e.grade, 'SOUND_SET');
+  assert.equal(e.evidence.match, 'template');
+  // The base was not readable, so the host is not claimed to be anything.
+  assert.equal(e.evidence.service, null);
+  assert.equal(e.evidence.serviceLiteral, false);
+  assert.equal(e.evidence.url.base, 'serviceUri()');
+});
+
+test('an imperative call that matches no route here is UNRESOLVED, and no walk follows it', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...servedRoute('GET', '/a'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec({ url: 'http://svc.invalid/elsewhere', path: '/elsewhere' }),
+  ], { packagePrefixes: ['com.example'] });
+
+  const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
+  assert.equal(e.to, endpointId('GET', '/elsewhere'));
+  assert.equal(e.grade, 'UNRESOLVED');
+  assert.equal(e.evidence.target, 'outside-pack');
+  assert.equal(e.evidence.match, null);
+  assert.equal(stats.httpCallsUnresolved, 1);
+  assert.equal(stats.httpCallsResolved, 0);
+  // The target is a real route of a real call, so it is IN the graph and marked
+  // as one this pack only calls.
+  assert.equal(g.nodes.get(endpointId('GET', '/elsewhere')).outbound, true);
+  // ...and below every mode's floor, so no walk crosses it. The SAME walk over
+  // a call that did resolve crosses two nodes (the route, then its handler),
+  // which is what makes this a floor and not an absence of edges.
+  const from = symbolId('com.example.Client#fetch');
+  assert.equal(chainWalk(g, { start: from, mode: 'heuristic', edgeTypes: FLOW_EDGE_TYPES }).walked, 0,
+    'an UNRESOLVED edge is counted, never walked');
+
+  const served = new Graph();
+  addJavaFacts(served, [
+    ...servedRoute('GET', '/a'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec(),
+  ], { packagePrefixes: ['com.example'] });
+  assert.equal(chainWalk(served, { start: from, mode: 'conservative', edgeTypes: FLOW_EDGE_TYPES }).walked, 2,
+    'a SOUND_SET hop is crossed even under the conservative floor: the route, then the method that answers it');
+});
+
+test('a url the worker could not read draws NO edge, invents no route, and is counted', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...servedRoute('GET', '/a'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec({
+      client: 'resttemplate', receiver: 'restTemplate', receiverType: 'RestTemplate',
+      urlKind: 'unresolved', url: null, path: null, host: null, hostLiteral: false, written: 'endpoint',
+    }),
+  ], { packagePrefixes: ['com.example'] });
+
+  assert.deepEqual(g.edges.filter((e) => e.type === 'CALLS_HTTP'), []);
+  assert.deepEqual([...g.nodes.keys()].filter((id) => id.startsWith('endpoint:')), [endpointId('GET', '/a')]);
+  assert.equal(stats.httpCallsUrlUnreadable, 1);
+  assert.equal(stats.httpCalls, 0);
+});
+
+test('gatewayRoutes rewrites an imperative call\'s prefix before it is matched', () => {
+  const facts = [
+    ...servedRoute('GET', '/sys/user/list'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec({ url: 'http://svc.invalid/api/user/list', path: '/api/user/list' }),
+  ];
+  // Undeclared, the call names a route nothing here serves.
+  const plain = new Graph();
+  addJavaFacts(plain, facts, { packagePrefixes: ['com.example'] });
+  assert.equal(plain.edges.find((e) => e.type === 'CALLS_HTTP').grade, 'UNRESOLVED');
+
+  // Declared, the same call lands on the route the other service really serves.
+  const g = new Graph();
+  addJavaFacts(g, facts, { packagePrefixes: ['com.example'], gatewayRoutes: { '/api': '/sys' } });
+  const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
+  assert.equal(e.to, endpointId('GET', '/sys/user/list'));
+  assert.equal(e.grade, 'SOUND_SET');
+  assert.deepEqual(e.evidence.prefix, { value: '/sys', from: 'declared', written: '/api' });
+  assert.equal(e.evidence.url.template, '/sys/user/list', 'the path searched for is the rewritten one');
+});
+
+test('two imperative calls from one method to one route are one edge, whatever order they arrive in', () => {
+  const twice = [
+    ...servedRoute('GET', '/a'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec({ line: 12 }),
+    httpCallRec({ line: 30 }),
+  ];
+  const a = new Graph();
+  const statsA = addJavaFacts(a, twice, { packagePrefixes: ['com.example'] });
+  const b = new Graph();
+  addJavaFacts(b, [twice[0], twice[1], twice[2], twice[4], twice[3]], { packagePrefixes: ['com.example'] });
+  assert.equal(a.edges.filter((e) => e.type === 'CALLS_HTTP').length, 1);
+  assert.equal(statsA.httpCalls, 1);
+  assert.deepEqual(edgeKeys(a), edgeKeys(b), 'the same facts in the other order must build the same edges');
+});
+
+test('an imperative call whose VERB the worker could not read is matched on the path alone, and says so', () => {
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...servedRoute('POST', '/a'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    // `restTemplate.exchange(url, method, …)`: the verb is a variable, so the
+    // worker recorded no method at all rather than the variable's name.
+    httpCallRec({
+      client: 'resttemplate', receiver: 'restTemplate', receiverType: 'RestTemplate',
+      httpMethod: null, written: 'restTemplate.exchange',
+    }),
+  ], { packagePrefixes: ['com.example'] });
+
+  const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
+  assert.equal(e.to, endpointId('POST', '/a'), 'the only route with this path, whatever its method');
+  assert.equal(e.grade, 'HEURISTIC', 'a path-only match is below the conservative floor');
+  assert.equal(e.evidence.method, null);
+  assert.equal(chainWalk(g, {
+    start: symbolId('com.example.Client#fetch'), mode: 'conservative', edgeTypes: FLOW_EDGE_TYPES,
+  }).walked, 0, 'a walk that only trusts checked links does not cross it');
 });

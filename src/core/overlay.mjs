@@ -302,6 +302,11 @@ function nearWebRoot(file, webRoots) {
  * @param {string} a.overlaySessionId
  * @param {string[]} [a.dirtyFiles]             every re-read path, for provenance tagging
  * @param {string[]} [a.packagePrefixes]
+ * @param {object} [a.gatewayRoutes]  the profile's declared prefix map. Both
+ *        bridges read it: the web one for a frontend call, the Java one for an
+ *        imperative service-to-service call, and the overlay must apply it the
+ *        same way the base pack did or an edited file would change what a call
+ *        matches.
  * @param {{annotations?:string[], pathGlobs?:string[]}} [a.generatedSources]
  *        the profile's generated-source declaration — the overlay must classify
  *        machine-written code the same way the base pack did, or an edited file
@@ -331,6 +336,7 @@ export function overlayGraph(a) {
     webBaseShards = new Map(), webDirtyFacts = new Map(), webDropFiles = [], webConfigRecords = [],
     catalogRecords = [], lineageRecords = [],
     baseGraph, overlaySessionId, dirtyFiles = [], packagePrefixes = [], generatedSources = null,
+    gatewayRoutes = null,
     identifierCase = 'exact', bridges = null, web = null,
   } = a ?? {};
   if (!(baseShards instanceof Map)) throw new OverlayError('baseShards must be a Map of file -> records');
@@ -352,7 +358,11 @@ export function overlayGraph(a) {
   const webFacts = assembleWebFacts(webShards, webConfigRecords);
   const { graph, javaStats, webStats } = assembleGraph({
     bridges, catalogRecords, lineageRecords, javaFacts, webFacts, identifierCase,
-    java: { packagePrefixes, ...(generatedSources ? { generatedSources } : {}) },
+    java: {
+      packagePrefixes,
+      ...(generatedSources ? { generatedSources } : {}),
+      ...(gatewayRoutes ? { gatewayRoutes } : {}),
+    },
     web,
   });
 

@@ -986,7 +986,9 @@ export function addWebFacts(g, webFacts, opts = {}) {
     let out = null;
 
     // 1. DECLARED. The profile said what the front-end prefix maps onto, so no
-    // rule has to work it out (I-5: gatewayRoutes is consumed here and nowhere else).
+    // rule has to work it out. I-5: gatewayRoutes reaches exactly two readers,
+    // this one and src/adapters/java_bridge.mjs, which applies the same rewrite
+    // to an imperative Java HTTP call.
     const star = Object.prototype.hasOwnProperty.call(gatewayRoutes, '*') ? String(gatewayRoutes['*']) : null;
     if (star !== null) out = { value: normalizeTail(star), from: 'declared', candidates: [] };
     if (out === null && base.state === 'known' && base.value !== '') {

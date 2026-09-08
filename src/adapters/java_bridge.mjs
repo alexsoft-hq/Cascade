@@ -17,11 +17,17 @@
 //  - HANDLES        SOUND_SET  …but a mapping on an interface/abstract DECLARATION is a route
 //                              CONTRACT: the handler is the implementer this bridge matched by name
 //                              (and arity), which is a resolution, not a definition.
-//  - CALLS_HTTP     SOUND_SET  a @FeignClient/@HttpExchange method calls a route this pack also
-//                              SERVES — the internal HTTP hop of §1.1.
+//  - CALLS_HTTP     SOUND_SET  an HTTP client call reaches a route this pack also SERVES — the
+//                              internal HTTP hop of §1.1. Two ways of writing one: a
+//                              @FeignClient/@HttpExchange method (the route is in the annotation)
+//                              and an imperative WebClient/RestClient/RestTemplate call (the verb
+//                              is a method name and the url is an argument).
 //                   UNRESOLVED …or one it does not: the target is outside the pack, so the edge is
 //                              below every mode's floor and no walk follows it. It is counted, not
-//                              hidden (`httpCallsUnresolved`).
+//                              hidden (`httpCallsUnresolved`). An imperative call whose url this
+//                              lane could not reduce to a path gets NO edge at all, and is counted
+//                              apart (`httpCallsUrlUnreadable`): a route nobody wrote is not put in
+//                              the graph to stand in for one.
 //  - IMPLEMENTS_STMT EXACT     a MyBatis statement id IS the mapper interface FQN + method (definitional).
 //  - MAY_CALL       SOUND_SET  calls are resolved from the parse tree WITHOUT compiler binding or
 //                              overload resolution — a field receiver (`repo.save`, `this.repo.save`)
@@ -33,6 +39,11 @@
 // graph reports it as such; a call chain is never dressed up as confirmed.
 
 import { nodeId, Graph, FLOW_EDGE_TYPES } from '../core/graph.mjs';
+// One route-matching rule for the whole engine. The web lane wrote it (a call
+// path and a route path each carry holes, and they are not the same kind of
+// hole), and an imperative Java call is the same question asked from the other
+// side of the wire: two rules would mean two answers for one url.
+import { routeMatches, normalizeUrlPath } from './web_bridge.mjs';
 
 export const JAVAFACTS_SCHEMA = 'cascade:javafacts:1';
 
@@ -294,6 +305,7 @@ export const ROUTE_RULE_BASIS = Object.freeze({
   'route-contract-impl': 'the mapping is on an interface/abstract declaration; the handler is the concrete @Controller that implements it, matched through `implements` by method name (and arity where the worker recorded one), not by compiler binding',
   'route-contract-only': 'the mapping is on an interface/abstract declaration that NO concrete controller in this pack implements: the route is declared here and served somewhere this analysis cannot see',
   'http-client': 'a @FeignClient/@HttpExchange method CALLS this route over HTTP; which deployable answers is not knowable from source, so the service name and url are recorded as written and the grade says only whether a route with this method+path exists in the pack',
+  'http-client-call': 'an IMPERATIVE client call (a WebClient/RestClient chain or a RestTemplate request) sends this method to this url: the verb is the method the code named, and the path is the url reduced as far as one file allows, with a scheme://host stripped off and kept as evidence. Which deployable answers is not knowable from source, so the grade says only whether a route with this method+path exists in the pack, and drops to HEURISTIC when the verb was an argument this lane could not read and only the path was matched',
 });
 
 /**
@@ -898,7 +910,8 @@ export function findDeclaringAncestor(startFqn, name, arity, idx) {
  * @param {Graph} g
  * @param {object[]} javaFacts  parsed cascade:javafacts:1 records (header optional)
  * @param {{packagePrefixes?:string[],
- *          generatedSources?:{annotations?:string[], pathGlobs?:string[]}}} [opts]
+ *          generatedSources?:{annotations?:string[], pathGlobs?:string[]},
+ *          gatewayRoutes?:object}} [opts]
  *        packagePrefixes: the profile's declared top-level packages — a symbol
  *        outside every one of them is marked `external:true`, and a call to one
  *        is counted as `externalCalls` rather than reported as "unresolved" (a
@@ -907,6 +920,12 @@ export function findDeclaringAncestor(startFqn, name, arity, idx) {
  *        generatedSources: the profile's declaration of what machine-written
  *        code looks like in THIS project — symbols of a matching type get
  *        `generated:true`. Undeclared classifies nothing.
+ *        gatewayRoutes: the profile's declared prefix map, applied to an
+ *        IMPERATIVE HTTP call's path the way the web bridge applies it to a
+ *        frontend call, so a service that calls another through a gateway
+ *        prefix lands on the route the other service really serves. The `*`
+ *        key is a FRONT-END base url and means nothing here (a Java call writes
+ *        its url at the call site), so it is not applied.
  * @returns {{endpoints:number, handles:number, calls:number, dispatch:number,
  *            implementsStmt:number, unresolvedCalls:number, externalCalls:number,
  *            externalSymbols:number, mapperMethods:number, mapperMethodsBound:number,
@@ -921,6 +940,7 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
   // machine-written.
   const generatedSources = opts.generatedSources && typeof opts.generatedSources === 'object'
     ? opts.generatedSources : { annotations: [], pathGlobs: [] };
+  const gatewayRoutes = opts.gatewayRoutes && typeof opts.gatewayRoutes === 'object' ? opts.gatewayRoutes : {};
 
   // ---- indices -----------------------------------------------------------
   const {
@@ -933,6 +953,10 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
   const calls = [];                        // {from, method, toTypeSimple}
   const endpoints = [];                    // {httpMethod, path, handler, line}
   const transactionals = [];               // {method, scope, line} — @Transactional boundaries
+  // IMPERATIVE HTTP calls, as the worker read them (javafacts/8): a WebClient or
+  // RestClient chain, or a RestTemplate request. Kept whole rather than picked
+  // apart here, because the whole record is the evidence the edge carries.
+  const httpCallFacts = [];                // {from, client, httpMethod, path, url, host, ...}
   // owner fqn -> (field name -> declared type SIMPLE name), from `field` records.
   // The inherited-field rule reads it: a receiver a file never declares is
   // looked for in the fields of its ancestors, and the ancestor's own record is
@@ -949,6 +973,7 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
       case 'call': calls.push({ from: r.from, method: r.method, toTypeSimple: r.toTypeSimple, receiver: r.receiver ?? null, via: r.via ?? null }); break;
       case 'endpoint': endpoints.push({ httpMethod: r.httpMethod, path: r.path, handler: r.handler, handlerType: r.handlerType ?? ownerOf(r.handler ?? ''), line: r.line ?? null, file: r.file ?? null }); break;
       case 'transactional': transactionals.push({ method: r.method, scope: r.scope ?? null, line: r.line ?? null }); break;
+      case 'httpCall': httpCallFacts.push(r); break;
       case 'field': {
         if (!r.owner || !r.name) break;
         let m = fieldsByOwner.get(r.owner);
@@ -1053,6 +1078,16 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     // pack, so every chain through them ends at this pack's edge.
     routeContracts: 0, contractOnlyRoutes: 0,
     httpCalls: 0, httpCallsResolved: 0, httpCallsUnresolved: 0,
+    // The two producers of a CALLS_HTTP edge in this lane, which sum to
+    // `httpCalls`: the DECLARATIVE client (a @FeignClient/@HttpExchange method)
+    // and the IMPERATIVE one (a WebClient/RestClient chain, a RestTemplate
+    // request). Counted apart because they fail differently — a declarative
+    // client states its route, an imperative one states a url somebody built.
+    httpCallsDeclarative: 0, httpCallsImperative: 0,
+    // Imperative call sites whose url this lane could not reduce to a path (a
+    // bare variable, a fully computed string). NO edge is drawn for them and no
+    // route is invented: they are the honest gap, and this is its size.
+    httpCallsUrlUnreadable: 0,
     // What the profile's generatedSources declaration classified. All zero when
     // it declares nothing — which is the default, and is NOT a claim that the
     // project has no generated code (see `generatedDeclared`).
@@ -1294,7 +1329,117 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
       },
     });
     stats.httpCalls += 1;
+    stats.httpCallsDeclarative += 1;
     if (resolved) stats.httpCallsResolved += 1; else stats.httpCallsUnresolved += 1;
+  }
+
+  // ---- CALLS_HTTP: an IMPERATIVE client call --> the route it calls -------
+  //
+  // The same edge, from the other way of writing the call. A declarative client
+  // states its route in an annotation; a WebClient/RestClient chain or a
+  // RestTemplate request states a VERB and a URL somebody built, and until this
+  // rule the lane saw none of them — a five-service application whose gateway
+  // calls the other four with a WebClient drew no cross-service edge at all.
+  //
+  // WHAT IS DECIDED HERE, and nowhere else:
+  //  - the path is matched against the routes this pack SERVES with the web
+  //    lane's own `routeMatches`, exactly and then by template, because a
+  //    route's `{ownerId}` and a call's `{*}` are holes of different kinds;
+  //  - `gatewayRoutes` rewrites the call's prefix first, the way the web bridge
+  //    rewrites a frontend call's, so a service calling another THROUGH a
+  //    gateway prefix lands on the route the other service really serves;
+  //  - a url the worker could not reduce to a path draws NO edge. Inventing a
+  //    route node for `restTemplate.exchange(url, …)` would put a route in the
+  //    graph that no line of source spells. The count says how many.
+  //
+  // The grade never rises above SOUND_SET, for the reason the declarative edge
+  // above gives: a host is a service NAME, and which deployable answers it is
+  // not a fact about the source.
+  const servedList = [...byRoute.entries()]
+    .map(([epId, r]) => ({ epId, httpMethod: r.httpMethod ?? 'ANY', path: normalizeUrlPath(r.path) }))
+    .sort((a, b) => cmp(a.path, b.path) || cmp(a.epId, b.epId));
+  const gatewayKeys = Object.keys(gatewayRoutes)
+    .filter((k) => k !== '*')
+    .sort((a, b) => b.length - a.length || cmp(a, b));
+  /** The routes this pack serves that this method+path could reach. */
+  const matchServed = (httpMethod, callPath) => {
+    const methodOk = (r) => httpMethod === null || r.httpMethod === 'ANY' || r.httpMethod === httpMethod;
+    const exact = servedList.filter((r) => r.path === callPath && methodOk(r));
+    if (exact.length > 0) return { how: 'exact', routes: exact };
+    const hits = servedList.filter((r) => r.path !== callPath && routeMatches(r.path, callPath) && methodOk(r));
+    return hits.length > 0 ? { how: 'template', routes: hits } : { how: null, routes: [] };
+  };
+  // Sorted, and de-duplicated by (caller, route): the same call written twice in
+  // one method is one relation, and two assemblies of the same shards must place
+  // the same edges whatever order the records arrive in.
+  const imperativeSeen = new Set();
+  const imperative = httpCallFacts.slice().sort((a, b) => cmp(a.from ?? '', b.from ?? '')
+    || (a.line ?? 0) - (b.line ?? 0)
+    || cmp(a.httpMethod ?? '', b.httpMethod ?? '')
+    || cmp(a.path ?? '', b.path ?? ''));
+  for (const c of imperative) {
+    if (!c.from || typeof c.path !== 'string' || c.path.length === 0) {
+      stats.httpCallsUrlUnreadable += 1;
+      continue;
+    }
+    let full = normalizeUrlPath(c.path);
+    let prefix = null;
+    const hit = gatewayKeys.find((k) => full === k || full.startsWith(`${k}/`));
+    if (hit !== undefined) {
+      full = normalizeUrlPath(`${gatewayRoutes[hit]}${full.slice(hit.length)}`);
+      prefix = { value: String(gatewayRoutes[hit]), from: 'declared', written: hit };
+    }
+    const httpMethod = typeof c.httpMethod === 'string' && c.httpMethod.length > 0 ? c.httpMethod : null;
+    const found = matchServed(httpMethod, full);
+    const fromId = ensureSymbol(c.from);
+    const targets = found.routes.length > 0
+      ? found.routes.map((r) => ({ epId: r.epId, resolved: true }))
+      : [{ epId: endpointId(httpMethod ?? 'ANY', full), resolved: false }];
+    for (const t of targets) {
+      const key = `${fromId} ${t.epId}`;
+      if (imperativeSeen.has(key)) continue;
+      imperativeSeen.add(key);
+      if (!g.nodes.has(t.epId)) {
+        // A route nothing here answers, marked the way the declarative rule
+        // marks one: a census can then tell a route this pack serves from a
+        // route it only calls.
+        g.addNode({ id: t.epId, path: full, httpMethod: httpMethod ?? 'ANY', outbound: true });
+      }
+      // A call whose VERB the worker could not read (`exchange(url, method, …)`)
+      // was matched on the path alone, so it names whichever routes share that
+      // path whatever their method. That is a weaker rule than the one above and
+      // says so: HEURISTIC is below the conservative floor, so a walk that only
+      // trusts checked links does not cross it.
+      const grade = t.resolved ? (httpMethod === null ? 'HEURISTIC' : 'SOUND_SET') : 'UNRESOLVED';
+      g.addEdge({
+        from: fromId, to: t.epId, type: 'CALLS_HTTP',
+        grade,
+        evidence: {
+          rule: 'http-client-call', basis: ROUTE_RULE_BASIS['http-client-call'],
+          // Which client the code used, when the receiver's declared type said
+          // so; null when only the SHAPE of the chain identified it.
+          client: c.client ?? null,
+          // The host is usually a logical SERVICE NAME rather than a machine,
+          // and `serviceLiteral` says whether it was written as one or came out
+          // of a base the worker could not read — the same distinction the
+          // declarative edge draws for an annotation that names a constant.
+          service: c.host ?? null,
+          serviceLiteral: c.hostLiteral === true,
+          // The url as the source wrote it, the path this pack was searched for,
+          // and how much of it was literal.
+          url: { written: c.written ?? null, template: full, kind: c.urlKind ?? null, base: c.base ?? null },
+          ...(c.query ? { query: c.query } : {}),
+          method: httpMethod,
+          ...(prefix ? { prefix } : {}),
+          match: found.how,
+          line: c.line ?? null,
+          target: t.resolved ? 'in-pack' : 'outside-pack',
+        },
+      });
+      stats.httpCalls += 1;
+      stats.httpCallsImperative += 1;
+      if (t.resolved) stats.httpCallsResolved += 1; else stats.httpCallsUnresolved += 1;
+    }
   }
 
   // ---- calls: from-symbol --MAY_CALL--> target-symbol -------------------
