@@ -10,6 +10,13 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-09
+
+The connected projects are in the pictures. 0.2.0 let a question walk from one
+registered project into the next; 0.3.0 shows where a project's requests go on
+the Overview, the Graph and the ERD, without merging packs and without drawing
+a key between two services.
+
 ### Added
 
 - **The whole-pack pictures follow a request into the next project.** `flow` and
@@ -1425,6 +1432,7 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/alexsoft-hq/Cascade/releases/tag/v0.1.0

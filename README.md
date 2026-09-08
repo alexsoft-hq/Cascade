@@ -593,9 +593,14 @@ asked, from the small `routes.json` that `analyze` writes beside each pack; the
 packs and their digests do not change. A crossing is SOUND_SET at best,
 HEURISTIC when several projects serve the same route, and never invented: a
 call nobody serves stays "leaves the pack". `federate: false` asks one pack
-alone. Measured on spring-petclinic-microservices split into five projects,
-the gateway's `GET /api/gateway/owners/{ownerId}` reaches `owners` in
-customers-service and `visits` in visits-service.
+alone. The three whole-project pictures follow the same rule: the Overview
+lists the connected projects and the routes that go to each, the Graph draws
+what a request reaches in a sibling as a cluster beside this project's map,
+and the ERD frames each sibling's tables in their own cluster, joined to this
+project by a dashed HTTP line and never by a key. Measured on
+spring-petclinic-microservices split into five projects, the gateway's
+`GET /api/gateway/owners/{ownerId}` reaches `owners` in customers-service and
+`visits` in visits-service.
 
 **The cache budget.** `--memory-budget <MB>` bounds the pack JSON held in
 memory, 512 MB by default, and eviction is least-recently-used. That number is a

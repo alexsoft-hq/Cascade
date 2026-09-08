@@ -590,8 +590,12 @@ error [ambiguous]: several projects are registered: jpetstore, mall. Pass "proje
 않습니다. 건너는 엣지는 잘해야 SOUND_SET 이고, 여러 프로젝트가 같은 라우트를
 서빙하면 HEURISTIC 이며, 지어내지는 않습니다. 아무도 서빙하지 않는 호출은
 지금처럼 "pack 을 떠남"으로 남습니다. `federate: false` 면 pack 하나만으로
-답합니다. spring-petclinic-microservices 를 다섯 프로젝트로 나눠 재면
-게이트웨이의 `GET /api/gateway/owners/{ownerId}` 가 customers-service 의
+답합니다. 프로젝트 전체를 그리는 세 화면도 같은 규칙입니다. Overview 는
+연결된 프로젝트와 그리로 가는 라우트를 나열하고, Graph 는 요청이 형제
+프로젝트에서 닿는 것을 이 프로젝트 지도 옆에 묶음으로 그리며, ERD 는 형제의
+테이블을 자기 액자 안에 두고 이 프로젝트와는 HTTP 점선으로만 잇습니다. 키로
+잇는 일은 없습니다. spring-petclinic-microservices 를 다섯 프로젝트로 나눠
+재면 게이트웨이의 `GET /api/gateway/owners/{ownerId}` 가 customers-service 의
 `owners` 와 visits-service 의 `visits` 에 닿습니다.
 
 **캐시 예산.** `--memory-budget <MB>` 는 메모리에 들고 있는 pack JSON 의 양을
