@@ -21,11 +21,25 @@
 // as well as the answer. `_server/projects/projects.json` holds the one
 // server-level answer.
 //
-// TIMESTAMPS ARE MASKED. A pack's `builtAt` rides in every `basis`, and it is
-// the build's time, not the answer's content: left alone it would make every
-// file differ after any rebuild. Every key that names a moment is replaced with
-// a fixed marker; nothing else is touched, because a mask is a place a real
-// change can hide.
+// WHAT IS MASKED, and why only this. A mask is a place a real change can hide,
+// so exactly two kinds of value are replaced with a fixed marker, and both are
+// facts about the MACHINE rather than about the answer:
+//   a moment      a pack's `builtAt` rides in every `basis`. It is the build's
+//                 time, not the answer's content, and left alone it would make
+//                 every file differ after any rebuild.
+//   a size        `bytes`, `budgetBytes`, `unpackedSize` and the whole `cache`
+//                 block of the `projects` answer. These are the memory proxy a
+//                 server keeps for a loaded pack: `bytes` is the size of
+//                 pack.json plus facts-index.json, and facts-index carries
+//                 ABSOLUTE paths, so the number moves with the length of the
+//                 directory the project happens to sit in. It made the goldens
+//                 red on a CI runner, whose checkout path is a hundred
+//                 characters longer than a laptop's temp directory, and green on
+//                 the laptop — for a difference that is not an answer. `loaded`
+//                 and `evictions` follow that number against the budget, so the
+//                 cache block goes with it.
+// `digest` is NOT masked, and must not be: it is content-addressed, so a digest
+// that moves between two machines is a finding, not noise.
 //
 // USAGE
 //   node scripts/answers-snapshot.mjs --out <dir> --project mall --project petclinic
@@ -54,24 +68,49 @@ export const DEFAULT_CAP = 200;
  * spelled out so that adding one is a deliberate act.
  */
 const TIME_KEYS = new Set(['builtAt', 'lastCertifiedAt', 'certifiedAt', 'generatedAt', 'recordedAt', 'observedAt', 'at', 'timestamp', 'time']);
+
+/**
+ * Keys whose VALUE is a size in bytes, and `cache`, the server's whole account
+ * of what it is holding. Masked everywhere they appear, at any depth.
+ *
+ * A SIZE HERE IS A MEASUREMENT OF THIS MACHINE, NOT OF THE ANSWER. The one that
+ * moved was `projects[].bytes`, the pack's memory proxy: pack.json plus
+ * facts-index.json, and facts-index holds the ABSOLUTE path of the repository it
+ * was built from, so the same pack under a checkout path a hundred characters
+ * longer measures a hundred bytes larger. Measured, not assumed.
+ *
+ * `map.bytes` — the size of the map answer itself — goes with it, and gives up
+ * almost nothing: it is computed FROM the answer, and the answer is compared
+ * byte for byte either way, so a map that really changed still shows it in every
+ * node and edge. One key name, one rule, is worth more here than a rule that
+ * knows which tool it is reading.
+ */
+const SIZE_KEYS = new Set(['bytes', 'budgetBytes', 'unpackedSize', 'cache']);
 const MASK = '<masked>';
 
-/** True for a key we mask by name: anything in the list, or any `…At`. */
+/** True for a key we mask by name: a moment, or any `…At`. */
 function isTimeKey(key) {
   return TIME_KEYS.has(key) || (/At$/.test(key) && key.length > 2);
 }
 
+/** True for a key whose value measures this machine rather than this answer. */
+function isSizeKey(key) {
+  return SIZE_KEYS.has(key);
+}
+
 /**
- * Replace every timestamp with a fixed marker, keeping the shape. Null stays
- * null: "this pack has no build time" is a fact, not a moment, and a mask that
- * hid the difference between null and a date would hide a real regression.
+ * Replace every moment and every size with a fixed marker, keeping the shape.
+ * Null stays null: "this pack has no build time" is a fact, not a moment, and a
+ * mask that hid the difference between null and a date would hide a real
+ * regression. The same goes for a size that is absent rather than zero.
  */
-export function maskTimes(value) {
-  if (Array.isArray(value)) return value.map(maskTimes);
+export function maskVolatile(value) {
+  if (Array.isArray(value)) return value.map(maskVolatile);
   if (value && typeof value === 'object') {
     const out = {};
     for (const [k, v] of Object.entries(value)) {
-      out[k] = isTimeKey(k) && v !== null && v !== undefined ? MASK : maskTimes(v);
+      const mask = (isTimeKey(k) || isSizeKey(k)) && v !== null && v !== undefined;
+      out[k] = mask ? MASK : maskVolatile(v);
     }
     return out;
   }
@@ -164,7 +203,7 @@ class McpClient {
 /**
  * Write one answer file. Returns its path.
  *
- * `scrub` is the caller's own normaliser, applied AFTER the timestamp mask. The
+ * `scrub` is the caller's own normaliser, applied AFTER the mask above. The
  * corpus needs none: those projects live at fixed paths and were built from
  * fixed commits. A golden built in a temp directory needs one, because the
  * directory and the commit it was `git init`-ed at are different on every run
@@ -174,7 +213,7 @@ function writeAnswer(outDir, dirName, tool, key, tool_args, answer, scrub = (x) 
   const dir = path.join(outDir, dirName, tool);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, keyToFile(key));
-  const body = { tool, key, args: scrub(maskTimes(tool_args)), answer: scrub(maskTimes(answer)) };
+  const body = { tool, key, args: scrub(maskVolatile(tool_args)), answer: scrub(maskVolatile(answer)) };
   fs.writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`, 'utf8');
   return file;
 }

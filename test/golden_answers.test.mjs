@@ -27,8 +27,12 @@
 //
 // WHAT IS NORMALISED. The trees are built in a temp directory and `git init`-ed
 // on the spot, so the absolute path, the commit sha and the build time are
-// different on every run and are not what a golden is about. Everything else —
-// the pack digest included — is compared byte for byte.
+// different on every run and are not what a golden is about. So is a SIZE IN
+// BYTES: a loaded pack's memory proxy counts the absolute paths inside
+// facts-index.json, so the same answer measures larger under a long checkout
+// directory than under a short one — which is exactly how these goldens first
+// went red on CI and stayed green on a laptop. Everything else — the pack digest
+// included — is compared byte for byte.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +41,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { snapshot, diffDirs, walkFiles } from '../scripts/answers-snapshot.mjs';
+import { snapshot, diffDirs, walkFiles, maskVolatile } from '../scripts/answers-snapshot.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { skipWithoutSqlLane } from './helpers/lane_prereqs.mjs';
 
@@ -542,4 +546,60 @@ test('the goldens are committed, and cover all three trees', () => {
   for (const f of files) {
     assert.match(f, /\.json$/, `${f} is not an answer file`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// the mask, which is what makes a golden portable
+//
+// These run with no JDK and no SQL lane, because they are about the recorder
+// rather than about the engine. They exist because the first thing the goldens
+// caught was not an engine change at all: `projects[].bytes` is pack.json plus
+// facts-index.json, facts-index holds the absolute path of the repository the
+// pack was built from, and a CI runner's checkout path is about a hundred
+// characters longer than a laptop's temp directory. Same answer, a hundred more
+// bytes, three red files.
+// ---------------------------------------------------------------------------
+
+test('the mask replaces a moment and a size, and leaves the answer alone', () => {
+  const masked = maskVolatile({
+    id: 'fullstack',
+    builtAt: '2026-09-10T00:00:00.000Z',
+    lastCertifiedAt: null,
+    bytes: 48746,
+    digest: '9f01dfcbb8ed',
+    cache: { loaded: 1, bytes: 48746, budgetBytes: 536870912, evictions: 0, hits: 38, misses: 1 },
+    answer: { rows: 3, unpackedSize: 900, nested: [{ bytes: 1 }] },
+  });
+  assert.equal(masked.builtAt, '<masked>');
+  assert.equal(masked.bytes, '<masked>');
+  assert.equal(masked.cache, '<masked>', 'the whole cache block is the server\'s account of this machine');
+  assert.equal(masked.answer.unpackedSize, '<masked>');
+  assert.equal(masked.answer.nested[0].bytes, '<masked>', 'masked at any depth, inside arrays too');
+  // A DIGEST IS CONTENT, NOT A MEASUREMENT. If one ever moves between two
+  // machines that is a finding about the engine, and a mask would hide it.
+  assert.equal(masked.digest, '9f01dfcbb8ed');
+  assert.equal(masked.id, 'fullstack');
+  assert.equal(masked.answer.rows, 3);
+  // Absent stays absent: "no build time" and "no size" are facts of their own.
+  assert.equal(masked.lastCertifiedAt, null);
+});
+
+test('two recordings of the same answer under paths of different length are the same bytes', () => {
+  // The bug in one line. `bytes` is the only thing that moved, and it moved
+  // because the path did.
+  const answer = (root) => ({
+    projects: [{ id: 'fullstack', dotCascadePath: `${root}/pack`, bytes: 40000 + root.length, digest: 'abc123' }],
+    cache: { loaded: 1, bytes: 40000 + root.length, budgetBytes: 536870912, evictions: 0, hits: 3, misses: 1 },
+  });
+  const shortRoot = '/tmp/a';
+  const longRoot = '/build/agent/workspace/ci/a-much-longer-checkout-directory-of-the-kind-a-runner-uses';
+  const scrub = (root) => function walk(v) {
+    if (typeof v === 'string') return v.split(root).join('<tmp>');
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    return v;
+  };
+  const one = JSON.stringify(scrub(shortRoot)(maskVolatile(answer(shortRoot))));
+  const two = JSON.stringify(scrub(longRoot)(maskVolatile(answer(longRoot))));
+  assert.equal(one, two);
 });

@@ -15,7 +15,7 @@
           ],
           "lastCertifiedAt": "<masked>",
           "loaded": true,
-          "bytes": 38472,
+          "bytes": "<masked>",
           "federation": {
             "index": "present",
             "serves": 10,
@@ -70,14 +70,7 @@
           }
         }
       ],
-      "cache": {
-        "loaded": 1,
-        "bytes": 38472,
-        "budgetBytes": 536870912,
-        "evictions": 0,
-        "hits": 31,
-        "misses": 1
-      }
+      "cache": "<masked>"
     },
     "basis": {
       "project": "*",
