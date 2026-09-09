@@ -1,0 +1,467 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj hidden" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch."></select>
+        <span id="projone" class="projone">angular</span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java + web</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <span class="crlane">
+        screens
+        <b>6</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+        api groups
+        <b>6</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>19</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        services
+        <b>28</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane hollow" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
+        SQL
+        <b>not shipped</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT">
+        columns
+        <b>6 ~</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden  statements-axis-not-shipped  column-axis-degraded  jpa-axis-degraded  mybatisPlus-axis-not-shipped">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mtrustsr" class="sronly">trust not certified</span>
+        <span id="mtrust">not certified</span>
+      </span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            9 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div class="tabs">
+      <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
+      <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
+      <button class="tab" data-t="tab.flow" data-tab="flow" onclick type="button">Flow</button>
+      <button class="tab" data-t="tab.impact" data-tab="impact" onclick type="button">Impact</button>
+      <button class="tab active" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
+      <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
+      <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
+      <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="tab-overview" class="hidden">…</div>
+    <div id="tab-explore" class="hidden">…</div>
+    <div id="tab-flow" class="hidden">…</div>
+    <div id="tab-impact" class="hidden">…</div>
+    <div id="tab-coupling">
+      <div class="searchbar">
+        <span id="cpaxis" class="seg" data-t-title="coupling.axis.title" title="what the two groups share">
+          <button class="on" data-axis="column" data-t="coupling.axis.column" onclick>columns</button>
+          <button data-axis="table" data-t="coupling.axis.table" onclick>tables</button>
+        </span>
+        <select id="cpmode" data-t-title="mode.title" onchange title="how sure a call has to be before we follow it" value="conservative">
+          <option data-t="mode.conservative" selected value="conservative">conservative: also follow likely calls</option>
+          <option data-t="mode.strict" value="strict">strict: only calls we can prove</option>
+          <option data-t="mode.heuristic" value="heuristic">heuristic: also follow guessed rules</option>
+        </select>
+        <select id="cpdepth" data-t-title="coupling.depth.title" onchange title="how many calls deep we follow each endpoint" value="8">
+          <option>
+            1
+          </option>
+          <option>
+            2
+          </option>
+          <option>
+            3
+          </option>
+          <option>
+            4
+          </option>
+          <option>
+            5
+          </option>
+          <option>
+            6
+          </option>
+          <option>
+            7
+          </option>
+          <option selected>
+            8
+          </option>
+        </select>
+        <label class="cpchk" data-t-title="coupling.all.title" title="off: show only the groups that appear in a pair">
+          <input id="cpall" onchange type="checkbox"></input>
+          <span data-t="coupling.all">show all groups</span>
+        </label>
+        <button id="cpdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
+      </div>
+      <div class="hint hintfold" data-t-fold="hint.coupling">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              Two API groups that share data through the database without calling each other.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div class="cpgrid">
+        <div>
+          <div id="cpsummary" class="cpsum">
+            <b>6</b>
+            groups
+            <b>5</b>
+            participating
+            <b>8</b>
+            pairs
+            <b>2</b>
+            coupled columns
+            <b>0</b>
+            self-only
+            <b>2</b>
+            write-only or read-only
+          </div>
+          <div id="cpmatrix" class="cpscroll">
+            <table class="cpm">
+              <thead>
+                <tr>
+                  <th class="cpcorner" title="a row WRITES what a column READS">writer ↓ / reader →</th>
+                  <th title="boxes">boxes</th>
+                  <th title="catalog">catalog</th>
+                  <th title="orders">orders</th>
+                  <th title="things">things</th>
+                  <th title="twins">twins</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th title="boxes">boxes</th>
+                  <td>
+                    <div class="cpcell diag" title="boxes writes and reads its own columns. One group on its own is not coupling, so it is counted apart."></div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                </tr>
+                <tr>
+                  <th title="catalog">catalog</th>
+                  <td>
+                    <div class="cpcell on" aria-label="catalog writes 1 column that boxes reads" role="button" tabIndex="0" title="catalog writes 1 column that boxes reads">1</div>
+                  </td>
+                  <td>
+                    <div class="cpcell diag" title="catalog writes and reads its own columns. One group on its own is not coupling, so it is counted apart."></div>
+                  </td>
+                  <td>
+                    <div class="cpcell on" aria-label="catalog writes 1 column that orders reads" role="button" tabIndex="0" title="catalog writes 1 column that orders reads">1</div>
+                  </td>
+                  <td>
+                    <div class="cpcell on" aria-label="catalog writes 2 columns that things reads" role="button" tabIndex="0" title="catalog writes 2 columns that things reads">2</div>
+                  </td>
+                  <td>
+                    <div class="cpcell on" aria-label="catalog writes 1 column that twins reads" role="button" tabIndex="0" title="catalog writes 1 column that twins reads">1</div>
+                  </td>
+                </tr>
+                <tr>
+                  <th title="orders">orders</th>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell diag" title="orders writes and reads its own columns. One group on its own is not coupling, so it is counted apart."></div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                </tr>
+                <tr>
+                  <th title="things">things</th>
+                  <td>
+                    <div class="cpcell on" aria-label="things writes 1 column that boxes reads" role="button" tabIndex="0" title="things writes 1 column that boxes reads">1</div>
+                  </td>
+                  <td>
+                    <div class="cpcell on" aria-label="things writes 1 column that catalog reads" role="button" tabIndex="0" title="things writes 1 column that catalog reads">1</div>
+                  </td>
+                  <td>
+                    <div class="cpcell on" aria-label="things writes 1 column that orders reads" role="button" tabIndex="0" title="things writes 1 column that orders reads">1</div>
+                  </td>
+                  <td>
+                    <div class="cpcell diag" title="things writes and reads its own columns. One group on its own is not coupling, so it is counted apart."></div>
+                  </td>
+                  <td>
+                    <div class="cpcell on" aria-label="things writes 1 column that twins reads" role="button" tabIndex="0" title="things writes 1 column that twins reads">1</div>
+                  </td>
+                </tr>
+                <tr>
+                  <th title="twins">twins</th>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell">·</div>
+                  </td>
+                  <td>
+                    <div class="cpcell diag" title="twins writes and reads its own columns. One group on its own is not coupling, so it is counted apart."></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div id="cpside" class="flowside">
+          <div class="panel">
+            <h2>
+              coupled pairs
+              <span class="count">(8)</span>
+            </h2>
+            <div class="comment">writer, then reader, ranked by how many columns they share. Click one for the list.</div>
+            <ul class="list">
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">catalog</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">things</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag">2</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">catalog</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">boxes</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag">1</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">catalog</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">orders</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag">1</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">catalog</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">twins</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag">1</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">things</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">boxes</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag">1</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">things</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">catalog</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag">1</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">things</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">orders</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag">1</span>
+                </span>
+              </li>
+              <li>
+                <a class="id clickable cppair" onclick title="the columns these two share">
+                  <span class="cpg">things</span>
+                  <span class="cparrow">→</span>
+                  <span class="cpg">twins</span>
+                </a>
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag">1</span>
+                </span>
+              </li>
+            </ul>
+          </div>
+          <div class="rail">
+            <div class="railhead">
+              <h2>What this answer is based on</h2>
+              <span class="legend">
+                how sure each line is:
+                <span class="grade g-EXACT">
+                  EXACT
+                </span>
+                <span class="grade g-SOUND_SET">
+                  SOUND_SET
+                </span>
+                <span class="grade g-HEURISTIC">
+                  <svg class="gbox">
+                    <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                  </svg>
+                  HEURISTIC
+                </span>
+                <span class="grade g-RUNTIME_ONLY">
+                  RUNTIME_ONLY
+                </span>
+                <span class="grade g-UNRESOLVED">
+                  UNRESOLVED
+                </span>
+              </span>
+            </div>
+            <div class="railchips">
+              <span class="railchip" title="trust.trustLevel">UNCERTIFIED</span>
+              <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+              <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  7 limits
+                </span>
+              </button>
+            </div>
+            <div class="foldbody"></div>
+            <div class="railfolds">
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    basis
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    trust
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="tab-graph" class="hidden">…</div>
+    <div id="tab-erd" class="hidden">…</div>
+    <div id="tab-tx" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+</body>

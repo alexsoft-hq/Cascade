@@ -147,7 +147,7 @@ test('§14.3 gate: a trust level is never written as a literal outside src/core/
   // TRUST_LEVELS (or the computed value) instead of typing the string.
   const ALLOWED = new Set(['src/core/trust.mjs']);
   const offenders = [];
-  for (const f of filesUnder(['src', 'bin', 'scripts', 'viewer/index.html'])) {
+  for (const f of filesUnder(['src', 'bin', 'scripts', 'viewer/index.html', 'viewer/js'])) {
     if (ALLOWED.has(f.rel)) continue;
     f.text.split('\n').forEach((line, i) => {
       for (const level of TRUST_LEVELS) {

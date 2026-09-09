@@ -1044,7 +1044,8 @@ src/viewer/              the viewer's pure logic under test
 adapters/sql/            Python workers: catalog_ddl, catalog_live, mybatis_extract, lineage
 adapters/java/           the Java worker: JavaFacts, the parse-only javac Tree API pass
 adapters/web/            the frontend worker (webfacts) and its declaration packs
-viewer/index.html        the self-contained viewer page, served by `cascade view`
+viewer/index.html        the viewer page's markup and CSS, served by `cascade view`
+viewer/js/               the page's own code: thirteen classic scripts, one shared scope
 viewer/i18n/             one JSON catalogue per non-English interface language
 viewer/vendor/           the two vendored MIT browser bundles every graph picture renders with
 scripts/                 generality-gate.mjs, the memory measurements, the java smoke check, the DCO check

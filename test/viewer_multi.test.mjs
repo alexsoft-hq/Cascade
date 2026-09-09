@@ -95,6 +95,10 @@ async function startViewer(t, entries) {
       callTool: (name, args) => host.callTool(name, args),
       vendorDir: path.join(ENGINE_ROOT, 'viewer', 'vendor'),
       i18nDir: path.join(ENGINE_ROOT, 'viewer', 'i18n'),
+      // The page's own scripts and the two engine modules it is served, so a
+      // browser pointed at this server would get the whole page and not a shell.
+      viewerJsDir: path.join(ENGINE_ROOT, 'viewer', 'js'),
+      viewerLibDir: path.join(ENGINE_ROOT, 'src', 'viewer'),
       meta: (project) => {
         const { projectId, ctx } = contextOf(project);
         const pack = ctx.packJson;

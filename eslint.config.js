@@ -43,9 +43,8 @@ export default [
       // does not parse, a `.d.ts` this lane must skip. Linting them would ask
       // the fixtures to stop being the thing they exist to be.
       'test/fixtures/**',
-      // The viewer page carries its own inline script, which no rule here can
-      // see because it is inside HTML. RM52 is the round that takes the viewer
-      // apart; until then this line is the honest statement that it is unlinted.
+      // The viewer page is markup and CSS now; its code lives in viewer/js and
+      // is linted below. HTML is not JavaScript, so it stays out.
       'viewer/**/*.html',
     ],
   },
@@ -98,5 +97,45 @@ export default [
       // See the header: the ratchet does this, per file, with a baseline.
       'max-lines-per-function': 'off',
     },
+  },
+  {
+    // THE VIEWER PAGE'S OWN CODE. Thirteen classic scripts and the two engine
+    // modules served beside them, sharing ONE global scope in the browser (see
+    // the tags at the foot of viewer/index.html). Not modules: a `const` at the
+    // top of 00_state.js is visible in 45_graph.js, which is the whole point of
+    // the numbering.
+    files: ['viewer/js/**/*.js'],
+    languageOptions: {
+      sourceType: 'script',
+      globals: {
+        ...globals.browser,
+        // The two vendored map renderers, loaded by <script> before these files
+        // (viewer/vendor — see NOTICE). They are the only globals on this page
+        // that come from somewhere else.
+        ForceGraph: 'readonly',
+        ForceGraph3D: 'readonly',
+      },
+    },
+    rules: {
+      // NO no-undef HERE, and it is not laziness. These files are one scope
+      // split across thirteen files: `drawMap` is declared in 45_graph.js and
+      // called from 30_chrome.js, and a rule that reads one file at a time
+      // cannot know that. Turning it on would mean listing four hundred names in
+      // this config, or a `/* global */` line at the top of every file that grew
+      // stale the first time somebody renamed a function. The page's own tests
+      // (test/viewer_page.test.mjs, test/viewer_golden.test.mjs) run the whole
+      // page for real, which is what actually catches a name that is not there.
+      'no-undef': 'off',
+      // ...and for the same reason, a declaration this file does not use is not
+      // dead: it is what the next file uses.
+      'no-unused-vars': ['error', { args: 'after-used', caughtErrors: 'none', vars: 'local' }],
+    },
+  },
+  {
+    // The engine modules the page is served as classic scripts. They are ES
+    // modules with their own tests, so they are linted as modules — the rules
+    // above already cover them; this is only about the browser they also run in.
+    files: ['src/viewer/*.mjs'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
 ];

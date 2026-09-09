@@ -1074,7 +1074,9 @@ adapters/sql/            Python workers: catalog_ddl, catalog_live, mybatis_extr
 adapters/java/           the Java worker: JavaFacts, the parse-only javac Tree API pass
 adapters/web/            the frontend worker (webfacts) and its declaration packs: one JSON file per
                          router convention and one for the HTTP client libraries
-viewer/index.html        the self-contained viewer page, served by `cascade view`
+viewer/index.html        the viewer page's markup and CSS, served by `cascade view`
+viewer/js/               the page's own code: thirteen classic scripts, one shared scope, in the
+                         order their numbers give them
 viewer/i18n/             one JSON catalogue per non-English interface language
 viewer/vendor/           the two vendored MIT browser bundles every graph picture renders with
 scripts/                 generality-gate.mjs (the pinned corpus), the memory and pack cost

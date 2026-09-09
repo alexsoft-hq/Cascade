@@ -1,0 +1,438 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch." value="delta">
+          <option title="gamma  lanes: sql  (not loaded)" value="gamma">gamma</option>
+          <option selected="true" title="delta  lanes: sql  (not loaded)" value="delta">delta</option>
+        </select>
+        <span id="projone" class="projone hidden"></span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java + web</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <span class="crlane">
+        screens
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+        api groups
+        <b>1</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        services
+        <b>9</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        SQL
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>1</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        columns
+        <b>2</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mtrustsr" class="sronly">trust not certified</span>
+        <span id="mtrust">not certified</span>
+      </span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            3 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div class="tabs">
+      <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
+      <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
+      <button class="tab" data-t="tab.flow" data-tab="flow" onclick type="button">Flow</button>
+      <button class="tab" data-t="tab.impact" data-tab="impact" onclick type="button">Impact</button>
+      <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
+      <button class="tab active" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
+      <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
+      <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="tab-overview" class="hidden">…</div>
+    <div id="tab-explore" class="hidden">…</div>
+    <div id="tab-flow" class="hidden">…</div>
+    <div id="tab-impact" class="hidden">…</div>
+    <div id="tab-coupling" class="hidden">…</div>
+    <div id="tab-graph">
+      <div class="searchbar">
+        <button id="gback" class="hidden" data-t="graph.back" data-t-title="graph.back.title" onclick title="back to the whole-project map">…</button>
+        <div style="position:relative;flex:1;min-width:260px">
+          <input id="gfocus" autocomplete="off" placeholder="find a group, an endpoint like GET /brand/list, or a table on the map…" style="width:100%" type="text"></input>
+          <div id="gsug" class="sug hidden"></div>
+        </div>
+        <span id="grend" class="seg" data-t-title="graph.rend.title" title="2D draws on a canvas. 3D draws the same graph in WebGL.">
+          <button class="on" data-rend="2d" onclick>
+            2D
+          </button>
+          <button data-rend="3d" onclick>
+            3D
+          </button>
+        </span>
+        <button id="gfit" data-t-title="graph.fit.title" onclick title="Fit the whole map in view. Nothing refits itself once you have zoomed or panned.">
+          &#x2922;
+        </button>
+        <span id="grendnote" class="grendnote hidden"></span>
+        <span id="gfold" class="seg" data-t-title="graph.fold.title" title="folded: one node per API group, with its endpoints counted inside it. endpoints: every endpoint drawn around its own group">
+          <button class="on" data-fold="folded" data-t="graph.fold.folded" onclick>folded</button>
+          <button data-fold="endpoints" data-t="graph.fold.endpoints" onclick>endpoints</button>
+        </span>
+        <button id="gflow" aria-pressed="false" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+        <span id="gflownote" class="grendnote" title="a map this size turns to speckle with a dot on every line, so it stays still until you point at something. A node you light up flows on its own, and Flow on runs every line.">still at rest</span>
+        <select id="gmode" data-t-title="graph.mode.title" onchange title="how sure a call has to be before the map follows it" value="conservative">
+          <option data-t="graph.mode.strict" value="strict">strict</option>
+          <option data-t="graph.mode.conservative" selected value="conservative">conservative</option>
+          <option data-t="graph.mode.heuristic" value="heuristic">heuristic</option>
+        </select>
+        <select id="gdepth" data-t-title="graph.depth.title" onchange title="how many calls deep we follow each endpoint" value="8">
+          <option>
+            1
+          </option>
+          <option>
+            2
+          </option>
+          <option>
+            3
+          </option>
+          <option>
+            4
+          </option>
+          <option>
+            5
+          </option>
+          <option>
+            6
+          </option>
+          <option>
+            7
+          </option>
+          <option selected>
+            8
+          </option>
+        </select>
+        <select id="gdir" class="hidden" data-t-title="graph.dir.title" onchange title="which way to follow the lines" value="both">…</select>
+        <select id="ghops" class="hidden" data-t-title="graph.hops.title" onchange title="how many rings out from the middle" value="2">…</select>
+        <button id="gload" class="primary" onclick>Find</button>
+        <button id="gshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" disabled="true" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+      </div>
+      <div id="ghintmap" class="hint hintfold" data-t-fold="hint.graph.map">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              The whole project in one picture, from API groups to the tables they reach.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div id="ghintaround" class="hint hidden hintfold" data-t-fold="hint.graph.around">…</div>
+      <div class="gtgrid">
+        <div id="gwrap" class="sheetgrid">
+          <div id="gmapwrap">
+            <div id="gmaplabels"></div>
+          </div>
+          <div id="garound" class="hidden"></div>
+          <div class="gover gover-tl">
+            <div id="gchips" class="chips">
+              <span class="count">show:</span>
+              <button class="chip" aria-pressed="true" onclick title="hide the 1 group node(s). The count stays either way.">
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#C4B5FD" r="3.3"></circle>
+                </svg>
+                group 1
+              </button>
+              <button class="chip" aria-pressed="true" onclick title="hide the 1 screen node(s). The count stays either way.">
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#F9A8D4" r="3.3"></circle>
+                </svg>
+                screen 1
+              </button>
+              <button class="chip" aria-pressed="true" onclick title="hide the 2 endpoint node(s). The count stays either way.">
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#22D3EE" r="3.3"></circle>
+                </svg>
+                endpoint 2
+              </button>
+              <button class="chip" aria-pressed="true" onclick title="hide the 1 table node(s). The count stays either way.">
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#4ADE80" r="3.3"></circle>
+                </svg>
+                table 1
+              </button>
+              <button class="chip off" aria-pressed="false" onclick title="ask the engine again with the SQL layer on, so each mapper statement gets its own node">
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#FB923C" r="3.3"></circle>
+                </svg>
+                SQL layer off
+              </button>
+              <button class="chip" aria-pressed="true" onclick title="turn the screens layer off, so this map is the server side alone">
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#F9A8D4" r="3.3"></circle>
+                </svg>
+                screens on (1)
+              </button>
+            </div>
+          </div>
+          <div class="gover gover-bl">
+            <div id="gmapleg" class="gmapleg">
+              <b>nodes:</b>
+              <span>
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#F9A8D4" r="3.3"></circle>
+                </svg>
+                screen
+              </span>
+              <span>
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#C4B5FD" r="3.3"></circle>
+                </svg>
+                group
+              </span>
+              <span>
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#22D3EE" r="3.3"></circle>
+                </svg>
+                endpoint
+              </span>
+              <span>
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#4ADE80" r="3.3"></circle>
+                </svg>
+                table
+              </span>
+              <span>
+                <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
+                  <circle cx="5.5" cy="5.5" fill="#FB923C" r="3.3"></circle>
+                </svg>
+                statement
+              </span>
+              <b style="margin-left: 8px">lines:</b>
+              <span>
+                <span class="swatch" style="background: #6E7A9A"></span>
+                group → endpoint
+              </span>
+              <span>
+                <span class="swatch" style="background: #60A5FA"></span>
+                reads
+              </span>
+              <span>
+                <span class="swatch" style="background: #F87171"></span>
+                writes / deletes
+              </span>
+              <span>
+                <span class="swatch" style="background: #FBBF24"></span>
+                table join
+              </span>
+              <span title="SOUND_SET: a call we could not confirm. Drawn dashed on the 2D canvas only.">
+                <span class="swatch" style="background: repeating-linear-gradient(90deg,#F87171,#F87171 4px,transparent 4px,transparent 7px)"></span>
+                dashed = SOUND_SET
+              </span>
+            </div>
+            <div id="klegend" class="klegend hidden">…</div>
+            <div id="glineleg" class="klegend hidden">…</div>
+          </div>
+          <div class="gover gover-br">
+            <div id="gcounts" class="gcount">
+              <span>
+                <b>1</b>
+                groups
+              </span>
+              <span>
+                <b>2</b>
+                endpoints
+              </span>
+              <span>
+                <b>1</b>
+                / 1 tables touched
+              </span>
+              <span>
+                <b>1</b>
+                / 2 screens reach a route
+              </span>
+              <span>
+                <b>2</b>
+                endpoints folded in
+              </span>
+              <span>
+                <b>2</b>
+                lines drawn
+              </span>
+              (1 calls 1 aggregate)
+              <span class="count" title="which renderer drew this picture">drawn in 2D</span>
+            </div>
+          </div>
+        </div>
+        <div id="gside" class="flowside">
+          <div class="panel fcard">
+            <h2>
+              the whole project
+            </h2>
+            <div class="fold">
+              <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  Every API group, the endpoints under it, and the tables those endpoints reach.
+                </span>
+              </button>
+              <div class="foldbody"></div>
+            </div>
+            <h2 style="margin-top: 12px">
+              tables, by API groups reaching them
+            </h2>
+            <div class="ovchips">
+              <button class="ovchip" onclick title="table:delta_rows, 1 connections drawn">delta_rows 1</button>
+            </div>
+            <h2 style="margin-top: 12px">
+              largest groups
+            </h2>
+            <div class="ovchips">
+              <button class="ovchip" onclick title="group:rows, 2 connections drawn">rows 2</button>
+            </div>
+            <div class="cpnote">
+              every table in this project is reached from an endpoint.
+            </div>
+          </div>
+          <div class="rail">
+            <div class="railhead">
+              <h2>What this answer is based on</h2>
+              <span class="legend">
+                how sure each line is:
+                <span class="grade g-EXACT">
+                  EXACT
+                </span>
+                <span class="grade g-SOUND_SET">
+                  SOUND_SET
+                </span>
+                <span class="grade g-HEURISTIC">
+                  <svg class="gbox">
+                    <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                  </svg>
+                  HEURISTIC
+                </span>
+                <span class="grade g-RUNTIME_ONLY">
+                  RUNTIME_ONLY
+                </span>
+                <span class="grade g-UNRESOLVED">
+                  UNRESOLVED
+                </span>
+              </span>
+            </div>
+            <div class="railchips">
+              <span class="railchip" title="trust.trustLevel">UNCERTIFIED</span>
+              <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+              <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  6 limits
+                </span>
+              </button>
+            </div>
+            <div class="foldbody"></div>
+            <div class="railfolds">
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    basis
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    trust
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="tab-erd" class="hidden">…</div>
+    <div id="tab-tx" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+</body>

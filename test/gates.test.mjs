@@ -14,7 +14,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // What every gate reads. `viewer/vendor` is excluded: it holds pre-built
 // third-party bundles that are governed by NOTICE, not by our own style rules.
 const SCAN_ROOTS = [
-  'src', 'bin', 'adapters', 'viewer/index.html', 'scripts', 'docs', 'README.md',
+  // `viewer/index.html` is the page's markup and CSS; `viewer/js` is the page's
+  // code, which used to be inside it. Both, or the gates would stop reading two
+  // thirds of the viewer the day it was split into files.
+  'src', 'bin', 'adapters', 'viewer/index.html', 'viewer/js', 'scripts', 'docs', 'README.md',
   // The Korean mirror of the README is a first page too, and a pasted path or a
   // colleague's address lands there exactly as easily as in the English one.
   'README.ko.md', 'NOTICE', 'test',
@@ -24,13 +27,13 @@ const SCAN_ROOTS = [
   'CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', 'DCO', 'CHANGELOG.md',
 ];
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', '__pycache__', 'vendor']);
-const RUNTIME_ROOTS = ['src', 'bin', 'adapters', 'viewer/index.html', 'scripts'];
+const RUNTIME_ROOTS = ['src', 'bin', 'adapters', 'viewer/index.html', 'viewer/js', 'scripts'];
 
 // EXCLUDED FROM EVERY GATE: the translation catalogues (SPEC §17.11).
 // `viewer/i18n/*.json` is the ONE place in this repository where non-English
 // text is expected — that is what a translation is. Excluding it is what lets
 // the English-only gate below keep scanning `src`, `bin`, `adapters`, `scripts`
-// and `viewer/index.html` without exception, and it is the whole reason the
+// and the viewer's own files without exception, and it is the whole reason the
 // Korean strings live in a JSON file the viewer server hands out at
 // `GET /i18n/ko.json` rather than inside the page.
 const EXCLUDED_PATHS = ['viewer/i18n'];
@@ -341,8 +344,10 @@ test('gate: the translation catalogues are the one excluded path — and the exc
   // about translations rather than a line nobody would have noticed.
   const ko = fs.readFileSync(path.join(ROOT, 'viewer', 'i18n', 'ko.json'), 'utf8');
   assert.match(ko, /[\uac00-\ud7a3]/, 'viewer/i18n/ko.json is meant to BE the Korean translation');
-  // The page and the module it copies stay English, gate or no gate.
-  for (const rel of ['viewer/index.html', 'src/viewer/i18n.mjs']) {
+  // The page and the module it is served stay English, gate or no gate.
+  const pageFiles = ['viewer/index.html', 'src/viewer/i18n.mjs',
+    ...fs.readdirSync(path.join(ROOT, 'viewer', 'js')).sort().map((f) => `viewer/js/${f}`)];
+  for (const rel of pageFiles) {
     const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     assert.equal(new RegExp(CJK.source).test(text), false, `${rel} must carry no non-English text`);
   }

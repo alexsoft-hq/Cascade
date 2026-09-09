@@ -345,17 +345,18 @@ uses it.
 ### Where the strings live
 
 - `src/viewer/i18n.mjs` holds the lookup (`makeT`, `interpolate`, `richText`)
-  and the **English** catalogue, `VIEWER_STRINGS.en`. The page carries a
-  verbatim copy of that block, because it is one self-contained file and cannot
-  import from `src/`. `test/i18n.test.mjs` fails if the two drift.
+  and the **English** catalogue, `VIEWER_STRINGS.en`. The page cannot `import`,
+  so the local server hands it this very module at `GET /viewer/lib/i18n.js`,
+  minus its `export ` keywords. One file: there is no copy to drift, and
+  `test/i18n.test.mjs` checks that what is served is the module.
 - `viewer/i18n/<lang>.json` is one file per other language, served by
   `GET /i18n/<lang>.json` from an allowlisted directory, like `/vendor`: only
   `.json`, only out of that directory, and every escape a 404.
 
 The translations are files rather than page content on purpose. The English-only
-gate (`test/gates.test.mjs`) scans `src`, `bin`, `adapters`, `scripts` and
-`viewer/index.html` for non-English text, and `viewer/i18n` is the single
-excluded path, the one place non-English text is expected.
+gate (`test/gates.test.mjs`) scans `src`, `bin`, `adapters`, `scripts`,
+`viewer/index.html` and `viewer/js` for non-English text, and `viewer/i18n` is
+the single excluded path, the one place non-English text is expected.
 
 `t(key, params)` never throws. A key the chosen language lacks falls back to
 English; a key no catalogue has renders as the key itself and is recorded in
@@ -381,7 +382,7 @@ sentence in the polite 합니다체 rather than the flat note-taking register.
    sentence goes.
 2. Give the file its own name in `lang.label`, since the toggle shows each
    language in its own language.
-3. Add the code to `LANGS` in `viewer/index.html`.
+3. Add the code to `LANGS` in `viewer/js/00_state.js`.
 
 The key set is enforced. A translation must carry exactly the English keys: no
 fewer, so nothing silently falls back, and no more, so a stale key cannot

@@ -20,10 +20,6 @@ export function run(cli) {
   const { opt } = cli;
   const host = cli.servedHost('view');
   const served = host.list();
-  const contextOf = (project) => {
-    const { projectId } = host.resolveProjectArg(project ? { project } : {});
-    return { projectId, ctx: host.ctxFor(projectId) };
-  };
   const html = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'index.html'), 'utf8');
   // The mark, read once and answered by name at /cascade-mark.svg (and its
   // dark-ground variant at /cascade-mark-dark.svg). The page inlines the light
@@ -31,7 +27,28 @@ export function run(cli) {
   // the file itself.
   const mark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark.svg'), 'utf8');
   const markDark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark-dark.svg'), 'utf8');
-  const deps = {
+  const port = Number(opt('port', '4319'));
+  serveHttp({ http, port, deps: viewerDeps(host, served), html, mark, markDark }).then(({ port: p }) => {
+    process.stderr.write(`cascade viewer at http://127.0.0.1:${p}/  serving ${served.length} project(s) [${served.map((x) => x.id).join(', ')}], `
+      + `budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
+    if (served.length > 1) {
+      process.stderr.write(`the page shows ONE project: open http://127.0.0.1:${p}/?project=${served[0].id} (or another id above). `
+        + 'Without it the API answers `ambiguous`\n');
+    }
+  });
+}
+
+/**
+ * What the server is allowed to answer with: the tool catalog, the one project
+ * host, and the four directories it may read a file out of. Nothing else on
+ * disk is reachable through any route.
+ */
+function viewerDeps(host, served) {
+  const contextOf = (project) => {
+    const { projectId } = host.resolveProjectArg(project ? { project } : {});
+    return { projectId, ctx: host.ctxFor(projectId) };
+  };
+  return {
     toolList,
     callTool: (name, args) => host.callTool(name, args),
     meta: (project) => {
@@ -48,6 +65,13 @@ export function run(cli) {
     // (viewer/vendor — see NOTICE). Served from THIS directory only; nothing
     // else on disk is reachable through /vendor.
     vendorDir: path.join(ENGINE_ROOT, 'viewer', 'vendor'),
+    // The page's own scripts. They are classic scripts sharing one global scope,
+    // loaded in the numbered order their names give them; splitting them out of
+    // the HTML is what lets a stack trace name a file and a linter read them.
+    viewerJsDir: path.join(ENGINE_ROOT, 'viewer', 'js'),
+    // ...and the two modules the page shares with the engine, served from the
+    // engine's own source minus its `export ` keywords. One file, not a copy.
+    viewerLibDir: path.join(ENGINE_ROOT, 'src', 'viewer'),
     // The translation catalogues (SPEC §17.11). English is compiled into the
     // page; every other language is a JSON file fetched on demand from here,
     // which is why no non-English text lives in the page or in src/.
@@ -70,13 +94,4 @@ export function run(cli) {
       });
     },
   };
-  const port = Number(opt('port', '4319'));
-  serveHttp({ http, port, deps, html, mark, markDark }).then(({ port: p }) => {
-    process.stderr.write(`cascade viewer at http://127.0.0.1:${p}/  serving ${served.length} project(s) [${served.map((x) => x.id).join(', ')}], `
-      + `budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
-    if (served.length > 1) {
-      process.stderr.write(`the page shows ONE project: open http://127.0.0.1:${p}/?project=${served[0].id} (or another id above). `
-        + 'Without it the API answers `ambiguous`\n');
-    }
-  });
 }

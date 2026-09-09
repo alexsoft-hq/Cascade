@@ -5,17 +5,46 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT, interpolate, richText, VIEWER_STRINGS } from '../src/viewer/i18n.mjs';
 import { TRUST_LEVELS } from '../src/core/trust.mjs';
+import { handleViewerLib } from '../src/mcp/http.mjs';
 
 // The viewer's i18n shell (SPEC §17.11, §15 M9). What is under test here is the
 // SHELL, not the translation: that English is the default and the fallback,
 // that a missing key is visible rather than swallowed, that the Korean
-// catalogue covers exactly the English key set, and that the copy of this
-// module inside the page has not drifted from the module itself.
+// catalogue covers exactly the English key set, and that the page is served
+// this very module rather than a copy of it.
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const KO = JSON.parse(fs.readFileSync(path.join(ROOT, 'viewer', 'i18n', 'ko.json'), 'utf8'));
 const HTML = fs.readFileSync(path.join(ROOT, 'viewer', 'index.html'), 'utf8');
+// THE PAGE, as text: its markup AND the scripts it loads. Which key the page
+// asks for used to be a question about one file; since the page's code moved
+// into viewer/js/*.js it is a question about all of them, and a scan that read
+// only the HTML would say every key was dead.
+const JS_DIR = path.join(ROOT, 'viewer', 'js');
+const PAGE = [HTML, ...fs.readdirSync(JS_DIR).sort()
+  .map((f) => fs.readFileSync(path.join(JS_DIR, f), 'utf8'))].join('\n');
 const CATALOG = { en: VIEWER_STRINGS.en, ko: KO };
+
+/**
+ * Does the page ask for this key? Three ways it can: as a quoted literal in the
+ * code (`t('tab.flow')`, or a table of key names the code reads through), as a
+ * `data-t…` attribute in the markup, or as a `data-t-fold` pair, which names one
+ * key for the line that stands on the page and one for the paragraph under the
+ * fold.
+ *
+ * This asks per KEY rather than scanning the page for every quoted string,
+ * because an apostrophe in a comment ("one node's neighborhood") pairs with the
+ * next quote and hides every literal after it.
+ */
+const FOLD_KEYS = new Set([...PAGE.matchAll(/data-t-fold="([^"]+)"/g)]
+  .flatMap((m) => [`${m[1]}.lead`, `${m[1]}.more`]));
+const ATTR_KEYS = new Set([...PAGE.matchAll(/data-t(?:-rich|-title|-ph)?="([^"]+)"/g)].map((m) => m[1]));
+// ...and a fourth way: the page BUILDS the key, from a prefix and a value the
+// engine gave it (`'mast.trust.'+level`, `'ov.gap.'+kind+'.label'`). A literal
+// that ends in a dot is such a prefix, and every key under it is asked for.
+const KEY_PREFIXES = [...new Set([...PAGE.matchAll(/'([a-z][\w-]*(?:\.[\w-]+)*\.)'/g)].map((m) => m[1]))];
+const usedByPage = (k) => PAGE.includes(`'${k}'`) || ATTR_KEYS.has(k) || FOLD_KEYS.has(k)
+  || KEY_PREFIXES.some((p) => k.startsWith(p));
 
 // ---------------------------------------------------------------------------
 // interpolate
@@ -182,7 +211,7 @@ test('the round\'s new chrome is keyed and translated: the theme toggle, the chi
     assert.equal(typeof VIEWER_STRINGS.en[k], 'string', `${k} is missing from en`);
     assert.equal(typeof KO[k], 'string', `${k} is missing from ko`);
     assert.match(KO[k], /[가-힣]/, `${k} is not translated`);
-    assert.ok(HTML.includes(`'${k}'`), `${k} is in the catalogue but nothing in the page asks for it`);
+    assert.ok(usedByPage(k), `${k} is in the catalogue but nothing in the page asks for it`);
   }
   // The four remainders each keep their {n}: a share is only honest beside the
   // number it leaves out.
@@ -245,7 +274,7 @@ test('the masthead\'s plain-language layer is keyed and translated, in both lang
     assert.equal(typeof VIEWER_STRINGS.en[k], 'string', `${k} is missing from en`);
     assert.equal(typeof KO[k], 'string', `${k} is missing from ko`);
     assert.match(KO[k], /[가-힣]/, `${k} is not translated`);
-    assert.ok(HTML.includes(`'${k}'`), `${k} is in the catalogue but nothing in the page asks for it`);
+    assert.ok(usedByPage(k), `${k} is in the catalogue but nothing in the page asks for it`);
   }
   // The four chip labels are what a masthead pill prints, so they stay short.
   for (const k of ['mast.build', 'mast.fresh.behind', 'mast.fresh.overlay', 'mast.fresh.current',
@@ -291,62 +320,59 @@ test('the catalogue is chrome only: no engine vocabulary is translated', () => {
 // ---------------------------------------------------------------------------
 
 test("every key the page asks for with t('…') exists in en", () => {
-  const asked = [...HTML.matchAll(/\bt\('([^']+)'/g)].map((m) => m[1]);
+  const asked = [...PAGE.matchAll(/\bt\('([^']+)'/g)].map((m) => m[1]);
   assert.ok(asked.length > 20, `expected the page to use the catalogue, found ${asked.length} calls`);
   const missing = [...new Set(asked)].filter((k) => !Object.hasOwn(VIEWER_STRINGS.en, k)).sort();
   assert.deepEqual(missing, [], `the page asks for keys the catalogue does not have:\n${missing.join('\n')}`);
 });
 
 test('every key a data-t attribute names exists in en', () => {
-  const attrs = [...HTML.matchAll(/data-t(?:-rich|-title|-ph)?="([^"]+)"/g)].map((m) => m[1]);
+  const attrs = [...PAGE.matchAll(/data-t(?:-rich|-title|-ph)?="([^"]+)"/g)].map((m) => m[1]);
   // `data-t-fold="hint.x"` names a PAIR: the one-line lead that stands on the
   // page and the paragraph under the fold. Both must exist, or a tab hint would
   // render its own key name at reading size.
-  for (const m of HTML.matchAll(/data-t-fold="([^"]+)"/g)) attrs.push(`${m[1]}.lead`, `${m[1]}.more`);
+  for (const m of PAGE.matchAll(/data-t-fold="([^"]+)"/g)) attrs.push(`${m[1]}.lead`, `${m[1]}.more`);
   assert.ok(attrs.length > 30, `expected the page's static chrome to be keyed, found ${attrs.length}`);
   const missing = [...new Set(attrs)].filter((k) => !Object.hasOwn(VIEWER_STRINGS.en, k)).sort();
   assert.deepEqual(missing, [], `data-t names keys the catalogue does not have:\n${missing.join('\n')}`);
 });
 
 test('every en key is actually referenced by the page — no dead strings to translate', () => {
-  const lits = new Set([...HTML.matchAll(/'([^'\\\n]*)'/g)].map((m) => m[1]));
-  for (const m of HTML.matchAll(/data-t(?:-rich|-title|-ph)?="([^"]+)"/g)) lits.add(m[1]);
-  const unused = Object.keys(VIEWER_STRINGS.en).filter((k) => !lits.has(k)).sort();
+  const unused = Object.keys(VIEWER_STRINGS.en).filter((k) => !usedByPage(k)).sort();
   assert.deepEqual(unused, [], `catalogue keys nothing in the page uses:\n${unused.join('\n')}`);
 });
 
 // ---------------------------------------------------------------------------
-// The page carries a copy of this module (it cannot import from src/): the two
-// must not drift. Same guard as test/graphlayout.test.mjs.
+// The page does not carry a copy of this module any more: the server hands it
+// the module itself, minus the `export ` keywords. This is the guard on that
+// transform — and on there being nothing left to drift.
 // ---------------------------------------------------------------------------
 
-function block(text, what) {
-  const a = text.indexOf('// --- i18n (verbatim copy of src/viewer/i18n.mjs) ---');
-  const b = text.indexOf('// --- end i18n ---');
-  assert.ok(a >= 0 && b > a, `no i18n block found in ${what}`);
-  return text.slice(text.indexOf('\n', a) + 1, b).trim();
-}
+const LIB_DEPS = { viewerLibDir: path.join(ROOT, 'src', 'viewer') };
 
-test('viewer/index.html carries this module VERBATIM (minus `export `) — no drift', () => {
+test('the page is served THIS module, minus its `export ` keywords', () => {
+  const out = handleViewerLib('GET', '/viewer/lib/i18n.js', LIB_DEPS);
+  assert.equal(out.status, 200);
+  assert.equal(out.headers['content-type'], 'application/javascript; charset=utf-8');
   const mod = fs.readFileSync(path.join(ROOT, 'src/viewer/i18n.mjs'), 'utf8');
-  const want = block(mod, 'src/viewer/i18n.mjs').replace(/^export /gm, '');
-  const got = block(HTML, 'viewer/index.html');
-  assert.equal(got, want);
-});
-
-test('the page copy declares everything the module exports', () => {
-  const inPage = block(HTML, 'viewer/index.html');
+  assert.equal(out.body, mod.replace(/^export /gm, ''));
+  // ...and what comes out is a classic script: the names are declared, nothing
+  // is exported, so they land in the one scope the page's files share.
+  assert.equal(/^export /m.test(out.body), false);
   for (const fn of ['interpolate', 'richText', 'makeT']) {
-    assert.ok(inPage.includes(`function ${fn}(`), `page copy is missing ${fn}`);
+    assert.ok(out.body.includes(`function ${fn}(`), `the served text is missing ${fn}`);
   }
-  assert.ok(inPage.includes('const VIEWER_STRINGS'), 'page copy is missing VIEWER_STRINGS');
+  assert.ok(out.body.includes('const VIEWER_STRINGS'), 'the served text is missing VIEWER_STRINGS');
 });
 
-test('the page copy is the catalogue the module ships — the same keys, the same strings', () => {
-  // The drift test above compares text; this one proves the text MEANS the same
-  // thing, by evaluating the page's copy and diffing the catalogue it declares.
-  const inPage = block(HTML, 'viewer/index.html');
-  // eslint-disable-next-line no-new-func
-  const pageStrings = new Function(`${inPage}\nreturn VIEWER_STRINGS;`)();
-  assert.deepEqual(pageStrings.en, VIEWER_STRINGS.en);
+test('the page loads it, before the file that first needs it', () => {
+  const at = (src) => HTML.indexOf(`<script src="${src}">`);
+  assert.ok(at('/viewer/lib/i18n.js') > 0, 'the page does not load /viewer/lib/i18n.js');
+  assert.ok(at('/viewer/lib/i18n.js') < at('/viewer/js/10_dom.js'),
+    'I18N is built while 10_dom.js runs, so the catalogue has to be there already');
+});
+
+test('and no copy of it is left in the page', () => {
+  assert.equal(PAGE.includes('const VIEWER_STRINGS ='), false, 'a second catalogue is a catalogue that will drift');
+  assert.equal(PAGE.includes('function makeT('), false);
 });

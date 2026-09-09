@@ -6,8 +6,8 @@
 //
 // `handleApi` is PURE (method, pathname, body, deps) → {status, json}: unit-
 // testable with no sockets. `serveHttp` is a thin node:http loop around it that
-// also serves the static viewer file, the two vendored browser bundles and the
-// translation catalogues.
+// also serves the static viewer file, the page's own scripts, the two vendored
+// browser bundles and the translation catalogues.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,17 +45,37 @@ const VENDOR_PREFIX = '/vendor/';
  * @returns {{status:number, headers:object, body:Buffer|string}}
  */
 export function handleVendor(method, pathname, deps) {
-  if (method !== 'GET' && method !== 'HEAD') return vendorErr(405, 'use GET for /vendor/…');
-  const dir = deps && deps.vendorDir;
+  return serveFromDir({
+    method,
+    pathname,
+    prefix: VENDOR_PREFIX,
+    dir: deps && deps.vendorDir,
+    types: VENDOR_TYPES,
+    cacheFor: (ext) => (Object.hasOwn(VENDOR_CACHE, ext) ? VENDOR_CACHE[ext] : VENDOR_CACHE_DEFAULT),
+    deps,
+  });
+}
+
+/**
+ * One file out of one directory, by the rule /vendor has always used: a GET, an
+ * extension the route names, and a path that RESOLVES inside the root — `..`, an
+ * absolute path and a percent-encoded escape all land outside it and are refused
+ * as a 404, so the route never reports whether the file it refused exists.
+ *
+ * The three static routes are the same rule with different tables, so it is
+ * written once here rather than three times.
+ */
+function serveFromDir({ method, pathname, prefix, dir, types, cacheFor, deps }) {
+  if (method !== 'GET' && method !== 'HEAD') return vendorErr(405, `use GET for ${prefix}…`);
   if (!dir) return vendorErr(404, 'not found');
-  if (!pathname.startsWith(VENDOR_PREFIX)) return vendorErr(404, 'not found');
+  if (!pathname.startsWith(prefix)) return vendorErr(404, 'not found');
   let name;
-  try { name = decodeURIComponent(pathname.slice(VENDOR_PREFIX.length)); }
+  try { name = decodeURIComponent(pathname.slice(prefix.length)); }
   catch { return vendorErr(404, 'not found'); } // a malformed %-escape names no file
   if (!name) return vendorErr(404, 'not found');
   const dot = name.lastIndexOf('.');
   const ext = dot < 0 ? '' : name.slice(dot);
-  if (!Object.hasOwn(VENDOR_TYPES, ext)) return vendorErr(404, 'not found');
+  if (!Object.hasOwn(types, ext)) return vendorErr(404, 'not found');
   const root = path.resolve(dir);
   const abs = path.resolve(root, name);
   if (abs !== root && !abs.startsWith(root + path.sep)) return vendorErr(404, 'not found'); // no escape
@@ -63,14 +83,7 @@ export function handleVendor(method, pathname, deps) {
   let body;
   try { body = readFile(abs); }
   catch { return vendorErr(404, 'not found'); }
-  return {
-    status: 200,
-    headers: {
-      'content-type': VENDOR_TYPES[ext],
-      'cache-control': Object.hasOwn(VENDOR_CACHE, ext) ? VENDOR_CACHE[ext] : VENDOR_CACHE_DEFAULT,
-    },
-    body,
-  };
+  return { status: 200, headers: { 'content-type': types[ext], 'cache-control': cacheFor(ext) }, body };
 }
 
 function vendorErr(status, message) {
@@ -81,6 +94,34 @@ function vendorErr(status, message) {
 // else (SPEC §17.11).
 const I18N_TYPES = Object.freeze({ '.json': 'application/json; charset=utf-8' });
 const I18N_PREFIX = '/i18n/';
+
+// The page's own scripts. `viewer/js/*.js` are classic scripts sharing one
+// global scope, loaded in the numbered order their names make explicit, and
+// they are served like the vendored bundles: a day of cache, one directory, no
+// escaping it.
+const VIEWER_JS_TYPES = Object.freeze({ '.js': 'application/javascript; charset=utf-8' });
+const VIEWER_JS_PREFIX = '/viewer/js/';
+
+// The two modules the page shares with the engine, served FROM the engine.
+//
+// The page cannot `import`: it is one global scope, and the modules under
+// src/viewer/ are ES modules with their own tests. The page used to carry a
+// verbatim COPY of each, kept in step by a drift test — which meant two places
+// to edit and a test whose whole job was to notice when somebody edited one.
+// Now there is one file, read at request time and served minus its `export `
+// keywords, which is exactly the transform the copies were. There is nothing
+// left to drift.
+const VIEWER_LIB_PREFIX = '/viewer/lib/';
+const VIEWER_LIB_MODULES = Object.freeze(['i18n', 'graphlayout', 'source']);
+
+/**
+ * One ES module as a classic script: the same text, minus the `export `
+ * keywords. Nothing else changes — the names it declares land in the shared
+ * global scope, which is how the page reaches them.
+ */
+export function classicSource(text) {
+  return String(text).replace(/^export /gm, '');
+}
 
 // What the two mark routes answer with. A day of cache: the file can be
 // replaced under the same name by an update, the way a bundle can.
@@ -106,26 +147,69 @@ const SVG_HEADERS = Object.freeze({
  * @returns {{status:number, headers:object, body:Buffer|string}}
  */
 export function handleI18n(method, pathname, deps) {
-  if (method !== 'GET' && method !== 'HEAD') return vendorErr(405, 'use GET for /i18n/…');
-  const dir = deps && deps.i18nDir;
+  return serveFromDir({
+    method,
+    pathname,
+    prefix: I18N_PREFIX,
+    dir: deps && deps.i18nDir,
+    types: I18N_TYPES,
+    // No cache: a translator editing ko.json wants a reload to show the edit.
+    cacheFor: () => 'no-cache',
+    deps,
+  });
+}
+
+/**
+ * Serve one of the page's own scripts out of `viewer/js`. Same rule as /vendor,
+ * same day of cache: these files change when the engine is updated, under the
+ * same names.
+ *
+ * @param {string} method
+ * @param {string} pathname  "/viewer/js/<name>.js"
+ * @param {{viewerJsDir?:string, readFile?:(abs:string)=>Buffer|string}} deps
+ */
+export function handleViewerJs(method, pathname, deps) {
+  return serveFromDir({
+    method,
+    pathname,
+    prefix: VIEWER_JS_PREFIX,
+    dir: deps && deps.viewerJsDir,
+    types: VIEWER_JS_TYPES,
+    cacheFor: () => VENDOR_CACHE_DEFAULT,
+    deps,
+  });
+}
+
+/**
+ * Serve one module of `src/viewer/` as a classic script.
+ *
+ * NOT a directory: the three names are listed above, and anything else is a
+ * 404. `src/viewer/` is engine source, not a shelf of files to hand out, so the
+ * route answers by NAME rather than by path — there is no traversal to defend
+ * against because there is no path to traverse.
+ *
+ * @param {string} method
+ * @param {string} pathname  "/viewer/lib/<name>.js"
+ * @param {{viewerLibDir?:string, readFile?:(abs:string)=>Buffer|string}} deps
+ */
+export function handleViewerLib(method, pathname, deps) {
+  if (method !== 'GET' && method !== 'HEAD') return vendorErr(405, `use GET for ${VIEWER_LIB_PREFIX}…`);
+  const dir = deps && deps.viewerLibDir;
   if (!dir) return vendorErr(404, 'not found');
-  if (!pathname.startsWith(I18N_PREFIX)) return vendorErr(404, 'not found');
-  let name;
-  try { name = decodeURIComponent(pathname.slice(I18N_PREFIX.length)); }
+  if (!pathname.startsWith(VIEWER_LIB_PREFIX)) return vendorErr(404, 'not found');
+  const name = pathname.slice(VIEWER_LIB_PREFIX.length);
+  if (!name.endsWith('.js')) return vendorErr(404, 'not found');
+  const stem = name.slice(0, -'.js'.length);
+  if (!VIEWER_LIB_MODULES.includes(stem)) return vendorErr(404, 'not found');
+  const readFile = (deps && deps.readFile) || ((p) => fs.readFileSync(p, 'utf8'));
+  let text;
+  try { text = readFile(path.join(path.resolve(dir), `${stem}.mjs`)); }
   catch { return vendorErr(404, 'not found'); }
-  if (!name) return vendorErr(404, 'not found');
-  const dot = name.lastIndexOf('.');
-  const ext = dot < 0 ? '' : name.slice(dot);
-  if (!Object.hasOwn(I18N_TYPES, ext)) return vendorErr(404, 'not found');
-  const root = path.resolve(dir);
-  const abs = path.resolve(root, name);
-  if (abs !== root && !abs.startsWith(root + path.sep)) return vendorErr(404, 'not found'); // no escape
-  const readFile = (deps && deps.readFile) || ((p) => fs.readFileSync(p));
-  let body;
-  try { body = readFile(abs); }
-  catch { return vendorErr(404, 'not found'); }
-  // No cache: a translator editing ko.json wants a reload to show the edit.
-  return { status: 200, headers: { 'content-type': I18N_TYPES[ext], 'cache-control': 'no-cache' }, body };
+  return {
+    status: 200,
+    headers: { 'content-type': VIEWER_JS_TYPES['.js'], 'cache-control': VENDOR_CACHE_DEFAULT },
+    body: classicSource(String(text)),
+  };
 }
 
 /**
@@ -242,7 +326,8 @@ function err(status, code, message) {
 /**
  * Serve the API + the static viewer over HTTP.
  * @param {{http:object, port?:number, host?:string, deps:object, html:string, mark?:string, markDark?:string}} cfg
- *   http: the node:http module; deps: {toolList, callTool, meta?, source?, vendorDir?, i18nDir?};
+ *   http: the node:http module; deps: {toolList, callTool, meta?, source?, vendorDir?,
+ *   i18nDir?, viewerJsDir?, viewerLibDir?};
  *   html: viewer page; mark / markDark: the SVG of the Cascade mark for a light
  *   and for a dark ground, served at `/cascade-mark.svg` and
  *   `/cascade-mark-dark.svg`. All three are STRINGS held in memory and answered
@@ -270,6 +355,14 @@ export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, m
       }
       if (pathname === '/i18n' || pathname.startsWith(I18N_PREFIX)) {
         const out = handleI18n(req.method, pathname, deps);
+        return send(res, out.status, out.headers, out.body);
+      }
+      if (pathname.startsWith(VIEWER_JS_PREFIX)) {
+        const out = handleViewerJs(req.method, pathname, deps);
+        return send(res, out.status, out.headers, out.body);
+      }
+      if (pathname.startsWith(VIEWER_LIB_PREFIX)) {
+        const out = handleViewerLib(req.method, pathname, deps);
         return send(res, out.status, out.headers, out.body);
       }
       if (pathname === '/' || pathname === '/index.html') {

@@ -54,15 +54,18 @@ export const NEW_FUNCTION_BRANCHES = 30;
 
 /**
  * The source this ratchet holds. `bin/` and `src/` are the engine; `adapters/web`
- * is the worker beside them, with the modules its body was split into, and its
- * VENDORED parser excluded because it is not ours (the walk skips any directory
- * named `vendor`). Tests are not here: a test file is read once, in one
- * direction, and length is not what makes one hard.
+ * is the worker beside them, with the modules its body was split into; `viewer/js`
+ * is the page's own code, which used to be one inline script in the HTML where no
+ * tool could read it. The VENDORED parser and the vendored map renderers are
+ * excluded because they are not ours (the walk skips any directory named
+ * `vendor`). Tests are not here: a test file is read once, in one direction, and
+ * length is not what makes one hard.
  */
 export const SCOPE = Object.freeze([
   { dir: 'bin', recurse: true },
   { dir: 'src', recurse: true },
   { dir: 'adapters/web', recurse: true },
+  { dir: 'viewer/js', recurse: true },
 ]);
 
 const BRANCH_TYPES = new Set([

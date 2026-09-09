@@ -31,11 +31,10 @@
 // register rather than the flat note-taking one.
 //
 // Pure: no DOM, no fetch, no state beyond the missing-key ledger a caller can
-// read back. `viewer/index.html` carries a VERBATIM copy of the marked block
-// below (it is one self-contained file and cannot import from src/), and
-// test/i18n.test.mjs fails if the two ever drift.
-
-// --- i18n (verbatim copy of src/viewer/i18n.mjs) ---
+// read back. THE PAGE RUNS THIS FILE: the viewer is one global scope and cannot
+// `import` from src/, so `cascade view` hands it this text at
+// `GET /viewer/lib/i18n.js` minus the `export ` keywords. There is no copy to
+// drift from any more; test/i18n.test.mjs checks that what is served is this.
 
 /**
  * Substitute `{name}` placeholders. A placeholder with no matching parameter is
@@ -874,4 +873,3 @@ export const VIEWER_STRINGS = {
     'err.generic': 'error: {message}',
   },
 };
-// --- end i18n ---

@@ -2,15 +2,13 @@
 // the Graph tab's concentric hop rings and the ERD's name-family colouring.
 // No DOM, no state, no I/O — every function is a value in, a value out.
 //
-// WHY A COPY LIVES IN THE PAGE. `cascade view` serves ONE self-contained HTML
-// file out of memory (bin/cascade.mjs reads viewer/index.html; http.mjs serves
-// "/" and the API, nothing else), so the page cannot `import` from src/. The
-// block between the two markers below is therefore copied VERBATIM into
-// viewer/index.html — minus the `export ` keywords — and
-// test/graphlayout.test.mjs FAILS if the two ever drift. That keeps the viewer
-// a single file and keeps this logic under test at the same time.
-
-// --- graphlayout (verbatim copy lives in viewer/index.html) ---
+// THE PAGE RUNS THIS FILE. The viewer is one global scope, not modules, so it
+// cannot `import` from src/: `cascade view` hands it THIS text at
+// `GET /viewer/lib/graphlayout.js`, minus the `export ` keywords, and the names
+// below land in the scope viewer/js/*.js share. There is no copy — there used
+// to be one in the page, with a test whose whole job was to notice when
+// somebody edited one of the two — so this logic is under test here and drawn
+// with there, from one file.
 
 /**
  * BFS hop distance from `focus`, walking edges the way the ANSWER walked them.
@@ -381,14 +379,27 @@ export function seededRandom(seed) {
  *            components:string[][]}}
  */
 export function settleComponents(nodes, links, opts = {}) {
+  const L = layoutState(nodes, links, opts);
+  if (!L.list.length) return layoutResult(L);
+  seedComponents(L);
+  labelCommunities(L);
+  L.cell = collisionCell(L);
+  for (let i = 0; i < L.steps; i++) settleStep(L);
+  if (opts.pack !== false) packComponents(L);
+  relaxOverlaps(L);
+  return layoutResult(L);
+}
+
+/**
+ * Everything the phases below share, read once: the pane, the settings, the
+ * nodes as mutable points, which component each one is in, the edges between
+ * them, and the neighbour lists the community pass walks. One object, passed
+ * along, so every phase is a function a reader can read on its own.
+ */
+function layoutState(nodes, links, opts) {
   const W = opts.width > 0 ? opts.width : 900;
   const H = opts.height > 0 ? opts.height : 620;
   const GAP = opts.gap ?? 16;
-  const steps = opts.iterations ?? 194;   // alpha 1 → 0.02 at the old 0.98 decay
-  const attempts = opts.relaxAttempts ?? 7;
-  const sweeps = opts.relaxSweeps ?? 250;
-  const rnd = seededRandom(opts.seed ?? 1);
-
   const idx = new Map();
   const list = [];
   for (const n of nodes || []) {
@@ -408,205 +419,256 @@ export function settleComponents(nodes, links, opts = {}) {
     const s = idx.get(l.from), t = idx.get(l.to);
     if (s && t && s !== t) edges.push({ s, t });
   }
-  const result = () => ({
-    nodes: list.map((n) => ({ id: n.id, x: n.x, y: n.y, r: n.r, comp: n.comp, comm: n.comm })),
-    components,
-  });
-  if (!list.length) return result();
-
-  // --- where a component starts ---------------------------------------------
-  const seed = () => {
-    const boxes = compNodes.map((cn, ci) => {
-      const R = Math.max(24, Math.sqrt(cn.length) * 36);
-      let mr = 0; for (const n of cn) if (n.r > mr) mr = n.r;
-      return { key: ci, w: 2 * R, h: 2 * R, maxR: mr };
-    });
-    for (const slot of shelfPack(boxes, { aspect: W / H, gap: GAP + 8 }).placed) {
-      const cn = compNodes[slot.key], R = slot.w / 2, ox = slot.x + R, oy = slot.y + R;
-      cn.forEach((n, i) => {
-        if (n.pinned) return;
-        const ang = 2.399963229728653 * i, rr = R * Math.sqrt((i + 0.5) / cn.length);
-        n.x = ox + rr * Math.cos(ang); n.y = oy + rr * Math.sin(ang); n.vx = 0; n.vy = 0;
-      });
-    }
-  };
-
-  // --- communities (label propagation) --------------------------------------
-  // A cheap, dependency-free clustering INSIDE a component, so the settle can
-  // give each cluster its own room and still hold it together. The visiting
-  // order is shuffled by the seeded stream, never by Math.random.
   const adj = new Map(list.map((n) => [n.id, []]));
   for (const e of edges) { adj.get(e.s.id).push(e.t.id); adj.get(e.t.id).push(e.s.id); }
-  let nComm = 1;
-  const communities = () => {
-    const lab = new Map(list.map((n) => [n.id, n.id]));
-    const order = list.map((n) => n.id);
-    for (let it = 0; it < 12; it++) {
-      for (let i = order.length - 1; i > 0; i--) {
-        const j = (rnd() * (i + 1)) | 0;
-        const t = order[i]; order[i] = order[j]; order[j] = t;
-      }
-      let moved = false;
-      for (const id of order) {
-        const cnt = new Map();
-        for (const nb of adj.get(id)) { if (nb === id) continue; const l = lab.get(nb); cnt.set(l, (cnt.get(l) || 0) + 1); }
-        if (!cnt.size) continue;
-        let best = lab.get(id), bc = -1;
-        for (const [l, c] of cnt) { if (c > bc || (c === bc && l < best)) { best = l; bc = c; } }
-        if (lab.get(id) !== best) { lab.set(id, best); moved = true; }
-      }
-      if (!moved) break;
-    }
-    const uniq = [...new Set(list.map((n) => lab.get(n.id)))];
-    const ci = new Map(uniq.map((c, i) => [c, i]));
-    for (const n of list) n.comm = ci.get(lab.get(n.id));
-    nComm = uniq.length;
+  return {
+    W, H, GAP, idx, list, components, compNodes, edges, adj,
+    steps: opts.iterations ?? 194,   // alpha 1 → 0.02 at the old 0.98 decay
+    attempts: opts.relaxAttempts ?? 7,
+    sweeps: opts.relaxSweeps ?? 250,
+    rnd: seededRandom(opts.seed ?? 1),
+    nComm: 1,
+    cell: 1,
+    center: compNodes.map((cn) => Math.min(0.02, 0.0006 + 6 / (cn.length * cn.length))),
   };
-
-  // --- collision ------------------------------------------------------------
-  // One Gauss-Seidel sweep (corrections applied in place, so chains resolve over
-  // a few sweeps), over a uniform grid whose cell is the largest separation two
-  // nodes can ask for: each node only ever looks at the 9 cells around it, so a
-  // sweep is O(n) rather than O(n²) and a 400-table schema settles in the time
-  // a 25-table one used to. Returns the worst overlap depth it saw.
-  const fixed = (n) => n.pinned;
-  let cell = 1;
-  const measureCell = () => { let mr = 0; for (const n of list) if (n.r > mr) mr = n.r; cell = Math.max(1, 2 * mr + GAP + 1); };
-  const push = (a, b, i, j) => {
-    let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
-    // Two nodes at the very same point have no direction to part along, so one
-    // is derived from the pair's own indices: the same picture every run.
-    if (d < 0.01) { dx = ((i % 5) - 2) || 1; dy = ((j % 5) - 2) || 1; d = Math.hypot(dx, dy) || 1; }
-    const min = a.r + b.r + GAP;
-    if (d >= min) return 0;
-    const ov = min - d;
-    const fa = fixed(a), fb = fixed(b);
-    // Two PINNED nodes closer than the gap is a picture the caller built, and no
-    // sweep may take it apart: neither may move, so the overlap survives every
-    // pass and must not be reported as "the relax failed" — that is what used to
-    // inflate the whole picture x17 chasing something it could never fix.
-    if (fa && fb) return 0;
-    const p = ov / d, wa = fa ? 0 : (fb ? 1 : 0.5), wb = fb ? 0 : (fa ? 1 : 0.5);
-    a.x -= dx * p * wa; a.y -= dy * p * wa;
-    b.x += dx * p * wb; b.y += dy * p * wb;
-    return ov;
-  };
-  const collideSweep = () => {
-    const grid = new Map();
-    for (let i = 0; i < list.length; i++) {
-      const n = list[i], k = Math.floor(n.x / cell) + ':' + Math.floor(n.y / cell);
-      const b = grid.get(k); if (b) b.push(i); else grid.set(k, [i]);
-    }
-    let worst = 0;
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i], gx = Math.floor(a.x / cell), gy = Math.floor(a.y / cell);
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-        const bucket = grid.get((gx + dx) + ':' + (gy + dy));
-        if (!bucket) continue;
-        for (const j of bucket) { if (j <= i) continue; const ov = push(a, list[j], i, j); if (ov > worst) worst = ov; }
-      }
-    }
-    return worst;
-  };
-  // The grid is built from the positions a sweep STARTED at, so a node that
-  // moves far during one can be missed. This is the exact answer — every pair,
-  // no corrections — and it is what the relax loop believes.
-  const worstOverlap = () => {
-    let worst = 0;
-    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-      const a = list[i], b = list[j];
-      if (fixed(a) && fixed(b)) continue;
-      const ov = a.r + b.r + GAP - Math.hypot(b.x - a.x, b.y - a.y);
-      if (ov > worst) worst = ov;
-    }
-    return worst;
-  };
-
-  // --- one settle step ------------------------------------------------------
-  const center = compNodes.map((cn) => Math.min(0.02, 0.0006 + 6 / (cn.length * cn.length)));
-  const step = () => {
-    // pairwise repulsion, O(n²) WITHIN a component. 1/d falloff (long-range, à la
-    // Fruchterman-Reingold) so nodes spread into open space instead of piling in
-    // the middle; boosted between communities, softened inside one.
-    for (const cn of compNodes)
-      for (let i = 0; i < cn.length; i++) for (let j = i + 1; j < cn.length; j++) {
-        const a = cn[i], b = cn[j];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const d = Math.sqrt(dx * dx + dy * dy) || 1, dd = d < 24 ? 24 : d;
-        const rep = (a.comm === b.comm ? 230 : 470) * (1 + (a.r + b.r) / 26) / dd;
-        const fx = dx / d * rep, fy = dy / d * rep;
-        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
-      }
-    // springs — rest length grows with node size, so big hubs don't crush neighbours.
-    for (const e of edges) {
-      const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const k = (d - (72 + e.s.r + e.t.r)) * 0.04, fx = dx / d * k, fy = dy / d * k;
-      e.s.vx += fx; e.s.vy += fy; e.t.vx -= fx; e.t.vy -= fy;
-    }
-    // community cohesion — a light pull toward each node's cluster centroid.
-    if (nComm > 1) {
-      const sx = new Float64Array(nComm), sy = new Float64Array(nComm), sn = new Float64Array(nComm);
-      for (const n of list) { sx[n.comm] += n.x; sy[n.comm] += n.y; sn[n.comm]++; }
-      for (let c = 0; c < nComm; c++) if (sn[c]) { sx[c] /= sn[c]; sy[c] /= sn[c]; }
-      for (const n of list) { if (n.pinned) continue; n.vx += (sx[n.comm] - n.x) * 0.005; n.vy += (sy[n.comm] - n.y) * 0.005; }
-    }
-    // integrate + weak centering, each node toward ITS OWN component's centroid.
-    // Velocity is capped per step (a Fruchterman-Reingold "temperature") so a node
-    // overlapping many others cannot accumulate a huge push and fling itself off.
-    const kx = new Float64Array(compNodes.length), ky = new Float64Array(compNodes.length);
-    for (let c = 0; c < compNodes.length; c++) {
-      const cn = compNodes[c];
-      let mx = 0, my = 0;
-      for (const n of cn) { mx += n.x; my += n.y; }
-      kx[c] = mx / cn.length; ky[c] = my / cn.length;
-    }
-    for (const n of list) {
-      if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
-      const c = center[n.comp];
-      n.vx += (kx[n.comp] - n.x) * c; n.vy += (ky[n.comp] - n.y) * c;
-      n.vx *= 0.9; n.vy *= 0.9;
-      const sp = Math.hypot(n.vx, n.vy);
-      if (sp > 26) { const s = 26 / sp; n.vx *= s; n.vy *= s; }
-      n.x += n.vx; n.y += n.vy;
-    }
-    collideSweep(); collideSweep();
-  };
-
-  // --- pack the settled components ------------------------------------------
-  const packAll = () => {
-    if (components.length < 2) return;
-    const boxes = compNodes.map((cn, ci) => {
-      let a1 = Infinity, b1 = Infinity, a2 = -Infinity, b2 = -Infinity, mr = 0;
-      for (const n of cn) {
-        if (n.x - n.r < a1) a1 = n.x - n.r; if (n.y - n.r < b1) b1 = n.y - n.r;
-        if (n.x + n.r > a2) a2 = n.x + n.r; if (n.y + n.r > b2) b2 = n.y + n.r;
-        if (n.r > mr) mr = n.r;
-      }
-      return { key: ci, w: a2 - a1, h: b2 - b1, maxR: mr, x0: a1, y0: b1 };
-    });
-    for (const slot of shelfPack(boxes, { aspect: W / H, gap: 24 }).placed) {
-      const cn = compNodes[slot.key];
-      if (cn.some((n) => n.pinned)) continue;
-      const b = boxes[slot.key], dx = slot.x - b.x0, dy = slot.y - b.y0;
-      for (const n of cn) { n.x += dx; n.y += dy; n.vx = 0; n.vy = 0; }
-    }
-  };
-
-  seed();
-  communities();
-  measureCell();
-  for (let i = 0; i < steps; i++) step();
-  if (opts.pack !== false) packAll();
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    for (let p = 0; p < sweeps; p++) if (collideSweep() < 0.5) break;
-    if (worstOverlap() < 0.5) break;
-    let mx = 0, my = 0, k = 0;
-    for (const n of list) if (!n.pinned) { mx += n.x; my += n.y; k++; }
-    if (!k) break;
-    mx /= k; my /= k;
-    for (const n of list) if (!n.pinned) { n.x = mx + (n.x - mx) * 1.5; n.y = my + (n.y - my) * 1.5; }
-  }
-  return result();
 }
 
-// --- end graphlayout ---
+/** The answer: a position per node, and the components they were settled in. */
+function layoutResult(L) {
+  return {
+    nodes: L.list.map((n) => ({ id: n.id, x: n.x, y: n.y, r: n.r, comp: n.comp, comm: n.comm })),
+    components: L.components,
+  };
+}
+
+/**
+ * Where a component starts: its members on a sunflower spiral inside a disc,
+ * the discs packed, so the settle begins spread out instead of with every
+ * cluster piled on the same middle.
+ */
+function seedComponents(L) {
+  const boxes = L.compNodes.map((cn, ci) => {
+    const R = Math.max(24, Math.sqrt(cn.length) * 36);
+    let mr = 0; for (const n of cn) if (n.r > mr) mr = n.r;
+    return { key: ci, w: 2 * R, h: 2 * R, maxR: mr };
+  });
+  for (const slot of shelfPack(boxes, { aspect: L.W / L.H, gap: L.GAP + 8 }).placed) {
+    const cn = L.compNodes[slot.key], R = slot.w / 2, ox = slot.x + R, oy = slot.y + R;
+    cn.forEach((n, i) => {
+      if (n.pinned) return;
+      const ang = 2.399963229728653 * i, rr = R * Math.sqrt((i + 0.5) / cn.length);
+      n.x = ox + rr * Math.cos(ang); n.y = oy + rr * Math.sin(ang); n.vx = 0; n.vy = 0;
+    });
+  }
+}
+
+/**
+ * Communities, by label propagation: a cheap, dependency-free clustering INSIDE
+ * a component, so the settle can give each cluster its own room and still hold
+ * it together. The visiting order is shuffled by the seeded stream, never by
+ * Math.random.
+ */
+function labelCommunities(L) {
+  const lab = new Map(L.list.map((n) => [n.id, n.id]));
+  const order = L.list.map((n) => n.id);
+  for (let it = 0; it < 12; it++) {
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = (L.rnd() * (i + 1)) | 0;
+      const t = order[i]; order[i] = order[j]; order[j] = t;
+    }
+    let moved = false;
+    for (const id of order) {
+      const cnt = new Map();
+      for (const nb of L.adj.get(id)) { if (nb === id) continue; const l = lab.get(nb); cnt.set(l, (cnt.get(l) || 0) + 1); }
+      if (!cnt.size) continue;
+      let best = lab.get(id), bc = -1;
+      for (const [l, c] of cnt) { if (c > bc || (c === bc && l < best)) { best = l; bc = c; } }
+      if (lab.get(id) !== best) { lab.set(id, best); moved = true; }
+    }
+    if (!moved) break;
+  }
+  const uniq = [...new Set(L.list.map((n) => lab.get(n.id)))];
+  const ci = new Map(uniq.map((c, i) => [c, i]));
+  for (const n of L.list) n.comm = ci.get(lab.get(n.id));
+  L.nComm = uniq.length;
+}
+
+/**
+ * The collision grid's cell: the largest separation two nodes can ask for. Each
+ * node then only ever looks at the 9 cells around it, so a sweep is O(n) rather
+ * than O(n²) and a 400-table schema settles in the time a 25-table one used to.
+ */
+function collisionCell(L) {
+  let mr = 0; for (const n of L.list) if (n.r > mr) mr = n.r;
+  return Math.max(1, 2 * mr + L.GAP + 1);
+}
+
+/** Part two overlapping nodes, and say by how much they overlapped. */
+function pushApart(a, b, i, j, gap) {
+  let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+  // Two nodes at the very same point have no direction to part along, so one
+  // is derived from the pair's own indices: the same picture every run.
+  if (d < 0.01) { dx = ((i % 5) - 2) || 1; dy = ((j % 5) - 2) || 1; d = Math.hypot(dx, dy) || 1; }
+  const min = a.r + b.r + gap;
+  if (d >= min) return 0;
+  const ov = min - d;
+  const fa = a.pinned, fb = b.pinned;
+  // Two PINNED nodes closer than the gap is a picture the caller built, and no
+  // sweep may take it apart: neither may move, so the overlap survives every
+  // pass and must not be reported as "the relax failed" — that is what used to
+  // inflate the whole picture x17 chasing something it could never fix.
+  if (fa && fb) return 0;
+  const p = ov / d, wa = fa ? 0 : (fb ? 1 : 0.5), wb = fb ? 0 : (fa ? 1 : 0.5);
+  a.x -= dx * p * wa; a.y -= dy * p * wa;
+  b.x += dx * p * wb; b.y += dy * p * wb;
+  return ov;
+}
+
+/**
+ * One Gauss-Seidel collision sweep: corrections applied in place, so chains
+ * resolve over a few sweeps. Returns the worst overlap depth it saw.
+ */
+function collideSweep(L) {
+  const grid = new Map();
+  for (let i = 0; i < L.list.length; i++) {
+    const n = L.list[i], k = Math.floor(n.x / L.cell) + ':' + Math.floor(n.y / L.cell);
+    const b = grid.get(k); if (b) b.push(i); else grid.set(k, [i]);
+  }
+  let worst = 0;
+  for (let i = 0; i < L.list.length; i++) {
+    const a = L.list[i], gx = Math.floor(a.x / L.cell), gy = Math.floor(a.y / L.cell);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const bucket = grid.get((gx + dx) + ':' + (gy + dy));
+      if (!bucket) continue;
+      for (const j of bucket) { if (j <= i) continue; const ov = pushApart(a, L.list[j], i, j, L.GAP); if (ov > worst) worst = ov; }
+    }
+  }
+  return worst;
+}
+
+/**
+ * The worst overlap there really is. The grid above is built from the positions
+ * a sweep STARTED at, so a node that moves far during one can be missed; this is
+ * the exact answer — every pair, no corrections — and it is what the relax loop
+ * believes.
+ */
+function worstOverlap(L) {
+  let worst = 0;
+  for (let i = 0; i < L.list.length; i++) for (let j = i + 1; j < L.list.length; j++) {
+    const a = L.list[i], b = L.list[j];
+    if (a.pinned && b.pinned) continue;
+    const ov = a.r + b.r + L.GAP - Math.hypot(b.x - a.x, b.y - a.y);
+    if (ov > worst) worst = ov;
+  }
+  return worst;
+}
+
+/** One settle step: repulsion, springs, cohesion, then integrate and collide. */
+function settleStep(L) {
+  stepRepulsion(L);
+  stepSprings(L);
+  stepCohesion(L);
+  stepIntegrate(L);
+  collideSweep(L); collideSweep(L);
+}
+
+/**
+ * Pairwise repulsion, O(n²) WITHIN a component. 1/d falloff (long-range, à la
+ * Fruchterman-Reingold) so nodes spread into open space instead of piling in the
+ * middle; boosted between communities, softened inside one.
+ */
+function stepRepulsion(L) {
+  for (const cn of L.compNodes)
+    for (let i = 0; i < cn.length; i++) for (let j = i + 1; j < cn.length; j++) {
+      const a = cn[i], b = cn[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1, dd = d < 24 ? 24 : d;
+      const rep = (a.comm === b.comm ? 230 : 470) * (1 + (a.r + b.r) / 26) / dd;
+      const fx = dx / d * rep, fy = dy / d * rep;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+}
+
+/** Springs — rest length grows with node size, so big hubs don't crush neighbours. */
+function stepSprings(L) {
+  for (const e of L.edges) {
+    const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const k = (d - (72 + e.s.r + e.t.r)) * 0.04, fx = dx / d * k, fy = dy / d * k;
+    e.s.vx += fx; e.s.vy += fy; e.t.vx -= fx; e.t.vy -= fy;
+  }
+}
+
+/** Community cohesion — a light pull toward each node's cluster centroid. */
+function stepCohesion(L) {
+  if (L.nComm <= 1) return;
+  const sx = new Float64Array(L.nComm), sy = new Float64Array(L.nComm), sn = new Float64Array(L.nComm);
+  for (const n of L.list) { sx[n.comm] += n.x; sy[n.comm] += n.y; sn[n.comm]++; }
+  for (let c = 0; c < L.nComm; c++) if (sn[c]) { sx[c] /= sn[c]; sy[c] /= sn[c]; }
+  for (const n of L.list) { if (n.pinned) continue; n.vx += (sx[n.comm] - n.x) * 0.005; n.vy += (sy[n.comm] - n.y) * 0.005; }
+}
+
+/**
+ * Integrate + weak centering, each node toward ITS OWN component's centroid.
+ * Velocity is capped per step (a Fruchterman-Reingold "temperature") so a node
+ * overlapping many others cannot accumulate a huge push and fling itself off.
+ */
+function stepIntegrate(L) {
+  const kx = new Float64Array(L.compNodes.length), ky = new Float64Array(L.compNodes.length);
+  for (let c = 0; c < L.compNodes.length; c++) {
+    const cn = L.compNodes[c];
+    let mx = 0, my = 0;
+    for (const n of cn) { mx += n.x; my += n.y; }
+    kx[c] = mx / cn.length; ky[c] = my / cn.length;
+  }
+  for (const n of L.list) {
+    if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
+    const c = L.center[n.comp];
+    n.vx += (kx[n.comp] - n.x) * c; n.vy += (ky[n.comp] - n.y) * c;
+    n.vx *= 0.9; n.vy *= 0.9;
+    const sp = Math.hypot(n.vx, n.vy);
+    if (sp > 26) { const s = 26 / sp; n.vx *= s; n.vy *= s; }
+    n.x += n.vx; n.y += n.vy;
+  }
+}
+
+/**
+ * Each settled component measured and placed by `shelfPack` into a block the
+ * shape of the pane. A component holding a PINNED node is anchored on it: it
+ * keeps its place and leaves its slot empty, because the only translation that
+ * leaves a pinned node where the caller put it is none at all.
+ */
+function packComponents(L) {
+  if (L.components.length < 2) return;
+  const boxes = L.compNodes.map((cn, ci) => {
+    let a1 = Infinity, b1 = Infinity, a2 = -Infinity, b2 = -Infinity, mr = 0;
+    for (const n of cn) {
+      if (n.x - n.r < a1) a1 = n.x - n.r; if (n.y - n.r < b1) b1 = n.y - n.r;
+      if (n.x + n.r > a2) a2 = n.x + n.r; if (n.y + n.r > b2) b2 = n.y + n.r;
+      if (n.r > mr) mr = n.r;
+    }
+    return { key: ci, w: a2 - a1, h: b2 - b1, maxR: mr, x0: a1, y0: b1 };
+  });
+  for (const slot of shelfPack(boxes, { aspect: L.W / L.H, gap: 24 }).placed) {
+    const cn = L.compNodes[slot.key];
+    if (cn.some((n) => n.pinned)) continue;
+    const b = boxes[slot.key], dx = slot.x - b.x0, dy = slot.y - b.y0;
+    for (const n of cn) { n.x += dx; n.y += dy; n.vx = 0; n.vy = 0; }
+  }
+}
+
+/**
+ * Collision sweeps until no two circles overlap. If a round cannot clear a
+ * compressed hub-spoke pile, every free node is inflated outward from the
+ * centroid (a pure zoom — structure preserved) and the round runs again.
+ */
+function relaxOverlaps(L) {
+  for (let attempt = 0; attempt < L.attempts; attempt++) {
+    for (let p = 0; p < L.sweeps; p++) if (collideSweep(L) < 0.5) break;
+    if (worstOverlap(L) < 0.5) break;
+    let mx = 0, my = 0, k = 0;
+    for (const n of L.list) if (!n.pinned) { mx += n.x; my += n.y; k++; }
+    if (!k) break;
+    mx /= k; my /= k;
+    for (const n of L.list) if (!n.pinned) { n.x = mx + (n.x - mx) * 1.5; n.y = my + (n.y - my) * 1.5; }
+  }
+}

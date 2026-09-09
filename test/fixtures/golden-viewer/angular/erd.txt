@@ -1,0 +1,289 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj hidden" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch."></select>
+        <span id="projone" class="projone">angular</span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java + web</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <span class="crlane">
+        screens
+        <b>6</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+        api groups
+        <b>6</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>19</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        services
+        <b>28</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane hollow" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
+        SQL
+        <b>not shipped</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT">
+        columns
+        <b>6 ~</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden  statements-axis-not-shipped  column-axis-degraded  jpa-axis-degraded  mybatisPlus-axis-not-shipped">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mtrustsr" class="sronly">trust not certified</span>
+        <span id="mtrust">not certified</span>
+      </span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            9 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div class="tabs">
+      <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
+      <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
+      <button class="tab" data-t="tab.flow" data-tab="flow" onclick type="button">Flow</button>
+      <button class="tab" data-t="tab.impact" data-tab="impact" onclick type="button">Impact</button>
+      <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
+      <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
+      <button class="tab active" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
+      <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="tab-overview" class="hidden">…</div>
+    <div id="tab-explore" class="hidden">…</div>
+    <div id="tab-flow" class="hidden">…</div>
+    <div id="tab-impact" class="hidden">…</div>
+    <div id="tab-coupling" class="hidden">…</div>
+    <div id="tab-graph" class="hidden">…</div>
+    <div id="tab-erd">
+      <div class="searchbar">
+        <input id="etable" autocomplete="off" data-t-ph="erd.find.ph" placeholder="find a table to highlight… (Enter)" type="text"></input>
+        <button id="ereset" data-t="erd.reset" onclick>Reset view</button>
+        <button id="eshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" disabled="true" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+      </div>
+      <div class="hint hintfold" data-t-fold="hint.erd">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              The whole schema, laid out by the joins the mapper SQL makes between tables.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div id="erdleg" class="famleg">
+        <span>
+          <b>0</b>
+          tables drawn
+          <b>0</b>
+          relationships
+          <b>2</b>
+          joined to nothing
+        </span>
+        <span title="the part of a table name before the first underscore. It is a naming habit, not a boundary we found in the code.">name prefixes:</span>
+        <span>
+          <span class="erdswatch" style="background: #73c1b8"></span>
+          thing
+          <span class="count">1</span>
+        </span>
+        <span>
+          (no prefix)
+          <span class="count">1</span>
+        </span>
+      </div>
+      <div class="erdgrid">
+        <div>
+          <div id="erdwrap" class="sheetgrid">
+            <div id="erdcanvas" __tipbound="true"></div>
+          </div>
+          <div id="erdiso">
+            <div class="panel">
+              <h2>
+                joined to nothing
+                <span class="count">(2 tables)</span>
+              </h2>
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    No SQL joins these tables to anything, so we can’t place them on the map. They’re still in the schema.
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+              <div class="isogrid">
+                <button class="isochip" onclick title="thing — one row per thing  [3 cols]  open in Explore">
+                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                    <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
+                  </svg>
+                  thing
+                </button>
+                <button class="isochip" onclick title="thing_tag — a label on a thing  [3 cols]  open in Explore">
+                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                    <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
+                  </svg>
+                  thing_tag
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="erdside">
+          <div class="panel">
+            <h2>whole-schema map</h2>
+            <div class="fold">
+              <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  2 tables, 0 relationships.
+                </span>
+              </button>
+              <div class="foldbody"></div>
+            </div>
+            <div class="comment" style="margin-top: 6px">2 of them join to nothing in the SQL. They are in the strip under the map.</div>
+          </div>
+        </div>
+      </div>
+      <div id="ehonesty">
+        <div class="rail">
+          <div class="railhead">
+            <h2>What this answer is based on</h2>
+            <span class="legend">
+              how sure each line is:
+              <span class="grade g-EXACT">
+                EXACT
+              </span>
+              <span class="grade g-SOUND_SET">
+                SOUND_SET
+              </span>
+              <span class="grade g-HEURISTIC">
+                <svg class="gbox">
+                  <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                </svg>
+                HEURISTIC
+              </span>
+              <span class="grade g-RUNTIME_ONLY">
+                RUNTIME_ONLY
+              </span>
+              <span class="grade g-UNRESOLVED">
+                UNRESOLVED
+              </span>
+            </span>
+          </div>
+          <div class="railchips">
+            <span class="railchip" title="trust.trustLevel">UNCERTIFIED</span>
+            <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+            <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+              <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+              </svg>
+              <span class="foldtext">
+                5 limits
+              </span>
+            </button>
+          </div>
+          <div class="foldbody"></div>
+          <div class="railfolds">
+            <div class="fold">
+              <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  basis
+                </span>
+              </button>
+              <div class="foldbody"></div>
+            </div>
+            <div class="fold">
+              <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  trust
+                </span>
+              </button>
+              <div class="foldbody"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="tab-tx" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+  <div id="gtip"></div>
+</body>

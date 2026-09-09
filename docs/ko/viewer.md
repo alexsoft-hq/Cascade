@@ -296,16 +296,18 @@ http://127.0.0.1:4319/#p=<project>&tab=<overview|explore|flow|impact|coupling|gr
 ### 문자열이 사는 곳
 
 - `src/viewer/i18n.mjs` 가 조회 함수(`makeT`, `interpolate`, `richText`)와
-  **영어** 카탈로그 `VIEWER_STRINGS.en` 을 들고 있습니다. 페이지는 그 블록을 그대로
-  복사해 들고 있습니다. 자기 완결적인 파일 하나라서 `src/` 에서 import 할 수
-  없기 때문입니다. `test/i18n.test.mjs` 가 둘이 갈라지면 실패합니다.
+  **영어** 카탈로그 `VIEWER_STRINGS.en` 을 들고 있습니다. 페이지는 import 를 할 수
+  없으므로, 로컬 서버가 이 모듈 자체를 `export ` 키워드만 뗀 채
+  `GET /viewer/lib/i18n.js` 로 내려 줍니다. 파일은 하나뿐이라 갈라질 사본이 없고,
+  `test/i18n.test.mjs` 는 내려간 것이 그 모듈인지를 확인합니다.
 - `viewer/i18n/<lang>.json` 이 다른 언어마다 하나씩입니다. `/vendor` 처럼
   허용 목록 디렉터리에서 `GET /i18n/<lang>.json` 으로 나갑니다. `.json` 만,
   그 디렉터리에서만, 빠져나가려는 모든 시도는 404 입니다.
 
 번역을 페이지 내용이 아니라 파일로 둔 것은 의도적입니다. 영어 전용 게이트
-(`test/gates.test.mjs`)가 `src`, `bin`, `adapters`, `scripts`, `viewer/index.html`
-에서 영어가 아닌 텍스트를 찾는데, `viewer/i18n` 이 그 유일한 예외 경로입니다.
+(`test/gates.test.mjs`)가 `src`, `bin`, `adapters`, `scripts`, `viewer/index.html`,
+`viewer/js` 에서 영어가 아닌 텍스트를 찾는데, `viewer/i18n` 이 그 유일한 예외
+경로입니다.
 영어 아닌 텍스트가 있어야 마땅한 단 하나의 자리입니다.
 
 `t(key, params)` 는 절대 예외를 던지지 않습니다. 고른 언어에 없는 키는 영어로
@@ -332,7 +334,7 @@ http://127.0.0.1:4319/#p=<project>&tab=<overview|explore|flow|impact|coupling|gr
    자리이기 때문입니다.
 2. `lang.label` 에 그 언어 자신의 말로 이름을 넣습니다. 토글이 각 언어를 그
    언어로 보여 주기 때문입니다.
-3. `viewer/index.html` 의 `LANGS` 에 코드를 추가합니다.
+3. `viewer/js/00_state.js` 의 `LANGS` 에 코드를 추가합니다.
 
 키 집합은 강제됩니다. 번역은 영어의 키를 정확히 그대로 가져야 합니다. 적으면
 무언가 조용히 영어로 떨어지고, 많으면 낡은 키가 남기 때문입니다.

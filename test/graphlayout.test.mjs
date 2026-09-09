@@ -7,6 +7,7 @@ import {
   hopsFrom, ringPlan, ringLayout, hopRingLabel, nameFamily, familyCounts, familyPalette, witnessWidth,
   connectedComponents, shelfPack, seededRandom, settleComponents,
 } from '../src/viewer/graphlayout.mjs';
+import { handleViewerLib } from '../src/mcp/http.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -614,30 +615,33 @@ test('settleComponents: a link naming a table that is not drawn is ignored', () 
 });
 
 // ---------------------------------------------------------------------------
-// The page carries a copy of this module (it cannot import from src/): the two
-// must not drift. This test is the guard.
+// The page does not carry a copy of this module any more: the server hands it
+// the module itself, minus the `export ` keywords. This is the guard on that
+// transform — and on there being nothing left to drift.
 // ---------------------------------------------------------------------------
 
-function block(text, what) {
-  const a = text.indexOf('// --- graphlayout');
-  const b = text.indexOf('// --- end graphlayout ---');
-  assert.ok(a >= 0 && b > a, `no graphlayout block found in ${what}`);
-  return text.slice(text.indexOf('\n', a) + 1, b).trim();
-}
-
-test('viewer/index.html carries this module VERBATIM (minus `export `) — no drift', () => {
+test('the page is served THIS module, minus its `export ` keywords', () => {
+  const out = handleViewerLib('GET', '/viewer/lib/graphlayout.js', { viewerLibDir: path.join(ROOT, 'src', 'viewer') });
+  assert.equal(out.status, 200);
+  assert.equal(out.headers['content-type'], 'application/javascript; charset=utf-8');
   const mod = fs.readFileSync(path.join(ROOT, 'src/viewer/graphlayout.mjs'), 'utf8');
-  const html = fs.readFileSync(path.join(ROOT, 'viewer/index.html'), 'utf8');
-  const want = block(mod, 'src/viewer/graphlayout.mjs').replace(/^export /gm, '');
-  const got = block(html, 'viewer/index.html');
-  assert.equal(got, want);
-});
-
-test('the page copy declares every function the module exports', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'viewer/index.html'), 'utf8');
-  const inPage = block(html, 'viewer/index.html');
+  assert.equal(out.body, mod.replace(/^export /gm, ''));
+  // What comes out is a classic script: every function is declared, nothing is
+  // exported, and the names land in the one scope the page's files share.
+  assert.equal(/^export /m.test(out.body), false);
   for (const fn of ['hopsFrom', 'ringPlan', 'ringLayout', 'nameFamily', 'familyCounts', 'familyPalette', 'witnessWidth',
     'connectedComponents', 'shelfPack', 'seededRandom', 'settleComponents']) {
-    assert.ok(inPage.includes(`function ${fn}(`), `page copy is missing ${fn}`);
+    assert.ok(out.body.includes(`function ${fn}(`), `the served text is missing ${fn}`);
+  }
+});
+
+test('the page loads it, and no copy of it is left behind', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'viewer/index.html'), 'utf8');
+  assert.ok(html.includes('<script src="/viewer/lib/graphlayout.js">'), 'the page does not load the module');
+  const jsDir = path.join(ROOT, 'viewer', 'js');
+  const page = fs.readdirSync(jsDir).sort().map((f) => fs.readFileSync(path.join(jsDir, f), 'utf8')).join('\n');
+  for (const fn of ['function settleComponents(', 'function shelfPack(', 'function connectedComponents(']) {
+    assert.equal(page.includes(fn), false, `${fn} is declared twice: in the module and in the page`);
+    assert.equal(html.includes(fn), false, `${fn} is declared twice: in the module and in the page`);
   }
 });
