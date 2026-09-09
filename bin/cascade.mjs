@@ -104,10 +104,10 @@ import { readRegistry, upsertProject, writeRegistryAtomic, findProject, projectI
 import {
   AGENT_CLIENTS, codexTomlBlock, filesFor, mcpServerEntry, mergeManagedBlock, mergeMcpConfig,
 } from '../src/core/agent_setup.mjs';
-import { findConnectionCandidates, describeCandidate, parseConnectionUrl, DEFAULT_PORTS, CONNECTION_DIALECTS } from '../src/core/dbconfig.mjs';
+import { describeCandidate, parseConnectionUrl, DEFAULT_PORTS, CONNECTION_DIALECTS } from '../src/core/dbconfig.mjs';
 import {
-  credentialsPath, serverKey, readCredentials, findPassword, listCredentials,
-  setCredential, removeCredential, modeVerdict, permissionMessage, isInside, CredentialsError,
+  credentialsPath, serverKey, findPassword, listCredentials,
+  setCredential, removeCredential, modeVerdict, isInside, CredentialsError,
 } from '../src/core/credentials.mjs';
 import { resolveProject, registrationTarget } from '../src/core/resolve.mjs';
 import { makeScratch } from '../src/core/scratch.mjs';
@@ -550,7 +550,7 @@ function webPackagesRead(webRootsAbs) {
       const file = path.join(dir, 'package.json');
       if (fs.existsSync(file)) {
         if (!out.has(file)) {
-          let router = null;
+          let router;
           try {
             const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
             router = routerDependencyOf({ ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) });
@@ -913,13 +913,18 @@ function globFiles(pattern) {
   const abs = path.resolve(pattern);
   const parts = abs.split(path.sep);
   // The longest leading run of literal segments is a real directory to start in.
-  let firstWild = parts.findIndex((p) => /[*?]/.test(p));
+  const firstWild = parts.findIndex((p) => /[*?]/.test(p));
   if (firstWild < 0) return fs.existsSync(abs) ? [abs] : [];
   const base = parts.slice(0, firstWild).join(path.sep) || path.sep;
   const body = abs
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*\*/g, '\u0000')
     .replace(/\*/g, '[^/]*')
+    // NUL as a SENTINEL, on purpose: `**` is replaced by a byte no path can
+    // contain, so the `*` rule above cannot eat half of it, and the sentinel is
+    // then replaced by what `**` means. A control character in a regular
+    // expression is a mistake everywhere else, which is why the rule is on.
+    // eslint-disable-next-line no-control-regex
     .replace(/\u0000/g, '.*')
     .replace(/\?/g, '[^/]');
   const re = new RegExp(`^${body}$`);
@@ -1660,8 +1665,8 @@ if (cmd === 'agent') {
   try { reg = readRegistry(regFile); } catch (e) { die(e.message); }
 
   const projectFlag = opt('project');
-  let projectEntry = null;
-  let root = null;
+  let projectEntry;
+  let root;
   if (typeof projectFlag === 'string' && projectFlag.length > 0) {
     projectEntry = findProject(reg, projectFlag);
     if (!projectEntry) {
@@ -3443,7 +3448,7 @@ if (cmd === 'catalog') {
       + '  1. the variable named by --password-env <NAME>\n'
       + `  2. the environment variable ${DEFAULT_PASSWORD_ENV}\n`
       + `  3. an entry in ${credFile} for ${server} as user ${target.user}\n`
-      + '     (\`cascade catalog credentials set --url <jdbc url> --user <u>\` writes one, at mode 0600)\n'
+      + '     (`cascade catalog credentials set --url <jdbc url> --user <u>` writes one, at mode 0600)\n'
       + '  4. a hidden prompt, when a terminal is attached\n'
       + '  This run has none of the four.');
   }
@@ -3694,7 +3699,7 @@ if (cmd === 'verify') {
     const h = hashOrNull(path.resolve(stateDir, name));
     if (h !== null) files[name] = h;
   }
-  let gateState = null;
+  let gateState;
   try { gateState = readJsonOrNull(path.join(stateDir, 'calibration', 'gate-state.json')); }
   catch (e) { gateState = { verdict: null, unreadable: e.message }; }
 

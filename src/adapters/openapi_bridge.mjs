@@ -113,7 +113,7 @@ export function readYamlSubset(text) {
   }
   if (unreadable.length > 0) return { value: null, unreadable };
 
-  let value = null;
+  let value;
   try {
     const [parsed] = parseBlock(lines, 0, lines.length > 0 ? lines[0].indent : 0, unreadable);
     value = parsed;
@@ -355,7 +355,7 @@ export function readOpenApiDocument(text, opts = {}) {
   const trimmed = raw.trimStart();
   const isJson = path.endsWith('.json') || trimmed.startsWith('{');
 
-  let doc = null;
+  let doc;
   if (isJson) {
     try { doc = JSON.parse(raw); }
     catch (e) {
@@ -438,7 +438,7 @@ export function readOpenApiDocument(text, opts = {}) {
  *            onlyInDocument:number, onlyInCode:number, unreadable:object[],
  *            drift:{onlyInDocument:string[], onlyInCode:string[]}}}
  */
-export function addOpenApiRoutes(g, documents, opts = {}) {
+export function addOpenApiRoutes(g, documents, _opts = {}) {
   const docs = Array.isArray(documents) ? documents : [];
   // What the CODE serves, read before anything is added: a node with a handler
   // edge is a route this pack actually serves. An outbound node the web lane

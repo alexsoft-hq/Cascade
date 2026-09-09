@@ -192,5 +192,8 @@ test('makeResponse itself throws at construction time on an invalid shape', () =
 });
 
 test('makeResponse throws when answer/basis/trust/limits/truncated are entirely absent', () => {
+  // `undefined ?? {}` is written out rather than collapsed: it is the call site
+  // being described — a caller that had nothing and passed the empty object.
+  // eslint-disable-next-line no-constant-binary-expression
   assert.throws(() => makeResponse(undefined ?? {}), ContractError);
 });

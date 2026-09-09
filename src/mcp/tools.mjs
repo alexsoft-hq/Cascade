@@ -1544,7 +1544,7 @@ export function flow(graph, args, ctx) {
   const up = direction === 'up';
   const has = (k) => args[k] != null && args[k] !== '';
 
-  let entryKind = null;
+  let entryKind;
   if (up) {
     // An endpoint is where a request ENTERS: nothing in this graph calls it.
     if (has('endpoint')) throw new ToolError('bad-input', 'an endpoint has nothing upstream. direction=up starts at a column, table, statement or method (symbol=)');

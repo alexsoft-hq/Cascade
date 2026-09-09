@@ -1,0 +1,120 @@
+{
+  "tool": "projects",
+  "key": "projects",
+  "args": {},
+  "answer": {
+    "answer": {
+      "projects": [
+        {
+          "id": "angular",
+          "dotCascadePath": null,
+          "stack": [
+            "sql",
+            "java",
+            "web"
+          ],
+          "lastCertifiedAt": "<masked>",
+          "loaded": true,
+          "bytes": 49459,
+          "federation": {
+            "index": "present",
+            "serves": 13,
+            "calls": 6
+          },
+          "meta": {
+            "project": "angular",
+            "digest": "79aea5aa4e0d",
+            "builtAt": "<masked>",
+            "lanes": [
+              "sql",
+              "java",
+              "web"
+            ],
+            "axes": {
+              "catalog": {
+                "status": "shipped",
+                "reason": null
+              },
+              "statements": {
+                "status": "not-shipped",
+                "reason": "we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+              },
+              "jpa": {
+                "status": "degraded",
+                "reason": "we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+              },
+              "mybatisPlus": {
+                "status": "not-shipped",
+                "reason": "the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+              },
+              "column": {
+                "status": "degraded",
+                "reason": "where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+              },
+              "code": {
+                "status": "shipped",
+                "reason": null
+              },
+              "web": {
+                "status": "shipped",
+                "reason": null
+              },
+              "screen": {
+                "status": "shipped",
+                "reason": null
+              }
+            },
+            "freshness": {
+              "verdict": "unknown"
+            }
+          }
+        }
+      ],
+      "cache": {
+        "loaded": 1,
+        "bytes": 49459,
+        "budgetBytes": 536870912,
+        "evictions": 0,
+        "hits": 44,
+        "misses": 1
+      }
+    },
+    "basis": {
+      "project": "*",
+      "scope": "server",
+      "buildDigest": null,
+      "builtAt": null,
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "server"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "server-level-answer"
+      ]
+    },
+    "limits": [],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "projects",
+          "shown": 1,
+          "total": 1,
+          "order": "id asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

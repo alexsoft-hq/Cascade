@@ -1,0 +1,139 @@
+{
+  "tool": "flow",
+  "key": "endpoint POST /health",
+  "args": {
+    "project": "fullstack",
+    "endpoint": "POST /health",
+    "direction": "down"
+  },
+  "answer": {
+    "answer": {
+      "entry": {
+        "kind": "endpoint",
+        "id": "POST /health",
+        "httpMethod": "POST",
+        "path": "/health",
+        "handler": null,
+        "handlerShort": null,
+        "handlers": 0,
+        "owner": null,
+        "file": null,
+        "line": null,
+        "start": "endpoint:POST /health"
+      },
+      "walk": {
+        "mode": "conservative",
+        "direction": "down",
+        "depth": 6,
+        "walked": 0,
+        "other": 0,
+        "byLinkGrade": {
+          "EXACT": 0,
+          "SOUND_SET": 0,
+          "HEURISTIC": 0
+        },
+        "cut": {
+          "depth": 0,
+          "nodeCap": false,
+          "byMode": 0,
+          "generated": 0
+        },
+        "beyond": {
+          "tables": 0
+        },
+        "endLane": "tables",
+        "note": null
+      },
+      "layers": [],
+      "services": [],
+      "statements": [],
+      "tables": [],
+      "empty": {
+        "services": "none",
+        "statements": "none",
+        "tables": "none",
+        "layers": "none"
+      },
+      "federation": {
+        "available": false,
+        "reason": "single-project",
+        "unmatched": []
+      }
+    },
+    "basis": {
+      "project": "fullstack",
+      "buildDigest": "522af29633ee",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "flow"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped",
+        "screen-axis-degraded"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "axis:screen",
+        "reason": "the screen axis of this pack is degraded: we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "services",
+          "shown": 0,
+          "total": 0,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "statements",
+          "shown": 0,
+          "total": 0,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "tables",
+          "shown": 0,
+          "total": 0,
+          "order": "hops asc, grade desc, table asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

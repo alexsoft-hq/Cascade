@@ -1,0 +1,430 @@
+{
+  "tool": "map",
+  "key": "default",
+  "args": {
+    "project": "templates"
+  },
+  "answer": {
+    "answer": {
+      "mode": "conservative",
+      "depth": 8,
+      "layers": {
+        "statements": false,
+        "screens": false
+      },
+      "limit": 6000,
+      "maxBytes": 524288,
+      "nodes": [
+        {
+          "id": "group:catalog",
+          "kind": "group",
+          "label": "catalog",
+          "degree": 3,
+          "endpoints": 3
+        },
+        {
+          "id": "group:orders",
+          "kind": "group",
+          "label": "orders",
+          "degree": 1,
+          "endpoints": 1
+        },
+        {
+          "id": "group:page",
+          "kind": "group",
+          "label": "page",
+          "degree": 2,
+          "endpoints": 2
+        },
+        {
+          "id": "group:things",
+          "kind": "group",
+          "label": "things",
+          "degree": 4,
+          "endpoints": 4
+        },
+        {
+          "id": "endpoint:GET /catalog/list",
+          "kind": "endpoint",
+          "label": "GET /catalog/list",
+          "group": "catalog",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/catalog/list",
+          "handlerShort": "CatalogController#list",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /orders/{id}",
+          "kind": "endpoint",
+          "label": "GET /orders/{id}",
+          "group": "orders",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/orders/{id}",
+          "handlerShort": "OrderController#one",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /page/things",
+          "kind": "endpoint",
+          "label": "GET /page/things",
+          "group": "page",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/page/things",
+          "handlerShort": "ThingPageController#list",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /page/things/new",
+          "kind": "endpoint",
+          "label": "GET /page/things/new",
+          "group": "page",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/page/things/new",
+          "handlerShort": "ThingPageController#create",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/list",
+          "kind": "endpoint",
+          "label": "GET /things/list",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/list",
+          "handlerShort": "ThingController#list",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/{id}",
+          "kind": "endpoint",
+          "label": "GET /things/{id}",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/{id}",
+          "handlerShort": "ThingController#detail",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/{id}/tags",
+          "kind": "endpoint",
+          "label": "GET /things/{id}/tags",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/{id}/tags",
+          "handlerShort": "ThingController#tags",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:POST /catalog/edit",
+          "kind": "endpoint",
+          "label": "POST /catalog/edit",
+          "group": "catalog",
+          "degree": 2,
+          "httpMethod": "POST",
+          "path": "/catalog/edit",
+          "handlerShort": "CatalogController#edit",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:POST /catalog/save",
+          "kind": "endpoint",
+          "label": "POST /catalog/save",
+          "group": "catalog",
+          "degree": 2,
+          "httpMethod": "POST",
+          "path": "/catalog/save",
+          "handlerShort": "CatalogController#save",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:POST /things/save",
+          "kind": "endpoint",
+          "label": "POST /things/save",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "POST",
+          "path": "/things/save",
+          "handlerShort": "ThingController#save",
+          "handlers": 1
+        },
+        {
+          "id": "table:thing",
+          "kind": "table",
+          "label": "thing",
+          "degree": 9,
+          "comment": "one row per thing",
+          "columnCount": 3
+        },
+        {
+          "id": "table:thing_tag",
+          "kind": "table",
+          "label": "thing_tag",
+          "degree": 1,
+          "comment": "a label on a thing",
+          "columnCount": 3
+        }
+      ],
+      "links": [
+        {
+          "source": "group:catalog",
+          "target": "endpoint:GET /catalog/list",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:catalog",
+          "target": "endpoint:POST /catalog/edit",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:catalog",
+          "target": "endpoint:POST /catalog/save",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:orders",
+          "target": "endpoint:GET /orders/{id}",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:page",
+          "target": "endpoint:GET /page/things",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:page",
+          "target": "endpoint:GET /page/things/new",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/list",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/{id}",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/{id}/tags",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:POST /things/save",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "endpoint:GET /catalog/list",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /orders/{id}",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /page/things",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /page/things/new",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/list",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/{id}",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/{id}/tags",
+          "target": "table:thing_tag",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:POST /catalog/edit",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "write",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:POST /catalog/save",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "write",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:POST /things/save",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "write",
+          "grade": "SOUND_SET",
+          "statements": 1
+        }
+      ],
+      "summary": {
+        "groups": 4,
+        "endpoints": 10,
+        "tables": 2,
+        "tablesTouched": 2,
+        "links": 20,
+        "linksTotal": 20,
+        "nodesTotal": 16,
+        "shown": {
+          "groups": 4,
+          "endpoints": 10,
+          "tables": 2,
+          "statements": 0,
+          "screens": 0
+        },
+        "cutBy": null,
+        "bytes": 4909,
+        "maxBytes": 524288,
+        "walk": {
+          "starts": 10,
+          "depthCut": 0,
+          "depthCutStarts": 0,
+          "nodeCapStarts": 0,
+          "byMode": 0,
+          "generated": 0,
+          "multiHandlerEndpoints": 0,
+          "outboundEndpoints": 1
+        }
+      },
+      "federation": {
+        "available": false,
+        "reason": "single-project",
+        "unmatched": []
+      }
+    },
+    "basis": {
+      "project": "templates",
+      "buildDigest": "499d0976614a",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "map"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "map",
+        "reason": "a group is the first segment of an API path. It is a naming habit, not a module boundary anyone declared"
+      },
+      {
+        "scope": "map",
+        "reason": "a table is on this map because a walk (conservative, depth 8) from an endpoint reaches a statement that touches it. It is the same forward walk `flow` draws, and what a deeper or wider walk would add is unknown, not absent"
+      },
+      {
+        "scope": "federation",
+        "reason": "1 call(s) leave this project from 1 method(s) that no route on this picture reaches (src/main/resources/templates/fragments/layout.html#ping): POST /health/ping. A picture drawn from routes cannot show them, and they are real calls: a scheduled job, a startup listener or a tool an AI model calls is code nothing upstream of it names. `overview.federation` counts every call that leaves the pack, and `flow` from the method itself follows this one"
+      },
+      {
+        "scope": "map",
+        "reason": "an endpoint to table link folds away the statements that carried it. Its `statements` count says how many, and layers:[\"statements\"] draws them as nodes of their own instead"
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "nodes",
+          "shown": 16,
+          "total": 16,
+          "order": "kind (group, endpoint, table, statement) asc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "links",
+          "shown": 20,
+          "total": 20,
+          "order": "kind (member, touches, executes, joins) asc, source asc, target asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

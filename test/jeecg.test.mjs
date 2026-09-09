@@ -454,13 +454,15 @@ const TABLE_NAME_DECLARATIONS = 50;
 // CLAUSE at all: JeecgServiceImpl.java:17 spells a type-parameter BOUND,
 //   class JeecgServiceImpl<M extends BaseMapper<T>, T extends JeecgEntity>
 // so the mappers are 64.
-const MP_MAPPERS = 65 - 1;
+// (Recorded for the reader; no assertion below reads it.)
+const _MP_MAPPERS = 65 - 1;
 
 // `grep -hoE 'extends ServiceImpl *<'` -> 60 (all real).
 // `grep -hoE 'extends IService *<'`    -> 59, of which ONE is again a bound:
 //   JeecgController.java  `public class JeecgController<T, S extends IService<T>>`
 // so 60 + 58 = 118 declarations name a service's entity.
-const MP_SERVICES = 60 + (59 - 1);
+// (Recorded for the reader; no assertion below reads it.)
+const _MP_SERVICES = 60 + (59 - 1);
 
 // `grep -hoE '^[[:space:]]*@TableLogic'` -> 7. Six sit on a class a mapper or
 // service names as its entity; the seventh, SysUserSysDepPostModel.java:76, is

@@ -372,7 +372,7 @@ export function buildMap(graph, opts = {}) {
   if (maxBytes != null && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
     throw new MapError(`maxBytes must be a positive integer or null, got ${maxBytes}`);
   }
-  let bytes = null;
+  let bytes;
   if (maxBytes != null) {
     // How many ELEMENTS (nodes + links) survive each prefix of the cut queue.
     // Dropping one node also drops every link touching it, so the two cannot be

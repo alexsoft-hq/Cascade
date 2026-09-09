@@ -1,11 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { nodeId, buildGraph, FLOW_EDGE_TYPES } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
-import { loadPack } from '../src/core/pack.mjs';
 import { flow, endpoint_impact, ToolError } from '../src/mcp/tools.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
 import { assertContract } from '../src/mcp/contract.mjs';

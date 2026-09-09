@@ -47,9 +47,12 @@ export function findJdk(env = process.env) {
 /**
  * Compile and run the java adapter over the smoke fixture, then check the
  * output contract. Throws Error on any breach.
+ * `stdout` rides along raw, so a caller can compare two runs BYTE for byte — a
+ * worker whose output moves between runs makes every pack digest a coin toss,
+ * and only the bytes can say it does not.
  * @param {{javac:string, java:string}} jdk
  * @param {{fixture?:string, buildDir?:string}} [opts]
- * @returns {{lines:number, header:Object}}
+ * @returns {{lines:number, header:Object, stdout:string}}
  */
 export function runJavaSmoke(jdk, opts = {}) {
   const fixture = opts.fixture ?? path.join(ENGINE_ROOT, 'test', 'fixtures', 'java-smoke');
@@ -68,13 +71,13 @@ export function runJavaSmoke(jdk, opts = {}) {
   try {
     header = JSON.parse(lines[0]);
   } catch (e) {
-    throw new Error(`first output line is not JSON: ${e.message} -- ${lines[0].slice(0, 200)}`);
+    throw new Error(`first output line is not JSON: ${e.message} -- ${lines[0].slice(0, 200)}`, { cause: e });
   }
   if (header.schema !== JAVAFACTS_SCHEMA) {
     throw new Error(`first line must declare "schema":"${JAVAFACTS_SCHEMA}", got ${JSON.stringify(header.schema)}`);
   }
   if (!(header.files > 0)) throw new Error(`the adapter reported ${header.files} files over ${fixture}`);
-  return { lines: lines.length, header };
+  return { lines: lines.length, header, stdout };
 }
 
 // CLI entry point (only when run directly, so `node --test` can import this).

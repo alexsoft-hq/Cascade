@@ -372,9 +372,16 @@ const CORPUS_ALLOWED = [
 ];
 
 test('gate: no project name and no wrapper name from the corpus is in a rule, a default or a fixture', () => {
+  // The web lane is the bridge, the modules it was split into (RM49), the worker
+  // and the declaration packs. The DIRECTORIES are read rather than listed, so a
+  // module added tomorrow is covered by this gate without anybody remembering.
   const files = [
     'src/adapters/web_bridge.mjs',
     'adapters/web/webfacts.mjs',
+    ...fs.readdirSync(path.join(ROOT, 'src', 'adapters', 'web')).sort()
+      .filter((f) => f.endsWith('.mjs')).map((f) => `src/adapters/web/${f}`),
+    ...fs.readdirSync(path.join(ROOT, 'adapters', 'web', 'lib')).sort()
+      .filter((f) => f.endsWith('.mjs')).map((f) => `adapters/web/lib/${f}`),
     ...fs.readdirSync(path.join(ROOT, 'adapters', 'web', 'packs')).sort()
       .map((f) => `adapters/web/packs/${f}`),
   ];

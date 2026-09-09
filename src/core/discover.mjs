@@ -21,7 +21,7 @@ import path from 'node:path';
 import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
 import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
-  findViewResolvers, VIEW_RESOLVERS,
+  findViewResolvers,
 } from './springconfig.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
@@ -369,7 +369,7 @@ export function templateRootsOf(input) {
         roots.set(hit, (roots.get(hit) ?? 0) + h.files);
       }
     }
-    let from = roots.size === 0 ? 'default' : configured !== null ? 'config' : 'default';
+    const from = roots.size === 0 ? 'default' : configured !== null ? 'config' : 'default';
     if (roots.size === 0) {
       const byResource = new Map();
       for (const h of holds) {

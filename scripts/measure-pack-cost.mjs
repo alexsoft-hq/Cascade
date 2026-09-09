@@ -114,7 +114,14 @@ const packInfo = {
     laneStats: pack.meta?.laneStats ?? null,
   },
 };
+// THE POINT OF THESE TWO LINES IS THE ASSIGNMENT, not the value. Dropping the
+// last reference to the pack text and the parsed pack is what lets the heap
+// reading below be about the GRAPH rather than about the JSON it was built
+// from. A linter is right that nothing reads them again, and wrong that they
+// can go.
+// eslint-disable-next-line no-useless-assignment
 packText = null;
+// eslint-disable-next-line no-useless-assignment
 pack = null;
 const heapResident = heapUsed();
 

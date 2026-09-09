@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Graph, nodeId } from '../src/core/graph.mjs';
+import { nodeId } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
 import { transactions, ToolError } from '../src/mcp/tools.mjs';

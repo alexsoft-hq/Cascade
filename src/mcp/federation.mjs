@@ -382,7 +382,7 @@ export function makeFederator(ctx, args = {}) {
   function projectCtx(id) {
     if (id === self) return ctx;
     if (ctxCache.has(id)) return ctxCache.get(id);
-    let sib = null;
+    let sib;
     try {
       sib = host.ctxFor(id);
     } catch (e) {

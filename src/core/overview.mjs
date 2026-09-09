@@ -335,7 +335,7 @@ export function buildOverview(graph, opts = {}) {
       note: 'no database schema was read for this pack, so the ERD draws no relationship line, a SELECT * is not expanded '
         + 'into the columns it reads, and a bare column name is tied to its table only where the SQL says so unambiguously. '
         + `The ${tableIds.length} table(s) here are the ones a statement named. Run \`cascade catalog fetch --candidate 1\` to pin one `
-        + 'from the database this project already names, or \`cascade analyze --ddl <schema.sql>\` if the schema is a file you have',
+        + 'from the database this project already names, or `cascade analyze --ddl <schema.sql>` if the schema is a file you have',
     });
   }
   if (!codeAxis) {

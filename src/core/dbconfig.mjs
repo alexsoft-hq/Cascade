@@ -92,7 +92,7 @@ export function findConnectionCandidates(files, diagnostics = null) {
   for (const file of files ?? []) {
     if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
     const kind = kindOfFile(file.path);
-    let found = [];
+    let found;
     try {
       if (kind === 'spring-yml') found = fromYaml(file, diagnostics);
       else if (kind === 'spring-properties') found = fromProperties(file, diagnostics);
@@ -221,8 +221,8 @@ export function parseConnectionUrl(raw) {
   let passwordRef = null;
 
   const lower = text.toLowerCase();
-  let dialect = null;
-  let rest = null;      // everything after the scheme, i.e. `//host:port/db?…`
+  let dialect;
+  let rest;              // everything after the scheme, i.e. `//host:port/db?…`
   let oracle = false;
 
   if (lower.startsWith('jdbc:oracle:')) {

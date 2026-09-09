@@ -294,6 +294,25 @@ test('no runtime string in the CLI or the engine carries an em dash or a middle 
   assert.deepEqual(offenders, [], `these runtime strings are still punctuated like a machine wrote them:\n${offenders.join('\n')}`);
 });
 
+/**
+ * The web worker's own source: the entry file and the modules RM49 split its
+ * body into. The DIRECTORY is read rather than listed, so a module added
+ * tomorrow is held to these rules without anybody remembering. `vendor/` is
+ * outside them on purpose: the parser in there is third-party text governed by
+ * NOTICE, and it is not ours to repunctuate (adapters/web/vendor/README.md
+ * says so too).
+ */
+function webWorkerFiles() {
+  const dir = path.join(ROOT, 'adapters', 'web');
+  const top = fs.readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.mjs'))
+    .map((e) => `adapters/web/${e.name}`);
+  const lib = fs.readdirSync(path.join(dir, 'lib'), { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.mjs'))
+    .map((e) => `adapters/web/lib/${e.name}`);
+  return [...top, ...lib].sort();
+}
+
 test('every worker prints the same way: no em dash, no middle dot', () => {
   const py = fs.readdirSync(path.join(ROOT, 'adapters', 'sql'))
     .filter((f) => f.endsWith('.py')).sort().map((f) => `adapters/sql/${f}`);
@@ -302,10 +321,8 @@ test('every worker prints the same way: no em dash, no middle dot', () => {
   // the top level of `adapters/web/` is walked, NOT `adapters/web/vendor`: the
   // parser in there is third-party text governed by NOTICE, and it is not ours
   // to repunctuate (adapters/web/vendor/README.md says so too).
-  const web = fs.readdirSync(path.join(ROOT, 'adapters', 'web'), { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.mjs'))
-    .map((e) => `adapters/web/${e.name}`).sort();
-  assert.ok(web.length >= 1, `expected the web worker, found ${web.length} file(s)`);
+  const web = webWorkerFiles();
+  assert.ok(web.length >= 6, `expected the web worker and its modules, found ${web.length} file(s)`);
   const offenders = [
     ...py.flatMap((rel) => dashLines(rel, stripPyComments)),
     ...dashLines('adapters/java/JavaFacts.java', stripJavaComments),
@@ -319,13 +336,17 @@ test('the web worker is English, carries no NUL byte, and the vendored parser is
   // one adapter that is JavaScript. `vendor/` is deliberately outside all of
   // them and this test states which files it did and did not read.
   const dir = path.join(ROOT, 'adapters', 'web');
-  const own = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.mjs'));
-  assert.deepEqual(own.map((e) => e.name), ['webfacts.mjs']);
+  const own = webWorkerFiles();
+  assert.deepEqual(own, [
+    'adapters/web/lib/ast.mjs', 'adapters/web/lib/calls.mjs', 'adapters/web/lib/emit.mjs',
+    'adapters/web/lib/imports.mjs', 'adapters/web/lib/routers.mjs', 'adapters/web/lib/templates.mjs',
+    'adapters/web/webfacts.mjs',
+  ]);
   const CJK = /[\u1100-\u11ff\u3000-\u30ff\u3130-\u318f\u4e00-\u9fff\uac00-\ud7af]/;
-  for (const e of own) {
-    const buf = fs.readFileSync(path.join(dir, e.name));
-    assert.equal(buf.indexOf(0), -1, `adapters/web/${e.name} carries a literal NUL byte`);
-    assert.equal(CJK.test(buf.toString('utf8')), false, `adapters/web/${e.name} carries non-English text`);
+  for (const rel of own) {
+    const buf = fs.readFileSync(path.join(ROOT, rel));
+    assert.equal(buf.indexOf(0), -1, `${rel} carries a literal NUL byte`);
+    assert.equal(CJK.test(buf.toString('utf8')), false, `${rel} carries non-English text`);
   }
   // The parser is present and is NOT one of the files above.
   assert.ok(fs.existsSync(path.join(dir, 'vendor', 'babel-parser.cjs')),

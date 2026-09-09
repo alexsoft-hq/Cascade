@@ -229,7 +229,7 @@ test('splitWebFactsByFile: a file the config run owns is named, never guessed fr
 // THE test that makes the web lane's incremental path trustworthy: reassembling
 // the shards plus the package configuration must reproduce the worker's own
 // bytes, not merely the same records in some order.
-test('assembleWebFacts reproduces the real worker stream byte-for-byte, and the summary with it', (t) => {
+test('assembleWebFacts reproduces the real worker stream byte-for-byte, and the summary with it', () => {
   const worker = path.join(ENGINE_ROOT, 'adapters', 'web', 'webfacts.mjs');
   const fixture = path.join(ENGINE_ROOT, 'test', 'fixtures', 'web-smoke');
   const run = (args) => execFileSync(process.execPath, [worker, ...args], { maxBuffer: 1 << 28 })

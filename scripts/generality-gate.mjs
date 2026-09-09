@@ -228,7 +228,7 @@ export function frontRepoDir(entry, env = process.env) {
 /** Whether one directory is a clone sitting at exactly `sha`. */
 function checkoutAt(dir, sha) {
   if (!fs.existsSync(path.join(dir, '.git'))) return { present: false, head: null, why: `no clone at ${dir}` };
-  let head = null;
+  let head;
   try {
     head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   } catch (e) {

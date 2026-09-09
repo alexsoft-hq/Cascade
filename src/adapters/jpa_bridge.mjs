@@ -520,7 +520,7 @@ function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
 // ---------------------------------------------------------------------------
 
 function addQueryStatement(g, ctx) {
-  const { repo, method, entity, stats } = ctx;
+  const { repo, method, stats } = ctx;
   const key = statementKey(repo.fqn, method.name);
   const sid = nodeId('statement', key);
   const q = method.query;
@@ -564,7 +564,7 @@ function addQueryStatement(g, ctx) {
 
 /** A derived query's predicate/order columns, resolved through the entity model. */
 function resolveDerivedRefs(parsed, ctx, sink) {
-  const { entity, entities, resolveType, stats } = ctx;
+  const { entity, entities, resolveType } = ctx;
   const access = parsed.access; // 'select' | 'delete'
   const lookup = makeLookup(entities, resolveType);
 
@@ -703,7 +703,7 @@ function addBuiltinStatement(g, { repoFqn, method, entity, file, entities, resol
   const writes = [];
   const tableAccess = new Map();
   const unresolved = [];
-  let evidenceNote = null;
+  let evidenceNote;
 
   if (family === 'save') {
     evidenceNote = 'a JPA save() merges the whole entity, so every mapped column of the row is written';

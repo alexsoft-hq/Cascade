@@ -1,10 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
-import { loadPack } from '../src/core/pack.mjs';
 import { buildOverview, OverviewError } from '../src/core/overview.mjs';
 import { overview, ToolError } from '../src/mcp/tools.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';

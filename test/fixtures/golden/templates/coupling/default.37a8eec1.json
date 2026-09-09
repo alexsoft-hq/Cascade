@@ -1,0 +1,260 @@
+{
+  "tool": "coupling",
+  "key": "default",
+  "args": {
+    "project": "templates"
+  },
+  "answer": {
+    "answer": {
+      "axis": "column",
+      "mode": "conservative",
+      "depth": 8,
+      "groups": [
+        {
+          "group": "catalog",
+          "endpoints": 3,
+          "writes": 3,
+          "reads": 1
+        },
+        {
+          "group": "orders",
+          "endpoints": 1,
+          "writes": 0,
+          "reads": 1
+        },
+        {
+          "group": "page",
+          "endpoints": 2,
+          "writes": 0,
+          "reads": 1
+        },
+        {
+          "group": "things",
+          "endpoints": 4,
+          "writes": 3,
+          "reads": 3
+        }
+      ],
+      "pairs": [
+        {
+          "writer": "catalog",
+          "reader": "things",
+          "count": 2,
+          "items": [
+            "thing.id",
+            "thing.kind"
+          ],
+          "viaShared": 1,
+          "sharedVia": [
+            "com.example.domain.ThingRepository.findByKind"
+          ]
+        },
+        {
+          "writer": "catalog",
+          "reader": "orders",
+          "count": 1,
+          "items": [
+            "thing.id"
+          ],
+          "viaShared": 0,
+          "sharedVia": []
+        },
+        {
+          "writer": "catalog",
+          "reader": "page",
+          "count": 1,
+          "items": [
+            "thing.kind"
+          ],
+          "viaShared": 1,
+          "sharedVia": [
+            "com.example.domain.ThingRepository.findByKind"
+          ]
+        },
+        {
+          "writer": "things",
+          "reader": "catalog",
+          "count": 1,
+          "items": [
+            "thing.kind"
+          ],
+          "viaShared": 1,
+          "sharedVia": [
+            "com.example.domain.ThingRepository.findByKind"
+          ]
+        },
+        {
+          "writer": "things",
+          "reader": "orders",
+          "count": 1,
+          "items": [
+            "thing.id"
+          ],
+          "viaShared": 0,
+          "sharedVia": []
+        },
+        {
+          "writer": "things",
+          "reader": "page",
+          "count": 1,
+          "items": [
+            "thing.kind"
+          ],
+          "viaShared": 1,
+          "sharedVia": [
+            "com.example.domain.ThingRepository.findByKind"
+          ]
+        }
+      ],
+      "cells": [
+        {
+          "writer": "catalog",
+          "reader": "things",
+          "count": 2
+        },
+        {
+          "writer": "catalog",
+          "reader": "orders",
+          "count": 1
+        },
+        {
+          "writer": "catalog",
+          "reader": "page",
+          "count": 1
+        },
+        {
+          "writer": "things",
+          "reader": "catalog",
+          "count": 1
+        },
+        {
+          "writer": "things",
+          "reader": "orders",
+          "count": 1
+        },
+        {
+          "writer": "things",
+          "reader": "page",
+          "count": 1
+        }
+      ],
+      "sharedStatements": [
+        {
+          "statement": "com.example.domain.ThingRepository.findByKind",
+          "groups": 3
+        }
+      ],
+      "walk": {
+        "starts": 10,
+        "depthCut": 0,
+        "depthCutStarts": 0,
+        "nodeCapStarts": 0,
+        "byMode": 0,
+        "generated": 0,
+        "multiHandlerEndpoints": 0,
+        "outboundEndpoints": 1
+      },
+      "summary": {
+        "items": 4,
+        "coupledItems": 2,
+        "selfOnlyItems": 0,
+        "writeOnlyItems": 1,
+        "readOnlyItems": 1,
+        "groups": 4,
+        "participatingGroups": 4,
+        "sharedStatements": 1,
+        "statements": 4,
+        "endpoints": 10
+      }
+    },
+    "basis": {
+      "project": "templates",
+      "buildDigest": "499d0976614a",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "coupling"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "coupling",
+        "reason": "we attribute a statement to a group by following calls (conservative, depth 8), so a statement behind a shared service counts for every group that reaches it. 1 statement(s) are reached by 3 or more groups"
+      },
+      {
+        "scope": "coupling",
+        "reason": "a group is the first segment of an API path. It is a naming habit, not a module boundary anyone declared"
+      },
+      {
+        "scope": "coupling",
+        "reason": "this view sees sharing through the database only. A direct call from one group to another is not counted here"
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "groups",
+          "shown": 4,
+          "total": 4,
+          "order": "group asc",
+          "nextOffset": null
+        },
+        {
+          "field": "pairs",
+          "shown": 6,
+          "total": 6,
+          "order": "count desc, writer asc, reader asc",
+          "nextOffset": null
+        },
+        {
+          "field": "cells",
+          "shown": 6,
+          "total": 6,
+          "order": "count desc, writer asc, reader asc",
+          "nextOffset": null
+        },
+        {
+          "field": "sharedStatements",
+          "shown": 1,
+          "total": 1,
+          "order": "groups desc, statement asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

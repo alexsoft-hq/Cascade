@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Graph, nodeId } from '../src/core/graph.mjs';
+import { nodeId } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import {
   column_impact, endpoint_impact, changed_impact, table_usage, search, neighborhood, ToolError,

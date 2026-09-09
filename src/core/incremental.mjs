@@ -212,7 +212,7 @@ export function runLanesWithShards(a) {
         if (droppedWeb.has(file)) continue;
         if (!listed.includes(file)) { droppedWeb.add(file); continue; }
         if (reparseWeb.has(file)) continue;
-        let key = null;
+        let key;
         try { key = webShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.web }); }
         catch { droppedWeb.add(file); continue; }
         if (key !== entry.shardKey) { reparseWeb.add(file); continue; }

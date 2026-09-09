@@ -77,7 +77,7 @@ const call = (from, receiver, method, toTypeSimple, via = 'field') => ({
 const op = (name, args = [], props = [], line = 10) => ({ name, args, props, line });
 const prop = (owner, getter) => ({
   owner, method: getter,
-  property: getter.replace(/^(get|is)/, (m) => '').replace(/^./, (c) => c.toLowerCase()),
+  property: getter.replace(/^(get|is)/, () => '').replace(/^./, (c) => c.toLowerCase()),
 });
 const sink = (kind, receiver, receiverTypeSimple, method, line = 12) => ({ kind, receiver, receiverTypeSimple, method, line });
 const mpWrapper = (from, extra = {}) => ({

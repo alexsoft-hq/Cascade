@@ -1,0 +1,105 @@
+{
+  "tool": "screen_impact",
+  "key": "thing.kind",
+  "args": {
+    "project": "fullstack",
+    "column": "thing.kind"
+  },
+  "answer": {
+    "answer": {
+      "target": {
+        "kind": "column",
+        "id": "thing.kind",
+        "short": "thing.kind",
+        "comment": "which family it belongs to"
+      },
+      "mode": "conservative",
+      "screens": [
+        {
+          "screen": "/catalog/index",
+          "label": "/catalog/index",
+          "grade": "SOUND_SET",
+          "endpoints": [
+            "GET /catalog/list"
+          ],
+          "observed": false
+        },
+        {
+          "screen": "/things/list",
+          "label": "/things/list",
+          "grade": "SOUND_SET",
+          "endpoints": [
+            "GET /things/list"
+          ],
+          "observed": false
+        }
+      ]
+    },
+    "basis": {
+      "project": "fullstack",
+      "buildDigest": "522af29633ee",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "screen",
+        "column"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped",
+        "screen-axis-degraded"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "axis:screen",
+        "reason": "the screen axis of this pack is degraded: we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
+      },
+      {
+        "scope": "screen",
+        "reason": "a screen reaches a route because a walk (mode=conservative, depth 8) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk `flow` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (`observed`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one"
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "screens",
+          "shown": 2,
+          "total": 2,
+          "order": "grade desc, screen asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

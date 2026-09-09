@@ -1,0 +1,519 @@
+{
+  "tool": "map",
+  "key": "default",
+  "args": {
+    "project": "angular"
+  },
+  "answer": {
+    "answer": {
+      "mode": "conservative",
+      "depth": 8,
+      "layers": {
+        "statements": false,
+        "screens": false
+      },
+      "limit": 6000,
+      "maxBytes": 524288,
+      "nodes": [
+        {
+          "id": "group:api",
+          "kind": "group",
+          "label": "api",
+          "degree": 1,
+          "endpoints": 1
+        },
+        {
+          "id": "group:boxes",
+          "kind": "group",
+          "label": "boxes",
+          "degree": 1,
+          "endpoints": 1
+        },
+        {
+          "id": "group:catalog",
+          "kind": "group",
+          "label": "catalog",
+          "degree": 3,
+          "endpoints": 3
+        },
+        {
+          "id": "group:orders",
+          "kind": "group",
+          "label": "orders",
+          "degree": 1,
+          "endpoints": 1
+        },
+        {
+          "id": "group:things",
+          "kind": "group",
+          "label": "things",
+          "degree": 6,
+          "endpoints": 6
+        },
+        {
+          "id": "group:twins",
+          "kind": "group",
+          "label": "twins",
+          "degree": 1,
+          "endpoints": 1
+        },
+        {
+          "id": "endpoint:GET /api/shop/badges",
+          "kind": "endpoint",
+          "label": "GET /api/shop/badges",
+          "group": "api",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/api/shop/badges",
+          "handlerShort": "ShopController#badges",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /boxes",
+          "kind": "endpoint",
+          "label": "GET /boxes",
+          "group": "boxes",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/boxes",
+          "handlerShort": "ShopController#boxes",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /catalog/list",
+          "kind": "endpoint",
+          "label": "GET /catalog/list",
+          "group": "catalog",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/catalog/list",
+          "handlerShort": "CatalogController#list",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /orders/{id}",
+          "kind": "endpoint",
+          "label": "GET /orders/{id}",
+          "group": "orders",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/orders/{id}",
+          "handlerShort": "OrderController#one",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things",
+          "kind": "endpoint",
+          "label": "GET /things",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things",
+          "handlerShort": "ShopController#things",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/list",
+          "kind": "endpoint",
+          "label": "GET /things/list",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/list",
+          "handlerShort": "ThingController#list",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/{id}",
+          "kind": "endpoint",
+          "label": "GET /things/{id}",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/{id}",
+          "handlerShort": "ThingController#detail",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/{id}/tags",
+          "kind": "endpoint",
+          "label": "GET /things/{id}/tags",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/{id}/tags",
+          "handlerShort": "ThingController#tags",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /things/{thingId}",
+          "kind": "endpoint",
+          "label": "GET /things/{thingId}",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/things/{thingId}",
+          "handlerShort": "ShopController#thing",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:GET /twins",
+          "kind": "endpoint",
+          "label": "GET /twins",
+          "group": "twins",
+          "degree": 2,
+          "httpMethod": "GET",
+          "path": "/twins",
+          "handlerShort": "ShopController#twins",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:POST /catalog/edit",
+          "kind": "endpoint",
+          "label": "POST /catalog/edit",
+          "group": "catalog",
+          "degree": 2,
+          "httpMethod": "POST",
+          "path": "/catalog/edit",
+          "handlerShort": "CatalogController#edit",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:POST /catalog/save",
+          "kind": "endpoint",
+          "label": "POST /catalog/save",
+          "group": "catalog",
+          "degree": 2,
+          "httpMethod": "POST",
+          "path": "/catalog/save",
+          "handlerShort": "CatalogController#save",
+          "handlers": 1
+        },
+        {
+          "id": "endpoint:POST /things/save",
+          "kind": "endpoint",
+          "label": "POST /things/save",
+          "group": "things",
+          "degree": 2,
+          "httpMethod": "POST",
+          "path": "/things/save",
+          "handlerShort": "ThingController#save",
+          "handlers": 1
+        },
+        {
+          "id": "table:thing",
+          "kind": "table",
+          "label": "thing",
+          "degree": 11,
+          "comment": "one row per thing",
+          "columnCount": 3
+        },
+        {
+          "id": "table:thing_tag",
+          "kind": "table",
+          "label": "thing_tag",
+          "degree": 2,
+          "comment": "a label on a thing",
+          "columnCount": 3
+        }
+      ],
+      "links": [
+        {
+          "source": "group:api",
+          "target": "endpoint:GET /api/shop/badges",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:boxes",
+          "target": "endpoint:GET /boxes",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:catalog",
+          "target": "endpoint:GET /catalog/list",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:catalog",
+          "target": "endpoint:POST /catalog/edit",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:catalog",
+          "target": "endpoint:POST /catalog/save",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:orders",
+          "target": "endpoint:GET /orders/{id}",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/list",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/{id}",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/{id}/tags",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:GET /things/{thingId}",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:things",
+          "target": "endpoint:POST /things/save",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "group:twins",
+          "target": "endpoint:GET /twins",
+          "kind": "member",
+          "grade": "EXACT"
+        },
+        {
+          "source": "endpoint:GET /api/shop/badges",
+          "target": "table:thing_tag",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /boxes",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /catalog/list",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /orders/{id}",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/list",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/{id}",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/{id}/tags",
+          "target": "table:thing_tag",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /things/{thingId}",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:GET /twins",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "read",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:POST /catalog/edit",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "write",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:POST /catalog/save",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "write",
+          "grade": "SOUND_SET",
+          "statements": 1
+        },
+        {
+          "source": "endpoint:POST /things/save",
+          "target": "table:thing",
+          "kind": "touches",
+          "access": "write",
+          "grade": "SOUND_SET",
+          "statements": 1
+        }
+      ],
+      "summary": {
+        "groups": 6,
+        "endpoints": 13,
+        "tables": 2,
+        "tablesTouched": 2,
+        "links": 26,
+        "linksTotal": 26,
+        "nodesTotal": 21,
+        "shown": {
+          "groups": 6,
+          "endpoints": 13,
+          "tables": 2,
+          "statements": 0,
+          "screens": 0
+        },
+        "cutBy": null,
+        "bytes": 6271,
+        "maxBytes": 524288,
+        "walk": {
+          "starts": 13,
+          "depthCut": 0,
+          "depthCutStarts": 0,
+          "nodeCapStarts": 0,
+          "byMode": 0,
+          "generated": 0,
+          "multiHandlerEndpoints": 0,
+          "outboundEndpoints": 6
+        }
+      },
+      "federation": {
+        "available": false,
+        "reason": "single-project",
+        "unmatched": []
+      }
+    },
+    "basis": {
+      "project": "angular",
+      "buildDigest": "79aea5aa4e0d",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "map"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "map",
+        "reason": "a group is the first segment of an API path. It is a naming habit, not a module boundary anyone declared"
+      },
+      {
+        "scope": "map",
+        "reason": "a table is on this map because a walk (conservative, depth 8) from an endpoint reaches a statement that touches it. It is the same forward walk `flow` draws, and what a deeper or wider walk would add is unknown, not absent"
+      },
+      {
+        "scope": "federation",
+        "reason": "6 call(s) leave this project from 5 method(s) that no route on this picture reaches (front/static/scripts/legacy/legacy.js#(module), front/static/scripts/thing-list/thing-list.controller.js#(module), front/static/scripts/twin/twin-a.js#(module), and 2 more): GET /api/shop/legacy/items, GET /api/shop/things, GET /api/shop/twins/a, GET /api/shop/twins/b, GET /api/shop/widgets, POST /api/shop/things. A picture drawn from routes cannot show them, and they are real calls: a scheduled job, a startup listener or a tool an AI model calls is code nothing upstream of it names. `overview.federation` counts every call that leaves the pack, and `flow` from the method itself follows this one"
+      },
+      {
+        "scope": "map",
+        "reason": "an endpoint to table link folds away the statements that carried it. Its `statements` count says how many, and layers:[\"statements\"] draws them as nodes of their own instead"
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "nodes",
+          "shown": 21,
+          "total": 21,
+          "order": "kind (group, endpoint, table, statement) asc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "links",
+          "shown": 26,
+          "total": 26,
+          "order": "kind (member, touches, executes, joins) asc, source asc, target asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

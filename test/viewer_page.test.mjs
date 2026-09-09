@@ -3670,6 +3670,10 @@ test('a hand-off from another tab does not filter the rail it lands on either', 
 
 /** The masthead rail's lanes, as `label -> the number (or word) beside it`. */
 const crailOf = (byId) => Object.fromEntries(byId.get('crail').querySelectorAll('.crlane')
+  // The character class holds the NO-BREAK SPACE the page really prints between
+  // a number and its unit. It is the thing being stripped, so it has to be here
+  // as itself.
+  // eslint-disable-next-line no-irregular-whitespace
   .map((n) => [n.textContent.replace(/\s*[\d,~— ]*$/, '').trim(), n.children[0].textContent]));
 
 test('the masthead rail carries a screens lane, and says shipped, degraded and not shipped differently', async (t) => {

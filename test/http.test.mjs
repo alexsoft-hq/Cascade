@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import nodeFs from 'node:fs';
-import nodeHttp from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { handleApi, handleI18n, handleVendor, serveHttp } from '../src/mcp/http.mjs';
 import { createProjectHost } from '../src/mcp/projects.mjs';

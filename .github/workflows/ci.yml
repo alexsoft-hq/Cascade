@@ -1,5 +1,5 @@
-# CI — eight INDEPENDENT jobs:
-#   node · python · db · java · petclinic · dco · fixtures · gate
+# CI — nine INDEPENDENT jobs:
+#   node · lint · python · db · java · petclinic · dco · fixtures · gate
 #
 # There is no `needs:` between them and the node matrix does not fail fast, so a
 # missing or broken lane never hides the state of the others. Each job builds
@@ -68,6 +68,23 @@ jobs:
       - name: unit tests with coverage
         if: matrix.node == '22.x'
         run: npm test
+
+  # The linter. Its own job, with no `needs:`, like everything else here: a rule
+  # violation is a five-second answer and must not wait behind a thirty-second
+  # test suite, nor hide one. It installs the dev dependencies, which is the only
+  # job that needs them — the engine itself ships with none.
+  lint:
+    name: lint (eslint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: install the dev dependencies (eslint)
+        run: npm ci
+      - name: lint
+        run: npm run lint
 
   python:
     name: python (SQL lane)

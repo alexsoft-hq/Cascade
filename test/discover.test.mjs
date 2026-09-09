@@ -330,7 +330,7 @@ test('discover turns an unreadable file into a diagnostic, not a crash', (t) => 
   const root = tree(t, { '.git/HEAD': 'x', 'src/A.java': JAVA_SERVICE });
   const bad = {
     ...io(() => SHA('a')),
-    readFile: (f) => { throw new Error('permission denied'); },
+    readFile: () => { throw new Error('permission denied'); },
   };
   const d = discover(root, bad);
   assert.equal(d.counts.javaFiles, 1);

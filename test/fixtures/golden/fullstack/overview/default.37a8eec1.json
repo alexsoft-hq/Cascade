@@ -1,0 +1,513 @@
+{
+  "tool": "overview",
+  "key": "default",
+  "args": {
+    "project": "fullstack"
+  },
+  "answer": {
+    "answer": {
+      "mode": "conservative",
+      "depth": 8,
+      "pack": {
+        "project": "fullstack",
+        "digest": "522af29633ee",
+        "builtAt": "<masked>",
+        "lanes": [
+          "sql",
+          "java",
+          "web"
+        ],
+        "base": {
+          "commit": "<commit>",
+          "repoPath": "<tmp>/repo"
+        },
+        "ddl": "<tmp>/repo/db/schema.sql"
+      },
+      "axes": {
+        "catalog": {
+          "status": "shipped",
+          "reason": null
+        },
+        "statements": {
+          "status": "not-shipped",
+          "reason": "we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+        },
+        "jpa": {
+          "status": "degraded",
+          "reason": "we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+        },
+        "mybatisPlus": {
+          "status": "not-shipped",
+          "reason": "the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+        },
+        "column": {
+          "status": "degraded",
+          "reason": "where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+        },
+        "code": {
+          "status": "shipped",
+          "reason": null
+        },
+        "web": {
+          "status": "shipped",
+          "reason": null
+        },
+        "screen": {
+          "status": "degraded",
+          "reason": "we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
+        }
+      },
+      "nodes": [
+        {
+          "kind": "symbol",
+          "count": 33
+        },
+        {
+          "kind": "endpoint",
+          "count": 12
+        },
+        {
+          "kind": "screen",
+          "count": 7
+        },
+        {
+          "kind": "column",
+          "count": 6
+        },
+        {
+          "kind": "statement",
+          "count": 5
+        },
+        {
+          "kind": "table",
+          "count": 2
+        }
+      ],
+      "edges": [
+        {
+          "type": "MAY_CALL",
+          "grade": "SOUND_SET",
+          "count": 12
+        },
+        {
+          "type": "CALLS_HTTP",
+          "grade": "SOUND_SET",
+          "count": 9
+        },
+        {
+          "type": "HANDLES",
+          "grade": "EXACT",
+          "count": 8
+        },
+        {
+          "type": "DECLARES",
+          "grade": "EXACT",
+          "count": 6
+        },
+        {
+          "type": "CALLS_HTTP",
+          "grade": "UNRESOLVED",
+          "count": 5
+        },
+        {
+          "type": "EXECUTES",
+          "grade": "EXACT",
+          "count": 5
+        },
+        {
+          "type": "IMPLEMENTS_STMT",
+          "grade": "EXACT",
+          "count": 5
+        },
+        {
+          "type": "READS",
+          "grade": "EXACT",
+          "count": 4
+        },
+        {
+          "type": "CALLS",
+          "grade": "EXACT",
+          "count": 3
+        },
+        {
+          "type": "CALLS",
+          "grade": "SOUND_SET",
+          "count": 3
+        },
+        {
+          "type": "RENDERS",
+          "grade": "EXACT",
+          "count": 3
+        },
+        {
+          "type": "WRITES",
+          "grade": "EXACT",
+          "count": 3
+        }
+      ],
+      "grades": [
+        {
+          "grade": "EXACT",
+          "count": 37
+        },
+        {
+          "grade": "SOUND_SET",
+          "count": 24
+        },
+        {
+          "grade": "UNRESOLVED",
+          "count": 5
+        }
+      ],
+      "statementTypes": [
+        {
+          "type": "derived",
+          "count": 3
+        },
+        {
+          "type": "builtin",
+          "count": 2
+        }
+      ],
+      "reach": {
+        "endpoints": 8,
+        "outboundEndpoints": 4,
+        "endpointsWithoutStatement": 0,
+        "endpointsWithMultipleHandlers": 0,
+        "statements": 5,
+        "statementsReached": 4,
+        "tables": 2,
+        "tablesReached": 2,
+        "columns": 6,
+        "columnsReached": 4,
+        "samples": {
+          "endpointsWithoutStatement": [],
+          "unreachedStatements": [
+            "com.example.domain.ThingRepository.findByName"
+          ],
+          "unreachedTables": []
+        }
+      },
+      "code": {
+        "symbols": 33,
+        "external": 0,
+        "transactional": 1,
+        "mapperMethods": 5,
+        "statementsWithoutMapper": 0,
+        "mpEntities": 0,
+        "mpBuiltinStatements": 0,
+        "mpStatementsRuntimeOnlyColumns": 0,
+        "generated": 0,
+        "generatedInternalEdges": 0,
+        "generatedBoundaryEdges": 0
+      },
+      "jpa": {
+        "entities": 2,
+        "repositories": 2,
+        "statements": 5,
+        "unresolvedStatements": 0
+      },
+      "screens": {
+        "declared": 7,
+        "screens": 7,
+        "withComponent": 2,
+        "byKind": {
+          "router": 7,
+          "page": 0
+        },
+        "reachingAnEndpoint": 2,
+        "reachingATable": 2,
+        "componentUnresolved": 5,
+        "fromRecording": 0,
+        "observed": 0,
+        "seenAtRunTime": 0,
+        "depthCut": 0,
+        "serverDriven": false,
+        "walk": {
+          "starts": 7,
+          "depthCut": 0,
+          "depthCutStarts": 0,
+          "nodeCapStarts": 0,
+          "byMode": 0,
+          "generated": 0
+        }
+      },
+      "hubs": {
+        "tables": [
+          {
+            "table": "thing",
+            "endpoints": 7,
+            "statements": 3
+          },
+          {
+            "table": "thing_tag",
+            "endpoints": 1,
+            "statements": 1
+          }
+        ],
+        "endpoints": [
+          {
+            "endpoint": "GET /catalog/list",
+            "httpMethod": "GET",
+            "path": "/catalog/list",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "GET /orders/{id}",
+            "httpMethod": "GET",
+            "path": "/orders/{id}",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "GET /things/list",
+            "httpMethod": "GET",
+            "path": "/things/list",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "GET /things/{id}",
+            "httpMethod": "GET",
+            "path": "/things/{id}",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "GET /things/{id}/tags",
+            "httpMethod": "GET",
+            "path": "/things/{id}/tags",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "POST /catalog/edit",
+            "httpMethod": "POST",
+            "path": "/catalog/edit",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "POST /catalog/save",
+            "httpMethod": "POST",
+            "path": "/catalog/save",
+            "tables": 1,
+            "statements": 1
+          },
+          {
+            "endpoint": "POST /things/save",
+            "httpMethod": "POST",
+            "path": "/things/save",
+            "tables": 1,
+            "statements": 1
+          }
+        ]
+      },
+      "gaps": [
+        {
+          "kind": "unresolved-calls",
+          "count": 0,
+          "note": "we couldn't tell what 0 method calls point to, so they aren't in the graph. Any chain that needed one of them is shorter than it really is"
+        },
+        {
+          "kind": "http-calls-leaving-pack",
+          "count": 4,
+          "note": "4 HTTP call target(s) leave this pack. 0 HTTP client call(s) in the code name a route no controller here serves, so what they reach is outside this analysis. The node census counts them as endpoints; the reach figures below count only the 8 route(s) this pack serves. 5 of those target(s) are named by the FRONTEND (4 matched no route here, 1 name another host), which is as often a prefix nobody declared as a real external service: check the web axis reason before reading them as external"
+        },
+        {
+          "kind": "screen-components-unresolved",
+          "count": 5,
+          "note": "5 of 7 route declaration(s) name a component this lane could not resolve to a file it read. Those screens are in the pack with no RENDERS edge, so nothing hangs off them: what they show is unknown, not empty. The failing specifiers are on laneStats.web.screens.unresolvedSpecifiers, and an alias or a source root is usually what is missing"
+        },
+        {
+          "kind": "statements-not-reached",
+          "count": 1,
+          "note": "1 of 5 statement(s) are not reached from the endpoints we analysed, and they are usually generated mapper methods nothing calls. That is NOT a claim that they are dead code: a caller outside this pack, such as a scheduled job, another service or reflection, would not be visible here"
+        },
+        {
+          "kind": "mode-floor",
+          "count": 5,
+          "note": "walked at mode=conservative, depth 8: 5 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 24 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all"
+        }
+      ],
+      "federation": {
+        "calls": 4,
+        "answered": 0,
+        "unmatched": 4,
+        "projects": [],
+        "byProject": [],
+        "unmatchedRoutes": [
+          {
+            "method": "GET",
+            "path": "/v/items",
+            "sites": 2,
+            "service": null
+          },
+          {
+            "method": "POST",
+            "path": "/health",
+            "sites": 1,
+            "service": null
+          },
+          {
+            "method": "GET",
+            "path": "/legacy/ping",
+            "sites": 1,
+            "service": null
+          },
+          {
+            "method": "POST",
+            "path": "/u/thing",
+            "sites": 1,
+            "service": null
+          }
+        ]
+      }
+    },
+    "basis": {
+      "project": "fullstack",
+      "buildDigest": "522af29633ee",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "overview"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped",
+        "screen-axis-degraded"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "axis:screen",
+        "reason": "the screen axis of this pack is degraded: we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
+      },
+      {
+        "scope": "overview",
+        "reason": "unresolved-calls (0): we couldn't tell what 0 method calls point to, so they aren't in the graph. Any chain that needed one of them is shorter than it really is"
+      },
+      {
+        "scope": "overview",
+        "reason": "http-calls-leaving-pack (4): 4 HTTP call target(s) leave this pack. 0 HTTP client call(s) in the code name a route no controller here serves, so what they reach is outside this analysis. The node census counts them as endpoints; the reach figures below count only the 8 route(s) this pack serves. 5 of those target(s) are named by the FRONTEND (4 matched no route here, 1 name another host), which is as often a prefix nobody declared as a real external service: check the web axis reason before reading them as external"
+      },
+      {
+        "scope": "overview",
+        "reason": "screen-components-unresolved (5): 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read. Those screens are in the pack with no RENDERS edge, so nothing hangs off them: what they show is unknown, not empty. The failing specifiers are on laneStats.web.screens.unresolvedSpecifiers, and an alias or a source root is usually what is missing"
+      },
+      {
+        "scope": "overview",
+        "reason": "statements-not-reached (1): 1 of 5 statement(s) are not reached from the endpoints we analysed, and they are usually generated mapper methods nothing calls. That is NOT a claim that they are dead code: a caller outside this pack, such as a scheduled job, another service or reflection, would not be visible here"
+      },
+      {
+        "scope": "overview",
+        "reason": "mode-floor (5): walked at mode=conservative, depth 8: 5 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 24 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all"
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "nodes",
+          "shown": 6,
+          "total": 6,
+          "order": "count desc, kind asc",
+          "nextOffset": null
+        },
+        {
+          "field": "edges",
+          "shown": 12,
+          "total": 12,
+          "order": "count desc, type asc, grade asc",
+          "nextOffset": null
+        },
+        {
+          "field": "grades",
+          "shown": 3,
+          "total": 3,
+          "order": "grade lattice desc",
+          "nextOffset": null
+        },
+        {
+          "field": "statementTypes",
+          "shown": 2,
+          "total": 2,
+          "order": "count desc, type asc",
+          "nextOffset": null
+        },
+        {
+          "field": "gaps",
+          "shown": 5,
+          "total": 5,
+          "order": "the order the story is told in",
+          "nextOffset": null
+        },
+        {
+          "field": "hubs.tables",
+          "shown": 2,
+          "total": 2,
+          "order": "endpoints desc, statements desc, table asc",
+          "nextOffset": null
+        },
+        {
+          "field": "hubs.endpoints",
+          "shown": 8,
+          "total": 8,
+          "order": "tables desc, statements desc, endpoint asc",
+          "nextOffset": null
+        },
+        {
+          "field": "reach.samples.endpointsWithoutStatement",
+          "shown": 0,
+          "total": 0,
+          "order": "id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "reach.samples.unreachedStatements",
+          "shown": 1,
+          "total": 1,
+          "order": "id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "reach.samples.unreachedTables",
+          "shown": 0,
+          "total": 0,
+          "order": "id asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

@@ -383,6 +383,11 @@ export function pathGlobMatcher(globs) {
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
       .replace(/\*\*/g, '\u0000')
       .replace(/\*/g, '[^/]*')
+      // NUL as a SENTINEL, on purpose: `**` is replaced by a byte no path can
+      // contain, so the `*` rule below cannot eat half of it, and the sentinel is
+      // then replaced by what `**` means. A control character in a regular
+      // expression is a mistake everywhere else, which is why the rule is on.
+      // eslint-disable-next-line no-control-regex
       .replace(/\u0000/g, '.*')
       .replace(/\?/g, '[^/]');
     return new RegExp(`^${body}$`);

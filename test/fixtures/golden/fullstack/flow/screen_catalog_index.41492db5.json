@@ -1,0 +1,738 @@
+{
+  "tool": "flow",
+  "key": "screen /catalog/index",
+  "args": {
+    "project": "fullstack",
+    "screen": "/catalog/index",
+    "direction": "down"
+  },
+  "answer": {
+    "answer": {
+      "entry": {
+        "kind": "screen",
+        "id": "/catalog/index",
+        "short": "/catalog/index",
+        "path": "/catalog/index",
+        "title": null,
+        "name": "CatalogIndex",
+        "group": "catalog",
+        "component": "front/src/views/catalog/index.vue",
+        "source": "router",
+        "observed": false,
+        "file": "front/src/router/index.js",
+        "line": 31,
+        "start": "screen:/catalog/index"
+      },
+      "walk": {
+        "mode": "conservative",
+        "direction": "down",
+        "depth": 8,
+        "walked": 9,
+        "other": 0,
+        "byLinkGrade": {
+          "EXACT": 5,
+          "SOUND_SET": 3,
+          "HEURISTIC": 0
+        },
+        "cut": {
+          "depth": 0,
+          "nodeCap": false,
+          "byMode": 0,
+          "generated": 0
+        },
+        "beyond": {
+          "tables": 0
+        },
+        "endLane": "tables",
+        "note": null
+      },
+      "layers": [
+        {
+          "hops": 1,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 1,
+          "endpoints": 0
+        },
+        {
+          "hops": 2,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 1,
+          "endpoints": 0
+        },
+        {
+          "hops": 3,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 0,
+            "SOUND_SET": 1,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 0,
+          "endpoints": 1
+        },
+        {
+          "hops": 4,
+          "nodes": 1,
+          "services": 1,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 0,
+          "endpoints": 0
+        },
+        {
+          "hops": 5,
+          "nodes": 1,
+          "services": 1,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 0,
+            "SOUND_SET": 1,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 0,
+          "endpoints": 0
+        },
+        {
+          "hops": 6,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 0,
+            "SOUND_SET": 1,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 0,
+          "endpoints": 0
+        },
+        {
+          "hops": 7,
+          "nodes": 1,
+          "services": 0,
+          "statements": 1,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 0,
+          "endpoints": 0
+        },
+        {
+          "hops": 8,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 1,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          },
+          "webFunctions": 0,
+          "endpoints": 0
+        }
+      ],
+      "webFunctions": [
+        {
+          "id": "front/src/views/catalog/index.vue#(setup)",
+          "short": "index.vue#(setup)",
+          "owner": null,
+          "hops": 1,
+          "grade": "EXACT",
+          "external": false,
+          "transactional": false,
+          "file": "front/src/views/catalog/index.vue",
+          "line": null,
+          "link": {
+            "from": "screen:/catalog/index",
+            "fromShort": "/catalog/index",
+            "type": "RENDERS",
+            "grade": "EXACT",
+            "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named",
+            "receiver": null,
+            "iface": null
+          },
+          "path": [
+            {
+              "from": "screen:/catalog/index",
+              "to": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "type": "RENDERS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "route-component",
+                "component": "front/src/views/catalog/index.vue",
+                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+              }
+            }
+          ],
+          "component": true
+        },
+        {
+          "id": "front/src/api/catalog.ts#listCatalog",
+          "short": "catalog.ts#listCatalog",
+          "owner": null,
+          "hops": 2,
+          "grade": "EXACT",
+          "external": false,
+          "transactional": false,
+          "file": "front/src/api/catalog.ts",
+          "line": 9,
+          "link": {
+            "from": "symbol:front/src/views/catalog/index.vue#(setup)",
+            "fromShort": "index.vue#(setup)",
+            "type": "CALLS",
+            "grade": "EXACT",
+            "basis": null,
+            "receiver": null,
+            "iface": null
+          },
+          "path": [
+            {
+              "from": "screen:/catalog/index",
+              "to": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "type": "RENDERS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "route-component",
+                "component": "front/src/views/catalog/index.vue",
+                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+              }
+            },
+            {
+              "from": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "to": "symbol:front/src/api/catalog.ts#listCatalog",
+              "type": "CALLS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "esm-import",
+                "specifier": "@/api/catalog",
+                "origin": "front/src/api/catalog.ts#listCatalog"
+              }
+            }
+          ],
+          "component": false
+        }
+      ],
+      "endpoints": [
+        {
+          "id": "GET /catalog/list",
+          "httpMethod": "GET",
+          "path": "/catalog/list",
+          "handler": "com.example.web.CatalogController#list",
+          "hops": 3,
+          "grade": "SOUND_SET",
+          "file": "src/main/java/com/example/web/CatalogController.java",
+          "line": 21,
+          "frontendCalls": 1,
+          "link": {
+            "from": "symbol:front/src/api/catalog.ts#listCatalog",
+            "fromShort": "catalog.ts#listCatalog",
+            "type": "CALLS_HTTP",
+            "grade": "SOUND_SET",
+            "basis": "the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library's verbs, so the call sends a request and the URL it sends to is the argument the library reads",
+            "receiver": null,
+            "iface": null
+          },
+          "walkedPath": [
+            {
+              "from": "screen:/catalog/index",
+              "to": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "type": "RENDERS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "route-component",
+                "component": "front/src/views/catalog/index.vue",
+                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+              }
+            },
+            {
+              "from": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "to": "symbol:front/src/api/catalog.ts#listCatalog",
+              "type": "CALLS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "esm-import",
+                "specifier": "@/api/catalog",
+                "origin": "front/src/api/catalog.ts#listCatalog"
+              }
+            },
+            {
+              "from": "symbol:front/src/api/catalog.ts#listCatalog",
+              "to": "endpoint:GET /catalog/list",
+              "type": "CALLS_HTTP",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "web-http-call",
+                "basis": "the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library's verbs, so the call sends a request and the URL it sends to is the argument the library reads",
+                "sink": {
+                  "kind": "library",
+                  "module": "axios",
+                  "instance": "front/src/utils/http.js#client",
+                  "chain": [],
+                  "depth": 0
+                },
+                "url": {
+                  "written": "/catalog/list",
+                  "template": "/catalog/list",
+                  "via": "local-constant"
+                },
+                "method": {
+                  "value": "GET",
+                  "from": "callee-name"
+                },
+                "prefix": {
+                  "value": "",
+                  "from": "derived"
+                },
+                "match": "exact",
+                "target": "in-pack"
+              }
+            }
+          ]
+        }
+      ],
+      "services": [
+        {
+          "id": "com.example.web.CatalogController#list",
+          "short": "CatalogController#list",
+          "owner": "com.example.web.CatalogController",
+          "hops": 4,
+          "grade": "SOUND_SET",
+          "external": false,
+          "transactional": false,
+          "file": "src/main/java/com/example/web/CatalogController.java",
+          "line": 21,
+          "link": {
+            "from": "endpoint:GET /catalog/list",
+            "fromShort": "GET /catalog/list",
+            "type": "HANDLES",
+            "grade": "EXACT",
+            "basis": null,
+            "receiver": null,
+            "iface": null
+          },
+          "viaHttp": true,
+          "httpHops": 1,
+          "path": [
+            {
+              "from": "screen:/catalog/index",
+              "to": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "type": "RENDERS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "route-component",
+                "component": "front/src/views/catalog/index.vue",
+                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+              }
+            },
+            {
+              "from": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "to": "symbol:front/src/api/catalog.ts#listCatalog",
+              "type": "CALLS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "esm-import",
+                "specifier": "@/api/catalog",
+                "origin": "front/src/api/catalog.ts#listCatalog"
+              }
+            },
+            {
+              "from": "symbol:front/src/api/catalog.ts#listCatalog",
+              "to": "endpoint:GET /catalog/list",
+              "type": "CALLS_HTTP",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "web-http-call",
+                "basis": "the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library's verbs, so the call sends a request and the URL it sends to is the argument the library reads",
+                "sink": {
+                  "kind": "library",
+                  "module": "axios",
+                  "instance": "front/src/utils/http.js#client",
+                  "chain": [],
+                  "depth": 0
+                },
+                "url": {
+                  "written": "/catalog/list",
+                  "template": "/catalog/list",
+                  "via": "local-constant"
+                },
+                "method": {
+                  "value": "GET",
+                  "from": "callee-name"
+                },
+                "prefix": {
+                  "value": "",
+                  "from": "derived"
+                },
+                "match": "exact",
+                "target": "in-pack"
+              }
+            },
+            {
+              "from": "endpoint:GET /catalog/list",
+              "to": "symbol:com.example.web.CatalogController#list",
+              "type": "HANDLES",
+              "grade": "EXACT",
+              "evidence": null
+            }
+          ]
+        },
+        {
+          "id": "com.example.service.ThingService#list",
+          "short": "ThingService#list",
+          "owner": "com.example.service.ThingService",
+          "hops": 5,
+          "grade": "SOUND_SET",
+          "external": false,
+          "transactional": false,
+          "file": "src/main/java/com/example/service/ThingService.java",
+          "line": null,
+          "link": {
+            "from": "symbol:com.example.web.CatalogController#list",
+            "fromShort": "CatalogController#list",
+            "type": "MAY_CALL",
+            "grade": "SOUND_SET",
+            "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+            "receiver": "ThingService",
+            "iface": null
+          },
+          "viaHttp": true,
+          "httpHops": 1,
+          "path": [
+            {
+              "from": "screen:/catalog/index",
+              "to": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "type": "RENDERS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "route-component",
+                "component": "front/src/views/catalog/index.vue",
+                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+              }
+            },
+            {
+              "from": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "to": "symbol:front/src/api/catalog.ts#listCatalog",
+              "type": "CALLS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "esm-import",
+                "specifier": "@/api/catalog",
+                "origin": "front/src/api/catalog.ts#listCatalog"
+              }
+            },
+            {
+              "from": "symbol:front/src/api/catalog.ts#listCatalog",
+              "to": "endpoint:GET /catalog/list",
+              "type": "CALLS_HTTP",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "web-http-call",
+                "basis": "the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library's verbs, so the call sends a request and the URL it sends to is the argument the library reads",
+                "sink": {
+                  "kind": "library",
+                  "module": "axios",
+                  "instance": "front/src/utils/http.js#client",
+                  "chain": [],
+                  "depth": 0
+                },
+                "url": {
+                  "written": "/catalog/list",
+                  "template": "/catalog/list",
+                  "via": "local-constant"
+                },
+                "method": {
+                  "value": "GET",
+                  "from": "callee-name"
+                },
+                "prefix": {
+                  "value": "",
+                  "from": "derived"
+                },
+                "match": "exact",
+                "target": "in-pack"
+              }
+            },
+            {
+              "from": "endpoint:GET /catalog/list",
+              "to": "symbol:com.example.web.CatalogController#list",
+              "type": "HANDLES",
+              "grade": "EXACT",
+              "evidence": null
+            },
+            {
+              "from": "symbol:com.example.web.CatalogController#list",
+              "to": "symbol:com.example.service.ThingService#list",
+              "type": "MAY_CALL",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "field-receiver",
+                "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+                "receiver": "ThingService"
+              }
+            }
+          ]
+        }
+      ],
+      "statements": [
+        {
+          "id": "com.example.domain.ThingRepository.findByKind",
+          "short": "ThingRepository.findByKind",
+          "symbol": "com.example.domain.ThingRepository#findByKind",
+          "statementType": "derived",
+          "file": "src/main/java/com/example/domain/ThingRepository.java",
+          "line": 7,
+          "hops": 7,
+          "grade": "SOUND_SET",
+          "link": {
+            "from": "symbol:com.example.service.ThingService#list",
+            "fromShort": "ThingService#list",
+            "type": "MAY_CALL",
+            "grade": "SOUND_SET",
+            "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+            "receiver": "ThingRepository",
+            "iface": null
+          },
+          "viaHttp": true,
+          "httpHops": 1,
+          "path": [
+            {
+              "from": "screen:/catalog/index",
+              "to": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "type": "RENDERS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "route-component",
+                "component": "front/src/views/catalog/index.vue",
+                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+              }
+            },
+            {
+              "from": "symbol:front/src/views/catalog/index.vue#(setup)",
+              "to": "symbol:front/src/api/catalog.ts#listCatalog",
+              "type": "CALLS",
+              "grade": "EXACT",
+              "evidence": {
+                "rule": "esm-import",
+                "specifier": "@/api/catalog",
+                "origin": "front/src/api/catalog.ts#listCatalog"
+              }
+            },
+            {
+              "from": "symbol:front/src/api/catalog.ts#listCatalog",
+              "to": "endpoint:GET /catalog/list",
+              "type": "CALLS_HTTP",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "web-http-call",
+                "basis": "the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library's verbs, so the call sends a request and the URL it sends to is the argument the library reads",
+                "sink": {
+                  "kind": "library",
+                  "module": "axios",
+                  "instance": "front/src/utils/http.js#client",
+                  "chain": [],
+                  "depth": 0
+                },
+                "url": {
+                  "written": "/catalog/list",
+                  "template": "/catalog/list",
+                  "via": "local-constant"
+                },
+                "method": {
+                  "value": "GET",
+                  "from": "callee-name"
+                },
+                "prefix": {
+                  "value": "",
+                  "from": "derived"
+                },
+                "match": "exact",
+                "target": "in-pack"
+              }
+            },
+            {
+              "from": "endpoint:GET /catalog/list",
+              "to": "symbol:com.example.web.CatalogController#list",
+              "type": "HANDLES",
+              "grade": "EXACT",
+              "evidence": null
+            },
+            {
+              "from": "symbol:com.example.web.CatalogController#list",
+              "to": "symbol:com.example.service.ThingService#list",
+              "type": "MAY_CALL",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "field-receiver",
+                "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+                "receiver": "ThingService"
+              }
+            },
+            {
+              "from": "symbol:com.example.service.ThingService#list",
+              "to": "symbol:com.example.domain.ThingRepository#findByKind",
+              "type": "MAY_CALL",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "field-receiver",
+                "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+                "receiver": "ThingRepository"
+              }
+            },
+            {
+              "from": "symbol:com.example.domain.ThingRepository#findByKind",
+              "to": "statement:com.example.domain.ThingRepository.findByKind",
+              "type": "IMPLEMENTS_STMT",
+              "grade": "EXACT",
+              "evidence": null
+            }
+          ],
+          "tables": [
+            {
+              "table": "thing",
+              "access": "read"
+            }
+          ]
+        }
+      ],
+      "tables": [
+        {
+          "table": "thing",
+          "comment": "one row per thing",
+          "hops": 8,
+          "grade": "SOUND_SET",
+          "via": "com.example.domain.ThingRepository.findByKind",
+          "viaShort": "ThingRepository.findByKind",
+          "statements": 1,
+          "viaHttp": true,
+          "httpHops": 1,
+          "access": "read",
+          "reads": 1,
+          "writes": 0
+        }
+      ],
+      "federation": {
+        "available": false,
+        "reason": "single-project",
+        "unmatched": []
+      }
+    },
+    "basis": {
+      "project": "fullstack",
+      "buildDigest": "522af29633ee",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "flow"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped",
+        "screen-axis-degraded"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      },
+      {
+        "scope": "axis:screen",
+        "reason": "the screen axis of this pack is degraded: we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "webFunctions",
+          "shown": 2,
+          "total": 2,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "endpoints",
+          "shown": 1,
+          "total": 1,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "services",
+          "shown": 2,
+          "total": 2,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "statements",
+          "shown": 1,
+          "total": 1,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "tables",
+          "shown": 1,
+          "total": 1,
+          "order": "hops asc, grade desc, table asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

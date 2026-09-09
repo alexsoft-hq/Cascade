@@ -43,6 +43,7 @@
   "scripts": {
     "test": "node --test --experimental-test-coverage test/*.test.mjs",
     "test:quick": "node --test test/*.test.mjs",
+    "lint": "eslint .",
     "doctor": "node bin/cascade.mjs doctor",
     "dco": "node scripts/check-dco.mjs"
   },
@@ -53,5 +54,10 @@
     "knowledge-graph",
     "mcp",
     "vibe-coding"
-  ]
+  ],
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.10.0",
+    "globals": "17.12.0"
+  }
 }

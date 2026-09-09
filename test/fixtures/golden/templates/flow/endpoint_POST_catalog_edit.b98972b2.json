@@ -1,0 +1,281 @@
+{
+  "tool": "flow",
+  "key": "endpoint POST /catalog/edit",
+  "args": {
+    "project": "templates",
+    "endpoint": "POST /catalog/edit",
+    "direction": "down"
+  },
+  "answer": {
+    "answer": {
+      "entry": {
+        "kind": "endpoint",
+        "id": "POST /catalog/edit",
+        "httpMethod": "POST",
+        "path": "/catalog/edit",
+        "handler": "com.example.web.CatalogController#edit",
+        "handlerShort": "CatalogController#edit",
+        "handlers": 1,
+        "owner": "com.example.web.CatalogController",
+        "file": "src/main/java/com/example/web/CatalogController.java",
+        "line": 31,
+        "start": "symbol:com.example.web.CatalogController#edit"
+      },
+      "walk": {
+        "mode": "conservative",
+        "direction": "down",
+        "depth": 6,
+        "walked": 7,
+        "other": 0,
+        "byLinkGrade": {
+          "EXACT": 2,
+          "SOUND_SET": 2,
+          "HEURISTIC": 0
+        },
+        "cut": {
+          "depth": 0,
+          "nodeCap": false,
+          "byMode": 0,
+          "generated": 0
+        },
+        "beyond": {
+          "tables": 0
+        },
+        "endLane": "tables",
+        "note": null
+      },
+      "layers": [
+        {
+          "hops": 1,
+          "nodes": 1,
+          "services": 1,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 0,
+            "SOUND_SET": 1,
+            "HEURISTIC": 0
+          }
+        },
+        {
+          "hops": 2,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 0,
+            "SOUND_SET": 1,
+            "HEURISTIC": 0
+          }
+        },
+        {
+          "hops": 3,
+          "nodes": 1,
+          "services": 0,
+          "statements": 1,
+          "tables": 0,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          }
+        },
+        {
+          "hops": 4,
+          "nodes": 1,
+          "services": 0,
+          "statements": 0,
+          "tables": 1,
+          "byLinkGrade": {
+            "EXACT": 1,
+            "SOUND_SET": 0,
+            "HEURISTIC": 0
+          }
+        }
+      ],
+      "services": [
+        {
+          "id": "com.example.service.ThingService#save",
+          "short": "ThingService#save",
+          "owner": "com.example.service.ThingService",
+          "hops": 1,
+          "grade": "SOUND_SET",
+          "external": false,
+          "transactional": true,
+          "file": "src/main/java/com/example/service/ThingService.java",
+          "line": 33,
+          "link": {
+            "from": "symbol:com.example.web.CatalogController#edit",
+            "fromShort": "CatalogController#edit",
+            "type": "MAY_CALL",
+            "grade": "SOUND_SET",
+            "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+            "receiver": "ThingService",
+            "iface": null
+          },
+          "path": [
+            {
+              "from": "symbol:com.example.web.CatalogController#edit",
+              "to": "symbol:com.example.service.ThingService#save",
+              "type": "MAY_CALL",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "field-receiver",
+                "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+                "receiver": "ThingService"
+              }
+            }
+          ]
+        }
+      ],
+      "statements": [
+        {
+          "id": "com.example.domain.ThingRepository.save",
+          "short": "ThingRepository.save",
+          "symbol": "com.example.domain.ThingRepository#save",
+          "statementType": "builtin",
+          "file": "src/main/java/com/example/domain/ThingRepository.java",
+          "line": null,
+          "hops": 3,
+          "grade": "SOUND_SET",
+          "link": {
+            "from": "symbol:com.example.service.ThingService#save",
+            "fromShort": "ThingService#save",
+            "type": "MAY_CALL",
+            "grade": "SOUND_SET",
+            "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+            "receiver": "ThingRepository",
+            "iface": null
+          },
+          "path": [
+            {
+              "from": "symbol:com.example.web.CatalogController#edit",
+              "to": "symbol:com.example.service.ThingService#save",
+              "type": "MAY_CALL",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "field-receiver",
+                "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+                "receiver": "ThingService"
+              }
+            },
+            {
+              "from": "symbol:com.example.service.ThingService#save",
+              "to": "symbol:com.example.domain.ThingRepository#save",
+              "type": "MAY_CALL",
+              "grade": "SOUND_SET",
+              "evidence": {
+                "rule": "field-receiver",
+                "basis": "parse-tree receiver→field→declared type, method-by-name (no binding); the runtime object may be a subtype",
+                "receiver": "ThingRepository"
+              }
+            },
+            {
+              "from": "symbol:com.example.domain.ThingRepository#save",
+              "to": "statement:com.example.domain.ThingRepository.save",
+              "type": "IMPLEMENTS_STMT",
+              "grade": "EXACT",
+              "evidence": null
+            }
+          ],
+          "tables": [
+            {
+              "table": "thing",
+              "access": "write"
+            }
+          ]
+        }
+      ],
+      "tables": [
+        {
+          "table": "thing",
+          "comment": "one row per thing",
+          "hops": 4,
+          "grade": "SOUND_SET",
+          "via": "com.example.domain.ThingRepository.save",
+          "viaShort": "ThingRepository.save",
+          "statements": 1,
+          "access": "write",
+          "reads": 0,
+          "writes": 3
+        }
+      ],
+      "federation": {
+        "available": false,
+        "reason": "single-project",
+        "unmatched": []
+      }
+    },
+    "basis": {
+      "project": "templates",
+      "buildDigest": "499d0976614a",
+      "builtAt": "<masked>",
+      "freshness": {
+        "verdict": "unknown"
+      }
+    },
+    "trust": {
+      "trustLevel": "UNCERTIFIED",
+      "axes": [
+        "flow"
+      ],
+      "gatesNotShown": [
+        "calibration-gate",
+        "golden:all-relations"
+      ],
+      "knownGaps": [
+        "no-calibration-state",
+        "no-project-golden",
+        "statements-axis-not-shipped",
+        "column-axis-degraded",
+        "jpa-axis-degraded",
+        "mybatisPlus-axis-not-shipped"
+      ]
+    },
+    "limits": [
+      {
+        "scope": "axis:statements",
+        "reason": "the statements axis of this pack is not-shipped: we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty"
+      },
+      {
+        "scope": "axis:column",
+        "reason": "the column axis of this pack is degraded: where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT"
+      },
+      {
+        "scope": "axis:jpa",
+        "reason": "the jpa axis of this pack is degraded: we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT"
+      },
+      {
+        "scope": "axis:mybatisPlus",
+        "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
+      }
+    ],
+    "truncated": {
+      "any": false,
+      "fields": [
+        {
+          "field": "services",
+          "shown": 1,
+          "total": 1,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "statements",
+          "shown": 1,
+          "total": 1,
+          "order": "hops asc, grade desc, id asc",
+          "nextOffset": null
+        },
+        {
+          "field": "tables",
+          "shown": 1,
+          "total": 1,
+          "order": "hops asc, grade desc, table asc",
+          "nextOffset": null
+        }
+      ]
+    }
+  }
+}

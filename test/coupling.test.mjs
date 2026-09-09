@@ -1,11 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
-import { loadPack } from '../src/core/pack.mjs';
 import { nodeId, buildGraph } from '../src/core/graph.mjs';
 import { buildCoupling, groupOfPath, CouplingError } from '../src/core/coupling.mjs';
 import { coupling, ToolError } from '../src/mcp/tools.mjs';
