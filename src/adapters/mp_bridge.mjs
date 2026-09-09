@@ -331,6 +331,211 @@ export function readEntityModel(javaFacts, opts = {}) {
  *        real table and column facts instead of only a warning.
  * @returns {object} stats
  */
+/**
+ * 4. THE TABLE AND COLUMN NODES this lane needs, and the two helpers that keep
+ * their spelling the CATALOG's. The SQL bridge keyed every table and column by
+ * what the DDL wrote; a MyBatis-Plus entity names the same table in whatever
+ * case the Java source used, and two spellings of one table are two nodes.
+ */
+function tableAndColumnNodes(g, model, opts, schema) {
+  const { entities, stats } = model;
+// ---- 4. table / column nodes -------------------------------------------
+//
+// THE CATALOG'S OWN SPELLING WINS. The SQL bridge keyed every table and column
+// node by what the DDL wrote; the naming rule here derives `id` where the DDL
+// says `ID`. Matched through the SAME fold the SQL lane used, the derived name
+// lands on the catalog's node; matched by string, it would create a second
+// node for the same column and split every answer about it in half. A name the
+// catalog does not have at all keeps its own spelling and becomes a stub,
+// exactly as in the SQL bridge.
+// The fold itself lives in ONE place (`graphSpellingIndex`, sql_bridge.mjs);
+// the JPA bridge calls the same helper for the same reason.
+const { settle, register } = graphSpellingIndex(g, opts.identifierCase ?? 'exact');
+const tableIdOf = (e, name) => settle(nodeId('table', tableKey(e ? e.schema : schema, name)));
+const columnIdOf = (e, table, column) => settle(nodeId('column', columnKey(e ? e.schema : schema, table, column)));
+
+const seenTables = new Set();
+const seenInCatalog = new Set();
+const ensureTable = (e) => {
+  const id = tableIdOf(e, e.table);
+  if (!g.nodes.has(id)) {
+    g.addNode({ id, stub: true, declaredBy: 'mybatis-plus', mappedFrom: e.fqn });
+    stats.tablesStubbed += 1;
+  }
+  const n = g.nodes.get(id);
+  // TWO CLASSES CAN MAP TO ONE TABLE, and in jeecg-boot two do: the sharding
+  // test module's `@TableName("sys_log") ShardingSysLog` names the same row as
+  // `SysLog`. Writing `mpEntity` twice would have left the node naming
+  // whichever class came last in the fact stream — an attribute that depends
+  // on arrival order, which is exactly the defect RM11 found on mall's
+  // endpoints. So the node LISTS them, sorted, and its mapping grade is the
+  // WEAKEST of the two: the reader is told the table is claimed twice instead
+  // of being shown one of the claims.
+  if (n.mpEntity && n.mpEntity !== e.fqn) {
+    const all = [...new Set([...(n.mpEntities ?? [n.mpEntity]), e.fqn])].sort(cmp);
+    n.mpEntities = all;
+    n.mpEntity = all[0];
+    n.mpMappingGrade = weakest(n.mpMappingGrade ?? 'EXACT', e.tableGrade);
+    stats.tableNameCollisions += 1;
+    note(stats, 'mp-table-claimed-twice',
+      `${e.table} is the table of ${all.join(' and ')}. Two MyBatis-Plus entities map to one row, so a statement on either reaches the same columns. The table's mapping grade is the weaker of the two`);
+  } else {
+    n.mpEntity = e.fqn;
+    n.mpMappingGrade = e.tableGrade;
+  }
+  // I-1, spelled out: a catalog HIT is evidence, never a promotion.
+  if (n.stub !== true && n.mpCatalogMatch !== true) { n.mpCatalogMatch = true; stats.tablesInCatalog += 1; }
+  seenTables.add(id);
+  return id;
+};
+const ensureColumn = (e, table, column, grade) => {
+  const cid = columnIdOf(e, table, column);
+  if (!g.nodes.has(cid)) {
+    g.addNode({ id: cid, name: column, stub: true, declaredBy: 'mybatis-plus' });
+    g.addEdge({ from: tableIdOf(e, table), to: cid, type: 'DECLARES', grade });
+    stats.columnsStubbed += 1;
+    // A stub the derived name INVENTED still has to be findable by the fold,
+    // or the next entity that derives the same name would make a third node.
+    register(cid);
+  } else if (g.nodes.get(cid).stub !== true && !seenInCatalog.has(cid)) {
+    // Counted ONCE per column, not once per statement that reaches it: how
+    // many of the names this lane derived the DB really has is a fact about
+    // the mapping, and multiplying it by the traffic would make it a
+    // different, meaningless number.
+    seenInCatalog.add(cid);
+    stats.columnsInCatalog += 1;
+  }
+  return cid;
+};
+for (const e of [...entities.values()].sort((a, b) => cmp(a.fqn, b.fqn))) {
+  ensureTable(e);
+  for (const f of e.fields.values()) {
+    if (!f.column) continue;
+    ensureColumn(e, e.table, f.column, weakest(e.tableGrade, f.grade));
+  }
+}
+
+  return { tableIdOf, columnIdOf, ensureColumn, seenTables };
+}
+
+/**
+ * 5. THE WRAPPERS a call site hands to a built-in, resolved against this
+ * project's entities, with the lineage the SQL analyzer produced for whatever
+ * raw SQL those wrappers carry.
+ */
+function wrappersByCallSite(model, opts) {
+  const { entities, resolveType, stats, wrapperRecords } = model;
+// ---- 5. wrappers -> the columns a statement touches ---------------------
+//
+// The lineage the SQL analyzer produced for this project's wrapper SQL
+// fragments, keyed the way `wrapperFragmentStatements` named them. Absent
+// (no fragments, no python, an older caller) the lane behaves as it did
+// before RM17: the fragment is reported, not read.
+const fragmentLineage = new Map();
+for (const r of opts.fragmentLineage ?? []) {
+  if (r && r.kind === 'lineage') fragmentLineage.set(`${r.namespace}.${r.id}`, r);
+}
+const fragmentBases = wrapperFragmentBases(wrapperRecords);
+const wrappersByCall = new Map(); // "from|receiver|method" -> [resolvedWrapper]
+for (const w of wrapperRecords) {
+  const resolved = readWrapper(w, { entities, resolveType, stats, fragmentBases });
+  for (const s of w.sinks ?? []) {
+    const receiver = s.kind === 'this' ? 'this' : (s.receiver ?? null);
+    const key = `${w.from}|${receiver}|${s.method}`;
+    const list = wrappersByCall.get(key);
+    if (list) list.push(resolved); else wrappersByCall.set(key, [resolved]);
+  }
+  if (!Array.isArray(w.sinks) || w.sinks.length === 0) stats.wrappersWithoutSink += 1;
+}
+
+  return { fragmentLineage, wrappersByCall };
+}
+
+/**
+ * 6. THE CALLS, folded into STATEMENTS. Ten call sites onto one built-in are ONE
+ * statement whose column set is the union of what those sites can touch — a
+ * statement per call site would be ten nodes for one generated query.
+ */
+function statementsFromCalls(g, model, ctx) {
+  const {
+    entities, calls, types, resolveType, implementorsOf, bindingsOf, declares, stats,
+  } = model;
+  const {
+    opts, roleOf, tableIdOf, columnIdOf, ensureColumn, seenTables,
+    fragmentLineage, wrappersByCall,
+  } = ctx;
+// ---- 6. calls -> statements --------------------------------------------
+//
+// Every MP built-in a caller REACHED, keyed by the (owner, method) pair that
+// names the statement — so ten call sites on `SysUserMapper#selectList` are
+// ONE statement whose column set is the union of what those ten sites can
+// touch. That union is the sound direction: a statement that could touch a
+// column and did not say so would be the one omission this engine must not
+// make.
+const wanted = new Map(); // statement key -> {ownerFqn, method, verb, entity, wrappers[], callers[]}
+for (const c of calls) {
+  if (!c || !c.from || !c.method) continue;
+  const ownerFqn = c.from.slice(0, c.from.lastIndexOf('#'));
+  for (const targetFqn of callTargets(c, ownerFqn, { types, resolveType, bindingsOf })) {
+    const r = roleOf(targetFqn);
+    if (!r || !r.entity || !r.entity.concrete) continue;
+    const table = MAPPER_BUILTINS_FOR(r.role);
+    const verb = Object.hasOwn(table, c.method) ? table[c.method] : null;
+    if (!verb) continue;
+    // A type that DECLARES the method itself has overridden the built-in: the
+    // call runs the project's own code (and, for a mapper, its own XML
+    // statement), so claiming the generic one here would put a second, wrong
+    // statement under an id the SQL lane already owns.
+    if (declares(targetFqn, c.method, null)) {
+      stats.builtinsOverridden += 1;
+      note(stats, 'mp-builtin-overridden',
+        `${targetFqn}#${c.method} is declared by the type itself, so the call runs that method and not MyBatis-Plus's built-in, so no generic statement was created for it`);
+      continue;
+    }
+    for (const owner of statementOwners(targetFqn, r, { types, implementorsOf, roleOf })) {
+      const key = statementKey(owner, c.method);
+      let w = wanted.get(key);
+      if (!w) {
+        w = { key, ownerFqn: owner, method: c.method, verb, entity: r.entity.concrete, wrappers: [], callers: [], noWrapperCall: false };
+        wanted.set(key, w);
+      }
+      w.callers.push(c.from);
+      const hit = wrappersByCall.get(`${c.from}|${c.receiver ?? null}|${c.method}`);
+      if (hit) w.wrappers.push(...hit);
+      else w.noWrapperCall = true;
+    }
+  }
+}
+
+for (const key of [...wanted.keys()].sort(cmp)) {
+  const w = wanted.get(key);
+  const entity = entities.get(w.entity) ?? null;
+  if (!entity) {
+    note(stats, 'mp-statement-entity-unmapped',
+      `${key}: the entity ${w.entity} maps to no table in this pack, so the statement names none`);
+    continue;
+  }
+  emitBuiltinStatement(g, {
+    stmt: w, entity, stats, tableIdOf, columnIdOf, ensureColumn,
+    logicDeleteValue: opts.logicDeleteValue ?? null,
+    logicNotDeleteValue: opts.logicNotDeleteValue ?? null,
+    types, resolveCtx: { entities, resolveType, stats },
+    fragmentLineage,
+  });
+}
+
+// DISTINCT table nodes, which is not the same as the entity count: two
+// entities can map to one table (`sys_log` in jeecg-boot), and saying "64
+// tables" for 63 rows would be a number nobody could reconcile with the graph.
+stats.tables = seenTables.size;
+stats.unresolvedStatements = new Set(stats.unresolved.filter((u) => u.statement).map((u) => u.statement)).size;
+stats.opsUninterpreted = Object.fromEntries([...stats._uninterpreted.entries()].sort((a, b) => cmp(a[0], b[0])));
+stats.opsStructural = Object.fromEntries([...stats._structural.entries()].sort((a, b) => cmp(a[0], b[0])));
+delete stats._uninterpreted;
+delete stats._structural;
+}
+
+
 export function addMybatisPlusFacts(g, javaFacts, opts = {}) {
   if (!g || !g.nodes || !Array.isArray(g.edges)) throw new MpBridgeError('g must be a Graph');
 
@@ -341,179 +546,14 @@ export function addMybatisPlusFacts(g, javaFacts, opts = {}) {
   const model = readEntityModel(javaFacts, opts);
   const stats = model.stats;
   if (model.empty) return stats;
-  const {
-    entities, wrapperRecords, calls, types, resolveType,
-    implementorsOf, bindingsOf, declares, roleOf, schema,
-  } = model;
+  const { roleOf, schema } = model;
 
-  // ---- 4. table / column nodes -------------------------------------------
-  //
-  // THE CATALOG'S OWN SPELLING WINS. The SQL bridge keyed every table and column
-  // node by what the DDL wrote; the naming rule here derives `id` where the DDL
-  // says `ID`. Matched through the SAME fold the SQL lane used, the derived name
-  // lands on the catalog's node; matched by string, it would create a second
-  // node for the same column and split every answer about it in half. A name the
-  // catalog does not have at all keeps its own spelling and becomes a stub,
-  // exactly as in the SQL bridge.
-  // The fold itself lives in ONE place (`graphSpellingIndex`, sql_bridge.mjs);
-  // the JPA bridge calls the same helper for the same reason.
-  const { settle, register } = graphSpellingIndex(g, opts.identifierCase ?? 'exact');
-  const tableIdOf = (e, name) => settle(nodeId('table', tableKey(e ? e.schema : schema, name)));
-  const columnIdOf = (e, table, column) => settle(nodeId('column', columnKey(e ? e.schema : schema, table, column)));
+  const { tableIdOf, columnIdOf, ensureColumn, seenTables } = tableAndColumnNodes(g, model, opts, schema);
+  const { fragmentLineage, wrappersByCall } = wrappersByCallSite(model, opts);
+  statementsFromCalls(g, model, {
+    opts, roleOf, tableIdOf, columnIdOf, ensureColumn, seenTables, fragmentLineage, wrappersByCall,
+  });
 
-  const seenTables = new Set();
-  const seenInCatalog = new Set();
-  const ensureTable = (e) => {
-    const id = tableIdOf(e, e.table);
-    if (!g.nodes.has(id)) {
-      g.addNode({ id, stub: true, declaredBy: 'mybatis-plus', mappedFrom: e.fqn });
-      stats.tablesStubbed += 1;
-    }
-    const n = g.nodes.get(id);
-    // TWO CLASSES CAN MAP TO ONE TABLE, and in jeecg-boot two do: the sharding
-    // test module's `@TableName("sys_log") ShardingSysLog` names the same row as
-    // `SysLog`. Writing `mpEntity` twice would have left the node naming
-    // whichever class came last in the fact stream — an attribute that depends
-    // on arrival order, which is exactly the defect RM11 found on mall's
-    // endpoints. So the node LISTS them, sorted, and its mapping grade is the
-    // WEAKEST of the two: the reader is told the table is claimed twice instead
-    // of being shown one of the claims.
-    if (n.mpEntity && n.mpEntity !== e.fqn) {
-      const all = [...new Set([...(n.mpEntities ?? [n.mpEntity]), e.fqn])].sort(cmp);
-      n.mpEntities = all;
-      n.mpEntity = all[0];
-      n.mpMappingGrade = weakest(n.mpMappingGrade ?? 'EXACT', e.tableGrade);
-      stats.tableNameCollisions += 1;
-      note(stats, 'mp-table-claimed-twice',
-        `${e.table} is the table of ${all.join(' and ')}. Two MyBatis-Plus entities map to one row, so a statement on either reaches the same columns. The table's mapping grade is the weaker of the two`);
-    } else {
-      n.mpEntity = e.fqn;
-      n.mpMappingGrade = e.tableGrade;
-    }
-    // I-1, spelled out: a catalog HIT is evidence, never a promotion.
-    if (n.stub !== true && n.mpCatalogMatch !== true) { n.mpCatalogMatch = true; stats.tablesInCatalog += 1; }
-    seenTables.add(id);
-    return id;
-  };
-  const ensureColumn = (e, table, column, grade) => {
-    const cid = columnIdOf(e, table, column);
-    if (!g.nodes.has(cid)) {
-      g.addNode({ id: cid, name: column, stub: true, declaredBy: 'mybatis-plus' });
-      g.addEdge({ from: tableIdOf(e, table), to: cid, type: 'DECLARES', grade });
-      stats.columnsStubbed += 1;
-      // A stub the derived name INVENTED still has to be findable by the fold,
-      // or the next entity that derives the same name would make a third node.
-      register(cid);
-    } else if (g.nodes.get(cid).stub !== true && !seenInCatalog.has(cid)) {
-      // Counted ONCE per column, not once per statement that reaches it: how
-      // many of the names this lane derived the DB really has is a fact about
-      // the mapping, and multiplying it by the traffic would make it a
-      // different, meaningless number.
-      seenInCatalog.add(cid);
-      stats.columnsInCatalog += 1;
-    }
-    return cid;
-  };
-  for (const e of [...entities.values()].sort((a, b) => cmp(a.fqn, b.fqn))) {
-    ensureTable(e);
-    for (const f of e.fields.values()) {
-      if (!f.column) continue;
-      ensureColumn(e, e.table, f.column, weakest(e.tableGrade, f.grade));
-    }
-  }
-
-  // ---- 5. wrappers -> the columns a statement touches ---------------------
-  //
-  // The lineage the SQL analyzer produced for this project's wrapper SQL
-  // fragments, keyed the way `wrapperFragmentStatements` named them. Absent
-  // (no fragments, no python, an older caller) the lane behaves as it did
-  // before RM17: the fragment is reported, not read.
-  const fragmentLineage = new Map();
-  for (const r of opts.fragmentLineage ?? []) {
-    if (r && r.kind === 'lineage') fragmentLineage.set(`${r.namespace}.${r.id}`, r);
-  }
-  const fragmentBases = wrapperFragmentBases(wrapperRecords);
-  const wrappersByCall = new Map(); // "from|receiver|method" -> [resolvedWrapper]
-  for (const w of wrapperRecords) {
-    const resolved = readWrapper(w, { entities, resolveType, stats, fragmentBases });
-    for (const s of w.sinks ?? []) {
-      const receiver = s.kind === 'this' ? 'this' : (s.receiver ?? null);
-      const key = `${w.from}|${receiver}|${s.method}`;
-      const list = wrappersByCall.get(key);
-      if (list) list.push(resolved); else wrappersByCall.set(key, [resolved]);
-    }
-    if (!Array.isArray(w.sinks) || w.sinks.length === 0) stats.wrappersWithoutSink += 1;
-  }
-
-  // ---- 6. calls -> statements --------------------------------------------
-  //
-  // Every MP built-in a caller REACHED, keyed by the (owner, method) pair that
-  // names the statement — so ten call sites on `SysUserMapper#selectList` are
-  // ONE statement whose column set is the union of what those ten sites can
-  // touch. That union is the sound direction: a statement that could touch a
-  // column and did not say so would be the one omission this engine must not
-  // make.
-  const wanted = new Map(); // statement key -> {ownerFqn, method, verb, entity, wrappers[], callers[]}
-  for (const c of calls) {
-    if (!c || !c.from || !c.method) continue;
-    const ownerFqn = c.from.slice(0, c.from.lastIndexOf('#'));
-    for (const targetFqn of callTargets(c, ownerFqn, { types, resolveType, bindingsOf })) {
-      const r = roleOf(targetFqn);
-      if (!r || !r.entity || !r.entity.concrete) continue;
-      const table = MAPPER_BUILTINS_FOR(r.role);
-      const verb = Object.hasOwn(table, c.method) ? table[c.method] : null;
-      if (!verb) continue;
-      // A type that DECLARES the method itself has overridden the built-in: the
-      // call runs the project's own code (and, for a mapper, its own XML
-      // statement), so claiming the generic one here would put a second, wrong
-      // statement under an id the SQL lane already owns.
-      if (declares(targetFqn, c.method, null)) {
-        stats.builtinsOverridden += 1;
-        note(stats, 'mp-builtin-overridden',
-          `${targetFqn}#${c.method} is declared by the type itself, so the call runs that method and not MyBatis-Plus's built-in, so no generic statement was created for it`);
-        continue;
-      }
-      for (const owner of statementOwners(targetFqn, r, { types, implementorsOf, roleOf })) {
-        const key = statementKey(owner, c.method);
-        let w = wanted.get(key);
-        if (!w) {
-          w = { key, ownerFqn: owner, method: c.method, verb, entity: r.entity.concrete, wrappers: [], callers: [], noWrapperCall: false };
-          wanted.set(key, w);
-        }
-        w.callers.push(c.from);
-        const hit = wrappersByCall.get(`${c.from}|${c.receiver ?? null}|${c.method}`);
-        if (hit) w.wrappers.push(...hit);
-        else w.noWrapperCall = true;
-      }
-    }
-  }
-
-  for (const key of [...wanted.keys()].sort(cmp)) {
-    const w = wanted.get(key);
-    const entity = entities.get(w.entity) ?? null;
-    if (!entity) {
-      note(stats, 'mp-statement-entity-unmapped',
-        `${key}: the entity ${w.entity} maps to no table in this pack, so the statement names none`);
-      continue;
-    }
-    emitBuiltinStatement(g, {
-      stmt: w, entity, stats, tableIdOf, columnIdOf, ensureColumn,
-      logicDeleteValue: opts.logicDeleteValue ?? null,
-      logicNotDeleteValue: opts.logicNotDeleteValue ?? null,
-      types, resolveCtx: { entities, resolveType, stats },
-      fragmentLineage,
-    });
-  }
-
-  // DISTINCT table nodes, which is not the same as the entity count: two
-  // entities can map to one table (`sys_log` in jeecg-boot), and saying "64
-  // tables" for 63 rows would be a number nobody could reconcile with the graph.
-  stats.tables = seenTables.size;
-  stats.unresolvedStatements = new Set(stats.unresolved.filter((u) => u.statement).map((u) => u.statement)).size;
-  stats.opsUninterpreted = Object.fromEntries([...stats._uninterpreted.entries()].sort((a, b) => cmp(a[0], b[0])));
-  stats.opsStructural = Object.fromEntries([...stats._structural.entries()].sort((a, b) => cmp(a[0], b[0])));
-  delete stats._uninterpreted;
-  delete stats._structural;
   return stats;
 }
 
@@ -990,300 +1030,353 @@ function statementOwners(targetFqn, r, { types, implementorsOf, roleOf }) {
   return impls.length > 0 ? impls : [targetFqn];
 }
 
-/** One generic-CRUD statement: what MyBatis-Plus's built-in does to the row. */
-function emitBuiltinStatement(g, a) {
-  const { stmt, entity, stats, tableIdOf, columnIdOf, ensureColumn, types } = a;
-  const fragmentLineage = a.fragmentLineage ?? new Map();
-  const sid = nodeId('statement', stmt.key);
-  const verb = stmt.verb;
-  const reads = [];
-  const writes = [];
-  const unresolved = [];
-  const notes = [];
-  let access = 'read';
-  let logicDelete = false;
-
-  const mapped = [...entity.fields.values()].filter((f) => f.column);
-  const allColumns = mapped.map((f) => ({ table: entity.table, column: f.column, grade: weakest(entity.tableGrade, f.grade), role: 'row' }));
-  const idColumns = mapped.filter((f) => f.id === true)
-    .map((f) => ({ table: entity.table, column: f.column, grade: weakest(entity.tableGrade, f.grade), role: 'primary-key' }));
-
-  // The wrapper columns every call site that reaches this statement can touch.
-  const wrapperReads = [];
-  const wrapperWrites = [];
-  const selectNarrowing = [];
-  const fragmentReads = [];
-  const fragmentWrites = [];
-  const fragmentTables = [];
-  let runtimeOnly = false;
-  const runtimeReasons = new Set();
-  for (const w of stmt.wrappers) {
-    // Resolved HERE, against THIS statement's entity: a wrapper built over a
-    // type parameter (`QueryWrapper<T>` in a shared base controller) has no
-    // entity of its own, and the subclass binding that produced this statement
-    // is exactly what says which table its `in("id")` filters.
-    for (const c of columnsOf(w.reads, w, entity, a.resolveCtx, unresolved)) wrapperReads.push(c);
-    for (const c of columnsOf(w.writes, w, entity, a.resolveCtx, unresolved)) wrapperWrites.push(c);
-    for (const c of columnsOf(w.selects, w, entity, a.resolveCtx, unresolved)) selectNarrowing.push(c);
-    for (const u of w.unresolved) unresolved.push(u);
-    for (const f of w.fragments) {
-      // THE FRAGMENT, AS SQL. Its lineage record was produced by lineage.py in
-      // the lane phase (`wrapperFragmentStatements` wrote the statement, the CLI
-      // ran it). Present and resolved, its tables and columns join this
-      // statement's; absent or unparsed, the old note stands — WITH the text,
-      // so the reader knows exactly what was not read.
-      const rec = fragmentLineage.get(f.statementKey);
-      const why = fragmentFailure(rec, f, w);
-      if (why) {
-        unresolved.push({ reason: 'wrapper-sql-fragment', detail: why });
-        stats.fragmentsUnresolved += 1;
-        continue;
-      }
-      stats.fragmentsResolved += 1;
-      for (const t of rec.tables ?? []) {
-        if (t.table === entity.table && (t.schema ?? null) === (entity.schema ?? null)) continue;
-        fragmentTables.push({ table: t.table, schema: t.schema ?? null, access: t.access, op: f.op });
-      }
-      for (const c of rec.columns ?? []) {
-        if (c.access !== 'read' && c.access !== 'write') continue;
-        const own = c.table === entity.table && (c.schema ?? null) === (entity.schema ?? null);
-        const col = {
-          entity: own ? entity : { schema: c.schema ?? null },
-          table: c.table, column: c.column,
-          // The fragment's TEXT is exact; the FROM this lane wrote around it is
-          // only as sure as the entity's table name, so a fragment column on the
-          // entity's own table is never surer than that mapping.
-          grade: own ? entity.tableGrade : 'EXACT',
-          via: `wrapper-fragment:${f.op}`, role: 'sql-fragment', fragmentOp: f.op,
-        };
-        (c.access === 'write' ? fragmentWrites : fragmentReads).push(col);
-        stats.fragmentColumns += 1;
-      }
+/**
+ * THE WRAPPER COLUMNS every call site that reaches this statement can touch, and
+ * the fragments those wrappers pulled in. A wrapper built at run time names a
+ * KNOWN table with an UNKNOWN column list, and that is recorded rather than
+ * guessed at.
+ */
+function readWrapperColumns(a, b) {
+  const { stmt, entity, stats, fragmentLineage } = a;
+  const {
+    unresolved, wrapperReads, wrapperWrites, selectNarrowing,
+    fragmentReads, fragmentWrites, fragmentTables, runtimeReasons,
+  } = b;
+for (const w of stmt.wrappers) {
+  // Resolved HERE, against THIS statement's entity: a wrapper built over a
+  // type parameter (`QueryWrapper<T>` in a shared base controller) has no
+  // entity of its own, and the subclass binding that produced this statement
+  // is exactly what says which table its `in("id")` filters.
+  for (const c of columnsOf(w.reads, w, entity, a.resolveCtx, unresolved)) wrapperReads.push(c);
+  for (const c of columnsOf(w.writes, w, entity, a.resolveCtx, unresolved)) wrapperWrites.push(c);
+  for (const c of columnsOf(w.selects, w, entity, a.resolveCtx, unresolved)) selectNarrowing.push(c);
+  for (const u of w.unresolved) unresolved.push(u);
+  for (const f of w.fragments) {
+    // THE FRAGMENT, AS SQL. Its lineage record was produced by lineage.py in
+    // the lane phase (`wrapperFragmentStatements` wrote the statement, the CLI
+    // ran it). Present and resolved, its tables and columns join this
+    // statement's; absent or unparsed, the old note stands — WITH the text,
+    // so the reader knows exactly what was not read.
+    const rec = fragmentLineage.get(f.statementKey);
+    const why = fragmentFailure(rec, f, w);
+    if (why) {
+      unresolved.push({ reason: 'wrapper-sql-fragment', detail: why });
+      stats.fragmentsUnresolved += 1;
+      continue;
     }
-    if (w.runtimeOnly) { runtimeOnly = true; if (w.runtimeReason) runtimeReasons.add(w.runtimeReason); }
-  }
-  if (stmt.noWrapperCall && VERB_TAKES_WRAPPER.has(verb)) {
-    runtimeOnly = runtimeOnly || false; // a call with no wrapper is not a mystery — see below
-  }
-
-  if (verb === 'insert') {
-    access = 'write';
-    notes.push('MyBatis-Plus writes the NON-NULL fields of the entity; statically every mapped column is a candidate');
-    writes.push(...allColumns);
-  } else if (verb === 'save-or-update') {
-    access = 'write';
-    notes.push('saveOrUpdate inserts or updates by the id, so it both reads the key and writes every mapped column');
-    writes.push(...allColumns);
-    reads.push(...idColumns);
-  } else if (verb === 'updateById') {
-    access = 'write';
-    notes.push('an update by id writes the non-null fields and reads the key; statically every mapped non-id column is a write candidate');
-    writes.push(...allColumns.filter((c) => !idColumns.some((k) => k.column === c.column)));
-    reads.push(...idColumns);
-  } else if (verb === 'update') {
-    access = 'write';
-    if (wrapperWrites.length > 0) {
-      notes.push('the UpdateWrapper names the columns it sets');
-      writes.push(...wrapperWrites);
-    } else {
-      notes.push('no UpdateWrapper `set(...)` is visible here, so every mapped column is a write candidate');
-      writes.push(...allColumns);
+    stats.fragmentsResolved += 1;
+    for (const t of rec.tables ?? []) {
+      if (t.table === entity.table && (t.schema ?? null) === (entity.schema ?? null)) continue;
+      fragmentTables.push({ table: t.table, schema: t.schema ?? null, access: t.access, op: f.op });
     }
-    reads.push(...wrapperReads);
-  } else if (verb === 'deleteById' || verb === 'delete' || verb === 'selectById' || verb === 'select') {
-    const deleting = verb === 'deleteById' || verb === 'delete';
-    if (deleting && entity.logicColumn) {
-      // LOGICAL DELETE. `@TableLogic` turns MyBatis-Plus's DELETE into an UPDATE
-      // that sets the flag column — the row stays, so calling this a delete would
-      // be wrong about what the statement does and about which column it touches.
-      access = 'write';
-      logicDelete = true;
-      stats.logicDeleteRewrites += 1;
-      const v = a.logicDeleteValue;
-      notes.push(`@TableLogic on ${entity.fqn}: MyBatis-Plus rewrites this delete into an UPDATE that sets ${entity.logicColumn.column}`
-        + (v ? ` to ${v}` : ' to the deleted value (the profile declares none, so it is not named here)'));
-      writes.push({ table: entity.table, column: entity.logicColumn.column, grade: weakest(entity.tableGrade, entity.logicColumn.grade), role: 'logic-delete' });
-    } else if (deleting) {
-      access = 'delete';
-      notes.push('the row is removed; its columns are not individually written');
-    }
-    if (verb === 'deleteById' || verb === 'selectById') {
-      reads.push(...idColumns);
-      if (idColumns.length === 0) {
-        unresolved.push({ reason: 'mp-no-table-id', detail: `${entity.fqn} declares no @TableId, so the by-id ${deleting ? 'delete' : 'lookup'} names no key column` });
-      }
-    }
-    reads.push(...wrapperReads);
-    if (verb === 'select') {
-      // What the SELECT actually projects. MyBatis-Plus selects EVERY mapped
-      // column into the entity unless the wrapper's `select(...)` narrows it, so
-      // the projection is part of what the statement reads — leaving it out
-      // would report a read that happens as one that does not.
-      if (selectNarrowing.length > 0) {
-        notes.push('the wrapper\'s select(...) narrows the projection to the columns it names');
-        reads.push(...selectNarrowing.map((c) => ({ ...c, role: 'projection' })));
-      } else {
-        reads.push(...allColumns.map((c) => ({ ...c, role: 'projection' })));
-      }
+    for (const c of rec.columns ?? []) {
+      if (c.access !== 'read' && c.access !== 'write') continue;
+      const own = c.table === entity.table && (c.schema ?? null) === (entity.schema ?? null);
+      const col = {
+        entity: own ? entity : { schema: c.schema ?? null },
+        table: c.table, column: c.column,
+        // The fragment's TEXT is exact; the FROM this lane wrote around it is
+        // only as sure as the entity's table name, so a fragment column on the
+        // entity's own table is never surer than that mapping.
+        grade: own ? entity.tableGrade : 'EXACT',
+        via: `wrapper-fragment:${f.op}`, role: 'sql-fragment', fragmentOp: f.op,
+      };
+      (c.access === 'write' ? fragmentWrites : fragmentReads).push(col);
+      stats.fragmentColumns += 1;
     }
   }
+  if (w.runtimeOnly) { b.runtimeOnly = true; if (w.runtimeReason) runtimeReasons.add(w.runtimeReason); }
+}
+}
 
-  // THE FRAGMENT'S OWN COLUMNS. Folded in after the verb decided what the
-  // statement does, because a fragment names columns whatever the verb is: an
-  // `apply(...)` on a select is a filter, on an update it is still a filter, and
-  // a `setSql(...)` is the update's own SET.
-  reads.push(...fragmentReads);
-  if (access === 'delete' && fragmentWrites.length > 0) {
-    // I-2: a DELETE writes no column. A fragment that parsed as a write on a
-    // deleting statement is reported rather than turned into a column write.
-    unresolved.push({
-      reason: 'wrapper-fragment-write-on-delete',
-      detail: `${[...new Set(fragmentWrites.map((c) => c.fragmentOp))].sort().join(', ')} read as writing `
-        + `${[...new Set(fragmentWrites.map((c) => `${c.table}.${c.column}`))].sort().join(', ')}, but this statement deletes rows. A delete writes no column, so the fragment's writes are NOT in this statement's column list`,
-    });
+/**
+ * WHAT THE VERB TOUCHES. `insert` writes every mapped column, `deleteById`
+ * writes the logic-delete column of a @TableLogic entity and deletes otherwise,
+ * a `select` reads what its projection narrows to. One verb, one rule.
+ */
+function columnsForVerb(a, b) {
+  const { stmt, entity, stats } = a;
+  const {
+    verb, reads, writes, unresolved, notes, allColumns, idColumns,
+    wrapperReads, wrapperWrites, selectNarrowing,
+  } = b;
+if (stmt.noWrapperCall && VERB_TAKES_WRAPPER.has(verb)) {
+  b.runtimeOnly = b.runtimeOnly || false; // a call with no wrapper is not a mystery — see below
+}
+
+if (verb === 'insert') {
+  b.access = 'write';
+  notes.push('MyBatis-Plus writes the NON-NULL fields of the entity; statically every mapped column is a candidate');
+  writes.push(...allColumns);
+} else if (verb === 'save-or-update') {
+  b.access = 'write';
+  notes.push('saveOrUpdate inserts or updates by the id, so it both reads the key and writes every mapped column');
+  writes.push(...allColumns);
+  reads.push(...idColumns);
+} else if (verb === 'updateById') {
+  b.access = 'write';
+  notes.push('an update by id writes the non-null fields and reads the key; statically every mapped non-id column is a write candidate');
+  writes.push(...allColumns.filter((c) => !idColumns.some((k) => k.column === c.column)));
+  reads.push(...idColumns);
+} else if (verb === 'update') {
+  b.access = 'write';
+  if (wrapperWrites.length > 0) {
+    notes.push('the UpdateWrapper names the columns it sets');
+    writes.push(...wrapperWrites);
   } else {
-    writes.push(...fragmentWrites);
+    notes.push('no UpdateWrapper `set(...)` is visible here, so every mapped column is a write candidate');
+    writes.push(...allColumns);
   }
-
-  // A @TableLogic entity has `<logic column> = <not-deleted>` appended to EVERY
-  // generated query — that is a read of the column nobody wrote down.
-  if (entity.logicColumn && (access === 'read' || logicDelete || verb === 'update')) {
-    reads.push({
-      table: entity.table, column: entity.logicColumn.column,
-      grade: weakest(entity.tableGrade, entity.logicColumn.grade),
-      role: 'implicit-logic-filter',
-    });
-    stats.implicitLogicFilters += 1;
+  reads.push(...wrapperReads);
+} else if (verb === 'deleteById' || verb === 'delete' || verb === 'selectById' || verb === 'select') {
+  const deleting = verb === 'deleteById' || verb === 'delete';
+  if (deleting && entity.logicColumn) {
+    // LOGICAL DELETE. `@TableLogic` turns MyBatis-Plus's DELETE into an UPDATE
+    // that sets the flag column — the row stays, so calling this a delete would
+    // be wrong about what the statement does and about which column it touches.
+    b.access = 'write';
+    b.logicDelete = true;
+    stats.logicDeleteRewrites += 1;
+    const v = a.logicDeleteValue;
+    notes.push(`@TableLogic on ${entity.fqn}: MyBatis-Plus rewrites this delete into an UPDATE that sets ${entity.logicColumn.column}`
+      + (v ? ` to ${v}` : ' to the deleted value (the profile declares none, so it is not named here)'));
+    writes.push({ table: entity.table, column: entity.logicColumn.column, grade: weakest(entity.tableGrade, entity.logicColumn.grade), role: 'logic-delete' });
+  } else if (deleting) {
+    b.access = 'delete';
+    notes.push('the row is removed; its columns are not individually written');
   }
-
-  if (runtimeOnly) {
-    stats.statementsRuntimeOnlyColumns += 1;
-    unresolved.push({
-      reason: 'wrapper-columns-runtime-only',
-      detail: [...runtimeReasons].sort().join(' | ') || 'a wrapper reaching this statement was built outside this method',
-    });
-  }
-
-  const node = {
-    id: sid,
-    statementType: 'mp-builtin',
-    source: 'mybatis-plus',
-    file: types.get(stmt.ownerFqn)?.file ?? null,
-    line: null,
-    mpEvidence: {
-      owner: stmt.ownerFqn, method: stmt.method, verb, entity: entity.fqn,
-      table: entity.table, tableGrade: entity.tableGrade, tableEvidence: entity.tableEvidence,
-      access, note: notes.join('; ') || null,
-      ...(logicDelete ? { logicDelete: true } : {}),
-      callers: [...new Set(stmt.callers)].sort(cmp).slice(0, 20),
-      callerCount: new Set(stmt.callers).size,
-    },
-  };
-  if (runtimeOnly) {
-    // The whole point of the RUNTIME_ONLY grade: the table is known, the columns
-    // are not, and BOTH are said out loud rather than one of them going quiet.
-    node.columnsRuntimeOnly = true;
-    node.columnsRuntimeOnlyReason = [...runtimeReasons].sort().join(' | ');
-  }
-  if (unresolved.length > 0) {
-    node.hasUnresolved = true;
-    node.unresolved = unresolved.map((u) => ({ reason: u.reason, detail: u.detail ?? null }));
-  }
-
-  // A NAME CLASH with a statement the SQL lane already owns is impossible in a
-  // correct project (MyBatis-Plus refuses to register a mapper XML statement
-  // whose id is one of BaseMapper's), but "impossible" is not a reason to
-  // overwrite somebody's SQL: the existing node wins and the clash is reported.
-  const existing = g.nodes.get(sid);
-  if (existing && existing.statementType && existing.statementType !== 'mp-builtin') {
-    stats.statementIdClashes += 1;
-    note(stats, 'mp-statement-id-clash',
-      `${stmt.key} is already a ${existing.statementType} statement in this pack (mapper XML or a native query), so the MyBatis-Plus built-in was NOT written over it`);
-    return;
-  }
-  g.addNode(node);
-  stats.statements += 1;
-  stats.statementsByVerb[verb] = (stats.statementsByVerb[verb] ?? 0) + 1;
-  for (const u of unresolved) stats.unresolved.push({ statement: stmt.key, reason: u.reason, detail: u.detail ?? null });
-
-  // The mapper-interface rule, unchanged from the MyBatis and JPA lanes: the
-  // METHOD *is* the statement MyBatis-Plus generates for it — definitional.
-  const member = `${stmt.ownerFqn}#${stmt.method}`;
-  const symId = nodeId('symbol', member);
-  g.addNode({ id: symId, symbol: member, owner: stmt.ownerFqn, mpBuiltinMethod: true });
-  if (!g.outEdges(symId).some((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid)) {
-    g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
-    stats.implementsStmt += 1;
-  }
-
-  g.addEdge({
-    from: sid, to: tableIdOf(entity, entity.table), type: 'EXECUTES', grade: entity.tableGrade,
-    evidence: { access, via: 'mybatis-plus', builtin: stmt.method, ...(logicDelete ? { logicDelete: true } : {}) },
-  });
-
-  // A fragment can name a table of its OWN — `exists("select 1 from sys_role
-  // where ...")`. That table is written in the source, so the edge is EXACT, and
-  // leaving it out would hide a table this statement really touches.
-  const fragTables = new Map(); // node id -> {access:Set, ops:Set, schema, table}
-  for (const t of fragmentTables) {
-    const id = tableIdOf({ schema: t.schema }, t.table);
-    let m = fragTables.get(id);
-    if (!m) { m = { access: new Set(), ops: new Set() }; fragTables.set(id, m); }
-    m.access.add(t.access);
-    m.ops.add(t.op);
-  }
-  for (const id of [...fragTables.keys()].sort(cmp)) {
-    const m = fragTables.get(id);
-    g.addEdge({
-      from: sid, to: id, type: 'EXECUTES', grade: 'EXACT',
-      evidence: {
-        access: [...m.access].sort().join(','), via: 'mybatis-plus-fragment',
-        builtin: stmt.method, fragmentOp: [...m.ops].sort().join(','),
-      },
-    });
-  }
-
-  // ONE edge per (access, column) — but a column reached BOTH ways (the `in(…)`
-  // predicate on `dep_id` and the projection that also selects it) keeps BOTH
-  // roles. Dropping the second would make the evidence say the statement reads
-  // that column only as a filter, which is not what the SQL does.
-  const merged = new Map(); // "TYPE|columnId" -> {edgeType, cid, grade, roles, vias, flags}
-  for (const [bucket, edgeType] of [[reads, 'READS'], [writes, 'WRITES']]) {
-    for (const c of bucket) {
-      const owner = c.entity ?? entity;
-      const cid = columnIdOf(owner, c.table, c.column);
-      ensureColumn(owner, c.table, c.column, c.grade);
-      const key = `${edgeType}|${cid}`;
-      let m = merged.get(key);
-      if (!m) {
-        m = { edgeType, cid, grade: c.grade, roles: new Set(), vias: new Set(), fragmentOps: new Set(), literal: false };
-        merged.set(key, m);
-      }
-      if (c.fragmentOp) m.fragmentOps.add(c.fragmentOp);
-      // WEAKEST link: the same column reached by a declared name and by a
-      // derived one is only as sure as the weaker of the two.
-      m.grade = weakest(m.grade, c.grade);
-      if (c.role) m.roles.add(c.role);
-      m.vias.add(c.via ?? 'mybatis-plus');
-      if (c.fromLiteral) m.literal = true;
+  if (verb === 'deleteById' || verb === 'selectById') {
+    reads.push(...idColumns);
+    if (idColumns.length === 0) {
+      unresolved.push({ reason: 'mp-no-table-id', detail: `${entity.fqn} declares no @TableId, so the by-id ${deleting ? 'delete' : 'lookup'} names no key column` });
     }
   }
-  for (const key of [...merged.keys()].sort(cmp)) {
-    const m = merged.get(key);
-    const roles = [...m.roles].sort();
-    g.addEdge({
-      from: sid, to: m.cid, type: m.edgeType, grade: m.grade,
-      evidence: {
-        via: [...m.vias].sort().join(','), roles,
-        ...(m.fragmentOps.size > 0 ? { fragmentOp: [...m.fragmentOps].sort().join(',') } : {}),
-        ...(m.literal ? { literal: true, catalogMatch: g.nodes.get(m.cid)?.stub !== true } : {}),
-        ...(m.roles.has('implicit-logic-filter') ? { implicitFilter: true } : {}),
-        ...(m.roles.has('logic-delete') ? { logicDelete: true } : {}),
-      },
-    });
-    if (m.edgeType === 'READS') stats.reads += 1; else stats.writes += 1;
+  reads.push(...wrapperReads);
+  if (verb === 'select') {
+    // What the SELECT actually projects. MyBatis-Plus selects EVERY mapped
+    // column into the entity unless the wrapper's `select(...)` narrows it, so
+    // the projection is part of what the statement reads — leaving it out
+    // would report a read that happens as one that does not.
+    if (selectNarrowing.length > 0) {
+      notes.push('the wrapper\'s select(...) narrows the projection to the columns it names');
+      reads.push(...selectNarrowing.map((c) => ({ ...c, role: 'projection' })));
+    } else {
+      reads.push(...allColumns.map((c) => ({ ...c, role: 'projection' })));
+    }
   }
 }
+
+}
+
+/**
+ * THE FRAGMENT'S OWN COLUMNS, folded in AFTER the verb decided what the
+ * statement does — and the logic-delete column, which a @TableLogic entity
+ * appends to every read.
+ */
+function foldFragmentsAndLogicDelete(a, b) {
+  const { entity, stats } = a;
+  const { verb, reads, writes, unresolved, fragmentReads, fragmentWrites, runtimeReasons } = b;
+// THE FRAGMENT'S OWN COLUMNS. Folded in after the verb decided what the
+// statement does, because a fragment names columns whatever the verb is: an
+// `apply(...)` on a select is a filter, on an update it is still a filter, and
+// a `setSql(...)` is the update's own SET.
+reads.push(...fragmentReads);
+if (b.access === 'delete' && fragmentWrites.length > 0) {
+  // I-2: a DELETE writes no column. A fragment that parsed as a write on a
+  // deleting statement is reported rather than turned into a column write.
+  unresolved.push({
+    reason: 'wrapper-fragment-write-on-delete',
+    detail: `${[...new Set(fragmentWrites.map((c) => c.fragmentOp))].sort().join(', ')} read as writing `
+      + `${[...new Set(fragmentWrites.map((c) => `${c.table}.${c.column}`))].sort().join(', ')}, but this statement deletes rows. A delete writes no column, so the fragment's writes are NOT in this statement's column list`,
+  });
+} else {
+  writes.push(...fragmentWrites);
+}
+
+// A @TableLogic entity has `<logic column> = <not-deleted>` appended to EVERY
+// generated query — that is a read of the column nobody wrote down.
+if (entity.logicColumn && (b.access === 'read' || b.logicDelete || verb === 'update')) {
+  reads.push({
+    table: entity.table, column: entity.logicColumn.column,
+    grade: weakest(entity.tableGrade, entity.logicColumn.grade),
+    role: 'implicit-logic-filter',
+  });
+  stats.implicitLogicFilters += 1;
+}
+
+if (b.runtimeOnly) {
+  stats.statementsRuntimeOnlyColumns += 1;
+  unresolved.push({
+    reason: 'wrapper-columns-runtime-only',
+    detail: [...runtimeReasons].sort().join(' | ') || 'a wrapper reaching this statement was built outside this method',
+  });
+}
+
+}
+
+/** The statement node, its column edges, and the mapper method that IS it. */
+function writeStatementNode(g, a, b) {
+  const { stmt, entity, stats, tableIdOf, columnIdOf, ensureColumn, types } = a;
+  const {
+    sid, verb, reads, writes, unresolved, notes, access, logicDelete, runtimeOnly,
+    fragmentTables, runtimeReasons,
+  } = b;
+const node = {
+  id: sid,
+  statementType: 'mp-builtin',
+  source: 'mybatis-plus',
+  file: types.get(stmt.ownerFqn)?.file ?? null,
+  line: null,
+  mpEvidence: {
+    owner: stmt.ownerFqn, method: stmt.method, verb, entity: entity.fqn,
+    table: entity.table, tableGrade: entity.tableGrade, tableEvidence: entity.tableEvidence,
+    access, note: notes.join('; ') || null,
+    ...(logicDelete ? { logicDelete: true } : {}),
+    callers: [...new Set(stmt.callers)].sort(cmp).slice(0, 20),
+    callerCount: new Set(stmt.callers).size,
+  },
+};
+if (runtimeOnly) {
+  // The whole point of the RUNTIME_ONLY grade: the table is known, the columns
+  // are not, and BOTH are said out loud rather than one of them going quiet.
+  node.columnsRuntimeOnly = true;
+  node.columnsRuntimeOnlyReason = [...runtimeReasons].sort().join(' | ');
+}
+if (unresolved.length > 0) {
+  node.hasUnresolved = true;
+  node.unresolved = unresolved.map((u) => ({ reason: u.reason, detail: u.detail ?? null }));
+}
+
+// A NAME CLASH with a statement the SQL lane already owns is impossible in a
+// correct project (MyBatis-Plus refuses to register a mapper XML statement
+// whose id is one of BaseMapper's), but "impossible" is not a reason to
+// overwrite somebody's SQL: the existing node wins and the clash is reported.
+const existing = g.nodes.get(sid);
+if (existing && existing.statementType && existing.statementType !== 'mp-builtin') {
+  stats.statementIdClashes += 1;
+  note(stats, 'mp-statement-id-clash',
+    `${stmt.key} is already a ${existing.statementType} statement in this pack (mapper XML or a native query), so the MyBatis-Plus built-in was NOT written over it`);
+  return;
+}
+g.addNode(node);
+stats.statements += 1;
+stats.statementsByVerb[verb] = (stats.statementsByVerb[verb] ?? 0) + 1;
+for (const u of unresolved) stats.unresolved.push({ statement: stmt.key, reason: u.reason, detail: u.detail ?? null });
+
+// The mapper-interface rule, unchanged from the MyBatis and JPA lanes: the
+// METHOD *is* the statement MyBatis-Plus generates for it — definitional.
+const member = `${stmt.ownerFqn}#${stmt.method}`;
+const symId = nodeId('symbol', member);
+g.addNode({ id: symId, symbol: member, owner: stmt.ownerFqn, mpBuiltinMethod: true });
+if (!g.outEdges(symId).some((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid)) {
+  g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+  stats.implementsStmt += 1;
+}
+
+g.addEdge({
+  from: sid, to: tableIdOf(entity, entity.table), type: 'EXECUTES', grade: entity.tableGrade,
+  evidence: { access, via: 'mybatis-plus', builtin: stmt.method, ...(logicDelete ? { logicDelete: true } : {}) },
+});
+
+// A fragment can name a table of its OWN — `exists("select 1 from sys_role
+// where ...")`. That table is written in the source, so the edge is EXACT, and
+// leaving it out would hide a table this statement really touches.
+const fragTables = new Map(); // node id -> {access:Set, ops:Set, schema, table}
+for (const t of fragmentTables) {
+  const id = tableIdOf({ schema: t.schema }, t.table);
+  let m = fragTables.get(id);
+  if (!m) { m = { access: new Set(), ops: new Set() }; fragTables.set(id, m); }
+  m.access.add(t.access);
+  m.ops.add(t.op);
+}
+for (const id of [...fragTables.keys()].sort(cmp)) {
+  const m = fragTables.get(id);
+  g.addEdge({
+    from: sid, to: id, type: 'EXECUTES', grade: 'EXACT',
+    evidence: {
+      access: [...m.access].sort().join(','), via: 'mybatis-plus-fragment',
+      builtin: stmt.method, fragmentOp: [...m.ops].sort().join(','),
+    },
+  });
+}
+
+// ONE edge per (access, column) — but a column reached BOTH ways (the `in(…)`
+// predicate on `dep_id` and the projection that also selects it) keeps BOTH
+// roles. Dropping the second would make the evidence say the statement reads
+// that column only as a filter, which is not what the SQL does.
+const merged = new Map(); // "TYPE|columnId" -> {edgeType, cid, grade, roles, vias, flags}
+for (const [bucket, edgeType] of [[reads, 'READS'], [writes, 'WRITES']]) {
+  for (const c of bucket) {
+    const owner = c.entity ?? entity;
+    const cid = columnIdOf(owner, c.table, c.column);
+    ensureColumn(owner, c.table, c.column, c.grade);
+    const key = `${edgeType}|${cid}`;
+    let m = merged.get(key);
+    if (!m) {
+      m = { edgeType, cid, grade: c.grade, roles: new Set(), vias: new Set(), fragmentOps: new Set(), literal: false };
+      merged.set(key, m);
+    }
+    if (c.fragmentOp) m.fragmentOps.add(c.fragmentOp);
+    // WEAKEST link: the same column reached by a declared name and by a
+    // derived one is only as sure as the weaker of the two.
+    m.grade = weakest(m.grade, c.grade);
+    if (c.role) m.roles.add(c.role);
+    m.vias.add(c.via ?? 'mybatis-plus');
+    if (c.fromLiteral) m.literal = true;
+  }
+}
+for (const key of [...merged.keys()].sort(cmp)) {
+  const m = merged.get(key);
+  const roles = [...m.roles].sort();
+  g.addEdge({
+    from: sid, to: m.cid, type: m.edgeType, grade: m.grade,
+    evidence: {
+      via: [...m.vias].sort().join(','), roles,
+      ...(m.fragmentOps.size > 0 ? { fragmentOp: [...m.fragmentOps].sort().join(',') } : {}),
+      ...(m.literal ? { literal: true, catalogMatch: g.nodes.get(m.cid)?.stub !== true } : {}),
+      ...(m.roles.has('implicit-logic-filter') ? { implicitFilter: true } : {}),
+      ...(m.roles.has('logic-delete') ? { logicDelete: true } : {}),
+    },
+  });
+  if (m.edgeType === 'READS') stats.reads += 1; else stats.writes += 1;
+}
+}
+
+function emitBuiltinStatement(g, a) {
+  const { stmt, entity } = a;
+  a.fragmentLineage = a.fragmentLineage ?? new Map();
+  // THE BUILDER. Every step below writes into it, and the statement node is
+  // written from it once: five accumulators in one object rather than five
+  // closures, so a step can be read on its own.
+  const mapped = [...entity.fields.values()].filter((f) => f.column);
+  const b = {
+    sid: nodeId('statement', stmt.key),
+    verb: stmt.verb,
+    reads: [],
+    writes: [],
+    unresolved: [],
+    notes: [],
+    access: 'read',
+    logicDelete: false,
+    runtimeOnly: false,
+    mapped,
+    allColumns: mapped.map((f) => ({ table: entity.table, column: f.column, grade: weakest(entity.tableGrade, f.grade), role: 'row' })),
+    idColumns: mapped.filter((f) => f.id === true)
+      .map((f) => ({ table: entity.table, column: f.column, grade: weakest(entity.tableGrade, f.grade), role: 'primary-key' })),
+    wrapperReads: [],
+    wrapperWrites: [],
+    selectNarrowing: [],
+    fragmentReads: [],
+    fragmentWrites: [],
+    fragmentTables: [],
+    runtimeReasons: new Set(),
+  };
+  readWrapperColumns(a, b);
+  columnsForVerb(a, b);
+  foldFragmentsAndLogicDelete(a, b);
+  writeStatementNode(g, a, b);
+}
+
 
 /**
  * WHY a fragment produced no fact — or `null` when it produced facts.

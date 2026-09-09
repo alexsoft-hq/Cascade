@@ -659,212 +659,241 @@ export function normalizeProfile(obj = {}) {
  * @param {Object} obj
  * @returns {Object} the same object (validated, not normalized)
  */
+/**
+ * THE LISTS AND MAPS: the packages this project owns, the services it is, the
+ * frontend and template roots it declares, and where a gateway forwards. Each
+ * one is a shape a later lane will read as given, so a wrong shape is refused
+ * HERE, with the key that is wrong and what it should be.
+ */
+function validateProfileLists(obj) {
+if ('packagePrefixes' in obj && !Array.isArray(obj.packagePrefixes)) {
+  throw new ProfileError('profile.packagePrefixes must be an array (multiple top-level packages allowed)');
+}
+
+if ('serviceNames' in obj) {
+  const v = obj.serviceNames;
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
+    throw new ProfileError('profile.serviceNames must be an array of non-empty names this deployable answers to (spring.application.name)');
+  }
+}
+
+if ('webRoots' in obj) {
+  const v = obj.webRoots;
+  if (!Array.isArray(v)) {
+    throw new ProfileError('profile.webRoots must be an array of {root, kind} entries naming frontend source roots no package.json declares');
+  }
+  v.forEach((entry, i) => {
+    const shape = `profile.webRoots[${i}]`;
+    if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
+      throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
+    }
+    if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared') {
+      throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it) or "declared" (you typed it)`);
+    }
+    if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
+      throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
+    }
+  });
+}
+
+if ('templateRoots' in obj) {
+  const v = obj.templateRoots;
+  if (!Array.isArray(v)) {
+    throw new ProfileError('profile.templateRoots must be an array of {root, engine, suffix} entries naming where a view name is resolved');
+  }
+  v.forEach((entry, i) => {
+    const shape = `profile.templateRoots[${i}]`;
+    if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
+      throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
+    }
+    if ('engine' in entry && !TEMPLATE_ENGINE_NAMES.includes(entry.engine)) {
+      throw new ProfileError(`${shape}.engine must be one of ${TEMPLATE_ENGINE_NAMES.join(', ')}`);
+    }
+    if ('suffix' in entry && (typeof entry.suffix !== 'string' || !entry.suffix.startsWith('.'))) {
+      throw new ProfileError(`${shape}.suffix must be the extension the view resolver appends, starting with a dot (".html", ".ftl", ".jsp")`);
+    }
+    if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
+      throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
+    }
+  });
+}
+
+if ('gatewayRoutes' in obj) {
+  const v = obj.gatewayRoutes;
+  if (!isObject(v)) {
+    throw new ProfileError('profile.gatewayRoutes must be an object mapping a front-end prefix to the back-end prefix it becomes');
+  }
+  for (const [key, entry] of Object.entries(v)) {
+    const shape = `profile.gatewayRoutes[${JSON.stringify(key)}]`;
+    if (typeof entry === 'string') continue;
+    if (!isObject(entry) || typeof entry.to !== 'string') {
+      throw new ProfileError(`${shape} must be the back-end prefix as a string, or an object with a "to" prefix (and optionally "service" and "from")`);
+    }
+    if ('service' in entry && entry.service !== null && !(typeof entry.service === 'string' && entry.service.length > 0)) {
+      throw new ProfileError(`${shape}.service must be null or the non-empty name of the service the gateway forwards to`);
+    }
+    if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
+      throw new ProfileError(`${shape}.from must be null or the file this route was read from`);
+    }
+  }
+}
+}
+
+/**
+ * THE SINGLE-VALUE KEYS: a schema, a switch, a naming strategy, an identifier
+ * case. Every one of them is read by a lane that has no second opinion about it,
+ * so an unknown value is refused rather than defaulted.
+ */
+function validateProfileValues(obj) {
+
+if (isObject(obj.schema) && 'default' in obj.schema) {
+  const d = obj.schema.default;
+  if (d !== null && !(typeof d === 'string' && d.length > 0)) {
+    throw new ProfileError('profile.schema.default must be null or a non-empty string');
+  }
+}
+
+if (isObject(obj.screenAxis) && 'enabled' in obj.screenAxis) {
+  // null is a VALUE here, not a missing key: it is the third state, "decide
+  // it from what the run reads". Anything but true/false/null is a typo.
+  if (obj.screenAxis.enabled !== null && typeof obj.screenAxis.enabled !== 'boolean') {
+    throw new ProfileError('profile.screenAxis.enabled must be true, false or null');
+  }
+}
+
+if (isObject(obj.catalog) && 'source' in obj.catalog) {
+  if (!CATALOG_SOURCES.includes(obj.catalog.source)) {
+    throw new ProfileError(`profile.catalog.source must be one of ${CATALOG_SOURCES.join('|')}, got ${JSON.stringify(obj.catalog.source)}`);
+  }
+}
+
+if (isObject(obj.build) && 'tool' in obj.build) {
+  if (!BUILD_TOOLS.includes(obj.build.tool)) {
+    throw new ProfileError(`profile.build.tool must be one of gradle|maven|null, got ${JSON.stringify(obj.build.tool)}`);
+  }
+}
+
+if ('sqlIdentifierCase' in obj) {
+  const c = obj.sqlIdentifierCase;
+  if (c !== null && !IDENTIFIER_CASES.includes(c)) {
+    throw new ProfileError(`profile.sqlIdentifierCase must be null or one of ${IDENTIFIER_CASES.join('|')}, got ${JSON.stringify(c)}`);
+  }
+}
+
+if (isObject(obj.jpa) && 'namingStrategy' in obj.jpa) {
+  const ns = obj.jpa.namingStrategy;
+  if (ns !== null && !JPA_NAMING_STRATEGIES.includes(ns)) {
+    throw new ProfileError(`profile.jpa.namingStrategy must be null or one of ${JPA_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(ns)}`);
+  }
+}
+
+if (isObject(obj.mybatisPlus)) {
+  if ('namingStrategy' in obj.mybatisPlus) {
+    const ns = obj.mybatisPlus.namingStrategy;
+    if (ns !== null && !MYBATIS_PLUS_NAMING_STRATEGIES.includes(ns)) {
+      throw new ProfileError(`profile.mybatisPlus.namingStrategy must be null or one of ${MYBATIS_PLUS_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(ns)}`);
+    }
+  }
+  for (const k of ['tablePrefix', 'logicDeleteValue', 'logicNotDeleteValue']) {
+    if (!(k in obj.mybatisPlus)) continue;
+    const v = obj.mybatisPlus[k];
+    if (v !== null && !(typeof v === 'string' && v.length > 0)) {
+      throw new ProfileError(`profile.mybatisPlus.${k} must be null or a non-empty string, got ${JSON.stringify(v)}`);
+    }
+  }
+}
+
+if (isObject(obj.openapi) && 'documents' in obj.openapi) {
+  const v = obj.openapi.documents;
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
+    throw new ProfileError('profile.openapi.documents must be an array of non-empty paths, relative to the manifest directory');
+  }
+}
+
+for (const k of ['har', 'otel']) {
+  if (!isObject(obj.runtimeEvidence) || !(k in obj.runtimeEvidence)) continue;
+  const v = obj.runtimeEvidence[k];
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
+    throw new ProfileError(`profile.runtimeEvidence.${k} must be an array of non-empty paths, relative to the manifest directory`);
+  }
+}
+
+}
+
+/**
+ * THE BLOCKS A LANE READS WHOLE: the screen axis, module attribution, the
+ * generated-sources declaration and the calibration state.
+ */
+function validateProfileBlocks(obj) {
+if (isObject(obj.screenAxis)) {
+  for (const k of ['codeRegex', 'pathRule', 'nameSource']) {
+    if (!(k in obj.screenAxis)) continue;
+    const v = obj.screenAxis[k];
+    if (v !== null && typeof v !== 'string') {
+      throw new ProfileError(`profile.screenAxis.${k} must be null or a string`);
+    }
+  }
+  if (typeof obj.screenAxis.codeRegex === 'string' && obj.screenAxis.codeRegex !== '') {
+    try {
+      // eslint-disable-next-line no-new
+      new RegExp(obj.screenAxis.codeRegex);
+    } catch (e) {
+      throw new ProfileError(`profile.screenAxis.codeRegex is not a regular expression this engine can compile: ${e.message}`);
+    }
+  }
+}
+
+if (isObject(obj.moduleAttribution) && 'codeLength' in obj.moduleAttribution) {
+  const v = obj.moduleAttribution.codeLength;
+  if (v !== null && !(Number.isInteger(v) && v > 0)) {
+    throw new ProfileError(`profile.moduleAttribution.codeLength must be null or a positive whole number of characters, got ${JSON.stringify(v)}`);
+  }
+}
+
+if (isObject(obj.generatedSources)) {
+  for (const k of ['annotations', 'pathGlobs']) {
+    if (!(k in obj.generatedSources)) continue;
+    const v = obj.generatedSources[k];
+    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
+      throw new ProfileError(`profile.generatedSources.${k} must be an array of non-empty strings`);
+    }
+  }
+}
+
+if (isObject(obj.calibration)) {
+  if ('firstRun' in obj.calibration && !FIRST_RUN_MODES.includes(obj.calibration.firstRun)) {
+    throw new ProfileError(`profile.calibration.firstRun must be one of ${FIRST_RUN_MODES.join('|')}, got ${JSON.stringify(obj.calibration.firstRun)}`);
+  }
+  for (const k of ['maxRelativeDrop', 'maxRelativeDropOnRepin']) {
+    if (k in obj.calibration) {
+      const v = obj.calibration[k];
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) {
+        throw new ProfileError(`profile.calibration.${k} must be a fraction between 0 and 1 (0.05 = a 5% relative drop), got ${JSON.stringify(v)}`);
+      }
+    }
+  }
+  if ('receiptTtlDays' in obj.calibration) {
+    const v = obj.calibration.receiptTtlDays;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) {
+      throw new ProfileError(`profile.calibration.receiptTtlDays must be a positive whole number of days, got ${JSON.stringify(v)}`);
+    }
+  }
+}
+
+}
+
+
 export function validateProfile(obj) {
   if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
     throw new ProfileError('validateProfile expects a profile object');
   }
 
-  if ('packagePrefixes' in obj && !Array.isArray(obj.packagePrefixes)) {
-    throw new ProfileError('profile.packagePrefixes must be an array (multiple top-level packages allowed)');
-  }
-
-  if ('serviceNames' in obj) {
-    const v = obj.serviceNames;
-    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
-      throw new ProfileError('profile.serviceNames must be an array of non-empty names this deployable answers to (spring.application.name)');
-    }
-  }
-
-  if ('webRoots' in obj) {
-    const v = obj.webRoots;
-    if (!Array.isArray(v)) {
-      throw new ProfileError('profile.webRoots must be an array of {root, kind} entries naming frontend source roots no package.json declares');
-    }
-    v.forEach((entry, i) => {
-      const shape = `profile.webRoots[${i}]`;
-      if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
-        throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
-      }
-      if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared') {
-        throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it) or "declared" (you typed it)`);
-      }
-      if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
-        throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
-      }
-    });
-  }
-
-  if ('templateRoots' in obj) {
-    const v = obj.templateRoots;
-    if (!Array.isArray(v)) {
-      throw new ProfileError('profile.templateRoots must be an array of {root, engine, suffix} entries naming where a view name is resolved');
-    }
-    v.forEach((entry, i) => {
-      const shape = `profile.templateRoots[${i}]`;
-      if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
-        throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
-      }
-      if ('engine' in entry && !TEMPLATE_ENGINE_NAMES.includes(entry.engine)) {
-        throw new ProfileError(`${shape}.engine must be one of ${TEMPLATE_ENGINE_NAMES.join(', ')}`);
-      }
-      if ('suffix' in entry && (typeof entry.suffix !== 'string' || !entry.suffix.startsWith('.'))) {
-        throw new ProfileError(`${shape}.suffix must be the extension the view resolver appends, starting with a dot (".html", ".ftl", ".jsp")`);
-      }
-      if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
-        throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
-      }
-    });
-  }
-
-  if ('gatewayRoutes' in obj) {
-    const v = obj.gatewayRoutes;
-    if (!isObject(v)) {
-      throw new ProfileError('profile.gatewayRoutes must be an object mapping a front-end prefix to the back-end prefix it becomes');
-    }
-    for (const [key, entry] of Object.entries(v)) {
-      const shape = `profile.gatewayRoutes[${JSON.stringify(key)}]`;
-      if (typeof entry === 'string') continue;
-      if (!isObject(entry) || typeof entry.to !== 'string') {
-        throw new ProfileError(`${shape} must be the back-end prefix as a string, or an object with a "to" prefix (and optionally "service" and "from")`);
-      }
-      if ('service' in entry && entry.service !== null && !(typeof entry.service === 'string' && entry.service.length > 0)) {
-        throw new ProfileError(`${shape}.service must be null or the non-empty name of the service the gateway forwards to`);
-      }
-      if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
-        throw new ProfileError(`${shape}.from must be null or the file this route was read from`);
-      }
-    }
-  }
-
-  if (isObject(obj.schema) && 'default' in obj.schema) {
-    const d = obj.schema.default;
-    if (d !== null && !(typeof d === 'string' && d.length > 0)) {
-      throw new ProfileError('profile.schema.default must be null or a non-empty string');
-    }
-  }
-
-  if (isObject(obj.screenAxis) && 'enabled' in obj.screenAxis) {
-    // null is a VALUE here, not a missing key: it is the third state, "decide
-    // it from what the run reads". Anything but true/false/null is a typo.
-    if (obj.screenAxis.enabled !== null && typeof obj.screenAxis.enabled !== 'boolean') {
-      throw new ProfileError('profile.screenAxis.enabled must be true, false or null');
-    }
-  }
-
-  if (isObject(obj.catalog) && 'source' in obj.catalog) {
-    if (!CATALOG_SOURCES.includes(obj.catalog.source)) {
-      throw new ProfileError(`profile.catalog.source must be one of ${CATALOG_SOURCES.join('|')}, got ${JSON.stringify(obj.catalog.source)}`);
-    }
-  }
-
-  if (isObject(obj.build) && 'tool' in obj.build) {
-    if (!BUILD_TOOLS.includes(obj.build.tool)) {
-      throw new ProfileError(`profile.build.tool must be one of gradle|maven|null, got ${JSON.stringify(obj.build.tool)}`);
-    }
-  }
-
-  if ('sqlIdentifierCase' in obj) {
-    const c = obj.sqlIdentifierCase;
-    if (c !== null && !IDENTIFIER_CASES.includes(c)) {
-      throw new ProfileError(`profile.sqlIdentifierCase must be null or one of ${IDENTIFIER_CASES.join('|')}, got ${JSON.stringify(c)}`);
-    }
-  }
-
-  if (isObject(obj.jpa) && 'namingStrategy' in obj.jpa) {
-    const ns = obj.jpa.namingStrategy;
-    if (ns !== null && !JPA_NAMING_STRATEGIES.includes(ns)) {
-      throw new ProfileError(`profile.jpa.namingStrategy must be null or one of ${JPA_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(ns)}`);
-    }
-  }
-
-  if (isObject(obj.mybatisPlus)) {
-    if ('namingStrategy' in obj.mybatisPlus) {
-      const ns = obj.mybatisPlus.namingStrategy;
-      if (ns !== null && !MYBATIS_PLUS_NAMING_STRATEGIES.includes(ns)) {
-        throw new ProfileError(`profile.mybatisPlus.namingStrategy must be null or one of ${MYBATIS_PLUS_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(ns)}`);
-      }
-    }
-    for (const k of ['tablePrefix', 'logicDeleteValue', 'logicNotDeleteValue']) {
-      if (!(k in obj.mybatisPlus)) continue;
-      const v = obj.mybatisPlus[k];
-      if (v !== null && !(typeof v === 'string' && v.length > 0)) {
-        throw new ProfileError(`profile.mybatisPlus.${k} must be null or a non-empty string, got ${JSON.stringify(v)}`);
-      }
-    }
-  }
-
-  if (isObject(obj.openapi) && 'documents' in obj.openapi) {
-    const v = obj.openapi.documents;
-    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
-      throw new ProfileError('profile.openapi.documents must be an array of non-empty paths, relative to the manifest directory');
-    }
-  }
-
-  for (const k of ['har', 'otel']) {
-    if (!isObject(obj.runtimeEvidence) || !(k in obj.runtimeEvidence)) continue;
-    const v = obj.runtimeEvidence[k];
-    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
-      throw new ProfileError(`profile.runtimeEvidence.${k} must be an array of non-empty paths, relative to the manifest directory`);
-    }
-  }
-
-  if (isObject(obj.screenAxis)) {
-    for (const k of ['codeRegex', 'pathRule', 'nameSource']) {
-      if (!(k in obj.screenAxis)) continue;
-      const v = obj.screenAxis[k];
-      if (v !== null && typeof v !== 'string') {
-        throw new ProfileError(`profile.screenAxis.${k} must be null or a string`);
-      }
-    }
-    if (typeof obj.screenAxis.codeRegex === 'string' && obj.screenAxis.codeRegex !== '') {
-      try {
-        // eslint-disable-next-line no-new
-        new RegExp(obj.screenAxis.codeRegex);
-      } catch (e) {
-        throw new ProfileError(`profile.screenAxis.codeRegex is not a regular expression this engine can compile: ${e.message}`);
-      }
-    }
-  }
-
-  if (isObject(obj.moduleAttribution) && 'codeLength' in obj.moduleAttribution) {
-    const v = obj.moduleAttribution.codeLength;
-    if (v !== null && !(Number.isInteger(v) && v > 0)) {
-      throw new ProfileError(`profile.moduleAttribution.codeLength must be null or a positive whole number of characters, got ${JSON.stringify(v)}`);
-    }
-  }
-
-  if (isObject(obj.generatedSources)) {
-    for (const k of ['annotations', 'pathGlobs']) {
-      if (!(k in obj.generatedSources)) continue;
-      const v = obj.generatedSources[k];
-      if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
-        throw new ProfileError(`profile.generatedSources.${k} must be an array of non-empty strings`);
-      }
-    }
-  }
-
-  if (isObject(obj.calibration)) {
-    if ('firstRun' in obj.calibration && !FIRST_RUN_MODES.includes(obj.calibration.firstRun)) {
-      throw new ProfileError(`profile.calibration.firstRun must be one of ${FIRST_RUN_MODES.join('|')}, got ${JSON.stringify(obj.calibration.firstRun)}`);
-    }
-    for (const k of ['maxRelativeDrop', 'maxRelativeDropOnRepin']) {
-      if (k in obj.calibration) {
-        const v = obj.calibration[k];
-        if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) {
-          throw new ProfileError(`profile.calibration.${k} must be a fraction between 0 and 1 (0.05 = a 5% relative drop), got ${JSON.stringify(v)}`);
-        }
-      }
-    }
-    if ('receiptTtlDays' in obj.calibration) {
-      const v = obj.calibration.receiptTtlDays;
-      if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) {
-        throw new ProfileError(`profile.calibration.receiptTtlDays must be a positive whole number of days, got ${JSON.stringify(v)}`);
-      }
-    }
-  }
-
+  validateProfileLists(obj);
+  validateProfileValues(obj);
+  validateProfileBlocks(obj);
   return obj;
 }
+
 
 /**
  * Load a profile from a file. For `.json`, read + parse + normalize + validate and

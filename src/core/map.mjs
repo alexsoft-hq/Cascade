@@ -93,6 +93,398 @@ const KEY_SEP = '\u0000';
  * @returns {{mode:string, depth:number, layers:{statements:boolean, screens:boolean},
  *            nodes:object[], links:object[], summary:object, limit:number}}
  */
+/**
+ * 1. GROUPS — the API path prefixes a route belongs to, and the routes under
+ * each. The picture's first column.
+ */
+function mapGroups(endpoints) {
+// ---- 1. groups (API path prefixes) and their endpoints -------------------
+const groupOf = new Map(); // group name -> endpoint node ids
+for (const ep of endpoints) {
+  let list = groupOf.get(ep.group);
+  if (!list) { list = []; groupOf.set(ep.group, list); }
+  list.push(ep.id);
+}
+
+  return groupOf;
+}
+
+/**
+ * 2. WHAT EACH ENDPOINT ENDS AT: the tables its walk touches, the statements it
+ * runs, and the weakest grade on the way to each.
+ */
+function mapReaches(graph, endpoints, withStatements) {
+// ---- 2. what each endpoint ends at --------------------------------------
+// `touches` is the SHORTCUT link endpoint→table, with the statements folded
+// into it; the `statements` layer replaces it with the two real steps
+// (endpoint --executes--> statement --executes--> table) so the SQL that
+// carried the touch is on screen rather than summarised.
+const touches = new Map();   // (endpoint, table) -> {source,target,access:Set,grade,statements}
+const epToStmt = new Map();  // (endpoint, statement) -> {source,target,grade}
+const stmtToTable = new Map(); // (statement, table) -> {source,target,access:Set,grade}
+const stmtGrade = new Map(); // statement node id -> weakest grade over the endpoints that reach it
+const touchedTables = new Set();
+for (const ep of endpoints) {
+  for (const s of ep.statements) {
+    const prev = stmtGrade.get(s.id);
+    if (prev === undefined || RANK[s.grade] > RANK[prev]) stmtGrade.set(s.id, s.grade);
+    if (withStatements) {
+      const k = ep.id + KEY_SEP + s.id;
+      const cur = epToStmt.get(k);
+      if (!cur) epToStmt.set(k, { source: ep.id, target: s.id, kind: 'executes', grade: s.grade });
+      else if (RANK[s.grade] > RANK[cur.grade]) cur.grade = s.grade;
+    }
+    for (const e of graph.outEdges(s.id)) {
+      if (e.type !== 'EXECUTES') continue;
+      const access = graph.edgeAt(e.idx)?.evidence?.access ?? 'read';
+      touchedTables.add(e.to);
+      if (withStatements) {
+        const k = s.id + KEY_SEP + e.to;
+        let link = stmtToTable.get(k);
+        if (!link) { link = { source: s.id, target: e.to, kind: 'executes', access: new Set(), grade: e.grade }; stmtToTable.set(k, link); }
+        link.access.add(access);
+        if (RANK[e.grade] > RANK[link.grade]) link.grade = e.grade;
+        continue;
+      }
+      const k = ep.id + KEY_SEP + e.to;
+      let link = touches.get(k);
+      // WITHIN this path, the weakest link: the walk's path grade to the
+      // statement, then the statement's own SQL edge.
+      const pathGrade = RANK[s.grade] <= RANK[e.grade] ? s.grade : e.grade;
+      if (!link) { link = { source: ep.id, target: e.to, kind: 'touches', access: new Set(), grade: pathGrade, statements: 0 }; touches.set(k, link); }
+      link.access.add(access);
+      link.statements += 1;
+      // ACROSS the paths, the strongest: one confirmed route to this table is
+      // a confirmed touch, however many candidate routes also reach it.
+      if (RANK[pathGrade] > RANK[link.grade]) link.grade = pathGrade;
+    }
+  }
+}
+
+  return { touches, epToStmt, stmtToTable, stmtGrade, touchedTables };
+}
+
+/**
+ * 2b. THE SCREENS LAYER, when it was asked for: the other end of the round trip
+ * on the same picture. A screen that reaches NO drawn route is not on the map —
+ * it would be a dot with no line, which reads as "this screen calls nothing"
+ * when the truth is that its calls did not resolve.
+ */
+function mapScreens(graph, { endpoints, mode, depth, withScreens }) {
+// ---- 2b. the screens layer, when it was asked for ------------------------
+// The other end of the round trip (SPEC §1.1), on the same picture: one node
+// per SCREEN that reaches a route this pack serves, and one line per (screen,
+// route) the forward walk found. It is the same `walkScreens` census the
+// overview counts and `browse kind=screen` lists, so the map cannot disagree
+// with either about what a screen reaches.
+//
+// A screen that reaches NO drawn route is not on the map: it would be a dot
+// with no line, which says "this screen calls nothing" where the truth is
+// that nothing we could follow leaves it. The count of those is in `summary`.
+const servedEndpoints = new Set(endpoints.map((ep) => ep.id));
+const screenRows = [];       // {node, links:[…]}
+let screensReaching = 0;
+let screensTotal = 0;
+if (withScreens) {
+  const sw = walkScreens(graph, { mode, depth });
+  screensTotal = sw.screens.length;
+  for (const s of sw.screens) {
+    const out = s.endpoints.filter((e) => servedEndpoints.has(e.id));
+    if (out.length === 0) continue;
+    screensReaching += 1;
+    const n = graph.nodes.get(s.id) ?? {};
+    screenRows.push({
+      node: {
+        id: s.id, kind: 'screen', label: nodeLabel(n, s.id), degree: 0,
+        path: s.path, title: s.title, group: s.group, component: s.component,
+        endpoints: out.length, tables: s.tables.length,
+        // A recording says the browser really was here. It is a MARKER, never
+        // a grade: no line on this map was drawn from one.
+        observed: s.observed === true,
+        source: s.source ?? null,
+      },
+      links: out.map((e) => ({ source: s.id, target: e.id, kind: 'calls', grade: e.grade })),
+    });
+  }
+}
+
+  return { screenRows, screensReaching, screensTotal };
+}
+
+/** 3. THE NODE SET: one node per group, screen, route, statement and table. */
+function mapNodes(graph, ctx) {
+  const {
+    endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements,
+  } = ctx;
+// ---- 3. the node set ----------------------------------------------------
+const tableFacts = tableCensus(graph);
+const nodes = [];
+for (const [name, eps] of groupOf) {
+  nodes.push({ id: `group:${name}`, kind: 'group', label: name, degree: 0, endpoints: eps.length });
+}
+for (const s of screenRows) nodes.push(s.node);
+for (const ep of endpoints) {
+  const n = graph.nodes.get(ep.id) ?? {};
+  nodes.push({
+    id: ep.id, kind: 'endpoint', label: nodeLabel(n, ep.id), group: ep.group, degree: 0,
+    httpMethod: ep.httpMethod, path: ep.path, handlerShort: handlerShortOf(graph, ep.id, n),
+    // How many controller methods declare this route. 1 almost always; 2+ when
+    // two modules use the same route string, and then `handlerShort` names the
+    // primary one and the map still walked ALL of them.
+    handlers: ep.handlers,
+  });
+}
+for (const tid of touchedTables) {
+  const f = tableFacts.get(tid) ?? { comment: null, columnCount: 0 };
+  nodes.push({ id: tid, kind: 'table', label: strip(tid), degree: 0, comment: f.comment, columnCount: f.columnCount });
+}
+if (withStatements) {
+  for (const sid of stmtGrade.keys()) {
+    const n = graph.nodes.get(sid) ?? {};
+    nodes.push({ id: sid, kind: 'statement', label: nodeLabel(n, sid), degree: 0, statementType: n.statementType ?? null });
+  }
+}
+
+// ---- 3b. what the caller brought with it --------------------------------
+for (const n of extraNodes) nodes.push(n);
+
+  return { tableFacts, nodes };
+}
+
+/** 4. THE LINK SET, joins between drawn tables included, each drawn once. */
+function mapLinks(graph, ctx) {
+  const {
+    epToStmt, extraLinks, groupOf, screenRows, stmtToTable, touchedTables, touches,
+  } = ctx;
+// ---- 4. the link set ----------------------------------------------------
+const links = [];
+for (const [name, eps] of groupOf) for (const epId of eps) {
+  // Definitional: the group IS the endpoint's first path segment — or, when
+  // the profile declares moduleAttribution.packageDepth, its handler's own
+  // truncated package. Either way nothing was inferred, so the membership is
+  // EXACT even where the chain below it is not.
+  links.push({ source: `group:${name}`, target: epId, kind: 'member', grade: 'EXACT' });
+}
+for (const s of screenRows) for (const l of s.links) links.push(l);
+for (const l of touches.values()) links.push({ ...l, access: joinAccess(l.access) });
+for (const l of epToStmt.values()) links.push(l);
+for (const l of stmtToTable.values()) links.push({ ...l, access: joinAccess(l.access) });
+// Joins between DRAWN tables, undirected and once. A JOINS edge recorded in
+// both directions is one relationship, not two: keyed by the sorted pair, with
+// the strongest witness count and the strongest grade of the pair.
+const joins = new Map();
+for (const e of graph.edges) {
+  if (e.type !== 'JOINS') continue;
+  if (!touchedTables.has(e.from) || !touchedTables.has(e.to)) continue;
+  const [a, b] = e.from <= e.to ? [e.from, e.to] : [e.to, e.from];
+  const k = a + KEY_SEP + b;
+  const witness = e.evidence?.count ?? 1;
+  let link = joins.get(k);
+  if (!link) { link = { source: a, target: b, kind: 'joins', grade: e.grade, witness }; joins.set(k, link); }
+  else {
+    if (RANK[e.grade] > RANK[link.grade]) link.grade = e.grade;
+    if (witness > link.witness) link.witness = witness;
+  }
+}
+for (const l of joins.values()) links.push(l);
+for (const l of extraLinks) links.push(l);
+
+  return links;
+}
+
+/**
+ * 5-5b. THE TWO CAPS. Degree over the FULL link set decides who survives — a cut
+ * must not be decided by what an earlier cut already removed — and the byte
+ * budget then cuts further, by halving, until the answer fits.
+ */
+function mapCaps(nodes, links, { fromOutside, limit, opts }) {
+// ---- 5. the node cap ----------------------------------------------------
+// Degree over the FULL link set decides who survives: cutting the map must
+// keep the hubs, not whichever ids sort first.
+const fullDegree = degreeOf(nodes, links);
+const totals = { group: 0, screen: 0, endpoint: 0, table: 0, statement: 0 };
+for (const n of nodes) if (!fromOutside.has(n.id) && totals[n.kind] !== undefined) totals[n.kind] += 1;
+// The cut ORDER, written once: the least-connected node of the first kind that
+// still has members, then the next kind. Used by both budgets below.
+const cutQueue = [];
+for (const kind of CUT_ORDER) {
+  // Inside one kind, what the caller BROUGHT gives way before what this pack
+  // drew. This pack's picture is the answer; the second picture laid over it
+  // is the first thing a budget takes back.
+  for (const outside of [true, false]) {
+    const of = nodes.filter((n) => n.kind === kind && fromOutside.has(n.id) === outside)
+      .sort((a, b) => (fullDegree.get(a.id) - fullDegree.get(b.id)) || cmp(b.id, a.id));
+    cutQueue.push(...of.map((n) => n.id));
+  }
+}
+const dropFirst = (howMany) => {
+  const out = new Set();
+  for (let i = 0; i < howMany && i < cutQueue.length; i++) out.add(cutQueue[i]);
+  return out;
+};
+const apply = (dropSet) => {
+  const keptNodes = dropSet.size ? nodes.filter((n) => !dropSet.has(n.id)) : nodes;
+  const ids = new Set(keptNodes.map((n) => n.id));
+  const keptLinks = dropSet.size ? links.filter((l) => ids.has(l.source) && ids.has(l.target)) : links;
+  if (!fromOutside.size) return { keptNodes, keptLinks };
+  // A NODE FROM OUTSIDE THAT LOST EVERY LINE IS NOT DRAWN. The picture it
+  // came on was a route and the things that route reaches; cut the route and
+  // what is left is a disc floating beside this pack's map with nothing
+  // saying why it is there. This pack's own nodes keep the old behaviour: a
+  // group whose endpoints all went is still the group this pack has.
+  // An orphan has no line by definition, so removing it removes no line and
+  // one pass is enough.
+  const linked = new Set();
+  for (const l of keptLinks) { linked.add(l.source); linked.add(l.target); }
+  const orphaned = keptNodes.some((n) => fromOutside.has(n.id) && !linked.has(n.id));
+  if (!orphaned) return { keptNodes, keptLinks };
+  return { keptNodes: keptNodes.filter((n) => !fromOutside.has(n.id) || linked.has(n.id)), keptLinks };
+};
+
+// HOW MANY THE CAP REALLY COSTS. Without outside nodes it is arithmetic: one
+// node dropped is one node fewer. With them it is not, because dropping a
+// portal takes the cluster hanging off it too, so the smallest prefix that
+// fits is SEARCHED rather than computed. The predicate is monotone (a longer
+// prefix never leaves more nodes), so a binary search finds it in a dozen
+// passes, and the answer is still the least this budget can take.
+let dropCount = Math.max(0, nodes.length - limit);
+if (fromOutside.size && dropCount > 0) {
+  let lo = 0, hi = cutQueue.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (apply(dropFirst(mid)).keptNodes.length <= limit) hi = mid; else lo = mid + 1;
+  }
+  dropCount = lo;
+}
+let drop = dropFirst(dropCount);
+let cutBy = drop.size ? 'node-cap' : null;
+let applied = apply(drop);
+
+// ---- 5b. the BYTE budget (SPEC §13) ------------------------------------
+// The node cap is in the wrong unit for the promise §13 makes. Measured on a
+// 400-table / 3 800-endpoint pack: 4 227 nodes — comfortably UNDER the default
+// cap of 6 000 — carry 12 200 links and serialise to 2.5 MB, and the answer
+// called itself complete. A picture that large is neither drawable nor
+// returnable, and "no cut" was a true statement about nodes and a false one
+// about the answer.
+//
+// So the map is also cut to fit `maxBytes` OF ITS OWN MEASURED SERIALISATION —
+// not an estimate, the real JSON.stringify of the nodes and links. The first
+// pass computes the true bytes-per-element and cuts to the target directly;
+// at most MAX_BYTE_ROUNDS passes run, and the last one is allowed to be a
+// little under rather than a little over. The cut uses the SAME order as the
+// node cap (least-connected of statements, then endpoints, then tables;
+// groups never), so a byte-cut map and a node-cut map are the same picture at
+// different sizes. `summary.shown` and the caller's `truncated` say exactly
+// what went.
+const maxBytes = opts.maxBytes ?? null;
+if (maxBytes != null && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
+  throw new MapError(`maxBytes must be a positive integer or null, got ${maxBytes}`);
+}
+let bytes;
+if (maxBytes != null) {
+  // How many ELEMENTS (nodes + links) survive each prefix of the cut queue.
+  // Dropping one node also drops every link touching it, so the two cannot be
+  // traded one for one — computed exactly, once, in O(links): walking the
+  // queue and counting each link the first time either of its ends goes.
+  const incident = new Map();
+  links.forEach((l, i) => {
+    for (const end of [l.source, l.target]) {
+      const arr = incident.get(end);
+      if (arr) arr.push(i); else incident.set(end, [i]);
+    }
+  });
+  const gone = new Uint8Array(links.length);
+  // elementsAfter[i] = elements left after dropping the first i queue entries.
+  const elementsAfter = new Array(cutQueue.length + 1);
+  elementsAfter[0] = nodes.length + links.length;
+  let linksLeft = links.length;
+  for (let i = 0; i < cutQueue.length; i += 1) {
+    for (const li of incident.get(cutQueue[i]) ?? []) {
+      if (!gone[li]) { gone[li] = 1; linksLeft -= 1; }
+    }
+    elementsAfter[i + 1] = (nodes.length - (i + 1)) + linksLeft;
+  }
+  const dropForTarget = (target) => {
+    // The SMALLEST prefix that fits — cut as little as the budget allows.
+    for (let i = 0; i <= cutQueue.length; i += 1) if (elementsAfter[i] <= target) return i;
+    return cutQueue.length;
+  };
+  for (let round = 0; round < MAX_BYTE_ROUNDS; round += 1) {
+    bytes = sizeOf(applied.keptNodes, applied.keptLinks);
+    const elements = applied.keptNodes.length + applied.keptLinks.length;
+    if (bytes <= maxBytes || elements === 0) break;
+    // The MEASURED bytes per element of what is on the table right now; aim a
+    // little under the budget so the next measurement is not a coin flip.
+    const target = Math.max(1, Math.floor(elements * (maxBytes / bytes) * 0.95));
+    const nextDrop = Math.max(drop.size + 1, dropForTarget(target));
+    drop = dropFirst(nextDrop);
+    cutBy = 'byte-budget';
+    applied = apply(drop);
+  }
+}
+const kept = applied.keptNodes;
+const keptLinks = applied.keptLinks;
+
+  return { kept, keptLinks, cutBy, dropCount, totals, maxBytes, bytes };
+}
+
+/** 6. DEGREES, ORDER, AND THE SUMMARY THE PAGE READS. */
+function mapSummary(ctx) {
+  const {
+    cutBy, extraLinks, extraNodes, fromOutside, kept, keptLinks, links, maxBytes,
+    nodes, outsideLinks, screensReaching, screensTotal, tableFacts, totals, touchedTables,
+    walk, withScreens, withStatements,
+  } = ctx;
+// ---- 6. degrees, order, summary ----------------------------------------
+const degree = degreeOf(kept, keptLinks);
+for (const n of kept) n.degree = degree.get(n.id);
+kept.sort((a, b) => (KIND_RANK[a.kind] - KIND_RANK[b.kind]) || cmp(a.id, b.id));
+keptLinks.sort((a, b) => (LINK_RANK[a.kind] - LINK_RANK[b.kind]) || cmp(a.source, b.source) || cmp(a.target, b.target));
+
+const shown = { group: 0, screen: 0, endpoint: 0, table: 0, statement: 0 };
+for (const n of kept) if (!fromOutside.has(n.id) && shown[n.kind] !== undefined) shown[n.kind] += 1;
+const summary = {
+  groups: totals.group,
+  endpoints: totals.endpoint,
+  tables: tableFacts.size,
+  tablesTouched: touchedTables.size,
+  links: keptLinks.length,
+  linksTotal: links.length,
+  nodesTotal: nodes.length,
+  shown: { groups: shown.group, endpoints: shown.endpoint, tables: shown.table, statements: shown.statement, screens: shown.screen },
+  // What (if anything) cut this map, and how big the answer's own node+link
+  // payload actually is — measured, never estimated. `bytes` is null when no
+  // byte budget was asked for.
+  cutBy,
+  bytes: maxBytes == null ? null : sizeOf(kept, keptLinks),
+  maxBytes,
+  walk,
+};
+// How much of what the caller brought survived. Counted apart from `shown`,
+// because `shown` answers "how much of THIS pack is on the picture" and an
+// extra node is not part of this pack.
+if (extraNodes.length || extraLinks.length) {
+  summary.extra = {
+    nodes: kept.reduce((n, x) => n + (fromOutside.has(x.id) ? 1 : 0), 0),
+    nodesGiven: extraNodes.length,
+    links: keptLinks.reduce((n, l) => n + (outsideLinks.has(l) ? 1 : 0), 0),
+    linksGiven: extraLinks.length,
+  };
+}
+if (withStatements) summary.statements = totals.statement;
+if (withScreens) {
+  // Two numbers, because they answer two different questions: how many screens
+  // the pack HAS, and how many of them reach a route this map draws. The
+  // difference is the screens that are not on the picture, and it is reported
+  // rather than left as a silence.
+  summary.screens = screensReaching;
+  summary.screensTotal = screensTotal;
+}
+  return { degree, shown, summary };
+}
+
+
 export function buildMap(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new MapError(`unknown mode: ${JSON.stringify(mode)}`);
@@ -132,337 +524,21 @@ export function buildMap(graph, opts = {}) {
     ...(opts.only != null ? { only: opts.only } : {}),
   });
 
-  // ---- 1. groups (API path prefixes) and their endpoints -------------------
-  const groupOf = new Map(); // group name -> endpoint node ids
-  for (const ep of endpoints) {
-    let list = groupOf.get(ep.group);
-    if (!list) { list = []; groupOf.set(ep.group, list); }
-    list.push(ep.id);
-  }
-
-  // ---- 2. what each endpoint ends at --------------------------------------
-  // `touches` is the SHORTCUT link endpoint→table, with the statements folded
-  // into it; the `statements` layer replaces it with the two real steps
-  // (endpoint --executes--> statement --executes--> table) so the SQL that
-  // carried the touch is on screen rather than summarised.
-  const touches = new Map();   // (endpoint, table) -> {source,target,access:Set,grade,statements}
-  const epToStmt = new Map();  // (endpoint, statement) -> {source,target,grade}
-  const stmtToTable = new Map(); // (statement, table) -> {source,target,access:Set,grade}
-  const stmtGrade = new Map(); // statement node id -> weakest grade over the endpoints that reach it
-  const touchedTables = new Set();
-  for (const ep of endpoints) {
-    for (const s of ep.statements) {
-      const prev = stmtGrade.get(s.id);
-      if (prev === undefined || RANK[s.grade] > RANK[prev]) stmtGrade.set(s.id, s.grade);
-      if (withStatements) {
-        const k = ep.id + KEY_SEP + s.id;
-        const cur = epToStmt.get(k);
-        if (!cur) epToStmt.set(k, { source: ep.id, target: s.id, kind: 'executes', grade: s.grade });
-        else if (RANK[s.grade] > RANK[cur.grade]) cur.grade = s.grade;
-      }
-      for (const e of graph.outEdges(s.id)) {
-        if (e.type !== 'EXECUTES') continue;
-        const access = graph.edgeAt(e.idx)?.evidence?.access ?? 'read';
-        touchedTables.add(e.to);
-        if (withStatements) {
-          const k = s.id + KEY_SEP + e.to;
-          let link = stmtToTable.get(k);
-          if (!link) { link = { source: s.id, target: e.to, kind: 'executes', access: new Set(), grade: e.grade }; stmtToTable.set(k, link); }
-          link.access.add(access);
-          if (RANK[e.grade] > RANK[link.grade]) link.grade = e.grade;
-          continue;
-        }
-        const k = ep.id + KEY_SEP + e.to;
-        let link = touches.get(k);
-        // WITHIN this path, the weakest link: the walk's path grade to the
-        // statement, then the statement's own SQL edge.
-        const pathGrade = RANK[s.grade] <= RANK[e.grade] ? s.grade : e.grade;
-        if (!link) { link = { source: ep.id, target: e.to, kind: 'touches', access: new Set(), grade: pathGrade, statements: 0 }; touches.set(k, link); }
-        link.access.add(access);
-        link.statements += 1;
-        // ACROSS the paths, the strongest: one confirmed route to this table is
-        // a confirmed touch, however many candidate routes also reach it.
-        if (RANK[pathGrade] > RANK[link.grade]) link.grade = pathGrade;
-      }
-    }
-  }
-
-  // ---- 2b. the screens layer, when it was asked for ------------------------
-  // The other end of the round trip (SPEC §1.1), on the same picture: one node
-  // per SCREEN that reaches a route this pack serves, and one line per (screen,
-  // route) the forward walk found. It is the same `walkScreens` census the
-  // overview counts and `browse kind=screen` lists, so the map cannot disagree
-  // with either about what a screen reaches.
-  //
-  // A screen that reaches NO drawn route is not on the map: it would be a dot
-  // with no line, which says "this screen calls nothing" where the truth is
-  // that nothing we could follow leaves it. The count of those is in `summary`.
-  const servedEndpoints = new Set(endpoints.map((ep) => ep.id));
-  const screenRows = [];       // {node, links:[…]}
-  let screensReaching = 0;
-  let screensTotal = 0;
-  if (withScreens) {
-    const sw = walkScreens(graph, { mode, depth });
-    screensTotal = sw.screens.length;
-    for (const s of sw.screens) {
-      const out = s.endpoints.filter((e) => servedEndpoints.has(e.id));
-      if (out.length === 0) continue;
-      screensReaching += 1;
-      const n = graph.nodes.get(s.id) ?? {};
-      screenRows.push({
-        node: {
-          id: s.id, kind: 'screen', label: nodeLabel(n, s.id), degree: 0,
-          path: s.path, title: s.title, group: s.group, component: s.component,
-          endpoints: out.length, tables: s.tables.length,
-          // A recording says the browser really was here. It is a MARKER, never
-          // a grade: no line on this map was drawn from one.
-          observed: s.observed === true,
-          source: s.source ?? null,
-        },
-        links: out.map((e) => ({ source: s.id, target: e.id, kind: 'calls', grade: e.grade })),
-      });
-    }
-  }
-
-  // ---- 3. the node set ----------------------------------------------------
-  const tableFacts = tableCensus(graph);
-  const nodes = [];
-  for (const [name, eps] of groupOf) {
-    nodes.push({ id: `group:${name}`, kind: 'group', label: name, degree: 0, endpoints: eps.length });
-  }
-  for (const s of screenRows) nodes.push(s.node);
-  for (const ep of endpoints) {
-    const n = graph.nodes.get(ep.id) ?? {};
-    nodes.push({
-      id: ep.id, kind: 'endpoint', label: nodeLabel(n, ep.id), group: ep.group, degree: 0,
-      httpMethod: ep.httpMethod, path: ep.path, handlerShort: handlerShortOf(graph, ep.id, n),
-      // How many controller methods declare this route. 1 almost always; 2+ when
-      // two modules use the same route string, and then `handlerShort` names the
-      // primary one and the map still walked ALL of them.
-      handlers: ep.handlers,
-    });
-  }
-  for (const tid of touchedTables) {
-    const f = tableFacts.get(tid) ?? { comment: null, columnCount: 0 };
-    nodes.push({ id: tid, kind: 'table', label: strip(tid), degree: 0, comment: f.comment, columnCount: f.columnCount });
-  }
-  if (withStatements) {
-    for (const sid of stmtGrade.keys()) {
-      const n = graph.nodes.get(sid) ?? {};
-      nodes.push({ id: sid, kind: 'statement', label: nodeLabel(n, sid), degree: 0, statementType: n.statementType ?? null });
-    }
-  }
-
-  // ---- 3b. what the caller brought with it --------------------------------
-  for (const n of extraNodes) nodes.push(n);
-
-  // ---- 4. the link set ----------------------------------------------------
-  const links = [];
-  for (const [name, eps] of groupOf) for (const epId of eps) {
-    // Definitional: the group IS the endpoint's first path segment — or, when
-    // the profile declares moduleAttribution.packageDepth, its handler's own
-    // truncated package. Either way nothing was inferred, so the membership is
-    // EXACT even where the chain below it is not.
-    links.push({ source: `group:${name}`, target: epId, kind: 'member', grade: 'EXACT' });
-  }
-  for (const s of screenRows) for (const l of s.links) links.push(l);
-  for (const l of touches.values()) links.push({ ...l, access: joinAccess(l.access) });
-  for (const l of epToStmt.values()) links.push(l);
-  for (const l of stmtToTable.values()) links.push({ ...l, access: joinAccess(l.access) });
-  // Joins between DRAWN tables, undirected and once. A JOINS edge recorded in
-  // both directions is one relationship, not two: keyed by the sorted pair, with
-  // the strongest witness count and the strongest grade of the pair.
-  const joins = new Map();
-  for (const e of graph.edges) {
-    if (e.type !== 'JOINS') continue;
-    if (!touchedTables.has(e.from) || !touchedTables.has(e.to)) continue;
-    const [a, b] = e.from <= e.to ? [e.from, e.to] : [e.to, e.from];
-    const k = a + KEY_SEP + b;
-    const witness = e.evidence?.count ?? 1;
-    let link = joins.get(k);
-    if (!link) { link = { source: a, target: b, kind: 'joins', grade: e.grade, witness }; joins.set(k, link); }
-    else {
-      if (RANK[e.grade] > RANK[link.grade]) link.grade = e.grade;
-      if (witness > link.witness) link.witness = witness;
-    }
-  }
-  for (const l of joins.values()) links.push(l);
-  for (const l of extraLinks) links.push(l);
-
-  // ---- 5. the node cap ----------------------------------------------------
-  // Degree over the FULL link set decides who survives: cutting the map must
-  // keep the hubs, not whichever ids sort first.
-  const fullDegree = degreeOf(nodes, links);
-  const totals = { group: 0, screen: 0, endpoint: 0, table: 0, statement: 0 };
-  for (const n of nodes) if (!fromOutside.has(n.id) && totals[n.kind] !== undefined) totals[n.kind] += 1;
-  // The cut ORDER, written once: the least-connected node of the first kind that
-  // still has members, then the next kind. Used by both budgets below.
-  const cutQueue = [];
-  for (const kind of CUT_ORDER) {
-    // Inside one kind, what the caller BROUGHT gives way before what this pack
-    // drew. This pack's picture is the answer; the second picture laid over it
-    // is the first thing a budget takes back.
-    for (const outside of [true, false]) {
-      const of = nodes.filter((n) => n.kind === kind && fromOutside.has(n.id) === outside)
-        .sort((a, b) => (fullDegree.get(a.id) - fullDegree.get(b.id)) || cmp(b.id, a.id));
-      cutQueue.push(...of.map((n) => n.id));
-    }
-  }
-  const dropFirst = (howMany) => {
-    const out = new Set();
-    for (let i = 0; i < howMany && i < cutQueue.length; i++) out.add(cutQueue[i]);
-    return out;
-  };
-  const apply = (dropSet) => {
-    const keptNodes = dropSet.size ? nodes.filter((n) => !dropSet.has(n.id)) : nodes;
-    const ids = new Set(keptNodes.map((n) => n.id));
-    const keptLinks = dropSet.size ? links.filter((l) => ids.has(l.source) && ids.has(l.target)) : links;
-    if (!fromOutside.size) return { keptNodes, keptLinks };
-    // A NODE FROM OUTSIDE THAT LOST EVERY LINE IS NOT DRAWN. The picture it
-    // came on was a route and the things that route reaches; cut the route and
-    // what is left is a disc floating beside this pack's map with nothing
-    // saying why it is there. This pack's own nodes keep the old behaviour: a
-    // group whose endpoints all went is still the group this pack has.
-    // An orphan has no line by definition, so removing it removes no line and
-    // one pass is enough.
-    const linked = new Set();
-    for (const l of keptLinks) { linked.add(l.source); linked.add(l.target); }
-    const orphaned = keptNodes.some((n) => fromOutside.has(n.id) && !linked.has(n.id));
-    if (!orphaned) return { keptNodes, keptLinks };
-    return { keptNodes: keptNodes.filter((n) => !fromOutside.has(n.id) || linked.has(n.id)), keptLinks };
-  };
-
-  // HOW MANY THE CAP REALLY COSTS. Without outside nodes it is arithmetic: one
-  // node dropped is one node fewer. With them it is not, because dropping a
-  // portal takes the cluster hanging off it too, so the smallest prefix that
-  // fits is SEARCHED rather than computed. The predicate is monotone (a longer
-  // prefix never leaves more nodes), so a binary search finds it in a dozen
-  // passes, and the answer is still the least this budget can take.
-  let dropCount = Math.max(0, nodes.length - limit);
-  if (fromOutside.size && dropCount > 0) {
-    let lo = 0, hi = cutQueue.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (apply(dropFirst(mid)).keptNodes.length <= limit) hi = mid; else lo = mid + 1;
-    }
-    dropCount = lo;
-  }
-  let drop = dropFirst(dropCount);
-  let cutBy = drop.size ? 'node-cap' : null;
-  let applied = apply(drop);
-
-  // ---- 5b. the BYTE budget (SPEC §13) ------------------------------------
-  // The node cap is in the wrong unit for the promise §13 makes. Measured on a
-  // 400-table / 3 800-endpoint pack: 4 227 nodes — comfortably UNDER the default
-  // cap of 6 000 — carry 12 200 links and serialise to 2.5 MB, and the answer
-  // called itself complete. A picture that large is neither drawable nor
-  // returnable, and "no cut" was a true statement about nodes and a false one
-  // about the answer.
-  //
-  // So the map is also cut to fit `maxBytes` OF ITS OWN MEASURED SERIALISATION —
-  // not an estimate, the real JSON.stringify of the nodes and links. The first
-  // pass computes the true bytes-per-element and cuts to the target directly;
-  // at most MAX_BYTE_ROUNDS passes run, and the last one is allowed to be a
-  // little under rather than a little over. The cut uses the SAME order as the
-  // node cap (least-connected of statements, then endpoints, then tables;
-  // groups never), so a byte-cut map and a node-cut map are the same picture at
-  // different sizes. `summary.shown` and the caller's `truncated` say exactly
-  // what went.
-  const maxBytes = opts.maxBytes ?? null;
-  if (maxBytes != null && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
-    throw new MapError(`maxBytes must be a positive integer or null, got ${maxBytes}`);
-  }
-  let bytes;
-  if (maxBytes != null) {
-    // How many ELEMENTS (nodes + links) survive each prefix of the cut queue.
-    // Dropping one node also drops every link touching it, so the two cannot be
-    // traded one for one — computed exactly, once, in O(links): walking the
-    // queue and counting each link the first time either of its ends goes.
-    const incident = new Map();
-    links.forEach((l, i) => {
-      for (const end of [l.source, l.target]) {
-        const arr = incident.get(end);
-        if (arr) arr.push(i); else incident.set(end, [i]);
-      }
-    });
-    const gone = new Uint8Array(links.length);
-    // elementsAfter[i] = elements left after dropping the first i queue entries.
-    const elementsAfter = new Array(cutQueue.length + 1);
-    elementsAfter[0] = nodes.length + links.length;
-    let linksLeft = links.length;
-    for (let i = 0; i < cutQueue.length; i += 1) {
-      for (const li of incident.get(cutQueue[i]) ?? []) {
-        if (!gone[li]) { gone[li] = 1; linksLeft -= 1; }
-      }
-      elementsAfter[i + 1] = (nodes.length - (i + 1)) + linksLeft;
-    }
-    const dropForTarget = (target) => {
-      // The SMALLEST prefix that fits — cut as little as the budget allows.
-      for (let i = 0; i <= cutQueue.length; i += 1) if (elementsAfter[i] <= target) return i;
-      return cutQueue.length;
-    };
-    for (let round = 0; round < MAX_BYTE_ROUNDS; round += 1) {
-      bytes = sizeOf(applied.keptNodes, applied.keptLinks);
-      const elements = applied.keptNodes.length + applied.keptLinks.length;
-      if (bytes <= maxBytes || elements === 0) break;
-      // The MEASURED bytes per element of what is on the table right now; aim a
-      // little under the budget so the next measurement is not a coin flip.
-      const target = Math.max(1, Math.floor(elements * (maxBytes / bytes) * 0.95));
-      const dropCount = Math.max(drop.size + 1, dropForTarget(target));
-      drop = dropFirst(dropCount);
-      cutBy = 'byte-budget';
-      applied = apply(drop);
-    }
-  }
-  const kept = applied.keptNodes;
-  const keptLinks = applied.keptLinks;
-
-  // ---- 6. degrees, order, summary ----------------------------------------
-  const degree = degreeOf(kept, keptLinks);
-  for (const n of kept) n.degree = degree.get(n.id);
-  kept.sort((a, b) => (KIND_RANK[a.kind] - KIND_RANK[b.kind]) || cmp(a.id, b.id));
-  keptLinks.sort((a, b) => (LINK_RANK[a.kind] - LINK_RANK[b.kind]) || cmp(a.source, b.source) || cmp(a.target, b.target));
-
-  const shown = { group: 0, screen: 0, endpoint: 0, table: 0, statement: 0 };
-  for (const n of kept) if (!fromOutside.has(n.id) && shown[n.kind] !== undefined) shown[n.kind] += 1;
-  const summary = {
-    groups: totals.group,
-    endpoints: totals.endpoint,
-    tables: tableFacts.size,
-    tablesTouched: touchedTables.size,
-    links: keptLinks.length,
-    linksTotal: links.length,
-    nodesTotal: nodes.length,
-    shown: { groups: shown.group, endpoints: shown.endpoint, tables: shown.table, statements: shown.statement, screens: shown.screen },
-    // What (if anything) cut this map, and how big the answer's own node+link
-    // payload actually is — measured, never estimated. `bytes` is null when no
-    // byte budget was asked for.
-    cutBy,
-    bytes: maxBytes == null ? null : sizeOf(kept, keptLinks),
-    maxBytes,
-    walk,
-  };
-  // How much of what the caller brought survived. Counted apart from `shown`,
-  // because `shown` answers "how much of THIS pack is on the picture" and an
-  // extra node is not part of this pack.
-  if (extraNodes.length || extraLinks.length) {
-    summary.extra = {
-      nodes: kept.reduce((n, x) => n + (fromOutside.has(x.id) ? 1 : 0), 0),
-      nodesGiven: extraNodes.length,
-      links: keptLinks.reduce((n, l) => n + (outsideLinks.has(l) ? 1 : 0), 0),
-      linksGiven: extraLinks.length,
-    };
-  }
-  if (withStatements) summary.statements = totals.statement;
-  if (withScreens) {
-    // Two numbers, because they answer two different questions: how many screens
-    // the pack HAS, and how many of them reach a route this map draws. The
-    // difference is the screens that are not on the picture, and it is reported
-    // rather than left as a silence.
-    summary.screens = screensReaching;
-    summary.screensTotal = screensTotal;
-  }
-
+  const groupOf = mapGroups(endpoints);
+  const { touches, epToStmt, stmtToTable, stmtGrade, touchedTables } = mapReaches(graph, endpoints, withStatements);
+  const { screenRows, screensReaching, screensTotal } = mapScreens(graph, { endpoints, mode, depth, withScreens });
+  const { tableFacts, nodes } = mapNodes(graph, {
+    endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements,
+  });
+  const links = mapLinks(graph, {
+    epToStmt, extraLinks, groupOf, screenRows, stmtToTable, touchedTables, touches,
+  });
+  const { kept, keptLinks, cutBy, totals, maxBytes } = mapCaps(nodes, links, { fromOutside, limit, opts });
+  const { summary } = mapSummary({
+    cutBy, extraLinks, extraNodes, fromOutside, kept, keptLinks, links, maxBytes,
+    nodes, outsideLinks, screensReaching, screensTotal, tableFacts, totals, touchedTables,
+    walk, withScreens, withStatements,
+  });
   return { mode, depth, layers: { statements: withStatements, screens: withScreens }, limit, nodes: kept, links: keptLinks, summary };
 }
 

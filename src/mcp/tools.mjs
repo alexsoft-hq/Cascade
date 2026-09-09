@@ -1537,6 +1537,159 @@ const UP_ENTRY_KINDS = Object.freeze(['column', 'table', 'statement', 'symbol'])
  * a controller→service call is below the floor, so the whole picture is empty
  * for a reason that is the MODE, not an absence of code.
  */
+/**
+ * WHERE THE WALK STARTS, and what the answer says about that starting point.
+ *
+ * The walk starts at the CODE, not at the route: the handler method the endpoint
+ * HANDLES. A route with no handler edge is the only one that starts at itself.
+ * A route that names MORE THAN ONE handler is the same route string declared in
+ * two modules; one picture can follow only one of them, and merging the two
+ * would claim a request runs through both deployables — so the choice is made by
+ * one rule and SAID, next to everything else this picture did not look at.
+ *
+ * @returns {{start:string, entry:object, entryLimits:object[], handlerNote:(string|null),
+ *            missing:(object|null)}} `missing` is the not-found response, when there is one
+ */
+function flowEntry(graph, args, ctx, { entryKind, up }) {
+let entry;
+let start;
+// Set when a route names more than one handler: said in `limits` below, next
+// to everything else this picture did not look at.
+let handlerNote = null;
+// Set when a table/column argument was resolved through the pack's identifier
+// rule rather than matched literally (see schemaArg).
+let entryLimits = [];
+if (entryKind === 'endpoint') {
+  const epId = nodeId('endpoint', String(args.endpoint));
+  const ep = graph.nodes.get(epId);
+  if (!ep) return { missing: notFound(ctx, 'endpoint', args.endpoint) };
+  // The walk starts at the code, not the route: the handler method the
+  // endpoint HANDLES. Only a route with no handler edge starts at itself.
+  //
+  // A route can name MORE THAN ONE handler — the same route string declared in
+  // two modules. ONE picture can follow only one of them, and merging the two
+  // would claim a request runs through both deployables, so the choice is the
+  // shared primary rule (core/walks.mjs, the same method `map` labels the
+  // route with) and the others are named in `limits` with the query that draws
+  // them. The whole-pack views (overview/map/coupling) walk the UNION instead;
+  // that difference is stated in the note, because the same route can then
+  // reach more tables in the census than in this one picture.
+  const handlerIds = handlersOf(graph, epId);
+  start = primaryHandlerOf(graph, epId) ?? epId;
+  const handled = handlerIds.length > 0;
+  if (handlerIds.length > 1) {
+    const others = handlerIds.filter((id) => id !== start);
+    handlerNote = `this route is declared by ${handlerIds.length} controller methods, which means the same route string sits in more than one module. This picture follows ${nodeLabel(graph.nodes.get(start), start)}; for the others, ask flow with symbol=${others.map(strip).join(' / symbol=')}. The whole-pack views (overview, map, coupling) walk ALL of them, so their counts for this route can be bigger than this picture`;
+  }
+  const startNode = graph.nodes.get(start);
+  entry = {
+    kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
+    // Read from the EDGE, not from the endpoint node's own `handler`: a node
+    // merged from two controllers carries whichever was ingested last, and the
+    // card must name the method this picture actually walked.
+    handler: handled ? strip(start) : (ep.handler ?? null),
+    handlerShort: handled ? nodeLabel(startNode, start) : null,
+    handlers: handlerIds.length,
+    owner: startNode?.owner ?? null,
+    file: ep.file ?? null, line: ep.line ?? null, start,
+  };
+} else if (entryKind === 'screen') {
+  // THE OTHER END OF THE ROUND TRIP (SPEC §1.1). A screen is named by its
+  // COMPOSED path, the same string the node is keyed by, so `screen=/things/list`
+  // is what a reader sees in the router and in this answer alike.
+  const scrId = nodeId('screen', String(args.screen));
+  const n = graph.nodes.get(scrId);
+  if (!n) return { missing: notFound(ctx, 'screen', args.screen) };
+  start = scrId;
+  entry = {
+    // A SERVER-RENDERED PAGE IS A PAGE (RM48). It is a screen like a router's
+    // is, and a reader looking at the row has to be able to tell which of the
+    // two they are looking at without reading the id.
+    kind: n.source === 'view' ? 'page' : 'screen', id: strip(scrId), short: nodeLabel(n, scrId),
+    path: n.path ?? null, title: n.title ?? null, name: n.name ?? null,
+    group: n.group ?? null, component: n.component ?? null,
+    source: n.source ?? null, observed: n.observed === true,
+    ...(n.source === 'view'
+      ? { template: n.template ?? null, engine: n.engine ?? null, routes: Array.isArray(n.paths) ? n.paths : [] }
+      : {}),
+    file: n.file ?? null, line: n.line ?? null, start,
+  };
+} else if (!up) {
+  const symId = nodeId('symbol', String(args.symbol));
+  const n = graph.nodes.get(symId);
+  if (!n) return { missing: notFound(ctx, 'symbol', args.symbol) };
+  start = symId;
+  entry = {
+    kind: 'symbol', id: strip(symId), short: nodeLabel(n, symId), owner: n.owner ?? null,
+    transactional: n.transactional === true, file: n.file ?? null, line: n.line ?? null, start,
+    ...(n.lane === 'web' ? { lane: 'web', component: n.component === true } : {}),
+  };
+} else {
+  // Walking up, the entry is the thing you are about to change. It is the row
+  // the page draws at hop 0 — kept minimal on purpose: what it IS, where it
+  // lives, and the node id the lanes hang off.
+  //
+  // A table/column argument goes through the pack's identifier rule first (a
+  // reader types the spelling their SQL uses); statement and symbol names are
+  // not schema objects and stay exact.
+  let id;
+  if (entryKind === 'column' || entryKind === 'table') {
+    const r = schemaArg(graph, ctx, entryKind, args[entryKind]);
+    id = r.id;
+    entryLimits = r.limits;
+  } else {
+    id = nodeId(entryKind, String(args[entryKind]));
+    if (!graph.nodes.has(id)) return { missing: notFound(ctx, entryKind, args[entryKind]) };
+  }
+  const n = graph.nodes.get(id);
+  start = id;
+  entry = { kind: entryKind, id: strip(id), short: nodeLabel(n, id), file: n.file ?? null, line: n.line ?? null, start };
+  if (entryKind === 'column' || entryKind === 'table') entry.comment = n.comment ?? null;
+  if (entryKind === 'statement') {
+    entry.statementType = n.statementType ?? null;
+    // The same tables a statement ROW carries, so a statement read as the
+    // TARGET is described exactly like one read as a row of the chain.
+    entry.tables = graph.outEdges(id)
+      .filter((e) => e.type === 'EXECUTES')
+      .map((e) => ({ table: strip(e.to), access: graph.edgeAt(e.idx)?.evidence?.access ?? 'read' }))
+      .sort((a, b) => cmpStr(a.table, b.table));
+  }
+  if (entryKind === 'symbol') { entry.owner = n.owner ?? null; entry.transactional = n.transactional === true; }
+}
+  return { start, entry, entryLimits, handlerNote, missing: null };
+}
+
+/**
+ * THE CROSSING (RM44). The walk stopped where this pack stops: an UNRESOLVED
+ * CALLS_HTTP edge onto a route this project calls and does not serve is below
+ * every mode's floor. If another project this server serves answers that route,
+ * the same walk continues over there and its rows join this answer carrying the
+ * project they came from.
+ */
+function flowCrossings(graph, args, ctx, { w, start, up, mode, depth }) {
+// THE CROSSING (RM44). The walk above stopped where this pack stops: an
+// UNRESOLVED CALLS_HTTP edge onto a route this project calls and does not
+// serve is below every mode's floor. If another project this server serves
+// answers that route, the same walk continues over there and its rows join
+// this answer carrying the project they came from.
+const fed = makeFederator(ctx, args);
+let federated = emptyFedLanes();
+if (fed.wanted) {
+  federated = up
+    ? fed.crossUp(w.endpoints.map((e) => routeRef(e, { hops: e.hops, grade: e.grade, http: e.httpHops ?? 0 })), { mode, depth })
+    : fed.crossDown(graph, [
+      { id: start, hops: 0, grade: 'EXACT', http: 0, project: fed.self },
+      ...[...w.services, ...w.webFunctions].map((s) => ({
+        id: nodeId('symbol', s.id), hops: s.hops, grade: s.grade, http: s.httpHops ?? 0, project: fed.self,
+      })),
+    ], { mode, depth });
+}
+const crossedRows = Object.values(federated).reduce((n, rows) => n + rows.length, 0);
+
+  return { fed, federated, crossedRows };
+}
+
+
 export function flow(graph, args, ctx) {
   args = args || {}; // called with no arguments at all: that is list mode, not a crash
   const direction = args.direction == null || args.direction === '' ? 'down' : String(args.direction);
@@ -1576,132 +1729,13 @@ export function flow(graph, args, ctx) {
   // a caller wanting more raises the limit rather than sliding a window.
   if (args.offset != null) throw new ToolError('bad-input', 'offset is not accepted in chain mode. Raise limit instead');
 
-  let entry;
-  let start;
-  // Set when a route names more than one handler: said in `limits` below, next
-  // to everything else this picture did not look at.
-  let handlerNote = null;
-  // Set when a table/column argument was resolved through the pack's identifier
-  // rule rather than matched literally (see schemaArg).
-  let entryLimits = [];
-  if (entryKind === 'endpoint') {
-    const epId = nodeId('endpoint', String(args.endpoint));
-    const ep = graph.nodes.get(epId);
-    if (!ep) return notFound(ctx, 'endpoint', args.endpoint);
-    // The walk starts at the code, not the route: the handler method the
-    // endpoint HANDLES. Only a route with no handler edge starts at itself.
-    //
-    // A route can name MORE THAN ONE handler — the same route string declared in
-    // two modules. ONE picture can follow only one of them, and merging the two
-    // would claim a request runs through both deployables, so the choice is the
-    // shared primary rule (core/walks.mjs, the same method `map` labels the
-    // route with) and the others are named in `limits` with the query that draws
-    // them. The whole-pack views (overview/map/coupling) walk the UNION instead;
-    // that difference is stated in the note, because the same route can then
-    // reach more tables in the census than in this one picture.
-    const handlerIds = handlersOf(graph, epId);
-    start = primaryHandlerOf(graph, epId) ?? epId;
-    const handled = handlerIds.length > 0;
-    if (handlerIds.length > 1) {
-      const others = handlerIds.filter((id) => id !== start);
-      handlerNote = `this route is declared by ${handlerIds.length} controller methods, which means the same route string sits in more than one module. This picture follows ${nodeLabel(graph.nodes.get(start), start)}; for the others, ask flow with symbol=${others.map(strip).join(' / symbol=')}. The whole-pack views (overview, map, coupling) walk ALL of them, so their counts for this route can be bigger than this picture`;
-    }
-    const startNode = graph.nodes.get(start);
-    entry = {
-      kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
-      // Read from the EDGE, not from the endpoint node's own `handler`: a node
-      // merged from two controllers carries whichever was ingested last, and the
-      // card must name the method this picture actually walked.
-      handler: handled ? strip(start) : (ep.handler ?? null),
-      handlerShort: handled ? nodeLabel(startNode, start) : null,
-      handlers: handlerIds.length,
-      owner: startNode?.owner ?? null,
-      file: ep.file ?? null, line: ep.line ?? null, start,
-    };
-  } else if (entryKind === 'screen') {
-    // THE OTHER END OF THE ROUND TRIP (SPEC §1.1). A screen is named by its
-    // COMPOSED path, the same string the node is keyed by, so `screen=/things/list`
-    // is what a reader sees in the router and in this answer alike.
-    const scrId = nodeId('screen', String(args.screen));
-    const n = graph.nodes.get(scrId);
-    if (!n) return notFound(ctx, 'screen', args.screen);
-    start = scrId;
-    entry = {
-      // A SERVER-RENDERED PAGE IS A PAGE (RM48). It is a screen like a router's
-      // is, and a reader looking at the row has to be able to tell which of the
-      // two they are looking at without reading the id.
-      kind: n.source === 'view' ? 'page' : 'screen', id: strip(scrId), short: nodeLabel(n, scrId),
-      path: n.path ?? null, title: n.title ?? null, name: n.name ?? null,
-      group: n.group ?? null, component: n.component ?? null,
-      source: n.source ?? null, observed: n.observed === true,
-      ...(n.source === 'view'
-        ? { template: n.template ?? null, engine: n.engine ?? null, routes: Array.isArray(n.paths) ? n.paths : [] }
-        : {}),
-      file: n.file ?? null, line: n.line ?? null, start,
-    };
-  } else if (!up) {
-    const symId = nodeId('symbol', String(args.symbol));
-    const n = graph.nodes.get(symId);
-    if (!n) return notFound(ctx, 'symbol', args.symbol);
-    start = symId;
-    entry = {
-      kind: 'symbol', id: strip(symId), short: nodeLabel(n, symId), owner: n.owner ?? null,
-      transactional: n.transactional === true, file: n.file ?? null, line: n.line ?? null, start,
-      ...(n.lane === 'web' ? { lane: 'web', component: n.component === true } : {}),
-    };
-  } else {
-    // Walking up, the entry is the thing you are about to change. It is the row
-    // the page draws at hop 0 — kept minimal on purpose: what it IS, where it
-    // lives, and the node id the lanes hang off.
-    //
-    // A table/column argument goes through the pack's identifier rule first (a
-    // reader types the spelling their SQL uses); statement and symbol names are
-    // not schema objects and stay exact.
-    let id;
-    if (entryKind === 'column' || entryKind === 'table') {
-      const r = schemaArg(graph, ctx, entryKind, args[entryKind]);
-      id = r.id;
-      entryLimits = r.limits;
-    } else {
-      id = nodeId(entryKind, String(args[entryKind]));
-      if (!graph.nodes.has(id)) return notFound(ctx, entryKind, args[entryKind]);
-    }
-    const n = graph.nodes.get(id);
-    start = id;
-    entry = { kind: entryKind, id: strip(id), short: nodeLabel(n, id), file: n.file ?? null, line: n.line ?? null, start };
-    if (entryKind === 'column' || entryKind === 'table') entry.comment = n.comment ?? null;
-    if (entryKind === 'statement') {
-      entry.statementType = n.statementType ?? null;
-      // The same tables a statement ROW carries, so a statement read as the
-      // TARGET is described exactly like one read as a row of the chain.
-      entry.tables = graph.outEdges(id)
-        .filter((e) => e.type === 'EXECUTES')
-        .map((e) => ({ table: strip(e.to), access: graph.edgeAt(e.idx)?.evidence?.access ?? 'read' }))
-        .sort((a, b) => cmpStr(a.table, b.table));
-    }
-    if (entryKind === 'symbol') { entry.owner = n.owner ?? null; entry.transactional = n.transactional === true; }
-  }
+  const found = flowEntry(graph, args, ctx, { entryKind, up });
+  if (found.missing) return found.missing;
+  const { start, entry, entryLimits, handlerNote } = found;
 
   const w = chainWalk(graph, { start, direction, mode, maxDepth: depth });
+  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth });
 
-  // THE CROSSING (RM44). The walk above stopped where this pack stops: an
-  // UNRESOLVED CALLS_HTTP edge onto a route this project calls and does not
-  // serve is below every mode's floor. If another project this server serves
-  // answers that route, the same walk continues over there and its rows join
-  // this answer carrying the project they came from.
-  const fed = makeFederator(ctx, args);
-  let federated = emptyFedLanes();
-  if (fed.wanted) {
-    federated = up
-      ? fed.crossUp(w.endpoints.map((e) => routeRef(e, { hops: e.hops, grade: e.grade, http: e.httpHops ?? 0 })), { mode, depth })
-      : fed.crossDown(graph, [
-        { id: start, hops: 0, grade: 'EXACT', http: 0, project: fed.self },
-        ...[...w.services, ...w.webFunctions].map((s) => ({
-          id: nodeId('symbol', s.id), hops: s.hops, grade: s.grade, http: s.httpHops ?? 0, project: fed.self,
-        })),
-      ], { mode, depth });
-  }
-  const crossedRows = Object.values(federated).reduce((n, rows) => n + rows.length, 0);
 
   // Everything the walk skipped, said once — in limits AND in walk.note, so the
   // page has a single place to read it.

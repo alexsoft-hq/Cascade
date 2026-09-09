@@ -81,14 +81,12 @@ function unresolvedReasonSentence(laneStats) {
  *            grades:{grade:string,count:number}[], statementTypes:{type:string,count:number}[],
  *            reach:object, code:object, hubs:object, gaps:{kind:string,count:number|null,note:string}[]}}
  */
-export function buildOverview(graph, opts = {}) {
-  const mode = opts.mode ?? 'conservative';
-  if (!GRADE_SETS[mode]) throw new OverviewError(`unknown mode: ${JSON.stringify(mode)}`);
-  const depth = opts.depth ?? 8;
-  if (!Number.isInteger(depth) || depth < 1) throw new OverviewError(`depth must be a positive integer, got ${depth}`);
-  const lanes = Array.isArray(opts.lanes) ? opts.lanes : null;
-  const laneStats = opts.laneStats && typeof opts.laneStats === 'object' ? opts.laneStats : null;
 
+/**
+ * 1. THE NODE CENSUS, and the per-kind facts that only need the node itself.
+ * One pass over every node; nothing here walks an edge.
+ */
+function censusNodes(graph) {
   // 1. The node census, and the per-kind facts that only need the node itself.
   const nodeCount = new Map();
   const statementTypeCount = new Map();
@@ -163,6 +161,18 @@ export function buildOverview(graph, opts = {}) {
   tableIds.sort(cmp);
   endpointIds.sort(cmp);
 
+  return {
+    nodeCount, statementTypeCount, statementIds, tableIds, endpointIds, columns, symbols, external,
+    transactional, generatedSymbols, generatedIds, jpaEntities, jpaStatements, jpaUnresolved,
+    jpaRepositories, mpEntities, mpStatements, mpRuntimeOnly, mpUnresolved, mpLogicDelete,
+  };
+}
+
+/**
+ * 2. THE EDGE CENSUS, by type AND grade — "932 calls" says nothing without the
+ * grades — and the two counts the generated rule turns on.
+ */
+function censusEdges(graph, mode, generatedIds) {
   // 2. The edge census (by type AND grade — "932 calls" says nothing without
   // "…and every one of them is a candidate"), plus the two facts that live on
   // the IMPLEMENTS_STMT edge: which symbols are mapper methods, and which
@@ -194,6 +204,17 @@ export function buildOverview(graph, opts = {}) {
     else if (e.grade !== 'EXACT') onlyCandidate += 1;
   }
 
+  return {
+    edgeCount, gradeCount, mapperMethods, statementsWithMapper, generatedInternalEdges,
+    generatedBoundaryEdges, belowFloor, onlyCandidate,
+  };
+}
+
+/**
+ * 3. THE END-TO-END WALK, and everything derived from where it got to.
+ */
+function walkAxis(graph, { mode, depth, laneStats }, c) {
+  const { endpointIds, statementIds, tableIds } = c;
   // 3. The end-to-end walk: the Flow tab's own forward chain, from every
   // handler of every route (core/walks.mjs caches by START node, so two routes
   // on the same handler walk the same chain once — and a route declared by TWO
@@ -303,6 +324,21 @@ export function buildOverview(graph, opts = {}) {
   const unreachedStatements = statementIds.filter((id) => !reachedStatements.has(id)).map(strip);
   const unreachedTables = tableIds.filter((id) => !reachedTables.has(id)).map(strip);
 
+  return {
+    walked, walk, reachedStatements, endpointsWithoutStatement, tableEndpoints, tableStatements,
+    endpointRows, depthCapped, reachedTables, reachedColumns, screenNodes, webScreenStats,
+    screensBlock, multiHandler, statements, tables, outboundEndpoints, endpoints, codeAxis,
+    unreachedStatements, unreachedTables,
+  };
+}
+
+/**
+ * 4-5. HUBS — where the pack concentrates — and the one number that only means
+ * anything when there IS a code axis.
+ */
+function hubsOf(c, e, reach) {
+  const { statementsWithMapper } = e;
+  const { codeAxis, endpointRows, statements, tableEndpoints, tableStatements } = reach;
   // 4. Hubs — where the pack concentrates. A table nothing reaches is not a hub,
   // so only the reached ones are ranked (their total IS tablesReached).
   const hubTables = [...tableEndpoints.entries()].map(([tid, eps]) => ({
@@ -316,6 +352,17 @@ export function buildOverview(graph, opts = {}) {
   // the not-shipped gap says it once, and says it better.
   const statementsWithoutMapper = codeAxis ? statements - statementsWithMapper.size : 0;
 
+  return { hubTables, hubEndpoints, statementsWithoutMapper };
+}
+
+/**
+ * 6. THE HONESTY BLOCK. Every entry is COMPUTED; a gap with nothing to report is
+ * left out rather than padded with a zero, except the two whose whole point is
+ * that they are unknown or a standing caveat (unresolved-calls, mode-floor).
+ * The order is the order the story is told in — fixed here, not data-driven, so
+ * the list is deterministic without being alphabetised into nonsense.
+ */
+function buildGaps(o) {
   // 6. The honesty block. Every entry is COMPUTED; a gap with nothing to report
   // is left out rather than padded with a zero, except the two whose whole point
   // is that they are unknown or a standing caveat (unresolved-calls, mode-floor).
@@ -328,9 +375,28 @@ export function buildOverview(graph, opts = {}) {
   // be attributed to a table), SELECT * cannot be expanded, and a column answer
   // holds what the SQL spelled out rather than the whole truth. `count` is the
   // tables that came from statements alone, because that number IS the size of
+  const say = (gap) => gaps.push(gap);
+  schemaGaps(o, say);
+  routeGaps(o, say);
+  laneGaps(o, say);
+  reachGaps(o, say);
+  budgetGaps(o, say);
+  restGaps(o, say);
+  return gaps;
+}
+
+/**
+ * NO SCHEMA, NO CODE AXIS, NO PROJECT BOUNDARY. The three gaps that change the
+ * shape of every other answer, so they are told first and each carries its own
+ * remedy.
+ */
+function schemaGaps(o, say) {
+  const {
+    codeAxis, external, lanes, laneStats, opts, statements, tableIds,
+  } = o;
   // what is standing in for a schema here.
   if (opts.axes && opts.axes.catalog && opts.axes.catalog.status === 'not-shipped') {
-    gaps.push({
+    say({
       kind: 'no-catalog', count: tableIds.length,
       note: 'no database schema was read for this pack, so the ERD draws no relationship line, a SELECT * is not expanded '
         + 'into the columns it reads, and a bare column name is tied to its table only where the SQL says so unambiguously. '
@@ -339,13 +405,13 @@ export function buildOverview(graph, opts = {}) {
     });
   }
   if (!codeAxis) {
-    gaps.push({
+    say({
       kind: 'not-shipped', count: statements,
       note: `we read this pack without the Java lane${lanes ? ` (lanes: ${lanes.join(' + ')})` : ''}, so it holds no endpoint at all. All ${statements} statement(s) here have no known caller, and the service, endpoint and @Transactional counts are absent, not empty`,
     });
   } else {
     const unresolved = laneStats && Number.isInteger(laneStats.unresolvedCalls) ? laneStats.unresolvedCalls : null;
-    gaps.push({
+    say({
       kind: 'unresolved-calls', count: unresolved,
       note: unresolved == null
         ? 'this pack kept no lane statistics, so we cannot say how many method calls we failed to resolve. It is not zero: a call we could not resolve never entered the graph, and any chain that needed one is shorter here than it really is'
@@ -359,11 +425,21 @@ export function buildOverview(graph, opts = {}) {
     });
   }
   if (external > 0) {
-    gaps.push({
+    say({
       kind: 'external-symbols', count: external,
       note: `${external} symbol(s) have no source file here. They are library or framework types we only saw referenced, so a chain that runs into one stops there`,
     });
   }
+}
+
+/**
+ * THE ROUTES THAT DO NOT ADD UP: a route this pack CALLS and does not serve, and
+ * a route string two controllers both declare.
+ */
+function routeGaps(o, say) {
+  const {
+    endpoints, laneStats, multiHandler, outboundEndpoints,
+  } = o;
   // A ROUTE THIS PACK CALLS AND DOES NOT SERVE. The method that calls it is in
   // the graph (a @FeignClient/@HttpExchange declaration, or an imperative
   // WebClient/RestClient/RestTemplate call), the route it names is in the graph,
@@ -378,7 +454,7 @@ export function buildOverview(graph, opts = {}) {
     // often a prefix nobody declared as a real external service.
     const web = laneStats && laneStats.web && laneStats.web.unresolved ? laneStats.web : null;
     const webMisses = web ? (web.unresolved.byReason.noMatch ?? 0) + (web.unresolved.byReason.outsidePack ?? 0) : 0;
-    gaps.push({
+    say({
       kind: 'http-calls-leaving-pack', count: outboundEndpoints,
       note: `${outboundEndpoints} HTTP call target(s) leave this pack. ${calls == null ? 'HTTP client calls in the code' : `${calls} HTTP client call(s) in the code`} name a route no controller here serves, so what they reach is outside this analysis. `
         + `The node census counts them as endpoints; the reach figures below count only the ${endpoints} route(s) this pack serves`
@@ -397,18 +473,28 @@ export function buildOverview(graph, opts = {}) {
   if (multiHandler.length > 0) {
     const named = multiHandler.slice(0, MULTI_HANDLER_NAMED)
       .map((m) => `${m.endpoint} (${m.handlers.length})`).join(', ');
-    gaps.push({
+    say({
       kind: 'multi-handler-routes', count: multiHandler.length,
       note: `${multiHandler.length} route(s) are declared by more than one controller method. The same route string sits in two modules, so the endpoint node carries ${multiHandler.length === 1 ? 'two HANDLES edges' : 'several HANDLES edges'}: ${named}${multiHandler.length > MULTI_HANDLER_NAMED ? `, and ${multiHandler.length - MULTI_HANDLER_NAMED} more` : ''}. The reach counts above follow every handler together; a single-chain view (flow) follows one of them and names the others`,
     });
   }
+}
+
+/**
+ * WHAT ANOTHER SOURCE KNOWS AND THE SOURCE DOES NOT: an OpenAPI document, a
+ * frontend that fetches its own menu, a browser recording, a trace.
+ */
+function laneGaps(o, say) {
+  const {
+    laneStats, screensBlock, webScreenStats,
+  } = o;
   // THE DRIFT BETWEEN THE CONTRACT AND THE CODE. Two independent statements
   // about the same routes, and where they disagree only a reader can decide
   // which one is wrong — so the gap names both directions and neither verdict.
   const oa = laneStats && laneStats.openapi && laneStats.openapi.drift ? laneStats.openapi : null;
   if (oa && (oa.onlyInDocument > 0 || oa.onlyInCode > 0)) {
     const named = (list) => list.slice(0, 3).map(strip).join(', ');
-    gaps.push({
+    say({
       kind: 'openapi-drift', count: oa.onlyInDocument + oa.onlyInCode,
       note: `the OpenAPI document(s) and this code do not describe the same routes. `
         + `${oa.onlyInDocument} route(s) are declared and not served here`
@@ -426,7 +512,7 @@ export function buildOverview(graph, opts = {}) {
   // product.
   if (webScreenStats && webScreenStats.serverDriven && webScreenStats.serverDriven.detected === true) {
     const sd = webScreenStats.serverDriven;
-    gaps.push({
+    say({
       kind: 'screens-from-server', count: sd.routes ?? 0,
       note: `the app also fetches its menu from the server at run time: one of its calls resolved to ${(sd.menuEndpoints ?? []).join(', ')}, and it declares ${sd.routes} route(s) in its source. `
         + `${(sd.routes ?? 0) < (sd.ceiling ?? 0) ? 'Most screens arrive when the app runs' : `Screens beyond the ${sd.routes} declared arrive when the app runs`}, `
@@ -439,7 +525,7 @@ export function buildOverview(graph, opts = {}) {
   // named as a blind spot of the SOURCE rather than as a number beside the
   // walked ones, because no walk followed a RUNTIME_ONLY edge to produce it.
   if (screensBlock && screensBlock.seenAtRunTime > 0) {
-    gaps.push({
+    say({
       kind: 'screens-seen-at-run-time', count: screensBlock.seenAtRunTime,
       note: `${screensBlock.seenAtRunTime} screen(s) here are known partly from a recording: ${screensBlock.fromRecording} that the source never declared, and ${screensBlock.observed} whose call to a route a recording confirms. `
         + 'A recorded edge is RUNTIME_ONLY, which is below every mode\'s floor, so nothing was walked from one: it is shown beside these numbers and never counted inside them. '
@@ -454,7 +540,7 @@ export function buildOverview(graph, opts = {}) {
   const otel = laneStats && laneStats.otel && typeof laneStats.otel === 'object' ? laneStats.otel : null;
   if (otel) {
     const narrowed = otel.dispatchThroughInterface ?? 0;
-    gaps.push({
+    say({
       kind: 'runtime-evidence',
       count: (otel.edgesObserved ?? 0) + (otel.edgesAdded ?? 0),
       note: `a trace of ${otel.spans ?? 0} span(s) confirmed ${otel.edgesObserved ?? 0} edge(s) this analysis already had, `
@@ -464,8 +550,19 @@ export function buildOverview(graph, opts = {}) {
         + 'a candidate the trace did not visit is unknown, not dead',
     });
   }
+}
+
+/**
+ * WHAT THE WALK DID NOT REACH: a screen with no component, a route with no
+ * statement, a statement and a table nothing runs.
+ */
+function reachGaps(o, say) {
+  const {
+    depth, endpointsWithoutStatement, mode, screensBlock, statements, tables,
+    unreachedStatements, unreachedTables,
+  } = o;
   if (screensBlock && screensBlock.componentUnresolved > 0) {
-    gaps.push({
+    say({
       kind: 'screen-components-unresolved', count: screensBlock.componentUnresolved,
       note: `${screensBlock.componentUnresolved} of ${screensBlock.declared} route declaration(s) name a component this lane could not resolve to a file it read. `
         + 'Those screens are in the pack with no RENDERS edge, so nothing hangs off them: what they show is unknown, not empty. '
@@ -473,25 +570,36 @@ export function buildOverview(graph, opts = {}) {
     });
   }
   if (endpointsWithoutStatement.length > 0) {
-    gaps.push({
+    say({
       kind: 'endpoints-without-statement', count: endpointsWithoutStatement.length,
       note: `${endpointsWithoutStatement.length} endpoint(s) reach no SQL statement at mode=${mode}, depth ${depth}. They may touch no database at all (login, file upload), or we could not tell where one of their calls goes`,
     });
   }
   if (unreachedStatements.length > 0) {
-    gaps.push({
+    say({
       kind: 'statements-not-reached', count: unreachedStatements.length,
       note: `${unreachedStatements.length} of ${statements} statement(s) are not reached from the endpoints we analysed, and they are usually generated mapper methods nothing calls. That is NOT a claim that they are dead code: a caller outside this pack, such as a scheduled job, another service or reflection, would not be visible here`,
     });
   }
   if (unreachedTables.length > 0) {
-    gaps.push({
+    say({
       kind: 'tables-not-reached', count: unreachedTables.length,
       note: `${unreachedTables.length} of ${tables} table(s) are not reached from any endpoint. A statement may still execute them; what is missing is the HTTP route above`,
     });
   }
+}
+
+/**
+ * WHAT THE WALK DELIBERATELY DID NOT LOOK AT: the generated interior, the node
+ * cap and the depth cap. A bound on this answer is not an absence.
+ */
+function budgetGaps(o, say) {
+  const {
+    depth, depthCapped, generatedBoundaryEdges, generatedInternalEdges, generatedSymbols,
+    symbols, walk,
+  } = o;
   if (generatedSymbols > 0) {
-    gaps.push({
+    say({
       kind: 'generated-code', count: generatedSymbols,
       note: `${generatedSymbols} of ${symbols} symbol(s) are machine-written. The profile's generatedSources declaration classified them, `
         + `and they carry ${generatedInternalEdges} edge(s) among themselves. `
@@ -501,23 +609,35 @@ export function buildOverview(graph, opts = {}) {
     });
   }
   if (walk.generated > 0) {
-    gaps.push({
+    say({
       kind: 'generated-walk-skip', count: walk.generated,
       note: `${walk.generated} step(s) from one generated symbol to another were not walked, because that is the machine-written interior. A generated symbol a real caller reaches is still walked and still counted above`,
     });
   }
   if (walk.nodeCapStarts > 0) {
-    gaps.push({
+    say({
       kind: 'node-cap', count: walk.nodeCapStarts,
       note: `${walk.nodeCapStarts} handler walk(s) hit the per-walk node cap. The chain under them is bigger than one walk, so we counted only part of what those routes reach`,
     });
   }
   if (depthCapped > 0) {
-    gaps.push({
+    say({
       kind: 'depth-cap', count: depthCapped,
       note: `${depthCapped} endpoint(s) still had calls to walk when we stopped at depth ${depth}. What lies past that is unknown, so each "reached" count here is a lower bound: the real number is this one or higher`,
     });
   }
+}
+
+/**
+ * THE LAST FOUR: one FQN in two files, a JPA statement with an unresolved part,
+ * a MyBatis-Plus statement whose columns are built at run time, and the two that
+ * are always said — what did not resolve, and where the mode floor sits.
+ */
+function restGaps(o, say) {
+  const {
+    belowFloor, depth, jpaStatements, jpaUnresolved, laneStats, mode, mpRuntimeOnly,
+    mpStatements, onlyCandidate,
+  } = o;
   // THE SAME FQN, DECLARED IN TWO FILES. A multi-module repo does this on
   // purpose (jeecg-boot ships three API interfaces twice: a plain interface in
   // the local module, a @FeignClient in the cloud one). One FQN is one node, so
@@ -532,7 +652,7 @@ export function buildOverview(graph, opts = {}) {
     const kinds = Object.entries(dup.byKind).sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([k, n]) => `${k} ${n}`).join(', ');
     const named = (dup.types ?? []).slice(0, DUPLICATE_TYPES_NAMED).map((d) => d.fqn).join(', ');
-    gaps.push({
+    say({
       kind: 'duplicate-types', count: dup.count,
       note: `${dup.count} type(s) are declared in more than one file (${dup.declarations} declarations in total: ${kinds}). `
         + 'The same fully-qualified name sits in two modules that are never on one classpath. '
@@ -540,26 +660,52 @@ export function buildOverview(graph, opts = {}) {
     });
   }
   if (jpaUnresolved > 0) {
-    gaps.push({
+    say({
       kind: 'jpa-statements-unresolved', count: jpaUnresolved,
       note: `${jpaUnresolved} of ${jpaStatements} JPA statement(s) carry a part we could not resolve: a derived method name, or a JPQL fragment the bridge could not tie to a column. The statement is KEPT with its reason, and its column list holds what we could read rather than the whole truth`,
     });
   }
   if (mpRuntimeOnly > 0) {
-    gaps.push({
+    say({
       kind: 'mp-columns-runtime-only', count: mpRuntimeOnly,
       note: `${mpRuntimeOnly} of ${mpStatements} MyBatis-Plus statement(s) reach their table with columns decided at RUN TIME. A condition wrapper built from request parameters, or handed in already built, names columns no source line states. `
         + 'The TABLE is certain; the column list on those statements holds only what we could read, and `column_impact` on any column of those tables says so in its limits',
     });
   }
-  gaps.push({
+  say({
     kind: 'mode-floor', count: belowFloor,
     note: `walked at mode=${mode}, depth ${depth}: ${belowFloor} flow edge(s) sit below this mode's grade floor, so we did not follow them`
       + (onlyCandidate > 0
         ? `. mode=strict would refuse ${onlyCandidate} more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all`
         : '. This census is already at the strictest floor, so nothing here rests on a call we could not prove'),
   });
+}
 
+export function buildOverview(graph, opts = {}) {
+  const mode = opts.mode ?? 'conservative';
+  if (!GRADE_SETS[mode]) throw new OverviewError(`unknown mode: ${JSON.stringify(mode)}`);
+  const depth = opts.depth ?? 8;
+  if (!Number.isInteger(depth) || depth < 1) throw new OverviewError(`depth must be a positive integer, got ${depth}`);
+  const lanes = Array.isArray(opts.lanes) ? opts.lanes : null;
+  const laneStats = opts.laneStats && typeof opts.laneStats === 'object' ? opts.laneStats : null;
+  const c = censusNodes(graph);
+  const e = censusEdges(graph, mode, c.generatedIds);
+  const r = walkAxis(graph, { mode, depth, laneStats }, c);
+  const h = hubsOf(c, e, r);
+  const o = { mode, depth, lanes, laneStats, opts, ...c, ...e, ...r, ...h };
+  const gaps = buildGaps(o);
+  // The answer reads what the four censuses produced, by name: an explicit list
+  // is the one thing that keeps a field on the answer and the number behind it
+  // from drifting apart.
+  const {
+    columns, endpoints, endpointsWithoutStatement, external, generatedBoundaryEdges,
+    generatedInternalEdges, generatedSymbols, hubEndpoints, hubTables, jpaEntities,
+    jpaRepositories, jpaStatements, jpaUnresolved, mapperMethods, mpEntities, mpLogicDelete,
+    mpRuntimeOnly, mpStatements, mpUnresolved, multiHandler, nodeCount, outboundEndpoints,
+    reachedColumns, reachedStatements, reachedTables, screensBlock, statementTypeCount,
+    statements, statementsWithoutMapper, symbols, tables, transactional, unreachedStatements,
+    unreachedTables, edgeCount, gradeCount,
+  } = o;
   return {
     mode,
     depth,
@@ -689,6 +835,7 @@ export function buildOverview(graph, opts = {}) {
 
 const EMPTY_SET = new Set();
 
+
 function addTo(map, key, val) {
   let s = map.get(key);
   if (!s) { s = new Set(); map.set(key, s); }
@@ -700,3 +847,5 @@ function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
 export class OverviewError extends Error {
   constructor(message) { super(message); this.name = 'OverviewError'; }
 }
+
+

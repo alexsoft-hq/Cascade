@@ -96,6 +96,199 @@ export function packProxyBytes(entry, io = fs) {
  *   log?: (line:string) => void              // defaults to one stderr line
  * }} cfg
  */
+// THE ROUTE INDEX, READ FROM THE SIDECAR AND NEVER FROM THE PACK (RM44).
+// `routes.json` is a few kilobytes beside pack.json, so a server can answer
+// "who serves this route?" for twenty projects without parsing one of them.
+// Read once per project per server and remembered, including the failure: a
+// project with no sidecar is not federated, and the answer says so rather
+// than trying the file again on every question.
+function indexOf(h, projectId) {
+  const { indexes, byId, readIndex } = h;
+  if (indexes.has(projectId)) return indexes.get(projectId);
+  const entry = byId.get(projectId);
+  let r;
+  if (!entry) r = { ok: false, reason: 'unknown', detail: `this server does not serve ${projectId}` };
+  else {
+    try { r = readIndex(entry); }
+    catch (e) { r = { ok: false, reason: 'unreadable', detail: (e && e.message) || String(e) }; }
+  }
+  indexes.set(projectId, r);
+  return r;
+}
+
+/** The served projects, from the registry and the sidecars — no pack is parsed. */
+
+function list(h) {
+  const { entries, cache } = h;
+  return entries.map((e) => {
+    const held = cache.get(e.id);
+    const idx = h.indexOf(e.id);
+    return {
+      id: e.id,
+      dotCascadePath: e.dotCascadePath ?? null,
+      stack: Array.isArray(e.stack) ? e.stack.slice() : [],
+      lastCertifiedAt: e.lastCertifiedAt ?? null,
+      loaded: !!held,
+      bytes: held ? held.bytes : null,
+      // WHETHER THIS PROJECT CAN BE FEDERATED, from its sidecar alone. A
+      // project with no index is not crossed into and not crossed out of, and
+      // this is where a reader finds out why an answer stopped at a call.
+      federation: idx.ok
+        ? { index: 'present', serves: idx.index.serves.length, calls: idx.index.calls.length }
+        : { index: 'absent', reason: idx.reason },
+      // What the pack SAYS about itself — only for a project whose pack is
+      // already in memory. Reading it for an unloaded project would mean
+      // parsing the pack, which is exactly what listing must not do (§15 M8):
+      // `null` here means "not loaded", never "this pack has no metadata".
+      meta: held ? metaSummary(held.ctx) : null,
+    };
+  });
+}
+
+
+function stats(h) {
+  const { cache, budgetBytes, counters, totalBytes } = h;
+  return { loaded: cache.size, bytes: totalBytes(), budgetBytes, evictions: counters.evictions, hits: counters.hits, misses: counters.misses };
+}
+
+/** Evict least-recently-used projects until the cache fits the budget. */
+
+function evictToBudget(h, keepId) {
+  const { cache, counters, totalBytes, log, budgetBytes } = h;
+  while (totalBytes() > budgetBytes) {
+    const victim = [...cache.keys()].find((id) => id !== keepId);
+    if (victim == null) break; // only the just-loaded project is left; it fits by construction
+    const held = cache.get(victim);
+    cache.delete(victim);
+    counters.evictions += 1;
+    log(`cascade: evicted project ${victim} (${held.bytes} bytes, last used ${held.lastUsedAt}): `
+      + `${cache.size} project(s) / ${totalBytes()} bytes now held under the ${budgetBytes} byte budget`);
+  }
+}
+
+/**
+ * The tool context for one project — loaded on first use, then kept in the
+ * LRU. Throws DispatchError: `unknown-key` for an id this server does not
+ * serve, `pack-unreadable` for a pack that cannot be read or cannot fit.
+ */
+
+function ctxFor(h, projectId) {
+  const { byId, cache, loadProject, measureBytes, now, counters, budgetBytes } = h;
+  const entry = byId.get(projectId);
+  if (!entry) throw unknownProject(projectId, h.ids());
+  const held = cache.get(projectId);
+  if (held) {
+    counters.hits += 1;
+    cache.delete(projectId);
+    held.lastUsedAt = now();
+    cache.set(projectId, held); // to the back: most recently used
+    return held.ctx;
+  }
+  counters.misses += 1;
+
+  let bytes;
+  try {
+    bytes = Number(measureBytes(entry));
+  } catch (e) {
+    throw new DispatchError('pack-unreadable', `pack of ${projectId} cannot be measured: ${(e && e.message) || e}`);
+  }
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    throw new DispatchError('pack-unreadable', `pack of ${projectId} reported a nonsense size (${bytes})`);
+  }
+  // A pack that does not fit ALONE is refused before a byte of it is parsed:
+  // loading it would blow the budget the moment it succeeded, and a partial
+  // load would answer from half a graph (§17.6).
+  if (bytes > budgetBytes) {
+    throw new DispatchError(
+      'pack-unreadable',
+      `pack of ${projectId} (${bytes}) exceeds the memory budget (${budgetBytes}). Serve it alone, or raise --memory-budget`,
+    );
+  }
+
+  let ctx;
+  try {
+    ctx = loadProject(entry);
+  } catch (e) {
+    if (e instanceof DispatchError) throw e;
+    throw new DispatchError('pack-unreadable', `pack of ${projectId} could not be loaded: ${(e && e.message) || e}`);
+  }
+  // SIBLING ACCESS (RM44). A tool answering for this project can ask what the
+  // other served projects serve, and can load one when the answer really
+  // crosses into it. It goes through THIS function, so a sibling's pack costs
+  // the same cache slot and the same memory budget as any other project.
+  if (ctx && typeof ctx === 'object' && ctx.federation == null) {
+    ctx.federation = { self: projectId, ids: h.ids, indexOf: h.indexOf, ctxFor: h.ctxFor };
+  }
+  const stamp = now();
+  cache.set(projectId, { ctx, bytes, loadedAt: stamp, lastUsedAt: stamp });
+  h.evictToBudget(projectId);
+  return ctx;
+}
+
+/**
+ * Which project a call is about, and the arguments with `project` removed.
+ * The tool never sees the routing argument.
+ * @param {object} args
+ * @returns {{projectId:string, args:object}}
+ */
+
+function resolveProjectArg(h, args) {
+  const { entries, byId } = h;
+  const raw = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const { project, ...rest } = raw;
+  if (project != null && project !== '') {
+    if (typeof project !== 'string') throw new DispatchError('bad-input', `"project" must be a string, got ${typeof project}`);
+    if (!byId.has(project)) throw unknownProject(project, h.ids());
+    return { projectId: project, args: rest };
+  }
+  if (entries.length === 1) return { projectId: entries[0].id, args: rest };
+  if (entries.length === 0) {
+    throw new DispatchError('unknown-key', 'this server serves no project. Run `cascade init` + `cascade analyze` in a project, or start the server with --pack <dir>');
+  }
+  throw new DispatchError('ambiguous', `several projects are registered: ${h.ids().join(', ')}. Pass "project"`);
+}
+
+/** The basis/trust a SERVER-LEVEL answer carries (the `projects` listing). */
+
+function serverCtx(h) {
+  return {
+    graph: null,
+    basis: {
+      // Not a pack: this answer describes the server. It anchors to no
+      // snapshot, and the contract lets it say so instead of inventing a
+      // digest (see src/mcp/contract.mjs).
+      project: '*',
+      scope: 'server',
+      buildDigest: null,
+      builtAt: null,
+      freshness: { verdict: 'unknown' },
+    },
+    trust: computeTrust({ knownGaps: ['server-level-answer'] }),
+    limits: [],
+    projects: { list: h.list, stats: () => stats(h) },
+  };
+}
+
+/**
+ * Run one tool for the right project. Server-level tools (`projects`) answer
+ * from the host itself; every other tool is routed by `resolveProjectArg`.
+ */
+
+function callTool(h, name, args) {
+
+  const spec = TOOLS[name];
+  if (!spec) return catalogCallTool(name, args, {}); // the catalog owns the unknown-tool message
+  if (spec.serverLevel) {
+    const raw = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+    const { project, ...rest } = raw; // a project argument means nothing here; it is dropped, not honoured
+    void project;
+    return catalogCallTool(name, rest, h.serverCtx());
+  }
+  const routed = h.resolveProjectArg(args);
+  return catalogCallTool(name, routed.args, h.ctxFor(routed.projectId));
+}
+
+
 export function createProjectHost(cfg = {}) {
   const entries = entriesOf(cfg.registry);
   const byId = new Map(entries.map((e) => [e.id, e]));
@@ -113,194 +306,49 @@ export function createProjectHost(cfg = {}) {
   // The LRU. A Map keeps insertion order, so "least recently used" is simply
   // "first key": every hit deletes and re-inserts the entry at the back.
   const cache = new Map(); // id -> {ctx, bytes, loadedAt, lastUsedAt}
-  let evictions = 0;
-  let hits = 0;
-  let misses = 0;
 
-  const ids = () => entries.map((e) => e.id);
-  const totalBytes = () => [...cache.values()].reduce((n, e) => n + e.bytes, 0);
-
-  // THE ROUTE INDEX, READ FROM THE SIDECAR AND NEVER FROM THE PACK (RM44).
-  // `routes.json` is a few kilobytes beside pack.json, so a server can answer
-  // "who serves this route?" for twenty projects without parsing one of them.
-  // Read once per project per server and remembered, including the failure: a
-  // project with no sidecar is not federated, and the answer says so rather
-  // than trying the file again on every question.
-  const indexes = new Map(); // id -> {ok:true,index} | {ok:false,reason,detail}
-  const readIndex = typeof cfg.readIndex === 'function' ? cfg.readIndex : (entry) => readRoutesIndex(packDirOf(entry));
-  function indexOf(projectId) {
-    if (indexes.has(projectId)) return indexes.get(projectId);
-    const entry = byId.get(projectId);
-    let r;
-    if (!entry) r = { ok: false, reason: 'unknown', detail: `this server does not serve ${projectId}` };
-    else {
-      try { r = readIndex(entry); }
-      catch (e) { r = { ok: false, reason: 'unreadable', detail: (e && e.message) || String(e) }; }
-    }
-    indexes.set(projectId, r);
-    return r;
-  }
-
-  /** The served projects, from the registry and the sidecars — no pack is parsed. */
-  function list() {
-    return entries.map((e) => {
-      const held = cache.get(e.id);
-      const idx = indexOf(e.id);
-      return {
-        id: e.id,
-        dotCascadePath: e.dotCascadePath ?? null,
-        stack: Array.isArray(e.stack) ? e.stack.slice() : [],
-        lastCertifiedAt: e.lastCertifiedAt ?? null,
-        loaded: !!held,
-        bytes: held ? held.bytes : null,
-        // WHETHER THIS PROJECT CAN BE FEDERATED, from its sidecar alone. A
-        // project with no index is not crossed into and not crossed out of, and
-        // this is where a reader finds out why an answer stopped at a call.
-        federation: idx.ok
-          ? { index: 'present', serves: idx.index.serves.length, calls: idx.index.calls.length }
-          : { index: 'absent', reason: idx.reason },
-        // What the pack SAYS about itself — only for a project whose pack is
-        // already in memory. Reading it for an unloaded project would mean
-        // parsing the pack, which is exactly what listing must not do (§15 M8):
-        // `null` here means "not loaded", never "this pack has no metadata".
-        meta: held ? metaSummary(held.ctx) : null,
-      };
-    });
-  }
-
-  function stats() {
-    return { loaded: cache.size, bytes: totalBytes(), budgetBytes, evictions, hits, misses };
-  }
-
-  /** Evict least-recently-used projects until the cache fits the budget. */
-  function evictToBudget(keepId) {
-    while (totalBytes() > budgetBytes) {
-      const victim = [...cache.keys()].find((id) => id !== keepId);
-      if (victim == null) break; // only the just-loaded project is left; it fits by construction
-      const held = cache.get(victim);
-      cache.delete(victim);
-      evictions += 1;
-      log(`cascade: evicted project ${victim} (${held.bytes} bytes, last used ${held.lastUsedAt}): `
-        + `${cache.size} project(s) / ${totalBytes()} bytes now held under the ${budgetBytes} byte budget`);
-    }
-  }
-
-  /**
-   * The tool context for one project — loaded on first use, then kept in the
-   * LRU. Throws DispatchError: `unknown-key` for an id this server does not
-   * serve, `pack-unreadable` for a pack that cannot be read or cannot fit.
-   */
-  function ctxFor(projectId) {
-    const entry = byId.get(projectId);
-    if (!entry) throw unknownProject(projectId, ids());
-    const held = cache.get(projectId);
-    if (held) {
-      hits += 1;
-      cache.delete(projectId);
-      held.lastUsedAt = now();
-      cache.set(projectId, held); // to the back: most recently used
-      return held.ctx;
-    }
-    misses += 1;
-
-    let bytes;
-    try {
-      bytes = Number(measureBytes(entry));
-    } catch (e) {
-      throw new DispatchError('pack-unreadable', `pack of ${projectId} cannot be measured: ${(e && e.message) || e}`);
-    }
-    if (!Number.isFinite(bytes) || bytes < 0) {
-      throw new DispatchError('pack-unreadable', `pack of ${projectId} reported a nonsense size (${bytes})`);
-    }
-    // A pack that does not fit ALONE is refused before a byte of it is parsed:
-    // loading it would blow the budget the moment it succeeded, and a partial
-    // load would answer from half a graph (§17.6).
-    if (bytes > budgetBytes) {
-      throw new DispatchError(
-        'pack-unreadable',
-        `pack of ${projectId} (${bytes}) exceeds the memory budget (${budgetBytes}). Serve it alone, or raise --memory-budget`,
-      );
-    }
-
-    let ctx;
-    try {
-      ctx = loadProject(entry);
-    } catch (e) {
-      if (e instanceof DispatchError) throw e;
-      throw new DispatchError('pack-unreadable', `pack of ${projectId} could not be loaded: ${(e && e.message) || e}`);
-    }
-    // SIBLING ACCESS (RM44). A tool answering for this project can ask what the
-    // other served projects serve, and can load one when the answer really
-    // crosses into it. It goes through THIS function, so a sibling's pack costs
-    // the same cache slot and the same memory budget as any other project.
-    if (ctx && typeof ctx === 'object' && ctx.federation == null) {
-      ctx.federation = { self: projectId, ids, indexOf, ctxFor };
-    }
-    const stamp = now();
-    cache.set(projectId, { ctx, bytes, loadedAt: stamp, lastUsedAt: stamp });
-    evictToBudget(projectId);
-    return ctx;
-  }
-
-  /**
-   * Which project a call is about, and the arguments with `project` removed.
-   * The tool never sees the routing argument.
-   * @param {object} args
-   * @returns {{projectId:string, args:object}}
-   */
-  function resolveProjectArg(args) {
-    const raw = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-    const { project, ...rest } = raw;
-    if (project != null && project !== '') {
-      if (typeof project !== 'string') throw new DispatchError('bad-input', `"project" must be a string, got ${typeof project}`);
-      if (!byId.has(project)) throw unknownProject(project, ids());
-      return { projectId: project, args: rest };
-    }
-    if (entries.length === 1) return { projectId: entries[0].id, args: rest };
-    if (entries.length === 0) {
-      throw new DispatchError('unknown-key', 'this server serves no project. Run `cascade init` + `cascade analyze` in a project, or start the server with --pack <dir>');
-    }
-    throw new DispatchError('ambiguous', `several projects are registered: ${ids().join(', ')}. Pass "project"`);
-  }
-
-  /** The basis/trust a SERVER-LEVEL answer carries (the `projects` listing). */
-  function serverCtx() {
-    return {
-      graph: null,
-      basis: {
-        // Not a pack: this answer describes the server. It anchors to no
-        // snapshot, and the contract lets it say so instead of inventing a
-        // digest (see src/mcp/contract.mjs).
-        project: '*',
-        scope: 'server',
-        buildDigest: null,
-        builtAt: null,
-        freshness: { verdict: 'unknown' },
-      },
-      trust: computeTrust({ knownGaps: ['server-level-answer'] }),
-      limits: [],
-      projects: { list, stats },
-    };
-  }
-
-  /**
-   * Run one tool for the right project. Server-level tools (`projects`) answer
-   * from the host itself; every other tool is routed by `resolveProjectArg`.
-   */
-  function callTool(name, args) {
-    const spec = TOOLS[name];
-    if (!spec) return catalogCallTool(name, args, {}); // the catalog owns the unknown-tool message
-    if (spec.serverLevel) {
-      const raw = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-      const { project, ...rest } = raw; // a project argument means nothing here; it is dropped, not honoured
-      void project;
-      return catalogCallTool(name, rest, serverCtx());
-    }
-    const routed = resolveProjectArg(args);
-    return catalogCallTool(name, routed.args, ctxFor(routed.projectId));
-  }
-
-  return { list, stats, ctxFor, resolveProjectArg, callTool, serverCtx, ids, indexOf, budgetBytes };
+  // THE HOST'S STATE, in one object: the registry it serves, the LRU it holds,
+  // the sidecar indexes it has read, and the counters it reports. Every member
+  // below is a module-level function of it, so each can be read — and tested —
+  // without the others.
+  const h = {
+    entries,
+    byId,
+    loadProject,
+    budgetBytes,
+    now,
+    measureBytes,
+    log,
+    cache,
+    // THE ROUTE INDEX, READ FROM THE SIDECAR AND NEVER FROM THE PACK (RM44).
+    // `routes.json` is a few kilobytes beside pack.json, so a server can answer
+    // "who serves this route?" for twenty projects without parsing one of them.
+    // Read once per project per server and remembered, INCLUDING the failure: a
+    // project with no sidecar is not federated, and the answer says so rather
+    // than trying the file again on every question.
+    indexes: new Map(), // id -> {ok:true,index} | {ok:false,reason,detail}
+    readIndex: typeof cfg.readIndex === 'function' ? cfg.readIndex : (entry) => readRoutesIndex(packDirOf(entry)),
+    counters: { evictions: 0, hits: 0, misses: 0 },
+  };
+  h.ids = () => entries.map((e) => e.id);
+  h.totalBytes = () => [...cache.values()].reduce((n, e) => n + e.bytes, 0);
+  h.indexOf = (id) => indexOf(h, id);
+  h.evictToBudget = (keepId) => evictToBudget(h, keepId);
+  h.ctxFor = (id) => ctxFor(h, id);
+  h.list = () => list(h);
+  h.resolveProjectArg = (args) => resolveProjectArg(h, args);
+  h.serverCtx = () => serverCtx(h);
+  return {
+    list: h.list,
+    stats: () => stats(h),
+    ctxFor: h.ctxFor,
+    resolveProjectArg: h.resolveProjectArg,
+    callTool: (name, args) => callTool(h, name, args),
+    serverCtx: h.serverCtx,
+    ids: h.ids,
+    indexOf: h.indexOf,
+    budgetBytes,
+  };
 }
 
 /**
@@ -340,9 +388,9 @@ function unknownProject(id, ids) {
 }
 
 function entriesOf(registry) {
-  const list = Array.isArray(registry) ? registry : (registry && Array.isArray(registry.projects) ? registry.projects : null);
-  if (!list) throw new DispatchError('bad-input', 'createProjectHost needs a registry {projects:[…]} or an array of project entries');
-  return list.map((e, i) => {
+  const rows = Array.isArray(registry) ? registry : (registry && Array.isArray(registry.projects) ? registry.projects : null);
+  if (!rows) throw new DispatchError('bad-input', 'createProjectHost needs a registry {projects:[…]} or an array of project entries');
+  return rows.map((e, i) => {
     if (!e || typeof e !== 'object' || typeof e.id !== 'string' || e.id.length === 0) {
       throw new DispatchError('bad-input', `project entry ${i} needs a non-empty string id`);
     }

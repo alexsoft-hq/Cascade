@@ -125,6 +125,242 @@ export function buildManifest(discovery, opts) {
  *        `existing` is the profile already on disk, when there is one.
  * @returns {{profile:Object, diagnostics:Object[]}}
  */
+/**
+ * WHICH FRAMEWORK PACKS THIS TREE DECLARES. A pack is what turns a file
+ * discovery found into a lane that runs, so this is the profile's answer to
+ * "which lanes does this project want?" — and a router package is the SCREEN
+ * AXIS switch, which is why the router packs come back beside them.
+ */
+function declareFrameworkPacks(discovery, counts) {
+const frameworkPacks = [];
+if ((counts.springHandlerFiles ?? 0) > 0) frameworkPacks.push('spring-mvc');
+if ((counts.mybatisMapperXml ?? 0) > 0) frameworkPacks.push('mybatis-xml');
+// @Entity classes mean the persistence this project actually uses is declared
+// in the mapping, not written as SQL — that is the `jpa` pack's lane (M10).
+if ((counts.jpaEntityFiles ?? 0) > 0) frameworkPacks.push('jpa');
+// `extends BaseMapper<…>` or `@TableName` means MyBatis-Plus generates the
+// CRUD this project never wrote — that is the `mybatis-plus` pack's lane
+// (RM15). It is INDEPENDENT of mybatis-xml: a project can have both, and
+// jeecg-boot does (80 mapper XML files for 65 mappers, and generic CRUD for
+// everything else).
+if ((counts.mybatisPlusFiles ?? 0) > 0) frameworkPacks.push('mybatis-plus');
+// A frontend package means there is a screen side to this project, and the
+// web lane reads it (RM26). The ROUTER packs are declared only when a package
+// depends on one: the router declaration packs (adapters/web/packs) are what
+// let the worker recognize a route object, and naming the one this project
+// actually uses is how the profile says which convention its screens follow.
+//
+// A VENDORED ROOT COUNTS THE SAME WAY (RM47). A gateway that ships AngularJS
+// as `<script>` tags has no manifest to read a dependency out of, so the
+// router pack comes from the registrar its own source writes. Everything else
+// about the lane is identical: the same worker reads the same files.
+const webPackages = discovery.webPackages ?? [];
+const vendoredRoots = discovery.webVendoredRoots ?? [];
+const routerPacks = [];
+if (webPackages.length > 0 || vendoredRoots.length > 0) {
+  frameworkPacks.push('web');
+  for (const router of ROUTER_PACKS) {
+    if (webPackages.some((p) => p.router === router)
+      || vendoredRoots.some((r) => (r.routerPacks ?? []).includes(router))) routerPacks.push(router);
+  }
+  frameworkPacks.push(...routerPacks);
+}
+
+  return { frameworkPacks, routerPacks, vendoredRoots };
+}
+
+/**
+ * WHERE THE SCHEMA IS. One DDL file in the tree is the catalog; no DDL and one
+ * connection candidate RECORDS where the database is and leaves the source at
+ * `none`, because reading a live database is a sentence the user types.
+ */
+function declareCatalog(discovery, { ddlPaths, root, manifestDir, diagnostics }) {
+let catalog = { source: 'none', connectionFrom: null };
+if (ddlPaths.length === 1) {
+  catalog = { source: 'file', connectionFrom: toPosix(path.relative(manifestDir, path.resolve(root, ddlPaths[0]))) };
+} else if (ddlPaths.length > 1) {
+  diagnostics.push({
+    kind: 'AMBIGUOUS_CATALOG_SOURCE',
+    severity: 'warn',
+    path: '.',
+    reason: `${ddlPaths.length} DDL files contain CREATE TABLE (${ddlPaths.join(', ')}); catalog.source is left "none". Set catalog.connectionFrom to the one that describes the live schema`,
+  });
+}
+
+// No DDL in the tree, but the project says where its database is? RECORD the
+// file — and stop there. `source` stays "none": SPEC §12.3 forbids the tool
+// deciding by itself to connect anywhere, precisely because the connection
+// info comes from the ANALYZED REPOSITORY, which is untrusted input (§17.5).
+// Turning it on is a sentence the user types, and the diagnostic below is
+// where they read it.
+const candidates = discovery.connectionCandidates ?? [];
+if (catalog.source === 'none' && candidates.length === 1) {
+  const only = candidates[0];
+  catalog = {
+    source: 'none',
+    connectionFrom: toPosix(path.relative(manifestDir, path.resolve(root, only.path))),
+  };
+  diagnostics.push({
+    kind: 'CATALOG_CONNECTION_FOUND',
+    severity: 'info',
+    path: only.path,
+    reason: `${only.path} describes a ${only.dialect ?? 'database'} at ${only.host ?? '?'}:${only.port ?? '?'}/${only.database ?? '?'}`
+      + ` (user ${only.usernameRef ?? 'not stated'}, password ${only.passwordPresent ? 'present in that file' : 'absent'}).`
+      + ' It is RECORDED as catalog.connectionFrom and nothing else: run `cascade catalog fetch --candidate 1` to see the exact target,'
+      + ' confirm it, and pin a snapshot the profile then reads. Nothing connects until you do.',
+  });
+} else if (catalog.source === 'none' && candidates.length > 1) {
+  diagnostics.push({
+    kind: 'AMBIGUOUS_CATALOG_SOURCE',
+    severity: 'info',
+    path: '.',
+    reason: `${candidates.length} files carry datasource connection info (${candidates.slice(0, 4).map((c) => c.path).join(', ')}${candidates.length > 4 ? ', …' : ''});`
+      + ' none is recorded, because picking one would decide which database this project talks to.'
+      + ' Run `cascade catalog discover` to list them.',
+  });
+}
+
+// The OpenAPI / Swagger documents this tree ships, MANIFEST-RELATIVE like
+// every other path in the profile. They are recorded whatever else was found:
+// reading a document needs no framework pack, and a project that publishes one
+// has already said what it serves.
+const openapiDocuments = (discovery.openapiDocuments ?? [])
+  .map((d) => toPosix(path.relative(manifestDir, path.resolve(root, d.path))))
+  .sort();
+
+  return { catalog, openapiDocuments };
+}
+
+/**
+ * THE FRONTEND AND TEMPLATE ROOTS no package manifest declares (RM47, RM48),
+ * written down so a later run reads them from the profile rather than
+ * rediscovering them — and a root the USER wrote stays the user's.
+ */
+function declareWebRoots(discovery, { existing, routerPacks, vendoredRoots, root, manifestDir, diagnostics }) {
+// A ROUTER PACK IS THE SCREEN AXIS SWITCH. The packs are what let the worker
+// recognize a route object at all, so a project that uses one has screens to
+// build and the axis is turned on here rather than left for the reader to
+// find.
+//
+// A project with no router package IN THIS TREE leaves the key at its default
+// (null), which is NOT "off": discovery walked the analyzed root, and a
+// backend whose frontend is checked out beside it has no package here to
+// find. `screenAxisOf` (src/core/lanes.mjs) decides that case from what the
+// run really reads. Writing `false` here would be this engine putting words
+// in the user's mouth, and those words would be wrong.
+const screenAxis = routerPacks.length > 0 ? { screenAxis: { enabled: true } } : {};
+
+// THE FRONTEND ROOTS NO PACKAGE DECLARES, written down so a later run reads
+// them without a flag. Same rule as the two keys below: a list that is
+// already in the profile is the user's word, including an EMPTY one, which is
+// how a project says "read none of them". Discovery re-running is not a
+// reason to overwrite either answer.
+const discoveredWebRoots = vendoredRoots.map((r) => ({
+  root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
+  kind: 'vendored',
+  from: 'discovery',
+}));
+const declaredWebRoots = Array.isArray(existing?.webRoots) ? existing.webRoots : null;
+const webRoots = declaredWebRoots ?? discoveredWebRoots;
+if (declaredWebRoots !== null && discoveredWebRoots.length > 0) {
+  diagnostics.push({
+    kind: 'WEB_ROOTS_KEPT',
+    severity: 'info',
+    path: '.',
+    reason: `the profile already answers for webRoots (${declaredWebRoots.length} root(s)), so it is left alone. `
+      + `This tree holds ${discoveredWebRoots.length} frontend root(s) with no package manifest that were not applied: `
+      + `${vendoredRoots.map((r) => r.root).join(', ')}`,
+  });
+}
+
+// WHERE A VIEW NAME BECOMES A PAGE (RM48). Same rule again: written only into
+// a profile that has no list of its own, because a template root decides what
+// is in the pack and a pack must not change under an input nobody recorded.
+const discoveredTemplateRoots = (discovery.templateRoots ?? []).map((r) => ({
+  root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
+  engine: r.engine,
+  suffix: r.suffix,
+  from: r.from,
+}));
+const declaredTemplateRoots = Array.isArray(existing?.templateRoots) ? existing.templateRoots : null;
+const templateRoots = declaredTemplateRoots ?? discoveredTemplateRoots;
+if (declaredTemplateRoots !== null && discoveredTemplateRoots.length > 0) {
+  diagnostics.push({
+    kind: 'TEMPLATE_ROOTS_KEPT',
+    severity: 'info',
+    path: '.',
+    reason: `the profile already answers for templateRoots (${declaredTemplateRoots.length} root(s)), so it is left alone. `
+      + `This tree holds ${discoveredTemplateRoots.length} template root(s) that were not applied: `
+      + `${discoveredTemplateRoots.map((r) => `${r.root} (${r.engine})`).join(', ')}`,
+  });
+}
+
+  return { screenAxis, webRoots, templateRoots };
+}
+
+/**
+ * WHO THIS SERVICE IS and WHERE IT FORWARDS (RM46), read from its own Spring
+ * configuration. Both used to be typed into the profile by hand, and both are in
+ * the tree; a value the user wrote is kept, and the difference is reported.
+ */
+function declareServiceIdentity(discovery, { existing, diagnostics }) {
+// WHO THIS SERVICE IS, from `spring.application.name` (RM46). It is what the
+// federation matcher uses to pick one sibling out of several serving the same
+// path, so leaving it for a person to type was leaving the tie-breaker unset
+// on every project that never edits its profile.
+const discoveredNames = [...new Set((discovery.serviceNames ?? []).map((s) => s.name))].sort();
+const declaredNames = Array.isArray(existing?.serviceNames) ? existing.serviceNames.filter((s) => typeof s === 'string' && s !== '') : [];
+const serviceNames = declaredNames.length > 0 ? declaredNames : discoveredNames;
+if (declaredNames.length > 0 && discoveredNames.some((n) => !declaredNames.includes(n))) {
+  diagnostics.push({
+    kind: 'SERVICE_NAME_KEPT',
+    severity: 'info',
+    path: '.',
+    reason: `the profile already names this project ${declaredNames.join(', ')}, so it is left alone. `
+      + `This tree also declares spring.application.name ${discoveredNames.join(', ')}`,
+  });
+}
+
+// WHERE THIS GATEWAY FORWARDS, from its own `spring.cloud.gateway` route
+// table (RM46). Same rule as the name: written only into a profile that has
+// no map of its own.
+const discoveredRoutes = {};
+for (const r of discovery.gatewayRoutes ?? []) {
+  if (Object.hasOwn(discoveredRoutes, r.front)) {
+    const already = discoveredRoutes[r.front];
+    if (already.to !== r.to || already.service !== r.service) {
+      diagnostics.push({
+        kind: 'AMBIGUOUS_GATEWAY_ROUTE',
+        severity: 'warn',
+        path: r.file,
+        reason: `two gateway routes claim the prefix ${r.front} and forward it differently `
+          + `(${already.from} sends it to ${already.service ?? 'an unnamed service'} as ${already.to || '/'}, `
+          + `${r.file} to ${r.service ?? 'an unnamed service'} as ${r.to || '/'}); the first one is kept`,
+      });
+    }
+    continue;
+  }
+  discoveredRoutes[r.front] = { to: r.to, service: r.service, from: r.file };
+}
+const declaredRoutes = existing && typeof existing.gatewayRoutes === 'object' && existing.gatewayRoutes !== null
+  ? existing.gatewayRoutes : {};
+const keepRoutes = Object.keys(declaredRoutes).length > 0;
+const gatewayRoutes = keepRoutes ? declaredRoutes : discoveredRoutes;
+if (keepRoutes && Object.keys(discoveredRoutes).length > 0) {
+  diagnostics.push({
+    kind: 'GATEWAY_ROUTES_KEPT',
+    severity: 'info',
+    path: '.',
+    reason: `the profile already declares ${Object.keys(declaredRoutes).length} gateway route(s), so they are left alone. `
+      + `This tree declares ${Object.keys(discoveredRoutes).length} route(s) that were not applied: `
+      + `${Object.keys(discoveredRoutes).sort().join(', ')}`,
+  });
+}
+
+  return { serviceNames, gatewayRoutes };
+}
+
+
 export function buildProfile(discovery, opts) {
   const { root, manifestDir } = opts;
   const existing = opts.existing && typeof opts.existing === 'object' && !Array.isArray(opts.existing)
@@ -133,203 +369,13 @@ export function buildProfile(discovery, opts) {
   const counts = discovery.counts ?? {};
   const ddlPaths = discovery.ddlPaths ?? [];
 
-  const frameworkPacks = [];
-  if ((counts.springHandlerFiles ?? 0) > 0) frameworkPacks.push('spring-mvc');
-  if ((counts.mybatisMapperXml ?? 0) > 0) frameworkPacks.push('mybatis-xml');
-  // @Entity classes mean the persistence this project actually uses is declared
-  // in the mapping, not written as SQL — that is the `jpa` pack's lane (M10).
-  if ((counts.jpaEntityFiles ?? 0) > 0) frameworkPacks.push('jpa');
-  // `extends BaseMapper<…>` or `@TableName` means MyBatis-Plus generates the
-  // CRUD this project never wrote — that is the `mybatis-plus` pack's lane
-  // (RM15). It is INDEPENDENT of mybatis-xml: a project can have both, and
-  // jeecg-boot does (80 mapper XML files for 65 mappers, and generic CRUD for
-  // everything else).
-  if ((counts.mybatisPlusFiles ?? 0) > 0) frameworkPacks.push('mybatis-plus');
-  // A frontend package means there is a screen side to this project, and the
-  // web lane reads it (RM26). The ROUTER packs are declared only when a package
-  // depends on one: the router declaration packs (adapters/web/packs) are what
-  // let the worker recognize a route object, and naming the one this project
-  // actually uses is how the profile says which convention its screens follow.
-  //
-  // A VENDORED ROOT COUNTS THE SAME WAY (RM47). A gateway that ships AngularJS
-  // as `<script>` tags has no manifest to read a dependency out of, so the
-  // router pack comes from the registrar its own source writes. Everything else
-  // about the lane is identical: the same worker reads the same files.
-  const webPackages = discovery.webPackages ?? [];
-  const vendoredRoots = discovery.webVendoredRoots ?? [];
-  const routerPacks = [];
-  if (webPackages.length > 0 || vendoredRoots.length > 0) {
-    frameworkPacks.push('web');
-    for (const router of ROUTER_PACKS) {
-      if (webPackages.some((p) => p.router === router)
-        || vendoredRoots.some((r) => (r.routerPacks ?? []).includes(router))) routerPacks.push(router);
-    }
-    frameworkPacks.push(...routerPacks);
-  }
+  const { frameworkPacks, routerPacks, vendoredRoots } = declareFrameworkPacks(discovery, counts);
+  const { catalog, openapiDocuments } = declareCatalog(discovery, { ddlPaths, root, manifestDir, diagnostics });
+  const { screenAxis, webRoots, templateRoots } = declareWebRoots(discovery, {
+    existing, routerPacks, vendoredRoots, root, manifestDir, diagnostics,
+  });
+  const { serviceNames, gatewayRoutes } = declareServiceIdentity(discovery, { existing, diagnostics });
 
-  let catalog = { source: 'none', connectionFrom: null };
-  if (ddlPaths.length === 1) {
-    catalog = { source: 'file', connectionFrom: toPosix(path.relative(manifestDir, path.resolve(root, ddlPaths[0]))) };
-  } else if (ddlPaths.length > 1) {
-    diagnostics.push({
-      kind: 'AMBIGUOUS_CATALOG_SOURCE',
-      severity: 'warn',
-      path: '.',
-      reason: `${ddlPaths.length} DDL files contain CREATE TABLE (${ddlPaths.join(', ')}); catalog.source is left "none". Set catalog.connectionFrom to the one that describes the live schema`,
-    });
-  }
-
-  // No DDL in the tree, but the project says where its database is? RECORD the
-  // file — and stop there. `source` stays "none": SPEC §12.3 forbids the tool
-  // deciding by itself to connect anywhere, precisely because the connection
-  // info comes from the ANALYZED REPOSITORY, which is untrusted input (§17.5).
-  // Turning it on is a sentence the user types, and the diagnostic below is
-  // where they read it.
-  const candidates = discovery.connectionCandidates ?? [];
-  if (catalog.source === 'none' && candidates.length === 1) {
-    const only = candidates[0];
-    catalog = {
-      source: 'none',
-      connectionFrom: toPosix(path.relative(manifestDir, path.resolve(root, only.path))),
-    };
-    diagnostics.push({
-      kind: 'CATALOG_CONNECTION_FOUND',
-      severity: 'info',
-      path: only.path,
-      reason: `${only.path} describes a ${only.dialect ?? 'database'} at ${only.host ?? '?'}:${only.port ?? '?'}/${only.database ?? '?'}`
-        + ` (user ${only.usernameRef ?? 'not stated'}, password ${only.passwordPresent ? 'present in that file' : 'absent'}).`
-        + ' It is RECORDED as catalog.connectionFrom and nothing else: run `cascade catalog fetch --candidate 1` to see the exact target,'
-        + ' confirm it, and pin a snapshot the profile then reads. Nothing connects until you do.',
-    });
-  } else if (catalog.source === 'none' && candidates.length > 1) {
-    diagnostics.push({
-      kind: 'AMBIGUOUS_CATALOG_SOURCE',
-      severity: 'info',
-      path: '.',
-      reason: `${candidates.length} files carry datasource connection info (${candidates.slice(0, 4).map((c) => c.path).join(', ')}${candidates.length > 4 ? ', …' : ''});`
-        + ' none is recorded, because picking one would decide which database this project talks to.'
-        + ' Run `cascade catalog discover` to list them.',
-    });
-  }
-
-  // The OpenAPI / Swagger documents this tree ships, MANIFEST-RELATIVE like
-  // every other path in the profile. They are recorded whatever else was found:
-  // reading a document needs no framework pack, and a project that publishes one
-  // has already said what it serves.
-  const openapiDocuments = (discovery.openapiDocuments ?? [])
-    .map((d) => toPosix(path.relative(manifestDir, path.resolve(root, d.path))))
-    .sort();
-
-  // A ROUTER PACK IS THE SCREEN AXIS SWITCH. The packs are what let the worker
-  // recognize a route object at all, so a project that uses one has screens to
-  // build and the axis is turned on here rather than left for the reader to
-  // find.
-  //
-  // A project with no router package IN THIS TREE leaves the key at its default
-  // (null), which is NOT "off": discovery walked the analyzed root, and a
-  // backend whose frontend is checked out beside it has no package here to
-  // find. `screenAxisOf` (src/core/lanes.mjs) decides that case from what the
-  // run really reads. Writing `false` here would be this engine putting words
-  // in the user's mouth, and those words would be wrong.
-  const screenAxis = routerPacks.length > 0 ? { screenAxis: { enabled: true } } : {};
-
-  // THE FRONTEND ROOTS NO PACKAGE DECLARES, written down so a later run reads
-  // them without a flag. Same rule as the two keys below: a list that is
-  // already in the profile is the user's word, including an EMPTY one, which is
-  // how a project says "read none of them". Discovery re-running is not a
-  // reason to overwrite either answer.
-  const discoveredWebRoots = vendoredRoots.map((r) => ({
-    root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
-    kind: 'vendored',
-    from: 'discovery',
-  }));
-  const declaredWebRoots = Array.isArray(existing?.webRoots) ? existing.webRoots : null;
-  const webRoots = declaredWebRoots ?? discoveredWebRoots;
-  if (declaredWebRoots !== null && discoveredWebRoots.length > 0) {
-    diagnostics.push({
-      kind: 'WEB_ROOTS_KEPT',
-      severity: 'info',
-      path: '.',
-      reason: `the profile already answers for webRoots (${declaredWebRoots.length} root(s)), so it is left alone. `
-        + `This tree holds ${discoveredWebRoots.length} frontend root(s) with no package manifest that were not applied: `
-        + `${vendoredRoots.map((r) => r.root).join(', ')}`,
-    });
-  }
-
-  // WHERE A VIEW NAME BECOMES A PAGE (RM48). Same rule again: written only into
-  // a profile that has no list of its own, because a template root decides what
-  // is in the pack and a pack must not change under an input nobody recorded.
-  const discoveredTemplateRoots = (discovery.templateRoots ?? []).map((r) => ({
-    root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
-    engine: r.engine,
-    suffix: r.suffix,
-    from: r.from,
-  }));
-  const declaredTemplateRoots = Array.isArray(existing?.templateRoots) ? existing.templateRoots : null;
-  const templateRoots = declaredTemplateRoots ?? discoveredTemplateRoots;
-  if (declaredTemplateRoots !== null && discoveredTemplateRoots.length > 0) {
-    diagnostics.push({
-      kind: 'TEMPLATE_ROOTS_KEPT',
-      severity: 'info',
-      path: '.',
-      reason: `the profile already answers for templateRoots (${declaredTemplateRoots.length} root(s)), so it is left alone. `
-        + `This tree holds ${discoveredTemplateRoots.length} template root(s) that were not applied: `
-        + `${discoveredTemplateRoots.map((r) => `${r.root} (${r.engine})`).join(', ')}`,
-    });
-  }
-
-  // WHO THIS SERVICE IS, from `spring.application.name` (RM46). It is what the
-  // federation matcher uses to pick one sibling out of several serving the same
-  // path, so leaving it for a person to type was leaving the tie-breaker unset
-  // on every project that never edits its profile.
-  const discoveredNames = [...new Set((discovery.serviceNames ?? []).map((s) => s.name))].sort();
-  const declaredNames = Array.isArray(existing?.serviceNames) ? existing.serviceNames.filter((s) => typeof s === 'string' && s !== '') : [];
-  const serviceNames = declaredNames.length > 0 ? declaredNames : discoveredNames;
-  if (declaredNames.length > 0 && discoveredNames.some((n) => !declaredNames.includes(n))) {
-    diagnostics.push({
-      kind: 'SERVICE_NAME_KEPT',
-      severity: 'info',
-      path: '.',
-      reason: `the profile already names this project ${declaredNames.join(', ')}, so it is left alone. `
-        + `This tree also declares spring.application.name ${discoveredNames.join(', ')}`,
-    });
-  }
-
-  // WHERE THIS GATEWAY FORWARDS, from its own `spring.cloud.gateway` route
-  // table (RM46). Same rule as the name: written only into a profile that has
-  // no map of its own.
-  const discoveredRoutes = {};
-  for (const r of discovery.gatewayRoutes ?? []) {
-    if (Object.hasOwn(discoveredRoutes, r.front)) {
-      const already = discoveredRoutes[r.front];
-      if (already.to !== r.to || already.service !== r.service) {
-        diagnostics.push({
-          kind: 'AMBIGUOUS_GATEWAY_ROUTE',
-          severity: 'warn',
-          path: r.file,
-          reason: `two gateway routes claim the prefix ${r.front} and forward it differently `
-            + `(${already.from} sends it to ${already.service ?? 'an unnamed service'} as ${already.to || '/'}, `
-            + `${r.file} to ${r.service ?? 'an unnamed service'} as ${r.to || '/'}); the first one is kept`,
-        });
-      }
-      continue;
-    }
-    discoveredRoutes[r.front] = { to: r.to, service: r.service, from: r.file };
-  }
-  const declaredRoutes = existing && typeof existing.gatewayRoutes === 'object' && existing.gatewayRoutes !== null
-    ? existing.gatewayRoutes : {};
-  const keepRoutes = Object.keys(declaredRoutes).length > 0;
-  const gatewayRoutes = keepRoutes ? declaredRoutes : discoveredRoutes;
-  if (keepRoutes && Object.keys(discoveredRoutes).length > 0) {
-    diagnostics.push({
-      kind: 'GATEWAY_ROUTES_KEPT',
-      severity: 'info',
-      path: '.',
-      reason: `the profile already declares ${Object.keys(declaredRoutes).length} gateway route(s), so they are left alone. `
-        + `This tree declares ${Object.keys(discoveredRoutes).length} route(s) that were not applied: `
-        + `${Object.keys(discoveredRoutes).sort().join(', ')}`,
-    });
-  }
 
   const profile = normalizeProfile({
     build: { tool: discovery.buildTool ?? null },

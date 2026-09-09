@@ -20,8 +20,9 @@
 // prefix object it does not build.
 
 import {
-  cmp, escapeRe, normalizeUrl, GRADE_RANK, FIXPOINT_LIMIT,
+  cmp, normalizeUrl, GRADE_RANK, FIXPOINT_LIMIT,
 } from './shared.mjs';
+import { routeMatches } from '../http_routes.mjs';
 import { isComponentFile, webEndpointId, webSymbolId } from './symbols.mjs';
 import { TEMPLATE_PREFIX } from './prefix.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
@@ -40,39 +41,12 @@ export const WEB_CALL_BASIS = Object.freeze({
 });
 
 /**
- * Whether one ROUTE path template matches one CALL path template.
- *
- * Both sides have holes and they are not the same kind of hole. A route's
- * `{id}`, `{key:.+}` and `*` each stand for ONE segment and `**` for the rest;
- * a call's `{*}` is whatever the code interpolated, which is one whole segment
- * when the segment is nothing but the hole, and part of a segment otherwise
- * (`/thing-{*}.json`). So the comparison is segment by segment, and a hole on
- * either side is satisfied by anything the other side can be.
- *
- * @param {string} routePath  as the pack records it
- * @param {string} callPath   as the web lane resolved it
- * @returns {boolean}
+ * Whether one ROUTE path template matches one CALL path template. The rule is
+ * `src/adapters/http_routes.mjs`'s, because the Java lane asks the same question
+ * of a service-to-service call; re-exported here so every importer of this
+ * module still finds it where it has always been.
  */
-export function routeMatches(routePath, callPath) {
-  const r = normalizeUrl(routePath).split('/');
-  const c = normalizeUrl(callPath).split('/');
-  let i = 0;
-  for (; i < r.length; i += 1) {
-    const rs = r[i];
-    if (rs === '**') return true; // the rest, however many segments it is
-    if (i >= c.length) return false;
-    const cs = c[i];
-    const routeHole = (rs.startsWith('{') && rs.endsWith('}')) || rs === '*';
-    if (routeHole) continue; // one segment, whatever it is
-    if (rs === cs) continue;
-    if (!cs.includes('{*}')) return false;
-    // The call segment carries a hole: it matches this literal route segment
-    // when its fixed parts line up around it.
-    const re = new RegExp(`^${cs.split('{*}').map(escapeRe).join(cs === '{*}' ? '[^/]+' : '[^/]*')}$`);
-    if (!re.test(rs)) return false;
-  }
-  return i === r.length && c.length === r.length;
-}
+export { routeMatches };
 
 /**
  * A URL TEMPLATE THAT IS NOTHING BUT HOLES NAMES NO ROUTE.

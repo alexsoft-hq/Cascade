@@ -30,7 +30,7 @@ export const SKIP_DIRS = Object.freeze([
   '.git', 'node_modules', 'target', 'build', 'dist', 'out', '.cascade', '.venv', '.gradle', '.idea',
 ]);
 
-// Default walk cap. A tree bigger than this is reported as capped, never
+// Default walk cap. A tree bigger than this is reported as capped: w.capped, never
 // silently truncated (§7.3).
 export const DEFAULT_MAX_FILES = 50000;
 
@@ -615,6 +615,592 @@ export function classifyDdlFile(relPath, text) {
  *   diagnostics:{kind:string, severity:string, path:string, reason:string}[]
  * }}
  */
+/**
+ * An `index.html` beside loose scripts: the one file that can say which
+ * directory the server treats as the root of a frontend with no manifest.
+ * Noted, not read — only the directories that turn out to hold frontend
+ * sources are opened, after the walk.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyIndexPage(d, f) {
+  const { absFile, lower, inPackage, rel } = f;
+  const { looseIndexPages } = d;
+  // An `index.html` beside loose scripts is the one file that can say which
+  // directory the server treats as its root. Noted, not read: only the
+  // directories that turn out to hold frontend sources are opened, after the
+  // walk.
+  if (lower === 'index.html' && inPackage !== true) {
+    const dir = rel(path.dirname(absFile));
+    if (outsideVendorDirs(dir)) looseIndexPages.set(dir, absFile);
+  }
+
+  return false;
+}
+
+/**
+ * A TEMPLATE FILE (RM48), noted by directory and extension and never read
+ * here: WHICH of these directories is a template root depends on the view
+ * resolver settings, which are read from the configuration files below.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyTemplateFile(d, f) {
+  const { absFile, lower, rel } = f;
+  const { templateDirs, templateSample } = d;
+  // A TEMPLATE FILE (RM48). Noted by directory and extension, never read here:
+  // which of these directories is a template ROOT depends on the view resolver
+  // settings, and those are read from the configuration files further down.
+  const templateExt = TEMPLATE_ENGINES
+    .flatMap((e) => e.extensions)
+    .find((e) => lower.endsWith(e)) ?? null;
+  if (templateExt !== null) {
+    const dir = rel(path.dirname(absFile));
+    if (outsideVendorDirs(dir)) {
+      if (!templateDirs.has(dir)) templateDirs.set(dir, new Map());
+      const byExt = templateDirs.get(dir);
+      byExt.set(templateExt, (byExt.get(templateExt) ?? 0) + 1);
+      if (!templateSample.has(dir)) templateSample.set(dir, []);
+      const sample = templateSample.get(dir);
+      if (sample.length < 3) sample.push(absFile);
+    }
+  }
+
+  return false;
+}
+
+/**
+ * A frontend source file. Counted BEFORE the java/xml/sql branches so a `.vue`
+ * or a `.ts` never falls through to "a technology this engine has no lane for".
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyWebSource(d, f) {
+  const { absFile, name, lower, dirEntries, inPackage, rel } = f;
+  const { counts, looseWebFiles, looseWebPaths } = d;
+  // Counted BEFORE the java/xml/sql branches so a `.vue` or `.ts` never falls
+  // through to nothing. The web lane reads these files (RM26), so they are an
+  // input, not an uncovered technology.
+  if (isWebSourceFile(name)) {
+    counts.webFiles += 1;
+    if (lower.endsWith('.vue')) counts.vueFiles += 1;
+    // A SOURCE MAP BESIDE IT MEANS A BUILD WROTE IT. `app.cebd468e.js` is not
+    // spelled `.min.js` and is a webpack chunk all the same; nobody writes a
+    // `.js.map` by hand, so the pair is the one generic thing that says
+    // "generated". A directory of those is output, not a frontend somebody
+    // keeps here, and reading it would put a bundle's insides in the graph.
+    const generated = (dirEntries ?? []).some((e) => e.isFile && e.name === `${name}.map`);
+    if (inPackage !== true && !generated) {
+      const dir = rel(path.dirname(absFile));
+      if (outsideVendorDirs(dir)) {
+        looseWebFiles.set(dir, (looseWebFiles.get(dir) ?? 0) + 1);
+        looseWebPaths.add(rel(absFile));
+      }
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * A Java source: the package it declares, the source root that package implies,
+ * and what its annotations say this project uses.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyJavaFile(d, f) {
+  const { absFile, lower, stats, rel } = f;
+  const { addRoot, counts, packageCounts, read, root } = d;
+  if (lower.endsWith('.java')) {
+    counts.javaFiles += 1;
+    if (isTestPath(rel(absFile))) counts.javaTestFiles += 1;
+    if (stats) stats.javaFiles += 1;
+    const text = read(absFile);
+    if (text === null) return;
+    const pkg = PACKAGE_DECL_RE.exec(text);
+    const dir = path.dirname(absFile);
+    if (pkg) {
+      d.javaWithPackage += 1;
+      const declared = pkg[1].replace(/[ \t]/g, '');
+      const prefix = prefixOf(declared);
+      packageCounts.set(prefix, (packageCounts.get(prefix) ?? 0) + 1);
+      addRoot(rel(sourceRootOf(dir, declared, root)));
+    } else {
+      // No package declaration: the file's own directory IS the source root.
+      addRoot(rel(dir));
+    }
+    if (SPRING_HANDLER_RE.test(text)) counts.springHandlerFiles += 1;
+    // A JPA entity is a LANE as of M10, not an uncovered technology: the count
+    // is what makes `cascade init` declare the `jpa` framework pack.
+    if (JPA_ENTITY_RE.test(text)) counts.jpaEntityFiles += 1;
+    // Same rule, same reason: the count is what makes `cascade init` declare
+    // the `mybatis-plus` framework pack.
+    if (MYBATIS_PLUS_RE.test(text)) counts.mybatisPlusFiles += 1;
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * A Kotlin source. A `build.gradle.kts` is configuration, not a source, so only
+ * `.kt` counts here.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyKotlinFile(d, f) {
+  const { absFile, lower, rel } = f;
+  const { counts, diagnostics } = d;
+  // Kotlin build scripts (build.gradle.kts) are configuration, not sources;
+  // only `.kt` counts as a Kotlin source here.
+  if (lower.endsWith('.kt')) {
+    counts.kotlinFiles += 1;
+    diagnostics.push({
+      kind: 'UNSUPPORTED_TECHNOLOGY', severity: 'info', path: rel(absFile),
+      reason: 'Kotlin source: the engine ships no Kotlin lane, so this file contributes nothing to the graph',
+    });
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * An XML file: a MyBatis mapper, or an XML this engine has no question about.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyXmlFile(d, f) {
+  const { absFile, lower, rel } = f;
+  const { counts, mapperDirs, read } = d;
+  if (lower.endsWith('.xml')) {
+    const text = read(absFile);
+    if (text === null) return;
+    if (MYBATIS_MAPPER_RE.test(text)) {
+      counts.mybatisMapperXml += 1;
+      mapperDirs.add(rel(path.dirname(absFile)));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * An OpenAPI / Swagger document — an EVIDENCE LAYER, not a technology with no
+ * lane. TESTED BEFORE THE CONNECTION-FILE RULE, and it has to be: that rule
+ * claims every `.yml` in the tree, and no file is both a contract and a
+ * datasource configuration.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyOpenApiDocument(d, f) {
+  const { absFile, name, lower, rel } = f;
+  const { diagnostics, openapiDocuments, read } = d;
+  // An OpenAPI / Swagger document is an EVIDENCE LAYER, not a technology this
+  // engine has no lane for: it declares routes, and RM29's bridge reads them.
+  //
+  // TESTED BEFORE THE CONNECTION-FILE RULE, and it has to be: that rule claims
+  // every `.yml`/`.yaml` in the tree, so a document tested after it would never
+  // be seen. A file whose head says `openapi:` is a contract, not a datasource
+  // configuration, and no file is both.
+  if (name !== 'package.json' && OPENAPI_EXTENSIONS.some((e) => lower.endsWith(e))) {
+    const text = read(absFile);
+    if (text !== null) {
+      const head = text.slice(0, OPENAPI_HEAD_BYTES);
+      const version = openApiVersionOf(head);
+      if (version !== null && (version !== 'unknown' || OPENAPI_PATHS_KEY.test(head))) {
+        if (text.length > OPENAPI_MAX_BYTES) {
+          diagnostics.push({
+            kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
+            reason: `this OpenAPI document is ${Math.round(text.length / 1024)} KB, over the ${OPENAPI_MAX_BYTES / 1024 / 1024} MB this engine reads. Its routes are not in the pack; point --openapi at a smaller document if one is published`,
+          });
+        } else {
+          openapiDocuments.push({ path: rel(absFile), version });
+        }
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * A Spring configuration or a connection file. ONE READ, TWO QUESTIONS: where
+ * is the database, and who is this service and where does it forward a
+ * request? Reading the file twice would be the same bytes and a second chance
+ * for the two answers to disagree about which file they came from.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifySpringConfig(d, f) {
+  const { absFile, rel } = f;
+  const { connectionCandidates, diagnostics, externalConfigImports, gatewayRoutes, read, serviceNames, viewResolvers } = d;
+  // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
+  // `locale*/` is a presentation resource, and reading it produced diagnostics
+  // about files that were never connection candidates (see dbconfig.mjs).
+  //
+  // ONE READ, TWO QUESTIONS. A Spring `application.yml` answers "where is the
+  // database?" (dbconfig.mjs) and "who is this service, and where does it
+  // forward a request?" (springconfig.mjs, RM46). Reading the file twice would
+  // be the same bytes and a second chance for the two answers to disagree
+  // about which file they came from.
+  const relFile = rel(absFile);
+  const springConfig = looksLikeSpringConfigFile(relFile) && !isTestPath(relFile);
+  if (springConfig || looksLikeConnectionFile(relFile)) {
+    const text = read(absFile);
+    if (text === null) return;
+    const one = [{ path: relFile, text }];
+    if (springConfig) {
+      serviceNames.push(...findServiceNames(one, diagnostics));
+      gatewayRoutes.push(...findGatewayRoutes(one, diagnostics));
+      externalConfigImports.push(...findExternalConfigImports(one));
+      viewResolvers.push(...findViewResolvers(one, diagnostics));
+    }
+    if (looksLikeConnectionFile(relFile)) {
+      connectionCandidates.push(...findConnectionCandidates(one, diagnostics));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * A `.sql` file: does it declare a table, amend one, or neither?
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifySqlFile(d, f) {
+  const { absFile, lower, rel } = f;
+  const { counts, ddlCandidates, ddlPaths, read } = d;
+  if (lower.endsWith('.sql')) {
+    const text = read(absFile);
+    if (text === null) return;
+    if (CREATE_TABLE_RE.test(text)) {
+      counts.ddlFiles += 1;
+      ddlPaths.push(rel(absFile));
+      if (d.ddlDialectHint === null && MYSQL_DDL_RE.test(text)) d.ddlDialectHint = 'mysql';
+    }
+    // EVERY candidate, classified — including the ones that only ALTER, which
+    // `ddlPaths` (CREATE TABLE only) never listed. Without them the run cannot
+    // say how many migration files it left out, and a silent omission is the
+    // one thing a catalog decision must not be.
+    if (CREATE_TABLE_RE.test(text) || ALTER_TABLE_RE.test(text)) {
+      ddlCandidates.push(classifyDdlFile(rel(absFile), text));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * A `package.json`, and what its dependencies declare about the frontend it
+ * describes.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyPackageManifest(d, f) {
+  const { absFile, name, dirEntries, stats, rel } = f;
+  const { counts, diagnostics, read, webPackages } = d;
+  if (name === 'package.json') {
+    const text = read(absFile);
+    if (text === null) return;
+    let pkg;
+    try {
+      pkg = JSON.parse(text);
+    } catch (e) {
+      diagnostics.push({
+        kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
+        reason: `package.json is not valid JSON: ${e.message}`,
+      });
+      return true;
+    }
+    const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
+    if (FRONTEND_DEPS.some((dep) => Object.prototype.hasOwnProperty.call(deps, dep))) {
+      counts.frontendPackageJson += 1;
+      if (stats) stats.frontendPackageJson += 1;
+      // NO `UNSUPPORTED_TECHNOLOGY` here any more: as of RM26 there IS a web
+      // lane, and it reads this package. What it does not yet do is attach a
+      // frontend call to an endpoint, and that is stated on the `web` axis
+      // (src/core/lanes.mjs) rather than as a discovery diagnostic.
+      //
+      // Angular and Svelte get no diagnostic either: their HTTP calls carry
+      // URL literals like anyone else's, so the lane reads them too. What the
+      // record says is which framework the package DECLARED, and nothing more.
+      const dir = path.dirname(absFile);
+      const framework = FRAMEWORK_DEPS.find(([, names]) =>
+        names.some((n) => Object.prototype.hasOwnProperty.call(deps, n)));
+      const router = routerDependencyOf(deps);
+      const http = [];
+      if (Object.prototype.hasOwnProperty.call(deps, 'axios')) http.push('axios');
+      if (http.length === 0) http.push('fetch-only');
+      // `<dir>/src` when the package keeps its sources there, which is the
+      // near-universal layout; otherwise the package directory itself, so a
+      // flat package is still read rather than skipped.
+      const hasSrc = (dirEntries ?? []).some((e) => e.isDir && e.name === 'src');
+      webPackages.push({
+        path: rel(absFile),
+        root: rel(hasSrc ? path.join(dir, 'src') : dir),
+        framework: framework ? framework[0] : 'unknown',
+        router,
+        http,
+      });
+    }
+  }
+  return false;
+}
+
+/**
+ * ONE FILE, ONE ANSWER. The classifiers run in this order and the first that
+ * says it is finished ends the question — which is the rule the old chain of
+ * `if … return;` branches spelled out by falling through. The first two never
+ * finish anything: an `index.html` and a template file are NOTED, and the file
+ * is then still whatever else it is.
+ */
+function classifyFile(d, f) {
+  if (classifyIndexPage(d, f)) return;
+  if (classifyTemplateFile(d, f)) return;
+  if (classifyWebSource(d, f)) return;
+  if (classifyJavaFile(d, f)) return;
+  if (classifyKotlinFile(d, f)) return;
+  if (classifyXmlFile(d, f)) return;
+  if (classifyOpenApiDocument(d, f)) return;
+  if (classifySpringConfig(d, f)) return;
+  if (classifySqlFile(d, f)) return;
+  if (classifyPackageManifest(d, f)) return;
+}
+
+/**
+ * THE WALK, and the four things only the walk can answer: how many files it
+ * scanned, whether it hit its cap, and whether the tree carries a Maven or a
+ * Gradle build. Every file it reaches is handed to `classify`, which decides
+ * what that file IS; nothing here reads a file for its content.
+ *
+ * @param {{readDir:Function, readFile:Function, gitHead:Function}} io
+ * @param {object} w   the walk's own counters, written in place
+ * @param {object} ctx everything the walk needs from the caller
+ * @returns {{walk:Function, addRoot:Function, read:Function}}
+ */
+function makeWalker(io, w, ctx) {
+  const { readDir, readFile, gitHead } = io;
+  const {
+    classify, diagnostics, javaRoots, javaTestRoots, maxFiles, rel, repoStats,
+  } = ctx;
+const repoOf = (stack) => (stack.length ? stack[stack.length - 1] : null);
+
+const noteRepo = (absDir) => {
+  const key = rel(absDir);
+  const commit = gitHead(absDir);
+  if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)) {
+    diagnostics.push({
+      kind: 'REPOSITORY_WITHOUT_HEAD',
+      severity: 'warn',
+      path: key,
+      reason: 'git repository has no resolvable HEAD commit (empty repository?); excluded from the manifest, which pins every repo to a full commit',
+    });
+    return null;
+  }
+  if (!repoStats.has(key)) {
+    repoStats.set(key, { path: key, commit, javaFiles: 0, frontendPackageJson: 0 });
+  }
+  return key;
+};
+
+const walk = (absDir, repoStack, isRepoRoot, underPackage = false) => {
+  if (w.capped) return;
+  let entries;
+  try {
+    entries = readDir(absDir);
+  } catch (e) {
+    diagnostics.push({
+      kind: 'UNREADABLE_DIRECTORY', severity: 'warn', path: rel(absDir),
+      reason: `cannot list directory: ${e.message}`,
+    });
+    return;
+  }
+  entries = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  // A directory holding `.git` (a dir, or a file for linked worktrees) is a
+  // repository — the root included (§5, nested repos are listed separately).
+  const hasGit = entries.some((e) => e.name === '.git');
+  let stack = repoStack;
+  if (hasGit) {
+    const key = noteRepo(absDir);
+    if (key !== null) stack = [...repoStack, key];
+  }
+
+  // "No package.json in any ancestor INSIDE THE REPOSITORY": a nested checkout
+  // starts the question again, because a manifest in the outer tree says
+  // nothing about the inner one.
+  const inPackage = (hasGit ? false : underPackage)
+    || entries.some((e) => e.isFile && e.name === 'package.json');
+
+  if (isRepoRoot || hasGit) {
+    if (entries.some((e) => e.isFile && e.name === 'pom.xml')) w.sawPom = true;
+    if (entries.some((e) => e.isFile && (e.name === 'build.gradle' || e.name === 'build.gradle.kts'))) w.sawGradle = true;
+  }
+
+  for (const entry of entries) {
+    if (w.capped) return;
+    if (entry.isDir) {
+      if (SKIP_DIRS.includes(entry.name)) continue;
+      walk(path.join(absDir, entry.name), stack, false, inPackage);
+      continue;
+    }
+    if (!entry.isFile) continue; // symlinks and specials: not walked, not counted
+    w.filesScanned += 1;
+    if (w.filesScanned > maxFiles) {
+      w.capped = true;
+      diagnostics.push({
+        kind: 'FILE_CAP_REACHED', severity: 'warn', path: rel(absDir),
+        reason: `walk stopped after ${maxFiles} files; the discovery below describes only the part of the tree that was scanned`,
+      });
+      return;
+    }
+    classify(path.join(absDir, entry.name), entry.name, repoOf(stack), entries, inPackage);
+  }
+};
+
+// A root under the standard Maven/Gradle test layout goes on the TEST list,
+// not the main one. It is reported either way — never dropped (§7.3).
+const addRoot = (relRoot) => {
+  (isTestPath(relRoot) ? javaTestRoots : javaRoots).add(relRoot);
+};
+
+const read = (absFile) => {
+  try {
+    return readFile(absFile);
+  } catch (e) {
+    diagnostics.push({
+      kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
+      reason: `cannot read file: ${e.message}`,
+    });
+    return null;
+  }
+};
+
+  return { walk, addRoot, read };
+}
+
+
+/**
+ * A FRONTEND WITH NO PACKAGE MANIFEST (RM47). Every directory that holds
+ * frontend sources with no `package.json` above it is a candidate root; the
+ * `index.html` beside it, where there is one, says which of them the server
+ * really serves, and its `<script src>` list is the evidence.
+ *
+ * It runs AFTER the walk because the rule needs the whole file list.
+ *
+ * @returns {object[]} one entry per root, in the shape a web package has
+ */
+function looseWebRoots(d) {
+  const { counts, looseIndexPages, looseWebFiles, looseWebPaths, read, root } = d;
+// ---- a frontend with no package manifest (RM47) --------------------------
+//
+// Everything above answers "which frontend PACKAGE is here?". A gateway that
+// ships AngularJS as `<script>` tags has none, and refusing to read it left
+// the whole screen side of that project invisible. So a directory of frontend
+// sources with no manifest above it is a web root when the tree SAYS it is
+// served: it sits under a `static`/`public`/`webapp`/`www` directory (or
+// under `resources/templates`), or an `index.html` beside it loads one of its
+// files by `<script src>`. Nothing else is enough — a build helper next to a
+// pom is not a frontend, and neither is a directory of loose scripts nobody
+// serves.
+const servedDirs = [];
+for (const dir of [...looseWebFiles.keys()].sort()) {
+  if (underWebRootDir(dir)) { servedDirs.push(dir); continue; }
+  const page = looseIndexPages.get(dir);
+  if (page === undefined) continue;
+  const html = read(page);
+  if (html === null) continue;
+  const loadsOwnFile = scriptSourcesOf(html)
+    .map((src) => scriptTargetOf(dir, src))
+    .some((target) => target !== null && looseWebPaths.has(target));
+  if (loadsOwnFile) servedDirs.push(dir);
+}
+const webVendoredRoots = minimalRoots(servedDirs).map((vendorRoot) => {
+  const under = (p) => p === vendorRoot || p.startsWith(`${vendorRoot}/`);
+  let files = 0;
+  for (const [dir, n] of looseWebFiles) if (under(dir)) files += n;
+  // WHICH ROUTER THIS IS, from the source alone. No dependency list names the
+  // framework here, so the registrar the code writes is the only thing that
+  // can, and a bounded read of the root's own files is what says it.
+  const scanned = [...looseWebPaths].filter(under).sort().slice(0, ROUTER_SCAN_FILES);
+  const named = new Set();
+  for (const relPath of scanned) {
+    const text = read(path.resolve(root, relPath));
+    if (text === null) continue;
+    const head = text.slice(0, ROUTER_SCAN_BYTES);
+    for (const [pack, markers] of ROUTER_SOURCE_MARKERS) {
+      if (markers.some((m) => head.includes(m))) named.add(pack);
+    }
+  }
+  return { root: vendorRoot, files, routerPacks: [...named].sort() };
+});
+counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
+
+  return webVendoredRoots;
+}
+
+/**
+ * THE TEMPLATE ROOTS (RM48). Which of the directories holding template files is
+ * a ROOT depends on the view resolver settings and on what the markup itself
+ * says: two engines share the `.html` extension, and only the root's own files
+ * can tell them apart.
+ *
+ * @returns {object[]} the roots, each with the engine it was read as
+ */
+function templateRootsFrom(d) {
+  const { counts, diagnostics, externalConfigImports, read, templateDirs, templateSample, viewResolvers } = d;
+// ---- the template roots (RM48) -------------------------------------------
+//
+// WHICH ENGINE WROTE THIS MARKUP, when nothing in the configuration says. A
+// `.html` under a template directory is a Thymeleaf template when it carries a
+// `th:` attribute and an ordinary page when it does not, and a bounded read of
+// the root's own files is the only thing that can tell them apart.
+const engineMarkers = new Map();
+const dirsUnder = (under) => [...templateDirs.keys()].filter((dir) => dir === under || dir.startsWith(`${under}/`)).sort();
+const markRoots = (roots) => {
+  for (const r of roots) {
+    const seen = new Set();
+    let filesRead = 0;
+    for (const dir of dirsUnder(r)) {
+      for (const absFile of templateSample.get(dir) ?? []) {
+        if (filesRead >= TEMPLATE_MARKER_FILES) break;
+        filesRead += 1;
+        const text = read(absFile);
+        if (text === null) continue;
+        const head = text.slice(0, TEMPLATE_MARKER_BYTES);
+        for (const spec of TEMPLATE_ENGINES) {
+          if (spec.markers.some((m) => head.includes(m))) seen.add(spec.engine);
+        }
+      }
+    }
+    engineMarkers.set(r, seen);
+  }
+};
+// Two passes: the roots first, then the markers over exactly those roots, then
+// the engines again now that the markers are known. Reading the markers first
+// would mean reading every candidate directory in the tree.
+const provisional = templateRootsOf({ dirs: templateDirs, resolvers: viewResolvers });
+markRoots(provisional.map((r) => r.root));
+const templateRoots = templateRootsOf({ dirs: templateDirs, resolvers: viewResolvers, engineMarkers });
+counts.templateFiles = templateRoots.reduce((n, r) => n + r.files, 0);
+
+// SAID ONCE, not once per file. A `spring.config.import` pointing at a config
+// server means part of this project's configuration lives somewhere this walk
+// cannot see, so the service name and the gateway routes below are what the
+// TREE says and may not be all the deployment says.
+if (externalConfigImports.length > 0) {
+  const files = [...new Set(externalConfigImports.map((i) => i.file))].sort();
+  diagnostics.push({
+    kind: 'CONFIG_IMPORTED_FROM_OUTSIDE_THE_TREE',
+    severity: 'info',
+    path: files[0],
+    reason: `${files.length} Spring configuration file(s) import settings from outside this repository `
+      + `(spring.config.import in ${files.slice(0, 3).join(', ')}${files.length > 3 ? `, and ${files.length - 3} more` : ''}). `
+      + 'Nothing here reads a config server, so a service name or a gateway route declared only there is not in this discovery',
+  });
+}
+
+  return templateRoots;
+}
+
+
 export function discover(root, io = {}) {
   const { readDir, readFile, gitHead } = io;
   const maxFiles = io.maxFiles ?? DEFAULT_MAX_FILES;
@@ -684,12 +1270,6 @@ export function discover(root, io = {}) {
   // enclosing repository so the manifest can give every repo an honest `kind`.
   const repoStats = new Map();
   const packageCounts = new Map();
-  let javaWithPackage = 0;
-  let ddlDialectHint = null;
-  let filesScanned = 0;
-  let capped = false;
-  let sawPom = false;
-  let sawGradle = false;
 
   const rel = (abs) => {
     const r = path.relative(root, abs);
@@ -697,415 +1277,59 @@ export function discover(root, io = {}) {
   };
 
   // The repository stack: the innermost entry owns the files being walked.
-  const repoOf = (stack) => (stack.length ? stack[stack.length - 1] : null);
+  // The walk's own counters: written by the walk, read by the answer.
+  const w = { filesScanned: 0, capped: false, sawPom: false, sawGradle: false };
+  // `classify` is handed over as a thunk because the walker calls it and the
+  // classifiers need the state the walker's own `read` and `addRoot` go into.
+  const walkers = { classify: (...a) => classify(...a) };
+  const { walk, addRoot, read } = makeWalker(io, w, {
+    classify: (...a) => walkers.classify(...a), diagnostics, javaRoots, javaTestRoots, maxFiles, rel, repoStats,
+  });
 
-  const noteRepo = (absDir) => {
-    const key = rel(absDir);
-    const commit = gitHead(absDir);
-    if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)) {
-      diagnostics.push({
-        kind: 'REPOSITORY_WITHOUT_HEAD',
-        severity: 'warn',
-        path: key,
-        reason: 'git repository has no resolvable HEAD commit (empty repository?); excluded from the manifest, which pins every repo to a full commit',
-      });
-      return null;
-    }
-    if (!repoStats.has(key)) {
-      repoStats.set(key, { path: key, commit, javaFiles: 0, frontendPackageJson: 0 });
-    }
-    return key;
+  // The discovery STATE the classifiers write into. One object rather than
+  // twenty closures, so a classifier can be read — and tested — on its own.
+  const d = {
+    addRoot,
+    connectionCandidates,
+    counts,
+    ddlCandidates,
+    ddlDialectHint: null,
+    ddlPaths,
+    diagnostics,
+    externalConfigImports,
+    gatewayRoutes,
+    javaWithPackage: 0,
+    looseIndexPages,
+    looseWebFiles,
+    looseWebPaths,
+    mapperDirs,
+    openapiDocuments,
+    packageCounts,
+    read,
+    root,
+    serviceNames,
+    templateDirs,
+    templateSample,
+    viewResolvers,
+    webPackages,
   };
-
-  const walk = (absDir, repoStack, isRepoRoot, underPackage = false) => {
-    if (capped) return;
-    let entries;
-    try {
-      entries = readDir(absDir);
-    } catch (e) {
-      diagnostics.push({
-        kind: 'UNREADABLE_DIRECTORY', severity: 'warn', path: rel(absDir),
-        reason: `cannot list directory: ${e.message}`,
-      });
-      return;
-    }
-    entries = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-
-    // A directory holding `.git` (a dir, or a file for linked worktrees) is a
-    // repository — the root included (§5, nested repos are listed separately).
-    const hasGit = entries.some((e) => e.name === '.git');
-    let stack = repoStack;
-    if (hasGit) {
-      const key = noteRepo(absDir);
-      if (key !== null) stack = [...repoStack, key];
-    }
-
-    // "No package.json in any ancestor INSIDE THE REPOSITORY": a nested checkout
-    // starts the question again, because a manifest in the outer tree says
-    // nothing about the inner one.
-    const inPackage = (hasGit ? false : underPackage)
-      || entries.some((e) => e.isFile && e.name === 'package.json');
-
-    if (isRepoRoot || hasGit) {
-      if (entries.some((e) => e.isFile && e.name === 'pom.xml')) sawPom = true;
-      if (entries.some((e) => e.isFile && (e.name === 'build.gradle' || e.name === 'build.gradle.kts'))) sawGradle = true;
-    }
-
-    for (const entry of entries) {
-      if (capped) return;
-      if (entry.isDir) {
-        if (SKIP_DIRS.includes(entry.name)) continue;
-        walk(path.join(absDir, entry.name), stack, false, inPackage);
-        continue;
-      }
-      if (!entry.isFile) continue; // symlinks and specials: not walked, not counted
-      filesScanned += 1;
-      if (filesScanned > maxFiles) {
-        capped = true;
-        diagnostics.push({
-          kind: 'FILE_CAP_REACHED', severity: 'warn', path: rel(absDir),
-          reason: `walk stopped after ${maxFiles} files; the discovery below describes only the part of the tree that was scanned`,
-        });
-        return;
-      }
-      classify(path.join(absDir, entry.name), entry.name, repoOf(stack), entries, inPackage);
-    }
-  };
-
-  // A root under the standard Maven/Gradle test layout goes on the TEST list,
-  // not the main one. It is reported either way — never dropped (§7.3).
-  const addRoot = (relRoot) => {
-    (isTestPath(relRoot) ? javaTestRoots : javaRoots).add(relRoot);
-  };
-
-  const read = (absFile) => {
-    try {
-      return readFile(absFile);
-    } catch (e) {
-      diagnostics.push({
-        kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
-        reason: `cannot read file: ${e.message}`,
-      });
-      return null;
-    }
-  };
-
   const classify = (absFile, name, repoKey, dirEntries, inPackage) => {
-    const lower = name.toLowerCase();
-    const stats = repoKey === null ? null : repoStats.get(repoKey);
-
-    // An `index.html` beside loose scripts is the one file that can say which
-    // directory the server treats as its root. Noted, not read: only the
-    // directories that turn out to hold frontend sources are opened, after the
-    // walk.
-    if (lower === 'index.html' && inPackage !== true) {
-      const dir = rel(path.dirname(absFile));
-      if (outsideVendorDirs(dir)) looseIndexPages.set(dir, absFile);
-    }
-
-    // A TEMPLATE FILE (RM48). Noted by directory and extension, never read here:
-    // which of these directories is a template ROOT depends on the view resolver
-    // settings, and those are read from the configuration files further down.
-    const templateExt = TEMPLATE_ENGINES
-      .flatMap((e) => e.extensions)
-      .find((e) => lower.endsWith(e)) ?? null;
-    if (templateExt !== null) {
-      const dir = rel(path.dirname(absFile));
-      if (outsideVendorDirs(dir)) {
-        if (!templateDirs.has(dir)) templateDirs.set(dir, new Map());
-        const byExt = templateDirs.get(dir);
-        byExt.set(templateExt, (byExt.get(templateExt) ?? 0) + 1);
-        if (!templateSample.has(dir)) templateSample.set(dir, []);
-        const sample = templateSample.get(dir);
-        if (sample.length < 3) sample.push(absFile);
-      }
-    }
-
-    // Counted BEFORE the java/xml/sql branches so a `.vue` or `.ts` never falls
-    // through to nothing. The web lane reads these files (RM26), so they are an
-    // input, not an uncovered technology.
-    if (isWebSourceFile(name)) {
-      counts.webFiles += 1;
-      if (lower.endsWith('.vue')) counts.vueFiles += 1;
-      // A SOURCE MAP BESIDE IT MEANS A BUILD WROTE IT. `app.cebd468e.js` is not
-      // spelled `.min.js` and is a webpack chunk all the same; nobody writes a
-      // `.js.map` by hand, so the pair is the one generic thing that says
-      // "generated". A directory of those is output, not a frontend somebody
-      // keeps here, and reading it would put a bundle's insides in the graph.
-      const generated = (dirEntries ?? []).some((e) => e.isFile && e.name === `${name}.map`);
-      if (inPackage !== true && !generated) {
-        const dir = rel(path.dirname(absFile));
-        if (outsideVendorDirs(dir)) {
-          looseWebFiles.set(dir, (looseWebFiles.get(dir) ?? 0) + 1);
-          looseWebPaths.add(rel(absFile));
-        }
-      }
-      return;
-    }
-
-    if (lower.endsWith('.java')) {
-      counts.javaFiles += 1;
-      if (isTestPath(rel(absFile))) counts.javaTestFiles += 1;
-      if (stats) stats.javaFiles += 1;
-      const text = read(absFile);
-      if (text === null) return;
-      const pkg = PACKAGE_DECL_RE.exec(text);
-      const dir = path.dirname(absFile);
-      if (pkg) {
-        javaWithPackage += 1;
-        const declared = pkg[1].replace(/[ \t]/g, '');
-        const prefix = prefixOf(declared);
-        packageCounts.set(prefix, (packageCounts.get(prefix) ?? 0) + 1);
-        addRoot(rel(sourceRootOf(dir, declared, root)));
-      } else {
-        // No package declaration: the file's own directory IS the source root.
-        addRoot(rel(dir));
-      }
-      if (SPRING_HANDLER_RE.test(text)) counts.springHandlerFiles += 1;
-      // A JPA entity is a LANE as of M10, not an uncovered technology: the count
-      // is what makes `cascade init` declare the `jpa` framework pack.
-      if (JPA_ENTITY_RE.test(text)) counts.jpaEntityFiles += 1;
-      // Same rule, same reason: the count is what makes `cascade init` declare
-      // the `mybatis-plus` framework pack.
-      if (MYBATIS_PLUS_RE.test(text)) counts.mybatisPlusFiles += 1;
-      return;
-    }
-
-    // Kotlin build scripts (build.gradle.kts) are configuration, not sources;
-    // only `.kt` counts as a Kotlin source here.
-    if (lower.endsWith('.kt')) {
-      counts.kotlinFiles += 1;
-      diagnostics.push({
-        kind: 'UNSUPPORTED_TECHNOLOGY', severity: 'info', path: rel(absFile),
-        reason: 'Kotlin source: the engine ships no Kotlin lane, so this file contributes nothing to the graph',
-      });
-      return;
-    }
-
-    if (lower.endsWith('.xml')) {
-      const text = read(absFile);
-      if (text === null) return;
-      if (MYBATIS_MAPPER_RE.test(text)) {
-        counts.mybatisMapperXml += 1;
-        mapperDirs.add(rel(path.dirname(absFile)));
-      }
-      return;
-    }
-
-    // An OpenAPI / Swagger document is an EVIDENCE LAYER, not a technology this
-    // engine has no lane for: it declares routes, and RM29's bridge reads them.
-    //
-    // TESTED BEFORE THE CONNECTION-FILE RULE, and it has to be: that rule claims
-    // every `.yml`/`.yaml` in the tree, so a document tested after it would never
-    // be seen. A file whose head says `openapi:` is a contract, not a datasource
-    // configuration, and no file is both.
-    if (name !== 'package.json' && OPENAPI_EXTENSIONS.some((e) => lower.endsWith(e))) {
-      const text = read(absFile);
-      if (text !== null) {
-        const head = text.slice(0, OPENAPI_HEAD_BYTES);
-        const version = openApiVersionOf(head);
-        if (version !== null && (version !== 'unknown' || OPENAPI_PATHS_KEY.test(head))) {
-          if (text.length > OPENAPI_MAX_BYTES) {
-            diagnostics.push({
-              kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
-              reason: `this OpenAPI document is ${Math.round(text.length / 1024)} KB, over the ${OPENAPI_MAX_BYTES / 1024 / 1024} MB this engine reads. Its routes are not in the pack; point --openapi at a smaller document if one is published`,
-            });
-          } else {
-            openapiDocuments.push({ path: rel(absFile), version });
-          }
-          return;
-        }
-      }
-    }
-
-    // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
-    // `locale*/` is a presentation resource, and reading it produced diagnostics
-    // about files that were never connection candidates (see dbconfig.mjs).
-    //
-    // ONE READ, TWO QUESTIONS. A Spring `application.yml` answers "where is the
-    // database?" (dbconfig.mjs) and "who is this service, and where does it
-    // forward a request?" (springconfig.mjs, RM46). Reading the file twice would
-    // be the same bytes and a second chance for the two answers to disagree
-    // about which file they came from.
-    const relFile = rel(absFile);
-    const springConfig = looksLikeSpringConfigFile(relFile) && !isTestPath(relFile);
-    if (springConfig || looksLikeConnectionFile(relFile)) {
-      const text = read(absFile);
-      if (text === null) return;
-      const one = [{ path: relFile, text }];
-      if (springConfig) {
-        serviceNames.push(...findServiceNames(one, diagnostics));
-        gatewayRoutes.push(...findGatewayRoutes(one, diagnostics));
-        externalConfigImports.push(...findExternalConfigImports(one));
-        viewResolvers.push(...findViewResolvers(one, diagnostics));
-      }
-      if (looksLikeConnectionFile(relFile)) {
-        connectionCandidates.push(...findConnectionCandidates(one, diagnostics));
-      }
-      return;
-    }
-
-    if (lower.endsWith('.sql')) {
-      const text = read(absFile);
-      if (text === null) return;
-      if (CREATE_TABLE_RE.test(text)) {
-        counts.ddlFiles += 1;
-        ddlPaths.push(rel(absFile));
-        if (ddlDialectHint === null && MYSQL_DDL_RE.test(text)) ddlDialectHint = 'mysql';
-      }
-      // EVERY candidate, classified — including the ones that only ALTER, which
-      // `ddlPaths` (CREATE TABLE only) never listed. Without them the run cannot
-      // say how many migration files it left out, and a silent omission is the
-      // one thing a catalog decision must not be.
-      if (CREATE_TABLE_RE.test(text) || ALTER_TABLE_RE.test(text)) {
-        ddlCandidates.push(classifyDdlFile(rel(absFile), text));
-      }
-      return;
-    }
-
-    if (name === 'package.json') {
-      const text = read(absFile);
-      if (text === null) return;
-      let pkg;
-      try {
-        pkg = JSON.parse(text);
-      } catch (e) {
-        diagnostics.push({
-          kind: 'UNREADABLE_FILE', severity: 'warn', path: rel(absFile),
-          reason: `package.json is not valid JSON: ${e.message}`,
-        });
-        return;
-      }
-      const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
-      if (FRONTEND_DEPS.some((d) => Object.prototype.hasOwnProperty.call(deps, d))) {
-        counts.frontendPackageJson += 1;
-        if (stats) stats.frontendPackageJson += 1;
-        // NO `UNSUPPORTED_TECHNOLOGY` here any more: as of RM26 there IS a web
-        // lane, and it reads this package. What it does not yet do is attach a
-        // frontend call to an endpoint, and that is stated on the `web` axis
-        // (src/core/lanes.mjs) rather than as a discovery diagnostic.
-        //
-        // Angular and Svelte get no diagnostic either: their HTTP calls carry
-        // URL literals like anyone else's, so the lane reads them too. What the
-        // record says is which framework the package DECLARED, and nothing more.
-        const dir = path.dirname(absFile);
-        const framework = FRAMEWORK_DEPS.find(([, names]) =>
-          names.some((n) => Object.prototype.hasOwnProperty.call(deps, n)));
-        const router = routerDependencyOf(deps);
-        const http = [];
-        if (Object.prototype.hasOwnProperty.call(deps, 'axios')) http.push('axios');
-        if (http.length === 0) http.push('fetch-only');
-        // `<dir>/src` when the package keeps its sources there, which is the
-        // near-universal layout; otherwise the package directory itself, so a
-        // flat package is still read rather than skipped.
-        const hasSrc = (dirEntries ?? []).some((e) => e.isDir && e.name === 'src');
-        webPackages.push({
-          path: rel(absFile),
-          root: rel(hasSrc ? path.join(dir, 'src') : dir),
-          framework: framework ? framework[0] : 'unknown',
-          router,
-          http,
-        });
-      }
-    }
+    classifyFile(d, {
+      absFile,
+      name,
+      lower: name.toLowerCase(),
+      repoKey,
+      dirEntries,
+      inPackage,
+      stats: repoKey === null ? null : repoStats.get(repoKey),
+      rel,
+    });
   };
 
   walk(root, [], true, false);
 
-  // ---- a frontend with no package manifest (RM47) --------------------------
-  //
-  // Everything above answers "which frontend PACKAGE is here?". A gateway that
-  // ships AngularJS as `<script>` tags has none, and refusing to read it left
-  // the whole screen side of that project invisible. So a directory of frontend
-  // sources with no manifest above it is a web root when the tree SAYS it is
-  // served: it sits under a `static`/`public`/`webapp`/`www` directory (or
-  // under `resources/templates`), or an `index.html` beside it loads one of its
-  // files by `<script src>`. Nothing else is enough — a build helper next to a
-  // pom is not a frontend, and neither is a directory of loose scripts nobody
-  // serves.
-  const servedDirs = [];
-  for (const dir of [...looseWebFiles.keys()].sort()) {
-    if (underWebRootDir(dir)) { servedDirs.push(dir); continue; }
-    const page = looseIndexPages.get(dir);
-    if (page === undefined) continue;
-    const html = read(page);
-    if (html === null) continue;
-    const loadsOwnFile = scriptSourcesOf(html)
-      .map((src) => scriptTargetOf(dir, src))
-      .some((target) => target !== null && looseWebPaths.has(target));
-    if (loadsOwnFile) servedDirs.push(dir);
-  }
-  const webVendoredRoots = minimalRoots(servedDirs).map((vendorRoot) => {
-    const under = (p) => p === vendorRoot || p.startsWith(`${vendorRoot}/`);
-    let files = 0;
-    for (const [dir, n] of looseWebFiles) if (under(dir)) files += n;
-    // WHICH ROUTER THIS IS, from the source alone. No dependency list names the
-    // framework here, so the registrar the code writes is the only thing that
-    // can, and a bounded read of the root's own files is what says it.
-    const scanned = [...looseWebPaths].filter(under).sort().slice(0, ROUTER_SCAN_FILES);
-    const named = new Set();
-    for (const relPath of scanned) {
-      const text = read(path.resolve(root, relPath));
-      if (text === null) continue;
-      const head = text.slice(0, ROUTER_SCAN_BYTES);
-      for (const [pack, markers] of ROUTER_SOURCE_MARKERS) {
-        if (markers.some((m) => head.includes(m))) named.add(pack);
-      }
-    }
-    return { root: vendorRoot, files, routerPacks: [...named].sort() };
-  });
-  counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
-
-  // ---- the template roots (RM48) -------------------------------------------
-  //
-  // WHICH ENGINE WROTE THIS MARKUP, when nothing in the configuration says. A
-  // `.html` under a template directory is a Thymeleaf template when it carries a
-  // `th:` attribute and an ordinary page when it does not, and a bounded read of
-  // the root's own files is the only thing that can tell them apart.
-  const engineMarkers = new Map();
-  const dirsUnder = (root) => [...templateDirs.keys()].filter((d) => d === root || d.startsWith(`${root}/`)).sort();
-  const markRoots = (roots) => {
-    for (const r of roots) {
-      const seen = new Set();
-      let filesRead = 0;
-      for (const dir of dirsUnder(r)) {
-        for (const absFile of templateSample.get(dir) ?? []) {
-          if (filesRead >= TEMPLATE_MARKER_FILES) break;
-          filesRead += 1;
-          const text = read(absFile);
-          if (text === null) continue;
-          const head = text.slice(0, TEMPLATE_MARKER_BYTES);
-          for (const spec of TEMPLATE_ENGINES) {
-            if (spec.markers.some((m) => head.includes(m))) seen.add(spec.engine);
-          }
-        }
-      }
-      engineMarkers.set(r, seen);
-    }
-  };
-  // Two passes: the roots first, then the markers over exactly those roots, then
-  // the engines again now that the markers are known. Reading the markers first
-  // would mean reading every candidate directory in the tree.
-  const provisional = templateRootsOf({ dirs: templateDirs, resolvers: viewResolvers });
-  markRoots(provisional.map((r) => r.root));
-  const templateRoots = templateRootsOf({ dirs: templateDirs, resolvers: viewResolvers, engineMarkers });
-  counts.templateFiles = templateRoots.reduce((n, r) => n + r.files, 0);
-
-  // SAID ONCE, not once per file. A `spring.config.import` pointing at a config
-  // server means part of this project's configuration lives somewhere this walk
-  // cannot see, so the service name and the gateway routes below are what the
-  // TREE says and may not be all the deployment says.
-  if (externalConfigImports.length > 0) {
-    const files = [...new Set(externalConfigImports.map((i) => i.file))].sort();
-    diagnostics.push({
-      kind: 'CONFIG_IMPORTED_FROM_OUTSIDE_THE_TREE',
-      severity: 'info',
-      path: files[0],
-      reason: `${files.length} Spring configuration file(s) import settings from outside this repository `
-        + `(spring.config.import in ${files.slice(0, 3).join(', ')}${files.length > 3 ? `, and ${files.length - 3} more` : ''}). `
-        + 'Nothing here reads a config server, so a service name or a gateway route declared only there is not in this discovery',
-    });
-  }
+  const webVendoredRoots = looseWebRoots(d);
+  const templateRoots = templateRootsFrom(d);
 
   const repos = [...repoStats.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
@@ -1113,8 +1337,8 @@ export function discover(root, io = {}) {
     root,
     repos,
     counts,
-    buildTool: sawPom ? 'maven' : sawGradle ? 'gradle' : null,
-    packagePrefixes: coveringPrefixes(packageCounts, javaWithPackage),
+    buildTool: w.sawPom ? 'maven' : w.sawGradle ? 'gradle' : null,
+    packagePrefixes: coveringPrefixes(packageCounts, d.javaWithPackage),
     mapperDirs: minimalRoots(mapperDirs),
     // The web lane's roots and packages (RM26). `minimalRoots` for the same
     // reason the mapper and java roots use it: the lane walks recursively, so
@@ -1143,7 +1367,7 @@ export function discover(root, io = {}) {
     // Sorted by path: "applied in path order" has to mean the same thing on
     // every machine, and a directory walk's order does not.
     ddlCandidates: ddlCandidates.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
-    ddlDialectHint,
+    ddlDialectHint: d.ddlDialectHint,
     connectionCandidates: connectionCandidates
       .slice()
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),
@@ -1155,8 +1379,8 @@ export function discover(root, io = {}) {
       .sort((a, b) => (a.front < b.front ? -1 : a.front > b.front ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     externalConfigImports: externalConfigImports.slice()
       .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)),
-    filesScanned: Math.min(filesScanned, maxFiles),
-    capped,
+    filesScanned: Math.min(w.filesScanned, maxFiles),
+    capped: w.capped,
     diagnostics,
   };
 }

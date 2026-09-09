@@ -49,251 +49,274 @@ export function ratio(num, den, note = null) {
  * @returns {{axes:{axis:string,status:string,reason:string,counts:Object}[],
  *            notCovered:{technology:string,files:number,reason:string}[]}}
  */
+/**
+ * THE FOUR BACK-END AXES: the catalog, the statements, the Java lane and the
+ * routes above it. A lane only runs unflagged when its framework pack is
+ * DECLARED — discovery finding the files is not the same as the profile asking
+ * for the lane — and every `not-shipped` says which half is missing.
+ */
+function backendAxes(discovery, profile, n, packs, axes) {
+  const catalogSource = (profile.catalog && profile.catalog.source) || 'none';
+const ddlFiles = n('ddlFiles');
+const mapperFiles = n('mybatisMapperXml');
+const javaFiles = n('javaFiles');
+const handlerFiles = n('springHandlerFiles');
+
+// A lane only runs unflagged when its framework pack is declared; discovery
+// finding the files is necessary, not sufficient.
+const sqlPackDeclared = packs.includes('mybatis-xml');
+const springPackDeclared = packs.includes('spring-mvc');
+const willReadCatalog = ddlFiles > 0 && catalogSource === 'file';
+const willReadStatements = mapperFiles > 0 && sqlPackDeclared;
+const willReadJava = javaFiles > 0 && springPackDeclared;
+
+axes.push({
+  axis: 'catalog',
+  status: willReadCatalog ? 'shipped' : 'not-shipped',
+  reason: willReadCatalog
+    ? `catalog.source is "file" and ${ddlFiles} DDL file(s) declare CREATE TABLE`
+    : ddlFiles === 0
+      ? 'no .sql file in this tree contains CREATE TABLE, so there is no schema to read'
+      : `we found ${ddlFiles} DDL file(s), but catalog.source is ${JSON.stringify(catalogSource)}. Set it to "file" and point catalog.connectionFrom at one of them, or pass --ddl`,
+  counts: { ddlFiles, catalogSource },
+});
+axes.push({
+  axis: 'statements',
+  status: willReadStatements ? 'shipped' : 'not-shipped',
+  reason: willReadStatements
+    ? `${mapperFiles} MyBatis mapper XML file(s) in ${(discovery.mapperDirs ?? []).length} directory(ies)`
+    : mapperFiles === 0
+      ? 'we found no MyBatis mapper XML (<mapper namespace=…>), and this engine reads SQL from mapper XML only'
+      : `we found ${mapperFiles} mapper XML file(s), but frameworkPacks does not declare mybatis-xml, so an unflagged run will not read them`,
+  counts: { mapperXmlFiles: mapperFiles, mapperDirs: (discovery.mapperDirs ?? []).length },
+});
+axes.push({
+  axis: 'column',
+  status: willReadStatements && willReadCatalog ? 'shipped'
+    : willReadStatements ? 'degraded' : 'not-shipped',
+  reason: willReadStatements && willReadCatalog
+    ? 'both a DB catalog and mapper SQL are available, so a column reference can be attributed to its owning table'
+    : willReadStatements
+      ? 'there is no DB catalog here. Without one we cannot tie a bare column name to its table, so we record it as unresolved rather than guess, and column answers will be partial'
+      : 'no mapper SQL, so nothing reads or writes a column in this pack',
+  counts: { ddlFiles, mapperXmlFiles: mapperFiles },
+});
+const jpaFiles = n('jpaEntityFiles');
+const jpaPackDeclared = packs.includes('jpa');
+const willReadJpa = jpaFiles > 0 && jpaPackDeclared && willReadJava;
+const namingDeclared = !!(profile.jpa && profile.jpa.namingStrategy);
+axes.push({
+  axis: 'jpa',
+  status: willReadJpa ? (namingDeclared ? 'shipped' : 'degraded') : 'not-shipped',
+  reason: !willReadJpa
+    ? jpaFiles === 0
+      ? 'there is no @Entity class in this tree, so nothing declares persistence through JPA'
+      : !willReadJava
+        ? `${jpaFiles} @Entity file(s) were found, but the Java lane will not run, and the JPA bridge reads the Java lane's facts`
+        : `we found ${jpaFiles} @Entity file(s), but frameworkPacks does not declare jpa, so an unflagged run will not map them`
+    : namingDeclared
+      ? `${jpaFiles} @Entity file(s), mapped with the declared jpa.namingStrategy`
+      : `${jpaFiles} @Entity file(s). jpa.namingStrategy is not declared, so a name the mapping did not spell out is DERIVED with Spring Boot's default and graded HEURISTIC`,
+  counts: { jpaEntityFiles: jpaFiles, namingStrategy: (profile.jpa && profile.jpa.namingStrategy) || null },
+});
+const mpFiles = n('mybatisPlusFiles');
+const mpPackDeclared = packs.includes('mybatis-plus');
+const willReadMp = mpFiles > 0 && mpPackDeclared && willReadJava;
+const mpNamingDeclared = !!(profile.mybatisPlus && profile.mybatisPlus.namingStrategy);
+axes.push({
+  axis: 'mybatisPlus',
+  status: willReadMp ? (mpNamingDeclared ? 'shipped' : 'degraded') : 'not-shipped',
+  reason: !willReadMp
+    ? mpFiles === 0
+      ? 'there is no `extends BaseMapper<…>` and no @TableName in this tree, so nothing declares persistence through MyBatis-Plus'
+      : !willReadJava
+        ? `${mpFiles} MyBatis-Plus file(s) were found, but the Java lane will not run, and this bridge reads the Java lane's facts`
+        : `we found ${mpFiles} MyBatis-Plus file(s), but frameworkPacks does not declare mybatis-plus, so an unflagged run will not map them`
+    : mpNamingDeclared
+      ? `${mpFiles} MyBatis-Plus file(s), mapped with the declared mybatisPlus.namingStrategy`
+      : `${mpFiles} MyBatis-Plus file(s). mybatisPlus.namingStrategy is not declared, so a name the mapping did not spell out is DERIVED with MyBatis-Plus's default and graded HEURISTIC`,
+  counts: { mybatisPlusFiles: mpFiles, namingStrategy: (profile.mybatisPlus && profile.mybatisPlus.namingStrategy) || null },
+});
+
+const testFiles = n('javaTestFiles');
+const testRoots = (discovery.javaTestRoots ?? []).length;
+axes.push({
+  axis: 'code',
+  status: willReadJava ? 'shipped' : 'not-shipped',
+  reason: willReadJava
+    ? `${javaFiles - testFiles} main java file(s) across ${(discovery.javaSourceRoots ?? []).length} source root(s)`
+      + (testRoots > 0 ? `; ${testFiles} more sit in ${testRoots} src/test root(s) an unflagged run does not read` : '')
+    : javaFiles === 0
+      ? 'no java source in this tree'
+      : 'we found java sources, but frameworkPacks does not declare spring-mvc, so an unflagged run will not read them',
+  counts: { javaFiles, javaMainFiles: javaFiles - testFiles, javaTestFiles: testFiles,
+            javaSourceRoots: (discovery.javaSourceRoots ?? []).length, javaTestRoots: testRoots },
+});
+axes.push({
+  axis: 'endpoints',
+  status: willReadJava && handlerFiles > 0 ? 'shipped' : 'not-shipped',
+  reason: !willReadJava
+    ? 'the Java lane will not run, so no HTTP route can be attached to the SQL below it'
+    : handlerFiles > 0
+      ? `${handlerFiles} java file(s) carry a Spring mapping annotation`
+      : 'no java file carries a Spring mapping annotation (@RestController/@Controller/@RequestMapping/@GetMapping…), so the endpoint axis is not shipped and impact answers stop at the mapper method',
+  counts: { springHandlerFiles: handlerFiles },
+});
+}
+
+/**
+ * THE WEB AND SCREEN AXES. A frontend with no package manifest is a root too
+ * (RM47), and a SERVER-RENDERED application has no frontend source root at all
+ * (RM48) — its pages are template files a `@Controller` names.
+ */
+function webAxes(discovery, profile, n, packs, axes, { prevRoutes }) {
+// The web lane runs unflagged only when the profile declares the `web` pack,
+// the same rule the other three lanes follow.
+const webPackDeclared = packs.includes('web');
+const webFiles = n('webFiles');
+const packageRoots = (discovery.webSourceRoots ?? []).length;
+// A frontend with no package manifest is a root too (RM47), and it is the one
+// a reader has to be told about by name: nothing in the tree declares which
+// framework it is, so the router pack is read out of the source.
+const vendoredRoots = discovery.webVendoredRoots ?? [];
+const declaredWebRoots = Array.isArray(profile.webRoots) ? profile.webRoots.length : 0;
+const webRoots = packageRoots + Math.max(vendoredRoots.length, declaredWebRoots);
+const vendoredNamed = [...new Set(vendoredRoots.flatMap((r) => r.routerPacks ?? []))].sort();
+const vendoredNote = vendoredRoots.length === 0 ? ''
+  : ` ${vendoredRoots.length} of those root(s) are vendored (no package manifest): `
+    + `${vendoredRoots.slice(0, 3).map((r) => `${r.root} (${r.files} file(s))`).join(', ')}`
+    + `${vendoredRoots.length > 3 ? `, and ${vendoredRoots.length - 3} more` : ''}. `
+    + 'No dependency list names the framework there, so the router pack is chosen from the source alone'
+    + `${vendoredNamed.length > 0 ? ` (${vendoredNamed.join(', ')})` : ' and nothing in those roots names one'}.`;
+// A SERVER-RENDERED APPLICATION HAS NO FRONTEND SOURCE ROOT AT ALL (RM48).
+// Its pages are template files a `@Controller` names, read by the same lane,
+// and a run that reads only those is still a web lane running.
+const templateRoots = Array.isArray(profile.templateRoots) && profile.templateRoots.length > 0
+  ? profile.templateRoots.map((r) => ({ root: r.root, engine: r.engine ?? 'plain-html', suffix: r.suffix ?? '.html', files: null }))
+  : (discovery.templateRoots ?? []);
+const templateFiles = templateRoots.reduce((n2, r) => n2 + (Number.isInteger(r.files) ? r.files : 0), 0);
+const templateEngines = [...new Set(templateRoots.map((r) => r.engine))].sort();
+const templateNote = templateRoots.length === 0 ? ''
+  : `${templateRoots.length} template root(s) (${templateEngines.join(', ')})`
+    + `${templateFiles > 0 ? `, ${templateFiles} page(s)` : ''}: `
+    + `${templateRoots.slice(0, 3).map((r) => `${r.root} ${r.suffix}`).join(', ')}`
+    + `${templateRoots.length > 3 ? `, and ${templateRoots.length - 3} more` : ''}. `
+    + 'A page a controller names becomes a screen, and its form, its links and its inline scripts become calls onto the routes this pack serves.';
+const willReadWeb = (webFiles > 0 && webRoots > 0 && webPackDeclared) || templateRoots.length > 0;
+axes.push({
+  axis: 'web',
+  // DEGRADED even before it runs, because the one thing that decides between
+  // `shipped` and `degraded` is not knowable yet: whether the prefix and the
+  // aliases this frontend goes through are stated in its own source or have
+  // to be guessed. The pack's own axis says which, once the lane has run.
+  status: willReadWeb ? 'degraded' : 'not-shipped',
+  reason: willReadWeb
+    ? `${webRoots > 0 && webFiles > 0
+      ? `${webFiles} frontend source file(s) in ${webRoots} root(s).${vendoredNote}${templateNote === '' ? '' : ` It also reads ${templateNote}`}`
+      : `no frontend source file and no frontend root in this tree, and ${templateNote}`}`
+      + ' The lane will trace each HTTP call to the client that sends it and attach it to the route this pack serves;'
+      + ' a call whose prefix or alias had to be assumed is graded HEURISTIC, and one no route here answers is counted, not dropped'
+    : webFiles === 0
+      ? 'there is no frontend source file in this tree (.js/.ts/.jsx/.tsx/.vue outside tests and type declarations), so there is no frontend to read'
+      : webRoots === 0
+        ? `we found ${webFiles} frontend source file(s), but no package.json declaring a framework dependency and no directory of frontend sources the tree says it serves, so there is no frontend root to read. Pass --web-src to name one anyway`
+        : `we found ${webFiles} frontend source file(s), but frameworkPacks does not declare web, so an unflagged run will not read them`,
+  counts: {
+    frontendPackages: n('frontendPackageJson'),
+    webFiles,
+    vueFiles: n('vueFiles'),
+    webSourceRoots: webRoots,
+    vendoredRoots: vendoredRoots.length,
+    vendoredFiles: n('webVendoredFiles'),
+    templateRoots: templateRoots.length,
+    templateFiles,
+    templateEngines,
+  },
+});
+// The OpenAPI documents this run will read. No framework pack gates it: a
+// document is a document, and a project that ships one has said what it
+// serves.
+const openapiDocs = discovery.openapiDocuments ?? [];
+const declaredDocs = Array.isArray(profile.openapi && profile.openapi.documents) ? profile.openapi.documents : [];
+const willReadDocs = declaredDocs.length > 0 ? declaredDocs.length : openapiDocs.length;
+axes.push({
+  axis: 'openapi',
+  status: willReadDocs > 0 ? 'shipped' : 'not-shipped',
+  reason: willReadDocs > 0
+    ? `${willReadDocs} OpenAPI / Swagger document(s) will be read${declaredDocs.length > 0 ? ', as the profile declares them' : ''}: `
+      + `${(declaredDocs.length > 0 ? declaredDocs : openapiDocs.map((d) => d.path)).slice(0, 5).join(', ')}`
+      + `${willReadDocs > 5 ? `, and ${willReadDocs - 5} more` : ''}. `
+      + 'Every route they declare becomes an endpoint, and the ones this code does not serve are reported as drift rather than dropped'
+    : 'no .json/.yaml/.yml file in this tree carries a top-level `openapi` or `swagger` key, so no route is declared to this run',
+  counts: {
+    openapiDocuments: willReadDocs,
+    byVersion: openapiDocs.reduce((acc, d) => ({ ...acc, [d.version]: (acc[d.version] ?? 0) + 1 }), {}),
+  },
+});
+// THE SCREEN AXIS, before anything has been parsed. Two of the three things
+// that decide it ARE knowable here: whether a router declaration pack is
+// declared (the packs are what let the worker recognize a route object at
+// all) and whether the profile turned the axis on. The third — how many route
+// declarations there really are — is not, until the lane runs; the LAST run's
+// count is reported instead when there is one, said as such.
+const routerPacks = ROUTER_PACKS.filter((p) => packs.includes(p));
+// The same three-state switch `cascade analyze` resolves, over the evidence
+// an estimate has: the packages discovery found in THIS tree. An estimate
+// cannot know about a frontend a later `--web-src` will point outside it, and
+// says so in the reason rather than promising no screens.
+const screenGate = screenAxisOf(profile, {
+  webPackages: discovery?.webPackages ?? [],
+  templateRoots,
+});
+const screenEnabled = screenGate.enabled;
+const lastRoutes = Number.isInteger(prevRoutes) ? prevRoutes : null;
+const willBuildScreens = willReadWeb && screenEnabled && (routerPacks.length > 0 || templateRoots.length > 0);
+axes.push({
+  axis: 'screen',
+  // DEGRADED before the fact, like the web axis and for the same reason: what
+  // separates shipped from degraded is whether every route's component
+  // resolves to a file, and that is not knowable until the lane has run.
+  status: willBuildScreens ? 'degraded' : 'not-shipped',
+  reason: willBuildScreens
+    ? `the web lane will turn ${routerPacks.length > 0 ? `the route declarations it finds into screens (router pack(s): ${routerPacks.join(', ')})` : ''}`
+      + `${routerPacks.length > 0 && templateRoots.length > 0 ? ', and ' : ''}`
+      + `${templateRoots.length > 0 ? `every template a controller names into a page (${templateEngines.join(', ')})` : ''}`
+      + `${routerPacks.length > 0 && lastRoutes !== null ? `; the last run recorded ${lastRoutes} route declaration(s)` : ''}`
+      + `. ${routerPacks.length > 0
+        ? 'A route\'s screen gets a RENDERS edge onto the functions of the component it mounts, and a route whose component this lane cannot resolve is counted rather than dropped'
+        : 'A page gets a RENDERS edge onto its own inline scripts and onto every template it includes, and a view name that resolves to no template this run read is counted rather than dropped'}`
+    : !willReadWeb
+      ? (screenEnabled
+        ? 'the profile enables the screen axis, but no web lane will run to record the routes a screen would come from'
+        : 'no web lane will run, so there is no router declaration to build a screen from')
+      : !screenEnabled
+        ? `the web lane will run and the screen axis is off: ${screenGate.reason}. Set screenAxis.enabled to true in the profile to build screens anyway`
+        : 'the web lane will run and frameworkPacks names no router pack (vue-router, react-router), so no route object is recognized and there is nothing to build a screen from',
+  counts: {
+    frontendPackages: n('frontendPackageJson'),
+    webFiles,
+    routerPacks,
+    enabled: screenEnabled,
+    enabledFrom: screenGate.from,
+    lastRunRoutes: lastRoutes,
+    templateRoots: templateRoots.length,
+  },
+});
+  return { webPackDeclared, willReadWeb };
+}
+
+
 export function estimateBefore(discovery, profile = {}, prev = {}) {
   const prevRoutes = prev && Number.isInteger(prev.routes) ? prev.routes : null;
   const c = (discovery && discovery.counts) || {};
   const n = (k) => Number(c[k]) || 0;
   const packs = Array.isArray(profile.frameworkPacks) ? profile.frameworkPacks : [];
-  const catalogSource = (profile.catalog && profile.catalog.source) || 'none';
-
-  const ddlFiles = n('ddlFiles');
-  const mapperFiles = n('mybatisMapperXml');
-  const javaFiles = n('javaFiles');
-  const handlerFiles = n('springHandlerFiles');
-
-  // A lane only runs unflagged when its framework pack is declared; discovery
-  // finding the files is necessary, not sufficient.
-  const sqlPackDeclared = packs.includes('mybatis-xml');
-  const springPackDeclared = packs.includes('spring-mvc');
-  const willReadCatalog = ddlFiles > 0 && catalogSource === 'file';
-  const willReadStatements = mapperFiles > 0 && sqlPackDeclared;
-  const willReadJava = javaFiles > 0 && springPackDeclared;
 
   const axes = [];
-  axes.push({
-    axis: 'catalog',
-    status: willReadCatalog ? 'shipped' : 'not-shipped',
-    reason: willReadCatalog
-      ? `catalog.source is "file" and ${ddlFiles} DDL file(s) declare CREATE TABLE`
-      : ddlFiles === 0
-        ? 'no .sql file in this tree contains CREATE TABLE, so there is no schema to read'
-        : `we found ${ddlFiles} DDL file(s), but catalog.source is ${JSON.stringify(catalogSource)}. Set it to "file" and point catalog.connectionFrom at one of them, or pass --ddl`,
-    counts: { ddlFiles, catalogSource },
-  });
-  axes.push({
-    axis: 'statements',
-    status: willReadStatements ? 'shipped' : 'not-shipped',
-    reason: willReadStatements
-      ? `${mapperFiles} MyBatis mapper XML file(s) in ${(discovery.mapperDirs ?? []).length} directory(ies)`
-      : mapperFiles === 0
-        ? 'we found no MyBatis mapper XML (<mapper namespace=…>), and this engine reads SQL from mapper XML only'
-        : `we found ${mapperFiles} mapper XML file(s), but frameworkPacks does not declare mybatis-xml, so an unflagged run will not read them`,
-    counts: { mapperXmlFiles: mapperFiles, mapperDirs: (discovery.mapperDirs ?? []).length },
-  });
-  axes.push({
-    axis: 'column',
-    status: willReadStatements && willReadCatalog ? 'shipped'
-      : willReadStatements ? 'degraded' : 'not-shipped',
-    reason: willReadStatements && willReadCatalog
-      ? 'both a DB catalog and mapper SQL are available, so a column reference can be attributed to its owning table'
-      : willReadStatements
-        ? 'there is no DB catalog here. Without one we cannot tie a bare column name to its table, so we record it as unresolved rather than guess, and column answers will be partial'
-        : 'no mapper SQL, so nothing reads or writes a column in this pack',
-    counts: { ddlFiles, mapperXmlFiles: mapperFiles },
-  });
-  const jpaFiles = n('jpaEntityFiles');
-  const jpaPackDeclared = packs.includes('jpa');
-  const willReadJpa = jpaFiles > 0 && jpaPackDeclared && willReadJava;
-  const namingDeclared = !!(profile.jpa && profile.jpa.namingStrategy);
-  axes.push({
-    axis: 'jpa',
-    status: willReadJpa ? (namingDeclared ? 'shipped' : 'degraded') : 'not-shipped',
-    reason: !willReadJpa
-      ? jpaFiles === 0
-        ? 'there is no @Entity class in this tree, so nothing declares persistence through JPA'
-        : !willReadJava
-          ? `${jpaFiles} @Entity file(s) were found, but the Java lane will not run, and the JPA bridge reads the Java lane's facts`
-          : `we found ${jpaFiles} @Entity file(s), but frameworkPacks does not declare jpa, so an unflagged run will not map them`
-      : namingDeclared
-        ? `${jpaFiles} @Entity file(s), mapped with the declared jpa.namingStrategy`
-        : `${jpaFiles} @Entity file(s). jpa.namingStrategy is not declared, so a name the mapping did not spell out is DERIVED with Spring Boot's default and graded HEURISTIC`,
-    counts: { jpaEntityFiles: jpaFiles, namingStrategy: (profile.jpa && profile.jpa.namingStrategy) || null },
-  });
-  const mpFiles = n('mybatisPlusFiles');
-  const mpPackDeclared = packs.includes('mybatis-plus');
-  const willReadMp = mpFiles > 0 && mpPackDeclared && willReadJava;
-  const mpNamingDeclared = !!(profile.mybatisPlus && profile.mybatisPlus.namingStrategy);
-  axes.push({
-    axis: 'mybatisPlus',
-    status: willReadMp ? (mpNamingDeclared ? 'shipped' : 'degraded') : 'not-shipped',
-    reason: !willReadMp
-      ? mpFiles === 0
-        ? 'there is no `extends BaseMapper<…>` and no @TableName in this tree, so nothing declares persistence through MyBatis-Plus'
-        : !willReadJava
-          ? `${mpFiles} MyBatis-Plus file(s) were found, but the Java lane will not run, and this bridge reads the Java lane's facts`
-          : `we found ${mpFiles} MyBatis-Plus file(s), but frameworkPacks does not declare mybatis-plus, so an unflagged run will not map them`
-      : mpNamingDeclared
-        ? `${mpFiles} MyBatis-Plus file(s), mapped with the declared mybatisPlus.namingStrategy`
-        : `${mpFiles} MyBatis-Plus file(s). mybatisPlus.namingStrategy is not declared, so a name the mapping did not spell out is DERIVED with MyBatis-Plus's default and graded HEURISTIC`,
-    counts: { mybatisPlusFiles: mpFiles, namingStrategy: (profile.mybatisPlus && profile.mybatisPlus.namingStrategy) || null },
-  });
+  backendAxes(discovery, profile, n, packs, axes);
+  const { webPackDeclared, willReadWeb } = webAxes(discovery, profile, n, packs, axes, { prevRoutes });
 
-  const testFiles = n('javaTestFiles');
-  const testRoots = (discovery.javaTestRoots ?? []).length;
-  axes.push({
-    axis: 'code',
-    status: willReadJava ? 'shipped' : 'not-shipped',
-    reason: willReadJava
-      ? `${javaFiles - testFiles} main java file(s) across ${(discovery.javaSourceRoots ?? []).length} source root(s)`
-        + (testRoots > 0 ? `; ${testFiles} more sit in ${testRoots} src/test root(s) an unflagged run does not read` : '')
-      : javaFiles === 0
-        ? 'no java source in this tree'
-        : 'we found java sources, but frameworkPacks does not declare spring-mvc, so an unflagged run will not read them',
-    counts: { javaFiles, javaMainFiles: javaFiles - testFiles, javaTestFiles: testFiles,
-              javaSourceRoots: (discovery.javaSourceRoots ?? []).length, javaTestRoots: testRoots },
-  });
-  axes.push({
-    axis: 'endpoints',
-    status: willReadJava && handlerFiles > 0 ? 'shipped' : 'not-shipped',
-    reason: !willReadJava
-      ? 'the Java lane will not run, so no HTTP route can be attached to the SQL below it'
-      : handlerFiles > 0
-        ? `${handlerFiles} java file(s) carry a Spring mapping annotation`
-        : 'no java file carries a Spring mapping annotation (@RestController/@Controller/@RequestMapping/@GetMapping…), so the endpoint axis is not shipped and impact answers stop at the mapper method',
-    counts: { springHandlerFiles: handlerFiles },
-  });
-  // The web lane runs unflagged only when the profile declares the `web` pack,
-  // the same rule the other three lanes follow.
-  const webPackDeclared = packs.includes('web');
-  const webFiles = n('webFiles');
-  const packageRoots = (discovery.webSourceRoots ?? []).length;
-  // A frontend with no package manifest is a root too (RM47), and it is the one
-  // a reader has to be told about by name: nothing in the tree declares which
-  // framework it is, so the router pack is read out of the source.
-  const vendoredRoots = discovery.webVendoredRoots ?? [];
-  const declaredWebRoots = Array.isArray(profile.webRoots) ? profile.webRoots.length : 0;
-  const webRoots = packageRoots + Math.max(vendoredRoots.length, declaredWebRoots);
-  const vendoredNamed = [...new Set(vendoredRoots.flatMap((r) => r.routerPacks ?? []))].sort();
-  const vendoredNote = vendoredRoots.length === 0 ? ''
-    : ` ${vendoredRoots.length} of those root(s) are vendored (no package manifest): `
-      + `${vendoredRoots.slice(0, 3).map((r) => `${r.root} (${r.files} file(s))`).join(', ')}`
-      + `${vendoredRoots.length > 3 ? `, and ${vendoredRoots.length - 3} more` : ''}. `
-      + 'No dependency list names the framework there, so the router pack is chosen from the source alone'
-      + `${vendoredNamed.length > 0 ? ` (${vendoredNamed.join(', ')})` : ' and nothing in those roots names one'}.`;
-  // A SERVER-RENDERED APPLICATION HAS NO FRONTEND SOURCE ROOT AT ALL (RM48).
-  // Its pages are template files a `@Controller` names, read by the same lane,
-  // and a run that reads only those is still a web lane running.
-  const templateRoots = Array.isArray(profile.templateRoots) && profile.templateRoots.length > 0
-    ? profile.templateRoots.map((r) => ({ root: r.root, engine: r.engine ?? 'plain-html', suffix: r.suffix ?? '.html', files: null }))
-    : (discovery.templateRoots ?? []);
-  const templateFiles = templateRoots.reduce((n2, r) => n2 + (Number.isInteger(r.files) ? r.files : 0), 0);
-  const templateEngines = [...new Set(templateRoots.map((r) => r.engine))].sort();
-  const templateNote = templateRoots.length === 0 ? ''
-    : `${templateRoots.length} template root(s) (${templateEngines.join(', ')})`
-      + `${templateFiles > 0 ? `, ${templateFiles} page(s)` : ''}: `
-      + `${templateRoots.slice(0, 3).map((r) => `${r.root} ${r.suffix}`).join(', ')}`
-      + `${templateRoots.length > 3 ? `, and ${templateRoots.length - 3} more` : ''}. `
-      + 'A page a controller names becomes a screen, and its form, its links and its inline scripts become calls onto the routes this pack serves.';
-  const willReadWeb = (webFiles > 0 && webRoots > 0 && webPackDeclared) || templateRoots.length > 0;
-  axes.push({
-    axis: 'web',
-    // DEGRADED even before it runs, because the one thing that decides between
-    // `shipped` and `degraded` is not knowable yet: whether the prefix and the
-    // aliases this frontend goes through are stated in its own source or have
-    // to be guessed. The pack's own axis says which, once the lane has run.
-    status: willReadWeb ? 'degraded' : 'not-shipped',
-    reason: willReadWeb
-      ? `${webRoots > 0 && webFiles > 0
-        ? `${webFiles} frontend source file(s) in ${webRoots} root(s).${vendoredNote}${templateNote === '' ? '' : ` It also reads ${templateNote}`}`
-        : `no frontend source file and no frontend root in this tree, and ${templateNote}`}`
-        + ' The lane will trace each HTTP call to the client that sends it and attach it to the route this pack serves;'
-        + ' a call whose prefix or alias had to be assumed is graded HEURISTIC, and one no route here answers is counted, not dropped'
-      : webFiles === 0
-        ? 'there is no frontend source file in this tree (.js/.ts/.jsx/.tsx/.vue outside tests and type declarations), so there is no frontend to read'
-        : webRoots === 0
-          ? `we found ${webFiles} frontend source file(s), but no package.json declaring a framework dependency and no directory of frontend sources the tree says it serves, so there is no frontend root to read. Pass --web-src to name one anyway`
-          : `we found ${webFiles} frontend source file(s), but frameworkPacks does not declare web, so an unflagged run will not read them`,
-    counts: {
-      frontendPackages: n('frontendPackageJson'),
-      webFiles,
-      vueFiles: n('vueFiles'),
-      webSourceRoots: webRoots,
-      vendoredRoots: vendoredRoots.length,
-      vendoredFiles: n('webVendoredFiles'),
-      templateRoots: templateRoots.length,
-      templateFiles,
-      templateEngines,
-    },
-  });
-  // The OpenAPI documents this run will read. No framework pack gates it: a
-  // document is a document, and a project that ships one has said what it
-  // serves.
-  const openapiDocs = discovery.openapiDocuments ?? [];
-  const declaredDocs = Array.isArray(profile.openapi && profile.openapi.documents) ? profile.openapi.documents : [];
-  const willReadDocs = declaredDocs.length > 0 ? declaredDocs.length : openapiDocs.length;
-  axes.push({
-    axis: 'openapi',
-    status: willReadDocs > 0 ? 'shipped' : 'not-shipped',
-    reason: willReadDocs > 0
-      ? `${willReadDocs} OpenAPI / Swagger document(s) will be read${declaredDocs.length > 0 ? ', as the profile declares them' : ''}: `
-        + `${(declaredDocs.length > 0 ? declaredDocs : openapiDocs.map((d) => d.path)).slice(0, 5).join(', ')}`
-        + `${willReadDocs > 5 ? `, and ${willReadDocs - 5} more` : ''}. `
-        + 'Every route they declare becomes an endpoint, and the ones this code does not serve are reported as drift rather than dropped'
-      : 'no .json/.yaml/.yml file in this tree carries a top-level `openapi` or `swagger` key, so no route is declared to this run',
-    counts: {
-      openapiDocuments: willReadDocs,
-      byVersion: openapiDocs.reduce((acc, d) => ({ ...acc, [d.version]: (acc[d.version] ?? 0) + 1 }), {}),
-    },
-  });
-  // THE SCREEN AXIS, before anything has been parsed. Two of the three things
-  // that decide it ARE knowable here: whether a router declaration pack is
-  // declared (the packs are what let the worker recognize a route object at
-  // all) and whether the profile turned the axis on. The third — how many route
-  // declarations there really are — is not, until the lane runs; the LAST run's
-  // count is reported instead when there is one, said as such.
-  const routerPacks = ROUTER_PACKS.filter((p) => packs.includes(p));
-  // The same three-state switch `cascade analyze` resolves, over the evidence
-  // an estimate has: the packages discovery found in THIS tree. An estimate
-  // cannot know about a frontend a later `--web-src` will point outside it, and
-  // says so in the reason rather than promising no screens.
-  const screenGate = screenAxisOf(profile, {
-    webPackages: discovery?.webPackages ?? [],
-    templateRoots,
-  });
-  const screenEnabled = screenGate.enabled;
-  const lastRoutes = Number.isInteger(prevRoutes) ? prevRoutes : null;
-  const willBuildScreens = willReadWeb && screenEnabled && (routerPacks.length > 0 || templateRoots.length > 0);
-  axes.push({
-    axis: 'screen',
-    // DEGRADED before the fact, like the web axis and for the same reason: what
-    // separates shipped from degraded is whether every route's component
-    // resolves to a file, and that is not knowable until the lane has run.
-    status: willBuildScreens ? 'degraded' : 'not-shipped',
-    reason: willBuildScreens
-      ? `the web lane will turn ${routerPacks.length > 0 ? `the route declarations it finds into screens (router pack(s): ${routerPacks.join(', ')})` : ''}`
-        + `${routerPacks.length > 0 && templateRoots.length > 0 ? ', and ' : ''}`
-        + `${templateRoots.length > 0 ? `every template a controller names into a page (${templateEngines.join(', ')})` : ''}`
-        + `${routerPacks.length > 0 && lastRoutes !== null ? `; the last run recorded ${lastRoutes} route declaration(s)` : ''}`
-        + `. ${routerPacks.length > 0
-          ? 'A route\'s screen gets a RENDERS edge onto the functions of the component it mounts, and a route whose component this lane cannot resolve is counted rather than dropped'
-          : 'A page gets a RENDERS edge onto its own inline scripts and onto every template it includes, and a view name that resolves to no template this run read is counted rather than dropped'}`
-      : !willReadWeb
-        ? (screenEnabled
-          ? 'the profile enables the screen axis, but no web lane will run to record the routes a screen would come from'
-          : 'no web lane will run, so there is no router declaration to build a screen from')
-        : !screenEnabled
-          ? `the web lane will run and the screen axis is off: ${screenGate.reason}. Set screenAxis.enabled to true in the profile to build screens anyway`
-          : 'the web lane will run and frameworkPacks names no router pack (vue-router, react-router), so no route object is recognized and there is nothing to build a screen from',
-    counts: {
-      frontendPackages: n('frontendPackageJson'),
-      webFiles,
-      routerPacks,
-      enabled: screenEnabled,
-      enabledFrom: screenGate.from,
-      lastRunRoutes: lastRoutes,
-      templateRoots: templateRoots.length,
-    },
-  });
+
 
   const notCovered = [];
   if (n('kotlinFiles') > 0) {

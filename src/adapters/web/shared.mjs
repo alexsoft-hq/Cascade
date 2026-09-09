@@ -7,11 +7,21 @@
 // beside it — and two spellings of one path are two nodes.
 //
 // WHAT IT MUST NEVER KNOW ABOUT: the graph, the fact stream, the profile, or
-// any other module in this directory. It imports nothing.
+// any other module in this directory. The one thing it imports is
+// `src/adapters/http_routes.mjs`, which owns the URL spelling BOTH lanes are
+// written on — the web lane asking which route answers a browser call and the
+// Java lane asking which route answers a service call are one question, and one
+// question gets one spelling.
 //
 // Every path in the fact stream is ROOT-RELATIVE and POSIX, whatever the
 // platform ran the analysis, so nothing here touches node:path's separator
 // rules.
+
+/**
+ * The URL vocabulary, from the module both lanes share. Re-exported under the
+ * name this directory has always used, so every step below reads the same.
+ */
+export { normalizeUrlPath as normalizeUrl, escapeRe } from '../http_routes.mjs';
 
 /** Ascending string order, and the only comparator in this directory. */
 export const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -62,15 +72,6 @@ export function normalizePosix(p) {
   return out.join('/');
 }
 
-/** A URL path with one leading slash, no doubled slashes and no trailing slash. */
-export function normalizeUrl(u) {
-  let s = String(u ?? '');
-  if (!s.startsWith('/')) s = `/${s}`;
-  s = s.replace(/\/{2,}/g, '/');
-  if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
-  return s;
-}
-
 /**
  * The package a config record belongs to: the directory its file sits in. A
  * record whose `file` has no dot in its last segment IS a directory (the
@@ -87,8 +88,6 @@ export function packageNameOf(spec) {
   const parts = spec.split('/');
   return spec.startsWith('@') && parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
 }
-
-export function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 /**
  * The top of a "what did we fail on, and how often" list: most common first,

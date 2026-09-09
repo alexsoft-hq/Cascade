@@ -280,6 +280,229 @@ function resourceSpansOnLine(line) {
  *            form:('document'|'log'|null), skippedLines:number,
  *            unreadable:(string|null)}}
  */
+/**
+ * 0. WHICH FORM IS THIS? A trace arrives as one OTLP document, as one JSON array
+ * of them, or as JSON Lines — and a line that will not parse is COUNTED rather
+ * than failing the whole file, because a capture truncated mid-line is the
+ * normal way a recording ends.
+ */
+function readTraceForm(source, empty) {
+// ---- 0. which form is this? --------------------------------------------
+let resourceSpans = null;
+let form = null;
+let skippedLines = 0;
+let docReason = null;
+try {
+  const doc = JSON.parse(source);
+  if (doc && typeof doc === 'object' && Array.isArray(doc.resourceSpans)) {
+    resourceSpans = doc.resourceSpans;
+    form = 'document';
+  } else {
+    docReason = 'no resourceSpans array, so this is not an OTLP/JSON trace export';
+  }
+} catch (e) {
+  docReason = `not JSON: ${e.message}`;
+}
+if (resourceSpans === null) {
+  // THE LOG PASS. Every line stands on its own, so one unreadable line costs
+  // that line and nothing else: a log is a stream somebody may have truncated,
+  // rotated or interleaved with another thread's output.
+  const collected = [];
+  let skipped = 0;
+  let read = 0;
+  for (const line of source.split('\n')) {
+    if (line.trim() === '') continue;
+    read += 1;
+    const found = resourceSpansOnLine(line);
+    if (found === null) { skipped += 1; continue; }
+    for (const rs of found) collected.push(rs);
+  }
+  if (collected.length > 0) {
+    resourceSpans = collected;
+    form = 'log';
+    skippedLines = skipped;
+  } else if (read > 1) {
+    // Several lines and not one export. Reporting only the document reading's
+    // complaint here would be misleading, because a log is not a broken
+    // document: it is a file that was read the other way and still had
+    // nothing in it. Both readings are named, so a reader can tell which file
+    // they pointed at.
+    docReason = `no OTLP export in this file. As one document: ${docReason}. `
+      + `As an agent log: ${read} line(s) read, none of them carrying a ResourceSpans`;
+  }
+}
+if (resourceSpans === null) return { resourceSpans: null, form, skippedLines, unreadable: empty(docReason) };
+
+  return { resourceSpans, form, skippedLines, unreadable: null };
+}
+
+/**
+ * 1. EVERY SPAN, FLATTENED, with its facets read once. The order is the order
+ * the document gave, which is what makes two readings of one capture agree.
+ */
+function flattenSpans(resourceSpans) {
+// ---- 1. every span, flattened, with its facets read once ----------------
+const spans = new Map(); // spanId -> {id, parentId, facets, at}
+const order = []; // insertion order, so a trace with no ids still reads stably
+const services = new Set();
+let total = 0;
+for (const rs of resourceSpans) {
+  if (!rs || typeof rs !== 'object') continue;
+  const resAttrs = attributesOf(rs.resource && rs.resource.attributes);
+  const service = resAttrs.get('service.name');
+  if (typeof service === 'string' && service !== '') services.add(service);
+  // `scopeSpans` is the current spelling; `instrumentationLibrarySpans` is
+  // what an older collector wrote, and a trace exported by one is still a
+  // trace.
+  const scopes = Array.isArray(rs.scopeSpans) ? rs.scopeSpans
+    : Array.isArray(rs.instrumentationLibrarySpans) ? rs.instrumentationLibrarySpans : [];
+  for (const sc of scopes) {
+    if (!sc || typeof sc !== 'object' || !Array.isArray(sc.spans)) continue;
+    for (const sp of sc.spans) {
+      if (!sp || typeof sp !== 'object') continue;
+      total += 1;
+      const id = typeof sp.spanId === 'string' && sp.spanId !== '' ? sp.spanId : `#${total}`;
+      const parentId = typeof sp.parentSpanId === 'string' && sp.parentSpanId !== '' ? sp.parentSpanId : null;
+      const rec = {
+        id,
+        parentId,
+        facets: spanFacets(sp),
+        at: spanTimeIso(sp.startTimeUnixNano),
+      };
+      if (!spans.has(id)) { spans.set(id, rec); order.push(id); }
+    }
+  }
+}
+
+  return { spans, order, services, total };
+}
+
+/**
+ * 2. THE NEAREST ENCLOSING METHOD SPAN of each span: a SQL span belongs to the
+ * method that ran it, and the parent chain is the only thing that says which.
+ */
+function methodAncestors(spans) {
+// ---- 2. the nearest enclosing METHOD span, for each span ----------------
+// A trace nests a service method under a controller method under an HTTP
+// span, and often under a framework span nobody instrumented as a method.
+// "Who ran this?" is therefore the nearest ANCESTOR that names a method, and
+// whether that ancestor was the immediate parent is recorded rather than
+// assumed: only a direct nesting is evidence enough to draw a NEW edge.
+const methodAncestorOf = (rec) => {
+  let hops = 0;
+  let cur = rec.parentId === null ? null : spans.get(rec.parentId) ?? null;
+  const seen = new Set([rec.id]);
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.facets.method) return { span: cur, direct: hops === 0 };
+    hops += 1;
+    cur = cur.parentId === null ? null : spans.get(cur.parentId) ?? null;
+  }
+  return null;
+};
+
+  return methodAncestorOf;
+}
+
+/**
+ * 3. THE SPANS, FOLDED INTO COUNTED OBSERVATIONS. One row per thing observed,
+ * with how many times it was seen and the window it was seen in — a trace is
+ * evidence of what RAN, and the count is part of the evidence.
+ */
+function foldObservations(ctx) {
+  const { file, form, spans, order, services, total, methodAncestorOf, skippedLines } = ctx;
+// ---- 3. fold the spans into counted observations ------------------------
+const folded = new Map(); // key -> observation
+let usable = 0;
+let from = null;
+let to = null;
+const bump = (key, make) => {
+  let o = folded.get(key);
+  if (!o) { o = make(); folded.set(key, o); }
+  o.count += 1;
+  return o;
+};
+for (const id of order) {
+  const rec = spans.get(id);
+  const f = rec.facets;
+  // USABLE means the span carried an attribute this lane reads. A usable span
+  // can still produce no observation (a method span with no method above it
+  // names no caller), and the two are counted apart so "unusable" keeps
+  // meaning "this lane could read nothing on it" and never "this lane chose
+  // not to use it".
+  const used = !!(f.route || f.method || f.sql !== null);
+  if (f.route) {
+    bump(`e|${f.route.httpMethod}|${f.route.path}`, () => ({
+      kind: 'endpoint', httpMethod: f.route.httpMethod, path: f.route.path, count: 0,
+    }));
+  }
+  if (f.method) {
+    const anc = methodAncestorOf(rec);
+    if (anc) {
+      const caller = anc.span.facets.method;
+      const key = `d|${caller.type}#${caller.name}|${f.method.type}#${f.method.name}`;
+      const o = bump(key, () => ({
+        kind: 'dispatch',
+        callerType: caller.type, callerMethod: caller.name,
+        calleeType: f.method.type, calleeMethod: f.method.name,
+        direct: anc.direct,
+        count: 0,
+      }));
+      // A pair seen directly nested even once IS directly nested: the weaker
+      // reading must not erase the stronger one.
+      if (anc.direct) o.direct = true;
+    }
+    // A method span with no method span above it is the entry of the trace:
+    // it says a method ran and names no caller, so there is no dispatch to
+    // observe and nothing is invented for it.
+  }
+  if (f.sql !== null) {
+    const own = f.method;
+    const anc = own ? null : methodAncestorOf(rec);
+    const owner = own ?? (anc ? anc.span.facets.method : null);
+    const tables = tablesInSql(f.sql);
+    if (owner || tables.length > 0) {
+      const key = `s|${owner ? `${owner.type}.${owner.name}` : ''}|${tables.join(',')}`;
+      bump(key, () => ({
+        kind: 'statement',
+        ownerType: owner ? owner.type : null,
+        method: owner ? owner.name : null,
+        sql: f.sql,
+        tables,
+        count: 0,
+      }));
+    }
+  }
+  if (used) {
+    usable += 1;
+    if (rec.at !== null) {
+      if (from === null || rec.at < from) from = rec.at;
+      if (to === null || rec.at > to) to = rec.at;
+    }
+  }
+}
+
+// Sorted by kind then key: the same trace must read the same way every run,
+// whatever order a collector happened to write the spans in.
+const observations = [...folded.entries()]
+  .sort((a, b) => cmp(a[0], b[0]))
+  .map(([, o]) => o);
+
+return {
+  file,
+  observations,
+  spans: total,
+  usableSpans: usable,
+  unusable: total - usable,
+  services: [...services].sort(),
+  window: from !== null && to !== null ? { from, to } : null,
+  form,
+  skippedLines,
+  unreadable: null,
+};
+}
+
+
 export function readOtelTrace(text, opts = {}) {
   const file = typeof opts.file === 'string' ? opts.file : '(otel)';
   const empty = (unreadable) => ({
@@ -288,194 +511,15 @@ export function readOtelTrace(text, opts = {}) {
   });
   const source = String(text);
 
-  // ---- 0. which form is this? --------------------------------------------
-  let resourceSpans = null;
-  let form = null;
-  let skippedLines = 0;
-  let docReason = null;
-  try {
-    const doc = JSON.parse(source);
-    if (doc && typeof doc === 'object' && Array.isArray(doc.resourceSpans)) {
-      resourceSpans = doc.resourceSpans;
-      form = 'document';
-    } else {
-      docReason = 'no resourceSpans array, so this is not an OTLP/JSON trace export';
-    }
-  } catch (e) {
-    docReason = `not JSON: ${e.message}`;
-  }
-  if (resourceSpans === null) {
-    // THE LOG PASS. Every line stands on its own, so one unreadable line costs
-    // that line and nothing else: a log is a stream somebody may have truncated,
-    // rotated or interleaved with another thread's output.
-    const collected = [];
-    let skipped = 0;
-    let read = 0;
-    for (const line of source.split('\n')) {
-      if (line.trim() === '') continue;
-      read += 1;
-      const found = resourceSpansOnLine(line);
-      if (found === null) { skipped += 1; continue; }
-      for (const rs of found) collected.push(rs);
-    }
-    if (collected.length > 0) {
-      resourceSpans = collected;
-      form = 'log';
-      skippedLines = skipped;
-    } else if (read > 1) {
-      // Several lines and not one export. Reporting only the document reading's
-      // complaint here would be misleading, because a log is not a broken
-      // document: it is a file that was read the other way and still had
-      // nothing in it. Both readings are named, so a reader can tell which file
-      // they pointed at.
-      docReason = `no OTLP export in this file. As one document: ${docReason}. `
-        + `As an agent log: ${read} line(s) read, none of them carrying a ResourceSpans`;
-    }
-  }
-  if (resourceSpans === null) return empty(docReason);
-
-  // ---- 1. every span, flattened, with its facets read once ----------------
-  const spans = new Map(); // spanId -> {id, parentId, facets, at}
-  const order = []; // insertion order, so a trace with no ids still reads stably
-  const services = new Set();
-  let total = 0;
-  for (const rs of resourceSpans) {
-    if (!rs || typeof rs !== 'object') continue;
-    const resAttrs = attributesOf(rs.resource && rs.resource.attributes);
-    const service = resAttrs.get('service.name');
-    if (typeof service === 'string' && service !== '') services.add(service);
-    // `scopeSpans` is the current spelling; `instrumentationLibrarySpans` is
-    // what an older collector wrote, and a trace exported by one is still a
-    // trace.
-    const scopes = Array.isArray(rs.scopeSpans) ? rs.scopeSpans
-      : Array.isArray(rs.instrumentationLibrarySpans) ? rs.instrumentationLibrarySpans : [];
-    for (const sc of scopes) {
-      if (!sc || typeof sc !== 'object' || !Array.isArray(sc.spans)) continue;
-      for (const sp of sc.spans) {
-        if (!sp || typeof sp !== 'object') continue;
-        total += 1;
-        const id = typeof sp.spanId === 'string' && sp.spanId !== '' ? sp.spanId : `#${total}`;
-        const parentId = typeof sp.parentSpanId === 'string' && sp.parentSpanId !== '' ? sp.parentSpanId : null;
-        const rec = {
-          id,
-          parentId,
-          facets: spanFacets(sp),
-          at: spanTimeIso(sp.startTimeUnixNano),
-        };
-        if (!spans.has(id)) { spans.set(id, rec); order.push(id); }
-      }
-    }
-  }
-
-  // ---- 2. the nearest enclosing METHOD span, for each span ----------------
-  // A trace nests a service method under a controller method under an HTTP
-  // span, and often under a framework span nobody instrumented as a method.
-  // "Who ran this?" is therefore the nearest ANCESTOR that names a method, and
-  // whether that ancestor was the immediate parent is recorded rather than
-  // assumed: only a direct nesting is evidence enough to draw a NEW edge.
-  const methodAncestorOf = (rec) => {
-    let hops = 0;
-    let cur = rec.parentId === null ? null : spans.get(rec.parentId) ?? null;
-    const seen = new Set([rec.id]);
-    while (cur && !seen.has(cur.id)) {
-      seen.add(cur.id);
-      if (cur.facets.method) return { span: cur, direct: hops === 0 };
-      hops += 1;
-      cur = cur.parentId === null ? null : spans.get(cur.parentId) ?? null;
-    }
-    return null;
-  };
-
-  // ---- 3. fold the spans into counted observations ------------------------
-  const folded = new Map(); // key -> observation
-  let usable = 0;
-  let from = null;
-  let to = null;
-  const bump = (key, make) => {
-    let o = folded.get(key);
-    if (!o) { o = make(); folded.set(key, o); }
-    o.count += 1;
-    return o;
-  };
-  for (const id of order) {
-    const rec = spans.get(id);
-    const f = rec.facets;
-    // USABLE means the span carried an attribute this lane reads. A usable span
-    // can still produce no observation (a method span with no method above it
-    // names no caller), and the two are counted apart so "unusable" keeps
-    // meaning "this lane could read nothing on it" and never "this lane chose
-    // not to use it".
-    const used = !!(f.route || f.method || f.sql !== null);
-    if (f.route) {
-      bump(`e|${f.route.httpMethod}|${f.route.path}`, () => ({
-        kind: 'endpoint', httpMethod: f.route.httpMethod, path: f.route.path, count: 0,
-      }));
-    }
-    if (f.method) {
-      const anc = methodAncestorOf(rec);
-      if (anc) {
-        const caller = anc.span.facets.method;
-        const key = `d|${caller.type}#${caller.name}|${f.method.type}#${f.method.name}`;
-        const o = bump(key, () => ({
-          kind: 'dispatch',
-          callerType: caller.type, callerMethod: caller.name,
-          calleeType: f.method.type, calleeMethod: f.method.name,
-          direct: anc.direct,
-          count: 0,
-        }));
-        // A pair seen directly nested even once IS directly nested: the weaker
-        // reading must not erase the stronger one.
-        if (anc.direct) o.direct = true;
-      }
-      // A method span with no method span above it is the entry of the trace:
-      // it says a method ran and names no caller, so there is no dispatch to
-      // observe and nothing is invented for it.
-    }
-    if (f.sql !== null) {
-      const own = f.method;
-      const anc = own ? null : methodAncestorOf(rec);
-      const owner = own ?? (anc ? anc.span.facets.method : null);
-      const tables = tablesInSql(f.sql);
-      if (owner || tables.length > 0) {
-        const key = `s|${owner ? `${owner.type}.${owner.name}` : ''}|${tables.join(',')}`;
-        bump(key, () => ({
-          kind: 'statement',
-          ownerType: owner ? owner.type : null,
-          method: owner ? owner.name : null,
-          sql: f.sql,
-          tables,
-          count: 0,
-        }));
-      }
-    }
-    if (used) {
-      usable += 1;
-      if (rec.at !== null) {
-        if (from === null || rec.at < from) from = rec.at;
-        if (to === null || rec.at > to) to = rec.at;
-      }
-    }
-  }
-
-  // Sorted by kind then key: the same trace must read the same way every run,
-  // whatever order a collector happened to write the spans in.
-  const observations = [...folded.entries()]
-    .sort((a, b) => cmp(a[0], b[0]))
-    .map(([, o]) => o);
-
-  return {
-    file,
-    observations,
-    spans: total,
-    usableSpans: usable,
-    unusable: total - usable,
-    services: [...services].sort(),
-    window: from !== null && to !== null ? { from, to } : null,
-    form,
-    skippedLines,
-    unreadable: null,
-  };
+  const { resourceSpans, form, skippedLines, unreadable } = readTraceForm(source, empty);
+  if (unreadable) return unreadable;
+  const { spans, order, services, total } = flattenSpans(resourceSpans);
+  const methodAncestorOf = methodAncestors(spans);
+  return foldObservations({
+    file, form, spans, order, services, total, methodAncestorOf, skippedLines,
+  });
 }
+
 
 /**
  * Attach one or more traces to a graph that already holds this pack's symbols,
@@ -512,6 +556,132 @@ export function readOtelTrace(text, opts = {}) {
  * @param {{unmatchedListed?:number}} [opts]
  * @returns {object} the census (see `stats` below)
  */
+/**
+ * WHAT A TRACE SAW, folded onto the graph's own edges and nodes. Nothing is
+ * added to the graph here: this only counts, so the same observation seen in
+ * three files is one mark with a count of three and three file names.
+ */
+function collectMarks(g, traces, ctx) {
+  const {
+    allRoutes, routesByPath, noteUnmatched, stats, services, edgeMarks, nodeMarks, added,
+  } = ctx;
+  const markEdge = (idx, count, file, rule) => {
+    let m = edgeMarks.get(idx);
+    if (!m) { m = { count: 0, files: new Set(), rule }; edgeMarks.set(idx, m); }
+    m.count += count;
+    m.files.add(file);
+  };
+  const markNode = (id, count, file, tables) => {
+    let m = nodeMarks.get(id);
+    if (!m) { m = { count: 0, files: new Set(), tables: new Set() }; nodeMarks.set(id, m); }
+    m.count += count;
+    m.files.add(file);
+    for (const t of tables ?? []) m.tables.add(t);
+  };
+
+  /** The MAY_CALL edge index from `fromId` to `toId`, or null. */
+  const callEdge = (fromId, toId) => {
+    for (const e of g.outEdges(fromId)) {
+      if (e.type === 'MAY_CALL' && e.to === toId) return e.idx;
+    }
+    return null;
+  };
+
+  let from = null;
+  let to = null;
+
+const list = Array.isArray(traces) ? traces : [];
+for (const rec of list) {
+  if (!rec || typeof rec !== 'object') continue;
+  stats.files += 1;
+  if (rec.unreadable) {
+    stats.unreadable.push({ file: rec.file, reason: rec.unreadable });
+    continue;
+  }
+  stats.sources.push(rec.file);
+  stats.spans += rec.spans ?? 0;
+  stats.usableSpans += rec.usableSpans ?? 0;
+  stats.unusable += rec.unusable ?? 0;
+  for (const s of rec.services ?? []) services.add(s);
+  if (rec.window) {
+    if (from === null || rec.window.from < from) from = rec.window.from;
+    if (to === null || rec.window.to > to) to = rec.window.to;
+  }
+  for (const o of rec.observations ?? []) {
+    stats.observations += 1;
+    if (o.kind === 'endpoint') {
+      const hit = matchRoute(routesByPath, allRoutes, o.path, o.httpMethod);
+      if (!hit) { noteUnmatched('endpoint', `${o.httpMethod} ${o.path}`); continue; }
+      stats.matched.endpoint += 1;
+      markNode(hit.id, o.count, rec.file, null);
+      continue;
+    }
+    if (o.kind === 'statement') {
+      if (o.ownerType === null || o.method === null) {
+        // SQL with no method above it. The statement it belongs to is not
+        // knowable from the trace, so it is counted and named by the tables
+        // it touched, never guessed onto a statement node.
+        noteUnmatched('statement', `(no mapper method) ${o.tables.join(', ') || '(no table read)'}`);
+        continue;
+      }
+      const stmtId = nodeId('statement', `${o.ownerType}.${o.method}`);
+      if (!g.nodes.has(stmtId)) { noteUnmatched('statement', `${o.ownerType}.${o.method}`); continue; }
+      stats.matched.statement += 1;
+      markNode(stmtId, o.count, rec.file, o.tables);
+      // The mapper method that runs it, so a reader looking at the CODE side
+      // sees the same mark as one looking at the SQL side.
+      const symId = symbolId(`${o.ownerType}#${o.method}`);
+      if (g.nodes.has(symId)) {
+        markNode(symId, o.count, rec.file, null);
+        for (const e of g.outEdges(symId)) {
+          if (e.type === 'IMPLEMENTS_STMT' && e.to === stmtId) markEdge(e.idx, o.count, rec.file, 'otel-statement');
+        }
+      }
+      continue;
+    }
+    if (o.kind !== 'dispatch') continue;
+    const callerId = symbolId(`${o.callerType}#${o.callerMethod}`);
+    const calleeId = symbolId(`${o.calleeType}#${o.calleeMethod}`);
+    const direct = callEdge(callerId, calleeId);
+    if (direct !== null) {
+      stats.matched.dispatch += 1;
+      stats.dispatchDirect += 1;
+      markEdge(direct, o.count, rec.file, 'otel-dispatch');
+      markNode(calleeId, o.count, rec.file, null);
+      continue;
+    }
+    // THE CANDIDATE SET, NARROWED. The trace ran the concrete class; the
+    // static graph reached it through the interface. Both hops are marked,
+    // and neither changes grade.
+    const viaIface = interfaceHop(g, callerId, calleeId, o.calleeMethod);
+    if (viaIface) {
+      stats.matched.dispatch += 1;
+      stats.dispatchThroughInterface += 1;
+      markEdge(viaIface.intoIface, o.count, rec.file, 'otel-dispatch');
+      markEdge(viaIface.dispatch, o.count, rec.file, 'otel-dispatch');
+      markNode(calleeId, o.count, rec.file, null);
+      continue;
+    }
+    // NOTHING STATIC EXPLAINS IT. A new edge is written only where the trace
+    // nested the two spans directly and this pack already holds both symbols;
+    // anything else is counted, so a reader can see what the trace saw that
+    // this analysis could not place.
+    if (o.direct && g.nodes.has(callerId) && g.nodes.has(calleeId)) {
+      const key = `${callerId}|${calleeId}`;
+      let a = added.get(key);
+      if (!a) { a = { from: callerId, to: calleeId, count: 0, files: new Set() }; added.set(key, a); }
+      a.count += o.count;
+      a.files.add(rec.file);
+      stats.matched.dispatch += 1;
+      continue;
+    }
+    noteUnmatched('dispatch', `${o.callerType}#${o.callerMethod} -> ${o.calleeType}#${o.calleeMethod}`);
+  }
+}
+  return { from, to };
+}
+
+
 export function addRuntimeFacts(g, traces, opts = {}) {
   const listed = Number.isInteger(opts.unmatchedListed) && opts.unmatchedListed > 0
     ? opts.unmatchedListed : UNMATCHED_LISTED;
@@ -562,119 +732,11 @@ export function addRuntimeFacts(g, traces, opts = {}) {
   const nodeMarks = new Map(); // node id -> {count, files:Set, tables:Set}
   const added = new Map(); // "from|to" -> {from, to, count, files:Set, spans:number}
   const services = new Set();
-  let from = null;
-  let to = null;
 
-  const markEdge = (idx, count, file, rule) => {
-    let m = edgeMarks.get(idx);
-    if (!m) { m = { count: 0, files: new Set(), rule }; edgeMarks.set(idx, m); }
-    m.count += count;
-    m.files.add(file);
-  };
-  const markNode = (id, count, file, tables) => {
-    let m = nodeMarks.get(id);
-    if (!m) { m = { count: 0, files: new Set(), tables: new Set() }; nodeMarks.set(id, m); }
-    m.count += count;
-    m.files.add(file);
-    for (const t of tables ?? []) m.tables.add(t);
-  };
-
-  /** The MAY_CALL edge index from `fromId` to `toId`, or null. */
-  const callEdge = (fromId, toId) => {
-    for (const e of g.outEdges(fromId)) {
-      if (e.type === 'MAY_CALL' && e.to === toId) return e.idx;
-    }
-    return null;
-  };
-
-  const list = Array.isArray(traces) ? traces : [];
-  for (const rec of list) {
-    if (!rec || typeof rec !== 'object') continue;
-    stats.files += 1;
-    if (rec.unreadable) {
-      stats.unreadable.push({ file: rec.file, reason: rec.unreadable });
-      continue;
-    }
-    stats.sources.push(rec.file);
-    stats.spans += rec.spans ?? 0;
-    stats.usableSpans += rec.usableSpans ?? 0;
-    stats.unusable += rec.unusable ?? 0;
-    for (const s of rec.services ?? []) services.add(s);
-    if (rec.window) {
-      if (from === null || rec.window.from < from) from = rec.window.from;
-      if (to === null || rec.window.to > to) to = rec.window.to;
-    }
-    for (const o of rec.observations ?? []) {
-      stats.observations += 1;
-      if (o.kind === 'endpoint') {
-        const hit = matchRoute(routesByPath, allRoutes, o.path, o.httpMethod);
-        if (!hit) { noteUnmatched('endpoint', `${o.httpMethod} ${o.path}`); continue; }
-        stats.matched.endpoint += 1;
-        markNode(hit.id, o.count, rec.file, null);
-        continue;
-      }
-      if (o.kind === 'statement') {
-        if (o.ownerType === null || o.method === null) {
-          // SQL with no method above it. The statement it belongs to is not
-          // knowable from the trace, so it is counted and named by the tables
-          // it touched, never guessed onto a statement node.
-          noteUnmatched('statement', `(no mapper method) ${o.tables.join(', ') || '(no table read)'}`);
-          continue;
-        }
-        const stmtId = nodeId('statement', `${o.ownerType}.${o.method}`);
-        if (!g.nodes.has(stmtId)) { noteUnmatched('statement', `${o.ownerType}.${o.method}`); continue; }
-        stats.matched.statement += 1;
-        markNode(stmtId, o.count, rec.file, o.tables);
-        // The mapper method that runs it, so a reader looking at the CODE side
-        // sees the same mark as one looking at the SQL side.
-        const symId = symbolId(`${o.ownerType}#${o.method}`);
-        if (g.nodes.has(symId)) {
-          markNode(symId, o.count, rec.file, null);
-          for (const e of g.outEdges(symId)) {
-            if (e.type === 'IMPLEMENTS_STMT' && e.to === stmtId) markEdge(e.idx, o.count, rec.file, 'otel-statement');
-          }
-        }
-        continue;
-      }
-      if (o.kind !== 'dispatch') continue;
-      const callerId = symbolId(`${o.callerType}#${o.callerMethod}`);
-      const calleeId = symbolId(`${o.calleeType}#${o.calleeMethod}`);
-      const direct = callEdge(callerId, calleeId);
-      if (direct !== null) {
-        stats.matched.dispatch += 1;
-        stats.dispatchDirect += 1;
-        markEdge(direct, o.count, rec.file, 'otel-dispatch');
-        markNode(calleeId, o.count, rec.file, null);
-        continue;
-      }
-      // THE CANDIDATE SET, NARROWED. The trace ran the concrete class; the
-      // static graph reached it through the interface. Both hops are marked,
-      // and neither changes grade.
-      const viaIface = interfaceHop(g, callerId, calleeId, o.calleeMethod);
-      if (viaIface) {
-        stats.matched.dispatch += 1;
-        stats.dispatchThroughInterface += 1;
-        markEdge(viaIface.intoIface, o.count, rec.file, 'otel-dispatch');
-        markEdge(viaIface.dispatch, o.count, rec.file, 'otel-dispatch');
-        markNode(calleeId, o.count, rec.file, null);
-        continue;
-      }
-      // NOTHING STATIC EXPLAINS IT. A new edge is written only where the trace
-      // nested the two spans directly and this pack already holds both symbols;
-      // anything else is counted, so a reader can see what the trace saw that
-      // this analysis could not place.
-      if (o.direct && g.nodes.has(callerId) && g.nodes.has(calleeId)) {
-        const key = `${callerId}|${calleeId}`;
-        let a = added.get(key);
-        if (!a) { a = { from: callerId, to: calleeId, count: 0, files: new Set() }; added.set(key, a); }
-        a.count += o.count;
-        a.files.add(rec.file);
-        stats.matched.dispatch += 1;
-        continue;
-      }
-      noteUnmatched('dispatch', `${o.callerType}#${o.callerMethod} -> ${o.calleeType}#${o.calleeMethod}`);
-    }
-  }
+  const window = collectMarks(g, traces, {
+    allRoutes, routesByPath, noteUnmatched, stats, services, edgeMarks, nodeMarks, added,
+  });
+  const { from, to } = window;
 
   // ---- write, in a fixed order -------------------------------------------
   for (const idx of [...edgeMarks.keys()].sort((a, b) => a - b)) {

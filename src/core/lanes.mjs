@@ -178,6 +178,256 @@ export function sqlLaneArgs(profile) {
 }
 
 /**
+ * THE CATALOG AXIS. A schema is often SPLIT across files, so this is a set of
+ * files in order and not one file; it can also come from a PINNED SNAPSHOT that
+ * `cascade catalog` wrote, which is a reading of a live database rather than of
+ * the DDL in the tree.
+ */
+function chooseCatalog(ctx) {
+  const { flags, profile, discovery, root, cwd, manifestDir, catalog, diagnostics, input } = ctx;
+// ---- DDL (the catalog axis) ---------------------------------------------
+// `noDdl` is the user saying "run WITHOUT a catalog" out loud (`--no-ddl`);
+// `noMappers` and `noJava` are its two siblings. Each is the ONLY way to
+// override a manifest/profile/discovery that would otherwise supply that
+// lane, and each produces a partial pack whose missing axis is declared.
+// A SET of files, in order, not one file (RM20 §3). A schema is often split —
+// one file per service, one file per dialect, a base plus an ordered migration
+// sequence — and `--ddl` is repeatable so the user can say so.
+let ddls = flags.noDdl ? [] : asPathList(flags.ddl).map((p) => path.resolve(cwd, p));
+let ddlSource = ddls.length > 0 ? 'flag' : 'none';
+// The DDL classification this run used, so the caller can PRINT it. Empty
+// unless discovery chose the set (a flag or a profile is the user's own words
+// and needs no explanation).
+let ddlChoice = null;
+// The catalog can also come from a PINNED SNAPSHOT that `cascade catalog
+// fetch` wrote (SPEC §12, §15 M5). It is still a FILE to this run: analysis
+// never opens a database connection (§2.3 — zero network calls in the
+// extraction path), it reads the snapshot the user fetched deliberately.
+let snapshot = null;
+if (ddls.length === 0 && !flags.noDdl) {
+  const source = catalog.source ?? 'none';
+  const declared = asPathList(catalog.connectionFrom);
+  if (source === 'jdbc') {
+    if (nonEmpty(input.catalogSnapshot)) {
+      snapshot = path.resolve(input.catalogSnapshot);
+    } else {
+      diagnostics.push({
+        kind: 'MISSING_INPUT', severity: 'warn', key: 'catalog.source',
+        reason: 'catalog.source is "jdbc", but this run has no project state directory to hold the snapshot. Run `cascade init`, then `cascade catalog fetch`',
+      });
+    }
+  } else if (source === 'file' && declared.length > 0) {
+    // A string or an array, in the order written: `catalog.connectionFrom` is
+    // the project saying which files ARE its schema, and a schema split over
+    // three services is still one schema.
+    ddls = declared.map((p) => path.resolve(manifestDir ?? root, p));
+    ddlSource = 'profile';
+  } else if (source === 'file') {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'catalog.connectionFrom',
+      reason: 'catalog.source is "file", but catalog.connectionFrom is empty. There is no DDL to read, so this run gets no table or column names from a schema',
+    });
+  } else {
+    // NOBODY SAID. Discovery classified every .sql it found by dialect and by
+    // role; the default is every SCHEMA file of the dialect this project
+    // declares (or, absent a declaration, the dialect most of them are written
+    // in), applied in path order. Migrations are NOT applied: a migration
+    // means nothing without the schema it amends and without its siblings in
+    // the right order, and guessing that order would be the engine inventing
+    // a history. The choice — and everything left out — is returned so the
+    // caller prints it.
+    ddlChoice = chooseDdlFiles(discovery?.ddlCandidates ?? [], profile);
+    if (ddlChoice.chosen.length > 0) {
+      ddls = ddlChoice.chosen.map((c) => path.resolve(root, c.path));
+      ddlSource = 'discovery';
+    }
+  }
+}
+
+  return { ddls, ddlSource, ddlChoice, snapshot };
+}
+
+/**
+ * THE STATEMENT AND CODE AXES. The same three-way rule for both: the flag wins,
+ * otherwise the framework pack the profile declares turns discovery's finding
+ * into an input, and a default run reads MAIN sources only — test sources are a
+ * different program.
+ */
+function chooseJavaLanes(ctx) {
+  const { flags, discovery, root, cwd, packs, diagnostics } = ctx;
+// ---- mapper XML (the statement axis) ------------------------------------
+let mappers = flags.noMappers ? [] : (flags.mappers ?? []).map((m) => path.resolve(cwd, m));
+let mapperSource = mappers.length ? 'flag' : 'none';
+if (mappers.length === 0 && !flags.noMappers && packs.includes('mybatis-xml')) {
+  const dirs = discovery && Array.isArray(discovery.mapperDirs) ? discovery.mapperDirs : [];
+  mappers = dirs.map((d) => path.resolve(root, d));
+  if (mappers.length > 0) mapperSource = 'discovery';
+  else {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+      reason: 'frameworkPacks declares mybatis-xml, but discovery found no directory holding a <mapper namespace=…> XML file',
+    });
+  }
+}
+
+// ---- Java sources (the code axis) ---------------------------------------
+// A DEFAULT run reads main sources only: test sources are a different program
+// (they call production code, they carry no route the service serves). The
+// roots that were left out are returned so the caller can PRINT them — the
+// exclusion is a stated default, never a silent filter. `--java-src <a test
+// root>` is honoured, because the user asked for it by name.
+let javaSrc = flags.noJava ? [] : (flags.javaSrc ?? []).map((d) => path.resolve(cwd, d));
+let javaSource = javaSrc.length ? 'flag' : 'none';
+let excludedTestRoots = [];
+if (javaSrc.length === 0 && !flags.noJava && packs.includes('spring-mvc')) {
+  const roots = discovery && Array.isArray(discovery.javaSourceRoots) ? discovery.javaSourceRoots : [];
+  const testRoots = discovery && Array.isArray(discovery.javaTestRoots) ? discovery.javaTestRoots : [];
+  javaSrc = roots.map((d) => path.resolve(root, d));
+  excludedTestRoots = testRoots.slice().sort();
+  if (javaSrc.length > 0) javaSource = 'discovery';
+  else {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+      reason: testRoots.length > 0
+        ? `frameworkPacks declares spring-mvc, but every Java source root discovery found is a test root under the standard src/test layout (${testRoots.join(', ')}). Pass --java-src to analyze one anyway`
+        : 'frameworkPacks declares spring-mvc, but discovery found no Java source root',
+    });
+  }
+}
+
+  return { mappers, mapperSource, javaSrc, javaSource, excludedTestRoots };
+}
+
+/**
+ * THE WEB AXIS. A frontend source root, or — for a SERVER-RENDERED application,
+ * which has no frontend package and often no JavaScript at all — the template
+ * roots a `@Controller` names.
+ */
+function chooseWebLanes(ctx) {
+  const { flags, profile, discovery, root, cwd, manifestDir, packs, diagnostics } = ctx;
+// ---- frontend sources (the web lane, RM26) ------------------------------
+// Same three-way rule as the Java lane: the flag wins, otherwise the `web`
+// framework pack lets discovery's roots in, otherwise nothing runs. The pack
+// being declared with nothing found is a MISSING_INPUT, not a silent skip.
+let webSrc = flags.noWeb ? [] : (flags.webSrc ?? []).map((d) => path.resolve(cwd, d));
+let webSource = webSrc.length ? 'flag' : 'none';
+if (webSrc.length === 0 && !flags.noWeb && packs.includes('web')) {
+  const roots = discovery && Array.isArray(discovery.webSourceRoots) ? discovery.webSourceRoots : [];
+  // THE PROFILE'S OWN ROOTS, beside the ones a frontend package.json gives
+  // (RM47). A frontend shipped as `<script>` tags declares no dependency, so
+  // no walk of the tree can turn it into a package: `cascade init` writes what
+  // it found into `webRoots`, and this is where that record is acted on. It is
+  // read from the PROFILE and not from this run's discovery, because a web
+  // root decides what is in the pack, and a pack must not change under an
+  // input nobody recorded.
+  const declaredRoots = Array.isArray(profile.webRoots) ? profile.webRoots : [];
+  const fromProfile = declaredRoots
+    .map((r) => (r && typeof r.root === 'string' ? r.root : null))
+    .filter(nonEmpty)
+    .map((d) => path.resolve(manifestDir ?? root, d));
+  webSrc = [...roots.map((d) => path.resolve(root, d)), ...fromProfile];
+  if (webSrc.length > 0) {
+    webSource = fromProfile.length === 0 ? 'discovery'
+      : roots.length === 0 ? 'profile' : 'discovery+profile';
+  } else {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+      reason: 'frameworkPacks declares web, but discovery found no frontend package.json with a framework dependency and the profile names no webRoots, so there is no frontend source root to read. Pass --web-src to name one',
+    });
+  }
+}
+
+// ---- template roots (the server-rendered pages, RM48) -------------------
+//
+// A `@Controller` returning a view name has no frontend package and often no
+// `.js` at all, so nothing above would run the web lane for it. The roots come
+// from the PROFILE, not from this run's discovery, for the same reason
+// `webRoots` does: a template root decides what is in the pack, and a pack
+// must not change under an input nobody recorded. `--no-web` silences them
+// like everything else on this lane.
+let templateRoots = [];
+let templateSource = 'none';
+if (!flags.noWeb) {
+  const declared = Array.isArray(profile.templateRoots) ? profile.templateRoots : [];
+  templateRoots = declared
+    .filter((r) => r && typeof r.root === 'string' && r.root !== '')
+    .map((r) => ({
+      root: path.resolve(manifestDir ?? root, r.root),
+      engine: typeof r.engine === 'string' ? r.engine : 'plain-html',
+      suffix: typeof r.suffix === 'string' && r.suffix !== '' ? r.suffix : '.html',
+    }));
+  if (templateRoots.length > 0) templateSource = 'profile';
+}
+templateRoots = templateRoots
+  .filter((r, i) => templateRoots.findIndex((x) => x.root === r.root) === i)
+  .sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
+
+  return { webSrc, webSource, templateRoots, templateSource };
+}
+
+/**
+ * THE EVIDENCE LAYERS: a declared contract, a browser recording, an execution
+ * trace. The same rule once more — the flag wins, then the profile — with no
+ * framework pack in the way, because none of these is a framework.
+ */
+function chooseEvidenceLanes(ctx) {
+  const { flags, profile, discovery, root, cwd, manifestDir } = ctx;
+// ---- OpenAPI documents (the declaration layer, RM29) --------------------
+// The same three-way rule once more, with one difference: no framework pack
+// gates it. A document is a document — a project that ships one has said what
+// it serves, and reading it needs no declaration beyond the file existing.
+let openapi = flags.noOpenapi ? [] : (flags.openapi ?? []).map((f) => path.resolve(cwd, f));
+let openapiSource = openapi.length ? 'flag' : 'none';
+if (openapi.length === 0 && !flags.noOpenapi) {
+  const declared = Array.isArray(profile.openapi?.documents) ? profile.openapi.documents.filter(nonEmpty) : [];
+  if (declared.length > 0) {
+    openapi = declared.map((f) => path.resolve(manifestDir ?? root, f));
+    openapiSource = 'profile';
+  } else {
+    const found = discovery && Array.isArray(discovery.openapiDocuments) ? discovery.openapiDocuments : [];
+    if (found.length > 0) {
+      openapi = found.map((d) => path.resolve(root, d.path));
+      openapiSource = 'discovery';
+    }
+  }
+}
+openapi = [...new Set(openapi)].sort();
+
+// ---- browser recordings (runtime evidence, RM30) ------------------------
+// The flag wins, then the profile's `runtimeEvidence.har`. There is NO
+// discovery step, on purpose: a HAR file is something a person recorded
+// deliberately, and picking one up because it happens to be in the tree would
+// let an unrelated capture decide what this pack claims was observed.
+let har = (flags.har ?? []).map((f) => path.resolve(cwd, f));
+let harSource = har.length ? 'flag' : 'none';
+if (har.length === 0) {
+  const declared = Array.isArray(profile.runtimeEvidence?.har) ? profile.runtimeEvidence.har.filter(nonEmpty) : [];
+  if (declared.length > 0) {
+    har = declared.map((f) => path.resolve(manifestDir ?? root, f));
+    harSource = 'profile';
+  }
+}
+har = [...new Set(har)].sort();
+
+// ---- execution traces (runtime evidence on the dispatch axis) ----------
+// The same rule once more, and for the same reason: the flag wins, then the
+// profile's `runtimeEvidence.otel`, and there is NO discovery step. A trace is
+// captured deliberately, and a JSON file that happens to sit in the tree must
+// never be allowed to decide what this pack claims ran.
+let otel = (flags.otel ?? []).map((f) => path.resolve(cwd, f));
+let otelSource = otel.length ? 'flag' : 'none';
+if (otel.length === 0) {
+  const declared = Array.isArray(profile.runtimeEvidence?.otel) ? profile.runtimeEvidence.otel.filter(nonEmpty) : [];
+  if (declared.length > 0) {
+    otel = declared.map((f) => path.resolve(manifestDir ?? root, f));
+    otelSource = 'profile';
+  }
+}
+otel = [...new Set(otel)].sort();
+  return { openapi, openapiSource, har, harSource, otel, otelSource };
+}
+
+/**
  * Decide what each lane runs over.
  *
  * Explicit flags win over everything. Where a flag is absent, the input is
@@ -220,226 +470,28 @@ export function selectLanes(input = {}) {
   const packs = Array.isArray(profile.frameworkPacks) ? profile.frameworkPacks : [];
   const catalog = (profile && profile.catalog) || {};
 
-  // ---- DDL (the catalog axis) ---------------------------------------------
-  // `noDdl` is the user saying "run WITHOUT a catalog" out loud (`--no-ddl`);
-  // `noMappers` and `noJava` are its two siblings. Each is the ONLY way to
-  // override a manifest/profile/discovery that would otherwise supply that
-  // lane, and each produces a partial pack whose missing axis is declared.
-  // A SET of files, in order, not one file (RM20 §3). A schema is often split —
-  // one file per service, one file per dialect, a base plus an ordered migration
-  // sequence — and `--ddl` is repeatable so the user can say so.
-  let ddls = flags.noDdl ? [] : asPathList(flags.ddl).map((p) => path.resolve(cwd, p));
-  let ddlSource = ddls.length > 0 ? 'flag' : 'none';
-  // The DDL classification this run used, so the caller can PRINT it. Empty
-  // unless discovery chose the set (a flag or a profile is the user's own words
-  // and needs no explanation).
-  let ddlChoice = null;
-  // The catalog can also come from a PINNED SNAPSHOT that `cascade catalog
-  // fetch` wrote (SPEC §12, §15 M5). It is still a FILE to this run: analysis
-  // never opens a database connection (§2.3 — zero network calls in the
-  // extraction path), it reads the snapshot the user fetched deliberately.
-  let snapshot = null;
-  if (ddls.length === 0 && !flags.noDdl) {
-    const source = catalog.source ?? 'none';
-    const declared = asPathList(catalog.connectionFrom);
-    if (source === 'jdbc') {
-      if (nonEmpty(input.catalogSnapshot)) {
-        snapshot = path.resolve(input.catalogSnapshot);
-      } else {
-        diagnostics.push({
-          kind: 'MISSING_INPUT', severity: 'warn', key: 'catalog.source',
-          reason: 'catalog.source is "jdbc", but this run has no project state directory to hold the snapshot. Run `cascade init`, then `cascade catalog fetch`',
-        });
-      }
-    } else if (source === 'file' && declared.length > 0) {
-      // A string or an array, in the order written: `catalog.connectionFrom` is
-      // the project saying which files ARE its schema, and a schema split over
-      // three services is still one schema.
-      ddls = declared.map((p) => path.resolve(manifestDir ?? root, p));
-      ddlSource = 'profile';
-    } else if (source === 'file') {
-      diagnostics.push({
-        kind: 'MISSING_INPUT', severity: 'warn', key: 'catalog.connectionFrom',
-        reason: 'catalog.source is "file", but catalog.connectionFrom is empty. There is no DDL to read, so this run gets no table or column names from a schema',
-      });
-    } else {
-      // NOBODY SAID. Discovery classified every .sql it found by dialect and by
-      // role; the default is every SCHEMA file of the dialect this project
-      // declares (or, absent a declaration, the dialect most of them are written
-      // in), applied in path order. Migrations are NOT applied: a migration
-      // means nothing without the schema it amends and without its siblings in
-      // the right order, and guessing that order would be the engine inventing
-      // a history. The choice — and everything left out — is returned so the
-      // caller prints it.
-      ddlChoice = chooseDdlFiles(discovery?.ddlCandidates ?? [], profile);
-      if (ddlChoice.chosen.length > 0) {
-        ddls = ddlChoice.chosen.map((c) => path.resolve(root, c.path));
-        ddlSource = 'discovery';
-      }
-    }
-  }
-
-  // ---- mapper XML (the statement axis) ------------------------------------
-  let mappers = flags.noMappers ? [] : (flags.mappers ?? []).map((m) => path.resolve(cwd, m));
-  let mapperSource = mappers.length ? 'flag' : 'none';
-  if (mappers.length === 0 && !flags.noMappers && packs.includes('mybatis-xml')) {
-    const dirs = discovery && Array.isArray(discovery.mapperDirs) ? discovery.mapperDirs : [];
-    mappers = dirs.map((d) => path.resolve(root, d));
-    if (mappers.length > 0) mapperSource = 'discovery';
-    else {
-      diagnostics.push({
-        kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-        reason: 'frameworkPacks declares mybatis-xml, but discovery found no directory holding a <mapper namespace=…> XML file',
-      });
-    }
-  }
-
-  // ---- Java sources (the code axis) ---------------------------------------
-  // A DEFAULT run reads main sources only: test sources are a different program
-  // (they call production code, they carry no route the service serves). The
-  // roots that were left out are returned so the caller can PRINT them — the
-  // exclusion is a stated default, never a silent filter. `--java-src <a test
-  // root>` is honoured, because the user asked for it by name.
-  let javaSrc = flags.noJava ? [] : (flags.javaSrc ?? []).map((d) => path.resolve(cwd, d));
-  let javaSource = javaSrc.length ? 'flag' : 'none';
-  let excludedTestRoots = [];
-  if (javaSrc.length === 0 && !flags.noJava && packs.includes('spring-mvc')) {
-    const roots = discovery && Array.isArray(discovery.javaSourceRoots) ? discovery.javaSourceRoots : [];
-    const testRoots = discovery && Array.isArray(discovery.javaTestRoots) ? discovery.javaTestRoots : [];
-    javaSrc = roots.map((d) => path.resolve(root, d));
-    excludedTestRoots = testRoots.slice().sort();
-    if (javaSrc.length > 0) javaSource = 'discovery';
-    else {
-      diagnostics.push({
-        kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-        reason: testRoots.length > 0
-          ? `frameworkPacks declares spring-mvc, but every Java source root discovery found is a test root under the standard src/test layout (${testRoots.join(', ')}). Pass --java-src to analyze one anyway`
-          : 'frameworkPacks declares spring-mvc, but discovery found no Java source root',
-      });
-    }
-  }
-
-  // ---- frontend sources (the web lane, RM26) ------------------------------
-  // Same three-way rule as the Java lane: the flag wins, otherwise the `web`
-  // framework pack lets discovery's roots in, otherwise nothing runs. The pack
-  // being declared with nothing found is a MISSING_INPUT, not a silent skip.
-  let webSrc = flags.noWeb ? [] : (flags.webSrc ?? []).map((d) => path.resolve(cwd, d));
-  let webSource = webSrc.length ? 'flag' : 'none';
-  if (webSrc.length === 0 && !flags.noWeb && packs.includes('web')) {
-    const roots = discovery && Array.isArray(discovery.webSourceRoots) ? discovery.webSourceRoots : [];
-    // THE PROFILE'S OWN ROOTS, beside the ones a frontend package.json gives
-    // (RM47). A frontend shipped as `<script>` tags declares no dependency, so
-    // no walk of the tree can turn it into a package: `cascade init` writes what
-    // it found into `webRoots`, and this is where that record is acted on. It is
-    // read from the PROFILE and not from this run's discovery, because a web
-    // root decides what is in the pack, and a pack must not change under an
-    // input nobody recorded.
-    const declaredRoots = Array.isArray(profile.webRoots) ? profile.webRoots : [];
-    const fromProfile = declaredRoots
-      .map((r) => (r && typeof r.root === 'string' ? r.root : null))
-      .filter(nonEmpty)
-      .map((d) => path.resolve(manifestDir ?? root, d));
-    webSrc = [...roots.map((d) => path.resolve(root, d)), ...fromProfile];
-    if (webSrc.length > 0) {
-      webSource = fromProfile.length === 0 ? 'discovery'
-        : roots.length === 0 ? 'profile' : 'discovery+profile';
-    } else {
-      diagnostics.push({
-        kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-        reason: 'frameworkPacks declares web, but discovery found no frontend package.json with a framework dependency and the profile names no webRoots, so there is no frontend source root to read. Pass --web-src to name one',
-      });
-    }
-  }
-
-  // ---- template roots (the server-rendered pages, RM48) -------------------
-  //
-  // A `@Controller` returning a view name has no frontend package and often no
-  // `.js` at all, so nothing above would run the web lane for it. The roots come
-  // from the PROFILE, not from this run's discovery, for the same reason
-  // `webRoots` does: a template root decides what is in the pack, and a pack
-  // must not change under an input nobody recorded. `--no-web` silences them
-  // like everything else on this lane.
-  let templateRoots = [];
-  let templateSource = 'none';
-  if (!flags.noWeb) {
-    const declared = Array.isArray(profile.templateRoots) ? profile.templateRoots : [];
-    templateRoots = declared
-      .filter((r) => r && typeof r.root === 'string' && r.root !== '')
-      .map((r) => ({
-        root: path.resolve(manifestDir ?? root, r.root),
-        engine: typeof r.engine === 'string' ? r.engine : 'plain-html',
-        suffix: typeof r.suffix === 'string' && r.suffix !== '' ? r.suffix : '.html',
-      }));
-    if (templateRoots.length > 0) templateSource = 'profile';
-  }
-  templateRoots = templateRoots
-    .filter((r, i) => templateRoots.findIndex((x) => x.root === r.root) === i)
-    .sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
-
-  // ---- OpenAPI documents (the declaration layer, RM29) --------------------
-  // The same three-way rule once more, with one difference: no framework pack
-  // gates it. A document is a document — a project that ships one has said what
-  // it serves, and reading it needs no declaration beyond the file existing.
-  let openapi = flags.noOpenapi ? [] : (flags.openapi ?? []).map((f) => path.resolve(cwd, f));
-  let openapiSource = openapi.length ? 'flag' : 'none';
-  if (openapi.length === 0 && !flags.noOpenapi) {
-    const declared = Array.isArray(profile.openapi?.documents) ? profile.openapi.documents.filter(nonEmpty) : [];
-    if (declared.length > 0) {
-      openapi = declared.map((f) => path.resolve(manifestDir ?? root, f));
-      openapiSource = 'profile';
-    } else {
-      const found = discovery && Array.isArray(discovery.openapiDocuments) ? discovery.openapiDocuments : [];
-      if (found.length > 0) {
-        openapi = found.map((d) => path.resolve(root, d.path));
-        openapiSource = 'discovery';
-      }
-    }
-  }
-  openapi = [...new Set(openapi)].sort();
-
-  // ---- browser recordings (runtime evidence, RM30) ------------------------
-  // The flag wins, then the profile's `runtimeEvidence.har`. There is NO
-  // discovery step, on purpose: a HAR file is something a person recorded
-  // deliberately, and picking one up because it happens to be in the tree would
-  // let an unrelated capture decide what this pack claims was observed.
-  let har = (flags.har ?? []).map((f) => path.resolve(cwd, f));
-  let harSource = har.length ? 'flag' : 'none';
-  if (har.length === 0) {
-    const declared = Array.isArray(profile.runtimeEvidence?.har) ? profile.runtimeEvidence.har.filter(nonEmpty) : [];
-    if (declared.length > 0) {
-      har = declared.map((f) => path.resolve(manifestDir ?? root, f));
-      harSource = 'profile';
-    }
-  }
-  har = [...new Set(har)].sort();
-
-  // ---- execution traces (runtime evidence on the dispatch axis) ----------
-  // The same rule once more, and for the same reason: the flag wins, then the
-  // profile's `runtimeEvidence.otel`, and there is NO discovery step. A trace is
-  // captured deliberately, and a JSON file that happens to sit in the tree must
-  // never be allowed to decide what this pack claims ran.
-  let otel = (flags.otel ?? []).map((f) => path.resolve(cwd, f));
-  let otelSource = otel.length ? 'flag' : 'none';
-  if (otel.length === 0) {
-    const declared = Array.isArray(profile.runtimeEvidence?.otel) ? profile.runtimeEvidence.otel.filter(nonEmpty) : [];
-    if (declared.length > 0) {
-      otel = declared.map((f) => path.resolve(manifestDir ?? root, f));
-      otelSource = 'profile';
-    }
-  }
-  otel = [...new Set(otel)].sort();
+  const ctx = {
+    flags, profile, discovery, root, cwd, manifestDir, packs, catalog, diagnostics, input,
+  };
+  const chosen = chooseCatalog(ctx);
+  const { ddlChoice, snapshot } = chosen;
+  const chosenJava = chooseJavaLanes(ctx);
+  const { mapperSource, javaSource, excludedTestRoots } = chosenJava;
+  const chosenWeb = chooseWebLanes(ctx);
+  const { webSource, templateRoots, templateSource } = chosenWeb;
+  const { openapi, openapiSource, har, harSource, otel, otelSource } = chooseEvidenceLanes(ctx);
 
   // Deterministic order: the pack digest must not depend on the order the flags
   // were typed in (projectPack sorts nodes and edges, but lane RESOLUTION can
   // otherwise see types in a different order).
-  mappers = [...new Set(mappers)].sort();
-  javaSrc = [...new Set(javaSrc)].sort();
-  webSrc = [...new Set(webSrc)].sort();
+  const mappers = [...new Set(chosenJava.mappers)].sort();
+  const javaSrc = [...new Set(chosenJava.javaSrc)].sort();
+  const webSrc = [...new Set(chosenWeb.webSrc)].sort();
 
   // Deterministic and duplicate-free, but NOT sorted: DDL order is meaning (a
   // migration applies on top of the schema before it), so the order the user or
   // the classification gave is the order that runs.
-  ddls = ddls.filter((p, i) => ddls.indexOf(p) === i);
+  const ddls = chosen.ddls.filter((p, i) => chosen.ddls.indexOf(p) === i);
   const ddl = ddls[0] ?? null;
 
   const lanes = [];
@@ -453,7 +505,7 @@ export function selectLanes(input = {}) {
   // put in the graph rather than adding an axis of their own.
   if (otel.length > 0) lanes.push('otel');
 
-  if (snapshot) ddlSource = 'snapshot';
+  const ddlSource = snapshot ? 'snapshot' : chosen.ddlSource;
   return {
     // `ddl` is the FIRST of `ddls`, kept because a single-file project is still
     // the common case and every caller that only ever wanted one file reads it.

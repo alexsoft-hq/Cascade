@@ -220,6 +220,267 @@ function sqlVerbOf(sql) {
  *            implementsStmt:number, unresolvedStatements:number, unresolved:Object[],
  *            builtins:number, namingStrategy:string, namingStrategyDeclared:boolean}}
  */
+/**
+ * 1. ENTITIES -> TABLES. A name the SOURCE wrote down is EXACT; a name this
+ * engine DERIVED is EXACT only where the project declared the naming strategy it
+ * was derived by, and HEURISTIC otherwise.
+ */
+function entityTables(entityRecords, { strategy, derivedGrade, namingEvidence, stats }) {
+// ---- 1. entities -> tables ----------------------------------------------
+/** @type {Map<string, {fqn, table, tableId, grade, attributes:Map, pkColumn}>} */
+const entities = new Map();
+for (const [fqn, rec] of entityRecords) {
+  if (rec.mappedSuperclass === true) stats.mappedSuperclasses += 1;
+  if (rec.entity !== true) continue; // @MappedSuperclass / @Embeddable map to no table
+  stats.entities += 1;
+  const simple = fqn.slice(fqn.lastIndexOf('.') + 1);
+  const explicit = typeof rec.tableName === 'string' && rec.tableName.length > 0;
+  const table = explicit ? rec.tableName : physicalName(simple, strategy);
+  entities.set(fqn, {
+    fqn, simple, record: rec,
+    table,
+    tableGrade: explicit ? 'EXACT' : derivedGrade,
+    tableEvidence: explicit ? 'declared' : namingEvidence,
+    attributes: null, // filled below, once the superclass chain is walked
+    pkColumn: null,
+    // Columns on THIS table that another entity's association declares — the
+    // foreign key a unidirectional @OneToMany(@JoinColumn) puts on the target.
+    // They are as much part of the row as the entity's own attributes, so a
+    // `save()` writes them and a `findAll()` reads them.
+    inboundColumns: [],
+  });
+}
+
+  return entities;
+}
+
+/**
+ * 2. THE ATTRIBUTES, through the @MappedSuperclass chain. A base class's fields
+ * are the entity's fields, and the entity's own override wins.
+ */
+function attributesThroughSuperclasses(entities, entityRecords, ctx) {
+  const { resolveType, strategy, derivedGrade, namingEvidence } = ctx;
+// ---- 2. attributes, through the @MappedSuperclass chain -----------------
+const attributesOf = (fqn, seen = new Set()) => {
+  if (seen.has(fqn)) return []; // a cycle in the extends chain: stop, do not hang
+  seen.add(fqn);
+  const rec = entityRecords.get(fqn);
+  if (!rec) return [];
+  const superFqn = rec.superclass ? resolveType(fqn, rec.superclass) : null;
+  const inherited = superFqn && entityRecords.has(superFqn) ? attributesOf(superFqn, seen) : [];
+  const own = Array.isArray(rec.attributes) ? rec.attributes : [];
+  // Base-most first, and a subclass attribute of the same name REPLACES the
+  // inherited one (Java's own shadowing rule).
+  const byName = new Map();
+  for (const a of [...inherited, ...own]) byName.set(a.name, a);
+  return [...byName.values()];
+};
+
+for (const e of entities.values()) {
+  const attrs = attributesOf(e.fqn);
+  e.attributes = new Map();
+  for (const a of attrs) {
+    const mapped = mapAttribute(a, { strategy, derivedGrade, namingEvidence });
+    e.attributes.set(a.name, { ...a, ...mapped });
+    if (a.id === true && mapped.column) e.pkColumn = mapped.column;
+  }
+}
+
+}
+
+/**
+ * 3. THE TABLE AND COLUMN NODES, and the JOINS an association carries. THE
+ * CATALOG'S OWN SPELLING WINS: the SQL bridge keyed every table and column by
+ * what the DDL wrote, and two spellings of one table are two nodes.
+ */
+function tableColumnAndJoinNodes(g, entities, ctx) {
+  const { opts, schema, resolveType, strategy, derivedGrade, stats } = ctx;
+// ---- 3. table / column nodes + JOINS ------------------------------------
+//
+// THE CATALOG'S OWN SPELLING WINS. The SQL bridge keyed every table and column
+// node by what the DDL wrote; the naming strategy here derives `id` where an
+// Oracle / HSQLDB / H2 DDL says `ID`. Matched through the SAME fold the SQL
+// lane used, the derived name lands on the catalog's node; matched by string,
+// it would create a second node for one column and split every answer about it
+// in half — exactly the defect the MyBatis-Plus lane had against jeecg-boot's
+// `sys_user_depart.ID`. petclinic's DDL is lower case and its rule is
+// fold-lower, so nothing there moves; an upper-case DDL is where it shows.
+// The fold lives in ONE helper, shared with mp_bridge (sql_bridge.mjs).
+const { settle, register } = graphSpellingIndex(g, opts.identifierCase ?? 'exact');
+const tableIdOf = (name) => settle(nodeId('table', tableKey(schema, name)));
+const columnIdOf = (table, column) => settle(nodeId('column', columnKey(schema, table, column)));
+
+const ensureTable = (name, evidence) => {
+  const id = tableIdOf(name);
+  if (!g.nodes.has(id)) {
+    // Not in the catalog (no DDL, or a table only JPA knows about). Created as
+    // a STUB so the reader can tell "declared by the mapping" from "read from
+    // the schema" — never presented as a catalog fact.
+    g.addNode({ id, stub: true, declaredBy: 'jpa', ...evidence });
+    stats.tablesStubbed += 1;
+  }
+  return id;
+};
+const ensureColumn = (table, column, grade) => {
+  const tid = tableIdOf(table);
+  const cid = columnIdOf(table, column);
+  if (!g.nodes.has(cid)) {
+    g.addNode({ id: cid, name: column, stub: true, declaredBy: 'jpa' });
+    g.addEdge({ from: tid, to: cid, type: 'DECLARES', grade });
+    stats.columnsStubbed += 1;
+    // A stub the derived name INVENTED still has to be findable by the fold,
+    // or the next entity that derives the same name would make a third node.
+    register(cid);
+  }
+  return cid;
+};
+
+for (const e of entities.values()) {
+  ensureTable(e.table, { mappedFrom: e.fqn });
+  const tnode = g.nodes.get(tableIdOf(e.table));
+  if (tnode) {
+    tnode.jpaEntity = e.fqn;
+    tnode.jpaMappingGrade = e.tableGrade;
+  }
+  stats.tables += 1;
+  for (const a of e.attributes.values()) {
+    if (!a.column) continue;
+    ensureColumn(e.table, a.column, weakest(e.tableGrade, a.grade));
+    stats.columns += 1;
+  }
+}
+
+// Associations -> the physical column that carries them, plus a JOINS edge.
+// The pairs already in the graph (the SQL lane's joins) are indexed once, so
+// adding N associations does not cost N scans of the edge list.
+const joinSeen = new Set();
+for (const edge of g.edges) if (edge.type === 'JOINS') joinSeen.add(`${edge.from}|${edge.to}`);
+for (const e of entities.values()) {
+  for (const a of e.attributes.values()) {
+    const target = a.targetSimple ? entities.get(resolveType(e.fqn, a.targetSimple) ?? '') : null;
+    if (!a.relation) continue;
+    if (a.transient === true) continue;
+    if (!target) {
+      if (a.relation) {
+        note(stats, 'association-target-unknown', `${e.fqn}.${a.name}: ${a.targetSimple ?? '?'} is not an @Entity this pack saw`);
+      }
+      continue;
+    }
+    const pairGrade = weakest(e.tableGrade, target.tableGrade, a.grade);
+    if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
+      if (a.mappedBy) continue; // the OTHER side owns the column
+      const col = a.column ?? `${physicalName(a.name, strategy)}_${target.pkColumn ?? 'id'}`;
+      // Record the resolved name back on the attribute, so the column this
+      // association owns is part of the row every statement reads and writes.
+      a.column = col;
+      if (!a.grade) a.grade = pairGrade;
+      ensureColumn(e.table, col, pairGrade);
+      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, pairGrade, stats);
+    } else if (a.relation === 'oneToMany') {
+      // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
+      // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
+      // other side already declared it. Either way this table gains no column.
+      const col = a.joinColumn ?? (a.mappedBy ? null : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`);
+      if (col) {
+        ensureColumn(target.table, col, pairGrade);
+        if (!target.inboundColumns.some((c) => c.column === col)) {
+          target.inboundColumns.push({ column: col, grade: pairGrade });
+        }
+      }
+      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
+    } else if (a.relation === 'manyToMany') {
+      if (a.mappedBy) continue; // the owning side declares the join table
+      // Each half of a join table is graded on its OWN evidence: the table
+      // name, the owning column and the inverse column are three separate
+      // declarations, and any one of them may be left to the strategy.
+      const jt = a.joinTable;
+      const named = !!(jt && jt.name);
+      const joinTableName = named ? jt.name : physicalName(`${e.simple}${target.simple}`, strategy);
+      const tableNameGrade = named ? 'EXACT' : derivedGrade;
+      ensureTable(joinTableName, { joinTableFor: [e.fqn, target.fqn] });
+      const leftDeclared = !!(jt && jt.joinColumns && jt.joinColumns[0]);
+      const rightDeclared = !!(jt && jt.inverseJoinColumns && jt.inverseJoinColumns[0]);
+      const left = leftDeclared ? jt.joinColumns[0] : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`;
+      const right = rightDeclared ? jt.inverseJoinColumns[0] : `${physicalName(target.simple, strategy)}_${target.pkColumn ?? 'id'}`;
+      const leftGrade = weakest(e.tableGrade, tableNameGrade, leftDeclared ? 'EXACT' : derivedGrade);
+      const rightGrade = weakest(target.tableGrade, tableNameGrade, rightDeclared ? 'EXACT' : derivedGrade);
+      ensureColumn(joinTableName, left, leftGrade);
+      ensureColumn(joinTableName, right, rightGrade);
+      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(joinTableName), `${e.table}.${e.pkColumn ?? 'id'}=${joinTableName}.${left}`, leftGrade, stats);
+      addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(joinTableName), `${target.table}.${target.pkColumn ?? 'id'}=${joinTableName}.${right}`, rightGrade, stats);
+    }
+  }
+}
+
+// I-1, spelled out: a catalog HIT is evidence, never a promotion.
+for (const e of entities.values()) {
+  const tnode = g.nodes.get(tableIdOf(e.table));
+  if (tnode && tnode.stub !== true) tnode.jpaCatalogMatch = true;
+}
+
+  return { tableIdOf, columnIdOf };
+}
+
+/** 4. REPOSITORIES -> STATEMENTS: what each declared method runs. */
+function repositoryStatements(g, entities, repositories, ctx) {
+  const { resolveType, tableIdOf, columnIdOf, stats } = ctx;
+// ---- 4. repositories -> statements --------------------------------------
+const repoByFqn = new Map();
+for (const rec of repositories) {
+  stats.repositories += 1;
+  const entityFqn = rec.entityTypeSimple ? resolveType(rec.fqn, rec.entityTypeSimple) : null;
+  const entity = entityFqn ? entities.get(entityFqn) : null;
+  const declaredMethods = new Set((rec.methods ?? []).map((m) => m.name));
+  repoByFqn.set(rec.fqn, { rec, entity, declaredMethods });
+  if (!entity) {
+    note(stats, 'repository-entity-unknown',
+      `${rec.fqn}: the domain type ${rec.entityTypeSimple ?? '?'} is not an @Entity this pack saw, so its queries touch no table`);
+    continue;
+  }
+  // An OVERLOAD names one statement: Spring Data derives the same query from
+  // `findAll()` and `findAll(Pageable)`. Emitting it twice would double-count
+  // the statement and add a second IMPLEMENTS_STMT edge to the same node.
+  const emittedHere = new Set();
+  for (const m of rec.methods ?? []) {
+    if (emittedHere.has(m.name)) continue;
+    emittedHere.add(m.name);
+    addQueryStatement(g, { repo: rec, method: m, entity, entities, resolveType, stats, tableIdOf, columnIdOf });
+  }
+}
+
+  return repoByFqn;
+}
+
+/**
+ * 5. THE BUILT-INS A SERVICE CALLS AND THE REPOSITORY NEVER DECLARED. `save`,
+ * `findById` and their kin are Spring Data's, not the interface's, so nothing
+ * declares them and a caller still runs them.
+ */
+function builtinStatements(g, entities, repoByFqn, calls, ctx) {
+  const { resolveType, tableIdOf, columnIdOf, stats } = ctx;
+// ---- 5. built-ins the service calls but the repository never declared ----
+const wanted = new Map(); // "repoFqn#method" -> {repoFqn, method}
+for (const c of calls) {
+  if (!c || !c.from || !c.method) continue;
+  if (!Object.hasOwn(BUILTIN_METHODS, c.method)) continue;
+  const ownerFqn = c.from.slice(0, c.from.lastIndexOf('#'));
+  const targetFqn = resolveType(ownerFqn, c.toTypeSimple);
+  if (!targetFqn || !repoByFqn.has(targetFqn)) continue;
+  const r = repoByFqn.get(targetFqn);
+  if (r.declaredMethods.has(c.method)) continue; // declared: it is a derived/@Query statement
+  wanted.set(`${targetFqn}#${c.method}`, { repoFqn: targetFqn, method: c.method });
+}
+for (const { repoFqn, method } of [...wanted.values()].sort((a, b) => cmp(`${a.repoFqn}#${a.method}`, `${b.repoFqn}#${b.method}`))) {
+  const r = repoByFqn.get(repoFqn);
+  if (!r.entity) continue;
+  addBuiltinStatement(g, { repoFqn, method, entity: r.entity, file: r.rec.file ?? null, entities, resolveType, stats, tableIdOf, columnIdOf });
+  stats.builtins += 1;
+}
+
+stats.unresolvedStatements = new Set(stats.unresolved.filter((u) => u.statement).map((u) => u.statement)).size;
+}
+
+
 export function addJpaFacts(g, javaFacts, opts = {}) {
   if (!g || !g.nodes || !Array.isArray(g.edges)) throw new JpaBridgeError('g must be a Graph');
   if (!Array.isArray(javaFacts)) throw new JpaBridgeError('javaFacts must be an array');
@@ -255,224 +516,17 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
   };
   if (entityRecords.size === 0 && repositories.length === 0) return stats;
 
-  // ---- 1. entities -> tables ----------------------------------------------
-  /** @type {Map<string, {fqn, table, tableId, grade, attributes:Map, pkColumn}>} */
-  const entities = new Map();
-  for (const [fqn, rec] of entityRecords) {
-    if (rec.mappedSuperclass === true) stats.mappedSuperclasses += 1;
-    if (rec.entity !== true) continue; // @MappedSuperclass / @Embeddable map to no table
-    stats.entities += 1;
-    const simple = fqn.slice(fqn.lastIndexOf('.') + 1);
-    const explicit = typeof rec.tableName === 'string' && rec.tableName.length > 0;
-    const table = explicit ? rec.tableName : physicalName(simple, strategy);
-    entities.set(fqn, {
-      fqn, simple, record: rec,
-      table,
-      tableGrade: explicit ? 'EXACT' : derivedGrade,
-      tableEvidence: explicit ? 'declared' : namingEvidence,
-      attributes: null, // filled below, once the superclass chain is walked
-      pkColumn: null,
-      // Columns on THIS table that another entity's association declares — the
-      // foreign key a unidirectional @OneToMany(@JoinColumn) puts on the target.
-      // They are as much part of the row as the entity's own attributes, so a
-      // `save()` writes them and a `findAll()` reads them.
-      inboundColumns: [],
-    });
-  }
+  const naming = { strategy, derivedGrade, namingEvidence, stats };
+  const entities = entityTables(entityRecords, naming);
+  attributesThroughSuperclasses(entities, entityRecords, { resolveType, ...naming });
+  const { tableIdOf, columnIdOf } = tableColumnAndJoinNodes(g, entities, {
+    opts, schema, resolveType, strategy, derivedGrade, stats,
+  });
+  const repoByFqn = repositoryStatements(g, entities, repositories, {
+    resolveType, tableIdOf, columnIdOf, stats,
+  });
+  builtinStatements(g, entities, repoByFqn, calls, { resolveType, tableIdOf, columnIdOf, stats });
 
-  // ---- 2. attributes, through the @MappedSuperclass chain -----------------
-  const attributesOf = (fqn, seen = new Set()) => {
-    if (seen.has(fqn)) return []; // a cycle in the extends chain: stop, do not hang
-    seen.add(fqn);
-    const rec = entityRecords.get(fqn);
-    if (!rec) return [];
-    const superFqn = rec.superclass ? resolveType(fqn, rec.superclass) : null;
-    const inherited = superFqn && entityRecords.has(superFqn) ? attributesOf(superFqn, seen) : [];
-    const own = Array.isArray(rec.attributes) ? rec.attributes : [];
-    // Base-most first, and a subclass attribute of the same name REPLACES the
-    // inherited one (Java's own shadowing rule).
-    const byName = new Map();
-    for (const a of [...inherited, ...own]) byName.set(a.name, a);
-    return [...byName.values()];
-  };
-
-  for (const e of entities.values()) {
-    const attrs = attributesOf(e.fqn);
-    e.attributes = new Map();
-    for (const a of attrs) {
-      const mapped = mapAttribute(a, { strategy, derivedGrade, namingEvidence });
-      e.attributes.set(a.name, { ...a, ...mapped });
-      if (a.id === true && mapped.column) e.pkColumn = mapped.column;
-    }
-  }
-
-  // ---- 3. table / column nodes + JOINS ------------------------------------
-  //
-  // THE CATALOG'S OWN SPELLING WINS. The SQL bridge keyed every table and column
-  // node by what the DDL wrote; the naming strategy here derives `id` where an
-  // Oracle / HSQLDB / H2 DDL says `ID`. Matched through the SAME fold the SQL
-  // lane used, the derived name lands on the catalog's node; matched by string,
-  // it would create a second node for one column and split every answer about it
-  // in half — exactly the defect the MyBatis-Plus lane had against jeecg-boot's
-  // `sys_user_depart.ID`. petclinic's DDL is lower case and its rule is
-  // fold-lower, so nothing there moves; an upper-case DDL is where it shows.
-  // The fold lives in ONE helper, shared with mp_bridge (sql_bridge.mjs).
-  const { settle, register } = graphSpellingIndex(g, opts.identifierCase ?? 'exact');
-  const tableIdOf = (name) => settle(nodeId('table', tableKey(schema, name)));
-  const columnIdOf = (table, column) => settle(nodeId('column', columnKey(schema, table, column)));
-
-  const ensureTable = (name, evidence) => {
-    const id = tableIdOf(name);
-    if (!g.nodes.has(id)) {
-      // Not in the catalog (no DDL, or a table only JPA knows about). Created as
-      // a STUB so the reader can tell "declared by the mapping" from "read from
-      // the schema" — never presented as a catalog fact.
-      g.addNode({ id, stub: true, declaredBy: 'jpa', ...evidence });
-      stats.tablesStubbed += 1;
-    }
-    return id;
-  };
-  const ensureColumn = (table, column, grade) => {
-    const tid = tableIdOf(table);
-    const cid = columnIdOf(table, column);
-    if (!g.nodes.has(cid)) {
-      g.addNode({ id: cid, name: column, stub: true, declaredBy: 'jpa' });
-      g.addEdge({ from: tid, to: cid, type: 'DECLARES', grade });
-      stats.columnsStubbed += 1;
-      // A stub the derived name INVENTED still has to be findable by the fold,
-      // or the next entity that derives the same name would make a third node.
-      register(cid);
-    }
-    return cid;
-  };
-
-  for (const e of entities.values()) {
-    ensureTable(e.table, { mappedFrom: e.fqn });
-    const tnode = g.nodes.get(tableIdOf(e.table));
-    if (tnode) {
-      tnode.jpaEntity = e.fqn;
-      tnode.jpaMappingGrade = e.tableGrade;
-    }
-    stats.tables += 1;
-    for (const a of e.attributes.values()) {
-      if (!a.column) continue;
-      ensureColumn(e.table, a.column, weakest(e.tableGrade, a.grade));
-      stats.columns += 1;
-    }
-  }
-
-  // Associations -> the physical column that carries them, plus a JOINS edge.
-  // The pairs already in the graph (the SQL lane's joins) are indexed once, so
-  // adding N associations does not cost N scans of the edge list.
-  const joinSeen = new Set();
-  for (const edge of g.edges) if (edge.type === 'JOINS') joinSeen.add(`${edge.from}|${edge.to}`);
-  for (const e of entities.values()) {
-    for (const a of e.attributes.values()) {
-      const target = a.targetSimple ? entities.get(resolveType(e.fqn, a.targetSimple) ?? '') : null;
-      if (!a.relation) continue;
-      if (a.transient === true) continue;
-      if (!target) {
-        if (a.relation) {
-          note(stats, 'association-target-unknown', `${e.fqn}.${a.name}: ${a.targetSimple ?? '?'} is not an @Entity this pack saw`);
-        }
-        continue;
-      }
-      const pairGrade = weakest(e.tableGrade, target.tableGrade, a.grade);
-      if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
-        if (a.mappedBy) continue; // the OTHER side owns the column
-        const col = a.column ?? `${physicalName(a.name, strategy)}_${target.pkColumn ?? 'id'}`;
-        // Record the resolved name back on the attribute, so the column this
-        // association owns is part of the row every statement reads and writes.
-        a.column = col;
-        if (!a.grade) a.grade = pairGrade;
-        ensureColumn(e.table, col, pairGrade);
-        addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, pairGrade, stats);
-      } else if (a.relation === 'oneToMany') {
-        // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
-        // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
-        // other side already declared it. Either way this table gains no column.
-        const col = a.joinColumn ?? (a.mappedBy ? null : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`);
-        if (col) {
-          ensureColumn(target.table, col, pairGrade);
-          if (!target.inboundColumns.some((c) => c.column === col)) {
-            target.inboundColumns.push({ column: col, grade: pairGrade });
-          }
-        }
-        addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
-      } else if (a.relation === 'manyToMany') {
-        if (a.mappedBy) continue; // the owning side declares the join table
-        // Each half of a join table is graded on its OWN evidence: the table
-        // name, the owning column and the inverse column are three separate
-        // declarations, and any one of them may be left to the strategy.
-        const jt = a.joinTable;
-        const named = !!(jt && jt.name);
-        const joinTableName = named ? jt.name : physicalName(`${e.simple}${target.simple}`, strategy);
-        const tableNameGrade = named ? 'EXACT' : derivedGrade;
-        ensureTable(joinTableName, { joinTableFor: [e.fqn, target.fqn] });
-        const leftDeclared = !!(jt && jt.joinColumns && jt.joinColumns[0]);
-        const rightDeclared = !!(jt && jt.inverseJoinColumns && jt.inverseJoinColumns[0]);
-        const left = leftDeclared ? jt.joinColumns[0] : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`;
-        const right = rightDeclared ? jt.inverseJoinColumns[0] : `${physicalName(target.simple, strategy)}_${target.pkColumn ?? 'id'}`;
-        const leftGrade = weakest(e.tableGrade, tableNameGrade, leftDeclared ? 'EXACT' : derivedGrade);
-        const rightGrade = weakest(target.tableGrade, tableNameGrade, rightDeclared ? 'EXACT' : derivedGrade);
-        ensureColumn(joinTableName, left, leftGrade);
-        ensureColumn(joinTableName, right, rightGrade);
-        addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(joinTableName), `${e.table}.${e.pkColumn ?? 'id'}=${joinTableName}.${left}`, leftGrade, stats);
-        addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(joinTableName), `${target.table}.${target.pkColumn ?? 'id'}=${joinTableName}.${right}`, rightGrade, stats);
-      }
-    }
-  }
-
-  // I-1, spelled out: a catalog HIT is evidence, never a promotion.
-  for (const e of entities.values()) {
-    const tnode = g.nodes.get(tableIdOf(e.table));
-    if (tnode && tnode.stub !== true) tnode.jpaCatalogMatch = true;
-  }
-
-  // ---- 4. repositories -> statements --------------------------------------
-  const repoByFqn = new Map();
-  for (const rec of repositories) {
-    stats.repositories += 1;
-    const entityFqn = rec.entityTypeSimple ? resolveType(rec.fqn, rec.entityTypeSimple) : null;
-    const entity = entityFqn ? entities.get(entityFqn) : null;
-    const declaredMethods = new Set((rec.methods ?? []).map((m) => m.name));
-    repoByFqn.set(rec.fqn, { rec, entity, declaredMethods });
-    if (!entity) {
-      note(stats, 'repository-entity-unknown',
-        `${rec.fqn}: the domain type ${rec.entityTypeSimple ?? '?'} is not an @Entity this pack saw, so its queries touch no table`);
-      continue;
-    }
-    // An OVERLOAD names one statement: Spring Data derives the same query from
-    // `findAll()` and `findAll(Pageable)`. Emitting it twice would double-count
-    // the statement and add a second IMPLEMENTS_STMT edge to the same node.
-    const emittedHere = new Set();
-    for (const m of rec.methods ?? []) {
-      if (emittedHere.has(m.name)) continue;
-      emittedHere.add(m.name);
-      addQueryStatement(g, { repo: rec, method: m, entity, entities, resolveType, stats, tableIdOf, columnIdOf });
-    }
-  }
-
-  // ---- 5. built-ins the service calls but the repository never declared ----
-  const wanted = new Map(); // "repoFqn#method" -> {repoFqn, method}
-  for (const c of calls) {
-    if (!c || !c.from || !c.method) continue;
-    if (!Object.hasOwn(BUILTIN_METHODS, c.method)) continue;
-    const ownerFqn = c.from.slice(0, c.from.lastIndexOf('#'));
-    const targetFqn = resolveType(ownerFqn, c.toTypeSimple);
-    if (!targetFqn || !repoByFqn.has(targetFqn)) continue;
-    const r = repoByFqn.get(targetFqn);
-    if (r.declaredMethods.has(c.method)) continue; // declared: it is a derived/@Query statement
-    wanted.set(`${targetFqn}#${c.method}`, { repoFqn: targetFqn, method: c.method });
-  }
-  for (const { repoFqn, method } of [...wanted.values()].sort((a, b) => cmp(`${a.repoFqn}#${a.method}`, `${b.repoFqn}#${b.method}`))) {
-    const r = repoByFqn.get(repoFqn);
-    if (!r.entity) continue;
-    addBuiltinStatement(g, { repoFqn, method, entity: r.entity, file: r.rec.file ?? null, entities, resolveType, stats, tableIdOf, columnIdOf });
-    stats.builtins += 1;
-  }
-
-  stats.unresolvedStatements = new Set(stats.unresolved.filter((u) => u.statement).map((u) => u.statement)).size;
   return stats;
 }
 
