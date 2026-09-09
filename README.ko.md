@@ -596,7 +596,10 @@ error [ambiguous]: several projects are registered: jpetstore, mall. Pass "proje
 테이블을 자기 액자 안에 두고 이 프로젝트와는 HTTP 점선으로만 잇습니다. 키로
 잇는 일은 없습니다. spring-petclinic-microservices 를 다섯 프로젝트로 나눠
 재면 게이트웨이의 `GET /api/gateway/owners/{ownerId}` 가 customers-service 의
-`owners` 와 visits-service 의 `visits` 에 닿습니다.
+`owners` 와 visits-service 의 `visits` 에 닿습니다. 게이트웨이 자신의
+`/owners` 화면도 마찬가지입니다. package.json 없이 `static/` 에서 서빙되는
+AngularJS 앱인데, discovery 가 게이트웨이의 `application.yml` 에서 읽은 라우트
+표를 거쳐 customers-service 의 `owners` 에 닿습니다.
 
 **캐시 예산.** `--memory-budget <MB>` 는 메모리에 들고 있는 pack JSON 의 양을
 제한하며 기본값은 512 MB, 축출은 LRU 입니다. 이 숫자는 힙 측정값이 아니라
@@ -977,10 +980,10 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 | linlinjava/litemall | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 |
 | yangzongzhuan/RuoYi-Vue (+ RuoYi-Vue3) | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 |
 | jeequan/jeepay | 126 / 134 | 22 / 23 | 302 / 314 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
-| xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
+| xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 0 / 2 | 0 / 0 |
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
 | spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
-| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | 프런트엔드를 읽지 않음 | 프런트엔드를 읽지 않음 |
+| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run

@@ -10,6 +10,13 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-09
+
+The release where a screen in one service reaches a table in another with
+nothing typed by hand: the service names and the gateway's route table are
+read from the tree, a frontend shipped without a package is read anyway, and
+an AngularJS app gets its screens.
+
 ### Added
 
 - **The service name comes out of the tree.** `spring.application.name` is what
@@ -1585,7 +1592,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/alexsoft-hq/Cascade/releases/tag/v0.1.0

@@ -600,7 +600,10 @@ and the ERD frames each sibling's tables in their own cluster, joined to this
 project by a dashed HTTP line and never by a key. Measured on
 spring-petclinic-microservices split into five projects, the gateway's
 `GET /api/gateway/owners/{ownerId}` reaches `owners` in customers-service and
-`visits` in visits-service.
+`visits` in visits-service, and the gateway's own `/owners` screen, an
+AngularJS app served from `static/` with no package.json, reaches `owners`
+in customers-service through the route table discovery read from the
+gateway's `application.yml`.
 
 **The cache budget.** `--memory-budget <MB>` bounds the pack JSON held in
 memory, 512 MB by default, and eviction is least-recently-used. That number is a
@@ -998,10 +1001,10 @@ that improves silently is a number nobody checked.
 | linlinjava/litemall | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 |
 | yangzongzhuan/RuoYi-Vue (+ RuoYi-Vue3) | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 |
 | jeequan/jeepay | 126 / 134 | 22 / 23 | 302 / 314 | no frontend read | no frontend read |
-| xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | no frontend read | no frontend read |
+| xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 0 / 2 | 0 / 0 |
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read |
 | spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read |
-| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read |
+| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run
