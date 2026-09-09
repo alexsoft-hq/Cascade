@@ -263,6 +263,16 @@ it brings back carry `project`. The packs are untouched — the join is made whe
 the question is asked, from the small `routes.json` index `analyze` writes
 beside each pack.
 
+**A name is what settles a tie.** Two projects can serve `GET /owners`, and the
+path cannot tell them apart. What can is the name the CALLER wrote: the host of
+a Java client's url, or the service a gateway route forwards to. Both are read
+out of the tree rather than typed in — `cascade init` takes the service's own
+`spring.application.name` into `profile.serviceNames`, and a gateway's
+`spring.cloud.gateway` route table into `profile.gatewayRoutes`, where each
+entry carries the deployable it forwards to. With a name on the call and a name
+on the project, one candidate is picked and crossed at `SOUND_SET`; without one,
+every candidate is crossed at `HEURISTIC` and the answer says it was ambiguous.
+
 **A crossing is never better than a candidate.** Which deployable answers the
 service name `customers-service` is not a fact about anybody's source: it is a
 fact about a deployment, and no line of code states it. So a crossing is

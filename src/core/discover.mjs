@@ -19,6 +19,9 @@
 
 import path from 'node:path';
 import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
+import {
+  findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
+} from './springconfig.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
 // vendored `node_modules` cannot dominate the counts or the file cap.
@@ -290,6 +293,9 @@ export function classifyDdlFile(relPath, text) {
  *   ddlCandidates:{path:string, dialect:(string|null), dialectFrom:(string|null), role:string, createTables:number, alters:number, dml:number, byPath:boolean, testPath:boolean}[],
  *   ddlDialectHint:('mysql'|null),
  *   connectionCandidates:Object[],
+ *   serviceNames:{name:string, file:string}[],
+ *   gatewayRoutes:{front:string, to:string, service:(string|null), file:string, id:(string|null)}[],
+ *   externalConfigImports:{file:string, value:string}[],
  *   filesScanned:number,
  *   capped:boolean,
  *   diagnostics:{kind:string, severity:string, path:string, reason:string}[]
@@ -332,6 +338,12 @@ export function discover(root, io = {}) {
   // never dials one, and it never reads a password value — src/core/dbconfig.mjs
   // returns references, not secrets.
   const connectionCandidates = [];
+  // What the project's own Spring configuration says about WHO it is and WHERE
+  // it forwards a request (RM46, src/core/springconfig.mjs). Both used to be
+  // typed into the profile by hand, and both are in the tree.
+  const serviceNames = [];
+  const gatewayRoutes = [];
+  const externalConfigImports = [];
   // The two lane inputs `cascade analyze` needs when it is run with no flags:
   // which directories hold MyBatis mapper XML, and which directories are Java
   // source roots (measured from each file's own `package` declaration, never
@@ -534,12 +546,26 @@ export function discover(root, io = {}) {
     // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
     // `locale*/` is a presentation resource, and reading it produced diagnostics
     // about files that were never connection candidates (see dbconfig.mjs).
-    if (looksLikeConnectionFile(rel(absFile))) {
+    //
+    // ONE READ, TWO QUESTIONS. A Spring `application.yml` answers "where is the
+    // database?" (dbconfig.mjs) and "who is this service, and where does it
+    // forward a request?" (springconfig.mjs, RM46). Reading the file twice would
+    // be the same bytes and a second chance for the two answers to disagree
+    // about which file they came from.
+    const relFile = rel(absFile);
+    const springConfig = looksLikeSpringConfigFile(relFile) && !isTestPath(relFile);
+    if (springConfig || looksLikeConnectionFile(relFile)) {
       const text = read(absFile);
       if (text === null) return;
-      connectionCandidates.push(...findConnectionCandidates(
-        [{ path: rel(absFile), text }], diagnostics,
-      ));
+      const one = [{ path: relFile, text }];
+      if (springConfig) {
+        serviceNames.push(...findServiceNames(one, diagnostics));
+        gatewayRoutes.push(...findGatewayRoutes(one, diagnostics));
+        externalConfigImports.push(...findExternalConfigImports(one));
+      }
+      if (looksLikeConnectionFile(relFile)) {
+        connectionCandidates.push(...findConnectionCandidates(one, diagnostics));
+      }
       return;
     }
 
@@ -610,6 +636,22 @@ export function discover(root, io = {}) {
 
   walk(root, [], true);
 
+  // SAID ONCE, not once per file. A `spring.config.import` pointing at a config
+  // server means part of this project's configuration lives somewhere this walk
+  // cannot see, so the service name and the gateway routes below are what the
+  // TREE says and may not be all the deployment says.
+  if (externalConfigImports.length > 0) {
+    const files = [...new Set(externalConfigImports.map((i) => i.file))].sort();
+    diagnostics.push({
+      kind: 'CONFIG_IMPORTED_FROM_OUTSIDE_THE_TREE',
+      severity: 'info',
+      path: files[0],
+      reason: `${files.length} Spring configuration file(s) import settings from outside this repository `
+        + `(spring.config.import in ${files.slice(0, 3).join(', ')}${files.length > 3 ? `, and ${files.length - 3} more` : ''}). `
+        + 'Nothing here reads a config server, so a service name or a gateway route declared only there is not in this discovery',
+    });
+  }
+
   const repos = [...repoStats.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   return {
@@ -637,6 +679,14 @@ export function discover(root, io = {}) {
     connectionCandidates: connectionCandidates
       .slice()
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),
+    // Sorted for the same reason every other list here is: what a run reports
+    // must not depend on the order a directory happened to be walked in.
+    serviceNames: serviceNames.slice()
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+    gatewayRoutes: gatewayRoutes.slice()
+      .sort((a, b) => (a.front < b.front ? -1 : a.front > b.front ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+    externalConfigImports: externalConfigImports.slice()
+      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)),
     filesScanned: Math.min(filesScanned, maxFiles),
     capped,
     diagnostics,

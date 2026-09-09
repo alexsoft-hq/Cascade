@@ -251,9 +251,63 @@ serves. `"/dev-api": ""` says "the dev server strips it". A key of `"*"` applies
 to every call in the project. Declaring it moves the axis from `degraded` to
 `shipped` and the edges from HEURISTIC to SOUND_SET.
 
-`gatewayRoutes` is read in exactly one place (`src/adapters/web_bridge.mjs`).
-Declared with no web lane to read it, `cascade analyze` says so as a
-`RECORDED_NOT_ACTED` diagnostic rather than silently ignoring it.
+The key is applied in both places a prefix can sit: on the client's base URL,
+and on the CALL PATH itself when the call carries the prefix (`$http.get(
+'/api/customer/owners')` with no base URL at all, which is what a frontend
+served by a gateway looks like). The longest matching key wins.
+
+### Gateway routes you do not have to type
+
+A Spring Cloud Gateway already states the same mapping, and `cascade init`
+reads it: every route under `spring.cloud.gateway…routes` with a `Path=`
+predicate becomes one entry, with `StripPrefix`, `PrefixPath` and `RewritePath`
+applied to work out the back-end prefix, and the `uri` read for the service the
+gateway forwards to. Both the classic key path and the newer `server.webflux` /
+`server.webmvc` / `mvc` spellings are read, in YAML and in `.properties`.
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: orders
+          uri: lb://orders-service
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - StripPrefix=2
+```
+
+...becomes:
+
+```json
+{ "gatewayRoutes": {
+    "/api/order": { "to": "", "service": "orders-service",
+                    "from": "src/main/resources/application.yml" } } }
+```
+
+A value is therefore EITHER the back-end prefix as a plain string, which is what
+a person writes, OR that object: `to` is the same prefix, `service` is the
+deployable the gateway forwards to, and `from` is the file it was read out of.
+Both shapes are read by both readers, and the `service` is what lets an answer
+cross into the right project when two of them serve the same path (see
+[concepts](../concepts.md), "Crossings").
+
+What is NOT read is not guessed. A `RewritePath` outside the plain
+`/prefix/(?<name>.*)` form Spring documents, a filter that sets the whole
+forwarded path, or a pattern with a wildcard in the middle produces a
+`GATEWAY_ROUTE_UNREADABLE` diagnostic and no entry. A route table that lives in
+a config server, not in the repository, is not read either, and `cascade init`
+says so once.
+
+A map that is ALREADY in the profile is yours: `cascade init --force` leaves it
+exactly as it is and says how many routes it found and did not apply.
+
+`gatewayRoutes` is read in two places: `src/adapters/web_bridge.mjs` for a
+frontend call, and `src/adapters/java_bridge.mjs` for an imperative Java HTTP
+call, which is the same rewrite from the other side of the wire. Declared with
+neither lane to read it, `cascade analyze` says so as a `RECORDED_NOT_ACTED`
+diagnostic rather than silently ignoring it.
 
 ### The HTTP client pack
 

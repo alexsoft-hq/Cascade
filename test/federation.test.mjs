@@ -30,6 +30,7 @@ import {
   buildRoutesIndex, serializeRoutesIndex, readRoutesIndex, ROUTES_FILE, ROUTES_SCHEMA,
   methodMatch, serversOf, outboundCallsOf, packOutboundCalls,
 } from '../src/mcp/federation.mjs';
+import { addWebFacts } from '../src/adapters/web_bridge.mjs';
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -345,6 +346,92 @@ test('...and with the service name in the evidence, exactly one of them, at SOUN
   assert.deepEqual(r.limits.filter((l) => l.scope === 'federation'), []);
 });
 
+/**
+ * A GATEWAY'S OWN FRONTEND, through the real web lane (RM46).
+ *
+ * The call is written with the gateway prefix in the path and no base URL,
+ * which is what a gateway-served frontend looks like. `gatewayRoutes` is the
+ * table `cascade init` reads out of `spring.cloud.gateway`: the prefix the back
+ * end sees, and the service it is forwarded to. Nothing here is hand-written
+ * evidence: the service name on the edge is the one the route table stated.
+ */
+function webCallerGraph({ service = 'thing-service' } = {}) {
+  const g = new Graph();
+  addWebFacts(g, [
+    { kind: 'file', file: 'src/http.js', line: 1, lang: 'js', recoveredErrors: 0 },
+    { kind: 'import', file: 'src/http.js', line: 1, source: 'axios', specifiers: [{ imported: 'default', local: 'axios' }], dynamic: false },
+    { kind: 'binding',
+      file: 'src/http.js',
+      line: 2,
+      name: 'client',
+      exported: true,
+      init: {
+        shape: 'call',
+        callee: { shape: 'member', root: 'axios', path: ['create'], name: 'create' },
+        binding: { kind: 'import', source: 'axios', imported: 'default' },
+      } },
+    { kind: 'export', file: 'src/http.js', line: 3, name: 'default', of: 'expression', local: 'client' },
+    { kind: 'file', file: 'src/api/thing.js', line: 1, lang: 'js', recoveredErrors: 0 },
+    { kind: 'import', file: 'src/api/thing.js', line: 1, source: '../http', specifiers: [{ imported: 'default', local: 'client' }], dynamic: false },
+    { kind: 'function', file: 'src/api/thing.js', line: 2, name: 'loadThing', endLine: 4, exported: 'named', async: false, params: 1, returns: null },
+    { kind: 'call',
+      file: 'src/api/thing.js',
+      line: 3,
+      enclosing: 'loadThing',
+      callee: { shape: 'member', root: 'client', path: ['get'], name: 'get' },
+      binding: { kind: 'import', source: '../http', imported: 'default' },
+      args: [],
+      url: { arg: { kind: 'string', value: '/api/thing/things/7' }, resolved: [{ template: '/api/thing/things/7', dynamicParts: 0, via: 'literal' }] },
+      method: { value: 'GET', from: 'callee-name' },
+      platformSink: null },
+  ], {
+    gatewayRoutes: {
+      '/api/thing': { to: '', service, from: 'src/main/resources/application.yml' },
+    },
+  });
+  return g;
+}
+
+test('a route table read out of the tree puts the service name on a FRONTEND call', () => {
+  const g = webCallerGraph();
+  const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
+  assert.equal(e.to, 'endpoint:GET /things/7', 'the declared route rewrote the path the call was written with');
+  assert.equal(e.grade, 'UNRESOLVED', 'nothing in this pack serves it, which is what federation is for');
+  assert.equal(e.evidence.service, 'thing-service');
+  assert.equal(e.evidence.serviceLiteral, true);
+  // ...and that is what reaches the sidecar, which is all a sibling ever reads.
+  const index = buildRoutesIndex(g, { project: 'web-gateway', buildDigest: 'x' });
+  assert.deepEqual(index.calls, [{ id: 'endpoint:GET /things/7', method: 'GET', path: '/things/7', service: 'thing-service' }]);
+});
+
+test('two projects serve the path: the DISCOVERED route name picks one, and without it neither is picked', (t) => {
+  const named = workspace(t, [
+    { id: 'web-gateway', graph: webCallerGraph() },
+    { id: 'things', graph: serverGraph(), serviceNames: ['thing-service'] },
+    { id: 'other', graph: serverGraph({ pkg: 'ot', table: 'others' }) },
+  ]);
+  const a = named.host.callTool('endpoint_impact', { project: 'things', column: 'things.name' });
+  assertContract(a);
+  assert.deepEqual(a.answer.federation.crossed.map((c) => [c.from.project, c.to.project, c.grade]),
+    [['web-gateway', 'things', 'SOUND_SET']]);
+  // The caller is the FRONTEND FUNCTION that makes the call, named as such, and
+  // the crossing carries the name the route table gave it.
+  assert.deepEqual(a.answer.federation.crossed.map((c) => [c.from.symbol, c.service, c.to.endpoint]),
+    [['src/api/thing.js#loadThing', 'thing-service', 'GET /things/{thingId}']]);
+
+  // The same two siblings, with the gateway route naming nobody: the call
+  // matches both, so it is crossed to both at HEURISTIC and said to be
+  // ambiguous. The NAME is the whole difference.
+  const blind = workspace(t, [
+    { id: 'web-gateway', graph: webCallerGraph({ service: null }) },
+    { id: 'things', graph: serverGraph(), serviceNames: ['thing-service'] },
+    { id: 'other', graph: serverGraph({ pkg: 'ot', table: 'others' }) },
+  ]);
+  const b = blind.host.callTool('endpoint_impact', { project: 'things', column: 'things.name' });
+  assert.deepEqual(b.answer.federation.crossed.map((c) => [c.from.project, c.to.project, c.grade, c.ambiguous]),
+    [['web-gateway', 'things', 'HEURISTIC', true]]);
+});
+
 test('a service name declared in the sidecar picks the project just as the id does', (t) => {
   const { host } = workspace(t, [
     { id: 'gateway', graph: callerGraph({ service: 'thing-svc' }) },
@@ -521,8 +608,15 @@ test('overview on a single-project server says the call leaves and nobody answer
     calls: 1, answered: 0, unmatched: 1, projects: [], byProject: [],
     // The remedy needs the route, not just the count: this is what the page
     // puts in the "nobody serves this" row.
-    unmatchedRoutes: [{ method: 'GET', path: '/things/{*}', sites: 1 }],
+    // The remedy needs the SERVICE, too: the caller said which deployable it
+    // meant, and that is the project a reader has to register.
+    unmatchedRoutes: [{ method: 'GET', path: '/things/{*}', sites: 1, service: 'thingsvc' }],
   });
+
+  // A caller that named nobody says so, rather than leaving the field out.
+  const blind = workspace(t, [{ id: 'gateway', graph: callerGraph({ service: null }) }]);
+  assert.deepEqual(blind.host.callTool('overview', {}).answer.federation.unmatchedRoutes,
+    [{ method: 'GET', path: '/things/{*}', sites: 1, service: null }]);
 });
 
 // ---------------------------------------------------------------------------

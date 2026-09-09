@@ -103,6 +103,22 @@ prefixes, the mapper directories and Java source roots the lanes will read — a
 **what it has no lane for**: Kotlin sources and frontend packages come back as
 `UNSUPPORTED_TECHNOLOGY` diagnostics rather than being silently ignored.
 
+It also reads what the project says about ITSELF, out of its own Spring
+configuration under `resources`:
+
+```
+service name: edge-service (from src/main/resources/application.yml)
+gateway routes: 4 read from src/main/resources/application.yml
+  /api/order -> / at orders-service
+```
+
+The name goes to `profile.serviceNames` (it is how two projects serving the same
+path are told apart when one calls the other), the routes to
+`profile.gatewayRoutes`. Both are written only into a profile that has none of
+its own: a map you typed is yours, and a re-run with `--force` says how many
+routes it found and did not apply. See
+[the web lane](setup/web-lane.md#gateway-routes-you-do-not-have-to-type).
+
 - `--root <dir>` — the tree to discover (default: the current directory).
 - `--project <id>` — the id to register it under (default: derived from the
   directory name).

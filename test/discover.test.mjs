@@ -542,3 +542,77 @@ test('discover: every .sql that declares OR amends a table is a classified candi
   assert.equal(d.counts.ddlFiles, 3);
   assert.deepEqual(d.ddlPaths, ['db/postgres/schema.sql', 'svc-a/db/mysql/schema.sql', 'svc-b/db/mysql/schema.sql']);
 });
+
+// ---------------------------------------------------------------------------
+// Who this service is, and where its gateway forwards (RM46)
+// ---------------------------------------------------------------------------
+
+test('discover reads spring.application.name and the gateway route table out of the tree', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'src/main/java/com/example/svc/UserService.java': JAVA_SERVICE,
+    'src/main/resources/application.yml': [
+      'spring:',
+      '  application:',
+      '    name: edge-service',
+      '  config:',
+      '    import: optional:configserver:http://localhost:8888/',
+      '  cloud:',
+      '    gateway:',
+      '      routes:',
+      '        - id: orders',
+      '          uri: lb://orders-service',
+      '          predicates:',
+      '            - Path=/api/order/**',
+      '          filters:',
+      '            - StripPrefix=2',
+      '',
+    ].join('\n'),
+    // A test resource is a different program's configuration: not read.
+    'src/test/resources/application.yml': 'spring:\n  application:\n    name: test-only\n',
+  });
+  const d = discover(root, io(() => SHA('a')));
+
+  assert.deepEqual(d.serviceNames, [{ name: 'edge-service', file: 'src/main/resources/application.yml' }]);
+  assert.deepEqual(d.gatewayRoutes, [{
+    front: '/api/order', to: '', service: 'orders-service',
+    file: 'src/main/resources/application.yml', id: 'orders',
+  }]);
+  assert.deepEqual(d.externalConfigImports,
+    [{ file: 'src/main/resources/application.yml', value: 'optional:configserver:http://localhost:8888/' }]);
+
+  // SAID ONCE, whatever the file count: configuration this walk cannot see is a
+  // limit on the two lists above, not a note per file.
+  const said = d.diagnostics.filter((x) => x.kind === 'CONFIG_IMPORTED_FROM_OUTSIDE_THE_TREE');
+  assert.equal(said.length, 1, JSON.stringify(d.diagnostics));
+  assert.match(said[0].reason, /Nothing here reads a config server/);
+});
+
+test('a tree that says neither reports neither, and no diagnostic about it', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'src/main/java/com/example/svc/UserService.java': JAVA_SERVICE,
+    'src/main/resources/application.yml': 'server:\n  port: 8080\n',
+  });
+  const d = discover(root, io(() => SHA('a')));
+  assert.deepEqual(d.serviceNames, []);
+  assert.deepEqual(d.gatewayRoutes, []);
+  assert.deepEqual(d.diagnostics.filter((x) => x.kind === 'CONFIG_IMPORTED_FROM_OUTSIDE_THE_TREE'), []);
+});
+
+test('one read answers both questions: the same application.yml is still a datasource candidate', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'src/main/resources/application.yml': [
+      'spring:',
+      '  application:',
+      '    name: orders-service',
+      '  datasource:',
+      '    url: jdbc:mysql://db.example.com:3306/shop',
+      '',
+    ].join('\n'),
+  });
+  const d = discover(root, io(() => SHA('a')));
+  assert.deepEqual(d.serviceNames.map((s) => s.name), ['orders-service']);
+  assert.deepEqual(d.connectionCandidates.map((c) => [c.kind, c.host]), [['spring-yml', 'db.example.com']]);
+});

@@ -112,6 +112,21 @@ can answer "who serves this?" for twenty projects without parsing one of them.
 A sibling's pack is loaded only when the answer really crosses into it, through
 the same LRU and the same memory budget as any other project.
 
+**Where the names come from.** `serviceNames` is `profile.serviceNames`, which
+`cascade init` writes from `spring.application.name` in the project's own
+`application.yml`. When the profile declares none, `analyze` uses the names its
+OWN run read out of the tree, so a project analyzed before anybody re-ran `init`
+still answers to its real name, and the run says the name is not recorded yet
+and how to record it. The profile always wins when it has one, and neither
+choice touches the pack: the name rides beside it in the sidecar, so the digest
+is the same either way. A project that declares no name anywhere is still
+matched by its project id.
+
+The name ON A CALL comes from the evidence the lane recorded: the host a Java
+client wrote (a `lb://`-style service name in the url), the service a declared
+or discovered gateway route forwards to, or nothing at all, in which case only
+the path and the method are left to match on.
+
 | the call matches | what happens |
 |---|---|
 | one project | crossed, `SOUND_SET` (`HEURISTIC` when either side's method is `ANY`) |

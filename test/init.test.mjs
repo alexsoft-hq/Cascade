@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildManifest, buildProfile, lanesOf, slugify, writeInitFiles, InitError } from '../src/core/init.mjs';
 import { validateManifest, MANIFEST_SCHEMA, REPO_KINDS } from '../src/core/manifest.mjs';
@@ -113,6 +113,56 @@ test('buildProfile carries the discovered hints and passes validateProfile', () 
   assert.equal(profile.schema.default, null, 'invariant I-4: no invented schema name');
   assert.deepEqual(diagnostics, []);
   assert.doesNotThrow(() => validateProfile(profile));
+});
+
+test('buildProfile writes the service name and the gateway routes discovery read (RM46)', () => {
+  const { profile, diagnostics } = buildProfile(discovery({
+    serviceNames: [{ name: 'edge-service', file: 'src/main/resources/application.yml' }],
+    gatewayRoutes: [
+      { front: '/api/order', to: '', service: 'orders-service', file: 'src/main/resources/application.yml', id: 'orders' },
+      { front: '/api/bill', to: '/bill', service: 'billing-service', file: 'src/main/resources/application.yml', id: 'billing' },
+    ],
+  }), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+
+  assert.deepEqual(profile.serviceNames, ['edge-service']);
+  assert.deepEqual(profile.gatewayRoutes, {
+    '/api/order': { to: '', service: 'orders-service', from: 'src/main/resources/application.yml' },
+    '/api/bill': { to: '/bill', service: 'billing-service', from: 'src/main/resources/application.yml' },
+  });
+  assert.deepEqual(diagnostics, []);
+  assert.doesNotThrow(() => validateProfile(profile));
+});
+
+test('a profile that already declares them keeps its own, and the run says what it did not apply', () => {
+  const d = discovery({
+    serviceNames: [{ name: 'edge-service', file: 'src/main/resources/application.yml' }],
+    gatewayRoutes: [{ front: '/api/order', to: '', service: 'orders-service', file: 'src/main/resources/application.yml', id: 'orders' }],
+  });
+  const { profile, diagnostics } = buildProfile(d, {
+    root: '/p/app',
+    manifestDir: '/p/app/.cascade',
+    existing: { serviceNames: ['my-own-name'], gatewayRoutes: { '/dev-api': '' } },
+  });
+  assert.deepEqual(profile.serviceNames, ['my-own-name']);
+  assert.deepEqual(profile.gatewayRoutes, { '/dev-api': '' });
+  assert.deepEqual(diagnostics.map((x) => x.kind).sort(), ['GATEWAY_ROUTES_KEPT', 'SERVICE_NAME_KEPT']);
+  assert.match(diagnostics.find((x) => x.kind === 'GATEWAY_ROUTES_KEPT').reason, /were not applied: \/api\/order/);
+  assert.match(diagnostics.find((x) => x.kind === 'SERVICE_NAME_KEPT').reason, /already names this project my-own-name/);
+});
+
+test('two routes claiming one prefix: the first is kept and the disagreement is reported', () => {
+  const { profile, diagnostics } = buildProfile(discovery({
+    gatewayRoutes: [
+      { front: '/api/order', to: '', service: 'orders-service', file: 'a/application.yml', id: 'orders' },
+      { front: '/api/order', to: '/inner', service: 'other-service', file: 'b/application.yml', id: 'other' },
+    ],
+  }), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(profile.gatewayRoutes, {
+    '/api/order': { to: '', service: 'orders-service', from: 'a/application.yml' },
+  });
+  const hit = diagnostics.find((x) => x.kind === 'AMBIGUOUS_GATEWAY_ROUTE');
+  assert.ok(hit, JSON.stringify(diagnostics));
+  assert.match(hit.reason, /the first one is kept/);
 });
 
 test('buildProfile leaves the catalog at "none" and reports the candidates when several DDL files exist', () => {
@@ -466,4 +516,56 @@ test('cascade init: a frontend with no router dependency declares web and no rou
   assert.equal(JSON.parse(profileText).screenAxis.enabled, null);
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'manifest.json'), 'utf8'));
   assert.equal(manifest.repositories[0].kind, 'frontend-web');
+});
+
+test('cascade init: the profile gets the service name and the gateway table, and says both out loud', (t) => {
+  const base = tmpDir(t, 'cascade-init-gateway-');
+  const dir = path.join(base, 'edge');
+  gitRepo(dir, {
+    'pom.xml': '<project/>',
+    'src/main/java/com/example/web/A.java': 'package com.example.web;\n@RestController\npublic class A {}\n',
+    'src/main/resources/application.yml': [
+      'spring:',
+      '  application:',
+      '    name: edge-service',
+      '  cloud:',
+      '    gateway:',
+      '      routes:',
+      '        - id: orders',
+      '          uri: lb://orders-service',
+      '          predicates:',
+      '            - Path=/api/order/**',
+      '          filters:',
+      '            - StripPrefix=2',
+      '',
+    ].join('\n'),
+  });
+  const run = spawnSync(process.execPath, [CLI, 'init', '--root', dir], {
+    env: { ...process.env, CASCADE_HOME: path.join(base, 'home') },
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stderr, /service name: edge-service \(from src\/main\/resources\/application\.yml\)/);
+  assert.match(run.stderr, /gateway routes: 1 read from src\/main\/resources\/application\.yml/);
+  assert.match(run.stderr, /\/api\/order -> \/ at orders-service/);
+
+  const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
+  assert.deepEqual(profile.serviceNames, ['edge-service']);
+  assert.deepEqual(profile.gatewayRoutes, {
+    '/api/order': { to: '', service: 'orders-service', from: 'src/main/resources/application.yml' },
+  });
+
+  // A SECOND RUN with --force does not overwrite a map the user has since
+  // edited: the profile on disk is read first, and a non-empty one is theirs.
+  const edited = { ...profile, gatewayRoutes: { '/api/order': '/mine' }, serviceNames: ['my-own-name'] };
+  fs.writeFileSync(path.join(dir, '.cascade', 'profile.json'), JSON.stringify(edited, null, 2) + '\n');
+  const again = spawnSync(process.execPath, [CLI, 'init', '--root', dir, '--force'], {
+    env: { ...process.env, CASCADE_HOME: path.join(base, 'home') },
+    encoding: 'utf8',
+  });
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stderr, /the profile already declares its own, so these were not applied/);
+  const after = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
+  assert.deepEqual(after.gatewayRoutes, { '/api/order': '/mine' });
+  assert.deepEqual(after.serviceNames, ['my-own-name']);
 });

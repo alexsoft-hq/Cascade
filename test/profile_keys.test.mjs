@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PROFILE_DEFAULTS, PROFILE_KEY_CONSUMERS, profileDiagnostics, normalizeProfile,
   leafKeyPaths, readKeyPath, sqlDialectOf, trustGapsFor, SQL_DIALECT_ALIASES,
+  validateProfile, gatewayRouteOf,
 } from '../src/core/profile.mjs';
 
 // Invariant I-5 (SPEC §6.2, MUST): a key the profile DECLARES must actually be
@@ -194,6 +195,34 @@ test('profileDiagnostics is pure: it neither mutates nor depends on call order',
   assert.deepEqual(a, b);
   assert.equal(JSON.stringify(p), before);
   assert.throws(() => profileDiagnostics(null), (e) => e.name === 'ProfileError');
+});
+
+test('serviceNames: consumed by federation, validated as a list of names', () => {
+  const entry = PROFILE_KEY_CONSUMERS.serviceNames;
+  assert.equal(entry.status, 'consumed');
+  assert.equal(entry.where, 'src/mcp/federation.mjs');
+  assert.deepEqual(normalizeProfile({}).serviceNames, [], 'a project that never says its name declares none');
+  assert.deepEqual(normalizeProfile({ serviceNames: ['edge-service'] }).serviceNames, ['edge-service']);
+  // Declared or not, there is nothing to warn about: the key changes which
+  // project answers a call, and it does that whichever lanes ran.
+  assert.equal(profileDiagnostics(normalizeProfile({ serviceNames: ['edge-service'] }))
+    .some((d) => d.key === 'serviceNames'), false);
+  assert.throws(() => validateProfile({ serviceNames: 'edge-service' }), (e) => e.name === 'ProfileError');
+  assert.throws(() => validateProfile({ serviceNames: [''] }), (e) => e.name === 'ProfileError');
+});
+
+test('a gatewayRoutes value is a prefix or an object, and a typo fails closed', () => {
+  assert.doesNotThrow(() => validateProfile({ gatewayRoutes: { '/api': '/sys' } }));
+  assert.doesNotThrow(() => validateProfile({ gatewayRoutes: { '/api': { to: '', service: 'x', from: 'a.yml' } } }));
+  assert.doesNotThrow(() => validateProfile({ gatewayRoutes: { '/api': { to: '/sys', service: null } } }));
+  // The object form without the one field that says what the prefix becomes.
+  assert.throws(() => validateProfile({ gatewayRoutes: { '/api': { service: 'x' } } }), (e) => e.name === 'ProfileError');
+  assert.throws(() => validateProfile({ gatewayRoutes: { '/api': { to: '', service: 3 } } }), (e) => e.name === 'ProfileError');
+  assert.throws(() => validateProfile({ gatewayRoutes: [] }), (e) => e.name === 'ProfileError');
+  // Both shapes read the same way, in the one reader both bridges call.
+  assert.deepEqual(gatewayRouteOf('/sys'), { to: '/sys', service: null });
+  assert.deepEqual(gatewayRouteOf({ to: '', service: 'x', from: 'a.yml' }), { to: '', service: 'x' });
+  assert.deepEqual(gatewayRouteOf(null), { to: '', service: null });
 });
 
 test('gatewayRoutes: consumed by the web bridge, and announced when no web lane will read it', () => {

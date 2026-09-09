@@ -29,6 +29,10 @@ export const PROFILE_DEFAULTS = deepFreeze({
   sqlDialects: {},
   sqlIdentifierCase: null,
   gatewayRoutes: {},
+  // The logical names this deployable answers to (`spring.application.name`).
+  // Empty is the honest default: a project that never says its name is matched
+  // by its project id alone.
+  serviceNames: [],
   // `enabled: null` is the THIRD state, and the default: no word from the user,
   // so the switch is decided by what the run READS (src/core/lanes.mjs,
   // `screenAxisOf`). `true` and `false` are the user's word and are obeyed.
@@ -166,7 +170,11 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   gatewayRoutes: {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
-    note: 'the web bridge applies it as the FIRST prefix rule: a front-end prefix it names is replaced by the back-end prefix before the call is matched, and the edge records prefix.from=declared. A key of "*" applies to every call. Declaring it is how a project stops the bridge guessing a prefix by counting matches. src/adapters/java_bridge.mjs applies the same map to an IMPERATIVE Java HTTP call (a WebClient/RestClient/RestTemplate url), which is the same rewrite from the other side of the wire; the "*" key is a front-end base url and is not applied there, because a Java call writes its url at the call site',
+    note: 'the web bridge applies it as the FIRST prefix rule: a front-end prefix it names is replaced by the back-end prefix before the call is matched, and the edge records prefix.from=declared. It is applied to the client\'s base url and to a call path that carries the prefix itself, so a frontend that writes the gateway prefix into every url is rewritten too. A key of "*" applies to every call. Declaring it is how a project stops the bridge guessing a prefix by counting matches. A value is either the back-end prefix as a string, or an object {to, service, from}: `to` is that same prefix, `service` is the deployable the gateway forwards to (it rides on the edge evidence as service/serviceLiteral, which is what lets src/mcp/federation.mjs pick one sibling out of several serving the same path) and `from` is the file it was read out of. `cascade init` writes the object form from spring.cloud.gateway routes it finds; a map that is already in the profile is the user\'s and is left alone. src/adapters/java_bridge.mjs applies the same map to an IMPERATIVE Java HTTP call (a WebClient/RestClient/RestTemplate url), which is the same rewrite from the other side of the wire; the "*" key is a front-end base url and is not applied there, because a Java call writes its url at the call site',
+  },
+  serviceNames: {
+    status: 'consumed', where: 'src/mcp/federation.mjs',
+    note: 'the logical names this project answers to, written by `cascade init` from spring.application.name. `cascade analyze` copies them into the routes sidecar (routes.json) beside the pack, and the federation matcher picks THIS project for a call whose evidence names one of them: with two projects serving the same path, the name is the only thing in a call that can tell them apart. A project that declares none is still matched by its project id',
   },
   'screenAxis.enabled': {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
@@ -351,6 +359,34 @@ export function sqlIdentifierCaseOf(profile) {
 }
 
 /**
+ * ONE `gatewayRoutes` VALUE, READ THE SAME WAY BY BOTH BRIDGES.
+ *
+ * The key of a `gatewayRoutes` entry is the prefix the CALLER writes. The value
+ * is what the gateway forwards it as, in either of two shapes:
+ *
+ *   "/owners"                                  the back-end prefix, and nothing else
+ *   { to: "", service: "x", from: "…yml" }     the same prefix, plus the deployable
+ *                                              the gateway sends it to and the file
+ *                                              that said so
+ *
+ * The second shape is what `cascade init` writes from a Spring Cloud Gateway
+ * route table; the first is what a person types, and it stays exactly as valid.
+ * Both readers (src/adapters/web_bridge.mjs, src/adapters/java_bridge.mjs) call
+ * this, so an entry cannot mean two things.
+ *
+ * @param {string|Object|null} value
+ * @returns {{to:string, service:(string|null)}}
+ */
+export function gatewayRouteOf(value) {
+  if (isObject(value)) {
+    const to = typeof value.to === 'string' ? value.to : '';
+    const service = typeof value.service === 'string' && value.service !== '' ? value.service : null;
+    return { to, service };
+  }
+  return { to: value == null ? '' : String(value), service: null };
+}
+
+/**
  * The `trust.knownGaps` entries a profile itself implies, whatever the pack
  * holds.
  *
@@ -494,13 +530,15 @@ export function profileDiagnostics(profile) {
       'SQL rewrite layers are not modelled by this engine');
   }
 
-  // gatewayRoutes is CONSUMED (src/adapters/web_bridge.mjs). What is worth
-  // saying out loud is when it is declared and the lane that reads it will not
-  // run: the declaration then changes nothing, and nothing else would say so.
+  // gatewayRoutes is CONSUMED by TWO lanes: the web bridge rewrites a frontend
+  // call with it, and the Java bridge rewrites an imperative Java HTTP call with
+  // it (RM43). What is worth saying out loud is when NEITHER will run: the
+  // declaration then changes nothing, and nothing else would say so.
+  const packsDeclared = Array.isArray(profile.frameworkPacks) ? profile.frameworkPacks : [];
   if (isObject(profile.gatewayRoutes) && Object.keys(profile.gatewayRoutes).length > 0
-    && !(Array.isArray(profile.frameworkPacks) && profile.frameworkPacks.includes('web'))) {
+    && !packsDeclared.includes('web') && !packsDeclared.includes('spring-mvc')) {
     add('RECORDED_NOT_ACTED', 'info', 'gatewayRoutes',
-      'gatewayRoutes are declared and frameworkPacks does not declare web, so an unflagged run reads no frontend and nothing applies them. Pass --web-src, or add "web" to frameworkPacks');
+      'gatewayRoutes are declared and frameworkPacks declares neither web nor spring-mvc, so an unflagged run reads no frontend and no Java call for them to rewrite. Pass --web-src, or add "web" to frameworkPacks');
   }
 
   // A screen CODE needs a pattern to read it out of. Declaring the length
@@ -597,6 +635,33 @@ export function validateProfile(obj) {
 
   if ('packagePrefixes' in obj && !Array.isArray(obj.packagePrefixes)) {
     throw new ProfileError('profile.packagePrefixes must be an array (multiple top-level packages allowed)');
+  }
+
+  if ('serviceNames' in obj) {
+    const v = obj.serviceNames;
+    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
+      throw new ProfileError('profile.serviceNames must be an array of non-empty names this deployable answers to (spring.application.name)');
+    }
+  }
+
+  if ('gatewayRoutes' in obj) {
+    const v = obj.gatewayRoutes;
+    if (!isObject(v)) {
+      throw new ProfileError('profile.gatewayRoutes must be an object mapping a front-end prefix to the back-end prefix it becomes');
+    }
+    for (const [key, entry] of Object.entries(v)) {
+      const shape = `profile.gatewayRoutes[${JSON.stringify(key)}]`;
+      if (typeof entry === 'string') continue;
+      if (!isObject(entry) || typeof entry.to !== 'string') {
+        throw new ProfileError(`${shape} must be the back-end prefix as a string, or an object with a "to" prefix (and optionally "service" and "from")`);
+      }
+      if ('service' in entry && entry.service !== null && !(typeof entry.service === 'string' && entry.service.length > 0)) {
+        throw new ProfileError(`${shape}.service must be null or the non-empty name of the service the gateway forwards to`);
+      }
+      if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
+        throw new ProfileError(`${shape}.from must be null or the file this route was read from`);
+      }
+    }
   }
 
   if (isObject(obj.schema) && 'default' in obj.schema) {

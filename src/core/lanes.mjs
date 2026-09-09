@@ -89,6 +89,44 @@ export function screenAxisOf(profile, evidence = {}) {
   };
 }
 
+/**
+ * THE NAMES THIS RUN STAMPS ON ITS ROUTES SIDECAR, in two states.
+ *
+ * The profile's `serviceNames` is the user's word and wins. When it is empty,
+ * the run uses what THIS RUN's discovery read out of the tree
+ * (`spring.application.name`), because a project whose profile predates the
+ * round has no reason to answer to nothing: `cascade analyze` already walks the
+ * tree for its lanes, the name is in that walk, and a sidecar without it cannot
+ * tell two projects serving the same path apart.
+ *
+ * What it does NOT do is write anything back. The profile is `cascade init`'s
+ * to write, so the run says the name is not recorded yet and how to record it,
+ * rather than editing a file nobody asked it to edit. The pack is untouched
+ * either way: the name lives in the sidecar and in the profile, never in the
+ * graph, so no digest moves.
+ *
+ * @param {Object|null} profile  a normalized profile
+ * @param {{serviceNames?:{name:string, file:string}[]}|null} [discovery]
+ *        this run's discovery, or null when no lane needed one
+ * @returns {{names:string[], from:('profile'|'discovery'|'none'), files:string[]}}
+ */
+export function serviceNamesOf(profile, discovery = null) {
+  const declared = Array.isArray(profile && profile.serviceNames)
+    ? profile.serviceNames.filter((s) => typeof s === 'string' && s.length > 0)
+    : [];
+  if (declared.length > 0) return { names: [...new Set(declared)], from: 'profile', files: [] };
+  const found = Array.isArray(discovery && discovery.serviceNames) ? discovery.serviceNames : [];
+  const names = [...new Set(found
+    .map((s) => (s && typeof s.name === 'string' ? s.name : ''))
+    .filter((n) => n.length > 0))].sort();
+  if (names.length === 0) return { names: [], from: 'none', files: [] };
+  return {
+    names,
+    from: 'discovery',
+    files: [...new Set(found.map((s) => (s && typeof s.file === 'string' ? s.file : '')).filter((f) => f.length > 0))].sort(),
+  };
+}
+
 /** The axes a pack declares, in the order `overview` lists them. */
 export const AXES = Object.freeze(['catalog', 'statements', 'column', 'jpa', 'mybatisPlus', 'code', 'web', 'screen']);
 

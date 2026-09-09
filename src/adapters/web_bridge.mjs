@@ -39,6 +39,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nodeId } from '../core/graph.mjs';
+import { gatewayRouteOf } from '../core/profile.mjs';
 
 export const WEBFACTS_SCHEMA = 'cascade:webfacts:1';
 
@@ -975,6 +976,11 @@ export function addWebFacts(g, webFacts, opts = {}) {
 
   const prefixCache = new Map();
   const callsPerInstance = new Map(); // instance id -> call urls (for the auto count)
+  // Longest key first, so `/api/customer` wins over `/api` on a call that
+  // starts with both, and by name after that, so two runs choose the same one.
+  const gatewayKeys = Object.keys(gatewayRoutes)
+    .filter((k) => k !== '*')
+    .sort((a, b) => b.length - a.length || cmp(a, b));
 
   const prefixOf = (instanceId) => {
     if (prefixCache.has(instanceId)) return prefixCache.get(instanceId);
@@ -988,14 +994,20 @@ export function addWebFacts(g, webFacts, opts = {}) {
     // 1. DECLARED. The profile said what the front-end prefix maps onto, so no
     // rule has to work it out. I-5: gatewayRoutes reaches exactly two readers,
     // this one and src/adapters/java_bridge.mjs, which applies the same rewrite
-    // to an imperative Java HTTP call.
-    const star = Object.prototype.hasOwnProperty.call(gatewayRoutes, '*') ? String(gatewayRoutes['*']) : null;
-    if (star !== null) out = { value: normalizeTail(star), from: 'declared', candidates: [] };
+    // to an imperative Java HTTP call. Both read a value through the one reader
+    // in src/core/profile.mjs, so a route's `service` means the same thing on
+    // both sides of the wire.
+    const star = Object.prototype.hasOwnProperty.call(gatewayRoutes, '*')
+      ? gatewayRouteOf(gatewayRoutes['*']) : null;
+    if (star !== null) out = { value: normalizeTail(star.to), from: 'declared', service: star.service, candidates: [] };
     if (out === null && base.state === 'known' && base.value !== '') {
-      const keys = Object.keys(gatewayRoutes).filter((k) => k !== '*').sort((a, b) => b.length - a.length || cmp(a, b));
-      const hit = keys.find((k) => base.value === k || base.value.startsWith(k));
+      const hit = gatewayKeys.find((k) => base.value === k || base.value.startsWith(k));
       if (hit !== undefined) {
-        out = { value: normalizeTail(`${gatewayRoutes[hit]}${base.value.slice(hit.length)}`), from: 'declared', candidates: [] };
+        const route = gatewayRouteOf(gatewayRoutes[hit]);
+        out = {
+          value: normalizeTail(`${route.to}${base.value.slice(hit.length)}`),
+          from: 'declared', service: route.service, candidates: [],
+        };
       }
     }
 
@@ -1212,12 +1224,19 @@ export function addWebFacts(g, webFacts, opts = {}) {
         ? normalizeUrl(cand.template)
         : normalizeUrl(`${prefix.value}${normalizeUrl(cand.template)}`);
       let prefixEvidence = { value: prefix.value, from: prefix.from };
+      // WHICH SERVICE ANSWERS THIS CALL, when the declared route names one. A
+      // gateway route table says both halves — the prefix a request is
+      // forwarded with, and the deployable it is forwarded to — and the second
+      // half is what lets an answer cross into the right sibling when several
+      // serve the same path (src/mcp/federation.mjs).
+      let declaredService = prefix.from === 'declared' ? (prefix.service ?? null) : null;
       if (prefix.from !== 'declared') {
-        const keys = Object.keys(gatewayRoutes).filter((k) => k !== '*').sort((a, b) => b.length - a.length || cmp(a, b));
-        const hit = keys.find((k) => full === k || full.startsWith(`${k}/`));
+        const hit = gatewayKeys.find((k) => full === k || full.startsWith(`${k}/`));
         if (hit !== undefined) {
-          full = normalizeUrl(`${gatewayRoutes[hit]}${full.slice(hit.length)}`);
-          prefixEvidence = { value: String(gatewayRoutes[hit]), from: 'declared' };
+          const route = gatewayRouteOf(gatewayRoutes[hit]);
+          full = normalizeUrl(`${route.to}${full.slice(hit.length)}`);
+          prefixEvidence = { value: route.to, from: 'declared' };
+          declaredService = route.service;
         }
       }
       if (prefix.from === 'auto') prefixEvidence.candidates = prefix.candidates;
@@ -1251,6 +1270,11 @@ export function addWebFacts(g, webFacts, opts = {}) {
         },
         method: site.method,
         prefix: prefixEvidence,
+        // The same two fields the Java lane puts on a call it read a host from
+        // (src/adapters/java_bridge.mjs): the service this call is for, and
+        // whether that name was WRITTEN somewhere rather than inferred. Here it
+        // was written, in the gateway's own route table.
+        ...(declaredService ? { service: declaredService, serviceLiteral: true } : {}),
         match: found.how,
         target: found.routes.length > 0 ? 'in-pack' : 'outside-pack',
       };
@@ -1759,6 +1783,10 @@ export function addWebFacts(g, webFacts, opts = {}) {
     if (!stats.prefix[pkg]) stats.prefix[pkg] = { instances: [] };
     stats.prefix[pkg].instances.push({
       id: inst.id, value: p.value, from: p.from, front: p.front ?? '',
+      // Only when a declared route named one: an instance whose prefix nobody
+      // declared has no service to name, and an always-present null would read
+      // as "we looked and found nothing".
+      ...(p.service ? { service: p.service } : {}),
       candidates: p.from === 'auto' ? p.candidates : [],
     });
   }

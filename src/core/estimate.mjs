@@ -264,7 +264,19 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
         : 'frameworkPacks does not declare web, so an unflagged run reads no frontend source and the calls they make are absent from the graph',
     });
   }
-  return { axes, notCovered };
+  // WHO THIS PROJECT IS AND WHERE IT FORWARDS, as the tree says it (RM46).
+  // Neither is an axis — no lane ships or fails to ship them — but both decide
+  // whether an answer can cross from this project into the next one, so the
+  // report says them once instead of leaving them to be discovered in a profile.
+  const identity = {
+    serviceNames: (discovery.serviceNames ?? []).map((s) => ({ name: s.name, file: s.file })),
+    declaredServiceNames: Array.isArray(profile.serviceNames) ? profile.serviceNames : [],
+    gatewayRoutes: (discovery.gatewayRoutes ?? []).length,
+    gatewayRouteFiles: [...new Set((discovery.gatewayRoutes ?? []).map((r) => r.file))].sort(),
+    declaredGatewayRoutes: profile.gatewayRoutes && typeof profile.gatewayRoutes === 'object'
+      ? Object.keys(profile.gatewayRoutes).length : 0,
+  };
+  return { axes, notCovered, identity };
 }
 
 /**

@@ -572,6 +572,56 @@ test('a declared key rewrites the CALL when the prefix is already on the URL', (
   assert.equal(e.to, webEndpointId('GET', '/plain/list'));
 });
 
+test('a discovered route rewrites a call that carries the prefix itself, and names the service (RM46)', () => {
+  // The shape a gateway's own frontend has: no base URL anywhere, the gateway
+  // prefix written into every call, and a route table that says which service
+  // answers it. This is `cascade init`'s object value, read by both bridges.
+  const g = graphWithRoutes();
+  addWebFacts(g, withPrefixFacts(null, [], '/api/thing/plain/list'), {
+    gatewayRoutes: {
+      '/api/thing': { to: '', service: 'thing-service', from: 'src/main/resources/application.yml' },
+    },
+  });
+  const e = only(g);
+  assert.deepEqual(e.evidence.prefix, { value: '', from: 'declared' });
+  assert.equal(e.to, webEndpointId('GET', '/plain/list'));
+  assert.equal(e.evidence.service, 'thing-service');
+  assert.equal(e.evidence.serviceLiteral, true);
+});
+
+test('the longest declared key wins, and a route with no service names none', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, withPrefixFacts(null, [], '/api/thing/plain/list'), {
+    gatewayRoutes: {
+      '/api': { to: '/wrong', service: 'other-service', from: 'a.yml' },
+      '/api/thing': { to: '', service: 'thing-service', from: 'a.yml' },
+    },
+  });
+  assert.equal(only(g).evidence.service, 'thing-service');
+
+  const plain = graphWithRoutes();
+  addWebFacts(plain, withPrefixFacts(null, [], '/dev-api/plain/list'), { gatewayRoutes: { '/dev-api': '' } });
+  const e = only(plain);
+  assert.equal(e.to, webEndpointId('GET', '/plain/list'));
+  assert.equal(e.evidence.service, undefined, 'a string value names no service, and an absent field is not a null one');
+});
+
+test('a route on the client BASE URL carries its service too, and the census records it', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, withPrefixFacts(
+    { kind: 'member', root: 'process', path: ['env', 'BASE'] },
+    [cfg('.env.development', { what: 'env', name: 'BASE', value: '/api/thing', mode: 'development' })],
+  ), {
+    gatewayRoutes: { '/api/thing': { to: '', service: 'thing-service', from: 'a.yml' } },
+  });
+  const e = only(g);
+  assert.deepEqual(e.evidence.prefix, { value: '', from: 'declared' });
+  assert.equal(e.to, webEndpointId('GET', '/things/list'));
+  assert.equal(e.evidence.service, 'thing-service');
+  const instance = stats.prefix[''].instances.find((i) => i.id === 'src/http.js#client');
+  assert.equal(instance.service, 'thing-service');
+});
+
 // ---------------------------------------------------------------------------
 // B2: module resolution and the assumed alias
 // ---------------------------------------------------------------------------

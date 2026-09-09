@@ -1764,7 +1764,8 @@ export function flow(graph, args, ctx) {
  *
  * @returns {{calls:number, answered:number, unmatched:number, projects:string[],
  *            byProject:{project:string, sites:number, routes:{method:string, path:string, sites:number}[]}[],
- *            unmatchedRoutes:{method:string, path:string, sites:number}[]}}
+ *            unmatchedRoutes:{method:string, path:string, sites:number,
+ *                             service:(string|null)}[]}}
  */
 function federationCensus(graph, ctx) {
   const fed = makeFederator(ctx, {});
@@ -1776,7 +1777,13 @@ function federationCensus(graph, ctx) {
   for (const c of calls) {
     const sites = Array.isArray(c.callers) ? c.callers.length : 0;
     const r = serversOf(c, fed.entries, { exclude: fed.self });
-    if (r.chosen.length === 0) { unmatchedRoutes.push({ method: c.method, path: c.path, sites }); continue; }
+    // THE NAME RIDES ON THE UNMATCHED ROW. "Nobody here serves POST /chatclient"
+    // is a puzzle; "nobody here serves POST /chatclient, which the caller sends
+    // to genai-service" is the remedy, because it names the project to register.
+    if (r.chosen.length === 0) {
+      unmatchedRoutes.push({ method: c.method, path: c.path, sites, service: c.service ?? null });
+      continue;
+    }
     answered += 1;
     for (const x of r.chosen) {
       projects.add(x.project);

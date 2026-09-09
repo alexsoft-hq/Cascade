@@ -111,12 +111,21 @@ export function buildManifest(discovery, opts) {
  * `catalog.connectionFrom` — but `catalog.source` stays "none", so nothing
  * connects until the user says so (SPEC §12.3).
  *
+ * TWO KEYS ARE THE USER'S THE MOMENT THEY EXIST: `gatewayRoutes` and
+ * `serviceNames`. Discovery reads both out of the tree (RM46), and both are
+ * written only into a profile that has none. A map somebody typed outranks a
+ * re-run of discovery, so a non-empty one is left exactly as it is and the
+ * diagnostic says what was found and not applied.
+ *
  * @param {ReturnType<import('./discover.mjs').discover>} discovery
- * @param {{root:string, manifestDir:string}} opts
+ * @param {{root:string, manifestDir:string, existing?:(Object|null)}} opts
+ *        `existing` is the profile already on disk, when there is one.
  * @returns {{profile:Object, diagnostics:Object[]}}
  */
 export function buildProfile(discovery, opts) {
   const { root, manifestDir } = opts;
+  const existing = opts.existing && typeof opts.existing === 'object' && !Array.isArray(opts.existing)
+    ? opts.existing : null;
   const diagnostics = [];
   const counts = discovery.counts ?? {};
   const ddlPaths = discovery.ddlPaths ?? [];
@@ -214,12 +223,67 @@ export function buildProfile(discovery, opts) {
   // in the user's mouth, and those words would be wrong.
   const screenAxis = routerPacks.length > 0 ? { screenAxis: { enabled: true } } : {};
 
+  // WHO THIS SERVICE IS, from `spring.application.name` (RM46). It is what the
+  // federation matcher uses to pick one sibling out of several serving the same
+  // path, so leaving it for a person to type was leaving the tie-breaker unset
+  // on every project that never edits its profile.
+  const discoveredNames = [...new Set((discovery.serviceNames ?? []).map((s) => s.name))].sort();
+  const declaredNames = Array.isArray(existing?.serviceNames) ? existing.serviceNames.filter((s) => typeof s === 'string' && s !== '') : [];
+  const serviceNames = declaredNames.length > 0 ? declaredNames : discoveredNames;
+  if (declaredNames.length > 0 && discoveredNames.some((n) => !declaredNames.includes(n))) {
+    diagnostics.push({
+      kind: 'SERVICE_NAME_KEPT',
+      severity: 'info',
+      path: '.',
+      reason: `the profile already names this project ${declaredNames.join(', ')}, so it is left alone. `
+        + `This tree also declares spring.application.name ${discoveredNames.join(', ')}`,
+    });
+  }
+
+  // WHERE THIS GATEWAY FORWARDS, from its own `spring.cloud.gateway` route
+  // table (RM46). Same rule as the name: written only into a profile that has
+  // no map of its own.
+  const discoveredRoutes = {};
+  for (const r of discovery.gatewayRoutes ?? []) {
+    if (Object.hasOwn(discoveredRoutes, r.front)) {
+      const already = discoveredRoutes[r.front];
+      if (already.to !== r.to || already.service !== r.service) {
+        diagnostics.push({
+          kind: 'AMBIGUOUS_GATEWAY_ROUTE',
+          severity: 'warn',
+          path: r.file,
+          reason: `two gateway routes claim the prefix ${r.front} and forward it differently `
+            + `(${already.from} sends it to ${already.service ?? 'an unnamed service'} as ${already.to || '/'}, `
+            + `${r.file} to ${r.service ?? 'an unnamed service'} as ${r.to || '/'}); the first one is kept`,
+        });
+      }
+      continue;
+    }
+    discoveredRoutes[r.front] = { to: r.to, service: r.service, from: r.file };
+  }
+  const declaredRoutes = existing && typeof existing.gatewayRoutes === 'object' && existing.gatewayRoutes !== null
+    ? existing.gatewayRoutes : {};
+  const keepRoutes = Object.keys(declaredRoutes).length > 0;
+  const gatewayRoutes = keepRoutes ? declaredRoutes : discoveredRoutes;
+  if (keepRoutes && Object.keys(discoveredRoutes).length > 0) {
+    diagnostics.push({
+      kind: 'GATEWAY_ROUTES_KEPT',
+      severity: 'info',
+      path: '.',
+      reason: `the profile already declares ${Object.keys(declaredRoutes).length} gateway route(s), so they are left alone. `
+        + `This tree declares ${Object.keys(discoveredRoutes).length} route(s) that were not applied: `
+        + `${Object.keys(discoveredRoutes).sort().join(', ')}`,
+    });
+  }
+
   const profile = normalizeProfile({
     build: { tool: discovery.buildTool ?? null },
     packagePrefixes: discovery.packagePrefixes ?? [],
     sqlDialects: discovery.ddlDialectHint === 'mysql' ? { main: 'mysql' } : {},
     frameworkPacks,
     ...screenAxis,
+    ...(serviceNames.length > 0 ? { serviceNames } : {}),
+    ...(Object.keys(gatewayRoutes).length > 0 ? { gatewayRoutes } : {}),
     ...(openapiDocuments.length > 0 ? { openapi: { documents: openapiDocuments } } : {}),
     catalog,
   });

@@ -10,6 +10,62 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **The service name comes out of the tree.** `spring.application.name` is what
+  tells two projects apart when both serve `GET /owners`, and until now nothing
+  read it: the routes sidecar's `serviceNames` was always empty and a tie was
+  settled by the project id or not at all. `cascade init` now reads it from
+  every `application*.yml` / `bootstrap.yml` / `application.properties` under a
+  non-test `resources` directory, writes `profile.serviceNames`, and prints
+  `service name: <name> (from <file>)`. `cascade analyze` copies the names into
+  `routes.json`, which is the file the federation matcher reads.
+- **The gateway's route table comes out of the tree.** A Spring Cloud Gateway
+  states which front-end prefix becomes which back-end prefix, and which
+  deployable answers it, in its own `application.yml`; `profile.gatewayRoutes`
+  was a map a person had to type. `cascade init` now reads
+  `spring.cloud.gateway…routes` (the classic key path and the `server.webflux` /
+  `server.webmvc` / `mvc` spellings, in YAML and in `.properties`), turns each
+  route with a `Path=` predicate into one entry, and applies `StripPrefix`,
+  `PrefixPath` and `RewritePath` to work out the back prefix. A rewrite outside
+  the plain form Spring documents, a filter that sets the whole path, or a
+  pattern with a wildcard in the middle produces a `GATEWAY_ROUTE_UNREADABLE`
+  diagnostic and no entry, rather than a guess.
+- **A gateway route can name the service it forwards to.** A `gatewayRoutes`
+  value may now be `{ to, service, from }` as well as the plain back-prefix
+  string it has always been. Both bridges read it through one reader
+  (`gatewayRouteOf` in `src/core/profile.mjs`): the web bridge rewrites a
+  frontend call that carries the prefix in its own path and puts `service` /
+  `serviceLiteral` on the edge, and the Java bridge does the same for an
+  imperative HTTP call that carried no host of its own. That name is what lets
+  an answer cross into the right sibling when several serve the same path.
+- **An unmatched outbound route says who it was for.** `overview.federation`'s
+  `unmatchedRoutes` rows carry `service`, so "nobody here serves this" comes
+  with the project to register.
+- **A project analyzed before this round still answers to its name.** When
+  `profile.serviceNames` is empty, `cascade analyze` stamps the sidecar with the
+  names its own discovery read (it already walks the tree for its lanes) and
+  says on the lane census that they are not in the profile yet, with the command
+  that records them. A profile that declares names wins as before, and the pack
+  and its digest are the same either way.
+- **`cascade estimate` names both.** The report says the service name it found
+  and where, and how many gateway routes the tree declares against how many the
+  profile does.
+
+### Changed
+
+- **Both keys are the user's the moment they exist.** `cascade init --force`
+  reads the profile already on disk and leaves a non-empty `gatewayRoutes` or
+  `serviceNames` exactly as it is, saying what it found and did not apply.
+- **The YAML reader is one reader.** `src/core/dbconfig.mjs` grew
+  `readYamlLeaves`, which the datasource reader is now a thin wrapper over and
+  which the Spring configuration reader uses: one set of quoting, comment and
+  document rules, with block and flow sequences added for the route table.
+- **A `gatewayRoutes` map with no lane to read it is announced more precisely.**
+  The Java lane has applied the map since 0.2.0, so the "nothing will read this"
+  diagnostic now fires only when neither `web` nor `spring-mvc` is declared.
+
+
 ## [0.3.0] - 2026-09-09
 
 The connected projects are in the pictures. 0.2.0 let a question walk from one

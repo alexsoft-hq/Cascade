@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
   selectLanes, sqlLaneArgs, declareAxes, axisLimits, axisKnownGaps, AXES, chooseDdlFiles,
-  screenAxisOf,
+  screenAxisOf, serviceNamesOf,
 } from '../src/core/lanes.mjs';
 import { normalizeProfile } from '../src/core/profile.mjs';
 
@@ -828,4 +828,41 @@ test('chooseDdlFiles: nothing to choose from yields nothing, and says no dialect
   assert.deepEqual(c.chosen, []);
   assert.equal(c.dialect, null);
   assert.equal(c.dialectFrom, 'none');
+});
+
+// --------------------------------------------------------------------------
+// serviceNamesOf — who this run says it is (RM46)
+// --------------------------------------------------------------------------
+
+test('serviceNamesOf: the profile wins, and discovery is not consulted at all', () => {
+  const r = serviceNamesOf(
+    normalizeProfile({ serviceNames: ['orders-service'] }),
+    { serviceNames: [{ name: 'read-from-the-tree', file: 'src/main/resources/application.yml' }] },
+  );
+  assert.deepEqual(r, { names: ['orders-service'], from: 'profile', files: [] });
+});
+
+test('serviceNamesOf: an empty profile takes THIS RUN\'s discovery, and says where from', () => {
+  const r = serviceNamesOf(normalizeProfile({}), {
+    serviceNames: [
+      { name: 'orders-service', file: 'b/src/main/resources/application.yml' },
+      { name: 'billing-service', file: 'a/src/main/resources/application.yml' },
+      { name: 'orders-service', file: 'b/src/main/resources/application-docker.yml' },
+    ],
+  });
+  assert.deepEqual(r.names, ['billing-service', 'orders-service'], 'unique and sorted, so two runs write one sidecar');
+  assert.equal(r.from, 'discovery');
+  assert.deepEqual(r.files, [
+    'a/src/main/resources/application.yml',
+    'b/src/main/resources/application-docker.yml',
+    'b/src/main/resources/application.yml',
+  ]);
+});
+
+test('serviceNamesOf: no profile key and no discovery is `none`, not a guess', () => {
+  assert.deepEqual(serviceNamesOf(normalizeProfile({}), null), { names: [], from: 'none', files: [] });
+  assert.deepEqual(serviceNamesOf(normalizeProfile({}), { serviceNames: [] }), { names: [], from: 'none', files: [] });
+  // A run that gave every lane a flag reads no tree at all, and that is not a
+  // reason to invent a name.
+  assert.deepEqual(serviceNamesOf(null, null), { names: [], from: 'none', files: [] });
 });

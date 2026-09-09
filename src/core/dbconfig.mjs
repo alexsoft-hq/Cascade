@@ -488,6 +488,28 @@ export function parseDotenv(text, diagnostics = null, filePath = '') {
 /**
  * Read the `spring: datasource:` subtree of a YAML file — and nothing else.
  *
+ * A thin wrapper over `readYamlLeaves` (the ONE walker in this engine), pinned
+ * to the datasource subtree, with sequences refused: a datasource is a mapping,
+ * and a `- item` under it is a shape this reader will not guess at.
+ *
+ * @param {string} text
+ * @param {Object[]|null} [diagnostics]
+ * @param {string} [filePath]
+ * @returns {{doc:number, keyPath:string[], value:(string|null), line:number}[]}
+ *          leaves under `spring.datasource`, `keyPath` RELATIVE to it
+ */
+export function readSpringDatasourceYaml(text, diagnostics = null, filePath = '') {
+  return readYamlLeaves(text, {
+    interest: (keys) => keys.length >= 2 && keys[0] === 'spring' && keys[1] === 'datasource',
+    sequences: false,
+    diagnostics,
+    filePath,
+  }).map((l) => ({ ...l, keyPath: l.keyPath.slice(2) }));
+}
+
+/**
+ * EVERY LEAF OF A YAML FILE THAT THE CALLER IS INTERESTED IN.
+ *
  * THIS IS NOT A YAML PARSER, and it must not grow into one (SPEC §4: the engine
  * ships zero runtime dependencies). It understands exactly:
  *
@@ -497,38 +519,50 @@ export function parseDotenv(text, diagnostics = null, filePath = '') {
  *     inside single quotes, and `\\`/`\"`/`\n`/`\t` inside double quotes);
  *   - `#` comments — a whole-line one, or one after whitespace outside quotes;
  *   - multiple documents separated by `---` (each is read independently, and a
- *     leaf carries the document index it came from).
+ *     leaf carries the document index it came from);
+ *   - with `sequences: true`, block sequences (`- item`, `- key: value`) and a
+ *     ONE-LEVEL flow sequence of scalars (`[a, b]`). A sequence entry takes the
+ *     index it has in the file as its key path segment (a NUMBER, so a caller
+ *     can tell `routes.0.uri` from a mapping key spelled `0`).
  *
- * Everything else INSIDE THE SUBTREE — sequences (`- item`), flow collections
- * (`{a: b}`, `[a, b]`), block scalars (`|`, `>`), anchors/aliases/merge keys
- * (`&a`, `*a`, `<<:`), tab indentation — is refused with an `UNSUPPORTED_YAML`
- * diagnostic and the line is skipped. Outside the subtree everything is ignored
- * without comment, because it is none of this reader's business.
+ * Everything else INSIDE THE REGION OF INTEREST — flow mappings (`{a: b}`),
+ * nested flow collections, block scalars (`|`, `>`), anchors/aliases/merge keys
+ * (`&a`, `*a`, `<<:`), tab indentation, and sequences when the caller did not
+ * ask for them — is refused with an `UNSUPPORTED_YAML` diagnostic and the line
+ * is skipped. Outside that region everything is ignored WITHOUT comment,
+ * because it is none of this reader's business.
  *
  * @param {string} text
- * @param {Object[]|null} [diagnostics]
- * @param {string} [filePath]
- * @returns {{doc:number, keyPath:string[], value:(string|null), line:number}[]}
- *          leaves under `spring.datasource`, `keyPath` RELATIVE to it
+ * @param {{interest?:(keys:(string|number)[]) => boolean, sequences?:boolean,
+ *          diagnostics?:(Object[]|null), filePath?:string}} [opts]
+ *        `interest` is asked about a FULL key path (the file's own, not
+ *        relative to anything) and decides both which leaves come back and
+ *        which lines are worth a diagnostic. Omitted, everything is of interest.
+ * @returns {{doc:number, keyPath:(string|number)[], value:(string|null), line:number}[]}
  */
-export function readSpringDatasourceYaml(text, diagnostics = null, filePath = '') {
+export function readYamlLeaves(text, opts = {}) {
+  const interest = typeof opts.interest === 'function' ? opts.interest : () => true;
+  const sequences = opts.sequences === true;
+  const diagnostics = opts.diagnostics ?? null;
+  const filePath = opts.filePath ?? '';
+
   const leaves = [];
   const lines = String(text ?? '').split(/\r?\n/);
   let doc = 0;
-  /** @type {{indent:number, key:string, line:number, hadChild:boolean}[]} */
+  // A frame is a mapping key (`kind: 'map'`) or one entry of a block sequence
+  // (`kind: 'item'`). `indent` is the column the frame OWNS: a child sits
+  // deeper than it, a sibling sits at it.
+  /** @type {{kind:string, indent:number, key?:string, index?:number, line:number, hadChild:boolean, seq?:number}[]} */
   let stack = [];
 
-  const inSubtree = (pathKeys) => pathKeys.length >= 2 && pathKeys[0] === 'spring' && pathKeys[1] === 'datasource';
-  const pathOf = () => stack.map((s) => s.key);
+  const pathOf = () => stack.map((s) => (s.kind === 'item' ? s.index : s.key));
 
   // A `key:` with no value is a mapping node UNTIL the indentation proves it had
   // no children; only then is it an empty scalar (`password:` = no password).
   const closeNode = (node) => {
-    if (node.hadChild) return;
+    if (node.kind !== 'map' || node.hadChild) return;
     const keys = [...pathOf(), node.key];
-    if (inSubtree(keys)) {
-      leaves.push({ doc, keyPath: keys.slice(2), value: null, line: node.line });
-    }
+    if (interest(keys)) leaves.push({ doc, keyPath: keys, value: null, line: node.line });
   };
   const popTo = (indent) => {
     while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
@@ -536,6 +570,50 @@ export function readSpringDatasourceYaml(text, diagnostics = null, filePath = ''
     }
   };
   const endDoc = () => { popTo(-1); stack = []; };
+  const noteChild = () => { if (stack.length > 0) stack[stack.length - 1].hadChild = true; };
+
+  /** One `key: value` (or `key:`) entry, at the column it was written in. */
+  const mapEntry = (content, indent, lineNo) => {
+    const here = pathOf();
+    const split = splitYamlKey(content);
+    if (!split) {
+      if (interest(here)) {
+        diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
+          `line ${lineNo} under ${here.join('.')} is not a \`key: value\` mapping entry; it was skipped`);
+      }
+      return;
+    }
+    const { key, value } = split;
+    noteChild();
+
+    if (value === '') {
+      stack.push({ kind: 'map', indent, key, line: lineNo, hadChild: false, seq: 0 });
+      return;
+    }
+
+    const keys = [...here, key];
+    if (!interest(keys)) return;
+
+    // A flow SEQUENCE of scalars is the one flow collection this reader reads,
+    // and only when the caller asked for sequences: `predicates: [Path=/a/**]`
+    // is how half the Spring documentation spells a list. A nested one, or a
+    // flow mapping, is still refused rather than half-read.
+    if (sequences && value.startsWith('[') && value.endsWith(']')
+      && !/[[{]/.test(value.slice(1, -1))) {
+      const items = splitFlowScalars(value.slice(1, -1));
+      items.forEach((item, index) => {
+        leaves.push({ doc, keyPath: [...keys, index], value: unquoteYaml(item), line: lineNo });
+      });
+      return;
+    }
+
+    if (/^[|>&*!]/.test(value) || value.startsWith('{') || value.startsWith('[') || key === '<<') {
+      diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
+        `line ${lineNo} (${keys.join('.')}) uses a YAML construct this reader does not interpret (block scalar, flow collection, anchor/alias or merge key); it was skipped rather than guessed`);
+      return;
+    }
+    leaves.push({ doc, keyPath: keys, value: unquoteYaml(value), line: lineNo });
+  };
 
   for (let i = 0; i < lines.length; i += 1) {
     const raw = lines[i];
@@ -552,52 +630,83 @@ export function readSpringDatasourceYaml(text, diagnostics = null, filePath = ''
 
     if (indentMatch.includes('\t')) {
       // Only complain when it could concern us; a tab elsewhere is not our file.
-      if (inSubtree(pathOf())) {
+      if (interest(pathOf())) {
         diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
           `line ${lineNo} is indented with a tab, which YAML forbids and this reader does not interpret; the line was skipped`);
       }
       continue;
     }
 
-    popTo(indent);
-    const here = pathOf();
-
     if (content.startsWith('- ') || content === '-') {
-      if (inSubtree(here)) {
-        diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-          `line ${lineNo} starts a sequence under ${here.join('.')}; this reader reads block mappings only, so the entry was skipped`);
+      if (!sequences) {
+        popTo(indent);
+        const here = pathOf();
+        if (interest(here)) {
+          diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
+            `line ${lineNo} starts a sequence under ${here.join('.')}; this reader reads block mappings only, so the entry was skipped`);
+        }
+        continue;
       }
-      continue;
-    }
-
-    const split = splitYamlKey(content);
-    if (!split) {
-      if (inSubtree(here)) {
-        diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-          `line ${lineNo} under ${here.join('.')} is not a \`key: value\` mapping entry; it was skipped`);
+      // A dash may sit at its parent key's own column (YAML allows both), so a
+      // frame AT this column is popped only when it is a sibling entry of the
+      // same sequence rather than the mapping key that owns it.
+      popTo(indent + 1);
+      while (stack.length > 0 && stack[stack.length - 1].kind === 'item'
+        && stack[stack.length - 1].indent === indent) {
+        closeNode(stack.pop());
       }
+      const owner = stack.length > 0 ? stack[stack.length - 1] : null;
+      if (!owner || owner.kind !== 'map') {
+        if (interest(pathOf())) {
+          diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
+            `line ${lineNo} starts a sequence that belongs to no mapping key; it was skipped`);
+        }
+        continue;
+      }
+      owner.hadChild = true;
+      const index = owner.seq ?? 0;
+      owner.seq = index + 1;
+      const rest = content === '-' ? '' : content.slice(2).trim();
+      stack.push({ kind: 'item', indent, index, line: lineNo, hadChild: rest !== '', seq: 0 });
+      if (rest === '') continue;
+      // `- key: value` on one line: the entry's first mapping key, at the column
+      // it really occupies, so its own children line up under it.
+      const inlineIndent = indent + (content.length - content.slice(2).length)
+        + (content.slice(2).length - content.slice(2).trimStart().length);
+      if (splitYamlKey(rest)) {
+        mapEntry(rest, inlineIndent, lineNo);
+        continue;
+      }
+      // `- StripPrefix=2`: a scalar entry of the list.
+      const keys = pathOf();
+      if (interest(keys)) leaves.push({ doc, keyPath: keys, value: unquoteYaml(rest), line: lineNo });
       continue;
     }
-    const { key, value } = split;
-    if (stack.length > 0) stack[stack.length - 1].hadChild = true;
 
-    if (value === '') {
-      stack.push({ indent, key, line: lineNo, hadChild: false });
-      continue;
-    }
-
-    const keys = [...here, key];
-    if (!inSubtree(keys)) continue;
-
-    if (/^[|>&*!]/.test(value) || value.startsWith('{') || value.startsWith('[') || key === '<<') {
-      diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-        `line ${lineNo} (${keys.join('.')}) uses a YAML construct this reader does not interpret (block scalar, flow collection, anchor/alias or merge key); it was skipped rather than guessed`);
-      continue;
-    }
-    leaves.push({ doc, keyPath: keys.slice(2), value: unquoteYaml(value), line: lineNo });
+    popTo(indent);
+    mapEntry(content, indent, lineNo);
   }
   endDoc();
   return leaves;
+}
+
+/** `a, b, "c, d"` split on the commas OUTSIDE quotes, trimmed, blanks dropped. */
+function splitFlowScalars(body) {
+  const out = [];
+  let cur = '';
+  let quote = null;
+  for (const c of String(body ?? '')) {
+    if (quote) {
+      cur += c;
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+    if (c === ',') { out.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur.trim());
+  return out.filter((s) => s !== '');
 }
 
 /** Remove a trailing `#` comment that sits outside quotes (YAML needs a space

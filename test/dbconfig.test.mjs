@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   findConnectionCandidates, parseConnectionUrl, redactUrl, refFor,
-  readSpringDatasourceYaml, parseProperties, parseDotenv, kindOfFile,
+  readSpringDatasourceYaml, readYamlLeaves, parseProperties, parseDotenv, kindOfFile,
   looksLikeConnectionFile, PASSWORD_LITERAL_REF, DEFAULT_PORTS,
 } from '../src/core/dbconfig.mjs';
 
@@ -480,4 +480,92 @@ test('the exported candidate shape is exactly the documented one', () => {
     'database', 'dialect', 'host', 'kind', 'passwordPresent', 'passwordRef',
     'path', 'port', 'url', 'usernameRef',
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// The walker underneath (RM46)
+// ---------------------------------------------------------------------------
+//
+// `readSpringDatasourceYaml` is a wrapper over `readYamlLeaves`, which is the
+// ONE YAML reader in this engine: src/core/springconfig.mjs reads a service
+// name and a gateway route table with the same walker, so a quoting rule or a
+// comment rule cannot mean two things in two places.
+
+const leaf = (leaves) => leaves.map((l) => [l.keyPath.join('.'), l.value]);
+
+test('the walker reads a BLOCK SEQUENCE, and an entry keeps the index it was written at', () => {
+  const text = [
+    'top:',
+    '  list:',
+    '    - id: first',
+    '      uri: one://x',
+    '    - id: second',
+    '      uri: two://y',
+    '',
+  ].join('\n');
+  assert.deepEqual(leaf(readYamlLeaves(text, { sequences: true })), [
+    ['top.list.0.id', 'first'],
+    ['top.list.0.uri', 'one://x'],
+    ['top.list.1.id', 'second'],
+    ['top.list.1.uri', 'two://y'],
+  ]);
+});
+
+test('a dash at its key\'s own column belongs to that key, and a scalar entry is a leaf', () => {
+  const text = ['top:', 'list:', '- one', '- two', 'other: x', ''].join('\n');
+  assert.deepEqual(leaf(readYamlLeaves(text, { sequences: true })), [
+    ['top', null], ['list.0', 'one'], ['list.1', 'two'], ['other', 'x'],
+  ]);
+});
+
+test('a nested sequence keeps both indexes, and a flow sequence of scalars is read', () => {
+  const text = [
+    'routes:',
+    '  - name: a',
+    '    filters:',
+    '      - StripPrefix=2',
+    '      - PrefixPath=/x',
+    '    predicates: [Path=/a/**, Method=GET]',
+    '',
+  ].join('\n');
+  assert.deepEqual(leaf(readYamlLeaves(text, { sequences: true })), [
+    ['routes.0.name', 'a'],
+    ['routes.0.filters.0', 'StripPrefix=2'],
+    ['routes.0.filters.1', 'PrefixPath=/x'],
+    ['routes.0.predicates.0', 'Path=/a/**'],
+    ['routes.0.predicates.1', 'Method=GET'],
+  ]);
+});
+
+test('`interest` decides both which leaves come back and which lines are worth a diagnostic', () => {
+  const text = ['mine:', '  a: 1', '  bad: [nested, [deeper]]', 'theirs:', '  b: {flow: 1}', ''].join('\n');
+  const diags = [];
+  const leaves = readYamlLeaves(text, {
+    sequences: true, diagnostics: diags, filePath: 'x.yml',
+    interest: (keys) => keys[0] === 'mine',
+  });
+  assert.deepEqual(leaf(leaves), [['mine.a', '1']]);
+  assert.equal(diags.length, 1, JSON.stringify(diags));
+  assert.equal(diags[0].kind, 'UNSUPPORTED_YAML');
+  assert.match(diags[0].reason, /mine\.bad/);
+});
+
+test('without `sequences` a `- entry` is refused, which is what the datasource reader wants', () => {
+  const diags = [];
+  const leaves = readYamlLeaves('spring:\n  datasource:\n    - url: jdbc:mysql://h/db\n', {
+    diagnostics: diags, filePath: 'a.yml',
+    interest: (keys) => keys[0] === 'spring' && keys[1] === 'datasource',
+  });
+  // The refused entry leaves `datasource` with no child at all, so the node
+  // closes as an empty scalar - the same thing this reader has always done with
+  // a `key:` nothing was written under.
+  assert.deepEqual(leaf(leaves), [['spring.datasource', null]]);
+  assert.equal(diags.length, 1);
+  assert.match(diags[0].reason, /starts a sequence under spring\.datasource/);
+});
+
+test('every document is walked separately, and a leaf says which one it came from', () => {
+  const text = 'a: 1\n---\na: 2\n';
+  assert.deepEqual(readYamlLeaves(text, {}).map((l) => [l.doc, l.keyPath.join('.'), l.value]),
+    [[0, 'a', '1'], [1, 'a', '2']]);
 });

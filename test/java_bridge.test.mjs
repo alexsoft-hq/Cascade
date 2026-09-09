@@ -1767,6 +1767,37 @@ test('gatewayRoutes rewrites an imperative call\'s prefix before it is matched',
   assert.equal(e.evidence.url.template, '/sys/user/list', 'the path searched for is the rewritten one');
 });
 
+test('a discovered gateway route names the service a call with no host of its own goes to (RM46)', () => {
+  // The gateway's own route table, as `cascade init` writes it: the prefix, the
+  // prefix the back end sees, and the deployable it is forwarded to.
+  const routes = { '/api': { to: '/sys', service: 'user-service', from: 'src/main/resources/application.yml' } };
+  const noHost = {
+    url: '/api/user/list', written: '"/api/user/list"', host: null, hostLiteral: false, path: '/api/user/list',
+  };
+
+  const g = new Graph();
+  addJavaFacts(g, [
+    ...servedRoute('GET', '/sys/user/list'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec(noHost),
+  ], { packagePrefixes: ['com.example'], gatewayRoutes: routes });
+  const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
+  assert.equal(e.to, endpointId('GET', '/sys/user/list'), 'the object value rewrites the path exactly as a string one does');
+  assert.deepEqual(e.evidence.prefix, { value: '/sys', from: 'declared', written: '/api' });
+  assert.equal(e.evidence.service, 'user-service');
+  assert.equal(e.evidence.serviceLiteral, true, 'the gateway table wrote that name down');
+
+  // A call that carries its OWN host keeps it: the code at the call site
+  // outranks a table about somebody else's prefix.
+  const own = new Graph();
+  addJavaFacts(own, [
+    ...servedRoute('GET', '/sys/user/list'),
+    typeRec('com.example.Client', { file: 'com/example/Client.java', declaredMethods: ['fetch/0'] }),
+    httpCallRec({ url: 'http://other.invalid/api/user/list', host: 'other.invalid', hostLiteral: true, path: '/api/user/list' }),
+  ], { packagePrefixes: ['com.example'], gatewayRoutes: routes });
+  assert.equal(own.edges.find((x) => x.type === 'CALLS_HTTP').evidence.service, 'other.invalid');
+});
+
 test('two imperative calls from one method to one route are one edge, whatever order they arrive in', () => {
   const twice = [
     ...servedRoute('GET', '/a'),

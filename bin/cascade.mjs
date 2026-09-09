@@ -73,7 +73,7 @@ import { discover, isWebSourceFile, routerDependencyOf } from '../src/core/disco
 import { buildManifest, buildProfile, writeInitFiles, writeStateFile, catalogSignpost, lanesOf, slugify } from '../src/core/init.mjs';
 import { validateManifest, loadManifest } from '../src/core/manifest.mjs';
 import { normalizeProfile, validateProfile, loadProfile, profileDiagnostics, sqlDialectOf, trustGapsFor, PROFILE_DEFAULTS } from '../src/core/profile.mjs';
-import { selectLanes, sqlLaneArgs, declareAxes, screenAxisOf } from '../src/core/lanes.mjs';
+import { selectLanes, sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf } from '../src/core/lanes.mjs';
 import { buildEstimate } from '../src/core/estimate.mjs';
 import { buildChangeset, changedFiles } from '../src/core/changeset.mjs';
 import { overlaySession, shortSessionId } from '../src/core/overlay_session.mjs';
@@ -1445,13 +1445,21 @@ if (cmd === 'init') {
 
   const discovery = discover(root, DISCOVER_IO);
   const p = projectPaths(root);
+  // THE PROFILE THAT IS ALREADY THERE, when there is one. Two keys are the
+  // user's word the moment they exist (`gatewayRoutes`, `serviceNames`), so a
+  // re-run with --force must not overwrite them with what discovery read.
+  let existingProfile = null;
+  if (fs.existsSync(p.profile)) {
+    try { existingProfile = JSON.parse(fs.readFileSync(p.profile, 'utf8')); }
+    catch (e) { process.stderr.write(`the profile at ${p.profile} could not be read (${e.message}), so this run treats it as absent\n`); }
+  }
   let manifest;
   let profile;
   let profileDiagnostics = [];
   try {
     manifest = buildManifest(discovery, { projectId, root, manifestDir: p.root });
     validateManifest(manifest, p.manifest);
-    const built = buildProfile(discovery, { root, manifestDir: p.root });
+    const built = buildProfile(discovery, { root, manifestDir: p.root, existing: existingProfile });
     profile = built.profile;
     profileDiagnostics = built.diagnostics;
   } catch (e) {
@@ -1481,6 +1489,21 @@ if (cmd === 'init') {
     + `${c.javaFiles} java (${c.springHandlerFiles} spring handlers, ${c.jpaEntityFiles} JPA entities), `
     + `${c.mybatisMapperXml} mybatis mapper xml, ${c.ddlFiles} DDL, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json\n`);
   process.stderr.write(`build tool ${discovery.buildTool ?? 'none detected'}; package prefixes [${discovery.packagePrefixes.join(', ')}]; lanes [${lanes.join(',')}]\n`);
+  // WHO THIS SERVICE IS AND WHERE IT FORWARDS, read out of the tree (RM46).
+  // Both used to be blanks a person filled in, and both decide whether an
+  // answer can cross from this project into the next one.
+  for (const s of discovery.serviceNames ?? []) {
+    process.stderr.write(`service name: ${s.name} (from ${s.file})\n`);
+  }
+  const routeFiles = [...new Set((discovery.gatewayRoutes ?? []).map((r) => r.file))].sort();
+  if (routeFiles.length > 0) {
+    const routesKept = diagnostics.some((d) => d.kind === 'GATEWAY_ROUTES_KEPT');
+    process.stderr.write(`gateway routes: ${discovery.gatewayRoutes.length} read from ${routeFiles.join(', ')}`
+      + `${routesKept ? ' (the profile already declares its own, so these were not applied)' : ''}\n`);
+    for (const r of discovery.gatewayRoutes) {
+      process.stderr.write(`  ${r.front} -> ${r.to === '' ? '/' : r.to} at ${r.service ?? 'a service this route does not name'}\n`);
+    }
+  }
   for (const f of written) process.stderr.write(`wrote ${f}\n`);
   for (const f of kept) process.stderr.write(`kept ${f} (already present: re-run with --force to overwrite)\n`);
   process.stderr.write(`registered ${projectId} -> ${p.root} in ${regFile}\n`);
@@ -1839,6 +1862,25 @@ if (cmd === 'analyze') {
     + `openapi ${openapiFiles.length > 0 ? `${openapiFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.openapi})` : 'none'}; `
     + `har ${harFiles.length > 0 ? `${harFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.har})` : 'none'}; `
     + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
+
+  // WHO THIS PACK IS, AND WHERE ITS CALLS GO. The two answers this run uses,
+  // said on the run that uses them: the names go into the routes sidecar beside
+  // the pack, and the routes rewrite a call's prefix before it is matched. The
+  // name is the profile's when it declares one and THIS RUN's discovery
+  // otherwise, and the line says which, because a name nobody recorded is one
+  // that goes away the next time discovery reads a different tree.
+  const serviceNames = serviceNamesOf(profile, discovery);
+  const gatewayKeys = profile.gatewayRoutes && typeof profile.gatewayRoutes === 'object'
+    ? Object.keys(profile.gatewayRoutes).sort() : [];
+  if (serviceNames.names.length > 0 || gatewayKeys.length > 0) {
+    const readIn = serviceNames.files.slice(0, 3).join(', ')
+      + (serviceNames.files.length > 3 ? `, and ${serviceNames.files.length - 3} more` : '');
+    process.stderr.write(`service name(s) [${serviceNames.names.join(', ')}]`
+      + (serviceNames.from === 'discovery'
+        ? ` (discovered in ${readIn}, not in the profile: run \`cascade init --force\` to record it)`
+        : '')
+      + `; gateway routes ${gatewayKeys.length}${gatewayKeys.length > 0 ? `: ${gatewayKeys.join(', ')}` : ''}\n`);
+  }
 
   // THE SCREEN AXIS SWITCH, resolved once, here, and read nowhere else (I-5).
   // The third state needs the frontend packages this run will really read, which
@@ -2794,10 +2836,13 @@ if (cmd === 'analyze') {
     const routesIndex = buildRoutesIndex(g, {
       project: pack.meta?.project ?? projectId ?? null,
       buildDigest: pack.digest,
-      // `spring.application.name` is not something this engine reads today, so
-      // nothing cheap knows the logical service name. A call is matched by its
-      // path and method, and by the project id when the evidence names one.
-      serviceNames: [],
+      // THE NAMES THIS DEPLOYABLE ANSWERS TO (RM46): the profile's, which
+      // `cascade init` filled in from `spring.application.name`, or this run's
+      // own discovery when the profile declares none. A call is matched by its
+      // path and method; when two projects serve the same path, the name the
+      // caller wrote is the only thing that tells them apart. It is metadata
+      // beside the pack, never in it, so neither choice moves a digest.
+      serviceNames: serviceNames.names,
     });
     const routesFile = path.join(writeDir, ROUTES_FILE);
     fs.writeFileSync(routesFile, serializeRoutesIndex(routesIndex));
@@ -3426,6 +3471,19 @@ if (cmd === 'estimate') {
   if (webAxis && (webAxis.counts.webFiles > 0 || webAxis.counts.frontendPackages > 0)) {
     process.stdout.write(`  web files: ${webAxis.counts.webFiles} frontend source file(s) (${webAxis.counts.vueFiles} .vue) `
       + `in ${webAxis.counts.webSourceRoots} source root(s), from ${webAxis.counts.frontendPackages} frontend package(s)\n`);
+  }
+  // The service name and the gateway routes: not an axis, but the two things
+  // that decide whether an answer can cross into another project.
+  const id = est.before.identity ?? { serviceNames: [], gatewayRoutes: 0, gatewayRouteFiles: [], declaredServiceNames: [], declaredGatewayRoutes: 0 };
+  for (const s of id.serviceNames) {
+    process.stdout.write(`  service name: ${s.name} (from ${s.file})`
+      + `${id.declaredServiceNames.includes(s.name)
+        ? ', declared in the profile'
+        : ', and not in the profile yet: cascade init --force writes it'}\n`);
+  }
+  if (id.gatewayRoutes > 0) {
+    process.stdout.write(`  gateway routes: ${id.gatewayRoutes} read from ${id.gatewayRouteFiles.join(', ')}`
+      + `; the profile declares ${id.declaredGatewayRoutes}\n`);
   }
   if (est.before.notCovered.length === 0) process.stdout.write('  not covered: nothing found that this engine has no lane for\n');
   for (const n of est.before.notCovered) process.stdout.write(`  not covered: ${n.technology} (${n.files} file(s)): ${n.reason}\n`);

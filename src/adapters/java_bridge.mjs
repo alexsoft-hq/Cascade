@@ -44,6 +44,9 @@ import { nodeId, Graph, FLOW_EDGE_TYPES } from '../core/graph.mjs';
 // hole), and an imperative Java call is the same question asked from the other
 // side of the wire: two rules would mean two answers for one url.
 import { routeMatches, normalizeUrlPath } from './web_bridge.mjs';
+// One reader for a `gatewayRoutes` value, for the same reason: the web lane and
+// this one apply the same map, and an entry must not mean two things (I-5).
+import { gatewayRouteOf } from '../core/profile.mjs';
 
 export const JAVAFACTS_SCHEMA = 'cascade:javafacts:1';
 
@@ -1384,10 +1387,16 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
     }
     let full = normalizeUrlPath(c.path);
     let prefix = null;
+    // The service a DECLARED route forwards to, when the call itself carried no
+    // host. A gateway's route table names the deployable, and that name is what
+    // lets an answer cross into the right sibling later (src/mcp/federation.mjs).
+    let routeService = null;
     const hit = gatewayKeys.find((k) => full === k || full.startsWith(`${k}/`));
     if (hit !== undefined) {
-      full = normalizeUrlPath(`${gatewayRoutes[hit]}${full.slice(hit.length)}`);
-      prefix = { value: String(gatewayRoutes[hit]), from: 'declared', written: hit };
+      const route = gatewayRouteOf(gatewayRoutes[hit]);
+      full = normalizeUrlPath(`${route.to}${full.slice(hit.length)}`);
+      prefix = { value: route.to, from: 'declared', written: hit };
+      routeService = route.service;
     }
     const httpMethod = typeof c.httpMethod === 'string' && c.httpMethod.length > 0 ? c.httpMethod : null;
     const found = matchServed(httpMethod, full);
@@ -1422,9 +1431,11 @@ export function addJavaFacts(g, javaFacts, opts = {}) {
           // The host is usually a logical SERVICE NAME rather than a machine,
           // and `serviceLiteral` says whether it was written as one or came out
           // of a base the worker could not read — the same distinction the
-          // declarative edge draws for an annotation that names a constant.
-          service: c.host ?? null,
-          serviceLiteral: c.hostLiteral === true,
+          // declarative edge draws for an annotation that names a constant. A
+          // call written with no host at all takes the name from the declared
+          // gateway route that rewrote it, which is where a gateway states it.
+          service: c.host ?? routeService ?? null,
+          serviceLiteral: c.host ? c.hostLiteral === true : routeService !== null,
           // The url as the source wrote it, the path this pack was searched for,
           // and how much of it was literal.
           url: { written: c.written ?? null, template: full, kind: c.urlKind ?? null, base: c.base ?? null },

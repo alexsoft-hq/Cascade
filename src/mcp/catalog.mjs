@@ -44,7 +44,8 @@ export const TOOLS = Object.freeze({
       + '`unmatched` count the ROUTES this project calls and does not serve, `projects` names '
       + 'the registered projects that answer them, `byProject` breaks that down per project '
       + '({project, sites, routes}) and `unmatchedRoutes` lists the ones nobody registered '
-      + 'serves. `sites` counts the METHODS in this pack that make the call, so one route '
+      + 'serves, each with the `service` the caller named for it when it named one, which is '
+      + 'the project to register. `sites` counts the METHODS in this pack that make the call, so one route '
       + 'called from two services is one route and two sites.',
     inputSchema: {
       type: 'object',

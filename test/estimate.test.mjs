@@ -284,6 +284,33 @@ test('estimateBefore: files found but the pack not declared → the run would no
 // Both halves together
 // --------------------------------------------------------------------------
 
+test('estimateBefore names the service and the gateway table the tree declares (RM46)', () => {
+  const r = estimateBefore(
+    discovery({ javaFiles: 4, springHandlerFiles: 1 }, {
+      serviceNames: [{ name: 'edge-service', file: 'src/main/resources/application.yml' }],
+      gatewayRoutes: [
+        { front: '/api/order', to: '', service: 'orders-service', file: 'src/main/resources/application.yml', id: 'orders' },
+      ],
+    }),
+    normalizeProfile({ frameworkPacks: ['spring-mvc'] }),
+  );
+  assert.deepEqual(r.identity.serviceNames, [{ name: 'edge-service', file: 'src/main/resources/application.yml' }]);
+  assert.deepEqual(r.identity.declaredServiceNames, [], 'the profile has not been re-written yet, and the report says so');
+  assert.equal(r.identity.gatewayRoutes, 1);
+  assert.deepEqual(r.identity.gatewayRouteFiles, ['src/main/resources/application.yml']);
+  assert.equal(r.identity.declaredGatewayRoutes, 0);
+
+  // With the profile written, both halves agree.
+  const written = estimateBefore(
+    discovery({ javaFiles: 4 }, { serviceNames: [{ name: 'edge-service', file: 'a.yml' }] }),
+    normalizeProfile({ serviceNames: ['edge-service'], gatewayRoutes: { '/api/order': { to: '', service: 'orders-service' } } }),
+  );
+  assert.deepEqual(written.identity.declaredServiceNames, ['edge-service']);
+  assert.equal(written.identity.declaredGatewayRoutes, 1);
+});
+
+// --------------------------------------------------------------------------
+
 test('buildEstimate: with no pack the measured half is null AND says so', () => {
   const e = buildEstimate({ discovery: discovery({ javaFiles: 1 }), profile: normalizeProfile({}), root: '/x' });
   assert.equal(e.schema, 'cascade:estimate:1');
