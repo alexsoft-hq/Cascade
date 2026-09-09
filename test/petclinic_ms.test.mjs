@@ -124,8 +124,13 @@ test('petclinic-ms: the imperative HTTP calls draw the cross-service edges', { t
 
   // -----------------------------------------------------------------------
   // 1. six calls, six edges, every one of them imperative.
+  //
+  // Split by RULE, because since RM47 this tree has a frontend too: the
+  // gateway's AngularJS pages are read with no flag and their `$http` calls are
+  // CALLS_HTTP edges as well. Those are asserted below on their own.
   // -----------------------------------------------------------------------
-  const http = graph.edges.filter((e) => e.type === 'CALLS_HTTP');
+  const allHttp = graph.edges.filter((e) => e.type === 'CALLS_HTTP');
+  const http = allHttp.filter((e) => e.evidence?.rule === 'http-client-call');
   assert.equal(http.length, 6, `expected the six imperative calls, got ${http.map(shortFrom).join(', ')}`);
   const stats = packJson.meta.laneStats;
   assert.equal(stats.httpCallsDeclarative, 0, 'nothing in this tree is a @FeignClient or an @HttpExchange');
@@ -210,4 +215,81 @@ test('petclinic-ms: the imperative HTTP calls draw the cross-service edges', { t
   // The route the request passes THROUGH is served here, so it is not marked as
   // one this pack only calls.
   assert.equal(graph.nodes.get('endpoint:GET /owners/{ownerId}').outbound, undefined);
+
+  // -----------------------------------------------------------------------
+  // 4. THE FRONTEND (RM47). The gateway ships AngularJS as `<script>` tags
+  //    under `src/main/resources/static/scripts` with no package.json
+  //    anywhere, so nothing here passes a flag: discovery calls that directory
+  //    a web root because it sits under `static`, `cascade init` wrote it into
+  //    the profile, and this run read it.
+  // -----------------------------------------------------------------------
+  const web = allHttp.filter((e) => e.evidence?.rule === 'web-http-call');
+  const shortWeb = (e) => e.from.slice('symbol:'.length).split('static/scripts/')[1];
+  assert.deepEqual(
+    web.map((e) => [shortWeb(e), e.to.slice('endpoint:'.length), e.grade]).sort(),
+    [
+      ['genai/chat.js#sendMessage', 'POST /chatclient', 'SOUND_SET'],
+      ['owner-details/owner-details.controller.js#(module)', 'GET /api/gateway/owners/{ownerId}', 'SOUND_SET'],
+      ['owner-form/owner-form.controller.js#(module)', 'GET /owners/{ownerId}', 'SOUND_SET'],
+      ['owner-form/owner-form.controller.js#(module)', 'POST /owners', 'SOUND_SET'],
+      ['owner-form/owner-form.controller.js#(module)', 'PUT /owners/{ownerId}', 'SOUND_SET'],
+      ['owner-list/owner-list.controller.js#(module)', 'GET /owners', 'SOUND_SET'],
+      ['pet-form/pet-form.controller.js#(module)', 'GET /owners/*/pets/{petId}', 'SOUND_SET'],
+      ['pet-form/pet-form.controller.js#(module)', 'GET /owners/{ownerId}', 'SOUND_SET'],
+      ['pet-form/pet-form.controller.js#(module)', 'GET /petTypes', 'SOUND_SET'],
+      ['pet-form/pet-form.controller.js#(module)', 'POST /owners/{ownerId}/pets', 'SOUND_SET'],
+      ['pet-form/pet-form.controller.js#(module)', 'PUT /owners/*/pets/{petId}', 'SOUND_SET'],
+      ['vet-list/vet-list.controller.js#(module)', 'GET /vets', 'SOUND_SET'],
+      ['visits/visits.controller.js#(module)', 'GET /owners/*/pets/{petId}/visits', 'SOUND_SET'],
+      ['visits/visits.controller.js#(module)', 'POST /owners/*/pets/{petId}/visits', 'SOUND_SET'],
+    ],
+    'every `$http` call the pages make, with the gateway route table applied to its path',
+  );
+  // The `$http` a controller is handed is a client because the pack says so and
+  // because the function sits inside `.controller(…)` — nothing in the file
+  // binds that name.
+  const ownersCall = web.find((e) => e.to === 'endpoint:GET /owners');
+  assert.equal(ownersCall.evidence.sink.kind, 'injected');
+  assert.equal(ownersCall.evidence.sink.module, '$http');
+  assert.equal(ownersCall.evidence.url.written, 'api/customer/owners',
+    'the path is relative and carries the gateway prefix, exactly as the source writes it');
+  assert.equal(ownersCall.evidence.prefix.from, 'declared');
+  assert.equal(ownersCall.evidence.service, 'customers-service');
+
+  // NOT ONE ROUTE DECLARATION AMONG THEM. `$stateProvider.state('owners', {url:
+  // '/owners'})` used to come out as an HTTP call to `/owners`.
+  for (const e of web) {
+    assert.ok(!e.from.endsWith('.js#(module)') || !/\/(app|owner-list|vet-list|visits|owner-form|pet-form|owner-details)\.js#/.test(e.from),
+      `${e.from} is a router declaration file, not a caller`);
+  }
+
+  // The screens, and the chain of NAMES each one attached by.
+  const screens = graph.nodes.values().toArray?.() ?? [...graph.nodes.values()];
+  const screenPaths = screens.filter((n) => n.kind === 'screen').map((n) => n.path).sort();
+  assert.deepEqual(screenPaths, [
+    '/owners', '/owners/:ownerId/edit', '/owners/:ownerId/new-pet',
+    '/owners/:ownerId/pets/:petId', '/owners/:ownerId/pets/:petId/visits',
+    '/owners/details/:ownerId', '/owners/new', '/vets', '/welcome',
+  ], 'nine screens: ten `.state(…)` links, of which `app` is abstract and mounts nothing');
+  const renders = graph.edges.filter((e) => e.type === 'RENDERS');
+  assert.deepEqual(
+    renders.filter((e) => e.from === 'screen:/owners').map((e) => [e.grade, e.evidence.rule, e.evidence.names.join(' > ')]),
+    [['EXACT', 'angular-controller', 'owner-list > ownerList > OwnerListController']],
+    'the tag in the state template, the component registered under that name, and the controller it names',
+  );
+  // `<layout-welcome>` is registered in a loop over a computed name, so no
+  // source line states it. No edge, and the name is reported rather than
+  // silently dropped.
+  assert.deepEqual(renders.filter((e) => e.from === 'screen:/welcome'), []);
+  const screenStats = packJson.meta.laneStats.web.screens;
+  assert.equal(screenStats.componentUnresolved, 1);
+  assert.deepEqual(screenStats.unresolvedNames, [{ name: 'component layoutWelcome', count: 1 }]);
+
+  // The whole sentence, end to end: a screen in the gateway to a column a
+  // service owns, with the HTTP hop in the middle.
+  const screenFlow = callTool('flow', { screen: '/owners' }, ctx).answer;
+  assert.deepEqual(screenFlow.tables.map((x) => [x.table, x.grade, x.viaHttp === true]), [['owners', 'SOUND_SET', true]]);
+  const back = callTool('screen_impact', { column: 'owners.first_name' }, ctx).answer;
+  assert.ok(back.screens.some((s) => s.screen === '/owners'),
+    `the column names the screen: ${back.screens.map((s) => s.screen).join(', ')}`);
 });

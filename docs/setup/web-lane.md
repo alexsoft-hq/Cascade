@@ -125,10 +125,94 @@ cascade analyze [--web-src <dir>... | --no-web] [--openapi <file>... | --no-open
 With no flag, the lane runs over the roots discovery found, but **only when the
 profile declares the `web` framework pack**. `cascade init` declares it whenever
 it finds a `package.json` with a `vue`, `react`, `@angular/core` or `svelte`
-dependency, and adds `vue-router` / `react-router` when the same package depends
-on one. The documents follow the same three-way rule with no pack to declare:
-`--openapi` first, then the profile's `openapi.documents`, then whatever
-discovery found.
+dependency, and adds `vue-router` / `react-router` / `angular-router` when the
+same package depends on one. The documents follow the same three-way rule with
+no pack to declare: `--openapi` first, then the profile's `openapi.documents`,
+then whatever discovery found.
+
+## A frontend with no package.json
+
+Plenty of products ship their frontend the old way: `<script src>` tags in an
+HTML page, sources under `src/main/resources/static/`, and no `package.json`
+anywhere. Nothing there declares a framework dependency, so the rule above finds
+no package, and until RM47 the lane refused to read those files at all: the
+gateway of spring-petclinic-microservices has 22 of them, nine screens and
+thirteen `$http` calls, and every one of them was invisible.
+
+`cascade init` now calls such a directory a **vendored web root** and writes it
+into the profile. A directory qualifies when all three of these are true:
+
+1. it holds at least one non-minified frontend source file, and nothing on its
+   path is somebody else's code (`node_modules`, `bower_components`, `webjars`,
+   `vendor`, `lib`, `dist`, `build`, `target`);
+2. no `package.json` sits in any ancestor **inside its own repository** (a
+   nested checkout starts the question again);
+3. the tree says the directory is **served**: it is, or is under, a directory
+   named `static`, `public`, `webapp` or `www`, or under `resources/templates`,
+   **or** an `index.html` beside it loads one of its files with `<script src>`.
+
+The roots are minimised the way the mapper and Java roots are, so a directory
+and one of its children are never both read. `init` prints one line per root and
+writes them to the profile:
+
+```
+frontend without a package: reading src/main/resources/static/scripts (1 root(s), 22 file(s), router angular-router). Set webRoots to [] in the profile to stop
+```
+
+One line however many roots there are: a tree that keeps a directory of vendored
+plugin scripts under `static/` has thirteen of them, and thirteen lines saying
+the same thing is a wall a reader skips rather than a finding. The first five
+are named, then `and N more`; the count is always exact.
+
+```jsonc
+"webRoots": [
+  { "root": "../src/main/resources/static/scripts", "kind": "vendored", "from": "discovery" }
+]
+```
+
+`root` is relative to the profile's own directory, like every other path in that
+file. `kind` is `vendored` (discovery found it) or `declared` (you typed it).
+The list is **yours the moment it exists**: a later `cascade init --force` leaves
+a non-empty list alone and says what it found and did not apply, and an **empty**
+list is how a project says "read none of them". `--web-src` still wins for one
+run.
+
+`cascade analyze` reads `webRoots` beside the roots a `package.json` gave, and
+the census line says which is which:
+
+```
+web src/main/resources/static/scripts (profile); …
+web roots from the profile: 1 vendored (no package manifest): src/main/resources/static/scripts
+```
+
+**Which framework is it?** No dependency list says, so discovery reads the
+source: it opens up to 400 files under each vendored root and looks for the
+registrar spellings the router packs name (`$stateProvider`, `$routeProvider`,
+`$urlRouterProvider` for AngularJS; `createRouter(` / `VueRouter(`;
+`createBrowserRouter(` and its siblings). What it finds goes into
+`frameworkPacks`, and `cascade estimate` says so on the `web` axis:
+
+```
+web  degraded  22 frontend source file(s) in 1 root(s). 1 of those root(s) are vendored (no
+                package manifest): src/main/resources/static/scripts (22 file(s)). No dependency
+                list names the framework there, so the router pack is chosen from the source
+                alone (angular-router). …
+```
+
+A vendored root whose source names no router is still read, and both lines say
+so rather than staying quiet about it: `no router declaration in any of them` on
+the `init` line, `and nothing in those roots names one` on the axis.
+
+**A root that said nothing is reported.** A directory of somebody else's plugin
+scripts looks exactly like a frontend from the outside. After the run, every
+vendored root with no readable HTTP call, no route declaration and no
+registration in it is named in one warning:
+
+```
+  [warn] WEB_ROOT_SAID_NOTHING 10 root(s) have no readable HTTP call and no route declaration
+  in them: …/plugins/codemirror/addon/hint, …/plugins/codemirror/mode/clike, and 5 more.
+  Take them out of webRoots in the profile if they are not a frontend of yours
+```
 
 ## Router declaration packs
 
@@ -169,8 +253,66 @@ is read as the same tree.
 When two packs could both claim one object, the one whose **distinctive** keys
 the object carries wins (`meta`/`hidden`/`redirect`/`name` against
 `element`/`lazy`/`index`), and a registrar the file actually calls breaks a tie.
-To add a convention, drop a third JSON file in that directory. There is no code
+To add a convention, drop another JSON file in that directory. There is no code
 to change.
+
+### The chain form (`angular-router`)
+
+AngularJS and ui-router do not write an array of route objects. They write a
+**chain**, one call per route, each on the result of the one before it:
+
+```js
+$stateProvider
+    .state('app',    { abstract: true, url: '', template: '<ui-view></ui-view>' })
+    .state('owners', { parent: 'app', url: '/owners', template: '<owner-list></owner-list>' });
+```
+
+`adapters/web/packs/angular-router.json` describes that shape:
+
+```jsonc
+{ "pack": "angular-router",
+  "routesFrom": "chain",
+  "chain":    { "receivers": ["$stateProvider"], "method": "state", "nameArg": 0, "routeArg": 1 },
+  "chainAlt": { "receivers": ["$routeProvider"], "method": "when",  "pathArg": 0, "routeArg": 1 },
+  "routeObject": { "pathKey": "url", "parentKey": "parent", "abstractKey": "abstract",
+                   "controllerKey": "controller",
+                   "componentKeys": ["component", "template", "templateUrl"], "nameKey": null },
+  "registrars": ["$stateProvider", "$routeProvider", "$urlRouterProvider"],
+  "declarationCalls": [ … ],
+  "registrations": { … } }
+```
+
+- **`routesFrom: "chain"`** means this pack's route objects are read only where
+  its own registrar names them. `{url: '/x', template: '<y>'}` is a route inside
+  a `$stateProvider` chain and an ordinary options object anywhere else, and
+  without that switch every options object in the ecosystem with a `url` and a
+  `component` would become a screen.
+- Each link is one route, recorded at the line of its own `.state(`, not at the
+  line the chain starts on.
+- A state's path is its `url`, **composed onto its parent's**: the parent is the
+  `parent` key, or the prefix of a dotted name (`app.owners` means `app`). The
+  parent is as often in another file, so the worker records the parent's NAME
+  and the bridge is what puts the two together.
+- An **abstract** state is not a screen. It still composes: `/owners` under an
+  abstract `app` whose url is `''` is `/owners`.
+- `$routeProvider.when('/legacy', {templateUrl, controller})` is the ngRoute
+  spelling of the same thing, with the path as the first argument.
+
+### A route declaration is never an HTTP call
+
+`$stateProvider.state('owners', {url: '/owners'})` used to come out of the
+worker as a call to `/owners`, and `$urlRouterProvider.otherwise('/welcome')` as
+a call to `/welcome`. On the petclinic gateway that was eight of the nine "calls
+with a URL" the lane reported, and since federation those false calls even
+crossed into another service. Two rules close it, and both are declarations
+rather than code:
+
+- an object argument that **any** router pack recognises as a route object
+  contributes no URL to a call, whatever the callee is;
+- a call listed in a pack's `declarationCalls` (`$stateProvider.state`,
+  `$routeProvider.when` / `.otherwise`, `$urlRouterProvider.otherwise` / `.when`
+  / `.rule`) is a declaration and sends nothing. Its arguments are still walked,
+  because a real call can sit inside one.
 
 ## What the bridge does with them, and its honest grade
 
@@ -326,6 +468,32 @@ DECLARATION, not code: `adapters/web/packs/http-clients.json`.
 `"(call)"` means the instance itself is callable (`service({ url })`). To teach
 the lane a library it does not know, add a row to that file. There is no code to
 change, and nothing in the bridge names a library.
+
+**A client the framework hands you.** AngularJS does not let a file import its
+HTTP client: `$http` arrives as a **parameter**, filled in by name, so nothing
+in the file binds it and every tracing rule above sees a call on an unknown
+object. The pack has an `injected` list for that:
+
+```json
+{ "name": "$http", "framework": "angularjs",
+  "verbs": { "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE", "patch": "PATCH", "head": "HEAD" },
+  "generic": ["(call)"],
+  "registrars": ["controller", "service", "factory", "provider", "directive", "component", "filter", "run", "config", "decorator"] }
+```
+
+A parameter is that client only when **both** halves hold: it is spelled exactly
+like the pack's `name`, and its function sits where the framework fills one in.
+The worker recognises two such places, which are the two the framework itself
+accepts: a function passed to one of the `registrars` (including a
+`component({controller})`), and the inline annotation array
+`['$http', function ($http) { … }]` wherever it is written. The map is inherited
+downward, so `$http.get(url).then(function () { $http.post(…) })` is the same
+client one scope deeper. The edge is graded **SOUND_SET**, the same as any other
+declared client, and its evidence says `sink.kind: "injected"`.
+
+That is also the one place a **relative** path counts as a URL: `$http.get(
+'api/customer/owners')` has no leading slash, and a bare `get('size')` still
+does not become a call. The difference is the client, not the string.
 
 ### What a URL has to look like to count
 
@@ -536,6 +704,55 @@ Nothing about it is guessed from a name:
   counted (`laneStats.web.screens.componentUnresolved`) with the specifiers that
   failed, because an alias or a missing source root is usually what is wrong.
 
+#### When there are no imports: the framework's own name registry
+
+A frontend written before modules resolves nothing by path. AngularJS keeps a
+registry of NAMES, and a name is how one thing finds another:
+
+```js
+// the route says which TAG it mounts
+.state('owners', { url: '/owners', template: '<owner-list></owner-list>' })
+// the tag is a component registered under a name
+angular.module('ownerList').component('ownerList', { templateUrl: '…', controller: 'OwnerListController' })
+// which names a controller, registered in another file again
+angular.module('ownerList').controller('OwnerListController', ['$http', function ($http) { … }])
+```
+
+The worker records each registration as a fact (`kind: "registration"`, with
+`what` = `component` / `controller` / `directive`, the name, and the names it
+points at), reads the HTML template a registration or a route points at
+(`templateUrl`) **for its custom element tags and nothing else**, and the bridge
+walks the names:
+
+| rule | reached by |
+|---|---|
+| `angular-component` | the route named the component: `component: 'ownerList'`, or a `template` that is one element (`<owner-list></owner-list>`, kebab read as camel) |
+| `angular-controller` | a component registration's `controller` key |
+| `angular-template-tag` | a tag in the HTML template a registration points at, which is how one component mounts another |
+
+The grade follows the resolution, not the depth: **EXACT** when every name in
+the chain matched exactly one registration, because the framework itself
+resolves by that exact string, the same way an import names a file;
+**HEURISTIC** when a name is registered more than once, because which module
+loads last is not in the source and every file that registers it is a candidate.
+The chain of names is on the edge as `evidence.names`. Following tags through
+templates obeys the same depth limit as the import walk.
+
+A name **nothing registers** gets no edge and is counted, with the name, in
+`laneStats.web.screens.unresolvedNames` and printed as
+`SCREEN_COMPONENT_UNREGISTERED`. The petclinic gateway has exactly one: its
+layout components are registered in a loop over a computed name, so no source
+line states them.
+
+A `directive` counts as a mount point only when its definition object names a
+controller; every other directive is behaviour on an element. It is looked up
+after the component registry, because that is the one a modern file registers
+in.
+
+**One gap, stated.** An HTML template is not a file the lane lists as a source,
+so an **incremental** run that changes only a template does not re-read the file
+that points at it. A cold run (`cascade analyze --cold`) sees it.
+
 ### The frontend's own calls
 
 Between a component's function and the route it hits there is normally one more
@@ -645,7 +862,7 @@ rather have no screen axis than a partial one.
   |---|---|
   | `true` | build screens, whatever this run happens to read. `cascade init` writes this when it finds a router package in the analyzed tree |
   | `false` | build none, whatever this run happens to read. Your word, and the engine does not argue with it |
-  | `null`, or the key absent | decide it from what the run READS: on when `frameworkPacks` names a router pack, or when a frontend package this run really reads depends on `vue-router` or `react-router`; off otherwise. This is the default |
+  | `null`, or the key absent | decide it from what the run READS: on when `frameworkPacks` names a router pack, or when a frontend package this run really reads depends on `vue-router`, `react-router` or an AngularJS router; off otherwise. This is the default |
 
   The third state exists for the layout `--web-src ../front/src` describes. `cascade init`
   discovers the **analyzed tree**, so a backend whose frontend is checked out beside

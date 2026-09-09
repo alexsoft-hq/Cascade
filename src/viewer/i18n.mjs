@@ -396,6 +396,11 @@ export const VIEWER_STRINGS = {
     'kpi.rest.tables': '{n} sit behind no route',
     'kpi.rest.columns': '{n} nothing reaches',
     'kpi.rest.screens': '{n} reach none',
+    // A project whose requests are ANSWERED SOMEWHERE ELSE (RM47). The dial
+    // stays this project's own share, because that is what it measures; this
+    // says the other number beside it, so "0 of 9 screens reach a table" cannot
+    // be read as "this product's screens reach nothing".
+    'kpi.fed': '{here} here, {there} in connected projects',
     // The router of this frontend is filled in by the server at run time, so
     // the screens in the pack are the ones the source states, not the ones the
     // product has. Said under the dial, because the dial is a share of a

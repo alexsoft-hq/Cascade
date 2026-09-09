@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { discover, prefixOf, coveringPrefixes, minimalRoots, sourceRootOf, isTestPath, classifyDdlFile, ddlDialectFromPath, DiscoverError, SKIP_DIRS } from '../src/core/discover.mjs';
+import { discover, prefixOf, coveringPrefixes, minimalRoots, sourceRootOf, isTestPath, classifyDdlFile, ddlDialectFromPath, DiscoverError, SKIP_DIRS, scriptSourcesOf, scriptTargetOf, underWebRootDir, outsideVendorDirs } from '../src/core/discover.mjs';
 
 // A synthetic tree in a tmp dir: { 'rel/path': 'contents' }. Directories named
 // `.git` are created empty — the walk only needs their presence.
@@ -615,4 +615,122 @@ test('one read answers both questions: the same application.yml is still a datas
   const d = discover(root, io(() => SHA('a')));
   assert.deepEqual(d.serviceNames.map((s) => s.name), ['orders-service']);
   assert.deepEqual(d.connectionCandidates.map((c) => [c.kind, c.host]), [['spring-yml', 'db.example.com']]);
+});
+
+// ---------------------------------------------------------------------------
+// A frontend with no package manifest (RM47)
+// ---------------------------------------------------------------------------
+
+test('a directory of scripts under static/ IS a web root, with no package.json anywhere', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'pom.xml': '<project/>\n',
+    'src/main/java/com/example/web/UserController.java': JAVA_CONTROLLER,
+    'src/main/resources/static/index.html': '<script src="/scripts/app.js"></script>\n',
+    'src/main/resources/static/scripts/app.js': "angular.module('a', []).config(['$stateProvider', function ($stateProvider) {}]);\n",
+    'src/main/resources/static/scripts/list/list.js': "angular.module('a').controller('C', function () {});\n",
+    // Not first-party: a vendored library, wherever it sits.
+    'src/main/resources/static/webjars/angular/angular.js': 'var angular = {};\n',
+    'src/main/resources/static/plugins/vendor/thing.js': 'window.thing = 1;\n',
+    // Not served: a build helper beside the pom.
+    'tools/release.js': 'process.exit(0);\n',
+  });
+  const d = discover(root, io(() => SHA('a')));
+  assert.deepEqual(d.webVendoredRoots.map((r) => [r.root, r.files, r.routerPacks]), [
+    ['src/main/resources/static/scripts', 2, ['angular-router']],
+  ], 'one root, minimal, with the router its own source names');
+  assert.equal(d.counts.webVendoredFiles, 2);
+  assert.deepEqual(d.webSourceRoots, [], 'no package.json declares a framework, so there is no package root');
+  assert.equal(d.counts.webFiles, 5, 'every frontend file is still counted, root or not');
+});
+
+test('a directory with a package.json above it is that package, never a vendored root', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'front/package.json': '{ "name": "f", "dependencies": { "vue": "3.0.0" } }\n',
+    'front/public/app.js': "createRouter({ routes: [] });\n",
+    'front/src/main.js': "createRouter({ routes: [] });\n",
+  });
+  const d = discover(root, io(() => SHA('b')));
+  assert.deepEqual(d.webVendoredRoots, []);
+  assert.deepEqual(d.webSourceRoots, ['front/src']);
+});
+
+test('an index.html that loads one of its own files makes that directory a root', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    // No `static`/`public`/`www` anywhere on the path: the page itself is what
+    // says this directory is served.
+    'site/index.html': '<html><head><script src="./boot.js"></script></head></html>\n',
+    'site/boot.js': "createBrowserRouter([]);\n",
+    // The same shape with NOTHING pointing at it: not a root.
+    'scratch/notes.js': 'var x = 1;\n',
+  });
+  const d = discover(root, io(() => SHA('c')));
+  assert.deepEqual(d.webVendoredRoots.map((r) => [r.root, r.files, r.routerPacks]), [
+    ['site', 1, ['react-router']],
+  ]);
+});
+
+test('a nested repository starts the package question again', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'package.json': '{ "name": "outer" }\n',
+    // Inside a repository of its own, so the outer package.json says nothing
+    // about it.
+    'vendorapp/.git/HEAD': 'ref: refs/heads/main\n',
+    'vendorapp/src/main/resources/static/js/app.js': "angular.module('a', []);\n",
+  });
+  const d = discover(root, io(() => SHA('d')));
+  assert.deepEqual(d.webVendoredRoots.map((r) => r.root), ['vendorapp/src/main/resources/static/js']);
+});
+
+test('a directory of BUILD OUTPUT is not a frontend, whatever its files are called', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    // A webpack build: nothing is spelled `.min.js`, and every chunk has the
+    // source map a build writes beside it.
+    'src/main/resources/static/cashier/js/app.cebd468e.js': 'var a=1;\n',
+    'src/main/resources/static/cashier/js/app.cebd468e.js.map': '{"version":3}\n',
+    'src/main/resources/static/cashier/js/chunk-vendors.2e0d2416.js': 'var b=2;\n',
+    'src/main/resources/static/cashier/js/chunk-vendors.2e0d2416.js.map': '{"version":3}\n',
+  });
+  const d = discover(root, io(() => SHA('f')));
+  assert.deepEqual(d.webVendoredRoots, [], 'a bundle is output, and reading it puts a bundle\'s insides in the graph');
+});
+
+test('a served directory with no router in it is still a root, and says it names none', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'src/main/webapp/js/legacy.js': "$.get('/api/things');\n",
+  });
+  const d = discover(root, io(() => SHA('e')));
+  assert.deepEqual(d.webVendoredRoots.map((r) => [r.root, r.routerPacks]), [['src/main/webapp/js', []]]);
+});
+
+test('a <script src> is read as a path under the page\'s own directory', () => {
+  assert.deepEqual(scriptSourcesOf('<script src="a.js"></script><script src=\'b.js\'></script><script src=c.js>'),
+    ['a.js', 'b.js', 'c.js']);
+  assert.deepEqual(scriptSourcesOf('<script>var x = 1;</script>'), []);
+  // The leading slash is the SERVER\'s root, which is the directory the page is
+  // in, so both spellings name the same file.
+  assert.equal(scriptTargetOf('static', '/scripts/app.js'), 'static/scripts/app.js');
+  assert.equal(scriptTargetOf('static', 'scripts/app.js'), 'static/scripts/app.js');
+  assert.equal(scriptTargetOf('static', './scripts/app.js?v=2'), 'static/scripts/app.js');
+  assert.equal(scriptTargetOf('static/pages', '../scripts/app.js'), 'static/scripts/app.js');
+  assert.equal(scriptTargetOf('.', 'app.js'), 'app.js');
+  // Somebody else\'s file.
+  assert.equal(scriptTargetOf('static', 'https://cdn.example.invalid/x.js'), null);
+  assert.equal(scriptTargetOf('static', '//cdn.example.invalid/x.js'), null);
+});
+
+test('where a served directory sits, and what is somebody else\'s code', () => {
+  assert.equal(underWebRootDir('src/main/resources/static/scripts'), true);
+  assert.equal(underWebRootDir('src/main/webapp'), true);
+  assert.equal(underWebRootDir('src/main/resources/templates/js'), true);
+  assert.equal(underWebRootDir('tools/build'), false);
+  assert.equal(outsideVendorDirs('static/scripts'), true);
+  assert.equal(outsideVendorDirs('static/webjars/x'), false);
+  assert.equal(outsideVendorDirs('static/adminlte/bower_components/x'), false);
+  assert.equal(outsideVendorDirs('static/lib/x'), false);
 });

@@ -3703,6 +3703,32 @@ test('the masthead rail carries a screens lane, and says shipped, degraded and n
   assert.equal(off.title, 'the profile turns the screen axis off');
 });
 
+test('a project whose requests end elsewhere says both numbers under the dial', async (t) => {
+  const { ctx, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=overview' });
+  // Before: this project's own share, and what is left of it.
+  const before = byId.get('ovcards').querySelectorAll('.kpiden').map((x) => x.textContent);
+  assert.match(before[4], /reach none$/, before[4]);
+  assert.match(before[0], /reach no SQL$/, before[0]);
+
+  // A gateway whose screens and routes are answered in a connected project.
+  // The DIAL is untouched, because this project's share is what it measures;
+  // the subtitle is what gains the second number.
+  ev(ctx, `OV.resp.answer.screens.reachingATable = 0;
+    OV.resp.answer.reach.viaFederation = { screens: 8, endpoints: 1 };
+    renderOverview();`);
+  await settle(ctx, 4);
+  const after = byId.get('ovcards').querySelectorAll('.kpiden').map((x) => x.textContent);
+  assert.match(after[4], /^0 \/ \d+\s+0 here, 8 in connected projects$/, after[4]);
+  assert.match(after[0], /\d+ here, 1 in connected projects$/, after[0]);
+  // A lane with nothing on the other side keeps the plain wording.
+  assert.match(after[2], /sit behind no route$/, after[2]);
+
+  // ...and with no crossing at all the block is absent and nothing changes.
+  ev(ctx, 'delete OV.resp.answer.reach.viaFederation; renderOverview();');
+  await settle(ctx, 4);
+  assert.match(byId.get('ovcards').querySelectorAll('.kpiden')[4].textContent, /reach none$/);
+});
+
 test('a pack with no frontend has no screens lane number to show, and says so', async (t) => {
   const { byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=overview' });
   const lane = byId.get('crail').querySelectorAll('.crlane')[0];

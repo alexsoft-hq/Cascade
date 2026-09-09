@@ -51,12 +51,109 @@ Each dated section below is one round of work. The round protocol is in
 - **`cascade estimate` names both.** The report says the service name it found
   and where, and how many gateway routes the tree declares against how many the
   profile does.
+- **A frontend with no `package.json` is read.** Plenty of products ship the
+  screen side as `<script src>` tags under `src/main/resources/static/`, with no
+  manifest anywhere. Nothing there declares a framework dependency, so the lane
+  refused to open those files at all: the petclinic gateway's 22 of them, its
+  nine screens and its thirteen `$http` calls were invisible, and so were
+  jeepay's and xxl-job's. `cascade init` now calls a directory of frontend
+  sources a **vendored web root** when the tree says it is served (it is, or is
+  under, a `static` / `public` / `webapp` / `www` directory, or under
+  `resources/templates`, or an `index.html` beside it loads one of its files),
+  no `package.json` sits above it inside its own repository, and nothing on its
+  path is somebody else's code. It writes them to a new profile key `webRoots`
+  and prints one line naming the directory, the file count and the way to switch
+  it off. `cascade analyze` reads that key beside the roots a `package.json`
+  gives, and the census says which roots are vendored.
+- **The router pack is chosen from the source when no dependency names it.**
+  There is no dependency list for a vendored root, so discovery reads up to 400
+  of its files and looks for the registrar spellings the packs name. What it
+  finds goes into `frameworkPacks`, and `cascade estimate` says so on the `web`
+  axis: `No dependency list names the framework there, so the router pack is
+  chosen from the source alone (angular-router)`.
+- **An AngularJS router pack, and the CHAIN shape it is written in.**
+  `adapters/web/packs/angular-router.json` describes
+  `$stateProvider.state(name, route).state(…)` and `$routeProvider.when(path,
+  route)`: one route per link, recorded at its own line, with the state's `url`
+  composed onto its parent's (the `parent` key, or the prefix of a dotted name),
+  and an abstract state composing without being a screen. Its route objects are
+  read only where its own registrar names them, so an options object with a
+  `url` and a `component` anywhere else is still an options object.
+- **Screens attach through the framework's own name registry.** A frontend
+  written before modules imports nothing: `<owner-list>` in a state's template is
+  a string AngularJS matches against a registry of names. The worker records
+  each `angular.module(…).component / .controller / .directive` registration as
+  a fact and reads the HTML template a registration points at for its custom
+  element tags and nothing else; the bridge walks tag to component to controller
+  to file. `RENDERS` is **EXACT** when every name in the chain matched exactly
+  one registration, because the framework resolves by that exact string, and
+  **HEURISTIC** when a name is registered twice, because which module loads last
+  is not in the source. The chain of names is on the edge (`evidence.names`),
+  and a name nothing registers gets no edge and is reported as
+  `SCREEN_COMPONENT_UNREGISTERED`.
+- **`$http` is a client, and the pack says so.** AngularJS hands its HTTP client
+  to a function as a parameter, so nothing in the file binds it and every
+  tracing rule saw a call on an unknown object. `http-clients.json` gains an
+  `injected` list; a parameter is that client only when it is spelled like the
+  pack's name **and** its function sits where the framework fills one in (a
+  function passed to `.controller(…)` / `.service(…)` / `.factory(…)` /
+  `.component({controller})`, or the inline `['$http', function ($http) {}]`
+  array). The edge is SOUND_SET with `sink.kind: "injected"`. That is also the
+  one place a relative path (`api/customer/owners`) counts as a URL.
+- **`screen_impact` crosses into the project the screens are in.** A column
+  question asked of a service whose product has no frontend of its own now names
+  the screens a **sibling** shows it on, each row carrying `project`, the routes
+  it came in on and `viaHttp`, exactly as `endpoint_impact` already returned the
+  routes on the far side of the same crossing.
+- **The route a request ENTERED is a row of the endpoint lane.** A crossing
+  lands on a route in the other project and the walk over there starts at it, so
+  nothing below drew it: `flow` down from a screen showed `0 / 0` endpoints
+  beside a note about a connection this mode does not trust, for a request that
+  plainly entered `GET /owners` next door. Each crossing's target route is now an
+  `endpoints` row carrying `project`, `federated`, `viaHttp`, the crossing's
+  grade and the hop it was entered at, walking down from a screen and from a
+  route alike. It is not counted in this project's own endpoint census: `walk`
+  and `layers` still describe this project's walk, as they already did for the
+  tables.
+- **The overview says the second number.** "0 of 9 screens reach a table, 9
+  reach none" is true of one pack and false of the product: on a gateway whose
+  every request is answered elsewhere, eight of those screens end at a real
+  column one hop away. `overview.reach` gains `viaFederation: {screens,
+  endpoints}` — this project's screens and routes that reach a table in a
+  CONNECTED project, from one sibling walk per distinct crossed route — and the
+  page says both under the dial (`0 here, 8 in connected projects`). The dial
+  keeps this project's own ratio. Absent on a single-project server and when
+  nothing this project calls lands on a table.
+
+### Fixed
+
+- **A route declaration is no longer read as an HTTP call.**
+  `$stateProvider.state('owners', {url: '/owners'})` came out of the worker as a
+  call to `/owners` and `$urlRouterProvider.otherwise('/welcome')` as a call to
+  `/welcome`: on the petclinic gateway that was eight of the nine "calls with a
+  URL" the lane reported, and since federation those false calls crossed into
+  another service and told a real table that a screen touched it. Two
+  declarations close it for every pack: an object argument any router pack reads
+  as a route contributes no URL to a call, and a call a pack lists in
+  `declarationCalls` sends nothing.
 
 ### Changed
 
-- **Both keys are the user's the moment they exist.** `cascade init --force`
-  reads the profile already on disk and leaves a non-empty `gatewayRoutes` or
-  `serviceNames` exactly as it is, saying what it found and did not apply.
+- **Three keys are the user's the moment they exist.** `cascade init --force`
+  reads the profile already on disk and leaves a non-empty `gatewayRoutes`,
+  `serviceNames` or `webRoots` exactly as it is, saying what it found and did
+  not apply. For `webRoots` an EMPTY list counts as an answer too: it is how a
+  project says "read none of them".
+- **A run says a thing once, however many roots it has.** `cascade init`'s
+  "frontend without a package" line and the `WEB_ROOT_SAID_NOTHING` warning were
+  one line per root, which is thirteen lines on a tree that keeps a directory of
+  vendored plugin scripts. Both are one line now, naming the first five roots
+  and then how many more; the counts stay exact. The `analyze` census line lists
+  its roots the same way.
+- **The web worker is `webfacts/4`.** It prints two new record kinds
+  (`registration`, and the template facts that ride on a route or a
+  registration), an `injected` marker on a call, and three new summary counters.
+  Every web shard is re-read once, as a worker version change always does.
 - **The YAML reader is one reader.** `src/core/dbconfig.mjs` grew
   `readYamlLeaves`, which the datasource reader is now a thin wrapper over and
   which the Spring configuration reader uses: one set of quoting, comment and

@@ -430,6 +430,9 @@ export function webFactsSummary(records) {
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles: 0,
     platformSinks: { fetch: 0, xhr: 0 },
+    registrations: { component: 0, controller: 0, directive: 0 },
+    templatesRead: 0,
+    injectedCalls: 0,
   };
   const withFileRecord = new Set();
   const errorOnly = new Set();
@@ -459,6 +462,11 @@ export function webFactsSummary(records) {
       case 'route':
         counts.routes += 1;
         counts.byPack[r.pack] = (counts.byPack[r.pack] ?? 0) + 1;
+        if (typeof r.templateFile === 'string') counts.templatesRead += 1;
+        break;
+      case 'registration':
+        counts.registrations[r.what] = (counts.registrations[r.what] ?? 0) + 1;
+        if (typeof r.templateFile === 'string') counts.templatesRead += 1;
         break;
       case 'config':
         if (r.what === 'alias') counts.aliases += 1;
@@ -469,6 +477,7 @@ export function webFactsSummary(records) {
         counts.calls += 1;
         if (r.platformSink === 'fetch') counts.platformSinks.fetch += 1;
         if (r.platformSink === 'xhr') counts.platformSinks.xhr += 1;
+        if (r.injected) counts.injectedCalls += 1;
         if (r.method && r.method.from) {
           counts.methodBySource[r.method.from] = (counts.methodBySource[r.method.from] ?? 0) + 1;
         }

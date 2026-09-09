@@ -1,0 +1,32 @@
+{
+  "pack": "angular-router",
+  "routesFrom": "chain",
+  "chain": { "receivers": ["$stateProvider"], "method": "state", "nameArg": 0, "routeArg": 1 },
+  "chainAlt": { "receivers": ["$routeProvider"], "method": "when", "pathArg": 0, "routeArg": 1 },
+  "routeObject": {
+    "pathKey": "url",
+    "parentKey": "parent",
+    "abstractKey": "abstract",
+    "controllerKey": "controller",
+    "componentKeys": ["component", "template", "templateUrl"],
+    "nameKey": null
+  },
+  "registrars": ["$stateProvider", "$routeProvider", "$urlRouterProvider"],
+  "declarationCalls": [
+    { "receivers": ["$stateProvider"], "methods": ["state"] },
+    { "receivers": ["$routeProvider"], "methods": ["when", "otherwise"] },
+    { "receivers": ["$urlRouterProvider"], "methods": ["when", "otherwise", "rule"] }
+  ],
+  "registrations": {
+    "root": "angular",
+    "moduleMethod": "module",
+    "kinds": [
+      { "method": "component", "nameArg": 0, "defArg": 1 },
+      { "method": "controller", "nameArg": 0, "defArg": 1 },
+      { "method": "directive", "nameArg": 0, "defArg": 1, "needs": "controller" }
+    ],
+    "controllerKey": "controller",
+    "templateUrlKey": "templateUrl",
+    "templateKey": "template"
+  }
+}

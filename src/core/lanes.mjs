@@ -314,12 +314,26 @@ export function selectLanes(input = {}) {
   let webSource = webSrc.length ? 'flag' : 'none';
   if (webSrc.length === 0 && !flags.noWeb && packs.includes('web')) {
     const roots = discovery && Array.isArray(discovery.webSourceRoots) ? discovery.webSourceRoots : [];
-    webSrc = roots.map((d) => path.resolve(root, d));
-    if (webSrc.length > 0) webSource = 'discovery';
-    else {
+    // THE PROFILE'S OWN ROOTS, beside the ones a frontend package.json gives
+    // (RM47). A frontend shipped as `<script>` tags declares no dependency, so
+    // no walk of the tree can turn it into a package: `cascade init` writes what
+    // it found into `webRoots`, and this is where that record is acted on. It is
+    // read from the PROFILE and not from this run's discovery, because a web
+    // root decides what is in the pack, and a pack must not change under an
+    // input nobody recorded.
+    const declaredRoots = Array.isArray(profile.webRoots) ? profile.webRoots : [];
+    const fromProfile = declaredRoots
+      .map((r) => (r && typeof r.root === 'string' ? r.root : null))
+      .filter(nonEmpty)
+      .map((d) => path.resolve(manifestDir ?? root, d));
+    webSrc = [...roots.map((d) => path.resolve(root, d)), ...fromProfile];
+    if (webSrc.length > 0) {
+      webSource = fromProfile.length === 0 ? 'discovery'
+        : roots.length === 0 ? 'profile' : 'discovery+profile';
+    } else {
       diagnostics.push({
         kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-        reason: 'frameworkPacks declares web, but discovery found no frontend package.json with a framework dependency, so there is no frontend source root to read. Pass --web-src to name one',
+        reason: 'frameworkPacks declares web, but discovery found no frontend package.json with a framework dependency and the profile names no webRoots, so there is no frontend source root to read. Pass --web-src to name one',
       });
     }
   }
@@ -630,7 +644,8 @@ function screenAxis(web, har, opts = {}) {
     why.push(`${s.componentUnresolved} of ${s.declared} route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here`);
   }
   if (s.nameSource && s.nameSource.refused) why.push(s.nameSource.refused);
-  const renders = s.renders ? (s.renders.EXACT ?? 0) + (s.renders.SOUND_SET ?? 0) : 0;
+  const renders = s.renders
+    ? (s.renders.EXACT ?? 0) + (s.renders.SOUND_SET ?? 0) + (s.renders.HEURISTIC ?? 0) : 0;
   if (renders === 0) {
     why.push(`${s.screens ?? 0} screen(s) were built and not one of them reaches a function this lane read, so nothing hangs off any of them`);
   }

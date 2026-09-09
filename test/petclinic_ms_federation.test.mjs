@@ -144,18 +144,34 @@ test('petclinic-ms split five ways: the answer crosses from one pack into the ne
     return [id, idx.serves.length, idx.calls.length, pack.nodes.filter((n) => n.id.startsWith('table:')).length];
   });
   assert.deepEqual(counted, [
-    ['api-gateway', 2, 2, 0],
+    ['api-gateway', 2, 14, 0],
     ['customers-service', 8, 0, 3],
     ['visits-service', 3, 0, 1],
     ['vets-service', 1, 0, 3],
     ['genai-service', 1, 4, 0],
   ], 'a per-service build reads that service\'s own DDL, not the whole tree\'s');
-  // The two calls the gateway makes, by hand from CustomersServiceClient.java
-  // and VisitsServiceClient.java: one names its service as a literal, the other
-  // builds the url from a base this lane does not resolve and claims no name.
+  // Every call the gateway makes. TWO of them are Java, by hand from
+  // CustomersServiceClient.java and VisitsServiceClient.java: one names its
+  // service as a literal, the other builds the url from a base this lane does
+  // not resolve and claims no name. The other TWELVE are the AngularJS pages
+  // under `src/main/resources/static/scripts` (RM47), read with no flag because
+  // discovery wrote that directory into the profile's `webRoots`; each one
+  // carries the service the gateway's own route table forwards its prefix to.
   assert.deepEqual(indexOf('api-gateway').calls.map((c) => [c.method, c.path, c.service]), [
+    ['GET', '/owners', 'customers-service'],
+    ['GET', '/owners/{*}', 'customers-service'],
+    ['GET', '/owners/{*}/pets/{*}', 'customers-service'],
+    ['GET', '/owners/{*}/pets/{*}/visits', 'visits-service'],
     ['GET', '/owners/{ownerId}', 'customers-service'],
+    ['GET', '/petTypes', 'customers-service'],
     ['GET', '/pets/visits', null],
+    ['GET', '/vets', 'vets-service'],
+    ['POST', '/chatclient', 'genai-service'],
+    ['POST', '/owners', 'customers-service'],
+    ['POST', '/owners/{*}/pets', 'customers-service'],
+    ['POST', '/owners/{*}/pets/{*}/visits', 'visits-service'],
+    ['PUT', '/owners/{*}', 'customers-service'],
+    ['PUT', '/owners/{*}/pets/{*}', 'customers-service'],
   ]);
 
   // ---- the server that holds all five -------------------------------------
@@ -166,7 +182,7 @@ test('petclinic-ms split five ways: the answer crosses from one pack into the ne
   // Every project is federated, and the listing says so from the sidecars alone.
   const listed = host.callTool('projects', {}).answer.projects;
   assert.deepEqual(listed.map((p) => [p.id, p.federation.index, p.federation.serves, p.federation.calls]), [
-    ['api-gateway', 'present', 2, 2],
+    ['api-gateway', 'present', 2, 14],
     ['customers-service', 'present', 8, 0],
     ['genai-service', 'present', 1, 4],
     ['vets-service', 'present', 1, 0],
@@ -225,10 +241,29 @@ test('petclinic-ms split five ways: the answer crosses from one pack into the ne
   // chat client at run time, not by a call this lane can see — so the crossing
   // is REPORTED and contributes no row. A crossing with nothing above it is
   // still a crossing, and the answer says it happened.
-  assert.deepEqual(impact.answer.federation.crossed.map((c) => [c.from.project, c.route.path, c.to.endpoint]), [
-    ['api-gateway', '/owners/{ownerId}', 'GET /owners/{ownerId}'],
-    ['genai-service', '/owners/{*}/pets', 'POST /owners/{ownerId}/pets'],
-  ]);
+  assert.deepEqual(
+    impact.answer.federation.crossed.map((c) => [c.from.project, shortOf(c.from.symbol), c.route.path, c.to.endpoint]),
+    [
+      ['api-gateway', 'api.application.CustomersServiceClient#getOwner', '/owners/{ownerId}', 'GET /owners/{ownerId}'],
+      // The gateway's own pages ask for the same owner (RM47): two controllers,
+      // two crossings, both onto the route customers-service serves.
+      ['api-gateway', 'src/main/resources/static/scripts/owner-form/owner-form.controller.js#(module)', '/owners/{*}', 'GET /owners/{ownerId}'],
+      ['api-gateway', 'src/main/resources/static/scripts/pet-form/pet-form.controller.js#(module)', '/owners/{*}', 'GET /owners/{ownerId}'],
+      ['genai-service', 'genai.AIDataProvider#addPetToOwner', '/owners/{*}/pets', 'POST /owners/{ownerId}/pets'],
+    ],
+  );
+
+  // ---- 3b. the screens on the far side of the same crossing (RM47) -------
+  // The gateway's frontend is in ANOTHER pack, and a column question asked of
+  // customers-service still names the screens that show it.
+  const screens = host.callTool('screen_impact', { project: 'customers-service', column: 'owners.first_name' });
+  assertContract(screens);
+  assert.deepEqual(screens.answer.screens.map((s) => [s.screen, s.project, s.grade, s.endpoints]), [
+    ['/owners', 'api-gateway', 'SOUND_SET', ['GET /owners']],
+    ['/owners/:ownerId/edit', 'api-gateway', 'SOUND_SET', ['POST /owners', 'PUT /owners/{ownerId}']],
+    ['/owners/new', 'api-gateway', 'SOUND_SET', ['POST /owners', 'PUT /owners/{ownerId}']],
+  ], 'customers-service has no screen of its own, and these three are the gateway\'s');
+  assert.deepEqual(screens.basis.siblings.map((s) => s.project), ['api-gateway', 'genai-service']);
 
   // ---- 4. the project that serves it is not registered -------------------
   const withoutVisits = { projects: registry.projects.filter((p) => p.id !== 'visits-service') };

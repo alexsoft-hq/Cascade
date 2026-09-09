@@ -569,3 +569,49 @@ test('cascade init: the profile gets the service name and the gateway table, and
   assert.deepEqual(after.gatewayRoutes, { '/api/order': '/mine' });
   assert.deepEqual(after.serviceNames, ['my-own-name']);
 });
+
+// ---------------------------------------------------------------------------
+// A frontend with no package manifest (RM47)
+// ---------------------------------------------------------------------------
+
+const vendored = (over = {}) => discovery({
+  webVendoredRoots: [{ root: 'src/main/resources/static/scripts', files: 22, routerPacks: ['angular-router'] }],
+  ...over,
+});
+
+test('lanesOf counts a frontend with no package as a web lane', () => {
+  assert.ok(lanesOf(vendored()).includes('web'));
+});
+
+test('buildProfile writes the vendored root, the web pack and the router the SOURCE names', () => {
+  const { profile, diagnostics } = buildProfile(vendored(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(profile.webRoots, [{
+    root: '../src/main/resources/static/scripts', kind: 'vendored', from: 'discovery',
+  }], 'manifest-relative, like every other path in this file');
+  assert.ok(profile.frameworkPacks.includes('web'));
+  assert.ok(profile.frameworkPacks.includes('angular-router'),
+    'no dependency list names the framework, so the registrar the source writes is what does');
+  assert.equal(profile.screenAxis.enabled, true, 'a router pack IS the screen axis switch');
+  assert.deepEqual(diagnostics.filter((d) => d.kind === 'WEB_ROOTS_KEPT'), []);
+});
+
+test('a webRoots list already in the profile is the user\'s, including an empty one', () => {
+  const kept = buildProfile(vendored(), {
+    root: '/p/app', manifestDir: '/p/app/.cascade', existing: { webRoots: [] },
+  });
+  assert.deepEqual(kept.profile.webRoots, [], 'an empty list is how a project says "read none of them"');
+  const d = kept.diagnostics.find((x) => x.kind === 'WEB_ROOTS_KEPT');
+  assert.ok(d, JSON.stringify(kept.diagnostics));
+  assert.match(d.reason, /src\/main\/resources\/static\/scripts/);
+
+  const mine = buildProfile(vendored(), {
+    root: '/p/app', manifestDir: '/p/app/.cascade', existing: { webRoots: [{ root: '../legacy/js', kind: 'declared' }] },
+  });
+  assert.deepEqual(mine.profile.webRoots, [{ root: '../legacy/js', kind: 'declared' }]);
+});
+
+test('a tree with neither a frontend package nor a vendored root declares no web pack', () => {
+  const { profile } = buildProfile(discovery(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(profile.webRoots, []);
+  assert.equal(profile.frameworkPacks.includes('web'), false);
+});

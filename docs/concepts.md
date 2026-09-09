@@ -291,6 +291,27 @@ the list cannot know to do it. The same rule covers a project that could not be
 asked at all: a project with no route index beside its pack is named in
 `federation.skipped`, with `cascade analyze` as the fix.
 
+**The route the request ENTERED is a row of its own.** A crossing lands on a
+route in the other project, and the walk over there starts at it, so nothing
+below draws it. Left out, a screen whose call is answered next door showed an
+empty endpoint lane beside a note about a connection this mode does not trust,
+which reads as "this screen calls nothing". So each crossing's target route is
+an `endpoints` row carrying `project`, `federated`, `viaHttp`, the crossing's
+grade and the hop it was entered at. It is not counted in this project's own
+endpoint census: `walk` and `layers` describe this project's walk, exactly as
+they do for the tables.
+
+**"0 of 9 screens reach a table" is a true sentence about one pack and a false
+one about a product.** On a gateway whose every request is answered elsewhere,
+those nine screens end at real columns one HTTP hop away. `overview.reach`
+therefore carries `viaFederation: {screens, endpoints}` — how many of this
+project's screens and routes reach a table in a **connected** project — and the
+page says both numbers under the dial (`0 here, 8 in connected projects`). The
+dial itself stays this project's own ratio, because that is what a share of this
+project means. The block is absent on a single-project server and when nothing
+this project calls lands on a table, so its absence reads as "nothing crosses"
+rather than "we did not look".
+
 **A picture crosses, and it is still one project's picture.** The whole-pack
 views (`map`, `erd`) follow the same crossing rules, with one more of their own:
 they add only what **this project's requests reach**, never the other pack. Two

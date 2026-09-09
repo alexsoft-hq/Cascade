@@ -4,6 +4,18 @@
     { "name": "fetch", "urlArg": 0, "optionsArg": 1, "methodKey": "method", "defaultMethod": "GET" },
     { "name": "xhr", "open": { "methodArg": 0, "urlArg": 1 } }
   ],
+  "injected": [
+    {
+      "name": "$http",
+      "framework": "angularjs",
+      "verbs": { "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE", "patch": "PATCH", "head": "HEAD" },
+      "generic": ["(call)"],
+      "configUrlKey": "url",
+      "configMethodKey": "method",
+      "defaultMethod": "GET",
+      "registrars": ["controller", "service", "factory", "provider", "directive", "component", "filter", "run", "config", "decorator"]
+    }
+  ],
   "libraries": [
     {
       "module": "axios",

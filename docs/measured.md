@@ -42,17 +42,17 @@ suite.
 
 | Repository | Pinned at | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs |
 |---|---|---|---|---|---|---|---|
-| [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) | `74364054` | 744 / 969 | 73 / 177 | 836 / 2092 | 538 / 929 | 19 / 166 | 15997 |
+| [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) | `74364054` | 744 / 969 | 73 / 177 | 836 / 2092 | 538 / 934 | 19 / 166 | 15997 |
 | [jishenghua/JSH_ERP](https://github.com/jishenghua/JSH_ERP) | `ad6cf886` | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 | 13179 |
 | [apache/dolphinscheduler](https://github.com/apache/dolphinscheduler) | `499fd068` | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 | 6216 |
 | [macrozheng/mall](https://github.com/macrozheng/mall) + [mall-admin-web](https://github.com/macrozheng/mall-admin-web) | `0504e86b` + `81fc17e5` | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 | 3868 |
 | [linlinjava/litemall](https://github.com/linlinjava/litemall) | `a1ef964a` | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 | 4223 |
 | [yangzongzhuan/RuoYi-Vue](https://github.com/yangzongzhuan/RuoYi-Vue) + [RuoYi-Vue3](https://github.com/yangzongzhuan/RuoYi-Vue3) | `13db1fce` + `838965c5` | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 | 1613 |
 | [jeequan/jeepay](https://github.com/jeequan/jeepay) | `ba371119` | 126 / 134 | 22 / 23 | 302 / 314 | no frontend read | no frontend read | 3554 |
-| [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | no frontend read | no frontend read | 528 |
+| [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | 0 / 2 | 0 / 0 | 528 |
 | [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read | 243 |
 | [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read | 83 |
-| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 5 / 7 | 20 / 24 | no frontend read | no frontend read | 54 |
+| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 | 54 |
 
 The last column is the sixth, and it is guarded the other way up. It adds up,
 over every endpoint, how many distinct columns that one endpoint reaches, and a
@@ -79,10 +79,10 @@ asked it a question.
 | litemall | shipped | shipped | not-shipped | not-shipped | shipped | shipped | degraded | shipped |
 | ruoyi-vue | shipped | shipped | not-shipped | not-shipped | shipped | shipped | shipped | degraded |
 | jeepay | shipped | shipped | not-shipped | degraded | shipped | shipped | not-shipped | not-shipped |
-| xxl-job | shipped | shipped | not-shipped | not-shipped | shipped | shipped | not-shipped | not-shipped |
+| xxl-job | shipped | shipped | not-shipped | not-shipped | shipped | shipped | degraded | not-shipped |
 | jpetstore-6 | shipped | shipped | not-shipped | not-shipped | shipped | shipped | not-shipped | not-shipped |
 | spring-petclinic | shipped | not-shipped | degraded | not-shipped | degraded | shipped | not-shipped | not-shipped |
-| petclinic-ms | shipped | not-shipped | degraded | not-shipped | degraded | shipped | not-shipped | not-shipped |
+| petclinic-ms | shipped | not-shipped | degraded | not-shipped | degraded | shipped | shipped | shipped |
 
 `degraded` on `mybatisPlus` there is the naming strategy: no profile in the
 corpus declares one, so the engine assumes MyBatis-Plus's own default, grades
@@ -99,6 +99,20 @@ Whether the other 35 touch no database at all (a login, a file upload, a health
 check) or whether the engine lost one of their calls is a question only reading
 them answers, and the round that adds a repository to this table is the round
 that reads them. It is not a benchmark and it is not a claim of correctness.
+
+Three of those frontend numbers are new in RM47, and none of them came from a
+flag. The petclinic gateway ships its frontend as `<script src>` tags with no
+`package.json` anywhere: 22 files, nine screens and thirteen `$http` calls that
+the lane refused to open until this round, so both of its frontend columns said
+"no frontend read". `cascade init` now calls a directory of frontend sources the
+tree says it serves a web root and writes it into the profile. xxl-job gains a
+web lane over 19 loose scripts and reads two call sites out of them, neither
+resolving to a route it serves, which is why its `web` axis is `degraded` rather
+than `shipped`; jeecg-boot picks up five more call sites the same way, none of
+them resolving either. jeepay is the case that stays where it was on purpose:
+its `static/cashier/js` is a webpack build, and a `.js` with a `.js.map` beside
+it is output rather than a frontend somebody keeps here. See
+[the web lane](setup/web-lane.md#a-frontend-with-no-packagejson).
 
 One entry is worth reading as a limit rather than as a score. jeecg-boot
 declares 173 routes, 87 of them the framework's own demo pages, and fetches

@@ -1941,6 +1941,11 @@ const VIEWER_STRINGS = {
     'kpi.rest.tables': '{n} sit behind no route',
     'kpi.rest.columns': '{n} nothing reaches',
     'kpi.rest.screens': '{n} reach none',
+    // A project whose requests are ANSWERED SOMEWHERE ELSE (RM47). The dial
+    // stays this project's own share, because that is what it measures; this
+    // says the other number beside it, so "0 of 9 screens reach a table" cannot
+    // be read as "this product's screens reach nothing".
+    'kpi.fed': '{here} here, {there} in connected projects',
     // The router of this frontend is filled in by the server at run time, so
     // the screens in the pack are the ones the source states, not the ones the
     // product has. Said under the dial, because the dial is a share of a
@@ -10265,10 +10270,17 @@ function renderOverview(){
 // the answer carries a `screens` block: an axis that never ran has no share to
 // show, and a 0% dial there would say the frontend reaches nothing when the
 // truth is that no frontend was analyzed.
+// `fed` is the SECOND number a project whose requests are answered elsewhere
+// has to say: how many of its own routes or screens reach a table in a
+// CONNECTED project (`overview.reach.viaFederation`, RM47). The dial keeps this
+// project's own share, because that is what a share of this project means; the
+// subtitle then reads "0 here, 8 in connected projects" instead of "8 reach
+// none", which is true of one pack and false of the product.
 const OV_KPI = [
   { kind:'endpoint',  lbl:'kpi.endpoints',  rest:'kpi.rest.endpoints',
     has:()=> true,
     of:(a)=> (a.reach||{}).endpoints||0,
+    fed:(a)=> ((a.reach||{}).viaFederation||{}).endpoints||0,
     got:(a)=> ((a.reach||{}).endpoints||0)-((a.reach||{}).endpointsWithoutStatement||0) },
   { kind:'statement', lbl:'kpi.statements', rest:'kpi.rest.statements',
     has:()=> true,
@@ -10281,6 +10293,7 @@ const OV_KPI = [
     of:(a)=> (a.reach||{}).columns||0,    got:(a)=> (a.reach||{}).columnsReached||0 },
   { kind:'screen',    lbl:'kpi.screens',    rest:'kpi.rest.screens',
     has:(a)=> !!a.screens,
+    fed:(a)=> ((a.reach||{}).viaFederation||{}).screens||0,
     of:(a)=> (a.screens||{}).screens||0,  got:(a)=> (a.screens||{}).reachingATable||0,
     // A router the SERVER fills in at run time makes the denominator itself a
     // lower bound, and a share of a lower bound has to say so on the card.
@@ -10291,12 +10304,15 @@ function ovKpis(a){
   return OV_KPI.filter((k)=>k.has(a)).map((k)=>{
     const total=k.of(a), got=k.got(a), rest=Math.max(0, total-got);
     const pct = total ? Math.round(got/total*100) : 0;
+    // The connected number, when there is one and it has something to say.
+    const there = k.fed ? k.fed(a) : 0;
+    const tail = there>0 ? t('kpi.fed',{here:ovNum(got), there:ovNum(there)}) : t(k.rest,{n:ovNum(rest)});
     const card=el('div',{className:'kpi', style:'color:'+kindColor(k.kind)},[
       el('div',{className:'kpilbl',textContent:t(k.lbl)}),
       el('div',{className:'kpinum'},[ ovNum(got===0&&total===0?0:pct),
         el('span',{className:'kpipct',textContent:'%'}) ]),
       el('div',{className:'kpiden',
-        textContent: ovNum(got)+' / '+ovNum(total)+'\u00a0\u00a0'+t(k.rest,{n:ovNum(rest)})}),
+        textContent: ovNum(got)+' / '+ovNum(total)+'\u00a0\u00a0'+tail}),
       (k.note && k.note(a)) ? el('div',{className:'kpinote',textContent:t(k.note(a))}) : null,
     ]);
     // The arc: the same share, drawn. `stroke-dasharray` is the share of the

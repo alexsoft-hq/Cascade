@@ -69,6 +69,13 @@ endpoints reach SQL, how many statements, tables and columns are reached. Under
 each number is what it leaves out, in that step's own terms, because a share
 only means something beside its remainder.
 
+On a project whose requests are answered somewhere else, the remainder is the
+wrong sentence: a gateway's nine screens reach no table it owns, because it owns
+none, and eight of them end at a real column one HTTP hop away. Where the answer
+carries `reach.viaFederation`, the endpoint and screen dials say both numbers
+instead — `0 here, 8 in connected projects`. The dial itself stays this
+project's own ratio, because that is what a share of this project means.
+
 Beside the dials is the cartography: the live whole-project map at reduced
 height, from the very `map` answer the Graph tab uses. It is asked once and
 shared, so opening the Graph tab does not fetch it again. Hover a node to light

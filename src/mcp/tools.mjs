@@ -339,7 +339,28 @@ export function screen_impact(graph, args, ctx) {
       ...(s.viaHttp ? { viaHttp: true, httpHops: s.httpHops } : {}),
     };
   });
-  items.sort((a, b) => (a.grade !== b.grade ? gradeRank(b.grade) - gradeRank(a.grade) : cmpStr(a.screen, b.screen)));
+  // THE CROSSING, THE OTHER WAY UP (RM47). A screen that shows this column is
+  // as often in ANOTHER deployable as the column is: a gateway's frontend draws
+  // a table a customers service owns. The rows come back carrying `project` and
+  // are never folded into this project's own, exactly as `endpoint_impact`
+  // returns the routes on the far side of the same crossing.
+  const fed = makeFederator(ctx, args);
+  if (fed.wanted) {
+    const routes = [];
+    for (const id of [...affectedEndpoints].sort()) {
+      const n = graph.nodes.get(id);
+      if (!n || n.outbound === true) continue;
+      const info = [...graph.impactOf(targetId, { mode, edgeTypes: FLOW_EDGE_TYPES })]
+        .find(([nid]) => nid === id);
+      routes.push(routeRef({
+        id: strip(id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
+        grade: info ? info[1].pathGrade : 'SOUND_SET',
+      }, { grade: info ? info[1].pathGrade : 'SOUND_SET' }));
+    }
+    items.push(...fed.crossUpScreens(routes, { mode }));
+  }
+  items.sort((a, b) => (a.grade !== b.grade ? gradeRank(b.grade) - gradeRank(a.grade) : cmpStr(a.screen, b.screen))
+    || cmpStr(a.project ?? '', b.project ?? ''));
 
   const shown = items.slice(offset, offset + limit);
   const node = graph.nodes.get(targetId);
@@ -348,15 +369,16 @@ export function screen_impact(graph, args, ctx) {
     mode,
     screens: shown,
   };
+  if (fed.saysAnything()) answer.federation = fed.block();
   if (shown.length === 0) {
     answer.empty = { screens: items.length > 0 ? 'not-in-this-axis' : screenNoneReason(graph, ctx) };
   }
   const trunc = [truncField('screens', shown.length, items.length, offset, 'grade desc, screen asc')];
   return makeResponse({
     answer,
-    basis: ctx.basis,
+    basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['screen', 'column']),
-    limits: [...(ctx.limits ?? []), ...entryLimits, screenWalkLimit()],
+    limits: [...(ctx.limits ?? []), ...entryLimits, screenWalkLimit(), ...fed.limits()],
     truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
 }
@@ -1394,6 +1416,8 @@ export function overview(graph, args, ctx) {
     axes: (meta && meta.axes) || null,
   });
   const cut = (list) => list.slice(0, OVERVIEW_CAP);
+  const fed = makeFederator(ctx, args);
+  const viaFederation = federatedReach(graph, fed, { mode, depth });
 
   const answer = {
     mode: o.mode,
@@ -1411,6 +1435,11 @@ export function overview(graph, args, ctx) {
     statementTypes: o.statementTypes,
     reach: {
       ...o.reach,
+      // The screens and routes of THIS project that reach a table in a
+      // CONNECTED one (RM47). Absent on a single-project server and when
+      // nothing this project calls lands on a table, so its absence is "no
+      // crossing" and never "we did not look".
+      ...(viaFederation ? { viaFederation } : {}),
       samples: {
         endpointsWithoutStatement: cut(o.reach.samples.endpointsWithoutStatement),
         unreachedStatements: cut(o.reach.samples.unreachedStatements),
@@ -1719,7 +1748,17 @@ export function flow(graph, args, ctx) {
   };
   const empty = {};
   const trunc = [];
-  for (const field of (w.laneNames ?? FLOW_LANES[direction])) {
+  // THE LANES THIS ANSWER HAS, plus one the crossings can add. Walking down from
+  // a ROUTE there is no endpoint lane — a route is where that walk starts, so
+  // nothing below it is one. A crossing does put a route in it: the request left
+  // this project and entered another project's route, and that row has nowhere
+  // else to go. It sits where the walk would have drawn it, before the services.
+  const laneList = [...(w.laneNames ?? FLOW_LANES[direction])];
+  if (!up && (federated.endpoints ?? []).length > 0 && !laneList.includes('endpoints')) {
+    const at = laneList.indexOf('services');
+    laneList.splice(at < 0 ? laneList.length : at, 0, 'endpoints');
+  }
+  for (const field of laneList) {
     // A lane is this project's rows plus whatever the crossings added to it.
     // Sorted by the SAME rule the walk sorts by, with the project as the last
     // tiebreak so two projects' rows with one name keep a fixed order.
@@ -1745,6 +1784,64 @@ export function flow(graph, args, ctx) {
     trust: trustFor(ctx, ['flow']),
     limits, truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
+}
+
+/**
+ * HOW MUCH OF THIS PROJECT REACHES A TABLE IN ANOTHER ONE (RM47).
+ *
+ * "0 of 9 screens reach a table, 9 reach none" is a true sentence about one pack
+ * and a false one about the product: on a gateway whose every request is
+ * answered somewhere else, eight of those nine screens end at a real column, one
+ * HTTP hop away. The dial stays this project's own ratio, because that is what
+ * it measures; this is the second number said beside it.
+ *
+ * THE COST IS BOUNDED BY THE OUTBOUND ROUTE COUNT. One sibling walk per DISTINCT
+ * crossed route, cached, and then one backward walk per calling symbol in this
+ * project. Nothing is walked twice and no sibling is loaded that a crossing does
+ * not name.
+ *
+ * @returns {{screens:number, endpoints:number}|null} null on a single-project
+ *          server, and null when nothing this project calls lands on a table
+ */
+function federatedReach(graph, fed, opts) {
+  if (!fed.wanted || !fed.available) return null;
+  const outbound = packOutboundCalls(graph);
+  if (outbound.length === 0) return null;
+  const landsOnATable = new Map(); // `${project} ${route id}` -> boolean
+  const callers = new Set();
+  for (const call of outbound) {
+    const r = serversOf(call, fed.entries, { exclude: fed.self });
+    for (const target of r.chosen) {
+      const key = `${target.project} ${target.route.id}`;
+      let hit = landsOnATable.get(key);
+      if (hit === undefined) {
+        const sib = fed.contextFor(target.project);
+        hit = false;
+        if (sib && sib.graph.nodes.has(target.route.id)) {
+          const w = chainWalk(sib.graph, {
+            start: target.route.id, direction: 'down', mode: opts.mode, maxDepth: opts.depth,
+          });
+          hit = (w.tables ?? []).length > 0;
+        }
+        landsOnATable.set(key, hit);
+      }
+      if (hit) for (const c of call.callers ?? []) callers.add(c);
+    }
+  }
+  if (callers.size === 0) return null;
+  const screens = new Set();
+  const endpoints = new Set();
+  for (const id of [...callers].sort(cmpStr)) {
+    for (const [nid] of graph.impactOf(id, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES })) {
+      const n = graph.nodes.get(nid);
+      if (!n) continue;
+      if (n.kind === 'screen') screens.add(nid);
+      // A route this project only CALLS is not one of its own, here as
+      // everywhere else in the reach census.
+      else if (n.kind === 'endpoint' && n.outbound !== true) endpoints.add(nid);
+    }
+  }
+  return { screens: screens.size, endpoints: endpoints.size };
 }
 
 /**

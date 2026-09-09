@@ -892,7 +892,7 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   const stats = addWebFacts(g, []);
   assert.deepEqual(edgesOf(g), []);
   assert.deepEqual(stats.calls, {
-    withUrl: 0, traced: 0, platform: 0, untraced: 0, notUrlShaped: 0, notAFunction: 0, passedAsValue: 0,
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, notAFunction: 0, passedAsValue: 0,
   });
   assert.deepEqual(stats.resolved, { SOUND_SET: 0, HEURISTIC: 0 });
   assert.equal(stats.instances, 0);
@@ -1413,7 +1413,7 @@ test('RENDERS is EXACT onto the functions of the file the route names', () => {
   ]);
   assert.equal(rendersOf(g)[0].evidence.rule, 'route-component');
   assert.equal(rendersOf(g)[0].evidence.component, 'src/screens/panel/rows.vue');
-  assert.deepEqual(stats.screens.renders, { EXACT: 1, SOUND_SET: 0 });
+  assert.deepEqual(stats.screens.renders, { EXACT: 1, SOUND_SET: 0, HEURISTIC: 0 });
 });
 
 test('a component that IMPORTS another component renders it as a candidate, with the chain', () => {
@@ -1434,7 +1434,7 @@ test('a component that IMPORTS another component renders it as a candidate, with
   assert.deepEqual(e.evidence.via, [
     'src/screens/panel/index.vue', 'src/screens/panel/child.vue', 'src/screens/panel/rows.vue',
   ]);
-  assert.deepEqual(stats.screens.renders, { EXACT: 0, SOUND_SET: 1 });
+  assert.deepEqual(stats.screens.renders, { EXACT: 0, SOUND_SET: 1, HEURISTIC: 0 });
 });
 
 test('an import CYCLE between two components is cut, and neither is rendered twice', () => {
@@ -1548,4 +1548,177 @@ test('the server-driven rule is the MENU CALL: it fires with one route declared 
   assert.equal(big.screens.serverDriven.detected, true, 'the menu call alone decides');
   assert.equal(big.screens.serverDriven.detectedBy, 'menu-call');
   assert.equal(big.screens.serverDriven.ceiling, 30, 'the ceiling survives as the wording switch');
+});
+
+// ---------------------------------------------------------------------------
+// B7b/B7c: a screen that attaches by the FRAMEWORK'S OWN NAME REGISTRY (RM47)
+//
+// A frontend written before modules imports nothing. `<owner-list>` in a state's
+// template is a string the framework matches against a registry it keeps, and
+// that registry is what these edges are built on: the tag, the component
+// registered under that name, and the controller that component names.
+// ---------------------------------------------------------------------------
+
+const ngRoute = (line, rec) => ({
+  kind: 'route', line, pack: 'angular-router', via: 'chain', receiver: '$stateProvider',
+  parent: null, children: 0, ...rec,
+});
+const ngReg = (line, what, name, extra = {}) => ({
+  kind: 'registration', line, framework: 'angular', what, name, ...extra,
+});
+const ngCall = (line, url, method = 'GET') => ({
+  kind: 'call', line, enclosing: '(module)',
+  callee: { shape: 'member', root: '$http', path: [method.toLowerCase()], name: method.toLowerCase() },
+  binding: null, args: [], url: literalUrl(url), method: { value: method, from: 'callee-name' },
+  platformSink: null, injected: { client: '$http', framework: 'angularjs' },
+});
+
+/** The petclinic shape, renamed: a state, a component, a controller that calls. */
+const ngApp = ({ tag = 'thing-list', component = 'thingList', controller = 'ThingListCtrl' } = {}) => [
+  ...file('static/scripts/app.js',
+    ngRoute(4, { name: 'shell', path: '', abstract: true, componentTag: 'ui-view' }),
+    ngRoute(9, { name: 'things', path: '/plain/list', parentName: 'shell', componentTag: tag })),
+  ...file('static/scripts/thing/thing.component.js',
+    ngReg(3, 'component', component, { controller })),
+  ...file('static/scripts/thing/thing.controller.js',
+    ngReg(3, 'controller', controller),
+    ngCall(5, '/plain/list')),
+];
+
+test('a screen resolves its component by NAME, and the chain of names is on the edge', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, ngApp(), SCREEN_ON);
+  assert.deepEqual(screensOf(g).map((s) => s.path), ['/plain/list'],
+    'the abstract state composes the path and is not a screen of its own');
+  assert.deepEqual(rendersOf(g).map((e) => [e.from, e.to, e.grade]), [
+    ['screen:/plain/list', 'symbol:static/scripts/thing/thing.controller.js#(module)', 'EXACT'],
+  ]);
+  const [e] = rendersOf(g);
+  assert.equal(e.evidence.rule, 'angular-controller');
+  assert.deepEqual(e.evidence.names, ['thing-list', 'thingList', 'ThingListCtrl']);
+  assert.equal(e.evidence.component, 'static/scripts/thing/thing.controller.js');
+  assert.match(e.evidence.basis, /resolves that name through its own registry/);
+  assert.deepEqual(stats.screens.renders, { EXACT: 1, SOUND_SET: 0, HEURISTIC: 0 });
+  assert.equal(stats.screens.withComponent, 1);
+  assert.deepEqual(stats.screens.unresolvedNames, []);
+});
+
+test('the $http call behind that screen is a client, and the screen reaches the route', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, ngApp(), SCREEN_ON);
+  const e = only(g);
+  assert.equal(e.grade, 'SOUND_SET');
+  assert.equal(e.to, webEndpointId('GET', '/plain/list'));
+  assert.equal(e.evidence.sink.kind, 'injected');
+  assert.equal(e.evidence.sink.module, '$http');
+  assert.equal(e.evidence.basis, WEB_CALL_BASIS.injected);
+  assert.equal(stats.calls.injected, 1);
+  assert.equal(stats.calls.untraced, 0, 'an injected client is traced, not guessed at');
+});
+
+test('a name registered TWICE renders both, HEURISTIC, because load order decides', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ...ngApp(),
+    // A second module registers the same component name against another controller.
+    ...file('static/scripts/other/other.component.js', ngReg(3, 'component', 'thingList', { controller: 'OtherCtrl' })),
+    ...file('static/scripts/other/other.controller.js', ngReg(3, 'controller', 'OtherCtrl'), ngCall(5, '/plain/list')),
+  ], SCREEN_ON);
+  assert.deepEqual(rendersOf(g).map((e) => [e.to, e.grade]).sort(), [
+    ['symbol:static/scripts/other/other.controller.js#(module)', 'HEURISTIC'],
+    ['symbol:static/scripts/thing/thing.controller.js#(module)', 'HEURISTIC'],
+  ]);
+  assert.match(rendersOf(g)[0].evidence.basis, /registered more than once/);
+  assert.deepEqual(stats.screens.renders, { EXACT: 0, SOUND_SET: 0, HEURISTIC: 2 });
+});
+
+test('a tag nothing registers gets NO edge, and the name is reported rather than dropped', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ...file('static/scripts/app.js',
+      ngRoute(4, { name: 'ghost', path: '/plain/list', componentTag: 'never-registered' })),
+  ], SCREEN_ON);
+  assert.deepEqual(screensOf(g).map((s) => s.path), ['/plain/list']);
+  assert.deepEqual(rendersOf(g), []);
+  assert.equal(stats.screens.componentUnresolved, 1);
+  assert.deepEqual(stats.screens.unresolvedNames, [{ name: 'component neverRegistered', count: 1 }],
+    'the REGISTRY name the tag resolves to is what missed, and that is the name to look for');
+});
+
+test('a template mounts a component inside a component, and the walk follows it', () => {
+  const g = graphWithRoutes();
+  // The same app, with thing.component.js's template naming <thing-badge>:
+  // another component, with a controller of its own.
+  const withTemplate = ngApp().filter((r) => r.file !== 'static/scripts/thing/thing.component.js');
+  const stats = addWebFacts(g, [
+    ...withTemplate,
+    ...file('static/scripts/thing/thing.component.js',
+      ngReg(3, 'component', 'thingList', {
+        controller: 'ThingListCtrl',
+        templateFile: 'static/scripts/thing/thing.template.html',
+        templateTags: ['thing-badge'],
+      })),
+    ...file('static/scripts/badge/badge.js',
+      ngReg(3, 'component', 'thingBadge', { controller: 'BadgeCtrl' }),
+      ngReg(7, 'controller', 'BadgeCtrl'),
+      ngCall(9, '/api/things/list')),
+  ], SCREEN_ON);
+  const badge = rendersOf(g).find((e) => e.to.includes('badge/badge.js'));
+  assert.ok(badge, `expected an edge onto the badge file, got ${JSON.stringify(rendersOf(g).map((e) => e.to))}`);
+  assert.equal(badge.grade, 'EXACT');
+  assert.equal(badge.evidence.rule, 'angular-controller');
+  assert.deepEqual(badge.evidence.names, [
+    'thing-list', 'thingList', 'static/scripts/thing/thing.template.html', 'thing-badge', 'thingBadge', 'BadgeCtrl',
+  ], 'the whole chain, template included, is what the edge rests on');
+  // Three edges: the screen's own controller, and the badge file twice, once as
+  // the component the template names and once as the controller that component
+  // names. Both registrations sit in that one file.
+  assert.deepEqual(rendersOf(g).map((e) => [e.to, e.evidence.rule]).sort(), [
+    ['symbol:static/scripts/badge/badge.js#(module)', 'angular-controller'],
+    ['symbol:static/scripts/badge/badge.js#(module)', 'angular-template-tag'],
+    ['symbol:static/scripts/thing/thing.controller.js#(module)', 'angular-controller'],
+  ]);
+  assert.equal(stats.screens.renders.EXACT, 3);
+});
+
+test('a state with an abstract parent composes its path across FILES', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, [
+    ...file('static/scripts/app.js', ngRoute(4, { name: 'app', path: '/plain', abstract: true, componentTag: 'ui-view' })),
+    // Another file entirely names `app` as its parent — the worker resolves
+    // nothing across files, so the bridge is what puts the two together.
+    ...file('static/scripts/list/list.js', ngRoute(6, { name: 'rows', path: 'list', parentName: 'app', componentTag: 'row-list' })),
+    ...file('static/scripts/list/list.component.js', ngReg(3, 'component', 'rowList', { controller: 'RowCtrl' })),
+    ...file('static/scripts/list/list.controller.js', ngReg(3, 'controller', 'RowCtrl'), ngCall(5, '/plain/list')),
+  ], SCREEN_ON);
+  assert.deepEqual(screensOf(g).map((s) => s.path), ['/plain/list']);
+});
+
+test('a DIRECTIVE with a controller is a mount point when no component holds the name', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, [
+    ...file('static/scripts/app.js', ngRoute(4, { name: 'boxes', path: '/plain/list', componentTag: 'widget-box' })),
+    ...file('static/scripts/widget/widget.js',
+      ngReg(3, 'directive', 'widgetBox', { controller: 'WidgetCtrl' }),
+      ngReg(9, 'controller', 'WidgetCtrl'),
+      ngCall(11, '/plain/list')),
+  ], SCREEN_ON);
+  assert.deepEqual(rendersOf(g).map((e) => [e.to, e.grade, e.evidence.rule]), [
+    ['symbol:static/scripts/widget/widget.js#(module)', 'EXACT', 'angular-component'],
+    ['symbol:static/scripts/widget/widget.js#(module)', 'EXACT', 'angular-controller'],
+  ]);
+});
+
+test('a $routeProvider route names its controller directly, with no component in between', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, [
+    ...file('static/scripts/legacy.js', {
+      kind: 'route', line: 4, pack: 'angular-router', via: 'chain', receiver: '$routeProvider',
+      path: '/plain/list', controllerName: 'LegacyCtrl', parent: null, children: 0,
+    }),
+    ...file('static/scripts/legacy.controller.js', ngReg(3, 'controller', 'LegacyCtrl'), ngCall(5, '/plain/list')),
+  ], SCREEN_ON);
+  assert.deepEqual(rendersOf(g).map((e) => [e.from, e.to, e.evidence.rule]), [
+    ['screen:/plain/list', 'symbol:static/scripts/legacy.controller.js#(module)', 'angular-controller'],
+  ]);
 });

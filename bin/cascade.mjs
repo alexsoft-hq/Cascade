@@ -436,8 +436,8 @@ function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
         } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
       },
       catalog: () => { needPy('the DDL catalog'); return parseJsonl(runpy('catalog_ddl.py', ['--identifier-case', sqlArgs.identifierCase, ...ddlAbsList])); },
-      web: (targets) => runWebLane(rootAbs, targets),
-      webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true }),
+      web: (targets) => runWebLane(rootAbs, targets, { sourceRoots: (selection.webRoots ?? []).map(absOf) }),
+      webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots: roots }),
     };
     const webRootsAbs = (selection.webRoots ?? []).map(absOf);
 
@@ -831,9 +831,30 @@ function runJavaLane(jdk, root, srcRoots) {
  *        walked and only the package configuration comes back
  * @returns {Object[]} the worker's records, header and summary included
  */
+/**
+ * A list said in one line: the first five, then how many more.
+ *
+ * A run over a tree with a directory of vendored plugin scripts has thirteen
+ * web roots, and thirteen lines saying the same thing is a wall a reader skips
+ * rather than a finding. The count is always exact; only the names are cut.
+ *
+ * @param {string[]} items
+ * @returns {string}
+ */
+function listOfFive(items) {
+  const all = [...items];
+  return all.length <= 5 ? all.join(', ') : `${all.slice(0, 5).join(', ')}, and ${all.length - 5} more`;
+}
+
 function runWebLane(root, targets, opts = {}) {
   const worker = path.join(ENGINE_ROOT, 'adapters', 'web', 'webfacts.mjs');
-  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...targets];
+  // `--web-root` names the roots this project DECLARES, on every invocation.
+  // The worker looks for an HTML template a `templateUrl` names relative to
+  // them, and an incremental run is handed changed FILES rather than roots: a
+  // search derived from the arguments would look in different places on the two
+  // runs and could resolve one `templateUrl` to two files.
+  const declared = (opts.sourceRoots ?? []).flatMap((d) => ['--web-root', d]);
+  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...targets];
   const out = execFileSync(process.execPath, args, { maxBuffer: 1 << 28 }).toString('utf8');
   return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
@@ -1495,6 +1516,22 @@ if (cmd === 'init') {
   for (const s of discovery.serviceNames ?? []) {
     process.stderr.write(`service name: ${s.name} (from ${s.file})\n`);
   }
+  // A FRONTEND WITH NO PACKAGE MANIFEST, said in one line (RM47). It is the one
+  // thing about this profile a reader would not expect, and the way to turn it
+  // off is in the same sentence as the way it was turned on.
+  // ONE LINE, however many roots. A tree with a directory of vendored plugin
+  // scripts has thirteen of them, and thirteen lines saying the same thing is a
+  // wall a reader skips rather than a finding.
+  const vendoredKept = diagnostics.some((d) => d.kind === 'WEB_ROOTS_KEPT');
+  const vendored = discovery.webVendoredRoots ?? [];
+  if (vendored.length > 0) {
+    const named = [...new Set(vendored.flatMap((r) => r.routerPacks ?? []))].sort();
+    const files = vendored.reduce((n, r) => n + r.files, 0);
+    process.stderr.write(`frontend without a package: reading ${listOfFive(vendored.map((r) => r.root))} `
+      + `(${vendored.length} root(s), ${files} file(s)`
+      + `${named.length > 0 ? `, router ${named.join(', ')}` : ', no router declaration in any of them'})`
+      + `${vendoredKept ? '. The profile already answers for webRoots, so these were not applied' : '. Set webRoots to [] in the profile to stop'}\n`);
+  }
   const routeFiles = [...new Set((discovery.gatewayRoutes ?? []).map((r) => r.file))].sort();
   if (routeFiles.length > 0) {
     const routesKept = diagnostics.some((d) => d.kind === 'GATEWAY_ROUTES_KEPT');
@@ -1863,6 +1900,19 @@ if (cmd === 'analyze') {
     + `har ${harFiles.length > 0 ? `${harFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.har})` : 'none'}; `
     + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
 
+  // WHICH OF THOSE ROOTS NOBODY PACKAGED (RM47). A root the profile names is
+  // read exactly like one a package.json gave, and the census has to say which
+  // is which: nothing declares a framework for a vendored root, so the router
+  // pack was read out of its source rather than out of a dependency list.
+  if (webSrc.length > 0 && sel.sources.webSrc !== 'flag') {
+    const vendored = (profile.webRoots ?? [])
+      .filter((r) => r && typeof r.root === 'string' && (r.kind ?? 'declared') === 'vendored')
+      .map((r) => path.relative(root, path.resolve(resolved.dotCascade ?? root, r.root)) || '.');
+    if (vendored.length > 0) {
+      process.stderr.write(`web roots from the profile: ${vendored.length} vendored (no package manifest): ${listOfFive(vendored)}\n`);
+    }
+  }
+
   // WHO THIS PACK IS, AND WHERE ITS CALLS GO. The two answers this run uses,
   // said on the run that uses them: the names go into the routes sidecar beside
   // the pack, and the routes rewrite a call's prefix before it is matched. The
@@ -2086,7 +2136,7 @@ if (cmd === 'analyze') {
       web: (targets) => {
         process.stderr.write(`Web lane: reading ${targets.length} ${plan.mode === MODE_COLD ? 'frontend source root(s)' : 'changed frontend file(s)'}…\n`);
         try {
-          return runWebLane(root, targets);
+          return runWebLane(root, targets, { sourceRoots: webSrc });
         } catch (e) {
           const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
           die(`the web lane failed: ${said || (e && e.message) || 'unknown error'}`);
@@ -2098,7 +2148,7 @@ if (cmd === 'analyze') {
       // them honestly. Reading them walks no source file.
       webConfigs: (roots) => {
         try {
-          return runWebLane(root, roots, { configsOnly: true });
+          return runWebLane(root, roots, { configsOnly: true, sourceRoots: roots });
         } catch (e) {
           const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
           die(`the web lane failed to read the frontend package configuration: ${said || (e && e.message) || 'unknown error'}`);
@@ -2342,6 +2392,10 @@ if (cmd === 'analyze') {
         routes: summary.routes, byPack: summary.byPack ?? {},
         aliases: summary.aliases, proxies: summary.proxies, envFiles: summary.envFiles,
         platformSinks: summary.platformSinks ?? {},
+        // What a frontend written before modules put in the stream (RM47).
+        registrations: summary.registrations ?? {},
+        templatesRead: summary.templatesRead ?? 0,
+        injectedCalls: summary.injectedCalls ?? 0,
         roots: webSrc.map(relOf).sort(),
       };
       process.stderr.write(`Web lane: ${webWorkerStats.files} file(s) (${webWorkerStats.vueFiles} .vue, ${webWorkerStats.tsFiles} .ts/.tsx, ${webWorkerStats.jsFiles} .js/.jsx), `
@@ -2354,6 +2408,26 @@ if (cmd === 'analyze') {
         // and routes are absent from everything below, and nothing else would
         // say so.
         process.stderr.write(`  [warn] WEB_PARSE_ERROR ${r.file}:${r.line}:${r.col}: ${r.message}\n`);
+      }
+      // A ROOT NOBODY PACKAGED THAT SAID NOTHING (RM47). Discovery decided that
+      // directory was served, and the run read it: if it holds no call this
+      // lane could read a URL out of and no route declaration, that is worth a
+      // line. A directory of somebody else's plugin scripts looks exactly like a
+      // frontend from the outside, and silence there reads as "there is nothing
+      // in this product", which is a different sentence.
+      const vendoredRel = (profile.webRoots ?? [])
+        .filter((r) => r && typeof r.root === 'string' && (r.kind ?? 'declared') === 'vendored')
+        .map((r) => relOf(path.resolve(resolved.dotCascade ?? root, r.root)))
+        .sort();
+      const silent = vendoredRel.filter((rootRel) => {
+        const under = (f) => typeof f === 'string' && (f === rootRel || f.startsWith(`${rootRel}/`));
+        return !webFacts.some((r) => under(r.file)
+          && ((r.kind === 'call' && r.url) || r.kind === 'route' || r.kind === 'registration'));
+      });
+      if (silent.length > 0) {
+        process.stderr.write(`  [warn] WEB_ROOT_SAID_NOTHING ${silent.length} root(s) have no readable HTTP call `
+          + `and no route declaration in them: ${listOfFive(silent)}. `
+          + 'Take them out of webRoots in the profile if they are not a frontend of yours\n');
       }
     }
 
@@ -2533,13 +2607,16 @@ if (cmd === 'analyze') {
       const s = webBridgeStats.screens;
       process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s)` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
         + `${s.withComponent} with a component (${s.componentUnresolved} unresolved), `
-        + `${s.renders.EXACT} exact and ${s.renders.SOUND_SET} candidate RENDERS edge(s); `
+        + `${s.renders.EXACT} exact, ${s.renders.SOUND_SET} candidate and ${s.renders.HEURISTIC ?? 0} heuristic RENDERS edge(s); `
         + `${w.functions.created} frontend function node(s) (${w.functions.withHttp} send a request, ${w.functions.reachingHttp} lead to one), `
         + `${w.callsEdges.EXACT + w.callsEdges.SOUND_SET + w.callsEdges.HEURISTIC} CALLS edge(s) `
         + `(${w.callsEdges.EXACT} exact, ${w.callsEdges.SOUND_SET} sound, ${w.callsEdges.HEURISTIC} heuristic; `
         + `${w.callsByRule['passed-as-value'] ?? 0} of them a function handed over as a value)\n`);
       for (const u of s.unresolvedSpecifiers.slice(0, 5)) {
         process.stderr.write(`  [warn] SCREEN_COMPONENT_UNRESOLVED ${u.specifier} (${u.count} route declaration(s)): this lane read no file at that specifier, so those screens render nothing\n`);
+      }
+      for (const u of (s.unresolvedNames ?? []).slice(0, 5)) {
+        process.stderr.write(`  [warn] SCREEN_COMPONENT_UNREGISTERED ${u.name} (${u.count} time(s)): nothing in the files this lane read registers that name, so no edge was drawn for it\n`);
       }
       if (s.serverDriven.detected) {
         process.stderr.write(`  [warn] SCREENS_FROM_SERVER a call fetches the menu (${s.serverDriven.menuEndpoints.join(', ')}) and ${s.declared} route(s) are declared in the source: `

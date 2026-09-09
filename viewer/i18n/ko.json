@@ -183,6 +183,7 @@
   "kpi.rest.tables": "{n}개는 경로 뒤에 없음",
   "kpi.rest.columns": "{n}개는 아무것도 안 닿음",
   "kpi.rest.screens": "{n}개는 아무데도 못 닿음",
+  "kpi.fed": "여기서 {here}개, 연결된 프로젝트에서 {there}개",
   "kpi.screens.serverdriven": "이 라우터는 서버가 실행 중에 채웁니다. 그래서 여기 숫자는 소스에 적힌 경로만 셉니다",
   "ov.map.title": "전체 그림",
   "ov.map.hint": "올려 두면 사슬 하나에 불이 켜지고, 누르면 켜 둔 채로 두고, 두 번 누르면 Graph 탭에서 엽니다",

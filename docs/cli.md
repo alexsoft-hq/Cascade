@@ -119,6 +119,20 @@ its own: a map you typed is yours, and a re-run with `--force` says how many
 routes it found and did not apply. See
 [the web lane](setup/web-lane.md#gateway-routes-you-do-not-have-to-type).
 
+A **frontend with no `package.json`** gets a line of its own, and the way to
+switch it off is in the same sentence:
+
+```
+frontend without a package: reading src/main/resources/static/scripts (22 file(s), router angular-router). Set webRoots to [] in the profile to stop
+```
+
+That is a directory of frontend sources with no manifest above them that the
+tree says is served: under `static`, `public`, `webapp`, `www` or
+`resources/templates`, or named by an `index.html` beside it. It goes to
+`profile.webRoots`, which `cascade analyze` then reads with no flag. Like the
+two keys above, a list already in the profile is yours, an empty one included.
+See [the web lane](setup/web-lane.md#a-frontend-with-no-packagejson).
+
 - `--root <dir>` — the tree to discover (default: the current directory).
 - `--project <id>` — the id to register it under (default: derived from the
   directory name).

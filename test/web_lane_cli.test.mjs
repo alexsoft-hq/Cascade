@@ -25,6 +25,7 @@ const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
 const FIXTURE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'web-smoke');
 const OPENAPI_FIXTURE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'openapi');
+const ANGULAR_FIXTURE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'web-angular');
 
 function tmpDir(t, prefix) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -134,7 +135,7 @@ test('a run whose only lane is web exits 0, and every call it found is an outbou
   assert.deepEqual(stats.callsByRule, { 'same-file': 0, 'esm-import': 3, 'passed-as-value': 3 });
   assert.equal(stats.screens.declared, 7);
   assert.equal(stats.screens.screens, 7);
-  assert.deepEqual(stats.screens.renders, { EXACT: 3, SOUND_SET: 0 });
+  assert.deepEqual(stats.screens.renders, { EXACT: 3, SOUND_SET: 0, HEURISTIC: 0 });
 });
 
 test('screenAxis.enabled: false is still the user\'s word, and it turns the axis off', (t) => {
@@ -510,7 +511,7 @@ test('a screen reaches the column, the column names the screen, and a recording 
 
   // The lane list gains `har`, and the lane line says what it read.
   assert.match(res.stderr, /^lanes \[java,web,har\]/m);
-  assert.match(res.stderr, /^Web lane: 7 screen\(s\) from 7 route declaration\(s\), 2 with a component \(5 unresolved\), 3 exact and 0 candidate RENDERS edge\(s\)/m);
+  assert.match(res.stderr, /^Web lane: 7 screen\(s\) from 7 route declaration\(s\), 2 with a component \(5 unresolved\), 3 exact, 0 candidate and 0 heuristic RENDERS edge\(s\)/m);
   assert.match(res.stderr, /^HAR lane: 1 recording\(s\), 8 request\(s\): 3 matched a route this pack serves, 3 matched none, 2 static asset\(s\); 2 screen-to-route pair\(s\) observed/m);
 
   const pack = JSON.parse(fs.readFileSync(path.join(out, 'pack.json'), 'utf8'));
@@ -563,4 +564,102 @@ test('a screen reaches the column, the column names the screen, and a recording 
   assert.deepEqual(strays.map((r) => [r.screen, r.source, r.component, r.observed]), [
     ['/nowhere/at/all', 'har', null, true],
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// A frontend with no package.json, end to end through the CLI (RM47)
+// ---------------------------------------------------------------------------
+
+/** Run `cascade init`, capturing stderr the way `analyze` above does. */
+function initProject(args, cwd, t, env = {}) {
+  const log = path.join(tmpDir(t, 'cascade-init-log-'), 'stderr.txt');
+  const fd = fs.openSync(log, 'w');
+  let code = 0;
+  try {
+    execFileSync(process.execPath, [CLI, 'init', ...args], {
+      env: { ...process.env, ...env }, cwd, stdio: ['ignore', 'ignore', fd], maxBuffer: 1 << 28,
+    });
+  } catch (e) {
+    code = e.status ?? 1;
+  } finally {
+    fs.closeSync(fd);
+  }
+  return { code, stderr: fs.readFileSync(log, 'utf8') };
+}
+
+test('a frontend with no package.json is discovered, written to the profile and read with NO flag', (t) => {
+  const base = tmpDir(t, 'cascade-vendored-');
+  const dir = path.join(base, 'app');
+  fs.cpSync(ANGULAR_FIXTURE, dir, { recursive: true });
+  // A decoy beside it: somebody else's plugin script, in a directory the tree
+  // also says is served. It becomes a root and has nothing to say, which is the
+  // case the run has to report rather than pass over.
+  fs.mkdirSync(path.join(dir, 'static', 'plugins', 'tiny'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'static', 'plugins', 'tiny', 'tiny.js'), 'window.tiny = function () { return 1; };\n');
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.email=dev@example.com', '-c', 'user.name=dev', 'commit', '-qm', 'init');
+
+  const env = { CASCADE_HOME: path.join(base, 'home') };
+  const init = initProject(['--root', dir, '--project', 'vendored-app'], base, t, env);
+  assert.equal(init.code, 0, init.stderr);
+  // ONE line, however many roots: this tree has two, and a tree of vendored
+  // plugin directories has thirteen.
+  assert.match(init.stderr, /^frontend without a package: reading static\/plugins\/tiny, static\/scripts \(2 root\(s\), \d+ file\(s\), router angular-router\)\. Set webRoots to \[\] in the profile to stop$/m);
+  assert.equal(init.stderr.split('\n').filter((l) => l.startsWith('frontend without a package:')).length, 1);
+
+  const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
+  assert.deepEqual(profile.webRoots, [
+    { root: '../static/plugins/tiny', kind: 'vendored', from: 'discovery' },
+    { root: '../static/scripts', kind: 'vendored', from: 'discovery' },
+  ]);
+  assert.deepEqual(profile.frameworkPacks, ['web', 'angular-router']);
+  assert.equal(profile.screenAxis.enabled, true);
+
+  // ...and now NO lane flag at all.
+  const res = analyze(['--root', dir, '--project', 'vendored-app'], base, t, env);
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stderr, /^web roots from the profile: 2 vendored \(no package manifest\): static\/plugins\/tiny, static\/scripts$/m);
+  // ...and one warning, listing the roots that said nothing.
+  assert.match(res.stderr, /\[warn\] WEB_ROOT_SAID_NOTHING 1 root\(s\) have no readable HTTP call and no route declaration in them: static\/plugins\/tiny\. Take them out of webRoots/);
+  assert.equal(res.stderr.split('\n').filter((l) => l.includes('WEB_ROOT_SAID_NOTHING')).length, 1);
+  assert.equal(/WEB_ROOT_SAID_NOTHING.*static\/scripts/.test(res.stderr), false,
+    'the real frontend said plenty, so it is not on that list');
+
+  const pack = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'pack', 'pack.json'), 'utf8'));
+  const stats = pack.meta.laneStats.web;
+  assert.deepEqual(stats.byPack, { 'angular-router': 7 });
+  assert.deepEqual(stats.registrations, { component: 4, controller: 6, directive: 1 });
+  assert.equal(stats.injectedCalls, 7);
+  assert.equal(stats.calls.injected, 7);
+  // Six screens: seven route declarations, of which the abstract shell mounts
+  // nothing. The paths are composed across files.
+  assert.deepEqual(pack.nodes.filter((n) => n.kind === 'screen').map((n) => n.path).sort(),
+    ['/boxes', '/ghost', '/legacy', '/things', '/things/:thingId', '/twins']);
+  // `twin` is registered by two modules, so which one the framework mounts
+  // depends on load order and both are candidates.
+  const renders = pack.edges.filter((e) => e.type === 'RENDERS');
+  assert.deepEqual(
+    renders.filter((e) => e.from === 'screen:/twins').map((e) => [e.grade, e.evidence.rule, e.to]).sort(),
+    [
+      // Each twin file registers the component AND its controller, so each is
+      // reached twice: once as the name the route gave, once as the controller
+      // that component names.
+      ['HEURISTIC', 'angular-component', 'symbol:static/scripts/twin/twin-a.js#(module)'],
+      ['HEURISTIC', 'angular-component', 'symbol:static/scripts/twin/twin-b.js#(module)'],
+      ['HEURISTIC', 'angular-controller', 'symbol:static/scripts/twin/twin-a.js#(module)'],
+      ['HEURISTIC', 'angular-controller', 'symbol:static/scripts/twin/twin-b.js#(module)'],
+    ],
+  );
+  // `<never-registered>` is a tag nothing registers: no edge, and the name is
+  // reported rather than dropped.
+  assert.deepEqual(renders.filter((e) => e.from === 'screen:/ghost'), []);
+  assert.deepEqual(stats.screens.unresolvedNames, [{ name: 'component neverRegistered', count: 1 }]);
+  assert.match(res.stderr, /\[warn\] SCREEN_COMPONENT_UNREGISTERED component neverRegistered/);
+  // Not one router declaration became an HTTP call.
+  const urls = pack.edges.filter((e) => e.type === 'CALLS_HTTP').map((e) => e.evidence.url.template);
+  for (const declared of ['/things', '/ghost', '/twins', '/boxes', '/legacy']) {
+    assert.equal(urls.includes(declared), false, `${declared} is a route this app shows, not one it calls`);
+  }
 });

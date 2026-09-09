@@ -34,6 +34,24 @@
 // to; whether the receiver ever calls it is the bridge's problem, and the bridge
 // says so in the grade.
 //
+// webfacts/4 adds the shapes a frontend written BEFORE modules is in, because a
+// gateway that ships AngularJS as `<script>` tags has neither imports nor a
+// package (RM47):
+//   - a CHAIN registrar, `$stateProvider.state(name, route).state(…)`, where
+//     each link is one route and the route's own object says its parent;
+//   - `registration` records for the framework's own name registry
+//     (`angular.module(…).component('ownerList', {controller: 'OwnerListController'})`),
+//     which is how such a frontend resolves one thing to another when nothing
+//     imports anything;
+//   - the custom element tags of an HTML template a registration points at,
+//     read for tags and nothing else;
+//   - an INJECTED client: `$http` is a parameter the framework fills in, so
+//     nothing in the file binds it, and the pack says which parameter names are
+//     clients and in which registrar a function has to sit for that to be true.
+// It also stops a ROUTE DECLARATION being read as an HTTP call: the `url` of an
+// object a router pack recognizes as a route is a route, not a request, and a
+// call a pack lists as a declaration never sends one.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -44,7 +62,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/3';
+const VERSION = 'webfacts/4';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -90,6 +108,9 @@ const PLATFORM_GLOBALS = new Set(['fetch', 'XMLHttpRequest', 'window', 'document
 
 /** The object keys a call's config argument is summarized by. */
 const CONFIG_KEYS = ['url', 'method', 'baseURL', 'type', 'data', 'params'];
+
+/** How far a walk down a member/call spine goes before it gives up. */
+const HOP_GUARD = 64;
 
 function langOf(file) {
   if (file.endsWith('.vue')) return 'vue';
@@ -369,8 +390,69 @@ function loadPacks(dir) {
     const others = new Set();
     for (const q of packs) if (q !== p) for (const k of q.__keys) others.add(k);
     p.__distinctive = new Set([...p.__keys].filter((k) => !others.has(k)));
+    // A pack whose routes come from a CHAIN is never matched by an object
+    // literal on its own. `{url: '/x', template: '<y>'}` is a route where a
+    // `$stateProvider` chain names it and an ordinary options object anywhere
+    // else, and this is the difference.
+    p.__routesFrom = p.routesFrom === 'chain' ? 'chain' : 'object';
+    p.__chains = [p.chain, p.chainAlt].filter((c) => c && Array.isArray(c.receivers) && typeof c.method === 'string');
   }
   return packs;
+}
+
+// ---------------------------------------------------------------------------
+// HTML templates: custom element tags, and nothing else
+// ---------------------------------------------------------------------------
+
+/** 512 KB. Past that a `.html` is a generated page, not a component's template. */
+const MAX_TEMPLATE_BYTES = 512 * 1024;
+
+/**
+ * The CUSTOM ELEMENT TAGS a template names, in source order, once each.
+ *
+ * A hyphen in a tag name is what the HTML specification reserves for elements
+ * the page defines itself, so it is the whole rule here. Nothing else about the
+ * markup is read: no attributes, no directives, no bindings. A frontend written
+ * before modules mounts one component inside another by writing its tag, and
+ * that is the one thing this lane needs the markup for.
+ *
+ * @param {string} html
+ * @returns {string[]}
+ */
+export function customElementTags(html) {
+  const out = [];
+  const seen = new Set();
+  const re = /<([a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)+)(?=[\s/>])/g;
+  let m;
+  while ((m = re.exec(String(html ?? ''))) !== null) {
+    const tag = m[1];
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+/**
+ * The ONE element a template string is, when that is all it is.
+ *
+ * `template: '<owner-list></owner-list>'` names a component by its tag as
+ * plainly as `component: 'ownerList'` names it by its name. The hyphen rule
+ * above is NOT applied here: a component registered as `visits` is mounted as
+ * `<visits>`, with no hyphen anywhere, and a template that is nothing but one
+ * element is naming that element whatever it is spelled like. A template with
+ * markup around it names no single component, and this answers null for it
+ * rather than picking the first tag it sees; a template that is one ORDINARY
+ * element (`<div></div>`) answers with that name and resolves to nothing, which
+ * is the truth about it.
+ *
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function soleElementTag(text) {
+  const s = String(text ?? '').trim();
+  const m = /^<([a-zA-Z][a-zA-Z0-9-]*)(\s[^>]*?)?(\/>|>\s*<\/\1\s*>|>)$/.exec(s);
+  return m ? m[1] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +551,23 @@ function analyzeProgram(program, st) {
   // `<script setup>` block it is the component's setup, which is a different
   // place a call can come from and worth telling apart.
   const moduleEnclosing = block.setup === true ? '(setup)' : '(module)';
+
+  /**
+   * The HTML template a record points at, read for its custom element tags.
+   *
+   * `templateUrl: 'scripts/owner-list/owner-list.template.html'` is a path the
+   * SERVER resolves, not one this file's directory does, so finding it is the
+   * caller's job (`main` walks up from each source root). What is recorded is
+   * the file that was found and the tags in it; when nothing was found, the url
+   * is recorded as written, so a reader can see what was looked for.
+   */
+  const attachTemplate = (rec, templateUrl) => {
+    rec.templateUrl = templateUrl;
+    const found = typeof st.templateOf === 'function' ? st.templateOf(templateUrl) : null;
+    if (found === null) return;
+    rec.templateFile = found.file;
+    if (found.tags.length > 0) rec.templateTags = found.tags;
+  };
 
   // ---- pass 1: hoist what the top level declares -------------------------
   // A function at the top of a file calls one declared at the bottom, so the
@@ -786,6 +885,35 @@ function analyzeProgram(program, st) {
 
   // ---- the walk -----------------------------------------------------------
   const routeHandled = new Set();
+  // The object literals a router pack recognizes as ROUTE DECLARATIONS, and the
+  // calls a pack lists as declaring rather than sending. Both are filled in
+  // before the walk, and both exist for one reason: `{url: '/owners'}` inside
+  // `$stateProvider.state(…)` is a route, and reading it as an HTTP call put
+  // eight endpoints in a pack that nothing serves.
+  const routeObjects = new Set();
+  const declarationCalls = new Set();
+  // Function nodes the framework INJECTS into: a parameter named `$http` there
+  // is the client, and a parameter of the same name anywhere else is not.
+  const injectionTargets = new Set();
+  const injectedClients = new Map(
+    (packs.flatMap((p) => p.injected ?? [])).map((c) => [c.name, c]),
+  );
+
+  /** Whether one pack would read this object literal as a route declaration. */
+  const packSeesARoute = (p, node) => {
+    const ro = p.routeObject || {};
+    if (!ro.pathKey) return false;
+    const pathValue = propOf(node, ro.pathKey);
+    if (pathValue === null || pathValue.type !== 'StringLiteral') return false;
+    const hasComponent = (ro.componentKeys || []).some((k) => propOf(node, k) !== null);
+    const hasChildren = ro.childrenKey ? propOf(node, ro.childrenKey) !== null : false;
+    const hasRedirect = ro.redirectKey ? propOf(node, ro.redirectKey) !== null : false;
+    const indexValue = ro.indexKey ? propOf(node, ro.indexKey) : null;
+    const hasIndex = indexValue !== null && indexValue.type === 'BooleanLiteral' && indexValue.value === true;
+    return hasComponent || hasChildren || hasRedirect || hasIndex;
+  };
+  const anyPackSeesARoute = (node) => node !== null && node !== undefined
+    && node.type === 'ObjectExpression' && packs.some((p) => packSeesARoute(p, node));
 
   /**
    * @param {Object} node
@@ -1067,8 +1195,21 @@ function analyzeProgram(program, st) {
   const visitFunctionBody = (node, env, entry) => {
     const scope = new Scope(env.scope, false);
     for (const p of node.params || []) for (const n of patternNames(p)) scope.declare(n, null);
+    // A CLIENT ARRIVES AS A PARAMETER, in a function the framework fills in.
+    // The map is inherited downward, because `$http.get(url).then(function () {
+    // $http.post(…) })` is the same client one scope deeper.
+    let injected = env.injected ?? null;
+    if (injectedClients.size > 0 && injectionTargets.has(node)) {
+      for (const p of node.params || []) {
+        if (!p || p.type !== 'Identifier') continue;
+        const client = injectedClients.get(p.name);
+        if (!client) continue;
+        if (injected === null || injected === env.injected) injected = new Map(injected ?? []);
+        injected.set(p.name, client);
+      }
+    }
     const inner = {
-      scope, func: entry ?? env.func, defaultExport: false, classInfo: env.classInfo ?? null,
+      scope, func: entry ?? env.func, defaultExport: false, classInfo: env.classInfo ?? null, injected,
     };
     if (node.body) {
       if (node.body.type === 'BlockStatement') {
@@ -1295,7 +1436,28 @@ function analyzeProgram(program, st) {
       return;
     }
 
-    const summaries = node.arguments.slice(0, 3).map((a) => summarizeArg(a));
+    // A CALL A PACK LISTS AS A DECLARATION SENDS NOTHING.
+    // `$urlRouterProvider.otherwise('/welcome')` names the route to fall back
+    // to; reading it as a request put `ANY /welcome` in the pack and let a
+    // frontend "call" a table it never touches. The arguments are still walked,
+    // because a real call can sit inside one.
+    if (!isNew && callee !== null) {
+      const declared = packs.some((p) => (p.declarationCalls ?? []).some(
+        (d) => (d.receivers ?? []).includes(callee.root)
+          && (d.methods ?? []).includes(callee.path.length > 0 ? callee.path[callee.path.length - 1] : callee.root),
+      ));
+      if (declared || declarationCalls.has(node)) {
+        for (const a of node.arguments) visit(a, env);
+        return;
+      }
+    }
+
+    const argNodes = node.arguments.slice(0, 3);
+    // AN OBJECT A ROUTER PACK READS AS A ROUTE IS NOT A REQUEST. Its `path` or
+    // `url` is where the browser goes, not where a request is sent, and the
+    // route reader has already recorded it as one.
+    const routeArg = argNodes.map((a) => anyPackSeesARoute(a));
+    const summaries = argNodes.map((a) => summarizeArg(a));
     const binding = callee ? bindingOf(callee.root, env.scope, env.classInfo) : null;
     let platformSink = null;
     if (!isNew && callee && callee.shape === 'ident' && callee.root === 'fetch' && binding && binding.kind === 'global') {
@@ -1316,9 +1478,26 @@ function analyzeProgram(program, st) {
       && callee.path.length >= 1 && env.classInfo.members.has(callee.path[0]);
     const goesThroughABinding = binding !== null
       && (binding.kind === 'import' || (binding.kind === 'local' && top.bindings.has(binding.name)) || throughThis);
-    const carriesUrl = summaries.some(argCarriesUrl);
+    const carriesUrl = summaries.some((s, i) => !routeArg[i] && argCarriesUrl(s));
 
-    if (callee !== null && (goesThroughABinding || carriesUrl || platformSink !== null)) {
+    // THE CLIENT THE FRAMEWORK HANDED IN. `$http` is a parameter, so nothing in
+    // this file binds it and every rule above sees a call on an unknown name.
+    // What makes it a client is the pack's own list plus where the function
+    // sits, and both were settled before the walk. The verb has to be one the
+    // pack names, so `$http.pending` is still nothing.
+    let injected = null;
+    if (!isNew && callee !== null && env.injected) {
+      const client = env.injected.get(callee.root);
+      if (client) {
+        const verb = callee.path.length === 0 ? '(call)' : callee.path[callee.path.length - 1];
+        const known = callee.path.length === 0
+          ? (client.generic ?? []).includes('(call)')
+          : Object.prototype.hasOwnProperty.call(client.verbs ?? {}, verb) || (client.generic ?? []).includes(verb);
+        if (known) injected = { client: client.name, framework: client.framework ?? null };
+      }
+    }
+
+    if (callee !== null && (goesThroughABinding || carriesUrl || platformSink !== null || injected !== null)) {
       const rec = {
         kind: 'call', file: relFile, line,
         enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : moduleEnclosing,
@@ -1328,6 +1507,7 @@ function analyzeProgram(program, st) {
         url: null,
         method: null,
         platformSink,
+        ...(injected !== null ? { injected } : {}),
       };
       if (env.func) rec.__enclosingEntry = env.func;
 
@@ -1342,6 +1522,7 @@ function analyzeProgram(program, st) {
       } else {
         for (let i = 0; i < summaries.length; i += 1) {
           const s = summaries[i];
+          if (routeArg[i]) continue;
           if (s.kind === 'object' && Object.prototype.hasOwnProperty.call(s.keys, 'url')) {
             urlSummary = s.keys.url;
             break;
@@ -1351,6 +1532,7 @@ function analyzeProgram(program, st) {
           const httpShaped = typeof callee.name === 'string' && VERBS.has(callee.name.toUpperCase());
           for (let i = 0; i < summaries.length; i += 1) {
             const s = summaries[i];
+            if (routeArg[i]) continue;
             if (s.kind === 'object' || s.kind === 'other') continue;
             if (httpShaped) { urlSummary = s; break; }
             if (looksLikeUrlSummary(s)) { urlSummary = s; break; }
@@ -1424,16 +1606,10 @@ function analyzeProgram(program, st) {
     if (routeHandled.has(node)) return;
     const matches = [];
     for (const p of packs) {
-      const ro = p.routeObject || {};
-      const pathValue = propOf(node, ro.pathKey);
-      const hasPath = pathValue !== null && pathValue.type === 'StringLiteral';
-      if (!hasPath) continue;
-      const hasComponent = (ro.componentKeys || []).some((k) => propOf(node, k) !== null);
-      const hasChildren = ro.childrenKey ? propOf(node, ro.childrenKey) !== null : false;
-      const hasRedirect = ro.redirectKey ? propOf(node, ro.redirectKey) !== null : false;
-      const indexValue = ro.indexKey ? propOf(node, ro.indexKey) : null;
-      const hasIndex = indexValue !== null && indexValue.type === 'BooleanLiteral' && indexValue.value === true;
-      if (!hasComponent && !hasChildren && !hasRedirect && !hasIndex) continue;
+      // A chain pack's route objects are read where its registrar names them
+      // (`chainRoutes` below) and nowhere else.
+      if (p.__routesFrom === 'chain') continue;
+      if (!packSeesARoute(p, node)) continue;
       let score = 0;
       for (const k of p.__distinctive) if (propOf(node, k) !== null) score += 1;
       if (st.registrarPacks && st.registrarPacks.has(p.pack)) score += 0.5;
@@ -1612,7 +1788,240 @@ function analyzeProgram(program, st) {
     eachChild(n, (child) => registrarRoutes(child, env));
   };
 
-  const rootEnv = { scope: moduleScope, func: null, defaultExport: false, classInfo: null };
+  // ---- a CHAIN registrar's routes -----------------------------------------
+  //
+  // `$stateProvider.state('owners', {…}).state('vets', {…})` is one call per
+  // route, each written on the result of the one before it. `calleeOf` gives up
+  // on that shape by design (its root is a call, not a name), so the chain is
+  // walked here: down the member/call spine to the identifier at the bottom,
+  // which is the receiver the pack names.
+  const chainReceiverOf = (node, spec) => {
+    if (!node.callee || (node.callee.type !== 'MemberExpression' && node.callee.type !== 'OptionalMemberExpression')) return null;
+    const prop = node.callee.property;
+    const method = !node.callee.computed && prop && prop.type === 'Identifier' ? prop.name
+      : (prop && prop.type === 'StringLiteral' ? prop.value : null);
+    if (method !== spec.method) return null;
+    let cur = node.callee.object;
+    for (let i = 0; i < HOP_GUARD && cur; i += 1) {
+      if (cur.type === 'Identifier') return spec.receivers.includes(cur.name) ? cur.name : null;
+      if ((cur.type === 'CallExpression' || cur.type === 'OptionalCallExpression') && cur.callee) { cur = cur.callee; continue; }
+      if (cur.type === 'MemberExpression' || cur.type === 'OptionalMemberExpression') { cur = cur.object; continue; }
+      return null;
+    }
+    return null;
+  };
+
+  /** The parent state a route names: its own `parent` key, or a dotted name. */
+  const parentNameOf = (routeNode, ro, stateName) => {
+    const p = ro.parentKey ? propOf(routeNode, ro.parentKey) : null;
+    if (p && p.type === 'StringLiteral' && p.value !== '') return p.value;
+    if (typeof stateName === 'string') {
+      const dot = stateName.lastIndexOf('.');
+      if (dot > 0) return stateName.slice(0, dot);
+    }
+    return null;
+  };
+
+  const chainRoutes = (n) => {
+    if (!n) return;
+    if (n.type === 'CallExpression' || n.type === 'OptionalCallExpression') {
+      for (const p of packs) {
+        for (const spec of p.__chains ?? []) {
+          const receiver = chainReceiverOf(n, spec);
+          if (receiver === null) continue;
+          declarationCalls.add(n);
+          const args = n.arguments ?? [];
+          const routeNode = args[spec.routeArg];
+          if (routeNode && routeNode.type === 'ObjectExpression') routeObjects.add(routeNode);
+          const ro = p.routeObject || {};
+          // THE LINE OF THIS LINK, not of the chain. Every `.state(…)` written
+          // on the result of the one before it starts where the whole
+          // expression starts, so the call node's own position would give the
+          // ten routes of one chain the same line.
+          const line = lineOf(n.callee.property ?? n);
+          const rec = { kind: 'route', file: relFile, line, pack: p.pack, via: 'chain', receiver };
+          const nameNode = Number.isInteger(spec.nameArg) ? args[spec.nameArg] : null;
+          if (nameNode && nameNode.type === 'StringLiteral') rec.name = nameNode.value;
+          // The path is the route object's own key on a `state`, and the first
+          // argument on a `when`. Missing is '' — a state with no url of its own
+          // is the parent's path, which is what composing it says.
+          let pathText = null;
+          if (Number.isInteger(spec.pathArg)) {
+            const pathNode = args[spec.pathArg];
+            if (pathNode && pathNode.type === 'StringLiteral') pathText = pathNode.value;
+          }
+          if (pathText === null && routeNode && ro.pathKey) {
+            const urlNode = propOf(routeNode, ro.pathKey);
+            if (urlNode && urlNode.type === 'StringLiteral') pathText = urlNode.value;
+          }
+          rec.path = pathText ?? '';
+          const parentName = routeNode ? parentNameOf(routeNode, ro, rec.name) : null;
+          if (parentName !== null) rec.parentName = parentName;
+          const abstractNode = routeNode && ro.abstractKey ? propOf(routeNode, ro.abstractKey) : null;
+          if (abstractNode && abstractNode.type === 'BooleanLiteral' && abstractNode.value === true) rec.abstract = true;
+          if (routeNode) {
+            for (const k of ro.componentKeys ?? []) {
+              const v = propOf(routeNode, k);
+              if (!v || v.type !== 'StringLiteral') continue;
+              if (k === 'component') { rec.componentName = v.value; break; }
+              if (k === 'template') {
+                const tag = soleElementTag(v.value);
+                if (tag !== null) { rec.componentTag = tag; break; }
+                continue;
+              }
+              if (k === 'templateUrl') { attachTemplate(rec, v.value); break; }
+            }
+            const ctrl = ro.controllerKey ? propOf(routeNode, ro.controllerKey) : null;
+            if (ctrl && ctrl.type === 'StringLiteral') rec.controllerName = ctrl.value;
+          }
+          rec.parent = null;
+          rec.children = 0;
+          emit(rec, line);
+        }
+      }
+    }
+    eachChild(n, chainRoutes);
+  };
+
+  // ---- the framework's own name registry ----------------------------------
+  //
+  // `angular.module('ownerList').component('ownerList', {controller: 'OwnerListController'})`
+  // is how a frontend written before modules says one thing is made of another.
+  // Nothing is resolved here: the record says which NAME was registered, in
+  // which file, and which other names it points at. Putting those together is
+  // the bridge's job, because the two names are in two files.
+  const moduleLocals = new Set();
+  const registrationSpecs = packs.map((p) => p.registrations).filter((r) => r && Array.isArray(r.kinds));
+  const isRegistryRoot = (name, spec) => name === spec.root || moduleLocals.has(name);
+
+  const collectModuleLocals = (n) => {
+    if (!n) return;
+    if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier' && n.init) {
+      const c = n.init.type === 'CallExpression' || n.init.type === 'OptionalCallExpression'
+        ? calleeOf(n.init.callee) : null;
+      for (const spec of registrationSpecs) {
+        if (c && c.root === spec.root && c.path.length === 1 && c.path[0] === spec.moduleMethod) moduleLocals.add(n.id.name);
+      }
+    }
+    eachChild(n, collectModuleLocals);
+  };
+
+  /** The definition object a registration was given, through the DI array form. */
+  const definitionObjectOf = (node) => {
+    if (!node) return null;
+    if (node.type === 'ObjectExpression') return node;
+    if (node.type === 'ArrayExpression') {
+      const last = node.elements[node.elements.length - 1];
+      return last && last.type === 'ObjectExpression' ? last : null;
+    }
+    // `.directive('x', function () { return { controller: 'X' } })`
+    if (isFunctionNode(node)) {
+      let body = node.body;
+      if (body && body.type === 'BlockStatement') {
+        for (let i = body.body.length - 1; i >= 0; i -= 1) {
+          if (body.body[i].type === 'ReturnStatement') { body = body.body[i].argument; break; }
+        }
+      }
+      return body && body.type === 'ObjectExpression' ? body : null;
+    }
+    return null;
+  };
+
+  const registrationScan = (n) => {
+    if (!n) return;
+    if (n.type === 'CallExpression' || n.type === 'OptionalCallExpression') {
+      const method = n.callee && (n.callee.type === 'MemberExpression' || n.callee.type === 'OptionalMemberExpression')
+        && !n.callee.computed && n.callee.property && n.callee.property.type === 'Identifier'
+        ? n.callee.property.name : null;
+      if (method !== null) {
+        let cur = n.callee.object;
+        let rootName = null;
+        for (let i = 0; i < HOP_GUARD && cur; i += 1) {
+          if (cur.type === 'Identifier') { rootName = cur.name; break; }
+          if ((cur.type === 'CallExpression' || cur.type === 'OptionalCallExpression') && cur.callee) { cur = cur.callee; continue; }
+          if (cur.type === 'MemberExpression' || cur.type === 'OptionalMemberExpression') { cur = cur.object; continue; }
+          break;
+        }
+        for (const spec of registrationSpecs) {
+          if (rootName === null || !isRegistryRoot(rootName, spec)) continue;
+          const kind = spec.kinds.find((k) => k.method === method);
+          if (!kind) continue;
+          const args = n.arguments ?? [];
+          const nameNode = args[kind.nameArg];
+          if (!nameNode || nameNode.type !== 'StringLiteral' || nameNode.value === '') continue;
+          const def = definitionObjectOf(args[kind.defArg]);
+          const line = lineOf(n);
+          const rec = {
+            kind: 'registration', file: relFile, line, framework: spec.root,
+            what: method, name: nameNode.value,
+          };
+          if (def) {
+            const ctrl = spec.controllerKey ? propOf(def, spec.controllerKey) : null;
+            if (ctrl && ctrl.type === 'StringLiteral') rec.controller = ctrl.value;
+            const tpl = spec.templateKey ? propOf(def, spec.templateKey) : null;
+            if (tpl && tpl.type === 'StringLiteral') {
+              const tags = customElementTags(tpl.value);
+              if (tags.length > 0) rec.templateTags = tags;
+            }
+            const url = spec.templateUrlKey ? propOf(def, spec.templateUrlKey) : null;
+            if (url && url.type === 'StringLiteral') attachTemplate(rec, url.value);
+          }
+          // A directive is only a mount point when its definition names a
+          // controller. Every other directive is behaviour on an element, and
+          // claiming it renders a screen would be an invention.
+          if (kind.needs && !Object.prototype.hasOwnProperty.call(rec, kind.needs)) continue;
+          emit(rec, line);
+        }
+      }
+    }
+    eachChild(n, registrationScan);
+  };
+
+  // ---- the client the framework hands you ---------------------------------
+  //
+  // `$http` is not imported and not declared: it arrives as a parameter, and
+  // the only thing that says it is a client is WHERE the function sits. So the
+  // two forms the pack names are found first, and a parameter is a client only
+  // inside one of them.
+  const injectionScan = (n) => {
+    if (!n) return;
+    if (n.type === 'ArrayExpression') {
+      // `['$http', function ($http) {…}]`: the framework's own inline
+      // annotation. The names come first, the function last.
+      const els = n.elements ?? [];
+      const last = els[els.length - 1];
+      if (els.length >= 2 && last && isFunctionNode(last)
+        && els.slice(0, -1).every((e) => e && e.type === 'StringLiteral')) {
+        injectionTargets.add(last);
+      }
+    }
+    if (n.type === 'CallExpression' || n.type === 'OptionalCallExpression') {
+      const c = n.callee ? calleeOf(n.callee) : null;
+      const method = c ? c.name : (n.callee && (n.callee.type === 'MemberExpression' || n.callee.type === 'OptionalMemberExpression')
+        && !n.callee.computed && n.callee.property && n.callee.property.type === 'Identifier'
+        ? n.callee.property.name : null);
+      const named = [...injectedClients.values()].some((client) => (client.registrars ?? []).includes(method));
+      if (named) {
+        for (const a of n.arguments ?? []) {
+          if (!a) continue;
+          if (isFunctionNode(a)) { injectionTargets.add(a); continue; }
+          if (a.type === 'ObjectExpression') {
+            for (const prop of a.properties) {
+              if (prop.type !== 'ObjectProperty') continue;
+              if (isFunctionNode(prop.value)) injectionTargets.add(prop.value);
+            }
+          }
+        }
+      }
+    }
+    eachChild(n, injectionScan);
+  };
+
+  const rootEnv = { scope: moduleScope, func: null, defaultExport: false, classInfo: null, injected: null };
+  collectModuleLocals(program);
+  injectionScan(program);
+  chainRoutes(program);
+  registrationScan(program);
   registrarRoutes(program, rootEnv);
   for (const stmt of program.body) visit(stmt, rootEnv);
 }
@@ -2042,13 +2451,18 @@ function main(argv) {
   //                              root can see nothing at all.
   let configsOnly = false;
   const roots = [];
+  // The frontend source roots this project DECLARES, whatever this invocation
+  // was asked to read. Repeatable, and used for one thing only: where an HTML
+  // template named by a `templateUrl` is looked for.
+  const webRoots = [];
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--root') { root = argv[i + 1]; i += 1; continue; }
+    if (argv[i] === '--web-root') { webRoots.push(argv[i + 1]); i += 1; continue; }
     if (argv[i] === '--configs-only') { configsOnly = true; continue; }
     roots.push(argv[i]);
   }
   if (root === null || roots.length === 0) {
-    process.stderr.write('usage: node adapters/web/webfacts.mjs [--configs-only] --root <abs root> <abs source root>...\n');
+    process.stderr.write('usage: node adapters/web/webfacts.mjs [--configs-only] --root <abs root> [--web-root <abs source root>]... <abs source root or file>...\n');
     process.exit(2);
   }
   root = path.resolve(root);
@@ -2071,6 +2485,52 @@ function main(argv) {
     const abs = path.resolve(r);
     collectFiles(abs, found, [pkgOfRoot.get(abs)]);
   }
+
+  // ---- where an HTML template is looked for --------------------------------
+  //
+  // `templateUrl: 'scripts/owner-list/owner-list.template.html'` is a path the
+  // SERVER resolves, and the server's root is not the source root: the sources
+  // are under `static/scripts` and the url is written from `static`. So each
+  // source root and a few directories above it are tried, in a fixed order, and
+  // the first file that is there wins.
+  //
+  // THE BASES COME FROM `--web-root`, NEVER FROM THE TARGETS. A cold run is
+  // given the source roots and an incremental one is given the changed FILES,
+  // so a list derived from the arguments would put a file's own directory at
+  // the front on one run and not on the other, and a `templateUrl` that is a
+  // bare file name would then resolve to two different files. The CLI passes
+  // the declared roots on every invocation; without the flag the targets are
+  // the roots, which is what a hand-run over a directory means.
+  const TEMPLATE_BASE_LEVELS = 4;
+  const templateBases = [];
+  for (const r of (webRoots.length > 0 ? webRoots : roots).map((x) => path.resolve(x)).sort()) {
+    let cur = r;
+    for (let i = 0; i <= TEMPLATE_BASE_LEVELS; i += 1) {
+      if (!templateBases.includes(cur)) templateBases.push(cur);
+      const up = path.dirname(cur);
+      if (up === cur) break;
+      cur = up;
+    }
+  }
+  const templateCache = new Map();
+  const templateOf = (templateUrl) => {
+    const url = String(templateUrl ?? '');
+    if (url === '' || /^[a-z][a-z0-9+.-]*:/i.test(url) || url.includes('{') || url.includes('$')) return null;
+    if (templateCache.has(url)) return templateCache.get(url);
+    let out = null;
+    for (const base of templateBases) {
+      const abs = path.resolve(base, url.replace(/^\/+/, ''));
+      let stat;
+      try { stat = fs.statSync(abs); } catch { continue; }
+      if (!stat.isFile() || stat.size > MAX_TEMPLATE_BYTES) continue;
+      let text;
+      try { text = fs.readFileSync(abs, 'utf8'); } catch { continue; }
+      out = { file: toPosix(path.relative(root, abs)), tags: customElementTags(text) };
+      break;
+    }
+    templateCache.set(url, out);
+    return out;
+  };
 
   const configRecords = [];
   const configParsed = [];
@@ -2136,7 +2596,7 @@ function main(argv) {
     const blocks = lang === 'vue'
       ? vueBlocks(text)
       : [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
-    const res = analyzeFile({ relFile, blocks, packs, lang });
+    const res = analyzeFile({ relFile, blocks, packs, lang, templateOf });
     const fileRec = { kind: 'file', file: relFile, line: 1, lang, recoveredErrors: res.recoveredErrors };
     if (lang === 'vue') {
       fileRec.blocks = blocks.map((b) => ({ lang: b.lang, setup: b.setup, line: b.line }));
@@ -2169,6 +2629,12 @@ function main(argv) {
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles: out.envFiles.size,
     platformSinks: { fetch: 0, xhr: 0 },
+    // What a frontend written before modules put in the stream (RM47): the
+    // names the framework's own registry holds, the templates read for their
+    // tags, and the calls that went through a client the framework injected.
+    registrations: { component: 0, controller: 0, directive: 0 },
+    templatesRead: 0,
+    injectedCalls: 0,
   };
 
   const KIND_RANK = (k) => (k === 'file' ? 0 : 1);
@@ -2211,6 +2677,11 @@ function tally(rec, counts) {
     case 'route':
       counts.routes += 1;
       counts.byPack[rec.pack] = (counts.byPack[rec.pack] ?? 0) + 1;
+      if (typeof rec.templateFile === 'string') counts.templatesRead += 1;
+      break;
+    case 'registration':
+      counts.registrations[rec.what] = (counts.registrations[rec.what] ?? 0) + 1;
+      if (typeof rec.templateFile === 'string') counts.templatesRead += 1;
       break;
     case 'config':
       if (rec.what === 'alias') counts.aliases += 1;
@@ -2221,6 +2692,7 @@ function tally(rec, counts) {
       counts.calls += 1;
       if (rec.platformSink === 'fetch') counts.platformSinks.fetch += 1;
       if (rec.platformSink === 'xhr') counts.platformSinks.xhr += 1;
+      if (rec.injected) counts.injectedCalls += 1;
       if (rec.method && rec.method.from) {
         counts.methodBySource[rec.method.from] = (counts.methodBySource[rec.method.from] ?? 0) + 1;
       }

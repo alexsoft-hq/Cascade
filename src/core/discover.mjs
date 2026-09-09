@@ -103,7 +103,48 @@ const FRAMEWORK_DEPS = Object.freeze([
 const ROUTER_DEPS = Object.freeze([
   ['vue-router', ['vue-router']],
   ['react-router', ['react-router', 'react-router-dom']],
+  ['angular-router', ['angular-ui-router', '@uirouter/angularjs', 'angular-route']],
 ]);
+
+/**
+ * The registrar spellings that name a router declaration pack IN THE SOURCE.
+ *
+ * A frontend shipped as `<script>` tags has no dependency list at all, so the
+ * table above cannot answer "which router is this?" for it. What the source
+ * does carry is the registrar the framework makes you write, and that is the
+ * one thing about a vendored frontend that is not a guess. Kept beside
+ * ROUTER_DEPS so the two lists name the same packs; test/pack.test.mjs checks
+ * every name here against the files in adapters/web/packs.
+ */
+export const ROUTER_SOURCE_MARKERS = Object.freeze([
+  ['angular-router', ['$stateProvider', '$routeProvider', '$urlRouterProvider']],
+  ['vue-router', ['createRouter(', 'VueRouter(']],
+  ['react-router', ['createBrowserRouter(', 'createHashRouter(', 'createMemoryRouter(']],
+]);
+
+/**
+ * Directory names that mean "somebody else's code", wherever they sit. A
+ * vendored frontend root is never inside one of these: a minified library under
+ * `webjars/` is shipped by the build, not written here.
+ */
+const VENDOR_DIRS = Object.freeze([
+  'node_modules', 'bower_components', 'webjars', 'vendor', 'lib', 'dist', 'build', 'target',
+]);
+
+/**
+ * Directory names that mean "this is what the server serves". A `.js` file
+ * under one of these is a page's script, not a build helper that happens to sit
+ * beside a pom.
+ */
+const WEB_ROOT_DIRS = Object.freeze(['static', 'public', 'webapp', 'www']);
+
+/** The one two-segment spelling of the same thing (Spring's template directory). */
+const WEB_ROOT_PATH = 'resources/templates';
+
+/** How many files of a vendored root are read to see which router it names. */
+const ROUTER_SCAN_FILES = 400;
+/** How much of each of those files. A registrar is named where the module is set up. */
+const ROUTER_SCAN_BYTES = 65536;
 
 /** The router declaration packs this engine ships, in the order they are tried. */
 export const ROUTER_PACKS = Object.freeze(ROUTER_DEPS.map(([name]) => name));
@@ -138,6 +179,75 @@ export function isWebSourceFile(name) {
   if (/\.(?:test|spec)\./.test(n)) return false;
   return WEB_EXTENSIONS.some((e) => n.endsWith(e));
 }
+
+/**
+ * Whether a root-relative directory could hold a VENDORED frontend: nothing on
+ * its path is somebody else's code.
+ * @param {string} relDir
+ * @returns {boolean}
+ */
+export function outsideVendorDirs(relDir) {
+  const segments = String(relDir ?? '').split('/').filter((s) => s !== '' && s !== '.');
+  return !segments.some((s) => VENDOR_DIRS.includes(s));
+}
+
+/**
+ * Whether a root-relative directory sits where a server serves files from: it
+ * IS, or is under, a directory named `static`, `public`, `webapp` or `www`, or
+ * it is under `resources/templates`.
+ * @param {string} relDir
+ * @returns {boolean}
+ */
+export function underWebRootDir(relDir) {
+  const posix = String(relDir ?? '');
+  const segments = posix.split('/').filter((s) => s !== '' && s !== '.');
+  if (segments.some((s) => WEB_ROOT_DIRS.includes(s))) return true;
+  for (let i = 0; i + 1 < segments.length; i += 1) {
+    if (`${segments[i]}/${segments[i + 1]}` === WEB_ROOT_PATH) return true;
+  }
+  return false;
+}
+
+/** Every `<script src="...">` an HTML page loads, in source order. */
+export function scriptSourcesOf(html) {
+  const out = [];
+  const re = /<script\b[^>]*\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+  let m;
+  while ((m = re.exec(String(html ?? ''))) !== null) {
+    const value = m[2] ?? m[3] ?? m[4] ?? '';
+    if (value !== '') out.push(value);
+  }
+  return out;
+}
+
+/**
+ * One `<script src>` read as a path under the page's own directory.
+ *
+ * A page served from `static/` writes `/scripts/app.js` for the file that sits
+ * at `static/scripts/app.js`: the leading slash is the SERVER's root, which is
+ * the directory holding the page. A relative `scripts/app.js` names the same
+ * file. An address with a host is somebody else's file and is not one of ours.
+ *
+ * @param {string} dir  the page's directory, root-relative
+ * @param {string} src  the src attribute as written
+ * @returns {string|null} a root-relative path, or null when the src is not local
+ */
+export function scriptTargetOf(dir, src) {
+  let s = String(src ?? '').trim();
+  if (s === '' || /^[a-z][a-z0-9+.-]*:/i.test(s) || s.startsWith('//')) return null;
+  s = s.split('#')[0].split('?')[0];
+  if (s === '') return null;
+  s = s.replace(/^\/+/, '').replace(/^\.\//, '');
+  const base = dir === '.' || dir === '' ? '' : `${dir}/`;
+  const out = [];
+  for (const seg of `${base}${s}`.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { if (out.length > 0) out.pop(); continue; }
+    out.push(seg);
+  }
+  return out.length > 0 ? out.join('/') : null;
+}
+
 const MYSQL_DDL_RE = /`|ENGINE\s*=/;
 
 /**
@@ -286,6 +396,7 @@ export function classifyDdlFile(relPath, text) {
  *   mapperDirs:string[],
  *   webSourceRoots:string[],
  *   webPackages:{path:string, root:string, framework:string, router:(string|null), http:string[]}[],
+ *   webVendoredRoots:{root:string, files:number, routerPacks:string[]}[],
  *   openapiDocuments:{path:string, version:('3'|'2'|'unknown')}[],
  *   javaSourceRoots:string[],
  *   javaTestRoots:string[],
@@ -329,6 +440,15 @@ export function discover(root, io = {}) {
   };
   // One entry per frontend package.json, with what its dependencies declare.
   const webPackages = [];
+  // A FRONTEND WITH NO PACKAGE MANIFEST (RM47). Every directory that holds a
+  // frontend source file with no package.json above it inside its repository,
+  // with how many such files it holds; plus every `index.html` beside one, so
+  // the page's own `<script src>` list can say which of those directories the
+  // server really serves. The rule that turns these into roots runs after the
+  // walk, because it needs the whole file list.
+  const looseWebFiles = new Map(); // rel dir -> file count
+  const looseWebPaths = new Set(); // rel file path
+  const looseIndexPages = new Map(); // rel dir -> abs index.html
   // Every OpenAPI / Swagger document in the tree, with the version it declares.
   const openapiDocuments = [];
   const ddlPaths = [];
@@ -388,7 +508,7 @@ export function discover(root, io = {}) {
     return key;
   };
 
-  const walk = (absDir, repoStack, isRepoRoot) => {
+  const walk = (absDir, repoStack, isRepoRoot, underPackage = false) => {
     if (capped) return;
     let entries;
     try {
@@ -411,6 +531,12 @@ export function discover(root, io = {}) {
       if (key !== null) stack = [...repoStack, key];
     }
 
+    // "No package.json in any ancestor INSIDE THE REPOSITORY": a nested checkout
+    // starts the question again, because a manifest in the outer tree says
+    // nothing about the inner one.
+    const inPackage = (hasGit ? false : underPackage)
+      || entries.some((e) => e.isFile && e.name === 'package.json');
+
     if (isRepoRoot || hasGit) {
       if (entries.some((e) => e.isFile && e.name === 'pom.xml')) sawPom = true;
       if (entries.some((e) => e.isFile && (e.name === 'build.gradle' || e.name === 'build.gradle.kts'))) sawGradle = true;
@@ -420,7 +546,7 @@ export function discover(root, io = {}) {
       if (capped) return;
       if (entry.isDir) {
         if (SKIP_DIRS.includes(entry.name)) continue;
-        walk(path.join(absDir, entry.name), stack, false);
+        walk(path.join(absDir, entry.name), stack, false, inPackage);
         continue;
       }
       if (!entry.isFile) continue; // symlinks and specials: not walked, not counted
@@ -433,7 +559,7 @@ export function discover(root, io = {}) {
         });
         return;
       }
-      classify(path.join(absDir, entry.name), entry.name, repoOf(stack), entries);
+      classify(path.join(absDir, entry.name), entry.name, repoOf(stack), entries, inPackage);
     }
   };
 
@@ -455,9 +581,18 @@ export function discover(root, io = {}) {
     }
   };
 
-  const classify = (absFile, name, repoKey, dirEntries) => {
+  const classify = (absFile, name, repoKey, dirEntries, inPackage) => {
     const lower = name.toLowerCase();
     const stats = repoKey === null ? null : repoStats.get(repoKey);
+
+    // An `index.html` beside loose scripts is the one file that can say which
+    // directory the server treats as its root. Noted, not read: only the
+    // directories that turn out to hold frontend sources are opened, after the
+    // walk.
+    if (lower === 'index.html' && inPackage !== true) {
+      const dir = rel(path.dirname(absFile));
+      if (outsideVendorDirs(dir)) looseIndexPages.set(dir, absFile);
+    }
 
     // Counted BEFORE the java/xml/sql branches so a `.vue` or `.ts` never falls
     // through to nothing. The web lane reads these files (RM26), so they are an
@@ -465,6 +600,19 @@ export function discover(root, io = {}) {
     if (isWebSourceFile(name)) {
       counts.webFiles += 1;
       if (lower.endsWith('.vue')) counts.vueFiles += 1;
+      // A SOURCE MAP BESIDE IT MEANS A BUILD WROTE IT. `app.cebd468e.js` is not
+      // spelled `.min.js` and is a webpack chunk all the same; nobody writes a
+      // `.js.map` by hand, so the pair is the one generic thing that says
+      // "generated". A directory of those is output, not a frontend somebody
+      // keeps here, and reading it would put a bundle's insides in the graph.
+      const generated = (dirEntries ?? []).some((e) => e.isFile && e.name === `${name}.map`);
+      if (inPackage !== true && !generated) {
+        const dir = rel(path.dirname(absFile));
+        if (outsideVendorDirs(dir)) {
+          looseWebFiles.set(dir, (looseWebFiles.get(dir) ?? 0) + 1);
+          looseWebPaths.add(rel(absFile));
+        }
+      }
       return;
     }
 
@@ -634,7 +782,51 @@ export function discover(root, io = {}) {
     }
   };
 
-  walk(root, [], true);
+  walk(root, [], true, false);
+
+  // ---- a frontend with no package manifest (RM47) --------------------------
+  //
+  // Everything above answers "which frontend PACKAGE is here?". A gateway that
+  // ships AngularJS as `<script>` tags has none, and refusing to read it left
+  // the whole screen side of that project invisible. So a directory of frontend
+  // sources with no manifest above it is a web root when the tree SAYS it is
+  // served: it sits under a `static`/`public`/`webapp`/`www` directory (or
+  // under `resources/templates`), or an `index.html` beside it loads one of its
+  // files by `<script src>`. Nothing else is enough — a build helper next to a
+  // pom is not a frontend, and neither is a directory of loose scripts nobody
+  // serves.
+  const servedDirs = [];
+  for (const dir of [...looseWebFiles.keys()].sort()) {
+    if (underWebRootDir(dir)) { servedDirs.push(dir); continue; }
+    const page = looseIndexPages.get(dir);
+    if (page === undefined) continue;
+    const html = read(page);
+    if (html === null) continue;
+    const loadsOwnFile = scriptSourcesOf(html)
+      .map((src) => scriptTargetOf(dir, src))
+      .some((target) => target !== null && looseWebPaths.has(target));
+    if (loadsOwnFile) servedDirs.push(dir);
+  }
+  const webVendoredRoots = minimalRoots(servedDirs).map((vendorRoot) => {
+    const under = (p) => p === vendorRoot || p.startsWith(`${vendorRoot}/`);
+    let files = 0;
+    for (const [dir, n] of looseWebFiles) if (under(dir)) files += n;
+    // WHICH ROUTER THIS IS, from the source alone. No dependency list names the
+    // framework here, so the registrar the code writes is the only thing that
+    // can, and a bounded read of the root's own files is what says it.
+    const scanned = [...looseWebPaths].filter(under).sort().slice(0, ROUTER_SCAN_FILES);
+    const named = new Set();
+    for (const relPath of scanned) {
+      const text = read(path.resolve(root, relPath));
+      if (text === null) continue;
+      const head = text.slice(0, ROUTER_SCAN_BYTES);
+      for (const [pack, markers] of ROUTER_SOURCE_MARKERS) {
+        if (markers.some((m) => head.includes(m))) named.add(pack);
+      }
+    }
+    return { root: vendorRoot, files, routerPacks: [...named].sort() };
+  });
+  counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
 
   // SAID ONCE, not once per file. A `spring.config.import` pointing at a config
   // server means part of this project's configuration lives somewhere this walk
@@ -666,6 +858,11 @@ export function discover(root, io = {}) {
     // listing a directory and one of its children would read the child twice.
     webSourceRoots: minimalRoots(webPackages.map((p) => p.root)),
     webPackages: webPackages.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    // The frontend roots that have no package manifest at all (RM47). Kept
+    // apart from `webSourceRoots` on purpose: those come from a dependency list
+    // that named a framework, these from where the files sit, and a reader has
+    // to be able to tell the two apart.
+    webVendoredRoots,
     // Sorted by path, like every other list here: a walk's order must not decide
     // which document a run reads first.
     openapiDocuments: openapiDocuments.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),

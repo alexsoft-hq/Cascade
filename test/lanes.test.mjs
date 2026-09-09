@@ -461,6 +461,53 @@ test('selectLanes: the web pack declared with nothing found is a MISSING_INPUT, 
   assert.match(d.reason, /--web-src/);
 });
 
+test('selectLanes: the profile\'s webRoots are read beside the ones a package gives (RM47)', () => {
+  const r = selectLanes({
+    flags: {},
+    profile: normalizeProfile({
+      frameworkPacks: ['web'],
+      webRoots: [{ root: '../src/main/resources/static/scripts', kind: 'vendored', from: 'discovery' }],
+    }),
+    discovery: webDiscovery(),
+    root: ROOT, cwd: ROOT, manifestDir: DOT,
+  });
+  assert.deepEqual(r.webSrc, [
+    path.join(ROOT, 'src/main/resources/static/scripts'),
+    path.join(ROOT, 'web/src'),
+  ], 'the profile path is relative to the profile, the discovery path to the root');
+  assert.equal(r.sources.webSrc, 'discovery+profile');
+});
+
+test('selectLanes: a project whose ONLY frontend has no package is read from the profile alone', () => {
+  const r = selectLanes({
+    flags: {},
+    profile: normalizeProfile({
+      frameworkPacks: ['web'],
+      webRoots: [{ root: '../static/scripts', kind: 'vendored', from: 'discovery' }],
+    }),
+    discovery: discovery({ webSourceRoots: [], webPackages: [] }),
+    root: ROOT, cwd: ROOT, manifestDir: DOT,
+  });
+  assert.deepEqual(r.webSrc, [path.join(ROOT, 'static/scripts')]);
+  assert.equal(r.sources.webSrc, 'profile');
+  assert.ok(r.lanes.includes('web'));
+  assert.equal(r.diagnostics.some((x) => x.kind === 'MISSING_INPUT' && /declares web/.test(x.reason)), false);
+});
+
+test('selectLanes: --web-src still wins for one run, whatever the profile records', () => {
+  const r = selectLanes({
+    flags: { webSrc: ['other/src'] },
+    profile: normalizeProfile({
+      frameworkPacks: ['web'],
+      webRoots: [{ root: '../static/scripts', kind: 'vendored', from: 'discovery' }],
+    }),
+    discovery: webDiscovery(),
+    root: ROOT, cwd: ROOT, manifestDir: DOT,
+  });
+  assert.deepEqual(r.webSrc, [path.join(ROOT, 'other/src')]);
+  assert.equal(r.sources.webSrc, 'flag');
+});
+
 // The web axis, from what the bridge actually did (RM28). `laneStats.web` is the
 // worker's counts merged with the bridge's, so these fixtures are that shape.
 const webStats = (over = {}) => ({

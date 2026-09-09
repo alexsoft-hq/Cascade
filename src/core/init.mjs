@@ -11,6 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { MANIFEST_SCHEMA } from './manifest.mjs';
 import { normalizeProfile, validateProfile } from './profile.mjs';
+import { ROUTER_PACKS } from './discover.mjs';
 import { DEFAULT_PORTS } from './dbconfig.mjs';
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -46,7 +47,9 @@ export function lanesOf(discovery) {
   // The web lane runs over a frontend PACKAGE, not over loose `.js` files: a
   // build script at the top of a Java repository is not a frontend, and reading
   // it would put a lane on the list that has nothing to say.
-  if ((discovery.webPackages ?? []).length > 0) lanes.push('web');
+  // A frontend with no package manifest is a lane too (RM47): the files are
+  // there and the tree says the server serves them.
+  if ((discovery.webPackages ?? []).length > 0 || (discovery.webVendoredRoots ?? []).length > 0) lanes.push('web');
   return lanes;
 }
 
@@ -111,11 +114,11 @@ export function buildManifest(discovery, opts) {
  * `catalog.connectionFrom` — but `catalog.source` stays "none", so nothing
  * connects until the user says so (SPEC §12.3).
  *
- * TWO KEYS ARE THE USER'S THE MOMENT THEY EXIST: `gatewayRoutes` and
- * `serviceNames`. Discovery reads both out of the tree (RM46), and both are
- * written only into a profile that has none. A map somebody typed outranks a
- * re-run of discovery, so a non-empty one is left exactly as it is and the
- * diagnostic says what was found and not applied.
+ * THREE KEYS ARE THE USER'S THE MOMENT THEY EXIST: `gatewayRoutes`,
+ * `serviceNames` and `webRoots`. Discovery reads all three out of the tree
+ * (RM46, RM47), and each is written only into a profile that has none. A map
+ * somebody typed outranks a re-run of discovery, so a non-empty one is left
+ * exactly as it is and the diagnostic says what was found and not applied.
  *
  * @param {ReturnType<import('./discover.mjs').discover>} discovery
  * @param {{root:string, manifestDir:string, existing?:(Object|null)}} opts
@@ -147,12 +150,19 @@ export function buildProfile(discovery, opts) {
   // depends on one: the router declaration packs (adapters/web/packs) are what
   // let the worker recognize a route object, and naming the one this project
   // actually uses is how the profile says which convention its screens follow.
+  //
+  // A VENDORED ROOT COUNTS THE SAME WAY (RM47). A gateway that ships AngularJS
+  // as `<script>` tags has no manifest to read a dependency out of, so the
+  // router pack comes from the registrar its own source writes. Everything else
+  // about the lane is identical: the same worker reads the same files.
   const webPackages = discovery.webPackages ?? [];
+  const vendoredRoots = discovery.webVendoredRoots ?? [];
   const routerPacks = [];
-  if (webPackages.length > 0) {
+  if (webPackages.length > 0 || vendoredRoots.length > 0) {
     frameworkPacks.push('web');
-    for (const router of ['vue-router', 'react-router']) {
-      if (webPackages.some((p) => p.router === router)) routerPacks.push(router);
+    for (const router of ROUTER_PACKS) {
+      if (webPackages.some((p) => p.router === router)
+        || vendoredRoots.some((r) => (r.routerPacks ?? []).includes(router))) routerPacks.push(router);
     }
     frameworkPacks.push(...routerPacks);
   }
@@ -223,6 +233,29 @@ export function buildProfile(discovery, opts) {
   // in the user's mouth, and those words would be wrong.
   const screenAxis = routerPacks.length > 0 ? { screenAxis: { enabled: true } } : {};
 
+  // THE FRONTEND ROOTS NO PACKAGE DECLARES, written down so a later run reads
+  // them without a flag. Same rule as the two keys below: a list that is
+  // already in the profile is the user's word, including an EMPTY one, which is
+  // how a project says "read none of them". Discovery re-running is not a
+  // reason to overwrite either answer.
+  const discoveredWebRoots = vendoredRoots.map((r) => ({
+    root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
+    kind: 'vendored',
+    from: 'discovery',
+  }));
+  const declaredWebRoots = Array.isArray(existing?.webRoots) ? existing.webRoots : null;
+  const webRoots = declaredWebRoots ?? discoveredWebRoots;
+  if (declaredWebRoots !== null && discoveredWebRoots.length > 0) {
+    diagnostics.push({
+      kind: 'WEB_ROOTS_KEPT',
+      severity: 'info',
+      path: '.',
+      reason: `the profile already answers for webRoots (${declaredWebRoots.length} root(s)), so it is left alone. `
+        + `This tree holds ${discoveredWebRoots.length} frontend root(s) with no package manifest that were not applied: `
+        + `${vendoredRoots.map((r) => r.root).join(', ')}`,
+    });
+  }
+
   // WHO THIS SERVICE IS, from `spring.application.name` (RM46). It is what the
   // federation matcher uses to pick one sibling out of several serving the same
   // path, so leaving it for a person to type was leaving the tie-breaker unset
@@ -282,6 +315,7 @@ export function buildProfile(discovery, opts) {
     sqlDialects: discovery.ddlDialectHint === 'mysql' ? { main: 'mysql' } : {},
     frameworkPacks,
     ...screenAxis,
+    ...(webRoots.length > 0 ? { webRoots } : {}),
     ...(serviceNames.length > 0 ? { serviceNames } : {}),
     ...(Object.keys(gatewayRoutes).length > 0 ? { gatewayRoutes } : {}),
     ...(openapiDocuments.length > 0 ? { openapi: { documents: openapiDocuments } } : {}),

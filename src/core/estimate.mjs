@@ -166,7 +166,20 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
   // the same rule the other three lanes follow.
   const webPackDeclared = packs.includes('web');
   const webFiles = n('webFiles');
-  const webRoots = (discovery.webSourceRoots ?? []).length;
+  const packageRoots = (discovery.webSourceRoots ?? []).length;
+  // A frontend with no package manifest is a root too (RM47), and it is the one
+  // a reader has to be told about by name: nothing in the tree declares which
+  // framework it is, so the router pack is read out of the source.
+  const vendoredRoots = discovery.webVendoredRoots ?? [];
+  const declaredWebRoots = Array.isArray(profile.webRoots) ? profile.webRoots.length : 0;
+  const webRoots = packageRoots + Math.max(vendoredRoots.length, declaredWebRoots);
+  const vendoredNamed = [...new Set(vendoredRoots.flatMap((r) => r.routerPacks ?? []))].sort();
+  const vendoredNote = vendoredRoots.length === 0 ? ''
+    : ` ${vendoredRoots.length} of those root(s) are vendored (no package manifest): `
+      + `${vendoredRoots.slice(0, 3).map((r) => `${r.root} (${r.files} file(s))`).join(', ')}`
+      + `${vendoredRoots.length > 3 ? `, and ${vendoredRoots.length - 3} more` : ''}. `
+      + 'No dependency list names the framework there, so the router pack is chosen from the source alone'
+      + `${vendoredNamed.length > 0 ? ` (${vendoredNamed.join(', ')})` : ' and nothing in those roots names one'}.`;
   const willReadWeb = webFiles > 0 && webRoots > 0 && webPackDeclared;
   axes.push({
     axis: 'web',
@@ -176,13 +189,20 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
     // to be guessed. The pack's own axis says which, once the lane has run.
     status: willReadWeb ? 'degraded' : 'not-shipped',
     reason: willReadWeb
-      ? `${webFiles} frontend source file(s) in ${webRoots} root(s). The lane will trace each HTTP call to the client that sends it and attach it to the route this pack serves; a call whose prefix or alias had to be assumed is graded HEURISTIC, and one no route here answers is counted, not dropped`
+      ? `${webFiles} frontend source file(s) in ${webRoots} root(s).${vendoredNote} The lane will trace each HTTP call to the client that sends it and attach it to the route this pack serves; a call whose prefix or alias had to be assumed is graded HEURISTIC, and one no route here answers is counted, not dropped`
       : webFiles === 0
         ? 'there is no frontend source file in this tree (.js/.ts/.jsx/.tsx/.vue outside tests and type declarations), so there is no frontend to read'
         : webRoots === 0
-          ? `we found ${webFiles} frontend source file(s), but no package.json declaring a framework dependency, so there is no frontend package to read. Pass --web-src to name a root anyway`
+          ? `we found ${webFiles} frontend source file(s), but no package.json declaring a framework dependency and no directory of frontend sources the tree says it serves, so there is no frontend root to read. Pass --web-src to name one anyway`
           : `we found ${webFiles} frontend source file(s), but frameworkPacks does not declare web, so an unflagged run will not read them`,
-    counts: { frontendPackages: n('frontendPackageJson'), webFiles, vueFiles: n('vueFiles'), webSourceRoots: webRoots },
+    counts: {
+      frontendPackages: n('frontendPackageJson'),
+      webFiles,
+      vueFiles: n('vueFiles'),
+      webSourceRoots: webRoots,
+      vendoredRoots: vendoredRoots.length,
+      vendoredFiles: n('webVendoredFiles'),
+    },
   });
   // The OpenAPI documents this run will read. No framework pack gates it: a
   // document is a document, and a project that ships one has said what it

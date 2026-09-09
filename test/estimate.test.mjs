@@ -209,7 +209,7 @@ test('estimateBefore: with the web pack declared the axis is DEGRADED before the
   assert.match(web.reason, /120 frontend source file\(s\) in 1 root\(s\)/);
   assert.match(web.reason, /attach it to the route this pack serves/);
   assert.match(web.reason, /graded HEURISTIC/);
-  assert.deepEqual(web.counts, { frontendPackages: 1, webFiles: 120, vueFiles: 65, webSourceRoots: 1 });
+  assert.deepEqual(web.counts, { frontendPackages: 1, webFiles: 120, vueFiles: 65, webSourceRoots: 1, vendoredRoots: 0, vendoredFiles: 0 });
   // A frontend the lane WILL read is no longer an uncovered technology.
   assert.deepEqual(r.notCovered, []);
   // Nothing here declares a router: not the profile's packs, and not the
@@ -354,4 +354,45 @@ test('measurePack: webCallsResolved is null without a web lane, and measured wit
     },
   });
   assert.deepEqual(measured.webCallsResolved, { num: 30, den: 40, pct: 75 });
+});
+
+test('estimateBefore: a frontend with no package manifest is a web root, and the axis says which (RM47)', () => {
+  const d = discovery(
+    { javaFiles: 12, springHandlerFiles: 2, webFiles: 22, webVendoredFiles: 22 },
+    {
+      javaSourceRoots: ['src/main/java'],
+      webVendoredRoots: [{ root: 'src/main/resources/static/scripts', files: 22, routerPacks: ['angular-router'] }],
+    },
+  );
+  const profile = normalizeProfile({
+    frameworkPacks: ['spring-mvc', 'web', 'angular-router'],
+    screenAxis: { enabled: true },
+    webRoots: [{ root: '../src/main/resources/static/scripts', kind: 'vendored', from: 'discovery' }],
+  });
+  const r = estimateBefore(d, profile);
+  const web = axisOf(r, 'web');
+  assert.equal(web.status, 'degraded');
+  assert.match(web.reason, /22 frontend source file\(s\) in 1 root\(s\)/);
+  assert.match(web.reason, /1 of those root\(s\) are vendored \(no package manifest\): src\/main\/resources\/static\/scripts \(22 file\(s\)\)/);
+  assert.match(web.reason, /No dependency list names the framework there, so the router pack is chosen from the source alone \(angular-router\)/);
+  assert.deepEqual(web.counts, {
+    frontendPackages: 0, webFiles: 22, vueFiles: 0, webSourceRoots: 1, vendoredRoots: 1, vendoredFiles: 22,
+  });
+  // ...and the screen axis follows the router pack the source named.
+  const screen = axisOf(r, 'screen');
+  assert.equal(screen.status, 'degraded');
+  assert.match(screen.reason, /router pack\(s\): angular-router/);
+});
+
+test('estimateBefore: a served directory whose source names no router still reads as a web root', () => {
+  const d = discovery(
+    { webFiles: 4, webVendoredFiles: 4 },
+    { webVendoredRoots: [{ root: 'src/main/webapp/js', files: 4, routerPacks: [] }] },
+  );
+  const r = estimateBefore(d, normalizeProfile({
+    frameworkPacks: ['web'],
+    webRoots: [{ root: '../src/main/webapp/js', kind: 'vendored', from: 'discovery' }],
+  }));
+  assert.match(axisOf(r, 'web').reason, /and nothing in those roots names one/);
+  assert.equal(axisOf(r, 'screen').status, 'not-shipped');
 });

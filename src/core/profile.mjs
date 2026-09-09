@@ -33,6 +33,13 @@ export const PROFILE_DEFAULTS = deepFreeze({
   // Empty is the honest default: a project that never says its name is matched
   // by its project id alone.
   serviceNames: [],
+  // The frontend roots this project has that no package.json declares (RM47).
+  // Each entry is `{root, kind, from}`: `root` is manifest-relative like every
+  // other path in this file, `kind` is `vendored` (discovery found frontend
+  // sources with no manifest above them) or `declared` (a person typed it), and
+  // `from` says which. Empty is the honest default: a project whose frontend
+  // has a package.json needs no entry here.
+  webRoots: [],
   // `enabled: null` is the THIRD state, and the default: no word from the user,
   // so the switch is decided by what the run READS (src/core/lanes.mjs,
   // `screenAxisOf`). `true` and `false` are the user's word and are obeyed.
@@ -73,7 +80,7 @@ const CATALOG_SOURCES = Object.freeze(['jdbc', 'file', 'none']);
  * else a profile declares is reported as UNSUPPORTED_TECHNOLOGY and skipped —
  * never silently ignored (§7.3).
  */
-export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router']);
+export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router']);
 
 /**
  * The physical naming strategies `jpa.namingStrategy` may name (SPEC §18.2).
@@ -175,6 +182,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   serviceNames: {
     status: 'consumed', where: 'src/mcp/federation.mjs',
     note: 'the logical names this project answers to, written by `cascade init` from spring.application.name. `cascade analyze` copies them into the routes sidecar (routes.json) beside the pack, and the federation matcher picks THIS project for a call whose evidence names one of them: with two projects serving the same path, the name is the only thing in a call that can tell them apart. A project that declares none is still matched by its project id',
+  },
+  webRoots: {
+    status: 'consumed', where: 'src/core/lanes.mjs',
+    note: 'the frontend source roots this project has that no package.json declares. `cascade analyze` reads them beside the roots discovery derives from a frontend package.json, so a gateway that ships AngularJS as <script> tags is read with no flag. Each entry is {root, kind, from}: `root` is manifest-relative, `kind` is "vendored" (discovery found frontend sources with no manifest above them, under a static/public/webapp/www directory or beside an index.html that loads them) or "declared" (a person typed it), and `from` is "discovery" or "user". `cascade init` writes the vendored ones it finds; a list that is already in the profile is the user\'s and is left alone, and an empty list is how a project says "read none of them". --web-src still wins for one run',
   },
   'screenAxis.enabled': {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
@@ -541,6 +552,14 @@ export function profileDiagnostics(profile) {
       'gatewayRoutes are declared and frameworkPacks declares neither web nor spring-mvc, so an unflagged run reads no frontend and no Java call for them to rewrite. Pass --web-src, or add "web" to frameworkPacks');
   }
 
+  // A web root with no web lane is a root nothing reads. Said out loud for the
+  // same reason as the two above: the declaration is right and it changes
+  // nothing, and only this line would tell you.
+  if (Array.isArray(profile.webRoots) && profile.webRoots.length > 0 && !packsDeclared.includes('web')) {
+    add('RECORDED_NOT_ACTED', 'info', 'webRoots',
+      `webRoots names ${profile.webRoots.length} frontend root(s) and frameworkPacks does not declare web, so an unflagged run reads none of them. Add "web" to frameworkPacks, or pass --web-src`);
+  }
+
   // A screen CODE needs a pattern to read it out of. Declaring the length
   // without the pattern leaves every group falling back to the path segment,
   // which is a different grouping, so the mismatch is said out loud.
@@ -642,6 +661,25 @@ export function validateProfile(obj) {
     if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
       throw new ProfileError('profile.serviceNames must be an array of non-empty names this deployable answers to (spring.application.name)');
     }
+  }
+
+  if ('webRoots' in obj) {
+    const v = obj.webRoots;
+    if (!Array.isArray(v)) {
+      throw new ProfileError('profile.webRoots must be an array of {root, kind} entries naming frontend source roots no package.json declares');
+    }
+    v.forEach((entry, i) => {
+      const shape = `profile.webRoots[${i}]`;
+      if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
+        throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
+      }
+      if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared') {
+        throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it) or "declared" (you typed it)`);
+      }
+      if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
+        throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
+      }
+    });
   }
 
   if ('gatewayRoutes' in obj) {

@@ -37,7 +37,7 @@
    "tablesReached": 73,
    "columns": 2092,
    "columnsReached": 836,
-   "webCalls": 929,
+   "webCalls": 934,
    "webCallsResolved": 538,
    "screens": 166,
    "screensReachingATable": 19,
@@ -194,10 +194,10 @@
    "tablesReached": 5,
    "columns": 24,
    "columnsReached": 20,
-   "webCalls": 0,
-   "webCallsResolved": 0,
-   "screens": 0,
-   "screensReachingATable": 0,
+   "webCalls": 14,
+   "webCallsResolved": 14,
+   "screens": 9,
+   "screensReachingATable": 8,
    "endpointColumnPairs": 54,
    "axes": {
     "catalog": "shipped",
@@ -206,8 +206,8 @@
     "mybatisPlus": "not-shipped",
     "column": "degraded",
     "code": "shipped",
-    "web": "not-shipped",
-    "screen": "not-shipped"
+    "web": "shipped",
+    "screen": "shipped"
    }
   },
   "ruoyi-vue": {
@@ -273,7 +273,7 @@
    "tablesReached": 7,
    "columns": 71,
    "columnsReached": 70,
-   "webCalls": 0,
+   "webCalls": 2,
    "webCallsResolved": 0,
    "screens": 0,
    "screensReachingATable": 0,
@@ -285,7 +285,7 @@
     "mybatisPlus": "not-shipped",
     "column": "shipped",
     "code": "shipped",
-    "web": "not-shipped",
+    "web": "degraded",
     "screen": "not-shipped"
    }
   }

@@ -62,6 +62,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
 export const WEB_CALL_BASIS = Object.freeze({
   platform: 'the call goes to a browser sink (fetch / XMLHttpRequest), which sends the request itself: the URL argument is the URL by contract, and no rule had to decide that this call is an HTTP call',
   library: 'the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library\'s verbs, so the call sends a request and the URL it sends to is the argument the library reads',
+  injected: 'the callee is a client the FRAMEWORK hands the function, named in a declaration pack (adapters/web/packs/http-clients.json) and found by parameter name inside a function the framework fills in. Nothing in the file binds it, so there was nothing to trace: the pack says that parameter is a client and the method called is one of its verbs',
   wrapper: 'the callee was traced through the project\'s own wrapper(s) to a client library instance, by following what each name is BOUND to in its file and what each wrapper forwards. The chain is on the edge; every hop is a binding this lane read, not a name it recognized',
   untraced: 'the argument is URL-shaped but the callee could not be traced to any sink: the call may send this URL or may only build it, so the edge says a rule guessed and the grade is HEURISTIC',
 });
@@ -70,7 +71,22 @@ export const WEB_CALL_BASIS = Object.freeze({
 export const SCREEN_RENDERS_BASIS = Object.freeze({
   own: 'the route declaration names this file as the screen\'s component, and this function is declared in that file. Nothing was matched by name',
   child: 'the screen\'s component imports this file, directly or through other components, and this function is declared in it. Which of an imported component\'s functions a screen really runs is a run-time question, so the edge is a candidate',
+  // RM47. A frontend written before modules resolves nothing by path: the
+  // framework keeps a registry of names, and a name is how one thing finds
+  // another. So the chain of names IS the resolution, and it is on the edge.
+  registry: 'the route names a component, and the framework resolves that name through its own registry to the file that registers it. The chain of names is on the edge, and each link is a string the framework matches exactly, the same way an import names a file',
+  ambiguous: 'the same chain of names, with one name registered more than once. Which registration the framework really uses depends on the order the modules load, which is not in the source, so every file that registers the name is a candidate',
 });
+
+/**
+ * A kebab-case element tag as the name a framework registry holds.
+ * `owner-list` -> `ownerList`, `visits` -> `visits`.
+ * @param {string} tag
+ * @returns {string}
+ */
+export function registryNameOf(tag) {
+  return String(tag ?? '').replace(/-+([a-zA-Z0-9])/g, (m, c) => c.toUpperCase());
+}
 
 /** What each prefix decision rested on, in one sentence. */
 export const WEB_PREFIX_BASIS = Object.freeze({
@@ -301,6 +317,11 @@ export function addWebFacts(g, webFacts, opts = {}) {
   const gatewayRoutes = opts.gatewayRoutes && typeof opts.gatewayRoutes === 'object' ? opts.gatewayRoutes : {};
   const pack = httpClientPack();
   const libraries = new Map((pack.libraries ?? []).map((l) => [l.module, l]));
+  // The clients a FRAMEWORK hands a function rather than a file importing them
+  // (RM47). The worker decided which parameter really is one, by the pack's own
+  // list and by where the function sits; here the name is looked up again for
+  // the verb table and the default method.
+  const injectedClients = new Map((pack.injected ?? []).map((c) => [c.name, c]));
 
   // ---- B1: the indices -----------------------------------------------------
   //
@@ -317,6 +338,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
       f = {
         imports: [], exports: [], functions: new Map(), constants: new Map(),
         bindings: new Map(), classes: new Map(), assigns: [], calls: [], routes: [],
+        registrations: [],
         importOf: new Map(),
       };
       files.set(name, f);
@@ -340,6 +362,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
       case 'assign': f.assigns.push(r); break;
       case 'call': f.calls.push(r); break;
       case 'route': f.routes.push(r); break;
+      case 'registration': f.registrations.push(r); break;
       default: break;
     }
   }
@@ -350,6 +373,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
     f.assigns.sort((a, b) => cmp(sortKey(a), sortKey(b)));
     f.calls.sort((a, b) => cmp(sortKey(a), sortKey(b)));
     f.routes.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+    f.registrations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
     // The LAST import of a local name is the one in scope, and imports are now
     // in line order, so a later one legitimately shadows an earlier one.
     for (const imp of f.imports) {
@@ -404,7 +428,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
     // carrying a URL, that reached no client and whose argument is not written
     // like a path. Counted here so it is never a silent drop.
     calls: {
-      withUrl: 0, traced: 0, platform: 0, untraced: 0, notUrlShaped: 0,
+      withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
       // A call onto an imported name that is not a function this lane read: a
       // constant, a component, a client instance. No CALLS edge, and counted so
       // the missing hop is a number rather than a silence.
@@ -451,7 +475,12 @@ export function addWebFacts(g, webFacts, opts = {}) {
       // The specifiers that failed, most common first: the list a reader adds an
       // alias or a missing source root by.
       unresolvedSpecifiers: [],
-      renders: { EXACT: 0, SOUND_SET: 0 },
+      // The framework NAMES a screen's component in a frontend written before
+      // modules, and a name that nothing registers is the same kind of gap as a
+      // specifier that resolves to no file. Counted the same way, and listed so
+      // a reader can see which name it was.
+      unresolvedNames: [],
+      renders: { EXACT: 0, SOUND_SET: 0, HEURISTIC: 0 },
       // The rule of SERVER_MENU_SUFFIXES, and the numbers behind whichever way
       // it went, so a reader can check it rather than take it. `detectedBy`
       // names what fired it, so a later rule cannot be mistaken for this one.
@@ -1103,6 +1132,15 @@ export function addWebFacts(g, webFacts, opts = {}) {
       if (platform) {
         sink = { kind: 'platform', module: platform.name, instance: null, chain: [], depth: 0 };
         stats.calls.platform += 1;
+      } else if (c.injected && injectedClients.has(c.injected.client)) {
+        // AN INJECTED CLIENT IS A CLIENT. Nothing in the file binds `$http`, so
+        // there is nothing to trace: the framework put it in the parameter list,
+        // the pack says that parameter is a client, and the worker checked that
+        // the function really sits where the framework fills it in.
+        sink = {
+          kind: 'injected', module: c.injected.client, instance: null, chain: [], depth: 0,
+        };
+        stats.calls.injected += 1;
       } else {
         target = calleeTarget(file, c);
         if (target && target.kind === 'sink' && sinkVerb(target)) {
@@ -1176,6 +1214,10 @@ export function addWebFacts(g, webFacts, opts = {}) {
     if (sink.kind === 'platform') {
       const p = (pack.platform ?? []).find((x) => x.name === sink.module);
       if (p && p.defaultMethod) return { value: p.defaultMethod, from: 'library-default' };
+    }
+    if (sink.kind === 'injected') {
+      const cl = injectedClients.get(sink.module);
+      if (cl && cl.defaultMethod) return { value: cl.defaultMethod, from: 'library-default' };
     }
     return { value: null, from: 'absent' };
   }
@@ -1599,6 +1641,16 @@ export function addWebFacts(g, webFacts, opts = {}) {
     const k = `${r.file}|${r.line}`;
     if (!routeAt.has(k)) routeAt.set(k, r);
   }
+  // A CHAIN ROUTE NAMES ITS PARENT, and the parent is as often in another file
+  // (`app.js` declares `app`, `owner-list.js` declares `owners` under it). The
+  // worker resolves nothing across files, so the name is what it records and
+  // this is where the two are put together. The first declaration in (file,
+  // line) order wins a name, the same rule two declarations of one path follow.
+  const routeByName = new Map();
+  for (const r of routeRecords) {
+    if (typeof r.name !== 'string' || r.name === '') continue;
+    if (!routeByName.has(r.name)) routeByName.set(r.name, r);
+  }
   const parentChain = (rec) => {
     const chain = [];
     const seen = new Set();
@@ -1608,11 +1660,127 @@ export function addWebFacts(g, webFacts, opts = {}) {
       if (seen.has(k)) break;
       seen.add(k);
       chain.push(cur);
+      if (typeof cur.parentName === 'string' && cur.parentName !== '') {
+        cur = routeByName.get(cur.parentName) ?? null;
+        continue;
+      }
       cur = cur.parent == null ? null : (routeAt.get(`${cur.file}|${cur.parent}`) ?? null);
     }
     chain.reverse();
     return chain;
   };
+
+  // ---- the framework's own name registry (RM47) ----------------------------
+  //
+  // `angular.module('ownerList').component('ownerList', {controller:
+  // 'OwnerListController'})` is a frontend written before modules saying what a
+  // name means. Two indexes, one per kind, each holding EVERY file that
+  // registers a name: a name registered twice is a real ambiguity, and the
+  // grade says so rather than the first one winning silently.
+  const registryOf = new Map(); // `${what}:${name}` -> registration records
+  for (const file of fileNames) {
+    for (const r of files.get(file).registrations) {
+      if (typeof r.name !== 'string' || r.name === '' || typeof r.what !== 'string') continue;
+      const key = `${r.what}:${r.name}`;
+      let arr = registryOf.get(key);
+      if (!arr) registryOf.set(key, arr = []);
+      arr.push(r);
+    }
+  }
+
+  const unresolvedNames = new Map();
+  const noteMissingName = (what, name) => {
+    const key = `${what} ${name}`;
+    unresolvedNames.set(key, (unresolvedNames.get(key) ?? 0) + 1);
+  };
+
+  /**
+   * The RENDERS edges one route earns through the name registry, and the names
+   * that led nowhere.
+   *
+   * The walk is over NAMES, not over files: a route names a component, the
+   * component names a controller and a template, and the template names more
+   * components by their tags. Each hop is a string the framework matches
+   * exactly, so a hop that lands on exactly one registration is EXACT; a name
+   * registered twice makes every edge below it HEURISTIC, because which one
+   * loads last is not in the source.
+   *
+   * @param {Object} rec  a route record carrying registry names
+   * @returns {{targets:{file:string, rule:string, chain:string[], grade:string}[], primary:(string|null)}}
+   */
+  const attachByRegistry = (rec) => {
+    const targets = [];
+    const placed = new Set();
+    const seenNames = new Set();
+    const add = (file, rule, chain, grade) => {
+      const key = `${file}|${rule}|${chain.join('>')}`;
+      if (placed.has(key)) return;
+      placed.add(key);
+      targets.push({ file, rule, chain: [...chain], grade });
+    };
+    // Every name the route itself puts forward, in a fixed order.
+    const seeds = [];
+    if (typeof rec.componentName === 'string' && rec.componentName !== '') {
+      seeds.push({ what: 'component', name: rec.componentName, rule: 'angular-component', chain: [rec.componentName] });
+    }
+    if (typeof rec.componentTag === 'string' && rec.componentTag !== '') {
+      const name = registryNameOf(rec.componentTag);
+      seeds.push({ what: 'component', name, rule: 'angular-component', chain: [rec.componentTag, name] });
+    }
+    for (const tag of rec.templateTags ?? []) {
+      const name = registryNameOf(tag);
+      seeds.push({ what: 'component', name, rule: 'angular-template-tag', chain: [rec.templateFile ?? rec.templateUrl ?? '(template)', tag, name] });
+    }
+    if (typeof rec.controllerName === 'string' && rec.controllerName !== '') {
+      seeds.push({ what: 'controller', name: rec.controllerName, rule: 'angular-controller', chain: [rec.controllerName] });
+    }
+
+    let frontier = seeds.map((s) => ({ ...s, grade: 'EXACT' }));
+    for (let depth = 0; depth < RENDERS_DEPTH && frontier.length > 0; depth += 1) {
+      const next = [];
+      for (const hop of frontier.slice().sort((a, b) => cmp(a.name, b.name) || cmp(a.rule, b.rule))) {
+        const nameKey = `${hop.what}:${hop.name}`;
+        if (seenNames.has(nameKey)) continue; // a cycle in the registry, cut here
+        seenNames.add(nameKey);
+        // A COMPONENT, OR THE DIRECTIVE THAT IS ONE. Before components existed
+        // the same job was done by a directive with a controller, and the
+        // framework mounts both by writing the element. The component registry
+        // is asked first, because that is the one a modern file registers in.
+        let hits = registryOf.get(nameKey) ?? [];
+        if (hits.length === 0 && hop.what === 'component') hits = registryOf.get(`directive:${hop.name}`) ?? [];
+        if (hits.length === 0) { noteMissingName(hop.what, hop.name); continue; }
+        const grade = hits.length > 1 ? 'HEURISTIC' : hop.grade;
+        for (const hit of hits) {
+          add(hit.file, hop.rule, hop.chain, grade);
+          if (hop.what !== 'component') continue;
+          if (typeof hit.controller === 'string' && hit.controller !== '') {
+            next.push({
+              what: 'controller', name: hit.controller, rule: 'angular-controller',
+              chain: [...hop.chain, hit.controller], grade,
+            });
+          }
+          for (const tag of hit.templateTags ?? []) {
+            const name = registryNameOf(tag);
+            next.push({
+              what: 'component', name, rule: 'angular-template-tag',
+              chain: [...hop.chain, hit.templateFile ?? hit.templateUrl ?? '(template)', tag, name], grade,
+            });
+          }
+        }
+      }
+      frontier = next;
+    }
+    // The file a reader would call "the screen's component": the first target
+    // of the first seed, in the order above.
+    const primary = targets.length > 0 ? targets[0].file : null;
+    return { targets, primary };
+  };
+
+  /** Whether a route names its component through a registry rather than a path. */
+  const namesByRegistry = (rec) => typeof rec.componentName === 'string'
+    || typeof rec.componentTag === 'string'
+    || typeof rec.controllerName === 'string'
+    || (rec.templateTags ?? []).length > 0;
   // THE PATH IS COMPOSED, not read. A child path that starts with `/` is
   // ABSOLUTE and replaces everything above it; a parent whose path is `''`
   // contributes nothing; everything else is joined with one slash.
@@ -1654,12 +1822,17 @@ export function addWebFacts(g, webFacts, opts = {}) {
 
   const unresolvedSpecifiers = new Map();
   const screenNodes = new Map(); // screen id -> node
+  const registryTargets = new Map(); // screen id -> what attachByRegistry found
   if (screenEnabled) {
     for (const rec of routeRecords) {
-      const hasComponent = typeof rec.componentSource === 'string' || typeof rec.componentLocal === 'string';
+      const hasComponent = typeof rec.componentSource === 'string' || typeof rec.componentLocal === 'string'
+        || namesByRegistry(rec);
       // A REDIRECT IS NOT A SCREEN. `{path:'/', redirect:'/home'}` mounts
       // nothing and shows nothing; it is a rule about where to go next.
       if (!hasComponent && (rec.children ?? 0) === 0 && rec.redirect != null) continue;
+      // AN ABSTRACT STATE IS NOT A SCREEN EITHER, and it is not nothing: it is
+      // the path its children hang off, so it composes and it does not mount.
+      if (rec.abstract === true) continue;
       const full = composedPath(rec);
       const id = webScreenId(full);
       const existing = screenNodes.get(id);
@@ -1673,7 +1846,15 @@ export function addWebFacts(g, webFacts, opts = {}) {
       }
       let componentFile = null;
       let componentSpec = null;
-      if (typeof rec.componentSource === 'string' && rec.componentSource !== '') {
+      let registryHit = null;
+      if (namesByRegistry(rec)) {
+        // A NAME, NOT A PATH. Nothing imports anything here, so the file comes
+        // from the framework's registry and a name nobody registered is the
+        // same gap an unresolvable specifier is.
+        registryHit = attachByRegistry(rec);
+        componentFile = registryHit.primary;
+        if (componentFile === null) stats.screens.componentUnresolved += 1;
+      } else if (typeof rec.componentSource === 'string' && rec.componentSource !== '') {
         componentSpec = rec.componentSource;
         const r = resolveSpecifier(rec.file, rec.componentSource);
         if (r.file) componentFile = r.file;
@@ -1722,6 +1903,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
       if (node.params) stats.screens.withParams += 1;
       if (componentFile !== null) stats.screens.withComponent += 1;
       screenNodes.set(id, node);
+      if (registryHit !== null) registryTargets.set(id, registryHit.targets);
     }
   }
   stats.screens.screens = screenNodes.size;
@@ -1729,6 +1911,10 @@ export function addWebFacts(g, webFacts, opts = {}) {
     .sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]))
     .slice(0, 10)
     .map(([specifier, count]) => ({ specifier, count }));
+  stats.screens.unresolvedNames = [...unresolvedNames.entries()]
+    .sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]))
+    .slice(0, 10)
+    .map(([name, count]) => ({ name, count }));
 
   // ---- B7c: RENDERS --------------------------------------------------------
   //
@@ -1739,6 +1925,28 @@ export function addWebFacts(g, webFacts, opts = {}) {
   for (const id of [...screenNodes.keys()].sort()) {
     const node = screenNodes.get(id);
     nodesToAdd.set(id, node);
+    // A SCREEN THAT RESOLVED BY NAME took a different road here (RM47): the
+    // registry walk already knows every file, and following imports out of
+    // those files would be following imports a frontend written before modules
+    // does not have.
+    const byRegistry = registryTargets.get(id);
+    if (byRegistry !== undefined) {
+      for (const t of byRegistry.slice().sort((a, b) => cmp(a.file, b.file) || cmp(a.rule, b.rule) || cmp(a.chain.join('>'), b.chain.join('>')))) {
+        for (const sym of symbolsByFile.get(t.file) ?? []) {
+          stats.screens.renders[t.grade] += 1;
+          edges.push({
+            from: id, to: sym, type: 'RENDERS', grade: t.grade,
+            evidence: {
+              rule: t.rule,
+              component: t.file,
+              names: t.chain,
+              basis: t.grade === 'HEURISTIC' ? SCREEN_RENDERS_BASIS.ambiguous : SCREEN_RENDERS_BASIS.registry,
+            },
+          });
+        }
+      }
+      continue;
+    }
     const root = node.component;
     if (root === null) continue;
     for (const sym of symbolsByFile.get(root) ?? []) {

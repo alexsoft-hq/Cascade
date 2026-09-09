@@ -38,6 +38,7 @@ import path from 'node:path';
 import { routeMatches, normalizeUrlPath } from '../adapters/web_bridge.mjs';
 import { chainWalk } from '../core/chain.mjs';
 import { buildMap } from '../core/map.mjs';
+import { screensAffecting } from '../core/walks.mjs';
 import { FLOW_EDGE_TYPES } from '../core/graph.mjs';
 
 /** The sidecar's schema id. Written by `analyze`, read by the server. */
@@ -477,6 +478,16 @@ export function makeFederator(ctx, args = {}) {
             const httpBase = (caller.http ?? 0) + 1;
             recordCrossing(caller, call, { project: target.project, endpoint: target.route.id },
               grade, r.ambiguous, remaining < 1 ? { depthCut: true } : {});
+            // THE ROUTE THE REQUEST ENTERED IS A ROW. The sibling's walk starts
+            // AT that route, so nothing below draws it, and the endpoint lane
+            // came back empty for a request that plainly entered one: "0 / 0,
+            // and we left out 1 connection" for a screen whose call is answered
+            // by `GET /owners` in the next project. It is a row with a project
+            // on it, like the tables already are, and it is not counted in this
+            // project's own endpoint census.
+            lanes.endpoints.push(crossedRouteRow(sib.graph, target.route.id, {
+              project: target.project, hops: hopsBase, grade, httpBase, caller, crossGrade: target.grade,
+            }));
             if (remaining < 1) continue;
             const w = chainWalk(sib.graph, {
               start: target.route.id, direction: 'down', mode: opts.mode, maxDepth: remaining,
@@ -663,6 +674,101 @@ export function makeFederator(ctx, args = {}) {
                 httpHops: (info.http ?? 0) + 1, federated: true,
               });
               next.push({ id, method: methodOf(n), path: pathOf(n), grade: rowGrade });
+            }
+          }
+          if (next.length) step(next, hit.project, budget - 1);
+        }
+      }
+    }
+  }
+
+  /**
+   * The same crossing for `screen_impact`: which SCREENS in the other projects
+   * are shown a change to this column, because a function behind one of them
+   * calls a route we serve.
+   *
+   * This is the sentence a federated product exists to answer, and the screens
+   * are as often in another deployable as the column is: a gateway's frontend
+   * shows a table another service owns. It is `crossUpEndpoints` with the last
+   * step changed — the sibling's own backward walk from the calling symbol,
+   * stopped at its screens instead of at its routes.
+   *
+   * @param {{id:string, method:string, path:string, grade:string}[]} routes
+   * @param {{mode:string}} opts
+   * @returns {{screen:string, label:(string|null), grade:string, project:string,
+   *            endpoints:string[], viaHttp:boolean, httpHops:number, federated:boolean}[]}
+   */
+  function crossUpScreens(routes, opts) {
+    // ONE ROW PER SCREEN, and every route it came in on. A screen whose
+    // controller sends three requests to three affected routes is one screen,
+    // and naming only the first route it was reached through would read as
+    // "that is the only one".
+    const rows = new Map();
+    // Two guards, not one. `crossed` keeps a (caller, route) pair from being
+    // recorded twice; `walked` keeps the sibling's own walk from being run
+    // twice for one caller. Separating them is what lets a screen name every
+    // affected route it reaches rather than only the first one found.
+    const crossedPairs = new Set();
+    const walked = new Set();
+    const screensCache = new Map();
+    step(routes, self, maxCrossings);
+    const out = [...rows.values()];
+    for (const row of out) row.endpoints.sort(cmp);
+    out.sort((a, b) => cmp(a.project, b.project) || cmp(a.screen, b.screen));
+    return out;
+
+    function step(from, servedBy, budget) {
+      if (budget <= 0) return;
+      for (const route of from) {
+        for (const hit of callersOf(route, servedBy)) {
+          const sib = projectCtx(hit.project);
+          if (!sib) continue;
+          if (!routeNode(sib.graph, hit.call.id, hit.project, 'outbound')) continue;
+          const grade = weaker(route.grade, hit.grade);
+          const next = [];
+          for (const callerId of callingSymbols(sib.graph, hit.call.id)) {
+            const key = `${hit.project} ${callerId}`;
+            const pair = `${key} ${route.id}`;
+            if (crossedPairs.has(pair)) continue;
+            crossedPairs.add(pair);
+            recordCrossing({ project: hit.project, id: callerId }, hit.call,
+              { project: servedBy, endpoint: route.id }, grade, hit.ambiguous);
+            let screens = screensCache.get(key);
+            if (screens === undefined) {
+              screens = screensAffecting(sib.graph, callerId, { mode: opts.mode });
+              screensCache.set(key, screens);
+            }
+            for (const s of screens) {
+              const rowKey = `${hit.project} ${s.screen}`;
+              const rowGrade = weaker(grade, s.pathGrade);
+              const existing = rows.get(rowKey);
+              if (existing) {
+                if (!existing.endpoints.includes(strip(route.id))) existing.endpoints.push(strip(route.id));
+                if (RANK[rowGrade] > RANK[existing.grade]) existing.grade = rowGrade;
+                continue;
+              }
+              rows.set(rowKey, {
+                screen: s.path ?? strip(s.screen),
+                label: s.label ?? null,
+                grade: rowGrade,
+                // The routes the crossing came in on, said as this project's
+                // own: a reader asking "which of my routes does that screen
+                // reach?" gets the answer without another call.
+                endpoints: [strip(route.id)],
+                project: hit.project,
+                viaHttp: true,
+                httpHops: (s.httpHops ?? 1),
+                federated: true,
+              });
+            }
+            // A route in the caller that is also affected keeps the walk going,
+            // so a screen two deployables away is still reached.
+            if (walked.has(key)) continue;
+            walked.add(key);
+            for (const [id, info] of sib.graph.impactOf(callerId, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES })) {
+              const n = sib.graph.nodes.get(id);
+              if (!n || n.kind !== 'endpoint' || n.outbound === true) continue;
+              next.push({ id, method: methodOf(n), path: pathOf(n), grade: weaker(grade, info.pathGrade) });
             }
           }
           if (next.length) step(next, hit.project, budget - 1);
@@ -928,6 +1034,7 @@ export function makeFederator(ctx, args = {}) {
     crossDown,
     crossUp,
     crossUpEndpoints,
+    crossUpScreens,
     crossMap,
     contextFor: projectCtx,
     saysAnything,
@@ -1005,6 +1112,37 @@ function callerRow(graph, id, o) {
     link: crossingLink(o.route.id, o.servedBy, o.grade,
       'the other project calls this route, and the server matched that call to it by method and path'),
     path: [],
+  };
+}
+
+/**
+ * The route in another project that a request ENTERED, as an endpoint row.
+ *
+ * Shaped exactly like the endpoint row a walk down from a screen produces
+ * (src/core/chain.mjs), so a page draws the two the same way, plus the three
+ * fields every federated row carries. `path` is the URL, as it is there;
+ * `walkedPath` is empty because this row is the crossing itself and there is no
+ * step of this project's walk below it.
+ */
+function crossedRouteRow(graph, id, o) {
+  const n = graph.nodes.get(id) ?? {};
+  return {
+    id: strip(id),
+    httpMethod: n.httpMethod ?? null,
+    path: n.path ?? null,
+    handler: n.handler ?? null,
+    hops: o.hops,
+    grade: o.grade,
+    file: n.file ?? null,
+    line: n.line ?? null,
+    ...(n.observed === true ? { observed: true } : {}),
+    project: o.project,
+    federated: true,
+    viaHttp: true,
+    httpHops: o.httpBase,
+    link: crossingLink(o.caller.id, o.caller.project, o.crossGrade,
+      'this project calls a route the other project serves, and the server matched them by method and path'),
+    walkedPath: [],
   };
 }
 

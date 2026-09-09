@@ -108,3 +108,26 @@ test("loadProfile('x.yaml') throws ProfileError mentioning YAML or an adapter", 
     return true;
   });
 });
+
+// ---------------------------------------------------------------------------
+// webRoots — a frontend root no package.json declares (RM47)
+// ---------------------------------------------------------------------------
+
+test('webRoots defaults to empty and takes {root, kind, from} entries', () => {
+  assert.deepEqual(normalizeProfile({}).webRoots, []);
+  const p = normalizeProfile({
+    webRoots: [{ root: '../src/main/resources/static/scripts', kind: 'vendored', from: 'discovery' }],
+  });
+  assert.deepEqual(p.webRoots, [{ root: '../src/main/resources/static/scripts', kind: 'vendored', from: 'discovery' }]);
+  // A person naming one by hand says so, and says nothing else.
+  assert.doesNotThrow(() => validateProfile({ webRoots: [{ root: 'legacy/js', kind: 'declared' }] }));
+  assert.doesNotThrow(() => validateProfile({ webRoots: [{ root: 'legacy/js' }] }));
+});
+
+test('webRoots refuses a shape that would silently read nothing', () => {
+  assert.throws(() => validateProfile({ webRoots: {} }), ProfileError);
+  assert.throws(() => validateProfile({ webRoots: ['legacy/js'] }), /non-empty "root" path/);
+  assert.throws(() => validateProfile({ webRoots: [{ root: '' }] }), /non-empty "root" path/);
+  assert.throws(() => validateProfile({ webRoots: [{ root: 'js', kind: 'guessed' }] }), /"vendored".*"declared"/);
+  assert.throws(() => validateProfile({ webRoots: [{ root: 'js', from: 7 }] }), /must be null or a string/);
+});

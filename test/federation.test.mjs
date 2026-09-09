@@ -56,6 +56,19 @@ function callerGraph({ route = '/api/x', callPath = '/things/{*}', method = 'GET
   return g;
 }
 
+/** A caller with TWO outbound calls, so one walk crosses into two projects. */
+function twoCallGraph() {
+  const g = callerGraph();
+  const client = 'symbol:com.gw.Client#fetch';
+  const outbound = 'endpoint:GET /others/{*}';
+  g.addNode({ id: outbound, kind: 'endpoint', httpMethod: 'GET', path: '/others/{*}', outbound: true });
+  g.addEdge({
+    from: client, to: outbound, type: 'CALLS_HTTP', grade: 'UNRESOLVED',
+    evidence: { rule: 'http-client-call', service: null, serviceLiteral: false, url: { template: '/others/{*}' }, target: 'outside-pack' },
+  });
+  return g;
+}
+
 /** A server: one route, its handler, a service, a statement, a table, a column. */
 function serverGraph({ route = '/things/{thingId}', pkg = 'th', table = 'things', column = 'name' } = {}) {
   const g = new Graph();
@@ -402,6 +415,160 @@ test('a route table read out of the tree puts the service name on a FRONTEND cal
   // ...and that is what reaches the sidecar, which is all a sibling ever reads.
   const index = buildRoutesIndex(g, { project: 'web-gateway', buildDigest: 'x' });
   assert.deepEqual(index.calls, [{ id: 'endpoint:GET /things/7', method: 'GET', path: '/things/7', service: 'thing-service' }]);
+});
+
+/**
+ * THE SAME GATEWAY, WITH SCREENS (RM47). The frontend has no package.json and
+ * no imports: a `$stateProvider` chain declares the route, the framework's own
+ * registry resolves `<thing-list>` to a component and that component to a
+ * controller, and the controller is handed `$http`.
+ */
+function webScreenGraph({ service = 'thing-service' } = {}) {
+  const g = new Graph();
+  const f = (name, ...recs) => [
+    { kind: 'file', file: name, line: 1, lang: 'js', recoveredErrors: 0 },
+    ...recs.map((r) => ({ file: name, ...r })),
+  ];
+  addWebFacts(g, [
+    ...f('static/scripts/app.js', {
+      kind: 'route', line: 4, pack: 'angular-router', via: 'chain', receiver: '$stateProvider',
+      name: 'things', path: '/things', componentTag: 'thing-list', parent: null, children: 0,
+    }),
+    ...f('static/scripts/thing.component.js', {
+      kind: 'registration', line: 3, framework: 'angular', what: 'component',
+      name: 'thingList', controller: 'ThingListCtrl',
+    }),
+    ...f('static/scripts/thing.controller.js', {
+      kind: 'registration', line: 3, framework: 'angular', what: 'controller', name: 'ThingListCtrl',
+    }, {
+      kind: 'call',
+      line: 5,
+      enclosing: '(module)',
+      callee: { shape: 'member', root: '$http', path: ['get'], name: 'get' },
+      binding: null,
+      args: [],
+      url: { arg: { kind: 'string', value: 'api/thing/things/7' }, resolved: [{ template: 'api/thing/things/7', dynamicParts: 0, via: 'literal' }] },
+      method: { value: 'GET', from: 'callee-name' },
+      platformSink: null,
+      injected: { client: '$http', framework: 'angularjs' },
+    }),
+  ], {
+    gatewayRoutes: { '/api/thing': { to: '', service, from: 'src/main/resources/application.yml' } },
+    screenAxis: { enabled: true },
+  });
+  return g;
+}
+
+test('the route a request ENTERED is a row in the endpoint lane, with its project', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const r = host.callTool('flow', { project: 'gateway', endpoint: 'GET /api/x' });
+  assertContract(r);
+  // Walking down from a ROUTE there is no endpoint lane of this project's own —
+  // a route is where that walk starts. The crossing puts one there: the request
+  // left this pack and entered `GET /things/{thingId}` over in `things`, and
+  // before RM47 that route appeared in no lane at all.
+  assert.deepEqual(r.answer.endpoints.map((e) => [e.id, e.project, e.grade, e.hops, e.federated, e.viaHttp]),
+    [['GET /things/{thingId}', 'things', 'SOUND_SET', 2, true, true]]);
+  assert.equal(r.answer.endpoints[0].link.type, 'CALLS_HTTP');
+  assert.equal(r.answer.endpoints[0].link.from, 'symbol:com.gw.Client#fetch');
+  assert.equal(r.answer.endpoints[0].link.fromProject, 'gateway');
+  // It is NOT counted in this project's own census: `layers` and `walk`
+  // describe this project's walk, exactly as they do for the tables. Every row
+  // in the lane carries a project, so nothing here is this pack's own.
+  assert.equal(r.answer.endpoints.every((e) => e.project && e.federated === true), true);
+  assert.equal(r.answer.layers.reduce((n, l) => n + (l.endpoints ?? 0), 0), 0);
+  assert.equal(r.answer.walk.walked, host.callTool('flow', { project: 'gateway', endpoint: 'GET /api/x', federate: false }).answer.walk.walked,
+    'the crossing adds rows, never steps of this project\'s walk');
+  assert.match(r.answer.walk.note, /row\(s\) below come from another project/);
+  // ...and with federation off the lane is not drawn at all.
+  const alone = host.callTool('flow', { project: 'gateway', endpoint: 'GET /api/x', federate: false });
+  assert.equal(alone.answer.endpoints, undefined);
+});
+
+test('two crossings are two federated endpoint rows, one per route entered', (t) => {
+  const { host } = workspace(t, [
+    { id: 'gateway', graph: twoCallGraph() },
+    { id: 'things', graph: serverGraph() },
+    { id: 'others', graph: serverGraph({ route: '/others/{otherId}', pkg: 'ot', table: 'others' }) },
+  ]);
+  const r = host.callTool('flow', { project: 'gateway', endpoint: 'GET /api/x' });
+  assert.deepEqual(r.answer.endpoints.map((e) => [e.id, e.project]), [
+    ['GET /others/{otherId}', 'others'],
+    ['GET /things/{thingId}', 'things'],
+  ]);
+});
+
+test('overview says the second number: what reaches a table in a CONNECTED project', (t) => {
+  const { host } = workspace(t, [
+    { id: 'web-gateway', graph: webScreenGraph() },
+    { id: 'things', graph: serverGraph(), serviceNames: ['thing-service'] },
+  ]);
+  const r = host.callTool('overview', { project: 'web-gateway' });
+  assertContract(r);
+  // This project's own share is unchanged and still 0: none of its screens
+  // reaches a table IT owns, because it owns none.
+  assert.equal(r.answer.screens.screens, 1);
+  assert.equal(r.answer.screens.reachingATable, 0);
+  // ...and the second number says where they really end.
+  assert.deepEqual(r.answer.reach.viaFederation, { screens: 1, endpoints: 0 });
+
+  // The project that ANSWERS crosses nowhere, so it carries no such block: an
+  // absent one is "nothing crosses", never "we did not look".
+  const server = host.callTool('overview', { project: 'things' });
+  assert.equal(server.answer.reach.viaFederation, undefined);
+});
+
+test('overview: a route of this project that ends in another one is counted too', (t) => {
+  const { host } = workspace(t, DEFAULTS());
+  const r = host.callTool('overview', { project: 'gateway' });
+  assert.equal(r.answer.reach.endpoints, 1);
+  assert.equal(r.answer.reach.endpointsWithoutStatement, 1, 'nothing in this pack answers it');
+  assert.deepEqual(r.answer.reach.viaFederation, { screens: 0, endpoints: 1 });
+  // With federation off, and on a server holding one project, there is no
+  // second number to say.
+  assert.equal(host.callTool('overview', { project: 'gateway', federate: false }).answer.reach.viaFederation, undefined);
+  const alone = workspace(t, [{ id: 'things', graph: serverGraph() }]);
+  assert.equal(alone.host.callTool('overview', { project: 'things' }).answer.reach.viaFederation, undefined);
+});
+
+test('screen_impact crosses the other way: a column here, the screens that show it over there', (t) => {
+  const { host } = workspace(t, [
+    { id: 'web-gateway', graph: webScreenGraph() },
+    { id: 'things', graph: serverGraph(), serviceNames: ['thing-service'] },
+  ]);
+  // The gateway's own answer first, so the fixture is not doing the work: it
+  // has a screen, and the screen reaches a route it does not serve.
+  const own = host.callTool('flow', { project: 'web-gateway', screen: '/things' });
+  assertContract(own);
+  assert.deepEqual(own.answer.tables.map((x) => [x.table, x.project]), [['things', 'things']]);
+
+  // ...and now the same chain read from the far end, out of a project that has
+  // no screen axis at all.
+  const r = host.callTool('screen_impact', { project: 'things', column: 'things.name' });
+  assertContract(r);
+  assert.deepEqual(r.answer.screens, [{
+    screen: '/things',
+    label: '/things',
+    grade: 'SOUND_SET',
+    endpoints: ['GET /things/{thingId}'],
+    project: 'web-gateway',
+    viaHttp: true,
+    httpHops: 1,
+    federated: true,
+  }]);
+  assert.deepEqual(r.answer.federation.crossed.map((c) => [c.from.project, c.from.symbol, c.service]),
+    [['web-gateway', 'static/scripts/thing.controller.js#(module)', 'thing-service']]);
+  assert.deepEqual(r.basis.siblings.map((s) => s.project), ['web-gateway']);
+});
+
+test('screen_impact with federation off stops where this pack stops', (t) => {
+  const { host } = workspace(t, [
+    { id: 'web-gateway', graph: webScreenGraph() },
+    { id: 'things', graph: serverGraph(), serviceNames: ['thing-service'] },
+  ]);
+  const r = host.callTool('screen_impact', { project: 'things', column: 'things.name', federate: false });
+  assert.deepEqual(r.answer.screens, []);
+  assert.equal(r.answer.empty.screens, 'not-shipped', 'this pack has no screen axis of its own');
 });
 
 test('two projects serve the path: the DISCOVERED route name picks one, and without it neither is picked', (t) => {
