@@ -994,16 +994,16 @@ that improves silently is a number nobody checked.
 
 | Repository | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table |
 |---|---|---|---|---|---|
-| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | 538 / 929 | 19 / 166 |
+| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | 562 / 963 | 25 / 181 |
 | jishenghua/JSH_ERP | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 |
 | apache/dolphinscheduler | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 |
 | macrozheng/mall (+ mall-admin-web) | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 |
 | linlinjava/litemall | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 |
 | yangzongzhuan/RuoYi-Vue (+ RuoYi-Vue3) | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 |
-| jeequan/jeepay | 126 / 134 | 22 / 23 | 302 / 314 | no frontend read | no frontend read |
-| xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 0 / 2 | 0 / 0 |
-| mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read |
-| spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read |
+| jeequan/jeepay | 126 / 134 | 22 / 23 | 302 / 314 | 0 / 0 | 0 / 5 |
+| xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 24 / 31 | 6 / 11 |
+| mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 |
+| spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | 12 / 13 | 3 / 8 |
 | spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 |
 
 ```bash
