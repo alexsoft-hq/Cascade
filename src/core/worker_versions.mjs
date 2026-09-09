@@ -13,7 +13,7 @@
 // tells you to bump this one.
 
 /** JavaFacts.java — `static final String VERSION`. */
-export const JAVA_WORKER_VERSION = 'javafacts/8';
+export const JAVA_WORKER_VERSION = 'javafacts/9';
 /** mybatis_extract.py — `EXTRACTOR_VERSION`. */
 export const MYBATIS_WORKER_VERSION = 'mybatis-extract/1';
 /** lineage.py — `LINEAGE_VERSION`. */
@@ -35,7 +35,7 @@ export const CATALOG_WORKER_VERSION = 'catalog-ddl/3';
  */
 export const CATALOG_LIVE_WORKER_VERSION = 'catalog-live/1';
 /** adapters/web/webfacts.mjs — `const VERSION`. */
-export const WEB_WORKER_VERSION = 'webfacts/4';
+export const WEB_WORKER_VERSION = 'webfacts/5';
 
 /**
  * The versions as the facts index records them. One object, so a new worker can

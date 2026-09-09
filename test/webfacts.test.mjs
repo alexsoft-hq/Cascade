@@ -55,7 +55,7 @@ function lineOf(relFile, re) {
 test('the header names the schema, the version, the roots and what it read', () => {
   assert.equal(HEADER.kind, 'header');
   assert.equal(HEADER.schema, 'cascade:webfacts:1');
-  assert.equal(HEADER.version, 'webfacts/4');
+  assert.equal(HEADER.version, 'webfacts/5');
   assert.equal(HEADER.root, FIXTURE);
   assert.deepEqual(HEADER.roots, ['src']);
   // `files` is the number of files that were read WITH THE PARSER. Every one of
@@ -418,7 +418,7 @@ test('a dynamic import() is an import record, and a call through an import bindi
 
 test('every count in the summary equals the records it claims to count', () => {
   assert.equal(SUMMARY.kind, 'summary');
-  assert.equal(SUMMARY.version, 'webfacts/4');
+  assert.equal(SUMMARY.version, 'webfacts/5');
   const n = (k) => BODY.filter((r) => r.kind === k).length;
   assert.equal(SUMMARY.files, n('file'));
   assert.equal(SUMMARY.parseErrors, n('parse_error'));
@@ -549,6 +549,20 @@ test('the fixture is synthetic: it names no project and no wrapper from the corp
     for (const word of forbidden) if (text.includes(word)) hits.push(`${path.relative(ROOT, f)}: ${word}`);
   }
   assert.deepEqual(hits, [], `the fixture must invent its own names:\n${hits.join('\n')}`);
+});
+
+test('the third-party directory list core reads is the one the pack declares (RM48)', async () => {
+  // The list lives in `adapters/web/packs/vendor-dirs.json`, which is the
+  // declaration a reader extends. `src/core/discover.mjs` mirrors it as a
+  // constant because discovery is pure and reads no file of its own, and a
+  // mirror that nobody checks is a mirror that drifts.
+  const { THIRD_PARTY_DIRS } = await import('../src/core/discover.mjs');
+  const pack = JSON.parse(fs.readFileSync(path.join(ROOT, 'adapters', 'web', 'packs', 'vendor-dirs.json'), 'utf8'));
+  const declared = [...new Set([...pack.directories, ...pack.libraries])].sort();
+  assert.deepEqual([...THIRD_PARTY_DIRS].sort(), declared,
+    'adapters/web/packs/vendor-dirs.json and discover.mjs THIRD_PARTY_DIRS disagree');
+  // Every name is one path segment, lower case: that is how it is compared.
+  for (const name of declared) assert.match(name, /^[a-z0-9][a-z0-9._-]*$/, name);
 });
 
 test('neither the worker nor a router pack names a wrapper or a project from the corpus', () => {

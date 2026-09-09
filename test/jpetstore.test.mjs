@@ -157,7 +157,9 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
 
   const { pack, graph, ask } = askOf(path.join(repo, '.cascade', 'pack'));
   assert.equal(pack.meta.base.commit, PINNED_COMMIT);
-  assert.deepEqual(pack.meta.lanes, ['sql', 'java']);
+  // ...and the WEB lane, which this project has without a line of JavaScript
+  // (RM48): its screens are the JSP pages a `@Controller` names.
+  assert.deepEqual(pack.meta.lanes, ['sql', 'java', 'web']);
 
   // -----------------------------------------------------------------------
   // 3. the endpoints, hand-counted from the controllers.
@@ -172,7 +174,11 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
   //    application in earlier releases; at this commit it is Spring MVC, so the
   //    endpoint axis IS shipped here and the Java lane really walks it.
   // -----------------------------------------------------------------------
-  const endpoints = [...graph.nodes.values()].filter((n) => n.kind === 'endpoint').map((n) => n.id.slice('endpoint:'.length)).sort();
+  // The routes this pack SERVES. A page's link to something it does not serve
+  // is an OUTBOUND node (RM48) and is asserted on its own below.
+  const endpoints = [...graph.nodes.values()]
+    .filter((n) => n.kind === 'endpoint' && n.outbound !== true)
+    .map((n) => n.id.slice('endpoint:'.length)).sort();
   assert.deepEqual(endpoints, [
     'GET /',                        // RootController
     'GET /account',                 // AccountController @GetMapping({"", "/"})
@@ -198,6 +204,14 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
     'POST /order/new',
   ]);
   assert.equal(pack.meta.laneStats.endpoints, 22);
+  // ...and the two the JSP pages point at and no controller answers: the
+  // container serves them as files. They are nodes marked `outbound`, exactly
+  // as a call that leaves the pack is, never silently dropped.
+  assert.deepEqual(
+    [...graph.nodes.values()].filter((n) => n.kind === 'endpoint' && n.outbound === true)
+      .map((n) => n.id.slice('endpoint:'.length)).sort(),
+    ['GET /help.html', 'GET /index.html'],
+  );
   assert.equal(pack.meta.laneStats.parseErrors, 0, 'the fixture parses cleanly');
   // Every mapper method the Java lane saw is bound to a statement in this pack.
   assert.equal(pack.meta.laneStats.mapperMethods, 25);
@@ -205,20 +219,44 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
 
   // -----------------------------------------------------------------------
   // 4. the partial-pack contract: what this pack does NOT carry, declared.
-  //    There is no web lane and no screen axis in this engine at all, and the
-  //    fixture has no @Entity, so the JPA bridge did not run either.
+  //    The fixture has no @Entity, so the JPA bridge did not run. The web and
+  //    screen axes DO ship here since RM48, without a line of JavaScript: every
+  //    screen this application has is a JSP file a `@Controller` named, and
+  //    every one of its 22 handler returns is a name this engine could read.
   // -----------------------------------------------------------------------
   assert.equal(pack.meta.axes.catalog.status, 'shipped');
   assert.equal(pack.meta.axes.statements.status, 'shipped');
   assert.equal(pack.meta.axes.column.status, 'shipped');
   assert.equal(pack.meta.axes.code.status, 'shipped');
   assert.equal(pack.meta.axes.jpa.status, 'not-shipped');
-  assert.equal(pack.meta.axes.web.status, 'not-shipped');
-  assert.equal(pack.meta.axes.screen.status, 'not-shipped');
+  assert.equal(pack.meta.axes.web.status, 'shipped');
+  assert.equal(pack.meta.axes.screen.status, 'shipped');
   const gaps = ask('overview', {}).trust.knownGaps;
-  for (const g of ['jpa-axis-not-shipped', 'web-axis-not-shipped', 'screen-axis-not-shipped']) {
+  for (const g of ['jpa-axis-not-shipped']) {
     assert.ok(gaps.includes(g), `${g} must be declared on every answer; got ${gaps.join(',')}`);
   }
+  // The pages themselves: a screen per view name, keyed apart from a router's
+  // screens by the `view:` prefix. Ten of the sixteen are named by a `static
+  // final String` the controller declares, not by a literal at the return.
+  const pages = [...graph.nodes.values()].filter((n) => n.kind === 'screen').map((n) => n.name).sort();
+  assert.deepEqual(pages, [
+    'account/EditAccountForm', 'account/NewAccountForm', 'account/SignonForm',
+    'cart/Cart', 'cart/Checkout', 'catalog/Category', 'catalog/Item',
+    'catalog/Main', 'catalog/Product', 'catalog/SearchProducts', 'common/Error',
+    'order/ConfirmOrder', 'order/ListOrders', 'order/NewOrderForm',
+    'order/ShippingForm', 'order/ViewOrder',
+  ]);
+  const byFrom = {};
+  for (const e of graph.edges.filter((x) => x.type === 'RENDERS_PAGE')) {
+    byFrom[e.evidence.from] = (byFrom[e.evidence.from] ?? 0) + 1;
+  }
+  assert.deepEqual(byFrom, { constant: 17, literal: 10 });
+  // The header every page pulls in is one row on each of the sixteen, and never
+  // a screen of its own.
+  const top = graph.edges.filter((e) => e.type === 'RENDERS'
+    && e.to === 'symbol:src/main/webapp/WEB-INF/jsp/common/IncludeTop.jsp');
+  assert.equal(top.length, 16);
+  assert.equal(graph.nodes.has('screen:view:common/IncludeTop'), false);
 
   // -----------------------------------------------------------------------
   // SPOT CHECK 1 — table_usage on the orders table.

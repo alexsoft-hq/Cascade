@@ -83,7 +83,7 @@ test('selectLanes: explicit flags win over the profile and discovery', () => {
     discovery: discovery(), root: ROOT, manifestDir: DOT, cwd: ROOT,
   });
   assert.equal(r.ddl, path.join(ROOT, 'db/schema.sql'));
-  assert.deepEqual(r.sources, { ddl: 'flag', mappers: 'flag', javaSrc: 'flag', webSrc: 'none', openapi: 'none', har: 'none', otel: 'none' });
+  assert.deepEqual(r.sources, { ddl: 'flag', mappers: 'flag', javaSrc: 'flag', webSrc: 'none', openapi: 'none', har: 'none', otel: 'none', templateRoots: 'none' });
   // Sorted: the pack digest must not depend on the order the flags were typed.
   assert.deepEqual(r.mappers, [path.join(ROOT, 'm1'), path.join(ROOT, 'm2')]);
   assert.deepEqual(r.lanes, ['sql', 'java']);
@@ -102,7 +102,7 @@ test('selectLanes: with no flags the inputs come from the profile + discovery', 
   assert.equal(r.ddl, path.join(ROOT, 'document/sql/schema.sql'));
   assert.deepEqual(r.mappers, [path.join(ROOT, 'app/src/main/resources/dao')]);
   assert.deepEqual(r.javaSrc, [path.join(ROOT, 'app/src/main/java')]);
-  assert.deepEqual(r.sources, { ddl: 'profile', mappers: 'discovery', javaSrc: 'discovery', webSrc: 'none', openapi: 'none', har: 'none', otel: 'none' });
+  assert.deepEqual(r.sources, { ddl: 'profile', mappers: 'discovery', javaSrc: 'discovery', webSrc: 'none', openapi: 'none', har: 'none', otel: 'none', templateRoots: 'none' });
   assert.deepEqual(r.diagnostics, []);
 });
 

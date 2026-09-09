@@ -264,6 +264,12 @@ export function classifyDirtyFiles(files, selection) {
       (status === 'D' ? out.webDeleted : out.web).push(p);
       continue;
     }
+    // A TEMPLATE IS A WEB-LANE FILE (RM48): the same worker reads it and the
+    // same kind of shard holds its facts.
+    if (isTemplateFileOf(p, sel.templateRoots ?? [])) {
+      (status === 'D' ? out.webDeleted : out.web).push(p);
+      continue;
+    }
     // A package config is not a source file and has no shard, but the overlay
     // still re-reads it (its values reshape every URL the frontend sends), so it
     // is a lane input and not an unclaimed file.
@@ -279,6 +285,12 @@ export function classifyDirtyFiles(files, selection) {
   out.javaDeleted = out.javaDeleted.filter((f) => !out.java.includes(f));
   out.webDeleted = out.webDeleted.filter((f) => !out.web.includes(f));
   return out;
+}
+
+/** Whether a file is a template of one of the selection's template roots. */
+function isTemplateFileOf(file, templateRoots) {
+  return templateRoots.some((t) => t && typeof t === 'object' && typeof t.root === 'string'
+    && typeof t.suffix === 'string' && file.endsWith(t.suffix) && underAny(file, [t.root]));
 }
 
 /** A config file sits in a directory that holds a web root, or inside one. */

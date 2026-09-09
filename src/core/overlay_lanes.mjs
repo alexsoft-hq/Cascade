@@ -85,7 +85,7 @@ export function ephemeralIo(io) {
  */
 export function runOverlayLanes(a) {
   const {
-    index, store, inputs, dirty, run, hash, abs, workers, webRootsAbs = [],
+    index, store, inputs, dirty, run, hash, abs, workers, webRootsAbs = [], templateRootsAbs = [],
     clock = () => Date.now(), diag = () => {},
   } = a ?? {};
   if (!index || typeof index !== 'object') throw new OverlayStaleError('there is no facts index beside the pack');
@@ -144,12 +144,15 @@ export function runOverlayLanes(a) {
   const webDirtyFacts = new Map();
   const parsedWebFiles = [...reparseWeb].sort();
   let webConfigRecords = [];
-  if (webRootsAbs.length > 0) {
+  // The web lane also reads the TEMPLATE roots (RM48); a server-rendered
+  // application has those and no frontend source root at all.
+  const webInputRoots = [...webRootsAbs, ...templateRootsAbs.map((t) => (t && typeof t === 'object' ? t.root : t))];
+  if (webInputRoots.length > 0) {
     // The worker's `--configs-only` mode prints the package configuration and the
     // LIST of files this lane reads. Only the configuration is fact content; the
     // list is what `cascade analyze` uses to decide reuse, and the overlay takes
     // its dirty set from git instead.
-    webConfigRecords = (run.webConfigs(webRootsAbs) ?? [])
+    webConfigRecords = (run.webConfigs(webInputRoots) ?? [])
       .filter((r) => r && typeof r === 'object'
         && r.kind !== 'header' && r.kind !== 'summary' && r.kind !== 'sourceFile');
     const configFiles = new Set(webConfigRecords.map((r) => r.file).filter((f) => typeof f === 'string'));

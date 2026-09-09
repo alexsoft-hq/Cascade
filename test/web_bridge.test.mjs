@@ -84,7 +84,14 @@ const only = (g) => {
 test('the http-client pack is a DECLARATION: platform sinks and libraries, not rules', () => {
   const p = httpClientPack();
   assert.equal(p.pack, 'http-clients');
-  assert.deepEqual(p.platform.map((x) => x.name).sort(), ['fetch', 'xhr']);
+  assert.deepEqual(p.platform.map((x) => x.name).sort(), ['fetch', 'jquery', 'xhr']);
+  // jQuery is a GLOBAL sink (RM48): the page loads it with a script tag, so the
+  // pack names the identifiers it lands on rather than a module to import.
+  const jq = p.platform.find((x) => x.name === 'jquery');
+  assert.deepEqual(jq.globals, ['$', 'jQuery']);
+  assert.deepEqual(jq.config.methods, ['ajax']);
+  assert.equal(jq.verbs.getJSON, 'GET');
+  assert.equal(jq.defaultMethod, 'GET');
   const modules = p.libraries.map((l) => l.module).sort();
   assert.deepEqual(modules, ['axios', 'ky', 'superagent']);
   const axios = p.libraries.find((l) => l.module === 'axios');
@@ -892,7 +899,7 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   const stats = addWebFacts(g, []);
   assert.deepEqual(edgesOf(g), []);
   assert.deepEqual(stats.calls, {
-    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, notAFunction: 0, passedAsValue: 0,
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, template: 0, notAFunction: 0, passedAsValue: 0,
   });
   assert.deepEqual(stats.resolved, { SOUND_SET: 0, HEURISTIC: 0 });
   assert.equal(stats.instances, 0);

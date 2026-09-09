@@ -37,10 +37,10 @@
    "tablesReached": 73,
    "columns": 2092,
    "columnsReached": 836,
-   "webCalls": 934,
-   "webCallsResolved": 538,
-   "screens": 166,
-   "screensReachingATable": 19,
+   "webCalls": 963,
+   "webCallsResolved": 562,
+   "screens": 181,
+   "screensReachingATable": 25,
    "endpointColumnPairs": 15997,
    "axes": {
     "catalog": "shipped",
@@ -65,7 +65,7 @@
    "columnsReached": 302,
    "webCalls": 0,
    "webCallsResolved": 0,
-   "screens": 0,
+   "screens": 5,
    "screensReachingATable": 0,
    "endpointColumnPairs": 3554,
    "axes": {
@@ -75,8 +75,8 @@
     "mybatisPlus": "degraded",
     "column": "shipped",
     "code": "shipped",
-    "web": "not-shipped",
-    "screen": "not-shipped"
+    "web": "degraded",
+    "screen": "degraded"
    }
   },
   "jpetstore-6": {
@@ -89,10 +89,10 @@
    "tablesReached": 12,
    "columns": 86,
    "columnsReached": 77,
-   "webCalls": 0,
-   "webCallsResolved": 0,
-   "screens": 0,
-   "screensReachingATable": 0,
+   "webCalls": 53,
+   "webCallsResolved": 52,
+   "screens": 16,
+   "screensReachingATable": 16,
    "endpointColumnPairs": 243,
    "axes": {
     "catalog": "shipped",
@@ -101,8 +101,8 @@
     "mybatisPlus": "not-shipped",
     "column": "shipped",
     "code": "shipped",
-    "web": "not-shipped",
-    "screen": "not-shipped"
+    "web": "shipped",
+    "screen": "shipped"
    }
   },
   "jsh-erp": {
@@ -247,10 +247,10 @@
    "tablesReached": 4,
    "columns": 24,
    "columnsReached": 18,
-   "webCalls": 0,
-   "webCallsResolved": 0,
-   "screens": 0,
-   "screensReachingATable": 0,
+   "webCalls": 13,
+   "webCallsResolved": 12,
+   "screens": 8,
+   "screensReachingATable": 3,
    "endpointColumnPairs": 83,
    "axes": {
     "catalog": "shipped",
@@ -259,8 +259,8 @@
     "mybatisPlus": "not-shipped",
     "column": "degraded",
     "code": "shipped",
-    "web": "not-shipped",
-    "screen": "not-shipped"
+    "web": "shipped",
+    "screen": "degraded"
    }
   },
   "xxl-job": {
@@ -273,10 +273,10 @@
    "tablesReached": 7,
    "columns": 71,
    "columnsReached": 70,
-   "webCalls": 2,
-   "webCallsResolved": 0,
-   "screens": 0,
-   "screensReachingATable": 0,
+   "webCalls": 31,
+   "webCallsResolved": 24,
+   "screens": 11,
+   "screensReachingATable": 6,
    "endpointColumnPairs": 528,
    "axes": {
     "catalog": "shipped",
@@ -285,8 +285,8 @@
     "mybatisPlus": "not-shipped",
     "column": "shipped",
     "code": "shipped",
-    "web": "degraded",
-    "screen": "not-shipped"
+    "web": "shipped",
+    "screen": "degraded"
    }
   }
  }

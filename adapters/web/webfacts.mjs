@@ -52,6 +52,21 @@
 // object a router pack recognizes as a route is a route, not a request, and a
 // call a pack lists as a declaration never sends one.
 //
+// webfacts/5 reads the SERVER-RENDERED PAGE (RM48). A large share of the systems
+// this tool is for have no router at all: a `@Controller` returns a view name, a
+// template engine renders it, and the page's own `<script>` calls the backend,
+// its `<form>` posts to a route and its links open other routes. So a template
+// root named on the command line (`--template-root`) is walked like a source
+// root, and each template file produces:
+//   - a `template` record: which engine, which view name it answers to, what it
+//     includes, and which of its JavaScript variables hold the CONTEXT PATH;
+//   - `call` records for its inline `<script>` blocks, read by the SAME reader
+//     the `.js` files go through after the template's own directives have been
+//     neutralised into placeholders, plus one per `<form>` and per link.
+// jQuery joins the pack as a platform global for the same round: a page that
+// loads it with a `<script>` tag has nothing to import and nothing to bind, so
+// `$` is a client the way `fetch` is one.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -62,7 +77,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/4';
+const VERSION = 'webfacts/5';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -212,7 +227,10 @@ function summarizeArg(node) {
       const t = flattenText(node);
       if (t === null) break;
       if (t.dynamicParts === 0) return { kind: 'string', value: t.template };
-      return { kind: 'template', template: t.template, dynamicParts: t.dynamicParts };
+      return {
+        kind: 'template', template: t.template, dynamicParts: t.dynamicParts,
+        ...(t.base === null ? {} : { base: t.base }),
+      };
     }
     case 'ConditionalExpression':
       return {
@@ -248,18 +266,39 @@ function summarizeArg(node) {
 /**
  * A template literal or a `+` chain flattened into `'/a/{*}/b'`. Null when the
  * node is not made of text at all.
- * @returns {{template:string, dynamicParts:number}|null}
+ *
+ * `base` is the NAME of the hole the text starts with, when it is a plain name
+ * (`base_url + '/things/list'`, `` `${api}/things` ``). The template alone says
+ * a hole is there and not what it was; a page whose scripts are written against
+ * a variable the server filled in with the application's context path cannot be
+ * read without it (RM48), and nothing else in the record carries the name.
+ *
+ * @returns {{template:string, dynamicParts:number, base:(string|null)}|null}
  */
 function flattenText(node) {
   const parts = [];
   let dynamic = 0;
+  let base = null;
+  const nameOfHole = (n) => {
+    if (!n) return null;
+    if (n.type === 'Identifier') return n.name;
+    if (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression') {
+      const c = calleeOf(n);
+      return c && c.root !== null ? [c.root, ...c.path].join('.') : null;
+    }
+    return null;
+  };
   const walkText = (n) => {
     if (!n) return false;
     if (n.type === 'StringLiteral') { parts.push(n.value); return true; }
     if (n.type === 'TemplateLiteral') {
       for (let i = 0; i < n.quasis.length; i += 1) {
         parts.push(n.quasis[i].value.cooked ?? n.quasis[i].value.raw ?? '');
-        if (i < n.expressions.length) { parts.push('{*}'); dynamic += 1; }
+        if (i < n.expressions.length) {
+          if (parts.join('') === '') base = nameOfHole(n.expressions[i]);
+          parts.push('{*}');
+          dynamic += 1;
+        }
       }
       return true;
     }
@@ -267,13 +306,14 @@ function flattenText(node) {
       return walkText(n.left) && walkText(n.right);
     }
     // Anything else inside a concatenation is a hole.
+    if (parts.join('') === '') base = nameOfHole(n);
     parts.push('{*}');
     dynamic += 1;
     return true;
   };
   if (node.type === 'BinaryExpression' && node.operator !== '+') return null;
   if (!walkText(node)) return null;
-  return { template: parts.join(''), dynamicParts: dynamic };
+  return { template: parts.join(''), dynamicParts: dynamic, base };
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +493,466 @@ export function soleElementTag(text) {
   const s = String(text ?? '').trim();
   const m = /^<([a-zA-Z][a-zA-Z0-9-]*)(\s[^>]*?)?(\/>|>\s*<\/\1\s*>|>)$/.exec(s);
   return m ? m[1] : null;
+}
+
+// ---------------------------------------------------------------------------
+// Server-rendered pages: templates (RM48)
+// ---------------------------------------------------------------------------
+//
+// A template is HTML with another language written through it. Three of those
+// languages are read here — Thymeleaf, FreeMarker and JSP — plus plain HTML,
+// and every one of them is read for the same four things: the inline scripts,
+// the forms, the links and the includes. Nothing else about the markup matters,
+// and nothing here understands the template language: the directives are
+// NEUTRALISED into placeholders so the JavaScript inside a `<script>` still
+// parses, and the four readers below are text rules over the tags.
+
+/** What a neutralised directive leaves behind: a name the parser accepts. */
+const EXPR_MARKER = '__cascade_expr__';
+/**
+ * ...and the one expression that is not just a hole: the application's CONTEXT
+ * PATH. `${request.contextPath}` is where this deployment is mounted, which is
+ * the root every path in the page is written from, so a URL built on it is a
+ * URL written from the root and the prefix is the empty string.
+ */
+const CTX_MARKER = '__cascade_ctx__';
+
+/** An expression that yields the context path: `…contextPath`, however qualified. */
+const CONTEXT_PATH_EXPR = /^[\w.$\s]*\bcontextPath\s*$/;
+
+/** Path prefixes that are served files rather than routes. */
+const ASSET_PREFIXES = Object.freeze(['/webjars', '/resources', '/static', '/css', '/js', '/images', '/fonts']);
+
+/** File extensions that are served files rather than routes. */
+const ASSET_EXTENSIONS = Object.freeze([
+  '.css', '.js', '.mjs', '.map', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico',
+  '.webp', '.bmp', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.pdf', '.zip',
+  '.mp4', '.webm', '.mp3',
+]);
+
+/** A `type` a `<script>` can carry and still be JavaScript. */
+const SCRIPT_TYPES = new Set([
+  '', 'text/javascript', 'application/javascript', 'text/ecmascript',
+  'application/ecmascript', 'module',
+]);
+
+/** One tag, with quoted attribute values that may contain `>`. */
+const TAG_RE = /<([a-zA-Z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/g;
+
+/**
+ * Replace a matched region with `marker`, keeping every line where it was.
+ *
+ * Line numbers are the only thing downstream needs from the shape of the text,
+ * and they must survive: a `call` record points at a line of the TEMPLATE, not
+ * at a line of some rewritten copy of it.
+ */
+function keepLines(marker, matched) {
+  const newlines = (matched.match(/\n/g) ?? []).length;
+  return newlines > 0 ? marker + '\n'.repeat(newlines) : marker;
+}
+
+/** The same, for a directive that leaves nothing behind at all. */
+const blankOut = (matched) => matched.replace(/[^\n]/g, ' ');
+
+/**
+ * One `${…}` (or `#{…}`) interpolation, as the placeholder it becomes.
+ * A context path becomes its own marker, because the bridge treats it as the
+ * app root; everything else is a hole with a name a parser will accept.
+ */
+function interpolationMarker(expr) {
+  return CONTEXT_PATH_EXPR.test(String(expr ?? '')) ? CTX_MARKER : EXPR_MARKER;
+}
+
+/**
+ * A template's own directives taken out of one `<script>` block, so what is left
+ * is JavaScript.
+ *
+ * It is NOT a template-language parser and does not try to be. A directive is a
+ * statement of the other language and leaves nothing behind; an interpolation is
+ * a value and leaves a name. A block that still does not parse afterwards is
+ * counted (`parseErrors`) and costs that block's calls, never the run.
+ *
+ * @param {string} code  the text between `<script>` and `</script>`
+ * @param {string} engine
+ * @returns {string} the same text, same number of lines
+ */
+export function neutralizeScript(code, engine) {
+  let out = String(code ?? '');
+  if (engine === 'freemarker') {
+    out = out.replace(/<#--[\s\S]*?-->/g, blankOut);
+    out = out.replace(/<\/?[#@][\w.]*(?:"[^"]*"|'[^']*'|[^>"'])*\/?>/g, blankOut);
+  }
+  if (engine === 'jsp') {
+    out = out.replace(/<%--[\s\S]*?--%>/g, blankOut);
+    out = out.replace(/<%@[\s\S]*?%>/g, blankOut);
+    out = out.replace(/<%=([\s\S]*?)%>/g, (m) => keepLines(EXPR_MARKER, m));
+    out = out.replace(/<%[\s\S]*?%>/g, blankOut);
+  }
+  if (engine === 'thymeleaf' || engine === 'plain-html') {
+    // `[[…]]` and `[(…)]` are Thymeleaf's inline expressions. A link expression
+    // inside one is a URL the page really uses, so it keeps its path.
+    out = out.replace(/\[\(([\s\S]*?)\)\]|\[\[([\s\S]*?)\]\]/g, (m, a, b) => {
+      const inner = String(a ?? b ?? '').trim();
+      const link = /^@\{\s*'?([^'}]*)'?\s*\}$/.exec(inner);
+      if (link) return keepLines(`'${link[1].trim()}'`, m);
+      return keepLines(`'${interpolationMarker(inner)}'`, m);
+    });
+  }
+  // Every engine here spells an interpolation `${…}`; JSP and FreeMarker also
+  // accept `#{…}`. A JavaScript template literal is spelled the same way, and
+  // the template engine would have eaten it before the browser saw it anyway.
+  out = out.replace(/[$#]\{([^{}]*)\}/g, (m, expr) => keepLines(interpolationMarker(expr), m));
+  return out;
+}
+
+/**
+ * Every inline `<script>` of a template, as a block the JavaScript reader takes.
+ *
+ * A block with `src` loads a file that is read as a source file in its own
+ * right; a block with a `type` that is not JavaScript is a client-side template
+ * or a data island, and parsing it as code would be a parse error per page.
+ *
+ * @param {string} text  the whole template
+ * @param {string} engine
+ * @returns {{code:string, lang:string, setup:boolean, lineOffset:number, line:number}[]}
+ */
+export function templateScriptBlocks(text, engine) {
+  const src = String(text ?? '');
+  const out = [];
+  const re = /<script\b((?:"[^"]*"|'[^']*'|[^>"'])*)>([\s\S]*?)<\/script\s*>/gi;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const attrs = attributesOf(m[1]);
+    if (attrs.has('src')) continue;
+    if (!SCRIPT_TYPES.has((attrs.get('type') ?? '').trim().toLowerCase())) continue;
+    // The body starts right after `<script` + the attributes + `>`.
+    const lineOffset = countLines(src.slice(0, m.index + '<script'.length + m[1].length + 1));
+    out.push({
+      code: neutralizeScript(m[2], engine),
+      lang: 'js',
+      setup: false,
+      lineOffset,
+      line: lineOffset + 1,
+    });
+  }
+  return out;
+}
+
+/** The attributes of one tag, lower-cased names, first spelling wins. */
+export function attributesOf(tagText) {
+  const out = new Map();
+  const re = /([:@\w.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+  let m;
+  while ((m = re.exec(String(tagText ?? ''))) !== null) {
+    const name = m[1].toLowerCase();
+    if (!out.has(name)) out.set(name, m[2] ?? m[3] ?? m[4] ?? '');
+  }
+  return out;
+}
+
+/** How many lines a piece of text ends after. */
+function countLines(text) {
+  return (String(text).match(/\n/g) ?? []).length;
+}
+
+/**
+ * A `href` or an `action` read as a path this application serves, or null.
+ *
+ * The four ways a template writes "a path from the app root" — Thymeleaf's
+ * `@{…}`, an EL context path, JSTL's `<c:url>`, Spring's `<spring:url>` — all
+ * mean the same thing and all come out as a path with one leading slash. A
+ * static asset is not a route and is left out by prefix and by extension; a
+ * query string is not part of a route and is dropped; an address with a host
+ * belongs to somebody else.
+ *
+ * @param {string} raw  the attribute as written
+ * @returns {string|null}
+ */
+export function templateUrlOf(raw) {
+  let s = String(raw ?? '').trim();
+  if (s === '') return null;
+  // `<c:url value="/x"/>` / `<spring:url value="/x"/>` written as the value.
+  const tagValue = /^<(?:c|spring):url\b[^>]*\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>?/i.exec(s);
+  if (tagValue) s = (tagValue[1] ?? tagValue[2] ?? '').trim();
+  // Thymeleaf's link expression, with its `(a=…,b=…)` parameter list dropped.
+  if (s.startsWith('@{') && s.endsWith('}')) {
+    s = s.slice(2, -1).trim();
+    s = dropTrailingParens(s);
+    if (s.startsWith("'") && s.endsWith("'") && s.length >= 2) s = s.slice(1, -1);
+  }
+  s = s.replace(/[$#]\{([^{}]*)\}/g, (m, expr) => (CONTEXT_PATH_EXPR.test(expr) ? '' : '{*}'));
+  s = s.replace(/<%=[\s\S]*?%>/g, '{*}').replace(/<%[\s\S]*?%>/g, '{*}');
+  s = s.replace(/\[\[[\s\S]*?\]\]|\[\([\s\S]*?\)\]/g, '{*}');
+  s = s.trim();
+  if (s === '' || s.startsWith('#')) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(s) || s.startsWith('//')) return null;
+  s = s.split('#')[0].split('?')[0];
+  // A Thymeleaf path variable is a hole like any other, spelled the way the
+  // rest of this lane spells one.
+  s = s.replace(/\{[A-Za-z_$][\w$]*\}/g, '{*}');
+  if (!s.startsWith('/')) return null;
+  const lower = s.toLowerCase();
+  if (ASSET_PREFIXES.some((p) => lower === p || lower.startsWith(`${p}/`))) return null;
+  if (ASSET_EXTENSIONS.some((e) => lower.endsWith(e))) return null;
+  return s;
+}
+
+/** `'/a/{b}(b=${x})'` -> `'/a/{b}'`: the trailing balanced parenthesis, dropped. */
+function dropTrailingParens(s) {
+  if (!s.endsWith(')')) return s;
+  let depth = 0;
+  for (let i = s.length - 1; i >= 0; i -= 1) {
+    if (s[i] === ')') depth += 1;
+    else if (s[i] === '(') {
+      depth -= 1;
+      if (depth === 0) return s.slice(0, i).trim();
+    }
+  }
+  return s;
+}
+
+/**
+ * The forms a template declares: one call site each, the method as written.
+ * @param {string} text
+ * @returns {{line:number, url:string, method:string, written:string, attr:string}[]}
+ */
+export function templateForms(text) {
+  const src = String(text ?? '');
+  const out = [];
+  const re = new RegExp(TAG_RE.source, 'g');
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const tag = m[1].toLowerCase();
+    if (tag !== 'form' && tag !== 'form:form') continue;
+    const attrs = attributesOf(m[2]);
+    const attr = ['th:action', 'data-th-action', 'action'].find((a) => attrs.has(a)) ?? null;
+    if (attr === null) continue;
+    const written = attrs.get(attr);
+    const url = templateUrlOf(written);
+    if (url === null) continue;
+    const spelled = (attrs.get('th:method') ?? attrs.get('method') ?? 'GET').trim().toUpperCase();
+    out.push({
+      line: countLines(src.slice(0, m.index)) + 1,
+      url,
+      method: VERBS.has(spelled) ? spelled : 'GET',
+      written,
+      attr,
+    });
+  }
+  return out;
+}
+
+/**
+ * The links a template opens: one GET call site each.
+ * @param {string} text
+ * @returns {{line:number, url:string, written:string, attr:string}[]}
+ */
+export function templateLinks(text) {
+  const src = String(text ?? '');
+  const out = [];
+  const re = new RegExp(TAG_RE.source, 'g');
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const attrs = attributesOf(m[2]);
+    const attr = ['th:href', 'data-th-href', 'href'].find((a) => attrs.has(a)) ?? null;
+    if (attr === null) continue;
+    const written = attrs.get(attr);
+    const url = templateUrlOf(written);
+    if (url === null) continue;
+    out.push({ line: countLines(src.slice(0, m.index)) + 1, url, written, attr });
+  }
+  return out;
+}
+
+/**
+ * The templates one template pulls in, as written.
+ *
+ * JSP and FreeMarker resolve an include against the INCLUDING FILE's directory
+ * (a leading slash means the template root); Thymeleaf resolves a fragment
+ * expression against the template root always. That difference is the whole of
+ * what `relativeTo` records.
+ *
+ * @param {string} text
+ * @param {string} engine
+ * @returns {{written:string, kind:string, relativeTo:('file'|'root')}[]}
+ */
+export function templateIncludes(text, engine) {
+  const src = String(text ?? '');
+  const out = [];
+  const add = (written, kind, relativeTo) => {
+    const w = String(written ?? '').trim();
+    if (w === '' || w.includes('${') || w.includes('<%')) return;
+    if (!out.some((e) => e.written === w && e.kind === kind)) out.push({ written: w, kind, relativeTo });
+  };
+  if (engine === 'jsp') {
+    for (const m of src.matchAll(/<%@\s*include\s+file\s*=\s*(?:"([^"]*)"|'([^']*)')\s*%>/g)) {
+      add(m[1] ?? m[2], 'jsp-directive', 'file');
+    }
+    for (const m of src.matchAll(/<jsp:include\b[^>]*\bpage\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+      add(m[1] ?? m[2], 'jsp-include', 'file');
+    }
+  }
+  if (engine === 'freemarker') {
+    for (const m of src.matchAll(/<#(include|import)\s+(?:"([^"]*)"|'([^']*)')/g)) {
+      add(m[2] ?? m[3], `freemarker-${m[1]}`, 'file');
+    }
+  }
+  if (engine === 'thymeleaf' || engine === 'plain-html') {
+    const re = new RegExp(TAG_RE.source, 'g');
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const attrs = attributesOf(m[2]);
+      for (const name of ['th:replace', 'th:insert', 'th:include', 'data-th-replace', 'data-th-insert', 'data-th-include']) {
+        if (!attrs.has(name)) continue;
+        const target = thymeleafFragmentTemplate(attrs.get(name));
+        if (target !== null) add(target, `thymeleaf-${name.split(':').pop()}`, 'root');
+      }
+    }
+  }
+  return out;
+}
+
+/** The TEMPLATE half of `~{tpl :: frag(…)}`, or null when the fragment is this file's own. */
+export function thymeleafFragmentTemplate(value) {
+  let s = String(value ?? '').trim();
+  if (s.startsWith('~{') && s.endsWith('}')) s = s.slice(2, -1).trim();
+  const cut = s.indexOf('::');
+  if (cut >= 0) s = s.slice(0, cut).trim();
+  s = dropTrailingParens(s).trim();
+  if (s === '' || s.includes('$') || s.includes('{')) return null;
+  return s;
+}
+
+/**
+ * An include written in a template, resolved to a path under the template root.
+ *
+ * Lexical only: no file is opened and none is stat-ed, so a shard describes the
+ * bytes of its own file and nothing else.
+ *
+ * @param {string} written
+ * @param {{fromDir:string, relativeTo:string, suffix:string}} how
+ *        `fromDir` is the including template's directory, relative to the root
+ * @returns {string|null} the include's name relative to the template root, without the suffix
+ */
+export function resolveIncludeName(written, how) {
+  const w = String(written ?? '').trim();
+  if (w === '') return null;
+  const base = (how.relativeTo === 'root' || w.startsWith('/')) ? '' : String(how.fromDir ?? '');
+  const segments = [];
+  for (const seg of `${base}/${w}`.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { if (segments.length > 0) segments.pop(); continue; }
+    segments.push(seg);
+  }
+  let name = segments.join('/');
+  if (name === '') return null;
+  const suffix = String(how.suffix ?? '');
+  if (suffix !== '' && name.endsWith(suffix)) name = name.slice(0, name.length - suffix.length);
+  return name;
+}
+
+/**
+ * Everything one template file says, on top of what its inline scripts said.
+ *
+ * It also EDITS the calls the scripts produced, in the one way only this file
+ * can: a URL written on the application's context path is a URL written from
+ * the root, so the marker the neutraliser left is taken off the front and the
+ * call says the context path was there. A URL built on a NAME the context path
+ * was assigned to is stripped the same way when the name is assigned here; when
+ * it is assigned in a template this one includes, only the bridge can see that,
+ * and `url.base` is what it reads.
+ *
+ * @param {{abs:string, relFile:string, text:string, root:string,
+ *          tmpl:{root:string, engine:string, suffix:string},
+ *          records:{order:number, line:number, rec:object}[]}} a
+ * @returns {{order:number, line:number, rec:object}[]}
+ */
+function templateRecordsOf(a) {
+  const { relFile, text, root, tmpl, records } = a;
+  const rootRel = toPosix(path.relative(root, tmpl.root));
+  const nameRel = toPosix(path.relative(tmpl.root, a.abs));
+  const name = nameRel.endsWith(tmpl.suffix) ? nameRel.slice(0, nameRel.length - tmpl.suffix.length) : nameRel;
+  const fromDir = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '';
+
+  // The names this file binds the context path to.
+  const contextVars = [...new Set(records
+    .filter((r) => r.rec.kind === 'constant' && r.rec.value === CTX_MARKER)
+    .map((r) => r.rec.name))].sort();
+  const isContextVar = new Set(contextVars);
+
+  for (const { rec } of records) {
+    if (rec.kind !== 'call' || !rec.url || !Array.isArray(rec.url.resolved)) continue;
+    let stripped = false;
+    rec.url.resolved = rec.url.resolved.map((r) => {
+      if (typeof r.template !== 'string') return r;
+      if (r.template.startsWith(CTX_MARKER)) {
+        stripped = true;
+        return { ...r, template: r.template.slice(CTX_MARKER.length) };
+      }
+      if (typeof rec.url.base === 'string' && isContextVar.has(rec.url.base) && r.template.startsWith('{*}')) {
+        stripped = true;
+        return { ...r, template: r.template.slice(3), dynamicParts: Math.max(0, (r.dynamicParts ?? 1) - 1) };
+      }
+      return r;
+    });
+    if (stripped) rec.url.contextPath = true;
+  }
+
+  const includes = [];
+  for (const inc of templateIncludes(text, tmpl.engine)) {
+    const target = resolveIncludeName(inc.written, { fromDir, relativeTo: inc.relativeTo, suffix: tmpl.suffix });
+    if (target === null) continue;
+    includes.push({
+      written: inc.written,
+      kind: inc.kind,
+      name: target,
+      file: `${rootRel === '' ? '' : `${rootRel}/`}${target}${tmpl.suffix}`,
+    });
+  }
+
+  const out = [];
+  const forms = templateForms(text);
+  const links = templateLinks(text);
+  out.push({
+    order: -0.5,
+    line: 1,
+    rec: {
+      kind: 'template', file: relFile, line: 1,
+      engine: tmpl.engine, root: rootRel, name, suffix: tmpl.suffix,
+      includes, contextVars,
+      scripts: a.scripts ?? 0, forms: forms.length, links: links.length,
+    },
+  });
+
+  // A form and a link are call sites of the PAGE ITSELF, so they sit on the
+  // page's module symbol beside whatever its scripts do. The order base keeps
+  // them apart from a script's calls on the same line without either having to
+  // know about the other.
+  let ordinal = 1e6;
+  const siteOf = (line, url, method, from, rule, attr, written) => {
+    const holes = (url.match(/\{\*\}/g) ?? []).length;
+    return {
+      order: ordinal++,
+      line,
+      rec: {
+        kind: 'call', file: relFile, line,
+        enclosing: '(module)',
+        callee: { shape: 'template', root: rule, path: [], name: rule },
+        binding: null,
+        args: [],
+        url: {
+          arg: { kind: 'string', value: url },
+          resolved: [{ template: url, dynamicParts: holes, via: holes > 0 ? 'template' : 'literal' }],
+        },
+        method: { value: method, from },
+        platformSink: null,
+        template: { rule, attr, written },
+      },
+    };
+  };
+  for (const f of forms) out.push(siteOf(f.line, f.url, f.method, 'template-attribute', 'template-form', f.attr, f.written));
+  for (const l of links) out.push(siteOf(l.line, l.url, 'GET', 'template-link', 'template-link', l.attr, l.written));
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +1199,10 @@ function analyzeProgram(program, st) {
   const buildUrl = (summary, scope) => {
     if (!summary) return null;
     const url = { arg: summary };
+    // The name the URL is built ON TOP OF, when the text starts with one. Only
+    // the bridge can say what that name holds, because the file that assigns it
+    // is as often another file (RM48).
+    if (summary.kind === 'template' && typeof summary.base === 'string') url.base = summary.base;
     let resolved = resolveSummary(summary, scope, viaOf(summary), 1);
     if (resolved === null) {
       url.resolved = null;
@@ -898,6 +1402,18 @@ function analyzeProgram(program, st) {
   const injectedClients = new Map(
     (packs.flatMap((p) => p.injected ?? [])).map((c) => [c.name, c]),
   );
+
+  // THE CLIENT A PAGE LOADS WITH A SCRIPT TAG (RM48). It is on `window`, so no
+  // file imports it and nothing binds it: every rule that follows a name to what
+  // it is bound to sees a call on an unknown global. What makes it a client is
+  // the pack's own list of global names plus the method called, and the same two
+  // things say which argument is the URL and what verb the call sends.
+  const globalClients = new Map();
+  for (const p of packs) {
+    for (const g of p.platform ?? []) {
+      for (const name of g.globals ?? []) globalClients.set(name, g);
+    }
+  }
 
   /** Whether one pack would read this object literal as a route declaration. */
   const packSeesARoute = (p, node) => {
@@ -1468,6 +1984,23 @@ function analyzeProgram(program, st) {
       platformSink = 'xhr';
     }
 
+    // A GLOBAL CLIENT THE PAGE LOADED. `$.ajax({url})`, `$.post(url)`: the root
+    // is a name the pack lists, nothing in this file declares it, and the method
+    // is one the pack names. `$('#x').val()` is not this — its callee sits on
+    // the result of a call, which has no root name at all.
+    let globalClient = null;
+    if (!isNew && callee !== null && callee.path.length === 1
+      && binding !== null && binding.kind === 'global' && globalClients.has(callee.root)) {
+      const client = globalClients.get(callee.root);
+      const method = callee.path[0];
+      const isConfig = (client.config?.methods ?? []).includes(method);
+      const isVerb = Object.prototype.hasOwnProperty.call(client.verbs ?? {}, method);
+      if (isConfig || isVerb) {
+        platformSink = client.name;
+        globalClient = { client, method, isConfig };
+      }
+    }
+
     // `this.something(…)` inside a class, where `something` is a member THIS
     // class declares or assigns. That restriction is what keeps the stream from
     // filling up with every `this.$emit`, `this.setState` and `this.$refs.x`
@@ -1515,7 +2048,16 @@ function analyzeProgram(program, st) {
       // The two platform sinks say which argument the URL is, by contract:
       // `fetch(url, init)` and `xhr.open(method, url)`. Nothing has to be shown.
       let urlSummary = null;
-      if (platformSink === 'xhr') {
+      if (globalClient !== null) {
+        // `$.ajax({url: …})` and `$.ajax(url, settings)` are the same call
+        // written two ways; a verb call (`$.post(url, data)`) puts it first.
+        const at = summaries[globalClient.client.config?.urlArg ?? globalClient.client.urlArg ?? 0] ?? null;
+        if (!globalClient.isConfig) urlSummary = at;
+        else if (at && at.kind === 'object') {
+          urlSummary = Object.prototype.hasOwnProperty.call(at.keys, globalClient.client.config.urlKey)
+            ? at.keys[globalClient.client.config.urlKey] : null;
+        } else urlSummary = at;
+      } else if (platformSink === 'xhr') {
         urlSummary = summaries[1] ?? null;
       } else if (platformSink === 'fetch') {
         urlSummary = summaries[0] ?? null;
@@ -1545,7 +2087,7 @@ function analyzeProgram(program, st) {
       if (urlSummary !== null) rec.url = buildUrl(urlSummary, env.scope);
 
       // ---- the method -------------------------------------------------
-      rec.method = methodOf(callee, summaries, platformSink);
+      rec.method = methodOf(callee, summaries, platformSink, globalClient);
 
       // ---- the functions this call HANDS OVER --------------------------
       // Left off when there are none, so a frontend's tens of thousands of
@@ -1564,11 +2106,11 @@ function analyzeProgram(program, st) {
     }
   };
 
-  const methodOf = (callee, summaries, platformSink) => {
-    const fromObject = () => {
+  const methodOf = (callee, summaries, platformSink, globalClient = null) => {
+    const fromObject = (keys = ['method', 'type']) => {
       for (const s of summaries) {
         if (s.kind !== 'object') continue;
-        for (const key of ['method', 'type']) {
+        for (const key of keys) {
           const v = s.keys[key];
           if (v && v.kind === 'string' && VERBS.has(v.value.toUpperCase())) {
             return v.value.toUpperCase();
@@ -1577,6 +2119,16 @@ function analyzeProgram(program, st) {
       }
       return null;
     };
+    if (globalClient !== null) {
+      // The pack's own verb table first: `getJSON` is a GET and is spelled like
+      // nothing. Then the config keys, for the one method that takes a config.
+      const verbs = globalClient.client.verbs ?? {};
+      if (Object.prototype.hasOwnProperty.call(verbs, globalClient.method)) {
+        return { value: verbs[globalClient.method], from: 'callee-name' };
+      }
+      const v = fromObject(globalClient.client.config?.methodKeys ?? []);
+      return v ? { value: v, from: 'config' } : null;
+    }
     if (platformSink === 'xhr') {
       const first = summaries[0];
       if (first && first.kind === 'string' && VERBS.has(first.value.toUpperCase())) {
@@ -2372,10 +2924,11 @@ function isSkippedFileName(name) {
  * @param {Set<string>} found  collects absolute file paths
  * @param {string[]} boundaries  absolute directories where OUTPUT_DIRS apply
  */
-function collectFiles(sourceRoot, found, boundaries = []) {
+function collectFiles(sourceRoot, found, boundaries = [], alsoAccept = () => false) {
   let st;
   try { st = fs.statSync(sourceRoot); } catch { return; }
   if (st.isFile()) {
+    if (alsoAccept(sourceRoot)) { found.add(sourceRoot); return; }
     if (EXTENSIONS.some((e) => sourceRoot.endsWith(e)) && !isSkippedFileName(path.basename(sourceRoot))) found.add(sourceRoot);
     return;
   }
@@ -2392,6 +2945,7 @@ function collectFiles(sourceRoot, found, boundaries = []) {
         continue;
       }
       if (!e.isFile()) continue;
+      if (alsoAccept(abs)) { found.add(abs); continue; }
       if (!EXTENSIONS.some((x) => e.name.endsWith(x))) continue;
       if (isSkippedFileName(e.name)) continue;
       found.add(abs);
@@ -2455,18 +3009,50 @@ function main(argv) {
   // was asked to read. Repeatable, and used for one thing only: where an HTML
   // template named by a `templateUrl` is looked for.
   const webRoots = [];
+  // The TEMPLATE roots this project declares (RM48), each with the engine that
+  // renders them and the suffix the view resolver adds to a view name. Passed on
+  // every invocation, like `--web-root`: an incremental run is handed changed
+  // FILES, and a file only says which view name it answers to relative to its
+  // root.
+  const templateRoots = [];
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--root') { root = argv[i + 1]; i += 1; continue; }
     if (argv[i] === '--web-root') { webRoots.push(argv[i + 1]); i += 1; continue; }
+    if (argv[i] === '--template-root') {
+      let spec;
+      try { spec = JSON.parse(argv[i + 1]); } catch (e) {
+        process.stderr.write(`--template-root must be a JSON object ({"root":…,"engine":…,"suffix":…}): ${e.message}\n`);
+        process.exit(2);
+      }
+      templateRoots.push({
+        root: path.resolve(spec.root),
+        engine: typeof spec.engine === 'string' ? spec.engine : 'plain-html',
+        suffix: typeof spec.suffix === 'string' && spec.suffix !== '' ? spec.suffix : '.html',
+      });
+      i += 1;
+      continue;
+    }
     if (argv[i] === '--configs-only') { configsOnly = true; continue; }
     roots.push(argv[i]);
   }
   if (root === null || roots.length === 0) {
-    process.stderr.write('usage: node adapters/web/webfacts.mjs [--configs-only] --root <abs root> [--web-root <abs source root>]... <abs source root or file>...\n');
+    process.stderr.write('usage: node adapters/web/webfacts.mjs [--configs-only] --root <abs root> [--web-root <abs source root>]... [--template-root <json>]... <abs source root or file>...\n');
     process.exit(2);
   }
   root = path.resolve(root);
   const packs = loadPacks(path.join(HERE, 'packs'));
+
+  // Longest root first, so a template root nested inside another wins.
+  templateRoots.sort((a, b) => b.root.length - a.root.length || (a.root < b.root ? -1 : 1));
+  /** The template root a file belongs to, or null when it is not a template. */
+  const templateRootOf = (abs) => {
+    for (const t of templateRoots) {
+      if (abs !== t.root && !abs.startsWith(t.root + path.sep)) continue;
+      if (!abs.endsWith(t.suffix)) continue;
+      return t;
+    }
+    return null;
+  };
 
   // The package directory each source root belongs to, resolved BEFORE the walk:
   // it is one of the two places where a `dist`/`build` really is output.
@@ -2481,9 +3067,10 @@ function main(argv) {
   }
 
   const found = new Set();
+  const isTemplateFile = (abs) => templateRootOf(abs) !== null;
   for (const r of roots) {
     const abs = path.resolve(r);
-    collectFiles(abs, found, [pkgOfRoot.get(abs)]);
+    collectFiles(abs, found, [pkgOfRoot.get(abs)], isTemplateFile);
   }
 
   // ---- where an HTML template is looked for --------------------------------
@@ -2593,12 +3180,19 @@ function main(argv) {
       parseErrors += 1;
       continue;
     }
-    const blocks = lang === 'vue'
-      ? vueBlocks(text)
-      : [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
-    const res = analyzeFile({ relFile, blocks, packs, lang, templateOf });
-    const fileRec = { kind: 'file', file: relFile, line: 1, lang, recoveredErrors: res.recoveredErrors };
-    if (lang === 'vue') {
+    const tmpl = templateRootOf(abs);
+    const blocks = tmpl !== null
+      ? templateScriptBlocks(text, tmpl.engine)
+      : lang === 'vue'
+        ? vueBlocks(text)
+        : [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
+    const res = analyzeFile({ relFile, blocks, packs, lang: tmpl !== null ? 'js' : lang, templateOf });
+    const fileRec = {
+      kind: 'file', file: relFile, line: 1,
+      lang: tmpl !== null ? 'template' : lang,
+      recoveredErrors: res.recoveredErrors,
+    };
+    if (lang === 'vue' && tmpl === null) {
       fileRec.blocks = blocks.map((b) => ({ lang: b.lang, setup: b.setup, line: b.line }));
     }
     push(relFile, fileRec, 1, -1);
@@ -2606,6 +3200,13 @@ function main(argv) {
     for (const pe of res.parseErrors) {
       push(relFile, { kind: 'parse_error', file: relFile, line: pe.line, col: pe.col, message: pe.message }, pe.line, 0);
       parseErrors += 1;
+    }
+    if (tmpl !== null) {
+      for (const rec of templateRecordsOf({
+        abs, relFile, text, root, tmpl, records: res.records, scripts: blocks.length,
+      })) {
+        push(relFile, rec.rec, rec.line, rec.order);
+      }
     }
     for (const r of res.records) push(relFile, r.rec, r.line, r.order);
   }
@@ -2628,7 +3229,13 @@ function main(argv) {
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles: out.envFiles.size,
-    platformSinks: { fetch: 0, xhr: 0 },
+    platformSinks: { fetch: 0, xhr: 0, jquery: 0 },
+    // The server-rendered pages this run read (RM48): how many template files,
+    // how many inline `<script>` blocks went through the JavaScript reader, and
+    // how many call sites came out of a form, a link or an include.
+    templates: {
+      files: 0, byEngine: {}, scripts: 0, forms: 0, links: 0, includes: 0, contextVars: 0,
+    },
     // What a frontend written before modules put in the stream (RM47): the
     // names the framework's own registry holds, the templates read for their
     // tags, and the calls that went through a client the framework injected.
@@ -2662,10 +3269,19 @@ function main(argv) {
 function tally(rec, counts) {
   switch (rec.kind) {
     case 'file':
-      if (rec.lang === 'vue') counts.vueFiles += 1;
+      if (rec.lang === 'template') counts.templates.files += 1;
+      else if (rec.lang === 'vue') counts.vueFiles += 1;
       else if (rec.lang === 'ts' || rec.lang === 'tsx') counts.tsFiles += 1;
       else counts.jsFiles += 1;
       if (rec.skipped) counts.skippedFiles += 1;
+      break;
+    case 'template':
+      counts.templates.byEngine[rec.engine] = (counts.templates.byEngine[rec.engine] ?? 0) + 1;
+      counts.templates.scripts += rec.scripts ?? 0;
+      counts.templates.forms += rec.forms ?? 0;
+      counts.templates.links += rec.links ?? 0;
+      counts.templates.includes += (rec.includes ?? []).length;
+      counts.templates.contextVars += (rec.contextVars ?? []).length;
       break;
     case 'import': counts.imports += 1; break;
     case 'export': counts.exports += 1; break;
@@ -2690,8 +3306,9 @@ function tally(rec, counts) {
       break;
     case 'call': {
       counts.calls += 1;
-      if (rec.platformSink === 'fetch') counts.platformSinks.fetch += 1;
-      if (rec.platformSink === 'xhr') counts.platformSinks.xhr += 1;
+      if (typeof rec.platformSink === 'string') {
+        counts.platformSinks[rec.platformSink] = (counts.platformSinks[rec.platformSink] ?? 0) + 1;
+      }
       if (rec.injected) counts.injectedCalls += 1;
       if (rec.method && rec.method.from) {
         counts.methodBySource[rec.method.from] = (counts.methodBySource[rec.method.from] ?? 0) + 1;

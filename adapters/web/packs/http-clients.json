@@ -2,7 +2,16 @@
   "pack": "http-clients",
   "platform": [
     { "name": "fetch", "urlArg": 0, "optionsArg": 1, "methodKey": "method", "defaultMethod": "GET" },
-    { "name": "xhr", "open": { "methodArg": 0, "urlArg": 1 } }
+    { "name": "xhr", "open": { "methodArg": 0, "urlArg": 1 } },
+    {
+      "name": "jquery",
+      "why": "jQuery is loaded by a <script> tag and put on the page as a global, so no file imports it and nothing binds it. It is a platform sink for the same reason `fetch` is: the library sends the request itself and says which argument the URL is.",
+      "globals": ["$", "jQuery"],
+      "config": { "methods": ["ajax"], "urlArg": 0, "urlKey": "url", "methodKeys": ["type", "method"] },
+      "verbs": { "get": "GET", "post": "POST", "getJSON": "GET" },
+      "urlArg": 0,
+      "defaultMethod": "GET"
+    }
   ],
   "injected": [
     {

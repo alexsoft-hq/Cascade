@@ -42,16 +42,16 @@ suite.
 
 | Repository | Pinned at | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs |
 |---|---|---|---|---|---|---|---|
-| [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) | `74364054` | 744 / 969 | 73 / 177 | 836 / 2092 | 538 / 934 | 19 / 166 | 15997 |
+| [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) | `74364054` | 744 / 969 | 73 / 177 | 836 / 2092 | 562 / 963 | 25 / 181 | 15997 |
 | [jishenghua/JSH_ERP](https://github.com/jishenghua/JSH_ERP) | `ad6cf886` | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 | 13179 |
 | [apache/dolphinscheduler](https://github.com/apache/dolphinscheduler) | `499fd068` | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 | 6216 |
 | [macrozheng/mall](https://github.com/macrozheng/mall) + [mall-admin-web](https://github.com/macrozheng/mall-admin-web) | `0504e86b` + `81fc17e5` | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 | 3868 |
 | [linlinjava/litemall](https://github.com/linlinjava/litemall) | `a1ef964a` | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 | 4223 |
 | [yangzongzhuan/RuoYi-Vue](https://github.com/yangzongzhuan/RuoYi-Vue) + [RuoYi-Vue3](https://github.com/yangzongzhuan/RuoYi-Vue3) | `13db1fce` + `838965c5` | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 | 1613 |
-| [jeequan/jeepay](https://github.com/jeequan/jeepay) | `ba371119` | 126 / 134 | 22 / 23 | 302 / 314 | no frontend read | no frontend read | 3554 |
-| [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | 0 / 2 | 0 / 0 | 528 |
-| [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | no frontend read | no frontend read | 243 |
-| [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | no frontend read | no frontend read | 83 |
+| [jeequan/jeepay](https://github.com/jeequan/jeepay) | `ba371119` | 126 / 134 | 22 / 23 | 302 / 314 | 0 / 0 | 0 / 5 | 3554 |
+| [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | 24 / 31 | 6 / 11 | 528 |
+| [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 | 243 |
+| [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | 12 / 13 | 3 / 8 | 83 |
 | [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 | 54 |
 
 The last column is the sixth, and it is guarded the other way up. It adds up,
@@ -79,9 +79,9 @@ asked it a question.
 | litemall | shipped | shipped | not-shipped | not-shipped | shipped | shipped | degraded | shipped |
 | ruoyi-vue | shipped | shipped | not-shipped | not-shipped | shipped | shipped | shipped | degraded |
 | jeepay | shipped | shipped | not-shipped | degraded | shipped | shipped | not-shipped | not-shipped |
-| xxl-job | shipped | shipped | not-shipped | not-shipped | shipped | shipped | degraded | not-shipped |
-| jpetstore-6 | shipped | shipped | not-shipped | not-shipped | shipped | shipped | not-shipped | not-shipped |
-| spring-petclinic | shipped | not-shipped | degraded | not-shipped | degraded | shipped | not-shipped | not-shipped |
+| xxl-job | shipped | shipped | not-shipped | not-shipped | shipped | shipped | shipped | degraded |
+| jpetstore-6 | shipped | shipped | not-shipped | not-shipped | shipped | shipped | shipped | shipped |
+| spring-petclinic | shipped | not-shipped | degraded | not-shipped | degraded | shipped | shipped | degraded |
 | petclinic-ms | shipped | not-shipped | degraded | not-shipped | degraded | shipped | shipped | shipped |
 
 `degraded` on `mybatisPlus` there is the naming strategy: no profile in the
@@ -113,6 +113,25 @@ them resolving either. jeepay is the case that stays where it was on purpose:
 its `static/cashier/js` is a webpack build, and a `.js` with a `.js.map` beside
 it is output rather than a frontend somebody keeps here. See
 [the web lane](setup/web-lane.md#a-frontend-with-no-packagejson).
+
+Four of them are new in RM48, and none of them came from a flag either. Three
+of these projects have no frontend router at all: a `@Controller` returns a view
+name, a template engine renders it, and the page's own `<form>`, its links and
+its inline `<script>` are what talk to the backend. spring-petclinic, xxl-job
+and jpetstore-6 had **zero screens** for exactly that reason, and now have 8, 11
+and 16. jpetstore's 20 JSP pages yield 52 resolved calls out of 53 and every one
+of its 16 pages reaches a table, which is why it is the one project here whose
+`screen` axis reads `shipped`. jeecg-boot gains 15 pages beside the 166 screens
+its Vue frontend's router declares, and jeepay 5 payment pages it had none of.
+
+Ten of jpetstore's sixteen page names, and five of petclinic's eight, are not
+literals at the return statement at all: they are a `static final String` the
+controller declares (`return VIEWS_OWNER_CREATE_OR_UPDATE_FORM;`) or a private
+method of the same class whose returns are literals (petclinic's
+`addPaginationModel`). Both are read out of ONE file, so both are EXACT like any
+other literal. What is still not read is a name that would need another file or
+a data-flow answer: 2 of petclinic's returns (`"redirect:/owners/" +
+owner.getId()`) and 2 of xxl-job's, which is why those two read `degraded`.
 
 One entry is worth reading as a limit rather than as a score. jeecg-boot
 declares 173 routes, 87 of them the framework's own demo pages, and fetches
@@ -165,9 +184,12 @@ resolved frontend calls out of 153, and 44 screens that reach a table.
 |---|---|
 | census | 22 endpoints, 25 mapper statements, 13 tables, 86 columns |
 | reach | 11 of 22 endpoints reach a statement, 12 tables, 77 columns |
+| pages | 20 JSP templates, 16 of them a controller names, 52 of 53 call sites resolved |
 
 Its schema is HSQLDB, which routes to sqlglot's ANSI parser rather than to a
-dialect parser of its own, so this golden is what exercises that path.
+dialect parser of its own, so this golden is what exercises that path. It is
+also the plainest server-rendered application in the corpus: not one line of
+JavaScript, and every screen it has is a JSP file a `@Controller` named.
 
 ### spring-petclinic
 
@@ -175,6 +197,7 @@ dialect parser of its own, so this golden is what exercises that path.
 |---|---|
 | census | 17 endpoints, 6 statements, 7 tables, 24 columns |
 | reach | 9 of 17 endpoints reach a statement, 4 tables, 18 columns |
+| pages | 12 Thymeleaf templates, 8 of them a controller names |
 
 It has no mapper XML at all: every statement in it is one the JPA bridge derived
 from an entity mapping, a derived query name or a `@Query`.

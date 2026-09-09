@@ -10,6 +10,111 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+The round where a server-rendered page is a screen. Three of the eleven corpus
+projects had none, for one reason: they have no frontend router at all. A
+`@Controller` returns a view name, a template engine renders it, and the page's
+own `<form>`, its links and its inline `<script>` are what talk to the backend.
+
+### Added
+
+- **The Java worker records the page a handler renders** (`javafacts/9`). A
+  method of a `@Controller` that is not a `@RestController` and carries no
+  `@ResponseBody` emits a `view` record: the name from a returned literal, from
+  every literal leaf of a returned ternary, from `new ModelAndView("x", …)`,
+  from `mav.setViewName("x")`, from a `static final String` the same class
+  declares (`from: constant`), or from a private method of that class whose
+  every return is such a literal or such a field (`from: helper`, with the
+  method's name). `redirect:` and `forward:` are the record's KIND rather than
+  part of the name. All six are read out of ONE file, so all six are EXACT.
+  Two guards: the helper is read one level deep, and two methods of one name are
+  read as neither. Anything a returned name could ALSO mean — a field of a
+  superclass, a method somebody overrides, a constant from another file, a local
+  variable — is not resolved: it is counted in `unresolved`, so the run says how
+  many pages it could not name instead of guessing one.
+- **Discovery finds the template roots and the engine.** RM46's Spring config
+  reader now also reads `spring.thymeleaf.*`, `spring.freemarker.*`,
+  `spring.mvc.view.*` and `spring.velocity.*`, in every spelling Spring's
+  relaxed binding accepts. A configured prefix picks out the directory it names
+  (`classpath:/templates/` -> `src/main/resources/templates`); with nothing
+  configured, the root is the directory every template of one resource root sits
+  under, with the engine's documented suffix. `cascade init` writes
+  `profile.templateRoots` and prints one line; `cascade analyze` prints the
+  roots it will read; `cascade estimate` says how many pages and which engine.
+  A list already in the profile is the user's, an empty one included.
+- **The web worker reads a template** (`webfacts/5`). Four things per file, and
+  nothing else: the inline `<script>` blocks, put through the SAME JavaScript
+  reader every `.js` file goes through after the template's own directives have
+  been neutralised into placeholders that keep every line where it was; the
+  `<form>`s; the links that name a path from the app root, static assets left
+  out by prefix and by extension; and the includes (`<%@ include%>`,
+  `<jsp:include>`, `<#include>`, `<#import>`, `th:replace`/`insert`/`include`),
+  resolved lexically so a shard still describes the bytes of its own file.
+  Thymeleaf, FreeMarker, JSP, Velocity and plain HTML.
+- **The context path is the app root.** `${request.contextPath}`,
+  `${pageContext.request.contextPath}`, `@{/…}`, `<c:url>` and `<spring:url>`
+  all name where the deployment is mounted, which is not part of any route the
+  pack serves, so a page's prefix is the empty string and `prefix.from` is
+  `context-path`. A page whose layout writes `var base_url =
+  '${request.contextPath}'` and whose own script writes `base_url + "/x"` is
+  read the same way: the worker records the NAME the URL was built on, and the
+  bridge closes the hole with the include graph.
+- **jQuery is a client the pack knows.** A page loads it with a `<script>` tag,
+  so nothing imports it and nothing binds it: it is a platform sink for the same
+  reason `fetch` is. `$.ajax({url, type})`, `$.ajax(url, settings)`,
+  `$.post`, `$.get` and `$.getJSON` are call sites, in a `.js` file and in a
+  page's inline script alike. `$('#x').val()` is not, and neither is `$.each`.
+- **A page is a screen.** Every template a `view` record names becomes
+  `screen:view:<view name>` carrying its `template`, its `engine` and the
+  route(s) whose handler renders it; the `view:` prefix keeps a hybrid
+  application's two kinds of screen apart. `symbol --RENDERS_PAGE--> screen` is
+  EXACT, because the literal the handler returned is the resolver's own input.
+  The page's inline scripts are its own functions (`RENDERS`, EXACT, rule
+  `template-own`) and each template it includes is a candidate (`RENDERS`,
+  SOUND_SET, rule `template-include`), followed four deep, with its calls
+  counting for every page that includes it. A `redirect:` becomes
+  `symbol --CALLS_HTTP--> endpoint`, graded by the route match like any call. A
+  template no handler names is not a screen: it is counted and left alone.
+- **The screen axis turns on for a server-rendered application**
+  (`from: server-views`), beside the router cases, and `overview.screens.byKind`
+  splits the screens into `router` and `page`. `browse kind=screen` and the
+  screen card show the template and the routes; `flow` walking down from a route
+  lists the page it shows.
+
+### Changed
+
+- **A directory named after somebody else's library is never a frontend root.**
+  `adapters/web/packs/vendor-dirs.json` declares them (`plugins`, `libs`,
+  `codemirror`, `layer`, `nprogress`, `adminlte`, …) and `src/core/discover.mjs`
+  mirrors the list, with a test that fails if the two disagree. Measured:
+  xxl-job went from 13 vendored web roots to 1 and jeecg-boot from 16 to 4, and
+  both kept their own.
+
+### Measured
+
+The three projects that had no screens now have them, with nothing configured:
+spring-petclinic 8, xxl-job 11, jpetstore-6 16, and two more projects gain pages
+they never had a way to show: jeecg-boot 15, beside the 166 screens its Vue
+frontend's router declares, and jeepay 5. Frontend calls resolved: jpetstore-6
+0 -> 52 of 53, xxl-job 0 -> 24 of 31, spring-petclinic 0 -> 12 of 13, jeecg-boot
+538 -> 562. Screens reaching a table: jpetstore-6 0 -> 16, xxl-job 0 -> 6,
+spring-petclinic 0 -> 3, jeecg-boot 19 -> 25. jpetstore-6 is the first project
+in the corpus whose `screen` axis reads `shipped`: every one of its 22 handler
+returns is a name this engine can read, and every one of its 16 pages reaches a
+table. No project moved down by one number, and every `endpointColumnPairs` is
+exactly where it was — the gate baseline's five moved entries do not touch that
+column at all.
+
+`RENDERS_PAGE` is deliberately **not** in `FLOW_EDGE_TYPES`, and that is the one
+measurement worth reading twice. A page's own form and links are the NEXT
+request, not this one, and following them from the route that renders the page
+made every route inherit the reach of every route its page links to: what one
+endpoint reaches inflated by 81% on jpetstore-6 (243 -> 439 endpoint/column
+pairs) and 14% on xxl-job, with no union count moving by one, which is exactly
+the smear the fan-out ceiling exists to catch. The relation is a real edge and
+is taken ONE step instead, in the two questions that ask it: `screen_impact`
+turns "this method reads the column" into "this page shows it", and `flow`
+walking down from a route lists the page without following it.
+
 ## [0.4.0] - 2026-09-09
 
 The release where a screen in one service reaches a table in another with

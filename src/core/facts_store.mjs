@@ -228,6 +228,7 @@ export function javaRecordSortKey(rec) {
     case 'mpService': return `2mpservice${SEP}${rec.fqn}${SEP}${rec.base}`;
     case 'field': return `3field${SEP}${rec.owner}${SEP}${rec.name}`;
     case 'endpoint': return `4endpoint${SEP}${rec.handler}${SEP}${rec.httpMethod}${SEP}${rec.path}`;
+    case 'view': return `4view${SEP}${rec.owner}${SEP}${rec.method}${SEP}${rec.paramCount}`;
     case 'method': return `5method${SEP}${rec.fqn}${SEP}${rec.paramCount}`;
     case 'mapperAnnotationSql': return `5mapsql${SEP}${rec.ownerFqn}${SEP}${rec.method}${SEP}${rec.verb}`;
     case 'transactional': return `6tx${SEP}${rec.method}`;
@@ -429,7 +430,10 @@ export function webFactsSummary(records) {
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles: 0,
-    platformSinks: { fetch: 0, xhr: 0 },
+    platformSinks: { fetch: 0, xhr: 0, jquery: 0 },
+    templates: {
+      files: 0, byEngine: {}, scripts: 0, forms: 0, links: 0, includes: 0, contextVars: 0,
+    },
     registrations: { component: 0, controller: 0, directive: 0 },
     templatesRead: 0,
     injectedCalls: 0,
@@ -442,11 +446,20 @@ export function webFactsSummary(records) {
     switch (r.kind) {
       case 'file':
         withFileRecord.add(r.file);
-        if (r.lang === 'vue') counts.vueFiles += 1;
+        if (r.lang === 'template') counts.templates.files += 1;
+        else if (r.lang === 'vue') counts.vueFiles += 1;
         else if (r.lang === 'ts' || r.lang === 'tsx') counts.tsFiles += 1;
         else counts.jsFiles += 1;
         if (r.skipped) counts.skippedFiles += 1;
         counts.recoveredErrors += r.recoveredErrors ?? 0;
+        break;
+      case 'template':
+        counts.templates.byEngine[r.engine] = (counts.templates.byEngine[r.engine] ?? 0) + 1;
+        counts.templates.scripts += r.scripts ?? 0;
+        counts.templates.forms += r.forms ?? 0;
+        counts.templates.links += r.links ?? 0;
+        counts.templates.includes += (r.includes ?? []).length;
+        counts.templates.contextVars += (r.contextVars ?? []).length;
         break;
       case 'parse_error':
         counts.parseErrors += 1;
@@ -475,8 +488,9 @@ export function webFactsSummary(records) {
         break;
       case 'call': {
         counts.calls += 1;
-        if (r.platformSink === 'fetch') counts.platformSinks.fetch += 1;
-        if (r.platformSink === 'xhr') counts.platformSinks.xhr += 1;
+        if (typeof r.platformSink === 'string') {
+          counts.platformSinks[r.platformSink] = (counts.platformSinks[r.platformSink] ?? 0) + 1;
+        }
         if (r.injected) counts.injectedCalls += 1;
         if (r.method && r.method.from) {
           counts.methodBySource[r.method.from] = (counts.methodBySource[r.method.from] ?? 0) + 1;

@@ -103,6 +103,13 @@ const ALLOWED_HOSTS = new Set([
   'opensource.org',    // OSI licence pages (MIT text in NOTICE)
   'spdx.org',          // SPDX licence identifiers
   'mybatis.org',       // the MyBatis mapper DTD every mapper XML declares in its DOCTYPE
+  // The two template languages' own NAMESPACE identifiers (RM48). A Thymeleaf
+  // page opens with `xmlns:th="https://www.thymeleaf.org"` and a JSP with
+  // `<%@ taglib uri="http://java.sun.com/jsp/jstl/core" %>`; both are a
+  // standard's identifier, exactly like the W3C and MyBatis ones above, and a
+  // fixture that dropped them would not be the file the reader has to read.
+  'www.thymeleaf.org',
+  'java.sun.com',
   // The OTLP schema URL every OpenTelemetry export stamps on its resource
   // (`"schemaUrl": "https://opentelemetry.io/schemas/1.24.0"`). It is in the
   // real-agent trace fixture because the agent wrote it, and a standard's own

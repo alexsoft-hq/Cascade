@@ -19,6 +19,13 @@ import fs from 'node:fs';
 import { IDENTIFIER_CASES, identifierCaseForDialect } from './identifier_case.mjs';
 
 /**
+ * The template engines a `templateRoots` entry may name (RM48). `plain-html` is
+ * in the list because a root of ordinary `.html` pages with no engine marker is
+ * a real answer, and calling it Thymeleaf would name a technology nobody used.
+ */
+const TEMPLATE_ENGINE_NAMES = Object.freeze(['thymeleaf', 'freemarker', 'jsp', 'velocity', 'plain-html']);
+
+/**
  * Documented profile defaults (SPEC §6.2). Frozen. `normalizeProfile` layers a
  * user object over a deep copy of this — arrays REPLACE, they do not concat.
  */
@@ -40,6 +47,7 @@ export const PROFILE_DEFAULTS = deepFreeze({
   // `from` says which. Empty is the honest default: a project whose frontend
   // has a package.json needs no entry here.
   webRoots: [],
+  templateRoots: [],
   // `enabled: null` is the THIRD state, and the default: no word from the user,
   // so the switch is decided by what the run READS (src/core/lanes.mjs,
   // `screenAxisOf`). `true` and `false` are the user's word and are obeyed.
@@ -186,6 +194,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   webRoots: {
     status: 'consumed', where: 'src/core/lanes.mjs',
     note: 'the frontend source roots this project has that no package.json declares. `cascade analyze` reads them beside the roots discovery derives from a frontend package.json, so a gateway that ships AngularJS as <script> tags is read with no flag. Each entry is {root, kind, from}: `root` is manifest-relative, `kind` is "vendored" (discovery found frontend sources with no manifest above them, under a static/public/webapp/www directory or beside an index.html that loads them) or "declared" (a person typed it), and `from` is "discovery" or "user". `cascade init` writes the vendored ones it finds; a list that is already in the profile is the user\'s and is left alone, and an empty list is how a project says "read none of them". --web-src still wins for one run',
+  },
+  templateRoots: {
+    status: 'consumed', where: 'src/core/lanes.mjs',
+    note: 'where a view name is resolved into a page, for a server-rendered application. Each entry is {root, engine, suffix, from}: `root` is manifest-relative, `engine` is thymeleaf / freemarker / jsp / velocity / plain-html, `suffix` is what the view resolver appends to a view name, and `from` is "config" (a spring.thymeleaf/freemarker/mvc.view prefix named the directory) or "default" (the engine\'s documented default, applied to where the files actually sit). `cascade analyze` reads these roots with the web lane, so a `@Controller` returning "owners/findOwners" reaches src/main/resources/templates/owners/findOwners.html. `cascade init` writes what discovery found; a list that is already in the profile is the user\'s and is left alone, and an empty list is how a project says "read no templates"',
   },
   'screenAxis.enabled': {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
@@ -675,6 +687,28 @@ export function validateProfile(obj) {
       }
       if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared') {
         throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it) or "declared" (you typed it)`);
+      }
+      if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
+        throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
+      }
+    });
+  }
+
+  if ('templateRoots' in obj) {
+    const v = obj.templateRoots;
+    if (!Array.isArray(v)) {
+      throw new ProfileError('profile.templateRoots must be an array of {root, engine, suffix} entries naming where a view name is resolved');
+    }
+    v.forEach((entry, i) => {
+      const shape = `profile.templateRoots[${i}]`;
+      if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
+        throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
+      }
+      if ('engine' in entry && !TEMPLATE_ENGINE_NAMES.includes(entry.engine)) {
+        throw new ProfileError(`${shape}.engine must be one of ${TEMPLATE_ENGINE_NAMES.join(', ')}`);
+      }
+      if ('suffix' in entry && (typeof entry.suffix !== 'string' || !entry.suffix.startsWith('.'))) {
+        throw new ProfileError(`${shape}.suffix must be the extension the view resolver appends, starting with a dot (".html", ".ftl", ".jsp")`);
       }
       if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
         throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);

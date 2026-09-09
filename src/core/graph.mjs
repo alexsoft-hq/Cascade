@@ -25,7 +25,7 @@ export const NODE_KINDS = Object.freeze([
 export const EDGE_TYPES = Object.freeze([
   'HANDLES', 'CALLS', 'MAY_CALL', 'OVERRIDES', 'INJECTS', 'MAY_INJECT',
   'IMPLEMENTS_STMT', 'EXECUTES', 'READS', 'WRITES', 'DECLARES', 'JOINS',
-  'CALLS_HTTP', 'RENDERS', 'IN_DOMAIN', 'AFFECTS',
+  'CALLS_HTTP', 'RENDERS', 'IN_DOMAIN', 'AFFECTS', 'RENDERS_PAGE',
 ]);
 
 /**
@@ -41,6 +41,31 @@ export const FLOW_EDGE_TYPES = Object.freeze([
   'HANDLES', 'CALLS', 'MAY_CALL', 'OVERRIDES', 'INJECTS', 'MAY_INJECT',
   'IMPLEMENTS_STMT', 'EXECUTES', 'READS', 'WRITES', 'CALLS_HTTP', 'RENDERS',
 ]);
+
+/**
+ * RENDERS_PAGE IS NOT FLOW, AND THAT IS THE MEASUREMENT (RM48).
+ *
+ * A handler renders a page, and the page's own `<form>` and links are the NEXT
+ * request, not this one. Put the edge in the set above and a walk down from a
+ * route runs `route -> handler -> page -> the page's links -> those routes ->
+ * their columns`, and every route inherits the reach of every route its page
+ * links to.
+ *
+ * MEASURED, both ways, on the pinned corpus. With the edge in the set above,
+ * what ONE endpoint reaches inflated by 81% on jpetstore-6 (243 -> 439
+ * endpoint/column pairs) and by 14% on xxl-job (528 -> 601), while not one
+ * union count moved by one: that is exactly the shape of smear the fan-out
+ * ceiling in `scripts/generality-gate.mjs` exists to catch. With it out, every
+ * project in the corpus returns to its baseline pair count EXACTLY (243, 528,
+ * 83, 15997), so the edge is the whole of the difference and nothing else in
+ * this round moved that number.
+ *
+ * So the relation is a real edge and is NOT walked. The two questions it exists
+ * for are answered by taking ONE step off it, in the two places that ask:
+ * `screensAffecting` (src/core/walks.mjs) turns "this method reads the column"
+ * into "this page shows it", and `chainWalk` (src/core/chain.mjs) lists the
+ * pages a walk down reached a handler for, without following them.
+ */
 
 // Grade rank for "weakest link" path grading (mirrors policy lattice).
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });

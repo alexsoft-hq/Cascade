@@ -511,7 +511,7 @@ test('a screen reaches the column, the column names the screen, and a recording 
 
   // The lane list gains `har`, and the lane line says what it read.
   assert.match(res.stderr, /^lanes \[java,web,har\]/m);
-  assert.match(res.stderr, /^Web lane: 7 screen\(s\) from 7 route declaration\(s\), 2 with a component \(5 unresolved\), 3 exact, 0 candidate and 0 heuristic RENDERS edge\(s\)/m);
+  assert.match(res.stderr, /^Web lane: 7 screen\(s\) from 7 route declaration\(s\) and 0 page\(s\) a controller renders, 2 with a component \(5 unresolved\), 3 exact, 0 candidate and 0 heuristic RENDERS edge\(s\)/m);
   assert.match(res.stderr, /^HAR lane: 1 recording\(s\), 8 request\(s\): 3 matched a route this pack serves, 3 matched none, 2 static asset\(s\); 2 screen-to-route pair\(s\) observed/m);
 
   const pack = JSON.parse(fs.readFileSync(path.join(out, 'pack.json'), 'utf8'));
@@ -591,11 +591,16 @@ test('a frontend with no package.json is discovered, written to the profile and 
   const base = tmpDir(t, 'cascade-vendored-');
   const dir = path.join(base, 'app');
   fs.cpSync(ANGULAR_FIXTURE, dir, { recursive: true });
-  // A decoy beside it: somebody else's plugin script, in a directory the tree
-  // also says is served. It becomes a root and has nothing to say, which is the
-  // case the run has to report rather than pass over.
-  fs.mkdirSync(path.join(dir, 'static', 'plugins', 'tiny'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'static', 'plugins', 'tiny', 'tiny.js'), 'window.tiny = function () { return 1; };\n');
+  // A decoy beside it: a script in a directory the tree also says is served,
+  // named after nothing in particular. It becomes a root and has nothing to
+  // say, which is the case the run has to report rather than pass over.
+  fs.mkdirSync(path.join(dir, 'static', 'widgets', 'tiny'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'static', 'widgets', 'tiny', 'tiny.js'), 'window.tiny = function () { return 1; };\n');
+  // ...and a second decoy in a directory named after what it is (RM48). A
+  // `plugins` directory is somebody else's code by name, so it never becomes a
+  // root at all and never has to be reported.
+  fs.mkdirSync(path.join(dir, 'static', 'plugins', 'crongen'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'static', 'plugins', 'crongen', 'crongen.js'), 'window.cronGen = function () { return 2; };\n');
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   git('init', '-q');
   git('add', '-A');
@@ -606,13 +611,14 @@ test('a frontend with no package.json is discovered, written to the profile and 
   assert.equal(init.code, 0, init.stderr);
   // ONE line, however many roots: this tree has two, and a tree of vendored
   // plugin directories has thirteen.
-  assert.match(init.stderr, /^frontend without a package: reading static\/plugins\/tiny, static\/scripts \(2 root\(s\), \d+ file\(s\), router angular-router\)\. Set webRoots to \[\] in the profile to stop$/m);
+  assert.match(init.stderr, /^frontend without a package: reading static\/scripts, static\/widgets\/tiny \(2 root\(s\), \d+ file\(s\), router angular-router\)\. Set webRoots to \[\] in the profile to stop$/m);
+  assert.equal(/static\/plugins/.test(init.stderr), false, 'a `plugins` directory is third-party by name and is never a root');
   assert.equal(init.stderr.split('\n').filter((l) => l.startsWith('frontend without a package:')).length, 1);
 
   const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
   assert.deepEqual(profile.webRoots, [
-    { root: '../static/plugins/tiny', kind: 'vendored', from: 'discovery' },
     { root: '../static/scripts', kind: 'vendored', from: 'discovery' },
+    { root: '../static/widgets/tiny', kind: 'vendored', from: 'discovery' },
   ]);
   assert.deepEqual(profile.frameworkPacks, ['web', 'angular-router']);
   assert.equal(profile.screenAxis.enabled, true);
@@ -620,9 +626,9 @@ test('a frontend with no package.json is discovered, written to the profile and 
   // ...and now NO lane flag at all.
   const res = analyze(['--root', dir, '--project', 'vendored-app'], base, t, env);
   assert.equal(res.code, 0, res.stderr);
-  assert.match(res.stderr, /^web roots from the profile: 2 vendored \(no package manifest\): static\/plugins\/tiny, static\/scripts$/m);
+  assert.match(res.stderr, /^web roots from the profile: 2 vendored \(no package manifest\): static\/scripts, static\/widgets\/tiny$/m);
   // ...and one warning, listing the roots that said nothing.
-  assert.match(res.stderr, /\[warn\] WEB_ROOT_SAID_NOTHING 1 root\(s\) have no readable HTTP call and no route declaration in them: static\/plugins\/tiny\. Take them out of webRoots/);
+  assert.match(res.stderr, /\[warn\] WEB_ROOT_SAID_NOTHING 1 root\(s\) have no readable HTTP call and no route declaration in them: static\/widgets\/tiny\. Take them out of webRoots/);
   assert.equal(res.stderr.split('\n').filter((l) => l.includes('WEB_ROOT_SAID_NOTHING')).length, 1);
   assert.equal(/WEB_ROOT_SAID_NOTHING.*static\/scripts/.test(res.stderr), false,
     'the real frontend said plenty, so it is not on that list');

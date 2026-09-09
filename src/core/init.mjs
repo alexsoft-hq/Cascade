@@ -256,6 +256,28 @@ export function buildProfile(discovery, opts) {
     });
   }
 
+  // WHERE A VIEW NAME BECOMES A PAGE (RM48). Same rule again: written only into
+  // a profile that has no list of its own, because a template root decides what
+  // is in the pack and a pack must not change under an input nobody recorded.
+  const discoveredTemplateRoots = (discovery.templateRoots ?? []).map((r) => ({
+    root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
+    engine: r.engine,
+    suffix: r.suffix,
+    from: r.from,
+  }));
+  const declaredTemplateRoots = Array.isArray(existing?.templateRoots) ? existing.templateRoots : null;
+  const templateRoots = declaredTemplateRoots ?? discoveredTemplateRoots;
+  if (declaredTemplateRoots !== null && discoveredTemplateRoots.length > 0) {
+    diagnostics.push({
+      kind: 'TEMPLATE_ROOTS_KEPT',
+      severity: 'info',
+      path: '.',
+      reason: `the profile already answers for templateRoots (${declaredTemplateRoots.length} root(s)), so it is left alone. `
+        + `This tree holds ${discoveredTemplateRoots.length} template root(s) that were not applied: `
+        + `${discoveredTemplateRoots.map((r) => `${r.root} (${r.engine})`).join(', ')}`,
+    });
+  }
+
   // WHO THIS SERVICE IS, from `spring.application.name` (RM46). It is what the
   // federation matcher uses to pick one sibling out of several serving the same
   // path, so leaving it for a person to type was leaving the tie-breaker unset
@@ -316,6 +338,7 @@ export function buildProfile(discovery, opts) {
     frameworkPacks,
     ...screenAxis,
     ...(webRoots.length > 0 ? { webRoots } : {}),
+    ...(templateRoots.length > 0 ? { templateRoots } : {}),
     ...(serviceNames.length > 0 ? { serviceNames } : {}),
     ...(Object.keys(gatewayRoutes).length > 0 ? { gatewayRoutes } : {}),
     ...(openapiDocuments.length > 0 ? { openapi: { documents: openapiDocuments } } : {}),

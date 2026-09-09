@@ -21,6 +21,7 @@ import path from 'node:path';
 import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
 import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
+  findViewResolvers, VIEW_RESOLVERS,
 } from './springconfig.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
@@ -132,6 +133,28 @@ const VENDOR_DIRS = Object.freeze([
 ]);
 
 /**
+ * The same idea, said by NAME rather than by role (RM48): a directory called
+ * `plugins`, or called after a library everybody vendors, is somebody else's
+ * code wherever it sits. Measured before this list existed: xxl-job had 13
+ * vendored frontend roots and 12 of them were one plugin directory each, and
+ * jeecg-boot 16 with 12 of the same.
+ *
+ * MIRRORED from `adapters/web/packs/vendor-dirs.json`, which is the declaration
+ * a reader extends; `test/pack.test.mjs` fails if the two disagree. It lives
+ * here as a constant because discovery is pure and reads no file of its own.
+ */
+export const THIRD_PARTY_DIRS = Object.freeze([
+  'adminlte', 'bootstrap', 'bootstrap-table', 'bower_components', 'ckeditor',
+  'codemirror', 'cron', 'crongen', 'datatables', 'echarts', 'font-awesome',
+  'fontawesome', 'fullscreen', 'highcharts', 'jquery', 'jquery-ui', 'laydate',
+  'layer', 'layui', 'lib', 'libs', 'moment', 'node_modules', 'nprogress',
+  'plugin', 'plugins', 'select2', 'summernote', 'swiper', 'tinymce', 'ueditor',
+  'vendor', 'vendors', 'webjars', 'ztree',
+]);
+
+const THIRD_PARTY_DIR_SET = new Set(THIRD_PARTY_DIRS);
+
+/**
  * Directory names that mean "this is what the server serves". A `.js` file
  * under one of these is a page's script, not a build helper that happens to sit
  * beside a pom.
@@ -140,6 +163,39 @@ const WEB_ROOT_DIRS = Object.freeze(['static', 'public', 'webapp', 'www']);
 
 /** The one two-segment spelling of the same thing (Spring's template directory). */
 const WEB_ROOT_PATH = 'resources/templates';
+
+/**
+ * THE TEMPLATE ENGINES a server-rendered page can be written in (RM48), by the
+ * file extension the engine's own documentation gives it.
+ *
+ * `plain-html` is not an engine and is not in here: it is what an `.html`
+ * template root is called when nothing says Thymeleaf, and the extension it
+ * answers to is Thymeleaf's.
+ */
+export const TEMPLATE_ENGINES = Object.freeze([
+  { engine: 'thymeleaf', extensions: ['.html', '.htm'], defaultPrefix: 'templates', defaultSuffix: '.html', markers: ['th:', 'xmlns:th'], underTemplateDirOnly: true },
+  { engine: 'freemarker', extensions: ['.ftl', '.ftlh'], defaultPrefix: 'templates', defaultSuffix: '.ftl', markers: [], underTemplateDirOnly: false },
+  // Spring MVC's own resolver, which is what a JSP application configures, has
+  // NO documented default prefix: `/WEB-INF/jsp/` is a convention and not a
+  // default, so a JSP root is the directory the files themselves sit under.
+  { engine: 'jsp', extensions: ['.jsp', '.jspx'], defaultPrefix: null, defaultSuffix: '.jsp', markers: [], underTemplateDirOnly: false },
+  { engine: 'velocity', extensions: ['.vm'], defaultPrefix: 'templates', defaultSuffix: '.vm', markers: [], underTemplateDirOnly: false },
+]);
+
+/**
+ * Where an `.html` file is a VIEW rather than a page the server just hands out.
+ *
+ * An `.html` under `static/` is served as it stands: no handler names it, no
+ * resolver renders it, and reading every one of them would cost the run a walk
+ * through whatever a project keeps there. A view lives where the resolver looks,
+ * and these are the two directory names every Spring layout uses for that.
+ */
+const TEMPLATE_DIR_SEGMENTS = Object.freeze(['templates', 'WEB-INF']);
+
+/** How many of a template root's own files are read to see which engine wrote them. */
+const TEMPLATE_MARKER_FILES = 40;
+/** How much of each of those. A `th:` attribute is on the first tag of the page. */
+const TEMPLATE_MARKER_BYTES = 8192;
 
 /** How many files of a vendored root are read to see which router it names. */
 const ROUTER_SCAN_FILES = 400;
@@ -188,7 +244,7 @@ export function isWebSourceFile(name) {
  */
 export function outsideVendorDirs(relDir) {
   const segments = String(relDir ?? '').split('/').filter((s) => s !== '' && s !== '.');
-  return !segments.some((s) => VENDOR_DIRS.includes(s));
+  return !segments.some((s) => VENDOR_DIRS.includes(s) || THIRD_PARTY_DIR_SET.has(s.toLowerCase()));
 }
 
 /**
@@ -206,6 +262,153 @@ export function underWebRootDir(relDir) {
     if (`${segments[i]}/${segments[i + 1]}` === WEB_ROOT_PATH) return true;
   }
   return false;
+}
+
+/**
+ * The DIRECTORY a view name is resolved against, from a configured prefix.
+ *
+ * `classpath:/templates/` is a location on the class path, `/WEB-INF/jsp/` a
+ * location in the servlet context, and neither is a path in the repository. What
+ * both DO say is how the directory ends, and that is enough to pick it out of
+ * the directories this walk found: `src/main/resources/templates` ends with
+ * `templates`, `src/main/webapp/WEB-INF/jsp` with `WEB-INF/jsp`.
+ *
+ * @param {string|null} prefix  as the configuration wrote it
+ * @returns {string|null} a path suffix with no leading or trailing slash
+ */
+export function templatePrefixPath(prefix) {
+  let s = String(prefix ?? '').trim();
+  if (s === '') return null;
+  s = s.replace(/^(?:classpath\*?|file|servletContext):/i, '');
+  s = s.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (s === '' || s.includes('$')) return null;
+  return s;
+}
+
+/** The longest directory every one of these paths starts with. */
+function commonDirectory(dirs) {
+  const lists = dirs.map((d) => d.split('/').filter((x) => x !== ''));
+  if (lists.length === 0) return null;
+  const out = [];
+  for (let i = 0; i < lists[0].length; i += 1) {
+    const seg = lists[0][i];
+    if (!lists.every((l) => l[i] === seg)) break;
+    out.push(seg);
+  }
+  return out.join('/');
+}
+
+/**
+ * The RESOURCE ROOT a template directory belongs to: the ancestor path up to and
+ * including the last `resources` or `webapp` segment.
+ *
+ * It is what keeps a multi-module repository's modules apart. Two modules that
+ * each keep templates have two template roots, and a common ancestor taken
+ * across both would be the repository itself.
+ *
+ * @param {string} relDir
+ * @returns {string} the group key, or the directory itself when it has neither
+ */
+function resourceRootOf(relDir) {
+  const segments = String(relDir ?? '').split('/').filter((x) => x !== '' && x !== '.');
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    if (segments[i] === 'resources' || segments[i] === 'webapp') return segments.slice(0, i + 1).join('/');
+  }
+  return segments.join('/');
+}
+
+/**
+ * THE TEMPLATE ROOTS of a tree: where a view name is resolved, by which engine,
+ * with which suffix. Pure — the caller does the walking and the reading.
+ *
+ * Two ways a root is found, and the run says which:
+ *   config   the view resolver names a prefix, and a directory holding template
+ *            files ends the way that prefix does
+ *   default  nothing names one, so the root is the directory every template file
+ *            of that engine sits under, inside one resource root
+ *
+ * @param {{dirs:Map<string, Map<string, number>>, resolvers:Object[],
+ *          engineMarkers?:Map<string, Set<string>>}} input
+ *        `dirs` maps a root-relative directory to a map of extension -> count
+ * @returns {{root:string, engine:string, suffix:string, from:string, files:number}[]}
+ */
+export function templateRootsOf(input) {
+  const dirs = input.dirs instanceof Map ? input.dirs : new Map();
+  const resolvers = Array.isArray(input.resolvers) ? input.resolvers : [];
+  const markers = input.engineMarkers instanceof Map ? input.engineMarkers : new Map();
+  const out = [];
+  for (const spec of TEMPLATE_ENGINES) {
+    const declared = resolvers.find((r) => r && r.engine === spec.engine) ?? null;
+    const holds = [];
+    for (const [dir, byExt] of dirs) {
+      let n = 0;
+      for (const ext of spec.extensions) n += byExt.get(ext) ?? 0;
+      if (n === 0) continue;
+      if (spec.underTemplateDirOnly && declared === null) {
+        const segments = dir.split('/');
+        if (!segments.some((sg) => TEMPLATE_DIR_SEGMENTS.includes(sg))) continue;
+      }
+      holds.push({ dir, files: n });
+    }
+    if (holds.length === 0) continue;
+    const suffix = (declared && typeof declared.suffix === 'string' && declared.suffix !== '')
+      ? declared.suffix : spec.defaultSuffix;
+    const configured = templatePrefixPath(declared ? declared.prefix : null);
+    // THE ENGINE'S OWN DOCUMENTED DEFAULT, when the project configured nothing.
+    // Thymeleaf, FreeMarker and Velocity all resolve against
+    // `classpath:/templates/` out of the box, so a directory ending that way IS
+    // the root even in a module holding one page: taking the directory the files
+    // happen to share would make `templates/channelUser/x.ftl` a root of its own
+    // and `channelUser/x` would then resolve to nothing.
+    const prefixPath = configured ?? (spec.defaultPrefix ?? null);
+    const roots = new Map();
+    if (prefixPath !== null) {
+      for (const h of holds) {
+        const hit = ancestorEndingWith(h.dir, prefixPath);
+        if (hit === null) continue;
+        roots.set(hit, (roots.get(hit) ?? 0) + h.files);
+      }
+    }
+    let from = roots.size === 0 ? 'default' : configured !== null ? 'config' : 'default';
+    if (roots.size === 0) {
+      const byResource = new Map();
+      for (const h of holds) {
+        const key = resourceRootOf(h.dir);
+        if (!byResource.has(key)) byResource.set(key, []);
+        byResource.get(key).push(h);
+      }
+      for (const group of byResource.values()) {
+        const root = commonDirectory(group.map((h) => h.dir));
+        if (root === null || root === '') continue;
+        roots.set(root, group.reduce((n, h) => n + h.files, 0));
+      }
+    }
+    for (const [root, files] of [...roots.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      // A `.html` root is Thymeleaf when something says so, and PLAIN HTML when
+      // nothing does. Saying "thymeleaf" over a directory of ordinary pages
+      // would be naming a technology this run did not see.
+      let engine = spec.engine;
+      if (spec.engine === 'thymeleaf' && declared === null && !(markers.get(root) ?? new Set()).has('thymeleaf')) {
+        engine = 'plain-html';
+      }
+      out.push({ root, engine, suffix, from, files });
+    }
+  }
+  out.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : a.engine < b.engine ? -1 : 1));
+  return out;
+}
+
+/** The longest ancestor of `dir` (itself included) whose path ends with `tail`. */
+function ancestorEndingWith(dir, tail) {
+  const want = `/${tail}`;
+  let cur = String(dir ?? '');
+  for (let i = 0; i < 64 && cur !== ''; i += 1) {
+    if (cur === tail || cur.endsWith(want)) return cur;
+    const cut = cur.lastIndexOf('/');
+    if (cut < 0) break;
+    cur = cur.slice(0, cut);
+  }
+  return null;
 }
 
 /** Every `<script src="...">` an HTML page loads, in source order. */
@@ -449,6 +652,12 @@ export function discover(root, io = {}) {
   const looseWebFiles = new Map(); // rel dir -> file count
   const looseWebPaths = new Set(); // rel file path
   const looseIndexPages = new Map(); // rel dir -> abs index.html
+  // THE SERVER-RENDERED PAGES (RM48): every directory holding a file with a
+  // template engine's extension, with how many of each, plus a bounded sample of
+  // the files themselves so the engine can be read off the markup after the walk.
+  const templateDirs = new Map(); // rel dir -> Map<ext, count>
+  const templateSample = new Map(); // rel dir -> abs paths, at most a few
+  const viewResolvers = [];
   // Every OpenAPI / Swagger document in the tree, with the version it declares.
   const openapiDocuments = [];
   const ddlPaths = [];
@@ -594,6 +803,24 @@ export function discover(root, io = {}) {
       if (outsideVendorDirs(dir)) looseIndexPages.set(dir, absFile);
     }
 
+    // A TEMPLATE FILE (RM48). Noted by directory and extension, never read here:
+    // which of these directories is a template ROOT depends on the view resolver
+    // settings, and those are read from the configuration files further down.
+    const templateExt = TEMPLATE_ENGINES
+      .flatMap((e) => e.extensions)
+      .find((e) => lower.endsWith(e)) ?? null;
+    if (templateExt !== null) {
+      const dir = rel(path.dirname(absFile));
+      if (outsideVendorDirs(dir)) {
+        if (!templateDirs.has(dir)) templateDirs.set(dir, new Map());
+        const byExt = templateDirs.get(dir);
+        byExt.set(templateExt, (byExt.get(templateExt) ?? 0) + 1);
+        if (!templateSample.has(dir)) templateSample.set(dir, []);
+        const sample = templateSample.get(dir);
+        if (sample.length < 3) sample.push(absFile);
+      }
+    }
+
     // Counted BEFORE the java/xml/sql branches so a `.vue` or `.ts` never falls
     // through to nothing. The web lane reads these files (RM26), so they are an
     // input, not an uncovered technology.
@@ -710,6 +937,7 @@ export function discover(root, io = {}) {
         serviceNames.push(...findServiceNames(one, diagnostics));
         gatewayRoutes.push(...findGatewayRoutes(one, diagnostics));
         externalConfigImports.push(...findExternalConfigImports(one));
+        viewResolvers.push(...findViewResolvers(one, diagnostics));
       }
       if (looksLikeConnectionFile(relFile)) {
         connectionCandidates.push(...findConnectionCandidates(one, diagnostics));
@@ -828,6 +1056,41 @@ export function discover(root, io = {}) {
   });
   counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
 
+  // ---- the template roots (RM48) -------------------------------------------
+  //
+  // WHICH ENGINE WROTE THIS MARKUP, when nothing in the configuration says. A
+  // `.html` under a template directory is a Thymeleaf template when it carries a
+  // `th:` attribute and an ordinary page when it does not, and a bounded read of
+  // the root's own files is the only thing that can tell them apart.
+  const engineMarkers = new Map();
+  const dirsUnder = (root) => [...templateDirs.keys()].filter((d) => d === root || d.startsWith(`${root}/`)).sort();
+  const markRoots = (roots) => {
+    for (const r of roots) {
+      const seen = new Set();
+      let filesRead = 0;
+      for (const dir of dirsUnder(r)) {
+        for (const absFile of templateSample.get(dir) ?? []) {
+          if (filesRead >= TEMPLATE_MARKER_FILES) break;
+          filesRead += 1;
+          const text = read(absFile);
+          if (text === null) continue;
+          const head = text.slice(0, TEMPLATE_MARKER_BYTES);
+          for (const spec of TEMPLATE_ENGINES) {
+            if (spec.markers.some((m) => head.includes(m))) seen.add(spec.engine);
+          }
+        }
+      }
+      engineMarkers.set(r, seen);
+    }
+  };
+  // Two passes: the roots first, then the markers over exactly those roots, then
+  // the engines again now that the markers are known. Reading the markers first
+  // would mean reading every candidate directory in the tree.
+  const provisional = templateRootsOf({ dirs: templateDirs, resolvers: viewResolvers });
+  markRoots(provisional.map((r) => r.root));
+  const templateRoots = templateRootsOf({ dirs: templateDirs, resolvers: viewResolvers, engineMarkers });
+  counts.templateFiles = templateRoots.reduce((n, r) => n + r.files, 0);
+
   // SAID ONCE, not once per file. A `spring.config.import` pointing at a config
   // server means part of this project's configuration lives somewhere this walk
   // cannot see, so the service name and the gateway routes below are what the
@@ -863,6 +1126,14 @@ export function discover(root, io = {}) {
     // that named a framework, these from where the files sit, and a reader has
     // to be able to tell the two apart.
     webVendoredRoots,
+    // WHERE A VIEW NAME IS RESOLVED (RM48), with the engine that renders it and
+    // the suffix the resolver appends. `cascade init` writes these to the
+    // profile, where they become the user's to correct, exactly like `webRoots`.
+    templateRoots,
+    // …and what the configuration actually said, so a reader can see whether a
+    // root came from a declared prefix or from where the files sit.
+    viewResolvers: viewResolvers.slice()
+      .sort((a, b) => (a.engine < b.engine ? -1 : a.engine > b.engine ? 1 : a.file < b.file ? -1 : 1)),
     // Sorted by path, like every other list here: a walk's order must not decide
     // which document a run reads first.
     openapiDocuments: openapiDocuments.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),

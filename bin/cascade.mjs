@@ -436,13 +436,19 @@ function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
         } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
       },
       catalog: () => { needPy('the DDL catalog'); return parseJsonl(runpy('catalog_ddl.py', ['--identifier-case', sqlArgs.identifierCase, ...ddlAbsList])); },
-      web: (targets) => runWebLane(rootAbs, targets, { sourceRoots: (selection.webRoots ?? []).map(absOf) }),
-      webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots: roots }),
+      web: (targets) => runWebLane(rootAbs, targets, { sourceRoots: (selection.webRoots ?? []).map(absOf), templateRoots: templateRootsAbs }),
+      webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots: (selection.webRoots ?? []).map(absOf), templateRoots: templateRootsAbs }),
     };
     const webRootsAbs = (selection.webRoots ?? []).map(absOf);
+    // The template roots the certified run used, read back from the fact index
+    // so the overlay reads exactly the same set (RM48).
+    const templateRootsAbs = (selection.templateRoots ?? [])
+      .filter((t) => t && typeof t === 'object' && typeof t.root === 'string')
+      .map((t) => ({ root: absOf(t.root), engine: t.engine, suffix: t.suffix }));
 
     const lanes = runOverlayLanes({
       index: idx, store, dirty, run, abs: absOf, hash: sha256File, workers: workerVersions(), webRootsAbs,
+      templateRootsAbs,
       inputs: {
         mapperFiles: listMapperXml(mapperDirsAbs).map((p) => ({ rel: path.relative(rootAbs, p).split(path.sep).join('/'), abs: p })),
         ddlFiles: ddlRels.map((rel, i) => ({ rel, abs: ddlAbsList[i] })),
@@ -465,7 +471,7 @@ function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
       // overlay whose gate was off would report `touched.screens: []` on a file
       // the base pack does put on a screen, and the difference would read as
       // "your edit changed which screens exist".
-      web: webRootsAbs.length > 0
+      web: webRootsAbs.length > 0 || templateRootsAbs.length > 0
         ? {
           gatewayRoutes: profile?.gatewayRoutes ?? {},
           packages: [],
@@ -475,7 +481,10 @@ function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
           // screens here too.
           screenAxis: {
             ...(profile?.screenAxis ?? {}),
-            enabled: screenAxisOf(profile, { webPackages: webPackagesRead(webRootsAbs) }).enabled,
+            enabled: screenAxisOf(profile, {
+              webPackages: webPackagesRead(webRootsAbs),
+              templateRoots: templateRootsAbs,
+            }).enabled,
           },
           codeLength: profile?.moduleAttribution?.codeLength ?? null,
         }
@@ -854,7 +863,13 @@ function runWebLane(root, targets, opts = {}) {
   // search derived from the arguments would look in different places on the two
   // runs and could resolve one `templateUrl` to two files.
   const declared = (opts.sourceRoots ?? []).flatMap((d) => ['--web-root', d]);
-  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...targets];
+  // ...and the TEMPLATE roots, on every invocation for the same reason: an
+  // incremental run is handed changed files, and a template file only says which
+  // view name it answers to relative to the root it sits under.
+  const templates = (opts.templateRoots ?? []).flatMap((t) => ['--template-root', JSON.stringify({
+    root: t.root, engine: t.engine, suffix: t.suffix,
+  })]);
+  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...templates, ...targets];
   const out = execFileSync(process.execPath, args, { maxBuffer: 1 << 28 }).toString('utf8');
   return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
@@ -1532,6 +1547,18 @@ if (cmd === 'init') {
       + `${named.length > 0 ? `, router ${named.join(', ')}` : ', no router declaration in any of them'})`
       + `${vendoredKept ? '. The profile already answers for webRoots, so these were not applied' : '. Set webRoots to [] in the profile to stop'}\n`);
   }
+  // WHERE A VIEW NAME BECOMES A PAGE (RM48). One line, however many roots, with
+  // the engine and the suffix on each: a root nobody recorded is why a
+  // `@Controller` would come out with no screen.
+  const templateRoots = discovery.templateRoots ?? [];
+  if (templateRoots.length > 0) {
+    const templatesKept = diagnostics.some((d) => d.kind === 'TEMPLATE_ROOTS_KEPT');
+    const froms = [...new Set(templateRoots.map((r) => r.from))].sort();
+    process.stderr.write(`template roots: ${templateRoots.length} (${froms.join(', ')}) `
+      + `${listOfFive(templateRoots.map((r) => `${r.root} ${r.engine} ${r.suffix}`))}`
+      + `${templatesKept ? '. The profile already answers for templateRoots, so these were not applied' : '. Set templateRoots to [] in the profile to stop'}
+`);
+  }
   const routeFiles = [...new Set((discovery.gatewayRoutes ?? []).map((r) => r.file))].sort();
   if (routeFiles.length > 0) {
     const routesKept = diagnostics.some((d) => d.kind === 'GATEWAY_ROUTES_KEPT');
@@ -1935,9 +1962,19 @@ if (cmd === 'analyze') {
   // THE SCREEN AXIS SWITCH, resolved once, here, and read nowhere else (I-5).
   // The third state needs the frontend packages this run will really read, which
   // is a filesystem question and so cannot live in the pure decision.
-  const screenGate = screenAxisOf(profile, { webPackages: webPackagesRead(webSrc) });
-  if (webSrc.length > 0) {
+  const screenGate = screenAxisOf(profile, {
+    webPackages: webPackagesRead(webSrc),
+    templateRoots: sel.templateRoots,
+  });
+  if (webSrc.length > 0 || sel.templateRoots.length > 0) {
     process.stderr.write(`screen axis ${screenGate.enabled ? 'ON' : 'OFF'} (${screenGate.from}): ${screenGate.reason}\n`);
+  }
+  // WHERE THIS RUN LOOKS FOR A PAGE (RM48), said before the lanes run: a view
+  // name resolves against exactly these roots, and a root nobody recorded is why
+  // a `@Controller` would come out with no screen.
+  if (sel.templateRoots.length > 0) {
+    process.stderr.write(`template roots ${sel.templateRoots.length} (${sel.sources.templateRoots}): `
+      + `${sel.templateRoots.map((t) => `${path.relative(root, t.root) || '.'} ${t.engine} ${t.suffix}`).join(', ')}\n`);
   }
 
   // WHICH .sql FILES WERE CLASSIFIED HOW, one line each, whenever the engine —
@@ -2005,6 +2042,13 @@ if (cmd === 'analyze') {
     // set of inputs, and src/core/invalidate.mjs turns that into one cold run
     // with "the lane selection changed" as the reason.
     webRoots: webSrc.map(relOf).sort(),
+    // WHERE A VIEW NAME BECOMES A PAGE (RM48). Part of the SELECTION for the
+    // same reason the web roots are: a project that gains or loses its template
+    // roots analyzes a different set of inputs, and one cold run with "the lane
+    // selection changed" is the correct price.
+    templateRoots: sel.templateRoots
+      .map((t) => ({ root: relOf(t.root), engine: t.engine, suffix: t.suffix }))
+      .sort((a, b) => (a.root < b.root ? -1 : 1)),
     // Whichever file feeds the catalog axis. Recording it here is what makes a
     // switch between a DDL and a snapshot force a cold run instead of quietly
     // mixing two generations of catalog facts (src/core/invalidate.mjs).
@@ -2047,6 +2091,8 @@ if (cmd === 'analyze') {
   const isAnalysisInput = (f) => (f.endsWith('.java') && underAny(f, selectionRel.javaRoots))
     || (f.endsWith('.xml') && underAny(f, selectionRel.mapperDirs))
     || (isWebSourceFile(f) && underAny(f, selectionRel.webRoots))
+    // A template is an input of the web lane like any frontend source (RM48).
+    || selectionRel.templateRoots.some((t) => f.endsWith(t.suffix) && underAny(f, [t.root]))
     || selectionRel.ddls.includes(f);
   const dirtyFiles = [...new Set([
     ...splitZ(gitText(rootAbs, ['diff', '--name-only', '-z', 'HEAD', '--'])).map(toRootRel),
@@ -2136,7 +2182,7 @@ if (cmd === 'analyze') {
       web: (targets) => {
         process.stderr.write(`Web lane: reading ${targets.length} ${plan.mode === MODE_COLD ? 'frontend source root(s)' : 'changed frontend file(s)'}…\n`);
         try {
-          return runWebLane(root, targets, { sourceRoots: webSrc });
+          return runWebLane(root, targets, { sourceRoots: webSrc, templateRoots: sel.templateRoots });
         } catch (e) {
           const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
           die(`the web lane failed: ${said || (e && e.message) || 'unknown error'}`);
@@ -2148,7 +2194,7 @@ if (cmd === 'analyze') {
       // them honestly. Reading them walks no source file.
       webConfigs: (roots) => {
         try {
-          return runWebLane(root, roots, { configsOnly: true, sourceRoots: roots });
+          return runWebLane(root, roots, { configsOnly: true, sourceRoots: webSrc, templateRoots: sel.templateRoots });
         } catch (e) {
           const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
           die(`the web lane failed to read the frontend package configuration: ${said || (e && e.message) || 'unknown error'}`);
@@ -2162,7 +2208,10 @@ if (cmd === 'analyze') {
       plan,
       index: prevIndex,
       store,
-      selection: { ...selectionRel, javaRootsAbs: javaSrc, webRootsAbs: webSrc },
+      selection: {
+        ...selectionRel, javaRootsAbs: javaSrc, webRootsAbs: webSrc,
+        templateRootsAbs: sel.templateRoots,
+      },
       inputs: {
         mapperFiles: listMapperXml(mappers).map((p) => ({ rel: relOf(p), abs: p })),
         ddlFiles: ddls.length > 0
@@ -2380,7 +2429,7 @@ if (cmd === 'analyze') {
     // different run from the facts beside it.
     const webFacts = result.webFacts ?? [];
     let webWorkerStats = null;
-    if (webSrc.length > 0) {
+    if (webSrc.length > 0 || sel.templateRoots.length > 0) {
       const summary = webFactsSummary(webFacts);
       const u = summary.urlByShape;
       webWorkerStats = {
@@ -2396,12 +2445,22 @@ if (cmd === 'analyze') {
         registrations: summary.registrations ?? {},
         templatesRead: summary.templatesRead ?? 0,
         injectedCalls: summary.injectedCalls ?? 0,
+        // The server-rendered pages this run read (RM48).
+        templates: summary.templates ?? {},
         roots: webSrc.map(relOf).sort(),
+        templateRoots: sel.templateRoots.map((t) => ({ root: relOf(t.root), engine: t.engine, suffix: t.suffix })),
       };
-      process.stderr.write(`Web lane: ${webWorkerStats.files} file(s) (${webWorkerStats.vueFiles} .vue, ${webWorkerStats.tsFiles} .ts/.tsx, ${webWorkerStats.jsFiles} .js/.jsx), `
+      const t = webWorkerStats.templates;
+      process.stderr.write(`Web lane: ${webWorkerStats.files} file(s) (${webWorkerStats.vueFiles} .vue, ${webWorkerStats.tsFiles} .ts/.tsx, ${webWorkerStats.jsFiles} .js/.jsx`
+        + `${(t.files ?? 0) > 0 ? `, ${t.files} template(s): ${Object.entries(t.byEngine ?? {}).sort().map(([e, n]) => `${n} ${e}`).join(', ')}` : ''}), `
         + `${webWorkerStats.parseErrors} parse error(s); ${webWorkerStats.callsWithUrl} call site(s) carry a URL `
         + `(${u.literal} literal, ${u.template} template, ${u.constant} constant, ${u.unresolved} unresolved), `
         + `${webWorkerStats.routes} route declaration(s), ${webWorkerStats.aliases} alias(es), ${webWorkerStats.proxies} proxy rule(s)\n`);
+      if ((t.files ?? 0) > 0) {
+        process.stderr.write(`  the pages: ${t.scripts ?? 0} inline script block(s), ${t.forms ?? 0} form(s), `
+          + `${t.links ?? 0} link(s), ${t.includes ?? 0} include(s), `
+          + `${t.contextVars ?? 0} variable(s) holding the context path\n`);
+      }
       for (const r of webFacts) {
         if (r.kind !== 'parse_error') continue;
         // A parse error on a real frontend file is a FINDING: that file's calls
@@ -2605,13 +2664,27 @@ if (cmd === 'analyze') {
         process.stderr.write(`  [warn] WEB_NO_ROUTE ${u.url} (${u.count} call site(s)): nothing in this pack serves it\n`);
       }
       const s = webBridgeStats.screens;
-      process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s)` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
+      const pg = s.byKind ?? { router: 0, page: 0 };
+      process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s) and ${pg.page} page(s) a controller renders` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
         + `${s.withComponent} with a component (${s.componentUnresolved} unresolved), `
         + `${s.renders.EXACT} exact, ${s.renders.SOUND_SET} candidate and ${s.renders.HEURISTIC ?? 0} heuristic RENDERS edge(s); `
         + `${w.functions.created} frontend function node(s) (${w.functions.withHttp} send a request, ${w.functions.reachingHttp} lead to one), `
         + `${w.callsEdges.EXACT + w.callsEdges.SOUND_SET + w.callsEdges.HEURISTIC} CALLS edge(s) `
         + `(${w.callsEdges.EXACT} exact, ${w.callsEdges.SOUND_SET} sound, ${w.callsEdges.HEURISTIC} heuristic; `
         + `${w.callsByRule['passed-as-value'] ?? 0} of them a function handed over as a value)\n`);
+      // THE PAGES (RM48). A template a handler names is a page; one nothing
+      // names is a fragment or dead markup, and saying how many of each is what
+      // stops a silence from reading as "this application has no pages".
+      const tp = webBridgeStats.templates;
+      if (tp && tp.files > 0) {
+        process.stderr.write(`Web lane: ${tp.files} template(s) (${Object.entries(tp.byEngine).sort().map(([e, n]) => `${n} ${e}`).join(', ')}), `
+          + `${tp.rendered} of them rendered by a handler or pulled into one, ${tp.unrendered} named by nothing; `
+          + `${tp.views} handler(s) name a view (${tp.viewNames} view name(s), ${tp.redirects} redirect(s), `
+          + `${tp.unresolvedViews} return(s) this engine could not read)\n`);
+        for (const u of (tp.unresolvedViewNames ?? []).slice(0, 5)) {
+          process.stderr.write(`  [warn] VIEW_NAME_UNRESOLVED ${u.name} (${u.count} handler(s)): no template under a declared template root answers to that name, so that page is not here\n`);
+        }
+      }
       for (const u of s.unresolvedSpecifiers.slice(0, 5)) {
         process.stderr.write(`  [warn] SCREEN_COMPONENT_UNRESOLVED ${u.specifier} (${u.count} route declaration(s)): this lane read no file at that specifier, so those screens render nothing\n`);
       }

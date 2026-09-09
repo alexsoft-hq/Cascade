@@ -209,7 +209,10 @@ test('estimateBefore: with the web pack declared the axis is DEGRADED before the
   assert.match(web.reason, /120 frontend source file\(s\) in 1 root\(s\)/);
   assert.match(web.reason, /attach it to the route this pack serves/);
   assert.match(web.reason, /graded HEURISTIC/);
-  assert.deepEqual(web.counts, { frontendPackages: 1, webFiles: 120, vueFiles: 65, webSourceRoots: 1, vendoredRoots: 0, vendoredFiles: 0 });
+  assert.deepEqual(web.counts, {
+    frontendPackages: 1, webFiles: 120, vueFiles: 65, webSourceRoots: 1, vendoredRoots: 0, vendoredFiles: 0,
+    templateRoots: 0, templateFiles: 0, templateEngines: [],
+  });
   // A frontend the lane WILL read is no longer an uncovered technology.
   assert.deepEqual(r.notCovered, []);
   // Nothing here declares a router: not the profile's packs, and not the
@@ -377,6 +380,7 @@ test('estimateBefore: a frontend with no package manifest is a web root, and the
   assert.match(web.reason, /No dependency list names the framework there, so the router pack is chosen from the source alone \(angular-router\)/);
   assert.deepEqual(web.counts, {
     frontendPackages: 0, webFiles: 22, vueFiles: 0, webSourceRoots: 1, vendoredRoots: 1, vendoredFiles: 22,
+    templateRoots: 0, templateFiles: 0, templateEngines: [],
   });
   // ...and the screen axis follows the router pack the source named.
   const screen = axisOf(r, 'screen');
@@ -395,4 +399,25 @@ test('estimateBefore: a served directory whose source names no router still read
   }));
   assert.match(axisOf(r, 'web').reason, /and nothing in those roots names one/);
   assert.equal(axisOf(r, 'screen').status, 'not-shipped');
+});
+
+test('estimateBefore: a server-rendered application has pages and no frontend root at all (RM48)', () => {
+  const d = discovery(
+    { javaFiles: 40, springHandlerFiles: 5 },
+    { templateRoots: [{ root: 'src/main/resources/templates', engine: 'thymeleaf', suffix: '.html', from: 'default', files: 12 }] },
+  );
+  const r = estimateBefore(d, normalizeProfile({ frameworkPacks: ['spring-mvc'] }));
+  const web = axisOf(r, 'web');
+  // The web lane runs with no `.js` file anywhere and no `web` framework pack:
+  // its input is the template root a view name resolves against.
+  assert.equal(web.status, 'degraded');
+  assert.match(web.reason, /1 template root\(s\) \(thymeleaf\), 12 page\(s\)/);
+  assert.equal(web.counts.templateRoots, 1);
+  assert.equal(web.counts.templateFiles, 12);
+  assert.deepEqual(web.counts.templateEngines, ['thymeleaf']);
+  // ...and the screen axis turns on for it, with no router pack in sight.
+  const screen = axisOf(r, 'screen');
+  assert.equal(screen.status, 'degraded');
+  assert.equal(screen.counts.enabledFrom, 'server-views');
+  assert.match(screen.reason, /every template a controller names into a page \(thymeleaf\)/);
 });

@@ -97,6 +97,8 @@ export function runLanesWithShards(a) {
       // changed" on every single run and no project with a frontend could ever
       // be incremental.
       webRoots: selection.webRoots ?? [],
+      // …and the template roots, for the same reason (RM48).
+      templateRoots: selection.templateRoots ?? [],
       ddls: selection.ddls ?? (selection.ddl ? [selection.ddl] : []),
       sqlArgs: selection.sqlArgs ?? [],
       packagePrefixes: selection.packagePrefixes ?? [],
@@ -165,11 +167,18 @@ export function runLanesWithShards(a) {
   // whose shard could hold them honestly. They are cheap (no source file is
   // walked for them), so every run reads them again.
   const webRootsAbs = selection.webRootsAbs ?? [];
+  // A SERVER-RENDERED APPLICATION HAS NO FRONTEND ROOT AT ALL (RM48): its pages
+  // are template files under a template root, read by the same worker and shard
+  // by shard exactly like a `.js` file. So the lane's inputs are both lists.
+  const templateRootsAbs = (selection.templateRootsAbs ?? [])
+    .map((t) => (t && typeof t === 'object' ? t.root : t))
+    .filter((r) => typeof r === 'string' && r !== '');
+  const webInputRoots = [...webRootsAbs, ...templateRootsAbs];
   let webFacts = [];
-  if (webRootsAbs.length > 0) {
+  if (webInputRoots.length > 0) {
     // One worker invocation, no source file parsed, two answers: the package
     // configuration (never cached) and the LIST of files this lane would read.
-    const configOut = (run.webConfigs(webRootsAbs) ?? [])
+    const configOut = (run.webConfigs(webInputRoots) ?? [])
       .filter((r) => r && typeof r === 'object' && r.kind !== 'header' && r.kind !== 'summary');
     const listed = configOut.filter((r) => r.kind === 'sourceFile' && typeof r.file === 'string').map((r) => r.file);
     const configRecords = configOut.filter((r) => r.kind !== 'sourceFile');
@@ -221,7 +230,7 @@ export function runLanesWithShards(a) {
     }
     stats.droppedWeb = droppedWeb.size;
 
-    const webTargets = cold ? webRootsAbs : [...reparseWeb].sort().map((f) => abs(f));
+    const webTargets = cold ? webInputRoots : [...reparseWeb].sort().map((f) => abs(f));
     if (webTargets.length > 0) {
       const produced = run.web(webTargets);
       const { byFile } = splitWebFactsByFile(produced, { configFiles });

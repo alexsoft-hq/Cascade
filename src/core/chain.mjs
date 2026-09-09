@@ -730,6 +730,52 @@ export function chainWalk(graph, opts = {}) {
     other += 1;
   }
 
+  // ---- the pages a walk DOWN reached a handler for (RM48) ------------------
+  //
+  // `RENDERS_PAGE` is deliberately not a flow edge (src/core/graph.mjs says why
+  // and what it measured), so the walk never steps onto a page. What the route
+  // SHOWS is still a real answer, and this is where it is given: one step off
+  // every handler the walk reached, listed and never followed, so the page's own
+  // links stay the next request rather than this one's reach.
+  const pageRows = [];
+  if (!up) {
+    const placed = new Set();
+    const sources = [[start, root], ...best];
+    for (const [id, rec] of sources) {
+      if (kindOf(id) !== 'symbol') continue;
+      for (const edge of graph.outEdges(id)) {
+        if (edge.type !== 'RENDERS_PAGE') continue;
+        const n = graph.nodes.get(edge.to);
+        if (!n || n.kind !== 'screen' || placed.has(edge.to)) continue;
+        placed.add(edge.to);
+        const e = graph.edgeAt(edge.idx);
+        pageRows.push({
+          id: strip(edge.to),
+          short: n.label ?? strip(edge.to),
+          title: n.title ?? null,
+          name: n.name ?? null,
+          group: n.group ?? null,
+          component: n.component ?? null,
+          template: n.template ?? null,
+          engine: n.engine ?? null,
+          hops: rec.hops + 1,
+          grade: RANK[edge.grade] < RANK[rec.pathGrade] ? edge.grade : rec.pathGrade,
+          link: {
+            from: id,
+            fromShort: nodeLabel(graph.nodes.get(id), id),
+            type: 'RENDERS_PAGE',
+            grade: edge.grade,
+            basis: (e && e.evidence && e.evidence.basis) || null,
+            receiver: null,
+            iface: null,
+          },
+          walkedPath: [...pathTo(id), { from: id, to: edge.to, type: edge.type, grade: edge.grade, evidence: (e && e.evidence) || null }],
+        });
+      }
+    }
+    pageRows.sort((a, b) => a.hops - b.hops || cmp(a.id, b.id));
+  }
+
   // A lane that is empty because the TARGET sits on the wrong side of it is not
   // an absence. Walking up from a statement or a method, nothing upstream can be
   // a statement (nothing CALLS a statement; a statement is where the SQL axis
@@ -744,14 +790,15 @@ export function chainWalk(graph, opts = {}) {
   // walk has depends on which side of the round trip it started from.
   const laneNames = up
     ? ['statements', 'services', 'endpoints', ...(webLanes ? ['webFunctions', 'screens'] : [])]
-    : [...(webLanes ? ['webFunctions', 'endpoints'] : []), 'services', 'statements', 'tables'];
+    : [...(webLanes ? ['webFunctions', 'endpoints'] : []), 'services', 'statements', 'tables',
+      ...(pageRows.length > 0 ? ['screens'] : [])];
   // Every lane is on the RESULT, whether or not it is one of THIS answer's:
   // `laneNames` is the authority on what to draw, and a caller that wants a
   // count of something the answer does not draw should not have to test for
   // undefined to get it.
   const lanes = up
     ? { statements, services, endpoints, webFunctions, screens }
-    : { webFunctions, endpoints, services, statements, tables, screens };
+    : { webFunctions, endpoints, services, statements, tables, screens: pageRows };
   return {
     start,
     direction,

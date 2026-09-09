@@ -180,7 +180,21 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
       + `${vendoredRoots.length > 3 ? `, and ${vendoredRoots.length - 3} more` : ''}. `
       + 'No dependency list names the framework there, so the router pack is chosen from the source alone'
       + `${vendoredNamed.length > 0 ? ` (${vendoredNamed.join(', ')})` : ' and nothing in those roots names one'}.`;
-  const willReadWeb = webFiles > 0 && webRoots > 0 && webPackDeclared;
+  // A SERVER-RENDERED APPLICATION HAS NO FRONTEND SOURCE ROOT AT ALL (RM48).
+  // Its pages are template files a `@Controller` names, read by the same lane,
+  // and a run that reads only those is still a web lane running.
+  const templateRoots = Array.isArray(profile.templateRoots) && profile.templateRoots.length > 0
+    ? profile.templateRoots.map((r) => ({ root: r.root, engine: r.engine ?? 'plain-html', suffix: r.suffix ?? '.html', files: null }))
+    : (discovery.templateRoots ?? []);
+  const templateFiles = templateRoots.reduce((n2, r) => n2 + (Number.isInteger(r.files) ? r.files : 0), 0);
+  const templateEngines = [...new Set(templateRoots.map((r) => r.engine))].sort();
+  const templateNote = templateRoots.length === 0 ? ''
+    : `${templateRoots.length} template root(s) (${templateEngines.join(', ')})`
+      + `${templateFiles > 0 ? `, ${templateFiles} page(s)` : ''}: `
+      + `${templateRoots.slice(0, 3).map((r) => `${r.root} ${r.suffix}`).join(', ')}`
+      + `${templateRoots.length > 3 ? `, and ${templateRoots.length - 3} more` : ''}. `
+      + 'A page a controller names becomes a screen, and its form, its links and its inline scripts become calls onto the routes this pack serves.';
+  const willReadWeb = (webFiles > 0 && webRoots > 0 && webPackDeclared) || templateRoots.length > 0;
   axes.push({
     axis: 'web',
     // DEGRADED even before it runs, because the one thing that decides between
@@ -189,7 +203,11 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
     // to be guessed. The pack's own axis says which, once the lane has run.
     status: willReadWeb ? 'degraded' : 'not-shipped',
     reason: willReadWeb
-      ? `${webFiles} frontend source file(s) in ${webRoots} root(s).${vendoredNote} The lane will trace each HTTP call to the client that sends it and attach it to the route this pack serves; a call whose prefix or alias had to be assumed is graded HEURISTIC, and one no route here answers is counted, not dropped`
+      ? `${webRoots > 0 && webFiles > 0
+        ? `${webFiles} frontend source file(s) in ${webRoots} root(s).${vendoredNote}${templateNote === '' ? '' : ` It also reads ${templateNote}`}`
+        : `no frontend source file and no frontend root in this tree, and ${templateNote}`}`
+        + ' The lane will trace each HTTP call to the client that sends it and attach it to the route this pack serves;'
+        + ' a call whose prefix or alias had to be assumed is graded HEURISTIC, and one no route here answers is counted, not dropped'
       : webFiles === 0
         ? 'there is no frontend source file in this tree (.js/.ts/.jsx/.tsx/.vue outside tests and type declarations), so there is no frontend to read'
         : webRoots === 0
@@ -202,6 +220,9 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
       webSourceRoots: webRoots,
       vendoredRoots: vendoredRoots.length,
       vendoredFiles: n('webVendoredFiles'),
+      templateRoots: templateRoots.length,
+      templateFiles,
+      templateEngines,
     },
   });
   // The OpenAPI documents this run will read. No framework pack gates it: a
@@ -235,10 +256,13 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
   // an estimate has: the packages discovery found in THIS tree. An estimate
   // cannot know about a frontend a later `--web-src` will point outside it, and
   // says so in the reason rather than promising no screens.
-  const screenGate = screenAxisOf(profile, { webPackages: discovery?.webPackages ?? [] });
+  const screenGate = screenAxisOf(profile, {
+    webPackages: discovery?.webPackages ?? [],
+    templateRoots,
+  });
   const screenEnabled = screenGate.enabled;
   const lastRoutes = Number.isInteger(prevRoutes) ? prevRoutes : null;
-  const willBuildScreens = willReadWeb && screenEnabled && routerPacks.length > 0;
+  const willBuildScreens = willReadWeb && screenEnabled && (routerPacks.length > 0 || templateRoots.length > 0);
   axes.push({
     axis: 'screen',
     // DEGRADED before the fact, like the web axis and for the same reason: what
@@ -246,9 +270,13 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
     // resolves to a file, and that is not knowable until the lane has run.
     status: willBuildScreens ? 'degraded' : 'not-shipped',
     reason: willBuildScreens
-      ? `the web lane will turn the route declarations it finds into screens (router pack(s): ${routerPacks.join(', ')})`
-        + `${lastRoutes === null ? '' : `; the last run recorded ${lastRoutes} route declaration(s)`}`
-        + '. Each screen gets a RENDERS edge onto the functions of the component it mounts, and a route whose component this lane cannot resolve is counted rather than dropped'
+      ? `the web lane will turn ${routerPacks.length > 0 ? `the route declarations it finds into screens (router pack(s): ${routerPacks.join(', ')})` : ''}`
+        + `${routerPacks.length > 0 && templateRoots.length > 0 ? ', and ' : ''}`
+        + `${templateRoots.length > 0 ? `every template a controller names into a page (${templateEngines.join(', ')})` : ''}`
+        + `${routerPacks.length > 0 && lastRoutes !== null ? `; the last run recorded ${lastRoutes} route declaration(s)` : ''}`
+        + `. ${routerPacks.length > 0
+          ? 'A route\'s screen gets a RENDERS edge onto the functions of the component it mounts, and a route whose component this lane cannot resolve is counted rather than dropped'
+          : 'A page gets a RENDERS edge onto its own inline scripts and onto every template it includes, and a view name that resolves to no template this run read is counted rather than dropped'}`
       : !willReadWeb
         ? (screenEnabled
           ? 'the profile enables the screen axis, but no web lane will run to record the routes a screen would come from'
@@ -263,6 +291,7 @@ export function estimateBefore(discovery, profile = {}, prev = {}) {
       enabled: screenEnabled,
       enabledFrom: screenGate.from,
       lastRunRoutes: lastRoutes,
+      templateRoots: templateRoots.length,
     },
   });
 

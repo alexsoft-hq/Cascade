@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'things')}">
+<body>
+  <h2 th:text="#{things}">Things</h2>
+
+  <form th:object="${thing}" th:action="@{/things/search}" method="get" id="search-form">
+    <input class="form-control" th:field="*{label}" />
+    <button type="submit">Search</button>
+  </form>
+
+  <a th:href="@{/things/new}">Add</a>
+  <a th:href="@{/things/{id}(id=${thing.id})}">Open</a>
+  <a th:href="@{/static/logo.png}">Logo</a>
+  <a href="https://example.invalid/docs">Docs</a>
+  <a href="#top">Top</a>
+
+  <script>
+    function refreshTotals() {
+      fetch('/things/totals').then(function (r) { return r.json(); });
+    }
+    $.getJSON('/things/tags', function (data) { window.tags = data; });
+  </script>
+</body>
+</html>

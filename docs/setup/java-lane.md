@@ -269,6 +269,64 @@ reports it as `reach.outboundEndpoints` and names it in `gaps`
 (`http-calls-leaving-pack`), and the two numbers always add up to the endpoint
 node count.
 
+### The page a handler renders
+
+A `@Controller` that is not a `@RestController` and carries no class-level
+`@ResponseBody` answers a request by naming a **view**, and a template engine
+turns that name into the page the browser gets. The worker records one `view`
+record per handler:
+
+```json
+{ "kind": "view", "owner": "com.example.OwnerController", "method": "initFindForm",
+  "paramCount": 1, "unresolved": 0,
+  "views": [{ "name": "owners/findOwners", "kind": "view", "from": "literal" }] }
+```
+
+Four places a name is read from, and one honest gap:
+
+| `from` | what it read |
+|---|---|
+| `literal` | a returned string literal, and every literal leaf of a returned ternary |
+| `model-and-view` | `new ModelAndView("x", …)` |
+| `set-view-name` | `mav.setViewName("x")` |
+| `constant` | a `static final String` field of the **same class**, initialised with a literal |
+| `helper` | a **private or package-private method of the same class** whose every return is such a literal or such a field. The method's name is on the record |
+
+A `redirect:` or `forward:` prefix becomes the record's `kind` rather than part
+of the name, because what it names is a ROUTE and not a page.
+
+The last two rows are what makes this useful on real controllers, and neither
+resolves anything across a file. `private static final String
+VIEWS_OWNER_CREATE_OR_UPDATE_FORM = "owners/createOrUpdateOwnerForm";` has its
+value on the line that declares it, and `return addPaginationModel(page, …)`
+calls a method of the same class whose returns are right there. Measured on
+jpetstore-6, where every controller uses the constant idiom: 10 view names
+before this rule, 16 after, and zero unread returns. Two guards keep them
+honest:
+
+- the helper is read **one level deep**. A return inside it that is itself a
+  call is not followed, and the whole helper is then unreadable rather than
+  half-read;
+- **two methods of one name** are read as neither. Which overload a call reaches
+  depends on the argument types, and this worker does not resolve types.
+
+A helper with several literal returns gives several views, exactly as a ternary
+does. Anything else a returned name could be — a field of a superclass, a method
+somebody overrides, a constant from another file, a local variable — is **not**
+resolved. That is a data-flow or a cross-file question this parse-only worker
+does not answer, so it is counted in `unresolved` and the run says how many
+pages it could not name. The one exception is the ModelAndView idiom:
+`ModelAndView mav = new ModelAndView("x"); … return mav;` names the page on the
+line that builds the object, so the bare `return mav` is not counted as a gap.
+
+A method carrying `@ResponseBody`, and every method of a `@RestController`,
+answers with a body and has no view at all: no record, not an empty one.
+
+Which FILE `owners/findOwners` means is not the worker's business. That depends
+on the view resolver's prefix and suffix, which are the project's configuration;
+`src/core/discover.mjs` reads them and `src/adapters/web_bridge.mjs` joins the
+two into a screen. See [the web lane](web-lane.md) for the page end of it.
+
 ### Known limits (measured on macrozheng/mall)
 
 - A method call whose receiver is a **local variable or parameter** (not an

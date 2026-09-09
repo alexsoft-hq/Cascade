@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org">
+<body th:fragment="layout (template, menu)">
+  <nav><a th:href="@{/}">Home</a></nav>
+  <div th:replace="${template}">the page</div>
+  <script>
+    var pingUrl = [[@{/health/ping}]];
+    function ping() { $.post(pingUrl); }
+  </script>
+</body>
+</html>

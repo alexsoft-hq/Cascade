@@ -133,6 +133,23 @@ tree says is served: under `static`, `public`, `webapp`, `www` or
 two keys above, a list already in the profile is yours, an empty one included.
 See [the web lane](setup/web-lane.md#a-frontend-with-no-packagejson).
 
+A **server-rendered application** gets one too. Where a view name becomes a
+page, with the engine that renders it and the suffix the resolver appends:
+
+```
+template roots: 1 (config) src/main/resources/templates freemarker .ftl
+```
+
+It goes to `profile.templateRoots`, which `cascade analyze` then reads with no
+flag, and the same rule holds: a list already in the profile is yours, an empty
+one included. `analyze` prints the roots it will read before any lane starts:
+
+```
+template roots 1 (profile): src/main/resources/templates freemarker .ftl
+```
+
+See [the web lane](setup/web-lane.md#server-rendered-pages).
+
 - `--root <dir>` — the tree to discover (default: the current directory).
 - `--project <id>` — the id to register it under (default: derived from the
   directory name).

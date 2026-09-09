@@ -230,6 +230,9 @@ function screenCensus(graph) {
     group: s.group,
     component: s.component,
     source: s.source,
+    template: s.template,
+    engine: s.engine,
+    paths: s.paths,
     observed: s.observed,
     depthCut: s.depthCut,
     endpoints: new Set(s.endpoints.map((e) => e.id)),
@@ -1624,10 +1627,16 @@ export function flow(graph, args, ctx) {
     if (!n) return notFound(ctx, 'screen', args.screen);
     start = scrId;
     entry = {
-      kind: 'screen', id: strip(scrId), short: nodeLabel(n, scrId),
+      // A SERVER-RENDERED PAGE IS A PAGE (RM48). It is a screen like a router's
+      // is, and a reader looking at the row has to be able to tell which of the
+      // two they are looking at without reading the id.
+      kind: n.source === 'view' ? 'page' : 'screen', id: strip(scrId), short: nodeLabel(n, scrId),
       path: n.path ?? null, title: n.title ?? null, name: n.name ?? null,
       group: n.group ?? null, component: n.component ?? null,
       source: n.source ?? null, observed: n.observed === true,
+      ...(n.source === 'view'
+        ? { template: n.template ?? null, engine: n.engine ?? null, routes: Array.isArray(n.paths) ? n.paths : [] }
+        : {}),
       file: n.file ?? null, line: n.line ?? null, start,
     };
   } else if (!up) {
@@ -2067,6 +2076,7 @@ export function search(graph, args, ctx) {
       screens.push({
         screen: key, label: n.label ?? null, title: n.title ?? null,
         component: n.component ?? null, source: n.source ?? null,
+        ...(n.source === 'view' ? { kind: 'page', template: n.template ?? null } : {}),
       });
     } else if (n.kind === 'symbol' && n.lane === 'web') {
       webSymbols.push({ symbol: key, file: n.file ?? null, line: n.line ?? null });
@@ -2372,6 +2382,10 @@ function browseRows(graph, kind, census, opts) {
         // A screen the router never declared, seen only in a recording. It has
         // no component and no RENDERS edge, and the row says which it is.
         source: r.source,
+        // A PAGE, not a router screen (RM48): the template the view resolver
+        // found and the route(s) a handler renders it on. Absent on a router
+        // screen rather than null, so the two kinds read as two kinds.
+        ...(r.source === 'view' ? { kind: 'page', template: r.template, engine: r.engine, routes: r.paths ?? [] } : {}),
         endpoints: r.endpoints.size,
         tables: r.tables.size,
         observed: r.observed,

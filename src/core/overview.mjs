@@ -267,6 +267,12 @@ export function buildOverview(graph, opts = {}) {
       declared: webScreenStats ? (webScreenStats.declared ?? screenNodes.length) : screenNodes.length,
       screens: screenNodes.length,
       withComponent: screenNodes.filter((n) => n.component != null).length,
+      // TWO KINDS OF SCREEN (RM48): one a router declares, one a controller
+      // renders. A hybrid application has both, and one total would hide that.
+      byKind: {
+        router: screenNodes.filter((n) => n.source !== 'view').length,
+        page: screenNodes.filter((n) => n.source === 'view').length,
+      },
       reachingAnEndpoint,
       reachingATable,
       componentUnresolved: webScreenStats ? (webScreenStats.componentUnresolved ?? 0) : 0,

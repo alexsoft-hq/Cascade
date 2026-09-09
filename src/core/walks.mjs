@@ -36,6 +36,8 @@ export const ROOT_GROUP = '(root)';
 
 // Grade rank for weakest-link math (mirrors the policy lattice in chain.mjs).
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
+/** The weaker of two grades: the weakest link is what a path is graded by. */
+const weakest = (a, b) => (RANK[a] <= RANK[b] ? a : b);
 
 /**
  * The API group of an endpoint path: its first path segment.
@@ -363,6 +365,12 @@ export function walkScreens(graph, opts = {}) {
       group: n.group ?? null,
       component: n.component ?? null,
       source: n.source ?? null,
+      // A SERVER-RENDERED PAGE (RM48) carries two things a router screen has
+      // no equivalent of: the template file the view resolver found, and the
+      // route(s) whose handler renders it.
+      template: n.template ?? null,
+      engine: n.engine ?? null,
+      paths: Array.isArray(n.paths) ? n.paths : null,
       observed: n.observed === true,
       depthCut: w.cut.depth,
       endpoints: (w.endpoints ?? []).map((e) => ({ id: `endpoint:${e.id}`, grade: e.grade }))
@@ -394,20 +402,43 @@ export function walkScreens(graph, opts = {}) {
  */
 export function screensAffecting(graph, targetNodeId, opts = {}) {
   const reached = graph.impactOf(targetNodeId, { mode: opts.mode ?? 'conservative', edgeTypes: FLOW_EDGE_TYPES });
-  const out = [];
+  const found = new Map(); // screen id -> {pathGrade, http}
+  const consider = (id, info) => {
+    const prev = found.get(id);
+    if (prev === undefined || RANK[info.pathGrade] > RANK[prev.pathGrade]) found.set(id, info);
+  };
   for (const [id, info] of reached) {
     const n = graph.nodes.get(id);
-    if (!n || n.kind !== 'screen') continue;
+    if (!n) continue;
+    if (n.kind === 'screen') { consider(id, info); continue; }
+    // A SERVER-RENDERED PAGE HANGS OFF ITS HANDLER (RM48), the one direction a
+    // backward walk cannot take on its own: `symbol --RENDERS_PAGE--> screen`
+    // points AWAY from the column, so the walk arrives at the handler and stops.
+    // One forward step off every handler it reached is what turns "this method
+    // reads the column" into "this page shows it". The page's own form and
+    // links are already on the backward path and come out above.
+    if (n.kind !== 'symbol') continue;
+    for (const e of graph.outEdges(id)) {
+      if (e.type !== 'RENDERS_PAGE') continue;
+      const page = graph.nodes.get(e.to);
+      if (!page || page.kind !== 'screen') continue;
+      consider(e.to, { pathGrade: weakest(info.pathGrade, e.grade), http: info.http ?? 0 });
+    }
+  }
+  const out = [];
+  for (const [id, info] of found) {
+    const n = graph.nodes.get(id);
     out.push({
       screen: id,
       path: n.path ?? null,
       label: n.label ?? null,
       pathGrade: info.pathGrade,
-      ...(info.http > 1 ? { viaHttp: true, httpHops: info.http } : {}),
+      ...((info.http ?? 0) > 1 ? { viaHttp: true, httpHops: info.http } : {}),
     });
   }
   return out.sort((a, b) => cmp(a.screen, b.screen));
 }
+
 
 /**
  * The screens a change to this COLUMN would be felt on. The named form of

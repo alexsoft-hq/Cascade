@@ -47,7 +47,25 @@ const SERVICE_NAME_KEY = 'spring.application.name';
 const ROUTES_KEY_RE = /^spring\.cloud\.gateway(?:\.server\.webflux|\.server\.webmvc|\.mvc)?\.routes\.(\d+)\.(.+)$/;
 
 /** The key path prefixes this reader is interested in at all. */
-const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway)(?:\.|$)/;
+const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway|thymeleaf|freemarker|velocity|mvc\.view)(?:\.|$)/;
+
+/**
+ * THE VIEW RESOLVERS, and what each one calls its prefix and its suffix.
+ *
+ * A server-rendered page is found by joining a prefix, the view name a handler
+ * returned, and a suffix. Each engine spells the first two its own way and
+ * documents its own defaults; both are here, because a project that sets
+ * neither still has a template root and a suffix, and the default is what runs.
+ *
+ * `spring.mvc.view.*` is Spring MVC's own resolver rather than an engine's, so
+ * it is read as the JSP one: that is the resolver a JSP application configures.
+ */
+export const VIEW_RESOLVERS = Object.freeze([
+  { engine: 'thymeleaf', prefixKeys: ['spring.thymeleaf.prefix'], suffixKeys: ['spring.thymeleaf.suffix'], markerKey: 'spring.thymeleaf', defaultPrefix: 'classpath:/templates/', defaultSuffix: '.html' },
+  { engine: 'freemarker', prefixKeys: ['spring.freemarker.template-loader-path', 'spring.freemarker.prefix'], suffixKeys: ['spring.freemarker.suffix'], markerKey: 'spring.freemarker', defaultPrefix: 'classpath:/templates/', defaultSuffix: '.ftl' },
+  { engine: 'jsp', prefixKeys: ['spring.mvc.view.prefix'], suffixKeys: ['spring.mvc.view.suffix'], markerKey: 'spring.mvc.view', defaultPrefix: null, defaultSuffix: '.jsp' },
+  { engine: 'velocity', prefixKeys: ['spring.velocity.resource-loader-path', 'spring.velocity.prefix'], suffixKeys: ['spring.velocity.suffix'], markerKey: 'spring.velocity', defaultPrefix: 'classpath:/templates/', defaultSuffix: '.vm' },
+]);
 
 /** A whole-value `${VAR}` or `${VAR:default}` placeholder. */
 const PLACEHOLDER_RE = /^\$\{([^{}:]+)(?::([^{}]*))?\}$/;
@@ -131,6 +149,62 @@ export function springConfigEntries(file, diagnostics = null) {
 /** `a.b[0].c` -> `a.b.0.c`, so one set of rules reads YAML and properties alike. */
 function normalizeKey(key) {
   return String(key ?? '').replace(/\[(\d+)\]/g, '.$1');
+}
+
+/**
+ * A key in ONE spelling. Spring's relaxed binding accepts
+ * `spring.freemarker.templateLoaderPath`, `...template-loader-path` and
+ * `...TEMPLATE_LOADER_PATH` for the same property, and a project that wrote one
+ * of them must not be read as having written nothing.
+ * @param {string} key
+ * @returns {string}
+ */
+export function relaxedKey(key) {
+  return String(key ?? '')
+    .replace(/_/g, '-')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase();
+}
+
+/**
+ * The view resolver settings each file declares, one entry per engine per file.
+ *
+ * Only what is WRITTEN: the defaults belong to whoever joins these onto a tree
+ * (src/core/discover.mjs), because a default only means something once there is
+ * a directory to test it against.
+ *
+ * @param {{path:string, text:string}[]} files
+ * @param {Object[]|null} [diagnostics]
+ * @returns {{engine:string, prefix:(string|null), suffix:(string|null), file:string, line:number}[]}
+ *          sorted by engine, then file
+ */
+export function findViewResolvers(files, diagnostics = null) {
+  const out = [];
+  for (const file of files ?? []) {
+    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
+    const byEngine = new Map();
+    for (const e of springConfigEntries(file, diagnostics)) {
+      // `template-loader-path` may be a LIST; the first entry is the one a view
+      // name is resolved against first, and it is the one read here.
+      const key = relaxedKey(normalizeKey(e.key)).replace(/\.(\d+)$/, (m, n) => (n === '0' ? '' : m));
+      for (const r of VIEW_RESOLVERS) {
+        const isPrefix = r.prefixKeys.includes(key);
+        const isSuffix = r.suffixKeys.includes(key);
+        const isMarker = key === r.markerKey || key.startsWith(`${r.markerKey}.`);
+        if (!isPrefix && !isSuffix && !isMarker) continue;
+        if (!byEngine.has(r.engine)) {
+          byEngine.set(r.engine, { engine: r.engine, prefix: null, suffix: null, file: file.path, line: e.line });
+        }
+        const hit = byEngine.get(r.engine);
+        const value = resolvePlaceholder(e.value);
+        if (isPrefix && hit.prefix === null && value !== null) { hit.prefix = value; hit.line = e.line; }
+        if (isSuffix && hit.suffix === null && value !== null) { hit.suffix = value; }
+      }
+    }
+    for (const hit of byEngine.values()) out.push(hit);
+  }
+  out.sort((a, b) => cmp(a.engine, b.engine) || cmp(a.file, b.file));
+  return out;
 }
 
 /**

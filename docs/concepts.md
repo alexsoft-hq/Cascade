@@ -141,6 +141,24 @@ was never called here at all but handed to some other call AS A VALUE, and
 `HEURISTIC` through an assumed alias. See
 [the web lane setup page](setup/web-lane.md).
 
+A screen does not need a router. In a server-rendered application a
+`@Controller` answers a path and returns a **view name**, and a template engine
+turns that name into the page the browser gets: `screen:view:owners/findOwners`
+is that page, `symbol --RENDERS_PAGE--> screen` is the handler that renders it
+(`EXACT`, because the literal it returned is the resolver's own input), and the
+page's own `<form>`, its links and its inline `<script>` are its calls onto the
+routes this pack serves. `RENDERS_PAGE` is deliberately not a walkable edge: a
+page's links are the NEXT request, not this one, and following them from the
+route that renders the page made every route inherit the reach of every route
+its page links to. That was measured both ways on the pinned corpus. With the
+edge walkable, what ONE endpoint reaches inflated by 81% on jpetstore-6 (243 to
+439 endpoint-to-column pairs) and by 14% on xxl-job, while not one union count
+moved by one — the exact shape of smear the fan-out ceiling exists to catch;
+with it out, every project returns to its baseline pair count exactly, so the
+edge is the whole of the difference. It is taken one step instead, in the two
+questions that ask it: which pages a column change is felt on, and which page a
+route shows.
+
 A browser recording (`--har`) is a different KIND of fact and is graded as one:
 `RUNTIME_ONLY` sits below every mode's floor, so a recorded `screen → route` call
 is **shown** (`observed: true`) and **never walked**, and it never raises the

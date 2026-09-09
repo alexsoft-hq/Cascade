@@ -58,6 +58,16 @@ const PREFERRED_MODE = 'development';
 /** Hosts that mean "this machine", so an absolute URL to one is not another deployable. */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
 
+/**
+ * The prefix a SERVER-RENDERED PAGE's calls carry: none (RM48).
+ *
+ * A page writes its paths from the application root — `@{/owners}`,
+ * `${request.contextPath}/cart/update` — and the context path is where the
+ * deployment is mounted, not part of any route the pack serves. So the prefix
+ * is the empty string, and no candidate had to be scored to find that out.
+ */
+const TEMPLATE_PREFIX = Object.freeze({ value: '', from: 'context-path', front: '', candidates: [] });
+
 /** What each evidence layer actually did, in one sentence, for `evidence.basis`. */
 export const WEB_CALL_BASIS = Object.freeze({
   platform: 'the call goes to a browser sink (fetch / XMLHttpRequest), which sends the request itself: the URL argument is the URL by contract, and no rule had to decide that this call is an HTTP call',
@@ -65,6 +75,7 @@ export const WEB_CALL_BASIS = Object.freeze({
   injected: 'the callee is a client the FRAMEWORK hands the function, named in a declaration pack (adapters/web/packs/http-clients.json) and found by parameter name inside a function the framework fills in. Nothing in the file binds it, so there was nothing to trace: the pack says that parameter is a client and the method called is one of its verbs',
   wrapper: 'the callee was traced through the project\'s own wrapper(s) to a client library instance, by following what each name is BOUND to in its file and what each wrapper forwards. The chain is on the edge; every hop is a binding this lane read, not a name it recognized',
   untraced: 'the argument is URL-shaped but the callee could not be traced to any sink: the call may send this URL or may only build it, so the edge says a rule guessed and the grade is HEURISTIC',
+  template: 'the page itself makes this request: a `<form action=…>` posts to it, or a link opens it. The markup names the path and the attribute names the method, so nothing had to be traced and nothing was assumed',
 });
 
 /** What each RENDERS edge rested on, in one sentence, for `evidence.basis`. */
@@ -76,6 +87,17 @@ export const SCREEN_RENDERS_BASIS = Object.freeze({
   // another. So the chain of names IS the resolution, and it is on the edge.
   registry: 'the route names a component, and the framework resolves that name through its own registry to the file that registers it. The chain of names is on the edge, and each link is a string the framework matches exactly, the same way an import names a file',
   ambiguous: 'the same chain of names, with one name registered more than once. Which registration the framework really uses depends on the order the modules load, which is not in the source, so every file that registers the name is a candidate',
+  // RM48: a SERVER-RENDERED page's own scripts, and the fragments it pulls in.
+  own: 'the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named',
+  include: 'the page pulls this template in (`<%@ include%>`, `<#include>`, `th:replace`), so whatever the fragment does, this page does too. Which branch of the page really reaches the include is a run-time question, so it is a candidate',
+});
+
+/** What a RENDERS_PAGE edge and a redirect rest on, in one sentence. */
+export const PAGE_RENDERS_BASIS = Object.freeze({
+  view: 'the handler returns this view NAME as a literal, and the view resolver joins its configured prefix and suffix onto that literal to find the file. The name is the resolver\'s exact input, so nothing here was matched or guessed',
+  constant: 'the handler returns a `static final String` its own class declares, and the field is initialised with this literal on the line above. Both are in one file, so the name is read rather than resolved, and it is the resolver\'s exact input like any other literal',
+  helper: 'the handler returns a call to a private method of its own class, and every return of that method is a literal or one of the class\'s own constants. Both are in one file and the method is read one level deep, so a return inside it that is itself a call would have left the page unnamed rather than guessed',
+  redirect: 'the handler returns `redirect:` or `forward:` with a path, which sends the browser (or the container) to another route of this same application. It is a call onto that route, matched against the routes this pack serves like any other call',
 });
 
 /**
@@ -94,6 +116,7 @@ export const WEB_PREFIX_BASIS = Object.freeze({
   derived: 'the base URL was read from the client\'s own configuration (an env value, a literal, an absolute address) and the dev-server proxy rule that explains it was applied',
   auto: 'nothing in the source states the prefix, so every candidate was matched against the routes this pack serves and the one with the most exact hits was chosen. That is a guess, and every edge through it is HEURISTIC',
   none: 'no candidate prefix matched any route this pack serves, so the URL is used as written',
+  'context-path': 'the call is written in a server-rendered page, whose paths start at the application root. `${request.contextPath}`, `@{/…}` and `<c:url>` all name that root, and it is not part of any route this pack serves, so the prefix is empty',
 });
 
 /** symbol node id for a web function "file#enclosing" (position-independent). */
@@ -339,6 +362,8 @@ export function addWebFacts(g, webFacts, opts = {}) {
         imports: [], exports: [], functions: new Map(), constants: new Map(),
         bindings: new Map(), classes: new Map(), assigns: [], calls: [], routes: [],
         registrations: [],
+        // The one record a server-rendered page carries about itself (RM48).
+        template: null,
         importOf: new Map(),
       };
       files.set(name, f);
@@ -363,6 +388,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
       case 'call': f.calls.push(r); break;
       case 'route': f.routes.push(r); break;
       case 'registration': f.registrations.push(r); break;
+      case 'template': f.template = r; break;
       default: break;
     }
   }
@@ -381,6 +407,90 @@ export function addWebFacts(g, webFacts, opts = {}) {
     }
   }
   const fileNames = [...files.keys()].sort();
+
+  // ---- B1b: the server-rendered pages, before anything reads a call --------
+  //
+  // A `@Controller` returns a view name and a template engine turns it into a
+  // page. The Java worker read the names (`view` records), the web worker read
+  // the templates, and this is where the two meet: which template file each name
+  // resolves to, which templates a page pulls in, and which of the templates
+  // this run read are RENDERED at all.
+  //
+  // It runs here, before the calls are classified, because it decides two things
+  // the call pass needs: a template's URLs are written from the app root, and a
+  // template nobody renders is dead markup whose links are nobody's calls.
+  const templatesByFile = new Map();
+  for (const file of fileNames) {
+    const t = files.get(file).template;
+    if (t) templatesByFile.set(file, t);
+  }
+  const templateByName = new Map();
+  for (const file of [...templatesByFile.keys()].sort()) {
+    const t = templatesByFile.get(file);
+    if (typeof t.name === 'string' && t.name !== '' && !templateByName.has(t.name)) templateByName.set(t.name, file);
+  }
+  /** The template files one template pulls in, directly, in a fixed order. */
+  const includedBy = (file) => {
+    const t = templatesByFile.get(file);
+    if (!t) return [];
+    return [...new Set((t.includes ?? [])
+      .map((i) => (i && typeof i.file === 'string' ? i.file : null))
+      .filter((f) => f !== null && f !== file && templatesByFile.has(f)))].sort();
+  };
+  /** Every template reachable from one, includes followed, with the depth each was found at. */
+  const includeClosure = (file) => {
+    const out = new Map();
+    let frontier = [file];
+    const seen = new Set([file]);
+    for (let depth = 1; depth <= RENDERS_DEPTH && frontier.length > 0; depth += 1) {
+      const next = [];
+      for (const cur of frontier) {
+        for (const child of includedBy(cur)) {
+          if (seen.has(child)) continue;
+          seen.add(child);
+          out.set(child, depth);
+          next.push(child);
+        }
+      }
+      frontier = next;
+    }
+    return out;
+  };
+  /**
+   * The JavaScript names that hold the CONTEXT PATH for one page: the ones its
+   * own scripts assign, plus the ones every template it includes assigns. A
+   * layout writes `var base_url = '${request.contextPath}'` once and every page
+   * that includes it is written against that name.
+   */
+  const contextVarsCache = new Map();
+  const contextVarsFor = (file) => {
+    let out = contextVarsCache.get(file);
+    if (out) return out;
+    out = new Set(templatesByFile.get(file)?.contextVars ?? []);
+    for (const other of includeClosure(file).keys()) {
+      for (const n of templatesByFile.get(other)?.contextVars ?? []) out.add(n);
+    }
+    contextVarsCache.set(file, out);
+    return out;
+  };
+
+  const viewRecords = (opts.views ?? [])
+    .filter((v) => v && typeof v === 'object' && typeof v.owner === 'string' && typeof v.method === 'string')
+    .slice()
+    .sort((a, b) => cmp(a.owner, b.owner) || cmp(a.method, b.method) || (a.paramCount ?? 0) - (b.paramCount ?? 0));
+  // Every template a handler names, and every template one of those includes.
+  // A template outside that set is a fragment nobody pulls in or a page nobody
+  // serves: it is COUNTED, and its links are not somebody's calls.
+  const renderedTemplates = new Set();
+  for (const v of viewRecords) {
+    for (const view of v.views ?? []) {
+      if (!view || view.kind !== 'view') continue;
+      const file = templateByName.get(String(view.name ?? '').replace(/^\/+/, ''));
+      if (file === undefined) continue;
+      renderedTemplates.add(file);
+      for (const other of includeClosure(file).keys()) renderedTemplates.add(other);
+    }
+  }
 
   // ---- packages, and what each one declares --------------------------------
   const packageDirs = new Set();
@@ -429,6 +539,8 @@ export function addWebFacts(g, webFacts, opts = {}) {
     // like a path. Counted here so it is never a silent drop.
     calls: {
       withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
+      // A form or a link in a server-rendered page (RM48).
+      template: 0,
       // A call onto an imported name that is not a function this lane read: a
       // constant, a component, a client instance. No CALLS edge, and counted so
       // the missing hop is a number rather than a silence.
@@ -495,6 +607,25 @@ export function addWebFacts(g, webFacts, opts = {}) {
       codeRegex: null,
       codeLength: null,
       enabled: false,
+      // A screen is a router declaration or a SERVER-RENDERED PAGE (RM48), and
+      // a hybrid application has both. Counted apart, because they are found by
+      // two different routes and a reader comparing them is asking a real
+      // question.
+      byKind: { router: 0, page: 0 },
+    },
+    // The server-rendered pages: how many templates this run read, how many of
+    // them a handler names, and what the view names that resolved to nothing
+    // were. `unrendered` is the honest other half — a fragment nobody pulls in
+    // or a page nobody serves, whose links are nobody's calls.
+    templates: {
+      files: 0, byEngine: {}, rendered: 0, unrendered: 0, includes: 0,
+      views: 0, viewNames: 0, redirects: 0, unresolvedViews: 0,
+      // View names that resolved to no template this run read, counted by
+      // OCCURRENCE. `viewNames` counts occurrences too and `byKind.page` counts
+      // distinct pages, so the two can never be subtracted from one another:
+      // four handlers naming one page are four names and one screen.
+      viewNamesUnplaced: 0,
+      unresolvedViewNames: [],
     },
     // The frontend's own call graph: how many functions send a request, how many
     // only lead to one, and how many nodes that adds up to. Everything else is
@@ -845,10 +976,28 @@ export function addWebFacts(g, webFacts, opts = {}) {
    * address. A URL that never resolved is kept (its shape is unknown, and it is
    * counted by reason further down); one that resolved to a bare word is not.
    */
-  const urlShaped = (c) => {
+  const urlShaped = (c, resolved) => {
     if (c.url.absolute) return true;
-    if (!Array.isArray(c.url.resolved)) return true;
-    return c.url.resolved.some((r) => typeof r.template === 'string' && r.template.startsWith('/'));
+    if (!Array.isArray(resolved)) return true;
+    return resolved.some((r) => typeof r.template === 'string' && r.template.startsWith('/'));
+  };
+
+  /**
+   * A page's URL candidates with the CONTEXT PATH taken off the front.
+   *
+   * `base_url + '/jobinfo/pageList'` resolves to `{*}/jobinfo/pageList` in the
+   * worker, because the file it is written in does not assign `base_url` — the
+   * layout it includes does. Only here is the include graph known, so only here
+   * can the hole be recognised as the app root and removed. The result is the
+   * path the server sees, and everything downstream reads it as one.
+   */
+  const withContextPath = (call, contextVars) => {
+    const resolved = Array.isArray(call.url.resolved) ? call.url.resolved : null;
+    if (resolved === null || contextVars === null) return resolved;
+    if (typeof call.url.base !== 'string' || !contextVars.has(call.url.base)) return resolved;
+    return resolved.map((r) => (typeof r.template === 'string' && r.template.startsWith('{*}')
+      ? { ...r, template: r.template.slice(3), dynamicParts: Math.max(0, (r.dynamicParts ?? 1) - 1) }
+      : r));
   };
 
   const wrappers = new Map(); // key -> {depth, next, sink}
@@ -1124,12 +1273,26 @@ export function addWebFacts(g, webFacts, opts = {}) {
   for (const file of fileNames) {
     const f = files.get(file);
     const pkg = packageOf(file);
+    const isTemplate = templatesByFile.has(file);
+    const ctxVars = isTemplate ? contextVarsFor(file) : null;
+    // A TEMPLATE NOBODY RENDERS IS DEAD MARKUP. Its links go somewhere, but
+    // nobody opens them, so they are not this application's calls.
+    if (isTemplate && !renderedTemplates.has(file)) {
+      stats.templates.unrendered += 1;
+      continue;
+    }
     for (const c of f.calls) {
       if (!c.url) continue;
+      const resolved = withContextPath(c, ctxVars);
       const platform = platformOf(c);
       let sink = null;
       let target = null;
-      if (platform) {
+      if (isTemplate && c.template && typeof c.template.rule === 'string') {
+        // A FORM AND A LINK ARE THE PAGE'S OWN CALLS. Nothing had to be traced:
+        // the markup names the path and the attribute names the method.
+        sink = { kind: 'template', module: c.template.rule, instance: null, chain: [], depth: 0 };
+        stats.calls.template += 1;
+      } else if (platform) {
         sink = { kind: 'platform', module: platform.name, instance: null, chain: [], depth: 0 };
         stats.calls.platform += 1;
       } else if (c.injected && injectedClients.has(c.injected.client)) {
@@ -1174,7 +1337,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
           // reached none AND whose argument is not written like a path is not an
           // HTTP call here: it is counted (`notUrlShaped`) and left alone, rather
           // than becoming a route named `/size` that nothing serves.
-          if (!urlShaped(c)) { stats.calls.notUrlShaped += 1; continue; }
+          if (!urlShaped(c, resolved)) { stats.calls.notUrlShaped += 1; continue; }
           sink = { kind: 'untraced', module: target && target.kind === 'external' ? target.module : null, instance: null, chain: [], depth: 0 };
           stats.calls.untraced += 1;
         }
@@ -1188,11 +1351,12 @@ export function addWebFacts(g, webFacts, opts = {}) {
       const site = {
         file, pkg, call: c, sink, target, instanceId, method,
         assumed: (target && target.assumed === true) || false,
+        template: isTemplate, resolved,
       };
       sites.push(site);
-      if (Array.isArray(c.url.resolved)) {
+      if (Array.isArray(resolved) && !isTemplate) {
         if (!callsPerInstance.has(instanceId)) callsPerInstance.set(instanceId, []);
-        for (const r of c.url.resolved) callsPerInstance.get(instanceId).push(r.template);
+        for (const r of resolved) callsPerInstance.get(instanceId).push(r.template);
       }
     }
   }
@@ -1236,13 +1400,17 @@ export function addWebFacts(g, webFacts, opts = {}) {
 
   for (const site of sites) {
     const { file, call, sink } = site;
-    if (!Array.isArray(call.url.resolved) || call.url.resolved.length === 0) {
+    if (!Array.isArray(site.resolved) || site.resolved.length === 0) {
       const reason = REASON[call.url.unresolved] ?? 'expression';
       stats.unresolved.total += 1;
       stats.unresolved.byReason[reason] += 1;
       continue;
     }
-    const prefix = prefixOf(site.instanceId);
+    // A PAGE'S URLS ARE WRITTEN FROM THE APP ROOT. `${request.contextPath}`,
+    // `@{/…}` and `<c:url>` all mean "where this deployment is mounted", which
+    // is not part of any route the pack serves, so the prefix is the empty
+    // string and nothing had to be guessed to know that.
+    const prefix = site.template ? TEMPLATE_PREFIX : prefixOf(site.instanceId);
     const absolute = call.url.absolute ?? null;
     const outsidePack = absolute !== null && !LOCAL_HOSTS.has(absolute.host)
       && !configFor(site.pkg).proxies.some((p) => typeof p.target === 'string' && p.target.includes(absolute.host));
@@ -1255,16 +1423,17 @@ export function addWebFacts(g, webFacts, opts = {}) {
     let callMulti = false;
     let callMissed = false;
     let callAllHoles = false;
-    for (const cand of call.url.resolved) {
-      if (!namesARoute(cand.template)) { callAllHoles = true; continue; }
+    for (const cand of site.resolved) {
+      const written = cand.template;
+      if (!namesARoute(written)) { callAllHoles = true; continue; }
       // A declared gateway route rewrites the CALL, not just the client: a
       // project whose calls carry the dev prefix has nowhere else to say so.
       // The template is normalized BEFORE the prefix is joined on, or a path
       // written without its leading slash (`get('user/list')`) would be glued
       // to the prefix as `/adminuser/list`.
       let full = absolute !== null
-        ? normalizeUrl(cand.template)
-        : normalizeUrl(`${prefix.value}${normalizeUrl(cand.template)}`);
+        ? normalizeUrl(written)
+        : normalizeUrl(`${prefix.value}${normalizeUrl(written)}`);
       let prefixEvidence = { value: prefix.value, from: prefix.from };
       // WHICH SERVICE ANSWERS THIS CALL, when the declared route names one. A
       // gateway route table says both halves — the prefix a request is
@@ -1287,6 +1456,8 @@ export function addWebFacts(g, webFacts, opts = {}) {
       let grade;
       if (sink.kind === 'untraced') grade = 'HEURISTIC';
       else grade = 'SOUND_SET';
+      // NOTHING RISES ABOVE SOUND_SET ON A CALL, a page's form included: which
+      // handler answers a path is the route table's answer, not the markup's.
       if (prefixEvidence.from === 'auto' || site.assumed || site.method.value === null) grade = 'HEURISTIC';
 
       const enclosing = call.enclosing ?? '(module)';
@@ -1300,14 +1471,15 @@ export function addWebFacts(g, webFacts, opts = {}) {
       httpFunctionIds.add(fromId);
 
       const evidence = {
-        rule: 'web-http-call',
+        rule: site.template && call.template ? call.template.rule : 'web-http-call',
         basis: WEB_CALL_BASIS[sink.kind],
+        ...(site.template && call.template ? { attribute: call.template.attr, wrote: call.template.written } : {}),
         sink: { kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth },
         // `written` is the path as the code spells it, `template` the path this
         // pack was searched for. An absolute URL keeps its HOST here, because
         // the node id is a path and two hosts would otherwise be one node.
         url: {
-          written: cand.template, template: full, via: cand.via ?? null,
+          written, template: full, via: cand.via ?? null,
           ...(absolute ? { host: absolute.host } : {}),
         },
         method: site.method,
@@ -1360,7 +1532,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
     } else if (callAllHoles) {
       stats.unresolved.total += 1;
       stats.unresolved.byReason.allHoles += 1;
-      const key = `${site.method.value ?? 'ANY'} ${normalizeUrl(`${prefix.value}${normalizeUrl(call.url.resolved[0].template)}`)}`;
+      const key = `${site.method.value ?? 'ANY'} ${normalizeUrl(`${prefix.value}${normalizeUrl(site.resolved[0].template)}`)}`;
       unmatched.set(key, (unmatched.get(key) ?? 0) + 1);
     }
   }
@@ -1906,6 +2078,169 @@ export function addWebFacts(g, webFacts, opts = {}) {
       if (registryHit !== null) registryTargets.set(id, registryHit.targets);
     }
   }
+  stats.screens.byKind.router = screenNodes.size;
+
+  // ---- B7b': the pages a handler renders (RM48) ----------------------------
+  //
+  // The other kind of screen. A router declares a path and mounts a component;
+  // a `@Controller` answers a path and names a view, and the view resolver turns
+  // that name into a template file. Both are a screen; the id says which, so a
+  // hybrid application's two kinds never collide.
+  //
+  //   screen:<route path>        the router declared it
+  //   screen:view:<view name>    a handler rendered it
+  //
+  // A view name that resolves to no template this run read is a GAP with a name
+  // on it, not a screen: a template root nobody declared, a suffix that is not
+  // the one configured, a name built at run time.
+  const pageEdges = [];
+  const handlersOf = new Map(); // screen id -> the symbols that render it
+  for (const [file, t] of templatesByFile) {
+    stats.templates.files += 1;
+    stats.templates.byEngine[t.engine] = (stats.templates.byEngine[t.engine] ?? 0) + 1;
+    stats.templates.includes += includedBy(file).length;
+  }
+  stats.templates.rendered = renderedTemplates.size;
+  if (screenEnabled) {
+    // Which routes a handler serves, read off the graph the Java bridge built:
+    // `endpoint --HANDLES--> symbol` is already there, and re-deriving it from
+    // the facts would let the two disagree about the same method.
+    const routesOfHandler = new Map();
+    for (const e of g.edges) {
+      if (e.type !== 'HANDLES') continue;
+      const ep = g.nodes.get(e.from);
+      if (!ep || ep.kind !== 'endpoint' || typeof ep.path !== 'string') continue;
+      if (!routesOfHandler.has(e.to)) routesOfHandler.set(e.to, new Set());
+      routesOfHandler.get(e.to).add(ep.path);
+    }
+    const unresolvedViews = new Map();
+    for (const v of viewRecords) {
+      stats.templates.views += 1;
+      stats.templates.unresolvedViews += Number.isInteger(v.unresolved) ? v.unresolved : 0;
+      const symbol = nodeId('symbol', `${v.owner}#${v.method}`);
+      const paths = [...(routesOfHandler.get(symbol) ?? new Set())].sort();
+      for (const view of v.views ?? []) {
+        if (!view || typeof view.name !== 'string') continue;
+        if (view.kind !== 'view') {
+          // A REDIRECT IS NOT A PAGE, IT IS A ROUTE. `return "redirect:/catalog"`
+          // sends the browser to another route of this same application, so it
+          // is a call onto that route and is graded by the route match like any
+          // other call. `forward:` is the same journey without the round trip.
+          stats.templates.redirects += 1;
+          if (!g.nodes.has(symbol)) continue;
+          const full = normalizeUrl(view.name.split('?')[0]);
+          if (!namesARoute(full)) continue;
+          const found = matchUrl(full, 'GET');
+          const evidence = {
+            rule: 'view-redirect',
+            basis: PAGE_RENDERS_BASIS.redirect,
+            kind: view.kind,
+            url: { written: view.name, template: full },
+            method: { value: 'GET', from: 'redirect' },
+            match: found.how,
+            target: found.routes.length > 0 ? 'in-pack' : 'outside-pack',
+          };
+          if (found.routes.length === 0) {
+            const epId = webEndpointId('GET', full);
+            if (!g.nodes.has(epId) && !nodesToAdd.has(epId)) {
+              nodesToAdd.set(epId, { id: epId, path: full, httpMethod: 'GET', outbound: true, source: 'web' });
+              stats.outboundEndpoints += 1;
+            }
+            edges.push({ from: symbol, to: epId, type: 'CALLS_HTTP', grade: 'UNRESOLVED', evidence });
+            continue;
+          }
+          for (const r of found.routes.slice().sort((a, b) => cmp(a.id, b.id))) {
+            edges.push({
+              from: symbol, to: r.id, type: 'CALLS_HTTP', grade: 'SOUND_SET',
+              evidence: found.routes.length > 1 ? { ...evidence, candidates: found.routes.length } : evidence,
+            });
+          }
+          continue;
+        }
+        stats.templates.viewNames += 1;
+        // A LEADING SLASH IS THE ROOT THE PREFIX ALREADY IS. `return
+        // "/pages/index"` and `return "pages/index"` are the same view to every
+        // resolver, because the prefix ends in one.
+        const name = view.name.replace(/^\/+/, '');
+        const file = templateByName.get(name);
+        if (file === undefined) {
+          unresolvedViews.set(view.name, (unresolvedViews.get(view.name) ?? 0) + 1);
+          continue;
+        }
+        const t = templatesByFile.get(file);
+        const id = nodeId('screen', `view:${name}`);
+        let node = screenNodes.get(id);
+        if (node === undefined) {
+          const segments = name.split('/').filter((x) => x !== '');
+          const label = pathRule === 'last-segment' ? (segments[segments.length - 1] ?? name) : name;
+          let code = null;
+          if (codeRegex) {
+            const m = codeRegex.exec(name);
+            if (m) code = m[1] ?? m[0];
+          }
+          node = {
+            id,
+            path: '',
+            paths: [],
+            name,
+            title: null,
+            label,
+            code,
+            group: code !== null && codeLength !== null
+              ? code.slice(0, codeLength)
+              : (segments.length > 1 ? segments[0] : SCREEN_ROOT_GROUP),
+            component: null,
+            template: file,
+            engine: t.engine,
+            file,
+            line: 1,
+            pack: null,
+            params: false,
+            lane: 'web',
+            source: 'view',
+            declaredAt: [],
+          };
+          screenNodes.set(id, node);
+          stats.screens.byKind.page += 1;
+        }
+        for (const p of paths) if (!node.paths.includes(p)) node.paths.push(p);
+        node.paths.sort();
+        node.path = node.paths[0] ?? '';
+        node.params = node.paths.some((p) => /[{*]/.test(p));
+        node.declaredAt.push({ file: v.file, line: v.line ?? null });
+        if (!handlersOf.has(id)) handlersOf.set(id, new Set());
+        handlersOf.get(id).add(symbol);
+        // THE HANDLER RENDERS THE PAGE, exactly. The literal it returned is the
+        // resolver's own input, and joining the prefix and the suffix onto it is
+        // what the resolver does; nothing here was matched by name or by shape.
+        if (g.nodes.has(symbol)) {
+          pageEdges.push({
+            from: symbol, to: id, type: 'RENDERS_PAGE', grade: 'EXACT',
+            evidence: {
+              rule: 'view-name', view: name, from: view.from,
+              // WHICH method of the handler's own class the name was read out
+              // of, when it was not the handler itself.
+              ...(typeof view.helper === 'string' ? { helper: view.helper } : {}),
+              template: file, engine: t.engine, suffix: t.suffix, root: t.root,
+              basis: view.from === 'helper' ? PAGE_RENDERS_BASIS.helper
+                : view.from === 'constant' ? PAGE_RENDERS_BASIS.constant
+                  : PAGE_RENDERS_BASIS.view,
+            },
+          });
+        }
+      }
+    }
+    stats.templates.viewNamesUnplaced = [...unresolvedViews.values()].reduce((n, x) => n + x, 0);
+    stats.templates.unresolvedViewNames = [...unresolvedViews.entries()]
+      .sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]))
+      .slice(0, 10)
+      .map(([name, count]) => ({ name, count }));
+  }
+  for (const [id, symbols] of handlersOf) {
+    const node = screenNodes.get(id);
+    if (node) node.renderedBy = [...symbols].sort();
+  }
+
   stats.screens.screens = screenNodes.size;
   stats.screens.unresolvedSpecifiers = [...unresolvedSpecifiers.entries()]
     .sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]))
@@ -1922,9 +2257,47 @@ export function addWebFacts(g, webFacts, opts = {}) {
   // screen's own component (EXACT); a file that component IMPORTS is a
   // candidate child (SOUND_SET, with the import chain on the edge); a file
   // nobody imports is not a child at all.
+  for (const e of pageEdges) edges.push(e);
   for (const id of [...screenNodes.keys()].sort()) {
     const node = screenNodes.get(id);
     nodesToAdd.set(id, node);
+    // A PAGE'S OWN CODE IS ITS OWN FILE (RM48). Nothing imports a template and
+    // nothing imports out of one: what the page runs is the scripts written in
+    // it, and what it also runs is whatever the templates it INCLUDES do. So the
+    // walk is over the include graph and over nothing else.
+    if (node.source === 'view') {
+      for (const sym of symbolsByFile.get(node.template) ?? []) {
+        stats.screens.renders.EXACT += 1;
+        edges.push({
+          from: id, to: sym, type: 'RENDERS', grade: 'EXACT',
+          evidence: { rule: 'template-own', component: node.template, basis: SCREEN_RENDERS_BASIS.own },
+        });
+      }
+      for (const [child, depth] of [...includeClosure(node.template).entries()].sort((a, b) => cmp(a[0], b[0]))) {
+        // The fragment itself, as one node: a reader asking "what does this page
+        // pull in?" gets one answer per include, whether or not it holds code.
+        const childId = nodeId('symbol', child);
+        if (!nodesToAdd.has(childId)) {
+          nodesToAdd.set(childId, {
+            id: childId, symbol: child, file: child, line: 1, lane: 'web',
+            exported: null, template: true, engine: templatesByFile.get(child)?.engine ?? null,
+          });
+        }
+        stats.screens.renders.SOUND_SET += 1;
+        edges.push({
+          from: id, to: childId, type: 'RENDERS', grade: 'SOUND_SET',
+          evidence: { rule: 'template-include', component: child, depth, basis: SCREEN_RENDERS_BASIS.include },
+        });
+        for (const sym of symbolsByFile.get(child) ?? []) {
+          stats.screens.renders.SOUND_SET += 1;
+          edges.push({
+            from: id, to: sym, type: 'RENDERS', grade: 'SOUND_SET',
+            evidence: { rule: 'template-include', component: child, depth, basis: SCREEN_RENDERS_BASIS.include },
+          });
+        }
+      }
+      continue;
+    }
     // A SCREEN THAT RESOLVED BY NAME took a different road here (RM47): the
     // registry walk already knows every file, and following imports out of
     // those files would be following imports a frontend written before modules

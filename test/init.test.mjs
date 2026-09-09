@@ -610,6 +610,47 @@ test('a webRoots list already in the profile is the user\'s, including an empty 
   assert.deepEqual(mine.profile.webRoots, [{ root: '../legacy/js', kind: 'declared' }]);
 });
 
+// ---------------------------------------------------------------------------
+// A server-rendered application: where a view name becomes a page (RM48)
+// ---------------------------------------------------------------------------
+
+const withTemplates = (over = {}) => discovery({
+  templateRoots: [
+    { root: 'src/main/resources/templates', engine: 'thymeleaf', suffix: '.html', from: 'default', files: 12 },
+  ],
+  ...over,
+});
+
+test('buildProfile writes the template roots, manifest-relative, with the engine and the suffix', () => {
+  const { profile, diagnostics } = buildProfile(withTemplates(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(profile.templateRoots, [{
+    root: '../src/main/resources/templates', engine: 'thymeleaf', suffix: '.html', from: 'default',
+  }]);
+  assert.deepEqual(diagnostics.filter((d) => d.kind === 'TEMPLATE_ROOTS_KEPT'), []);
+});
+
+test('a templateRoots list already in the profile is the user\'s, including an empty one', () => {
+  const kept = buildProfile(withTemplates(), {
+    root: '/p/app', manifestDir: '/p/app/.cascade', existing: { templateRoots: [] },
+  });
+  // ...and a list the user typed is kept as typed.
+  const mine = buildProfile(withTemplates(), {
+    root: '/p/app', manifestDir: '/p/app/.cascade',
+    existing: { templateRoots: [{ root: '../views', engine: 'jsp', suffix: '.jsp' }] },
+  });
+  assert.deepEqual(mine.profile.templateRoots, [{ root: '../views', engine: 'jsp', suffix: '.jsp' }]);
+  assert.deepEqual(kept.profile.templateRoots, [],
+    'an empty list is how a project says "read no templates"');
+  const d = kept.diagnostics.find((x) => x.kind === 'TEMPLATE_ROOTS_KEPT');
+  assert.ok(d, JSON.stringify(kept.diagnostics));
+  assert.match(d.reason, /src\/main\/resources\/templates \(thymeleaf\)/);
+});
+
+test('a tree with no template at all writes no templateRoots', () => {
+  const { profile } = buildProfile(discovery(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
+  assert.deepEqual(profile.templateRoots, []);
+});
+
 test('a tree with neither a frontend package nor a vendored root declares no web pack', () => {
   const { profile } = buildProfile(discovery(), { root: '/p/app', manifestDir: '/p/app/.cascade' });
   assert.deepEqual(profile.webRoots, []);

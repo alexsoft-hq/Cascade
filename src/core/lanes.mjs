@@ -50,8 +50,9 @@ import { ROUTER_PACKS } from './discover.mjs';
  * frontend package this run really reads depending on a router.
  *
  * @param {Object|null} profile  a normalized profile
- * @param {{webPackages?:{router:(string|null)}[]}} [evidence]
- *        the frontend packages this run will really read, in-tree or beside it
+ * @param {{webPackages?:{router:(string|null)}[], templateRoots?:{engine:string}[]}} [evidence]
+ *        the frontend packages this run will really read, in-tree or beside it,
+ *        and the template roots it will read for server-rendered pages (RM48)
  * @returns {{enabled:boolean, from:('profile'|'declared-router'|'read-router'|'nothing-read'), reason:string}}
  */
 export function screenAxisOf(profile, evidence = {}) {
@@ -82,10 +83,22 @@ export function screenAxisOf(profile, evidence = {}) {
       reason: `screenAxis.enabled is undeclared and a frontend package this run reads depends on ${read.join(', ')}`,
     };
   }
+  // A SERVER-RENDERED APPLICATION HAS SCREENS AND NO ROUTER (RM48). Its pages
+  // are template files a `@Controller` names, so what says "build screens" is
+  // that this run reads a template root at all.
+  const templateRoots = Array.isArray(evidence.templateRoots) ? evidence.templateRoots : [];
+  if (templateRoots.length > 0) {
+    const engines = [...new Set(templateRoots.map((r) => (r && typeof r.engine === 'string' ? r.engine : 'plain-html')))].sort();
+    return {
+      enabled: true,
+      from: 'server-views',
+      reason: `screenAxis.enabled is undeclared and this run reads ${templateRoots.length} template root(s) (${engines.join(', ')}), whose pages a controller names`,
+    };
+  }
   return {
     enabled: false,
     from: 'nothing-read',
-    reason: 'screenAxis.enabled is undeclared, frameworkPacks names no router pack, and no frontend package this run reads depends on one',
+    reason: 'screenAxis.enabled is undeclared, frameworkPacks names no router pack, no frontend package this run reads depends on one, and this run reads no template root',
   };
 }
 
@@ -338,6 +351,31 @@ export function selectLanes(input = {}) {
     }
   }
 
+  // ---- template roots (the server-rendered pages, RM48) -------------------
+  //
+  // A `@Controller` returning a view name has no frontend package and often no
+  // `.js` at all, so nothing above would run the web lane for it. The roots come
+  // from the PROFILE, not from this run's discovery, for the same reason
+  // `webRoots` does: a template root decides what is in the pack, and a pack
+  // must not change under an input nobody recorded. `--no-web` silences them
+  // like everything else on this lane.
+  let templateRoots = [];
+  let templateSource = 'none';
+  if (!flags.noWeb) {
+    const declared = Array.isArray(profile.templateRoots) ? profile.templateRoots : [];
+    templateRoots = declared
+      .filter((r) => r && typeof r.root === 'string' && r.root !== '')
+      .map((r) => ({
+        root: path.resolve(manifestDir ?? root, r.root),
+        engine: typeof r.engine === 'string' ? r.engine : 'plain-html',
+        suffix: typeof r.suffix === 'string' && r.suffix !== '' ? r.suffix : '.html',
+      }));
+    if (templateRoots.length > 0) templateSource = 'profile';
+  }
+  templateRoots = templateRoots
+    .filter((r, i) => templateRoots.findIndex((x) => x.root === r.root) === i)
+    .sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
+
   // ---- OpenAPI documents (the declaration layer, RM29) --------------------
   // The same three-way rule once more, with one difference: no framework pack
   // gates it. A document is a document — a project that ships one has said what
@@ -408,7 +446,7 @@ export function selectLanes(input = {}) {
   if (ddls.length > 0 || snapshot || mappers.length > 0) lanes.push('sql');
   if (javaSrc.length > 0) lanes.push('java');
   if (openapi.length > 0) lanes.push('openapi');
-  if (webSrc.length > 0) lanes.push('web');
+  if (webSrc.length > 0 || templateRoots.length > 0) lanes.push('web');
   // The recordings come LAST: they attach to the screens the web lane built.
   if (har.length > 0) lanes.push('har');
   // ...and the traces after those, because they annotate what every other lane
@@ -419,7 +457,7 @@ export function selectLanes(input = {}) {
   return {
     // `ddl` is the FIRST of `ddls`, kept because a single-file project is still
     // the common case and every caller that only ever wanted one file reads it.
-    ddl, ddls, snapshot, mappers, javaSrc, webSrc, openapi, har, otel,
+    ddl, ddls, snapshot, mappers, javaSrc, webSrc, templateRoots, openapi, har, otel,
     // How the DDL set was chosen, when discovery chose it: what was picked, what
     // was left out, and why. Null when the user said it themselves.
     ddlChoice,
@@ -432,6 +470,7 @@ export function selectLanes(input = {}) {
     sources: {
       ddl: ddlSource, mappers: mapperSource, javaSrc: javaSource, webSrc: webSource,
       openapi: openapiSource, har: harSource, otel: otelSource,
+      templateRoots: templateSource,
     },
     excludedTestRoots,
     lanes, diagnostics,
@@ -619,10 +658,14 @@ function screenAxis(web, har, opts = {}) {
         + 'Set screenAxis.enabled to true in the profile to build them anyway',
     };
   }
-  if ((s.declared ?? 0) === 0) {
+  // A SERVER-RENDERED APPLICATION DECLARES NO ROUTES AT ALL (RM48): its pages
+  // are template files a `@Controller` names, so "no route declaration" is the
+  // normal state and the pages are what to count.
+  const pages = s.byKind && Number.isInteger(s.byKind.page) ? s.byKind.page : 0;
+  if ((s.declared ?? 0) === 0 && pages === 0) {
     return {
       status: 'not-shipped',
-      reason: 'the screen axis is enabled and the web lane recorded no route declaration at all, so there is nothing to build a screen from. '
+      reason: 'the screen axis is enabled and the web lane recorded no route declaration and no page a controller renders, so there is nothing to build a screen from. '
         + 'The router packs (adapters/web/packs) name the conventions a route object is recognized by; a router none of them describes is read by none of them',
     };
   }
@@ -638,6 +681,19 @@ function screenAxis(web, har, opts = {}) {
       : `screens beyond the ${declared} declared arrive when the app runs`;
     why.push(`the app also fetches its menu from the server at run time (a call to ${(sd.menuEndpoints ?? []).join(', ')} was found): `
       + `${declared} screen(s) are declared in the source and the ones the server adds are not here, so ${most}`);
+  }
+  // A VIEW NAME THIS RUN COULD NOT PLACE is the page side of the same gap an
+  // unresolvable component specifier is: a template root nobody declared, or a
+  // name the handler built rather than wrote.
+  const t = web && typeof web.templates === 'object' && web.templates !== null ? web.templates : null;
+  if (t && (t.viewNames ?? 0) > 0) {
+    const missed = t.viewNamesUnplaced ?? 0;
+    if (missed > 0) {
+      why.push(`${missed} of ${t.viewNames} view name(s) a handler returns resolve to no template this run read, so those pages are not here`);
+    }
+    if ((t.unresolvedViews ?? 0) > 0) {
+      why.push(`${t.unresolvedViews} handler return(s) name a view this engine could not read (a variable, a call it cannot follow, a name built at run time), so those pages have no name to look up`);
+    }
   }
   const unresolvedShare = (s.declared ?? 0) > 0 ? (s.componentUnresolved ?? 0) / s.declared : 0;
   if (unresolvedShare > SCREEN_UNRESOLVED_SHARE) {
@@ -657,7 +713,8 @@ function screenAxis(web, har, opts = {}) {
   }
   return {
     status: 'degraded',
-    reason: `we built ${s.screens ?? 0} screen(s) from ${s.declared} route declaration(s), and part of that is not the whole picture: ${why.join('; ')}.${observed}`,
+    reason: `we built ${s.screens ?? 0} screen(s) from ${s.declared} route declaration(s) and ${pages} page(s) a controller renders, `
+      + `and part of that is not the whole picture: ${why.join('; ')}.${observed}`,
   };
 }
 

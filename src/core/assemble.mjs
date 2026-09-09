@@ -114,7 +114,15 @@ export function assembleGraph(a) {
   let webStats = null;
   if (web) {
     if (typeof bridges.addWebFacts !== 'function') throw new AssembleError('web options were given but bridges.addWebFacts is missing');
-    webStats = bridges.addWebFacts(graph, webFacts, web);
+    // THE TWO HALVES OF A SERVER-RENDERED SCREEN meet here (RM48): the Java
+    // worker read which view name each handler returns, the web worker read the
+    // templates, and the web bridge is the only place that has both. Taken out
+    // of the Java stream rather than asked of the caller, so `analyze` and the
+    // working-tree overlay cannot pass different sets.
+    webStats = bridges.addWebFacts(graph, webFacts, {
+      ...web,
+      views: web.views ?? javaFacts.filter((r) => r && typeof r === 'object' && r.kind === 'view'),
+    });
   }
   let runtimeStats = null;
   if (runtime) {

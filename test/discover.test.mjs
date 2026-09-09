@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { discover, prefixOf, coveringPrefixes, minimalRoots, sourceRootOf, isTestPath, classifyDdlFile, ddlDialectFromPath, DiscoverError, SKIP_DIRS, scriptSourcesOf, scriptTargetOf, underWebRootDir, outsideVendorDirs } from '../src/core/discover.mjs';
+import { discover, prefixOf, coveringPrefixes, minimalRoots, sourceRootOf, isTestPath, classifyDdlFile, ddlDialectFromPath, DiscoverError, SKIP_DIRS, scriptSourcesOf, scriptTargetOf, underWebRootDir, outsideVendorDirs, templatePrefixPath, templateRootsOf } from '../src/core/discover.mjs';
 
 // A synthetic tree in a tmp dir: { 'rel/path': 'contents' }. Directories named
 // `.git` are created empty — the walk only needs their presence.
@@ -733,4 +733,110 @@ test('where a served directory sits, and what is somebody else\'s code', () => {
   assert.equal(outsideVendorDirs('static/webjars/x'), false);
   assert.equal(outsideVendorDirs('static/adminlte/bower_components/x'), false);
   assert.equal(outsideVendorDirs('static/lib/x'), false);
+});
+
+test('a directory named after somebody else\'s library is never a frontend root (RM48)', () => {
+  // Measured before this list existed: 12 of xxl-job's 13 vendored roots and 12
+  // of jeecg-boot's 16 were one plugin directory each.
+  assert.equal(outsideVendorDirs('static/plugins/codemirror/mode/php'), false);
+  assert.equal(outsideVendorDirs('static/plugins'), false);
+  assert.equal(outsideVendorDirs('static/libs/layer'), false);
+  assert.equal(outsideVendorDirs('static/zTree/js'), false, 'the comparison is lower-cased');
+  // ...and a project's OWN directory under `static` still is one.
+  assert.equal(outsideVendorDirs('static/framework'), true);
+  assert.equal(outsideVendorDirs('static/scripts'), true);
+  assert.equal(outsideVendorDirs('static/bigscreen/template2/js'), true);
+});
+
+test('the template roots: a configured prefix names the directory, and the default is where the files sit (RM48)', () => {
+  // A prefix is a location on the class path or in the servlet context, not a
+  // path in the repository. What it says is how the directory ENDS.
+  assert.equal(templatePrefixPath('classpath:/templates/'), 'templates');
+  assert.equal(templatePrefixPath('/WEB-INF/jsp/'), 'WEB-INF/jsp');
+  assert.equal(templatePrefixPath('classpath*:/tpl'), 'tpl');
+  assert.equal(templatePrefixPath('${TPL_DIR}'), null, 'a value this tree does not carry names no directory');
+  assert.equal(templatePrefixPath(null), null);
+
+  const dirs = new Map([
+    ['app/src/main/resources/templates', new Map([['.ftl', 2]])],
+    ['app/src/main/resources/templates/business', new Map([['.ftl', 5]])],
+    ['other/src/main/resources/templates', new Map([['.ftl', 1]])],
+  ]);
+  // With a configured prefix, every directory that ends the way it does is a root.
+  assert.deepEqual(
+    templateRootsOf({ dirs, resolvers: [{ engine: 'freemarker', prefix: 'classpath:/templates/', suffix: '.ftl' }] }),
+    [
+      { root: 'app/src/main/resources/templates', engine: 'freemarker', suffix: '.ftl', from: 'config', files: 7 },
+      { root: 'other/src/main/resources/templates', engine: 'freemarker', suffix: '.ftl', from: 'config', files: 1 },
+    ],
+  );
+  // With none, the ENGINE'S OWN documented default applies first: FreeMarker
+  // resolves against `classpath:/templates/` out of the box, so a directory
+  // ending that way is the root even in a module holding one page.
+  assert.deepEqual(
+    templateRootsOf({ dirs, resolvers: [] }),
+    [
+      { root: 'app/src/main/resources/templates', engine: 'freemarker', suffix: '.ftl', from: 'default', files: 7 },
+      { root: 'other/src/main/resources/templates', engine: 'freemarker', suffix: '.ftl', from: 'default', files: 1 },
+    ],
+  );
+  // Only when NOTHING ends the documented way is the root the directory every
+  // template of one resource root sits under — which is what keeps a
+  // multi-module repository's modules apart. A `.jsp` always takes that road:
+  // Spring MVC's resolver has no default prefix, only a convention.
+  assert.deepEqual(
+    templateRootsOf({
+      dirs: new Map([
+        ['app/src/main/webapp/WEB-INF/jsp/cart', new Map([['.jsp', 2]])],
+        ['app/src/main/webapp/WEB-INF/jsp/catalog', new Map([['.jsp', 3]])],
+        ['other/src/main/webapp/WEB-INF/views', new Map([['.jsp', 1]])],
+      ]),
+      resolvers: [],
+    }),
+    [
+      { root: 'app/src/main/webapp/WEB-INF/jsp', engine: 'jsp', suffix: '.jsp', from: 'default', files: 5 },
+      { root: 'other/src/main/webapp/WEB-INF/views', engine: 'jsp', suffix: '.jsp', from: 'default', files: 1 },
+    ],
+  );
+});
+
+test('an .html root is Thymeleaf when something says so, and PLAIN HTML when nothing does (RM48)', () => {
+  const dirs = new Map([['src/main/resources/templates', new Map([['.html', 3]])]]);
+  // Nothing configured and no `th:` attribute in the markup: the root is real,
+  // and calling it Thymeleaf would name a technology this run did not see.
+  assert.deepEqual(templateRootsOf({ dirs, resolvers: [] }).map((r) => r.engine), ['plain-html']);
+  // A marker read out of the files themselves.
+  assert.deepEqual(
+    templateRootsOf({ dirs, resolvers: [], engineMarkers: new Map([['src/main/resources/templates', new Set(['thymeleaf'])]]) })
+      .map((r) => r.engine),
+    ['thymeleaf'],
+  );
+  // ...or the configuration, which needs no marker at all.
+  assert.deepEqual(
+    templateRootsOf({ dirs, resolvers: [{ engine: 'thymeleaf', prefix: null, suffix: null }] }).map((r) => r.engine),
+    ['thymeleaf'],
+  );
+  // An `.html` file OUTSIDE a template directory is a served page, not a view.
+  assert.deepEqual(templateRootsOf({ dirs: new Map([['src/main/resources/static/docs', new Map([['.html', 4]])]]), resolvers: [] }), []);
+});
+
+test('discover finds the template roots and the view resolver settings out of the tree (RM48)', (t) => {
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'src/main/java/com/example/PageController.java':
+      'package com.example;\n@Controller\npublic class PageController { @GetMapping("/a") public String a() { return "things/list"; } }\n',
+    'src/main/resources/application.properties':
+      'spring.freemarker.templateLoaderPath=classpath:/templates/\nspring.freemarker.suffix=.ftl\n',
+    'src/main/resources/templates/things/list.ftl': '<html><body>hi</body></html>\n',
+    'src/main/resources/templates/common/layout.ftl': '<#macro head></#macro>\n',
+  });
+  const d = discover(root, io(() => SHA('t')));
+  // Relaxed binding: `templateLoaderPath` and `template-loader-path` are the
+  // same property, and a project that wrote one of them wrote it.
+  assert.deepEqual(d.viewResolvers, [
+    { engine: 'freemarker', prefix: 'classpath:/templates/', suffix: '.ftl', file: 'src/main/resources/application.properties', line: 1 },
+  ]);
+  assert.deepEqual(d.templateRoots, [
+    { root: 'src/main/resources/templates', engine: 'freemarker', suffix: '.ftl', from: 'config', files: 2 },
+  ]);
 });

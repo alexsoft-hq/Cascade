@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
   springConfigEntries, resolvePlaceholder, frontPrefixOf, backPrefixOf, serviceOfUri,
+  findViewResolvers, relaxedKey,
 } from '../src/core/springconfig.mjs';
 
 // RM46 — the two facts a Spring project states about itself, read out of the
@@ -365,4 +366,51 @@ test('serviceOfUri: lb:// names a service, http:// names a host, a placeholder n
 test('springConfigEntries reads only the keys this module is about', () => {
   const text = 'spring:\n  application:\n    name: x\n  datasource:\n    url: jdbc:mysql://h/db\nserver:\n  port: 8080\n';
   assert.deepEqual(springConfigEntries({ path: YML, text }).map((e) => e.key), ['spring.application.name']);
+});
+
+// ---------------------------------------------------------------------------
+// RM48 — the view resolver: where a view name becomes a page
+// ---------------------------------------------------------------------------
+
+test('a key is read in the three spellings Spring binds it from', () => {
+  assert.equal(relaxedKey('spring.freemarker.templateLoaderPath'), 'spring.freemarker.template-loader-path');
+  assert.equal(relaxedKey('spring.freemarker.TEMPLATE_LOADER_PATH'), 'spring.freemarker.template-loader-path');
+  assert.equal(relaxedKey('spring.thymeleaf.prefix'), 'spring.thymeleaf.prefix');
+});
+
+test('the view resolver settings are read per engine, in properties and in YAML', () => {
+  assert.deepEqual(
+    findViewResolvers(file('spring.freemarker.templateLoaderPath=classpath:/tpl/\nspring.freemarker.suffix=.ftl\n',
+      'src/main/resources/application.properties')),
+    [{ engine: 'freemarker', prefix: 'classpath:/tpl/', suffix: '.ftl', file: 'src/main/resources/application.properties', line: 1 }],
+  );
+  assert.deepEqual(
+    findViewResolvers(file('spring:\n  thymeleaf:\n    prefix: classpath:/views/\n    suffix: .htm\n')),
+    [{ engine: 'thymeleaf', prefix: 'classpath:/views/', suffix: '.htm', file: YML, line: 3 }],
+  );
+  // `spring.mvc.view.*` is Spring MVC's own resolver, which is what a JSP
+  // application configures.
+  assert.deepEqual(
+    findViewResolvers(file('spring:\n  mvc:\n    view:\n      prefix: /WEB-INF/jsp/\n      suffix: .jsp\n')),
+    [{ engine: 'jsp', prefix: '/WEB-INF/jsp/', suffix: '.jsp', file: YML, line: 4 }],
+  );
+  // A LIST loader path: the first entry is the one a view name is resolved
+  // against first, and it is the one read.
+  assert.deepEqual(
+    findViewResolvers(file('spring:\n  freemarker:\n    template-loader-path:\n      - classpath:/a/\n      - classpath:/b/\n'))
+      .map((r) => r.prefix),
+    ['classpath:/a/'],
+  );
+});
+
+test('a project that only TURNS AN ENGINE ON still names the engine, with no prefix invented', () => {
+  // `spring.thymeleaf.mode=HTML` says which engine renders the pages and
+  // nothing about where they are. The prefix stays null, and whoever joins
+  // these onto a tree applies the engine's documented default.
+  assert.deepEqual(
+    findViewResolvers(file('spring.thymeleaf.mode=HTML\n', 'src/main/resources/application.properties')),
+    [{ engine: 'thymeleaf', prefix: null, suffix: null, file: 'src/main/resources/application.properties', line: 1 }],
+  );
+  // A file that says nothing about a view resolver yields nothing.
+  assert.deepEqual(findViewResolvers(file('spring:\n  application:\n    name: a\n')), []);
 });

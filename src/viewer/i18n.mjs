@@ -369,6 +369,13 @@ export const VIEWER_STRINGS = {
     // answer walked from this screen, so the card counts nothing itself.
     'screen.title': 'screen',
     'screen.component': 'component',
+    // RM48: the other kind of screen. A router declares a path and mounts a
+    // component; a controller answers a path and names a view, and the view
+    // resolver turns that name into a file.
+    'screen.template': 'template',
+    'screen.renderedby': 'rendered on',
+    'screen.kind.page': 'page',
+    'screen.kind.page.title': 'a page the server renders: a controller returned this view name and the template engine turned it into the page the browser gets',
     'screen.renders': 'what this screen runs',
     'screen.endpoints': 'API routes it reaches',
     'screen.tables': 'tables at the end',

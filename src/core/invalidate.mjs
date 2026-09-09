@@ -161,6 +161,14 @@ export function planIncremental(input) {
   const ddls = selection.ddls ?? (selection.ddl ? [selection.ddl] : []);
 
   const webRoots = selection.webRoots ?? [];
+  // A TEMPLATE FILE IS A WEB-LANE INPUT (RM48): it goes through the same worker,
+  // its facts sit in the same kind of shard, and an edit to it invalidates that
+  // shard and nothing else. What makes it one is the root it sits under and the
+  // suffix that root's view resolver appends.
+  const templateRoots = (selection.templateRoots ?? [])
+    .filter((t) => t && typeof t === 'object' && typeof t.root === 'string');
+  const isTemplateFile = (file) => templateRoots.some((t) => typeof t.suffix === 'string'
+    && file.endsWith(t.suffix) && underAny(file, [t.root]));
 
   const reparse = new Set();
   const drop = new Set();
@@ -174,7 +182,7 @@ export function planIncremental(input) {
     if (ddls.includes(file)) catalogChanged = true;
     if (file.endsWith('.xml') && underAny(file, mapperDirs)) sqlChanged = true;
     if (isWebConfigOf(file, webRoots)) webConfigChanged = true;
-    if (isWebSourceFile(file) && underAny(file, webRoots)) {
+    if ((isWebSourceFile(file) && underAny(file, webRoots)) || isTemplateFile(file)) {
       if (status === 'D') dropWeb.add(file);
       else reparseWeb.add(file);
     }
@@ -197,7 +205,7 @@ export function planIncremental(input) {
       if (stillExists(f)) { reparse.add(f); drop.delete(f); }
       else { drop.add(f); reparse.delete(f); }
     }
-    if (isWebSourceFile(f) && underAny(f, webRoots)) {
+    if ((isWebSourceFile(f) && underAny(f, webRoots)) || isTemplateFile(f)) {
       if (stillExists(f)) { reparseWeb.add(f); dropWeb.delete(f); }
       else { dropWeb.add(f); reparseWeb.delete(f); }
     }
@@ -266,6 +274,9 @@ function normalizeSelection(sel) {
     javaRoots: [...(sel.javaRoots ?? [])].sort(),
     mapperDirs: [...(sel.mapperDirs ?? [])].sort(),
     webRoots: [...(sel.webRoots ?? [])].sort(),
+    templateRoots: [...(sel.templateRoots ?? [])]
+      .map((t) => (t && typeof t === 'object' ? `${t.root}|${t.engine}|${t.suffix}` : String(t)))
+      .sort(),
     ddls: sel.ddls ?? (sel.ddl ? [sel.ddl] : []),
     sqlArgs: [...(sel.sqlArgs ?? [])],
     packagePrefixes: [...(sel.packagePrefixes ?? [])].sort(),

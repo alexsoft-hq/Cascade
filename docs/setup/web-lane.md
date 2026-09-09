@@ -43,6 +43,7 @@ It **skips**:
 | skipped | where | why |
 |---|---|---|
 | `node_modules`, `.git`, `.cascade` | any depth | never first-party source |
+| `plugins`, `libs`, and directories named after a vendored library | any depth, in DISCOVERY | somebody else's frontend, by name. The list is `adapters/web/packs/vendor-dirs.json` |
 | `__tests__`, `__mocks__` | any depth | a test is a different program, wherever it sits |
 | `dist`, `build`, `coverage`, `public` | **only as a direct child of a source root, or of that root's package directory** | there they are output; deeper down they are ordinary names |
 | `*.d.ts` | any | a type declaration has no call in it |
@@ -76,6 +77,74 @@ holding the nearest `package.json`): the dotenv files (`.env`, `.env.local`,
 dev-server proxy table, and `tsconfig.json` / `jsconfig.json` / the bundler
 config for path aliases. Those three between them decide what `'/api'` in a call
 actually reaches, and the bridge uses all of them.
+
+### Server-rendered pages
+
+A frontend router is not the only way an application has screens. In a large
+share of the systems this tool is for there is no router at all: a `@Controller`
+returns a view name, a template engine renders it, and the page's own `<script>`
+calls the backend, its `<form>` posts to a route and its links open other
+routes. The lane reads those pages too, from the **template roots** the profile
+names.
+
+| engine | extension | how the root is found |
+|---|---|---|
+| Thymeleaf | `.html` | `spring.thymeleaf.prefix` / `.suffix`, else `classpath:/templates/` + `.html` |
+| FreeMarker | `.ftl` | `spring.freemarker.template-loader-path` / `.suffix`, else `classpath:/templates/` + `.ftl` |
+| JSP | `.jsp` | `spring.mvc.view.prefix` / `.suffix`, else where the `.jsp` files sit under `webapp` / `WEB-INF` |
+| Velocity | `.vm` | `spring.velocity.resource-loader-path` / `.suffix` |
+| plain HTML | `.html` | a root of `.html` pages with no engine setting and no `th:` attribute in them |
+
+A configured prefix is a location on the class path or in the servlet context,
+not a path in the repository. What it DOES say is how the directory ends, so
+`classpath:/templates/` picks out `src/main/resources/templates` and
+`/WEB-INF/jsp/` picks out `src/main/webapp/WEB-INF/jsp`. With nothing
+configured, the root is the directory every template of one resource root sits
+under, which keeps a multi-module repository's modules apart.
+
+An `.html` file under `static/` is **not** a template: the server hands it out
+as it stands, no resolver renders it, and reading every one of them would cost
+the run a walk through whatever a project keeps there. A `.html` template lives
+under a `templates` or a `WEB-INF` directory, or where the configuration says.
+
+`cascade init` writes what it found into the profile's `templateRoots`, one line
+says so, and a list that is already there is yours and is left alone — the same
+rule `webRoots` follows. `cascade analyze` reads the roots from the PROFILE, not
+from this run's discovery, because a template root decides what is in the pack
+and a pack must not change under an input nobody recorded.
+
+Four things are read out of each template, and nothing else:
+
+- **the inline `<script>` blocks.** The template's own directives are
+  NEUTRALISED first — FreeMarker's `<#…>`, `</#…>`, `<@…>` and `${…}`, JSP's
+  `<%…%>`, `<%=…%>` and `${…}`, Thymeleaf's `[[…]]` and `[(…)]` — into
+  placeholders that keep every line where it was, and what is left goes through
+  the SAME JavaScript reader every `.js` file goes through. A block that still
+  does not parse is a `parse_error` on that block and costs the run nothing. A
+  `<script src=…>` is a file of its own and is never an inline block.
+- **the forms.** `<form action>`, `th:action="@{…}"`, `<form:form action>`: one
+  call site each, the method from the attribute and GET when there is none.
+- **the links.** A `href` or `th:href` that names a path from the app root. A
+  static asset is not a route and is left out by prefix (`/webjars`,
+  `/resources`, `/static`, `/css`, `/js`, `/images`, `/fonts`) and by extension;
+  a query string is not part of a route and is dropped; an address with a host
+  belongs to somebody else.
+- **the includes.** `<%@ include file>`, `<jsp:include page>`, `<#include>`,
+  `<#import>`, `th:replace` / `th:insert` / `th:include`. JSP and FreeMarker
+  resolve an include against the INCLUDING file's directory (a leading slash
+  means the root); Thymeleaf resolves a fragment expression against the root
+  always. Resolution is lexical: no file is opened, so a shard describes the
+  bytes of its own file and nothing else.
+
+**The context path is the app root.** `${request.contextPath}`,
+`${pageContext.request.contextPath}`, `@{/…}`, `<c:url>` and `<spring:url>` all
+name where this deployment is mounted, which is not part of any route the pack
+serves. So a page's prefix is the empty string and `prefix.from` is
+`context-path` — nothing had to be guessed. A page that writes
+`var base_url = '${request.contextPath}'` in its layout and `base_url +
+"/things/list"` in a page that includes it is read the same way: the worker
+records the NAME the URL was built on, and the bridge closes the hole with the
+include graph.
 
 ## What it records
 
@@ -143,8 +212,17 @@ thirteen `$http` calls, and every one of them was invisible.
 into the profile. A directory qualifies when all three of these are true:
 
 1. it holds at least one non-minified frontend source file, and nothing on its
-   path is somebody else's code (`node_modules`, `bower_components`, `webjars`,
-   `vendor`, `lib`, `dist`, `build`, `target`);
+   path is somebody else's code. Two lists say what that is: the ROLE names
+   (`node_modules`, `bower_components`, `webjars`, `vendor`, `lib`, `dist`,
+   `build`, `target`), and the names a directory of somebody else's frontend
+   actually carries — `plugins`, `libs`, and the libraries everybody vendors
+   (`codemirror`, `layer`, `nprogress`, `adminlte`, `select2`, …). The second
+   list is a DECLARATION, `adapters/web/packs/vendor-dirs.json`, so a reader can
+   add the one their tree happens to use without touching a rule; discovery
+   mirrors it and `test/webfacts.test.mjs` fails if the two disagree. Measured:
+   one corpus project had 13 vendored roots and 12 of them were one plugin
+   directory each, another had 16 and 12; after the list they have 1 and 4, and
+   both keep their own;
 2. no `package.json` sits in any ancestor **inside its own repository** (a
    nested checkout starts the question again);
 3. the tree says the directory is **served**: it is, or is under, a directory
@@ -159,10 +237,11 @@ writes them to the profile:
 frontend without a package: reading src/main/resources/static/scripts (1 root(s), 22 file(s), router angular-router). Set webRoots to [] in the profile to stop
 ```
 
-One line however many roots there are: a tree that keeps a directory of vendored
-plugin scripts under `static/` has thirteen of them, and thirteen lines saying
-the same thing is a wall a reader skips rather than a finding. The first five
-are named, then `and N more`; the count is always exact.
+One line however many roots there are: before the vendored-directory list above,
+a tree that keeps plugin scripts under `static/` had thirteen of them, and
+thirteen lines saying the same thing is a wall a reader skips rather than a
+finding. The first five are named, then `and N more`; the count is always
+exact.
 
 ```jsonc
 "webRoots": [
@@ -469,6 +548,25 @@ DECLARATION, not code: `adapters/web/packs/http-clients.json`.
 the lane a library it does not know, add a row to that file. There is no code to
 change, and nothing in the bridge names a library.
 
+**A client the page LOADS.** jQuery arrives as a `<script>` tag and lands on
+`window`, so no file imports it and nothing binds it either. It is a platform
+sink for the same reason `fetch` is — the library sends the request itself and
+says which argument the URL is — and the pack names the globals it lands on:
+
+```json
+{ "name": "jquery",
+  "globals": ["$", "jQuery"],
+  "config": { "methods": ["ajax"], "urlArg": 0, "urlKey": "url", "methodKeys": ["type", "method"] },
+  "verbs": { "get": "GET", "post": "POST", "getJSON": "GET" },
+  "urlArg": 0, "defaultMethod": "GET" }
+```
+
+`$.ajax({url, type})`, `$.ajax(url, settings)`, `$.post(url, data)`,
+`$.get(url)` and `$.getJSON(url)` are call sites; `$('#x').val()` is not, because
+its callee sits on the result of a call and has no root name at all, and
+`$.each` is not, because the pack does not name it. It works in a `.js` file and
+in a page's inline `<script>` alike.
+
 **A client the framework hands you.** AngularJS does not let a file import its
 HTTP client: `$http` arrives as a **parameter**, filled in by name, so nothing
 in the file binds it and every tracing rule above sees a call on an unknown
@@ -671,6 +769,71 @@ The composition rules, in full:
 The node id is `screen:<the composed path>`, which is also what `flow screen=`
 and `browse kind=screen` name it by.
 
+### A page a controller renders
+
+The other kind of screen. Where a router declares a path and mounts a component,
+a `@Controller` answers a path and names a **view**, and the view resolver joins
+its prefix and suffix onto that name to find the file. Every template a handler
+names is a screen:
+
+    screen:view:<the view name>          owners/findOwners, business/job.list
+
+The `view:` prefix keeps a hybrid application's two kinds of screen apart: an
+application with a Vue router AND a Thymeleaf admin has both, and neither id can
+collide with the other.
+
+| field | where it comes from |
+|---|---|
+| `name` | the view name the handler returned |
+| `template` | the file the resolver's prefix and suffix found |
+| `engine` | thymeleaf / freemarker / jsp / velocity / plain-html |
+| `paths` | every route whose handler renders this page, sorted |
+| `path` | the first of those |
+| `label` / `group` / `code` | the same rules a router screen follows, applied to the view name |
+| `source` | `view` |
+
+A template **no handler names** is not a screen. It is a fragment somebody pulls
+in, or a page nobody serves, and the run says how many of each. Its links are
+nobody's calls and it draws no edge.
+
+`symbol --RENDERS_PAGE--> screen` is EXACT: the literal the handler returned is
+the view resolver's own input, so nothing was matched by name or by shape. It is
+deliberately **not** a flow edge. A page's own form and links are the NEXT
+request, not this one, and following them from the route that renders the page
+made every route inherit the reach of every route its page links to — measured
+on the corpus, what one endpoint reaches inflated by 81% on one project with no
+union count moving by one. Instead the relation is taken ONE step, in the two
+places that ask: `screen_impact` turns "this method reads the column" into "this
+page shows it", and `flow` walking down from a route lists the page it shows
+without following it.
+
+A `redirect:` or a `forward:` is not a page at all. It names a route of this
+same application, so it becomes `symbol --CALLS_HTTP--> endpoint` (GET, rule
+`view-redirect`), graded by the route match like any other call.
+
+A page's RENDERS edges are its own code and what it pulls in:
+
+- **EXACT**, rule `template-own`, onto every function of the page's inline
+  scripts — including `#(module)`, which is where a form and a link hang;
+- **SOUND_SET**, rule `template-include`, onto each template the page includes
+  (one row per include, whatever else the fragment holds) and onto that
+  fragment's own functions. It is a candidate because which branch of the page
+  really reaches the include is a run-time question.
+
+A view name the run cannot place — a template root nobody declared, a suffix
+that is not the configured one, a name built at run time — is a `VIEW_NAME_UNRESOLVED`
+warning with the name on it, and a handler return the Java lane could not read
+is counted on the screen axis reason. Both are gaps with a number, never a
+silence.
+
+How the name was READ rides on the edge as `evidence.from`: `literal`,
+`model-and-view`, `set-view-name`, `constant` (a `static final String` of the
+handler's own class) or `helper` (a private method of that class, whose name is
+on the edge too). All five are EXACT, because all five are read from one file
+with nothing resolved across it; see
+[the java lane](java-lane.md#the-page-a-handler-renders) for what each one is
+allowed to read.
+
 ### What is on a screen
 
 | field | where it comes from |
@@ -846,6 +1009,9 @@ rather have no screen axis than a partial one.
 
 ```json
 {
+  "templateRoots": [
+    { "root": "../src/main/resources/templates", "engine": "thymeleaf", "suffix": ".html", "from": "default" }
+  ],
   "screenAxis": {
     "enabled": true,
     "nameSource": "route-meta",
@@ -856,13 +1022,26 @@ rather have no screen axis than a partial one.
 }
 ```
 
+- `templateRoots` is where a view name becomes a page. Each entry is
+  `{root, engine, suffix, from}`: `root` is manifest-relative, `from` is
+  `config` (a `spring.thymeleaf`/`freemarker`/`mvc.view` prefix named the
+  directory) or `default` (the engine's documented default, applied to where the
+  files actually sit). `cascade init` writes what discovery found; a list that is
+  already there is yours and is left alone, and an empty list is how a project
+  says "read no templates". The run prints the roots it will read before any
+  lane starts:
+
+  ```
+  template roots 1 (profile): src/main/resources/templates thymeleaf .html
+  ```
+
 - `screenAxis.enabled` is the **gate**, and it has **three states**:
 
   | value | what it means |
   |---|---|
   | `true` | build screens, whatever this run happens to read. `cascade init` writes this when it finds a router package in the analyzed tree |
   | `false` | build none, whatever this run happens to read. Your word, and the engine does not argue with it |
-  | `null`, or the key absent | decide it from what the run READS: on when `frameworkPacks` names a router pack, or when a frontend package this run really reads depends on `vue-router`, `react-router` or an AngularJS router; off otherwise. This is the default |
+  | `null`, or the key absent | decide it from what the run READS: on when `frameworkPacks` names a router pack, when a frontend package this run really reads depends on `vue-router`, `react-router` or an AngularJS router, or when the run reads a template root at all; off otherwise. This is the default |
 
   The third state exists for the layout `--web-src ../front/src` describes. `cascade init`
   discovers the **analyzed tree**, so a backend whose frontend is checked out beside
@@ -874,6 +1053,8 @@ rather have no screen axis than a partial one.
   ```
   screen axis ON (read-router): screenAxis.enabled is undeclared and a frontend
   package this run reads depends on vue-router
+  screen axis ON (server-views): screenAxis.enabled is undeclared and this run
+  reads 1 template root(s) (thymeleaf), whose pages a controller names
   ```
 - `screenAxis.nameSource` is `route-meta`, `none`, or `jsdoc-comment`. The last
   is **refused** with a diagnostic: no lane here reads the comment above a

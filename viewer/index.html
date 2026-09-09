@@ -1914,6 +1914,13 @@ const VIEWER_STRINGS = {
     // answer walked from this screen, so the card counts nothing itself.
     'screen.title': 'screen',
     'screen.component': 'component',
+    // RM48: the other kind of screen. A router declares a path and mounts a
+    // component; a controller answers a path and names a view, and the view
+    // resolver turns that name into a file.
+    'screen.template': 'template',
+    'screen.renderedby': 'rendered on',
+    'screen.kind.page': 'page',
+    'screen.kind.page.title': 'a page the server renders: a controller returned this view name and the template engine turned it into the page the browser gets',
     'screen.renders': 'what this screen runs',
     'screen.endpoints': 'API routes it reaches',
     'screen.tables': 'tables at the end',
@@ -3367,6 +3374,14 @@ function renderScreenAnswer(path, r) {
     e.component? el('div',{className:'comment'},[ t('screen.component')+' ',
       el('a',{className:'id clickable',textContent:e.component,title:t('src.open.title'),
         onclick:()=>srcOf('screen:'+path)}) ]) : null,
+    // A SERVER-RENDERED PAGE has no component: it has the template file the
+    // view resolver found, and the route(s) whose handler renders it.
+    e.template? el('div',{className:'comment'},[ t('screen.template')+' ',
+      el('a',{className:'id clickable',textContent:e.template,title:t('src.open.title'),
+        onclick:()=>srcOf('screen:'+path)}),
+      e.engine? el('span',{className:'tag',textContent:e.engine}) : null ]) : null,
+    (e.routes&&e.routes.length)? el('div',{className:'comment'},
+      [ t('screen.renderedby')+' '+e.routes.join(', ') ]) : null,
     // Impact is not a button here and the card says why, rather than leaving a
     // reader to wonder where the other half of the pair went.
     el('div',{className:'comment',textContent:t('screen.noimpact')}),
@@ -3606,7 +3621,7 @@ function railHay(kind, row){
   if (kind === 'column') return (row.column + ' ' + (row.comment || '')).toLowerCase();
   if (kind === 'statement') return (row.statement + ' ' + (row.file || '')).toLowerCase();
   if (kind === 'endpoint') return ((row.httpMethod || '') + ' ' + (row.path || '') + ' ' + (row.handlerShort || '')).toLowerCase();
-  if (kind === 'screen') return (row.screen + ' ' + (row.label || '') + ' ' + (row.title || '') + ' ' + (row.component || '')).toLowerCase();
+  if (kind === 'screen') return (row.screen + ' ' + (row.label || '') + ' ' + (row.title || '') + ' ' + (row.component || '') + ' ' + (row.template || '')).toLowerCase();
   return String(row.symbol || '').toLowerCase();
 }
 
@@ -3930,6 +3945,9 @@ function railStats(kind, row){
     row.screens != null ? railStat('scr', row.screens, 'rail.stat.screens.title') : null,
   ].filter(Boolean);
   if (kind === 'screen') return [
+    // A PAGE, not a router screen (RM48): a reader scanning the list has to be
+    // able to tell the two apart without opening either.
+    row.kind === 'page' ? railFlag(t('screen.kind.page'), t('screen.kind.page.title')) : null,
     row.observed ? railFlag(t('rail.stat.seen'), t('rail.stat.seen.title')) : null,
     railStat('api', row.endpoints, 'rail.stat.screenapi.title'),
     railStat('tbl', row.tables, 'rail.stat.screentables.title'),
@@ -3957,8 +3975,10 @@ function railSub(kind, row){
   else if (kind === 'statement') s = [row.type, row.file].filter(Boolean).join('  ');
   else if (kind === 'endpoint') s = row.handlerShort || '';
   // The route itself when the label is a shortening of it, then the title the
-  // router's own `meta` gave the screen.
-  else if (kind === 'screen') s = [row.label === row.screen ? null : row.screen, row.title]
+  // router's own `meta` gave the screen. A SERVER-RENDERED page's label is its
+  // view name, so what goes under it is the template the resolver found (RM48):
+  // the file a reader would open.
+  else if (kind === 'screen') s = [row.label === row.screen ? null : row.screen, row.template, row.title]
     .filter(Boolean).join('  ');
   else s = row.owner || '';
   return s ? el('div', { className:'brsub', textContent:s }) : null;

@@ -40,6 +40,7 @@ import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.BinaryTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ConditionalExpressionTree;
 import com.sun.source.tree.LineMap;
 import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.IdentifierTree;
@@ -52,6 +53,7 @@ import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.NewArrayTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.ParameterizedTypeTree;
+import com.sun.source.tree.ReturnTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.TypeParameterTree;
 import com.sun.source.tree.VariableTree;
@@ -92,7 +94,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/8";
+    static final String VERSION = "javafacts/9";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -132,6 +134,10 @@ public class JavaFacts {
         // (javafacts/8). Counted, never interpreted: whether the url names a
         // route this pack serves is decided in src/adapters/java_bridge.mjs.
         int httpCalls;
+        // The PAGE a handler renders: a `@Controller` method that names a view
+        // (javafacts/9). Counted, never resolved: which template file the name
+        // means depends on the view resolver's prefix and suffix.
+        int views;
 
         void add(String key, Map<String, Object> obj) {
             records.add(new Rec(key, toJson(obj)));
@@ -552,6 +558,60 @@ public class JavaFacts {
             // show a transaction's read/write footprint.
             boolean classTx = annotationNames(ct.getModifiers().getAnnotations()).contains("Transactional");
 
+            // --- what a returned NAME can mean, inside this class ---------------
+            //
+            // Two shapes account for nearly every view name a real Spring
+            // controller does not write at the return statement, and both are
+            // readable HERE, in this file, with no data-flow analysis:
+            //
+            //   private static final String FORM = "owners/createOrUpdateOwnerForm";
+            //   …
+            //   return FORM;                       -> the field's own initializer
+            //   return addPaginationModel(page, …); -> a private helper of this class
+            //
+            // Collected BEFORE the method loop, because a helper is as often
+            // declared after the handler that calls it as before it. Anything a
+            // name could ALSO mean — a field two classes up, a method somebody
+            // overrides, a constant from another file — is not here and is not
+            // guessed: `scanViews` counts it as a page it could not name.
+            Map<String, String> viewConstants = new LinkedHashMap<>();
+            Map<String, MethodTree> viewHelpers = new LinkedHashMap<>();
+            java.util.Set<String> ambiguousHelpers = new java.util.LinkedHashSet<>();
+            for (Tree member : ct.getMembers()) {
+                if (member instanceof VariableTree) {
+                    VariableTree v = (VariableTree) member;
+                    java.util.Set<Modifier> flags = v.getModifiers().getFlags();
+                    if (!flags.contains(Modifier.STATIC) || !flags.contains(Modifier.FINAL)) continue;
+                    if (!"String".equals(typeSimpleName(v.getType()))) continue;
+                    String value = firstString(unwrap(v.getInitializer()));
+                    if (value != null) viewConstants.put(v.getName().toString(), value);
+                } else if (member instanceof MethodTree) {
+                    MethodTree m = (MethodTree) member;
+                    java.util.Set<Modifier> flags = m.getModifiers().getFlags();
+                    // Private or package-private: a method nobody outside this file
+                    // can override, so what this file reads is what runs.
+                    if (flags.contains(Modifier.PUBLIC) || flags.contains(Modifier.PROTECTED)) continue;
+                    if (m.getBody() == null) continue;
+                    String helperName = m.getName().toString();
+                    // TWO METHODS OF ONE NAME is a real ambiguity: which overload a
+                    // call reaches depends on the argument types, and this worker
+                    // does not resolve types. Neither is read.
+                    if (viewHelpers.containsKey(helperName)) { ambiguousHelpers.add(helperName); continue; }
+                    viewHelpers.put(helperName, m);
+                }
+            }
+            for (String helperName : ambiguousHelpers) viewHelpers.remove(helperName);
+
+            // A TYPE THAT RENDERS PAGES, not one that answers with data
+            // (javafacts/9): `@Controller` without `@RestController` and without a
+            // class-level `@ResponseBody`. `@RestController` IS `@Controller` plus
+            // `@ResponseBody`, so a class carrying both returns bodies and never a
+            // view name.
+            List<String> ctAnnNames = annotationNames(ct.getModifiers().getAnnotations());
+            boolean rendersViews = ctAnnNames.contains("Controller")
+                    && !ctAnnNames.contains("RestController")
+                    && !ctAnnNames.contains("ResponseBody");
+
             // --- pass 2: methods (endpoints, method records, calls) ------------
             for (Tree member : ct.getMembers()) {
                 if (member instanceof ClassTree) {
@@ -622,6 +682,12 @@ public class JavaFacts {
                         scanCalls(fqn, mname, fields, ext, m);
                         scanWrappers(fqn, mname, fields, m);
                         scanHttpCalls(fqn, mname, fieldTypeWritten, m);
+                        // A handler of a page-rendering controller, unless the
+                        // METHOD itself says it answers with a body.
+                        if (rendersViews && isHandler
+                                && !annotationNames(m.getModifiers().getAnnotations()).contains("ResponseBody")) {
+                            scanViews(fqn, mname, paramCount, m, viewConstants, viewHelpers);
+                        }
                     }
                 }
             }
@@ -1262,6 +1328,192 @@ public class JavaFacts {
                             + (pathStr == null ? "" : pathStr) + SEP + Integer.toString(sink.httpCalls), rec);
                 }
             }, null);
+        }
+
+        // ---- the page a handler RENDERS: `view` records (javafacts/9) -------
+        //
+        // A `@Controller` that is not a `@RestController` answers a request by
+        // naming a VIEW, and a template engine turns that name into the page the
+        // browser gets. The name is a string in the method, so it is readable
+        // here; which file it resolves to depends on the view resolver's prefix
+        // and suffix, which are a project's configuration and not this file's
+        // business (src/core/discover.mjs reads them, src/adapters/web_bridge.mjs
+        // joins the two).
+        //
+        // FOUR PLACES A NAME IS WRITTEN, and one honest gap. A returned literal,
+        // each literal leaf of a returned ternary, `new ModelAndView("x", …)` and
+        // `mav.setViewName("x")` are read, and so are the two shapes a name can
+        // take INSIDE THIS CLASS: a `static final String` field initialised with
+        // a literal (`from: "constant"`), and a private or package-private method
+        // of this class whose every return is such a literal or such a field
+        // (`from: "helper"`, with the method's name). Both are read from this
+        // file alone: the field's initializer and the helper's returns are right
+        // here, so nothing is resolved across a file and nothing is a guess. The
+        // helper is read ONE LEVEL DEEP — a return inside it that is itself a
+        // call is not followed, and the whole helper is then unreadable.
+        //
+        // Anything else a returned NAME could be — a field of a superclass, a
+        // method somebody overrides, a constant from another file, a local
+        // variable — is not: resolving it is a data-flow or a cross-file
+        // question this parse-only worker does not answer, so it is COUNTED in
+        // `unresolved` and the run says how many pages it could not name.
+        //
+        // `redirect:` and `forward:` are not pages at all. They are recorded with
+        // their kind, because what they name is a ROUTE, and the bridge turns
+        // them into a call onto that route rather than into a screen.
+        void scanViews(final String fqn, final String mname, final int paramCount, MethodTree m,
+                       final Map<String, String> viewConstants, final Map<String, MethodTree> viewHelpers) {
+            final List<Map<String, Object>> views = new ArrayList<>();
+            final java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+            final int[] unresolved = { 0 };
+            // `ModelAndView mav = new ModelAndView("x"); …; return mav;` is ONE
+            // view, written the long way. The `return mav` is a name, so the rule
+            // below would count it as a page this worker could not name — while
+            // the page is right there on the line that built it. So a returned
+            // NAME is held back and only counted when nothing in the method named
+            // a view through a ModelAndView at all.
+            final int[] returnedNames = { 0 };
+            final boolean[] namedByModelAndView = { false };
+
+            m.getBody().accept(new TreeScanner<Void, Void>() {
+                void addView(String raw, String from) { addView(raw, from, null); }
+
+                void addView(String raw, String from, String helper) {
+                    if (raw == null) { unresolved[0]++; return; }
+                    String name = raw;
+                    String kind = "view";
+                    if (name.startsWith("redirect:")) { kind = "redirect"; name = name.substring("redirect:".length()); }
+                    else if (name.startsWith("forward:")) { kind = "forward"; name = name.substring("forward:".length()); }
+                    if (name.isEmpty()) return;
+                    if (!seen.add(kind + SEP + name + SEP + from)) return;
+                    Map<String, Object> v = new LinkedHashMap<>();
+                    v.put("name", name);
+                    v.put("kind", kind);
+                    v.put("from", from);
+                    // WHICH method the name was read out of, when it was not this
+                    // one. The bridge puts it on the edge, so a reader is never
+                    // shown a page without being told where its name came from.
+                    if (helper != null) v.put("helper", helper);
+                    views.add(v);
+                }
+
+                /**
+                 * The view names a private helper of this class returns, or null
+                 * when any one of its returns is something this file cannot read.
+                 * ONE LEVEL: a return that is itself a call is what makes it null.
+                 */
+                List<String> helperViews(MethodTree helper) {
+                    final List<String> out = new ArrayList<>();
+                    final boolean[] ok = { true };
+                    helper.getBody().accept(new TreeScanner<Void, Void>() {
+                        @Override public Void visitReturn(ReturnTree r, Void p2) {
+                            ExpressionTree e = unwrap(r.getExpression());
+                            if (e == null) return null;              // `return;` in a void branch
+                            if (e instanceof LiteralTree && ((LiteralTree) e).getValue() instanceof String) {
+                                out.add((String) ((LiteralTree) e).getValue());
+                                return null;
+                            }
+                            if (e instanceof IdentifierTree) {
+                                String v = viewConstants.get(((IdentifierTree) e).getName().toString());
+                                if (v != null) { out.add(v); return null; }
+                            }
+                            ok[0] = false;
+                            return null;
+                        }
+                    }, null);
+                    return (ok[0] && !out.isEmpty()) ? out : null;
+                }
+
+                void readReturn(ExpressionTree e) {
+                    if (e == null) return;
+                    if (e instanceof LiteralTree) {
+                        Object v = ((LiteralTree) e).getValue();
+                        if (v instanceof String) addView((String) v, "literal");
+                        return;
+                    }
+                    if (e instanceof ConditionalExpressionTree) {
+                        readReturn(unwrap(((ConditionalExpressionTree) e).getTrueExpression()));
+                        readReturn(unwrap(((ConditionalExpressionTree) e).getFalseExpression()));
+                        return;
+                    }
+                    // `new ModelAndView("x")` and a `mav` built above are read by
+                    // the two visitors below, so they are not a gap here.
+                    if (e instanceof NewClassTree
+                            && "ModelAndView".equals(typeSimpleName(((NewClassTree) e).getIdentifier()))) return;
+                    if (e instanceof IdentifierTree) {
+                        String constant = viewConstants.get(((IdentifierTree) e).getName().toString());
+                        if (constant != null) { addView(constant, "constant"); return; }
+                        returnedNames[0]++;
+                        return;
+                    }
+                    if (e instanceof MethodInvocationTree) {
+                        // `return addPaginationModel(page, …)` and `return
+                        // this.addPaginationModel(…)` are the same call. Anything
+                        // with a receiver of its own is another object's method
+                        // and is not this class's to read.
+                        MethodInvocationTree inv = (MethodInvocationTree) e;
+                        Tree sel = inv.getMethodSelect();
+                        String called = null;
+                        if (sel instanceof IdentifierTree) {
+                            called = ((IdentifierTree) sel).getName().toString();
+                        } else if (sel instanceof MemberSelectTree
+                                && "this".equals(unwrap(((MemberSelectTree) sel).getExpression()).toString())) {
+                            called = ((MemberSelectTree) sel).getIdentifier().toString();
+                        }
+                        MethodTree helper = (called == null || called.equals(mname)) ? null : viewHelpers.get(called);
+                        if (helper != null) {
+                            List<String> names = helperViews(helper);
+                            if (names != null) {
+                                for (String n : names) addView(n, "helper", called);
+                                return;
+                            }
+                        }
+                        unresolved[0]++;
+                        return;
+                    }
+                    if (e instanceof MemberSelectTree || e instanceof BinaryTree) {
+                        unresolved[0]++;
+                    }
+                }
+
+                @Override public Void visitReturn(ReturnTree r, Void p) {
+                    readReturn(unwrap(r.getExpression()));
+                    return super.visitReturn(r, p);
+                }
+
+                @Override public Void visitNewClass(NewClassTree nc, Void p) {
+                    if ("ModelAndView".equals(typeSimpleName(nc.getIdentifier())) && !nc.getArguments().isEmpty()) {
+                        namedByModelAndView[0] = true;
+                        addView(firstString(unwrap(nc.getArguments().get(0))), "model-and-view");
+                    }
+                    return super.visitNewClass(nc, p);
+                }
+
+                @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
+                    Tree sel = inv.getMethodSelect();
+                    if (sel instanceof MemberSelectTree
+                            && "setViewName".equals(((MemberSelectTree) sel).getIdentifier().toString())
+                            && !inv.getArguments().isEmpty()) {
+                        namedByModelAndView[0] = true;
+                        addView(firstString(unwrap(inv.getArguments().get(0))), "set-view-name");
+                    }
+                    return super.visitMethodInvocation(inv, p);
+                }
+            }, null);
+
+            if (!namedByModelAndView[0]) unresolved[0] += returnedNames[0];
+            if (views.isEmpty() && unresolved[0] == 0) return;
+            Map<String, Object> rec = new LinkedHashMap<>();
+            rec.put("kind", "view");
+            rec.put("owner", fqn);
+            rec.put("method", mname);
+            rec.put("paramCount", paramCount);
+            rec.put("views", views);
+            rec.put("unresolved", unresolved[0]);
+            rec.put("line", lineOf(m));
+            rec.put("file", rel);
+            sink.views++;
+            sink.add("4view" + SEP + fqn + SEP + mname + SEP + paramCount, rec);
         }
 
         // ---- MyBatis-Plus: `mpWrapper` records (javafacts/6) ----------------
@@ -2350,6 +2602,7 @@ public class JavaFacts {
         header.put("mpWrappers", sink.mpWrappers);
         header.put("mapperAnnotationSql", sink.mapperAnnotationSql);
         header.put("httpCalls", sink.httpCalls);
+        header.put("views", sink.views);
         header.put("parseErrors", sink.parseErrors);
         out.println(toJson(header));
         for (Rec r : sink.records) out.println(r.json);
@@ -2377,6 +2630,7 @@ public class JavaFacts {
         summary.put("mpWrappers", sink.mpWrappers);
         summary.put("mapperAnnotationSql", sink.mapperAnnotationSql);
         summary.put("httpCalls", sink.httpCalls);
+        summary.put("views", sink.views);
         summary.put("parseErrors", sink.parseErrors);
         err.println(toJson(summary));
         err.flush();
