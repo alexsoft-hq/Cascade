@@ -8,6 +8,10 @@ Running it with no command prints the usage text. **That text is the source of
 truth for this page**: `test/docs.test.mjs` runs the binary, reads the commands
 and flags out of what it printed, and fails if any of them is missing here.
 
+`cascade <command> --help` (or `-h`) prints just that command's section and
+exits 0, before any other flag on the line is read and before anything is
+resolved, discovered or written.
+
 ## Exit codes
 
 | Code | Meaning |

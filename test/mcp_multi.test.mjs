@@ -70,7 +70,7 @@ function makeWorkspace(t) {
   return { work, env, regFile, sizes };
 }
 
-/** The loader the server uses: the same shape bin/cascade.mjs builds. */
+/** The loader the server uses: the same shape src/cli/serve.mjs builds. */
 function loadProject(entry) {
   const file = path.join(entry.packDir ?? path.join(entry.dotCascadePath, 'pack'), 'pack.json');
   const pack = JSON.parse(fs.readFileSync(file, 'utf8'));

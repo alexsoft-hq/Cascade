@@ -88,14 +88,6 @@ export {
   LOMBOK_LOGGERS, ROUTE_RULE_BASIS, UNRESOLVED_REASONS,
 };
 
-// AND ONE NAME THAT IS EXPORTED BY ACCIDENT. Before this split the file read
-// `export` on its own line above `function duplicateFqnCensus`, left there when
-// a later edit slid that function in between `classifyGeneratedTypes`'s doc
-// comment and `classifyGeneratedTypes` itself. Nothing in this repository
-// imports it, and a refactoring round does not narrow a published surface on its
-// own judgement, so it is kept reachable and reported instead.
-export { duplicateFqnCensus };
-
 /**
  * THE ONE PLACE A SYMBOL NODE IS WRITTEN, and the three questions it asks about
  * a member before writing one.

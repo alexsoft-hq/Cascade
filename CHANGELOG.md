@@ -10,6 +10,30 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Changed
+
+- **Internal surface: `duplicateFqnCensus` is no longer re-exported from
+  `src/adapters/java_bridge.mjs`.** A stray `export` keyword had been exporting
+  it by accident since before the Java lane was split; RM50 kept it reachable
+  with a note rather than narrowing a surface on its own judgement, and this
+  round removes it deliberately. It is still a proper export of
+  `src/adapters/java/stats.mjs`, which is where the one test that uses it reads
+  it from. Nothing outside this repository could have been importing it from the
+  bridge, because the bridge is not a published entry point.
+
+### Fixed
+
+- **`cascade <command> --help` explains the command instead of running it.**
+  It printed nothing: no branch read the flag, so it fell through to the command
+  body and the command did its job. `cascade analyze --help` analyzed the
+  directory you were standing in and wrote a pack into it, `cascade init --help`
+  registered that directory, and `cascade catalog fetch --help` went looking for
+  a database. Now the first thing the binary does, before a single other flag is
+  read and before anything is resolved, discovered or written, is print that
+  command's section of the usage text on stdout and exit 0 — `-h` too, and
+  whatever else is on the line. `cascade`, `cascade --help` and `cascade help`
+  still print the whole text on stderr and still exit 2, unchanged to the byte.
+
 ## [0.5.0] - 2026-09-09
 
 The release where a server-rendered page is a screen: the pages a

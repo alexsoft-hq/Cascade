@@ -462,7 +462,7 @@ test('gate: no source file carries a literal NUL byte', () => {
 // nothing looked — this is the gate that looks.
 //
 // The fix is injection: the bridges arrive as functions (src/core/assemble.mjs)
-// and bin/cascade.mjs — the layer allowed to know both sides — wires them.
+// and src/cli/ — the layer allowed to know both sides — wires them.
 //
 // It matches IMPORTS ONLY (`import … from`, `export … from`, `import(...)`), so
 // a comment or a doc string may still NAME an adapter file; several deliberately
@@ -500,7 +500,7 @@ test('gate: nothing under src/core/ imports from adapters — the core is what a
     }
   }
   assert.deepEqual(found, [], 'src/core must not depend on src/adapters (SPEC §4, I-3): the direction is adapters -> core. '
-    + 'A lane the core needs is INJECTED — see src/core/assemble.mjs and the LANE_BRIDGES object in bin/cascade.mjs:\n'
+    + 'A lane the core needs is INJECTED — see src/core/assemble.mjs and the LANE_BRIDGES object in src/cli/lanes_run.mjs:\n'
     + found.join('\n'));
 });
 

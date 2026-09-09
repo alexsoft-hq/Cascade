@@ -7,7 +7,7 @@
 //   the dependency ran core → adapters, the opposite of the direction the spec
 //   states, and CONTRIBUTING had to admit it in writing. The imports are gone;
 //   the bridges now arrive as INJECTED FUNCTIONS, wired once by the CLI
-//   (bin/cascade.mjs), which is the layer allowed to know both sides.
+//   (src/cli/lanes_run.mjs), which is the layer allowed to know both sides.
 //
 // It is the same three steps `cascade analyze` ran inline, in the same order,
 // with the same arguments, so `analyze` and the working-tree overlay cannot

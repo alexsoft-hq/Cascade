@@ -75,7 +75,7 @@ function preflight() {
   return null;
 }
 
-/** The loader the CLI builds, in miniature (bin/cascade.mjs loadServedProject). */
+/** The loader the CLI builds, in miniature (src/cli/serve.mjs loadServedProject). */
 function loadProject(entry) {
   const dir = entry.packDir ?? path.join(entry.dotCascadePath, 'pack');
   const pack = JSON.parse(fs.readFileSync(path.join(dir, 'pack.json'), 'utf8'));
