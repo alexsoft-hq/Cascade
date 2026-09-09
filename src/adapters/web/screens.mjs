@@ -61,8 +61,20 @@ export const SCREEN_ROOT_GROUP = '(root)';
 /** Past this share of unresolved components, the screen axis is degraded. */
 export const SCREEN_UNRESOLVED_SHARE = 0.2;
 
-/** What each RENDERS edge rested on, in one sentence, for `evidence.basis`. */
+/**
+ * What each RENDERS edge rested on, in one sentence, for `evidence.basis`.
+ *
+ * ONE KEY PER RULE, and that is the point of the `page` key rather than a sixth
+ * shade of `own`. RM48 added its page sentence to this literal under the name
+ * `own` was already using, so from 0.5.0 a `route-component` edge — a router
+ * declaration naming a file as the screen's component — carried the sentence
+ * about a server-rendered page's inline scripts, which is a claim about a file
+ * no router ever named. The router sentence is restored below; the page keeps
+ * its own, under its own name; and `test/web_modules.test.mjs` now asserts the
+ * basis each rule emits, so a rule and a sentence cannot drift apart again.
+ */
 export const SCREEN_RENDERS_BASIS = Object.freeze({
+  own: 'the route declaration names this file as the screen\'s component, and this function is declared in that file. Nothing was matched by name',
   child: 'the screen\'s component imports this file, directly or through other components, and this function is declared in it. Which of an imported component\'s functions a screen really runs is a run-time question, so the edge is a candidate',
   // RM47. A frontend written before modules resolves nothing by path: the
   // framework keeps a registry of names, and a name is how one thing finds
@@ -70,17 +82,7 @@ export const SCREEN_RENDERS_BASIS = Object.freeze({
   registry: 'the route names a component, and the framework resolves that name through its own registry to the file that registers it. The chain of names is on the edge, and each link is a string the framework matches exactly, the same way an import names a file',
   ambiguous: 'the same chain of names, with one name registered more than once. Which registration the framework really uses depends on the order the modules load, which is not in the source, so every file that registers the name is a candidate',
   // RM48: a SERVER-RENDERED page's own scripts, and the fragments it pulls in.
-  //
-  // TWO RULES SHARE THIS ONE SENTENCE, AND ONE OF THEM IS WRONG. `route-component`
-  // (a router declaration naming a file as the screen's component) also reads
-  // `own`, and it used to have a sentence of its own:
-  //   "the route declaration names this file as the screen's component, and this
-  //    function is declared in that file. Nothing was matched by name"
-  // RM48 added the key below beside it, in the same object literal, so the page
-  // sentence silently replaced it and a router-component edge has carried the
-  // wrong evidence since. RM49 found it and did NOT change it: this round moves
-  // code and changes no answer. It is reported for a round that can.
-  own: 'the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named',
+  page: 'the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named',
   include: 'the page pulls this template in (`<%@ include%>`, `<#include>`, `th:replace`), so whatever the fragment does, this page does too. Which branch of the page really reaches the include is a run-time question, so it is a candidate',
 });
 
@@ -458,7 +460,7 @@ function pageRenders(id, node, ctx) {
     stats.screens.renders.EXACT += 1;
     edges.push({
       from: id, to: sym, type: 'RENDERS', grade: 'EXACT',
-      evidence: { rule: 'template-own', component: node.template, basis: SCREEN_RENDERS_BASIS.own },
+      evidence: { rule: 'template-own', component: node.template, basis: SCREEN_RENDERS_BASIS.page },
     });
   }
   for (const [child, depth] of [...includeClosure(node.template).entries()].sort((a, b) => cmp(a[0], b[0]))) {

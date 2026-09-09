@@ -176,7 +176,7 @@
             "fromShort": "/things/list",
             "type": "RENDERS",
             "grade": "EXACT",
-            "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named",
+            "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name",
             "receiver": null,
             "iface": null
           },
@@ -189,7 +189,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             }
           ],
@@ -210,7 +210,7 @@
             "fromShort": "/things/list",
             "type": "RENDERS",
             "grade": "EXACT",
-            "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named",
+            "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name",
             "receiver": null,
             "iface": null
           },
@@ -223,7 +223,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             }
           ],
@@ -257,7 +257,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -302,7 +302,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -349,7 +349,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -428,7 +428,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -508,7 +508,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -596,7 +596,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -681,7 +681,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -780,7 +780,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -877,7 +877,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -999,7 +999,7 @@
               "evidence": {
                 "rule": "route-component",
                 "component": "front/src/views/things/list.vue",
-                "basis": "the inline `<script>` blocks of this page. They are the page: nothing imports them, nothing else runs them, and the file they sit in is the file the handler named"
+                "basis": "the route declaration names this file as the screen's component, and this function is declared in that file. Nothing was matched by name"
               }
             },
             {
@@ -1114,7 +1114,7 @@
     },
     "basis": {
       "project": "fullstack",
-      "buildDigest": "522af29633ee",
+      "buildDigest": "ea867e7b728e",
       "builtAt": "<masked>",
       "freshness": {
         "verdict": "unknown"

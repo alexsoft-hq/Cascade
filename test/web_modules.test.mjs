@@ -32,7 +32,7 @@ import {
   buildRouteIndex, namesARoute, routeMatches, WEB_CALL_BASIS,
 } from '../src/adapters/web/calls.mjs';
 import {
-  makeNameRegistry, readScreenAxis, SCREEN_RENDERS_BASIS, SCREEN_ROOT_GROUP,
+  makeNameRegistry, placeRendersEdges, readScreenAxis, SCREEN_RENDERS_BASIS, SCREEN_ROOT_GROUP,
 } from '../src/adapters/web/screens.mjs';
 import { indexTemplates, PAGE_RENDERS_BASIS } from '../src/adapters/web/pages.mjs';
 import { emptyWebStats } from '../src/adapters/web/stats.mjs';
@@ -395,10 +395,87 @@ test('pages: every RENDERS_PAGE reason has a sentence', () => {
   for (const k of ['view', 'constant', 'helper', 'redirect']) {
     assert.ok(PAGE_RENDERS_BASIS[k].length > 60, `${k} needs a sentence`);
   }
-  for (const k of ['own', 'child', 'registry', 'ambiguous', 'include']) {
+  for (const k of ['own', 'child', 'registry', 'ambiguous', 'page', 'include']) {
     assert.ok(SCREEN_RENDERS_BASIS[k].length > 40, `${k} needs a sentence`);
   }
   assert.equal(SCREEN_ROOT_GROUP, '(root)');
+});
+
+// ---------------------------------------------------------------------------
+// screens: the sentence on a RENDERS edge belongs to the rule that placed it
+//
+// This is the test the duplicate key got past. `SCREEN_RENDERS_BASIS` carried
+// `own` twice from 0.5.0, so `route-component` — a router declaration naming a
+// file as the screen's component — silently took the sentence RM48 wrote about
+// a server-rendered page's inline scripts. Every key held a sentence and every
+// rule held a key, so nothing above noticed. What nothing above asked is which
+// sentence a given rule actually emits, so that is what this asks: all five
+// rules driven through `placeRendersEdges` at once, each edge's `evidence.rule`
+// paired with its `evidence.basis`.
+// ---------------------------------------------------------------------------
+
+test('screens: each RENDERS rule carries its own sentence, and no two rules share one', () => {
+  // A router screen whose component imports a child component; a screen that
+  // resolved through the name registry, once cleanly and once ambiguously; and
+  // a server-rendered page that includes a fragment.
+  const screenNodes = new Map([
+    ['screen:/a', { source: 'route', component: 'src/views/A.vue' }],
+    ['screen:/b', { source: 'route', component: null }],
+    ['screen:/c', { source: 'view', template: 't/list.html' }],
+  ]);
+  const registryTargets = new Map([['screen:/b', [
+    { file: 'src/one.js', rule: 'angular-component', chain: ['ownerList'], grade: 'SOUND_SET' },
+    { file: 'src/two.js', rule: 'angular-controller', chain: ['OwnerCtrl'], grade: 'HEURISTIC' },
+  ]]]);
+  const symbolsByFile = new Map([
+    ['src/views/A.vue', ['sym:A']],
+    ['src/views/Child.vue', ['sym:Child']],
+    ['src/one.js', ['sym:one']],
+    ['src/two.js', ['sym:two']],
+    ['t/list.html', ['sym:list']],
+    ['t/layout.html', ['sym:layout']],
+  ]);
+  const files = new Map([['src/views/A.vue', { imports: [{ source: './Child.vue' }] }]]);
+  const resolver = { resolveSpecifier: (_from, spec) => ({ file: spec === './Child.vue' ? 'src/views/Child.vue' : null }) };
+  const edges = [];
+  placeRendersEdges({
+    screenNodes,
+    registryTargets,
+    symbolsByFile,
+    files,
+    resolver,
+    templatesByFile: new Map([['t/layout.html', { engine: 'thymeleaf' }]]),
+    includeClosure: (f) => (f === 't/list.html' ? new Map([['t/layout.html', 1]]) : new Map()),
+    nodesToAdd: new Map(),
+    edges,
+    stats: emptyWebStats(),
+  });
+
+  const byRule = new Map();
+  for (const e of edges) {
+    const seen = byRule.get(e.evidence.rule);
+    assert.ok(seen === undefined || seen === e.evidence.basis,
+      `${e.evidence.rule} placed two different sentences`);
+    byRule.set(e.evidence.rule, e.evidence.basis);
+  }
+  assert.deepEqual([...byRule.keys()].sort(),
+    ['angular-component', 'angular-controller', 'component-import', 'route-component', 'template-include', 'template-own']);
+
+  // THE ROUTER RULE'S OWN SENTENCE. It is about a declaration naming a file, and
+  // it is emphatically not the page sentence: a page has no route declaration.
+  assert.equal(byRule.get('route-component'), SCREEN_RENDERS_BASIS.own);
+  assert.match(byRule.get('route-component'), /route declaration names this file/);
+  assert.equal(byRule.get('component-import'), SCREEN_RENDERS_BASIS.child);
+  assert.equal(byRule.get('angular-component'), SCREEN_RENDERS_BASIS.registry);
+  assert.equal(byRule.get('angular-controller'), SCREEN_RENDERS_BASIS.ambiguous);
+  assert.equal(byRule.get('template-own'), SCREEN_RENDERS_BASIS.page);
+  assert.match(byRule.get('template-own'), /inline `<script>` blocks/);
+  assert.equal(byRule.get('template-include'), SCREEN_RENDERS_BASIS.include);
+
+  // And the two that were one string are two strings.
+  assert.notEqual(SCREEN_RENDERS_BASIS.own, SCREEN_RENDERS_BASIS.page);
+  const sentences = Object.values(SCREEN_RENDERS_BASIS);
+  assert.equal(new Set(sentences).size, sentences.length, 'two rules would share a sentence again');
 });
 
 test('stats: a fresh lane report is all zeroes, and every field is there before any step runs', () => {
