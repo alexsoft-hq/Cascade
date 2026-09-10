@@ -46,15 +46,43 @@ a freshness verdict, one of `current` · `behind` · `provisional-overlay` ·
 no pack digest is refused outright: an answer with nothing to anchor it to is
 not an answer.
 
-**`trust`** — a **computed** level, never a literal. Three names exist
-(`UNCERTIFIED`, `GOLDEN_FAIL`, `GOLDEN_PASS`) and `src/core/trust.mjs` is the
-only file allowed to write them down (a test greps the tree and fails the build
-if the strings reappear elsewhere). The computation is pessimistic in order: no
-calibration state at all → `UNCERTIFIED`; a gate that is not GREEN/BOOTSTRAP →
-`UNCERTIFIED`; fewer than 30 approved golden cases → `UNCERTIFIED`. Note the
-implication the module states plainly — 30 flawless cases give a Wilson lower
-bound of 0.8865, so **no 95% target can be shown at N=30**. Thirty cases are
-where a corpus may *start* being scored, not where it becomes sufficient.
+**`trust`** — a **computed** level, never a literal. Four names exist and
+`src/core/trust.mjs` is the only file allowed to write them down (a test greps
+the tree and fails the build if the strings reappear elsewhere):
+
+| level | what it says | what it does **not** say |
+|---|---|---|
+| `UNCERTIFIED` | nothing was scored: no approved golden set, or a gate that is not GREEN/BOOTSTRAP | anything at all about this project's answers |
+| `GOLDEN_FAIL` | a relation got something **wrong**; this outranks every pass | how much else is fine |
+| `RUNTIME_PASS` | nothing failed, `endpoint->tables` passed, and at least one passing relation was labelled by a **trace** and nothing else: the answer covered what actually ran | precision, which a trace cannot show because it carries no negatives, and anything about a route nobody exercised |
+| `GOLDEN_PASS` | every relation passes, each one hand-labelled or measured on its whole population | that the engine is right about what the corpus does not cover |
+
+The computation is pessimistic in order: no calibration state at all →
+`UNCERTIFIED`; a gate that is not GREEN/BOOTSTRAP → `UNCERTIFIED`; no approved
+golden case → `UNCERTIFIED`. Note the implication the module states plainly — 30
+flawless cases give a Wilson lower bound of 0.8865, so **no 95% target can be
+shown at N=30**. Thirty cases are where a corpus may *start* being scored, not
+where it becomes sufficient.
+
+There is one exception to that floor, and it is arithmetic rather than
+generosity. When a relation's approved cases cover **every input the pack has**
+for it (`exhaustive: true`, `population: n` in the summary), it is scored on all
+of them: every case right is `PASS`, one case wrong is `FAIL`. A Wilson bound
+says what a *sample* implies about the population it was drawn from, and a census
+has no population left to infer about. spring-petclinic has 17 endpoints, so
+under the floor alone its `endpoint->tables` row could never have been shown.
+
+**Covered means scored.** Only the cases that came back `PASS` or `FAIL` count
+towards a population, so one left `UNSCORABLE` takes its input back out and the
+relation is a sample again: a census with a hole in it is a sample. The
+population itself is read off the pack (`relationPopulations`): every column,
+every endpoint, every statement, and every symbol that **binds** a statement, the
+MyBatis mapper methods and the Spring Data repository binders alike.
+
+A relation that cannot be scored does **not** drag a level down. It is named in
+`trust.gatesNotShown` instead, because "this was measured and passed" and "these
+were not measured" are two different facts and demoting the first loses both.
+
 `trust.knownGaps` also carries the axis declarations (`column-axis-degraded`,
 `code-axis-not-shipped`, …).
 
@@ -212,6 +240,34 @@ Alongside it, `cascade golden` keeps the project's own labelled corpus: the tool
 a hash decides which are held out, and `check` scores the approved ones through
 the shipped MCP tools. The tool never approves itself, which is why the trust
 level above can mean anything.
+
+### Cases a run wrote
+
+A proposal sampled from the pack is right by construction, which is exactly why
+it carries no weight until a person has read it — and almost nobody does.
+`cascade golden propose --from-otel <trace>` takes the labels from somewhere the
+analyzer cannot reach: the program running. Each route the trace exercised
+becomes an `endpoint->tables` case carrying the tables of every statement that
+ran under that request, and each method that ran SQL becomes a
+`method->statements` case. Anything the pack does not know stays out and is
+counted out loud.
+
+What that can and cannot show is the whole of it. Execution proves **reach**, so
+a runtime case has no `absent` ids and scores recall only: it can show the answer
+covered what actually ran, it can never show precision, and it says nothing about
+a route nobody exercised. `RUNTIME_PASS` is the level that claims exactly that
+much and no more. `--all` is the expected way to approve these, because what a
+human is agreeing to is that the recording is a fair one, not that the analyzer
+was right.
+
+**A route that ran no statement is the interesting case.** Its honest label is
+the empty list, and an empty label is scored one way only: `PASS` where the pack
+answers nothing either (two independent sources, one reading the code and one
+running it, agreeing that this route reads nothing), and `UNSCORABLE` where the
+pack answers tables the run never touched, because the request may simply not
+have taken that branch. Counting those as passes is what would let a run that
+touched no database at all certify one. `golden check` prints both counts per
+relation, and `propose` says how many of the cases it wrote assert nothing.
 
 ## 6. Fail-closed, and evidence for everything
 

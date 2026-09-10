@@ -269,6 +269,9 @@ test('the masthead\'s plain-language layer is keyed and translated, in both lang
     'mast.trust.golden_pass', 'mast.trust.golden_pass.title',
     'mast.trust.golden_fail', 'mast.trust.golden_fail.title',
     'mast.trust.none.title',
+    // RM53: the level for a corpus a RUN labelled, and the way out of the one
+    // almost every project is in.
+    'mast.trust.runtime_pass', 'mast.trust.runtime_pass.title', 'mast.trust.how',
   ];
   for (const k of added) {
     assert.equal(typeof VIEWER_STRINGS.en[k], 'string', `${k} is missing from en`);
@@ -278,7 +281,7 @@ test('the masthead\'s plain-language layer is keyed and translated, in both lang
   }
   // The four chip labels are what a masthead pill prints, so they stay short.
   for (const k of ['mast.build', 'mast.fresh.behind', 'mast.fresh.overlay', 'mast.fresh.current',
-    'mast.trust.uncertified', 'mast.trust.golden_pass', 'mast.trust.golden_fail']) {
+    'mast.trust.uncertified', 'mast.trust.golden_pass', 'mast.trust.golden_fail', 'mast.trust.runtime_pass']) {
     assert.ok(VIEWER_STRINGS.en[k].length <= 40, `${k} (en) is too long for a chip: ${VIEWER_STRINGS.en[k]}`);
   }
   // The gloss key is DERIVED from the engine's value at run time, so the three

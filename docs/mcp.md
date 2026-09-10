@@ -59,6 +59,17 @@ Its basis says so: `project: "*"`, `scope: "server"`, no build digest.
   "limits": [], "truncated": { "any": false, "fields": [ … ] } }
 ```
 
+`trust.trustLevel` on every answer is one of four **computed** names, in
+ascending order of what they claim: `UNCERTIFIED` (nothing was scored),
+`GOLDEN_FAIL` (a relation got something wrong), `RUNTIME_PASS` (nothing failed,
+`endpoint->tables` passed, and at least one passing relation was labelled by an
+execution trace and nothing else) and `GOLDEN_PASS` (every relation passes on a
+corpus a human approved, or on one that covered the whole population). Read `RUNTIME_PASS` for exactly what a run can show: the answer
+covered what actually ran. It never covers precision, because a trace carries no
+negatives, and it says nothing about a route nobody exercised.
+`trust.gatesNotShown` names every relation that could not be scored at all, and
+a relation that is silently absent from it is one that passed.
+
 `basis.project` on every answer is the id you addressed — the registry id, not
 the name inside the pack (an older `analyze` stamped every pack `"project"`, so
 those names can collide across a multi-project server). When the pack declares a

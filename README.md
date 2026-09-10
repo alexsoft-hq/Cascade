@@ -400,9 +400,14 @@ are what makes the answer usable.
 - **`basis`** is what the answer is anchored to: which project, which pack
   digest, when it was built, and a freshness verdict of `current`, `behind`,
   `provisional-overlay` or `unknown`. `unknown` never reads as `current`.
-- **`trust`** is a **computed** level, never a typed-in one. `UNCERTIFIED` here
-  means this project has no approved golden corpus, which is stated rather than
-  hidden. `knownGaps` names each axis that is degraded or was never built.
+- **`trust`** is a **computed** level, never a typed-in one, and there are four
+  of them: `UNCERTIFIED` (nothing was scored, which is what `UNCERTIFIED` here
+  means: this project has no approved golden corpus, stated rather than hidden),
+  `GOLDEN_FAIL` (a check got something wrong), `RUNTIME_PASS` (the checks that
+  were scored passed, and at least one of them was labelled by a recording of the
+  program running, so the answer covered what actually ran and precision is not
+  covered) and `GOLDEN_PASS`. `knownGaps` names each axis that is degraded or was
+  never built.
 - **`limits`** is what the engine could not see, in sentences, each scoped. The
   one above says the JPA axis is absent rather than empty, which is a different
   claim from "this project uses no JPA".

@@ -5,6 +5,7 @@ import {
   assertContract,
   FRESHNESS_VERDICTS,
   EMPTY_REASONS,
+  TRUST_LEVELS,
   ContractError,
 } from '../src/mcp/contract.mjs';
 
@@ -109,6 +110,22 @@ test('trust.trustLevel missing throws', () => {
   const shape = validShape();
   shape.trust = { axes: ['column'] };
   assert.throws(() => makeResponse(shape), ContractError);
+});
+
+test('every level the engine can compute is accepted, and only those', () => {
+  // The contract re-exports the enum rather than minting its own, so a level
+  // added in src/core/trust.mjs (RUNTIME_PASS, this round) is accepted the day it
+  // exists and nothing here has to be edited to let it through. What must still
+  // be refused is a level nobody could have computed.
+  for (const level of TRUST_LEVELS) {
+    const shape = validShape();
+    shape.trust = { trustLevel: level, axes: ['column'] };
+    assert.doesNotThrow(() => makeResponse(shape), level);
+  }
+  assert.ok(TRUST_LEVELS.includes('RUNTIME_PASS'), 'the level this round added must be one of them');
+  const bogus = validShape();
+  bogus.trust = { trustLevel: 'RUNTIME_PASSED', axes: ['column'] };
+  assert.throws(() => makeResponse(bogus), (e) => e instanceof ContractError && /must be one of/.test(e.message));
 });
 
 test('trust.axes empty throws', () => {

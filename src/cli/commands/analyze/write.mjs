@@ -16,7 +16,7 @@ import {
   validateBaseline, sqlLaneTallies,
 } from '../../../core/calibration.mjs';
 import { catalogDigestOf, serializeIndex } from '../../../core/facts_store.mjs';
-import { checkCases, parseCases } from '../../../core/golden.mjs';
+import { checkCases, parseCases, inventoryOf, relationPopulations } from '../../../core/golden.mjs';
 import { slugify } from '../../../core/init.mjs';
 import { loadManifest } from '../../../core/manifest.mjs';
 import { projectPack } from '../../../core/pack.mjs';
@@ -160,7 +160,12 @@ export function goldenSummaryOf({ goldenDir, g, pack, profile }) {
   try {
     const cases = parseCases(fs.readFileSync(casesFile, 'utf8'));
     if (cases.length === 0) return null;
-    return checkCases(cases, { ask: goldenAsk(g, pack, profile) }).summary;
+    return checkCases(cases, {
+      ask: goldenAsk(g, pack, profile),
+      // How many inputs each relation HAS in this pack, so a corpus that covers
+      // all of one is scored as the census it is rather than as a small sample.
+      population: relationPopulations(inventoryOf(g)),
+    }).summary;
   } catch (e) {
     process.stderr.write(`golden check skipped: ${e.message}\n`);
     return null;

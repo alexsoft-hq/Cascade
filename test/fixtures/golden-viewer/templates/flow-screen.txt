@@ -72,11 +72,7 @@
         <span id="mfreshsr" class="sronly">freshness unknown</span>
         <span id="mfresh"></span>
       </span>
-      <span id="mtrustchip" class="mchip quiet warn" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden  statements-axis-not-shipped  column-axis-degraded  jpa-axis-degraded  mybatisPlus-axis-not-shipped">
-        <span class="mdot" aria-hidden="true"></span>
-        <span id="mtrustsr" class="sronly">trust not certified</span>
-        <span id="mtrust">not certified</span>
-      </span>
+      <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
         <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">

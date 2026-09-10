@@ -190,6 +190,46 @@ const MAST_FRESH = {
 // we wrote one for this value, and otherwise say the value itself.
 const mastTrustKey=(lvl)=> 'mast.trust.'+String(lvl).toLowerCase();
 const mastSay=(key, fallback)=> Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : fallback;
+// Does this answer say the project has NO approved golden set at all? Read off
+// the engine's own REASON, never off the level's name: the page has no list of
+// levels, and this is the one state where it has to know the difference.
+const noGoldenSet=(tt)=> (((tt && tt.knownGaps)||[]).includes('no-project-golden'));
+// WHAT THE LEVEL MEANS, in the reader's words, with the engine's own value and
+// every reason it held something back beside it. Where there is no golden set at
+// all it also says the two things that change that, because a label with no way
+// out of it is a dead end rather than a disclosure. The masthead chip and the
+// evidence rail both say this, so the two cannot drift apart.
+function trustWhy(tt){
+  const lvl=(tt && tt.trustLevel) || null;
+  const held=[...((tt && tt.gatesNotShown)||[]), ...((tt && tt.knownGaps)||[])];
+  return [ lvl ? mastSay(mastTrustKey(lvl)+'.title', '') : t('mast.trust.none.title'),
+    noGoldenSet(tt) ? t('mast.trust.how') : '',
+    lvl ? t('mast.trust')+' '+lvl : '', 'trust.trustLevel', ...held ].filter((x)=>x).join('  ');
+}
+// THE TRUST CHIP, which is silent unless it has something to say. A project with
+// no approved golden set gets NO chip: `not certified` over every answer anybody
+// ever opened was the page shouting a state that is true of almost every project
+// and actionable in almost none. The level still rides in the evidence rail
+// below, with the two ways to change it on its tooltip.
+//
+// The TINT is read off the engine's own reasons and never off the level's name:
+// an answer that names a gate it could not show, or a gap it knows about, wears
+// the soft amber, and one that names neither wears nothing. A runtime level
+// always names the checks it could not score, so it wears the amber by that rule
+// rather than by anybody typing its name here.
+function renderTrustChip(tt){
+  const lvl=(tt && tt.trustLevel) || null;
+  const hide=!lvl || noGoldenSet(tt);
+  const held=tt ? ((tt.gatesNotShown||[]).length + (tt.knownGaps||[]).length) : 0;
+  const say=lvl ? mastSay(mastTrustKey(lvl), lvl) : '';
+  const chip=byId('mtrustchip');
+  chip.className='mchip quiet'+(held ? ' warn' : '')+(hide ? ' hidden' : '');
+  byId('mtrust').textContent=hide ? '' : say;
+  // SAID OUT LOUD for a reader who is being read to, and silent when the chip is:
+  // a hidden chip that still spoke would be the shouting moved somewhere quieter.
+  byId('mtrustsr').textContent=hide ? '' : t('mast.trust')+' '+say;
+  chip.title=hide ? '' : trustWhy(tt);
+}
 // THE MASTHEAD CHIPS: what this answer is worth, and the two things a reader may
 // change. The limits chip is the SAME fold as the one in the evidence rail (it
 // shares its key, so opening either opens both), and its body drops under the
@@ -220,24 +260,10 @@ function renderMastChrome(){
     'basis.freshness.verdict' ].filter((x)=>x).join('  ');
   // The trust level rides with the landing answer, which every tab's rail also
   // carries: one source, printed once at the top of the page. The NAME is the
-  // engine's and is relayed verbatim in the tooltip; the TINT is read off the
-  // engine's own reasons and never off that name — a trust level is a computed
+  // engine's and is relayed verbatim in the tooltip. A trust level is a computed
   // value (SPEC §14.3), and a page that typed one would be a second source of
-  // truth for it. An answer that names a gate it could not show, or a gap it
-  // knows about, wears the soft amber; one that names neither wears nothing.
-  // NOT the green it used to wear: an uncertified pack painted like a passing
-  // build is the page telling the reader something the engine never said.
-  const tt=(OV.resp && OV.resp.trust) || null;
-  const lvl=(tt && tt.trustLevel) || null;
-  const held=tt ? ((tt.gatesNotShown||[]).length + (tt.knownGaps||[]).length) : 0;
-  const chip=byId('mtrustchip');
-  const key=lvl ? mastTrustKey(lvl) : '';
-  byId('mtrust').textContent=lvl ? mastSay(key, lvl) : '';
-  byId('mtrustsr').textContent=t('mast.trust')+' '+(lvl ? mastSay(key, lvl) : t('mast.trust.none.title'));
-  chip.className='mchip quiet'+(held ? ' warn' : '');
-  chip.title=[ lvl ? mastSay(key+'.title', '') : t('mast.trust.none.title'),
-    lvl ? t('mast.trust')+' '+lvl : '', 'trust.trustLevel',
-    ...(held ? [...(tt.gatesNotShown||[]), ...(tt.knownGaps||[])] : []) ].filter((x)=>x).join('  ');
+  // truth for it, so nothing here reads the name except to look up the wording.
+  renderTrustChip((OV.resp && OV.resp.trust) || null);
   // WHICH CAPTURE INFORMED THIS PACK. `basis.runtimeEvidence` is the engine's
   // own coverage statement and this chip only puts two of its fields in ink:
   // the source word and the span count, both relayed and neither rewritten. The

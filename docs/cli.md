@@ -438,6 +438,7 @@ expired receipt. Exit `4` on any disagreement — never a partial pass.
 
 ```
 cascade golden <propose|approve|seal|check> [--pack <dir> | --project <id> | --root <dir>]
+               [--per-relation N] [--from-otel <trace file>] [--ids <id>…] [--all] [--json]
 ```
 
 The project's golden corpus. The split is the point: **the tool
@@ -445,12 +446,50 @@ proposes, a human approves**.
 
 - `propose` — suggest candidate cases from the current pack. Writes candidates
   and nothing else.
+- `propose --from-otel <trace>` — propose cases from an **OpenTelemetry trace**
+  instead. Repeatable, and the file may be an OTLP/JSON document or the Java
+  agent's own log.
 - `approve` — make candidates evidence. Requires `--ids <id>…` or an explicit
   `--all`; the tool never approves itself.
 - `seal` — hash the approved set, deciding which cases are held out.
 - `check` — score the approved cases through the shipped MCP tools.
 
-Flags: `--ids <id>…`, `--all`, plus `--pack` / `--project` / `--root`.
+Flags: `--per-relation N`, `--from-otel <file>`, `--ids <id>…`, `--all`,
+`--json`, plus `--pack` / `--project` / `--root`.
+
+### Cases from a run
+
+A proposal sampled from the pack is right by construction: the engine wrote both
+the question and the answer, so it proves nothing until somebody reads it. That
+is why almost nobody ever does, and why almost every project is `UNCERTIFIED`.
+
+`--from-otel` breaks that loop by taking the labels from somewhere else: the
+running program. For every route the trace exercised, the case says the tables of
+every statement that ran under that request; for every method that ran SQL, it
+says the statement the pack keys by that method. A route or a method this pack
+does not know stays out and is counted in one line, so nothing is invented.
+
+Two things follow from what execution can and cannot witness, and both are on
+the case itself (`source: "runtime"`):
+
+- **Positives only.** A run proves REACH, never absence, so a runtime case
+  carries no `absent` ids and scores **recall** alone. It can show the answer
+  covered what ran; it can never show precision.
+- **A route that ran no statement asserts nothing**, and that is scored one way
+  only: `PASS` where the pack answers no table either (two independent sources
+  agreeing that this route reads nothing), and `UNSCORABLE` where the pack answers
+  tables the run never touched, because the request may not have taken that
+  branch. `check` prints how many cases of each relation assert nothing and how
+  many could not be scored, and only the scored ones count towards covering a
+  relation's population.
+- **`--all` is the expected path here.** A human still stamps the approval, but
+  what they are agreeing to is that the recording is a fair one, not that the
+  analyzer was right. Reading each case one at a time buys nothing, because the
+  engine did not write these labels.
+
+`cascade otel-methods` prints the instrument list a Java agent needs before a
+trace can see method spans at all; `docs/setup/runtime-evidence.md` is the whole
+capture story.
 
 ## `cascade catalog discover`
 

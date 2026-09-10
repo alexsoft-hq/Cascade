@@ -333,6 +333,10 @@ function err(status, code, message) {
  *   `/cascade-mark-dark.svg`. All three are STRINGS held in memory and answered
  *   by an exact name: there is no directory behind any of these routes, so
  *   nothing else on disk is reachable through them.
+ * The promise resolves with the port the socket really got, not the one that was
+ * asked for. They differ exactly where it matters: `--port 0` asks the kernel for
+ * a free port, and printing the 0 back gave a URL nobody could open.
+ *
  * @returns {Promise<{server:object, port:number}>}
  */
 export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, mark = null, markDark = null }) {
@@ -382,8 +386,22 @@ export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, m
       }
       send(res, 404, { 'content-type': 'text/plain' }, 'not found');
     });
-    server.listen(port, host, () => resolve({ server, port }));
+    server.listen(port, host, () => resolve({ server, port: boundPort(server, port) }));
   });
+}
+
+/**
+ * The port the socket REALLY got. `address()` is the only thing that knows it:
+ * with `--port 0` the kernel picks one, and resolving with the requested 0 gave
+ * every caller a URL nobody could open.
+ *
+ * An injected http module (the tests use one, so the routes can be driven with no
+ * socket at all) has no address to give, and there the requested port is all
+ * there is.
+ */
+function boundPort(server, port) {
+  const bound = typeof server.address === 'function' ? server.address() : null;
+  return bound && typeof bound.port === 'number' ? bound.port : port;
 }
 
 function collectBody(req, cb) {

@@ -7,9 +7,10 @@ import { callTool } from '../src/mcp/catalog.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 import {
   wilsonLowerBound, caseId, isHeldOut, expectationHash, sealCases, answerFor,
-  proposeCases, approveCases, checkCases, goldenSummary, inventoryOf,
+  proposeCases, approveCases, checkCases, goldenSummary, inventoryOf, relationPopulations,
   serializeCases, parseCases, seededOrder,
-  RELATIONS, RELATION_TARGETS, MIN_CASES, WILSON_Z, GOLDEN_CASE_SCHEMA, GoldenError,
+  RELATIONS, RELATION_TARGETS, RUNTIME_ANCHOR_RELATION, MIN_CASES, WILSON_Z,
+  GOLDEN_CASE_SCHEMA, GoldenError,
 } from '../src/core/golden.mjs';
 
 // SPEC §14.1. The project golden is the only evidence that says anything about
@@ -303,6 +304,165 @@ test('goldenSummary lists every relation, even one with no cases at all', () => 
   assert.equal(s.relations['endpoint->tables'].n, 0);
   assert.equal(s.relations['endpoint->tables'].status, 'INSUFFICIENT_SAMPLE');
   assert.equal(s.status, 'INSUFFICIENT_SAMPLE');
+});
+
+// ---------------------------------------------------------------------------
+// RM53: the population, and the census that beats the sample floor
+// ---------------------------------------------------------------------------
+
+test('relationPopulations counts, per relation, how many inputs the pack HAS', () => {
+  const inv = inventoryOf(fixture());
+  const pop = relationPopulations(inv);
+  assert.deepEqual(pop, {
+    'column->endpoints': inv.columns.length,
+    'endpoint->tables': inv.endpoints.length,
+    'statement->columns': inv.statements.length,
+    'method->statements': inv.mapperMethods.length,
+  });
+  // Every relation is named even when the pack has nothing to ask about, and an
+  // inventory that is not one at all counts zero rather than throwing: the
+  // population only ever WIDENS what can be scored, so a missing one must
+  // degrade to the sample floor instead of failing a check.
+  assert.deepEqual(relationPopulations(null), {
+    'column->endpoints': 0, 'endpoint->tables': 0, 'statement->columns': 0, 'method->statements': 0,
+  });
+});
+
+test('a corpus that covers EVERY input of a relation is scored on all of it, below 30', () => {
+  const g = fixture();
+  const inv = inventoryOf(g);
+  const population = relationPopulations(inv);
+  // Both endpoints of the fixture, labelled the way a trace labels: positives
+  // only, no negatives, `source: 'runtime'`.
+  const cases = inv.endpoints.map((endpoint) => ({
+    schema: GOLDEN_CASE_SCHEMA,
+    id: caseId({ relation: 'endpoint->tables', input: { endpoint } }),
+    relation: 'endpoint->tables',
+    input: { endpoint },
+    expect: { present: answerFor('endpoint->tables', { endpoint }, askOf(g)).ids, absent: [] },
+    source: 'runtime',
+    approvedAt: '2026-01-01T00:00:00.000Z',
+  }));
+  const { summary } = checkCases(cases, { ask: askOf(g), population });
+  const rel = summary.relations['endpoint->tables'];
+  assert.equal(rel.n, 2);
+  assert.equal(rel.population, 2);
+  assert.equal(rel.exhaustive, true);
+  assert.equal(rel.status, 'PASS', 'two of two endpoints, both right: a census, not a sample');
+  assert.equal(rel.runtimeCases, 2);
+  assert.equal(rel.handCases, 0);
+  assert.ok(rel.recall.lowerBound < rel.recall.target, 'and the bound is still short, which is the point');
+  // Without the population it is a 2-case sample again.
+  assert.equal(checkCases(cases, { ask: askOf(g) }).summary.relations['endpoint->tables'].status, 'INSUFFICIENT_SAMPLE');
+  // One case wrong, and a census FAILS: the floor never protected a corpus that
+  // measured everything and found something wrong.
+  const wrong = cases.map((c, i) => (i === 0
+    ? { ...c, expect: { present: [...c.expect.present, 'shop_nowhere'], absent: [] } } : c));
+  const broken = checkCases(wrong, { ask: askOf(g), population }).summary.relations['endpoint->tables'];
+  assert.equal(broken.exhaustive, true);
+  assert.equal(broken.status, 'FAIL');
+});
+
+test('the source of every case is carried through to the summary', () => {
+  const g = fixture();
+  const inv = inventoryOf(g);
+  const endpoint = inv.endpoints[0];
+  const one = (source) => ({
+    schema: GOLDEN_CASE_SCHEMA,
+    id: caseId({ relation: 'endpoint->tables', input: { endpoint } }),
+    relation: 'endpoint->tables', input: { endpoint },
+    expect: { present: answerFor('endpoint->tables', { endpoint }, askOf(g)).ids, absent: [] },
+    ...(source ? { source } : {}),
+    approvedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const runtime = checkCases([one('runtime')], { ask: askOf(g) });
+  assert.equal(runtime.results[0].source, 'runtime');
+  assert.equal(runtime.summary.relations['endpoint->tables'].runtimeCases, 1);
+  // A case with no `source` at all is a hand-sampled one: every corpus written
+  // before this round is exactly that, and it must not read as a runtime case.
+  const hand = checkCases([one(null)], { ask: askOf(g) });
+  assert.equal(hand.results[0].source, 'sample');
+  assert.equal(hand.summary.relations['endpoint->tables'].handCases, 1);
+  assert.equal(hand.summary.relations['endpoint->tables'].runtimeCases, 0);
+});
+
+test('a case that asserts NOTHING passes only where the engine answers nothing too', () => {
+  const g = fixture();
+  const endpoint = inventoryOf(g).endpoints[0];
+  const empty = {
+    schema: GOLDEN_CASE_SCHEMA,
+    id: caseId({ relation: 'endpoint->tables', input: { endpoint } }),
+    relation: 'endpoint->tables', input: { endpoint },
+    expect: { present: [], absent: [] },
+    source: 'runtime',
+    approvedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  // The pack answers tables for this endpoint and the run saw none. That is not
+  // a disagreement and it is not an agreement: the request may simply not have
+  // taken that branch. UNSCORABLE, and out of `n` entirely.
+  const against = checkCases([empty], { ask: askOf(g) });
+  assert.equal(against.results[0].status, 'UNSCORABLE');
+  assert.equal(against.results[0].empty, true);
+  assert.match(against.results[0].reason, /the run saw no statement under this route and the pack answers 1 table\(s\)/);
+  assert.match(against.results[0].reason, /nothing to compare/);
+  assert.equal(against.summary.relations['endpoint->tables'].n, 0);
+  assert.equal(against.summary.relations['endpoint->tables'].unscorable, 1);
+  assert.equal(against.summary.relations['endpoint->tables'].emptyCases, 1);
+
+  // The engine answering nothing either IS the agreement, and the only thing an
+  // empty label can demonstrate: two independent sources, one reading the code
+  // and one running it, both saying this route reads nothing.
+  const silent = () => ({ answer: { tables: [] }, truncated: { fields: [] } });
+  const agreed = checkCases([empty], { ask: silent });
+  assert.equal(agreed.results[0].status, 'PASS');
+  assert.equal(agreed.results[0].empty, true);
+  assert.equal(agreed.summary.relations['endpoint->tables'].n, 1);
+  assert.equal(agreed.summary.relations['endpoint->tables'].emptyCases, 1);
+});
+
+test('a relation is exhaustive only when every input of it was SCORED', () => {
+  // Two endpoints in this pack. One case agrees on nothing, the other cannot be
+  // compared, so the corpus "covers" both inputs and measures one: a census with
+  // a hole in it is a sample.
+  const g = fixture();
+  const population = relationPopulations(inventoryOf(g));
+  const results = [
+    { id: 'a', relation: 'endpoint->tables', source: 'runtime', empty: true, status: 'PASS', recallHit: true, precisionHit: true },
+    { id: 'b', relation: 'endpoint->tables', source: 'runtime', empty: true, status: 'UNSCORABLE', reason: 'nothing to compare' },
+  ];
+  const rel = goldenSummary(results, { population }).relations['endpoint->tables'];
+  assert.equal(rel.population, 2);
+  assert.equal(rel.n, 1);
+  assert.equal(rel.exhaustive, false);
+  assert.equal(rel.status, 'INSUFFICIENT_SAMPLE');
+});
+
+test('the method pool is every symbol that BINDS a statement, flagged or not', () => {
+  // `mapperMethod` is the MyBatis lane's marker. A Spring Data repository method
+  // binds a statement and never carries it, so reading the flag left every JPA
+  // project with an empty pool: the relation was never sampled there and its
+  // population was zero, on exactly the projects where a runtime trace matters
+  // most. The EDGE is the fact; the flag is one lane's way of saying it.
+  const g = new Graph();
+  g.addNode({ id: 'symbol:com.example.OwnerRepository#findById', kind: 'symbol' });
+  g.addNode({ id: 'statement:com.example.OwnerRepository.findById', kind: 'statement' });
+  g.addEdge({
+    from: 'symbol:com.example.OwnerRepository#findById',
+    to: 'statement:com.example.OwnerRepository.findById',
+    type: 'IMPLEMENTS_STMT', grade: 'EXACT',
+  });
+  const inv = inventoryOf(g);
+  assert.deepEqual(inv.mapperMethods, ['com.example.OwnerRepository#findById']);
+  assert.equal(relationPopulations(inv)['method->statements'], 1);
+  // ...and the MyBatis shape still counts, because it has the same edge.
+  assert.deepEqual(inventoryOf(fixture()).mapperMethods,
+    ['com.example.ItemMapper#selectAll', 'com.example.OrderMapper#selectById']);
+});
+
+test('the anchor relation is named once, in the module that owns the relation names', () => {
+  assert.equal(RUNTIME_ANCHOR_RELATION, 'endpoint->tables');
+  assert.ok(RELATIONS.includes(RUNTIME_ANCHOR_RELATION));
 });
 
 // ---------------------------------------------------------------------------

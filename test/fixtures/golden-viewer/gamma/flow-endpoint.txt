@@ -75,11 +75,7 @@
         <span id="mfreshsr" class="sronly">freshness unknown</span>
         <span id="mfresh"></span>
       </span>
-      <span id="mtrustchip" class="mchip quiet warn" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">
-        <span class="mdot" aria-hidden="true"></span>
-        <span id="mtrustsr" class="sronly">trust not certified</span>
-        <span id="mtrust">not certified</span>
-      </span>
+      <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
         <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
@@ -506,7 +502,7 @@
               </span>
             </div>
             <div class="railchips">
-              <span class="railchip" title="trust.trustLevel">UNCERTIFIED</span>
+              <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">UNCERTIFIED</span>
               <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
               <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
                 <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">

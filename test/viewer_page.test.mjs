@@ -721,8 +721,10 @@ test('the "This pack" card is gone, and every field it printed is still on the O
   // RM36: the resting freshness verdict is not printed, and the trust level is
   // said in words a first-time reader knows.
   assert.equal(byId.get('mfresh').textContent, '');
-  assert.equal(byId.get('mtrust').textContent, 'not certified', 'the trust level is a chip of its own');
-  assert.match(byId.get('mtrustchip').title, /UNCERTIFIED/, "...and the engine's own term is one hover away");
+  // RM53: this pack has no golden set, so the trust chip is not there at all.
+  // The level still rides in the evidence rail below (see the chip tests).
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), true, 'no golden set, no chip');
+  assert.equal(byId.get('mtrust').textContent, '');
 
   // built: the evidence rail's `basis` block, one activation away.
   const rail = byId.get('ovside');
@@ -829,10 +831,11 @@ test('the theme toggle sets data-theme, persists, re-renders the chips — and a
   assert.equal(store.get('cascade.viewer.theme'), 'signal');
 
   // Emptied on purpose: if the switch really re-renders the masthead, the chips
-  // it writes come back on their own. The freshness chip is checked through its
-  // TOOLTIP, because on this pack the verdict is the resting one and the chip
-  // deliberately prints no word for that.
-  byId.get('mtrust').textContent = '';
+  // it writes come back on their own. Both are checked through something other
+  // than their ink, because on this pack the freshness verdict is the resting one
+  // and the trust chip is hidden altogether (no golden set), and neither prints a
+  // word for that.
+  byId.get('mtrustchip').className = '';
   byId.get('mfreshchip').title = '';
   calls.length = 0;
   seg.children[1].onclick();
@@ -840,7 +843,7 @@ test('the theme toggle sets data-theme, persists, re-renders the chips — and a
   assert.equal(sandbox.document.documentElement.getAttribute('data-theme'), 'drawing');
   assert.equal(store.get('cascade.viewer.theme'), 'drawing');
   assert.deepEqual(calls, [], `the theme switch asked the server for: ${calls.map((c) => c.url).join(', ')}`);
-  assert.match(byId.get('mtrust').textContent, /^\w/, 'the trust chip was re-rendered');
+  assert.match(byId.get('mtrustchip').className, /^mchip\b/, 'the trust chip was re-rendered, silent and all');
   assert.match(byId.get('mfreshchip').title, /freshness unknown/, 'and so was the freshness chip');
   assert.deepEqual(byId.get('themeseg').children.map((b) => b.className), ['', 'on']);
   assert.equal(ev(ctx, 'themeNow()'), 'drawing');
@@ -970,8 +973,9 @@ test('the masthead carries the five facts the title block used to rule into a bo
   assert.equal(byId.get('mfresh').closest('#mchips') != null, true, 'freshness');
   assert.equal(byId.get('mfresh').textContent, '');
   assert.match(byId.get('mfreshchip').title, /freshness unknown/);
-  assert.equal(byId.get('mtrust').textContent, 'not certified', 'trust');
-  assert.match(byId.get('mtrustchip').title, /trust UNCERTIFIED/);
+  // The trust chip is in the row, and silent: this pack has no golden set (RM53).
+  assert.equal(byId.get('mtrustchip').closest('#mchips') != null, true, 'trust');
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), true);
   const inked = [byId.get('mfresh'), byId.get('mtrust')].map((n) => n.textContent).join(' ');
   assert.equal(/freshness|trust/.test(inked), false,
     'the chips print the state, not the name of the thing they measure');
@@ -1042,14 +1046,16 @@ test('the state a dot stands for is also written for a screen reader, clipped to
   assert.equal(byId.get('mtrustsr').closest('#mtrustchip') != null, true);
   assert.equal(byId.get('mfreshsr').textContent, 'freshness unknown',
     'the resting verdict is silent in ink and spoken here');
-  assert.equal(byId.get('mtrustsr').textContent, 'trust not certified');
+  // RM53: this pack has no golden set, so the trust chip is hidden — and a
+  // hidden chip that still spoke would be the shouting moved somewhere quieter.
+  assert.equal(byId.get('mtrustsr').textContent, '');
 
   // It moves with the state, and it is never left saying the last one.
   ev(ctx, "STATE.meta.freshness = { verdict: 'behind' }; renderMastChrome();");
   assert.equal(byId.get('mfreshsr').textContent, 'freshness older than the code you have now');
   ev(ctx, "STATE.meta.freshness = { verdict: 'current' }; renderMastChrome();");
   assert.equal(byId.get('mfreshsr').textContent, 'freshness up to date');
-  ev(ctx, "OV.resp.trust.trustLevel = 'SOMETHING_NEW'; renderMastChrome();");
+  ev(ctx, "OV.resp.trust.knownGaps = []; OV.resp.trust.trustLevel = 'SOMETHING_NEW'; renderMastChrome();");
   assert.equal(byId.get('mtrustsr').textContent, 'trust SOMETHING_NEW',
     'a level with no wording is spoken as it arrived');
 
@@ -1067,41 +1073,88 @@ test('the state a dot stands for is also written for a screen reader, clipped to
   assert.match(rule.decl, /clip-path:\s*inset\(50%\)/);
 });
 
-test('the trust chip is quiet and plain, and the engine\'s own level is one hover behind it', async (t) => {
+test('no golden set, NO trust chip: the masthead stops saying it over every answer', async (t) => {
   const { ctx, byId } = await bootPage(t);
   assert.equal(ev(ctx, 'OV.resp.trust.trustLevel'), 'UNCERTIFIED', 'this pack has no golden set');
+  assert.equal(ev(ctx, "OV.resp.trust.knownGaps.includes('no-project-golden')"), true);
 
-  // De-shouted, not renamed: the pill says what UNCERTIFIED MEANS, and the
-  // tooltip carries the engine's own term verbatim beside the contract field.
-  assert.equal(byId.get('mtrust').textContent, 'not certified');
-  assert.match(byId.get('mtrustchip').title, /trust UNCERTIFIED/);
-  assert.match(byId.get('mtrustchip').title, /no approved golden set/);
-  assert.match(byId.get('mtrustchip').title, /trust\.trustLevel/);
+  // RM53. `not certified` was true of this pack, and of nearly every pack anyone
+  // has ever opened, and there was nothing a reader could do about it from here.
+  // So the chip is gone in that state, and only in that state.
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), true);
+  assert.equal(byId.get('mtrust').textContent, '', 'nothing in ink');
+  assert.equal(byId.get('mtrustsr').textContent, '', 'and nothing read out either');
+  assert.equal(byId.get('mtrustchip').title, '');
 
-  // NEITHER the error red nor the passing green. An uncertified pack is not a
-  // broken one, and it is not a certified one either.
+  // It is read off the engine's own REASON, not off the level's name: a level
+  // this page has never heard of, with the same gap, is just as silent.
+  ev(ctx, "OV.resp.trust.trustLevel = 'SOMETHING_NEW'; renderMastChrome();");
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), true);
+  ev(ctx, "OV.resp.trust.knownGaps = []; renderMastChrome();");
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), false, 'a gap the engine did not report is not this one');
+  assert.equal(byId.get('mtrust').textContent, 'SOMETHING_NEW', 'a level with no wording is printed as it arrived');
+});
+
+test('the evidence rail still carries the level, with the two ways to change it on its hover', async (t) => {
+  const { ctx } = await bootPage(t);
+  // The masthead is silent about a project with no golden set. The rail is where
+  // the level stands, and a reader who wants to move it needs to be told how, or
+  // "not certified" is a dead end rather than a disclosure.
+  const raw = await ev(ctx, `(async () => {
+    const r = await api('overview', {});
+    const rail = honesty(r, 'probe-trust');
+    const chips = rail.querySelectorAll('span.railchip').map((c) => ({ text: c.textContent, title: c.title }));
+    return JSON.stringify({ chips, level: r.trust.trustLevel, gaps: r.trust.knownGaps });
+  })()`);
+  const got = JSON.parse(raw);
+  const trustChip = got.chips.find((c) => c.text === got.level);
+  assert.ok(trustChip, `the rail prints the engine's own level: ${JSON.stringify(got.chips)}`);
+  assert.match(trustChip.title, /no approved golden set/, 'what the level MEANS');
+  assert.match(trustChip.title, /cascade golden propose --from-otel/, 'the second way: label the checks from a run');
+  assert.match(trustChip.title, /cascade golden approve/, 'the first way: a human approves a golden set');
+  assert.match(trustChip.title, /trust\.trustLevel/, 'and the contract field it came from');
+});
+
+test('a level that rests on a RUN says so, in amber, and says what it does not cover', async (t) => {
+  const { ctx, byId } = await bootPage(t);
   const cls = () => byId.get('mtrustchip').className.split(/\s+/);
-  assert.equal(cls().includes('bad'), false, 'an uncertified pack is never painted as an error');
-  assert.equal(cls().includes('ok'), false, 'and never as a passing build');
+  // The engine's own level and its own reasons. The page holds no list of levels
+  // (SPEC §14.3): it derives the wording key from whatever value arrived.
+  ev(ctx, `OV.resp.trust.trustLevel = 'RUNTIME_PASS';
+    OV.resp.trust.knownGaps = ['project-golden-below-minimum'];
+    OV.resp.trust.gatesNotShown = ['golden:column->endpoints', 'golden:statement->columns'];
+    renderMastChrome();`);
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), false, 'there IS a golden set here');
+  assert.equal(byId.get('mtrust').textContent, 'checked against what ran');
+  assert.equal(byId.get('mtrustsr').textContent, 'trust checked against what ran');
+  assert.equal(cls().includes('warn'), true, 'the soft amber, because checks were held back');
+  assert.equal(cls().includes('bad'), false, 'and never the error red');
+  const title = byId.get('mtrustchip').title;
+  assert.match(title, /trust RUNTIME_PASS/, "the engine's own term, verbatim");
+  assert.match(title, /recording of the program running/);
+  assert.match(title, /do not cover precision/);
+  assert.match(title, /golden:column->endpoints/, 'the checks it could not score are named');
+  assert.match(title, /golden:statement->columns/);
+  assert.equal(/cascade golden propose --from-otel/.test(title), false,
+    'the how-to belongs to the state that has no golden set at all');
+});
 
-  // With nothing held back it is plain. This is the line that changed: the same
-  // state used to take the `ok` tint and read like a certified pack.
-  ev(ctx, 'OV.resp.trust.gatesNotShown = []; OV.resp.trust.knownGaps = []; renderMastChrome();');
-  assert.deepEqual(cls(), ['mchip', 'quiet']);
-  assert.equal(byId.get('mtrust').textContent, 'not certified');
+test('a golden set that passes, and one that fails, each keep their chip', async (t) => {
+  const { ctx, byId } = await bootPage(t);
+  const cls = () => byId.get('mtrustchip').className.split(/\s+/);
+  ev(ctx, `OV.resp.trust.trustLevel = 'GOLDEN_PASS';
+    OV.resp.trust.knownGaps = []; OV.resp.trust.gatesNotShown = []; renderMastChrome();`);
+  assert.equal(byId.get('mtrustchip').classList.contains('hidden'), false);
+  assert.equal(byId.get('mtrust').textContent, 'checks passing');
+  assert.deepEqual(cls(), ['mchip', 'quiet'], 'nothing held back, so nothing tinted');
+  assert.match(byId.get('mtrustchip').title, /trust GOLDEN_PASS/);
 
-  // A gate it could not show, or a gap it knows about, is the soft amber — read
-  // off the engine's own REASONS, never off the level's name. Still not red.
-  ev(ctx, "OV.resp.trust.knownGaps = ['the sql lane was read without the java one']; renderMastChrome();");
-  assert.equal(cls().includes('warn'), true, 'a held gap is disclosed');
-  assert.equal(cls().includes('bad'), false, 'a known blind spot is still not an error');
-  assert.match(byId.get('mtrustchip').title, /the sql lane was read without the java one/);
-  assert.equal(byId.get('mtrust').textContent, 'not certified', 'and the level itself has not moved');
-
-  // A level with no plain wording here is printed exactly as it arrived: the
-  // page never renames a value it does not recognise.
-  ev(ctx, "OV.resp.trust.trustLevel = 'SOMETHING_NEW'; OV.resp.trust.knownGaps = []; renderMastChrome();");
-  assert.equal(byId.get('mtrust').textContent, 'SOMETHING_NEW');
+  ev(ctx, "OV.resp.trust.trustLevel = 'GOLDEN_FAIL'; renderMastChrome();");
+  assert.equal(byId.get('mtrust').textContent, 'checks failing');
+  assert.match(byId.get('mtrustchip').title, /did not match it/);
+  // Still not the error red: the tint is read off what the engine held back, and
+  // a corpus that disagrees is a finding to read, not a broken screen.
+  assert.equal(cls().includes('bad'), false);
 });
 
 test('a blind spot has a plain name, keeps the engine\'s kind on its tooltip, and is never red', async (t) => {

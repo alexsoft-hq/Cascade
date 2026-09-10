@@ -43,6 +43,19 @@ export const RELATIONS = Object.freeze([
 ]);
 
 /**
+ * The relation a corpus labelled by EXECUTION has to cover before it says
+ * anything at all: which tables a request touched.
+ *
+ * It is named here, once, because `src/core/trust.mjs` needs it and a level rule
+ * that typed the relation name would be a second source of truth for it. Why
+ * this relation and not another: it is the one an endpoint-to-table answer rests
+ * on, it is the one a trace can witness end to end (the request ran, the SQL ran
+ * under it), and a run that cannot show it has not exercised the product's
+ * central claim.
+ */
+export const RUNTIME_ANCHOR_RELATION = RELATIONS[1];
+
+/**
  * The §2.2 quality gate each relation borrows its targets from. The mapping is
  * written down here, with the row it came from, because §2.2's table is phrased
  * in terms of relations this engine implements under slightly different names —
@@ -195,6 +208,11 @@ export function answerFor(relation, input, ask) {
  * (a Graph in, sorted key lists out) so the sampling is testable without a pack
  * on disk.
  *
+ * `mapperMethods` is every symbol with an outgoing `IMPLEMENTS_STMT` edge: the
+ * MyBatis mapper methods and the Spring Data repository binders alike, because
+ * both are "the method that binds this statement" and the relation is about
+ * neither framework in particular.
+ *
  * @param {import('./graph.mjs').Graph} graph
  * @returns {{columns:string[], endpoints:string[], statements:string[],
  *            mapperMethods:string[], tables:string[]}}
@@ -208,12 +226,47 @@ export function inventoryOf(graph) {
     else if (n.kind === 'endpoint') inv.endpoints.push(key);
     else if (n.kind === 'statement') inv.statements.push(key);
     else if (n.kind === 'table') inv.tables.push(key);
-    // A mapper method is the symbol that BINDS statements, which is the method
-    // the `method -> statement` row of SPEC §2.2 is about.
-    if (n.kind === 'symbol' && n.mapperMethod === true) inv.mapperMethods.push(key);
   }
+  // A mapper method is the symbol that BINDS a statement, which is the method
+  // the `method -> statement` row of SPEC §2.2 is about. That is read off the
+  // EDGE and not off a flag: `mapperMethod` is the MyBatis lane's marker, and a
+  // Spring Data repository method binds a statement without ever carrying it.
+  // Reading the flag left every JPA project with an empty pool, so the relation
+  // was never sampled there and its population was zero — a relation nobody
+  // could measure, on the projects where the runtime lane matters most.
+  // `src/core/overview.mjs` has counted mapper methods this way all along.
+  const binders = new Set();
+  for (const e of graph.edges ?? []) {
+    if (e.type === 'IMPLEMENTS_STMT' && typeof e.from === 'string' && e.from.startsWith('symbol:')) binders.add(strip(e.from));
+  }
+  inv.mapperMethods = [...binders];
   for (const k of Object.keys(inv)) inv[k].sort();
   return inv;
+}
+
+/**
+ * How many inputs each relation COULD be asked about in this pack — the size of
+ * the population its cases are a sample of.
+ *
+ * This is what turns a small corpus into a CENSUS. A Wilson bound answers "what
+ * does this sample say about the population it was drawn from"; when the cases
+ * cover the whole population there is no population left to infer about, and the
+ * relation is scored on all of them (`goldenSummary`). spring-petclinic has 17
+ * endpoints, so 17 approved `endpoint->tables` cases are every endpoint there is.
+ *
+ * @param {ReturnType<typeof inventoryOf>} inventory
+ * @returns {Record<string,number>} one count per relation
+ */
+export function relationPopulations(inventory) {
+  const inv = inventory && typeof inventory === 'object' ? inventory : {};
+  const n = (list) => (Array.isArray(list) ? list.length : 0);
+  return {
+    'column->endpoints': n(inv.columns),
+    'endpoint->tables': n(inv.endpoints),
+    'statement->columns': n(inv.statements),
+    // The methods that BIND a statement, which is what this relation asks about.
+    'method->statements': n(inv.mapperMethods),
+  };
 }
 
 /**
@@ -331,8 +384,15 @@ export function approveCases(proposed, choice = {}) {
  * entirely — scoring it either way would be inventing evidence, and leaving it
  * out can only push a relation towards INSUFFICIENT_SAMPLE, which never passes.
  *
+ * Every result says WHERE its labels came from (`source`), because a corpus of
+ * runtime cases proves recall and nothing about precision, and a level computed
+ * from the summary has to be able to say which of the two it is looking at.
+ *
  * @param {Object[]} cases
- * @param {{ask:(name:string, args:Object)=>Object}} deps
+ * @param {{ask:(name:string, args:Object)=>Object,
+ *          population?:Record<string,number>}} deps  `population` is
+ *          `relationPopulations(inventoryOf(graph))`, so a corpus that covers
+ *          every input of a relation can be scored as the census it is
  * @returns {{results:Object[], summary:Object}}
  */
 export function checkCases(cases, deps = {}) {
@@ -341,24 +401,25 @@ export function checkCases(cases, deps = {}) {
   const results = [];
   for (const c of Array.isArray(cases) ? cases : []) {
     if (!RELATIONS.includes(c.relation)) {
-      results.push({ id: c.id, relation: c.relation, status: 'UNSCORABLE', reason: `unknown relation ${JSON.stringify(c.relation)}` });
+      results.push({ id: c.id, relation: c.relation, source: sourceOf(c), status: 'UNSCORABLE', reason: `unknown relation ${JSON.stringify(c.relation)}` });
       continue;
     }
     if (c.proposed === true || !c.approvedAt) {
-      results.push({ id: c.id, relation: c.relation, status: 'UNSCORABLE', reason: 'this case is a proposal, not an approved case. A human has to approve it before it can score anything, because a tool that approves its own proposals proves nothing' });
+      results.push({ id: c.id, relation: c.relation, source: sourceOf(c), status: 'UNSCORABLE', reason: 'this case is a proposal, not an approved case. A human has to approve it before it can score anything, because a tool that approves its own proposals proves nothing' });
       continue;
     }
     let a;
     try {
       a = answerFor(c.relation, c.input, ask);
     } catch (e) {
-      results.push({ id: c.id, relation: c.relation, status: 'FAIL', recallHit: false, precisionHit: false, reason: `the engine could not answer: ${e.message}` });
+      results.push({ id: c.id, relation: c.relation, source: sourceOf(c), status: 'FAIL', recallHit: false, precisionHit: false, reason: `the engine could not answer: ${e.message}` });
       continue;
     }
     if (a.truncated) {
-      results.push({ id: c.id, relation: c.relation, status: 'UNSCORABLE', reason: `the answer was truncated by the tool's own list cap, so it is not the engine's full answer. This case is left out of n rather than scored on a partial list` });
+      results.push({ id: c.id, relation: c.relation, source: sourceOf(c), status: 'UNSCORABLE', reason: `the answer was truncated by the tool's own list cap, so it is not the engine's full answer. This case is left out of n rather than scored on a partial list` });
       continue;
     }
+    if (assertsNothing(c)) { results.push(emptyResult(c, a.ids)); continue; }
     const got = new Set(a.ids);
     if (c.sealed === true) {
       const probes = [...(c.probes ?? [])];
@@ -366,7 +427,7 @@ export function checkCases(cases, deps = {}) {
       const absent = probes.filter((p) => !got.has(p)).sort();
       const hit = expectationHash({ present, absent }) === c.expectHash;
       results.push({
-        id: c.id, relation: c.relation, sealed: true,
+        id: c.id, relation: c.relation, source: sourceOf(c), sealed: true,
         status: hit ? 'PASS' : 'FAIL', recallHit: hit, precisionHit: hit,
         reason: hit ? null : 'the sealed expectation hash does not match the engine\'s classification of the probe ids (the labels stay hidden, and only pass/fail is visible)',
       });
@@ -379,7 +440,7 @@ export function checkCases(cases, deps = {}) {
     const recallHit = missing.length === 0;
     const precisionHit = forbidden.length === 0;
     results.push({
-      id: c.id, relation: c.relation, sealed: false,
+      id: c.id, relation: c.relation, source: sourceOf(c), sealed: false,
       status: recallHit && precisionHit ? 'PASS' : 'FAIL',
       recallHit, precisionHit,
       missing, forbidden,
@@ -387,7 +448,42 @@ export function checkCases(cases, deps = {}) {
         : `${missing.length} expected id(s) missing, ${forbidden.length} forbidden id(s) returned`,
     });
   }
-  return { results, summary: goldenSummary(results) };
+  return { results, summary: goldenSummary(results, { population: deps.population }) };
+}
+
+/**
+ * The status of ONE relation, from its two bounds and how much of its population
+ * the cases cover.
+ *
+ * TWO RULES, AND THE ORDER MATTERS.
+ *
+ *  1. A CENSUS NEEDS NO BOUND. When the cases cover every input this relation
+ *     could be asked about in the pack (`population`), there is nothing left to
+ *     infer: the corpus IS the population. Every case right is PASS, however few
+ *     they are; one case wrong is FAIL, however many. A Wilson bound would be
+ *     answering a question nobody asked.
+ *
+ *     COVER means SCORED. `n` counts the cases that came back PASS or FAIL, so a
+ *     case left UNSCORABLE (a truncated answer, or a run that saw nothing where
+ *     the pack answers something) takes its input back OUT of the count, and the
+ *     relation is a sample again. A census with holes in it is a sample.
+ *  2. OTHERWISE THE SAMPLE FLOOR, exactly as before. SPEC §2.2, in its own
+ *     words: "if the sample is small, falling short even with no errors is
+ *     INSUFFICIENT_SAMPLE". A flawless 30-case relation cannot demonstrate a 95%
+ *     lower bound — the bound for 30/30 is 0.8865 — and calling that FAIL would
+ *     blame the engine for the size of the corpus. FAIL is reserved for a
+ *     relation that actually got something wrong.
+ *
+ * `population: 0` is NOT a census of nothing: a relation this pack cannot be
+ * asked about has no cases either, and letting 0 >= 0 read as PASS would turn
+ * every absent relation into a passing one.
+ */
+function relationStatus({ n, gated, enough, exhaustive }) {
+  if (exhaustive) return gated.every((b) => b.perfect) && n > 0 ? 'PASS' : 'FAIL';
+  if (!enough) return 'INSUFFICIENT_SAMPLE';
+  if (gated.every((b) => b.meets)) return 'PASS';
+  if (gated.every((b) => b.meets || b.perfect)) return 'INSUFFICIENT_SAMPLE';
+  return 'FAIL';
 }
 
 /**
@@ -396,9 +492,13 @@ export function checkCases(cases, deps = {}) {
  * that is silently absent reads as one that passed.
  *
  * @param {Object[]} results
+ * @param {{population?:Record<string,number>}} [opts]  how many inputs each
+ *        relation has in this pack (`relationPopulations`), so a corpus that
+ *        covers all of them is scored as a census rather than as a sample
  * @returns {Object}
  */
-export function goldenSummary(results) {
+export function goldenSummary(results, opts = {}) {
+  const populations = opts.population && typeof opts.population === 'object' ? opts.population : {};
   const relations = {};
   for (const relation of RELATIONS) {
     const rows = (results ?? []).filter((r) => r.relation === relation);
@@ -410,21 +510,25 @@ export function goldenSummary(results) {
     const enough = n >= MIN_CASES;
     const recall = bound(recallHits, n, targets.recall, enough);
     const precision = bound(precisionHits, n, targets.precision, enough);
-    // SPEC §2.2, in its own words: "if the sample is small, falling short even
-    // with no errors is INSUFFICIENT_SAMPLE". A flawless 30-case relation cannot
-    // demonstrate a 95% lower bound — the bound for 30/30 is 0.8865 — and
-    // calling that FAIL would blame the engine for the size of the corpus.
-    // FAIL is reserved for a relation that actually got something wrong.
     const gated = [recall, precision].filter((b) => b.target != null);
-    let status;
-    if (!enough) status = 'INSUFFICIENT_SAMPLE';
-    else if (gated.every((b) => b.meets)) status = 'PASS';
-    else if (gated.every((b) => b.meets || b.perfect)) status = 'INSUFFICIENT_SAMPLE';
-    else status = 'FAIL';
+    const population = Number.isInteger(populations[relation]) ? populations[relation] : null;
+    const exhaustive = population != null && population > 0 && n >= population;
     relations[relation] = {
       n, recallHits, precisionHits,
       unscorable: rows.length - n,
-      recall, precision, status,
+      // WHERE THE LABELS CAME FROM. A relation whose cases are all `runtime` was
+      // labelled by execution: its recall rests on what ran, and its precision
+      // rests on nothing at all, because a trace carries no negatives.
+      runtimeCases: scored.filter((r) => r.source === 'runtime').length,
+      handCases: scored.filter((r) => r.source !== 'runtime').length,
+      // ...and how many of them ASSERT NOTHING (a route a run reached with no
+      // statement under it). They are counted apart because a corpus of them is
+      // not a corpus: the ones the engine agrees with are a real agreement and
+      // the rest are UNSCORABLE, and both facts belong in the open.
+      emptyCases: rows.filter((r) => r.empty === true).length,
+      population, exhaustive,
+      recall, precision,
+      status: relationStatus({ n, gated, enough, exhaustive }),
       specRow: targets.specRow,
     };
   }
@@ -475,6 +579,56 @@ export function parseCases(text) {
 // ---------------------------------------------------------------------------
 // internals
 // ---------------------------------------------------------------------------
+
+/**
+ * Where a case's labels came from. `runtime` is a case a trace proposed, and it
+ * is the only value written down: anything else is a human who read a proposal.
+ */
+const sourceOf = (c) => (c && c.source === 'runtime' ? 'runtime' : 'sample');
+
+/**
+ * A case that asserts NOTHING: no id must be present, and none must be absent.
+ *
+ * Only a trace writes one. A route was exercised and no statement ran under that
+ * request, so the honest label is the empty list — the run has nothing to say
+ * about this input beyond having reached it.
+ */
+function assertsNothing(c) {
+  if (c.sealed === true) return (c.probes ?? []).length === 0;
+  return (c.expect?.present ?? []).length === 0 && (c.expect?.absent ?? []).length === 0;
+}
+
+/**
+ * How a case that asserts nothing is scored, and it is NOT "everything it asked
+ * for was there".
+ *
+ * PASS only where the engine's answer is empty too. That is two independent
+ * sources agreeing that this input reads nothing, which is a real agreement and
+ * the only thing an empty label can demonstrate.
+ *
+ * Otherwise UNSCORABLE, and it is left out of `n` entirely. The pack says this
+ * route reaches tables and the run did not go there: the request may simply not
+ * have taken that branch, and neither "the engine was wrong" nor "the engine was
+ * right" follows from it. Counting it as a pass is what would turn a run that
+ * touched no database at all into a corpus that certifies one.
+ */
+function emptyResult(c, ids) {
+  const answered = [...new Set(ids ?? [])];
+  if (answered.length === 0) {
+    return {
+      id: c.id, relation: c.relation, source: sourceOf(c), sealed: c.sealed === true, empty: true,
+      status: 'PASS', recallHit: true, precisionHit: true,
+      missing: [], forbidden: [],
+      reason: null,
+    };
+  }
+  return {
+    id: c.id, relation: c.relation, source: sourceOf(c), sealed: c.sealed === true, empty: true,
+    status: 'UNSCORABLE',
+    reason: `the run saw no statement under this route and the pack answers ${answered.length} table(s). `
+      + 'The request may not have taken that branch, so there is nothing to compare',
+  };
+}
 
 /** Deterministic order seeded by a string — the same seed always samples the same. */
 export function seededOrder(keys, seed) {

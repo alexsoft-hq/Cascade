@@ -26,10 +26,18 @@ engine follows, step by step, with a count on each step: api groups, endpoints,
 services, SQL, tables, columns. The counts are the `overview` answer's own; the
 page counts nothing itself.
 
-Beside them are three chips.
+Beside them are up to three chips.
 
 - **freshness** says whether the pack still matches your working tree.
-- **trust** is the computed trust level, never a typed-in one.
+- **trust** is the computed trust level, never a typed-in one, and it appears
+  only when there is something to say. A project with no approved golden set gets
+  **no chip at all**: `not certified` was true of nearly every project anybody
+  has ever opened, and a reader could do nothing about it from the masthead. The
+  level still stands in the evidence rail beside every answer, and its hover
+  there names the two things that move it (approve a golden set, or label the
+  checks from a recording of the program with `cascade golden propose
+  --from-otel`). A level that rests on a run reads `checked against what ran`,
+  in amber, and its hover says what a run cannot cover.
 - **limits** is a count. Click it and every limit the engine wrote opens
   underneath, word for word. It is the same fold the evidence rail beside each
   answer carries, so the sentences appear once and in one voice.

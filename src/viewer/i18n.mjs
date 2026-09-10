@@ -170,7 +170,13 @@ export const VIEWER_STRINGS = {
     'mast.trust.golden_pass.title': 'this project has an approved golden set and the last run matched it, so the answer as a whole was scored.',
     'mast.trust.golden_fail': 'checks failing',
     'mast.trust.golden_fail.title': 'this project has an approved golden set and the last run did not match it, so read what is here against that.',
+    'mast.trust.runtime_pass': 'checked against what ran',
+    'mast.trust.runtime_pass.title': 'the checks behind this were labelled by a recording of the program running, so they show that the answer covered what actually ran. They do not cover precision, and they say nothing about a route nobody exercised. The names beside this are the checks that could not be scored.',
     'mast.trust.none.title': 'no answer has come back yet, so there is no trust level to show.',
+    // The way out of "not certified", which is the state almost every project is
+    // in. Said here rather than on a chip: the masthead is silent about it now,
+    // and this is the tooltip a reader who wants to change it will reach for.
+    'mast.trust.how': 'two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.',
     'legend.grade': 'how sure each line is:',
     // ---- the cascade rail (the header's second line) ---------------------
     // The six steps of the chain this engine follows, in the order it walks it.

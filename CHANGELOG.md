@@ -10,7 +10,81 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **Golden cases proposed from an execution trace:** `cascade golden propose
+  --from-otel <trace>` (repeatable; an OTLP/JSON document or the Java agent's own
+  log, told apart by reading them). A proposal sampled from the pack is right by
+  construction, so it carries no weight until a person reads it, and almost
+  nobody ever does. This takes the labels from the one place the analyzer cannot
+  reach: the program running. Every route the trace exercised becomes an
+  `endpoint->tables` case carrying the tables of every statement that ran under
+  that request, and every method that ran SQL becomes a `method->statements`
+  case. Repeated observations of one input merge into one case (the union of the
+  tables, with the counts and the time window on it). A route or a method this
+  pack does not know stays out and is counted in one line, so nothing is
+  invented, and the route matching is the runtime census's own rather than a
+  second reading of the graph. The other two relations are questions no single
+  run answers, and the command says so instead of shipping half a corpus.
+  Execution proves REACH, so a runtime case carries no `absent` ids and scores
+  recall alone: it can show the answer covered what ran, and it can never show
+  precision. A human still stamps the approval, and for these `--all` is the
+  expected path, because what they are agreeing to is that the recording is a
+  fair one rather than that the analyzer was right.
+  A route a run reached with no statement under it asserts NOTHING, and an empty
+  assertion is scored one way only: `PASS` where the pack answers no table either
+  (two independent sources, one reading the code and one running it, agreeing that
+  this route reads nothing), and `UNSCORABLE` where the pack answers tables the
+  run never touched, because the request may not have taken that branch and
+  neither verdict follows. Counting those as passes is what would have let a run
+  that touched no database at all certify one. `propose` says how many of the
+  cases it wrote assert nothing, and `check` prints that count and the unscorable
+  one per relation (`emptyCases`, `unscorable` in the summary).
+- **A relation whose cases cover its whole population is scored as the census it
+  is** (`population`, `exhaustive` in the golden summary). A Wilson bound says
+  what a SAMPLE implies about the population it came from; when the corpus IS the
+  population there is nothing left to infer, so every case right is `PASS` even
+  below the 30-case floor, and one case wrong is `FAIL` however small the corpus.
+  spring-petclinic has 17 endpoints, and under the floor alone its
+  `endpoint->tables` row could never have been shown at all. COVERED MEANS
+  SCORED: only the cases that came back PASS or FAIL count, so one left
+  UNSCORABLE takes its input back out and the relation is a sample again. The
+  flag is not believed on the way back in either: `src/core/trust.mjs` compares
+  the counts again.
+- **The `method->statements` population is every symbol that BINDS a statement**,
+  read off the `IMPLEMENTS_STMT` edge instead of off the MyBatis lane's
+  `mapperMethod` flag. A Spring Data repository method binds a statement and never
+  carries that flag, so on a JPA project the pool was empty: the relation was
+  never sampled, `propose` reported "0 candidates", and its population was zero,
+  on exactly the projects where a runtime trace matters most. spring-petclinic
+  goes from 0 to 6. This widens hand-sampling there too, which is the improvement:
+  `golden propose` now offers those six methods for approval like any MyBatis
+  mapper method. `src/core/overview.mjs` has counted mapper methods this way all
+  along.
+- **A trust level for what RAN: `RUNTIME_PASS`**, between `GOLDEN_FAIL` and
+  `GOLDEN_PASS`. It says the gate passes, nothing FAILED, `endpoint->tables`
+  PASSED, and at least one passing relation rests only on cases a trace labelled.
+  What it claims is exactly what execution can show, which is why it is its own
+  level: the answer covered what actually ran. It claims nothing about precision,
+  and nothing about a route nobody exercised. A relation that could not be scored
+  does not hold it down: it is named in `trust.gatesNotShown` as before, because
+  "this was measured and passed" and "these were not measured" are two facts and
+  demoting the first loses both. Three of the four relations sit in that state
+  after a first trace and no amount of tracing moves them.
+
 ### Changed
+
+- **The masthead trust chip is silent where it used to shout.** A project with no
+  approved golden set now gets no chip at all: `not certified` was true of nearly
+  every project anybody has ever opened, and nothing on the masthead let a reader
+  do anything about it. The level still stands in the evidence rail beside every
+  answer, and its hover there says what the level means plus the two things that
+  move it (approve a golden set, or label the checks from a recording with
+  `golden propose --from-otel`). A `RUNTIME_PASS` answer wears `checked against
+  what ran` in amber, and its hover names the checks that were not scored and
+  says that precision is not covered. The chip reads the engine's own REASON
+  (`no-project-golden`) rather than the level's name: the page still holds no
+  list of levels.
 
 - **Internal surface: `duplicateFqnCensus` is no longer re-exported from
   `src/adapters/java_bridge.mjs`.** A stray `export` keyword had been exporting
@@ -23,6 +97,10 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Fixed
 
+- **`cascade view --port 0` prints the port it actually got.** `serveHttp`
+  resolved with the port it was ASKED for, so a run with `--port 0` (ask the
+  kernel for a free one) printed `http://127.0.0.1:0/` and nobody could open it.
+  It now resolves with `server.address().port`, and the `view` line prints that.
 - **`cascade <command> --help` explains the command instead of running it.**
   It printed nothing: no branch read the flag, so it fell through to the command
   body and the command did its job. `cascade analyze --help` analyzed the

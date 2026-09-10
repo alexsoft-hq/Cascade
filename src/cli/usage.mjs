@@ -91,8 +91,11 @@ export const USAGE = Object.freeze({
     + '       against the one that signed it, and refuse an expired receipt. Exit 4 on any disagreement)\n',
   golden:
     '  cascade golden <propose|approve|seal|check> [--pack <dir> | --project <id> | --root <dir>]\n'
+    + '                 [--per-relation N] [--from-otel <trace file>] [--ids <id>…] [--all] [--json]\n'
     + '      (the project golden corpus. propose SUGGESTS cases from the current pack; only\n'
-    + '       `approve --ids …` / an explicit `--all` makes one evidence. The tool never approves itself.)\n',
+    + '       `approve --ids …` / an explicit `--all` makes one evidence. The tool never approves itself.\n'
+    + '       --from-otel proposes from an OpenTelemetry trace instead, so the labels come from a RUN\n'
+    + '       rather than from this engine. A run proves reach, so those cases score recall only.)\n',
   catalog:
     '  cascade catalog discover [--root <dir>] [--json]\n'
     + '      (list the datasource connection info this tree carries: host, port, database, dialect,\n'

@@ -192,6 +192,10 @@ function leadOf(text){
 // shown/total. Those are the COUNTS, and they never fold: what folds is the
 // sentences. `scope` names which answer this rail is beside, so two rails on
 // two tabs remember their own open blocks.
+//
+// The trust chip's HOVER (`trustWhy`) is what the level means, and this is where
+// it stands: the masthead is silent about a project with no golden set, so the
+// two ways to change that are said here, beside the level itself.
 function honesty(resp, scope) {
   const k = 'rail.'+(scope||'x');
   const b = resp.basis||{}, tt = resp.trust||{}, tr = resp.truncated||{};
@@ -201,7 +205,7 @@ function honesty(resp, scope) {
   // GLANCE. The trust level and the freshness verdict are the engine's own
   // words and are printed as they arrived, here and in the folds below.
   const chips=el('div',{className:'railchips'},[
-    chip(tt.trustLevel||'trust unknown', 'trust.trustLevel'),
+    chip(tt.trustLevel||'trust unknown', trustWhy(tt)),
     chip('freshness '+((b.freshness&&b.freshness.verdict)||'unknown'), 'basis.freshness.verdict'),
   ]);
   const bodies=[];

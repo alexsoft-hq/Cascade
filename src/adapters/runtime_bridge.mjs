@@ -54,6 +54,7 @@
 import { routeMatches, normalizeUrlPath } from './web_bridge.mjs';
 import { symbolId } from './java_bridge.mjs';
 import { nodeId } from '../core/graph.mjs';
+import { caseId, GOLDEN_CASE_SCHEMA } from '../core/golden.mjs';
 
 /** The attribute pair naming the class and method a span ran in. */
 export const CODE_NAMESPACE_KEYS = Object.freeze(['code.namespace']);
@@ -273,11 +274,16 @@ function resourceSpansOnLine(line) {
  * requests through one chain is a handful of records with counts on them, and
  * the output is sorted, so the same trace always reads the same way.
  *
+ * `routeTables` is the one thing folding by identity cannot say: WHICH tables a
+ * request touched. It keeps one row per route with the tables of every SQL span
+ * that ran under it (`foldRouteTables`), which is what a golden case built from
+ * a trace needs.
+ *
  * @param {string} text  the file's bytes as UTF-8
  * @param {{file?:string}} [opts]  the name to put on the evidence
  * @returns {{file:string, observations:object[], spans:number, usableSpans:number,
  *            unusable:number, services:string[], window:({from:string,to:string}|null),
- *            form:('document'|'log'|null), skippedLines:number,
+ *            form:('document'|'log'|null), skippedLines:number, routeTables:object[],
  *            unreadable:(string|null)}}
  */
 /**
@@ -503,11 +509,64 @@ return {
 }
 
 
+/**
+ * 4. WHAT RAN UNDER EACH REQUEST. The folded observations above are keyed by
+ * WHAT was seen and lose WHERE it was seen, and one question needs that: which
+ * tables did a request touch? So this walks each SQL span's parent chain up to
+ * the nearest server span and puts the tables in that route's bucket.
+ *
+ * A SQL span with no route above it belongs to no request — a startup seed, a
+ * scheduled job, a warm-up — and is left out rather than attributed to whichever
+ * route ran next. A route with no SQL under it keeps an empty table list, which
+ * is the honest record of a request that read nothing.
+ *
+ * @param {Map<string,object>} spans
+ * @param {string[]} order
+ * @returns {{httpMethod:string, path:string, tables:string[], requests:number,
+ *            statementSpans:number}[]}  sorted by method then path
+ */
+function foldRouteTables(spans, order) {
+  const routeAncestorOf = (rec) => {
+    let cur = rec;
+    const seen = new Set();
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      if (cur.facets.route) return cur.facets.route;
+      cur = cur.parentId === null ? null : spans.get(cur.parentId) ?? null;
+    }
+    return null;
+  };
+  const buckets = new Map(); // "METHOD path" -> {httpMethod, path, tables:Set, ...}
+  const bucket = (route) => {
+    const key = `${route.httpMethod} ${route.path}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { httpMethod: route.httpMethod, path: route.path, tables: new Set(), requests: 0, statementSpans: 0 };
+      buckets.set(key, b);
+    }
+    return b;
+  };
+  for (const id of order) {
+    const rec = spans.get(id);
+    if (rec.facets.route) bucket(rec.facets.route).requests += 1;
+    if (rec.facets.sql === null) continue;
+    const route = routeAncestorOf(rec);
+    if (!route) continue;
+    const b = bucket(route);
+    b.statementSpans += 1;
+    for (const t of tablesInSql(rec.facets.sql)) b.tables.add(t);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => cmp(a[0], b[0]))
+    .map(([, b]) => ({ ...b, tables: [...b.tables].sort() }));
+}
+
+
 export function readOtelTrace(text, opts = {}) {
   const file = typeof opts.file === 'string' ? opts.file : '(otel)';
   const empty = (unreadable) => ({
     file, observations: [], spans: 0, usableSpans: 0, unusable: 0, services: [], window: null,
-    form: null, skippedLines: 0, unreadable,
+    form: null, skippedLines: 0, routeTables: [], unreadable,
   });
   const source = String(text);
 
@@ -515,9 +574,10 @@ export function readOtelTrace(text, opts = {}) {
   if (unreadable) return unreadable;
   const { spans, order, services, total } = flattenSpans(resourceSpans);
   const methodAncestorOf = methodAncestors(spans);
-  return foldObservations({
+  const folded = foldObservations({
     file, form, spans, order, services, total, methodAncestorOf, skippedLines,
   });
+  return { ...folded, routeTables: foldRouteTables(spans, order) };
 }
 
 
@@ -708,15 +768,7 @@ export function addRuntimeFacts(g, traces, opts = {}) {
   };
 
   // The routes this pack SERVES, keyed the way the web and HAR bridges key them.
-  const routesByPath = new Map();
-  const allRoutes = [];
-  for (const n of g.nodes.values()) {
-    if (n.kind !== 'endpoint' || n.outbound === true || typeof n.path !== 'string') continue;
-    const p = normalizeUrlPath(n.path);
-    if (!routesByPath.has(p)) { routesByPath.set(p, []); allRoutes.push(p); }
-    routesByPath.get(p).push({ id: n.id, httpMethod: n.httpMethod ?? 'ANY' });
-  }
-  allRoutes.sort();
+  const { routesByPath, allRoutes } = servedRouteIndex(g);
 
   const unmatched = new Map();
   const noteUnmatched = (kind, key) => {
@@ -807,6 +859,27 @@ export function addRuntimeFacts(g, traces, opts = {}) {
 }
 
 /**
+ * The routes this pack SERVES, indexed for `matchRoute`. One reading of the
+ * graph, shared by the census and by the golden fold, so the two can never come
+ * to different conclusions about which endpoint a recorded route is.
+ *
+ * @param {import('../core/graph.mjs').Graph} g
+ * @returns {{routesByPath:Map<string,{id:string,httpMethod:string}[]>, allRoutes:string[]}}
+ */
+function servedRouteIndex(g) {
+  const routesByPath = new Map();
+  const allRoutes = [];
+  for (const n of g.nodes.values()) {
+    if (n.kind !== 'endpoint' || n.outbound === true || typeof n.path !== 'string') continue;
+    const p = normalizeUrlPath(n.path);
+    if (!routesByPath.has(p)) { routesByPath.set(p, []); allRoutes.push(p); }
+    routesByPath.get(p).push({ id: n.id, httpMethod: n.httpMethod ?? 'ANY' });
+  }
+  allRoutes.sort();
+  return { routesByPath, allRoutes };
+}
+
+/**
  * The route this pack serves that a recorded route names: exact path first, then
  * through the route TEMPLATE, so `/brand/detail/42` reaches `/brand/detail/{id}`.
  * @returns {{id:string, httpMethod:string}|null}
@@ -821,6 +894,186 @@ function matchRoute(routesByPath, allRoutes, path, httpMethod) {
     if (hit.length > 0) return hit[0];
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// GOLDEN CASES FROM A TRACE
+//
+// A project golden needs LABELS somebody did not read off the analyzer, and the
+// running program is the one source of those. What execution can witness is
+// REACH: this route ran, and these tables were touched under it. So a case built
+// here carries positives and NO negatives, and scores recall only — a request
+// that did not touch a table proves nothing about whether it could have.
+//
+// The matching is the census's own (`servedRouteIndex` + `matchRoute`, and the
+// statement/symbol node ids `addRuntimeFacts` looks up), so a route this fold
+// calls "the GET /owners endpoint" is the same node the runtime marks observed.
+// ---------------------------------------------------------------------------
+
+/** The node key a case's input and expectation use: the id minus its kind. */
+const keyOf = (id) => String(id).slice(String(id).indexOf(':') + 1);
+
+/**
+ * The accumulator the fold below writes into: one case per (relation, input),
+ * merged across every observation and every trace that witnessed it.
+ *
+ * MERGED, NOT LAST-ONE-WINS. Two requests through one route, or two traces from
+ * two days, are one case whose expectation is the UNION of what was seen: every
+ * table either request touched really was touched. The counts add up and the
+ * window widens, so the case still says how much running it rests on.
+ *
+ * @param {string} packDigest  the pack the ids were matched against
+ */
+function caseFold(packDigest) {
+  const rows = new Map();
+  return {
+    add(relation, input, present, from) {
+      const id = caseId({ relation, input });
+      let r = rows.get(id);
+      if (!r) {
+        r = { id, relation, input, present: new Set(), files: new Set(), spans: 0, observed: 0, from: null, to: null };
+        rows.set(id, r);
+      }
+      for (const p of present) r.present.add(p);
+      r.files.add(from.file);
+      r.spans += from.spans ?? 0;
+      r.observed += from.observed ?? 0;
+      if (from.window) {
+        if (r.from === null || from.window.from < r.from) r.from = from.window.from;
+        if (r.to === null || from.window.to > r.to) r.to = from.window.to;
+      }
+      return r;
+    },
+    cases() {
+      return [...rows.values()].sort((a, b) => cmp(a.id, b.id)).map((r) => ({
+        schema: GOLDEN_CASE_SCHEMA,
+        id: r.id,
+        relation: r.relation,
+        input: r.input,
+        // NO NEGATIVES, EVER, from a trace: `absent` is the list a precision
+        // number is made of, and execution cannot fill it in. A case with an
+        // empty `absent` scores recall and leaves precision unproven.
+        expect: { present: [...r.present].sort(), absent: [] },
+        source: 'runtime',
+        proposed: true,
+        approvedAt: null,
+        proposedFrom: {
+          packDigest,
+          tool: 'otel',
+          file: [...r.files].sort()[0],
+          traces: r.files.size,
+          spans: r.spans,
+          observed: r.observed,
+          window: r.from !== null && r.to !== null ? { from: r.from, to: r.to } : null,
+        },
+      }));
+    },
+  };
+}
+
+/**
+ * Fold one trace's ROUTES into `endpoint->tables` cases: for every route this
+ * pack serves, the tables of every SQL span that ran under a request to it.
+ *
+ * A route the pack does not serve is COUNTED, never invented: a trace of another
+ * service, an actuator endpoint, a route added after this pack was built.
+ */
+function foldRouteCases(rec, fold, ctx) {
+  const { routesByPath, allRoutes, stats, unmatched } = ctx;
+  for (const row of rec.routeTables ?? []) {
+    const hit = matchRoute(routesByPath, allRoutes, row.path, row.httpMethod);
+    if (!hit) {
+      stats.unmatched.endpoint += 1;
+      const k = `endpoint|${row.httpMethod} ${row.path}`;
+      unmatched.set(k, (unmatched.get(k) ?? 0) + 1);
+      continue;
+    }
+    fold.add('endpoint->tables', { endpoint: keyOf(hit.id) }, row.tables, {
+      file: rec.file, spans: row.statementSpans, observed: row.requests, window: rec.window,
+    });
+    stats.routes += 1;
+    if (row.tables.length === 0) stats.routesWithNoStatement += 1;
+  }
+}
+
+/**
+ * Fold one trace's STATEMENT observations into `method->statements` cases: the
+ * method a SQL span ran inside, and the statement node named after it.
+ *
+ * The owner is the NEAREST enclosing method span (`readOtelTrace` decided that),
+ * which is what the relation is about: the statements a method BINDS, not
+ * everything its call chain eventually reaches.
+ */
+function foldStatementCases(rec, fold, ctx) {
+  const { g, stats, unmatched } = ctx;
+  for (const o of rec.observations ?? []) {
+    if (o.kind !== 'statement') continue;
+    const note = (key) => {
+      stats.unmatched.statement += 1;
+      const k = `statement|${key}`;
+      unmatched.set(k, (unmatched.get(k) ?? 0) + 1);
+    };
+    if (o.ownerType === null || o.method === null) {
+      note(`(no method above this SQL) ${o.tables.join(', ') || '(no table read)'}`);
+      continue;
+    }
+    const member = `${o.ownerType}#${o.method}`;
+    const stmtId = nodeId('statement', `${o.ownerType}.${o.method}`);
+    if (!g.nodes.has(symbolId(member)) || !g.nodes.has(stmtId)) { note(member); continue; }
+    fold.add('method->statements', { symbol: member }, [keyOf(stmtId)], {
+      file: rec.file, spans: o.count, observed: o.count, window: rec.window,
+    });
+    stats.statements += 1;
+  }
+}
+
+/**
+ * Golden cases proposed from execution: every trace's routes and statements,
+ * matched to this pack and folded into cases a human can approve.
+ *
+ * The two relations a trace can label are the two execution can witness. The
+ * other two (`column->endpoints`, `statement->columns`) are questions about what
+ * a change WOULD reach and what a statement touches, and no single run answers
+ * either, so nothing is proposed for them and the caller says so out loud.
+ *
+ * @param {import('../core/graph.mjs').Graph} g
+ * @param {ReturnType<typeof readOtelTrace>[]} traces
+ * @param {{packDigest:string, unmatchedListed?:number}} opts
+ * @returns {{cases:object[], relations:Object, unmatchedKeys:object[],
+ *            unreadable:object[], stats:Object}}
+ */
+export function otelGoldenCases(g, traces, opts = {}) {
+  const listed = Number.isInteger(opts.unmatchedListed) && opts.unmatchedListed > 0
+    ? opts.unmatchedListed : UNMATCHED_LISTED;
+  const fold = caseFold(typeof opts.packDigest === 'string' ? opts.packDigest : '');
+  const stats = {
+    files: 0, routes: 0, statements: 0, routesWithNoStatement: 0,
+    unmatched: { endpoint: 0, statement: 0 },
+  };
+  const unmatched = new Map();
+  const unreadable = [];
+  const { routesByPath, allRoutes } = servedRouteIndex(g);
+  const ctx = { g, routesByPath, allRoutes, stats, unmatched };
+  for (const rec of Array.isArray(traces) ? traces : []) {
+    if (!rec || typeof rec !== 'object') continue;
+    stats.files += 1;
+    if (rec.unreadable) { unreadable.push({ file: rec.file, reason: rec.unreadable }); continue; }
+    foldRouteCases(rec, fold, ctx);
+    foldStatementCases(rec, fold, ctx);
+  }
+  const cases = fold.cases();
+  const relations = {};
+  for (const c of cases) {
+    const r = relations[c.relation] ?? (relations[c.relation] = { cases: 0, present: 0, empty: 0 });
+    r.cases += 1;
+    r.present += c.expect.present.length;
+    if (c.expect.present.length === 0) r.empty += 1;
+  }
+  const unmatchedKeys = [...unmatched.entries()]
+    .sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]))
+    .slice(0, listed)
+    .map(([k, count]) => ({ kind: k.slice(0, k.indexOf('|')), key: k.slice(k.indexOf('|') + 1), count }));
+  return { cases, relations, unmatchedKeys, unreadable, stats };
 }
 
 /**

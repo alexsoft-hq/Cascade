@@ -5,9 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Graph, GRADE_SETS } from '../src/core/graph.mjs';
 import {
-  readOtelTrace, addRuntimeFacts, otelMethodsInclude, attrValue, attributesOf, spanFacets,
-  tablesInSql, spanTimeIso,
+  readOtelTrace, addRuntimeFacts, otelMethodsInclude, otelGoldenCases, attrValue, attributesOf,
+  spanFacets, tablesInSql, spanTimeIso,
 } from '../src/adapters/runtime_bridge.mjs';
+import { inventoryOf, relationPopulations, GOLDEN_CASE_SCHEMA } from '../src/core/golden.mjs';
 import { chainWalk } from '../src/core/chain.mjs';
 import { mallGraph, skipUnlessMall } from './helpers/mall_fixture.mjs';
 import { petclinicGraph, PETCLINIC_IDS } from './helpers/petclinic_graph.mjs';
@@ -760,4 +761,175 @@ test('the real capture marks what ran, keeps every grade, and adds exactly two R
 
   // The endpoint side: a route served, marked on the node.
   assert.equal(g.nodes.get(PETCLINIC_IDS.ownersEndpoint).observed, true);
+});
+
+// ---------------------------------------------------------------------------
+// RM53: golden cases from a trace
+//
+// The labels a project golden needs have to come from somewhere that is not the
+// analyzer. Execution is that somewhere, and what it can witness is REACH: this
+// route ran, and this SQL ran under it. So the cases below carry positives and
+// no negatives, and everything the pack does not know stays out.
+// ---------------------------------------------------------------------------
+
+const SYNTHETIC_FILE = path.join(ROOT, 'test', 'fixtures', 'otel', 'petclinic-synthetic-routes.json');
+const readTrace = (file) => readOtelTrace(fs.readFileSync(file, 'utf8'), { file: path.basename(file) });
+
+/** One request: a server span, and the SQL spans under it. */
+function requestDoc(requests, extraSpans = []) {
+  const spans = [];
+  requests.forEach((r, i) => {
+    const root = `r${i}`;
+    spans.push({
+      spanId: root, parentSpanId: '', name: `${r.method} ${r.route}`,
+      startTimeUnixNano: `${1767225600000000000 + i * 1000000}`,
+      attributes: [
+        { key: 'http.request.method', value: { stringValue: r.method } },
+        { key: 'http.route', value: { stringValue: r.route } },
+      ],
+    });
+    (r.sql ?? []).forEach((text, j) => {
+      // Nested one level deeper than the server span on purpose: a real capture
+      // puts a framework or a repository span in between, and the fold has to
+      // walk the chain rather than look at the parent.
+      spans.push({ spanId: `${root}m${j}`, parentSpanId: root, name: 'middle', attributes: [] });
+      spans.push({
+        spanId: `${root}s${j}`, parentSpanId: `${root}m${j}`, name: 'SELECT',
+        attributes: [{ key: 'db.statement', value: { stringValue: text } }],
+      });
+    });
+  });
+  return JSON.stringify({
+    resourceSpans: [{ resource: { attributes: [] }, scopeSpans: [{ spans: [...spans, ...extraSpans] }] }],
+  });
+}
+
+test('a trace says which tables ran UNDER each request, and repeats fold into one row', () => {
+  const rec = readOtelTrace(requestDoc([
+    { method: 'GET', route: '/owners', sql: ['select * from owners o'] },
+    { method: 'GET', route: '/owners', sql: ['select * from owners o', 'select * from pets p'] },
+    { method: 'GET', route: '/owners/find' },
+  ], [
+    // A statement that ran under NO request: the schema seed at startup, a
+    // scheduled job. It belongs to no route and is not given to the next one.
+    { spanId: 'seed', parentSpanId: '', name: 'INSERT', attributes: [{ key: 'db.statement', value: { stringValue: 'insert into vets values (?)' } }] },
+  ]), { file: 'two.json' });
+  assert.deepEqual(rec.routeTables, [
+    { httpMethod: 'GET', path: '/owners', tables: ['owners', 'pets'], requests: 2, statementSpans: 3 },
+    { httpMethod: 'GET', path: '/owners/find', tables: [], requests: 1, statementSpans: 0 },
+  ]);
+  // A route that ran no SQL keeps an empty list, which is the honest record of a
+  // request that read nothing, and is not the same as a route nobody called.
+  assert.equal(rec.routeTables[1].tables.length, 0);
+  // ...and an unreadable file has the field too, so a caller never branches on
+  // whether it is there.
+  assert.deepEqual(readOtelTrace('<html>', { file: 'x' }).routeTables, []);
+});
+
+test('cases from a trace: positives only, keyed to this pack, with the run beside them', () => {
+  const g = petclinicGraph();
+  const rec = readOtelTrace(requestDoc([
+    // The concrete path a request really carried, which has to reach the route
+    // TEMPLATE the pack serves — the same match the census makes.
+    { method: 'GET', route: '/owners/42', sql: ['select o1_0.id from owners o1_0 left join pets p1_0 on p1_0.owner_id=o1_0.id'] },
+    { method: 'GET', route: '/nowhere', sql: ['select * from owners'] },
+  ]), { file: 'one.json' });
+  const found = otelGoldenCases(g, [rec], { packDigest: 'deadbeef' });
+  assert.equal(found.cases.length, 1);
+  const c = found.cases[0];
+  assert.equal(c.schema, GOLDEN_CASE_SCHEMA);
+  assert.equal(c.relation, 'endpoint->tables');
+  assert.deepEqual(c.input, { endpoint: 'GET /owners/{ownerId}' });
+  assert.deepEqual(c.expect, { present: ['owners', 'pets'], absent: [] },
+    'execution proves reach and never absence, so a runtime case carries no negatives');
+  assert.equal(c.source, 'runtime');
+  assert.equal(c.proposed, true);
+  assert.equal(c.approvedAt, null, 'a trace proposes; a human still approves');
+  assert.deepEqual(c.proposedFrom, {
+    packDigest: 'deadbeef', tool: 'otel', file: 'one.json', traces: 1, spans: 1, observed: 1,
+    // WHEN it was seen, from the spans' own clock: a case built from a run is
+    // evidence about a moment, and a reader has to be able to ask how old it is.
+    window: { from: '2026-01-01T00:00:00.000Z', to: '2026-01-01T00:00:00.001Z' },
+  });
+  // The route nobody serves is COUNTED and named, never invented as an endpoint.
+  assert.equal(found.stats.unmatched.endpoint, 1);
+  assert.deepEqual(found.unmatchedKeys.filter((u) => u.kind === 'endpoint'),
+    [{ kind: 'endpoint', key: 'GET /nowhere', count: 1 }]);
+  assert.equal(g.nodes.has('endpoint:GET /nowhere'), false);
+});
+
+test('two traces of the same route are ONE case: the union of what each saw', () => {
+  const g = petclinicGraph();
+  const monday = readOtelTrace(requestDoc([{ method: 'GET', route: '/vets', sql: ['select * from vets v'] }]), { file: 'monday.json' });
+  const tuesday = readOtelTrace(requestDoc([
+    { method: 'GET', route: '/vets', sql: ['select * from vets v join vet_specialties vs on vs.vet_id=v.id'] },
+    { method: 'GET', route: '/vets', sql: ['select * from specialties s'] },
+  ]), { file: 'tuesday.json' });
+  const found = otelGoldenCases(g, [monday, tuesday], { packDigest: 'd' });
+  assert.equal(found.cases.length, 1);
+  assert.deepEqual(found.cases[0].expect.present, ['specialties', 'vet_specialties', 'vets']);
+  assert.equal(found.cases[0].proposedFrom.traces, 2);
+  assert.equal(found.cases[0].proposedFrom.observed, 3, 'three requests to it in all');
+  assert.equal(found.cases[0].proposedFrom.file, 'monday.json', 'the first witness, sorted, names the case');
+  assert.deepEqual(found.relations['endpoint->tables'], { cases: 1, present: 3, empty: 0 });
+});
+
+test('the real agent capture proposes what it saw, and nothing it could not place', () => {
+  const g = petclinicGraph();
+  const found = otelGoldenCases(g, [readTrace(AGENT_LOG_FILE)], { packDigest: 'petclinic' });
+  const byRelation = (rel) => found.cases.filter((c) => c.relation === rel);
+  // Ten of the seventeen routes were exercised, and every one of them matched.
+  assert.equal(byRelation('endpoint->tables').length, 10);
+  assert.equal(found.stats.unmatched.endpoint, 0);
+  assert.equal(found.stats.routesWithNoStatement, 3, 'three of the ten ran no SQL at all');
+  const owners = byRelation('endpoint->tables').find((c) => c.input.endpoint === 'GET /owners');
+  assert.deepEqual(owners.expect.present, ['owners', 'pets', 'types', 'visits']);
+  // Five repository methods ran SQL, and each names the statement the JPA lane
+  // keyed by that method.
+  assert.deepEqual(byRelation('method->statements').map((c) => c.input.symbol).sort(), [
+    'org.springframework.samples.petclinic.owner.OwnerRepository#findById',
+    'org.springframework.samples.petclinic.owner.OwnerRepository#findByLastNameStartingWith',
+    'org.springframework.samples.petclinic.owner.OwnerRepository#save',
+    'org.springframework.samples.petclinic.owner.PetTypeRepository#findPetTypes',
+    'org.springframework.samples.petclinic.vet.VetRepository#findAll',
+  ]);
+  const findById = byRelation('method->statements').find((c) => c.input.symbol.endsWith('#findById'));
+  assert.deepEqual(findById.expect.present, ['org.springframework.samples.petclinic.owner.OwnerRepository.findById']);
+  // The seed inserts at startup ran under no method and under no request: seven
+  // observations, counted and named, and not attributed to anything.
+  assert.equal(found.stats.unmatched.statement, 7);
+  assert.ok(found.unmatchedKeys.every((u) => u.key.startsWith('(no method above this SQL)') || u.kind === 'endpoint'));
+  // Two relations no single run can witness, so nothing is proposed for them.
+  assert.equal(byRelation('column->endpoints').length, 0);
+  assert.equal(byRelation('statement->columns').length, 0);
+});
+
+test('the synthetic capture covers every route, which is what makes the relation a census', () => {
+  const g = petclinicGraph();
+  const found = otelGoldenCases(g, [readTrace(SYNTHETIC_FILE)], { packDigest: 'petclinic' });
+  const population = relationPopulations(inventoryOf(g));
+  assert.equal(population['endpoint->tables'], 17);
+  assert.equal(found.cases.length, 17);
+  assert.equal(found.relations['endpoint->tables'].cases, population['endpoint->tables']);
+  assert.equal(found.relations['endpoint->tables'].empty, 8, 'eight routes ran no SQL, and that is what the pack says too');
+  assert.equal(found.stats.unmatched.endpoint, 0);
+  // It is SYNTHETIC and says so in its own first field, because a corpus built
+  // from a file whose labels came out of this engine proves nothing about this
+  // engine.
+  const doc = JSON.parse(fs.readFileSync(SYNTHETIC_FILE, 'utf8'));
+  assert.match(doc._comment, /^SYNTHETIC/);
+  // No host, no concrete URL, no process or thread attribute: the same rule the
+  // real capture is kept under.
+  const keys = new Set();
+  for (const rs of doc.resourceSpans) for (const sc of rs.scopeSpans) for (const sp of sc.spans) for (const a of sp.attributes) keys.add(a.key);
+  assert.deepEqual([...keys].sort(), ['db.sql.table', 'db.statement', 'db.system', 'http.request.method', 'http.route']);
+});
+
+test('an unreadable trace is reported, and stops nothing', () => {
+  const g = petclinicGraph();
+  const found = otelGoldenCases(g, [readOtelTrace('not a trace at all', { file: 'junk.log' }), readTrace(SYNTHETIC_FILE)], { packDigest: 'p' });
+  assert.equal(found.cases.length, 17, 'the readable one still proposed everything it saw');
+  assert.equal(found.unreadable.length, 1);
+  assert.equal(found.unreadable[0].file, 'junk.log');
+  assert.equal(found.stats.files, 2);
 });

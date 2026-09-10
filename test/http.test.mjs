@@ -688,6 +688,27 @@ test('serveHttp: /i18n/<lang>.json is served, and every escape from it is a 404'
   assert.equal((await fake.call('GET', '/i18n/en.json')).status, 404, 'English is compiled into the page, not served');
 });
 
+test('serveHttp binding port 0 resolves with the port the SOCKET got, not the 0 that was asked for', async () => {
+  // `--port 0` asks the kernel for a free port. The loop used to resolve with the
+  // number it was handed, so `cascade view --port 0` printed
+  // `http://127.0.0.1:0/` and nobody could open it. This is the one test here
+  // that really binds a socket, because `address()` is the thing under test.
+  const nodeHttp = (await import('node:http')).default;
+  const { server, port } = await serveHttp({
+    http: nodeHttp, port: 0, deps: makeDeps(), html: '<!doctype html><title>page</title>',
+  });
+  try {
+    assert.notEqual(port, 0, 'the resolved port must be the bound one');
+    assert.equal(port, server.address().port);
+    // ...and the URL a command prints out of it is one that opens.
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /<title>page<\/title>/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('serveHttp with no i18nDir: the route is simply absent, and the page still loads', async () => {
   const fake = fakeHttp();
   await serveHttp({ http: fake.module, port: 0, deps: makeDeps(), html: '<!doctype html><title>page</title>' });

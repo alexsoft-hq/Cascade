@@ -270,6 +270,74 @@ test('cascade golden: the tool proposes, a human approves, a hash seals, and che
   assert.ok(gs.goldenSummary.scored > 0);
 });
 
+test('cascade golden propose --from-otel: a RUN labels the cases, and nothing it cannot place', { timeout: 600000 }, (t) => {
+  const why = preflight();
+  if (why) { t.skip(why); return; }
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-golden-otel-'));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  const repo = makeRepo(path.join(work, 'repo'));
+  const cli = cliIn(work);
+  assert.equal(cli(analyzeArgs(repo)).status, 0);
+
+  // A capture of a route this pack does not serve, running a statement it does
+  // not have. Both are the normal case for a first trace: it came off a running
+  // system, and the pack is one service's reading of one tree.
+  const trace = path.join(work, 'trace.json');
+  fs.writeFileSync(trace, JSON.stringify({
+    resourceSpans: [{
+      resource: { attributes: [{ key: 'service.name', value: { stringValue: 'shop' } }] },
+      scopeSpans: [{
+        spans: [
+          {
+            spanId: 'aa01', parentSpanId: '', name: 'GET /items',
+            startTimeUnixNano: '1767225600000000000',
+            attributes: [
+              { key: 'http.request.method', value: { stringValue: 'GET' } },
+              { key: 'http.route', value: { stringValue: '/items' } },
+            ],
+          },
+          {
+            spanId: 'aa02', parentSpanId: 'aa01', name: 'SELECT shop_item',
+            startTimeUnixNano: '1767225600010000000',
+            attributes: [{ key: 'db.statement', value: { stringValue: 'select id, name from shop_item where id = ?' } }],
+          },
+        ],
+      }],
+    }],
+  }), 'utf8');
+
+  const r = cli(['golden', 'propose', '--root', repo, '--from-otel', trace]);
+  assert.equal(r.status, 0, r.stderr);
+  // This pack is SQL-lane only: it has statements and tables and no endpoint at
+  // all. So the one route observed matches nothing, and it is SAID rather than
+  // quietly dropped.
+  assert.match(r.stdout, /1 observed route\(s\) match no endpoint of this pack/);
+  assert.match(r.stdout, /unplaced endpoint GET \/items/);
+  assert.match(r.stdout, /column->endpoints\s+nothing: no single run witnesses this relation/);
+  assert.match(r.stdout, /wrote 0 PROPOSAL\(s\)/);
+  assert.match(r.stdout, /these labels came from a RUN/);
+  assert.match(r.stdout, /scores RECALL only/);
+  // Nothing was invented into the corpus, and nothing was approved by anybody.
+  const proposed = path.join(repo, '.cascade', 'golden', 'proposed.jsonl');
+  assert.equal(fs.readFileSync(proposed, 'utf8').trim(), '');
+  assert.equal(fs.existsSync(path.join(repo, '.cascade', 'golden', 'cases.jsonl')), false);
+
+  // A file that is not there is refused, and it says which one.
+  const missing = cli(['golden', 'propose', '--root', repo, '--from-otel', path.join(work, 'nope.json')]);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /no trace file at .*nope\.json/);
+
+  // `check` now says how much of each relation's population the corpus covers,
+  // which is what lets a small one be scored at all.
+  assert.equal(cli(['golden', 'propose', '--root', repo, '--per-relation', '3']).status, 0);
+  assert.equal(cli(['golden', 'approve', '--root', repo, '--all']).status, 0);
+  const checked = cli(['golden', 'check', '--root', repo]);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(checked.stdout, /statement->columns\s+INSUFFICIENT_SAMPLE\s+n=\s*1 of 2 input\(s\) this pack counts/);
+  assert.match(checked.stdout, /labels\s+1 hand-labelled and 0 from a run were scored, 0 case\(s\) of this relation assert nothing/);
+});
+
 // ---------------------------------------------------------------------------
 // The scratch directory outlives no exit path (the `.analyze-*` leak)
 // ---------------------------------------------------------------------------
