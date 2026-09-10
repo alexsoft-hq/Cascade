@@ -209,8 +209,9 @@ export function refuse({ session, dirtyFiles, entries, idx, profile, baseCommit,
  * reading convention. `jdk` is looked up at most once, and only if a `.java`
  * really changed: an overlay over an edited `.vue` must not need a compiler.
  */
-function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox }) {
+function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives }) {
   const mapperDirsAbs = (selection.mapperDirs ?? []).map(absOf);
+  const skipped = mapperAlternatives ?? [];
   const ddlRels = selection.ddls ?? (selection.ddl ? [selection.ddl] : []);
   const ddlAbsList = ddlRels.map(absOf);
   const pyRes = sqlPython();
@@ -226,7 +227,22 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
       }
       return runJavaLane(jdkBox.jdk, rootAbs, targets);
     },
-    mybatis: () => { needPy('the MyBatis extractor'); return parseJsonl(runpy('mybatis_extract.py', ['--root', rootAbs, ...sqlArgs.mybatisArgs, ...mapperDirsAbs])); },
+    mybatis: () => {
+      needPy('the MyBatis extractor');
+      // The same file list the certified run read, alternatives dropped
+      // (RM56): an overlay that read the other vendors' copies would report
+      // statements the base pack does not hold, and SPEC 16.1 says the overlay
+      // is a subset of the full run, never a second opinion.
+      if (skipped.length === 0) {
+        return parseJsonl(runpy('mybatis_extract.py', ['--root', rootAbs, ...sqlArgs.mybatisArgs, ...mapperDirsAbs]));
+      }
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-overlay-mappers-'));
+      try {
+        const listFile = path.join(tmp, 'mapper-files.txt');
+        fs.writeFileSync(listFile, listMapperXml(mapperDirsAbs, skipped).join('\n') + '\n');
+        return parseJsonl(runpy('mybatis_extract.py', ['--root', rootAbs, ...sqlArgs.mybatisArgs, '--files-from', listFile]));
+      } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    },
     lineage: (statements, catalogRecords) => {
       needPy('SQL lineage');
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-overlay-'));
@@ -242,11 +258,11 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
     web: (targets) => runWebLane(rootAbs, targets, { sourceRoots, templateRoots: templateRootsAbs }),
     webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots, templateRoots: templateRootsAbs }),
   };
-  return { run, mapperDirsAbs, ddlRels, ddlAbsList };
+  return { run, mapperDirsAbs, ddlRels, ddlAbsList, skipped };
 }
 
 /** Re-parse exactly the dirty files and read the rest back out of the shards. */
-export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox }) {
+export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives }) {
   const selection = idx.selection ?? {};
   const store = createFactsStore({ io: ephemeralIo(nodeFactsIo(fs)), projectId: idx.project, env: process.env });
   const webRootsAbs = (selection.webRoots ?? []).map(absOf);
@@ -255,14 +271,14 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox })
   const templateRootsAbs = (selection.templateRoots ?? [])
     .filter((t) => t && typeof t === 'object' && typeof t.root === 'string')
     .map((t) => ({ root: absOf(t.root), engine: t.engine, suffix: t.suffix }));
-  const { run, mapperDirsAbs, ddlRels, ddlAbsList } = laneRunners({
-    rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox,
+  const { run, mapperDirsAbs, ddlRels, ddlAbsList, skipped } = laneRunners({
+    rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives,
   });
   const lanes = runOverlayLanes({
     index: idx, store, dirty, run, abs: absOf, hash: sha256File, workers: workerVersions(), webRootsAbs,
     templateRootsAbs,
     inputs: {
-      mapperFiles: listMapperXml(mapperDirsAbs).map((p) => ({ rel: path.relative(rootAbs, p).split(path.sep).join('/'), abs: p })),
+      mapperFiles: listMapperXml(mapperDirsAbs, skipped).map((p) => ({ rel: path.relative(rootAbs, p).split(path.sep).join('/'), abs: p })),
       ddlFiles: ddlRels.map((rel, i) => ({ rel, abs: ddlAbsList[i] })),
       dialect: sqlArgs.dialect, identifierCase: sqlArgs.identifierCase,
       defaultSchema: sqlArgs.defaultSchema,
@@ -349,6 +365,19 @@ export function overlayState({
  * between calls) and memoizes on the overlaySessionId: repeated calls with the
  * same dirty bytes cost one git diff and a few hashes.
  */
+/**
+ * The mapper XML this project ships for the OTHER database vendors (RM56),
+ * absolute. The profile writes them manifest-relative, and the manifest sits
+ * beside the pack, so this is the one place the overlay resolves them.
+ */
+function mapperAlternativesOf(profile, packDir) {
+  const alt = (profile && profile.mappers && profile.mappers.alternatives) || {};
+  return [...new Set(Object.values(alt)
+    .flatMap((files) => (Array.isArray(files) ? files : []))
+    .filter((f) => typeof f === 'string' && f !== '')
+    .map((f) => path.resolve(packDir, f)))].sort();
+}
+
 export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
   const indexFile = path.join(packDir, 'facts-index.json');
   const stale = (msg) => { throw new OverlayStaleError(`${msg}. Run \`cascade analyze\` to rebuild the pack and its fact cache`); };
@@ -408,6 +437,7 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
     const absOf = (rel) => path.resolve(rootAbs, rel);
     const { lanes, webRootsAbs, templateRootsAbs } = runLanes({
       idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox,
+      mapperAlternatives: mapperAlternativesOf(profile, packDir),
     });
     return remember(session, overlayState({
       lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile,

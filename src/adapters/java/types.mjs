@@ -84,6 +84,10 @@ export function indexJavaFacts(javaFacts) {
         stmtId: typeof r.stmtId === 'string' ? r.stmtId : null,
         stmtIdFrom: typeof r.stmtIdFrom === 'string' ? r.stmtIdFrom : null,
         stmtArg: typeof r.stmtArg === 'string' ? r.stmtArg : null,
+        // The iBATIS bare id (RM56): one word, no namespace. Kept apart from
+        // `stmtId` because it is a weaker witness — it binds only when this
+        // pack holds exactly one statement under that id.
+        stmtIdBare: typeof r.stmtIdBare === 'string' ? r.stmtIdBare : null,
         line: Number.isInteger(r.line) ? r.line : null,
         file: typeof r.file === 'string' ? r.file : null,
       }); break;

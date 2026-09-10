@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
   selectLanes, sqlLaneArgs, declareAxes, axisLimits, axisKnownGaps, AXES, chooseDdlFiles,
-  chooseCatalogVendor, groupDdlByVendor,
+  chooseCatalogVendor, chooseVendorMappers, groupDdlByVendor, groupMappersByVendor,
   screenAxisOf, serviceNamesOf,
 } from '../src/core/lanes.mjs';
 import { normalizeProfile } from '../src/core/profile.mjs';
@@ -973,4 +973,115 @@ test('serviceNamesOf: no profile key and no discovery is `none`, not a guess', (
   // A run that gave every lane a flag reads no tree at all, and that is not a
   // reason to invent a name.
   assert.deepEqual(serviceNamesOf(null, null), { names: [], from: 'none', files: [] });
+});
+
+// --------------------------------------------------------------------------
+// one mapper, shipped once per vendor (RM56)
+// --------------------------------------------------------------------------
+
+const M = (path, namespace) => ({ path, namespace, kind: 'mapper' });
+
+test('groupMappersByVendor: one namespace and one path apart from a vendor word is one set', () => {
+  const sets = groupMappersByVendor([
+    M('mapper/let/sym/EgovProgrmManage_SQL_mysql.xml', 'progrmManageDAO'),
+    M('mapper/let/sym/EgovProgrmManage_SQL_oracle.xml', 'progrmManageDAO'),
+    M('mapper/let/sym/EgovProgrmManage_SQL_tibero.xml', 'progrmManageDAO'),
+    // The SAME namespace, a DIFFERENT mapper. It stays its own set, because
+    // cutting the vendor word out leaves a different path.
+    M('mapper/let/sym/EgovProgrmManageDtl_SQL_mysql.xml', 'progrmManageDAO'),
+    M('mapper/let/sym/EgovProgrmManageDtl_SQL_oracle.xml', 'progrmManageDAO'),
+    // A file whose path names no vendor is the one copy there is.
+    M('mapper/let/cmm/EgovCmmn.xml', 'cmmnDAO'),
+  ]);
+  assert.equal(sets.length, 2);
+  assert.deepEqual(sets.map((s) => [...s.byVendor.keys()].sort()),
+    [['mysql', 'oracle', 'tibero'], ['mysql', 'oracle']]);
+  assert.deepEqual(sets.map((s) => s.namespace), ['progrmManageDAO', 'progrmManageDAO']);
+});
+
+test('groupMappersByVendor: the vendor can be a DIRECTORY, and two namespaces never merge', () => {
+  const sets = groupMappersByVendor([
+    M('mapper/mysql/User.xml', 'userDAO'),
+    M('mapper/oracle/User.xml', 'userDAO'),
+    // The same file name under the same two vendors, another namespace.
+    M('other/mysql/User.xml', 'otherDAO'),
+    M('other/oracle/User.xml', 'otherDAO'),
+  ]);
+  assert.equal(sets.length, 2);
+  assert.deepEqual(sets.map((s) => s.namespace).sort(), ['otherDAO', 'userDAO']);
+});
+
+test('chooseVendorMappers: the chosen vendor is kept and the rest are named by vendor', () => {
+  const sets = groupMappersByVendor([
+    M('mapper/EgovA_SQL_mysql.xml', 'aDAO'),
+    M('mapper/EgovA_SQL_oracle.xml', 'aDAO'),
+    M('mapper/EgovA_SQL_tibero.xml', 'aDAO'),
+  ]);
+  const chosen = chooseVendorMappers(sets, 'mysql');
+  assert.deepEqual(chosen.kept, ['mapper/EgovA_SQL_mysql.xml']);
+  assert.deepEqual([...chosen.alternatives.entries()], [
+    ['oracle', ['mapper/EgovA_SQL_oracle.xml']],
+    ['tibero', ['mapper/EgovA_SQL_tibero.xml']],
+  ]);
+  assert.deepEqual(chosen.unmatched, []);
+});
+
+test('chooseVendorMappers: no copy for the chosen vendor keeps the first by path, and says so', () => {
+  const sets = groupMappersByVendor([
+    M('mapper/EgovA_SQL_oracle.xml', 'aDAO'),
+    M('mapper/EgovA_SQL_tibero.xml', 'aDAO'),
+  ]);
+  const chosen = chooseVendorMappers(sets, 'mysql');
+  assert.deepEqual(chosen.kept, ['mapper/EgovA_SQL_oracle.xml'], 'the first by SORTED path, so two runs agree');
+  assert.equal(chosen.unmatched.length, 1);
+  assert.deepEqual(chosen.unmatched[0].vendors, ['oracle', 'tibero']);
+  assert.equal(chosen.unmatched[0].namespace, 'aDAO');
+  // Nothing is lost: the statements are still read, from the copy that was kept.
+  assert.deepEqual([...chosen.alternatives.keys()], ['tibero']);
+});
+
+test('chooseVendorMappers: with no vendor chosen at all, the first copy by path is read', () => {
+  const sets = groupMappersByVendor([
+    M('mapper/EgovA_SQL_mysql.xml', 'aDAO'),
+    M('mapper/EgovA_SQL_oracle.xml', 'aDAO'),
+  ]);
+  const chosen = chooseVendorMappers(sets, null);
+  assert.deepEqual(chosen.kept, ['mapper/EgovA_SQL_mysql.xml']);
+  assert.equal(chosen.unmatched.length, 1);
+});
+
+test('selectLanes: mappers.alternatives becomes the file list the statement lane reads past', () => {
+  const sel = selectLanes({
+    root: '/repo',
+    manifestDir: '/repo/.cascade',
+    profile: {
+      frameworkPacks: ['mybatis-xml'],
+      mappers: {
+        alternatives: {
+          oracle: ['../src/main/resources/mapper/EgovA_SQL_oracle.xml'],
+          tibero: ['../src/main/resources/mapper/EgovA_SQL_tibero.xml'],
+        },
+      },
+    },
+    discovery: { mapperDirs: ['src/main/resources/mapper'] },
+  });
+  assert.deepEqual(sel.mappers, ['/repo/src/main/resources/mapper']);
+  assert.deepEqual(sel.mapperAlternatives, [
+    '/repo/src/main/resources/mapper/EgovA_SQL_oracle.xml',
+    '/repo/src/main/resources/mapper/EgovA_SQL_tibero.xml',
+  ]);
+});
+
+test('selectLanes: --mappers is the user speaking, so nothing is read past', () => {
+  const sel = selectLanes({
+    root: '/repo',
+    manifestDir: '/repo/.cascade',
+    flags: { mappers: ['/elsewhere/mapper'] },
+    profile: {
+      frameworkPacks: ['mybatis-xml'],
+      mappers: { alternatives: { oracle: ['../src/main/resources/mapper/EgovA_SQL_oracle.xml'] } },
+    },
+    discovery: { mapperDirs: ['src/main/resources/mapper'] },
+  });
+  assert.deepEqual(sel.mapperAlternatives, []);
 });

@@ -57,7 +57,8 @@ function printDiscovery(discovery, { projectId, root, lanes, diagnostics }) {
   process.stderr.write(`repositories (${discovery.repos.length}): ${discovery.repos.map((r) => `${r.path}@${r.commit.slice(0, 8)}`).join(', ')}\n`);
   process.stderr.write(`files scanned ${discovery.filesScanned}${discovery.capped ? ' (CAPPED: see diagnostics)' : ''}: `
     + `${c.javaFiles} java (${c.springHandlerFiles} spring handlers, ${c.jpaEntityFiles} JPA entities), `
-    + `${c.mybatisMapperXml} mybatis mapper xml, ${c.ddlFiles} DDL, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json\n`);
+    + `${c.mybatisMapperXml} mybatis mapper xml${(c.ibatisSqlMapXml ?? 0) > 0 ? ` and ${c.ibatisSqlMapXml} ibatis sqlMap xml` : ''}, `
+    + `${c.ddlFiles} DDL, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json\n`);
   process.stderr.write(`build tool ${discovery.buildTool ?? 'none detected'}; package prefixes [${discovery.packagePrefixes.join(', ')}]; lanes [${lanes.join(',')}]\n`);
   // WHO THIS SERVICE IS AND WHERE IT FORWARDS, read out of the tree (RM46).
   // Both used to be blanks a person filled in, and both decide whether an

@@ -139,15 +139,67 @@ export function indexTemplates({ fileNames, files, opts }) {
     .filter((v) => v && typeof v === 'object' && typeof v.owner === 'string' && typeof v.method === 'string')
     .slice()
     .sort((a, b) => cmp(a.owner, b.owner) || cmp(a.method, b.method) || (a.paramCount ?? 0) - (b.paramCount ?? 0));
+  // A NEXACRO FORM IS ITS OWN SCREEN (RM56). Nothing renders it: a user opens
+  // it, so no handler names it and the "rendered" question does not arise. It
+  // is rendered, and so is every script it includes.
+  const rendered = renderedTemplatesOf(viewRecords, templateByName, includeClosure);
+  for (const [file, t] of templatesByFile) {
+    if (t.engine !== 'nexacro') continue; // a shared script is rendered THROUGH the form that includes it
+    rendered.add(file);
+    for (const other of includeClosure(file).keys()) rendered.add(other);
+  }
   return {
     templatesByFile,
     templateByName,
     includedBy,
     includeClosure,
     contextVarsFor,
-    renderedTemplates: renderedTemplatesOf(viewRecords, templateByName, includeClosure),
+    renderedTemplates: rendered,
     viewRecords,
   };
+}
+
+/**
+ * B7b'': the screens a NEXACRO client declares (RM56).
+ *
+ * There is no router and there is no handler. A Nexacro form IS a screen: the
+ * file is the screen, its `<Form id>` is what the application calls it, its
+ * `titletext` is what a user reads on it, and its path in the tree is the path
+ * the client opens it by (`Pattern::Pattern_01.xfdl`). So the screen is built
+ * straight from the template record, and RENDERS then follows the page rules —
+ * the form's own script, and the shared scripts it includes.
+ *
+ * @returns {number} how many screens were built
+ */
+export function buildNexacroScreens({ templatesByFile, screenNodes, stats, axis }) {
+  let built = 0;
+  for (const file of [...templatesByFile.keys()].sort()) {
+    const t = templatesByFile.get(file);
+    if (t.engine !== 'nexacro') continue;
+    const name = typeof t.name === 'string' && t.name !== '' ? t.name : file;
+    // KEYED BY ITS PATH, the way a router's screen is. A form's path in the
+    // client IS its identity — one form, one path, no handler naming it — so a
+    // reader who saw `/packageB/Pattern/Pattern_01` in a list can hand that
+    // string straight back to `flow`. A path a router already claimed keeps the
+    // router's screen; nothing is merged.
+    const path = `/${name}`;
+    const id = nodeId('screen', path);
+    if (screenNodes.has(id)) continue;
+    const node = pageNodeOf(name, file, 'nexacro', axis);
+    node.id = id;
+    node.source = 'nexacro';
+    node.path = path;
+    node.paths = [path];
+    // The form's own id and the words on its title bar. A screen a reader can
+    // find in the product is a screen they can act on; `Pattern_01` alone is a
+    // file name.
+    node.name = t.formId ?? name;
+    node.title = t.title ?? null;
+    screenNodes.set(id, node);
+    stats.screens.byKind.nexacro += 1;
+    built += 1;
+  }
+  return built;
 }
 
 /** How many templates were read, by engine, and how many of them anybody renders. */

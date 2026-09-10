@@ -106,6 +106,7 @@ const ALLOWED_HOSTS = new Set([
   'opensource.org',    // OSI licence pages (MIT text in NOTICE)
   'spdx.org',          // SPDX licence identifiers
   'mybatis.org',       // the MyBatis mapper DTD every mapper XML declares in its DOCTYPE
+  'ibatis.apache.org', // …and the iBATIS 2 DTD every `<sqlMap>` declares in its own
   // The two template languages' own NAMESPACE identifiers (RM48). A Thymeleaf
   // page opens with `xmlns:th="https://www.thymeleaf.org"` and a JSP with
   // `<%@ taglib uri="http://java.sun.com/jsp/jstl/core" %>`; both are a

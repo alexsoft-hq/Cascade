@@ -705,3 +705,108 @@ test('a tree with neither a frontend package nor a vendored root declares no web
   assert.deepEqual(profile.webRoots, []);
   assert.equal(profile.frameworkPacks.includes('web'), false);
 });
+
+// --------------------------------------------------------------------------
+// one mapper, shipped once per vendor (RM56)
+// --------------------------------------------------------------------------
+
+const vendorMappers = (base, namespace, vendors) => vendors.map((v) => ({
+  path: `src/main/resources/mapper/${base}_SQL_${v}.xml`, kind: 'mapper', namespace,
+}));
+
+test('buildProfile leaves the other vendors\' mapper copies out, by name and by vendor (RM56)', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      ...SEVEN_VENDORS,
+      dbTypeDeclarations: [{ vendor: 'tibero', key: 'Globals.DbType', file: 'src/main/resources/globals.properties', line: 23 }],
+      mapperFiles: [
+        ...vendorMappers('EgovProgrmManage', 'progrmManageDAO', ['mysql', 'oracle', 'tibero']),
+        // A mapper this tree ships once needs no choosing.
+        { path: 'src/main/resources/mapper/EgovCmmn.xml', kind: 'mapper', namespace: 'cmmnDAO' },
+      ],
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.mappers.alternatives, {
+    mysql: ['../src/main/resources/mapper/EgovProgrmManage_SQL_mysql.xml'],
+    oracle: ['../src/main/resources/mapper/EgovProgrmManage_SQL_oracle.xml'],
+  }, 'the tibero copy is the one this project runs, so it is not on this list');
+  const hit = diagnostics.find((d) => d.kind === 'MAPPER_VENDOR_CHOSEN');
+  assert.ok(hit, JSON.stringify(diagnostics));
+  assert.match(hit.reason, /1 mapper\(s\) here are shipped once per database vendor/);
+  assert.match(hit.reason, /1 copy\(ies\) are read and 2 are recorded as mappers\.alternatives/);
+  validateProfile(profile);
+});
+
+test('buildProfile says so when no copy is for the vendor this project runs (RM56)', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      ...SEVEN_VENDORS,
+      dbTypeDeclarations: [{ vendor: 'tibero', key: 'Globals.DbType', file: 'globals.properties', line: 1 }],
+      mapperFiles: vendorMappers('EgovProgrmManage', 'progrmManageDAO', ['mysql', 'oracle']),
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  // The statements are still read, from the first copy by path.
+  assert.deepEqual(profile.mappers.alternatives, {
+    oracle: ['../src/main/resources/mapper/EgovProgrmManage_SQL_oracle.xml'],
+  });
+  const hit = diagnostics.find((d) => d.kind === 'MAPPER_VENDOR_UNMATCHED');
+  assert.ok(hit, JSON.stringify(diagnostics));
+  assert.equal(hit.severity, 'warn');
+  assert.match(hit.reason, /shipped for mysql, oracle and none of those is tibero/);
+  assert.match(hit.reason, /namespace progrmManageDAO/);
+});
+
+test('buildProfile: a tree that ships one copy of each mapper writes nothing down (RM56)', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      mapperFiles: [{ path: 'src/main/resources/mapper/EgovCmmn.xml', kind: 'mapper', namespace: 'cmmnDAO' }],
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.mappers, { alternatives: {} });
+  assert.equal(diagnostics.find((d) => String(d.kind).startsWith('MAPPER_VENDOR')), undefined);
+});
+
+test('buildProfile: a profile that already answers for mappers.alternatives is left alone (RM56)', () => {
+  const existing = { mappers: { alternatives: { oracle: ['../keep/me.xml'] } } };
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      ...SEVEN_VENDORS,
+      dbTypeDeclarations: [{ vendor: 'tibero', key: 'Globals.DbType', file: 'globals.properties', line: 1 }],
+      mapperFiles: vendorMappers('EgovProgrmManage', 'progrmManageDAO', ['mysql', 'oracle', 'tibero']),
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade', existing },
+  );
+  assert.deepEqual(profile.mappers.alternatives, { oracle: ['../keep/me.xml'] });
+  assert.ok(diagnostics.find((d) => d.kind === 'MAPPER_ALTERNATIVES_KEPT'), JSON.stringify(diagnostics));
+});
+
+test('buildProfile: an iBATIS sqlMap tree declares the statement lane like a MyBatis one (RM56)', () => {
+  const { profile } = buildProfile(
+    discovery({
+      counts: {
+        javaFiles: 3, springHandlerFiles: 1, mybatisMapperXml: 0, ibatisSqlMapXml: 4,
+        ddlFiles: 0, jpaEntityFiles: 0, kotlinFiles: 0, frontendPackageJson: 0,
+      },
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.ok(profile.frameworkPacks.includes('mybatis-xml'),
+    'one lane reads both elements, so one pack declares it');
+});
+
+test('buildProfile: a directory of Nexacro forms is a web root of its own kind (RM56)', () => {
+  const { profile } = buildProfile(
+    discovery({
+      counts: { javaFiles: 3, springHandlerFiles: 1, mybatisMapperXml: 0, ddlFiles: 0, jpaEntityFiles: 0, kotlinFiles: 0, frontendPackageJson: 0 },
+      webVendoredRoots: [{ root: 'src/main/nxui', files: 30, forms: 30, routerPacks: ['nexacro'], kind: 'nexacro' }],
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.webRoots, [{ root: '../src/main/nxui', kind: 'nexacro', from: 'discovery' }]);
+  assert.ok(profile.frameworkPacks.includes('nexacro'));
+  assert.equal(profile.screenAxis.enabled, true, 'a client made of screens turns the screen axis on');
+  validateProfile(profile);
+});

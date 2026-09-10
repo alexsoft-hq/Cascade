@@ -138,6 +138,96 @@ Swapping to Oracle is then an edit of `catalog.ddl`, not a walk of the tree.
 No answer means no answer: `catalog.source` stays `"none"`, the diagnostic names
 the vendors it found, and you pick.
 
+
+### One mapper, shipped once per vendor
+
+The schema is not the only thing a project like that ships seven times. The SQL
+is too:
+
+```
+mapper/let/sym/prm/
+  EgovProgrmManage_SQL_altibase.xml
+  EgovProgrmManage_SQL_cubrid.xml
+  EgovProgrmManage_SQL_hsql.xml
+  EgovProgrmManage_SQL_mysql.xml
+  EgovProgrmManage_SQL_oracle.xml
+  EgovProgrmManage_SQL_postgres.xml
+  EgovProgrmManage_SQL_tibero.xml
+```
+
+Seven files, one `<mapper namespace="progrmManageDAO">` between them. Read
+together they are not seven mappers: they are one mapper whose statements
+overwrite each other, so the SQL a statement ends up with is whichever copy the
+walk read last — and that copy is then parsed under the ONE dialect the run
+chose. Measured on `eGovFramework/egovframe-enterprise-business-template` before
+this rule existed: **189 mapper files, 1,423 statements collapsing onto 205 ids,
+47 of them failing to parse** because they were written for a database this
+project does not run.
+
+`cascade init` groups the mappers the same way the DDL is grouped. Two things
+have to be true for a set, and neither alone is enough: the files declare the
+**same namespace**, and their paths are the **same path apart from a vendor's
+name**. `EgovProgrmManage_SQL_mysql.xml` and `EgovProgrmManageDtl_SQL_mysql.xml`
+share a namespace and stay two different mappers, because cutting the vendor
+word out leaves two different paths.
+
+The copy for the vendor `catalog.ddl` chose is read; the rest go into
+`mappers.alternatives`, and the statement lane reads past them by name:
+
+```json
+"mappers": {
+  "alternatives": {
+    "oracle": ["../src/main/resources/mapper/let/sym/prm/EgovProgrmManage_SQL_oracle.xml"],
+    "tibero": ["../src/main/resources/mapper/let/sym/prm/EgovProgrmManage_SQL_tibero.xml"]
+  }
+}
+```
+
+The run says both numbers:
+
+```
+mapper XML: 27 file(s), 162 left out as other vendors' copies (profile mappers.alternatives)
+```
+
+A set with **no** copy for the chosen vendor keeps the first copy by sorted path
+and says so (`MAPPER_VENDOR_UNMATCHED`): dropping the set would lose the
+statements, and choosing by reading the SQL would be this engine deciding which
+database a project runs on. Move a vendor's files out of `mappers.alternatives`
+to read that vendor instead.
+
+## 2b. iBATIS 2
+
+The statement lane reads two elements, not one. `<mapper namespace="…">` is
+MyBatis 3; `<sqlMap namespace="…">` is iBATIS 2, which every eGovFrame project
+written before 3.x runs on, and a tree can hold both at once. One worker reads
+both, and one framework pack (`mybatis-xml`) declares the lane for either.
+
+What is different about the older element, and what this lane does with it:
+
+| iBATIS 2 | read as |
+| --- | --- |
+| `<select>` `<insert>` `<update>` `<delete>` `<procedure>` `<statement>` | all six are SQL the runtime sends |
+| `#name#` | a bind parameter, the same as MyBatis' `#{name}` |
+| `$name$` | a raw substitution, the same as `${name}`, and the statement is flagged |
+| `$dbMain$.tb_user` | a schema qualifier when `schema.propertyNames` declares it |
+| `<dynamic prepend="WHERE">` | the prepend is folded in, and the first `AND`/`OR` under it is dropped |
+| `<dynamic>` with no prepend | the body is kept as it stands, conjunctions and all |
+| `<isNotNull>` `<isEqual>` `<isNotEmpty>` … | the affixes plus the body; the test is not modelled, exactly as `<if test>` is not |
+| `<iterate open close conjunction>` | the body ONCE, with `open`/`close` folded in |
+| `<include refid>` / `<sql id>` | resolved, in the same index the MyBatis fragments use |
+
+**What an iBATIS statement is called** depends on one setting.
+`<sqlMapConfig><settings useStatementNamespaces="true"/>` makes the runtime key
+`namespace.id`; without it — and iBATIS' own default is without it — the key is
+the bare `id`, global across every sqlMap file in the deployment. The worker
+reads that setting out of any `<sqlMapConfig>` among the lane's inputs
+(discovery hands it the directory the file sits in), and two configurations that
+disagree are reported with the default left standing. Two files declaring one id
+is a `duplicate_statement_id` warning naming both.
+
+The Java side of the same shape is in `docs/setup/java-lane.md`: which receivers
+run an iBATIS statement, and how a bare id binds.
+
 ## 3. Where the table and column comments come from
 
 Column answers carry business meaning only when the catalog carries comments.

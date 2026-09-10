@@ -212,6 +212,66 @@ applications and a Nexacro client) are still unread, and that is the next round.
 
 The eleven repositories above this section did not move by one number either.
 
+
+### And the same six after the rest of the Korean stack (RM56)
+
+RM55 fixed what a route reaches; it left the frontends and half the SQL. RM56
+took those: one vendor's mapper XML, iBATIS 2 in the SQL lane, a Nexacro client
+in the web lane, and Next.js file routing.
+
+| Repository | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs | Wall |
+|---|---|---|---|---|---|---|---|
+| egovframe-common-components | 999 / 1193 | 165 / 179 | **1680 / 1862** | 765 / 811 | 470 / 657 | 9647 | 22 s |
+| egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | **218 / 288** | 122 / 135 | 55 / 84 | 2099 | 2 s |
+| egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 2 / 217 | **0 / 56** | 394 | 1 s |
+| egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 | 5 | 0 s |
+| nexacro-sample-egov | **10 / 21** | **5 / 5** | **46 / 46** | **7 / 7** | **4 / 30** | 100 | 1 s |
+| ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 | 900 | 1 s |
+
+Read row by row:
+
+- **nexacro-sample-egov** is the round in one line. Its persistence is iBATIS 2
+  and its frontend is Nexacro, and before this round the engine read neither: 3
+  statements, 2 routes reaching one, no screen at all. Now 24 statements (22 of
+  them iBATIS), 10 of 21 routes, every table and every column the schema
+  declares, 30 forms read as screens, and all 7 of their `transaction(…)` calls
+  matched to a `.do` route.
+- **the business template** ships 27 mappers seven times over. Reading one
+  vendor's copies took 189 mapper files to 27 and **47 statements failing to
+  parse to 1**; the one that is left is a `<isNotEmpty>` branch structure whose
+  flattened form holds two `SELECT`s end to end
+  (`ConectStatsDAO.selectConectStats`), which is the flattener's own limit and
+  not a vendor's. The statement count falls 205 → 201 because four
+  `loginDAO.*` statements are **commented out in the MySQL copy** and live only
+  in the six this project does not run: statements that do not exist for this
+  deployment. Columns reached rise 210 → 218 for the same reason the parse
+  failures fell.
+- **the common components** ship 1,224 mapper files the same way: 1,256
+  statements → 1,241, and 1,818 known columns → 1,862, because the statements
+  that now parse name columns the run could not see before. One number went
+  down: statements reached 1,136 → 1,135, the single statement among the fifteen
+  removed ones that a DAO really called and that exists only in another vendor's
+  copy.
+- **msa-edu** gets its screens: 56, from 62 file-tree page declarations across
+  two Next.js frontends, with 9 files under `pages/api` counted and read as the
+  server handlers they are. Its call resolution does **not** move, and the reason
+  is not this round's: its frontend calls `/portal-service/api/v1/…` through an
+  API gateway whose `RewritePath` filter uses a named capture group, which the
+  gateway-route reader refuses with `GATEWAY_ROUTE_UNREADABLE`. Until that
+  prefix is read, the calls name paths no route in the pack serves.
+- **egovframe-web-sample** and **ngrinder** do not move by one number: neither
+  ships a vendor mapper set, a `<sqlMap>`, a Nexacro form or a `pages/` tree, so
+  none of the four rules had anything to fire on.
+
+The eleven repositories above this section do not move by one number, all
+sixteen pack digests are identical, and 3,028 recorded answers are byte-identical.
+
+Two entries trip the **ceiling** the gate guards the other way up:
+`endpointColumnPairs` rises 1,889 → 2,099 on the business template and 9 → 100
+on the Nexacro sample. Both are the same cause as the rises above — statements
+that now parse, and a client whose screens now reach tables — rather than reach
+smearing sideways, and both are on the held-out six.
+
 ### What the after-run left on the table
 
 - **56 of 219** and **194 of 1193** routes still reach no statement. On the
@@ -220,11 +280,13 @@ The eleven repositories above this section did not move by one number either.
   `BBSLoneMasterDAO.select…`): a component whose Java is shipped and whose SQL is
   not. They are listed by name in `laneStats.statementIds.unknownSamples` rather
   than invented.
-- **the mapper XML is shipped once per vendor too**, and that half is not fixed.
-  The business template ships 27 modules × 7 vendors = 189 mapper files declaring
-  1,423 statements that collapse onto 205 ids, and the copy that wins is whichever
-  the walk read last. The catalog now picks a vendor; the statements do not, so
-  the SQL parsed for a statement can be a vendor's the project does not run.
+- **the mapper XML is shipped once per vendor too.** RM56 fixed this half: see
+  the round above, and `docs/setup/sql-lane.md`.
+- **msa-edu's frontend calls still reach no route.** 2 of 217, and the cause is
+  its API gateway: `RewritePath=/portal-service/(?<segment>.*), /$\{segment}`
+  uses a named capture group the gateway-route reader refuses
+  (`GATEWAY_ROUTE_UNREADABLE`), so nothing strips the service prefix off the
+  calls. That is a gateway rule, not a frontend one, and it is untouched.
 
 ## The goldens
 

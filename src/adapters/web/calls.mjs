@@ -38,6 +38,9 @@ export const WEB_CALL_BASIS = Object.freeze({
   wrapper: 'the callee was traced through the project\'s own wrapper(s) to a client library instance, by following what each name is BOUND to in its file and what each wrapper forwards. The chain is on the edge; every hop is a binding this lane read, not a name it recognized',
   untraced: 'the argument is URL-shaped but the callee could not be traced to any sink: the call may send this URL or may only build it, so the edge says a rule guessed and the grade is HEURISTIC',
   template: 'the page itself makes this request: a `<form action=…>` posts to it, or a link opens it. The markup names the path and the attribute names the method, so nothing had to be traced and nothing was assumed',
+  // RM56. A Nexacro client sends every request through one framework call, so
+  // there is no client library to trace and no wrapper chain to follow.
+  nexacro: 'the screen calls `transaction(…)`, which is the ONE way a Nexacro client sends a request: the framework opens the connection and the url is the argument, or the property of the options object, that it reads. The service prefix on the front of it (`svcurl::`) is resolved through the application typedef\'s own `<Service prefixid url>` list, so nothing here was matched by name',
 });
 
 /**
@@ -365,6 +368,12 @@ function sinkOf(file, c, { resolved, isTemplate, pkg, deps }) {
     platformOf, injectedClients, calleeTarget, sinkVerb, wrappers, noteInstance, stats,
   } = deps;
   const platform = platformOf(c);
+  // A NEXACRO TRANSACTION IS A REQUEST BY CONTRACT (RM56): one call, one url,
+  // nothing to trace. First, because that file is also a template.
+  if (c.nexacro) {
+    stats.calls.nexacro += 1;
+    return { sink: { kind: 'nexacro', module: 'transaction', instance: null, chain: [], depth: 0 }, target: null };
+  }
   if (isTemplate && c.template && typeof c.template.rule === 'string') {
     // A FORM AND A LINK ARE THE PAGE'S OWN CALLS. Nothing had to be traced:
     // the markup names the path and the attribute names the method.
@@ -457,6 +466,9 @@ export function classifyCallSites({
       continue;
     }
     for (const c of f.calls) {
+      // A TRANSACTION WITH NO URL (RM56) is a request this lane knows happens
+      // and cannot follow, which is not the same finding as no request.
+      if (c.nexacro && !c.url) { stats.calls.nexacroUnreadable += 1; continue; }
       if (!c.url) continue;
       const resolved = withContextPath(c, ctxVars);
       const found = sinkOf(file, c, { resolved, isTemplate, pkg, deps });
@@ -533,7 +545,9 @@ function noteCaller(site, nodesToAdd, files) {
 function callEvidence(site, { written, full, via, absolute, prefixEvidence, declaredService, found }) {
   const { call, sink } = site;
   const evidence = {
-    rule: site.template && call.template ? call.template.rule : 'web-http-call',
+    rule: call.nexacro ? 'nexacro-transaction'
+      : site.template && call.template ? call.template.rule : 'web-http-call',
+    ...(call.nexacro ? { nexacro: call.nexacro } : {}),
     basis: WEB_CALL_BASIS[sink.kind],
     ...(site.template && call.template ? { attribute: call.template.attr, wrote: call.template.written } : {}),
     sink: { kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth },

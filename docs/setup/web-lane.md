@@ -34,7 +34,8 @@ rather than "0 frontend calls".
 ## What it reads
 
 Under each source root, recursively: `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
-`.tsx`, and the `<script>` blocks of `.vue` single-file components. A Vue file's
+`.tsx`, the `<script>` blocks of `.vue` single-file components, and the
+`<Script>` blocks of a Nexacro client's `.xfdl` forms and `.xjs` scripts. A Vue file's
 line numbers are the lines in the `.vue` file, template included, so a fact
 points where you would put your cursor.
 
@@ -186,6 +187,107 @@ serves. So a page's prefix is the empty string and `prefix.from` is
 "/things/list"` in a page that includes it is read the same way: the worker
 records the NAME the URL was built on, and the bridge closes the hole with the
 include graph.
+
+
+### A Nexacro client
+
+A very large share of Korean public sector and enterprise systems has a frontend
+that looks like none of the above. A screen is an `.xfdl` file: XML that declares
+a form and its widgets, with the screen's whole JavaScript inside one
+`<Script type="xscript5.0"><![CDATA[ … ]]></Script>` block. A shared library is
+an `.xjs`, which is the same wrapper around a script nobody mounts. The
+application file is an `.xadl`, and the service prefixes every url is written
+against sit in the typedef XML it names.
+
+`cascade init` calls a directory that holds `.xfdl` files a **web root of kind
+`nexacro`**, and writes it to `webRoots` like any other root no package declares:
+
+```json
+"webRoots": [{ "root": "../src/main/nxui", "kind": "nexacro", "from": "discovery" }],
+"frameworkPacks": ["spring-mvc", "mybatis-xml", "web", "nexacro"]
+```
+
+The root is the directory the **application** sits in, not the directory the
+forms sit in, so a tree holding several applications keeps each one's name in
+its screens' paths (`packageB/Pattern/Pattern_01`).
+
+Under a Nexacro root the lane reads `.xfdl` and `.xjs` and **nothing else**. The
+reason is what else is under one: a Nexacro application ships the vendor's whole
+runtime beside its own screens (`nexacro14lib/`, several hundred `.js` files),
+and reading those would put a framework's insides in the graph and count every
+one of them as a frontend source file. A `.js` under a Nexacro root is the
+runtime; an `.xfdl` and an `.xjs` are what somebody wrote.
+
+What each file gives:
+
+- **the screen.** One form, one screen: the `<Form id>` is what the application
+  calls it, `titletext` is what a user reads on it, and its path under the root
+  is its path. It renders its own script (`template-own`, EXACT) and, through an
+  `include "Lib::Comm.xjs";` or a `<Script … url="…">`, the included script's
+  functions one hop out (`template-include`, SOUND_SET);
+- **the script.** `xscript5` is JavaScript with optional type annotations on
+  parameters, so it is read with the TypeScript grammar; `include` is a Nexacro
+  directive and is blanked before parsing, with its line kept. A form declares
+  its handlers on `this` (`this.fn_search = function(obj, e) {…}`), and each one
+  is a function record, so a call hangs off the handler rather than off the
+  module;
+- **the calls.** A Nexacro client sends every request through one framework call,
+  `transaction(…)`, so there is no client library to trace and no wrapper chain
+  to follow. Both spellings are read: the native
+  `this.transaction(id, "svcurl::userSelectVO.do", inDs, outDs, args, cb)`, and
+  the options object every product wraps it in —
+  `Iject.transaction(this, oDatas, cb)` with
+  `oDatas = { sController: "userSelectVO.do", … }`. The keys looked at are
+  `sController`, `svcUrl`, `strSvcUrl`, `sSvcUrl`, `sUrl` and `url`, and they are
+  a declaration in `adapters/web/lib/nexacro.mjs`, not a rule: a product with
+  another spelling adds it there. The options object is resolved in the handler
+  that holds it, so two handlers that both call theirs `oDatas` are two urls.
+
+A `prefix::path` url resolves the prefix through the typedef's
+`<Service prefixid url>` list, and the url's **path** part is the base:
+`svcurl::userSelectVO.do` under
+`<Service prefixid="svcurl" type="JSP" url="…/nexacro-sample/"/>` is
+`/nexacro-sample/userSelectVO.do`. A `file`/`form`/`js` service points at the
+client's own assets and answers no request, so it is not a base for a
+transaction — it is what an `include` is resolved through. A bare `x.do` is the
+path as written.
+
+The edge is `CALLS_HTTP` with `evidence.rule` `nexacro-transaction`, method
+`ANY` (Nexacro posts, and the route match accepts any), graded by the route
+match exactly like any other frontend call. A transaction whose url is built
+somewhere this lane cannot see is **counted**
+(`laneStats.web.calls.nexacroUnreadable`) rather than dropped: a request that
+happens and that no edge carries is a different finding from no request.
+
+### Next.js: the file tree IS the route table
+
+Next.js declares no routes. `pages/index.tsx` answers `/`,
+`pages/content/[id].tsx` answers `/content/{id}`, and nothing in the source says
+so. That convention is a declaration pack of its own shape,
+`adapters/web/packs/next-pages.json`, whose `filesystem` entries state which
+directory is the root, which extensions count, which leaf name is the directory
+itself, how a parameter is spelled, which names are the framework's own, and
+which subdirectory holds server handlers:
+
+| the file | the route |
+|---|---|
+| `pages/index.tsx` | `/` |
+| `pages/privacy/index.tsx` | `/privacy` |
+| `pages/content/[id].tsx` | `/content/{id}` |
+| `pages/docs/[...slug].tsx` | `/docs/{slug}/**` |
+| `pages/_app`, `_document`, `_error`, `404`, `500` | not pages: the framework's own |
+| `pages/api/**` | server handlers this frontend serves, counted and skipped |
+| `app/**/page.tsx` | the app router, by the same rules with `page` as the leaf |
+
+The rule fires only inside a package that **depends on** `next`, so a backend
+that happens to keep a `pages/` directory of templates gets no screens out of
+it. The page IS its own component — no declaration names it and nothing imports
+it — so RENDERS and the page's own calls work exactly as they do for a screen a
+router declares, and nothing had to be resolved. The run says both numbers:
+
+```
+the file tree: 62 page(s) declared by where they sit, 9 file(s) under the router's api directory read as server handlers instead
+```
 
 ## What it records
 

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Script type="xscript5.0"><![CDATA[
+this.commonSearch = function(oOwner)
+{
+	var oDatas = {
+		svcid : "common",
+		sController : "commonSelect.do",
+		inds : ["ds_in=ds_in"]
+	};
+	oOwner.transaction(oOwner, oDatas, "");
+};
+]]></Script>

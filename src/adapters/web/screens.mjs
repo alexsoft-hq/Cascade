@@ -355,7 +355,10 @@ function screenNodeOf(rec, full, componentFile, { nameSource, pathRule, codeRege
     file: rec.file,
     line: rec.line ?? null,
     pack: rec.pack ?? null,
-    params: /[:*]/.test(full),
+    // `{id}` is the third spelling of a parameter this engine reads: `:id` is
+    // a declared router's, `*` a wildcard's, and `{id}` the one a file-tree
+    // route writes (RM56) and the one every backend route is written in.
+    params: /[:*{]/.test(full),
     lane: 'web',
     source: 'router',
     declaredAt: [{ file: rec.file, line: rec.line }],
@@ -377,7 +380,7 @@ export function buildRouterScreens({
   if (!screenEnabled) return { screenNodes, registryTargets, unresolvedSpecifiers, composedPath };
   for (const rec of routeRecords) {
     const hasComponent = typeof rec.componentSource === 'string' || typeof rec.componentLocal === 'string'
-      || namesByRegistry(rec);
+      || rec.componentSelf === true || namesByRegistry(rec);
     // A REDIRECT IS NOT A SCREEN. `{path:'/', redirect:'/home'}` mounts
     // nothing and shows nothing; it is a rule about where to go next.
     if (!hasComponent && (rec.children ?? 0) === 0 && rec.redirect != null) continue;
@@ -398,7 +401,10 @@ export function buildRouterScreens({
     let componentFile = null;
     let componentSpec = null;
     let registryHit = null;
-    if (namesByRegistry(rec)) {
+    // A FILE-TREE ROUTE (RM56): the page IS its own component, so there is
+    // nothing to resolve and nothing that can fail to resolve.
+    if (rec.componentSelf === true) componentFile = rec.file;
+    else if (namesByRegistry(rec)) {
       // A NAME, NOT A PATH. Nothing imports anything here, so the file comes
       // from the framework's registry and a name nobody registered is the
       // same gap an unresolvable specifier is.
@@ -569,7 +575,9 @@ export function placeRendersEdges({
   for (const id of [...screenNodes.keys()].sort()) {
     const node = screenNodes.get(id);
     nodesToAdd.set(id, node);
-    if (node.source === 'view') { pageRenders(id, node, ctx); continue; }
+    // A page and a Nexacro form take the same road: what the screen runs is its
+    // OWN file's scripts, plus whatever the files it pulls in do (RM48, RM56).
+    if (node.source === 'view' || node.source === 'nexacro') { pageRenders(id, node, ctx); continue; }
     const byRegistry = registryTargets.get(id);
     if (byRegistry !== undefined) { registryRenders(id, byRegistry, ctx); continue; }
     if (node.component !== null) componentRenders(id, node.component, ctx);

@@ -527,6 +527,24 @@ export function visitArray(ctx, node, env, defaultMember) {
 }
 
 /** `this.field = …` and `x.y = …`: the one that can hold a client is recorded. */
+/**
+ * THE NAME A NEXACRO FORM GIVES ONE OF ITS HANDLERS, or null (RM56).
+ *
+ * `this.fn_search = function(obj, e) {…}` at the top of an `.xfdl` script is the
+ * form's own method: it is what a button's `onclick` names, and it is where the
+ * transaction is written. Recorded as a FUNCTION, so the screen renders it and
+ * the call hangs off it rather than off the module.
+ */
+function nexacroHandlerName(ctx, node, env) {
+  const left = node.left;
+  if (!ctx.nexacro || env.func !== null || !env.scope.isModule) return null;
+  if (!left || (left.type !== 'MemberExpression' && left.type !== 'OptionalMemberExpression')) return null;
+  const right = node.right;
+  if (!right || (right.type !== 'FunctionExpression' && right.type !== 'ArrowFunctionExpression')) return null;
+  const c = calleeOf(left);
+  return c && c.root === 'this' && c.path.length >= 1 ? c.path.join('.') : null;
+}
+
 export function visitAssignment(ctx, node, env) {
   const { emit, relFile, lineOf } = ctx;
   const left = node.left;
@@ -551,6 +569,15 @@ export function visitAssignment(ctx, node, env) {
         }, line);
       }
     }
+  }
+  // A NEXACRO FORM DECLARES ITS HANDLERS ON `this` (RM56); `nexacroHandlerName`
+  // says why that is a function record and not an assignment.
+  const handler = nexacroHandlerName(ctx, node, env);
+  if (handler !== null) {
+    const entry = declareFunction(ctx, node.right, handler, null, env.scope, env);
+    visitFunctionBody(ctx, node.right, env, entry);
+    eachChild(left, (child) => ctx.visit(child, env));
+    return;
   }
   ctx.visit(node.right, env);
   if (left && left.type !== 'Identifier') eachChild(left, (child) => ctx.visit(child, env));

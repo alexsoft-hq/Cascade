@@ -650,6 +650,67 @@ test('persistence: a method that calls one statement twice makes one edge', () =
   assert.equal(ctx.stats.statementIds.repeated, 1);
 });
 
+
+// An iBATIS DAO: a vendor base in a jar this run never parsed, named only by a
+// SUFFIX, and a statement key that is one word with no namespace on it (RM56).
+const IBATIS_FACTS = [
+  { kind: 'type', fqn: 'com.x.UserDAO', package: 'com.x', name: 'UserDAO', file: 'UserDAO.java', typeKind: 'class', annotations: ['Repository'], beanName: 'userDAO', implements: [], extends: 'VendorIbatisAbstractDAO', declaredMethods: ['selectUserVoList/1', 'insertUserVO/1', 'ambiguous/1', 'nothing/1'] },
+  { kind: 'call', from: 'com.x.UserDAO#selectUserVoList', receiver: 'this', method: 'list', toTypeSimple: 'UserDAO', via: 'unqualified', stmtIdBare: 'selectUserVOList', stmtArg: '"selectUserVOList"', stmtIdFrom: 'literal', line: 12, file: 'UserDAO.java' },
+  { kind: 'call', from: 'com.x.UserDAO#insertUserVO', receiver: 'this', method: 'insert', toTypeSimple: 'UserDAO', via: 'unqualified', stmtIdBare: 'insertUserVO', stmtArg: '"insertUserVO"', stmtIdFrom: 'literal', line: 18, file: 'UserDAO.java' },
+  { kind: 'call', from: 'com.x.UserDAO#ambiguous', receiver: 'this', method: 'queryForObject', toTypeSimple: 'UserDAO', via: 'unqualified', stmtIdBare: 'twice', stmtArg: '"twice"', stmtIdFrom: 'literal', line: 24, file: 'UserDAO.java' },
+  { kind: 'call', from: 'com.x.UserDAO#nothing', receiver: 'this', method: 'queryForList', toTypeSimple: 'UserDAO', via: 'unqualified', stmtIdBare: 'noSuchStatement', stmtArg: '"noSuchStatement"', stmtIdFrom: 'literal', line: 30, file: 'UserDAO.java' },
+  // The same method names on something that is not a session at all.
+  { kind: 'type', fqn: 'com.x.Basket', package: 'com.x', name: 'Basket', file: 'Basket.java', typeKind: 'class', implements: [], declaredMethods: ['add/1'] },
+  { kind: 'call', from: 'com.x.Basket#add', receiver: 'this', method: 'insert', toTypeSimple: 'Basket', via: 'unqualified', stmtIdBare: 'selectUserVOList', stmtArg: '"selectUserVOList"', stmtIdFrom: 'literal', line: 5, file: 'Basket.java' },
+];
+
+test('persistence: a `*IbatisAbstractDAO` base is a session, named by its suffix and nothing else', () => {
+  const ctx = ctxFor(IBATIS_FACTS);
+  const sessions = sessionTypesOf(ctx);
+  assert.ok(sessions.has('com.x.UserDAO'), 'a vendor base nobody can list by name still says what it is');
+  assert.equal(sessions.has('com.x.Basket'), false);
+});
+
+test('persistence: an iBATIS BARE id binds when exactly one statement carries it', () => {
+  const ctx = ctxFor(IBATIS_FACTS);
+  // The SQL lane read these with `useStatementNamespaces` off, so their keys
+  // have no namespace on them.
+  ctx.g.addNode({ id: nodeId('statement', 'selectUserVOList'), statement: 'selectUserVOList' });
+  ctx.g.addNode({ id: nodeId('statement', 'insertUserVO'), statement: 'insertUserVO' });
+  bindStatementIds(ctx);
+  const bound = [...ctx.g.edges].filter((e) => e.type === 'IMPLEMENTS_STMT');
+  assert.deepEqual(bound.map((e) => e.to).sort(), [
+    nodeId('statement', 'insertUserVO'), nodeId('statement', 'selectUserVOList'),
+  ], 'the Basket call is not a session call, so it binds nothing');
+  assert.equal(bound[0].grade, 'EXACT');
+  assert.equal(bound[0].evidence.rule, 'mybatis-statement-id');
+  const c = ctx.stats.statementIds;
+  assert.equal(c.sites, 4);
+  assert.equal(c.bound, 2);
+  assert.equal(c.unreadable, 2, 'a bare word that answers to no statement stays unread, not invented');
+});
+
+test('persistence: a namespaced statement is not reachable by a bare word', () => {
+  const ctx = ctxFor(IBATIS_FACTS);
+  ctx.g.addNode({ id: nodeId('statement', 'twice'), statement: 'twice' });
+  // The pack also holds a statement whose id ENDS in the same word. It is a
+  // different statement, and the bare call must not find it.
+  ctx.g.addNode({ id: nodeId('statement', 'other.twice'), statement: 'other.twice' });
+  bindStatementIds(ctx);
+  const bound = [...ctx.g.edges].filter((e) => e.type === 'IMPLEMENTS_STMT');
+  assert.equal(bound.length, 1);
+  assert.equal(bound[0].to, nodeId('statement', 'twice'));
+});
+
+test('persistence: a bare id changes nothing in a pack that holds no bare statement', () => {
+  const ctx = ctxFor(IBATIS_FACTS);
+  ctx.g.addNode({ id: nodeId('statement', 'com.x.UserMapper.selectUserVOList'), statement: 'com.x.UserMapper.selectUserVOList' });
+  bindStatementIds(ctx);
+  assert.equal([...ctx.g.edges].filter((e) => e.type === 'IMPLEMENTS_STMT').length, 0,
+    'a bare word must not find a namespaced statement by looking like the end of it');
+  assert.equal(ctx.stats.statementIds.unreadable, 4, 'and every site is still counted');
+});
+
 test('persistence: a @Transactional boundary is marked on its own symbol, created if need be', () => {
   const ctx = ctxFor(FACTS);
   markTransactions(ctx);

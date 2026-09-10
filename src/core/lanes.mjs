@@ -29,7 +29,7 @@
 
 import path from 'node:path';
 import { sqlDialectOf, sqlIdentifierCaseOf } from './profile.mjs';
-import { ROUTER_PACKS } from './discover.mjs';
+import { ddlDialectTokenOf, SCREEN_PACKS } from './discover.mjs';
 
 /**
  * THE SCREEN AXIS SWITCH, in three states. PURE.
@@ -65,7 +65,7 @@ export function screenAxisOf(profile, evidence = {}) {
     return { enabled: false, from: 'profile', reason: 'the profile sets screenAxis.enabled to false' };
   }
   const packs = Array.isArray(profile && profile.frameworkPacks) ? profile.frameworkPacks : [];
-  const declared = ROUTER_PACKS.filter((p) => packs.includes(p));
+  const declared = SCREEN_PACKS.filter((p) => packs.includes(p));
   if (declared.length > 0) {
     return {
       enabled: true,
@@ -259,7 +259,7 @@ if (ddls.length === 0 && !flags.noDdl) {
  * different program.
  */
 function chooseJavaLanes(ctx) {
-  const { flags, discovery, root, cwd, packs, diagnostics } = ctx;
+  const { flags, profile, discovery, root, cwd, manifestDir, packs, diagnostics } = ctx;
 // ---- mapper XML (the statement axis) ------------------------------------
 let mappers = flags.noMappers ? [] : (flags.mappers ?? []).map((m) => path.resolve(cwd, m));
 let mapperSource = mappers.length ? 'flag' : 'none';
@@ -300,7 +300,19 @@ if (javaSrc.length === 0 && !flags.noJava && packs.includes('spring-mvc')) {
   }
 }
 
-  return { mappers, mapperSource, javaSrc, javaSource, excludedTestRoots };
+  // THE COPIES THIS RUN LEAVES ON THE SHELF (RM56). `mappers.alternatives` is
+  // the same mappers, in the same namespaces, written for a database this
+  // project does not run on; reading them makes every statement come from
+  // whichever copy the walk read last. The lane still WALKS the directories —
+  // they are all in the same tree — and drops these files by name.
+  const mapperAlternatives = mapperSource === 'flag' ? [] : [...new Set(
+    Object.values((profile && profile.mappers && profile.mappers.alternatives) || {})
+      .flatMap((files) => (Array.isArray(files) ? files : []))
+      .filter((f) => typeof f === 'string' && f !== '')
+      .map((f) => path.resolve(manifestDir ?? root, f)),
+  )].sort();
+
+  return { mappers, mapperSource, mapperAlternatives, javaSrc, javaSource, excludedTestRoots };
 }
 
 /**
@@ -481,7 +493,7 @@ export function selectLanes(input = {}) {
   const chosen = chooseCatalog(ctx);
   const { ddlChoice, snapshot } = chosen;
   const chosenJava = chooseJavaLanes(ctx);
-  const { mapperSource, javaSource, excludedTestRoots } = chosenJava;
+  const { mapperSource, javaSource, excludedTestRoots, mapperAlternatives } = chosenJava;
   const chosenWeb = chooseWebLanes(ctx);
   const { webSource, templateRoots, templateSource } = chosenWeb;
   const { openapi, openapiSource, har, harSource, otel, otelSource } = chooseEvidenceLanes(ctx);
@@ -530,6 +542,9 @@ export function selectLanes(input = {}) {
       templateRoots: templateSource,
     },
     excludedTestRoots,
+    // The mapper XML files this run READS PAST: the other vendors' copies of a
+    // mapper this tree ships once per database (RM56). Absolute, sorted.
+    mapperAlternatives,
     lanes, diagnostics,
   };
 }
@@ -719,10 +734,13 @@ function screenAxis(web, har, opts = {}) {
   // are template files a `@Controller` names, so "no route declaration" is the
   // normal state and the pages are what to count.
   const pages = s.byKind && Number.isInteger(s.byKind.page) ? s.byKind.page : 0;
-  if ((s.declared ?? 0) === 0 && pages === 0) {
+  // …and a Nexacro client declares no routes either (RM56): its screens are its
+  // FORMS, so a run that read forms has screens whatever the route count says.
+  const forms = s.byKind && Number.isInteger(s.byKind.nexacro) ? s.byKind.nexacro : 0;
+  if ((s.declared ?? 0) === 0 && pages === 0 && forms === 0) {
     return {
       status: 'not-shipped',
-      reason: 'the screen axis is enabled and the web lane recorded no route declaration and no page a controller renders, so there is nothing to build a screen from. '
+      reason: 'the screen axis is enabled and the web lane recorded no route declaration, no page a controller renders and no Nexacro form, so there is nothing to build a screen from. '
         + 'The router packs (adapters/web/packs) name the conventions a route object is recognized by; a router none of them describes is read by none of them',
     };
   }
@@ -770,7 +788,10 @@ function screenAxis(web, har, opts = {}) {
   }
   return {
     status: 'degraded',
-    reason: `we built ${s.screens ?? 0} screen(s) from ${s.declared} route declaration(s) and ${pages} page(s) a controller renders, `
+    reason: `we built ${s.screens ?? 0} screen(s) from ${s.declared} route declaration(s)`
+      + (forms > 0
+        ? `, ${pages} page(s) a controller renders and ${forms} Nexacro form(s), `
+        : ` and ${pages} page(s) a controller renders, `)
       + `and part of that is not the whole picture: ${why.join('; ')}.${observed}`,
   };
 }
@@ -1117,5 +1138,93 @@ export function chooseCatalogVendor(input = {}) {
     why: agreed.length > 1
       ? `the jdbc urls in this tree name ${agreed.sort().join(', ')}, which is more than one database`
       : 'nothing in this tree says which database it runs on',
+  };
+}
+
+/**
+ * ONE MAPPER, SHIPPED ONCE PER DATABASE VENDOR (RM56). Pure.
+ *
+ * The schema is not the only thing an eGovFrame project ships seven times. So
+ * is the SQL: `EgovProgrmManage_SQL_{altibase,cubrid,hsql,mysql,oracle,postgres,
+ * tibero}.xml` are seven files with ONE `<mapper namespace="progrmManageDAO">`
+ * between them, and the walk reads all seven into one statement axis. Which of
+ * the seven a statement's SQL came from is then whichever copy the walk read
+ * last, parsed under the ONE dialect the run chose, so the six written for
+ * another database fail to parse and take their statements with them.
+ *
+ * WHAT MAKES A SET. Two things have to be true at once, and neither alone is
+ * enough: the files declare the SAME NAMESPACE, so MyBatis would look one
+ * statement up in all of them, and their paths are the SAME PATH apart from a
+ * vendor's name. `EgovProgrmManage_SQL_mysql.xml` and
+ * `EgovProgrmManageDtl_SQL_mysql.xml` share a namespace and are two different
+ * mappers; they stay two, because cutting the vendor word out leaves two
+ * different paths.
+ *
+ * A file whose path names no vendor is in no set: it is the one copy there is.
+ *
+ * @param {{path:string, namespace:string}[]} files  every mapping file, by name
+ * @returns {{key:string, namespace:string, byVendor:Map<string,string>}[]}
+ *          one entry per set of two or more, sorted by key
+ */
+export function groupMappersByVendor(files) {
+  const sets = new Map();
+  for (const f of Array.isArray(files) ? files : []) {
+    if (!f || typeof f.path !== 'string') continue;
+    const hit = ddlDialectTokenOf(f.path);
+    if (hit === null) continue;
+    const lower = f.path.toLowerCase();
+    const head = lower.slice(0, hit.at);
+    const tail = lower.slice(hit.at + hit.token.length);
+    const key = [f.namespace ?? '', head, tail].join('\u0000');
+    if (!sets.has(key)) sets.set(key, { key, namespace: f.namespace ?? '', byVendor: new Map() });
+    const set = sets.get(key);
+    // Two files for the SAME vendor in one set would be one copy shadowing
+    // another; the first by sorted path keeps the slot, so the answer does not
+    // depend on the order the walk found them in.
+    const held = set.byVendor.get(hit.dialect);
+    if (held === undefined || f.path < held) set.byVendor.set(hit.dialect, f.path);
+  }
+  return [...sets.values()]
+    .filter((s) => s.byVendor.size > 1)
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
+ * WHICH COPY OF EACH SET THIS RUN READS, and which it leaves on the shelf. Pure.
+ *
+ * The vendor is the one `chooseCatalogVendor` already picked for the schema,
+ * because reading one database's DDL and another's SQL would be reading two
+ * different databases. A set with no copy for that vendor keeps the FIRST BY
+ * SORTED PATH and says so: dropping the whole set would lose the statements,
+ * and picking by content would be this engine deciding which database a project
+ * runs on by reading SQL.
+ *
+ * @param {{key:string, namespace:string, byVendor:Map<string,string>}[]} sets
+ * @param {string|null} vendor  the vendor the catalog chose
+ * @returns {{kept:string[], alternatives:Map<string,string[]>,
+ *            unmatched:{namespace:string, kept:string, vendors:string[]}[]}}
+ */
+export function chooseVendorMappers(sets, vendor) {
+  const kept = [];
+  const alternatives = new Map();
+  const unmatched = [];
+  for (const set of Array.isArray(sets) ? sets : []) {
+    const vendors = [...set.byVendor.keys()].sort();
+    const has = nonEmpty(vendor) && set.byVendor.has(vendor);
+    const keep = has ? set.byVendor.get(vendor) : [...set.byVendor.values()].sort()[0];
+    kept.push(keep);
+    if (!has) unmatched.push({ namespace: set.namespace, kept: keep, vendors });
+    for (const v of vendors) {
+      const p = set.byVendor.get(v);
+      if (p === keep) continue;
+      if (!alternatives.has(v)) alternatives.set(v, []);
+      alternatives.get(v).push(p);
+    }
+  }
+  for (const files of alternatives.values()) files.sort();
+  return {
+    kept: kept.slice().sort(),
+    alternatives: new Map([...alternatives.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))),
+    unmatched,
   };
 }

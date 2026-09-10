@@ -22,7 +22,7 @@
 
 import { walkEndpoints } from './walks.mjs';
 import { screenAxisOf } from './lanes.mjs';
-import { ROUTER_PACKS } from './discover.mjs';
+import { SCREEN_PACKS } from './discover.mjs';
 
 export const ESTIMATE_SCHEMA = 'cascade:estimate:1';
 
@@ -101,7 +101,11 @@ function viewResolversNamed(resolvers) {
 function backendAxes(discovery, profile, n, packs, axes) {
   const catalogSource = (profile.catalog && profile.catalog.source) || 'none';
 const ddlFiles = n('ddlFiles');
-const mapperFiles = n('mybatisMapperXml');
+// BOTH SPELLINGS OF THE STATEMENT AXIS (RM56): MyBatis 3's `<mapper>` and
+// iBATIS 2's `<sqlMap>`. One lane reads them, so one number counts them.
+const mybatisFiles = n('mybatisMapperXml');
+const ibatisFiles = n('ibatisSqlMapXml');
+const mapperFiles = mybatisFiles + ibatisFiles;
 const javaFiles = n('javaFiles');
 const handlerFiles = n('springHandlerFiles');
 
@@ -127,11 +131,19 @@ axes.push({
   axis: 'statements',
   status: willReadStatements ? 'shipped' : 'not-shipped',
   reason: willReadStatements
-    ? `${mapperFiles} MyBatis mapper XML file(s) in ${(discovery.mapperDirs ?? []).length} directory(ies)`
+    ? `${mapperFiles} mapper XML file(s) in ${(discovery.mapperDirs ?? []).length} directory(ies)`
+      + (ibatisFiles > 0
+        ? `, of which ${ibatisFiles} are iBATIS 2 (<sqlMap namespace=…>) and ${mybatisFiles} are MyBatis 3 (<mapper namespace=…>)`
+        : '')
     : mapperFiles === 0
-      ? 'we found no MyBatis mapper XML (<mapper namespace=…>), and this engine reads SQL from mapper XML only'
+      ? 'we found no mapper XML (<mapper namespace=…> or iBATIS <sqlMap namespace=…>), and this engine reads SQL from mapper XML only'
       : `we found ${mapperFiles} mapper XML file(s), but frameworkPacks does not declare mybatis-xml, so an unflagged run will not read them`,
-  counts: { mapperXmlFiles: mapperFiles, mapperDirs: (discovery.mapperDirs ?? []).length },
+  counts: {
+    mapperXmlFiles: mapperFiles,
+    mybatisMapperXml: mybatisFiles,
+    ibatisSqlMapXml: ibatisFiles,
+    mapperDirs: (discovery.mapperDirs ?? []).length,
+  },
 });
 axes.push({
   axis: 'column',
@@ -302,7 +314,7 @@ axes.push({
 // all) and whether the profile turned the axis on. The third — how many route
 // declarations there really are — is not, until the lane runs; the LAST run's
 // count is reported instead when there is one, said as such.
-const routerPacks = ROUTER_PACKS.filter((p) => packs.includes(p));
+const routerPacks = SCREEN_PACKS.filter((p) => packs.includes(p));
 // The same three-state switch `cascade analyze` resolves, over the evidence
 // an estimate has: the packages discovery found in THIS tree. An estimate
 // cannot know about a frontend a later `--web-src` will point outside it, and

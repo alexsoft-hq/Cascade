@@ -68,7 +68,7 @@ import {
   buildRouterScreens, makeNameRegistry, placeRendersEdges, readRouteRecords, readScreenAxis,
   summariseScreens, SCREEN_RENDERS_BASIS, SCREEN_ROOT_GROUP, SCREEN_UNRESOLVED_SHARE,
 } from './web/screens.mjs';
-import { buildPageScreens, countTemplates, indexTemplates, PAGE_RENDERS_BASIS } from './web/pages.mjs';
+import { buildNexacroScreens, buildPageScreens, countTemplates, indexTemplates, PAGE_RENDERS_BASIS } from './web/pages.mjs';
 import { emptyWebStats } from './web/stats.mjs';
 
 export const WEBFACTS_SCHEMA = 'cascade:webfacts:1';
@@ -228,6 +228,8 @@ export function addWebFacts(g, webFacts, opts = {}) {
       axis,
     })
     : [];
+  // B7b'': the screens a Nexacro client declares (RM56) -- a form IS a screen.
+  if (axis.screenEnabled) buildNexacroScreens({ templatesByFile: templates.templatesByFile, screenNodes, stats, axis });
 
   summariseScreens({
     stats, screenNodes, unresolvedSpecifiers, unresolvedNames: registry.unresolvedNames,

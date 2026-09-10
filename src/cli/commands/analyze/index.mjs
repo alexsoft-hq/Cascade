@@ -12,12 +12,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { addHarFacts, readHar } from '../../../adapters/har_bridge.mjs';
 import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf } from '../../../core/lanes.mjs';
-import { ENGINE_ROOT, SCRATCH, noSqlPython, sqlPython } from '../../env.mjs';
+import { ENGINE_ROOT, SCRATCH, listMapperXml, noSqlPython, sqlPython } from '../../env.mjs';
 import { webPackagesRead } from '../../lanes_run.mjs';
 import {
-  sayDdlChoice, sayHarLane, sayIdentity, sayJavaLanes, sayLaneLine, sayNoSchemaFetched,
-  sayOpenApiLane, sayResult, sayRuntimeEvidence, sayScreenAxisAndTemplates, sayVendoredWebRoots,
-  sayWebBridge,
+  sayDdlChoice, sayHarLane, sayIdentity, sayJavaLanes, sayLaneLine, sayMapperCensus,
+  sayNoSchemaFetched, sayOpenApiLane, sayResult, sayRuntimeEvidence, sayScreenAxisAndTemplates,
+  sayVendoredWebRoots, sayWebBridge,
 } from './census.mjs';
 import {
   annotationLineage, assembleAll, nativeQueryLineage, readOpenApiDocs, runLanes,
@@ -51,6 +51,7 @@ function prepare(ctx) {
   sayNoSchemaFetched(profile, { ddls, snapshot, resolved, root });
 
   sayLaneLine({ sel, snapshot, snapshotProvenance, ddls, mappers, javaSrc, webSrc, openapiFiles, harFiles, otelFiles, root });
+  sayMapperCensus({ sel, mappers, mapperFiles: listMapperXml(mappers, sel.mapperAlternatives ?? []) });
 
   sayVendoredWebRoots(profile, { sel, webSrc, resolved, root });
 

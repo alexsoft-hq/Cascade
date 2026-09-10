@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""MyBatis mapper extractor for the Cascade SQL lane, piece 2 of 3.
+"""MyBatis / iBATIS mapper extractor for the Cascade SQL lane, piece 2 of 3.
 
-Walks MyBatis mapper XML files and emits, per SQL statement, a **flattened SQL
+Walks mapper XML files and emits, per SQL statement, a **flattened SQL
 text** that a SQL parser (piece 3) can consume. The flattening is best-effort:
 dynamic tags are collapsed to one representative form (never expanded
 combinatorially: one flattened string per statement, not a template), and
@@ -33,9 +33,27 @@ flagged ``schemaUnknown`` — the engine never invents a schema name. A ``${x}``
 that is not declared a schema property keeps today's behaviour: it stays the raw
 substitution marker it is, and flags the statement ``hasStringSubst``.
 
+iBATIS 2: the same statements in the element that shipped before MyBatis
+was called MyBatis. ``<sqlMap namespace="Sample">`` holds ``<select>``,
+``<insert>``, ``<update>``, ``<delete>``, ``<procedure>`` and ``<statement>``;
+its bind parameter is ``#name#`` rather than ``#{name}`` and its raw
+substitution is ``$name$`` rather than ``${name}``; its dynamic tags are
+``<dynamic>``, ``<isNotNull>``/``<isEqual>``/… and ``<iterate>``, each carrying
+a ``prepend`` the runtime folds in. All of that is flattened by the same rules
+the MyBatis tags go through, so both conventions produce one statement axis.
+
+What an iBATIS statement is CALLED depends on one setting. ``<sqlMapConfig>``
+with ``<settings useStatementNamespaces="true"/>`` makes the runtime key
+``namespace.id``; without it (the iBATIS default) the key is the bare ``id``,
+global across every sqlMap file. A ``<sqlMapConfig>`` among the inputs is read
+for that setting; two configs that disagree are reported and the default stands.
+
 CLI: ``python mybatis_extract.py [--root DIR] [--default-schema NAME]
-     [--schema-property NAME ...] <file-or-dir> [<file-or-dir> ...]``
-     (a directory is walked for ``*.xml`` mapper files.)
+     [--schema-property NAME ...] [--files-from LIST]
+     <file-or-dir> [<file-or-dir> ...]``
+     (a directory is walked for ``*.xml`` mapper files; ``--files-from`` reads a
+     newline-delimited list of files instead, which is how a run that reads one
+     database vendor's copy of each mapper says which copies those are.)
 """
 
 import argparse
@@ -52,10 +70,32 @@ STMTS_SCHEMA = "cascade:mybatis-stmts:1"
 # (SPEC §17.7), so upgrading the worker invalidates the cache instead of mixing
 # two generations of facts. BUMP IT whenever the records below change.
 # Mirrored (and asserted) in src/core/worker_versions.mjs.
-EXTRACTOR_VERSION = "mybatis-extract/1"
+EXTRACTOR_VERSION = "mybatis-extract/2"
 
 # The four statement tags MyBatis executes as SQL, keyed by tag name.
 _STATEMENT_TAGS = ("select", "insert", "update", "delete")
+
+# ...and iBATIS 2's six. `<procedure>` runs a callable statement and
+# `<statement>` is the untyped one every iBATIS DAO falls back to; both are SQL
+# the runtime sends, so both are read.
+_IBATIS_STATEMENT_TAGS = ("select", "insert", "update", "delete", "procedure", "statement")
+
+# iBATIS 2's conditional tags. Every one of them means "include the body when
+# the property passes this test", and every one may carry `prepend`, `open` and
+# `close` text the runtime folds in around the body. The TEST is not modelled --
+# the goal here is SQL a parser can read, one flattened form per statement --
+# so each is flattened to its affixes plus its body, exactly the way MyBatis'
+# `<if>` is.
+_IBATIS_CONDITIONAL_TAGS = frozenset((
+    "isequal", "isnotequal", "isgreaterthan", "isgreaterequal",
+    "islessthan", "islessequal", "isnull", "isnotnull",
+    "isempty", "isnotempty", "ispropertyavailable", "isnotpropertyavailable",
+    "isparameterpresent", "isnotparameterpresent",
+))
+
+# The root elements this worker reads: MyBatis 3's, iBATIS 2's, and the iBATIS
+# configuration file that says what a statement is called.
+_MAPPER_ROOTS = ("mapper", "sqlMap")
 
 # `#{param}` / `#{param,jdbcType=...}` are prepared-statement bind parameters:
 # MyBatis binds them as JDBC placeholders. We render them as `?`, the standard
@@ -72,6 +112,13 @@ _SUBST_PLACEHOLDER = "__subst__"
 
 # Matches a single `#{...}` or `${...}` token (no nested braces occur in MyBatis).
 _PARAM_RE = re.compile(r"([#$])\{[^{}]*\}")
+# iBATIS 2 writes the same two things as `#name#` and `$name$` -- a pair of
+# markers around a property name, with the optional `:JDBCTYPE:NULLVALUE`
+# suffixes iBATIS allows. Applied ONLY to a `<sqlMap>` file, so a `#` in a
+# MyBatis mapper's SQL is left exactly where it is.
+_IBATIS_PARAM_RE = re.compile(r"([#$])([A-Za-z_$][\w.$\[\]]*(?::[^\s#$]*)?)\1")
+# ...and the same schema qualifier in the iBATIS spelling: `$dbMain$.tb_user`.
+_IBATIS_SCHEMA_QUALIFIER_RE = re.compile(r"\$\s*([A-Za-z_][\w.]*)\s*\$\s*\.")
 # A `${prop}` used as a SCHEMA QUALIFIER — i.e. immediately followed by a dot,
 # as in `${dbMain}.tb_user`. Only rewritten when `prop` was declared in
 # `schema.propertyNames`; every other `${}` falls through to _PARAM_RE.
@@ -122,12 +169,35 @@ def _sub_schema_qualifiers(state, text):
     return _SCHEMA_QUALIFIER_RE.sub(repl, text)
 
 
-def _sub_params(state, text):
-    """Replace `#{}`/`${}` tokens in a chunk of character data.
+def _sub_ibatis_schema_qualifiers(state, text):
+    """The iBATIS spelling of the same qualifier: ``$dbMain$.tb_user``."""
+    props = state.get("schemaProperties") or ()
+    if not props or not text:
+        return text
 
-    `#{}` -> ``?`` (bind marker). `${}` -> ``__subst__`` and set the statement's
-    ``hasStringSubst`` flag. A declared schema qualifier is resolved first and
-    never reaches the marker. Returns the substituted text unchanged otherwise.
+    def repl(m):
+        if m.group(1) not in props:
+            return m.group(0)
+        default = state.get("defaultSchema")
+        if default:
+            return default + "."
+        state["schemaUnknown"] = True
+        return ""
+
+    return _IBATIS_SCHEMA_QUALIFIER_RE.sub(repl, text)
+
+
+def _sub_params(state, text):
+    """Replace `#{}`/`${}` (and iBATIS' `#x#`/`$x$`) tokens in character data.
+
+    A bind parameter -> ``?`` (bind marker). A raw substitution ->
+    ``__subst__``, with the statement's ``hasStringSubst`` flag set. A declared
+    schema qualifier is resolved first and never reaches the marker. Returns the
+    substituted text unchanged otherwise.
+
+    The iBATIS pass runs ONLY on a `<sqlMap>` file. A `#` means nothing in
+    particular inside a MyBatis mapper's SQL, and reading one as a bind marker
+    there would rewrite SQL nobody wrote that way.
     """
     if not text:
         return ""
@@ -139,7 +209,11 @@ def _sub_params(state, text):
             return _SUBST_PLACEHOLDER
         return _BIND_PLACEHOLDER
 
-    return _PARAM_RE.sub(repl, text)
+    text = _PARAM_RE.sub(repl, text)
+    if state.get("flavor") == "sqlMap":
+        text = _sub_ibatis_schema_qualifiers(state, text)
+        text = _IBATIS_PARAM_RE.sub(repl, text)
+    return text
 
 
 def _apply_overrides(inner, prefix_overrides, suffix_overrides):
@@ -235,6 +309,34 @@ def _flatten(elem, current_ns, state):
             out.extend(_flatten(child, current_ns, state))
         elif tag == "bind":
             pass  # `<bind name value>` declares a variable; emits no SQL text.
+        elif tag == "dynamic":
+            # iBATIS' `<dynamic prepend="WHERE">` (RM56). The prepend is folded
+            # in; the first conjunction INSIDE it is dropped when there is a
+            # prepend, which is what the runtime does and what keeps
+            # `WHERE AND x = ?` from being written. With no prepend the body is
+            # left as it stands: it is being appended to SQL that already has a
+            # WHERE, and cutting its leading OR there would break the join.
+            prepend = (child.get("prepend") or "").strip()
+            inner = "".join(_flatten(child, current_ns, state)).strip()
+            if prepend:
+                inner = _LEADING_CONJ_RE.sub("", inner, count=1)
+                out.append(" " + prepend + " " + inner + " ")
+            elif inner:
+                out.append(" " + inner + " ")
+        elif tag == "iterate":
+            # iBATIS' `<foreach>`: the body ONCE, with the literal open/close
+            # delimiters folded in so `id IN (...)` stays parseable, and the
+            # conjunction dropped for the same reason MyBatis' separator is.
+            body = "".join(_flatten(child, current_ns, state)).strip()
+            out.append(" " + (child.get("prepend") or "") + " " + (child.get("open") or "")
+                       + " " + body + " " + (child.get("close") or "") + " ")
+        elif tag.lower() in _IBATIS_CONDITIONAL_TAGS:
+            # One iBATIS condition: its affixes and its body. The TEST is not
+            # modelled, the same way MyBatis' `<if test>` is not.
+            body = "".join(_flatten(child, current_ns, state)).strip()
+            if body:
+                out.append(" " + (child.get("prepend") or "") + " " + (child.get("open") or "")
+                           + " " + body + " " + (child.get("close") or "") + " ")
         elif tag == "selectKey":
             # A separate key-generation SELECT MyBatis runs on its own; splicing
             # it into the host INSERT/UPDATE would corrupt that statement. Drop it.
@@ -248,6 +350,46 @@ def _flatten(elem, current_ns, state):
         out.append(_sub_params(state, child.tail))
 
     return out
+
+
+def _statement_namespaces_setting(config_root):
+    """What one ``<sqlMapConfig>`` says about ``useStatementNamespaces``.
+
+    Returns True, False, or None when the file does not mention it at all --
+    which is not the same thing as saying false, even though iBATIS treats it
+    the same way. The caller reports a disagreement; a file that stays silent
+    disagrees with nobody.
+    """
+    for child in config_root.iter():
+        if _localname(child.tag) != "settings":
+            continue
+        raw = child.get("useStatementNamespaces")
+        if raw is None:
+            continue
+        return raw.strip().lower() == "true"
+    return None
+
+
+def _decide_statement_namespaces(configs, diagnostics):
+    """Whether an iBATIS statement's runtime key carries its namespace.
+
+    iBATIS' own default is False, and that is the answer when no configuration
+    among the inputs says otherwise. Two configurations that DISAGREE cannot both
+    be right about one run, so the disagreement is reported and the default
+    stands: guessing which deployment is live would decide what every statement
+    is called by reading files in walk order.
+    """
+    said = [c for c in configs if c["useStatementNamespaces"] is not None]
+    values = sorted({c["useStatementNamespaces"] for c in said})
+    if len(values) > 1:
+        _diag(diagnostics, "warn", "statement_namespaces_conflict",
+              "the sqlMapConfig files here disagree about useStatementNamespaces (%s); "
+              "the iBATIS default (false) is used, so a statement's key is its bare id"
+              % ", ".join("%s=%s" % (c["file"], "true" if c["useStatementNamespaces"] else "false")
+                          for c in said),
+              files=[c["file"] for c in said])
+        return False
+    return bool(values[0]) if values else False
 
 
 def _resolve_refid(refid, current_ns, index):
@@ -293,13 +435,18 @@ def _expand_include(child, current_ns, state):
               fragment=key)
         return []
 
-    frag_elem, frag_ns = index[key]
+    frag_elem, frag_ns, frag_flavor = index[key]
     state["include_stack"].add(key)
+    outer_flavor = state.get("flavor")
+    state["flavor"] = frag_flavor
     try:
-        # A fragment resolves its own nested includes in *its* namespace.
+        # A fragment resolves its own nested includes in *its* namespace, and is
+        # read in ITS OWN convention: a `#name#` inside an iBATIS fragment is a
+        # bind parameter wherever the statement that pulled it in was written.
         chunks = _flatten(frag_elem, frag_ns, state)
     finally:
         state["include_stack"].discard(key)
+        state["flavor"] = outer_flavor
     return chunks
 
 
@@ -358,9 +505,11 @@ def extract_statements(files, root=None, diagnostics=None,
     """
     schema_properties = frozenset(schema_properties or ())
     # ---- Pass 1: parse every file; build the global fragment index. -----------
-    parsed = []          # [{ns, root_elem, rel, text}]
-    fragments = {}       # "namespace.fragid" -> (frag_elem, namespace)
+    parsed = []          # [{ns, root_elem, rel, text, flavor}]
+    fragments = {}       # "namespace.fragid" -> (frag_elem, namespace, flavor)
     n_files = 0
+    n_sqlmaps = 0
+    configs = []         # every <sqlMapConfig> among the inputs
 
     for path in files:
         try:
@@ -381,21 +530,29 @@ def extract_statements(files, root=None, diagnostics=None,
                   file=_rel_path(path, root))
             continue
 
-        if _localname(root_elem.tag) != "mapper":
+        flavor = _localname(root_elem.tag)
+        if flavor == "sqlMapConfig":
+            # NOT a mapper: the file that says what a statement is CALLED.
+            setting = _statement_namespaces_setting(root_elem)
+            configs.append({"file": _rel_path(path, root), "useStatementNamespaces": setting})
+            continue
+        if flavor not in _MAPPER_ROOTS:
             _diag(diagnostics, "info", "not_a_mapper",
-                  "root element is <%s>, not <mapper>; skipped"
-                  % _localname(root_elem.tag),
+                  "root element is <%s>, not <mapper> or <sqlMap>; skipped"
+                  % flavor,
                   file=_rel_path(path, root))
             continue
 
         ns = root_elem.get("namespace") or ""
         if not ns:
             _diag(diagnostics, "warn", "mapper_no_namespace",
-                  "<mapper> without a namespace attribute", file=_rel_path(path, root))
+                  "<%s> without a namespace attribute" % flavor, file=_rel_path(path, root))
 
         rel = _rel_path(path, root)
-        parsed.append({"ns": ns, "root": root_elem, "rel": rel, "text": text})
+        parsed.append({"ns": ns, "root": root_elem, "rel": rel, "text": text, "flavor": flavor})
         n_files += 1
+        if flavor == "sqlMap":
+            n_sqlmaps += 1
 
         for child in root_elem:
             if _localname(child.tag) == "sql":
@@ -410,7 +567,7 @@ def extract_statements(files, root=None, diagnostics=None,
                           "duplicate <sql> fragment id %r; first definition kept" % key,
                           fragment=key, file=rel)
                     continue
-                fragments[key] = (child, ns)
+                fragments[key] = (child, ns, flavor)
 
     # ---- Pass 2: flatten each statement against the global fragment index. -----
     statements = []
@@ -420,11 +577,15 @@ def extract_statements(files, root=None, diagnostics=None,
     unknown_tags = set()
     dropped_selectkey = 0
 
+    use_ns = _decide_statement_namespaces(configs, diagnostics)
+    seen_keys = {}
     for pf in parsed:
         ns, root_elem, rel, text = pf["ns"], pf["root"], pf["rel"], pf["text"]
+        flavor = pf["flavor"]
+        tags = _IBATIS_STATEMENT_TAGS if flavor == "sqlMap" else _STATEMENT_TAGS
         for child in root_elem:
             stype = _localname(child.tag)
-            if stype not in _STATEMENT_TAGS:
+            if stype not in tags:
                 continue
             stmt_id = child.get("id")
             if not stmt_id:
@@ -444,6 +605,7 @@ def extract_statements(files, root=None, diagnostics=None,
                 "unknownTags": unknown_tags,
                 "droppedSelectKey": 0,
                 "diagnostics": diagnostics,
+                "flavor": flavor,
             }
             sql = _flatten_text(_flatten(child, ns, state))
             total_unresolved += state["unresolved"]
@@ -452,9 +614,26 @@ def extract_statements(files, root=None, diagnostics=None,
             if state["unresolved"]:
                 stmts_with_unresolved += 1
 
+            # WHAT THE RUNTIME LOOKS THIS STATEMENT UP BY. MyBatis always joins
+            # the namespace on; iBATIS does so only when the configuration says
+            # `useStatementNamespaces="true"`, and its default is the bare id,
+            # global across every sqlMap file. The `namespace` field carries the
+            # answer, so everything downstream keys the statement the way the
+            # calling code names it.
+            key_ns = ns if (flavor != "sqlMap" or use_ns) else ""
+            key = (key_ns + "." + stmt_id) if key_ns else stmt_id
+            first = seen_keys.get(key)
+            if first is not None:
+                _diag(diagnostics, "warn", "duplicate_statement_id",
+                      "statement %r is declared in %s and again here; the runtime "
+                      "answers with one of them and nothing in the source says which"
+                      % (key, first), statement=key, file=rel)
+            else:
+                seen_keys[key] = rel
+
             statements.append({
                 "kind": "statement",
-                "namespace": ns,
+                "namespace": key_ns,
                 "id": stmt_id,
                 "type": stype,
                 "sql": sql,
@@ -481,6 +660,8 @@ def extract_statements(files, root=None, diagnostics=None,
         "schema": STMTS_SCHEMA,
         "version": EXTRACTOR_VERSION,
         "files": n_files,
+        "sqlMapFiles": n_sqlmaps,
+        "statementNamespaces": use_ns,
         "statements": len(statements),
         "fragments": len(fragments),
         "unresolvedIncludes": total_unresolved,
@@ -528,12 +709,23 @@ def main(argv=None):
                         metavar="NAME", dest="schema_property",
                         help="a MyBatis property used as a schema qualifier "
                              "(repeatable), e.g. --schema-property dbMain")
-    parser.add_argument("inputs", nargs="+", metavar="file-or-dir",
+    parser.add_argument("--files-from", default=None, metavar="LIST",
+                        help="a newline-delimited file listing the mapper .xml "
+                             "files to read, INSTEAD of walking directories. "
+                             "How a run that reads one database vendor's copy "
+                             "of each mapper says which copies those are")
+    parser.add_argument("inputs", nargs="*", metavar="file-or-dir",
                         help="mapper .xml files or directories to walk for *.xml")
     args = parser.parse_args(argv)
+    if not args.inputs and args.files_from is None:
+        parser.error("give at least one file or directory, or --files-from LIST")
 
     diagnostics = []
-    files = _collect_xml_files(args.inputs, diagnostics)
+    inputs = list(args.inputs)
+    if args.files_from is not None:
+        with open(args.files_from, "r", encoding="utf-8") as fh:
+            inputs.extend(line for line in (raw.strip() for raw in fh) if line)
+    files = _collect_xml_files(inputs, diagnostics)
     records = extract_statements(files, root=args.root, diagnostics=diagnostics,
                                  default_schema=args.default_schema,
                                  schema_properties=args.schema_property)
@@ -560,6 +752,8 @@ def main(argv=None):
         "code": "summary",
         "version": EXTRACTOR_VERSION,
         "files": header["files"],
+        "sqlMapFiles": header["sqlMapFiles"],
+        "statementNamespaces": header["statementNamespaces"],
         "statements": header["statements"],
         "fragments": header["fragments"],
         "unresolvedIncludes": header["unresolvedIncludes"],

@@ -51,6 +51,20 @@ export function sayLaneLine({ sel, snapshot, snapshotProvenance, ddls, mappers, 
     + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
 }
 
+/**
+ * THE MAPPER XML THIS RUN READ, AND THE COPIES IT DID NOT (RM56).
+ *
+ * A tree that ships one mapper per database vendor reads one vendor's copies,
+ * and a count with no explanation beside it reads as files going missing. So
+ * the line says both numbers, and where the other copies went.
+ */
+export function sayMapperCensus({ sel, mappers, mapperFiles }) {
+  const left = (sel.mapperAlternatives ?? []).length;
+  if (mappers.length === 0 || left === 0) return;
+  process.stderr.write(`mapper XML: ${mapperFiles.length} file(s), `
+    + `${left} left out as other vendors' copies (profile mappers.alternatives)\n`);
+}
+
 export function sayVendoredWebRoots(profile, { sel, webSrc, resolved, root }) {
   // WHICH OF THOSE ROOTS NOBODY PACKAGED (RM47). A root the profile names is
   // read exactly like one a package.json gave, and the census has to say which
@@ -137,6 +151,14 @@ export function sayWebWorker(webWorkerStats, { webFacts, profile, resolved, root
       + `${t.links ?? 0} link(s), ${t.includes ?? 0} include(s), `
       + `${t.contextVars ?? 0} variable(s) holding the context path\n`);
   }
+  // WHAT A FILE-TREE ROUTER KEEPS BESIDE ITS PAGES (RM56). `pages/api/**` is
+  // code this frontend SERVES, and a screen count with no word about it reads
+  // as pages going missing.
+  if ((webWorkerStats.apiFiles ?? 0) > 0) {
+    process.stderr.write(`  the file tree: ${webWorkerStats.routes} page(s) declared by where they sit, `
+      + `${webWorkerStats.apiFiles} file(s) under the router's api directory read as server handlers instead\n`);
+  }
+
   for (const r of webFacts) {
     if (r.kind !== 'parse_error') continue;
     // A parse error on a real frontend file is a FINDING: that file's calls
@@ -318,7 +340,10 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
   }
   const s = webBridgeStats.screens;
   const pg = s.byKind ?? { router: 0, page: 0 };
-  process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s) and ${pg.page} page(s) a controller renders` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
+  // …and the third kind of screen (RM56): a Nexacro form, which no route
+  // declares and no handler renders. Named only where there is one.
+  const forms = Number.isInteger(pg.nexacro) && pg.nexacro > 0 ? ` and ${pg.nexacro} Nexacro form(s)` : '';
+  process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s), ${pg.page} page(s) a controller renders${forms}` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
     + `${s.withComponent} with a component (${s.componentUnresolved} unresolved), `
     + `${s.renders.EXACT} exact, ${s.renders.SOUND_SET} candidate and ${s.renders.HEURISTIC ?? 0} heuristic RENDERS edge(s); `
     + `${w.functions.created} frontend function node(s) (${w.functions.withHttp} send a request, ${w.functions.reachingHttp} lead to one), `

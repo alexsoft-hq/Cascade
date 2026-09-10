@@ -484,7 +484,7 @@ test('stats: a fresh lane report is all zeroes, and every field is there before 
   assert.equal(s.unresolved.total, 0);
   assert.deepEqual(Object.keys(s.unresolved.byReason).sort(),
     ['allHoles', 'expression', 'importedConstant', 'noMatch', 'outsidePack', 'parameter']);
-  assert.deepEqual(s.screens.byKind, { router: 0, page: 0 });
+  assert.deepEqual(s.screens.byKind, { router: 0, page: 0, nexacro: 0 });
   assert.deepEqual(s.callsByRule, { 'same-file': 0, 'esm-import': 0, 'passed-as-value': 0 });
   assert.equal(s.screens.enabled, false);
   // Two reports do not share a nested object, or one project's counts would

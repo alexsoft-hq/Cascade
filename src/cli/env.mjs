@@ -139,15 +139,25 @@ export function catalogPathsOf(dotCascadeDir) {
 // unless --password-env names another. Mirrors catalog_live.py's default.
 export const DEFAULT_PASSWORD_ENV = 'CASCADE_DB_PASSWORD';
 
-/** Every *.xml under the given directories (or the files themselves), sorted. */
-export function listMapperXml(dirs) {
+/**
+ * Every *.xml under the given directories (or the files themselves), sorted,
+ * MINUS the ones this run reads past.
+ *
+ * `exclude` is the other database vendors' copies of a mapper this tree ships
+ * once per vendor (RM56, `mappers.alternatives`). They are dropped HERE, in the
+ * one place the lane's file list is built, so the worker, the shard keys and
+ * the census can never disagree about which files the statement axis is made
+ * of. Absolute paths, compared exactly.
+ */
+export function listMapperXml(dirs, exclude = []) {
+  const skip = new Set((exclude ?? []).map((p) => path.resolve(p)));
   const out = [];
   const walk = (p) => {
     let st;
     try { st = fs.statSync(p); } catch { return; }
     if (st.isDirectory()) {
       for (const e of fs.readdirSync(p).sort()) walk(path.join(p, e));
-    } else if (st.isFile() && p.endsWith('.xml')) out.push(p);
+    } else if (st.isFile() && p.endsWith('.xml') && !skip.has(p)) out.push(p);
   };
   for (const d of dirs) walk(d);
   return [...new Set(out)].sort();

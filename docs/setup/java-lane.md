@@ -242,6 +242,42 @@ A constant of **another** class (`CmmnConstants.SELECT_CODES`) is one of the
 `unreadable`, on purpose: nothing in the corpus writes one, and a resolver with
 no repository behind it is a rule nobody has checked.
 
+
+#### The same DAO one generation earlier: iBATIS 2
+
+The shape above is what a project written on MyBatis 3 looks like. A project
+written before it looks like this:
+
+```java
+@Repository("userDAO")
+public class UserDAO extends NexacroIbatisAbstractDAO {
+    public List<UserVO> selectUserVoList(UserVO searchVO) {
+        return (List<UserVO>) list("selectUserVOList", searchVO);
+    }
+}
+```
+
+Two things are different, and the rule reads both.
+
+**The receivers.** `SqlMapClient`, `SqlMapClientTemplate`,
+`SqlMapClientDaoSupport` and `EgovAbstractDAO` join the session list above, and
+so does any class whose `extends` chain names a type ending in
+`IbatisAbstractDAO`. That suffix is there because a framework vendor writes its
+own base on top of one of those and ships it in a jar, so the tree says
+`extends NexacroIbatisAbstractDAO` and nothing more; naming the vendor instead
+would be a rule that works on one product. `queryForList`, `queryForObject` and
+`queryForMap` join the method list.
+
+**The id.** iBATIS defaults `useStatementNamespaces` to false, so the runtime
+key is a **bare word** with no namespace on it. A bare word is a weaker witness
+than `Namespace.id` — it could be anything — so the worker records it under its
+own field and the bridge binds it only when the pack holds exactly one statement
+under that id, which is what the SQL lane produces when the configuration leaves
+namespaces off (`docs/setup/sql-lane.md`). A bare word never finds a namespaced
+statement by looking like the end of it: `selectCodeList` does not bind
+`codeDAO.selectCodeList`. A word that answers to no statement changes nothing at
+all and stays in the `unreadable` census with the expression as written.
+
 ### A field injected by name
 
 ```java

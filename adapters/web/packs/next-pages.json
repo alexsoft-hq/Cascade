@@ -1,0 +1,26 @@
+{
+  "pack": "next-pages",
+  "why": "Next.js declares no routes. The FILE TREE is the route table: `pages/index.tsx` answers `/`, `pages/content/[id].tsx` answers `/content/{id}`, and nothing in the source says so. Every other router pack here reads a declaration; this one reads a convention, which is why it needs a shape of its own (`filesystem`) rather than a `routeObject`. Two conventions ship in one product: the pages router every Next.js application before 13 uses, and the app router after it.",
+  "dependency": "next",
+  "matching": "a source file under a `root` directory of a package that depends on `next`, by extension; the route is the file's path under that directory",
+  "filesystem": [
+    {
+      "root": "pages",
+      "extensions": [".tsx", ".ts", ".jsx", ".js"],
+      "index": "index",
+      "dynamic": { "open": "[", "close": "]" },
+      "catchAll": "[...",
+      "exclude": ["_app", "_document", "_error", "404", "500"],
+      "apiDir": "api"
+    },
+    {
+      "root": "app",
+      "extensions": [".tsx", ".ts", ".jsx", ".js"],
+      "leaf": "page",
+      "dynamic": { "open": "[", "close": "]" },
+      "catchAll": "[...",
+      "exclude": ["_app", "_document", "_error", "404", "500"],
+      "apiDir": "api"
+    }
+  ]
+}

@@ -278,6 +278,7 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
     let reachingATable = 0;
     let observedScreens = 0;
     let depthCutScreens = 0;
+    const nexacroScreens = screenNodes.filter((n) => n.source === 'nexacro').length;
     for (const s of sw.screens) {
       if (s.endpoints.length > 0) reachingAnEndpoint += 1;
       if (s.tables.length > 0) reachingATable += 1;
@@ -288,11 +289,17 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
       declared: webScreenStats ? (webScreenStats.declared ?? screenNodes.length) : screenNodes.length,
       screens: screenNodes.length,
       withComponent: screenNodes.filter((n) => n.component != null).length,
-      // TWO KINDS OF SCREEN (RM48): one a router declares, one a controller
-      // renders. A hybrid application has both, and one total would hide that.
+      // THREE KINDS OF SCREEN: one a router declares (RM48), one a controller
+      // renders, and one a Nexacro client IS (RM56). A hybrid application has
+      // more than one of them, and a single total would hide that.
+      //
+      // The third is named ONLY where there is one, because this answer is what
+      // a caller reads and a key that appears everywhere at zero would say
+      // "this product could have Nexacro screens" about every product there is.
       byKind: {
-        router: screenNodes.filter((n) => n.source !== 'view').length,
+        router: screenNodes.filter((n) => n.source !== 'view' && n.source !== 'nexacro').length,
         page: screenNodes.filter((n) => n.source === 'view').length,
+        ...(nexacroScreens > 0 ? { nexacro: nexacroScreens } : {}),
       },
       reachingAnEndpoint,
       reachingATable,

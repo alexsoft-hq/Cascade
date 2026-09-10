@@ -40,6 +40,18 @@ const PREFIX_COVERAGE = 0.95;
 
 const SPRING_HANDLER_RE = /@RestController|@Controller|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping/;
 const MYBATIS_MAPPER_RE = /<mapper\s+namespace\s*=/;
+// iBATIS 2 (RM56). The SAME job as the `<mapper>` above, in the spelling that
+// shipped before MyBatis was called MyBatis: `<sqlMap namespace="Sample">`,
+// with `#name#` where `#{name}` goes. Every eGovFrame project written before
+// 3.x runs on it, and a tree can hold both at once — the Nexacro sample ships
+// four `<sqlMap>` files beside two `<mapper>` files.
+const IBATIS_SQLMAP_RE = /<sqlMap(?:\s[^>]*)?>/;
+// …and the file that CONFIGURES it. `useStatementNamespaces` is the one
+// setting that changes what a statement is CALLED: with it off (the iBATIS
+// default) `selectUserVOList` is the whole runtime key, with it on the key is
+// `Sample.selectUserVOList`.
+const IBATIS_SQLMAP_CONFIG_RE = /<sqlMapConfig(?:\s|>)/;
+const IBATIS_STATEMENT_NAMESPACES_RE = /useStatementNamespaces\s*=\s*["']\s*(true|false)\s*["']/i;
 const CREATE_TABLE_RE = /create\s+table/i;
 const ALTER_TABLE_RE = /alter\s+table/i;
 const JPA_ENTITY_RE = /@Entity\b/;
@@ -106,6 +118,11 @@ const ROUTER_DEPS = Object.freeze([
   ['vue-router', ['vue-router']],
   ['react-router', ['react-router', 'react-router-dom']],
   ['angular-router', ['angular-ui-router', '@uirouter/angularjs', 'angular-route']],
+  // LAST, and only when nothing above answered (RM56). Next.js routes by the
+  // FILE TREE, so a package that also ships a router library declares its
+  // screens in that library and the file tree is a fallback nobody uses. A
+  // package that depends on `next` and nothing else routes by `pages/`.
+  ['next-pages', ['next']],
 ]);
 
 /**
@@ -205,6 +222,16 @@ const ROUTER_SCAN_BYTES = 65536;
 
 /** The router declaration packs this engine ships, in the order they are tried. */
 export const ROUTER_PACKS = Object.freeze(ROUTER_DEPS.map(([name]) => name));
+
+/**
+ * …and the screen-declaring pack no dependency list can name (RM56). A Nexacro
+ * client has no package manifest at all: it is XML forms and an application
+ * file, and what says "there are screens here" is the forms themselves.
+ */
+export const VENDORED_SCREEN_PACKS = Object.freeze(['nexacro']);
+
+/** Every pack that declares SCREENS, whichever way it declares them. */
+export const SCREEN_PACKS = Object.freeze([...ROUTER_PACKS, ...VENDORED_SCREEN_PACKS]);
 
 /**
  * Which router declaration pack a package's dependencies name, or null.
@@ -528,10 +555,29 @@ const DDL_DIALECT_PATH_NAMES = Object.freeze([
  * @returns {string|null}
  */
 export function ddlDialectFromPath(relPath) {
+  const hit = ddlDialectTokenOf(relPath);
+  return hit === null ? null : hit.dialect;
+}
+
+/**
+ * The same answer with the TOKEN ITSELF and where it sits, which is what a
+ * caller needs to ask "are these two paths the same path apart from the vendor
+ * name?" (RM56). `EgovProgrmManage_SQL_mysql.xml` and
+ * `EgovProgrmManage_SQL_tibero.xml` are one mapper shipped twice, and the only
+ * way to say so is to cut the vendor word out of both and compare the rest.
+ *
+ * ONE routine, so the grouping and the classification can never disagree about
+ * which word in a path is a vendor's name.
+ *
+ * @param {string} relPath
+ * @returns {{dialect:string, token:string, at:number}|null}
+ */
+export function ddlDialectTokenOf(relPath) {
   const lower = String(relPath ?? '').toLowerCase();
   for (const [canonical, spellings] of DDL_DIALECT_PATH_NAMES) {
     for (const name of spellings) {
-      if (new RegExp(`(^|[^a-z0-9])${name}([^a-z0-9]|$)`).test(lower)) return canonical;
+      const m = new RegExp(`(^|[^a-z0-9])${name}([^a-z0-9]|$)`).exec(lower);
+      if (m) return { dialect: canonical, token: name, at: m.index + m[1].length };
     }
   }
   return null;
@@ -690,6 +736,28 @@ function classifyTemplateFile(d, f) {
  * or a `.ts` never falls through to "a technology this engine has no lane for".
  * @returns {boolean} true when this file's classification is FINISHED here
  */
+/**
+ * A NEXACRO FILE (RM56): a form, or the application file that names the typedef
+ * every url is written against. Noted by directory, never read here — which of
+ * these directories is a ROOT is decided after the walk, from where the
+ * application sits.
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyNexacroFile(d, f) {
+  const { absFile, lower, rel } = f;
+  const { nexacroForms, nexacroApps } = d;
+  if (lower.endsWith('.xfdl')) {
+    const dir = rel(path.dirname(absFile));
+    nexacroForms.set(dir, (nexacroForms.get(dir) ?? 0) + 1);
+    return true;
+  }
+  if (lower.endsWith('.xadl')) {
+    nexacroApps.add(rel(path.dirname(absFile)));
+    return true;
+  }
+  return false;
+}
+
 function classifyWebSource(d, f) {
   const { absFile, name, lower, dirEntries, inPackage, rel } = f;
   const { counts, looseWebFiles, looseWebPaths } = d;
@@ -785,13 +853,43 @@ function classifyKotlinFile(d, f) {
  */
 function classifyXmlFile(d, f) {
   const { absFile, lower, rel } = f;
-  const { counts, mapperDirs, read, xmlViewResolvers } = d;
+  const { counts, mapperDirs, mapperFiles, ibatisConfigs, read, xmlViewResolvers } = d;
   if (lower.endsWith('.xml')) {
     const text = read(absFile);
     if (text === null) return;
     if (MYBATIS_MAPPER_RE.test(text)) {
       counts.mybatisMapperXml += 1;
       mapperDirs.add(rel(path.dirname(absFile)));
+      mapperFiles.push({ path: rel(absFile), kind: 'mapper', namespace: namespaceAttrOf(text, 'mapper') });
+      return true;
+    }
+    // THE CONFIG BEFORE THE MAPPER, because a `<sqlMapConfig>` lists its
+    // mappers as `<sqlMap resource=…/>` elements and would otherwise read as
+    // one. The worker settles it properly, by the ROOT element; discovery only
+    // has to put the file in the right census.
+    if (IBATIS_SQLMAP_CONFIG_RE.test(text)) {
+      // The CONFIG joins the lane's inputs, because the worker reads the
+      // setting out of it: a statement's runtime key is decided there, and
+      // handing the worker the statements without the file that names them
+      // would leave it guessing.
+      mapperDirs.add(rel(path.dirname(absFile)));
+      const m = IBATIS_STATEMENT_NAMESPACES_RE.exec(text);
+      ibatisConfigs.push({
+        path: rel(absFile),
+        // ABSENT MEANS FALSE, because that is what iBATIS itself does. Recorded
+        // as `null` all the same, so a reader can tell "the file says false"
+        // from "the file says nothing".
+        useStatementNamespaces: m === null ? null : m[1].toLowerCase() === 'true',
+      });
+      return true;
+    }
+    // iBATIS 2 (RM56): the same statements, the older element. Read as a lane
+    // input exactly like a `<mapper>` — the SQL worker takes both — so a tree
+    // that ships one, the other, or both produces one statement axis.
+    if (IBATIS_SQLMAP_RE.test(text)) {
+      counts.ibatisSqlMapXml += 1;
+      mapperDirs.add(rel(path.dirname(absFile)));
+      mapperFiles.push({ path: rel(absFile), kind: 'sqlMap', namespace: namespaceAttrOf(text, 'sqlMap') });
       return true;
     }
     // A SPRING MVC PROJECT WRITES ITS VIEW RESOLVER AS A BEAN (RM55). The same
@@ -808,6 +906,20 @@ function classifyXmlFile(d, f) {
   }
 
   return false;
+}
+
+/**
+ * The `namespace` attribute of a mapping file's ROOT element, or the empty
+ * string. Read from the text rather than parsed, because discovery reads the
+ * whole tree and an XML parser on every file is the cost of the walk; the SQL
+ * worker parses these files properly and its answer is the one that ships.
+ * @param {string} text
+ * @param {string} element  `mapper` or `sqlMap`
+ * @returns {string}
+ */
+function namespaceAttrOf(text, element) {
+  const m = new RegExp(`<${element}\\b[^>]*\\bnamespace\\s*=\\s*["']([^"']*)["']`).exec(String(text ?? ''));
+  return m === null ? '' : m[1];
 }
 
 /**
@@ -992,6 +1104,7 @@ function classifyPackageManifest(d, f) {
 function classifyFile(d, f) {
   if (classifyIndexPage(d, f)) return;
   if (classifyTemplateFile(d, f)) return;
+  if (classifyNexacroFile(d, f)) return;
   if (classifyWebSource(d, f)) return;
   if (classifyJavaFile(d, f)) return;
   if (classifyKotlinFile(d, f)) return;
@@ -1175,6 +1288,61 @@ counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
 }
 
 /**
+ * A NEXACRO CLIENT (RM56).
+ *
+ * A directory of `.xfdl` files is a frontend, and nothing else in this walk
+ * would say so: `.xfdl` is XML, there is no package.json above it, it does not
+ * sit under `static/`, and no `index.html` loads it. What says it is a frontend
+ * is that a Nexacro form IS a screen, and a tree that holds one holds a client.
+ *
+ * WHERE THE ROOT IS. A Nexacro application is a directory holding an `.xadl`
+ * (`packageB/packageB.xadl`), with its forms in directories under it; the
+ * SERVED root is the directory that application sits in, because a tree can
+ * hold several applications side by side and each one's name belongs in its
+ * screens' paths. So the root is the `.xadl` directory's PARENT when that
+ * parent still covers every form; failing that, the deepest directory that
+ * covers them all.
+ *
+ * @returns {{root:string, files:number, forms:number, routerPacks:string[], kind:string}[]}
+ */
+function nexacroRoots(d) {
+  const { nexacroForms, nexacroApps } = d;
+  const formDirs = [...nexacroForms.keys()].sort();
+  if (formDirs.length === 0) return [];
+  const appDirs = [...nexacroApps].sort();
+  const covers = (dir) => formDirs.every((f) => f === dir || f.startsWith(`${dir}/`));
+  let root = commonAncestorDir(formDirs);
+  for (const app of appDirs) {
+    if (!covers(app)) continue;
+    const up = parentDir(app);
+    if (up !== null && covers(up)) { root = up; break; }
+    root = app;
+    break;
+  }
+  let forms = 0;
+  for (const [dir, n] of nexacroForms) if (dir === root || dir.startsWith(`${root}/`)) forms += n;
+  return [{ root, files: forms, forms, routerPacks: ['nexacro'], kind: 'nexacro' }];
+}
+
+/** The deepest directory every one of these paths sits in or under. */
+function commonAncestorDir(dirs) {
+  const split = dirs.map((p) => p.split('/').filter((s) => s !== '' && s !== '.'));
+  const out = [];
+  for (let i = 0; i < split[0].length; i += 1) {
+    const seg = split[0][i];
+    if (!split.every((parts) => parts[i] === seg)) break;
+    out.push(seg);
+  }
+  return out.join('/');
+}
+
+/** The directory above this one, or null at the top of the tree. */
+function parentDir(dir) {
+  const at = String(dir ?? '').lastIndexOf('/');
+  return at <= 0 ? null : dir.slice(0, at);
+}
+
+/**
  * THE TEMPLATE ROOTS (RM48). Which of the directories holding template files is
  * a ROOT depends on the view resolver settings and on what the markup itself
  * says: two engines share the `.html` extension, and only the root's own files
@@ -1260,6 +1428,10 @@ export function discover(root, io = {}) {
     javaTestFiles: 0,
     springHandlerFiles: 0,
     mybatisMapperXml: 0,
+    // …and the same statements in the iBATIS 2 element (RM56). Counted apart
+    // from `mybatisMapperXml` because they are two conventions, and a census
+    // that added them up could not say which one a tree is written in.
+    ibatisSqlMapXml: 0,
     ddlFiles: 0,
     jpaEntityFiles: 0,
     mybatisPlusFiles: 0,
@@ -1286,6 +1458,9 @@ export function discover(root, io = {}) {
   // the files themselves so the engine can be read off the markup after the walk.
   const templateDirs = new Map(); // rel dir -> Map<ext, count>
   const templateSample = new Map(); // rel dir -> abs paths, at most a few
+  // A Nexacro client (RM56): the directories holding its forms and its application file.
+  const nexacroForms = new Map(); // rel dir -> form count
+  const nexacroApps = new Set(); // rel dir holding an `.xadl` application file
   const viewResolvers = [];
   const xmlViewResolvers = []; // …and the same settings written as Spring BEANS (RM55)
   // Every OpenAPI / Swagger document in the tree, with the version it declares.
@@ -1309,6 +1484,8 @@ export function discover(root, io = {}) {
   // source roots (measured from each file's own `package` declaration, never
   // assumed to be `src/main/java`).
   const mapperDirs = new Set();
+  const mapperFiles = []; // …and each file by name, with its namespace (RM56)
+  const ibatisConfigs = []; // every `<sqlMapConfig>`, with what it says about statement namespaces
   const javaRoots = new Set();
   const javaTestRoots = new Set();
   // repoRel -> per-repo tallies; the walk attributes each file to the deepest
@@ -1349,11 +1526,15 @@ export function discover(root, io = {}) {
     looseWebFiles,
     looseWebPaths,
     mapperDirs,
+    mapperFiles,
+    ibatisConfigs,
     openapiDocuments,
     packageCounts,
     read,
     root,
     serviceNames,
+    nexacroApps,
+    nexacroForms,
     templateDirs,
     templateSample,
     viewResolvers,
@@ -1375,7 +1556,8 @@ export function discover(root, io = {}) {
 
   walk(root, [], true, false);
 
-  const webVendoredRoots = looseWebRoots(d);
+  const webVendoredRoots = [...looseWebRoots(d), ...nexacroRoots(d)]
+    .sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
   const templateRoots = templateRootsFrom(d);
 
   const repos = [...repoStats.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -1387,6 +1569,8 @@ export function discover(root, io = {}) {
     buildTool: w.sawPom ? 'maven' : w.sawGradle ? 'gradle' : null,
     packagePrefixes: coveringPrefixes(packageCounts, d.javaWithPackage),
     mapperDirs: minimalRoots(mapperDirs),
+    mapperFiles: mapperFiles.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    ibatisConfigs: ibatisConfigs.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
     // The web lane's roots and packages (RM26). `minimalRoots` for the same
     // reason the mapper and java roots use it: the lane walks recursively, so
     // listing a directory and one of its children would read the child twice.

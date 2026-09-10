@@ -426,6 +426,8 @@ export function webFactsSummary(records) {
     imports: 0, exports: 0, functions: 0, constants: 0, bindings: 0,
     classes: 0, assigns: 0,
     calls: 0, callsWithUrl: 0,
+    // A file-tree router's own server handlers (RM56), which are not screens.
+    apiFiles: 0,
     urlByShape: { literal: 0, template: 0, constant: 0, unresolved: 0 },
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
@@ -446,7 +448,10 @@ export function webFactsSummary(records) {
     switch (r.kind) {
       case 'file':
         withFileRecord.add(r.file);
-        if (r.lang === 'template') counts.templates.files += 1;
+        // A Nexacro form is a template of its own kind (RM56): markup with its
+        // scripts inside it, which is what every other entry here is.
+        if (r.lang === 'template' || r.lang === 'nexacro') counts.templates.files += 1;
+        else if (r.apiHandler === true) { counts.jsFiles += 1; counts.apiFiles += 1; }
         else if (r.lang === 'vue') counts.vueFiles += 1;
         else if (r.lang === 'ts' || r.lang === 'tsx') counts.tsFiles += 1;
         else counts.jsFiles += 1;

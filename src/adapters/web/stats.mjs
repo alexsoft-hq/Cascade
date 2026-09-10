@@ -33,6 +33,9 @@ export function emptyWebStats() {
       withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
       // A form or a link in a server-rendered page (RM48).
       template: 0,
+      // A Nexacro screen's `transaction(…)` (RM56), and the ones with no url.
+      nexacro: 0,
+      nexacroUnreadable: 0,
       // A call onto an imported name that is not a function this lane read: a
       // constant, a component, a client instance. No CALLS edge, and counted so
       // the missing hop is a number rather than a silence.
@@ -103,7 +106,7 @@ export function emptyWebStats() {
       // a hybrid application has both. Counted apart, because they are found by
       // two different routes and a reader comparing them is asking a real
       // question.
-      byKind: { router: 0, page: 0 },
+      byKind: { router: 0, page: 0, nexacro: 0 },
     },
     // The server-rendered pages: how many templates this run read, how many of
     // them a handler names, and what the view names that resolved to nothing

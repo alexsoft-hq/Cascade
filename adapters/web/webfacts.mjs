@@ -77,7 +77,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/5';
+const VERSION = 'webfacts/6';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -92,7 +92,11 @@ const babel = require('./vendor/babel-parser.cjs');
 import {
   calleeOf, eachChild, keyName, propOf, Scope, summarizeArg, toPosix,
 } from './lib/ast.mjs';
-import { visitCall } from './lib/calls.mjs';
+import { nexacroObjects, visitCall } from './lib/calls.mjs';
+import {
+  MAX_FORM_BYTES, NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT, nexacroAssetDirs, nexacroFormOf,
+  nexacroIncludes, nexacroScriptBlocks, nexacroServices, nexacroTypedefUrl, resolveIncludeFile,
+} from './lib/nexacro.mjs';
 import { emptyCounts, orderRecords, tally } from './lib/emit.mjs';
 import {
   bindingOf, declareFunction, hoist, isRequireCall, recordConstant, recordImport, visitArray,
@@ -111,7 +115,11 @@ import {
 // What the walk reads
 // ---------------------------------------------------------------------------
 
-const EXTENSIONS = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue'];
+// `.xfdl` and `.xjs` are a Nexacro client's own two file types (RM56): the
+// form, which is one screen, and the shared script it includes. Both hold
+// JavaScript inside an XML wrapper, and both are read here for the same reason
+// a `.vue` is: that is where the frontend's code is written.
+const EXTENSIONS = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue', NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT];
 
 /**
  * Directories that are never first-party source, WHEREVER they sit. A vendored
@@ -137,6 +145,9 @@ const OUTPUT_DIRS = new Set(['dist', 'build', 'coverage', 'public']);
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 function langOf(file) {
+  // A Nexacro FORM and a Nexacro SCRIPT are read the same way -- both wrap
+  // their JavaScript in `<Script>` -- and only the form is a screen.
+  if (file.endsWith(NEXACRO_FORM_EXT) || file.endsWith(NEXACRO_SCRIPT_EXT)) return 'nexacro';
   if (file.endsWith('.vue')) return 'vue';
   if (file.endsWith('.tsx')) return 'tsx';
   if (file.endsWith('.ts')) return 'ts';
@@ -447,6 +458,9 @@ function analyzeProgram(program, st) {
     anyPackSeesARoute,
     visit: (node, env) => visit(node, env),
   };
+  // A NEXACRO FILE IS READ AGAINST ITS OWN CLIENT (RM56): its typedef's service
+  // prefixes, and the options objects it binds to a name, both settled here.
+  if (st.nexacro) ctx.nexacro = { services: st.nexacro.services, objects: nexacroObjects(ctx, program) };
   hoist(ctx, program.body);
   st.registrarPacks = new Set();
   registrarScan(ctx, program);
@@ -884,6 +898,244 @@ function packageDirOf(dir) {
 }
 
 // ---------------------------------------------------------------------------
+// A Nexacro client (RM56)
+// ---------------------------------------------------------------------------
+//
+// A ROOT THAT HOLDS `.xfdl` FILES IS A NEXACRO ROOT, and under it this lane
+// reads ONLY the Nexacro file types. The reason is what else is under one: a
+// Nexacro application ships the vendor's whole runtime beside its own screens
+// (`nexacro14lib/`, several hundred `.js` files), and reading those would put a
+// framework's insides in the graph and count every one of them as a frontend
+// source file. A `.js` under a Nexacro root is the runtime; an `.xfdl` and an
+// `.xjs` are what somebody wrote.
+
+/** Whether a path is one of the two file types a Nexacro client is written in. */
+function isNexacroSource(abs) {
+  return abs.endsWith(NEXACRO_FORM_EXT) || abs.endsWith(NEXACRO_SCRIPT_EXT);
+}
+
+/**
+ * The Nexacro roots among the files collected, and the file set with each
+ * root's non-Nexacro files dropped.
+ *
+ * A root here is the topmost directory that holds an `.xfdl`: the walk found
+ * the forms, and the directory they sit under is the client. Everything under
+ * it that is not `.xfdl` or `.xjs` goes.
+ *
+ * @param {Set<string>} found  absolute paths, as `collectFiles` left them
+ * @param {string[]} roots     the source roots this invocation was given
+ * @returns {{nexacroRoots:string[], dropped:number}}
+ */
+function applyNexacroRoots(found, roots) {
+  const formDirs = new Set();
+  for (const abs of found) if (abs.endsWith(NEXACRO_FORM_EXT)) formDirs.add(path.dirname(abs));
+  if (formDirs.size === 0) return { nexacroRoots: [], dropped: 0 };
+  // The root a form belongs to is the SOURCE ROOT it was found under: an
+  // invocation says which directories it reads, and a form's client cannot be
+  // wider than that.
+  const nexacroRoots = [];
+  for (const r of roots.map((x) => path.resolve(x)).sort()) {
+    const under = [...formDirs].some((d) => d === r || d.startsWith(r + path.sep));
+    if (under) nexacroRoots.push(r);
+  }
+  let dropped = 0;
+  for (const abs of [...found]) {
+    const inRoot = nexacroRoots.some((r) => abs === r || abs.startsWith(r + path.sep));
+    if (!inRoot || isNexacroSource(abs)) continue;
+    found.delete(abs);
+    dropped += 1;
+  }
+  return { nexacroRoots, dropped };
+}
+
+/**
+ * WHAT A NEXACRO FILE IS WRITTEN AGAINST: the service prefixes its typedef
+ * declares, and the asset directories an include is resolved through.
+ *
+ * The typedef is named BY THE FILE (`<TypeDefinition url="..\default_typedef.xml"/>`)
+ * and resolved against the file's own directory, so a tree with several
+ * applications in it reads each one's own. Read once per typedef, because a
+ * client has one typedef and several hundred forms.
+ */
+function makeNexacroTypedefs() {
+  const cache = new Map(); // absolute typedef path -> {services, dirs, dir}
+  const empty = { services: new Map(), dirs: new Map(), dir: null };
+  return (abs, text) => {
+    const url = nexacroTypedefUrl(text);
+    if (url === null) return empty;
+    const file = path.resolve(path.dirname(abs), url);
+    if (cache.has(file)) return cache.get(file);
+    let xml;
+    try { xml = fs.readFileSync(file, 'utf8'); } catch { cache.set(file, empty); return empty; }
+    const out = { services: nexacroServices(xml), dirs: nexacroAssetDirs(xml), dir: path.dirname(file) };
+    cache.set(file, out);
+    return out;
+  };
+}
+
+/**
+ * The `template` record one `.xfdl` produces, plus the includes it pulls in.
+ *
+ * A Nexacro form is a screen the way a server-rendered page is one: nothing
+ * imports it, nothing else runs it, and what it runs is its own `<Script>` and
+ * whatever the scripts it includes do. So it goes into the stream as a
+ * `template` with an engine of its own, and the bridge builds the screen from
+ * it by the rules a page already follows.
+ */
+function nexacroTemplateRecord({ abs, relFile, text, root, clientRoot, typedef, scripts }) {
+  const isForm = abs.endsWith(NEXACRO_FORM_EXT);
+  const form = isForm ? nexacroFormOf(text) : { id: null, title: null };
+  const ext = isForm ? NEXACRO_FORM_EXT : NEXACRO_SCRIPT_EXT;
+  const rootRel = toPosix(path.relative(root, clientRoot));
+  const nameRel = toPosix(path.relative(clientRoot, abs));
+  const includes = [];
+  for (const written of nexacroIncludes(text)) {
+    const file = resolveIncludeFile(written, {
+      fileDir: path.dirname(abs),
+      rootDir: typedef.dir ?? path.dirname(abs),
+      dirs: typedef.dirs,
+    });
+    if (file === null) continue;
+    includes.push({ written, kind: 'nexacro-include', name: written, file: toPosix(path.relative(root, file)) });
+  }
+  return {
+    kind: 'template', file: relFile, line: 1,
+    // A FORM IS A SCREEN AND A SCRIPT IS NOT, and the engine is where that is
+    // said. Both are template records all the same, because that is what puts
+    // an include on the graph: a form renders the scripts it pulls in.
+    engine: isForm ? 'nexacro' : 'nexacro-script',
+    root: rootRel,
+    // The screen's path IS its path in the tree: a Nexacro client opens a form
+    // by `Pattern::Pattern_01.xfdl`, which is the directory and the file name.
+    name: nameRel.endsWith(ext) ? nameRel.slice(0, -ext.length) : nameRel,
+    suffix: ext,
+    includes,
+    contextVars: [],
+    scripts,
+    forms: 0,
+    links: 0,
+    formId: form.id,
+    title: form.title,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Routes that are not declared anywhere: the FILE TREE (RM56)
+// ---------------------------------------------------------------------------
+//
+// Next.js has no route table. `pages/index.tsx` answers `/`,
+// `pages/content/[id].tsx` answers `/content/{id}`, and the source says none of
+// it: the convention IS the declaration. A pack whose shape is `filesystem`
+// states that convention -- which directory is the root, which extensions
+// count, which leaf name is the directory itself, how a parameter is spelled,
+// which names are the framework's own rather than pages, and which
+// subdirectory holds server handlers instead of screens.
+//
+// The rule fires only inside a package that DEPENDS on the framework, so a
+// backend that happens to keep a `pages/` directory of templates gets no
+// screens out of it.
+
+/** The dependencies (and devDependencies) one package.json declares. */
+function packageDependencies(pkgDir) {
+  let text;
+  try { text = fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'); } catch { return {}; }
+  let json;
+  try { json = JSON.parse(text); } catch { return {}; }
+  return { ...(json.dependencies || {}), ...(json.devDependencies || {}) };
+}
+
+/**
+ * The route one file's path declares under one `filesystem` registrar, or null
+ * when this file is not a page of that registrar.
+ *
+ * `relative` is the file's path under the PACKAGE, POSIX-separated. The rules,
+ * in the order they are applied:
+ *
+ *   the root       the last path segment equal to `root` starts the route, so
+ *                  `src/pages/a/b.tsx` and `pages/a/b.tsx` both answer `/a/b`
+ *   the extension  a file the registrar does not list is not a page
+ *   the api dir    `pages/api/**` are SERVER handlers this frontend serves, not
+ *                  screens. Counted and skipped, never silently dropped
+ *   the leaf       an app-router registrar names one file (`page`) as the
+ *                  screen and every other file in the directory as something
+ *                  else; a pages-router registrar has no leaf and every file is
+ *                  a page
+ *   `index`        drops out of the path: `pages/a/index.tsx` answers `/a`
+ *   `[id]`         is a parameter, written `{id}` the way every other path in
+ *                  this engine writes one; `[...slug]` matches the rest of the
+ *                  path and is written `{slug}` followed by `**`
+ *   the exclusions the framework's own files (`_app`, `_document`, `404`) are
+ *                  not pages. Matched on the FIRST SEGMENT, because Next.js
+ *                  accepts both `pages/_app.tsx` and `pages/_app/index.tsx`
+ *
+ * @returns {{path:string}|{skipped:'api'}|null}
+ */
+function filesystemRouteOf(relative, spec) {
+  const parts = relative.split('/').filter((p) => p !== '');
+  let at = -1;
+  for (let i = 0; i < parts.length - 1; i += 1) if (parts[i] === spec.root) at = i;
+  if (at < 0) return null;
+  const ext = (spec.extensions || []).find((e) => relative.endsWith(e));
+  if (ext === undefined) return null;
+  const rest = parts.slice(at + 1);
+  rest[rest.length - 1] = rest[rest.length - 1].slice(0, -ext.length);
+  if (spec.apiDir && rest[0] === spec.apiDir) return { skipped: 'api' };
+  if (typeof spec.leaf === 'string' && spec.leaf !== '') {
+    if (rest[rest.length - 1] !== spec.leaf) return null;
+    rest.pop();
+  } else if (rest[rest.length - 1] === spec.index) {
+    rest.pop();
+  }
+  if (rest.length > 0 && (spec.exclude || []).includes(rest[0])) return null;
+  const open = spec.dynamic ? spec.dynamic.open : '[';
+  const close = spec.dynamic ? spec.dynamic.close : ']';
+  const catchAll = spec.catchAll || '[...';
+  const segments = [];
+  for (const seg of rest) {
+    if (seg.startsWith(catchAll) && seg.endsWith(close)) {
+      segments.push(`{${seg.slice(catchAll.length, -close.length).replace(/^\.+/, '')}}`, '**');
+      continue;
+    }
+    if (seg.startsWith(open) && seg.endsWith(close)) {
+      segments.push(`{${seg.slice(open.length, -close.length)}}`);
+      continue;
+    }
+    segments.push(seg);
+  }
+  return { path: `/${segments.join('/')}`.replace(/\/+$/, '') || '/' };
+}
+
+/**
+ * The `route` records the file tree declares for one file, and whether it was
+ * a server handler this run stepped over.
+ *
+ * @returns {{records:object[], apiFiles:number}}
+ */
+function filesystemRoutes(relFile, relToPackage, packs, dependencies) {
+  const records = [];
+  let apiFiles = 0;
+  for (const p of packs) {
+    const specs = Array.isArray(p.filesystem) ? p.filesystem : [];
+    if (specs.length === 0) continue;
+    if (typeof p.dependency === 'string' && !Object.hasOwn(dependencies, p.dependency)) continue;
+    for (const spec of specs) {
+      const hit = filesystemRouteOf(relToPackage, spec);
+      if (hit === null) continue;
+      if (hit.skipped === 'api') { apiFiles += 1; continue; }
+      records.push({
+        kind: 'route', file: relFile, line: 1, pack: p.pack, path: hit.path,
+        // The page IS its own component: no import names it, and nothing else
+        // renders it. The bridge reads this flag instead of resolving a
+        // specifier that was never written.
+        componentSelf: true,
+        from: 'filesystem', root: spec.root,
+      });
+    }
+  }
+  return { records, apiFiles };
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1019,13 +1271,22 @@ function makeTemplateFinder({ root, roots, webRoots, templateRoots }) {
  * an object rather than in the enclosing scope.
  */
 function analyzeSource(abs, cfg) {
-  const { root, packs, templateRootOf, templateOf, push, counts } = cfg;
+  const { root, packs, templateRootOf, templateOf, push, counts, routesFromTree, nexacroRootOf, typedefOf } = cfg;
   const relFile = toPosix(path.relative(root, abs));
+  // THE ROUTE THE FILE TREE DECLARES (RM56), before the file is even read: a
+  // Next.js page is a page because of where it sits, and it is a page whether
+  // or not its JavaScript parses.
+  let apiHandler = false;
+  if (typeof routesFromTree === 'function') {
+    const tree = routesFromTree(abs, relFile);
+    apiHandler = tree.apiHandler;
+    for (const rec of tree.records) push(relFile, rec, 1, -2);
+  }
   const lang = langOf(abs);
   counts.files += 1;
   let stat;
   try { stat = fs.statSync(abs); } catch { stat = { size: 0 }; }
-  if (stat.size > MAX_FILE_BYTES) {
+  if (stat.size > (lang === 'nexacro' ? MAX_FORM_BYTES : MAX_FILE_BYTES)) {
     push(relFile, {
       kind: 'file', file: relFile, line: 1, lang, recoveredErrors: 0, skipped: 'too-large',
     }, 1, -1);
@@ -1041,16 +1302,27 @@ function analyzeSource(abs, cfg) {
     return;
   }
   const tmpl = templateRootOf(abs);
-  const blocks = tmpl !== null
-    ? templateScriptBlocks(text, tmpl.engine)
-    : lang === 'vue'
-      ? vueBlocks(text)
-      : [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
-  const res = analyzeFile({ relFile, blocks, packs, lang: tmpl !== null ? 'js' : lang, templateOf });
+  const isNexacro = lang === 'nexacro' || (nexacroRootOf !== undefined && nexacroRootOf(abs) !== null);
+  const typedef = isNexacro && typedefOf !== undefined ? typedefOf(abs, text) : null;
+  const blocks = lang === 'nexacro'
+    ? nexacroScriptBlocks(text)
+    : tmpl !== null
+      ? templateScriptBlocks(text, tmpl.engine)
+      : lang === 'vue'
+        ? vueBlocks(text)
+        : [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
+  const res = analyzeFile({
+    relFile, blocks, packs, lang: tmpl !== null || lang === 'nexacro' ? 'js' : lang, templateOf,
+    ...(typedef !== null ? { nexacro: { services: typedef.services } } : {}),
+  });
   const fileRec = {
     kind: 'file', file: relFile, line: 1,
-    lang: tmpl !== null ? 'template' : lang,
+    lang: lang === 'nexacro' ? 'nexacro' : tmpl !== null ? 'template' : lang,
     recoveredErrors: res.recoveredErrors,
+    // A SERVER HANDLER OF THE FRONTEND'S OWN (RM56): a file under a file-tree
+    // router's api directory. Read like any other source, and marked so the
+    // census can say how many pages it is NOT.
+    ...(apiHandler ? { apiHandler: true } : {}),
   };
   if (lang === 'vue' && tmpl === null) {
     fileRec.blocks = blocks.map((b) => ({ lang: b.lang, setup: b.setup, line: b.line }));
@@ -1061,7 +1333,12 @@ function analyzeSource(abs, cfg) {
     push(relFile, { kind: 'parse_error', file: relFile, line: pe.line, col: pe.col, message: pe.message }, pe.line, 0);
     counts.parseErrors += 1;
   }
-  if (tmpl !== null) {
+  if (lang === 'nexacro') {
+    push(relFile, nexacroTemplateRecord({
+      abs, relFile, text, root, clientRoot: nexacroRootOf(abs) ?? root,
+      typedef: typedef ?? { dir: null, dirs: new Map() }, scripts: blocks.length,
+    }), 1, -0.5);
+  } else if (tmpl !== null) {
     for (const rec of templateRecordsOf({
       abs, relFile, text, root, tmpl, records: res.records, scripts: blocks.length,
     })) {
@@ -1094,6 +1371,34 @@ function main(argv) {
     const abs = path.resolve(r);
     collectFiles(abs, found, [pkgOfRoot.get(abs)], isTemplateFile);
   }
+
+  // A NEXACRO CLIENT (RM56): which roots are one, and the vendor runtime under
+  // them that this lane does not read.
+  const { nexacroRoots } = applyNexacroRoots(found, roots);
+  const nexacroRootOf = (abs) => nexacroRoots.find((r) => abs === r || abs.startsWith(r + path.sep)) ?? null;
+  const typedefOf = makeNexacroTypedefs();
+
+  // WHAT EACH PACKAGE DEPENDS ON, read once per package directory: a
+  // `filesystem` registrar fires only inside a package that declares the
+  // framework whose convention it states.
+  const depsOfPkg = new Map();
+  for (const dir of [...pkgDirs].sort()) depsOfPkg.set(dir, packageDependencies(dir));
+  const apiFilesSkipped = { count: 0 };
+  const packageOf = (abs) => {
+    let best = null;
+    for (const dir of depsOfPkg.keys()) {
+      if (abs !== dir && !abs.startsWith(dir + path.sep)) continue;
+      if (best === null || dir.length > best.length) best = dir;
+    }
+    return best;
+  };
+  const routesFromTree = (abs, relFile) => {
+    const pkg = packageOf(abs);
+    if (pkg === null) return { records: [], apiHandler: false };
+    const res = filesystemRoutes(relFile, toPosix(path.relative(pkg, abs)), packs, depsOfPkg.get(pkg) ?? {});
+    apiFilesSkipped.count += res.apiFiles;
+    return { records: res.records, apiHandler: res.apiFiles > 0 };
+  };
 
   const configRecords = [];
   const configParsed = [];
@@ -1137,7 +1442,10 @@ function main(argv) {
   const sourceList = configsOnly ? sorted.map((abs) => toPosix(path.relative(root, abs))) : [];
   const tallies = { files, parseErrors, recoveredErrors };
   for (const abs of configsOnly ? [] : sorted) {
-    analyzeSource(abs, { root, packs, templateRootOf, templateOf, push, counts: tallies });
+    analyzeSource(abs, {
+      root, packs, templateRootOf, templateOf, push, counts: tallies, routesFromTree,
+      nexacroRootOf, typedefOf,
+    });
   }
   ({ files, parseErrors, recoveredErrors } = tallies);
 
@@ -1149,7 +1457,9 @@ function main(argv) {
     files, parseErrors,
   }));
 
-  const counts = emptyCounts({ files, parseErrors, recoveredErrors, envFiles: out.envFiles.size });
+  const counts = emptyCounts({
+    files, parseErrors, recoveredErrors, envFiles: out.envFiles.size, apiFiles: apiFilesSkipped.count,
+  });
 
   for (const relFile of [...byFile.keys()].sort()) {
     for (const { rec } of orderRecords(byFile.get(relFile))) {

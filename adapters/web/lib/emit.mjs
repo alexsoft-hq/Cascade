@@ -17,9 +17,13 @@
 // file walk. It is handed records and hands back an order and a tally.
 
 /** A fresh, empty summary: every field the stream will be counted into. */
-export function emptyCounts({ files, parseErrors, recoveredErrors, envFiles }) {
+export function emptyCounts({ files, parseErrors, recoveredErrors, envFiles, apiFiles = 0 }) {
   const counts = {
     files, parseErrors, recoveredErrors,
+    // The server handlers a file-tree router keeps beside its pages (RM56):
+    // `pages/api/**` is code this frontend SERVES, not a screen. Counted so a
+    // census can say how many pages it is not.
+    apiFiles,
     vueFiles: 0, tsFiles: 0, jsFiles: 0, skippedFiles: 0,
     imports: 0, exports: 0, functions: 0, constants: 0, bindings: 0,
     classes: 0, assigns: 0,
@@ -68,10 +72,10 @@ export function orderRecords(recs) {
 export function tally(rec, counts) {
   switch (rec.kind) {
     case 'file':
-      if (rec.lang === 'template') counts.templates.files += 1;
+      if (rec.lang === 'template' || rec.lang === 'nexacro') counts.templates.files += 1;
       else if (rec.lang === 'vue') counts.vueFiles += 1;
       else if (rec.lang === 'ts' || rec.lang === 'tsx') counts.tsFiles += 1;
-      else counts.jsFiles += 1;
+      else { counts.jsFiles += 1; if (rec.apiHandler === true) counts.apiFiles += 1; }
       if (rec.skipped) counts.skippedFiles += 1;
       break;
     case 'template':

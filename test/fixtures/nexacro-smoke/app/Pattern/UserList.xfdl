@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FDL version="1.5">
+  <TypeDefinition url="..\default_typedef.xml"/>
+  <Form id="UserList" classname="Work" position="absolute" titletext="User list" left="0" width="800" top="0" height="360" onload="form_onload">
+    <Layouts>
+      <Layout>
+        <Button id="btn_search" taborder="1" text="Search" onclick="fn_search" left="10" top="10" width="60" height="24"/>
+        <Button id="btn_save" taborder="2" text="Save" onclick="fn_save" left="80" top="10" width="60" height="24"/>
+      </Layout>
+    </Layouts>
+    <Script type="xscript5.0"><![CDATA[
+include "Lib::Comm.xjs";
+
+this.form_onload = function(obj:Form, e:nexacro.LoadEventInfo)
+{
+	this.fn_search();
+};
+
+this.fn_search = function(obj:Button, e:nexacro.ClickEventInfo)
+{
+	var oDatas = {
+		svcid : "search",
+		sController : "userSelectVO.do",
+		inds : ["ds_search=ds_search"],
+		outds : ["ds_user=output1"],
+		bAsync : true
+	};
+	Iject.transaction(this, oDatas, function(){});
+};
+
+this.fn_save = function(obj:Button, e:nexacro.ClickEventInfo)
+{
+	var oDatas = {
+		svcid : "save",
+		sController : "userModifyVO.do",
+		inds : ["ds_user=ds_user:U"]
+	};
+	Iject.transaction(this, oDatas, function(){});
+};
+
+this.fn_native = function(obj:Button, e:nexacro.ClickEventInfo)
+{
+	this.transaction("codes", "svcurl::selectCodeList.do", "", "ds_code=output1", "", "fn_callback");
+};
+
+this.fn_unreadable = function(obj:Button, e:nexacro.ClickEventInfo)
+{
+	this.transaction("built", this.buildUrl(), "", "", "", "fn_callback");
+};
+]]></Script>
+  </Form>
+</FDL>

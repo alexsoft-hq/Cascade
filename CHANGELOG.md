@@ -10,6 +10,93 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+The rest of the Korean stack. RM55 fixed what a route reaches on eGovFrame and
+left four things in the open; this takes them. One vendor's mapper XML instead
+of seven, iBATIS 2 read as SQL, a Nexacro client read as screens, and Next.js
+file routing.
+
+### Added
+
+- **One mapper, shipped once per vendor.** The schema was not the only thing an
+  eGovFrame project ships seven times. `EgovProgrmManage_SQL_{altibase,cubrid,
+  hsql,mysql,oracle,postgres,tibero}.xml` are seven files with one `<mapper
+  namespace="progrmManageDAO">` between them, so the SQL a statement ends up with
+  is whichever copy the walk read last — and that copy is then parsed under the
+  ONE dialect the run chose. `cascade init` groups them the way it already groups
+  the DDL: two files are one mapper's copies when they declare the SAME NAMESPACE
+  and their paths are the SAME PATH apart from a vendor's name. The copy for the
+  vendor `catalog.ddl` chose is read; the rest go into a new profile key
+  `mappers.alternatives`, and the statement lane reads past them by name. A set
+  with no copy for that vendor keeps the first by sorted path and says so
+  (`MAPPER_VENDOR_UNMATCHED`). Measured on the enterprise business template: 189
+  mapper files to 27, and **47 statements failing to parse to 1**.
+- **iBATIS 2 is read as SQL.** `<sqlMap namespace="…">` is the element that
+  shipped before MyBatis was called MyBatis, and every eGovFrame project written
+  before 3.x runs on it. One worker reads both elements and one framework pack
+  declares the lane for either: the six statement tags (`select`, `insert`,
+  `update`, `delete`, `procedure`, `statement`), `#name#` as a bind parameter and
+  `$name$` as a raw substitution exactly as `#{}`/`${}` are treated, and the
+  dynamic tags flattened by the rules `<if>`/`<where>`/`<foreach>` already
+  follow — `<dynamic prepend>` folding its prepend in and dropping the first
+  conjunction under it, `<iterate>` its open and close once, `<include refid>`
+  resolved in the same fragment index. What a statement is CALLED comes from the
+  configuration: `<sqlMapConfig><settings useStatementNamespaces="true"/>` makes
+  the key `namespace.id`, and iBATIS' own default makes it the bare `id`, global
+  across every sqlMap file. Two configurations that disagree are reported and the
+  default stands; two files declaring one id is a named warning.
+- **The Java side of the same shape.** `SqlMapClient`, `SqlMapClientTemplate`,
+  `SqlMapClientDaoSupport` and `EgovAbstractDAO` join the session types the
+  `mybatis-statement-id` rule accepts, and so does any base whose name ends in
+  `IbatisAbstractDAO` — by suffix, because a framework vendor writes its own base
+  on top of one of those and ships it in a jar, and naming the vendor would be a
+  rule that works on one product. `queryForList`, `queryForObject` and
+  `queryForMap` join the method list. A BARE id (`list("selectUserVOList", vo)`)
+  is a weaker witness than `Namespace.id`, so it rides in its own field and binds
+  only against a statement this pack holds under exactly that key; a bare word
+  never finds a namespaced statement by looking like the end of it.
+- **A Nexacro client is a frontend.** A very large share of Korean public sector
+  and enterprise systems has one, and this lane read none of it. A directory of
+  `.xfdl` forms is now a web root of kind `nexacro`, and under it the lane reads
+  `.xfdl` and `.xjs` and nothing else — the vendor runtime shipped beside them is
+  somebody else's frontend. One form is one screen: its `<Form id>`, its
+  `titletext`, and its path under the client. Its `<Script>` CDATA is read as
+  JavaScript (with the TypeScript grammar, because xscript5 annotates parameter
+  types), its handlers on `this` are functions, and it renders its own script
+  EXACT plus the `.xjs` it includes one hop out, SOUND_SET. Every request goes
+  through one framework call, so `transaction(…)` is the rule: the native second
+  argument, or the options object's `sController`/`svcUrl`/`strSvcUrl`/
+  `sSvcUrl`/`sUrl`/`url`, resolved in the handler that holds it. A `prefix::path`
+  url resolves the prefix through the application typedef's own `<Service
+  prefixid url>` list. Rule `nexacro-transaction`, method `ANY`, graded by the
+  route match; a url this lane cannot read is counted rather than dropped.
+  Measured on `nexacro-spring/nexacro-sample-egov`: 30 screens where there were
+  none, all 7 transactions matched to a `.do` route, 4 screens reaching a table.
+- **Next.js routes by its file tree, and the lane reads the tree.** A new
+  declaration-pack shape, `filesystem` (`adapters/web/packs/next-pages.json`),
+  states the convention instead of a route object: `pages/index.tsx` answers `/`,
+  `pages/content/[id].tsx` answers `/content/{id}`, `[...slug]` answers a
+  catch-all, `_app`/`_document`/`_error`/`404`/`500` are the framework's own and
+  `pages/api/**` are server handlers this frontend serves — counted and skipped,
+  with a census line saying how many. The app router (`app/**/page.tsx`) is a
+  second entry of the same shape. The rule fires only inside a package that
+  depends on `next`. The page IS its own component, so RENDERS and its own calls
+  work as they do for any router screen. Measured on
+  `eGovFramework/egovframe-msa-edu`: 0 screens to 56 over two frontends, 9
+  `pages/api` files read as handlers.
+
+### Changed
+
+- `cascade estimate`'s statements axis counts both elements and says how many of
+  each. The screen axis is shipped when a run read Nexacro forms, the way it
+  already is for route declarations and rendered pages.
+- The overview's `screens.byKind` names `nexacro` only where there is one, so an
+  answer about a product with no Nexacro screens is the answer it was.
+
+### Fixed
+
+- A statement whose namespace is empty is keyed by its bare id rather than by a
+  key that starts with a dot.
+
 ## [0.8.0] - 2026-09-10
 
 The release measured on the Korean market: eGovFrame, the public sector's

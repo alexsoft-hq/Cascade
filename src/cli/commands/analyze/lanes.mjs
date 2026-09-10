@@ -42,7 +42,24 @@ import { sayWebWorker } from './census.mjs';
  * decides WHAT to recompute, they do it. The Java lane's JDK is looked up at
  * most once, and only if a source root really has to be re-parsed.
  */
+/**
+ * WHICH MAPPER FILES THE WORKER IS TOLD TO READ.
+ *
+ * The DIRECTORIES, when this run reads all of them. The FILE LIST, when it does
+ * not (RM56): a tree that ships one mapper per database vendor reads one
+ * vendor's copies, and naming them is how the worker is told which.
+ * `--files-from` rather than a thousand arguments on one command line.
+ */
+function mybatisArgv({ root, tmpDir, mappers, mapperAlternatives, sqlArgs }) {
+  const base = ['--root', root, ...sqlArgs.mybatisArgs];
+  if (mapperAlternatives.length === 0) return [...base, ...mappers];
+  const listFile = path.join(tmpDir, 'mapper-files.txt');
+  fs.writeFileSync(listFile, listMapperXml(mappers, mapperAlternatives).join('\n') + '\n');
+  return [...base, '--files-from', listFile];
+}
+
 export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, mappers, webSrc, sqlArgs, runpy }) {
+  const mapperAlternatives = sel.mapperAlternatives ?? [];
   const catFile = path.join(tmpDir, 'catalog.jsonl');
   const stmtFile = path.join(tmpDir, 'statements.jsonl');
   let jdk = null;
@@ -62,7 +79,9 @@ export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, 
     },
     mybatis: () => {
       process.stderr.write('SQL lane: mybatis statements…\n');
-      return parseJsonl(runpy('mybatis_extract.py', ['--root', root, ...sqlArgs.mybatisArgs, ...mappers]));
+      return parseJsonl(runpy('mybatis_extract.py', mybatisArgv({
+        root, tmpDir, mappers, mapperAlternatives, sqlArgs,
+      })));
     },
     lineage: (statements, catalogRecords) => {
       process.stderr.write(`SQL lane: lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase}) over ${statements.length} statement(s)…\n`);
@@ -120,7 +139,7 @@ export function runLanes(ctx, { root, tmpDir, plan, prevIndex, store, sel, selec
       templateRootsAbs: sel.templateRoots,
     },
     inputs: {
-      mapperFiles: listMapperXml(mappers).map((p) => ({ rel: relOf(p), abs: p })),
+      mapperFiles: listMapperXml(mappers, sel.mapperAlternatives ?? []).map((p) => ({ rel: relOf(p), abs: p })),
       ddlFiles: ddls.length > 0
         ? ddls.map((f) => ({ rel: relOf(f), abs: path.resolve(f) }))
         : snapshot ? [{ rel: relOf(snapshot), abs: path.resolve(snapshot) }] : [],
@@ -370,6 +389,7 @@ export function webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root,
       urlByShape: { literal: u.literal, template: u.template, constant: u.constant, unresolved: u.unresolved },
       methodBySource: summary.methodBySource ?? {},
       routes: summary.routes, byPack: summary.byPack ?? {},
+      apiFiles: summary.apiFiles ?? 0,
       aliases: summary.aliases, proxies: summary.proxies, envFiles: summary.envFiles,
       platformSinks: summary.platformSinks ?? {},
       // What a frontend written before modules put in the stream (RM47).

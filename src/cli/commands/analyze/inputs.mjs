@@ -200,7 +200,8 @@ export function laneSelection(ctx, { root, profile, resolved, diagnostics }) {
     die('nothing to analyze: no DDL, no mapper XML and no Java source were given or found.\n'
       + (c
         ? `  discovery under ${path.resolve(root)} found: ${c.javaFiles} java file(s) (${c.springHandlerFiles} with a Spring mapping), `
-          + `${c.mybatisMapperXml} mybatis mapper xml, ${c.ddlFiles} DDL file(s) with CREATE TABLE, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json, ${c.webFiles} frontend source file(s)\n`
+          + `${c.mybatisMapperXml} mybatis mapper xml${(c.ibatisSqlMapXml ?? 0) > 0 ? ` and ${c.ibatisSqlMapXml} ibatis sqlMap xml` : ''}, `
+          + `${c.ddlFiles} DDL file(s) with CREATE TABLE, ${c.kotlinFiles} kotlin, ${c.frontendPackageJson} frontend package.json, ${c.webFiles} frontend source file(s)\n`
           + `  mapper directories: ${discovery.mapperDirs.length ? discovery.mapperDirs.join(', ') : '(none)'}\n`
           + `  java source roots: ${discovery.javaSourceRoots.length ? discovery.javaSourceRoots.join(', ') : '(none)'}\n`
           + `  web source roots: ${(discovery.webSourceRoots ?? []).length ? discovery.webSourceRoots.join(', ') : '(none)'}\n`

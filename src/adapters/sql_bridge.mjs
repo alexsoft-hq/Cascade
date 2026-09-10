@@ -21,8 +21,15 @@ export function tableKey(schema, table) {
 export function columnKey(schema, table, column) {
   return schema ? `${schema}.${table}.${column}` : `${table}.${column}`;
 }
+/**
+ * The key a statement is looked up by at run time.
+ *
+ * MyBatis always joins the namespace on. iBATIS with `useStatementNamespaces`
+ * off does not, and the worker says so by leaving `namespace` empty (RM56) —
+ * so an empty namespace is the bare id, not a key that starts with a dot.
+ */
 export function statementKey(namespace, id) {
-  return `${namespace}.${id}`;
+  return namespace ? `${namespace}.${id}` : String(id);
 }
 
 /**

@@ -95,6 +95,31 @@ public class SampleService {
 }
 `,
   'SampleVO.java': 'package com.example;\npublic class SampleVO { }\n',
+  // The SAME job one generation earlier (RM56). An iBATIS DAO extends a base a
+  // framework vendor shipped in a jar, and names its statement with a BARE id:
+  // iBATIS defaults `useStatementNamespaces` to false, so the whole runtime key
+  // is one word with no dot in it.
+  'UserDAO.java': `package com.example;
+import java.util.List;
+import com.vendor.spring.dao.ibatis.NexacroIbatisAbstractDAO;
+import org.springframework.stereotype.Repository;
+
+@Repository("userDAO")
+public class UserDAO extends NexacroIbatisAbstractDAO {
+
+    public List<?> selectUserVoList(SampleVO vo) {
+        return (List<?>) list("selectUserVOList", vo);
+    }
+
+    public void insertUserVO(SampleVO vo) {
+        insert("insertUserVO", vo);
+    }
+
+    public Object one(SampleVO vo) {
+        return queryForObject("selectUserVO", vo);
+    }
+}
+`,
 };
 
 function runWorker(jdk, dir) {
@@ -152,9 +177,23 @@ test('javafacts/11: a session call records the statement id it names, or what it
   assert.equal(raw.stmtId, undefined);
   assert.equal(raw.stmtArg, 'NOT_AN_ID');
 
-  // A call that is not one of the ten session methods carries none of this.
+  // A call that is not one of the session methods carries none of this.
   const other = calls.find((c) => c.method === 'run' || c.from.endsWith('#run'));
   if (other) assert.equal(other.stmtId, undefined);
+
+  // 5. AN IBATIS BARE ID (RM56): one word, no namespace. It goes out under its
+  //    OWN field, because a bare word is a weaker witness than `Ns.id` and the
+  //    bridge binds it only when exactly one statement carries it.
+  const bare = calls.filter((c) => c.from.startsWith('com.example.UserDAO#'));
+  const byMethod = new Map(bare.map((c) => [c.from.split('#')[1], c]));
+  for (const [method, id] of [['selectUserVoList', 'selectUserVOList'], ['insertUserVO', 'insertUserVO'], ['one', 'selectUserVO']]) {
+    const c = byMethod.get(method);
+    assert.ok(c, `no call record for UserDAO#${method}`);
+    assert.equal(c.stmtId, undefined, 'a bare word is not a namespace and an id');
+    assert.equal(c.stmtIdBare, id);
+    assert.equal(c.stmtIdFrom, 'literal');
+    assert.equal(c.stmtArg, `"${id}"`, 'and what was written is still recorded');
+  }
 });
 
 test('javafacts/11: a class records the bean name it declares, and a field the one it asks for', (t) => {

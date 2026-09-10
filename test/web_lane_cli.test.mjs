@@ -511,7 +511,7 @@ test('a screen reaches the column, the column names the screen, and a recording 
 
   // The lane list gains `har`, and the lane line says what it read.
   assert.match(res.stderr, /^lanes \[java,web,har\]/m);
-  assert.match(res.stderr, /^Web lane: 7 screen\(s\) from 7 route declaration\(s\) and 0 page\(s\) a controller renders, 2 with a component \(5 unresolved\), 3 exact, 0 candidate and 0 heuristic RENDERS edge\(s\)/m);
+  assert.match(res.stderr, /^Web lane: 7 screen\(s\) from 7 route declaration\(s\), 0 page\(s\) a controller renders, 2 with a component \(5 unresolved\), 3 exact, 0 candidate and 0 heuristic RENDERS edge\(s\)/m);
   assert.match(res.stderr, /^HAR lane: 1 recording\(s\), 8 request\(s\): 3 matched a route this pack serves, 3 matched none, 2 static asset\(s\); 2 screen-to-route pair\(s\) observed/m);
 
   const pack = JSON.parse(fs.readFileSync(path.join(out, 'pack.json'), 'utf8'));

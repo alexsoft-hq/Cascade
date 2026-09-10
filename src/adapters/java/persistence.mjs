@@ -47,7 +47,23 @@ import {
 export const MYBATIS_SESSION_TYPES = Object.freeze([
   'SqlSession', 'SqlSessionTemplate', 'SqlSessionDaoSupport',
   'EgovAbstractMapper', 'EgovComAbstractDAO',
+  // iBATIS 2 (RM56). The same three shapes one generation earlier: the client
+  // itself, the Spring template over it, the Spring DAO base — plus the
+  // eGovFrame base every iBATIS-era Korean public sector DAO extends.
+  'SqlMapClient', 'SqlMapClientTemplate', 'SqlMapClientDaoSupport',
+  'EgovAbstractDAO',
 ]);
+
+/**
+ * …and the ones nobody can list by name.
+ *
+ * A framework vendor writes its own base on top of one of those and ships it in
+ * a jar, so the tree says `class UserDAO extends NexacroIbatisAbstractDAO` and
+ * nothing more. The SUFFIX is the declaration: a class called
+ * `<something>IbatisAbstractDAO` is an iBATIS DAO base, whoever wrote it, and
+ * naming the vendor instead would be a rule that works on one product.
+ */
+export const IBATIS_BASE_SUFFIX = 'IbatisAbstractDAO';
 
 /** How many statement-id call sites a census lists by name before it stops. */
 export const STATEMENT_ID_SAMPLE_LIMIT = 20;
@@ -136,8 +152,6 @@ export function bindStatements(ctx, mapperOwners) {
  */
 export function sessionTypesOf(ctx) {
   const { types, superOf } = ctx;
-  const bases = new Set(MYBATIS_SESSION_TYPES);
-  const simpleOf = (fqn) => fqn.slice(Math.max(fqn.lastIndexOf('.'), fqn.lastIndexOf('$')) + 1);
   const out = new Set();
   for (const [fqn, t] of types) {
     let cur = fqn;
@@ -145,15 +159,27 @@ export function sessionTypesOf(ctx) {
     for (let hops = 0; hops <= SUPER_CHAIN_LIMIT && record; hops += 1) {
       const ext = record.extendsSimple;
       if (!ext) break;
-      if (bases.has(ext)) { out.add(fqn); break; }
+      if (isSessionBaseName(ext)) { out.add(fqn); break; }
       const next = superOf.get(cur) ?? null;
       if (!next || next === cur) break;
       cur = next;
       record = types.get(next) ?? null;
     }
-    if (bases.has(simpleOf(fqn))) out.add(fqn);
+    if (isSessionBaseName(simpleName(fqn))) out.add(fqn);
   }
   return out;
+}
+
+/** The last segment of an FQN, inner classes included. */
+function simpleName(fqn) {
+  return fqn.slice(Math.max(fqn.lastIndexOf('.'), fqn.lastIndexOf('$')) + 1);
+}
+
+/** Whether one SIMPLE type name is a MyBatis or iBATIS session base. */
+function isSessionBaseName(name) {
+  if (typeof name !== 'string' || name === '') return false;
+  if (MYBATIS_SESSION_TYPES.includes(name)) return true;
+  return name.length > IBATIS_BASE_SUFFIX.length && name.endsWith(IBATIS_BASE_SUFFIX);
 }
 
 /**
@@ -206,11 +232,44 @@ function statementCallReceiver(ctx, c) {
   return resolveType(ownerFqn, c.toTypeSimple) ?? c.toTypeSimple ?? null;
 }
 
+/**
+ * THE STATEMENTS THIS PACK HOLDS UNDER A BARE ID.
+ *
+ * A statement whose key has no dot in it is an iBATIS statement read with
+ * `useStatementNamespaces` off, and its own key is what a DAO writes. A
+ * statement whose key DOES have a dot is NOT in here: the word
+ * `selectCodeList` must not find `codeDAO.selectCodeList` by looking like the
+ * end of it.
+ *
+ * One key, one statement, because that is what a node id is — two sqlMap files
+ * declaring the same bare id are ONE statement to the runtime as well, and the
+ * SQL worker names that collision where it can see both files.
+ *
+ * @returns {Map<string,string>} bare id -> the statement node id
+ */
+function bareStatementIndex(g) {
+  const out = new Map();
+  for (const id of g.nodes.keys()) {
+    if (!id.startsWith('statement:')) continue;
+    const key = id.slice('statement:'.length);
+    if (!key.includes('.')) out.set(key, id);
+  }
+  return out;
+}
+
 /** One recognised session call: an edge, an unknown id, or an unreadable argument. */
-function placeStatementId(ctx, c, { unknown, seen }) {
-  const { g, stats, ensureSymbol } = ctx;
+function placeStatementId(ctx, c, { unknown, seen, bare }) {
+  const { g, stats } = ctx;
   const census = stats.statementIds;
   census.sites += 1;
+  // A BARE ID IS A MATCH OR IT IS NOTHING (RM56). It is read only when this
+  // pack holds exactly one statement under that id; otherwise the call falls
+  // through to the census below, exactly as it did before this rule existed.
+  if (c.stmtId === null && typeof c.stmtIdBare === 'string' && bare && bare.has(c.stmtIdBare)) {
+    if (c.stmtIdFrom === 'constant') census.fromConstant += 1;
+    placeBoundStatement(ctx, { ...c, stmtId: c.stmtIdBare }, bare.get(c.stmtIdBare), { seen });
+    return;
+  }
   if (c.stmtId === null) {
     census.unreadable += 1;
     if (census.unreadableSamples.length < STATEMENT_ID_SAMPLE_LIMIT) {
@@ -227,6 +286,13 @@ function placeStatementId(ctx, c, { unknown, seen }) {
     else unknown.set(c.stmtId, { id: c.stmtId, sites: 1, from: c.from, file: c.file, line: c.line });
     return;
   }
+  placeBoundStatement(ctx, c, stmtNodeId, { seen });
+}
+
+/** The edge itself, once the statement node is known. */
+function placeBoundStatement(ctx, c, stmtNodeId, { seen }) {
+  const { g, stats, ensureSymbol } = ctx;
+  const census = stats.statementIds;
   const key = `${c.from} ${c.stmtId}`;
   if (seen.has(key)) { census.repeated += 1; return; }
   seen.add(key);
@@ -246,17 +312,22 @@ function placeStatementId(ctx, c, { unknown, seen }) {
 }
 
 export function bindStatementIds(ctx) {
-  const { stats, calls } = ctx;
+  const { g, stats, calls } = ctx;
   const sessions = sessionTypesOf(ctx);
-  const bases = new Set(MYBATIS_SESSION_TYPES);
   const unknown = new Map(); // statement id -> {id, sites, from, file, line}
   const seen = new Set(); // "member -> statement": one method calling one statement twice is one edge
   const isSession = (fqn) => typeof fqn === 'string'
-    && (sessions.has(fqn) || bases.has(fqn.slice(fqn.lastIndexOf('.') + 1)));
+    && (sessions.has(fqn) || isSessionBaseName(simpleName(fqn)));
+  // WHICH BARE IDS THIS PACK CAN ANSWER (RM56). An iBATIS statement with
+  // `useStatementNamespaces` off is keyed by its bare id, so a call that names
+  // one can be matched — but only when exactly ONE statement carries that id.
+  // Two would make the edge a guess about which sqlMap the runtime loaded, and
+  // the runtime itself has no answer either.
+  const bare = bareStatementIndex(g);
   for (const c of calls) {
     if (!c.from || (c.stmtId === null && c.stmtArg === null)) continue;
     if (!isSession(statementCallReceiver(ctx, c))) continue;
-    placeStatementId(ctx, c, { unknown, seen });
+    placeStatementId(ctx, c, { unknown, seen, bare });
   }
   stats.statementIds.unknownSamples = [...unknown.values()]
     .sort((a, b) => (b.sites - a.sites) || cmp(a.id, b.id))

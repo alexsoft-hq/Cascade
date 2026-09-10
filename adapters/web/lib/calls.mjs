@@ -13,6 +13,8 @@
 // WHAT IT MUST NEVER KNOW ABOUT: the graph, the routes a pack serves, the other
 // files in the tree.
 
+import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
+
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
 export const VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
 
@@ -312,6 +314,15 @@ export function visitCall(ctx, node, env) {
   const callee = calleeNode ? calleeOf(calleeNode) : null;
   const line = lineOf(node);
 
+  // A NEXACRO TRANSACTION (RM56), read before anything else here would fail to
+  // recognise it. `nexacroTransactionOf` says why.
+  const transaction = isNew ? null : nexacroTransactionOf(ctx, node, env, callee, line);
+  if (transaction !== null) {
+    emit(transaction, line);
+    for (const a of node.arguments) visit(a, env);
+    return;
+  }
+
   // `require('x')` is the CommonJS spelling of an import.
   if (isRequireCall(node, env)) {
     emit({
@@ -534,4 +545,134 @@ export function buildUrl(ctx, summary, scope) {
   if (query !== null) url.query = query;
   if (absolute !== null) url.absolute = absolute;
   return url;
+}
+
+/**
+ * A NEXACRO TRANSACTION IS A CALL TO THE BACKEND (RM56).
+ *
+ * `this.transaction(id, "svcurl::userSelectVO.do", inDs, outDs, args, cb)` is
+ * the native form; every product wraps it, and the wrapper takes an options
+ * object instead: `Iject.transaction(this, oDatas, cb)` with
+ * `oDatas = { svcid: "search", sController: "userSelectVO.do", … }`. Both send
+ * the same request, so both are read here, and the wrapper's NAME is never part
+ * of the rule: what makes this a transaction is the method called and a url in
+ * a place a transaction puts one.
+ *
+ * WHERE THE URL IS LOOKED FOR, in order:
+ *   the second argument   the native call's own url position, when it is a
+ *                         string literal
+ *   an options object     any argument that IS an object literal, or a name
+ *                         this file binds to one, under one of the keys the
+ *                         declaration `TRANSACTION_URL_KEYS` lists
+ *
+ * A transaction whose url is neither is RECORDED with no url and counted: it is
+ * a request this lane knows happens and cannot follow, which is a different
+ * thing from no request at all.
+ *
+ * @returns {Object|null} the call record, or null when this is not a transaction
+ */
+function nexacroTransactionOf(ctx, node, env, callee, line) {
+  const { relFile, moduleEnclosing, nexacro } = ctx;
+  if (!nexacro || callee === null) return null;
+  const method = callee.path.length > 0 ? callee.path[callee.path.length - 1] : callee.root;
+  if (method !== 'transaction') return null;
+  const args = node.arguments ?? [];
+  let written = null;
+  let from = null;
+  const second = args[1];
+  if (second && second.type === 'StringLiteral') {
+    written = second.value;
+    from = 'argument';
+  } else {
+    const scoped = nexacro.objects.get(env.func ? env.func.node : null) ?? null;
+    const atModule = nexacro.objects.get(null) ?? null;
+    for (const a of args) {
+      const object = a && a.type === 'ObjectExpression' ? nexacroUrlKeyOf(a)
+        : a && a.type === 'Identifier'
+          ? ((scoped && scoped.get(a.name)) ?? (atModule && atModule.get(a.name)) ?? null)
+          : null;
+      if (object === null) continue;
+      written = object.value;
+      from = object.key;
+      break;
+    }
+  }
+  const rec = {
+    kind: 'call', file: relFile, line,
+    enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : moduleEnclosing,
+    callee,
+    binding: null,
+    args: [],
+    url: null,
+    method: { value: TRANSACTION_METHOD, from: 'nexacro-transaction' },
+    platformSink: null,
+    nexacro: { from: from ?? 'unreadable' },
+  };
+  if (env.func) rec.__enclosingEntry = env.func;
+  if (written === null) return rec;
+  const hit = resolveTransactionUrl(written, nexacro.services);
+  rec.nexacro.written = written;
+  if (hit.prefix !== null) {
+    rec.nexacro.prefix = hit.prefix;
+    if (hit.base !== null) rec.nexacro.base = hit.base;
+  }
+  rec.url = { arg: { kind: 'literal', value: written }, resolved: [{ template: hit.full }] };
+  return rec;
+}
+
+/** One object property's key, when it is written plainly enough to read. */
+function propertyKeyName(p) {
+  const k = p.key;
+  if (!k) return null;
+  if (k.type === 'Identifier' && p.computed !== true) return k.name;
+  if (k.type === 'StringLiteral') return k.value;
+  return null;
+}
+
+/** The first URL key an object literal writes a string under, or null. */
+function nexacroUrlKeyOf(objectNode) {
+  for (const key of TRANSACTION_URL_KEYS) {
+    for (const p of objectNode.properties ?? []) {
+      if (p.type !== 'ObjectProperty') continue;
+      if (propertyKeyName(p) !== key) continue;
+      if (p.value && p.value.type === 'StringLiteral') return { key, value: p.value.value };
+    }
+  }
+  return null;
+}
+
+/**
+ * Every options object this file binds to a name, so a transaction handed
+ * `oDatas` can be read.
+ *
+ * The scan is over the WHOLE file rather than a scope: a Nexacro form declares
+ * one options object per handler, each in its own function, and reading them
+ * all up front is what lets the call rule stay one lookup. The FIRST
+ * declaration by position keeps a name, so a file that reuses one gets the same
+ * answer whatever order the walk takes.
+ *
+ * @returns {Map<string,{key:string, value:string}>}
+ */
+export function nexacroObjects(ctx, program) {
+  const out = new Map(); // enclosing function node (null = the module) -> name -> hit
+  const put = (owner, name, node) => {
+    const hit = nexacroUrlKeyOf(node);
+    if (hit === null) return;
+    if (!out.has(owner)) out.set(owner, new Map());
+    const byName = out.get(owner);
+    if (!byName.has(name)) byName.set(name, hit);
+  };
+  const walk = (n, owner) => {
+    if (!n || typeof n !== 'object') return;
+    const inner = (n.type === 'FunctionExpression' || n.type === 'FunctionDeclaration'
+      || n.type === 'ArrowFunctionExpression' || n.type === 'ObjectMethod'
+      || n.type === 'ClassMethod') ? n : owner;
+    if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier'
+      && n.init && n.init.type === 'ObjectExpression') put(owner, n.id.name, n.init);
+    if (n.type === 'AssignmentExpression' && n.left && n.left.type === 'Identifier'
+      && n.right && n.right.type === 'ObjectExpression') put(owner, n.left.name, n.right);
+    ctx.eachChild(n, (child) => walk(child, inner));
+  };
+  for (const stmt of program.body) walk(stmt, null);
+  return out;
 }

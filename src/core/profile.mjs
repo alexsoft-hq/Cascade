@@ -70,6 +70,13 @@ export const PROFILE_DEFAULTS = deepFreeze({
   // is the vendors that were left on the shelf, by name, so swapping to one is
   // an edit rather than a rediscovery.
   catalog: { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} },
+  // The mapper XML this project ships once per database vendor (RM56), by the
+  // vendor each copy is for. The copies for the vendor this project RUNS ON are
+  // read like any other mapper and are not listed here; these are the ones the
+  // run leaves on the shelf, so switching to Oracle is an edit rather than a
+  // rediscovery. Empty is the honest default: a project that ships one copy of
+  // each mapper has nothing to leave out.
+  mappers: { alternatives: {} },
   calibration: {
     firstRun: 'bootstrap',
     maxRelativeDrop: 0.05,
@@ -94,7 +101,7 @@ const CATALOG_SOURCES = Object.freeze(['jdbc', 'file', 'none']);
  * else a profile declares is reported as UNSUPPORTED_TECHNOLOGY and skipped —
  * never silently ignored (§7.3).
  */
-export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router']);
+export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'next-pages', 'nexacro']);
 
 /**
  * The physical naming strategies `jpa.namingStrategy` may name (SPEC §18.2).
@@ -211,7 +218,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   webRoots: {
     status: 'consumed', where: 'src/core/lanes.mjs',
-    note: 'the frontend source roots this project has that no package.json declares. `cascade analyze` reads them beside the roots discovery derives from a frontend package.json, so a gateway that ships AngularJS as <script> tags is read with no flag. Each entry is {root, kind, from}: `root` is manifest-relative, `kind` is "vendored" (discovery found frontend sources with no manifest above them, under a static/public/webapp/www directory or beside an index.html that loads them) or "declared" (a person typed it), and `from` is "discovery" or "user". `cascade init` writes the vendored ones it finds; a list that is already in the profile is the user\'s and is left alone, and an empty list is how a project says "read none of them". --web-src still wins for one run',
+    note: 'the frontend source roots this project has that no package.json declares. `cascade analyze` reads them beside the roots discovery derives from a frontend package.json, so a gateway that ships AngularJS as <script> tags is read with no flag. Each entry is {root, kind, from}: `root` is manifest-relative, `kind` is "vendored" (discovery found frontend sources with no manifest above them, under a static/public/webapp/www directory or beside an index.html that loads them), "nexacro" (the same thing for a Nexacro client, whose screens are `.xfdl` forms and whose `.js` files are the vendor runtime this lane does not read) or "declared" (a person typed it), and `from` is "discovery" or "user". `cascade init` writes the vendored ones it finds; a list that is already in the profile is the user\'s and is left alone, and an empty list is how a project says "read none of them". --web-src still wins for one run',
   },
   templateRoots: {
     status: 'consumed', where: 'src/core/lanes.mjs',
@@ -304,6 +311,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   'catalog.ddlAlternatives': {
     status: 'recorded-not-acted', where: null,
     note: 'the other vendors\' DDL that `cascade init` found and did not choose, as vendor -> file list. Nothing reads it: it is there so switching the catalog to Oracle is one edit of catalog.ddl rather than a walk of the tree',
+  },
+  'mappers.alternatives': {
+    status: 'consumed', where: 'src/core/lanes.mjs',
+    note: 'the mapper XML `cascade init` found for the OTHER database vendors, as vendor -> file list, manifest-relative. Every file listed here is LEFT OUT of the statement lane: they are the same mappers, in the same namespaces, written for a database this project does not run on, and reading them made every statement come from whichever copy the walk read last. Move a vendor\'s files out of this list to read that vendor instead',
   },
   'calibration.firstRun': {
     status: 'consumed', where: 'src/core/calibration.mjs',
@@ -714,8 +725,8 @@ if ('webRoots' in obj) {
     if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
       throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
     }
-    if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared') {
-      throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it) or "declared" (you typed it)`);
+    if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared' && entry.kind !== 'nexacro') {
+      throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it), "nexacro" (a Nexacro client, which is a vendored root whose files are .xfdl forms) or "declared" (you typed it)`);
     }
     if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
       throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);
@@ -807,6 +818,15 @@ if (isObject(obj.catalog) && 'ddlAlternatives' in obj.catalog) {
     .every((files) => Array.isArray(files) && files.every((x) => typeof x === 'string' && x !== ''));
   if (!ok) {
     throw new ProfileError('profile.catalog.ddlAlternatives must map a database vendor name to that vendor\'s DDL paths');
+  }
+}
+
+if (isObject(obj.mappers) && 'alternatives' in obj.mappers) {
+  const v = obj.mappers.alternatives;
+  const ok = isObject(v) && Object.values(v)
+    .every((files) => Array.isArray(files) && files.every((x) => typeof x === 'string' && x !== ''));
+  if (!ok) {
+    throw new ProfileError('profile.mappers.alternatives must map a database vendor name to that vendor\'s mapper XML paths');
   }
 }
 

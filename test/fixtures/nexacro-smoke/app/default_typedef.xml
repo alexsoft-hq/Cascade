@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TypeDefinition version="2.0">
+  <Services>
+    <Service prefixid="svcurl" type="JSP" url="http://localhost:8080/demo-app/" cachelevel="none"/>
+    <Service prefixid="Lib" type="js" url="./Lib/" cachelevel="session"/>
+    <Service prefixid="Pattern" type="form" url="./Pattern/" cachelevel="dynamic"/>
+  </Services>
+</TypeDefinition>

@@ -94,7 +94,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/11";
+    static final String VERSION = "javafacts/12";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -1207,6 +1207,11 @@ public class JavaFacts {
                             cr.put("stmtIdFrom", (first instanceof IdentifierTree) ? "constant" : "literal");
                         } else if (first != null) {
                             cr.put("stmtArg", shortExpression(first));
+                            String bare = bareStatementIdOf(first, constants);
+                            if (bare != null) {
+                                cr.put("stmtIdBare", bare);
+                                cr.put("stmtIdFrom", (first instanceof IdentifierTree) ? "constant" : "literal");
+                            }
                         }
                         cr.put("line", lineOf(inv));
                     }
@@ -1916,7 +1921,12 @@ public class JavaFacts {
      */
     static final java.util.Set<String> STATEMENT_METHODS = new java.util.HashSet<>(Arrays.asList(
         "selectList", "selectOne", "selectMap", "select", "selectCursor",
-        "list", "selectByPk", "insert", "update", "delete"));
+        "list", "selectByPk", "insert", "update", "delete",
+        // iBATIS 2's own three (RM56). `SqlMapClient` and the Spring template
+        // over it spell the same journey `queryFor…`, and eGovFrame's iBATIS
+        // base class puts `list`/`insert`/`update`/`delete` on top of them,
+        // which the ten names above already cover.
+        "queryForList", "queryForObject", "queryForMap"));
 
     /**
      * The shape of a MyBatis statement id: a namespace and an id, dotted. It is
@@ -1926,6 +1936,21 @@ public class JavaFacts {
      */
     static final java.util.regex.Pattern STATEMENT_ID_RE = java.util.regex.Pattern.compile(
         "^[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)+$");
+
+    /**
+     * The shape of an iBATIS statement id with no namespace on it (RM56).
+     * `list("selectUserVOList", vo)` is the whole runtime key when
+     * `useStatementNamespaces` is off, which is iBATIS' default and what every
+     * eGovFrame DAO written before MyBatis 3 relies on.
+     *
+     * A BARE WORD IS A WEAK WITNESS, and this worker treats it as one: the id
+     * goes out under its OWN field, `stmtIdBare`, beside the `stmtArg` the
+     * census already reads, and the bridge binds it only when exactly one
+     * statement in the pack carries that id. A word that names no statement
+     * changes nothing at all.
+     */
+    static final java.util.regex.Pattern BARE_STATEMENT_ID_RE = java.util.regex.Pattern.compile(
+        "^[A-Za-z_$][A-Za-z0-9_$]*$");
 
     /**
      * The annotations that give a Spring bean a NAME, on a class and on a field.
@@ -2666,6 +2691,24 @@ public class JavaFacts {
         }
         if (value == null) return null;
         return STATEMENT_ID_RE.matcher(value).matches() ? value : null;
+    }
+
+    /**
+     * The same first argument read as an iBATIS BARE id: one identifier-shaped
+     * word, no dot. Returns null for anything else, `stmtArg` having already
+     * recorded what was written.
+     */
+    static String bareStatementIdOf(ExpressionTree first, Map<String, String> constants) {
+        if (first == null) return null;
+        String value = null;
+        if (first instanceof LiteralTree) {
+            Object v = ((LiteralTree) first).getValue();
+            if (v instanceof String) value = (String) v;
+        } else if (first instanceof IdentifierTree && constants != null) {
+            value = constants.get(((IdentifierTree) first).getName().toString());
+        }
+        if (value == null) return null;
+        return BARE_STATEMENT_ID_RE.matcher(value).matches() ? value : null;
     }
 
     /** How long an unreadable argument may be when it is quoted back in a census. */

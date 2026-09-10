@@ -200,7 +200,7 @@ test('a view name becomes a screen, the handler renders it, and the page keeps i
   assert.equal(stats.templates.files, 3);
   assert.equal(stats.templates.rendered, 2, 'the page and the layout it pulls in');
   assert.equal(stats.templates.unrendered, 1, 'the orphan, counted rather than read as a page');
-  assert.deepEqual(stats.screens.byKind, { router: 0, page: 1 });
+  assert.deepEqual(stats.screens.byKind, { router: 0, page: 1, nexacro: 0 });
 
   // The handler renders the page, EXACTLY: the literal it returned is the
   // resolver's own input.

@@ -11,9 +11,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { MANIFEST_SCHEMA } from './manifest.mjs';
 import { normalizeProfile, validateProfile } from './profile.mjs';
-import { ROUTER_PACKS } from './discover.mjs';
+import { SCREEN_PACKS } from './discover.mjs';
 import { DEFAULT_PORTS } from './dbconfig.mjs';
-import { chooseCatalogVendor, groupDdlByVendor } from './lanes.mjs';
+import { chooseCatalogVendor, chooseVendorMappers, groupDdlByVendor, groupMappersByVendor } from './lanes.mjs';
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -135,7 +135,10 @@ export function buildManifest(discovery, opts) {
 function declareFrameworkPacks(discovery, counts) {
 const frameworkPacks = [];
 if ((counts.springHandlerFiles ?? 0) > 0) frameworkPacks.push('spring-mvc');
-if ((counts.mybatisMapperXml ?? 0) > 0) frameworkPacks.push('mybatis-xml');
+// `mybatis-xml` is the STATEMENT lane, and its two elements are read by one
+// worker: `<mapper>` is MyBatis 3, `<sqlMap>` is iBATIS 2 (RM56), and a tree
+// that ships either has SQL written out in XML for this lane to read.
+if (((counts.mybatisMapperXml ?? 0) + (counts.ibatisSqlMapXml ?? 0)) > 0) frameworkPacks.push('mybatis-xml');
 // @Entity classes mean the persistence this project actually uses is declared
 // in the mapping, not written as SQL — that is the `jpa` pack's lane (M10).
 if ((counts.jpaEntityFiles ?? 0) > 0) frameworkPacks.push('jpa');
@@ -160,7 +163,7 @@ const vendoredRoots = discovery.webVendoredRoots ?? [];
 const routerPacks = [];
 if (webPackages.length > 0 || vendoredRoots.length > 0) {
   frameworkPacks.push('web');
-  for (const router of ROUTER_PACKS) {
+  for (const router of SCREEN_PACKS) {
     if (webPackages.some((p) => p.router === router)
       || vendoredRoots.some((r) => (r.routerPacks ?? []).includes(router))) routerPacks.push(router);
   }
@@ -300,6 +303,83 @@ const openapiDocuments = (discovery.openapiDocuments ?? [])
 }
 
 /**
+ * ONE MAPPER, SHIPPED ONCE PER DATABASE VENDOR (RM56).
+ *
+ * The DDL block above chose one vendor's schema. The SQL is shipped the same
+ * way and had to be chosen the same way: 189 mapper XML files in the
+ * enterprise business template are 27 mappers written for seven databases, all
+ * of them read into one statement axis, so a statement's SQL came from
+ * whichever copy the walk read last and was then parsed under the ONE dialect
+ * the run chose. The copies for the vendor this project runs on stay; the rest
+ * go into `mappers.alternatives`, which the statement lane reads and skips.
+ *
+ * A profile that already answers for this key is the user's word and is left
+ * alone, the same rule `webRoots` and `templateRoots` follow.
+ *
+ * @returns {{mappers:Object, kept:string[]}} the profile block (empty when
+ *          this tree ships one copy of each mapper), and the files kept
+ */
+function declareMappers(discovery, { existing, dialect, root, manifestDir, diagnostics }) {
+  const files = discovery.mapperFiles ?? [];
+  const sets = groupMappersByVendor(files);
+  const declared = existing && isPlainObject(existing.mappers) && isPlainObject(existing.mappers.alternatives)
+    ? existing.mappers.alternatives : null;
+  if (sets.length === 0) {
+    return { mappers: declared === null ? {} : { mappers: { alternatives: declared } }, kept: [] };
+  }
+  const chosen = chooseVendorMappers(sets, dialect.main);
+  const rel = (p) => toPosix(path.relative(manifestDir, path.resolve(root, p)));
+  if (declared !== null) {
+    diagnostics.push({
+      kind: 'MAPPER_ALTERNATIVES_KEPT',
+      severity: 'info',
+      path: '.',
+      reason: `the profile already answers for mappers.alternatives (${Object.keys(declared).sort().join(', ') || 'nothing'}), so it is left alone. `
+        + `This tree ships ${sets.length} mapper(s) once per database vendor, and this run would have left out `
+        + `${[...chosen.alternatives.values()].reduce((n, x) => n + x.length, 0)} copy(ies)`,
+    });
+    return { mappers: { mappers: { alternatives: declared } }, kept: chosen.kept };
+  }
+  const others = [...chosen.alternatives.entries()];
+  const leftOut = others.reduce((n, [, x]) => n + x.length, 0);
+  if (leftOut > 0) {
+    diagnostics.push({
+      kind: 'MAPPER_VENDOR_CHOSEN',
+      severity: 'info',
+      path: '.',
+      reason: `${sets.length} mapper(s) here are shipped once per database vendor (${others.map(([v]) => v).join(', ')} beside ${dialect.main ?? 'the copy kept'}); `
+        + `${chosen.kept.length} copy(ies) are read and ${leftOut} are recorded as mappers.alternatives, `
+        + 'because reading them all makes every statement come from whichever copy the walk read last',
+    });
+  }
+  for (const u of chosen.unmatched.slice(0, MAPPER_UNMATCHED_SAMPLE)) {
+    diagnostics.push({
+      kind: 'MAPPER_VENDOR_UNMATCHED',
+      severity: 'warn',
+      path: u.kept,
+      reason: `this mapper is shipped for ${u.vendors.join(', ')} and none of those is ${dialect.main ?? 'a vendor this project names'}, `
+        + `so the first copy by path is read${u.namespace === '' ? '' : ` for namespace ${u.namespace}`}. `
+        + 'Move the copy you want out of mappers.alternatives to read that one instead',
+    });
+  }
+  if (chosen.unmatched.length > MAPPER_UNMATCHED_SAMPLE) {
+    diagnostics.push({
+      kind: 'MAPPER_VENDOR_UNMATCHED',
+      severity: 'warn',
+      path: '.',
+      reason: `${chosen.unmatched.length - MAPPER_UNMATCHED_SAMPLE} more mapper(s) here are shipped for vendors that do not include `
+        + `${dialect.main ?? 'a vendor this project names'}, and each reads its first copy by path`,
+    });
+  }
+  return {
+    mappers: leftOut === 0 ? {} : {
+      mappers: { alternatives: Object.fromEntries(others.map(([v, list]) => [v, list.map(rel)])) },
+    },
+    kept: chosen.kept,
+  };
+}
+
+/**
  * THE FRONTEND AND TEMPLATE ROOTS no package manifest declares (RM47, RM48),
  * written down so a later run reads them from the profile rather than
  * rediscovering them — and a root the USER wrote stays the user's.
@@ -325,7 +405,10 @@ const screenAxis = routerPacks.length > 0 ? { screenAxis: { enabled: true } } : 
 // reason to overwrite either answer.
 const discoveredWebRoots = vendoredRoots.map((r) => ({
   root: toPosix(path.relative(manifestDir, path.resolve(root, r.root))),
-  kind: 'vendored',
+  // A Nexacro client is a vendored root with a kind of its own (RM56): the
+  // lane reads its `.xfdl` forms and steps over the vendor runtime beside
+  // them, and a reader has to be able to see which root that is.
+  kind: r.kind === 'nexacro' ? 'nexacro' : 'vendored',
   from: 'discovery',
 }));
 const declaredWebRoots = Array.isArray(existing?.webRoots) ? existing.webRoots : null;
@@ -446,6 +529,7 @@ export function buildProfile(discovery, opts) {
     existing, routerPacks, vendoredRoots, root, manifestDir, diagnostics,
   });
   const { serviceNames, gatewayRoutes } = declareServiceIdentity(discovery, { existing, diagnostics });
+  const { mappers } = declareMappers(discovery, { existing, dialect, root, manifestDir, diagnostics });
 
 
   const profile = normalizeProfile({
@@ -459,6 +543,7 @@ export function buildProfile(discovery, opts) {
     ...(serviceNames.length > 0 ? { serviceNames } : {}),
     ...(Object.keys(gatewayRoutes).length > 0 ? { gatewayRoutes } : {}),
     ...(openapiDocuments.length > 0 ? { openapi: { documents: openapiDocuments } } : {}),
+    ...mappers,
     catalog,
   });
   validateProfile(profile);
@@ -468,6 +553,14 @@ export function buildProfile(discovery, opts) {
 function toPosix(p) {
   return p.split(path.sep).join('/');
 }
+
+/** A plain object, and not an array or null. */
+function isPlainObject(x) {
+  return !!x && typeof x === 'object' && !Array.isArray(x);
+}
+
+/** How many unmatched vendor sets are named one by one before the count stands in. */
+const MAPPER_UNMATCHED_SAMPLE = 5;
 
 /**
  * THE SIGNPOST. A project with no schema is the one gap that changes what every
