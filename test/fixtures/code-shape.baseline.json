@@ -305,7 +305,7 @@
    ]
   },
   "src/adapters/java/calls.mjs": {
-   "maxLines": 68,
+   "maxLines": 70,
    "maxBranches": 29,
    "longest": "resolveInheritedFieldCall",
    "branchiest": "instantiateInheritedMember",
@@ -345,10 +345,10 @@
    ]
   },
   "src/adapters/java/persistence.mjs": {
-   "maxLines": 27,
-   "maxBranches": 6,
-   "longest": "bindStatements",
-   "branchiest": "mapperOwnersOf",
+   "maxLines": 37,
+   "maxBranches": 10,
+   "longest": "placeStatementId",
+   "branchiest": "sessionTypesOf",
    "functions": [
     "bindStatements",
     "mapperOwnersOf",
@@ -449,7 +449,7 @@
    ]
   },
   "src/adapters/java_bridge.mjs": {
-   "maxLines": 64,
+   "maxLines": 65,
    "maxBranches": 9,
    "longest": "addJavaFacts",
    "branchiest": "addJavaFacts",
@@ -1896,7 +1896,7 @@
    ]
   },
   "src/core/discover.mjs": {
-   "maxLines": 183,
+   "maxLines": 188,
    "maxBranches": 41,
    "longest": "discover",
    "branchiest": "templateRootsOf",
@@ -2246,9 +2246,9 @@
    ]
   },
   "src/core/init.mjs": {
-   "maxLines": 61,
+   "maxLines": 63,
    "maxBranches": 21,
-   "longest": "declareWebRoots",
+   "longest": "declareCatalog",
    "branchiest": "declareServiceIdentity",
    "functions": [
     "buildManifest",
@@ -2648,7 +2648,7 @@
    ]
   },
   "src/core/profile.mjs": {
-   "maxLines": 153,
+   "maxLines": 154,
    "maxBranches": 59,
    "longest": "profileDiagnostics",
    "branchiest": "profileDiagnostics",

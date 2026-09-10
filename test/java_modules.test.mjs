@@ -31,11 +31,12 @@ import {
   classifyRoutes, placeEndpointNodes, placeHandlesEdges, servedRouteIndex, ROUTE_RULE_BASIS,
 } from '../src/adapters/java/routes.mjs';
 import {
-  makeEmitter, makeGeneratedFields, makeWildcardPlacer, placeCallEdges,
+  makeBeanNames, makeEmitter, makeGeneratedFields, makeWildcardPlacer, placeCallEdges,
   CALL_RULES, CALL_RULE_BASIS,
 } from '../src/adapters/java/calls.mjs';
 import {
-  bindStatements, mapperOwnersOf, markTransactions, registerMethodSymbols,
+  bindStatementIds, bindStatements, mapperOwnersOf, markTransactions, registerMethodSymbols,
+  sessionTypesOf,
 } from '../src/adapters/java/persistence.mjs';
 import { Graph, nodeId } from '../src/core/graph.mjs';
 
@@ -391,6 +392,7 @@ test('calls: a field receiver reaches its declared type, and the edge names the 
   const cw = makeEmitter(ctx);
   cw.generatedFieldFor = makeGeneratedFields(ctx);
   Object.assign(cw, makeWildcardPlacer(ctx));
+  Object.assign(cw, makeBeanNames(ctx));
   cw.queueIfInherited = () => {};
   cw.inheritorsFor = () => new Map();
   cw.bindSuperBody = () => {};
@@ -418,6 +420,7 @@ test('calls: a receiver nothing places is COUNTED by rule and by reason, never d
   const cw = makeEmitter(ctx);
   cw.generatedFieldFor = makeGeneratedFields(ctx);
   Object.assign(cw, makeWildcardPlacer(ctx));
+  Object.assign(cw, makeBeanNames(ctx));
   cw.queueIfInherited = () => {};
   cw.inheritorsFor = () => new Map();
   cw.bindSuperBody = () => {};
@@ -480,6 +483,90 @@ test('calls: every rule the worker can spell has a rule name and a sentence', ()
     '`this.m()` is the SAME call as the unqualified `m()`: one spelling, one rule');
 });
 
+test('calls: a field injected BY NAME reaches the one class that answers to it', () => {
+  // Two implementors of one interface, and a field that names one of them. The
+  // dispatch rule alone reaches both; the annotation says which is really there.
+  const facts = [
+    { kind: 'type', fqn: 'com.x.CmmUseService', package: 'com.x', name: 'CmmUseService', file: 'CmmUseService.java', typeKind: 'interface', implements: [], declaredMethods: ['selectCodes/1'] },
+    { kind: 'type', fqn: 'com.x.CmmUseServiceImpl', package: 'com.x', name: 'CmmUseServiceImpl', file: 'CmmUseServiceImpl.java', typeKind: 'class', annotations: ['Service'], beanName: 'EgovCmmUseService', implements: ['CmmUseService'], declaredMethods: ['selectCodes/1'] },
+    { kind: 'type', fqn: 'com.x.CmmUseServiceStub', package: 'com.x', name: 'CmmUseServiceStub', file: 'CmmUseServiceStub.java', typeKind: 'class', annotations: ['Service'], beanName: 'stubCmmUseService', implements: ['CmmUseService'], declaredMethods: ['selectCodes/1'] },
+    { kind: 'type', fqn: 'com.x.CodeController', package: 'com.x', name: 'CodeController', file: 'CodeController.java', typeKind: 'class', annotations: ['Controller'], implements: [], declaredMethods: ['list/1'] },
+    { kind: 'field', owner: 'com.x.CodeController', name: 'cmmUseService', typeSimple: 'CmmUseService', beanName: 'EgovCmmUseService', file: 'CodeController.java' },
+    { kind: 'call', from: 'com.x.CodeController#list', receiver: 'cmmUseService', method: 'selectCodes', toTypeSimple: 'CmmUseService', via: 'field', file: 'CodeController.java' },
+  ];
+  const ctx = ctxFor(facts);
+  const cw = makeEmitter(ctx);
+  cw.generatedFieldFor = makeGeneratedFields(ctx);
+  Object.assign(cw, makeWildcardPlacer(ctx));
+  Object.assign(cw, makeBeanNames(ctx));
+  cw.queueIfInherited = () => {};
+  cw.inheritorsFor = () => new Map();
+  cw.bindSuperBody = () => {};
+  placeCallEdges(ctx, cw);
+  const edges = [...ctx.g.edges].filter((e) => e.type === 'MAY_CALL');
+  assert.equal(edges.length, 1);
+  assert.equal(edges[0].to, symbolId('com.x.CmmUseServiceImpl#selectCodes'), 'the named bean, not the interface');
+  assert.equal(edges[0].grade, 'SOUND_SET', 'an interface dispatch never becomes EXACT, however well named');
+  assert.equal(edges[0].evidence.rule, 'spring-bean-name');
+  assert.equal(edges[0].evidence.bean, 'EgovCmmUseService');
+  assert.equal(edges[0].evidence.candidateCount, 1);
+  assert.equal(edges[0].evidence.iface, 'com.x.CmmUseService');
+  assert.equal(ctx.stats.beanNames.sites, 1);
+  assert.equal(ctx.stats.beanNames.narrowed, 1);
+});
+
+test('calls: a bean name no class answers to changes nothing, and is counted', () => {
+  const facts = [
+    { kind: 'type', fqn: 'com.x.PropertyService', package: 'com.x', name: 'PropertyService', file: 'PropertyService.java', typeKind: 'interface', implements: [], declaredMethods: ['getString/1'] },
+    { kind: 'type', fqn: 'com.x.PropertyServiceImpl', package: 'com.x', name: 'PropertyServiceImpl', file: 'PropertyServiceImpl.java', typeKind: 'class', implements: ['PropertyService'], declaredMethods: ['getString/1'] },
+    { kind: 'type', fqn: 'com.x.CodeController', package: 'com.x', name: 'CodeController', file: 'CodeController.java', typeKind: 'class', annotations: ['Controller'], implements: [], declaredMethods: ['list/1'] },
+    // The bean is declared in an XML this engine does not read.
+    { kind: 'field', owner: 'com.x.CodeController', name: 'propertiesService', typeSimple: 'PropertyService', beanName: 'propertiesService', file: 'CodeController.java' },
+    { kind: 'call', from: 'com.x.CodeController#list', receiver: 'propertiesService', method: 'getString', toTypeSimple: 'PropertyService', via: 'field', file: 'CodeController.java' },
+  ];
+  const ctx = ctxFor(facts);
+  const cw = makeEmitter(ctx);
+  cw.generatedFieldFor = makeGeneratedFields(ctx);
+  Object.assign(cw, makeWildcardPlacer(ctx));
+  Object.assign(cw, makeBeanNames(ctx));
+  cw.queueIfInherited = () => {};
+  cw.inheritorsFor = () => new Map();
+  cw.bindSuperBody = () => {};
+  placeCallEdges(ctx, cw);
+  const edges = [...ctx.g.edges].filter((e) => e.type === 'MAY_CALL');
+  assert.equal(edges.length, 1);
+  assert.equal(edges[0].to, symbolId('com.x.PropertyService#getString'), 'today\'s dispatch, untouched');
+  assert.equal(edges[0].evidence.rule, 'field-receiver');
+  assert.equal(ctx.stats.beanNames.narrowed, 0);
+  assert.equal(ctx.stats.beanNames.unknownName, 1);
+});
+
+test('calls: a transaction boundary declared on the interface keeps its hop', () => {
+  const facts = [
+    { kind: 'type', fqn: 'com.x.OrderService', package: 'com.x', name: 'OrderService', file: 'OrderService.java', typeKind: 'interface', implements: [], declaredMethods: ['place/1'] },
+    { kind: 'type', fqn: 'com.x.OrderServiceImpl', package: 'com.x', name: 'OrderServiceImpl', file: 'OrderServiceImpl.java', typeKind: 'class', annotations: ['Service'], beanName: 'orderService', implements: ['OrderService'], declaredMethods: ['place/1'] },
+    { kind: 'type', fqn: 'com.x.OrderController', package: 'com.x', name: 'OrderController', file: 'OrderController.java', typeKind: 'class', annotations: ['Controller'], implements: [], declaredMethods: ['post/1'] },
+    { kind: 'field', owner: 'com.x.OrderController', name: 'orderService', typeSimple: 'OrderService', beanName: 'orderService', file: 'OrderController.java' },
+    { kind: 'call', from: 'com.x.OrderController#post', receiver: 'orderService', method: 'place', toTypeSimple: 'OrderService', via: 'field', file: 'OrderController.java' },
+    // The annotation sits on the interface, where there is no body: the engine
+    // marks that member and walks FORWARD from it for the footprint.
+    { kind: 'transactional', method: 'com.x.OrderService#place', scope: 'method', line: 3 },
+  ];
+  const ctx = ctxFor(facts);
+  const cw = makeEmitter(ctx);
+  cw.generatedFieldFor = makeGeneratedFields(ctx);
+  Object.assign(cw, makeWildcardPlacer(ctx));
+  Object.assign(cw, makeBeanNames(ctx));
+  cw.queueIfInherited = () => {};
+  cw.inheritorsFor = () => new Map();
+  cw.bindSuperBody = () => {};
+  placeCallEdges(ctx, cw);
+  const edges = [...ctx.g.edges].filter((e) => e.type === 'MAY_CALL');
+  assert.equal(edges[0].to, symbolId('com.x.OrderService#place'), 'the boundary stays on the path');
+  assert.equal(ctx.stats.beanNames.transactionBoundary, 1);
+  assert.equal(ctx.stats.beanNames.narrowed, 0);
+});
+
 // ---------------------------------------------------------------------------
 // persistence.mjs — where a Java method meets the SQL
 // ---------------------------------------------------------------------------
@@ -505,6 +592,62 @@ test('persistence: a mapper is witnessed by a statement node OR by @Mapper, and 
   assert.equal(ctx.stats.unboundMapperMethods, 1,
     'the statement this method would run is not in this pack: counted, never invented');
   assert.equal(ctx.g.nodes.get(symbolId('com.x.OrderMapper#selectById')).mapperMethod, true);
+});
+
+// A DAO shaped like eGovFrame's: no mapper interface anywhere, a session base
+// the run never parsed, and the statement named in the call.
+const EGOV_FACTS = [
+  { kind: 'type', fqn: 'com.x.SampleDAO', package: 'com.x', name: 'SampleDAO', file: 'SampleDAO.java', typeKind: 'class', annotations: ['Repository'], beanName: 'SampleDAO', implements: [], extends: 'EgovAbstractMapper', declaredMethods: ['selectSampleList/1', 'insertSample/1', 'countSamples/1'] },
+  { kind: 'import', owner: 'com.x.SampleDAO', simple: 'EgovAbstractMapper', fqn: 'org.egovframe.rte.psl.dataaccess.EgovAbstractMapper', file: 'SampleDAO.java' },
+  { kind: 'call', from: 'com.x.SampleDAO#selectSampleList', receiver: 'this', method: 'selectList', toTypeSimple: 'SampleDAO', via: 'unqualified', stmtId: 'SampleDAO.selectSampleList', stmtIdFrom: 'literal', line: 12, file: 'SampleDAO.java' },
+  { kind: 'call', from: 'com.x.SampleDAO#insertSample', receiver: 'this', method: 'insert', toTypeSimple: 'SampleDAO', via: 'unqualified', stmtId: 'SampleDAO.insertNothing', stmtIdFrom: 'literal', line: 20, file: 'SampleDAO.java' },
+  { kind: 'call', from: 'com.x.SampleDAO#countSamples', receiver: 'this', method: 'selectOne', toTypeSimple: 'SampleDAO', via: 'unqualified', stmtArg: '"SampleDAO." + suffix', line: 28, file: 'SampleDAO.java' },
+  // A call of the same NAME on something that is not a session: no receiver of
+  // this shape is a MyBatis session, so the rule must leave it alone.
+  { kind: 'type', fqn: 'com.x.Cache', package: 'com.x', name: 'Cache', file: 'Cache.java', typeKind: 'class', implements: [], declaredMethods: ['put/2'] },
+  { kind: 'call', from: 'com.x.Cache#put', receiver: 'this', method: 'update', toTypeSimple: 'Cache', via: 'unqualified', stmtId: 'SampleDAO.selectSampleList', stmtIdFrom: 'literal', line: 5, file: 'Cache.java' },
+];
+
+test('persistence: a class whose extends chain names a session base is one, even unparsed', () => {
+  const ctx = ctxFor(EGOV_FACTS);
+  const sessions = sessionTypesOf(ctx);
+  assert.ok(sessions.has('com.x.SampleDAO'), 'the extends clause is the whole evidence');
+  assert.equal(sessions.has('com.x.Cache'), false);
+});
+
+test('persistence: a statement called by its string id binds EXACT, and the misses are named', () => {
+  const ctx = ctxFor(EGOV_FACTS);
+  ctx.g.addNode({ id: nodeId('statement', 'SampleDAO.selectSampleList'), statement: 'SampleDAO.selectSampleList' });
+  bindStatementIds(ctx);
+  const bound = [...ctx.g.edges].filter((e) => e.type === 'IMPLEMENTS_STMT');
+  assert.equal(bound.length, 1, 'one edge: the call on a non-session receiver is not one of these');
+  assert.equal(bound[0].from, symbolId('com.x.SampleDAO#selectSampleList'));
+  assert.equal(bound[0].to, nodeId('statement', 'SampleDAO.selectSampleList'));
+  assert.equal(bound[0].grade, 'EXACT', 'the literal IS the key MyBatis looks the statement up by');
+  assert.equal(bound[0].evidence.rule, 'mybatis-statement-id');
+  assert.equal(bound[0].evidence.statement, 'SampleDAO.selectSampleList');
+
+  const c = ctx.stats.statementIds;
+  assert.equal(c.sites, 3, 'three session calls; the Cache one is not a session call');
+  assert.equal(c.bound, 1);
+  assert.equal(c.unknown, 1, 'a literal naming no statement this pack holds gets NO edge');
+  assert.deepEqual(c.unknownSamples.map((x) => x.id), ['SampleDAO.insertNothing']);
+  assert.equal(c.unknownSamples[0].line, 20, 'the miss is listed with its site');
+  assert.equal(c.unreadable, 1);
+  assert.equal(c.unreadableSamples[0].wrote, '"SampleDAO." + suffix');
+  assert.equal(ctx.stats.implementsStmt, 1);
+});
+
+test('persistence: a method that calls one statement twice makes one edge', () => {
+  const twice = [
+    ...EGOV_FACTS,
+    { kind: 'call', from: 'com.x.SampleDAO#selectSampleList', receiver: 'this', method: 'selectOne', toTypeSimple: 'SampleDAO', via: 'unqualified', stmtId: 'SampleDAO.selectSampleList', stmtIdFrom: 'literal', line: 14, file: 'SampleDAO.java' },
+  ];
+  const ctx = ctxFor(twice);
+  ctx.g.addNode({ id: nodeId('statement', 'SampleDAO.selectSampleList'), statement: 'SampleDAO.selectSampleList' });
+  bindStatementIds(ctx);
+  assert.equal([...ctx.g.edges].filter((e) => e.type === 'IMPLEMENTS_STMT').length, 1);
+  assert.equal(ctx.stats.statementIds.repeated, 1);
 });
 
 test('persistence: a @Transactional boundary is marked on its own symbol, created if need be', () => {

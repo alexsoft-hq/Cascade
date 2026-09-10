@@ -39,6 +39,8 @@ const NON_DEFAULT = {
   modelPacks: ['owasp-taint'],
   'catalog.source': 'file',
   'catalog.connectionFrom': '../schema.sql',
+  'catalog.ddl': ['../db/mysql/schema.sql'],
+  'catalog.ddlAlternatives': { oracle: ['../db/oracle/schema.sql'] },
   'calibration.firstRun': 'require-baseline',
   'calibration.maxRelativeDrop': 0.1,
   'calibration.maxRelativeDropOnRepin': 0.4,

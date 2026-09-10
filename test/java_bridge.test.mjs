@@ -404,6 +404,7 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
       'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
       'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
       'generated-field': 0, 'wildcard-jdk': 0, 'spring-model-attribute': 0,
+      'spring-bean-name': 0,
     },
     unresolvedCallsByRule: {
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
@@ -417,6 +418,17 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
     typesOutsideRoots: [],
     identifierReceivers: { total: 0, inheritedField: 0, generatedField: 0, staticReceiver: 0, unresolved: 0 },
     unresolvedIdentifiers: [],
+    // RM55: a statement called by its string id, and a dispatch settled by a
+    // bean name. Nothing here writes either, so every count is zero and every
+    // sample list is empty.
+    statementIds: {
+      sites: 0, bound: 0, unknown: 0, unreadable: 0, repeated: 0, fromConstant: 0,
+      unknownSamples: [], unreadableSamples: [],
+    },
+    beanNames: {
+      sites: 0, narrowed: 0, notAnInterface: 0, typeNotRead: 0, noImplementor: 0,
+      unknownName: 0, ambiguousName: 0, notAnImplementor: 0, transactionBoundary: 0,
+    },
     inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
     // The calls Spring makes and no line of source writes: nothing here carries
     // @ModelAttribute, so the rule followed nothing and skipped nothing.
@@ -559,6 +571,7 @@ test('every MAY_CALL edge names the rule that produced it', () => {
     'super-enclosing': 0, 'type-param-binding': 0,
     'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
     'generated-field': 0, 'wildcard-jdk': 0, 'spring-model-attribute': 0,
+    'spring-bean-name': 0,
   });
   // The `this.field` spelling resolves through the SAME field, so it must reach
   // the same target as the bare one — only the recorded rule differs.

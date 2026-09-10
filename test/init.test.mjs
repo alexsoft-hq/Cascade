@@ -108,7 +108,7 @@ test('buildProfile carries the discovered hints and passes validateProfile', () 
   // `false` here would put a word in the user's mouth that the run would obey.
   assert.equal(profile.screenAxis.enabled, null);
   assert.deepEqual(profile.runtimeEvidence, { har: [], otel: [] });
-  assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql' });
+  assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql', ddl: [], ddlAlternatives: {} });
   assert.deepEqual(profile.sqlDialects, { main: 'mysql' });
   assert.equal(profile.schema.default, null, 'invariant I-4: no invented schema name');
   assert.deepEqual(diagnostics, []);
@@ -170,10 +170,59 @@ test('buildProfile leaves the catalog at "none" and reports the candidates when 
     discovery({ ddlPaths: ['db/a.sql', 'db/b.sql'], counts: { ...discovery().counts, ddlFiles: 2 } }),
     { root: '/p/app', manifestDir: '/p/app/.cascade' },
   );
-  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} });
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0].kind, 'AMBIGUOUS_CATALOG_SOURCE');
   assert.match(diagnostics[0].reason, /db\/a\.sql, db\/b\.sql/);
+});
+
+// One schema shipped once per database vendor (RM55): the eGovFrame layout.
+const vendorDdl = (vendor, name) => ({
+  path: `DATABASE/${vendor}/${name}`, dialect: vendor, dialectFrom: 'path', role: 'schema',
+  createTables: 30, alters: 0, dml: 0, byPath: false, testPath: false,
+});
+
+const SEVEN_VENDORS = {
+  ddlPaths: ['DATABASE/mysql/all_ddl_mysql.sql', 'DATABASE/oracle/all_ddl_oracle.sql', 'DATABASE/tibero/all_ddl_tibero.sql'],
+  ddlCandidates: [
+    vendorDdl('mysql', 'all_ddl_mysql.sql'),
+    vendorDdl('oracle', 'all_ddl_oracle.sql'),
+    vendorDdl('tibero', 'all_ddl_tibero.sql'),
+  ],
+  ddlDialectHint: null,
+  counts: { javaFiles: 3, springHandlerFiles: 1, mybatisMapperXml: 2, ddlFiles: 3, jpaEntityFiles: 0, kotlinFiles: 0, frontendPackageJson: 0 },
+};
+
+test('buildProfile picks the vendor the configuration NAMES, and records the rest as alternatives (RM55)', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({
+      ...SEVEN_VENDORS,
+      dbTypeDeclarations: [{ vendor: 'tibero', key: 'Globals.DbType', file: 'src/main/resources/globals.properties', line: 23 }],
+    }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.equal(profile.catalog.source, 'file');
+  assert.deepEqual(profile.catalog.ddl, ['../DATABASE/tibero/all_ddl_tibero.sql']);
+  assert.deepEqual(Object.keys(profile.catalog.ddlAlternatives).sort(), ['mysql', 'oracle']);
+  // …and the lineage dialect follows the same choice.
+  assert.deepEqual(profile.sqlDialects, { main: 'tibero' });
+  const hit = diagnostics.find((d) => d.kind === 'CATALOG_VENDOR_CHOSEN');
+  assert.ok(hit, JSON.stringify(diagnostics));
+  assert.match(hit.reason, /ships its schema for 3 databases \(mysql, oracle, tibero\)/);
+  assert.match(hit.reason, /Globals\.DbType in src\/main\/resources\/globals\.properties names it/);
+  validateProfile(profile);
+});
+
+test('buildProfile with nothing naming the vendor keeps today\'s behaviour, and lists what it found (RM55)', () => {
+  const { profile, diagnostics } = buildProfile(
+    discovery({ ...SEVEN_VENDORS }),
+    { root: '/p/app', manifestDir: '/p/app/.cascade' },
+  );
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} });
+  const hit = diagnostics.find((d) => d.kind === 'AMBIGUOUS_CATALOG_SOURCE');
+  assert.ok(hit, JSON.stringify(diagnostics));
+  assert.match(hit.reason, /one schema written for 3 databases \(mysql, oracle, tibero\)/);
+  assert.match(hit.reason, /nothing in this tree says which database it runs on/);
 });
 
 test('buildProfile records the OpenAPI documents discovery found, manifest-relative and sorted', () => {
@@ -198,7 +247,7 @@ test('buildProfile omits framework packs and dialects it did not see', () => {
   assert.deepEqual(profile.frameworkPacks, []);
   assert.deepEqual(profile.sqlDialects, {});
   assert.equal(profile.build.tool, null);
-  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} });
 });
 
 // --- the connection-info half of the catalog decision (SPEC §12.1, §12.3) ---
@@ -222,7 +271,7 @@ test('buildProfile RECORDS a single connection candidate but never turns the sou
   // the tool decided by itself to connect to a host named by the analyzed
   // repository — which is untrusted input (SPEC §12.3, §17.5).
   assert.deepEqual(profile.catalog, {
-    source: 'none', connectionFrom: '../src/main/resources/application.yml',
+    source: 'none', connectionFrom: '../src/main/resources/application.yml', ddl: [], ddlAlternatives: {},
   });
   validateProfile(profile);
   const hit = diagnostics.find((d) => d.kind === 'CATALOG_CONNECTION_FOUND');
@@ -239,7 +288,7 @@ test('buildProfile prefers a DDL file over a connection candidate', () => {
     discovery({ connectionCandidates: [candidate()] }),
     { root: '/p/app', manifestDir: '/p/app/.cascade' },
   );
-  assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql' });
+  assert.deepEqual(profile.catalog, { source: 'file', connectionFrom: '../db/schema.sql', ddl: [], ddlAlternatives: {} });
   assert.equal(diagnostics.find((d) => d.kind === 'CATALOG_CONNECTION_FOUND'), undefined);
 });
 
@@ -251,7 +300,7 @@ test('buildProfile records NOTHING when several files carry connection info', ()
     }),
     { root: '/p/app', manifestDir: '/p/app/.cascade' },
   );
-  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} });
   const hit = diagnostics.find((d) => d.kind === 'AMBIGUOUS_CATALOG_SOURCE');
   assert.ok(hit);
   assert.match(hit.reason, /2 files carry datasource connection info/);
@@ -469,7 +518,7 @@ test('cascade init: unsupported technologies reach the report as diagnostics', (
   // that reads it, and what the lane does not do is stated on the `web` axis.
   assert.deepEqual(kinds, ['AMBIGUOUS_CATALOG_SOURCE', 'UNSUPPORTED_TECHNOLOGY']);
   const profile = JSON.parse(fs.readFileSync(path.join(dir, '.cascade', 'profile.json'), 'utf8'));
-  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null });
+  assert.deepEqual(profile.catalog, { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} });
 });
 
 test('cascade init: a frontend package declares the web pack, plus the router pack its deps name', (t) => {

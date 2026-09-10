@@ -840,3 +840,27 @@ test('discover finds the template roots and the view resolver settings out of th
     { root: 'src/main/resources/templates', engine: 'freemarker', suffix: '.ftl', from: 'config', files: 2 },
   ]);
 });
+
+test('a view resolver declared in a Spring bean XML gives the template root too (RM55)', (t) => {
+  // The eGovFrame shape: nothing in `application.yml`, everything in a servlet
+  // XML, and the JSPs under the prefix that XML names. Without reading the bean
+  // the root is the directory the files happen to share (`src/main/webapp`),
+  // and `uat/uia/EgovLoginUsr` then resolves to nothing at all.
+  const root = tree(t, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'src/main/java/com/example/LoginController.java':
+      'package com.example;\n@Controller\npublic class LoginController { @GetMapping("/uat/uia/egovLoginUsr.do") public String login() { return "uat/uia/EgovLoginUsr"; } }\n',
+    'src/main/webapp/WEB-INF/config/springmvc/dispatcher-servlet.xml':
+      '<?xml version="1.0"?>\n<beans xmlns="http://www.springframework.org/schema/beans" xmlns:p="http://www.springframework.org/schema/p">\n'
+      + '  <bean class="org.springframework.web.servlet.view.UrlBasedViewResolver" p:order="1"\n'
+      + '      p:viewClass="org.springframework.web.servlet.view.JstlView" p:prefix="/WEB-INF/jsp/" p:suffix=".jsp"/>\n</beans>\n',
+    'src/main/webapp/WEB-INF/jsp/uat/uia/EgovLoginUsr.jsp': '<html><body>login</body></html>\n',
+    'src/main/webapp/WEB-INF/jsp/cmm/egovError.jsp': '<html><body>error</body></html>\n',
+    'src/main/webapp/index.jsp': '<html><body>index</body></html>\n',
+  });
+  const d = discover(root, io(() => SHA('x')));
+  assert.deepEqual(d.viewResolvers.map((r) => [r.engine, r.prefix, r.suffix]), [['jsp', '/WEB-INF/jsp/', '.jsp']]);
+  assert.deepEqual(d.templateRoots, [
+    { root: 'src/main/webapp/WEB-INF/jsp', engine: 'jsp', suffix: '.jsp', from: 'config', files: 2 },
+  ]);
+});

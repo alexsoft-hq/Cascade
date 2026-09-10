@@ -54,6 +54,10 @@ suite.
 | [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 | 196 |
 | [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 | 99 |
 
+Six more repositories joined this corpus in RM55 and are measured in [their own
+section](#the-korean-market-held-out-first), which keeps the measurement taken
+BEFORE any rule was written for them beside the one after.
+
 The last column is the sixth, and it is guarded the other way up. It adds up,
 over every endpoint, how many distinct columns that one endpoint reaches, and a
 rise of more than five percent fails the suite. It is here because the five
@@ -142,6 +146,85 @@ shortfall rather than as a description of a product whose screens are mostly not
 in its source. Adding that project's own spelling to the rule would be a rule
 that works on that project and nowhere else, so the table stays generic and this
 is written down instead.
+
+## The Korean market, held out first
+
+The eleven repositories above are the frameworks the world writes in. They are
+not the market this product is for. So RM55 cloned the public repositories that
+are — eGovFrame, which every Korean public sector project is required to build
+on, a Nexacro client over an eGovFrame backend, and one modern Korean OSS as a
+control — and **measured them before writing a line of code for them**. That
+first measurement is kept here beside the one after, so anyone can see which
+numbers the round moved and which it did not.
+
+### The first measurement, before any rule was written
+
+| Repository | Pinned at | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs |
+|---|---|---|---|---|---|---|---|
+| [egovframe-common-components](https://github.com/eGovFramework/egovframe-common-components) | `a88a3e31` | **0 / 1193** | 0 / 184 | 0 / 1956 | 0 / 13 | 0 / 1 | 0 |
+| [egovframe-enterprise-business-template](https://github.com/eGovFramework/egovframe-enterprise-business-template) | `cfccbe89` | **0 / 219** | 0 / 35 | 0 / 288 | 0 / 4 | 0 / 0 | 0 |
+| [egovframe-msa-edu](https://github.com/eGovFramework/egovframe-msa-edu) | `777f697c` | 90 / 163 | 20 / 25 | 191 / 270 | 2 / 217 | 0 / 0 | 394 |
+| [egovframe-web-sample](https://github.com/eGovFramework/egovframe-web-sample) | `8f37555e` | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 0 | 5 |
+| [nexacro-sample-egov](https://github.com/nexacro-spring/nexacro-sample-egov) | `deb90f90` | 6 / 21 | 2 / 5 | 9 / 46 | 0 / 0 | 0 / 0 | 27 |
+| [naver/ngrinder](https://github.com/naver/ngrinder) | `2a6da299` | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 | 900 |
+
+Two of those rows are the finding. 219 routes and 205 statements, 1,193 routes
+and 1,256 statements, and **not one edge between them**: nothing a route reached
+ended at a table. The product was useless on eGovFrame, and the causes were
+three, each verified by reading the trees:
+
+1. **Statements are called by their string id.** eGovFrame DAOs extend a session
+   base and write `selectList("CmmnDetailCodeManageDAO.selectCmmnDetailCodeList",
+   vo)`. There is no mapper interface anywhere, and the engine bound a statement
+   only through one.
+2. **The view resolver is a bean in an XML.** 92 and 747 JSPs, and no template
+   root, because the prefix was in `egov-com-servlet.xml` rather than in
+   `application.yml`.
+3. **The DDL is one file per vendor.** Seven of them, all read at once.
+
+### The same six, after
+
+| Repository | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs | Wall |
+|---|---|---|---|---|---|---|---|
+| egovframe-common-components | **999 / 1193** | 165 / 179 | 1640 / 1818 | 765 / 811 | 470 / 657 | 9568 | 50 s |
+| egovframe-enterprise-business-template | **163 / 219** | 30 / 35 | 210 / 288 | 122 / 135 | 55 / 84 | 1889 | 4 s |
+| egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 2 / 217 | 0 / 0 | 394 | 1 s |
+| egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 | 5 | 1 s |
+| nexacro-sample-egov | **2 / 21** | 2 / 5 | 9 / 46 | 0 / 0 | 0 / 0 | 9 | 1 s |
+| ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 | 900 | 1 s |
+
+**The one number that went DOWN is the one worth reading.** nexacro-sample-egov
+fell from 6 endpoints reaching a statement to 2, and its pair count from 27 to 9,
+while the tables and columns it reaches did not move at all. That project
+declares one `SampleService` interface with two implementations — one over
+iBATIS, one over MyBatis — and one `LargeDataService` with three. Every
+controller reached all of them through the interface, so four routes claimed to
+run MyBatis statements that their own `@Resource(name = "sampleService")` says
+they never touch. Reading the bean name removed exactly those four, and the two
+that remain (`/sampleMybatisSelectVO.do`, `/sampleMybatisLargeData.do`) are the
+two routes wired to the MyBatis implementation. Verified by running the same
+commit with the rule switched off and listing both sets.
+
+msa-edu and ngrinder did not move by one number, which is the other half of the
+result: neither has a mapper XML, an XML view resolver or a vendor DDL tree, so
+none of the three rules had anything to fire on. Their frontends (two Next.js
+applications and a Nexacro client) are still unread, and that is the next round.
+
+The eleven repositories above this section did not move by one number either.
+
+### What the after-run left on the table
+
+- **56 of 219** and **194 of 1193** routes still reach no statement. On the
+  business template, 52 of the 246 statement-id call sites name a statement no
+  mapper XML in that repository declares (`BBSAddedOptionsDAO.insert…`,
+  `BBSLoneMasterDAO.select…`): a component whose Java is shipped and whose SQL is
+  not. They are listed by name in `laneStats.statementIds.unknownSamples` rather
+  than invented.
+- **the mapper XML is shipped once per vendor too**, and that half is not fixed.
+  The business template ships 27 modules × 7 vendors = 189 mapper files declaring
+  1,423 statements that collapse onto 205 ids, and the copy that wins is whichever
+  the walk read last. The catalog now picks a vendor; the statements do not, so
+  the SQL parsed for a statement can be a vendor's the project does not run.
 
 ## The goldens
 

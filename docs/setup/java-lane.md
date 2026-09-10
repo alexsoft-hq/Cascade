@@ -69,6 +69,7 @@ endpoint_impact { "column": "pms_product.price" }
 | `clientMethod → endpoint` (CALLS_HTTP) | **SOUND_SET** | an HTTP client call reaches a route this pack also serves — the internal HTTP hop. Two ways of writing one: a `@FeignClient`/`@HttpExchange` method, and an imperative `WebClient`/`RestClient`/`RestTemplate` call |
 | `clientMethod → endpoint` (CALLS_HTTP) | **UNRESOLVED** | …or one it does not serve: the target is outside the pack, so no walk follows the edge and it is counted instead (`httpCallsUnresolved`) |
 | `mapperMethod → statement` (IMPLEMENTS_STMT) | **EXACT** | a MyBatis statement id *is* the mapper interface FQN + method — definitional |
+| `daoMethod → statement` (IMPLEMENTS_STMT) | **EXACT** | …or the DAO **names the statement outright** in the call, and that literal *is* the key MyBatis looks it up by — definitional the same way ([below](#a-dao-that-names-its-statement-in-the-call)) |
 | `caller → callee`, `interface → impl` (MAY_CALL) | **SOUND_SET** | calls are resolved from the parse tree (receiver → field → declared type, method-by-name) and interface dispatch is a class-hierarchy over-approximation — a sound candidate set, **not** compiler-verified |
 | `repositoryMethod → statement` (IMPLEMENTS_STMT) | **EXACT** | a Spring Data repository method *is* the statement Spring Data generates for it — definitional, same rule as MyBatis |
 
@@ -91,6 +92,7 @@ Every resolved call shape, all by NAME, all graded SOUND_SET:
 | `super.exportXls(…)` | `super-enclosing` | the first ancestor up the `extends` chain that **declares** the method |
 | `service.list(…)` where `service` is typed by a **type parameter** | `type-param-binding` | the binding **that subclass** makes (`class C extends B<A, IAService>`), one edge from the subclass's own copy of the method, with `evidence.boundThrough` naming where the binding was spelled and `evidence.inheritedFrom` naming the shared body the call site is in |
 | an interface method | `interface-dispatch` | every implementor (a class-hierarchy over-approximation) |
+| `cmmUseService.selectCodes(…)` where the field carries `@Resource(name = "EgovCmmUseService")` | `spring-bean-name` | the one class in this pack that answers to that bean name, when exactly one does ([below](#a-field-injected-by-name)) |
 | `log.info(…)` in a `@Slf4j` class | `generated-field` | the logger type that Lombok's annotation generates (`org.slf4j.Logger` …). The field is real at run time and in no parse tree, so nothing but the annotation can explain the receiver |
 | `ringData.computeIfAbsent(…)` where the field's type came in through `import java.util.*` | `wildcard-jdk` | `<that package>.<Simple>`. The JDK is a closed world this lane never reads, so the call leaves the project |
 
@@ -183,6 +185,102 @@ them `getClass()`/`hashCode()` inherited from `java.lang.Object`, and one real
 case (`CommentGenerator#addFieldJavaDoc → addJavadocTag()`, inherited from
 MyBatis-generator's `DefaultCommentGenerator`). In hand-written code — the 141
 sites outside generated `…Example`/`.model.` classes — the rate is **1 of 141**.
+
+### A DAO that names its statement in the call
+
+MyBatis has two shapes and the lane reads both. The one the documentation leads
+with is a mapper **interface**, where the statement id is the interface's FQN
+plus the method name, so the binding is definitional. The other has no interface
+at all:
+
+```java
+@Repository("CmmnCodeManageDAO")
+public class CmmnCodeManageDAO extends EgovAbstractMapper {
+    public List<?> selectCmmnCodeList(ComDefaultVO vo) {
+        return selectList("CmmnCodeManageDAO.selectCmmnCodeList", vo);
+    }
+}
+```
+
+That literal **is** the key MyBatis looks the statement up by at run time, and
+the mapper XML declares the same key as its `namespace` plus the statement's
+`id`. There is nothing between the two to resolve, so the edge is EXACT, with
+`evidence.rule` `mybatis-statement-id`.
+
+This is the whole persistence layer of eGovFrame, which is the framework Korean
+public sector projects are required to build on: 1,288 call sites in
+`eGovFramework/egovframe-common-components` and not one `@Mapper` interface.
+Before the rule existed, that repository connected **1,193 routes to 1,256
+statements with zero edges between them**.
+
+What the rule reads, and what it refuses:
+
+- the receiver has to be a MyBatis **session**. The `extends` chain is walked by
+  simple name for `SqlSession`, `SqlSessionTemplate`, `SqlSessionDaoSupport`,
+  `EgovAbstractMapper` or `EgovComAbstractDAO` — by name, because that base
+  almost always ships in a jar this run never parsed, and the `extends` clause in
+  the source is the whole evidence. A field of one of those types answers the
+  same question for a DAO that holds a session rather than extending one;
+- the method name has to be one of `selectList`, `selectOne`, `selectMap`,
+  `select`, `selectCursor`, `list`, `selectByPk`, `insert`, `update`, `delete`.
+  The name alone decides nothing: a service's own `insert(vo)` has it too, and
+  the receiver test is what keeps the rule off it;
+- the first argument has to be a **string literal**, or a `static final String`
+  of the same class initialised with one, shaped like `<namespace>.<id>`.
+  Measured: 1,289 of 1,298 sites in the common components are plain literals;
+- a literal naming a statement **this pack does not hold** gets no edge and is
+  listed by name in `laneStats.statementIds.unknownSamples`. A mapper XML left
+  outside the run and a typo look the same from here, and only a reader can tell
+  them apart;
+- a first argument no single file can read (a parameter, a concatenation) is
+  counted in `unreadable`, with the expression as it was written.
+
+`laneStats.statementIds` carries the whole census: `sites`, `bound`, `unknown`,
+`unreadable`, `repeated`, `fromConstant`.
+
+A constant of **another** class (`CmmnConstants.SELECT_CODES`) is one of the
+`unreadable`, on purpose: nothing in the corpus writes one, and a resolver with
+no repository behind it is a rule nobody has checked.
+
+### A field injected by name
+
+```java
+@Resource(name = "EgovCmmUseService")
+private EgovCmmUseService cmmUseService;
+```
+
+The declared type is the interface, so the dispatch rule alone reaches every
+implementor. The annotation says which object the container really puts there,
+and when exactly one class in this pack answers to that bean name the call site
+goes straight to it: `evidence.rule` `spring-bean-name`, `candidateCount: 1`,
+the bean name and the interface on the evidence.
+
+A class answers to a bean name in one of two ways, and the evidence says which
+(`nameFrom`):
+
+- `declared` — its own stereotype annotation names it: `@Service("x")`,
+  `@Repository("x")`, `@Component("x")`;
+- `default-name` — it carries a stereotype with no value, and its decapitalised
+  simple name is that name, which is the name Spring gives it.
+
+**The grade does not move.** It stays SOUND_SET, because this reads the name a
+field asks for and the names classes declare, without the container that would
+settle a `@Primary`, a profile, or a bean an XML or a `@Bean` method declares.
+Narrowing a candidate set to one member does not make it a proof.
+
+Two things the rule declines, both counted in `laneStats.beanNames`:
+
+- a name **no class in this pack answers to** (`unknownName`), which is usually
+  a bean an XML declares. Measured on
+  `eGovFramework/egovframe-enterprise-business-template`: 87 of 145 named fields
+  match a `@Service("…")` outright and 16 more by the default name, and every
+  one of the rest is typed by something this run never parsed (`typeNotRead`),
+  which is a different answer from "not an interface" and is counted as one;
+- an interface method that **is a transaction boundary**
+  (`transactionBoundary`). Some projects write `@Transactional` on the service
+  INTERFACE, where there is no body; the engine marks that member and computes
+  the transaction's footprint by walking forward from it. Routing the caller past
+  it would leave the boundary on the graph with nothing under it.
 
 ### A mapping annotation is not always a handler
 

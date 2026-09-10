@@ -59,6 +59,10 @@ export function indexJavaFacts(javaFacts) {
   // looked for in the fields of its ancestors, and the ancestor's own record is
   // the only place that declaration exists.
   const fieldsByOwner = new Map();
+  // owner fqn -> (field name -> the bean name it is injected by). Separate from
+  // the map above because it answers a different question and is almost always
+  // empty: a field is named only where somebody wrote `@Resource(name = "…")`.
+  const beanNamesByOwner = new Map();
   const parseErrors = [];                  // {file, line, message} — one per file that failed to parse
   const parsedFiles = new Set();           // every file any record came from
 
@@ -67,7 +71,22 @@ export function indexJavaFacts(javaFacts) {
     if (typeof r.file === 'string' && r.file.length > 0) parsedFiles.add(r.file);
     switch (r.kind) {
       case 'method': methods.push({ fqn: r.fqn, owner: r.owner, line: r.line ?? null, paramCount: r.paramCount ?? null }); break;
-      case 'call': calls.push({ from: r.from, method: r.method, toTypeSimple: r.toTypeSimple, receiver: r.receiver ?? null, via: r.via ?? null }); break;
+      case 'call': calls.push({
+        from: r.from,
+        method: r.method,
+        toTypeSimple: r.toTypeSimple,
+        receiver: r.receiver ?? null,
+        via: r.via ?? null,
+        // The MyBatis statement id this call names, when it names one
+        // (javafacts/11), what was written when the worker could not read one,
+        // and where the call site is. Absent on every call that is not one of
+        // the ten session methods.
+        stmtId: typeof r.stmtId === 'string' ? r.stmtId : null,
+        stmtIdFrom: typeof r.stmtIdFrom === 'string' ? r.stmtIdFrom : null,
+        stmtArg: typeof r.stmtArg === 'string' ? r.stmtArg : null,
+        line: Number.isInteger(r.line) ? r.line : null,
+        file: typeof r.file === 'string' ? r.file : null,
+      }); break;
       case 'endpoint': endpoints.push({ httpMethod: r.httpMethod, path: r.path, handler: r.handler, handlerType: r.handlerType ?? ownerOf(r.handler ?? ''), line: r.line ?? null, file: r.file ?? null }); break;
       case 'transactional': transactionals.push({ method: r.method, scope: r.scope ?? null, line: r.line ?? null }); break;
       case 'httpCall': httpCallFacts.push(r); break;
@@ -78,6 +97,14 @@ export function indexJavaFacts(javaFacts) {
         // FIRST declaration wins, so a stream that repeats a file cannot change
         // which type a field is read as.
         if (!m.has(r.name)) m.set(r.name, r.typeSimple ?? null);
+        // …and the BEAN this field asks for by name, when it asks for one
+        // (javafacts/11). Kept in a map of its own so `fieldsByOwner` stays what
+        // every rule already reads it as: a name to a declared type.
+        if (typeof r.beanName === 'string' && r.beanName !== '') {
+          let b = beanNamesByOwner.get(r.owner);
+          if (!b) { b = new Map(); beanNamesByOwner.set(r.owner, b); }
+          if (!b.has(r.name)) b.set(r.name, r.beanName);
+        }
         break;
       }
       case 'parse_error': parseErrors.push({ file: r.file, line: r.line ?? null, message: r.message ?? null }); break;
@@ -107,7 +134,7 @@ export function indexJavaFacts(javaFacts) {
   }
 
   return {
-    methods, calls, endpoints, transactionals, httpCallFacts, fieldsByOwner,
+    methods, calls, endpoints, transactionals, httpCallFacts, fieldsByOwner, beanNamesByOwner,
     parseErrors, parsedFiles, lineOfMember, aritiesOfMember, callsFrom,
   };
 }
@@ -362,6 +389,11 @@ function indexedType(r) {
     declaredMethods: list(r.declaredMethods),
     declaredMethodLines: list(r.declaredMethodLines),
     modelAttributeMethods: list(r.modelAttributeMethods),
+    // The name Spring knows this class by, when its stereotype annotation gave
+    // it one (javafacts/11). Null is not "no name": Spring then decapitalises
+    // the simple name, and src/adapters/java/calls.mjs applies that rule where
+    // it can also see whether two classes would claim the same one.
+    beanName: typeof r.beanName === 'string' && r.beanName !== '' ? r.beanName : null,
     file: r.file ?? null,
   };
 }

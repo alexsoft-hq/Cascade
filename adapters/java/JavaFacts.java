@@ -94,7 +94,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/10";
+    static final String VERSION = "javafacts/11";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -461,6 +461,12 @@ public class JavaFacts {
             // EVIDENCE ONLY: which of these types is a controller, and which of its
             // methods are handlers, is decided in src/adapters/java/calls.mjs.
             typeRec.put("modelAttributeMethods", modelAttributeMethodsOf(ct));
+            // THE NAME SPRING KNOWS THIS CLASS BY (javafacts/11), when the
+            // stereotype annotation gives it one: `@Service("egovCmmUseService")`.
+            // EVIDENCE ONLY — whether that name settles a dispatch is decided in
+            // src/adapters/java/calls.mjs, which can see whether any OTHER class
+            // in the tree claims the same name.
+            typeRec.put("beanName", beanNameOf(annotationsOf(ct.getModifiers().getAnnotations())));
             typeRec.put("file", rel);
             sink.types++;
             sink.add("2type" + SEP + fqn, typeRec);
@@ -531,6 +537,10 @@ public class JavaFacts {
                     fr.put("owner", fqn);
                     fr.put("name", fname);
                     fr.put("typeSimple", typeSimple);
+                    // WHICH BEAN THIS FIELD ASKS FOR BY NAME (javafacts/11).
+                    // `@Resource(name = "x")` and `@Qualifier("x")` name one bean
+                    // where the declared type names a whole interface.
+                    fr.put("beanName", injectedBeanNameOf(annotationsOf(v.getModifiers().getAnnotations())));
                     fr.put("file", rel);
                     sink.add("3field" + SEP + fqn + SEP + fname, fr);
                 }
@@ -685,7 +695,7 @@ public class JavaFacts {
                     emitMapperAnnotationSql(fqn, mname, m);
 
                     if (m.getBody() != null) {
-                        scanCalls(fqn, mname, fields, ext, m);
+                        scanCalls(fqn, mname, fields, ext, viewConstants, m);
                         scanWrappers(fqn, mname, fields, m);
                         scanHttpCalls(fqn, mname, fieldTypeWritten, m);
                         // A handler of a page-rendering controller, unless the
@@ -1094,7 +1104,7 @@ public class JavaFacts {
         // Method-invocation walk: emit a call only when the receiver is a simple
         // name that resolves to an instance field of the enclosing type.
         void scanCalls(final String fqn, final String mname, final Map<String, String> fields,
-                       final String superSimple, MethodTree m) {
+                       final String superSimple, final Map<String, String> constants, MethodTree m) {
             final String from = fqn + "#" + mname;
             final String ownSimple = fqn.substring(fqn.lastIndexOf('.') + 1);
             m.getBody().accept(new TreeScanner<Void, Void>() {
@@ -1114,9 +1124,9 @@ public class JavaFacts {
                         String keyword = receiverKeyword(recvExpr);
                         if (keyword != null) {
                             if ("this".equals(keyword)) {
-                                emitCall(from, "this", methodName, ownSimple, "this-method");
+                                emitCall(from, "this", methodName, ownSimple, "this-method", inv);
                             } else {
-                                emitCall(from, "super", methodName, superSimple, "super-method");
+                                emitCall(from, "super", methodName, superSimple, "super-method", inv);
                             }
                             return super.visitMethodInvocation(inv, p);
                         }
@@ -1133,7 +1143,7 @@ public class JavaFacts {
                                 // edge, so a reader can see what the resolution
                                 // rested on instead of taking one grade on faith.
                                 emitCall(from, recv, methodName, toType,
-                                        (recvExpr instanceof IdentifierTree) ? "field" : "this-field");
+                                        (recvExpr instanceof IdentifierTree) ? "field" : "this-field", inv);
                             } else if (declaredNames.contains(recv)) {
                                 // a receiver THIS FILE declares (a local, a
                                 // parameter, or a field whose type is a primitive
@@ -1150,7 +1160,7 @@ public class JavaFacts {
                                 // null because this worker knows no type for it,
                                 // and the bridge resolves it against the type
                                 // records it holds for the whole tree (I-1/I-6).
-                                emitCall(from, recv, methodName, null, "identifier");
+                                emitCall(from, recv, methodName, null, "identifier", inv);
                             }
                         }
                         // chained/qualified receivers (a.b().c(), Type.x()) are not
@@ -1166,13 +1176,14 @@ public class JavaFacts {
                         if (staticImportNames.contains(methodName) || staticImportNames.contains("*")) {
                             sink.skippedCalls++;
                         } else if (!"this".equals(methodName) && !"super".equals(methodName)) {
-                            emitCall(from, "this", methodName, ownSimple, "unqualified");
+                            emitCall(from, "this", methodName, ownSimple, "unqualified", inv);
                         }
                     }
                     return super.visitMethodInvocation(inv, p);
                 }
 
-                void emitCall(String fromMember, String recv, String methodName, String toType, String via) {
+                void emitCall(String fromMember, String recv, String methodName, String toType, String via,
+                              MethodInvocationTree inv) {
                     Map<String, Object> cr = new LinkedHashMap<>();
                     cr.put("kind", "call");
                     cr.put("from", fromMember);
@@ -1180,6 +1191,25 @@ public class JavaFacts {
                     cr.put("method", methodName);
                     cr.put("toTypeSimple", toType);
                     cr.put("via", via);
+                    // A MYBATIS STATEMENT ID, WHEN THIS CALL COULD CARRY ONE
+                    // (javafacts/11). Only for the ten session methods, and only
+                    // as far as ONE FILE can read it: a string literal, or a
+                    // `static final String` of this same class. `stmtArg` is what
+                    // was written when neither applies, so the run can say how
+                    // many statement calls it could not read and what they looked
+                    // like, instead of reporting a smaller number with no reason.
+                    if (STATEMENT_METHODS.contains(methodName)) {
+                        List<? extends ExpressionTree> args = inv.getArguments();
+                        ExpressionTree first = (args != null && !args.isEmpty()) ? unwrap(args.get(0)) : null;
+                        String id = statementIdOf(first, constants);
+                        if (id != null) {
+                            cr.put("stmtId", id);
+                            cr.put("stmtIdFrom", (first instanceof IdentifierTree) ? "constant" : "literal");
+                        } else if (first != null) {
+                            cr.put("stmtArg", shortExpression(first));
+                        }
+                        cr.put("line", lineOf(inv));
+                    }
                     cr.put("file", rel);
                     sink.calls++;
                     sink.add("6call" + SEP + fromMember + SEP + recv + SEP + methodName + SEP
@@ -1867,6 +1897,44 @@ public class JavaFacts {
      */
     static final java.util.Set<String> MP_CHAIN_TERMINALS = new java.util.HashSet<>(Arrays.asList(
         "list", "one", "oneOpt", "count", "page", "exists", "remove", "update"));
+
+    /**
+     * THE MYBATIS SESSION METHODS THAT TAKE A STATEMENT ID (javafacts/11).
+     *
+     * `selectList("CmmnCodeManageDAO.selectCmmnCodeList", vo)` is how every
+     * eGovFrame DAO runs SQL: no mapper INTERFACE, no annotation, just the
+     * statement's runtime key as a string. 1,288 call sites in
+     * egovframe-common-components alone, and none of them bound to anything
+     * before this. The names are `SqlSession`'s own API plus the two
+     * `EgovAbstractMapper` adds on top of it.
+     *
+     * The name alone decides NOTHING: a service's own `insert(vo)` has this
+     * name too. What this list does is say which call sites are worth reading a
+     * first argument off; whether the RECEIVER is a MyBatis session at all is
+     * decided in src/adapters/java/persistence.mjs, which holds the type records
+     * for the whole tree (I-1/I-6).
+     */
+    static final java.util.Set<String> STATEMENT_METHODS = new java.util.HashSet<>(Arrays.asList(
+        "selectList", "selectOne", "selectMap", "select", "selectCursor",
+        "list", "selectByPk", "insert", "update", "delete"));
+
+    /**
+     * The shape of a MyBatis statement id: a namespace and an id, dotted. It is
+     * the whole test a literal has to pass — anything else in that position is
+     * a piece of SQL, a table name, a message key, and reading it as a
+     * statement id would put a statement in the graph nobody declared.
+     */
+    static final java.util.regex.Pattern STATEMENT_ID_RE = java.util.regex.Pattern.compile(
+        "^[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)+$");
+
+    /**
+     * The annotations that give a Spring bean a NAME, on a class and on a field.
+     * `@Resource(name = "egovCmmUseService")` is 909 fields in
+     * egovframe-common-components; the field's TYPE is the interface, so the
+     * name is the only thing at the call site that says which implementor runs.
+     */
+    static final java.util.Set<String> BEAN_NAME_TYPE_ANNOTATIONS = new java.util.HashSet<>(Arrays.asList(
+        "Service", "Repository", "Component", "Controller", "RestController", "Named"));
 
     /** Strip parentheses and casts: they change nothing about which object this is. */
     static ExpressionTree unwrap(ExpressionTree e) {
@@ -2573,6 +2641,76 @@ public class JavaFacts {
     }
 
     /** The annotation with this simple name, or null. */
+    /**
+     * THE STATEMENT ID A FIRST ARGUMENT NAMES, as far as one file can read it.
+     *
+     * A string literal is the whole answer: `"CmmnCodeManageDAO.selectCmmnCodeList"`
+     * IS the key MyBatis looks the statement up by at run time, so there is
+     * nothing to resolve. A bare identifier is answered only when THIS class
+     * declares it as a `static final String` with a literal initializer — the
+     * same map the view-name scan reads, for the same reason: both are in one
+     * file, so the name is read rather than guessed.
+     *
+     * Anything else — a parameter, a concatenation, a constant of another class
+     * — returns null and is counted by the caller. Measured on
+     * egovframe-common-components: 1,289 of 1,298 call sites are plain literals.
+     */
+    static String statementIdOf(ExpressionTree first, Map<String, String> constants) {
+        if (first == null) return null;
+        String value = null;
+        if (first instanceof LiteralTree) {
+            Object v = ((LiteralTree) first).getValue();
+            if (v instanceof String) value = (String) v;
+        } else if (first instanceof IdentifierTree && constants != null) {
+            value = constants.get(((IdentifierTree) first).getName().toString());
+        }
+        if (value == null) return null;
+        return STATEMENT_ID_RE.matcher(value).matches() ? value : null;
+    }
+
+    /** How long an unreadable argument may be when it is quoted back in a census. */
+    static final int EXPRESSION_SAMPLE_CHARS = 60;
+
+    /** One expression as the source wrote it, on one line and bounded. */
+    static String shortExpression(ExpressionTree e) {
+        String text = String.valueOf(e).replaceAll("\\s+", " ").trim();
+        return text.length() <= EXPRESSION_SAMPLE_CHARS ? text
+                : text.substring(0, EXPRESSION_SAMPLE_CHARS) + "\u2026";
+    }
+
+    /**
+     * The bean name a class's own stereotype annotation gives it, or null.
+     * `@Service("x")` and `@Service(value = "x")` are the same declaration;
+     * `@Service` with no value leaves Spring to decapitalise the class name,
+     * which is a rule the BRIDGE applies, because only it can see whether two
+     * classes would then claim the same name.
+     */
+    static String beanNameOf(List<AnnotationTree> anns) {
+        for (AnnotationTree a : anns) {
+            String simple = typeSimpleName(a.getAnnotationType());
+            if (simple == null || !BEAN_NAME_TYPE_ANNOTATIONS.contains(simple)) continue;
+            String v = firstString(unwrap(annAttr(a, "value")));
+            if (v != null && !v.isEmpty()) return v;
+        }
+        return null;
+    }
+
+    /**
+     * The bean name a FIELD asks for: `@Resource(name = "x")`, `@Qualifier("x")`
+     * (which is what `@Autowired @Qualifier("x")` comes down to), or null.
+     */
+    static String injectedBeanNameOf(List<AnnotationTree> anns) {
+        for (AnnotationTree a : anns) {
+            String simple = typeSimpleName(a.getAnnotationType());
+            if (simple == null) continue;
+            String v = null;
+            if (simple.equals("Resource")) v = firstString(unwrap(annAttr(a, "name")));
+            else if (simple.equals("Qualifier")) v = firstString(unwrap(annAttr(a, "value")));
+            if (v != null && !v.isEmpty()) return v;
+        }
+        return null;
+    }
+
     static AnnotationTree annNamed(List<AnnotationTree> anns, String simple) {
         for (AnnotationTree a : anns) {
             if (simple.equals(typeSimpleName(a.getAnnotationType()))) return a;

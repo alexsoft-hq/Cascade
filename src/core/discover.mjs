@@ -21,8 +21,9 @@ import path from 'node:path';
 import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
 import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
-  findViewResolvers,
+  findViewResolvers, findXmlViewResolvers, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
+import { SQL_DIALECT_ALIASES } from './profile.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
 // vendored `node_modules` cannot dominate the counts or the file cap.
@@ -492,7 +493,13 @@ const DDL_DIALECT_MARKERS = Object.freeze([
  * Each entry is (canonical dialect, the spellings that name it in a path).
  */
 const DDL_DIALECT_PATH_NAMES = Object.freeze([
-  ['mysql', ['mysql', 'mariadb']],
+  // MariaDB AHEAD OF MySQL, and a canonical name of its own (RM55). The two
+  // parse alike, so the engine reads a MariaDB file with the MySQL grammar —
+  // but a repository that ships BOTH ships the same tables twice, and folding
+  // the name into `mysql` would apply both copies and declare every table
+  // twice. eGovFrame's common components do exactly that.
+  ['mariadb', ['mariadb', 'maria']],
+  ['mysql', ['mysql']],
   ['postgres', ['postgres', 'postgresql', 'pgsql', 'pg']],
   ['oracle', ['oracle']],
   ['hsqldb', ['hsqldb', 'hsql']],
@@ -500,6 +507,17 @@ const DDL_DIALECT_PATH_NAMES = Object.freeze([
   ['sqlserver', ['sqlserver', 'mssql']],
   ['db2', ['db2']],
   ['sqlite', ['sqlite']],
+  // THE FOUR THE KOREAN MARKET SHIPS AND NOBODY ELSE DOES (RM55). Without them
+  // `script/ddl/tibero/com_DDL_tibero.sql` reads as "portable" — no name, no
+  // marker — and a portable file is kept whichever vendor wins, so
+  // egovframe-common-components applied all eight vendors' DDL at once and
+  // declared 182 tables eight times over (13,505 duplicate-declaration
+  // warnings, measured). A vendor directory is the project saying which
+  // database a file is for, and that is all these names read.
+  ['tibero', ['tibero']],
+  ['cubrid', ['cubrid']],
+  ['altibase', ['altibase']],
+  ['goldilocks', ['goldilocks']],
 ]);
 
 /**
@@ -767,13 +785,24 @@ function classifyKotlinFile(d, f) {
  */
 function classifyXmlFile(d, f) {
   const { absFile, lower, rel } = f;
-  const { counts, mapperDirs, read } = d;
+  const { counts, mapperDirs, read, xmlViewResolvers } = d;
   if (lower.endsWith('.xml')) {
     const text = read(absFile);
     if (text === null) return;
     if (MYBATIS_MAPPER_RE.test(text)) {
       counts.mybatisMapperXml += 1;
       mapperDirs.add(rel(path.dirname(absFile)));
+      return true;
+    }
+    // A SPRING MVC PROJECT WRITES ITS VIEW RESOLVER AS A BEAN (RM55). The same
+    // setting a Boot project puts in `application.yml`, in the spelling every
+    // pre-Boot Spring MVC application uses — which is what eGovFrame is. Read
+    // by its ROOT ELEMENT and not by its file name: `dispatcher-servlet.xml`,
+    // `egov-com-servlet.xml` and `spring-mvc.xml` are the same document, and a
+    // list of names is a rule that would stop at the next project's spelling.
+    const relFile = rel(absFile);
+    if (!isTestPath(relFile) && looksLikeSpringBeansXml(text)) {
+      xmlViewResolvers.push(...findXmlViewResolvers([{ path: relFile, text }]));
     }
     return true;
   }
@@ -829,7 +858,10 @@ function classifyOpenApiDocument(d, f) {
  */
 function classifySpringConfig(d, f) {
   const { absFile, rel } = f;
-  const { connectionCandidates, diagnostics, externalConfigImports, gatewayRoutes, read, serviceNames, viewResolvers } = d;
+  const {
+    connectionCandidates, dbTypeDeclarations, diagnostics, externalConfigImports,
+    gatewayRoutes, read, serviceNames, viewResolvers,
+  } = d;
   // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
   // `locale*/` is a presentation resource, and reading it produced diagnostics
   // about files that were never connection candidates (see dbconfig.mjs).
@@ -853,6 +885,12 @@ function classifySpringConfig(d, f) {
     }
     if (looksLikeConnectionFile(relFile)) {
       connectionCandidates.push(...findConnectionCandidates(one, diagnostics));
+      // …and the THIRD question of the same read (RM55): does this file say
+      // outright which database vendor the project runs on? A repository that
+      // ships its schema seven times over answers it here and nowhere else.
+      if (!isTestPath(relFile)) {
+        dbTypeDeclarations.push(...findDbTypeDeclarations(one, (v) => Object.hasOwn(SQL_DIALECT_ALIASES, v)));
+      }
     }
     return true;
   }
@@ -1145,7 +1183,12 @@ counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
  * @returns {object[]} the roots, each with the engine it was read as
  */
 function templateRootsFrom(d) {
-  const { counts, diagnostics, externalConfigImports, read, templateDirs, templateSample, viewResolvers } = d;
+  const { counts, diagnostics, externalConfigImports, read, templateDirs, templateSample } = d;
+// THE RESOLVERS, IN THE ORDER THE RULE READS THEM. A project's own Spring
+// configuration first, then the bean XMLs, each in its declared `order` — which
+// is the order the container itself tries them in, so the first one that names
+// a prefix is the first one that would resolve a view.
+const viewResolvers = [...d.viewResolvers, ...d.xmlViewResolvers];
 // ---- the template roots (RM48) -------------------------------------------
 //
 // WHICH ENGINE WROTE THIS MARKUP, when nothing in the configuration says. A
@@ -1244,6 +1287,7 @@ export function discover(root, io = {}) {
   const templateDirs = new Map(); // rel dir -> Map<ext, count>
   const templateSample = new Map(); // rel dir -> abs paths, at most a few
   const viewResolvers = [];
+  const xmlViewResolvers = []; // …and the same settings written as Spring BEANS (RM55)
   // Every OpenAPI / Swagger document in the tree, with the version it declares.
   const openapiDocuments = [];
   const ddlPaths = [];
@@ -1253,6 +1297,7 @@ export function discover(root, io = {}) {
   // never dials one, and it never reads a password value — src/core/dbconfig.mjs
   // returns references, not secrets.
   const connectionCandidates = [];
+  const dbTypeDeclarations = []; // the vendor the configuration NAMES (RM55): Globals.DbType and its kin
   // What the project's own Spring configuration says about WHO it is and WHERE
   // it forwards a request (RM46, src/core/springconfig.mjs). Both used to be
   // typed into the profile by hand, and both are in the tree.
@@ -1292,6 +1337,7 @@ export function discover(root, io = {}) {
     addRoot,
     connectionCandidates,
     counts,
+    dbTypeDeclarations,
     ddlCandidates,
     ddlDialectHint: null,
     ddlPaths,
@@ -1312,6 +1358,7 @@ export function discover(root, io = {}) {
     templateSample,
     viewResolvers,
     webPackages,
+    xmlViewResolvers,
   };
   const classify = (absFile, name, repoKey, dirEntries, inPackage) => {
     classifyFile(d, {
@@ -1356,7 +1403,7 @@ export function discover(root, io = {}) {
     templateRoots,
     // …and what the configuration actually said, so a reader can see whether a
     // root came from a declared prefix or from where the files sit.
-    viewResolvers: viewResolvers.slice()
+    viewResolvers: [...viewResolvers, ...xmlViewResolvers]
       .sort((a, b) => (a.engine < b.engine ? -1 : a.engine > b.engine ? 1 : a.file < b.file ? -1 : 1)),
     // Sorted by path, like every other list here: a walk's order must not decide
     // which document a run reads first.
@@ -1368,6 +1415,7 @@ export function discover(root, io = {}) {
     // every machine, and a directory walk's order does not.
     ddlCandidates: ddlCandidates.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
     ddlDialectHint: d.ddlDialectHint,
+    dbTypeDeclarations: dbTypeDeclarations.slice(), // what the configuration says the database IS (RM55)
     connectionCandidates: connectionCandidates
       .slice()
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),

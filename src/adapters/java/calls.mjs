@@ -83,7 +83,20 @@ export const CALL_RULE_BASIS = Object.freeze({
   'wildcard-jdk': 'the receiver\'s type is named by an on-demand import of a `java.*`, `javax.*` or `jakarta.*` package and no analyzed type declares it, so the target is that package\'s type: the JDK is a closed world this lane never reads, and the call leaves the project whichever of those packages it is in',
   'inherited-member-call': 'a call in the body of a method this class only INHERITS, instantiated for this class: the ancestor wrote the call site, and the ancestor\'s type parameters were replaced by what this subclass binds them to, so the edge names this subclass\'s collaborator and not every subclass\'s. Same standing (SOUND_SET) as the rule that resolved the call in the ancestor, plus one assumption the compiler would check: that this class really inherits that body rather than an intervening one this lane never parsed',
   'spring-model-attribute': 'Spring invokes a @ModelAttribute method of the controller before each of its handlers; the framework, not a line of source, makes the call',
+  'spring-bean-name': 'the field is injected BY NAME (`@Resource(name = "x")`, `@Qualifier("x")`), and exactly one class in this pack answers to that bean name: it declares it in its own stereotype annotation, or it is the only stereotype class whose decapitalised name is it, which is the name Spring gives a class that declares none. So the container puts THAT object in this field, and the call runs its method. Still SOUND_SET and not EXACT: this reads the name a field asks for and the names classes declare, without the container that would settle a `@Primary`, a profile, or a bean an XML or a @Bean method declares outside these rules',
 });
+
+/**
+ * The annotations that make a class a Spring bean with a NAME OF ITS OWN.
+ *
+ * A class carrying one of these and no explicit value gets the name Spring
+ * gives it: its simple name with the first letter lowered. That default is
+ * applied HERE and not in the worker, because it is only usable once you can
+ * see whether some OTHER class in the tree would claim the same name.
+ */
+export const BEAN_STEREOTYPES = Object.freeze([
+  'Service', 'Repository', 'Component', 'Controller', 'RestController', 'Named',
+]);
 
 /** The annotations that make a class a Spring `@ControllerAdvice`. */
 export const CONTROLLER_ADVICE_ANNOTATIONS = Object.freeze(['ControllerAdvice', 'RestControllerAdvice']);
@@ -500,6 +513,116 @@ function resolveSuperCall(ctx, cw, c, rule, ownerFqn) {
 }
 
 
+// ---- the bean a field asks for BY NAME (RM55) -------------------------------
+//
+// THE GAP THIS CLOSES. `@Resource(name = "EgovCmmUseService")` on a field typed
+// by the INTERFACE is how every eGovFrame class gets its collaborator — 909
+// fields in the common components, 145 in the enterprise template. The declared
+// type is all the dispatch rule can see, so a call through such a field reaches
+// every implementor of that interface; the name in the annotation says which
+// object is really there, and it is written one line above the field.
+//
+// IT DOES NOT MAKE THE EDGE EXACT, and must not (policy I-1: an interface
+// dispatch is never a proof). What it does is make the CANDIDATE SET one, name
+// the bean in the evidence, and say which of the two ways the name was matched.
+// A name no class in this pack answers to, or one that two answer to, changes
+// nothing at all and is counted.
+
+/**
+ * The bean names this pack declares, and the one rule that reads them.
+ * @returns {{beanNameOfField:(ownerFqn:string, field:string)=>(string|null),
+ *            narrowByBeanName:(ifaceFqn:string, beanName:string)=>({impl:string, from:string}|null)}}
+ */
+export function makeBeanNames(ctx) {
+  const { types, stats, implementorsOf, beanNamesByOwner, transactionals } = ctx;
+  // A TRANSACTION BOUNDARY DECLARED ON THE INTERFACE keeps its hop. mall writes
+  // `@Transactional` on the service INTERFACE's method declaration — there is no
+  // body there, and the annotation applies to whatever implements it — so the
+  // engine marks that member and computes the transaction's footprint by walking
+  // FORWARD from it. Route the caller past that member and the boundary is still
+  // on the graph with nothing under it. Narrowing buys precision; it must not buy
+  // it by dropping a transaction.
+  const boundaries = new Set((transactionals ?? []).map((t) => t.method).filter((m) => typeof m === 'string'));
+  const declared = new Map(); // the name a class WROTE -> the classes that wrote it
+  const byDefault = new Map(); // the name Spring would give it -> the stereotype classes
+  const add = (map, name, fqn) => {
+    if (!name) return;
+    if (!map.has(name)) map.set(name, new Set());
+    map.get(name).add(fqn);
+  };
+  for (const [fqn, t] of types) {
+    const simple = fqn.slice(Math.max(fqn.lastIndexOf('.'), fqn.lastIndexOf('$')) + 1);
+    if (t.beanName) add(declared, t.beanName, fqn);
+    if ((t.annotations ?? []).some((a) => BEAN_STEREOTYPES.includes(a))) {
+      add(byDefault, simple.charAt(0).toLowerCase() + simple.slice(1), fqn);
+    }
+  }
+  const beanNameOfField = (ownerFqn, field) => (field ? (beanNamesByOwner.get(ownerFqn)?.get(field) ?? null) : null);
+  const narrowByBeanName = (ifaceFqn, beanName, method) => {
+    const impls = implementorsOf.get(ifaceFqn);
+    if (!impls || impls.size === 0) { stats.beanNames.noImplementor += 1; return null; }
+    if (boundaries.has(`${ifaceFqn}#${method}`)) { stats.beanNames.transactionBoundary += 1; return null; }
+    // The name a class WROTE outranks the name Spring would have given it: one
+    // is a declaration, the other is a convention this rule applied.
+    for (const [map, from] of [[declared, 'declared'], [byDefault, 'default-name']]) {
+      const named = map.get(beanName);
+      if (!named) continue;
+      const hits = [...named].filter((fqn) => impls.has(fqn)).sort(cmp);
+      if (hits.length === 1) return { impl: hits[0], from };
+      if (hits.length > 1) { stats.beanNames.ambiguousName += 1; return null; }
+      stats.beanNames.notAnImplementor += 1;
+      return null;
+    }
+    stats.beanNames.unknownName += 1;
+    return null;
+  };
+  return { beanNameOfField, narrowByBeanName };
+}
+
+/**
+ * The one edge the bean name settles, or null when it settles nothing.
+ * Returns the target the call really reaches, so both call rules read it the
+ * same way.
+ */
+function beanNarrowedTarget(ctx, cw, { fieldOwnerFqn, field, targetFqn, method }) {
+  const { types } = ctx;
+  const { beanNameOfField, narrowByBeanName } = cw;
+  const beanName = beanNameOfField(fieldOwnerFqn, field);
+  if (!beanName) return null;
+  ctx.stats.beanNames.sites += 1;
+  // Only an INTERFACE has a dispatch to narrow. A field already typed by a
+  // concrete class names one object whatever the annotation says — and a field
+  // typed by something this run never PARSED is a third case, counted apart:
+  // saying "not an interface" about a type nobody read would be a claim.
+  const declared = types.get(targetFqn);
+  if (!declared) { ctx.stats.beanNames.typeNotRead += 1; return null; }
+  if (declared.typeKind !== 'interface') { ctx.stats.beanNames.notAnInterface += 1; return null; }
+  const hit = narrowByBeanName(targetFqn, beanName, method);
+  if (!hit) return null;
+  ctx.stats.beanNames.narrowed += 1;
+  return { ...hit, beanName };
+}
+
+/**
+ * The narrowed edge, written where the bean name settles the dispatch.
+ * @returns {boolean} true when the edge was written and the caller is done
+ */
+function emitBeanNarrowed(ctx, cw, c, { fieldOwnerFqn, targetFqn, receiver }) {
+  const narrowed = beanNarrowedTarget(ctx, cw, {
+    fieldOwnerFqn, field: c.receiver, targetFqn, method: c.method,
+  });
+  if (!narrowed) return false;
+  cw.emitCall(c.from, narrowed.impl, c.method, 'spring-bean-name', {
+    receiver, bean: narrowed.beanName, iface: targetFqn,
+    nameFrom: narrowed.from, candidateCount: 1,
+    ...(fieldOwnerFqn === ownerOf(c.from) ? {} : { declaredBy: fieldOwnerFqn }),
+  });
+  // The narrowed class may only INHERIT the method, exactly as a dispatched
+  // implementor may, so the same instantiation applies.
+  cw.queueIfInherited(narrowed.impl, c.method);
+  return true;
+}
+
 /**
  * A RECEIVER THE FILE NEVER DECLARES. Returns true when this rule owned the call
  * site.
@@ -531,6 +654,8 @@ function resolveInheritedFieldCall(ctx, cw, c, rule, ownerFqn) {
   const found = resolveInheritedField(ownerFqn, c.receiver, { types, superOf, fieldsByOwner, resolveType });
   if (found && found.typeFqn) {
     stats.identifierReceivers.inheritedField += 1;
+    // …and an ancestor's field is injected by name like any other (RM55).
+    if (emitBeanNarrowed(ctx, cw, c, { fieldOwnerFqn: found.declaredBy, targetFqn: found.typeFqn, receiver: c.receiver })) return true;
     emitCall(c.from, found.typeFqn, c.method, 'inherited-field', {
       receiver: c.receiver,
       declaredBy: found.declaredBy,
@@ -676,6 +801,11 @@ function resolvePlainCall(ctx, cw, c, rule, ownerFqn) {
     countUnresolved(rule, reasonFor(place, c.toTypeSimple));
     return;
   }
+  // THE BEAN THIS FIELD ASKS FOR BY NAME (RM55). `@Resource(name = "x")` on a
+  // field typed by an interface says which of that interface's implementors is
+  // really in it, so the call site reaches ONE class instead of all of them.
+  if ((rule === 'field-receiver' || rule === 'this-field')
+    && emitBeanNarrowed(ctx, cw, c, { fieldOwnerFqn: ownerFqn, targetFqn, receiver: c.toTypeSimple })) return;
   // ONE grade, but the evidence names the RULE that produced the edge: the
   // rules can be wrong in different ways, and a reader deciding how far to
   // trust a chain needs to know which one it rested on.

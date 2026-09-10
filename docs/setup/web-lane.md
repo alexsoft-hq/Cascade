@@ -91,7 +91,7 @@ names.
 |---|---|---|
 | Thymeleaf | `.html` | `spring.thymeleaf.prefix` / `.suffix`, else `classpath:/templates/` + `.html` |
 | FreeMarker | `.ftl` | `spring.freemarker.template-loader-path` / `.suffix`, else `classpath:/templates/` + `.ftl` |
-| JSP | `.jsp` | `spring.mvc.view.prefix` / `.suffix`, else where the `.jsp` files sit under `webapp` / `WEB-INF` |
+| JSP | `.jsp` | `spring.mvc.view.prefix` / `.suffix`, a `ViewResolver` **bean** in a Spring XML, else where the `.jsp` files sit under `webapp` / `WEB-INF` |
 | Velocity | `.vm` | `spring.velocity.resource-loader-path` / `.suffix` |
 | plain HTML | `.html` | a root of `.html` pages with no engine setting and no `th:` attribute in them |
 
@@ -101,6 +101,47 @@ not a path in the repository. What it DOES say is how the directory ends, so
 `/WEB-INF/jsp/` picks out `src/main/webapp/WEB-INF/jsp`. With nothing
 configured, the root is the directory every template of one resource root sits
 under, which keeps a multi-module repository's modules apart.
+
+#### The resolver written as a bean
+
+A Spring MVC application written before Boot puts that setting in an XML bean
+definition, which is what eGovFrame does and what most of the Korean public
+sector runs:
+
+```xml
+<bean class="org.springframework.web.servlet.view.UrlBasedViewResolver" p:order="1"
+    p:viewClass="org.springframework.web.servlet.view.JstlView"
+    p:prefix="/WEB-INF/jsp/" p:suffix=".jsp"/>
+```
+
+Discovery reads it. Same question, same record, different spelling: a bean whose
+class name ends in `ViewResolver` and that sets a prefix or a suffix, read by the
+file's **root element** (`<beans>`) rather than by its name, because
+`dispatcher-servlet.xml`, `egov-com-servlet.xml` and `spring-mvc.xml` are the
+same document and a list of names would stop at the next project's spelling. A
+property written as the `p:` shorthand and one written as a `<property
+name=… value=…/>` child read alike, a commented-out bean is not a bean, and a
+resolver with neither a prefix nor a suffix (a `BeanNameViewResolver`) resolves a
+view name against beans rather than against a directory, so it names no root.
+
+The engine the bean renders with comes from its suffix first (`.jsp`, `.ftl`,
+`.vm`, `.html`), and then from its own class or its `viewClass`
+(`JstlView`, `InternalResourceView`, `FreeMarker…`, `Velocity…`, `Thymeleaf…`).
+
+What this is worth, measured: before it,
+`eGovFramework/egovframe-enterprise-business-template` shipped 92 JSPs and built
+**0 screens**, and `egovframe-common-components` shipped 747 and built **1** —
+in both cases because the root fell back to `src/main/webapp`, where
+`uat/uia/EgovLoginUsr` resolves to nothing at all. With the bean read, they build
+**84** and **657**.
+
+**Apache Tiles is not read**, and this round looked for it rather than assuming.
+Not one of the eleven eGovFrame and Nexacro repositories measured for RM55
+contains a `TilesConfigurer`, a tiles definitions file or a `put-attribute`:
+Apache Tiles was retired in 2021 and Spring Framework 6 dropped its support, so
+eGovFrame 4.x has none. A `forward:` view name is read, and has been since RM48:
+it is a call onto another route of the same application, exactly like
+`redirect:`.
 
 An `.html` file under `static/` is **not** a template: the server hands it out
 as it stands, no resolver renders it, and reading every one of them would cost

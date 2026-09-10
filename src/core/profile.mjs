@@ -63,7 +63,13 @@ export const PROFILE_DEFAULTS = deepFreeze({
   generatedSources: { annotations: [], pathGlobs: [] },
   openapi: { documents: [] },
   runtimeEvidence: { har: [], otel: [] },
-  catalog: { source: 'none', connectionFrom: null },
+  // `ddl` is the DDL this project's catalog is read from, manifest-relative, in
+  // the order written. It exists beside `connectionFrom` because a repository
+  // that ships its schema for SEVEN DATABASES has both a DDL set and a
+  // connection file, and one key could not hold both (RM55). `ddlAlternatives`
+  // is the vendors that were left on the shelf, by name, so swapping to one is
+  // an edit rather than a rediscovery.
+  catalog: { source: 'none', connectionFrom: null, ddl: [], ddlAlternatives: {} },
   calibration: {
     firstRun: 'bootstrap',
     maxRelativeDrop: 0.05,
@@ -129,6 +135,18 @@ export const SQL_DIALECT_ALIASES = Object.freeze({
   // identifier_case.mjs, which knows hsqldb and h2 fold to UPPER case.
   hsqldb: '',
   h2: '',
+  // THE FOUR DATABASES THE KOREAN PUBLIC SECTOR RUNS ON (RM55). eGovFrame ships
+  // its schema for seven vendors, and four of them are databases SQLGlot has
+  // never heard of. Each routes to the grammar of the database it was built to
+  // be compatible with — Tibero, Altibase and Goldilocks are Oracle-compatible
+  // and CUBRID is MySQL-compatible — which is a statement about the SQL, not a
+  // claim that the engine knows the product. What it is NOT is an identifier
+  // rule: `identifier_case.mjs` has no citation for any of the four, so a
+  // project that declares one gets `exact`, which matches only what is written.
+  tibero: 'oracle',
+  altibase: 'oracle',
+  goldilocks: 'oracle',
+  cubrid: 'mysql',
 });
 
 /** The dialect assumed when `sqlDialects` is empty (announced in a diagnostic). */
@@ -278,6 +296,14 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   'catalog.connectionFrom': {
     status: 'consumed', where: 'src/core/lanes.mjs',
     note: 'with catalog.source=file this is the DDL path: a string, or an ARRAY of paths applied IN THE ORDER WRITTEN when the schema is split across files, resolved relative to the manifest directory; with source=jdbc/none it is the connection-info file `cascade catalog discover` found (recorded for the human, never dialled by itself), and a fetch that a --candidate chose writes the candidate path here',
+  },
+  'catalog.ddl': {
+    status: 'consumed', where: 'src/core/lanes.mjs',
+    note: 'the DDL files the catalog is read from, manifest-relative, applied IN THE ORDER WRITTEN, and read INSTEAD of catalog.connectionFrom when catalog.source=file. `cascade init` writes it when a repository ships its schema once per database vendor and the project\'s own configuration says which vendor it runs on; edit it (or swap in one of catalog.ddlAlternatives) to read another',
+  },
+  'catalog.ddlAlternatives': {
+    status: 'recorded-not-acted', where: null,
+    note: 'the other vendors\' DDL that `cascade init` found and did not choose, as vendor -> file list. Nothing reads it: it is there so switching the catalog to Oracle is one edit of catalog.ddl rather than a walk of the tree',
   },
   'calibration.firstRun': {
     status: 'consumed', where: 'src/core/calibration.mjs',
@@ -521,6 +547,7 @@ export function profileDiagnostics(profile) {
       'mybatisPlus.logicNotDeleteValue is recorded but not acted on. This lane records that a @TableLogic column is read as an implicit filter, not which value the filter compares it with');
   }
 
+  sayWhatTheCatalogLeftOut(profile, add);
   if (isObject(profile.catalog) && profile.catalog.source === 'jdbc') {
     add('SNAPSHOT_REQUIRED', 'info', 'catalog.source',
       'catalog.source is "jdbc": analysis reads the PINNED snapshot at .cascade/catalog/columns.jsonl and never connects to a database. '
@@ -767,6 +794,22 @@ if (isObject(obj.catalog) && 'source' in obj.catalog) {
   }
 }
 
+if (isObject(obj.catalog) && 'ddl' in obj.catalog) {
+  const v = obj.catalog.ddl;
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x === '')) {
+    throw new ProfileError('profile.catalog.ddl must be an array of DDL paths, relative to this profile\'s directory, applied in the order written');
+  }
+}
+
+if (isObject(obj.catalog) && 'ddlAlternatives' in obj.catalog) {
+  const v = obj.catalog.ddlAlternatives;
+  const ok = isObject(v) && Object.values(v)
+    .every((files) => Array.isArray(files) && files.every((x) => typeof x === 'string' && x !== ''));
+  if (!ok) {
+    throw new ProfileError('profile.catalog.ddlAlternatives must map a database vendor name to that vendor\'s DDL paths');
+  }
+}
+
 if (isObject(obj.build) && 'tool' in obj.build) {
   if (!BUILD_TOOLS.includes(obj.build.tool)) {
     throw new ProfileError(`profile.build.tool must be one of gradle|maven|null, got ${JSON.stringify(obj.build.tool)}`);
@@ -930,6 +973,20 @@ export function loadProfile(profileFilePath) {
   const normalized = normalizeProfile(obj);
   validateProfile(normalized);
   return normalized;
+}
+
+/**
+ * The vendors `cascade init` found and did not choose (RM55). Nothing reads
+ * them, and a reader who sees them in the profile is entitled to be told that
+ * swapping one in means editing `catalog.ddl`, not editing this.
+ */
+function sayWhatTheCatalogLeftOut(profile, add) {
+  const alternatives = isObject(profile.catalog) && isObject(profile.catalog.ddlAlternatives)
+    ? Object.keys(profile.catalog.ddlAlternatives).sort() : [];
+  if (alternatives.length === 0) return;
+  add('RECORDED_NOT_ACTED', 'info', 'catalog.ddlAlternatives',
+    `catalog.ddlAlternatives lists the DDL of ${alternatives.join(', ')}, which this run does not read. `
+    + 'It is a note to you: to read one of them instead, put its files in catalog.ddl');
 }
 
 function isObject(v) {

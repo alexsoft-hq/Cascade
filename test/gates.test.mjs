@@ -113,6 +113,11 @@ const ALLOWED_HOSTS = new Set([
   // fixture that dropped them would not be the file the reader has to read.
   'www.thymeleaf.org',
   'java.sun.com',
+  // Spring's own XML namespace, which every bean-definition file declares in
+  // its root element (RM55). Same category as the three above: a standard's
+  // identifier, in a fixture because the file the reader has to read carries
+  // it, and no more somebody's internal address than the W3C one is.
+  'www.springframework.org',
   // The OTLP schema URL every OpenTelemetry export stamps on its resource
   // (`"schemaUrl": "https://opentelemetry.io/schemas/1.24.0"`). It is in the
   // real-agent trace fixture because the agent wrote it, and a standard's own

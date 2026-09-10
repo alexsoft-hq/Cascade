@@ -82,12 +82,58 @@ function emptyCallCensus() {
       'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
       'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
       'generated-field': 0, 'wildcard-jdk': 0, 'spring-model-attribute': 0,
+      'spring-bean-name': 0,
     },
     unresolvedCallsByRule: {
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
       'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
     },
     unresolvedCallsByReason: Object.fromEntries(UNRESOLVED_REASONS.map((r) => [r, 0])),
+  };
+}
+
+/**
+ * THE TWO CENSUSES RM55 ADDED, and what each column means.
+ *
+ * `statementIds` is the MyBatis shape that has no mapper interface at all,
+ * which is every eGovFrame DAO: `sites` is how many call sites the rule
+ * recognised as a session call, and the rest say what became of each — an edge,
+ * a literal naming no statement this pack holds, a first argument no single
+ * file can read, or a repeat of a statement the same method already calls. The
+ * two sample lists are there because a count with no names in it cannot tell a
+ * mapper XML left outside the run from a typo.
+ *
+ * `beanNames` is a dispatch settled by the bean's name: `@Resource(name = "x")`
+ * or `@Qualifier("x")` on a field whose type is an interface. `sites` is every
+ * call through a field that asks for a bean by name, and the six outcomes add
+ * up to it, so a reader sees the whole population rather than only the part
+ * that worked:
+ *   narrowed            the name settled the dispatch
+ *   notAnInterface      the field is typed by a class, so nothing to settle
+ *   typeNotRead         the field's type is not a type this run parsed (it ships
+ *                       in a jar), so whether it is an interface is not known
+ *   noImplementor       an interface no class in this pack implements
+ *   unknownName         no class in this pack answers to that name (a bean an
+ *                       XML or a @Bean method declares, which this engine does
+ *                       not read)
+ *   ambiguousName       two classes answer to it
+ *   notAnImplementor    a class answers to it and does not implement this
+ *                       interface, so it is a different bean of that name
+ *   transactionBoundary declined on purpose: an interface method that IS a
+ *                       transaction boundary keeps its hop, because the
+ *                       footprint of that transaction is computed by walking
+ *                       forward from that very member
+ */
+function emptyKoreanMarketCensus() {
+  return {
+    statementIds: {
+      sites: 0, bound: 0, unknown: 0, unreadable: 0, repeated: 0, fromConstant: 0,
+      unknownSamples: [], unreadableSamples: [],
+    },
+    beanNames: {
+      sites: 0, narrowed: 0, notAnInterface: 0, typeNotRead: 0, noImplementor: 0,
+      unknownName: 0, ambiguousName: 0, notAnImplementor: 0, transactionBoundary: 0,
+    },
   };
 }
 
@@ -122,6 +168,7 @@ export function emptyJavaStats({ generatedSources, parseErrors, parsedFiles }) {
     // ancestor chain that was searched: the counter says how big the gap is, the
     // sample says what it is made of.
     unresolvedIdentifiers: [],
+    ...emptyKoreanMarketCensus(),
     // Members a concrete class only INHERITS, instantiated so a dispatch edge
     // lands on something with a body (§2). `overapproximated` counts the ones
     // that fell back to the ancestor method itself.

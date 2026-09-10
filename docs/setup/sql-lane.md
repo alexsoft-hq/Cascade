@@ -61,6 +61,8 @@ parser happens to do.
 | `oracle`, `oracle-11g`, `oracle-19c` | `oracle` | `fold-upper` | Oracle stores and compares unquoted identifiers in upper case. |
 | `hsqldb` | sqlglot's default (ANSI) parser | `fold-upper` | HSQLDB follows the SQL standard, where unquoted identifiers fold to upper case. sqlglot 30.17.0 ships no HSQLDB parser, so we use the standard-SQL one and say so. The case rule still comes from HSQLDB. |
 | `h2` | sqlglot's default (ANSI) parser | `fold-upper` | H2's classic default (`DATABASE_TO_UPPER=TRUE`) folds unquoted identifiers to upper case. Same parser note as `hsqldb`. |
+| `tibero`, `altibase`, `goldilocks` | `oracle` | `exact` | three databases the Korean market runs and sqlglot has never heard of. Each was built to be Oracle-compatible, so the Oracle grammar is the honest reading of their SQL. The identifier rule is **not** inherited with it: this engine has no citation for how any of the three folds an unquoted name, so it fails closed on `exact` and says so. Declare `sqlIdentifierCase` if you know your deployment's rule. |
+| `cubrid` | `mysql` | `exact` | the same, for the database that was built MySQL-compatible. |
 | anything else | | | refused. A dialect we cannot route is an error rather than a quiet fall back to MySQL: a wrong dialect mis-parses every statement, and the result would still look fine. |
 
 Two rules apply under every row.
@@ -80,6 +82,61 @@ invalidates the cached lineage of every statement.
 If two catalog names fold onto one key, the run prints a
 `folded_identifier_collision` warning naming both, the first declaration keeps
 the key, and both tables stay in the pack. Nothing is merged in silence.
+
+### One schema, shipped once per vendor
+
+A repository that has to run on seven databases ships its schema seven times:
+
+```
+DATABASE/
+  altibase/all_ddl_altibase.sql
+  cubrid/all_ddl_cubrid.sql
+  mysql/all_ddl_mysql.sql
+  oracle/all_ddl_oracle.sql
+  postgres/all_ddl_postgres.sql
+  tibero/all_ddl_tibero.sql
+  goldilocks/all_ddl_goldilocks.sql
+```
+
+That is every eGovFrame project, and reading all seven is not a fuller catalog:
+it is the same tables declared seven times. Measured on
+`eGovFramework/egovframe-common-components` before this rule existed: **182
+tables declared eight times over, 13,505 duplicate-declaration warnings**, and
+four vendors' files failing to parse under a grammar they were not written for.
+
+`cascade init` groups the DDL by the vendor each file is FOR (a vendor-named
+directory or a vendor name in the file name), and when the tree names one
+vendor, that vendor's files become `catalog.ddl` and the rest are recorded as
+`catalog.ddlAlternatives`:
+
+```json
+"catalog": {
+  "source": "file",
+  "ddl": ["../DATABASE/mysql/all_ddl_mysql.sql"],
+  "ddlAlternatives": {
+    "oracle": ["../DATABASE/oracle/all_ddl_oracle.sql"],
+    "tibero": ["../DATABASE/tibero/all_ddl_tibero.sql"]
+  }
+}
+```
+
+Swapping to Oracle is then an edit of `catalog.ddl`, not a walk of the tree.
+
+**Which vendor, and where the answer comes from**, in this order:
+
+1. `sqlDialects.main`, when somebody already wrote it down. Their word stands.
+2. a property that names the database outright: a key ending in `db-type`,
+   `database-type`, `db-dialect` or `dbms`, whose value is a vendor this engine
+   routes. This is eGovFrame's `Globals.DbType = mysql`, and it is the one that
+   is true, because the jdbc url beside it is commented out six times and live
+   once.
+3. the scheme of the jdbc url, when **every** connection file in the tree agrees
+   on one vendor. Several urls naming several databases is a deployment with
+   several, and picking one by counting would decide which database a project
+   talks to.
+
+No answer means no answer: `catalog.source` stays `"none"`, the diagnostic names
+the vendors it found, and you pick.
 
 ## 3. Where the table and column comments come from
 

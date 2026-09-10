@@ -10,6 +10,70 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **A statement called by its string id binds.** MyBatis has two shapes and the
+  lane read one. The other has no mapper interface at all: a DAO extends a
+  session base and names the statement in the call,
+  `selectList("CmmnDetailCodeManageDAO.selectCmmnDetailCodeList", vo)`. That is
+  the whole persistence layer of eGovFrame, which every Korean public sector
+  project is required to build on, and before this round
+  `eGovFramework/egovframe-common-components` connected **1,193 routes to 1,256
+  statements with zero edges between them**. The literal IS the key MyBatis looks
+  the statement up by, and the mapper XML declares the same key as its namespace
+  plus its id, so the edge is EXACT with `evidence.rule` `mybatis-statement-id`.
+  The receiver has to be a MyBatis session, read by walking the `extends` chain by
+  SIMPLE NAME for `SqlSession`, `SqlSessionTemplate`, `SqlSessionDaoSupport`,
+  `EgovAbstractMapper` and `EgovComAbstractDAO` — by name, because that base ships
+  in a jar no run parses, and the `extends` clause is the whole evidence. A
+  literal naming no statement this pack holds gets no edge and is listed by name;
+  a first argument no single file can read is counted with the expression as
+  written. Measured: 1,238 of 1,290 call sites bind on the common components, 194
+  of 246 on the enterprise template, and every miss is a component whose Java is
+  shipped and whose SQL is not.
+- **A view resolver declared as a Spring bean gives the template root.** A Spring
+  MVC application written before Boot puts `prefix` and `suffix` in a `<bean
+  class="…UrlBasedViewResolver" p:prefix="/WEB-INF/jsp/" p:suffix=".jsp"/>`
+  rather than in `application.yml`. Discovery reads it, by the file's ROOT
+  ELEMENT rather than by its name, so `dispatcher-servlet.xml`,
+  `egov-com-servlet.xml` and `spring-mvc.xml` are one document. The `p:`
+  shorthand and a `<property>` child read alike, and a commented-out bean is not
+  a bean. Two eGovFrame repositories shipping 92 and 747 JSPs built 0 and 1
+  screens because the root fell back to `src/main/webapp`; they now build 84 and
+  657.
+- **One vendor's DDL, chosen by what the project says it runs on.** A repository
+  that has to run on seven databases ships its schema seven times, and reading
+  all seven declared 182 tables eight times over on the common components, with
+  13,505 duplicate-declaration warnings. Discovery now knows the vendor names the
+  Korean market ships (`tibero`, `cubrid`, `altibase`, `goldilocks`, and
+  `mariadb` as a vendor of its own rather than a spelling of MySQL), groups the
+  DDL by vendor, and `cascade init` picks the one the tree NAMES: an existing
+  `sqlDialects.main`, then a `Globals.DbType`-shaped property, then a jdbc url
+  scheme every connection file agrees on. That vendor's files become
+  `catalog.ddl` and the rest `catalog.ddlAlternatives`, both new profile keys.
+  Nothing named, nothing chosen: the diagnostic lists the vendors and the profile
+  is left alone. `sqlDialects.main` accepts `tibero`, `altibase` and
+  `goldilocks` (parsed with the Oracle grammar they were built to be compatible
+  with) and `cubrid` (MySQL), with the identifier rule failing closed on `exact`,
+  because this engine has no citation for how any of the four folds a name.
+- **`@Resource(name = "x")` settles a dispatch.** A field injected BY NAME whose
+  declared type is an interface reached every implementor. When exactly one class
+  in the pack answers to that bean name — its own `@Service("x")`, or the
+  decapitalised name Spring would give it — the call site goes to that class:
+  rule `spring-bean-name`, `candidateCount: 1`, the bean on the evidence. **The
+  grade does not move** (I-1: an interface dispatch is never a proof), and an
+  interface method that is a transaction boundary keeps its hop, because the
+  transaction's footprint is walked forward from that member. On
+  `nexacro-spring/nexacro-sample-egov` this REMOVED reach: four of its six routes
+  claimed to run MyBatis statements their own annotation says they never touch,
+  because one service interface has an iBATIS implementation and a MyBatis one.
+- **Six Korean-market repositories joined the generality gate, HELD OUT.** The
+  five eGovFrame projects, a Nexacro client over an eGovFrame backend, and
+  `naver/ngrinder` as a control. They were measured BEFORE any of the rules above
+  existed, and `docs/measured.md` keeps that first measurement beside the one
+  after. The eleven repositories already in the corpus did not move by one
+  number.
+
 ## [0.7.0] - 2026-09-10
 
 The release where a JPA query is read the way Hibernate runs it, found by

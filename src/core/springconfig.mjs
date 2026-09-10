@@ -207,6 +207,263 @@ export function findViewResolvers(files, diagnostics = null) {
   return out;
 }
 
+// ---- the same question asked of a Spring XML (RM55) ------------------------
+//
+// WHY THIS IS HERE AND NOT BESIDE THE YAML READER. A Spring Boot project writes
+// `spring.mvc.view.prefix` in `application.yml`; a Spring MVC project written
+// before Boot — which is what eGovFrame is, and what most of the Korean public
+// sector runs — writes the SAME setting as a bean:
+//
+//   <bean class="org.springframework.web.servlet.view.UrlBasedViewResolver"
+//         p:viewClass="…JstlView" p:prefix="/WEB-INF/jsp/" p:suffix=".jsp"/>
+//
+// Measured before this reader existed: egovframe-enterprise-business-template
+// ships 92 JSPs and produced 0 screens, and egovframe-common-components ships
+// 747 and produced 1, because nothing in the run could see that prefix. The
+// resolver is the same resolver and the answer is the same answer; only the
+// spelling is different, so it comes out of here in the same record shape and
+// `templateRootsOf` never learns there were two spellings.
+//
+// WHAT IT REFUSES TO DO. It reads bean ELEMENTS and their properties, and it
+// resolves nothing: a `${…}` prefix is a value this tree does not carry, an
+// `<import>` is not followed, and a profile-conditional bean is read like any
+// other. It is a reader, not a container.
+
+/** A file whose root element is a Spring `<beans>` document. */
+const SPRING_BEANS_RE = /<(?:\w+:)?beans[\s>]/;
+
+/** How much of a file is read to decide it is one. */
+const SPRING_BEANS_HEAD = 4096;
+
+/**
+ * The view classes and resolver classes that name an ENGINE. Asked of the
+ * resolver's own class and of the `viewClass` it is given, in that order; a
+ * resolver whose suffix names a template extension is answered by the suffix
+ * first, because that is the project stating the file type outright.
+ */
+const XML_VIEW_ENGINE_MARKERS = Object.freeze([
+  ['thymeleaf', ['Thymeleaf']],
+  ['freemarker', ['FreeMarker', 'Freemarker']],
+  ['velocity', ['Velocity']],
+  // Spring's own resolvers render a servlet resource, which is a JSP in every
+  // project that configures one. `JstlView` and `InternalResourceView` are the
+  // two view classes that say so outright.
+  ['jsp', ['JstlView', 'InternalResourceView', 'InternalResourceViewResolver', 'UrlBasedViewResolver']],
+]);
+
+/** suffix -> engine, for the case where the project simply wrote the extension. */
+const XML_VIEW_SUFFIX_ENGINE = Object.freeze({
+  '.jsp': 'jsp', '.jspx': 'jsp', '.ftl': 'freemarker', '.ftlh': 'freemarker', '.vm': 'velocity', '.html': 'thymeleaf',
+});
+
+/** Whether this text is a Spring bean-definition XML. */
+export function looksLikeSpringBeansXml(text) {
+  return SPRING_BEANS_RE.test(String(text ?? '').slice(0, SPRING_BEANS_HEAD));
+}
+
+/** The attributes of one start tag, as a map. Values are XML-unescaped. */
+function attributesOf(tagText) {
+  const out = new Map();
+  const re = /([\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+  let m;
+  while ((m = re.exec(tagText)) !== null) out.set(m[1], unescapeXml(m[3] ?? m[4] ?? ''));
+  return out;
+}
+
+function unescapeXml(s) {
+  return String(s)
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Every `<bean>` element of one document, with the properties it sets.
+ *
+ * A property is written two ways and both are read: the `p:` attribute
+ * shorthand on the element itself, and a `<property name="…" value="…"/>`
+ * child. The body of a bean is taken up to its own `</bean>`, counting nested
+ * `<bean>` elements so an INNER bean does not end its parent early.
+ *
+ * @param {string} text
+ * @returns {{className:string, id:(string|null), props:Map<string,string>, line:number}[]}
+ */
+export function springBeansOf(text) {
+  // A COMMENTED-OUT BEAN IS NOT A BEAN. Measured on nexacro-sample-egov, whose
+  // `dispatcher-servlet.xml` keeps an `InternalResourceViewResolver` inside a
+  // comment as an example: read without this, the file declared two resolvers
+  // and only one of them exists. Blanked rather than removed, so every line
+  // number below still names the line the file really has.
+  const body = stripXmlComments(String(text ?? ''));
+  const out = [];
+  const open = /<(?:\w+:)?bean\b([^>]*?)(\/?)>/g;
+  let m;
+  while ((m = open.exec(body)) !== null) {
+    const attrs = attributesOf(m[1]);
+    const className = attrs.get('class') ?? '';
+    if (className === '') continue;
+    const props = new Map();
+    for (const [k, v] of attrs) {
+      if (k.startsWith('p:')) props.set(k.slice(2).replace(/-ref$/, ''), v);
+    }
+    if (m[2] !== '/') {
+      // The bean's own body, up to the `</bean>` that closes IT.
+      const inner = bodyOfBean(body, open.lastIndex);
+      for (const p of inner.matchAll(/<(?:\w+:)?property\b([^>]*?)(?:\/>|>)/g)) {
+        const pa = attributesOf(p[1]);
+        const name = pa.get('name');
+        const value = pa.get('value') ?? pa.get('ref');
+        if (name && value !== undefined && !props.has(name)) props.set(name, value);
+      }
+      // A `<property name="x"><list><value>a</value>…` is one property with
+      // several values; the FIRST is the one a view name is resolved against
+      // first, which is the same rule the YAML reader keeps for a list.
+      for (const p of inner.matchAll(/<(?:\w+:)?property\b([^>]*?)>([\s\S]*?)<\/(?:\w+:)?property>/g)) {
+        const name = attributesOf(p[1]).get('name');
+        if (!name || props.has(name)) continue;
+        const first = /<(?:\w+:)?value\s*>([\s\S]*?)<\/(?:\w+:)?value>/.exec(p[2]);
+        if (first) props.set(name, unescapeXml(first[1].trim()));
+      }
+    }
+    out.push({ className, id: attrs.get('id') ?? null, props, line: lineAt(body, m.index) });
+  }
+  return out;
+}
+
+/** The text of a bean's body, from just after its start tag to its own `</bean>`. */
+function bodyOfBean(body, from) {
+  const re = /<(?:\w+:)?bean\b[^>]*?(\/?)>|<\/(?:\w+:)?bean\s*>/g;
+  re.lastIndex = from;
+  let depth = 0;
+  let m;
+  while ((m = re.exec(body)) !== null) {
+    if (m[0].startsWith('</')) {
+      if (depth === 0) return body.slice(from, m.index);
+      depth -= 1;
+      continue;
+    }
+    if (m[1] !== '/') depth += 1;
+  }
+  return body.slice(from);
+}
+
+/** Every `<!-- … -->` blanked to spaces, newlines kept, so line numbers hold. */
+function stripXmlComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '));
+}
+
+/** Which line an offset is on (1-based). */
+function lineAt(text, index) {
+  let line = 1;
+  for (let i = 0; i < index; i += 1) if (text.charCodeAt(i) === 10) line += 1;
+  return line;
+}
+
+/**
+ * The view resolvers a Spring bean XML declares, in the SAME record shape the
+ * YAML/properties reader returns, so `templateRootsOf` reads one list.
+ *
+ * A resolver with neither a prefix nor a suffix (a `BeanNameViewResolver`, a
+ * `ContentNegotiatingViewResolver`) resolves a view name against beans rather
+ * than against a directory, so it names no template root and yields no record.
+ *
+ * @param {{path:string, text:string}[]} files
+ * @returns {{engine:string, prefix:(string|null), suffix:(string|null), file:string, line:number,
+ *            className:string, order:(number|null)}[]} sorted by engine, then order, then file
+ */
+export function findXmlViewResolvers(files) {
+  const out = [];
+  for (const file of files ?? []) {
+    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
+    if (!looksLikeSpringBeansXml(file.text)) continue;
+    for (const bean of springBeansOf(file.text)) {
+      if (!/ViewResolver$/.test(bean.className)) continue;
+      const prefix = bean.props.get('prefix') ?? null;
+      const suffix = bean.props.get('suffix') ?? null;
+      if (prefix === null && suffix === null) continue;
+      const engine = xmlViewEngineOf(bean, suffix);
+      if (engine === null) continue;
+      const order = Number(bean.props.get('order'));
+      out.push({
+        engine,
+        prefix,
+        suffix,
+        file: file.path,
+        line: bean.line,
+        className: bean.className,
+        order: Number.isInteger(order) ? order : null,
+      });
+    }
+  }
+  out.sort((a, b) => cmp(a.engine, b.engine)
+    || ((a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
+    || cmp(a.file, b.file) || (a.line - b.line));
+  return out;
+}
+
+/** Which engine one resolver bean renders with: its suffix first, then its classes. */
+function xmlViewEngineOf(bean, suffix) {
+  const bySuffix = suffix === null ? undefined : XML_VIEW_SUFFIX_ENGINE[String(suffix).toLowerCase()];
+  if (bySuffix !== undefined) return bySuffix;
+  const names = `${bean.className} ${bean.props.get('viewClass') ?? ''}`;
+  for (const [engine, markers] of XML_VIEW_ENGINE_MARKERS) {
+    if (markers.some((marker) => names.includes(marker))) return engine;
+  }
+  return null;
+}
+
+/**
+ * A PROPERTY THAT NAMES THE DATABASE VENDOR ITSELF (RM55).
+ *
+ * A repository that ships its schema for seven databases has to say somewhere
+ * which one it runs on, and it is not the jdbc url: the url is commented out
+ * six times over and live once. eGovFrame writes `Globals.DbType = mysql` in
+ * `globals.properties`, and the same idea is spelled `db.type`, `database.type`
+ * and `db.dialect` elsewhere. This reads the KEY SHAPE — a key whose last
+ * segment says "which database" — and not one project's spelling.
+ *
+ * The value must be a vendor this engine can route; anything else is somebody's
+ * own word for a product and is left alone rather than guessed at.
+ */
+const DB_TYPE_KEY_RE = /(^|\.)(?:db-?type|database-?type|db-?dialect|dbms(?:-?type)?)$/;
+
+/** Spellings of a vendor that mean one of `SQL_DIALECT_ALIASES`' names. */
+const DB_TYPE_SPELLINGS = Object.freeze({
+  hsql: 'hsqldb', maria: 'mariadb', postgre: 'postgres', pgsql: 'postgres',
+  mssql: 'sqlserver', 'ms-sql': 'sqlserver', oracle11g: 'oracle-11g', oracle19c: 'oracle-19c',
+});
+
+/**
+ * Every `…DbType`-shaped declaration a set of configuration files makes.
+ *
+ * @param {{path:string, text:string}[]} files
+ * @param {(name:string)=>boolean} routable  whether a vendor name is one the engine routes
+ * @returns {{vendor:string, key:string, file:string, line:number}[]} sorted by file, then line
+ */
+export function findDbTypeDeclarations(files, routable = () => true) {
+  const out = [];
+  for (const file of files ?? []) {
+    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
+    const base = path.posix.basename(file.path.split('\\').join('/')).toLowerCase();
+    const entries = base.endsWith('.properties')
+      ? parseProperties(file.text, null, file.path).map((e) => ({ key: e.key, value: e.value, line: e.line }))
+      : readYamlLeaves(file.text, { sequences: false })
+        .filter((l) => typeof l.value === 'string')
+        .map((l) => ({ key: l.keyPath.map(String).join('.'), value: l.value, line: l.line }));
+    for (const e of entries) {
+      if (!DB_TYPE_KEY_RE.test(relaxedKey(String(e.key ?? '')))) continue;
+      const raw = resolvePlaceholder(e.value);
+      if (raw === null) continue;
+      const spelled = String(raw).trim().toLowerCase();
+      const vendor = Object.hasOwn(DB_TYPE_SPELLINGS, spelled) ? DB_TYPE_SPELLINGS[spelled] : spelled;
+      if (vendor === '' || !routable(vendor)) continue;
+      out.push({ vendor, key: String(e.key), file: file.path, line: e.line });
+    }
+  }
+  out.sort((a, b) => cmp(a.file, b.file) || (a.line - b.line));
+  return out;
+}
+
 /**
  * The service name each file declares: `spring.application.name`, per document.
  *

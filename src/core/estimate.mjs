@@ -38,6 +38,49 @@ export function ratio(num, den, note = null) {
 }
 
 /**
+ * HOW MANY DDL FILES THE RUN REALLY READS (RM55).
+ *
+ * A repository that ships its schema once per database vendor has seven DDL
+ * files and one catalog, so "7 DDL file(s)" said about a run that reads one of
+ * them is a count of the wrong thing.
+ *
+ * @param {Object} profile   a normalized profile
+ * @param {number} ddlFiles  how many files in the tree declare CREATE TABLE
+ * @returns {string}
+ */
+function catalogFilesNamed(profile, ddlFiles) {
+  const chosen = Array.isArray(profile?.catalog?.ddl) ? profile.catalog.ddl : [];
+  if (chosen.length === 0) return `catalog.source is "file" and ${ddlFiles} DDL file(s) declare CREATE TABLE`;
+  const others = Object.keys(profile?.catalog?.ddlAlternatives ?? {}).sort();
+  return `catalog.source is "file" and catalog.ddl names ${chosen.length} of the ${ddlFiles} DDL file(s) in this tree`
+    + (others.length > 0
+      ? `, the ones written for this project's database. The other vendors are in catalog.ddlAlternatives (${others.join(', ')})`
+      : '');
+}
+
+/**
+ * WHICH VIEW RESOLVER SAID WHERE THE TEMPLATES ARE, and where it was written
+ * (RM55). A root that came from a configured prefix and one that came from
+ * where the files happen to sit are two different answers, and only the first
+ * can be checked by a reader opening the file this names.
+ *
+ * @param {Object[]|undefined} resolvers  `discovery.viewResolvers`
+ * @returns {string} a clause naming at most two of them and their files, or ''
+ */
+function viewResolversNamed(resolvers) {
+  const out = [];
+  for (const r of Array.isArray(resolvers) ? resolvers : []) {
+    if (!r || (r.prefix === null && r.suffix === null)) continue;
+    if (out.length >= 2) break;
+    const simple = typeof r.className === 'string' && r.className !== ''
+      ? `a ${r.className.slice(r.className.lastIndexOf('.') + 1)} bean`
+      : `the ${r.engine} view resolver`;
+    out.push(`${simple} in ${r.file}${r.line ? `:${r.line}` : ''}`);
+  }
+  return out.length === 0 ? '' : `, named by ${out.join(' and ')}`;
+}
+
+/**
  * The BEFORE-ANALYSIS half: what a run over this tree will be able to ship.
  *
  * @param {Object} discovery  a `discover()` result (or a synthetic one with the
@@ -74,7 +117,7 @@ axes.push({
   axis: 'catalog',
   status: willReadCatalog ? 'shipped' : 'not-shipped',
   reason: willReadCatalog
-    ? `catalog.source is "file" and ${ddlFiles} DDL file(s) declare CREATE TABLE`
+    ? catalogFilesNamed(profile, ddlFiles)
     : ddlFiles === 0
       ? 'no .sql file in this tree contains CREATE TABLE, so there is no schema to read'
       : `we found ${ddlFiles} DDL file(s), but catalog.source is ${JSON.stringify(catalogSource)}. Set it to "file" and point catalog.connectionFrom at one of them, or pass --ddl`,
@@ -200,7 +243,7 @@ const templateNote = templateRoots.length === 0 ? ''
   : `${templateRoots.length} template root(s) (${templateEngines.join(', ')})`
     + `${templateFiles > 0 ? `, ${templateFiles} page(s)` : ''}: `
     + `${templateRoots.slice(0, 3).map((r) => `${r.root} ${r.suffix}`).join(', ')}`
-    + `${templateRoots.length > 3 ? `, and ${templateRoots.length - 3} more` : ''}. `
+    + `${templateRoots.length > 3 ? `, and ${templateRoots.length - 3} more` : ''}${viewResolversNamed(discovery.viewResolvers)}. `
     + 'A page a controller names becomes a screen, and its form, its links and its inline scripts become calls onto the routes this pack serves.';
 const willReadWeb = (webFiles > 0 && webRoots > 0 && webPackDeclared) || templateRoots.length > 0;
 axes.push({

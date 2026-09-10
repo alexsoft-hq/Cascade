@@ -100,6 +100,18 @@ export const CORPUS = Object.freeze([
   { id: 'jsh-erp', url: 'https://github.com/jishenghua/JSH_ERP', sha: 'ad6cf886dd4e0676723060a25d361c703dc56bc0', ddl: null, note: 'Spring MVC + MyBatis XML' },
   { id: 'spring-petclinic', url: 'https://github.com/spring-projects/spring-petclinic', sha: '818c4136ea971c21674525f9053de0d9c7ad8cfe', ddl: null, note: 'Spring MVC + JPA, single module' },
   { id: 'jpetstore-6', url: 'https://github.com/mybatis/jpetstore-6', sha: 'ebb36b392f0c0fdec10e2e7b364b03b88c08c184', ddl: null, note: 'Spring MVC + MyBatis XML, HSQLDB schema' },
+  // The Korean market (RM55). The eleven above are the frameworks the world
+  // writes in; these six are the framework a Korean public sector project is
+  // required to write in, plus one modern Korean OSS as a control. They were
+  // measured BEFORE any rule was written for them, and `docs/measured.md` keeps
+  // that first measurement beside the one after, so anyone can see which
+  // numbers the round moved and which it did not.
+  { id: 'egov-web-sample', url: 'https://github.com/eGovFramework/egovframe-web-sample', sha: '8f37555eeb0c90adb23638f557345aa776e0ebae', ddl: null, note: 'eGovFrame board sample: Spring MVC configured in XML, one MyBatis mapper called by statement id, JSP views' },
+  { id: 'egov-business-template', url: 'https://github.com/eGovFramework/egovframe-enterprise-business-template', sha: 'cfccbe89dc968a17d2962b2230fcd025786ec6de', ddl: null, note: 'eGovFrame 4.x enterprise template: 189 mapper XML, 92 JSP behind a Tiles layout, DDL for seven vendors' },
+  { id: 'egov-common-components', url: 'https://github.com/eGovFramework/egovframe-common-components', sha: 'a88a3e313f63aa4fc1105a5f4f9f7fe5e4f32d65', ddl: null, note: 'the 253 eGovFrame common components: 1092 java, 1224 mapper XML, 747 JSP, 945 DDL files over seven vendors; the slowest entry in the corpus' },
+  { id: 'egov-msa-edu', url: 'https://github.com/eGovFramework/egovframe-msa-edu', sha: '777f697cb685c8e6da903e79f3270fd89896ab1a', ddl: null, note: 'eGovFrame MSA teaching project: Spring Boot over ten source roots with JPA, and two Next.js frontends inside this repository, so an unconfigured init reads them with no flag' },
+  { id: 'nexacro-egov', url: 'https://github.com/nexacro-spring/nexacro-sample-egov', sha: 'deb90f902e9f1af141bb58226eb1a9e8aa15bd69', ddl: null, note: 'eGovFrame backend under a Nexacro client: 32 .xfdl screens inside this repository calling *.do, which no router pack reads yet' },
+  { id: 'ngrinder', url: 'https://github.com/naver/ngrinder', sha: '2a6da2995cf0010a78b6f63da6aef98560719090', ddl: null, note: 'Spring Boot + JPA + FreeMarker + vue-router: modern Korean OSS, the control for the five eGovFrame entries; its frontend is inside this repository' },
 ]);
 
 /**

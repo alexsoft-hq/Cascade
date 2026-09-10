@@ -13,6 +13,7 @@ import { MANIFEST_SCHEMA } from './manifest.mjs';
 import { normalizeProfile, validateProfile } from './profile.mjs';
 import { ROUTER_PACKS } from './discover.mjs';
 import { DEFAULT_PORTS } from './dbconfig.mjs';
+import { chooseCatalogVendor, groupDdlByVendor } from './lanes.mjs';
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -170,20 +171,87 @@ if (webPackages.length > 0 || vendoredRoots.length > 0) {
 }
 
 /**
+ * WHICH DATABASE THIS PROJECT RUNS ON, when the tree ships more than one
+ * vendor's schema — and the dialect the profile is written with.
+ *
+ * `main` is what goes into `sqlDialects.main`. Two things can put a value
+ * there and they rank in this order: a vendor the project NAMES (RM55, the
+ * `Globals.DbType` eGovFrame writes, or a jdbc url every connection file
+ * agrees on), and the MySQL marker discovery reads out of the DDL text itself,
+ * which is the rule that was here before and still answers for every
+ * single-vendor repository.
+ */
+function declareDialect(discovery, { existing }) {
+  const vendors = groupDdlByVendor(discovery.ddlCandidates ?? []);
+  const chosen = vendors.size > 1
+    ? chooseCatalogVendor({
+      vendors: [...vendors.keys()],
+      profileDialect: existing?.sqlDialects?.main ?? null,
+      dbTypes: discovery.dbTypeDeclarations ?? [],
+      connections: discovery.connectionCandidates ?? [],
+    })
+    : { vendor: null, from: 'none', why: 'this tree ships one vendor\'s schema, so there is nothing to choose', at: null };
+  const main = chosen.vendor ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null);
+  return { ...chosen, vendors, main };
+}
+
+/**
  * WHERE THE SCHEMA IS. One DDL file in the tree is the catalog; no DDL and one
  * connection candidate RECORDS where the database is and leaves the source at
  * `none`, because reading a live database is a sentence the user types.
  */
-function declareCatalog(discovery, { ddlPaths, root, manifestDir, diagnostics }) {
-let catalog = { source: 'none', connectionFrom: null };
-if (ddlPaths.length === 1) {
+/**
+ * ONE SCHEMA, SHIPPED ONCE PER DATABASE VENDOR (RM55).
+ *
+ * Every eGovFrame project keeps
+ * `DATABASE/{oracle,mysql,tibero,cubrid,postgres,altibase,goldilocks}/`, and
+ * reading all seven is not a fuller catalog: measured on
+ * egovframe-common-components, it declared 182 tables eight times over and
+ * raised 13,505 duplicate-declaration warnings. When the project's own
+ * configuration says which database it runs on, that vendor's files ARE the
+ * schema and the rest are recorded as alternatives to swap in.
+ *
+ * @returns {Object|null} the catalog block, or null when nothing here decides
+ */
+function vendorCatalog(dialect, { root, manifestDir, diagnostics }) {
+  const byVendor = dialect.vendors;
+  const chosen = dialect.vendor === null ? [] : (byVendor.get(dialect.vendor) ?? []);
+  if (byVendor.size <= 1 || chosen.length === 0) return null;
+  const rel = (p) => toPosix(path.relative(manifestDir, path.resolve(root, p)));
+  const others = [...byVendor.entries()].filter(([v]) => v !== dialect.vendor);
+  diagnostics.push({
+    kind: 'CATALOG_VENDOR_CHOSEN',
+    severity: 'info',
+    path: '.',
+    reason: `this tree ships its schema for ${byVendor.size} databases (${[...byVendor.keys()].join(', ')}); `
+      + `catalog.ddl is the ${dialect.vendor} set (${chosen.length} file(s)), because ${dialect.why}. `
+      + 'The others are recorded as catalog.ddlAlternatives: swap one into catalog.ddl to read that vendor instead',
+  });
+  return {
+    source: 'file',
+    connectionFrom: null,
+    ddl: chosen.map(rel),
+    ddlAlternatives: Object.fromEntries(others.map(([v, files]) => [v, files.map(rel)])),
+  };
+}
+
+function declareCatalog(discovery, { ddlPaths, root, manifestDir, diagnostics, dialect }) {
+const byVendor = dialect.vendors;
+let catalog = vendorCatalog(dialect, { root, manifestDir, diagnostics }) ?? { source: 'none', connectionFrom: null };
+if (catalog.source === 'file') {
+  // decided by vendor above
+} else if (ddlPaths.length === 1) {
   catalog = { source: 'file', connectionFrom: toPosix(path.relative(manifestDir, path.resolve(root, ddlPaths[0]))) };
 } else if (ddlPaths.length > 1) {
   diagnostics.push({
     kind: 'AMBIGUOUS_CATALOG_SOURCE',
     severity: 'warn',
     path: '.',
-    reason: `${ddlPaths.length} DDL files contain CREATE TABLE (${ddlPaths.join(', ')}); catalog.source is left "none". Set catalog.connectionFrom to the one that describes the live schema`,
+    reason: `${ddlPaths.length} DDL files contain CREATE TABLE (${ddlPaths.join(', ')}); catalog.source is left "none". `
+      + (byVendor.size > 1
+        ? `They are one schema written for ${byVendor.size} databases (${[...byVendor.keys()].join(', ')}), and ${dialect.why}, `
+          + 'so nothing here can say which of them is this project\'s. Set catalog.ddl to that vendor\'s files'
+        : 'Set catalog.connectionFrom to the one that describes the live schema'),
   });
 }
 
@@ -370,7 +438,10 @@ export function buildProfile(discovery, opts) {
   const ddlPaths = discovery.ddlPaths ?? [];
 
   const { frameworkPacks, routerPacks, vendoredRoots } = declareFrameworkPacks(discovery, counts);
-  const { catalog, openapiDocuments } = declareCatalog(discovery, { ddlPaths, root, manifestDir, diagnostics });
+  const dialect = declareDialect(discovery, { existing });
+  const { catalog, openapiDocuments } = declareCatalog(discovery, {
+    ddlPaths, root, manifestDir, diagnostics, dialect,
+  });
   const { screenAxis, webRoots, templateRoots } = declareWebRoots(discovery, {
     existing, routerPacks, vendoredRoots, root, manifestDir, diagnostics,
   });
@@ -380,7 +451,7 @@ export function buildProfile(discovery, opts) {
   const profile = normalizeProfile({
     build: { tool: discovery.buildTool ?? null },
     packagePrefixes: discovery.packagePrefixes ?? [],
-    sqlDialects: discovery.ddlDialectHint === 'mysql' ? { main: 'mysql' } : {},
+    sqlDialects: dialect.main === null ? {} : { main: dialect.main },
     frameworkPacks,
     ...screenAxis,
     ...(webRoots.length > 0 ? { webRoots } : {}),

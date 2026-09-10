@@ -206,7 +206,12 @@ let ddlChoice = null;
 let snapshot = null;
 if (ddls.length === 0 && !flags.noDdl) {
   const source = catalog.source ?? 'none';
-  const declared = asPathList(catalog.connectionFrom);
+  // `catalog.ddl` is the DDL set proper and outranks `connectionFrom`, which
+  // held that job before RM55 and still does for a profile written then. A
+  // repository that ships its schema once per vendor has BOTH a DDL set and a
+  // connection file, and one key could not hold the two.
+  const declared = asPathList(catalog.ddl).length > 0
+    ? asPathList(catalog.ddl) : asPathList(catalog.connectionFrom);
   if (source === 'jdbc') {
     if (nonEmpty(input.catalogSnapshot)) {
       snapshot = path.resolve(input.catalogSnapshot);
@@ -224,8 +229,8 @@ if (ddls.length === 0 && !flags.noDdl) {
     ddlSource = 'profile';
   } else if (source === 'file') {
     diagnostics.push({
-      kind: 'MISSING_INPUT', severity: 'warn', key: 'catalog.connectionFrom',
-      reason: 'catalog.source is "file", but catalog.connectionFrom is empty. There is no DDL to read, so this run gets no table or column names from a schema',
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'catalog.ddl',
+      reason: 'catalog.source is "file", but neither catalog.ddl nor catalog.connectionFrom names a DDL file. There is no DDL to read, so this run gets no table or column names from a schema',
     });
   } else {
     // NOBODY SAID. Discovery classified every .sql it found by dialect and by
@@ -1021,4 +1026,96 @@ export function chooseDdlFiles(candidates, profile = {}) {
     chosen.push(c);
   }
   return { dialect, dialectFrom, chosen, skipped, migrations, testFiles };
+}
+
+/**
+ * THE DDL, GROUPED BY THE DATABASE VENDOR EACH FILE IS FOR (RM55). Pure.
+ *
+ * A repository that ships one schema has one group and this says nothing new.
+ * A repository that ships the SAME schema for seven databases —
+ * `DATABASE/{oracle,mysql,tibero,cubrid,postgres,altibase,goldilocks}/…`, which
+ * is what every eGovFrame project does — has seven, and reading all of them is
+ * not a fuller catalog, it is the same 182 tables declared seven times.
+ *
+ * Only SCHEMA files outside a test root are grouped: a migration and a test
+ * fixture are left out of the catalog for reasons that have nothing to do with
+ * which vendor they are for, and `chooseDdlFiles` is where those reasons live.
+ *
+ * @param {{path:string, dialect:(string|null), role:string, testPath:boolean}[]} candidates
+ * @returns {Map<string, string[]>} vendor -> its schema files, in path order
+ */
+export function groupDdlByVendor(candidates) {
+  const out = new Map();
+  for (const c of Array.isArray(candidates) ? candidates : []) {
+    if (!c || c.testPath || c.role !== 'schema' || !nonEmpty(c.dialect)) continue;
+    if (!out.has(c.dialect)) out.set(c.dialect, []);
+    out.get(c.dialect).push(c.path);
+  }
+  for (const files of out.values()) files.sort();
+  return new Map([...out.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+}
+
+/**
+ * WHICH VENDOR'S DDL IS THIS PROJECT'S SCHEMA, when several are on offer. Pure.
+ *
+ * Asked only when the tree really holds more than one vendor's schema, and
+ * answered only from what the project SAYS — in this order:
+ *
+ *   profile     `sqlDialects.main` somebody already wrote. Their word stands.
+ *   config      a `Globals.DbType`-shaped property naming the vendor. This is
+ *               the one eGovFrame writes, and it is the one that is true: the
+ *               jdbc url beside it is commented out six times and live once.
+ *   connection  the scheme of the jdbc url, when EVERY connection file in the
+ *               tree agrees on one vendor. Several disagreeing urls is a
+ *               deployment with several databases, and picking one of them
+ *               would decide which database a project talks to by counting.
+ *
+ * No answer means no answer: the caller keeps today's behaviour, which is to
+ * leave `catalog.source` at "none" and let `chooseDdlFiles` pick by the dialect
+ * most files are written in — and to SAY which vendors were on offer.
+ *
+ * @param {{vendors:string[], profileDialect?:(string|null),
+ *          dbTypes?:{vendor:string, key:string, file:string, line:number}[],
+ *          connections?:{dialect:(string|null), path:string}[]}} input
+ * @returns {{vendor:(string|null), from:('profile'|'config'|'connection'|'none'),
+ *            why:string, at:(string|null)}}
+ */
+export function chooseCatalogVendor(input = {}) {
+  const vendors = new Set(Array.isArray(input.vendors) ? input.vendors : []);
+  const has = (v) => nonEmpty(v) && vendors.has(v);
+  const declared = input.profileDialect;
+  if (has(declared)) {
+    return { vendor: declared, from: 'profile', why: 'the profile declares it as sqlDialects.main', at: null };
+  }
+  const dbTypes = Array.isArray(input.dbTypes) ? input.dbTypes : [];
+  const named = [...new Set(dbTypes.map((d) => d.vendor).filter(has))];
+  if (named.length === 1) {
+    const first = dbTypes.find((d) => d.vendor === named[0]);
+    return {
+      vendor: named[0], from: 'config', at: `${first.file}:${first.line}`,
+      why: `${first.key} in ${first.file} names it`,
+    };
+  }
+  if (named.length > 1) {
+    return {
+      vendor: null, from: 'none', at: null,
+      why: `the configuration names ${named.sort().join(' and ')}, so nothing here can say which database this project runs on`,
+    };
+  }
+  const urls = (Array.isArray(input.connections) ? input.connections : [])
+    .map((c) => (c && nonEmpty(c.dialect) ? c.dialect : null))
+    .filter((d) => d !== null);
+  const agreed = [...new Set(urls)];
+  if (agreed.length === 1 && has(agreed[0])) {
+    return {
+      vendor: agreed[0], from: 'connection', at: null,
+      why: `every jdbc url in this tree is a ${agreed[0]} url`,
+    };
+  }
+  return {
+    vendor: null, from: 'none', at: null,
+    why: agreed.length > 1
+      ? `the jdbc urls in this tree name ${agreed.sort().join(', ')}, which is more than one database`
+      : 'nothing in this tree says which database it runs on',
+  };
 }

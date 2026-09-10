@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
   springConfigEntries, resolvePlaceholder, frontPrefixOf, backPrefixOf, serviceOfUri,
-  findViewResolvers, relaxedKey,
+  findViewResolvers, relaxedKey, findXmlViewResolvers, findDbTypeDeclarations,
+  looksLikeSpringBeansXml, springBeansOf,
 } from '../src/core/springconfig.mjs';
+import { SQL_DIALECT_ALIASES } from '../src/core/profile.mjs';
 
 // RM46 — the two facts a Spring project states about itself, read out of the
 // tree instead of typed into a profile: the name it answers to, and the route
@@ -413,4 +415,90 @@ test('a project that only TURNS AN ENGINE ON still names the engine, with no pre
   );
   // A file that says nothing about a view resolver yields nothing.
   assert.deepEqual(findViewResolvers(file('spring:\n  application:\n    name: a\n')), []);
+});
+
+// ---------------------------------------------------------------------------
+// RM55 — the same settings, written as Spring BEANS
+//
+// A Spring MVC application written before Boot puts its view resolver in an XML
+// bean definition, which is what eGovFrame does and what the Korean public
+// sector runs. Same question, same record shape, different spelling.
+// ---------------------------------------------------------------------------
+
+const SERVLET_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:p="http://www.springframework.org/schema/p">
+
+    <bean class="org.springframework.web.servlet.view.BeanNameViewResolver" p:order="0"/>
+
+    <bean class="org.springframework.web.servlet.view.UrlBasedViewResolver" p:order="1"
+        p:viewClass="org.springframework.web.servlet.view.JstlView"
+        p:prefix="/WEB-INF/jsp/" p:suffix=".jsp"/>
+
+    <!--
+    <bean class="org.springframework.web.servlet.view.InternalResourceViewResolver"
+        p:prefix="/WEB-INF/commented/" p:suffix=".jsp"/>
+    -->
+</beans>
+`;
+
+const PROPERTY_XML = `<?xml version="1.0"?>
+<beans xmlns="http://www.springframework.org/schema/beans">
+    <bean id="viewResolver" class="org.springframework.web.servlet.view.InternalResourceViewResolver">
+        <property name="prefix" value="/WEB-INF/pages/" />
+        <property name="suffix" value=".jsp" />
+    </bean>
+</beans>
+`;
+
+test('a Spring bean XML is read by its ROOT ELEMENT, never by its file name', () => {
+  assert.equal(looksLikeSpringBeansXml(SERVLET_XML), true);
+  assert.equal(looksLikeSpringBeansXml('<?xml version="1.0"?>\n<mapper namespace="X"><select id="a">SELECT 1</select></mapper>'), false);
+});
+
+test('a view resolver declared as a bean comes out in the same shape as one in YAML', () => {
+  const found = findXmlViewResolvers([{ path: 'src/main/webapp/WEB-INF/config/dispatcher-servlet.xml', text: SERVLET_XML }]);
+  // The BeanNameViewResolver resolves a view name against beans, not against a
+  // directory, so it names no template root and yields no record.
+  assert.equal(found.length, 1, 'one resolver: a bean with no prefix and no suffix is not one');
+  assert.equal(found[0].engine, 'jsp');
+  assert.equal(found[0].prefix, '/WEB-INF/jsp/');
+  assert.equal(found[0].suffix, '.jsp');
+  assert.equal(found[0].order, 1);
+  assert.equal(found[0].line, 7, 'the line is the bean\'s own, counted through the comment');
+  // A COMMENTED-OUT BEAN IS NOT A BEAN.
+  assert.equal(found.some((r) => r.prefix === '/WEB-INF/commented/'), false);
+});
+
+test('a property written as a child element reads the same as the p: shorthand', () => {
+  const found = findXmlViewResolvers([{ path: 'WEB-INF/spring-mvc.xml', text: PROPERTY_XML }]);
+  assert.deepEqual(found.map((r) => [r.engine, r.prefix, r.suffix]), [['jsp', '/WEB-INF/pages/', '.jsp']]);
+});
+
+test('springBeansOf reads a bean\'s own body, and an inner bean does not end it early', () => {
+  const xml = `<beans>
+  <bean id="outer" class="com.x.Outer">
+    <property name="delegate">
+      <bean class="com.x.Inner"/>
+    </property>
+    <property name="prefix" value="/WEB-INF/jsp/"/>
+  </bean>
+</beans>`;
+  const beans = springBeansOf(xml);
+  const outer = beans.find((b) => b.className === 'com.x.Outer');
+  assert.equal(outer.props.get('prefix'), '/WEB-INF/jsp/', 'the property AFTER the inner bean is still the outer\'s');
+});
+
+test('a DbType-shaped property names the database vendor, and only a routable one', () => {
+  const routable = (v) => Object.hasOwn(SQL_DIALECT_ALIASES, v);
+  const globals = [{ path: 'src/main/resources/egovProps/globals.properties', text: 'Globals.DbType = mysql\nGlobals.Url = jdbc:mysql://127.0.0.1:3306/x\n' }];
+  assert.deepEqual(findDbTypeDeclarations(globals, routable),
+    [{ vendor: 'mysql', key: 'Globals.DbType', file: 'src/main/resources/egovProps/globals.properties', line: 1 }]);
+  // The key SHAPE, not one project's spelling.
+  assert.deepEqual(findDbTypeDeclarations([{ path: 'a.properties', text: 'app.db-type=tibero\n' }], routable).map((d) => d.vendor), ['tibero']);
+  assert.deepEqual(findDbTypeDeclarations([{ path: 'a.properties', text: 'Globals.DbType=hsql\n' }], routable).map((d) => d.vendor), ['hsqldb']);
+  // A value this engine cannot route is somebody's own word for a product.
+  assert.deepEqual(findDbTypeDeclarations([{ path: 'a.properties', text: 'Globals.DbType=dm8\n' }], routable), []);
+  // A key that is not asking which database this is.
+  assert.deepEqual(findDbTypeDeclarations([{ path: 'a.properties', text: 'Globals.DbTypeLabel=mysql\n' }], routable), []);
 });

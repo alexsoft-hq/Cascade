@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
   selectLanes, sqlLaneArgs, declareAxes, axisLimits, axisKnownGaps, AXES, chooseDdlFiles,
+  chooseCatalogVendor, groupDdlByVendor,
   screenAxisOf, serviceNamesOf,
 } from '../src/core/lanes.mjs';
 import { normalizeProfile } from '../src/core/profile.mjs';
@@ -875,6 +876,66 @@ test('chooseDdlFiles: nothing to choose from yields nothing, and says no dialect
   assert.deepEqual(c.chosen, []);
   assert.equal(c.dialect, null);
   assert.equal(c.dialectFrom, 'none');
+});
+
+// --------------------------------------------------------------------------
+// one schema, shipped once per vendor (RM55)
+// --------------------------------------------------------------------------
+
+test('groupDdlByVendor: schema files group by the vendor they are for, and nothing else does', () => {
+  const g = groupDdlByVendor([
+    ddlCandidate({ path: 'DATABASE/mysql/all_ddl_mysql.sql', dialect: 'mysql' }),
+    ddlCandidate({ path: 'DATABASE/oracle/all_ddl_oracle.sql', dialect: 'oracle' }),
+    ddlCandidate({ path: 'DATABASE/tibero/all_ddl_tibero.sql', dialect: 'tibero' }),
+    // A migration and a test fixture are left out of a catalog for reasons that
+    // have nothing to do with which vendor they are for.
+    ddlCandidate({ path: 'DATABASE/mysql/upgrade.sql', dialect: 'mysql', role: 'migration' }),
+    ddlCandidate({ path: 'src/test/resources/mysql/fixture.sql', dialect: 'mysql', testPath: true }),
+    // A portable file names no vendor, so it belongs to no group.
+    ddlCandidate({ path: 'extra.sql', dialect: null }),
+  ]);
+  assert.deepEqual([...g.keys()], ['mysql', 'oracle', 'tibero'], 'sorted, so two runs read one order');
+  assert.deepEqual(g.get('mysql'), ['DATABASE/mysql/all_ddl_mysql.sql']);
+});
+
+test('chooseCatalogVendor: the profile, then the configuration, then a jdbc url everything agrees on', () => {
+  const vendors = ['mysql', 'oracle', 'tibero'];
+  const dbTypes = [{ vendor: 'oracle', key: 'Globals.DbType', file: 'globals.properties', line: 3 }];
+  // Somebody already wrote it down. Their word stands.
+  assert.equal(chooseCatalogVendor({ vendors, profileDialect: 'tibero', dbTypes }).vendor, 'tibero');
+  // The configuration names it outright, which is the one eGovFrame writes.
+  const byConfig = chooseCatalogVendor({ vendors, dbTypes });
+  assert.equal(byConfig.vendor, 'oracle');
+  assert.equal(byConfig.from, 'config');
+  assert.match(byConfig.why, /Globals\.DbType in globals\.properties/);
+  // No configuration, and every jdbc url in the tree is the same vendor.
+  const byUrl = chooseCatalogVendor({ vendors, connections: [{ dialect: 'mysql' }, { dialect: 'mysql' }] });
+  assert.equal(byUrl.vendor, 'mysql');
+  assert.equal(byUrl.from, 'connection');
+});
+
+test('chooseCatalogVendor: two answers is no answer, and it says which two', () => {
+  const vendors = ['mysql', 'oracle'];
+  // Two urls naming two databases is a deployment with two, and picking one by
+  // counting would decide which database a project talks to.
+  const urls = chooseCatalogVendor({ vendors, connections: [{ dialect: 'mysql' }, { dialect: 'oracle' }] });
+  assert.equal(urls.vendor, null);
+  assert.match(urls.why, /mysql, oracle/);
+  const configs = chooseCatalogVendor({
+    vendors,
+    dbTypes: [
+      { vendor: 'mysql', key: 'Globals.DbType', file: 'a.properties', line: 1 },
+      { vendor: 'oracle', key: 'Globals.DbType', file: 'b.properties', line: 1 },
+    ],
+  });
+  assert.equal(configs.vendor, null);
+  assert.match(configs.why, /mysql and oracle/);
+  // A vendor named by the configuration that this tree ships no schema for
+  // settles nothing either.
+  assert.equal(chooseCatalogVendor({
+    vendors, dbTypes: [{ vendor: 'cubrid', key: 'Globals.DbType', file: 'a.properties', line: 1 }],
+  }).vendor, null);
+  assert.equal(chooseCatalogVendor({ vendors: [] }).vendor, null);
 });
 
 // --------------------------------------------------------------------------
