@@ -10,6 +10,14 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-10
+
+The release measured on the Korean market: eGovFrame, the public sector's
+standard, joins the corpus held out, and the four things it showed are
+fixed. A statement called by its id binds, a view resolver declared in
+Spring XML makes pages, one vendor's schema is chosen by the configured
+dialect, and a bean named by `@Resource` settles a dispatch.
+
 ### Added
 
 - **A statement called by its string id binds.** MyBatis has two shapes and the
@@ -1942,7 +1950,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.4.0...v0.5.0

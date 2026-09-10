@@ -1,6 +1,6 @@
 {
   "name": "@alexsoft-hq/cascade",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "Code-to-column change-impact knowledge graph for AI coding agents: the round trip from a screen to a database column and back, over MCP.",
   "license": "Apache-2.0",

@@ -1010,6 +1010,12 @@ that improves silently is a number nobody checked.
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 |
 | spring-projects/spring-petclinic | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 |
 | spring-petclinic-microservices | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 |
+| eGovFramework/egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 210 / 288 | 122 / 135 | 55 / 84 |
+| eGovFramework/egovframe-common-components | 999 / 1193 | 165 / 179 | 1640 / 1818 | 765 / 811 | 470 / 657 |
+| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 2 / 217 | 0 / 0 |
+| eGovFramework/egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 |
+| nexacro-spring/nexacro-sample-egov | 2 / 21 | 2 / 5 | 9 / 46 | 0 / 0 | 0 / 0 |
+| naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run
