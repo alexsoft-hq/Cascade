@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-09-10
+
+A screen change is not a request, an unknown project is an error, and no
+function in the code base is over 120 lines.
+
 ### Added
 
 - **A router navigation is not an HTTP call.** `router.push('/auth/login')`
@@ -2232,7 +2237,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.0...v0.8.1

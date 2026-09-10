@@ -978,23 +978,23 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 
 | 저장소 | statement 에 닿는 엔드포인트 | 닿은 테이블 | 닿은 컬럼 | 해석된 프런트엔드 호출 | 테이블에 닿는 화면 |
 |---|---|---|---|---|---|
-| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | 584 / 963 | 25 / 181 |
-| jishenghua/JSH_ERP | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 |
+| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | 584 / 938 | 25 / 181 |
+| jishenghua/JSH_ERP | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 193 | 0 / 7 |
 | apache/dolphinscheduler | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 |
-| macrozheng/mall (+ mall-admin-web) | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 |
-| linlinjava/litemall | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 191 | 40 / 89 |
-| yangzongzhuan/RuoYi-Vue (+ RuoYi-Vue3) | 123 / 147 | 22 / 33 | 224 / 305 | 122 / 142 | 8 / 21 |
+| macrozheng/mall (+ mall-admin-web) | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 151 | 44 / 54 |
+| linlinjava/litemall | 198 / 219 | 34 / 34 | 376 / 376 | 172 / 177 | 40 / 89 |
+| yangzongzhuan/RuoYi-Vue (+ RuoYi-Vue3) | 123 / 147 | 22 / 33 | 224 / 305 | 121 / 138 | 8 / 21 |
 | jeequan/jeepay | 126 / 134 | 22 / 23 | 302 / 314 | 0 / 0 | 0 / 5 |
 | xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 24 / 31 | 6 / 11 |
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 |
 | spring-projects/spring-petclinic | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 |
 | spring-petclinic-microservices | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 |
-| eGovFramework/egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 218 / 288 | 122 / 135 | 55 / 84 |
-| eGovFramework/egovframe-common-components | 999 / 1193 | 165 / 179 | 1680 / 1862 | 765 / 811 | 470 / 657 |
-| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 137 / 217 | 33 / 56 |
+| eGovFramework/egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 218 / 288 | 122 / 134 | 55 / 84 |
+| eGovFramework/egovframe-common-components | 999 / 1193 | 165 / 179 | 1680 / 1862 | 765 / 810 | 470 / 657 |
+| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 137 / 173 | 33 / 56 |
 | eGovFramework/egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 |
 | nexacro-spring/nexacro-sample-egov | 10 / 21 | 5 / 5 | 46 / 46 | 7 / 7 | 4 / 30 |
-| naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 |
+| naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 63 / 69 | 0 / 19 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run
