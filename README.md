@@ -1008,8 +1008,8 @@ that improves silently is a number nobody checked.
 | jeequan/jeepay | 126 / 134 | 22 / 23 | 302 / 314 | 0 / 0 | 0 / 5 |
 | xuxueli/xxl-job | 31 / 42 | 7 / 8 | 70 / 71 | 24 / 31 | 6 / 11 |
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 |
-| spring-projects/spring-petclinic | 9 / 17 | 4 / 7 | 18 / 24 | 12 / 13 | 3 / 8 |
-| spring-petclinic-microservices | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 |
+| spring-projects/spring-petclinic | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 |
+| spring-petclinic-microservices | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run
