@@ -10,6 +10,12 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-10
+
+Two general defects the eGovFrame MSA template exposed: a member call on an
+imported object now links, and the gateway rewrite the Spring reference
+shows is read.
+
 Two general defects the eGovFrame MSA template exposed. Neither is Korean and
 neither was in the corpus before: a gateway rewrite written the way Spring's own
 reference writes it, and the hop from a page to the module its API calls live
@@ -2083,7 +2089,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.6.0...v0.7.0

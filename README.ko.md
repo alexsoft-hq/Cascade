@@ -991,7 +991,7 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 | spring-petclinic-microservices | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 |
 | eGovFramework/egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 218 / 288 | 122 / 135 | 55 / 84 |
 | eGovFramework/egovframe-common-components | 999 / 1193 | 165 / 179 | 1680 / 1862 | 765 / 811 | 470 / 657 |
-| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 2 / 217 | 0 / 56 |
+| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 23 / 217 | 12 / 56 |
 | eGovFramework/egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 |
 | nexacro-spring/nexacro-sample-egov | 10 / 21 | 5 / 5 | 46 / 46 | 7 / 7 | 4 / 30 |
 | naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 |
