@@ -657,12 +657,33 @@ Both shapes are read by both readers, and the `service` is what lets an answer
 cross into the right project when two of them serve the same path (see
 [concepts](../concepts.md), "Crossings").
 
+`RewritePath` is read in the form Spring's own reference shows, and the
+reference shows it with a backslash:
+
+```yaml
+            - RewritePath=/portal-service/(?<segment>.*), /$\{segment}
+```
+
+The backslash is not a typo. Spring resolves `${...}` in a configuration value
+as a property placeholder before the gateway ever sees it, so `$\{segment}` is
+what a YAML author has to write for the gateway to receive the capture
+reference. All three spellings mean the one group and all three are read:
+`/${segment}`, `/$\{segment}`, and `/$\\{segment}` (the same value after one
+more level of quoting). `/$1` with an unnamed `(.*)` group is the same rule
+again.
+
+The pattern may put the separator on either side of the prefix. `Path=/portal-
+service/**` names the prefix `/portal-service`, and the rewrite above writes
+`/portal-service/` — the prefix WITH its separator — so what it forwards is
+everything under the prefix with the service name taken off the front. Both
+spellings read as the same prefix rule.
+
 What is NOT read is not guessed. A `RewritePath` outside the plain
-`/prefix/(?<name>.*)` form Spring documents, a filter that sets the whole
-forwarded path, or a pattern with a wildcard in the middle produces a
-`GATEWAY_ROUTE_UNREADABLE` diagnostic and no entry. A route table that lives in
-a config server, not in the repository, is not read either, and `cascade init`
-says so once.
+`/prefix/(?<name>.*)` form Spring documents, one whose pattern starts somewhere
+else entirely, a filter that sets the whole forwarded path, or a pattern with a
+wildcard in the middle produces a `GATEWAY_ROUTE_UNREADABLE` diagnostic and no
+entry. A route table that lives in a config server, not in the repository, is
+not read either, and `cascade init` says so once.
 
 A map that is ALREADY in the profile is yours: `cascade init --force` leaves it
 exactly as it is and says how many routes it found and did not apply.
@@ -1074,6 +1095,26 @@ how the name was followed:
 
 A call onto an imported name that is **not** a function (a constant, a
 component) makes no edge and is counted as `calls.notAFunction`.
+
+**A member of an imported object.** Most TypeScript frontends keep their API
+calls in a named object rather than in loose exports:
+
+```ts
+export const contentService = {
+  get: async (no: number) => axios.get(`${CONTENT_URL}/${no}`),
+}
+```
+
+and the page writes `contentService.get(id)`. That is the same one hop, and it
+is read as one. The key alone (`get`) cannot say which object it belongs to —
+two objects in one file can both have a `get` — so the worker records the owner
+beside the name (`member: "contentService.get"`) and the bridge looks the member
+up by that. `.ts` and `.js` are alike here, an `export *` barrel between the two
+files grades the edge SOUND_SET as it does for a bare call, and the edge carries
+`evidence.member`. Only the DIRECT members of a named object are followed: one
+level deeper (`a: { b() {} }`) there is no name a caller writes, and a member
+call that lands on anything else — a client instance, a library object — is the
+sink the HTTP pass already explained, so it is no edge and no miss.
 
 **A function handed over as a value.** Plenty of frontends never call their api
 function from the view at all. They hand it to a hook:

@@ -67,6 +67,15 @@
 // loads it with a `<script>` tag has nothing to import and nothing to bind, so
 // `$` is a client the way `fetch` is one.
 //
+// webfacts/7 records WHOSE a function is when it is written inside a named
+// object literal (RM57). `export const contentService = { get: … }` is how a
+// TypeScript frontend usually keeps its API calls, and the page that fetches
+// the data writes `contentService.get(id)`. The key alone (`get`) cannot tell
+// the bridge which object it belongs to, so the record carries `member`
+// (`contentService.get`) beside the name. The NAME is left alone on purpose:
+// it is half of the bridge's symbol key, and moving it would move every
+// symbol in every frontend already read.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -77,7 +86,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/6';
+const VERSION = 'webfacts/7';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

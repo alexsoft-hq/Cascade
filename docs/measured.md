@@ -288,6 +288,76 @@ smearing sideways, and both are on the held-out six.
   (`GATEWAY_ROUTE_UNREADABLE`), so nothing strips the service prefix off the
   calls. That is a gateway rule, not a frontend one, and it is untouched.
 
+### And the same six after the two defects the MSA template exposed (RM57)
+
+RM56 read msa-edu's 56 screens and left its calls at 2 of 217. The two causes
+were both general, and neither was Korean: a gateway rewrite written the way
+Spring's own reference writes it, and one hop between a page and the module its
+API calls live in.
+
+| Repository | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs | Wall |
+|---|---|---|---|---|---|---|---|
+| egovframe-common-components | 999 / 1193 | 165 / 179 | 1680 / 1862 | 765 / 811 | 470 / 657 | 9647 | 21 s |
+| egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 218 / 288 | 122 / 135 | 55 / 84 | 2099 | 2 s |
+| egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | **23 / 217** | **12 / 56** | 394 | 1 s |
+| egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 | 5 | 1 s |
+| nexacro-sample-egov | 10 / 21 | 5 / 5 | 46 / 46 | 7 / 7 | 4 / 30 | 100 | 1 s |
+| ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 | 900 | 1 s |
+
+Only msa-edu moves, and it moves twice.
+
+- **The gateway prefix is now read.** The six routes carry
+  `RewritePath=/portal-service/(?<segment>.*), /$\{segment}` and its five
+  siblings, and they were refused for a reason the round before got wrong. The
+  replacement was already read: what was not is that `Path=/portal-service/**`
+  names the prefix `/portal-service` while the pattern writes
+  `/portal-service/`, prefix plus separator, so the pattern did not match the
+  prefix and the reader said so. Both spellings are the same prefix rule, and
+  reading them alike took the six routes from a `GATEWAY_ROUTE_UNREADABLE`
+  diagnostic each to six entries with the service each forwards to, and calls
+  resolved from **2 of 217 to 23**.
+- **A page reaches the module its API calls live in.** The pages import
+  `@service` and write `contentService.get(id)`; the calls are in
+  `service/*.ts`, in an exported object of functions. The `.ts` was never the
+  problem — the resolver already tried `.ts` first, the `@service` alias already
+  resolved and `.ts` modules already carried CALLS edges. What was missing was
+  the member: the bridge read `svc.method()` on an imported object as a call to
+  nothing it had read, because the key alone (`get`) does not say which object
+  it belongs to. The worker now records the owner, and the bridge matches on it:
+  **7 CALLS edges to 100**, 31 RENDERS to 81, and screens reaching a table from
+  **0 of 56 to 12**.
+- **The screen axis went from `shipped` to `degraded` on msa-edu, and that is
+  the honest direction.** Its call to `/api/v1/menus` now matches a route, so
+  the run can see that the app fetches part of its menu at run time and says
+  that the 62 declared screens are not the whole product. Before the gateway
+  fix it could not see that and said nothing.
+- **The other five do not move by one number**, and neither do the eleven
+  repositories above this section: sixteen pack digests identical, 3,028
+  recorded answers byte-identical. The gate's own jeecg-boot entry gains 14
+  symbol nodes and 17 CALLS edges from the member rule (`rules.duplicateCheckRule`,
+  `formApi.doQueryField`), which are hops that were always there; not one
+  guarded number moves.
+
+The round trip, end to end, on the `/content/{id}` screen: RENDERS (EXACT, the
+route declaration names the component) to `ContentItem`, CALLS (SOUND_SET, the
+member `contentService.save` through an `export *` barrel) to `Content.ts#save`,
+CALLS_HTTP (SOUND_SET, axios, the declared gateway prefix taking
+`/portal-service` off the front) to `POST /api/v1/contents`, HANDLES (EXACT) to
+`ContentApiController#save`, two MAY_CALL hops to `ContentRepository#save`,
+IMPLEMENTS_STMT (EXACT), and the table `content`, written.
+
+#### What this round left on the table
+
+**A URL built on a module constant is still nothing but holes.** 73 of msa-edu's
+217 call sites resolve to a template like `{*}/{*}`, because
+`` axios.get(`${POSTS_URL}/${id}`) `` records the leading `${POSTS_URL}` as a
+hole. The worker names the hole (`base: "POSTS_URL"`) and knows the constant's
+value in the same file, but nothing substitutes it, so the path names no route
+and the walk stops at the API function. That is why the portal's own
+`/board/{skin}/{board}/view/{id}` reaches five service functions and no
+endpoint. It is a general gap in the URL reader, not a gateway or a member rule,
+and it is untouched here.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

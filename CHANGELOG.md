@@ -10,6 +10,47 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+Two general defects the eGovFrame MSA template exposed. Neither is Korean and
+neither was in the corpus before: a gateway rewrite written the way Spring's own
+reference writes it, and the hop from a page to the module its API calls live
+in.
+
+### Fixed
+
+- **The gateway rewrite Spring's reference shows is read.** A Spring Cloud
+  Gateway route written
+  `RewritePath=/portal-service/(?<segment>.*), /$\{segment}` was refused as
+  outside the plain form, and the reason was subtler than the backslash.
+  `Path=/portal-service/**` names the prefix `/portal-service`; the pattern
+  writes `/portal-service/`, the prefix WITH its separator, so the pattern did
+  not match the prefix on its own and the reader said what it honestly saw.
+  Both spellings state one prefix rule and both are now read as it. The capture
+  reference is read in all three spellings that mean the one group: `/${name}`,
+  `/$\{name}` (what the reference tells YAML authors to write, so that Spring's
+  own property placeholder does not eat it first) and `/$\\{name}` after one
+  more level of quoting, plus `/$1` with an unnamed group. A pattern that starts
+  somewhere else entirely is still refused with the same diagnostic. Measured on
+  the MSA template: six routes from a `GATEWAY_ROUTE_UNREADABLE` diagnostic each
+  to six entries, and its frontend calls resolved from **2 of 217 to 23**.
+- **A page reaches the module its API calls live in.** Most TypeScript frontends
+  keep their calls in a named object (`export const contentService = { get: … }`)
+  and a page writes `contentService.get(id)`. That is one hop, and it was read
+  as a call to nothing: the key alone (`get`) does not say which object it
+  belongs to, and two objects in one file can both have one, so the bridge would
+  have been guessing. The worker now records the owner beside the name
+  (`member: "contentService.get"`) and the bridge matches the member by it, in
+  `.ts` and `.js` alike, through an `export *` barrel at the usual SOUND_SET,
+  with the owner on the edge as `evidence.member`. Only the direct members of a
+  named object are followed, and a member call that lands on a client instance
+  is still the sink the HTTP pass explains rather than a missing hop. Measured
+  on the MSA template: **7 CALLS edges to 100**, and screens reaching a table
+  from **0 of 56 to 12**.
+
+The eleven original repositories, petclinic-ms and the five service packs do not
+move: sixteen pack digests identical, 3,028 recorded answers byte-identical, and
+of the held-out six only msa-edu moves. `docs/measured.md` has the numbers and
+what the round left on the table.
+
 ## [0.8.1] - 2026-09-10
 
 The rest of the Korean stack: one vendor's mapper XML, iBATIS 2, Nexacro

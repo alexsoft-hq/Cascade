@@ -136,6 +136,29 @@ export function indexWebFacts(records) {
 }
 
 /**
+ * THE FUNCTIONS WRITTEN INSIDE A NAMED OBJECT LITERAL, across the whole tree,
+ * keyed the way a caller in another file spells one: `<file>#<owner>.<key>`
+ * (RM57). `export const contentService = { get: … }` is the ordinary way a
+ * TypeScript frontend keeps its API calls, and the key alone (`get`) does not
+ * say which object it belongs to — two objects in one file can both have one.
+ * The worker records the owner, and this is that record turned into a lookup.
+ *
+ * @param {Map<string,object>} files  the fact index's files
+ * @returns {Map<string,object>} the function record for each member
+ */
+export function memberIndex(files) {
+  const out = new Map();
+  for (const [file, f] of files) {
+    for (const r of f.functions.values()) {
+      if (typeof r.member !== 'string') continue;
+      const key = `${file}#${r.member}`;
+      if (!out.has(key)) out.set(key, r);
+    }
+  }
+  return out;
+}
+
+/**
  * B2 and B4: module resolution, and what a name holds.
  *
  * The seven functions below are mutually recursive — a specifier leads to a

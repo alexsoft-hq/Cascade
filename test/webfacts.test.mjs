@@ -55,7 +55,7 @@ function lineOf(relFile, re) {
 test('the header names the schema, the version, the roots and what it read', () => {
   assert.equal(HEADER.kind, 'header');
   assert.equal(HEADER.schema, 'cascade:webfacts:1');
-  assert.equal(HEADER.version, 'webfacts/6');
+  assert.equal(HEADER.version, 'webfacts/7');
   assert.equal(HEADER.root, FIXTURE);
   assert.deepEqual(HEADER.roots, ['src']);
   // `files` is the number of files that were read WITH THE PARSER. Every one of
@@ -418,7 +418,7 @@ test('a dynamic import() is an import record, and a call through an import bindi
 
 test('every count in the summary equals the records it claims to count', () => {
   assert.equal(SUMMARY.kind, 'summary');
-  assert.equal(SUMMARY.version, 'webfacts/6');
+  assert.equal(SUMMARY.version, 'webfacts/7');
   const n = (k) => BODY.filter((r) => r.kind === k).length;
   assert.equal(SUMMARY.files, n('file'));
   assert.equal(SUMMARY.parseErrors, n('parse_error'));
@@ -689,4 +689,70 @@ test('a source root with no package.json anywhere above it is still its own pack
   // No package.json above it means no `src` sibling to assume `@` for either,
   // so there is no config record at all rather than a guessed one.
   assert.deepEqual(body.filter((r) => r.kind === 'config'), []);
+});
+
+// ---------------------------------------------------------------------------
+// Whose a function is, when it is written inside an object (RM57)
+// ---------------------------------------------------------------------------
+//
+// Its own temp tree rather than a corner of `web-smoke`: the shared fixture is
+// the frontend a golden pack is built from, and a file added to it moves every
+// golden answer for a rule that has nothing to do with them.
+
+/** The worker's records for one throwaway file. */
+function recordsFor(t, name, text) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webmember-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', name), text, 'utf8');
+  const out = execFileSync(process.execPath, [WORKER, '--root', dir, path.join(dir, 'src')], { maxBuffer: 1 << 28 })
+    .toString('utf8');
+  return out.split('\n').filter(Boolean).map((l) => JSON.parse(l)).slice(1, -1);
+}
+
+test('a function inside a NAMED object literal records whose it is, and keeps its own name', (t) => {
+  const body = recordsFor(t, 'service.ts', `import axios from 'axios'
+
+const CONTENT_URL = '/api/v1/contents'
+
+export const contentService = {
+  get: async (no: number) => axios.get(\`\${CONTENT_URL}/\${no}\`),
+  list() { return axios.get(CONTENT_URL) },
+}
+
+export default {
+  ping() { return axios.get('/api/v1/ping') },
+}
+
+const nested = {
+  inner: { deep() { return axios.get('/api/v1/deep') } },
+}
+`);
+  const fns = body.filter((r) => r.kind === 'function');
+  const byName = new Map(fns.map((f) => [f.name, f]));
+  // The NAME is untouched — it is half of the bridge's symbol key.
+  assert.deepEqual([...byName.keys()].sort(), ['deep', 'get', 'list', 'ping']);
+  assert.equal(byName.get('get').member, 'contentService.get');
+  assert.equal(byName.get('list').member, 'contentService.list');
+  // The default export is an object with a name of its own kind.
+  assert.equal(byName.get('ping').member, 'default.ping');
+  // One level down there is no name the caller writes, so there is no member.
+  assert.equal('member' in byName.get('deep'), false);
+});
+
+test('two objects in one file keep their members apart, even when the keys collide', (t) => {
+  const body = recordsFor(t, 'two.ts', `import axios from 'axios'
+
+export const users = {
+  get: (id) => axios.get(\`/api/v1/users/\${id}\`),
+}
+
+export const roles = {
+  get: (id) => axios.get(\`/api/v1/roles/\${id}\`),
+}
+`);
+  const fns = body.filter((r) => r.kind === 'function');
+  // The second `get` is `get~2` by the name rule, and the member says which
+  // object each one belongs to, which the name alone never could.
+  assert.deepEqual(fns.map((f) => [f.name, f.member]), [['get', 'users.get'], ['get~2', 'roles.get']]);
 });

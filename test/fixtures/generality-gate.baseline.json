@@ -90,9 +90,9 @@
    "columns": 270,
    "columnsReached": 191,
    "webCalls": 217,
-   "webCallsResolved": 2,
+   "webCallsResolved": 23,
    "screens": 56,
-   "screensReachingATable": 0,
+   "screensReachingATable": 12,
    "endpointColumnPairs": 394,
    "axes": {
     "catalog": "shipped",
@@ -102,7 +102,7 @@
     "column": "degraded",
     "code": "shipped",
     "web": "shipped",
-    "screen": "shipped"
+    "screen": "degraded"
    }
   },
   "egov-web-sample": {

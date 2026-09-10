@@ -1083,6 +1083,81 @@ test('a member call on a NAMESPACE import resolves the member to the exported fu
   ]);
 });
 
+// ---- B: a member of an imported OBJECT (RM57) -----------------------------
+//
+// `export const rowService = { listRows: … }` in one file and
+// `rowService.listRows()` in another is how most TypeScript frontends keep
+// their API calls. The worker says whose each function is, so the member is
+// resolved by name rather than by looking for any function spelled `listRows`
+// in that file.
+
+/** The same api module, written as a named object of functions. */
+const serviceFile = (name = 'src/api/rows.js') => file(name,
+  imp(1, '@/http', [{ imported: 'default', local: 'client' }]),
+  exp(2, 'rowService', 'const', { local: 'rowService' }),
+  fn(3, 'listRows', { exported: null, member: 'rowService.listRows' }),
+  call(4, 'listRows', memberCallee('client', 'get'), importBinding('@/http', 'default'),
+    literalUrl('/plain/list'), { value: 'GET', from: 'callee-name' }));
+
+/** A view that calls one member of it, and whatever else the test adds. */
+const serviceViewFile = (...extra) => file('src/screens/panel/rows.vue',
+  imp(1, '@/api/rows', [{ imported: 'rowService', local: 'rowService' }]),
+  fn(10, 'getList', { exported: 'default-member' }),
+  call(11, 'getList', memberCallee('rowService', 'listRows'),
+    importBinding('@/api/rows', 'rowService'), null, null),
+  ...extra);
+
+test('a member of an imported object of functions is a CALLS edge, and the evidence names it', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [ALIAS, ...clientFile(null), ...serviceFile(), ...serviceViewFile()], SCREEN_ON);
+  assert.deepEqual(callsOf(g).map((e) => [e.from, e.to, e.grade]), [
+    ['symbol:src/screens/panel/rows.vue#getList', 'symbol:src/api/rows.js#listRows', 'EXACT'],
+  ]);
+  assert.deepEqual(callsOf(g)[0].evidence, {
+    rule: 'esm-import',
+    specifier: '@/api/rows',
+    member: 'rowService.listRows',
+    origin: 'src/api/rows.js#listRows',
+  });
+  assert.deepEqual(stats.callsEdges, { EXACT: 1, SOUND_SET: 0, HEURISTIC: 0 });
+  assert.equal(stats.callsByRule['esm-import'], 1);
+});
+
+test('a member this lane never read is no edge and no miss: the HTTP pass already explained it', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ALIAS, ...clientFile(null), ...serviceFile(),
+    ...serviceViewFile(
+      // A member nobody declared, and a path one level deeper than a member.
+      call(12, 'getList', memberCallee('rowService', 'missing'),
+        importBinding('@/api/rows', 'rowService'), null, null),
+      call(13, 'getList',
+        { shape: 'member', root: 'rowService', path: ['inner', 'listRows'], name: 'listRows' },
+        importBinding('@/api/rows', 'rowService'), null, null),
+    ),
+  ], SCREEN_ON);
+  assert.equal(callsOf(g).length, 1, 'only the member the worker recorded is an edge');
+  assert.equal(stats.calls.notAFunction, 0);
+});
+
+test('the object an import names is followed through a barrel, and the member with it', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, [
+    ALIAS, ...clientFile(null), ...serviceFile(),
+    ...file('src/api/all.js', exp(1, '*', 'reexport', { source: './rows' })),
+    ...file('src/screens/panel/rows.vue',
+      imp(1, '@/api/all', [{ imported: 'rowService', local: 'rowService' }]),
+      fn(10, 'getList', { exported: 'default-member' }),
+      call(11, 'getList', memberCallee('rowService', 'listRows'),
+        importBinding('@/api/all', 'rowService'), null, null)),
+  ], SCREEN_ON);
+  const [e] = callsOf(g);
+  assert.equal(e.grade, 'SOUND_SET');
+  assert.equal(e.evidence.viaStar, true);
+  assert.equal(e.evidence.member, 'rowService.listRows');
+  assert.equal(e.evidence.origin, 'src/api/rows.js#listRows');
+});
+
 test('a call onto an imported name that is not a function makes no edge, and is counted', () => {
   const g = graphWithRoutes();
   const stats = addWebFacts(g, [

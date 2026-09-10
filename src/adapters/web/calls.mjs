@@ -23,7 +23,7 @@ import {
   cmp, normalizeUrl, GRADE_RANK, FIXPOINT_LIMIT,
 } from './shared.mjs';
 import { routeMatches } from '../http_routes.mjs';
-import { isComponentFile, webEndpointId, webSymbolId } from './symbols.mjs';
+import { isComponentFile, memberIndex, webEndpointId, webSymbolId } from './symbols.mjs';
 import { TEMPLATE_PREFIX } from './prefix.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
 
@@ -730,13 +730,56 @@ export function placeHttpEdges({
 // looked at, and it does not pretend otherwise. An assumed alias on the path
 // lowers it to HEURISTIC, the same as everywhere else.
 //
-// A member call on an imported OBJECT (`client.get(...)`, where `client` is a
-// client instance) is not a call to a function this lane read, and it is not
-// counted as a miss either: the HTTP pass above already explained it.
+// AND A MEMBER OF AN IMPORTED OBJECT (RM57). `export const contentService = {
+// get: … }` in one file and `contentService.get(id)` in another is one hop, the
+// same as a bare call, and it is how most TypeScript frontends keep their API
+// calls. The worker records whose each function is, so the member is resolved
+// by name rather than guessed at by looking for any function spelled `get` in
+// that file. A member call that lands on something this lane never read
+// (`client.get(...)`, where `client` is a client instance) is still no edge and
+// still not counted as a miss: the HTTP pass above already explained it.
 // ---------------------------------------------------------------------------
 
+/**
+ * THE FUNCTION AN IMPORT LEADS TO, for a bare call and for a member call alike.
+ *
+ * A bare call (`listRows()`) names the export itself. A MEMBER call
+ * (`rowService.listRows()`) names one function written inside the object the
+ * export is — which is how most TypeScript frontends keep their API calls. The
+ * worker recorded whose each of those functions is, so the member is looked up
+ * by name rather than guessed at by finding any function spelled `listRows` in
+ * that file. Anything deeper (`a.b.c()`) is a path through objects nobody
+ * recorded, and is refused.
+ *
+ * `fn` is null when the import resolved and what it landed on is not a function
+ * this lane read; the whole answer is null when it did not resolve at all.
+ */
+function importedFunctionOf({ files, members, resolveSpecifier, resolveExport }, file, imp, parts) {
+  const namespace = imp.imported === '*';
+  const member = !namespace && parts.length === 1 ? parts[0] : null;
+  if (namespace ? parts.length !== 1 : parts.length > 1) return null;
+  const r = resolveSpecifier(file, imp.source);
+  if (!r.file) return null;
+  const hit = resolveExport(r.file, namespace ? parts[0] : imp.imported, 0);
+  if (!hit || hit.external || !hit.file) return null;
+  const fn = member === null
+    ? (files.get(hit.file)?.functions.get(hit.name) ?? null)
+    : (members.get(`${hit.file}#${hit.name}.${member}`) ?? null);
+  return { hit, member, fn, assumedAlias: r.assumed === true };
+}
+
+/** What one resolved import says about itself, with every qualifier that applies. */
+function importEvidence(specifier, found, assumed) {
+  const { hit, member, fn } = found;
+  const evidence = { rule: 'esm-import', specifier, origin: `${hit.file}#${fn.name}` };
+  if (member !== null) evidence.member = `${hit.name}.${member}`;
+  if (hit.viaStar === true) evidence.viaStar = true;
+  if (assumed) evidence.assumedAlias = true;
+  return evidence;
+}
+
 /** What one call NAMES, when it names a function this lane read. */
-function makeCallTargetOf({ files, resolver, httpSiteCalls, stats }) {
+function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats }) {
   const { resolveSpecifier, resolveExport } = resolver;
   return (file, c) => {
     const callee = c.callee ?? null;
@@ -765,28 +808,24 @@ function makeCallTargetOf({ files, resolver, httpSiteCalls, stats }) {
       if (parts.length !== 0) return null;
       return f.functions.has(callee.root) ? sameFile(callee.root) : null;
     }
-    const namespace = imp.imported === '*';
-    if (namespace ? parts.length !== 1 : parts.length !== 0) return null;
-    const r = resolveSpecifier(file, imp.source);
-    if (!r.file) return null; // a package this analysis never read
-    const wanted = namespace ? parts[0] : imp.imported;
-    const hit = resolveExport(r.file, wanted, 0);
-    if (!hit || hit.external || !hit.file) return null;
-    if (!files.get(hit.file)?.functions.has(hit.name)) {
+    const found = importedFunctionOf({ files, members, resolveSpecifier, resolveExport }, file, imp, parts);
+    if (found === null) return null; // a package this analysis never read
+    if (found.fn === null) {
       // It resolved, and what it landed on is not a function: a constant, a
       // component, a client. No edge, and a number rather than a silence —
       // except where the HTTP pass above already explained this call, because a
-      // call onto a client instance is not a missing hop, it is the sink.
-      if (!httpSiteCalls.has(c)) stats.calls.notAFunction += 1;
+      // call onto a client instance is not a missing hop, it is the sink. A
+      // MEMBER that landed on nothing is that same sink, so it is not a miss
+      // either and was never counted as one.
+      if (found.member === null && !httpSiteCalls.has(c)) stats.calls.notAFunction += 1;
       return null;
     }
-    const assumed = hit.assumed === true || r.assumed === true;
-    const viaStar = hit.viaStar === true;
-    const grade = assumed ? 'HEURISTIC' : viaStar ? 'SOUND_SET' : 'EXACT';
-    const evidence = { rule: 'esm-import', specifier: imp.source, origin: `${hit.file}#${hit.name}` };
-    if (viaStar) evidence.viaStar = true;
-    if (assumed) evidence.assumedAlias = true;
-    return { file: hit.file, name: hit.name, grade, evidence };
+    const assumed = found.hit.assumed === true || found.assumedAlias;
+    const grade = assumed ? 'HEURISTIC' : found.hit.viaStar === true ? 'SOUND_SET' : 'EXACT';
+    return {
+      file: found.hit.file, name: found.fn.name, grade,
+      evidence: importEvidence(imp.source, found, assumed),
+    };
   };
 }
 
@@ -931,7 +970,8 @@ export function linkFrontendCalls({
   fileNames, files, resolver, sites, nodesToAdd, edges, stats, httpFunctionIds,
 }) {
   const httpSiteCalls = new Set(sites.map((s) => s.call));
-  const callTargetOf = makeCallTargetOf({ files, resolver, httpSiteCalls, stats });
+  const members = memberIndex(files);
+  const callTargetOf = makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats });
   const fnRefTargetOf = makeFnRefTargetOf({ files, resolver });
 
   const symbolMeta = new Map(); // symbol node id -> {file, name}

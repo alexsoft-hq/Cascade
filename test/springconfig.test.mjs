@@ -204,6 +204,96 @@ test('RewritePath in the plain form Spring documents is applied to the prefix', 
   ]);
 });
 
+test('the three spellings of a RewritePath capture reference all mean the one group', () => {
+  // Spring resolves `${…}` in a value as a property placeholder before the
+  // gateway sees it, so its own reference tells YAML authors to write
+  // `$\{segment}`. One more level of quoting makes it `$\\{segment}`. All three
+  // are the same rule, and `$1` is the same rule again without a name.
+  const route = (filters) => `spring:
+  cloud:
+    gateway:
+      routes:
+        - id: orders
+          uri: lb://orders-service
+          predicates:
+            - Path=/api/order/**
+          filters:
+${filters.map((f) => `            - ${f}`).join('\n')}
+`;
+  for (const replacement of ['/${segment}', '/$\\{segment}', '/$\\\\{segment}']) {
+    const diags = [];
+    assert.deepEqual(
+      findGatewayRoutes(file(route([`RewritePath=/api/(?<segment>.*),${replacement}`])), diags)
+        .map((r) => [r.front, r.to]),
+      [['/api/order', '/order']],
+      replacement,
+    );
+    assert.deepEqual(diags, [], replacement);
+  }
+  // The unnamed group, referred to as `$1`, which is the other form the
+  // reference shows.
+  assert.deepEqual(
+    findGatewayRoutes(file(route(['RewritePath=/api/(.*),/$1']))).map((r) => [r.front, r.to]),
+    [['/api/order', '/order']],
+  );
+});
+
+test('a RewritePath that writes the separator inside the pattern is the same prefix rule', () => {
+  // The gateway of the eGovFrame MSA template, excerpted: the route table sits
+  // under `server.webflux`, and each rewrite writes `/portal-service/` — the
+  // prefix WITH its separator — so the prefix on its own does not match the
+  // pattern and everything under it does. The rule it states is "take the
+  // service name off the front", and that is what comes out.
+  const text = `spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: portal-service
+              uri: lb://PORTAL-SERVICE
+              predicates:
+                - Path=/portal-service/**
+              filters:
+                - RewritePath=/portal-service/(?<segment>.*), /$\\{segment}
+            - id: board-service
+              uri: lb://BOARD-SERVICE
+              predicates:
+                - Path=/board-service/**
+              filters:
+                - RemoveRequestHeader=Cookie
+                - RewritePath=/board-service/(?<segment>.*), /$\\{segment}
+`;
+  const diags = [];
+  assert.deepEqual(findGatewayRoutes(file(text), diags), [
+    { front: '/board-service', to: '', service: 'BOARD-SERVICE', file: YML, id: 'board-service' },
+    { front: '/portal-service', to: '', service: 'PORTAL-SERVICE', file: YML, id: 'portal-service' },
+  ]);
+  assert.deepEqual(diags, []);
+});
+
+test('a RewritePath whose pattern starts somewhere else is still refused', () => {
+  // `/api/v1/` is neither the prefix nor the prefix plus its separator: which
+  // requests under `/api/order` it rewrites depends on the rest of the path,
+  // and there is no one prefix rule to read out of it.
+  const text = `spring:
+  cloud:
+    gateway:
+      routes:
+        - id: orders
+          uri: lb://orders-service
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - RewritePath=/api/v1/(?<segment>.*),/$\\{segment}
+`;
+  const diags = [];
+  assert.deepEqual(findGatewayRoutes(file(text), diags), []);
+  const hit = diags.find((d) => d.kind === 'GATEWAY_ROUTE_UNREADABLE');
+  assert.ok(hit, JSON.stringify(diags));
+  assert.match(hit.reason, /does not match the prefix/);
+});
+
 test('a rewrite this reader does not understand is a diagnostic and NO entry, never a guess', () => {
   const text = `spring:
   cloud:

@@ -86,8 +86,18 @@ const PATH_FILTERS = Object.freeze(['StripPrefix', 'PrefixPath', 'RewritePath', 
  */
 const PLAIN_REWRITE_RE = /^\/?[A-Za-z0-9._~/-]*\((?:\?<([A-Za-z][A-Za-z0-9]*)>)?\.\*\)$/;
 
-/** The replacement that goes with it: literal characters and one reference. */
-const PLAIN_REPLACEMENT_RE = /^([A-Za-z0-9._~/-]*)(?:\$\\?\{([A-Za-z][A-Za-z0-9]*)\}|\$(\d))([A-Za-z0-9._~/-]*)$/;
+/**
+ * The replacement that goes with it: literal characters and one reference.
+ *
+ * THE BACKSLASHES ARE SPRING'S OWN SPELLING, not a typo. Spring resolves
+ * `${…}` in a configuration value as a property placeholder before the gateway
+ * ever sees it, so the reference has to be written `$\{segment}` for the
+ * gateway to get it — which is exactly what the Spring Cloud Gateway reference
+ * tells YAML authors to write. A value that has been through one more level of
+ * quoting arrives as `$\\{segment}`. All three spellings mean the one capture
+ * group, so all three are read as it.
+ */
+const PLAIN_REPLACEMENT_RE = /^([A-Za-z0-9._~/-]*)(?:\$\\{0,2}\{([A-Za-z][A-Za-z0-9]*)\}|\$(\d))([A-Za-z0-9._~/-]*)$/;
 
 /**
  * Whether a file is one Spring reads its own configuration from: an
@@ -743,7 +753,17 @@ function rewritePrefix(front, args, where) {
   }
   let m;
   try {
-    m = new RegExp(`^${source}$`).exec(front);
+    const re = new RegExp(`^${source}$`);
+    m = re.exec(front);
+    // THE SEPARATOR CAN BE WRITTEN INSIDE THE PATTERN, and in Spring's own
+    // example it is: `RewritePath=/portal-service/(?<segment>.*)` puts the
+    // slash after the prefix in the regex, so the prefix on its own
+    // (`/portal-service`, which is what `Path=/portal-service/**` names) does
+    // not match it and everything under it does. Matching the prefix WITH its
+    // separator is the same rule read at the same place, and what the group
+    // then captures is the empty rest — which is exactly what a prefix rule
+    // needs to know.
+    if (!m) m = re.exec(`${front}/`);
   } catch {
     refuse(where, `its RewritePath regular expression ${JSON.stringify(source)} could not be compiled`);
     return null;

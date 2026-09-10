@@ -215,8 +215,15 @@ export function returnsOf(ctx, node, env) {
   return initOf(ctx, arg, { scope: inner, classInfo: env.classInfo ?? null });
 }
 
-/** The `function` record, and the entry the naming pass later finalises. */
-export function declareFunction(ctx, node, baseName, exported, scope, env) {
+/**
+ * The `function` record, and the entry the naming pass later finalises.
+ *
+ * `member` is the OWNER AND KEY of a function written inside a named object
+ * literal (`contentService.get`), when there is one. It rides beside the name
+ * rather than replacing it, because the name is half of this lane's symbol key
+ * and renaming it would rename every symbol in every frontend already read.
+ */
+export function declareFunction(ctx, node, baseName, exported, scope, env, member = null) {
   const { st, top, emit, relFile, lineOf, endLineOf, columnOf } = ctx;
   const line = lineOf(node);
   const entry = {
@@ -227,6 +234,7 @@ export function declareFunction(ctx, node, baseName, exported, scope, env) {
     endLine: endLineOf(node), exported: exported ?? null,
     async: node.async === true, params: (node.params || []).length,
     returns: returnsOf(ctx, node, env ?? { scope, classInfo: null }),
+    ...(member === null ? {} : { member }),
   };
   entry.record = rec;
   st.funcEntries.push(entry);
@@ -312,7 +320,7 @@ export function visitExportDefault(ctx, node, env) {
     // A Vue options component IS this object, and its methods are what the
     // screen calls. Every function-valued member of it, at any depth, is a
     // member of the default export.
-    visitObject(ctx, d, { ...env, defaultExport: true }, true);
+    visitObject(ctx, d, { ...env, defaultExport: true }, true, 'default');
     return;
   }
   if (d.type === 'Identifier') {
@@ -362,6 +370,14 @@ export function visitVariableDeclaration(ctx, node, env, exportedAs) {
     if (decl.init && decl.init.type === 'NewExpression') {
       const c = calleeOf(decl.init.callee);
       if (c && c.name === 'XMLHttpRequest' && simple !== null) top.xhr.add(simple);
+    }
+    // A NAMED OBJECT OF FUNCTIONS is walked knowing its name. The generic walk
+    // below reaches the same members and records them under their bare keys;
+    // this one records WHOSE they are as well, which is what a caller writing
+    // `contentService.get(id)` in another file spells out.
+    if (decl.init && decl.init.type === 'ObjectExpression' && simple !== null && env.scope.isModule) {
+      visitObject(ctx, decl.init, env, false, simple);
+      continue;
     }
     if (decl.init) ctx.visit(decl.init, env);
   }
@@ -483,13 +499,23 @@ export function visitFunctionBody(ctx, node, env, entry) {
   }
 }
 
-/** An object literal: its function-valued members, and the routes inside it. */
-export function visitObject(ctx, node, env, defaultMember) {
+/**
+ * An object literal: its function-valued members, and the routes inside it.
+ *
+ * `owner` is the module-level name the whole object is bound to, when it has
+ * one. A service written as `export const contentService = { get: … }` is the
+ * ordinary way a TypeScript frontend keeps its API calls, and a page that
+ * writes `contentService.get(id)` is calling the function inside it. Only the
+ * DIRECT members carry the owner: one more level down, `a: { b(){} }`, the name
+ * `a.b` would be a path this lane invented rather than one the caller writes.
+ */
+export function visitObject(ctx, node, env, defaultMember, owner = null) {
+  const memberOf = (name) => (owner !== null && name !== null ? `${owner}.${name}` : null);
   for (const p of node.properties) {
     if (p.type === 'ObjectMethod') {
       const name = keyName(p);
       const entry = (env.func === null && name !== null)
-        ? declareFunction(ctx, p, name, defaultMember ? 'default-member' : null, env.scope, env)
+        ? declareFunction(ctx, p, name, defaultMember ? 'default-member' : null, env.scope, env, memberOf(name))
         : null;
       visitFunctionBody(ctx, p, env, entry);
       continue;
@@ -498,7 +524,7 @@ export function visitObject(ctx, node, env, defaultMember) {
       const name = keyName(p);
       if (isFunctionNode(p.value)) {
         const entry = (env.func === null && name !== null)
-          ? declareFunction(ctx, p.value, name, defaultMember ? 'default-member' : null, env.scope, env)
+          ? declareFunction(ctx, p.value, name, defaultMember ? 'default-member' : null, env.scope, env, memberOf(name))
           : null;
         visitFunctionBody(ctx, p.value, env, entry);
         continue;
