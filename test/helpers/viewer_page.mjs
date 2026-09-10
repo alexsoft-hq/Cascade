@@ -89,9 +89,16 @@ export class El {
   get childNodes() { return this.kids; }
   hasChildNodes() { return this.kids.length > 0; }
 
+  // A BROWSER DOES NOT DROP A NULL CHILD. `append` and `replaceChildren` convert
+  // every argument that is not a Node with ToString, so a `null` panel becomes
+  // the TEXT "null" in the document, which is what a reader saw on the Overview
+  // of every project with nothing to put in the connected-projects panel. This
+  // stub used to skip a null quietly, so the page could hand one over and no test
+  // could ever see it. It stringifies now, exactly as the DOM does: the page has
+  // `setKids` for the panels that are conditional, and this is what makes using
+  // it a rule instead of a habit.
   append(...kids) {
     for (const k of kids) {
-      if (k == null) continue;
       if (k instanceof El) { k.parentNode = this; this.kids.push(k); }
       else this.kids.push({ text: String(k) });
     }

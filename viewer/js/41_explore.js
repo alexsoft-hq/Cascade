@@ -268,7 +268,9 @@ function srcRenderFoot(){
   const ft=byId('srcft');
   if(!SRC.grade && !SRC.basis){ ft.classList.add('hidden'); ft.replaceChildren(); return; }
   ft.classList.remove('hidden');
-  ft.replaceChildren(
+  // `setKids`, because either half can be absent on its own and a null child is
+  // not nothing: replaceChildren would print the word `null` beside the other one.
+  setKids(ft,
     el('span',{textContent:t('src.why')}),
     SRC.grade? badge(SRC.grade) : null,
     SRC.basis? el('span',{className:'id', textContent:SRC.basis}) : null);

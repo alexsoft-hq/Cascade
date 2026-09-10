@@ -4005,6 +4005,82 @@ test('a project that calls nobody gets no connected-projects panel at all', asyn
   assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0);
 });
 
+/**
+ * Every piece of TEXT in the document that is not inside an element of its own:
+ * the text nodes, as a browser would have them.
+ *
+ * `replaceChildren(a, b, null)` does not skip the null. The DOM converts every
+ * argument that is not a Node with ToString, so a panel that is absent arrives as
+ * the word `null` between the two panels either side of it. The test DOM stub
+ * does the same thing now, which is what lets this be checked at all.
+ */
+function textNodesIn(root) {
+  const out = [];
+  for (const node of [root, ...root.all()]) {
+    for (const k of node.childNodes) {
+      if (!(k instanceof El)) out.push({ text: String(k.text), in: node.id || node.className || node.tagName });
+    }
+  }
+  return out;
+}
+
+test('a panel that is absent leaves NOTHING behind, in either shape of the answer', async (t) => {
+  const { ctx, byId, body } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  const stray = () => textNodesIn(body).filter((n) => n.text === 'null' || n.text === 'undefined');
+
+  // (1) A project with NO connected projects, which is most of them: the census
+  //     came back and answered "nobody". The connected-projects panel is null
+  //     here, and a null child is not nothing: the Overview printed the word
+  //     `null` between "What we could not see" and "How sure the lines are" on
+  //     every one of them.
+  assert.equal(ev(ctx, 'OV.resp.answer.federation.calls'), 0, 'this fixture calls nobody');
+  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0, 'and so has no connected panel');
+  assert.deepEqual(stray(), [], 'the page printed the word null or undefined at these places');
+
+  // (2) ...and with the panel present, which is the other half: dropping the
+  //     empty slots must not drop a panel that is really there.
+  ev(ctx, `OV.resp.answer.federation = ${JSON.stringify(connectedCensus())}; renderOverview();`);
+  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 3);
+  assert.deepEqual(stray(), []);
+
+  // (3) The third shape, and the other `return null` in the panel: an answer
+  //     with no federation block at all, which is what a pack built before that
+  //     census existed carries.
+  ev(ctx, 'delete OV.resp.answer.federation; renderOverview();');
+  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0);
+  assert.deepEqual(stray(), []);
+});
+
+test('the source footer says WHY with either half of it missing, and prints no null', async (t) => {
+  // The other place on the page that handed a conditional child straight to
+  // `replaceChildren`: the footer of the source pane, which carries the grade of
+  // the edge that led here and the sentence the engine gave for it. Either can be
+  // absent on its own, and the row used to print the word `null` beside the one
+  // that was there.
+  const { ctx, byId, body } = await bootPage(t, { hash: '#p=alpha&tab=explore' });
+  const stray = () => textNodesIn(body).filter((n) => n.text === 'null' || n.text === 'undefined');
+  const foot = () => byId.get('srcft');
+
+  ev(ctx, "SRC.grade='EXACT'; SRC.basis='one file says so'; srcRenderFoot();");
+  assert.match(foot().textContent, /EXACT/);
+  assert.match(foot().textContent, /one file says so/);
+  assert.deepEqual(stray(), []);
+
+  ev(ctx, "SRC.grade='SOUND_SET'; SRC.basis=null; srcRenderFoot();");
+  assert.match(foot().textContent, /SOUND_SET/);
+  assert.deepEqual(stray(), [], 'a grade with no sentence must not print the word null beside it');
+
+  ev(ctx, "SRC.grade=null; SRC.basis='a rule with no grade'; srcRenderFoot();");
+  assert.match(foot().textContent, /a rule with no grade/);
+  assert.deepEqual(stray(), []);
+
+  // Neither: the whole row is hidden and emptied, as before.
+  ev(ctx, 'SRC.grade=null; SRC.basis=null; srcRenderFoot();');
+  assert.equal(foot().classList.contains('hidden'), true);
+  assert.equal(foot().textContent, '');
+  assert.deepEqual(stray(), []);
+});
+
 test('a single-project server with an unanswered call shows the unmatched row alone', async (t) => {
   const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
   ev(ctx, `OV.resp.answer.federation = { calls: 1, answered: 0, unmatched: 1, projects: [], byProject: [],

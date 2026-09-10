@@ -105,6 +105,17 @@ byte for byte.
 
 ### Fixed
 
+- **The Overview no longer prints the word `null` between two panels.** The hero
+  column was filled with `replaceChildren(hubs, gaps, connected, grades)`, and the
+  connected-projects panel is `null` on a project with no connected projects,
+  which is most of them. A browser does not drop a null child: it converts every
+  argument that is not a node with ToString, so the text `null` stood between
+  "What we could not see" and "How sure the lines are" on nearly every project
+  since RM45. Both places that did this now go through `setKids`, which drops the
+  empty slots (the other was the source pane's footer, which printed `null` beside
+  a grade that had no sentence with it). The test DOM stub used to skip a null
+  child quietly, which is why no test ever saw either one; it stringifies now, the
+  way the DOM does.
 - **`cascade view --port 0` prints the port it actually got.** `serveHttp`
   resolved with the port it was ASKED for, so a run with `--port 0` (ask the
   kernel for a free one) printed `http://127.0.0.1:0/` and nobody could open it.

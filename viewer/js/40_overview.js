@@ -45,7 +45,11 @@ function renderOverview(){
   const a=r.answer;
   byId('ovcards').replaceChildren(...ovKpis(a));
   byId('ovhero').classList.remove('hidden');
-  byId('ovherocol').replaceChildren(ovHubBars(r,a), ovGapsPanel(a), ovConnectedPanel(a), ovGradesPanel(a));
+  // `setKids` and not `replaceChildren`: the connected-projects panel is null on
+  // a project that has no connected projects, which is most of them, and a null
+  // handed to replaceChildren does not disappear. The DOM converts it with
+  // ToString, so the word `null` was printed between two panels of the Overview.
+  setKids(byId('ovherocol'), ovHubBars(r,a), ovGapsPanel(a), ovConnectedPanel(a), ovGradesPanel(a));
   // The ribbon is NOT deleted: it is the drawing theme's own picture of the same
   // four numbers, one click below the dials that replaced it.
   byId('ovfold').replaceChildren(el('div',{className:'panel ovfoldwrap'},[
