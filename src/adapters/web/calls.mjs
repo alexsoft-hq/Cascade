@@ -311,8 +311,8 @@ export function traceWrappers({
  * address. A URL that never resolved is kept (its shape is unknown, and it is
  * counted by reason further down); one that resolved to a bare word is not.
  */
-function urlShaped(c, resolved) {
-  if (c.url.absolute) return true;
+function urlShaped(absolute, resolved) {
+  if (absolute) return true;
   if (!Array.isArray(resolved)) return true;
   return resolved.some((r) => typeof r.template === 'string' && r.template.startsWith('/'));
 }
@@ -326,13 +326,162 @@ function urlShaped(c, resolved) {
  * the hole be recognised as the app root and removed. The result is the path the
  * server sees, and everything downstream reads it as one.
  */
-function withContextPath(call, contextVars) {
-  const resolved = Array.isArray(call.url.resolved) ? call.url.resolved : null;
+function withContextPath(call, contextVars, from) {
+  const resolved = Array.isArray(from) ? from : null;
   if (resolved === null || contextVars === null) return resolved;
   if (typeof call.url.base !== 'string' || !contextVars.has(call.url.base)) return resolved;
   return resolved.map((r) => (typeof r.template === 'string' && r.template.startsWith('{*}')
-    ? { ...r, template: r.template.slice(3), dynamicParts: Math.max(0, (r.dynamicParts ?? 1) - 1) }
+    ? {
+      ...r,
+      template: r.template.slice(3),
+      dynamicParts: Math.max(0, (r.dynamicParts ?? 1) - 1),
+      // The hole goes with the text it stood for: it is the app root, which is
+      // explained, so it is no longer one of the holes this call is left with.
+      ...(Array.isArray(r.holes) ? { holes: r.holes.slice(1) } : {}),
+    }
     : r));
+}
+
+// ---------------------------------------------------------------------------
+// THE OTHER HALF OF THE SUBSTITUTION (RM58)
+//
+// The worker fills in a constant the SAME FILE declares, because that is all
+// one file can state. `import { POSTS_URL } from '@/constants/api'` is the same
+// shape written across two files, and following it needs the specifier rules,
+// the aliases and the export chain — which live here, and which this lane
+// already uses to say which function a call names. So the worker leaves such a
+// hole with the specifier on it and the bridge finishes it.
+//
+// The VALUE is still a literal somebody wrote: what is added here is only which
+// file it is in. Where the file was found through an ASSUMED alias, the site is
+// marked assumed and grades down, the same as everything else that rests on
+// that guess.
+// ---------------------------------------------------------------------------
+
+/** The text an imported constant holds, or null. Memoized per (file, hole). */
+function makeConstantOf({ files, resolver }) {
+  const { resolveSpecifier, resolveExport } = resolver;
+  const memo = new Map();
+  return (file, hole) => {
+    const key = `${file} ${hole.source} ${hole.imported} ${hole.name}`;
+    if (memo.has(key)) return memo.get(key);
+    const out = { value: null, assumed: false };
+    const dot = String(hole.name).indexOf('.');
+    const member = dot > 0 ? hole.name.slice(dot + 1) : null;
+    // `a.b.c` is a path through objects nobody recorded, and it is refused the
+    // same way a call through one is.
+    const tooDeep = member !== null && member.includes('.');
+    const namespace = hole.imported === '*';
+    const wanted = namespace ? member : hole.imported;
+    const r = typeof hole.source === 'string' && !tooDeep && wanted !== null
+      ? resolveSpecifier(file, hole.source) : {};
+    if (r.file) {
+      const hit = resolveExport(r.file, wanted, 0);
+      if (hit && !hit.external && hit.file) {
+        const rec = files.get(hit.file)?.constants.get(hit.name) ?? null;
+        const v = rec === null ? null
+          : (namespace || member === null ? rec.value : (rec.members ?? {})[member]);
+        if (typeof v === 'string') {
+          out.value = v;
+          out.assumed = r.assumed === true || hit.assumed === true;
+        }
+      }
+    }
+    memo.set(key, out);
+    return out;
+  };
+}
+
+/**
+ * One call's URL candidates with every hole an IMPORTED constant explains
+ * filled in, and what that took.
+ *
+ * @returns {{resolved:object[], substituted:object[], assumed:boolean}}
+ */
+function withImportedConstants(file, call, from, constantOf) {
+  const resolved = Array.isArray(from) ? from : null;
+  const url = call.url ?? {};
+  const substituted = [];
+  let assumed = false;
+  if (resolved === null || resolved.length === 0) return { resolved, substituted, assumed };
+  const one = resolved.length === 1;
+  const out = resolved.map((cand) => {
+    const holes = Array.isArray(cand.holes) ? cand.holes
+      : (one && Array.isArray(url.holes) ? url.holes : null);
+    if (holes === null || holes.length === 0) return cand;
+    const parts = String(cand.template).split('{*}');
+    // The hole list and the `{*}` have to line up, or a value would land in the
+    // wrong place, and a wrong path is worse than a hole.
+    if (parts.length - 1 !== holes.length) return { ...cand, holes };
+    const text = [];
+    const remaining = [];
+    for (let i = 0; i < holes.length; i += 1) {
+      text.push(parts[i]);
+      const h = holes[i];
+      const got = h && h.kind === 'import' ? constantOf(file, h) : { value: null, assumed: false };
+      if (typeof got.value !== 'string') { text.push('{*}'); remaining.push(h); continue; }
+      text.push(got.value);
+      assumed = assumed || got.assumed;
+      if (!substituted.some((s) => s.name === h.name && s.value === got.value)) {
+        substituted.push({ name: h.name, value: got.value, from: 'import' });
+      }
+    }
+    text.push(parts[parts.length - 1]);
+    if (remaining.length === holes.length) return { ...cand, holes };
+    return {
+      ...cand, template: text.join(''), dynamicParts: remaining.length, holes: remaining,
+    };
+  });
+  return { resolved: out, substituted, assumed };
+}
+
+/**
+ * The address a filled-in template turns out to name, when a constant put a
+ * HOST on the front of it, and the path with that host taken off.
+ *
+ * The worker does this for the text it resolves itself (`buildUrl`); a value
+ * that arrived from another module has not been through it, and a call whose
+ * template suddenly starts with `https:` would be read as not URL-shaped at
+ * all and dropped.
+ */
+function withoutHost(resolved) {
+  let absolute = null;
+  const out = resolved.map((r) => {
+    let t = r.template;
+    if (typeof t !== 'string') return r;
+    const abs = /^(https?:)?\/\/([^/]+)(\/.*)?$/.exec(t);
+    if (abs) {
+      if (absolute === null) absolute = { host: abs[2], path: abs[3] ?? '/' };
+      t = abs[3] ?? '/';
+    }
+    const q = t.indexOf('?');
+    if (q >= 0) t = t.slice(0, q);
+    return t === r.template ? r : { ...r, template: t };
+  });
+  return { resolved: out, absolute };
+}
+
+/**
+ * The holes a call site is LEFT with, and the constants that went into it.
+ *
+ * Counted per call site and once per distinct hole: a template that names the
+ * same parameter twice is one thing a reader cannot see, not two.
+ */
+function countUrlCensus(stats, resolved, substituted) {
+  for (const s of substituted) {
+    const from = s.from === 'import' ? 'import' : 'same-file';
+    stats.url.substituted[from] = (stats.url.substituted[from] ?? 0) + 1;
+  }
+  const seen = new Set();
+  for (const cand of resolved ?? []) {
+    for (const h of Array.isArray(cand.holes) ? cand.holes : []) {
+      if (!h || typeof h.kind !== 'string') continue;
+      const key = `${h.kind} ${h.name ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      stats.url.holes[h.kind] = (stats.url.holes[h.kind] ?? 0) + 1;
+    }
+  }
 }
 
 /** The HTTP method this call sends, and what said so. */
@@ -363,7 +512,7 @@ function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
 }
 
 /** Which of the six kinds of sink ONE call reached, or null when it is not a call at all. */
-function sinkOf(file, c, { resolved, isTemplate, pkg, deps }) {
+function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
   const {
     platformOf, injectedClients, calleeTarget, sinkVerb, wrappers, noteInstance, stats,
   } = deps;
@@ -431,7 +580,7 @@ function sinkOf(file, c, { resolved, isTemplate, pkg, deps }) {
   // reached none AND whose argument is not written like a path is not an
   // HTTP call here: it is counted (`notUrlShaped`) and left alone, rather
   // than becoming a route named `/size` that nothing serves.
-  if (!urlShaped(c, resolved)) { stats.calls.notUrlShaped += 1; return null; }
+  if (!urlShaped(absolute, resolved)) { stats.calls.notUrlShaped += 1; return null; }
   stats.calls.untraced += 1;
   return {
     sink: { kind: 'untraced', module: target && target.kind === 'external' ? target.module : null, instance: null, chain: [], depth: 0 },
@@ -453,6 +602,7 @@ export function classifyCallSites({
   instanceOf, callsPerInstance, stats, deps,
 }) {
   const methodFor = makeMethodFor(deps);
+  const constantOf = makeConstantOf({ files, resolver: deps.resolver });
   const sites = [];
   for (const file of fileNames) {
     const f = files.get(file);
@@ -470,11 +620,23 @@ export function classifyCallSites({
       // and cannot follow, which is not the same finding as no request.
       if (c.nexacro && !c.url) { stats.calls.nexacroUnreadable += 1; continue; }
       if (!c.url) continue;
-      const resolved = withContextPath(c, ctxVars);
-      const found = sinkOf(file, c, { resolved, isTemplate, pkg, deps });
+      // A HOLE ANOTHER MODULE'S CONSTANT EXPLAINS (RM58), filled before
+      // anything else reads the template: what this call asks for is decided
+      // on the text with the constants in it.
+      const imported = withImportedConstants(file, c, c.url.resolved, constantOf);
+      // Only text that CHANGED here needs the host and query taken off it: what
+      // the worker resolved has already been through that, and running it again
+      // over every call would quietly re-read URLs no constant touched.
+      const host = imported.substituted.length === 0
+        ? { resolved: imported.resolved, absolute: null } : withoutHost(imported.resolved);
+      const absolute = host.absolute ?? c.url.absolute ?? null;
+      const resolved = withContextPath(c, ctxVars, host.resolved);
+      const found = sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps });
       if (found === null) continue;
       const { sink, target } = found;
+      const substituted = [...(c.url.substituted ?? []), ...imported.substituted];
       stats.calls.withUrl += 1;
+      countUrlCensus(stats, resolved, substituted);
       const instanceId = sink.instance ?? `${pkg}#(package)`;
       if (!instanceOf.has(instanceId)) {
         instanceOf.set(instanceId, { id: instanceId, module: sink.module, baseURL: null, package: pkg });
@@ -482,8 +644,9 @@ export function classifyCallSites({
       const method = methodFor(c, sink, target);
       sites.push({
         file, pkg, call: c, sink, target, instanceId, method,
-        assumed: (target && target.assumed === true) || false,
-        template: isTemplate, resolved,
+        assumed: (target && target.assumed === true) || imported.assumed,
+        template: isTemplate, resolved, absolute,
+        ...(substituted.length > 0 ? { substituted } : {}),
       });
       if (Array.isArray(resolved) && !isTemplate) {
         if (!callsPerInstance.has(instanceId)) callsPerInstance.set(instanceId, []);
@@ -557,6 +720,10 @@ function callEvidence(site, { written, full, via, absolute, prefixEvidence, decl
     url: {
       written, template: full, via,
       ...(absolute ? { host: absolute.host } : {}),
+      // WHAT WAS PUT INTO THE PATH (RM58): each constant this call's URL was
+      // built on, and where its literal was read. `written` is the path with
+      // them already in it, so this is how a reader gets back to the source.
+      ...(site.substituted ? { substituted: site.substituted } : {}),
     },
     method: site.method,
     prefix: prefixEvidence,
@@ -685,7 +852,7 @@ export function placeHttpEdges({
     // is not part of any route the pack serves, so the prefix is the empty
     // string and nothing had to be guessed to know that.
     const prefix = site.template ? TEMPLATE_PREFIX : prefixOf(site.instanceId);
-    const absolute = call.url.absolute ?? null;
+    const absolute = site.absolute ?? call.url.absolute ?? null;
     const outsidePack = absolute !== null && !LOCAL_HOSTS.has(absolute.host)
       && !configFor(site.pkg).proxies.some((p) => typeof p.target === 'string' && p.target.includes(absolute.host));
     const ctx = {
@@ -839,7 +1006,7 @@ function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats }) {
  * source states: this function was handed over here, so whoever took it may
  * call it. That is a sound candidate, and SOUND_SET is what it is graded.
  */
-function makeFnRefTargetOf({ files, resolver }) {
+function makeFnRefTargetOf({ files, members, resolver }) {
   const { resolveSpecifier, resolveExport } = resolver;
   return (file, ref) => {
     if (!ref || typeof ref.name !== 'string') return null;
@@ -860,24 +1027,24 @@ function makeFnRefTargetOf({ files, resolver }) {
         evidence: { rule: 'passed-as-value', via, ...keyPart, origin: `${file}#${ref.name}` },
       };
     }
-    const namespace = imp.imported === '*';
-    if (namespace ? parts.length !== 1 : parts.length !== 0) return null;
-    const r = resolveSpecifier(file, imp.source);
-    if (!r.file) return null; // a package this analysis never read
-    const wanted = namespace ? parts[0] : imp.imported;
-    const hit = resolveExport(r.file, wanted, 0);
-    if (!hit || hit.external || !hit.file) return null;
+    // THE SAME INDEX A CALLEE GOES THROUGH (RM58). `usePagedList({ api:
+    // boardService.getPosts })` hands over a function written inside an
+    // imported object, which is the same hop as calling it, so it is resolved
+    // by the same rule rather than refused for having a dot in it.
+    const found = importedFunctionOf({ files, members, resolveSpecifier, resolveExport }, file, imp, parts);
     // What was passed is not a function this lane read: a constant, a component,
     // a client instance. Handing one of those over is ordinary, and it is not a
     // missing hop, so it is not counted as one either.
-    if (!files.get(hit.file)?.functions.has(hit.name)) return null;
-    const assumed = hit.assumed === true || r.assumed === true;
+    if (found === null || found.fn === null) return null;
+    const { hit, member, fn } = found;
+    const assumed = hit.assumed === true || found.assumedAlias;
     const evidence = {
-      rule: 'passed-as-value', via, ...keyPart, specifier: imp.source, origin: `${hit.file}#${hit.name}`,
+      rule: 'passed-as-value', via, ...keyPart, specifier: imp.source, origin: `${hit.file}#${fn.name}`,
+      ...(member === null ? {} : { member: `${hit.name}.${member}` }),
     };
     if (hit.viaStar === true) evidence.viaStar = true;
     if (assumed) evidence.assumedAlias = true;
-    return { file: hit.file, name: hit.name, grade: assumed ? 'HEURISTIC' : 'SOUND_SET', evidence };
+    return { file: hit.file, name: fn.name, grade: assumed ? 'HEURISTIC' : 'SOUND_SET', evidence };
   };
 }
 
@@ -972,7 +1139,7 @@ export function linkFrontendCalls({
   const httpSiteCalls = new Set(sites.map((s) => s.call));
   const members = memberIndex(files);
   const callTargetOf = makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats });
-  const fnRefTargetOf = makeFnRefTargetOf({ files, resolver });
+  const fnRefTargetOf = makeFnRefTargetOf({ files, members, resolver });
 
   const symbolMeta = new Map(); // symbol node id -> {file, name}
   for (const [id, n] of nodesToAdd) {

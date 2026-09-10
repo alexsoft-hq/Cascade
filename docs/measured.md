@@ -358,6 +358,62 @@ and the walk stops at the API function. That is why the portal's own
 endpoint. It is a general gap in the URL reader, not a gateway or a member rule,
 and it is untouched here.
 
+### And the same corpus after a URL built on a constant is read (RM58)
+
+The gap the round before left on the table: a frontend does not write its paths
+at the call site. It writes them once at the top of the file and every call is
+that name plus what the caller passes, so `` axios.get(`${POSTS_URL}/${id}`) ``
+read letter by letter is `{*}/{*}` and names no route. A hole that is a name the
+file can follow to text is now filled in, and the edge says what went in.
+
+| Repository | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs | Wall |
+|---|---|---|---|---|---|---|---|
+| egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | **137 / 217** | **33 / 56** | 394 | 1 s |
+| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | **584 / 963** | 25 / 181 | 15997 | 14 s |
+
+Two repositories move, both upward, and every other number in the corpus is
+where it was.
+
+- **msa-edu: calls resolved from 23 of 217 to 137, screens reaching a table
+  from 12 of 56 to 33.** 123 call sites were built on a constant declared in
+  their own file, and the templates that were nothing but holes went from 73 to
+  7. The call sites themselves did not move: 217 before and 217 after, because
+  filling a hole resolves a call and never adds one.
+- **jeecg-boot: 562 to 584**, from 71 substitutions, with no other guarded
+  number touched. Most of them are one enum of paths per module
+  (`Api.getDictItems`, `Api.promptGenerate`), which is the same shape written
+  as an enum instead of a `const`.
+- **Nothing else in the corpus has the shape.** ruoyi-vue, mall, litemall,
+  jsh-erp, dolphinscheduler and ngrinder write their paths at the call site, and
+  their sixteen pack digests, 3,028 recorded answers and every gate number are
+  identical to the run before.
+- **What is left is named rather than counted as one lump.** Of msa-edu's
+  remaining holes, 163 are local to the function the call is written in, which
+  is the route's own hole and is matched as one, and 8 are a constant another
+  module exports. All 8 lead to `process.env` one file away, so nothing in the
+  source states them.
+
+The round trip on the portal's `/board/{skin}/{board}/view/{id}`, which reached
+no endpoint at all before: RENDERS (EXACT, the file-tree page declaration) to
+`[id].tsx#BoardView`, CALLS (SOUND_SET, the member `boardService.getPostById`
+through an `@service` import) to `Board.ts#getPostById`, CALLS_HTTP (SOUND_SET,
+axios, `POSTS_URL` put into `` `${POSTS_URL}/view/${boardNo}/${postsNo}` `` and
+the declared gateway prefix taking `/board-service` off the front) to
+`GET /api/v1/posts/view/{boardNo}/{postsNo}`, HANDLES (EXACT) to
+`PostsApiController#findViewById`, two MAY_CALL hops (SOUND_SET, field receiver)
+to `PostsRepository.findById`, IMPLEMENTS_STMT (EXACT), and the table `posts`.
+The page reaches four tables in all: `board`, `posts`, `posts_read`, `comment`.
+
+#### What this round left on the table
+
+**A constant another module exports is followed only when it is a literal.**
+The bridge resolves the specifier and reads the exported constant, and every
+unit test for it passes, but no repository in the corpus exercises it: the eight
+import-bound holes left in msa-edu all lead to `export const X = process.env.X`,
+which is a deployment value and is left alone on purpose. A constant whose own
+value is built out of another hole (`` const BANNER_URL = `/api/${SITE_ID}/banners` ``)
+is reported by what stopped it and is not followed further.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

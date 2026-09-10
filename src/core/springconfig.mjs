@@ -735,6 +735,22 @@ export function backPrefixOf(front, filters, where = {}) {
   return out === '/' ? '' : out;
 }
 
+/**
+ * THE REPLACEMENT HAS TO NAME THE GROUP THE PATTERN CAPTURES (RM58).
+ *
+ * `/service/(?<segment>.*)` with `/$\{other}` refers to something the regular
+ * expression never captured, and reading `other` as `segment` would forward a
+ * path this route does not forward. Only `$1` is allowed to stand for the one
+ * group whatever it is called, because that is what it means.
+ */
+function sameGroup(plain, target, replacement, where) {
+  if (target[2] === undefined || target[2] === plain[1]) return true;
+  refuse(where, `its RewritePath replacement refers to ${JSON.stringify(target[2])} and its regular expression captures `
+    + `${plain[1] === undefined ? 'a group with no name' : JSON.stringify(plain[1])}, `
+    + 'so the two do not name the same thing');
+  return false;
+}
+
 /** `RewritePath=<regex>,<replacement>` applied to a prefix, or null. */
 function rewritePrefix(front, args, where) {
   const comma = String(args ?? '').indexOf(',');
@@ -751,6 +767,7 @@ function rewritePrefix(front, args, where) {
       + '`/prefix/(?<name>.*)` form this reader reads, so it was skipped rather than guessed');
     return null;
   }
+  if (!sameGroup(plain, target, replacement, where)) return null;
   let m;
   try {
     const re = new RegExp(`^${source}$`);

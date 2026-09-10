@@ -68,9 +68,19 @@ export function looksLikeUrlSummary(summary) {
   return false;
 }
 
-/** Whether a name this file can follow leads to text written like a URL. */
+/**
+ * Whether a name this file can follow leads to text written like a URL.
+ *
+ * Read WITHOUT substituting constants, on purpose (RM58). This question decides
+ * whether an argument IS the URL, and answering it on text a constant was put
+ * into would make this lane count calls it never counted before: `f(`${BASE}/x`)`
+ * would become a request the moment `BASE` is a path. Which calls a frontend
+ * makes is not what a substitution rule is allowed to change, so the decision is
+ * made on the text as written and the substitution only improves the answer for
+ * a call already recognised.
+ */
 function resolvesToUrl(ctx, summary, scope) {
-  const r = resolveSummary(ctx, summary, scope, viaOf(ctx, summary), 1);
+  const r = resolveSummary(ctx, summary, scope, viaOf(ctx, summary), 1, false);
   return r !== null && r.length > 0 && r.every((x) => looksLikeUrlText(x.template));
 }
 
@@ -429,16 +439,153 @@ export function visitCall(ctx, node, env) {
 //   ternary        a conditional written in the argument itself
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// A URL BUILT ON A NAMED CONSTANT IS STILL A URL (RM58)
+//
+// `const POSTS_URL = '/board-service/api/v1/posts'` at the top of a file, and
+// `axios.get(`${POSTS_URL}/${id}`)` twelve lines below it, is the commonest way
+// a TypeScript frontend writes its API calls. Read literally the template is
+// `{*}/{*}`, which names no route, so every one of those calls used to place no
+// edge at all — on the MSA template measured for this round, 73 of 217 call
+// sites.
+//
+// So a hole that is a NAME THIS FILE CAN FOLLOW TO TEXT is filled in, and the
+// record says what was put where: `substituted` names the constant and its
+// value, and the text as written stays on the record beside it. What is filled
+// in is only ever a literal the source states, which is why the substitution is
+// a fact and not a guess.
+//
+// WHAT STAYS A HOLE, and what it is then called:
+//   parameter  a name local to the enclosing function: one it was handed, or a
+//              `let` of its own. Neither is stated where the call is written
+//   env        `process.env.X`, `import.meta.env.X`, or a constant bound to
+//              one. An env value is a DEPLOYMENT fact, not a source fact, and
+//              filling it in would state something this repository does not
+//   call       a call. What it returns is a program, not a spelling
+//   import     a name another module exports. One file cannot follow it, so the
+//              record carries the specifier and the bridge finishes the job
+//   unknown    anything else
+// ---------------------------------------------------------------------------
+
+/** Whether a name is the deployment's environment rather than this source's. */
+const isEnvName = (name) => /^(process\.env|import\.meta\.env)(\.|$)/.test(name);
+
+/** What one NAME holds, followed as far as this file states it. */
+function reduceName(ctx, name, scope, seen) {
+  const { top, summarizeArg } = ctx;
+  if (seen.has(name)) return { value: null, kind: 'unknown', name };
+  seen.add(name);
+  if (isEnvName(name)) return { value: null, kind: 'env', name };
+  const dot = name.indexOf('.');
+  if (dot > 0) {
+    const root = name.slice(0, dot);
+    const member = name.slice(dot + 1);
+    const c = top.constants.get(root);
+    const outer = scope.find(root);
+    const statedRoot = outer === null || !outer.mutable.has(root);
+    if (c && c.members && c.members.has(member) && statedRoot) {
+      return { value: c.members.get(member), from: 'same-file' };
+    }
+    if (outer && !outer.isModule) return { value: null, kind: 'parameter', name };
+    if (top.imports.has(root)) return { value: null, kind: 'import', name, ...top.imports.get(root) };
+    return { value: null, kind: 'unknown', name };
+  }
+  const found = scope.find(name);
+  // A `let` is not bound to the literal beside it: the next line may assign it
+  // again, and `let t = "0"; if (…) t = params.t` is real code. Only a `const`
+  // states a value, so only a `const` is followed.
+  const stated = found === null || !found.mutable.has(name);
+  if (found && !found.isModule) {
+    const init = found.names.get(name);
+    // A parameter has no initializer at all: it is the caller's value.
+    if (!init || !stated) return { value: null, kind: 'parameter', name };
+    return reduceSummary(ctx, summarizeArg(init), scope, seen, name);
+  }
+  const c = top.constants.get(name);
+  if (c && typeof c.value === 'string' && stated) return { value: c.value, from: 'same-file' };
+  if (top.imports.has(name)) return { value: null, kind: 'import', name, ...top.imports.get(name) };
+  if (found && found.isModule && found.names.get(name) && stated) {
+    return reduceSummary(ctx, summarizeArg(found.names.get(name)), scope, seen, name);
+  }
+  return { value: null, kind: 'unknown', name };
+}
+
+/** The same question asked of what a name was ASSIGNED, one summary at a time. */
+function reduceSummary(ctx, summary, scope, seen, name) {
+  if (!summary) return { value: null, kind: 'unknown', name };
+  if (summary.kind === 'string') return { value: summary.value, from: 'same-file' };
+  if (summary.kind === 'ident') return reduceName(ctx, summary.name, scope, seen);
+  if (summary.kind === 'member') return reduceName(ctx, [summary.root, ...summary.path].join('.'), scope, seen);
+  if (summary.kind === 'template') {
+    // A constant built out of other constants. It counts only when it reduces
+    // ALL the way: half a path is not a path.
+    const inner = fillHoles(ctx, summary, scope, seen);
+    if (inner.dynamicParts === 0) return { value: inner.template, from: 'same-file' };
+    return { value: null, kind: inner.holes.length > 0 ? inner.holes[0].kind : 'unknown', name };
+  }
+  return { value: null, kind: 'unknown', name };
+}
+
+/**
+ * One template with every hole this file can fill filled in.
+ *
+ * @returns {{template:string, dynamicParts:number, holes:object[], substituted:object[], written:(string|null)}}
+ */
+export function fillHoles(ctx, summary, scope, seen = null) {
+  const written = summary.template;
+  const holes = Array.isArray(summary.holes) ? summary.holes : [];
+  const parts = written.split('{*}');
+  // The template and its hole list have to line up, or nothing is filled in:
+  // a `{*}` written in the source itself would put the values in the wrong
+  // places, and a wrong path is worse than a hole.
+  if (holes.length === 0 || parts.length - 1 !== holes.length) {
+    return {
+      template: written, dynamicParts: summary.dynamicParts, holes: [], substituted: [], written: null,
+    };
+  }
+  const out = [];
+  const substituted = [];
+  const remaining = [];
+  for (let i = 0; i < holes.length; i += 1) {
+    out.push(parts[i]);
+    const hole = holes[i];
+    const red = hole.kind === 'name'
+      ? reduceName(ctx, hole.name, scope, seen === null ? new Set() : new Set(seen))
+      : { value: null, kind: hole.kind === 'call' ? 'call' : 'unknown', ...(hole.name ? { name: hole.name } : {}) };
+    if (typeof red.value === 'string') {
+      out.push(red.value);
+      if (!substituted.some((s) => s.name === hole.name)) {
+        substituted.push({ name: hole.name, value: red.value, from: red.from });
+      }
+      continue;
+    }
+    out.push('{*}');
+    const { value, ...rest } = red;
+    remaining.push(rest);
+  }
+  out.push(parts[parts.length - 1]);
+  return {
+    template: out.join(''),
+    dynamicParts: remaining.length,
+    holes: remaining,
+    substituted,
+    written: substituted.length > 0 ? written : null,
+  };
+}
+
 /** Every URL one argument can be, or null when this file cannot say. */
-export function resolveSummary(ctx, summary, scope, via, depth) {
+export function resolveSummary(ctx, summary, scope, via, depth, substitute = true) {
   const { top, summarizeArg } = ctx;
   if (!summary) return null;
   if (summary.kind === 'string') return [{ template: summary.value, dynamicParts: 0, via }];
-  if (summary.kind === 'template') return [{ template: summary.template, dynamicParts: summary.dynamicParts, via }];
+  if (summary.kind === 'template') {
+    if (!substitute) return [{ template: summary.template, dynamicParts: summary.dynamicParts, via }];
+    return [{ ...fillHoles(ctx, summary, scope), via }];
+  }
   if (summary.kind === 'ternary') {
     const out = [];
     for (const c of summary.candidates) {
-      const r = resolveSummary(ctx, c, scope, via, depth);
+      const r = resolveSummary(ctx, c, scope, via, depth, substitute);
       if (r === null) return null;
       out.push(...r);
     }
@@ -461,7 +608,7 @@ export function resolveSummary(ctx, summary, scope, via, depth) {
     if (found && !found.isModule && found.names.get(summary.name)) {
       // A local `const` is followed ONCE. Twice would be a data-flow
       // analysis, and this worker is deliberately not one.
-      return resolveSummary(ctx, summarizeArg(found.names.get(summary.name)), scope, via, depth - 1);
+      return resolveSummary(ctx, summarizeArg(found.names.get(summary.name)), scope, via, depth - 1, substitute);
     }
     return null;
   }
@@ -541,10 +688,41 @@ export function buildUrl(ctx, summary, scope) {
     if (q >= 0) { if (query === null) query = t.slice(q + 1); t = t.slice(0, q); }
     return { ...r, template: t };
   });
-  url.resolved = resolved;
+  url.resolved = foldSubstitutions(url, resolved);
   if (query !== null) url.query = query;
   if (absolute !== null) url.absolute = absolute;
   return url;
+}
+
+/**
+ * What the substitution did, moved off the candidates and onto the url (RM58).
+ *
+ * ONE candidate keeps nothing of its own: its holes and its substitutions are
+ * the url's, and saying it twice would only make the shard bigger. A TERNARY is
+ * two possible requests, and the holes of one are not the holes of the other,
+ * so there each candidate keeps its own list and the url carries the merged
+ * substitutions for a reader to count.
+ */
+function foldSubstitutions(url, resolved) {
+  const substituted = [];
+  for (const r of resolved) {
+    for (const s of r.substituted ?? []) {
+      if (!substituted.some((x) => x.name === s.name && x.value === s.value)) substituted.push(s);
+    }
+  }
+  const one = resolved.length === 1;
+  if (one && typeof resolved[0].written === 'string') url.written = resolved[0].written;
+  if (substituted.length > 0) url.substituted = substituted;
+  if (one && (resolved[0].holes ?? []).length > 0) url.holes = resolved[0].holes;
+  return resolved.map((r) => {
+    const { holes, substituted: mine, written, ...rest } = r;
+    if (one) return rest;
+    return {
+      ...rest,
+      ...((holes ?? []).length > 0 ? { holes } : {}),
+      ...(typeof written === 'string' ? { written } : {}),
+    };
+  });
 }
 
 /**

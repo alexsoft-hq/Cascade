@@ -38,7 +38,9 @@ export function hoist(ctx, body) {
       ? node.declaration : node;
     if (!d) continue;
     if (d.type === 'VariableDeclaration') {
-      for (const decl of d.declarations) for (const n of patternNames(decl.id)) moduleScope.declare(n, decl.init);
+      for (const decl of d.declarations) {
+        for (const n of patternNames(decl.id)) moduleScope.declare(n, decl.init, d.kind !== 'const');
+      }
     } else if (d.type === 'FunctionDeclaration' && d.id) moduleScope.declare(d.id.name, null);
     else if (d.type === 'ClassDeclaration' && d.id) moduleScope.declare(d.id.name, null);
     else if (d.type === 'TSEnumDeclaration' && d.id) moduleScope.declare(d.id.name, null);
@@ -344,7 +346,7 @@ export function visitVariableDeclaration(ctx, node, env, exportedAs) {
   const { top, lineOf } = ctx;
   for (const decl of node.declarations) {
     const names = patternNames(decl.id);
-    for (const n of names) env.scope.declare(n, decl.init);
+    for (const n of names) env.scope.declare(n, decl.init, node.kind !== 'const');
     const simple = decl.id.type === 'Identifier' ? decl.id.name : null;
     const line = lineOf(decl);
     // `const x = require('y')` names the local the import lands in, which a

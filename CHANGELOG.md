@@ -10,6 +10,54 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **A URL built on a named constant is read as a URL.** A frontend does not
+  write its paths at the call site. It writes them once at the top of the file,
+  and every call is that name plus what the caller passes:
+  `` axios.get(`${POSTS_URL}/${id}`) ``. Read letter by letter that template is
+  `{*}/{*}`, which names no route, so calls written that way used to place no
+  edge at all. A hole that is a NAME the file can follow to text is now filled
+  in, recursively and cycle-safe, and the edge says what went in
+  (`evidence.url.substituted` names each constant and the literal it holds, and
+  `url.written` keeps the text as the source spells it). The value is always a
+  literal somebody wrote, so the substitution states a fact and the call is
+  graded on its route match as any other call is. A constant ANOTHER MODULE
+  exports is followed by the bridge, through the same aliases and export chain
+  the rest of the lane uses, because one file cannot follow an import.
+  Measured: the MSA template's frontend calls resolved from **23 of 217 to
+  137**, its screens reaching a table from **12 of 56 to 33**, and jeecg-boot's
+  from **562 of 963 to 584**. The number of call sites does not move: filling a
+  hole resolves a call and never adds one. Only a `const` counts, because
+  `let t = '0'` and an `if` that assigns `t` again is real code and the
+  initializer is then not what the name holds.
+- **A hole that stays a hole says which kind it is**, on the fact record
+  (`url.holes`) and in the lane statistics: `parameter` (the caller's value,
+  which is the route's own hole), `env` (`process.env.X`, `import.meta.env.X`
+  or a constant bound to one, which is a deployment fact and not a source
+  fact), `call`, `import` (a name another module exports that this run could
+  not follow) and `unknown`. A left-over `import` is the actionable one: it is
+  usually an alias the run did not read. The web worker is `webfacts/8`.
+
+### Fixed
+
+- **A `RewritePath` replacement has to name the group the pattern captures.**
+  `/service/(?<segment>.*)` with `/$\{other}` refers to something the regular
+  expression never captured, and it was accepted as if it were the group. It is
+  now refused with the existing diagnostic and the mismatch named. `$1` still
+  means the one group, named or not.
+- **A function handed over as a value takes the member shape a call takes.**
+  `usePagedList({ api: rowService.listRows })` hands over one function written
+  inside an imported object, which is the same hop as calling it, and it was
+  refused for having a dot in it while the call rule accepted it. Both now go
+  through the one index, and the edge carries the owner as `evidence.member`.
+
+The eleven original repositories, petclinic-ms and the five service packs do not
+move: sixteen pack digests identical and 3,028 recorded answers byte-identical.
+Of the held-out corpus, only msa-edu and jeecg-boot move, both upward, and no
+guarded number falls. `docs/measured.md` has the numbers and what the round left
+on the table.
+
 ## [0.8.2] - 2026-09-10
 
 Two general defects the eGovFrame MSA template exposed: a member call on an

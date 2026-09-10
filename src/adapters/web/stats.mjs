@@ -15,6 +15,21 @@
 import { SERVER_MENU_ROUTE_CEILING } from './screens.mjs';
 
 /**
+ * WHAT WENT INTO A URL, and what is still missing from one (RM58).
+ *
+ * A frontend writes most of its paths on a named constant, so `substituted`
+ * says how many of those this run put back and where the literal was read.
+ * `holes` says what is left in a template and why nothing could fill it, which
+ * is the list a reader fixes a missing alias or a missing `.env` by.
+ */
+function emptyUrlStats() {
+  return {
+    substituted: { 'same-file': 0, import: 0 },
+    holes: { parameter: 0, env: 0, call: 0, import: 0, unknown: 0 },
+  };
+}
+
+/**
  * A fresh statistics object, every counter at zero.
  *
  * It is one literal rather than six, because the caller returns it whole and a
@@ -59,7 +74,7 @@ export function emptyWebStats() {
         parameter: 0, expression: 0, importedConstant: 0, noMatch: 0, outsidePack: 0, allHoles: 0,
       },
     },
-    matches: { exact: 0, template: 0, multi: 0 },
+    matches: { exact: 0, template: 0, multi: 0 }, url: emptyUrlStats(),
     outboundEndpoints: 0,
     prefix: {},
     assumedAliases: 0,

@@ -757,6 +757,57 @@ That is also the one place a **relative** path counts as a URL: `$http.get(
 'api/customer/owners')` has no leading slash, and a bare `get('size')` still
 does not become a call. The difference is the client, not the string.
 
+### A URL built on a constant
+
+Most frontends do not write the path at the call site. They write it once, at
+the top of the file, and every call is that name plus what the caller passes:
+
+```ts
+const POSTS_URL = '/board-service/api/v1/posts'
+
+export const boardService = {
+  getPost: (id) => axios.get(`${POSTS_URL}/${id}`),
+  getComments: (id) => axios.get(`${POSTS_URL}/${id}/comments`),
+}
+```
+
+Read letter by letter that template is `{*}/{*}`, which names no route, so those
+calls used to reach nothing at all. A hole that is a **name this lane can follow
+to text** is now filled in, and the edge says what went in:
+
+```json
+"url": {
+  "written": "{*}/{*}",
+  "template": "/board-service/api/v1/posts/{*}",
+  "substituted": [{ "name": "POSTS_URL", "value": "/board-service/api/v1/posts", "from": "same-file" }]
+}
+```
+
+The value is always a literal somebody wrote, so the substitution states a fact
+rather than a guess, and the call is graded on its route match as any other call
+is. `from` says where the literal was read: `same-file` is the worker's answer,
+`import` the bridge's, because following an import needs the aliases and the
+export chain and one file has neither. The chain is followed as far as it goes
+(`ROOT` into `V1` into `REPORTS_URL`) and stops on a circle. Only a `const`
+counts: `let t = '0'` and an `if` that assigns `t` again is real code, and the
+initializer is not what the name holds.
+
+**A hole that stays a hole says which kind it is**, in `url.holes` on the fact
+record and counted per kind in `pack.meta.laneStats.web.url`:
+
+| kind | what it is | why nothing fills it |
+|---|---|---|
+| `parameter` | a value the enclosing function was handed (`id`, `page`), or a variable of its own | it is not stated where the call is written, and it is usually the route's own hole |
+| `env` | `process.env.X`, `import.meta.env.X`, or a constant bound to one | an environment value is a deployment fact, not a source fact |
+| `call` | a call (`${slug(id)}`) | what it returns is a program, not a spelling |
+| `import` | a name another module exports that this run could not follow | the specifier led out of the project, or what it names is not a literal |
+| `unknown` | anything else | there is no name to follow |
+
+An `import` hole left over is the actionable one: it usually means an alias this
+run did not read (see [the flags](#the-flags)) or a constant that is itself
+built on `process.env`. `laneStats.web.url.substituted` counts the other half,
+by where each literal was read.
+
 ### What a URL has to look like to count
 
 Two rules keep the graph from filling up with things that are not routes, and
@@ -769,7 +820,8 @@ both are counted rather than silently applied:
 - a URL that resolves to **nothing but interpolation** (`` `/${a}/${b}` `` →
   `/{*}/{*}`) names no route: it matches every route of that length. Counted as
   `unresolved.byReason.allHoles`, and listed in `unmatchedUrls` like any other
-  miss.
+  miss. The constants are put in first (see above), so this is what is left
+  after that.
 
 ### Matching a call to a route
 

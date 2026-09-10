@@ -55,7 +55,7 @@ function lineOf(relFile, re) {
 test('the header names the schema, the version, the roots and what it read', () => {
   assert.equal(HEADER.kind, 'header');
   assert.equal(HEADER.schema, 'cascade:webfacts:1');
-  assert.equal(HEADER.version, 'webfacts/7');
+  assert.equal(HEADER.version, 'webfacts/8');
   assert.equal(HEADER.root, FIXTURE);
   assert.deepEqual(HEADER.roots, ['src']);
   // `files` is the number of files that were read WITH THE PARSER. Every one of
@@ -418,7 +418,7 @@ test('a dynamic import() is an import record, and a call through an import bindi
 
 test('every count in the summary equals the records it claims to count', () => {
   assert.equal(SUMMARY.kind, 'summary');
-  assert.equal(SUMMARY.version, 'webfacts/7');
+  assert.equal(SUMMARY.version, 'webfacts/8');
   const n = (k) => BODY.filter((r) => r.kind === k).length;
   assert.equal(SUMMARY.files, n('file'));
   assert.equal(SUMMARY.parseErrors, n('parse_error'));

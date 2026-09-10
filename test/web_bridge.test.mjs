@@ -1083,6 +1083,83 @@ test('a member call on a NAMESPACE import resolves the member to the exported fu
   ]);
 });
 
+// ---- B: a URL built on a constant ANOTHER MODULE exports (RM58) -----------
+//
+// The worker fills in a constant the same file declares, because that is all
+// one file can state. `import { ROWS_URL } from '@/api/urls'` is the same shape
+// written across two files, and following it needs the specifier rules and the
+// export chain, which live in the bridge.
+
+/** A template URL with its remaining holes on it, the way the worker records one. */
+const templateUrl = (template, holes) => ({
+  arg: { kind: 'template', template, dynamicParts: holes.length, holes },
+  holes,
+  resolved: [{ template, dynamicParts: holes.length, via: 'template' }],
+});
+
+/** The module the paths are declared in, and the api file that imports one. */
+const urlsFile = (value) => file('src/api/urls.js',
+  { kind: 'constant', line: 1, name: 'ROWS_URL', exported: true, value },
+  exp(1, 'ROWS_URL', 'const', { local: 'ROWS_URL' }));
+
+const importedConstantApi = (source = '@/api/urls') => file('src/api/rows.js',
+  imp(1, '@/http', [{ imported: 'default', local: 'client' }]),
+  imp(2, source, [{ imported: 'ROWS_URL', local: 'ROWS_URL' }]),
+  fn(3, 'listRows'),
+  exp(3, 'listRows', 'function', { local: 'listRows' }),
+  call(4, 'listRows', memberCallee('client', 'get'), importBinding('@/http', 'default'),
+    templateUrl('{*}/list', [{ kind: 'import', name: 'ROWS_URL', source, imported: 'ROWS_URL' }]),
+    { value: 'GET', from: 'callee-name' }));
+
+test('a hole another module\'s constant explains is filled in, and the edge says what went in', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ALIAS, ...clientFile(null), ...urlsFile('/plain'), ...importedConstantApi(),
+  ], SCREEN_ON);
+  const e = only(g);
+  assert.equal(e.to, webEndpointId('GET', '/plain/list'));
+  assert.equal(e.evidence.url.written, '/plain/list');
+  assert.deepEqual(e.evidence.url.substituted, [
+    { name: 'ROWS_URL', value: '/plain', from: 'import' },
+  ]);
+  // The literal is in the source, so the route match is graded as any other.
+  assert.equal(e.grade, 'SOUND_SET');
+  assert.deepEqual(stats.url.substituted, { 'same-file': 0, import: 1 });
+  assert.deepEqual(stats.url.holes, {
+    parameter: 0, env: 0, call: 0, import: 0, unknown: 0,
+  });
+});
+
+test('a hole whose module this lane never read stays a hole, and nothing is invented', () => {
+  // The specifier leads out of the project, so nothing here knows what the name
+  // holds. The template keeps its hole and the call is matched on what is left
+  // of it, exactly as it was before this rule existed.
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ALIAS, ...clientFile(null), ...importedConstantApi('some-package/urls'),
+  ], SCREEN_ON);
+  const e = only(g);
+  assert.equal(e.evidence.url.written, '{*}/list');
+  assert.equal(e.evidence.url.substituted, undefined);
+  assert.deepEqual(stats.url.substituted, { 'same-file': 0, import: 0 });
+  assert.deepEqual(stats.url.holes, {
+    parameter: 0, env: 0, call: 0, import: 1, unknown: 0,
+  });
+});
+
+test('a constant reached through an ASSUMED alias grades the call down', () => {
+  // The value is a literal somebody wrote; WHICH file it was read from rests on
+  // a guessed alias, and everything that rests on that guess grades down.
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ASSUMED_ALIAS, ...clientFile(null), ...urlsFile('/plain'), ...importedConstantApi(),
+  ], SCREEN_ON);
+  const e = only(g);
+  assert.equal(e.to, webEndpointId('GET', '/plain/list'));
+  assert.equal(e.grade, 'HEURISTIC');
+  assert.equal(stats.assumedAliases, 1);
+});
+
 // ---- B: a member of an imported OBJECT (RM57) -----------------------------
 //
 // `export const rowService = { listRows: … }` in one file and
@@ -1267,6 +1344,34 @@ test('a member of a NAMESPACE import handed over resolves to the exported functi
     ['symbol:src/api/rows.js#listRows', 'SOUND_SET'],
   ]);
   assert.equal(callsOf(g)[0].evidence.origin, 'src/api/rows.js#listRows');
+});
+
+test('a member of an imported OBJECT handed over as a value resolves the same way a call does', () => {
+  // `usePage({ api: rowService.listRows })`. Handing a member over is the same
+  // hop as calling it, so it goes through the same index (RM58) rather than
+  // being refused for having a dot in it.
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ALIAS, ...clientFile(null), ...serviceFile(),
+    ...file('src/screens/panel/rows.vue',
+      imp(1, '@/api/rows', [{ imported: 'rowService', local: 'rowService' }]),
+      imp(2, '@/hooks/page', [{ imported: 'usePage', local: 'usePage' }]),
+      fn(10, 'setup', { exported: 'default-member' }),
+      call(11, 'setup', identCallee('usePage'), importBinding('@/hooks/page', 'usePage'), null, null, {
+        fnRefs: [byProperty('rowService', '@/api/rows', 'rowService', 'api')].map(
+          (r) => ({ ...r, path: ['listRows'] }),
+        ),
+      })),
+  ], SCREEN_ON);
+  assert.deepEqual(callsOf(g).map((e) => [e.to, e.grade]), [
+    ['symbol:src/api/rows.js#listRows', 'SOUND_SET'],
+  ]);
+  assert.deepEqual(callsOf(g)[0].evidence, {
+    rule: 'passed-as-value', via: 'property', key: 'api',
+    specifier: '@/api/rows', origin: 'src/api/rows.js#listRows',
+    member: 'rowService.listRows',
+  });
+  assert.equal(stats.callsByRule['passed-as-value'], 1);
 });
 
 test('an ASSUMED alias on the path lowers a handed-over function to HEURISTIC', () => {

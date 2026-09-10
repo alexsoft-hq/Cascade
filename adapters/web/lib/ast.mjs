@@ -85,7 +85,7 @@ export function summarizeArg(node) {
       if (t.dynamicParts === 0) return { kind: 'string', value: t.template };
       return {
         kind: 'template', template: t.template, dynamicParts: t.dynamicParts,
-        ...(t.base === null ? {} : { base: t.base }),
+        ...(t.base === null ? {} : { base: t.base }), ...(t.holes.length === 0 ? {} : { holes: t.holes }),
       };
     }
     case 'ConditionalExpression':
@@ -119,6 +119,29 @@ export function summarizeArg(node) {
   return { kind: 'other' };
 }
 
+/** A hole written as a plain name (`api`, `Api.BASE`), or null. */
+function nameOfHole(n) {
+  if (!n) return null;
+  if (n.type === 'Identifier') return n.name;
+  if (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression') {
+    const c = calleeOf(n);
+    return c && c.root !== null ? [c.root, ...c.path].join('.') : null;
+  }
+  return null;
+}
+
+/** What ONE interpolation is: a name, a call, or something neither. */
+function holeOf(n) {
+  const name = nameOfHole(n);
+  if (name !== null && !name.split('.').includes('*')) return { kind: 'name', name };
+  if (n && (n.type === 'CallExpression' || n.type === 'OptionalCallExpression')) {
+    const c = n.callee ? calleeOf(n.callee) : null;
+    const spelling = c && c.root !== null ? [c.root, ...c.path].join('.') : null;
+    return spelling === null ? { kind: 'call' } : { kind: 'call', name: spelling };
+  }
+  return { kind: 'other' };
+}
+
 /**
  * A template literal or a `+` chain flattened into `'/a/{*}/b'`. Null when the
  * node is not made of text at all.
@@ -129,21 +152,22 @@ export function summarizeArg(node) {
  * a variable the server filled in with the application's context path cannot be
  * read without it (RM48), and nothing else in the record carries the name.
  *
- * @returns {{template:string, dynamicParts:number, base:(string|null)}|null}
+ * `holes` says WHAT EACH INTERPOLATION WAS, in the order they are written, so
+ * that whoever knows what a name holds can put the value back where the hole is
+ * (RM58). Three kinds, and nothing here decides between them beyond the syntax:
+ *   name   a bare identifier or a plain member path (`POSTS_URL`, `Api.BASE`)
+ *   call   a call, whose callee spelling rides along when it has one
+ *   other  anything else, which no name can be given to
+ * A member path with a computed segment (`a[b]`) is not a name, because the
+ * segment is a value rather than a spelling.
+ *
+ * @returns {{template:string, dynamicParts:number, base:(string|null), holes:object[]}|null}
  */
 export function flattenText(node) {
   const parts = [];
+  const holes = [];
   let dynamic = 0;
   let base = null;
-  const nameOfHole = (n) => {
-    if (!n) return null;
-    if (n.type === 'Identifier') return n.name;
-    if (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression') {
-      const c = calleeOf(n);
-      return c && c.root !== null ? [c.root, ...c.path].join('.') : null;
-    }
-    return null;
-  };
   const walkText = (n) => {
     if (!n) return false;
     if (n.type === 'StringLiteral') { parts.push(n.value); return true; }
@@ -152,6 +176,7 @@ export function flattenText(node) {
         parts.push(n.quasis[i].value.cooked ?? n.quasis[i].value.raw ?? '');
         if (i < n.expressions.length) {
           if (parts.join('') === '') base = nameOfHole(n.expressions[i]);
+          holes.push(holeOf(n.expressions[i]));
           parts.push('{*}');
           dynamic += 1;
         }
@@ -163,13 +188,16 @@ export function flattenText(node) {
     }
     // Anything else inside a concatenation is a hole.
     if (parts.join('') === '') base = nameOfHole(n);
+    holes.push(holeOf(n));
     parts.push('{*}');
     dynamic += 1;
     return true;
   };
   if (node.type === 'BinaryExpression' && node.operator !== '+') return null;
   if (!walkText(node)) return null;
-  return { template: parts.join(''), dynamicParts: dynamic, base };
+  return {
+    template: parts.join(''), dynamicParts: dynamic, base, holes,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -221,10 +249,19 @@ export class Scope {
     this.parent = parent;
     this.isModule = isModule === true;
     this.names = new Map(); // name -> init node or null
+    this.mutable = new Set(); // the ones a `let` / `var` declared
   }
 
-  declare(name, init) {
-    if (typeof name === 'string') this.names.set(name, init ?? null);
+  /**
+   * `mutable` says the declaration was a `let` or a `var`, so what it holds now
+   * is not what it was initialized with. Nothing needs it to look a name up;
+   * the rule that puts a constant's TEXT into a URL needs it, because a name
+   * the next line assigns again is not bound to the literal beside it (RM58).
+   */
+  declare(name, init, mutable = false) {
+    if (typeof name !== 'string') return;
+    this.names.set(name, init ?? null);
+    if (mutable) this.mutable.add(name);
   }
 
   /** The scope that declares `name`, or null. */

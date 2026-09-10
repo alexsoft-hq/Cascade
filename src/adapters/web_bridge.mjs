@@ -174,7 +174,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
     stats,
     deps: {
       platformOf, injectedClients, calleeTarget, sinkVerb, wrappers, noteInstance,
-      libraries, pack, stats,
+      libraries, pack, stats, resolver,
     },
   });
 

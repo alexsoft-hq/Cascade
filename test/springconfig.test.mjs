@@ -272,6 +272,42 @@ test('a RewritePath that writes the separator inside the pattern is the same pre
   assert.deepEqual(diags, []);
 });
 
+test('a RewritePath replacement that names a group the pattern does not capture is refused', () => {
+  // `(?<segment>.*)` captures `segment`, and `/$\\{other}` asks for something the
+  // regular expression never captured. Reading the second as the first would
+  // forward a path this route does not forward, so it is refused and the
+  // mismatch is named.
+  const route = (filter) => `spring:
+  cloud:
+    gateway:
+      routes:
+        - id: orders
+          uri: lb://orders-service
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - ${filter}
+`;
+  const named = [];
+  assert.deepEqual(findGatewayRoutes(file(route('RewritePath=/api/(?<segment>.*),/$\\{other}')), named), []);
+  const hit = named.find((d) => d.kind === 'GATEWAY_ROUTE_UNREADABLE');
+  assert.ok(hit, JSON.stringify(named));
+  assert.match(hit.reason, /refers to "other" and its regular expression captures "segment"/);
+
+  // The same the other way round: an UNNAMED group and a named reference.
+  const unnamed = [];
+  assert.deepEqual(findGatewayRoutes(file(route('RewritePath=/api/(.*),/$\\{segment}')), unnamed), []);
+  const miss = unnamed.find((d) => d.kind === 'GATEWAY_ROUTE_UNREADABLE');
+  assert.ok(miss, JSON.stringify(unnamed));
+  assert.match(miss.reason, /captures a group with no name/);
+
+  // And `$1` still means the one group, named or not.
+  assert.deepEqual(
+    findGatewayRoutes(file(route('RewritePath=/api/(?<segment>.*),/$1'))).map((r) => [r.front, r.to]),
+    [['/api/order', '/order']],
+  );
+});
+
 test('a RewritePath whose pattern starts somewhere else is still refused', () => {
   // `/api/v1/` is neither the prefix nor the prefix plus its separator: which
   // requests under `/api/order` it rewrites depends on the rest of the path,

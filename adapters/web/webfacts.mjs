@@ -76,6 +76,17 @@
 // it is half of the bridge's symbol key, and moving it would move every
 // symbol in every frontend already read.
 //
+// webfacts/8 FILLS A CONSTANT INTO A URL (RM58). `const POSTS_URL = '/x/posts'`
+// at the top of a file and `axios.get(`${POSTS_URL}/${id}`)` below it is how a
+// TypeScript frontend usually writes its API calls, and read literally that
+// template is `{*}/{*}`, which names no route. So a hole that is a name THIS
+// FILE can follow to text is filled in, and the url record says what it did:
+// `written` is the text as the source spells it, `substituted` names each
+// constant and the literal it holds, and `holes` says what is left and of which
+// kind (`parameter`, `env`, `call`, `import`, `unknown`). A name another module
+// exports stays a hole here, with its specifier on it, because one file cannot
+// follow an import: the bridge finishes those.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -86,7 +97,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/7';
+const VERSION = 'webfacts/8';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

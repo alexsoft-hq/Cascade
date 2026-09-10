@@ -35,7 +35,7 @@ export const CATALOG_WORKER_VERSION = 'catalog-ddl/3';
  */
 export const CATALOG_LIVE_WORKER_VERSION = 'catalog-live/1';
 /** adapters/web/webfacts.mjs — `const VERSION`. */
-export const WEB_WORKER_VERSION = 'webfacts/7';
+export const WEB_WORKER_VERSION = 'webfacts/8';
 
 /**
  * The versions as the facts index records them. One object, so a new worker can
