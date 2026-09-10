@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-10
+
+The rest of the Korean stack: one vendor's mapper XML, iBATIS 2, Nexacro
+forms, and Next.js file routing.
+
 The rest of the Korean stack. RM55 fixed what a route reaches on eGovFrame and
 left four things in the open; this takes them. One vendor's mapper XML instead
 of seven, iBATIS 2 read as SQL, a Nexacro client read as screens, and Next.js
@@ -2037,7 +2042,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.5.0...v0.6.0
