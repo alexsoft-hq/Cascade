@@ -999,7 +999,7 @@ that improves silently is a number nobody checked.
 
 | Repository | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table |
 |---|---|---|---|---|---|
-| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | 562 / 963 | 25 / 181 |
+| jeecgboot/JeecgBoot | 744 / 969 | 73 / 177 | 836 / 2092 | 584 / 963 | 25 / 181 |
 | jishenghua/JSH_ERP | 330 / 339 | 32 / 32 | 409 / 413 | 165 / 221 | 0 / 7 |
 | apache/dolphinscheduler | 204 / 239 | 42 / 65 | 457 / 622 | 219 / 233 | 0 / 44 |
 | macrozheng/mall (+ mall-admin-web) | 205 / 239 | 49 / 76 | 461 / 669 | 145 / 153 | 44 / 54 |
@@ -1012,7 +1012,7 @@ that improves silently is a number nobody checked.
 | spring-petclinic-microservices | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 |
 | eGovFramework/egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 218 / 288 | 122 / 135 | 55 / 84 |
 | eGovFramework/egovframe-common-components | 999 / 1193 | 165 / 179 | 1680 / 1862 | 765 / 811 | 470 / 657 |
-| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 23 / 217 | 12 / 56 |
+| eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 137 / 217 | 33 / 56 |
 | eGovFramework/egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 0 / 0 | 0 / 2 |
 | nexacro-spring/nexacro-sample-egov | 10 / 21 | 5 / 5 | 46 / 46 | 7 / 7 | 4 / 30 |
 | naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 66 / 77 | 0 / 19 |

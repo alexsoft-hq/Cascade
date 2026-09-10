@@ -10,6 +10,12 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-09-10
+
+A URL built on a constant is a URL: the module constant carrying a base
+path is put into the request it is interpolated into, recorded, and what
+could not be filled is classified.
+
 ### Added
 
 - **A URL built on a named constant is read as a URL.** A frontend does not
@@ -2137,7 +2143,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.7.0...v0.8.0
