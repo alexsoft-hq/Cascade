@@ -259,6 +259,11 @@ somewhere this lane cannot see is **counted**
 (`laneStats.web.calls.nexacroUnreadable`) rather than dropped: a request that
 happens and that no edge carries is a different finding from no request.
 
+The in and out **datasets** a transaction names (75 of them in the sample read
+for this) are not read, and measuring said they need not be: they are data flow
+inside the browser, and what impact needs is the call, which the transaction
+already carries.
+
 ### Next.js: the file tree IS the route table
 
 Next.js declares no routes. `pages/index.tsx` answers `/`,
@@ -536,6 +541,76 @@ rather than code:
   / `.rule`) is a declaration and sends nothing. Its arguments are still walked,
   because a real call can sit inside one.
 
+### A navigation is never an HTTP call either
+
+`router.push('/auth/login')` is the same mistake one layer up. A single-page app
+changes the screen by asking its own router, and the browser sends nothing: the
+component on screen is swapped for another one the app already has. Read as an
+HTTP call it becomes a route nothing serves, graded UNRESOLVED, and in a pack of
+several services such a false call can even try to cross into a sibling. On the
+eGovFrame MSA template that was 39 of 217 "calls with a URL".
+
+The sinks are a declaration, `adapters/web/packs/navigation.json`, because every
+router spells it differently and each spelling is fixed by its framework:
+
+| Router | What is read |
+|---|---|
+| `next/router`, `next/navigation` | `useRouter().push` / `.replace` / `.prefetch` |
+| `next/link` | `<Link href=...>` |
+| `vue-router` | `this.$router.push` / `.replace`, and the same two on a name `useRouter()` was assigned to |
+| `react-router`, `react-router-dom` | `useNavigate()(...)`, `redirect(...)`, `<Link to=...>`, `<Navigate to=...>` |
+| the browser | `window.location.href = ...`, `location.href = ...`, `window.location.assign(...)` / `.replace(...)` |
+
+What makes a call a navigation is never the NAME the code gives the router. It
+is the hook it was made by (`const nav = useRouter()` reads the same as
+`const router = useRouter()`), the property the framework itself puts on a
+component (`this.$router`), the module a JSX element was imported from (a `Link`
+from a component library is a component, not a link), or a global nothing in the
+file declares (`window.location`). A `push` on something this lane cannot show
+to be a router is still a call.
+
+The path is read as text (`push('/x')`) or off the object a router takes instead
+(`push({pathname: '/x', query})`, `push({path: '/x'})`), and the query string is
+not part of where it goes.
+
+Then, and only in the bridge, the path is matched against the screens this
+project declares, by the same rule that matches a call to a route: `/user/{*}`
+lands on `/user/{id}` and on `/user/:id` alike. What the match produces is
+**data on the screen node, not an edge**:
+
+```json
+"navigatesTo": [
+  { "to": "screen:/auth/login", "path": "/auth/login", "match": "exact",
+    "rule": "router-navigation", "framework": "next", "sink": "router.push",
+    "file": "src/components/App/App.tsx", "line": 79 }
+]
+```
+
+There is no edge because a screen change is not a hop on the round trip from a
+screen to a column, and putting one on the graph would make every walk follow
+it. The entry sits on the screen the navigation is WRITTEN in, which is the
+screen whose component is that file. A navigation written in a shared component
+belongs to no one screen, so it is counted and recorded nowhere: saying it
+belongs to every screen that mounts the component would be a guess.
+
+Three numbers say what happened (`laneStats.web.navigation`): `navigations`,
+`navigationsToScreen` and `navigationsUnmatched`, with `unmatchedPaths` listing
+the paths that named no screen. A path that names none is a real finding either
+way round: a screen this lane did not find, or a page the framework owns (Next's
+`/404` is excluded from the screen list by the `next-pages` pack, so a
+`router.push('/404')` honestly matches nothing).
+
+**A server-rendered page keeps its links as GET calls.** There a link IS a
+request: the browser asks the server for the next page. The pack decides by the
+SINK, not by the file kind, so nothing about the rules above changed.
+
+**What is declared and not yet read.** `<router-link to=...>` is written in a
+single-file component's `<template>` block, and this worker parses a component's
+`<script>` blocks and not its markup. The sink is in the pack because it is one;
+it never fires today. Nor does `router.push` on an application's OWN router
+module (`import router from '@/router'`), which would need that module traced to
+a `createRouter(...)` the way an axios instance is traced.
+
 ## What the bridge does with them, and its honest grade
 
 `src/adapters/web_bridge.mjs` runs after the Java bridge (it needs the routes)
@@ -810,13 +885,24 @@ by where each literal was read.
 
 ### What a URL has to look like to count
 
-Two rules keep the graph from filling up with things that are not routes, and
-both are counted rather than silently applied:
+Three rules keep the graph from filling up with things that are not routes, and
+every one of them is counted rather than silently applied:
 
 - a call the lane could not trace to any sink, whose argument is **not written
   like a path** (no leading slash, not absolute), is not an HTTP call at all:
   `Cookies.get('size')` is a verb-named call on a library that is not an HTTP
   client. Counted as `calls.notUrlShaped`;
+- a call the lane could not trace to any sink whose callee **takes a path apart
+  instead of asking for one**: `pathname.startsWith('/auth/login/naver')` asks
+  where the browser already is, and `p.split('/')`, `s.replace('/a', '/b')` and
+  `re.test(path)` are how every frontend reads a path. There the argument really
+  is a path, so the rule above cannot help; the METHOD name is what settles it.
+  The list is `startsWith`, `endsWith`, `includes`, `indexOf`, `lastIndexOf`,
+  `match`, `test`, `replace`, `replaceAll`, `split`, `localeCompare`, `padStart`,
+  `padEnd`, `concat`, and no client verb any declaration pack names is on it (a
+  test holds the two lists apart). Counted as `calls.stringMethod`. A call that
+  DID reach a client is untouched: there the sink is the library, and this rule
+  is about a call that has no sink at all;
 - a URL that resolves to **nothing but interpolation** (`` `/${a}/${b}` `` →
   `/{*}/{*}`) names no route: it matches every route of that length. Counted as
   `unresolved.byReason.allHoles`, and listed in `unmatchedUrls` like any other

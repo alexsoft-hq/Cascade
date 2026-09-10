@@ -81,6 +81,32 @@ export function sayVendoredWebRoots(profile, { sel, webSrc, resolved, root }) {
 }
 
 /**
+ * A ROOT NOBODY PACKAGED THAT SAID NOTHING (RM47).
+ *
+ * Discovery decided that directory was served, and the run read it: if it holds
+ * no call this lane could read a URL out of and no route declaration, that is
+ * worth a line. A directory of somebody else's plugin scripts looks exactly like
+ * a frontend from the outside, and silence there reads as "there is nothing in
+ * this product", which is a different sentence.
+ */
+function saySilentWebRoots({ webFacts, profile, resolved, root, relOf }) {
+  const vendoredRel = (profile.webRoots ?? [])
+    .filter((r) => r && typeof r.root === 'string' && (r.kind ?? 'declared') === 'vendored')
+    .map((r) => relOf(path.resolve(resolved.dotCascade ?? root, r.root)))
+    .sort();
+  const silent = vendoredRel.filter((rootRel) => {
+    const under = (f) => typeof f === 'string' && (f === rootRel || f.startsWith(`${rootRel}/`));
+    return !webFacts.some((r) => under(r.file)
+      && ((r.kind === 'call' && r.url) || r.kind === 'route' || r.kind === 'registration'));
+  });
+  if (silent.length > 0) {
+    process.stderr.write(`  [warn] WEB_ROOT_SAID_NOTHING ${silent.length} root(s) have no readable HTTP call `
+      + `and no route declaration in them: ${listOfFive(silent)}. `
+      + 'Take them out of webRoots in the profile if they are not a frontend of yours\n');
+  }
+}
+
+/**
  * WHO THIS PACK IS, AND WHERE ITS CALLS GO, said on the run that uses them.
  * The name is the profile's when it declares one and THIS RUN's discovery
  * otherwise, and the line says which, because a name nobody recorded is one
@@ -145,7 +171,8 @@ export function sayWebWorker(webWorkerStats, { webFacts, profile, resolved, root
     + `${(t.files ?? 0) > 0 ? `, ${t.files} template(s): ${Object.entries(t.byEngine ?? {}).sort().map(([e, n]) => `${n} ${e}`).join(', ')}` : ''}), `
     + `${webWorkerStats.parseErrors} parse error(s); ${webWorkerStats.callsWithUrl} call site(s) carry a URL `
     + `(${u.literal} literal, ${u.template} template, ${u.constant} constant, ${u.unresolved} unresolved), `
-    + `${webWorkerStats.routes} route declaration(s), ${webWorkerStats.aliases} alias(es), ${webWorkerStats.proxies} proxy rule(s)\n`);
+    + `${webWorkerStats.routes} route declaration(s), ${webWorkerStats.navigations ?? 0} navigation(s), `
+    + `${webWorkerStats.aliases} alias(es), ${webWorkerStats.proxies} proxy rule(s)\n`);
   if ((t.files ?? 0) > 0) {
     process.stderr.write(`  the pages: ${t.scripts ?? 0} inline script block(s), ${t.forms ?? 0} form(s), `
       + `${t.links ?? 0} link(s), ${t.includes ?? 0} include(s), `
@@ -166,26 +193,7 @@ export function sayWebWorker(webWorkerStats, { webFacts, profile, resolved, root
     // say so.
     process.stderr.write(`  [warn] WEB_PARSE_ERROR ${r.file}:${r.line}:${r.col}: ${r.message}\n`);
   }
-  // A ROOT NOBODY PACKAGED THAT SAID NOTHING (RM47). Discovery decided that
-  // directory was served, and the run read it: if it holds no call this
-  // lane could read a URL out of and no route declaration, that is worth a
-  // line. A directory of somebody else's plugin scripts looks exactly like a
-  // frontend from the outside, and silence there reads as "there is nothing
-  // in this product", which is a different sentence.
-  const vendoredRel = (profile.webRoots ?? [])
-    .filter((r) => r && typeof r.root === 'string' && (r.kind ?? 'declared') === 'vendored')
-    .map((r) => relOf(path.resolve(resolved.dotCascade ?? root, r.root)))
-    .sort();
-  const silent = vendoredRel.filter((rootRel) => {
-    const under = (f) => typeof f === 'string' && (f === rootRel || f.startsWith(`${rootRel}/`));
-    return !webFacts.some((r) => under(r.file)
-      && ((r.kind === 'call' && r.url) || r.kind === 'route' || r.kind === 'registration'));
-  });
-  if (silent.length > 0) {
-    process.stderr.write(`  [warn] WEB_ROOT_SAID_NOTHING ${silent.length} root(s) have no readable HTTP call `
-      + `and no route declaration in them: ${listOfFive(silent)}. `
-      + 'Take them out of webRoots in the profile if they are not a frontend of yours\n');
-  }
+  saySilentWebRoots({ webFacts, profile, resolved, root, relOf });
 }
 
 /**
@@ -319,6 +327,45 @@ export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   return laneStats;
 }
 
+/**
+ * WHERE THE SCREENS LEAD (RM59), and THE PAGES (RM48).
+ *
+ * A router call changes the screen inside the browser and sends nothing, so it
+ * is in none of the call numbers. It is said here, always, because zero
+ * navigations on a single-page app is itself a finding. A template a handler
+ * names is a page; one nothing names is a fragment or dead markup, and saying
+ * how many of each is what stops a silence from reading as "this application has
+ * no pages".
+ */
+function sayNavigationsAndPages(webBridgeStats) {
+  // WHERE THE SCREENS LEAD (RM59). A router call changes the screen inside the
+  // browser and sends nothing, so it is in none of the call numbers above. It
+  // is said here, always, because zero navigations on a single-page app is
+  // itself a finding.
+  const nv = webBridgeStats.navigation ?? { navigations: 0, navigationsToScreen: 0, navigationsUnmatched: 0, screensWithNavigation: 0, byFramework: {}, unmatchedPaths: [] };
+  const routers = Object.entries(nv.byFramework).sort().map(([f, n]) => `${n} ${f}`).join(', ') || 'none';
+  process.stderr.write(`Web lane: ${nv.navigations} navigation(s) (${routers}), `
+    + `${nv.navigationsToScreen} name a screen this pack declares and ${nv.navigationsUnmatched} name none, `
+    + `recorded on ${nv.screensWithNavigation} screen(s). A navigation changes the screen without asking the server, `
+    + 'so it is not a call and it places no edge\n');
+  for (const u of (nv.unmatchedPaths ?? []).slice(0, 5)) {
+    process.stderr.write(`  [warn] WEB_NO_SCREEN ${u.path} (${u.count} navigation(s)): the router goes there and no screen this lane found declares it\n`);
+  }
+  // THE PAGES (RM48). A template a handler names is a page; one nothing
+  // names is a fragment or dead markup, and saying how many of each is what
+  // stops a silence from reading as "this application has no pages".
+  const tp = webBridgeStats.templates;
+  if (tp && tp.files > 0) {
+    process.stderr.write(`Web lane: ${tp.files} template(s) (${Object.entries(tp.byEngine).sort().map(([e, n]) => `${n} ${e}`).join(', ')}), `
+      + `${tp.rendered} of them rendered by a handler or pulled into one, ${tp.unrendered} named by nothing; `
+      + `${tp.views} handler(s) name a view (${tp.viewNames} view name(s), ${tp.redirects} redirect(s), `
+      + `${tp.unresolvedViews} return(s) this engine could not read)\n`);
+    for (const u of (tp.unresolvedViewNames ?? []).slice(0, 5)) {
+      process.stderr.write(`  [warn] VIEW_NAME_UNRESOLVED ${u.name} (${u.count} handler(s)): no template under a declared template root answers to that name, so that page is not here\n`);
+    }
+  }
+}
+
 export function sayWebBridge(webBridgeStats, webBridgeMs) {
   const w = webBridgeStats;
   const reasons = Object.entries(w.unresolved.byReason)
@@ -350,19 +397,7 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
     + `${w.callsEdges.EXACT + w.callsEdges.SOUND_SET + w.callsEdges.HEURISTIC} CALLS edge(s) `
     + `(${w.callsEdges.EXACT} exact, ${w.callsEdges.SOUND_SET} sound, ${w.callsEdges.HEURISTIC} heuristic; `
     + `${w.callsByRule['passed-as-value'] ?? 0} of them a function handed over as a value)\n`);
-  // THE PAGES (RM48). A template a handler names is a page; one nothing
-  // names is a fragment or dead markup, and saying how many of each is what
-  // stops a silence from reading as "this application has no pages".
-  const tp = webBridgeStats.templates;
-  if (tp && tp.files > 0) {
-    process.stderr.write(`Web lane: ${tp.files} template(s) (${Object.entries(tp.byEngine).sort().map(([e, n]) => `${n} ${e}`).join(', ')}), `
-      + `${tp.rendered} of them rendered by a handler or pulled into one, ${tp.unrendered} named by nothing; `
-      + `${tp.views} handler(s) name a view (${tp.viewNames} view name(s), ${tp.redirects} redirect(s), `
-      + `${tp.unresolvedViews} return(s) this engine could not read)\n`);
-    for (const u of (tp.unresolvedViewNames ?? []).slice(0, 5)) {
-      process.stderr.write(`  [warn] VIEW_NAME_UNRESOLVED ${u.name} (${u.count} handler(s)): no template under a declared template root answers to that name, so that page is not here\n`);
-    }
-  }
+  sayNavigationsAndPages(webBridgeStats);
   for (const u of s.unresolvedSpecifiers.slice(0, 5)) {
     process.stderr.write(`  [warn] SCREEN_COMPONENT_UNRESOLVED ${u.specifier} (${u.count} route declaration(s)): this lane read no file at that specifier, so those screens render nothing\n`);
   }

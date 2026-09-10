@@ -41,6 +41,156 @@ import { MODE_COLD } from './invalidate.mjs';
 export const INCREMENTAL_ENGINE_VERSION = 'cascade-incremental/2';
 
 /**
+ * 4. THE JAVA FACTS, one shard per source file.
+ *
+ * A shard is reused when the plan did not name its file, and recomputed for one
+ * file rather than trusted when it is tampered with or has vanished. A reparsed
+ * file that produced NO record still gets an (empty) shard, so the next run can
+ * tell "analyzed, nothing in it" from "never analyzed".
+ */
+function javaFactsWithShards({ plan, index, store, selection, run, hash, abs, workers, cold, diag, newIndex, stats }) {
+  const shardsByFile = new Map();
+  const dropped = new Set(plan.dropJava ?? []);
+  stats.droppedJava = dropped.size;
+  const reparse = new Set(cold ? [] : plan.reparseJava ?? []);
+
+  if (!cold && index) {
+    for (const [file, entry] of Object.entries(index.files ?? {})) {
+      // One index holds both lanes' shards; each lane reads its own.
+      if ((entry?.lane ?? 'java') !== 'java') continue;
+      if (dropped.has(file) || reparse.has(file)) continue;
+      const hit = tryRead(store, 'javafacts', entry.shardKey, entry, diag, `javafacts ${file}`);
+      if (hit) {
+        shardsByFile.set(file, hit.records);
+        newIndex.files[file] = { lane: 'java', shardKey: entry.shardKey, sha256: hit.sha256, lines: hit.lines };
+      } else {
+        // Tampered or vanished: recompute this ONE file rather than trust it.
+        stats.tamperedJava += 1;
+        reparse.add(file);
+      }
+    }
+    stats.reusedJava = shardsByFile.size;
+  }
+
+  const targets = cold
+    ? (selection.javaRootsAbs ?? [])
+    : [...reparse].sort().map((f) => abs(f));
+  if (targets.length > 0) {
+    const produced = run.java(targets);
+    const { byFile } = splitJavaFactsByFile(produced);
+    if (!cold) for (const f of reparse) if (!byFile.has(f)) byFile.set(f, []);
+    for (const [file, records] of byFile) {
+      const key = javaShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.java });
+      const w = store.write('javafacts', key, records);
+      shardsByFile.set(file, records);
+      newIndex.files[file] = { lane: 'java', shardKey: key, sha256: w.sha256, lines: w.lines };
+    }
+    stats.reparsedJava = byFile.size;
+  }
+  return assembleJavaFacts(shardsByFile);
+}
+
+/**
+ * WHICH WEB SHARDS STILL APPLY, decided from the BYTES rather than from a diff.
+ *
+ * The Java lane's roots are always inside `--root`, so `git diff` over that root
+ * sees every change to them and the plan is binding. A frontend is NOT:
+ * `--web-src ../front/src` is the common case and the frontend is as often a
+ * separate repository, where a diff of the analyzed root reports nothing at all.
+ * A run that trusted the changeset there would reuse a shard describing bytes
+ * that are no longer on disk, and the incremental pack would disagree with a
+ * cold one. (Measured before this was fixed: two of the four front/back pairs,
+ * one edited URL literal, two different digests.)
+ *
+ * So a shard is reused only when the key derived from the file's CURRENT content
+ * is the key the index recorded. The worker's own file list says which files
+ * exist, so an added file is parsed and a removed one dropped without git being
+ * asked anything.
+ */
+function reusableWebShards({ index, store, hash, abs, workers, diag, newIndex, stats, listed, droppedWeb, reparseWeb }) {
+  const webShards = new Map();
+  const known = new Set();
+  for (const [file, entry] of Object.entries(index.files ?? {})) {
+    if (entry?.lane !== 'web') continue;
+    known.add(file);
+    if (droppedWeb.has(file)) continue;
+    if (!listed.includes(file)) { droppedWeb.add(file); continue; }
+    if (reparseWeb.has(file)) continue;
+    let key;
+    try { key = webShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.web }); }
+    catch { droppedWeb.add(file); continue; }
+    if (key !== entry.shardKey) { reparseWeb.add(file); continue; }
+    const hit = tryRead(store, 'webfacts', entry.shardKey, entry, diag, `webfacts ${file}`);
+    if (hit) {
+      webShards.set(file, hit.records);
+      newIndex.files[file] = { lane: 'web', shardKey: entry.shardKey, sha256: hit.sha256, lines: hit.lines };
+    } else {
+      stats.tamperedWeb += 1;
+      reparseWeb.add(file);
+    }
+  }
+  for (const file of listed) if (!known.has(file)) reparseWeb.add(file);
+  stats.reusedWeb = webShards.size;
+  return webShards;
+}
+
+/**
+ * 5. THE WEB FACTS, the Java lane's shape with one difference: the PACKAGE
+ * CONFIGURATION is never cached.
+ *
+ * A `.env` value, a dev-server proxy rule and a path alias describe the package,
+ * not the file they are written in, so there is no file whose shard could hold
+ * them honestly. They are cheap (no source file is walked for them), so every
+ * run reads them again.
+ *
+ * A SERVER-RENDERED APPLICATION HAS NO FRONTEND ROOT AT ALL (RM48): its pages
+ * are template files under a template root, read by the same worker and shard by
+ * shard exactly like a `.js` file. So the lane's inputs are both lists.
+ */
+function webFactsWithShards({ plan, index, store, selection, run, hash, abs, workers, cold, diag, newIndex, stats }) {
+  const webRootsAbs = selection.webRootsAbs ?? [];
+  const templateRootsAbs = (selection.templateRootsAbs ?? [])
+    .map((t) => (t && typeof t === 'object' ? t.root : t))
+    .filter((r) => typeof r === 'string' && r !== '');
+  const webInputRoots = [...webRootsAbs, ...templateRootsAbs];
+  if (webInputRoots.length === 0) return [];
+  // One worker invocation, no source file parsed, two answers: the package
+  // configuration (never cached) and the LIST of files this lane would read.
+  const configOut = (run.webConfigs(webInputRoots) ?? [])
+    .filter((r) => r && typeof r === 'object' && r.kind !== 'header' && r.kind !== 'summary');
+  const listed = configOut.filter((r) => r.kind === 'sourceFile' && typeof r.file === 'string').map((r) => r.file);
+  const configRecords = configOut.filter((r) => r.kind !== 'sourceFile');
+  const configFiles = new Set(configRecords.map((r) => r.file).filter((f) => typeof f === 'string'));
+
+  const droppedWeb = new Set(plan.dropWeb ?? []);
+  const reparseWeb = new Set(cold ? [] : plan.reparseWeb ?? []);
+  const webShards = !cold && index
+    ? reusableWebShards({
+      index, store, hash, abs, workers, diag, newIndex, stats, listed, droppedWeb, reparseWeb,
+    })
+    : new Map();
+  stats.droppedWeb = droppedWeb.size;
+
+  const webTargets = cold ? webInputRoots : [...reparseWeb].sort().map((f) => abs(f));
+  if (webTargets.length > 0) {
+    const produced = run.web(webTargets);
+    const { byFile } = splitWebFactsByFile(produced, { configFiles });
+    // Same rule as the Java lane: a file that was re-read and produced nothing
+    // still gets an EMPTY shard, so "read, nothing in it" is distinguishable
+    // from "never read".
+    if (!cold) for (const f of reparseWeb) if (!byFile.has(f)) byFile.set(f, []);
+    for (const [file, records] of byFile) {
+      const key = webShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.web });
+      const w = store.write('webfacts', key, records);
+      webShards.set(file, records);
+      newIndex.files[file] = { lane: 'web', shardKey: key, sha256: w.sha256, lines: w.lines };
+    }
+    stats.reparsedWeb = byFile.size;
+  }
+  return assembleWebFacts(webShards, configRecords);
+}
+
+/**
  * Run the lanes, reusing every shard the plan did not invalidate.
  *
  * @param {Object} a
@@ -117,137 +267,9 @@ export function runLanesWithShards(a) {
   Object.assign(newIndex.statements, sql.statementEntries);
   Object.assign(stats, sql.stats);
 
-  // ---- 4. java facts (one shard per source file) --------------------------
-  const shardsByFile = new Map();
-  const dropped = new Set(plan.dropJava ?? []);
-  stats.droppedJava = dropped.size;
-  const reparse = new Set(cold ? [] : plan.reparseJava ?? []);
-
-  if (!cold && index) {
-    for (const [file, entry] of Object.entries(index.files ?? {})) {
-      // One index holds both lanes' shards; each lane reads its own.
-      if ((entry?.lane ?? 'java') !== 'java') continue;
-      if (dropped.has(file) || reparse.has(file)) continue;
-      const hit = tryRead(store, 'javafacts', entry.shardKey, entry, diag, `javafacts ${file}`);
-      if (hit) {
-        shardsByFile.set(file, hit.records);
-        newIndex.files[file] = { lane: 'java', shardKey: entry.shardKey, sha256: hit.sha256, lines: hit.lines };
-      } else {
-        // Tampered or vanished: recompute this ONE file rather than trust it.
-        stats.tamperedJava += 1;
-        reparse.add(file);
-      }
-    }
-    stats.reusedJava = shardsByFile.size;
-  }
-
-  const targets = cold
-    ? (selection.javaRootsAbs ?? [])
-    : [...reparse].sort().map((f) => abs(f));
-  if (targets.length > 0) {
-    const produced = run.java(targets);
-    const { byFile } = splitJavaFactsByFile(produced);
-    // A reparsed file that produced NO record still gets an (empty) shard, so the
-    // next run can tell "analyzed, nothing in it" from "never analyzed".
-    if (!cold) for (const f of reparse) if (!byFile.has(f)) byFile.set(f, []);
-    for (const [file, records] of byFile) {
-      const key = javaShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.java });
-      const w = store.write('javafacts', key, records);
-      shardsByFile.set(file, records);
-      newIndex.files[file] = { lane: 'java', shardKey: key, sha256: w.sha256, lines: w.lines };
-    }
-    stats.reparsedJava = byFile.size;
-  }
-  const javaFacts = assembleJavaFacts(shardsByFile);
-
-  // ---- 5. web facts (one shard per frontend source file) ------------------
-  // The Java lane's shape, with one difference: the PACKAGE CONFIGURATION is
-  // never cached. A `.env` value, a dev-server proxy rule and a path alias
-  // describe the package, not the file they are written in, so there is no file
-  // whose shard could hold them honestly. They are cheap (no source file is
-  // walked for them), so every run reads them again.
-  const webRootsAbs = selection.webRootsAbs ?? [];
-  // A SERVER-RENDERED APPLICATION HAS NO FRONTEND ROOT AT ALL (RM48): its pages
-  // are template files under a template root, read by the same worker and shard
-  // by shard exactly like a `.js` file. So the lane's inputs are both lists.
-  const templateRootsAbs = (selection.templateRootsAbs ?? [])
-    .map((t) => (t && typeof t === 'object' ? t.root : t))
-    .filter((r) => typeof r === 'string' && r !== '');
-  const webInputRoots = [...webRootsAbs, ...templateRootsAbs];
-  let webFacts = [];
-  if (webInputRoots.length > 0) {
-    // One worker invocation, no source file parsed, two answers: the package
-    // configuration (never cached) and the LIST of files this lane would read.
-    const configOut = (run.webConfigs(webInputRoots) ?? [])
-      .filter((r) => r && typeof r === 'object' && r.kind !== 'header' && r.kind !== 'summary');
-    const listed = configOut.filter((r) => r.kind === 'sourceFile' && typeof r.file === 'string').map((r) => r.file);
-    const configRecords = configOut.filter((r) => r.kind !== 'sourceFile');
-    const configFiles = new Set(configRecords.map((r) => r.file).filter((f) => typeof f === 'string'));
-
-    const webShards = new Map();
-    const droppedWeb = new Set(plan.dropWeb ?? []);
-    const reparseWeb = new Set(cold ? [] : plan.reparseWeb ?? []);
-
-    if (!cold && index) {
-      // WHY THE WEB LANE VERIFIES BY CONTENT AND THE JAVA LANE DOES NOT.
-      //
-      // The Java lane's roots are always inside `--root`, so `git diff` over that
-      // root sees every change to them and the plan is binding. A frontend is
-      // NOT: `--web-src ../front/src` is the common case and the frontend is as
-      // often a separate repository, where a diff of the analyzed root reports
-      // nothing at all. A run that trusted the changeset there would reuse a
-      // shard describing bytes that are no longer on disk, and the incremental
-      // pack would disagree with a cold one. (Measured before this was fixed:
-      // two of the four front/back pairs, one edited URL literal, two different
-      // digests.)
-      //
-      // So the decision is taken from the bytes: a shard is reused only when the
-      // key derived from the file's CURRENT content is the key the index
-      // recorded. The walk above says which files exist, so an added file is
-      // parsed and a removed one is dropped without git being asked anything.
-      const known = new Set();
-      for (const [file, entry] of Object.entries(index.files ?? {})) {
-        if (entry?.lane !== 'web') continue;
-        known.add(file);
-        if (droppedWeb.has(file)) continue;
-        if (!listed.includes(file)) { droppedWeb.add(file); continue; }
-        if (reparseWeb.has(file)) continue;
-        let key;
-        try { key = webShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.web }); }
-        catch { droppedWeb.add(file); continue; }
-        if (key !== entry.shardKey) { reparseWeb.add(file); continue; }
-        const hit = tryRead(store, 'webfacts', entry.shardKey, entry, diag, `webfacts ${file}`);
-        if (hit) {
-          webShards.set(file, hit.records);
-          newIndex.files[file] = { lane: 'web', shardKey: entry.shardKey, sha256: hit.sha256, lines: hit.lines };
-        } else {
-          stats.tamperedWeb += 1;
-          reparseWeb.add(file);
-        }
-      }
-      for (const file of listed) if (!known.has(file)) reparseWeb.add(file);
-      stats.reusedWeb = webShards.size;
-    }
-    stats.droppedWeb = droppedWeb.size;
-
-    const webTargets = cold ? webInputRoots : [...reparseWeb].sort().map((f) => abs(f));
-    if (webTargets.length > 0) {
-      const produced = run.web(webTargets);
-      const { byFile } = splitWebFactsByFile(produced, { configFiles });
-      // Same rule as the Java lane: a file that was re-read and produced nothing
-      // still gets an EMPTY shard, so "read, nothing in it" is distinguishable
-      // from "never read".
-      if (!cold) for (const f of reparseWeb) if (!byFile.has(f)) byFile.set(f, []);
-      for (const [file, records] of byFile) {
-        const key = webShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: workers.web });
-        const w = store.write('webfacts', key, records);
-        webShards.set(file, records);
-        newIndex.files[file] = { lane: 'web', shardKey: key, sha256: w.sha256, lines: w.lines };
-      }
-      stats.reparsedWeb = byFile.size;
-    }
-    webFacts = assembleWebFacts(webShards, configRecords);
-  }
+  const laneArgs = { plan, index, store, selection, run, hash, abs, workers, cold, diag, newIndex, stats };
+  const javaFacts = javaFactsWithShards(laneArgs);
+  const webFacts = webFactsWithShards(laneArgs);
 
   return { catalogRecords, lineageRecords, statementRecords, javaFacts, webFacts, index: newIndex, stats };
 }

@@ -414,6 +414,103 @@ which is a deployment value and is left alone on purpose. A constant whose own
 value is built out of another hole (`` const BANNER_URL = `/api/${SITE_ID}/banners` ``)
 is reported by what stopped it and is not followed further.
 
+### And the same corpus once a navigation stops counting as a request (RM59)
+
+A single-page app changes the screen by asking its own router, and the browser
+sends nothing. Every rule in the web lane saw a path-shaped argument and called
+it a request, so `router.push('/auth/login')` came out as a call to a route
+nothing serves. The sinks are now declared per router and read as navigations.
+
+The `Frontend calls` column is the end of all three fixes this round made (the
+navigation pack, the imported constant, the string method); the paragraphs below
+say which took which.
+
+| Repository | Frontend calls | Calls resolved | Navigations | To a screen | Screens reaching a table | Endpoint to column pairs |
+|---|---|---|---|---|---|---|
+| egovframe-msa-edu | **217 -> 173** | 137 | 68 | 62 | 33 / 56 | 394 |
+| jsh-erp | **221 -> 193** (the constant fix, not a navigation) | 165 | 8 | 3 | 0 / 7 | 13179 |
+| litemall | **191 -> 177** | 172 | 56 | 37 | 40 / 89 | 4223 |
+| jeecgboot/JeecgBoot | **963 -> 938** | 584 | 30 | 15 | 25 / 181 | 15997 |
+| naver/ngrinder | **77 -> 69** | **66 -> 63** | 14 | 7 | 0 / 19 | 900 |
+| macrozheng/mall | **153 -> 151** | 145 | 32 | 32 | 44 / 54 | 3868 |
+| ruoyi-vue | **142 -> 138** | **122 -> 121** | 5 | 4 | 8 / 21 | 1613 |
+| egovframe-common-components | 811 -> 810 | 765 | 66 | 0 | 470 / 657 | 9647 |
+| egovframe-enterprise-business-template | 135 -> 134 | 122 | 27 | 0 | 55 / 84 | 2099 |
+| dolphinscheduler | 233 | 219 | 33 | 18 | 0 / 44 | 6216 |
+| xxl-job | 31 | 24 | 5 | 3 | 6 / 11 | 528 |
+
+- **Which fix took which.** Navigations: the MSA template 39, litemall 13,
+  jeecg-boot 13, ngrinder 8, mall 2, ruoyi-vue 1, and none at all on jsh-erp,
+  where all eight navigations were already invisible to the call rule. The
+  imported constant: jsh-erp 27. The string method: the MSA template 5,
+  jeecg-boot 12, ruoyi-vue 3, and one each on jsh-erp, litemall and the two
+  eGovFrame repositories.
+- **Calls resolved fall in exactly two places, by four navigations.** Verified by
+  running the same commits with the pack switched off and diffing the edge sets:
+  ngrinder loses `$router.push('/script/detail/.gitconfig.yml')` (which had
+  matched `GET /script/detail/**`), `` $router.push(`/perftest/${id}`) `` (seven
+  edges, one call site) and `$router.push('/script/list/')`; ruoyi-vue loses
+  `router.push('/login')`, which had matched `POST /login`. All four are a
+  vue-router path that happens to be spelled like a route the same application
+  serves, which is what an application whose screens mirror its routes looks
+  like. Nothing else in the corpus loses a resolved call.
+- **No other guarded number moves.** `endpointColumnPairs`, screens reaching a
+  table, tables, columns and endpoints reaching a statement are identical on all
+  seventeen. Fourteen of the sixteen pack digests are identical; the two that
+  move are the two registered projects with a web lane, jsh-erp and litemall.
+- **Where the navigations are recorded, and where they are only counted.** A
+  navigation is recorded on the screen it is written in, which is the screen
+  whose component is that file: 34 screens on the MSA template, 23 on litemall,
+  17 on mall. On the two eGovFrame server-rendered repositories every navigation
+  is a `location.href` in a JSP's inline script and no route declaration makes
+  those pages screens, so all 93 are counted and recorded nowhere. That is the
+  honest answer: the count says the act happened, and there is no screen node to
+  hang it on.
+- **A path that names no screen is a finding either way round.** Six of the MSA
+  template's are: two `router.push('/404')`, which Next's own error page answers
+  and which the `next-pages` pack deliberately leaves out of the screen list; one
+  relative `push('view')`; and three whose target is a value handed in from
+  outside the file.
+
+**A string method is never an HTTP sink.** Five of the MSA template's nineteen
+unanswered paths were `pathname.startsWith('/auth/login/naver')` and
+`pathname.indexOf('/refresh')`: the argument really is a path, so the URL rule
+cannot help, and the METHOD name is what settles it. Reading it that way takes
+the template's call sites 178 to 173 and its unanswered paths 19 to 14, jeecg-boot
+950 to 938, ruoyi-vue 141 to 138, and one call each off the two eGovFrame
+repositories, jsh-erp and litemall. No repository loses a resolved call, and
+`endpointColumnPairs`, screens reaching a table, tables, columns and endpoints
+reaching a statement are identical on all seventeen.
+
+**What this round left on the table.** A `<router-link to=…>` is written in a
+single-file component's `<template>`, and the worker parses a component's
+`<script>` blocks and not its markup, so that sink is declared and never fires.
+Neither does `router.push` on an application's OWN router module
+(`import router from '@/router'`), which would need the module traced to a
+`createRouter(...)` the way an axios instance is traced. And a `location.href`
+in a server-rendered page IS a request in a way a router push is not: one such
+site in ngrinder (a CSV download) is now counted as a navigation that names no
+screen rather than as a call.
+
+**A URL that IS an imported constant.** RM58 filled the holes a template was
+left with and left a URL argument that is the imported name itself resolving to
+nothing, counted `importedConstant`. All 27 of jsh-erp's `importedConstant`
+unresolved sites were that, and not one was a URL: they are browser-storage keys
+read through a verb-named method (`Vue.ls.get(ACCESS_TOKEN)`, where
+`ACCESS_TOKEN` is `'Access-Token'`). Reading the value settles the call in both
+directions: 221 call sites to 194, 56 unresolved to 29, the same 165 resolved,
+and 27 more counted under `notUrlShaped`, which is where a call that never was
+one belongs. `sound` stays 0 there because every one of jsh-erp's resolved calls
+goes through a prefix chosen by match count, and an auto prefix grades the whole
+edge HEURISTIC.
+
+**Two shapes measured and deliberately not built.** A MyBatis session fetched
+and used in one expression (`getSqlSession().selectList("X.y", vo)`) has zero
+sites in all seventeen repositories, and the two `getSqlSession()` calls that
+exist fetch a JDBC connection for table metadata. A Nexacro transaction's in and
+out datasets (75 in the sample) are data flow inside the browser, and what
+impact needs is the call, which the transaction record already carries.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

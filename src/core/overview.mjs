@@ -211,6 +211,61 @@ function censusEdges(graph, mode, generatedIds) {
 }
 
 /**
+ * THE SCREEN AXIS CENSUS (RM30): the same forward walk `browse kind=screen`
+ * lists, from the router's own declaration down to the tables.
+ *
+ * Computed only where there IS a screen axis, so a backend-only pack pays
+ * nothing for it and its overview has no `screens` block to be mistaken for an
+ * empty one.
+ */
+function screensCensus(graph, { mode, depth }, screenNodes, webScreenStats) {
+  const sw = walkScreens(graph, { mode, depth });
+  let reachingAnEndpoint = 0;
+  let reachingATable = 0;
+  let observedScreens = 0;
+  let depthCutScreens = 0;
+  const nexacroScreens = screenNodes.filter((n) => n.source === 'nexacro').length;
+  for (const s of sw.screens) {
+    if (s.endpoints.length > 0) reachingAnEndpoint += 1;
+    if (s.tables.length > 0) reachingATable += 1;
+    if (s.observed) observedScreens += 1;
+    if (s.depthCut > 0) depthCutScreens += 1;
+  }
+  const screensBlock = {
+    declared: webScreenStats ? (webScreenStats.declared ?? screenNodes.length) : screenNodes.length,
+    screens: screenNodes.length,
+    withComponent: screenNodes.filter((n) => n.component != null).length,
+    // THREE KINDS OF SCREEN: one a router declares (RM48), one a controller
+    // renders, and one a Nexacro client IS (RM56). A hybrid application has
+    // more than one of them, and a single total would hide that.
+    //
+    // The third is named ONLY where there is one, because this answer is what
+    // a caller reads and a key that appears everywhere at zero would say
+    // "this product could have Nexacro screens" about every product there is.
+    byKind: {
+      router: screenNodes.filter((n) => n.source !== 'view' && n.source !== 'nexacro').length,
+      page: screenNodes.filter((n) => n.source === 'view').length,
+      ...(nexacroScreens > 0 ? { nexacro: nexacroScreens } : {}),
+    },
+    reachingAnEndpoint,
+    reachingATable,
+    componentUnresolved: webScreenStats ? (webScreenStats.componentUnresolved ?? 0) : 0,
+    // A screen the SOURCE never declared: the router is filled in at run time,
+    // or a recording found a page nothing here states.
+    fromRecording: screenNodes.filter((n) => n.source === 'har').length,
+    observed: observedScreens,
+    // The screens a RECORDING says something about: one the source never
+    // declared, or one whose call the browser was seen to make. Both are
+    // RUNTIME_ONLY facts, so neither is counted inside any other number here.
+    seenAtRunTime: screenNodes.filter((n) => n.observed === true || n.source === 'har').length,
+    depthCut: depthCutScreens,
+    serverDriven: !!(webScreenStats && webScreenStats.serverDriven && webScreenStats.serverDriven.detected === true),
+    walk: sw.walk,
+  };
+  return screensBlock;
+}
+
+/**
  * 3. THE END-TO-END WALK, and everything derived from where it got to.
  */
 function walkAxis(graph, { mode, depth, laneStats }, c) {
@@ -263,60 +318,12 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
     }
   }
 
-  // THE SCREEN AXIS CENSUS (RM30). The same forward walk `browse kind=screen`
-  // lists, from the router's own declaration down to the tables. Computed only
-  // where there IS a screen axis, so a backend-only pack pays nothing for it and
-  // its overview has no `screens` block to be mistaken for an empty one.
   const screenNodes = [];
   for (const n of graph.nodes.values()) if (n.kind === 'screen') screenNodes.push(n);
   const webScreenStats = laneStats && laneStats.web && laneStats.web.screens && typeof laneStats.web.screens === 'object'
     ? laneStats.web.screens : null;
-  let screensBlock = null;
-  if (screenNodes.length > 0) {
-    const sw = walkScreens(graph, { mode, depth });
-    let reachingAnEndpoint = 0;
-    let reachingATable = 0;
-    let observedScreens = 0;
-    let depthCutScreens = 0;
-    const nexacroScreens = screenNodes.filter((n) => n.source === 'nexacro').length;
-    for (const s of sw.screens) {
-      if (s.endpoints.length > 0) reachingAnEndpoint += 1;
-      if (s.tables.length > 0) reachingATable += 1;
-      if (s.observed) observedScreens += 1;
-      if (s.depthCut > 0) depthCutScreens += 1;
-    }
-    screensBlock = {
-      declared: webScreenStats ? (webScreenStats.declared ?? screenNodes.length) : screenNodes.length,
-      screens: screenNodes.length,
-      withComponent: screenNodes.filter((n) => n.component != null).length,
-      // THREE KINDS OF SCREEN: one a router declares (RM48), one a controller
-      // renders, and one a Nexacro client IS (RM56). A hybrid application has
-      // more than one of them, and a single total would hide that.
-      //
-      // The third is named ONLY where there is one, because this answer is what
-      // a caller reads and a key that appears everywhere at zero would say
-      // "this product could have Nexacro screens" about every product there is.
-      byKind: {
-        router: screenNodes.filter((n) => n.source !== 'view' && n.source !== 'nexacro').length,
-        page: screenNodes.filter((n) => n.source === 'view').length,
-        ...(nexacroScreens > 0 ? { nexacro: nexacroScreens } : {}),
-      },
-      reachingAnEndpoint,
-      reachingATable,
-      componentUnresolved: webScreenStats ? (webScreenStats.componentUnresolved ?? 0) : 0,
-      // A screen the SOURCE never declared: the router is filled in at run time,
-      // or a recording found a page nothing here states.
-      fromRecording: screenNodes.filter((n) => n.source === 'har').length,
-      observed: observedScreens,
-      // The screens a RECORDING says something about: one the source never
-      // declared, or one whose call the browser was seen to make. Both are
-      // RUNTIME_ONLY facts, so neither is counted inside any other number here.
-      seenAtRunTime: screenNodes.filter((n) => n.observed === true || n.source === 'har').length,
-      depthCut: depthCutScreens,
-      serverDriven: !!(webScreenStats && webScreenStats.serverDriven && webScreenStats.serverDriven.detected === true),
-      walk: sw.walk,
-    };
-  }
+  const screensBlock = screenNodes.length > 0
+    ? screensCensus(graph, { mode, depth }, screenNodes, webScreenStats) : null;
 
   const multiHandler = multiHandlerRoutes(graph);
   const statements = statementIds.length;
@@ -688,6 +695,51 @@ function restGaps(o, say) {
   });
 }
 
+/**
+ * THE TWO LANES THE GRAPH ALONE CANNOT DESCRIBE, from their own statistics.
+ *
+ * The graph cannot say how many frontend calls there were, only how many became
+ * an edge; and it cannot say what a document DECLARED, only what the code
+ * serves. Each block is ABSENT rather than zeroed on a pack whose lane did not
+ * run, so "no frontend calls" and "no frontend was read" cannot be confused.
+ */
+function laneBlocks(laneStats) {
+  const out = {};
+  if (laneStats && laneStats.web && laneStats.web.resolved) {
+    out.web = {
+      calls: laneStats.web.calls?.withUrl ?? 0,
+      resolved: {
+        SOUND_SET: laneStats.web.resolved.SOUND_SET ?? 0,
+        HEURISTIC: laneStats.web.resolved.HEURISTIC ?? 0,
+      },
+      unresolved: laneStats.web.unresolved?.total ?? 0,
+      outbound: laneStats.web.outboundEndpoints ?? 0,
+      prefix: Object.entries(laneStats.web.prefix ?? {}).sort(([a], [b]) => cmp(a, b))
+        .flatMap(([dir, p]) => (p.instances ?? []).map((i) => ({
+          package: dir, instance: i.id, value: i.value, from: i.from,
+        }))),
+    };
+  }
+  if (laneStats && laneStats.openapi && laneStats.openapi.drift) {
+    out.openapi = {
+      documents: (laneStats.openapi.documents ?? []).map((d) => ({
+        path: d.path, version: d.version, basePath: d.basePath ?? '',
+        paths: d.paths ?? 0, matchedServed: d.matchedServed ?? 0, onlyInDocument: d.onlyInDocument ?? 0,
+        unreadable: (d.unreadable ?? []).length,
+      })),
+      paths: laneStats.openapi.paths ?? 0,
+      matchedServed: laneStats.openapi.matchedServed ?? 0,
+      onlyInDocument: laneStats.openapi.onlyInDocument ?? 0,
+      onlyInCode: laneStats.openapi.onlyInCode ?? 0,
+      samples: {
+        onlyInDocument: (laneStats.openapi.drift.onlyInDocument ?? []).slice(0, 10).map(strip),
+        onlyInCode: (laneStats.openapi.drift.onlyInCode ?? []).slice(0, 10).map(strip),
+      },
+    };
+  }
+  return out;
+}
+
 export function buildOverview(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new OverviewError(`unknown mode: ${JSON.stringify(mode)}`);
@@ -775,46 +827,7 @@ export function buildOverview(graph, opts = {}) {
     // screen axis, so "no screen reaches a table" and "no screen was built"
     // cannot be confused.
     ...(screensBlock ? { screens: screensBlock } : {}),
-    // The web axis, from the lane's own statistics: the graph alone cannot say
-    // how many frontend calls there were, only how many became an edge. Absent
-    // (rather than zeroed) on a pack with no web lane, so "no frontend calls"
-    // and "no frontend was read" cannot be confused.
-    ...(laneStats && laneStats.web && laneStats.web.resolved ? {
-      web: {
-        calls: laneStats.web.calls?.withUrl ?? 0,
-        resolved: {
-          SOUND_SET: laneStats.web.resolved.SOUND_SET ?? 0,
-          HEURISTIC: laneStats.web.resolved.HEURISTIC ?? 0,
-        },
-        unresolved: laneStats.web.unresolved?.total ?? 0,
-        outbound: laneStats.web.outboundEndpoints ?? 0,
-        prefix: Object.entries(laneStats.web.prefix ?? {}).sort(([a], [b]) => cmp(a, b))
-          .flatMap(([dir, p]) => (p.instances ?? []).map((i) => ({
-            package: dir, instance: i.id, value: i.value, from: i.from,
-          }))),
-      },
-    } : {}),
-    // The OpenAPI axis: what the documents DECLARED, and how far that agrees
-    // with what the code serves. Absent (rather than zeroed) on a pack that read
-    // no document, so "the documents declare nothing" and "no document was read"
-    // cannot be confused.
-    ...(laneStats && laneStats.openapi && laneStats.openapi.drift ? {
-      openapi: {
-        documents: (laneStats.openapi.documents ?? []).map((d) => ({
-          path: d.path, version: d.version, basePath: d.basePath ?? '',
-          paths: d.paths ?? 0, matchedServed: d.matchedServed ?? 0, onlyInDocument: d.onlyInDocument ?? 0,
-          unreadable: (d.unreadable ?? []).length,
-        })),
-        paths: laneStats.openapi.paths ?? 0,
-        matchedServed: laneStats.openapi.matchedServed ?? 0,
-        onlyInDocument: laneStats.openapi.onlyInDocument ?? 0,
-        onlyInCode: laneStats.openapi.onlyInCode ?? 0,
-        samples: {
-          onlyInDocument: (laneStats.openapi.drift.onlyInDocument ?? []).slice(0, 10).map(strip),
-          onlyInCode: (laneStats.openapi.drift.onlyInCode ?? []).slice(0, 10).map(strip),
-        },
-      },
-    } : {}),
+    ...laneBlocks(laneStats),
     mybatisPlus: {
       entities: mpEntities,
       statements: mpStatements,

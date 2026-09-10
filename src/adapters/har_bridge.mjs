@@ -191,23 +191,14 @@ export function prefixRules(prefixCensus) {
  *            unmatchedPaths:{method:string, path:string, count:number}[],
  *            unreadable:{file:string, reason:string}[]}}
  */
-export function addHarFacts(g, recordings, opts = {}) {
-  const rules = prefixRules(opts.prefix);
-  const stats = {
-    files: 0,
-    entries: 0,
-    matched: 0,
-    unmatched: 0,
-    assets: 0,
-    pagesWithoutScreen: 0,
-    pairs: 0,
-    screensObserved: 0,
-    endpointsObserved: 0,
-    unmatchedPaths: [],
-    unreadable: [],
-  };
-
-  // The routes this pack SERVES, keyed the way the web bridge keys them.
+/**
+ * THE ROUTES THIS PACK SERVES, and the SCREENS its router declared, indexed the
+ * way a recorded request is matched against each.
+ *
+ * The screens are sorted longest path first, so `/a/b` wins over a `/a/:x` that
+ * would also swallow it.
+ */
+function harIndex(g) {
   const routesByPath = new Map();
   const allRoutes = [];
   for (const n of g.nodes.values()) {
@@ -217,18 +208,19 @@ export function addHarFacts(g, recordings, opts = {}) {
     routesByPath.get(p).push({ id: n.id, httpMethod: n.httpMethod ?? 'ANY' });
   }
   allRoutes.sort();
-
-  // The screens the router declared, longest path first so `/a/b` wins over a
-  // `/a/:x` that would also swallow it.
   const screens = [];
   for (const n of g.nodes.values()) {
     if (n.kind !== 'screen' || typeof n.path !== 'string') continue;
     screens.push({ id: n.id, path: n.path });
   }
   screens.sort((a, b) => b.path.length - a.path.length || cmp(a.path, b.path));
+  return { routesByPath, allRoutes, screens };
+}
 
+/** Which route a RECORDED path lands on, through each declared prefix rule in turn. */
+function makeMatchServed({ routesByPath, allRoutes }, rules) {
   const methodOk = (r, method) => r.httpMethod === 'ANY' || r.httpMethod === method;
-  const matchServed = (recordedPath, method) => {
+  return (recordedPath, method) => {
     for (const rule of rules) {
       let rest = recordedPath;
       if (rule.front !== '') {
@@ -246,90 +238,92 @@ export function addHarFacts(g, recordings, opts = {}) {
     }
     return null;
   };
+}
 
-  const pairs = new Map(); // `${screenId}|${endpointId}` -> accumulator
-  const newScreens = new Map(); // screen id -> node
-  const unmatched = new Map();
-  const observedScreens = new Set();
-  const observedEndpoints = new Set();
+/**
+ * WHICH SCREEN EACH RECORDED PAGE IS, decided once per page.
+ *
+ * A PAGE THE SOURCE NEVER DECLARED becomes a screen of its own, marked as coming
+ * from the recording and rendering nothing: the browser really was there, and no
+ * source line says which component it mounts.
+ */
+function screensOfPages(rec, screens, newScreens, g, stats) {
+  const screenOfPage = new Map();
+  for (const p of rec.pages) {
+    if (typeof p.path !== 'string' || p.path === '') continue;
+    const hit = screens.find((s) => screenPathMatches(s.path, p.path));
+    if (hit) { screenOfPage.set(p.id, hit.id); continue; }
+    const id = webScreenId(p.path);
+    screenOfPage.set(p.id, id);
+    if (g.nodes.has(id) || newScreens.has(id)) continue;
+    const segments = p.path.split('/').filter((s) => s !== '');
+    newScreens.set(id, {
+      id,
+      path: p.path,
+      name: null,
+      title: p.title ?? null,
+      label: p.path,
+      code: null,
+      group: segments[0] ?? '(root)',
+      component: null,
+      file: null,
+      line: null,
+      pack: null,
+      params: false,
+      lane: 'web',
+      source: 'har',
+      observed: true,
+      declaredAt: [],
+    });
+    stats.pagesWithoutScreen += 1;
+  }
+  return screenOfPage;
+}
 
-  const list = Array.isArray(recordings) ? recordings : [];
-  for (const rec of list) {
-    if (!rec || typeof rec !== 'object') continue;
-    stats.files += 1;
-    if (rec.unreadable) {
-      stats.unreadable.push({ file: rec.file, reason: rec.unreadable });
+/** One recording's requests, folded into (screen, route) pairs. */
+function readEntries(rec, screenOfPage, { matchServed, pairs, unmatched, observedScreens, observedEndpoints, stats }) {
+  for (const e of rec.entries) {
+    stats.entries += 1;
+    if (isAssetPath(e.path)) { stats.assets += 1; continue; }
+    const found = matchServed(e.path, e.method);
+    if (!found) {
+      stats.unmatched += 1;
+      // BY PATH, and by the method with it: `GET /thing` and `POST /thing`
+      // are two different requests, and a reader fixing a prefix needs both.
+      const key = `${e.method} ${e.path}`;
+      unmatched.set(key, (unmatched.get(key) ?? 0) + 1);
       continue;
     }
-    // Which screen each page id belongs to, decided once per page.
-    const screenOfPage = new Map();
-    for (const p of rec.pages) {
-      if (typeof p.path !== 'string' || p.path === '') continue;
-      const hit = screens.find((s) => screenPathMatches(s.path, p.path));
-      if (hit) { screenOfPage.set(p.id, hit.id); continue; }
-      // A PAGE THE SOURCE NEVER DECLARED. The browser really was there, so it
-      // becomes a screen of its own, marked as coming from the recording and
-      // rendering nothing: no source line says which component it mounts.
-      const id = webScreenId(p.path);
-      screenOfPage.set(p.id, id);
-      if (!g.nodes.has(id) && !newScreens.has(id)) {
-        const segments = p.path.split('/').filter((s) => s !== '');
-        newScreens.set(id, {
-          id,
-          path: p.path,
-          name: null,
-          title: p.title ?? null,
-          label: p.path,
-          code: null,
-          group: segments[0] ?? '(root)',
-          component: null,
-          file: null,
-          line: null,
-          pack: null,
-          params: false,
-          lane: 'web',
-          source: 'har',
-          observed: true,
-          declaredAt: [],
-        });
-        stats.pagesWithoutScreen += 1;
-      }
+    stats.matched += 1;
+    const screenId = e.pageref !== null ? screenOfPage.get(e.pageref) ?? null : null;
+    if (screenId === null) continue; // a request with no page: matched, and on no screen
+    const key = `${screenId}|${found.route.id}`;
+    let acc = pairs.get(key);
+    if (!acc) {
+      acc = {
+        screen: screenId, endpoint: found.route.id, file: rec.file, count: 0,
+        firstSeen: e.at, lastSeen: e.at, methods: new Set(),
+      };
+      pairs.set(key, acc);
     }
-    for (const e of rec.entries) {
-      stats.entries += 1;
-      if (isAssetPath(e.path)) { stats.assets += 1; continue; }
-      const found = matchServed(e.path, e.method);
-      if (!found) {
-        stats.unmatched += 1;
-        // BY PATH, and by the method with it: `GET /thing` and `POST /thing`
-        // are two different requests, and a reader fixing a prefix needs both.
-        const key = `${e.method} ${e.path}`;
-        unmatched.set(key, (unmatched.get(key) ?? 0) + 1);
-        continue;
-      }
-      stats.matched += 1;
-      const screenId = e.pageref !== null ? screenOfPage.get(e.pageref) ?? null : null;
-      if (screenId === null) continue; // a request with no page: matched, and on no screen
-      const key = `${screenId}|${found.route.id}`;
-      let acc = pairs.get(key);
-      if (!acc) {
-        acc = {
-          screen: screenId, endpoint: found.route.id, file: rec.file, count: 0,
-          firstSeen: e.at, lastSeen: e.at, methods: new Set(),
-        };
-        pairs.set(key, acc);
-      }
-      acc.count += 1;
-      acc.methods.add(e.method);
-      if (e.at !== null) {
-        if (acc.firstSeen === null || e.at < acc.firstSeen) acc.firstSeen = e.at;
-        if (acc.lastSeen === null || e.at > acc.lastSeen) acc.lastSeen = e.at;
-      }
-      observedScreens.add(screenId);
-      observedEndpoints.add(found.route.id);
+    acc.count += 1;
+    acc.methods.add(e.method);
+    if (e.at !== null) {
+      if (acc.firstSeen === null || e.at < acc.firstSeen) acc.firstSeen = e.at;
+      if (acc.lastSeen === null || e.at > acc.lastSeen) acc.lastSeen = e.at;
     }
+    observedScreens.add(screenId);
+    observedEndpoints.add(found.route.id);
   }
+}
 
+/**
+ * The pairs written to the graph, and the two ends marked `observed`.
+ *
+ * `observed` on BOTH ends, because both questions get asked: "was this screen
+ * ever opened?" and "did anything really call this route?".
+ */
+function writeHarPairs(g, { newScreens, pairs, unmatched, observedScreens, observedEndpoints, stats }) {
   for (const id of [...newScreens.keys()].sort()) g.addNode(newScreens.get(id));
   for (const key of [...pairs.keys()].sort()) {
     const a = pairs.get(key);
@@ -349,8 +343,6 @@ export function addHarFacts(g, recordings, opts = {}) {
     });
     stats.pairs += 1;
   }
-  // `observed` on BOTH ends, because both questions get asked: "was this screen
-  // ever opened?" and "did anything really call this route?".
   for (const id of [...observedScreens].sort()) if (g.nodes.has(id)) g.addNode({ id, observed: true });
   for (const id of [...observedEndpoints].sort()) if (g.nodes.has(id)) g.addNode({ id, observed: true });
   stats.screensObserved = observedScreens.size;
@@ -362,6 +354,47 @@ export function addHarFacts(g, recordings, opts = {}) {
       const sp = key.indexOf(' ');
       return { method: key.slice(0, sp), path: key.slice(sp + 1), count };
     });
+}
+
+export function addHarFacts(g, recordings, opts = {}) {
+  const rules = prefixRules(opts.prefix);
+  const stats = {
+    files: 0,
+    entries: 0,
+    matched: 0,
+    unmatched: 0,
+    assets: 0,
+    pagesWithoutScreen: 0,
+    pairs: 0,
+    screensObserved: 0,
+    endpointsObserved: 0,
+    unmatchedPaths: [],
+    unreadable: [],
+  };
+  const index = harIndex(g);
+  const matchServed = makeMatchServed(index, rules);
+  const out = {
+    matchServed,
+    pairs: new Map(), // `${screenId}|${endpointId}` -> accumulator
+    newScreens: new Map(), // screen id -> node
+    unmatched: new Map(),
+    observedScreens: new Set(),
+    observedEndpoints: new Set(),
+    stats,
+  };
+
+  for (const rec of (Array.isArray(recordings) ? recordings : [])) {
+    if (!rec || typeof rec !== 'object') continue;
+    stats.files += 1;
+    if (rec.unreadable) {
+      stats.unreadable.push({ file: rec.file, reason: rec.unreadable });
+      continue;
+    }
+    const screenOfPage = screensOfPages(rec, index.screens, out.newScreens, g, stats);
+    readEntries(rec, screenOfPage, out);
+  }
+
+  writeHarPairs(g, out);
   return stats;
 }
 

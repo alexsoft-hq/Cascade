@@ -76,7 +76,7 @@ test('a run whose only lane is web exits 0, and every call it found is an outbou
   assert.ok(lane, `no web lane line in:\n${res.stderr}`);
   assert.match(lane, /^Web lane: 19 file\(s\) \(3 \.vue, 8 \.ts\/\.tsx, 8 \.js\/\.jsx\), 1 parse error\(s\); /);
   assert.match(lane, /13 call site\(s\) carry a URL \(7 literal, 3 template, 2 constant, 1 unresolved\)/);
-  assert.match(lane, /7 route declaration\(s\), 3 alias\(es\), 2 proxy rule\(s\)/);
+  assert.match(lane, /7 route declaration\(s\), 0 navigation\(s\), 3 alias\(es\), 2 proxy rule\(s\)/);
 
   // The BRIDGE's line: with no backend in this pack, nothing can match, and the
   // line says that in the same words the pack does.

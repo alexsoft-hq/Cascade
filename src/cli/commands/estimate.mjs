@@ -87,7 +87,7 @@ function printMeasured(est) {
 
 export function run(ctx) {
   const { opt, flag, die, resolveOrDie, readProfile } = ctx;
-  const resolved = resolveOrDie({ strictProject: false });
+  const resolved = resolveOrDie();
   const rootChoice = analyzeRoot(resolved, opt('root'), process.cwd());
   const root = rootChoice.root;
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {

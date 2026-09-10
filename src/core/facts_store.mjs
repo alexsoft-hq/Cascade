@@ -405,6 +405,30 @@ export function assembleWebFacts(shards, configRecords = []) {
 }
 
 /**
+ * One CALL record's four counts, the same four the worker's own `tally` makes:
+ * the sink it went to, the client the framework injected, what said which method
+ * it sends, and the shape of its URL.
+ */
+function summariseCall(r, counts) {
+  counts.calls += 1;
+  if (typeof r.platformSink === 'string') {
+    counts.platformSinks[r.platformSink] = (counts.platformSinks[r.platformSink] ?? 0) + 1;
+  }
+  if (r.injected) counts.injectedCalls += 1;
+  if (r.method && r.method.from) {
+    counts.methodBySource[r.method.from] = (counts.methodBySource[r.method.from] ?? 0) + 1;
+  }
+  if (r.url) {
+    counts.callsWithUrl += 1;
+    const first = r.url.resolved && r.url.resolved[0];
+    if (!first) counts.urlByShape.unresolved += 1;
+    else if (first.via === 'literal') counts.urlByShape.literal += 1;
+    else if (first.via === 'template') counts.urlByShape.template += 1;
+    else counts.urlByShape.constant += 1;
+  }
+}
+
+/**
  * The counts a cold worker run prints in its `summary` record, recomputed from a
  * record stream.
  *
@@ -430,6 +454,8 @@ export function webFactsSummary(records) {
     apiFiles: 0,
     urlByShape: { literal: 0, template: 0, constant: 0, unresolved: 0 },
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
+    // The calls that change the SCREEN rather than send a request (RM59).
+    navigations: 0, navigationsByFramework: {},
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles: 0,
     platformSinks: { fetch: 0, xhr: 0, jquery: 0 },
@@ -477,6 +503,10 @@ export function webFactsSummary(records) {
       case 'binding': counts.bindings += 1; break;
       case 'class': counts.classes += 1; break;
       case 'assign': counts.assigns += 1; break;
+      case 'navigation':
+        counts.navigations += 1;
+        counts.navigationsByFramework[r.framework] = (counts.navigationsByFramework[r.framework] ?? 0) + 1;
+        break;
       case 'route':
         counts.routes += 1;
         counts.byPack[r.pack] = (counts.byPack[r.pack] ?? 0) + 1;
@@ -491,25 +521,9 @@ export function webFactsSummary(records) {
         else if (r.what === 'proxy') counts.proxies += 1;
         else if (r.what === 'env') { counts.envRecords += 1; envFiles.add(r.file); }
         break;
-      case 'call': {
-        counts.calls += 1;
-        if (typeof r.platformSink === 'string') {
-          counts.platformSinks[r.platformSink] = (counts.platformSinks[r.platformSink] ?? 0) + 1;
-        }
-        if (r.injected) counts.injectedCalls += 1;
-        if (r.method && r.method.from) {
-          counts.methodBySource[r.method.from] = (counts.methodBySource[r.method.from] ?? 0) + 1;
-        }
-        if (r.url) {
-          counts.callsWithUrl += 1;
-          const first = r.url.resolved && r.url.resolved[0];
-          if (!first) counts.urlByShape.unresolved += 1;
-          else if (first.via === 'literal') counts.urlByShape.literal += 1;
-          else if (first.via === 'template') counts.urlByShape.template += 1;
-          else counts.urlByShape.constant += 1;
-        }
+      case 'call':
+        summariseCall(r, counts);
         break;
-      }
       default: break;
     }
   }

@@ -242,6 +242,12 @@ A constant of **another** class (`CmmnConstants.SELECT_CODES`) is one of the
 `unreadable`, on purpose: nothing in the corpus writes one, and a resolver with
 no repository behind it is a rule nobody has checked.
 
+For the same reason a session fetched and used in one expression
+(`getSqlSession().selectList("X.y", vo)`) is not read: the shape has **zero
+sites** in all seventeen corpus repositories. The two `getSqlSession()` calls
+that are there both fetch a JDBC connection to read table metadata, which names
+no statement at all.
+
 
 #### The same DAO one generation earlier: iBATIS 2
 

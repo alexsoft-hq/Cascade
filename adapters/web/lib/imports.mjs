@@ -24,6 +24,7 @@
 // can see at the signature what a rule is allowed to reach.
 
 import { calleeOf, eachChild, isFunctionNode, keyName, patternNames, propOf, Scope, summarizeArg } from './ast.mjs';
+import { navigationAssignmentOf } from './navigation.mjs';
 import { maybeRoute } from './routers.mjs';
 
 /**
@@ -576,6 +577,10 @@ function nexacroHandlerName(ctx, node, env) {
 export function visitAssignment(ctx, node, env) {
   const { emit, relFile, lineOf } = ctx;
   const left = node.left;
+  // `location.href = '/'` is a navigation written as an assignment (RM59): the
+  // browser leaves this screen for another, and no request is sent from here.
+  const navigation = navigationAssignmentOf(ctx, node, env);
+  if (navigation !== null) emit(navigation, navigation.line);
   if (left && (left.type === 'MemberExpression' || left.type === 'OptionalMemberExpression')) {
     const c = calleeOf(left);
     if (c && c.path.length >= 2 && c.path[c.path.length - 2] === 'defaults' && c.path[c.path.length - 1] === 'baseURL') {

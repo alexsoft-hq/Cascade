@@ -140,22 +140,8 @@ export function mpPhysicalName(logical, strategy) {
  * @returns {object} `{empty, stats, entities, wrapperRecords, calls, types,
  *          resolveType, implementorsOf, bindingsOf, declares, roleOf, schema, …}`
  */
-export function readEntityModel(javaFacts, opts = {}) {
-  if (!Array.isArray(javaFacts)) throw new MpBridgeError('javaFacts must be an array');
-
-  const declared = opts.namingStrategy != null;
-  const strategy = declared ? opts.namingStrategy : ASSUMED_MP_NAMING_STRATEGY;
-  if (!MP_NAMING_STRATEGIES.includes(strategy)) {
-    throw new MpBridgeError(`unknown mybatisPlus.namingStrategy ${JSON.stringify(opts.namingStrategy)}. Expected one of ${MP_NAMING_STRATEGIES.join(', ')}`);
-  }
-  const derivedGrade = declared ? 'EXACT' : 'HEURISTIC';
-  const namingEvidence = declared ? 'declared' : 'assumed-mp-default';
-  const tablePrefix = typeof opts.tablePrefix === 'string' ? opts.tablePrefix : '';
-  const schema = opts.schema ?? null;
-
-  const stats = emptyStats(strategy, declared);
-
-  // ---- 0. index the fact stream -------------------------------------------
+/** The fact stream bucketed by the five record kinds this lane reads. */
+function indexMpFacts(javaFacts) {
   const entityRecords = new Map(); // fqn -> mpEntity record
   const mapperRecords = new Map(); // fqn -> mpMapper record
   const serviceRecords = new Map(); // fqn -> mpService record (the strongest base wins)
@@ -172,23 +158,22 @@ export function readEntityModel(javaFacts, opts = {}) {
       default:
     }
   }
-  if (entityRecords.size === 0 && mapperRecords.size === 0 && serviceRecords.size === 0) {
-    return { empty: true, stats, strategy, declared, derivedGrade, namingEvidence, tablePrefix, schema };
-  }
+  return { entityRecords, mapperRecords, serviceRecords, wrapperRecords, calls };
+}
 
-  const { types, resolveType } = buildTypeIndex(javaFacts);
-  const { implementorsOf, bindingsOf, declares } = buildHierarchyIndex(types, resolveType);
-
-  // ---- 1. who names an entity, through the generic bases ------------------
-  //
-  // A project rarely extends `ServiceImpl<M, T>` directly. jeecg-boot puts its
-  // own `JeecgServiceImpl<M extends BaseMapper<T>, T extends JeecgEntity>
-  // extends ServiceImpl<M, T>` in between, and 24 services extend THAT. The
-  // worker records only what each file says (`JeecgServiceImpl`'s entity
-  // argument is its own type parameter `T`), so the entity is resolved HERE by
-  // substituting type arguments down the extends/implements chain — no
-  // project-specific base name is ever hardcoded, which is what makes the same
-  // rule work for any other project's own base class.
+/**
+ * 1. WHO NAMES AN ENTITY, through the generic bases.
+ *
+ * A project rarely extends `ServiceImpl<M, T>` directly. jeecg-boot puts its own
+ * `JeecgServiceImpl<M extends BaseMapper<T>, T extends JeecgEntity> extends
+ * ServiceImpl<M, T>` in between, and 24 services extend THAT. The worker records
+ * only what each file says (`JeecgServiceImpl`'s entity argument is its own type
+ * parameter `T`), so the entity is resolved HERE by substituting type arguments
+ * down the extends/implements chain. No project-specific base name is ever
+ * hardcoded, which is what makes the same rule work for any other project's own
+ * base class.
+ */
+function makeRoleOf({ types, resolveType, mapperRecords, serviceRecords }) {
   const roleMemo = new Map(); // fqn -> {role, entity:{concrete|param}} | null
   const roleOf = (fqn, depth = 0) => {
     if (roleMemo.has(fqn)) return roleMemo.get(fqn);
@@ -205,7 +190,7 @@ export function readEntityModel(javaFacts, opts = {}) {
       // that is one. Deterministic: the clauses are read in source order.
       const supers = [];
       if (t.extendsSimple) supers.push({ simple: t.extendsSimple, args: t.extendsArgs ?? [] });
-      (t.implementsSimple ?? []).forEach((s, i) => supers.push({ simple: s, args: (t.implementsArgs ?? [])[i] ?? [] }));
+      (t.implementsSimple ?? []).forEach((sup, i) => supers.push({ simple: sup, args: (t.implementsArgs ?? [])[i] ?? [] }));
       for (const sup of supers) {
         const supFqn = resolveType(fqn, sup.simple);
         if (!supFqn) continue;
@@ -223,15 +208,25 @@ export function readEntityModel(javaFacts, opts = {}) {
     roleMemo.set(fqn, out);
     return out;
   };
+  return roleOf;
+}
 
-  // ---- 2. entities -> tables ----------------------------------------------
-  //
-  // A class is an MP ENTITY when the source says so in one of exactly two ways:
-  // it carries `@TableName`, or a `BaseMapper<T>` / `IService<T>` /
-  // `ServiceImpl<M, T>` in this pack names it as T. A class that merely carries
-  // `@TableField` on a couple of fields is NOT one — jeecg-boot has six of
-  // those, every one a DTO shaped for a result map — and mapping them would
-  // have invented six tables that no schema has.
+/**
+ * 2. ENTITIES -> TABLES.
+ *
+ * A class is an MP ENTITY when the source says so in one of exactly two ways: it
+ * carries `@TableName`, or a `BaseMapper<T>` / `IService<T>` / `ServiceImpl<M, T>`
+ * in this pack names it as T. A class that merely carries `@TableField` on a
+ * couple of fields is NOT one (jeecg-boot has six of those, every one a DTO
+ * shaped for a result map) and mapping them would have invented six tables no
+ * schema has.
+ *
+ * An entity a mapper or service NAMES but whose class carries no MP annotation
+ * at all has no field list. It is reported, not silently skipped: its statements
+ * would otherwise name no column and nobody would be told why.
+ */
+function entitiesToTables({ entityRecords, mapperRecords, serviceRecords, types, roleOf, stats, naming }) {
+  const { strategy, derivedGrade, namingEvidence, tablePrefix, schema } = naming;
   const namedByGeneric = new Set();
   for (const fqn of [...mapperRecords.keys(), ...serviceRecords.keys(), ...types.keys()]) {
     const r = roleOf(fqn);
@@ -260,18 +255,18 @@ export function readEntityModel(javaFacts, opts = {}) {
     stats.entities += 1;
     if (declaredName) stats.entitiesTableDeclared += 1;
   }
-  // An entity a mapper/service NAMES but whose class carries no MP annotation at
-  // all has no mpEntity record and therefore no field list. It is reported, not
-  // silently skipped: its statements would otherwise name no column and nobody
-  // would be told why.
   for (const fqn of [...namedByGeneric].sort(cmp)) {
     if (entities.has(fqn)) continue;
     stats.entitiesWithoutFields += 1;
     note(stats, 'mp-entity-fields-unknown',
       `${fqn} is named as a MyBatis-Plus entity but this pack holds no field list for it (the class carries no MP annotation, or the lane never parsed it), so statements on it name no column`);
   }
+  return entities;
+}
 
-  // ---- 3. fields -> columns, through the `extends` chain ------------------
+/** 3. FIELDS -> COLUMNS, through the `extends` chain. */
+function fieldsToColumns(entities, { entityRecords, resolveType, stats, naming }) {
+  const { strategy, derivedGrade, namingEvidence } = naming;
   const fieldsOf = (fqn, seen = new Set()) => {
     if (seen.has(fqn)) return [];
     seen.add(fqn);
@@ -283,21 +278,48 @@ export function readEntityModel(javaFacts, opts = {}) {
     for (const f of [...inherited, ...(Array.isArray(rec.fields) ? rec.fields : [])]) byName.set(f.name, f);
     return [...byName.values()];
   };
-
   for (const e of entities.values()) {
     e.fields = new Map();
     for (const f of fieldsOf(e.fqn)) {
       const mapped = mapField(f, { strategy, derivedGrade, namingEvidence });
       e.fields.set(f.name, { ...f, ...mapped });
-      if (mapped.column) {
-        stats.columns += 1;
-        if (f.id === true) e.idColumns.push(mapped.column);
-        if (f.logic === true) e.logicColumn = { column: mapped.column, grade: mapped.grade };
-      }
+      if (!mapped.column) continue;
+      stats.columns += 1;
+      if (f.id === true) e.idColumns.push(mapped.column);
+      if (f.logic === true) e.logicColumn = { column: mapped.column, grade: mapped.grade };
     }
     if (e.logicColumn) stats.logicDeleteEntities += 1;
   }
+}
 
+export function readEntityModel(javaFacts, opts = {}) {
+  if (!Array.isArray(javaFacts)) throw new MpBridgeError('javaFacts must be an array');
+
+  const declared = opts.namingStrategy != null;
+  const strategy = declared ? opts.namingStrategy : ASSUMED_MP_NAMING_STRATEGY;
+  if (!MP_NAMING_STRATEGIES.includes(strategy)) {
+    throw new MpBridgeError(`unknown mybatisPlus.namingStrategy ${JSON.stringify(opts.namingStrategy)}. Expected one of ${MP_NAMING_STRATEGIES.join(', ')}`);
+  }
+  const derivedGrade = declared ? 'EXACT' : 'HEURISTIC';
+  const namingEvidence = declared ? 'declared' : 'assumed-mp-default';
+  const tablePrefix = typeof opts.tablePrefix === 'string' ? opts.tablePrefix : '';
+  const schema = opts.schema ?? null;
+  const naming = { strategy, derivedGrade, namingEvidence, tablePrefix, schema };
+  const stats = emptyStats(strategy, declared);
+
+  // ---- 0. index the fact stream -------------------------------------------
+  const { entityRecords, mapperRecords, serviceRecords, wrapperRecords, calls } = indexMpFacts(javaFacts);
+  if (entityRecords.size === 0 && mapperRecords.size === 0 && serviceRecords.size === 0) {
+    return { empty: true, stats, strategy, declared, derivedGrade, namingEvidence, tablePrefix, schema };
+  }
+
+  const { types, resolveType } = buildTypeIndex(javaFacts);
+  const { implementorsOf, bindingsOf, declares } = buildHierarchyIndex(types, resolveType);
+  const roleOf = makeRoleOf({ types, resolveType, mapperRecords, serviceRecords });
+  const entities = entitiesToTables({
+    entityRecords, mapperRecords, serviceRecords, types, roleOf, stats, naming,
+  });
+  fieldsToColumns(entities, { entityRecords, resolveType, stats, naming });
 
   return {
     empty: false, stats,
@@ -1215,131 +1237,146 @@ if (b.runtimeOnly) {
 }
 
 /** The statement node, its column edges, and the mapper method that IS it. */
-function writeStatementNode(g, a, b) {
-  const { stmt, entity, stats, tableIdOf, columnIdOf, ensureColumn, types } = a;
-  const {
-    sid, verb, reads, writes, unresolved, notes, access, logicDelete, runtimeOnly,
-    fragmentTables, runtimeReasons,
-  } = b;
-const node = {
-  id: sid,
-  statementType: 'mp-builtin',
-  source: 'mybatis-plus',
-  file: types.get(stmt.ownerFqn)?.file ?? null,
-  line: null,
-  mpEvidence: {
-    owner: stmt.ownerFqn, method: stmt.method, verb, entity: entity.fqn,
-    table: entity.table, tableGrade: entity.tableGrade, tableEvidence: entity.tableEvidence,
-    access, note: notes.join('; ') || null,
-    ...(logicDelete ? { logicDelete: true } : {}),
-    callers: [...new Set(stmt.callers)].sort(cmp).slice(0, 20),
-    callerCount: new Set(stmt.callers).size,
-  },
-};
-if (runtimeOnly) {
-  // The whole point of the RUNTIME_ONLY grade: the table is known, the columns
-  // are not, and BOTH are said out loud rather than one of them going quiet.
-  node.columnsRuntimeOnly = true;
-  node.columnsRuntimeOnlyReason = [...runtimeReasons].sort().join(' | ');
-}
-if (unresolved.length > 0) {
-  node.hasUnresolved = true;
-  node.unresolved = unresolved.map((u) => ({ reason: u.reason, detail: u.detail ?? null }));
-}
-
-// A NAME CLASH with a statement the SQL lane already owns is impossible in a
-// correct project (MyBatis-Plus refuses to register a mapper XML statement
-// whose id is one of BaseMapper's), but "impossible" is not a reason to
-// overwrite somebody's SQL: the existing node wins and the clash is reported.
-const existing = g.nodes.get(sid);
-if (existing && existing.statementType && existing.statementType !== 'mp-builtin') {
-  stats.statementIdClashes += 1;
-  note(stats, 'mp-statement-id-clash',
-    `${stmt.key} is already a ${existing.statementType} statement in this pack (mapper XML or a native query), so the MyBatis-Plus built-in was NOT written over it`);
-  return;
-}
-g.addNode(node);
-stats.statements += 1;
-stats.statementsByVerb[verb] = (stats.statementsByVerb[verb] ?? 0) + 1;
-for (const u of unresolved) stats.unresolved.push({ statement: stmt.key, reason: u.reason, detail: u.detail ?? null });
-
-// The mapper-interface rule, unchanged from the MyBatis and JPA lanes: the
-// METHOD *is* the statement MyBatis-Plus generates for it — definitional.
-const member = `${stmt.ownerFqn}#${stmt.method}`;
-const symId = nodeId('symbol', member);
-g.addNode({ id: symId, symbol: member, owner: stmt.ownerFqn, mpBuiltinMethod: true });
-if (!g.outEdges(symId).some((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid)) {
-  g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
-  stats.implementsStmt += 1;
-}
-
-g.addEdge({
-  from: sid, to: tableIdOf(entity, entity.table), type: 'EXECUTES', grade: entity.tableGrade,
-  evidence: { access, via: 'mybatis-plus', builtin: stmt.method, ...(logicDelete ? { logicDelete: true } : {}) },
-});
-
-// A fragment can name a table of its OWN — `exists("select 1 from sys_role
-// where ...")`. That table is written in the source, so the edge is EXACT, and
-// leaving it out would hide a table this statement really touches.
-const fragTables = new Map(); // node id -> {access:Set, ops:Set, schema, table}
-for (const t of fragmentTables) {
-  const id = tableIdOf({ schema: t.schema }, t.table);
-  let m = fragTables.get(id);
-  if (!m) { m = { access: new Set(), ops: new Set() }; fragTables.set(id, m); }
-  m.access.add(t.access);
-  m.ops.add(t.op);
-}
-for (const id of [...fragTables.keys()].sort(cmp)) {
-  const m = fragTables.get(id);
-  g.addEdge({
-    from: sid, to: id, type: 'EXECUTES', grade: 'EXACT',
-    evidence: {
-      access: [...m.access].sort().join(','), via: 'mybatis-plus-fragment',
-      builtin: stmt.method, fragmentOp: [...m.ops].sort().join(','),
+/** The statement node this built-in method IS, with everything it could not resolve on it. */
+function builtinStatementNode(a, b) {
+  const { stmt, entity, types } = a;
+  const { sid, verb, unresolved, notes, access, logicDelete, runtimeOnly, runtimeReasons } = b;
+  const node = {
+    id: sid,
+    statementType: 'mp-builtin',
+    source: 'mybatis-plus',
+    file: types.get(stmt.ownerFqn)?.file ?? null,
+    line: null,
+    mpEvidence: {
+      owner: stmt.ownerFqn, method: stmt.method, verb, entity: entity.fqn,
+      table: entity.table, tableGrade: entity.tableGrade, tableEvidence: entity.tableEvidence,
+      access, note: notes.join('; ') || null,
+      ...(logicDelete ? { logicDelete: true } : {}),
+      callers: [...new Set(stmt.callers)].sort(cmp).slice(0, 20),
+      callerCount: new Set(stmt.callers).size,
     },
-  });
+  };
+  if (runtimeOnly) {
+    // The whole point of the RUNTIME_ONLY grade: the table is known, the columns
+    // are not, and BOTH are said out loud rather than one of them going quiet.
+    node.columnsRuntimeOnly = true;
+    node.columnsRuntimeOnlyReason = [...runtimeReasons].sort().join(' | ');
+  }
+  if (unresolved.length > 0) {
+    node.hasUnresolved = true;
+    node.unresolved = unresolved.map((u) => ({ reason: u.reason, detail: u.detail ?? null }));
+  }
+  return node;
 }
 
-// ONE edge per (access, column) — but a column reached BOTH ways (the `in(…)`
-// predicate on `dep_id` and the projection that also selects it) keeps BOTH
-// roles. Dropping the second would make the evidence say the statement reads
-// that column only as a filter, which is not what the SQL does.
-const merged = new Map(); // "TYPE|columnId" -> {edgeType, cid, grade, roles, vias, flags}
-for (const [bucket, edgeType] of [[reads, 'READS'], [writes, 'WRITES']]) {
-  for (const c of bucket) {
-    const owner = c.entity ?? entity;
-    const cid = columnIdOf(owner, c.table, c.column);
-    ensureColumn(owner, c.table, c.column, c.grade);
-    const key = `${edgeType}|${cid}`;
-    let m = merged.get(key);
-    if (!m) {
-      m = { edgeType, cid, grade: c.grade, roles: new Set(), vias: new Set(), fragmentOps: new Set(), literal: false };
-      merged.set(key, m);
-    }
-    if (c.fragmentOp) m.fragmentOps.add(c.fragmentOp);
-    // WEAKEST link: the same column reached by a declared name and by a
-    // derived one is only as sure as the weaker of the two.
-    m.grade = weakest(m.grade, c.grade);
-    if (c.role) m.roles.add(c.role);
-    m.vias.add(c.via ?? 'mybatis-plus');
-    if (c.fromLiteral) m.literal = true;
+/**
+ * The EXECUTES edges: the entity's own table, and any table a FRAGMENT names of
+ * its own (`exists("select 1 from sys_role where ...")`). That table is written
+ * in the source, so the edge is EXACT, and leaving it out would hide a table
+ * this statement really touches.
+ */
+function writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTables, stmt, tableIdOf }) {
+  g.addEdge({
+    from: sid, to: tableIdOf(entity, entity.table), type: 'EXECUTES', grade: entity.tableGrade,
+    evidence: { access, via: 'mybatis-plus', builtin: stmt.method, ...(logicDelete ? { logicDelete: true } : {}) },
+  });
+  const fragTables = new Map(); // node id -> {access:Set, ops:Set}
+  for (const t of fragmentTables) {
+    const id = tableIdOf({ schema: t.schema }, t.table);
+    let m = fragTables.get(id);
+    if (!m) { m = { access: new Set(), ops: new Set() }; fragTables.set(id, m); }
+    m.access.add(t.access);
+    m.ops.add(t.op);
+  }
+  for (const id of [...fragTables.keys()].sort(cmp)) {
+    const m = fragTables.get(id);
+    g.addEdge({
+      from: sid, to: id, type: 'EXECUTES', grade: 'EXACT',
+      evidence: {
+        access: [...m.access].sort().join(','), via: 'mybatis-plus-fragment',
+        builtin: stmt.method, fragmentOp: [...m.ops].sort().join(','),
+      },
+    });
   }
 }
-for (const key of [...merged.keys()].sort(cmp)) {
-  const m = merged.get(key);
-  const roles = [...m.roles].sort();
-  g.addEdge({
-    from: sid, to: m.cid, type: m.edgeType, grade: m.grade,
-    evidence: {
-      via: [...m.vias].sort().join(','), roles,
-      ...(m.fragmentOps.size > 0 ? { fragmentOp: [...m.fragmentOps].sort().join(',') } : {}),
-      ...(m.literal ? { literal: true, catalogMatch: g.nodes.get(m.cid)?.stub !== true } : {}),
-      ...(m.roles.has('implicit-logic-filter') ? { implicitFilter: true } : {}),
-      ...(m.roles.has('logic-delete') ? { logicDelete: true } : {}),
-    },
-  });
-  if (m.edgeType === 'READS') stats.reads += 1; else stats.writes += 1;
+
+/**
+ * ONE edge per (access, column) -- but a column reached BOTH ways (the `in(…)`
+ * predicate on `dep_id` and the projection that also selects it) keeps BOTH
+ * roles. Dropping the second would make the evidence say the statement reads
+ * that column only as a filter, which is not what the SQL does.
+ */
+function writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureColumn, stats }) {
+  const merged = new Map(); // "TYPE|columnId" -> {edgeType, cid, grade, roles, vias, flags}
+  for (const [bucket, edgeType] of [[reads, 'READS'], [writes, 'WRITES']]) {
+    for (const c of bucket) {
+      const owner = c.entity ?? entity;
+      const cid = columnIdOf(owner, c.table, c.column);
+      ensureColumn(owner, c.table, c.column, c.grade);
+      const key = `${edgeType}|${cid}`;
+      let m = merged.get(key);
+      if (!m) {
+        m = { edgeType, cid, grade: c.grade, roles: new Set(), vias: new Set(), fragmentOps: new Set(), literal: false };
+        merged.set(key, m);
+      }
+      if (c.fragmentOp) m.fragmentOps.add(c.fragmentOp);
+      // WEAKEST link: the same column reached by a declared name and by a
+      // derived one is only as sure as the weaker of the two.
+      m.grade = weakest(m.grade, c.grade);
+      if (c.role) m.roles.add(c.role);
+      m.vias.add(c.via ?? 'mybatis-plus');
+      if (c.fromLiteral) m.literal = true;
+    }
+  }
+  for (const key of [...merged.keys()].sort(cmp)) {
+    const m = merged.get(key);
+    g.addEdge({
+      from: sid, to: m.cid, type: m.edgeType, grade: m.grade,
+      evidence: {
+        via: [...m.vias].sort().join(','), roles: [...m.roles].sort(),
+        ...(m.fragmentOps.size > 0 ? { fragmentOp: [...m.fragmentOps].sort().join(',') } : {}),
+        ...(m.literal ? { literal: true, catalogMatch: g.nodes.get(m.cid)?.stub !== true } : {}),
+        ...(m.roles.has('implicit-logic-filter') ? { implicitFilter: true } : {}),
+        ...(m.roles.has('logic-delete') ? { logicDelete: true } : {}),
+      },
+    });
+    if (m.edgeType === 'READS') stats.reads += 1; else stats.writes += 1;
+  }
 }
+
+function writeStatementNode(g, a, b) {
+  const { stmt, entity, stats, tableIdOf, columnIdOf, ensureColumn } = a;
+  const { sid, verb, reads, writes, unresolved, access, logicDelete, fragmentTables } = b;
+  const node = builtinStatementNode(a, b);
+
+  // A NAME CLASH with a statement the SQL lane already owns is impossible in a
+  // correct project (MyBatis-Plus refuses to register a mapper XML statement
+  // whose id is one of BaseMapper's), but "impossible" is not a reason to
+  // overwrite somebody's SQL: the existing node wins and the clash is reported.
+  const existing = g.nodes.get(sid);
+  if (existing && existing.statementType && existing.statementType !== 'mp-builtin') {
+    stats.statementIdClashes += 1;
+    note(stats, 'mp-statement-id-clash',
+      `${stmt.key} is already a ${existing.statementType} statement in this pack (mapper XML or a native query), so the MyBatis-Plus built-in was NOT written over it`);
+    return;
+  }
+  g.addNode(node);
+  stats.statements += 1;
+  stats.statementsByVerb[verb] = (stats.statementsByVerb[verb] ?? 0) + 1;
+  for (const u of unresolved) stats.unresolved.push({ statement: stmt.key, reason: u.reason, detail: u.detail ?? null });
+
+  // The mapper-interface rule, unchanged from the MyBatis and JPA lanes: the
+  // METHOD *is* the statement MyBatis-Plus generates for it - definitional.
+  const member = `${stmt.ownerFqn}#${stmt.method}`;
+  const symId = nodeId('symbol', member);
+  g.addNode({ id: symId, symbol: member, owner: stmt.ownerFqn, mpBuiltinMethod: true });
+  if (!g.outEdges(symId).some((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid)) {
+    g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+    stats.implementsStmt += 1;
+  }
+
+  writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTables, stmt, tableIdOf });
+  writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureColumn, stats });
 }
 
 function emitBuiltinStatement(g, a) {

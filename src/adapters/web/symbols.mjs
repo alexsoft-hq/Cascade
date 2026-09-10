@@ -69,6 +69,27 @@ export function registryNameOf(tag) {
 export const sortKey = (r) => `${String(r.line ?? 0).padStart(9, '0')}|${JSON.stringify(r)}`;
 
 /**
+ * ONE FILE'S BUCKETS SORTED, and the import table built from them.
+ *
+ * The LAST import of a local name is the one in scope, and imports are in line
+ * order by then, so a later one legitimately shadows an earlier one.
+ */
+function sortOneFile(f) {
+  f.imports.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.exports.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.assigns.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.calls.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.navigations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.routes.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.registrations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  // The LAST import of a local name is the one in scope, and imports are now
+  // in line order, so a later one legitimately shadows an earlier one.
+  for (const imp of f.imports) {
+    for (const s of imp.specifiers ?? []) f.importOf.set(s.local, { source: imp.source, imported: s.imported });
+  }
+}
+
+/**
  * B1: bucket the whole fact stream by FILE and sort inside every bucket.
  *
  * That is not a nicety: an incremental run assembles the stream from shards, and
@@ -89,6 +110,8 @@ export function indexWebFacts(records) {
         imports: [], exports: [], functions: new Map(), constants: new Map(),
         bindings: new Map(), classes: new Map(), assigns: [], calls: [], routes: [],
         registrations: [],
+        // The calls that change the SCREEN rather than send a request (RM59).
+        navigations: [],
         // The one record a server-rendered page carries about itself (RM48).
         template: null,
         importOf: new Map(),
@@ -113,25 +136,14 @@ export function indexWebFacts(records) {
       case 'class': f.classes.set(r.name, r); break;
       case 'assign': f.assigns.push(r); break;
       case 'call': f.calls.push(r); break;
+      case 'navigation': f.navigations.push(r); break;
       case 'route': f.routes.push(r); break;
       case 'registration': f.registrations.push(r); break;
       case 'template': f.template = r; break;
       default: break;
     }
   }
-  for (const f of files.values()) {
-    f.imports.sort((a, b) => cmp(sortKey(a), sortKey(b)));
-    f.exports.sort((a, b) => cmp(sortKey(a), sortKey(b)));
-    f.assigns.sort((a, b) => cmp(sortKey(a), sortKey(b)));
-    f.calls.sort((a, b) => cmp(sortKey(a), sortKey(b)));
-    f.routes.sort((a, b) => cmp(sortKey(a), sortKey(b)));
-    f.registrations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
-    // The LAST import of a local name is the one in scope, and imports are now
-    // in line order, so a later one legitimately shadows an earlier one.
-    for (const imp of f.imports) {
-      for (const s of imp.specifiers ?? []) f.importOf.set(s.local, { source: imp.source, imported: s.imported });
-    }
-  }
+  for (const f of files.values()) sortOneFile(f);
   return { files, configs, parsed, fileNames: [...files.keys()].sort() };
 }
 

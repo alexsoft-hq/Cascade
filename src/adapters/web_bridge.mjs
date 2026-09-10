@@ -62,13 +62,14 @@ import {
 } from './web/prefix.mjs';
 import {
   buildRouteIndex, classifyCallSites, linkFrontendCalls, placeHttpEdges, routeMatches,
-  traceWrappers, WEB_CALL_BASIS,
+  traceWrappers, STRING_METHODS, WEB_CALL_BASIS,
 } from './web/calls.mjs';
 import {
   buildRouterScreens, makeNameRegistry, placeRendersEdges, readRouteRecords, readScreenAxis,
   summariseScreens, SCREEN_RENDERS_BASIS, SCREEN_ROOT_GROUP, SCREEN_UNRESOLVED_SHARE,
 } from './web/screens.mjs';
 import { buildNexacroScreens, buildPageScreens, countTemplates, indexTemplates, PAGE_RENDERS_BASIS } from './web/pages.mjs';
+import { NAVIGATION_RULE, placeNavigations } from './web/navigation.mjs';
 import { emptyWebStats } from './web/stats.mjs';
 
 export const WEBFACTS_SCHEMA = 'cascade:webfacts:1';
@@ -78,6 +79,7 @@ export const WEBFACTS_SCHEMA = 'cascade:webfacts:1';
 // './web_bridge.mjs'` still means exactly what it always meant.
 export {
   isComponentFile, registryNameOf, routeMatches, webEndpointId, webScreenId, webSymbolId,
+  NAVIGATION_RULE, STRING_METHODS,
   PAGE_RENDERS_BASIS, SCREEN_RENDERS_BASIS, SCREEN_ROOT_GROUP, SCREEN_UNRESOLVED_SHARE,
   WEB_CALL_BASIS, WEB_PREFIX_BASIS,
 };
@@ -107,6 +109,170 @@ export function httpClientPack() {
 }
 
 /**
+ * B1 to B4: WHAT THIS FRONTEND IS, before a single call is read.
+ *
+ * The facts bucketed by file, the server-rendered pages (which decide two
+ * things the call pass needs: a page's URLs start at the application root, and
+ * a template nobody renders is dead markup whose links are nobody's calls), the
+ * packages and what each one's `.env` / proxy / alias records declare, what a
+ * specifier leads to, what a name holds, and the wrapper fixpoint that says
+ * what a callee resolves to.
+ */
+function readTheFrontend(records, opts, stats) {
+  const pack = httpClientPack();
+  const libraries = new Map((pack.libraries ?? []).map((l) => [l.module, l]));
+  // The clients a FRAMEWORK hands a function rather than a file importing them
+  // (RM47). The worker decided which parameter really is one, by the pack's own
+  // list and by where the function sits; here the name is looked up again for
+  // the verb table and the default method.
+  const injectedClients = new Map((pack.injected ?? []).map((c) => [c.name, c]));
+  const { files, configs, parsed, fileNames } = indexWebFacts(records);
+  const templates = indexTemplates({ fileNames, files, opts });
+  const { packageOf, configFor } = readPackages({ opts, configs });
+  const resolver = makeResolver({ files, parsed, packageOf, configFor, libraries });
+  const { instanceOf, noteInstance } = collectInstances({ fileNames, files, packageOf, resolver });
+  const { wrappers, calleeTarget, sinkVerb, platformOf } = traceWrappers({
+    fileNames, files, libraries, pack, packageOf, resolver, stats,
+  });
+  stats.instances = instanceOf.size;
+  return {
+    pack, libraries, injectedClients, files, fileNames, templates, packageOf, configFor,
+    resolver, instanceOf, noteInstance, wrappers, calleeTarget, sinkVerb, platformOf,
+  };
+}
+
+/**
+ * B5, B6 and the two passes over the calls: one CALLS_HTTP edge per (call
+ * candidate, route it matched).
+ *
+ * TWO PASSES, because the `auto` prefix has to count matches over the calls of
+ * one instance before any of them can be graded.
+ */
+function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
+  const { exactPaths, templatePaths, matchUrl } = buildRouteIndex(g);
+  const callsPerInstance = new Map();
+  const { prefixOf, gatewayKeys } = makePrefixes({
+    instanceOf: read.instanceOf,
+    configFor: read.configFor,
+    gatewayRoutes,
+    callsPerInstance,
+    exactPaths,
+    templatePaths,
+    routeMatches,
+  });
+  const sites = classifyCallSites({
+    fileNames: read.fileNames,
+    files: read.files,
+    packageOf: read.packageOf,
+    templatesByFile: read.templates.templatesByFile,
+    contextVarsFor: read.templates.contextVarsFor,
+    renderedTemplates: read.templates.renderedTemplates,
+    instanceOf: read.instanceOf,
+    callsPerInstance,
+    stats,
+    deps: {
+      platformOf: read.platformOf,
+      injectedClients: read.injectedClients,
+      calleeTarget: read.calleeTarget,
+      sinkVerb: read.sinkVerb,
+      wrappers: read.wrappers,
+      noteInstance: read.noteInstance,
+      libraries: read.libraries,
+      pack: read.pack,
+      stats,
+      resolver: read.resolver,
+    },
+  });
+  const placed = placeHttpEdges({
+    sites,
+    g,
+    files: read.files,
+    nodesToAdd,
+    edges,
+    stats,
+    prefixOf,
+    matchUrl,
+    configFor: read.configFor,
+    gatewayRoutes,
+    gatewayKeys,
+  });
+  return { ...placed, sites, prefixOf, matchUrl };
+}
+
+/**
+ * B7 -- THE SCREEN AXIS (RM30).
+ *
+ * Everything above answers "which route does this function call?". Nothing
+ * above says WHICH SCREEN that function belongs to, because the calls BETWEEN
+ * frontend functions were not in the graph: a view that calls `listThings()`
+ * from an api module had no path to the route at all. Four things close it: the
+ * calls between frontend functions (B7a), the screens the router declares
+ * (B7b), the pages a handler renders and the forms a Nexacro client holds
+ * (B7b', B7b''), and the RENDERS edge from a screen to the functions of the
+ * component it mounts (B7c). Where each screen LEADS (RM59) is recorded last,
+ * once every screen this run found exists.
+ */
+function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
+  const { files, fileNames, resolver, templates } = read;
+  const { symbolsByFile } = linkFrontendCalls({
+    fileNames, files, resolver, sites: calls.sites, nodesToAdd, edges, stats,
+    httpFunctionIds: calls.httpFunctionIds,
+  });
+  const axis = readScreenAxis({ opts, stats });
+  const routeRecords = readRouteRecords({
+    fileNames, files, matchedRoutePaths: calls.matchedRoutePaths, stats,
+  });
+  const registry = makeNameRegistry({ fileNames, files });
+  const { screenNodes, registryTargets, unresolvedSpecifiers } = buildRouterScreens({
+    routeRecords, screenEnabled: axis.screenEnabled, axis, registry, resolver, stats,
+  });
+  countTemplates({
+    templatesByFile: templates.templatesByFile,
+    includedBy: templates.includedBy,
+    renderedTemplates: templates.renderedTemplates,
+    stats,
+  });
+  // The RENDERS_PAGE edges are held back so they land in the same block as the
+  // RENDERS edges below.
+  const pageEdges = axis.screenEnabled
+    ? buildPageScreens({
+      g,
+      viewRecords: templates.viewRecords,
+      templatesByFile: templates.templatesByFile,
+      templateByName: templates.templateByName,
+      screenNodes,
+      nodesToAdd,
+      edges,
+      stats,
+      matchUrl: calls.matchUrl,
+      axis,
+    })
+    : [];
+  // A Nexacro form IS a screen (RM56): no route declares it and no handler
+  // renders it.
+  if (axis.screenEnabled) {
+    buildNexacroScreens({ templatesByFile: templates.templatesByFile, screenNodes, stats, axis });
+  }
+  summariseScreens({
+    stats, screenNodes, unresolvedSpecifiers, unresolvedNames: registry.unresolvedNames,
+  });
+  placeNavigations({ fileNames, files, screenNodes, stats });
+  for (const e of pageEdges) edges.push(e);
+  placeRendersEdges({
+    screenNodes,
+    registryTargets,
+    symbolsByFile,
+    files,
+    resolver,
+    templatesByFile: templates.templatesByFile,
+    includeClosure: templates.includeClosure,
+    nodesToAdd,
+    edges,
+    stats,
+  });
+}
+
+/**
  * Add the web lane's CALLS_HTTP edges to a graph that already carries endpoints.
  *
  * @param {import('../core/graph.mjs').Graph} g
@@ -123,132 +289,12 @@ export function httpClientPack() {
 export function addWebFacts(g, webFacts, opts = {}) {
   const records = Array.isArray(webFacts) ? webFacts : [];
   const gatewayRoutes = opts.gatewayRoutes && typeof opts.gatewayRoutes === 'object' ? opts.gatewayRoutes : {};
-  const pack = httpClientPack();
-  const libraries = new Map((pack.libraries ?? []).map((l) => [l.module, l]));
-  // The clients a FRAMEWORK hands a function rather than a file importing them
-  // (RM47). The worker decided which parameter really is one, by the pack's own
-  // list and by where the function sits; here the name is looked up again for
-  // the verb table and the default method.
-  const injectedClients = new Map((pack.injected ?? []).map((c) => [c.name, c]));
-
-  // B1: every fact bucketed by file and sorted inside its bucket.
-  const { files, configs, parsed, fileNames } = indexWebFacts(records);
-  // B1b: the server-rendered pages, BEFORE anything reads a call. It decides two
-  // things the call pass needs: a page's URLs start at the application root, and
-  // a template nobody renders is dead markup whose links are nobody's calls.
-  const templates = indexTemplates({ fileNames, files, opts });
-  // The packages, and what each one's .env / proxy / alias records declare.
-  const { packageOf, configFor } = readPackages({ opts, configs });
   const stats = emptyWebStats();
-
-  // B2 + B4: what a specifier leads to, and what a name holds.
-  const resolver = makeResolver({ files, parsed, packageOf, configFor, libraries });
-  const { instanceOf, noteInstance } = collectInstances({ fileNames, files, packageOf, resolver });
-
-  // B4: the wrapper fixpoint, and with it what a callee resolves to.
-  const { wrappers, calleeTarget, sinkVerb, platformOf } = traceWrappers({
-    fileNames, files, libraries, pack, packageOf, resolver, stats,
-  });
-  stats.instances = instanceOf.size;
-
-  // B6: the routes this pack SERVES, and B5: the prefix each client instance
-  // sends its calls with. A prefix is asked for lazily, after the first pass
-  // over the calls has said which URLs each instance sends.
-  const { exactPaths, templatePaths, matchUrl } = buildRouteIndex(g);
-  const callsPerInstance = new Map();
-  const { prefixOf, gatewayKeys } = makePrefixes({
-    instanceOf, configFor, gatewayRoutes, callsPerInstance, exactPaths, templatePaths, routeMatches,
-  });
-
-  // TWO PASSES over the calls, because the `auto` prefix has to count matches
-  // over the calls of one instance before any of them can be graded.
-  const sites = classifyCallSites({
-    fileNames,
-    files,
-    packageOf,
-    templatesByFile: templates.templatesByFile,
-    contextVarsFor: templates.contextVarsFor,
-    renderedTemplates: templates.renderedTemplates,
-    instanceOf,
-    callsPerInstance,
-    stats,
-    deps: {
-      platformOf, injectedClients, calleeTarget, sinkVerb, wrappers, noteInstance,
-      libraries, pack, stats, resolver,
-    },
-  });
-
+  const read = readTheFrontend(records, opts, stats);
   const nodesToAdd = new Map();
   const edges = [];
-  const { httpFunctionIds, matchedRoutePaths, unmatched } = placeHttpEdges({
-    sites, g, files, nodesToAdd, edges, stats, prefixOf, matchUrl, configFor, gatewayRoutes, gatewayKeys,
-  });
-
-  // =========================================================================
-  // B7 — THE SCREEN AXIS (RM30)
-  //
-  // Everything above answers "which route does this function call?". Nothing
-  // above says WHICH SCREEN that function belongs to, because the calls BETWEEN
-  // frontend functions were not in the graph: a view that calls `listThings()`
-  // from an api module had no path to the route at all. Three things close it:
-  // the calls between frontend functions (B7a), the screens the router declares
-  // (B7b), and the RENDERS edge from a screen to the functions of the component
-  // it mounts (B7c).
-  // =========================================================================
-  const { symbolsByFile } = linkFrontendCalls({
-    fileNames, files, resolver, sites, nodesToAdd, edges, stats, httpFunctionIds,
-  });
-
-  const axis = readScreenAxis({ opts, stats });
-  const routeRecords = readRouteRecords({ fileNames, files, matchedRoutePaths, stats });
-  const registry = makeNameRegistry({ fileNames, files });
-  const { screenNodes, registryTargets, unresolvedSpecifiers } = buildRouterScreens({
-    routeRecords, screenEnabled: axis.screenEnabled, axis, registry, resolver, stats,
-  });
-
-  // B7b': the pages a handler renders. The RENDERS_PAGE edges are held back so
-  // they land in the same block as the RENDERS edges below.
-  countTemplates({
-    templatesByFile: templates.templatesByFile,
-    includedBy: templates.includedBy,
-    renderedTemplates: templates.renderedTemplates,
-    stats,
-  });
-  const pageEdges = axis.screenEnabled
-    ? buildPageScreens({
-      g,
-      viewRecords: templates.viewRecords,
-      templatesByFile: templates.templatesByFile,
-      templateByName: templates.templateByName,
-      screenNodes,
-      nodesToAdd,
-      edges,
-      stats,
-      matchUrl,
-      axis,
-    })
-    : [];
-  // B7b'': the screens a Nexacro client declares (RM56) -- a form IS a screen.
-  if (axis.screenEnabled) buildNexacroScreens({ templatesByFile: templates.templatesByFile, screenNodes, stats, axis });
-
-  summariseScreens({
-    stats, screenNodes, unresolvedSpecifiers, unresolvedNames: registry.unresolvedNames,
-  });
-
-  // B7c: RENDERS.
-  for (const e of pageEdges) edges.push(e);
-  placeRendersEdges({
-    screenNodes,
-    registryTargets,
-    symbolsByFile,
-    files,
-    resolver,
-    templatesByFile: templates.templatesByFile,
-    includeClosure: templates.includeClosure,
-    nodesToAdd,
-    edges,
-    stats,
-  });
+  const calls = placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges });
+  placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls });
 
   // ---- write the graph, in a fixed order -----------------------------------
   for (const id of [...nodesToAdd.keys()].sort()) g.addNode(nodesToAdd.get(id));
@@ -256,10 +302,10 @@ export function addWebFacts(g, webFacts, opts = {}) {
   for (const e of edges) g.addEdge(e);
 
   // ---- what the run saw, and what it did not ------------------------------
-  prefixCensus({ instanceOf, prefixOf, stats });
-  stats.instances = [...instanceOf.values()].filter((i) => !i.id.endsWith('#(package)')).length;
-  for (const site of sites) if (site.assumed) stats.assumedAliases += 1;
-  stats.unmatchedUrls = topCounts(unmatched, 15, 'url');
+  prefixCensus({ instanceOf: read.instanceOf, prefixOf: calls.prefixOf, stats });
+  stats.instances = [...read.instanceOf.values()].filter((i) => !i.id.endsWith('#(package)')).length;
+  for (const site of calls.sites) if (site.assumed) stats.assumedAliases += 1;
+  stats.unmatchedUrls = topCounts(calls.unmatched, 15, 'url');
   return stats;
 }
 

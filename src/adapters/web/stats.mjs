@@ -30,39 +30,122 @@ function emptyUrlStats() {
 }
 
 /**
+ * WHERE A SCREEN LEADS, and where it could not be followed (RM59).
+ *
+ * A call on a router changes the screen and sends nothing, so it is none of the
+ * call numbers: it is not a call, it has no method and it has no prefix.
+ * `navigationsToScreen` counts the ones whose path names a screen this project
+ * declares; `navigationsUnmatched` the rest, and `unmatchedPaths` is the list a
+ * reader checks them by, because a path that names no screen is either a screen
+ * this lane did not find or a link out.
+ */
+function emptyNavigationStats() {
+  return {
+    navigations: 0,
+    navigationsToScreen: 0,
+    navigationsUnmatched: 0,
+    screensWithNavigation: 0,
+    byFramework: {},
+    unmatchedPaths: [],
+  };
+}
+
+/**
+ * THE SCREEN AXIS (RM30). `declared` counts ROUTE DECLARATIONS that compose to a
+ * screen; `screens` counts the nodes, which is smaller when two declarations
+ * compose to the same path. Both are here because a reader comparing them is
+ * asking a real question ("why are there fewer screens than routes?").
+ */
+function emptyScreenStats() {
+  return {
+    declared: 0,
+    screens: 0,
+    withComponent: 0,
+    componentUnresolved: 0,
+    duplicatePaths: 0,
+    hidden: 0,
+    withParams: 0,
+    // The specifiers that failed, most common first: the list a reader adds an
+    // alias or a missing source root by.
+    unresolvedSpecifiers: [],
+    // The framework NAMES a screen's component in a frontend written before
+    // modules, and a name that nothing registers is the same kind of gap as a
+    // specifier that resolves to no file. Counted the same way, and listed so
+    // a reader can see which name it was.
+    unresolvedNames: [],
+    renders: { EXACT: 0, SOUND_SET: 0, HEURISTIC: 0 },
+    // The rule of SERVER_MENU_SUFFIXES, and the numbers behind whichever way
+    // it went, so a reader can check it rather than take it. `detectedBy`
+    // names what fired it, so a later rule cannot be mistaken for this one.
+    serverDriven: {
+      detected: false, detectedBy: null, routes: 0,
+      ceiling: SERVER_MENU_ROUTE_CEILING, menuEndpoints: [],
+    },
+    // What the profile asked for and what was used. `nameSource` is refused
+    // when it asks for a source this engine does not read.
+    nameSource: { asked: 'none', used: 'none', refused: null },
+    pathRule: null,
+    codeRegex: null,
+    codeLength: null,
+    enabled: false,
+    // A screen is a router declaration or a SERVER-RENDERED PAGE (RM48), and
+    // a hybrid application has both. Counted apart, because they are found by
+    // two different routes and a reader comparing them is asking a real
+    // question.
+    byKind: { router: 0, page: 0, nexacro: 0 },
+  };
+}
+
+/**
+ * WHAT EACH CALL SITE TURNED OUT TO BE.
+ *
+ * `withUrl` is the count a reader compares everything else against; the rest say
+ * why a site is NOT in it. `notUrlShaped` and `stringMethod` are the two the
+ * round's shape did not ask for and the lane cannot honestly leave out: a call
+ * the worker recorded as carrying a URL that reached no client, whose argument is
+ * not written like a path, or whose method takes a path apart instead of asking
+ * for one. Counted here so neither is ever a silent drop.
+ */
+function emptyCallStats() {
+  return {
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
+    // A call that reached no client and whose callee TAKES A PATH APART rather
+    // than asking for one (`pathname.startsWith('/x')`, `p.split('/')`).
+    // Counted apart from `notUrlShaped` because the argument really is a path
+    // and only the method name says the call is not a request.
+    stringMethod: 0,
+    // A form or a link in a server-rendered page (RM48).
+    template: 0,
+    // A Nexacro screen's `transaction(…)` (RM56), and the ones with no url.
+    nexacro: 0,
+    nexacroUnreadable: 0,
+    // A call onto an imported name that is not a function this lane read: a
+    // constant, a component, a client instance. No CALLS edge, and counted so
+    // the missing hop is a number rather than a silence.
+    notAFunction: 0,
+    // A function handed to a call as a VALUE that resolved to a function this
+    // lane read (RM32). Counted per REFERENCE, which is not the number of
+    // edges: two references from one function to the same target are one
+    // edge, a pair that is also CALLED keeps the call's edge, and an edge
+    // whose ends never reach HTTP is left out by the rule below. Read it
+    // beside `callsByRule['passed-as-value']`, which counts what was placed.
+    passedAsValue: 0,
+  };
+}
+
+/**
  * A fresh statistics object, every counter at zero.
  *
- * It is one literal rather than six, because the caller returns it whole and a
- * field that exists only after some step ran would read as "we did not look"
- * where the truth is "there were none".
+ * Every field is here from the start, because a field that exists only after
+ * some step ran would read as "we did not look" where the truth is "there were
+ * none". The three blocks big enough to read on their own are built beside it,
+ * and the rest is written here.
  */
 export function emptyWebStats() {
   return {
     instances: 0,
     wrappers: { count: 0, maxDepth: 0, byKind: { function: 0, classMethod: 0 } },
-    // `notUrlShaped` is the fifth number the round's shape did not ask for and
-    // the lane cannot honestly leave out: a call the worker recorded as
-    // carrying a URL, that reached no client and whose argument is not written
-    // like a path. Counted here so it is never a silent drop.
-    calls: {
-      withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
-      // A form or a link in a server-rendered page (RM48).
-      template: 0,
-      // A Nexacro screen's `transaction(…)` (RM56), and the ones with no url.
-      nexacro: 0,
-      nexacroUnreadable: 0,
-      // A call onto an imported name that is not a function this lane read: a
-      // constant, a component, a client instance. No CALLS edge, and counted so
-      // the missing hop is a number rather than a silence.
-      notAFunction: 0,
-      // A function handed to a call as a VALUE that resolved to a function this
-      // lane read (RM32). Counted per REFERENCE, which is not the number of
-      // edges: two references from one function to the same target are one
-      // edge, a pair that is also CALLED keeps the call's edge, and an edge
-      // whose ends never reach HTTP is left out by the rule below. Read it
-      // beside `callsByRule['passed-as-value']`, which counts what was placed.
-      passedAsValue: 0,
-    },
+    calls: emptyCallStats(),
     resolved: { SOUND_SET: 0, HEURISTIC: 0 },
     unresolved: {
       total: 0,
@@ -74,6 +157,7 @@ export function emptyWebStats() {
         parameter: 0, expression: 0, importedConstant: 0, noMatch: 0, outsidePack: 0, allHoles: 0,
       },
     },
+    navigation: emptyNavigationStats(),
     matches: { exact: 0, template: 0, multi: 0 }, url: emptyUrlStats(),
     outboundEndpoints: 0,
     prefix: {},
@@ -81,48 +165,7 @@ export function emptyWebStats() {
     // The URLs nothing here answers, most common first. A count alone cannot be
     // acted on; this is the list a reader fixes a prefix or a missing module by.
     unmatchedUrls: [],
-    // ---- the screen axis (RM30) --------------------------------------------
-    // `declared` counts ROUTE DECLARATIONS that compose to a screen; `screens`
-    // counts the nodes, which is smaller when two declarations compose to the
-    // same path. Both are here because a reader comparing them is asking a real
-    // question ("why are there fewer screens than routes?").
-    screens: {
-      declared: 0,
-      screens: 0,
-      withComponent: 0,
-      componentUnresolved: 0,
-      duplicatePaths: 0,
-      hidden: 0,
-      withParams: 0,
-      // The specifiers that failed, most common first: the list a reader adds an
-      // alias or a missing source root by.
-      unresolvedSpecifiers: [],
-      // The framework NAMES a screen's component in a frontend written before
-      // modules, and a name that nothing registers is the same kind of gap as a
-      // specifier that resolves to no file. Counted the same way, and listed so
-      // a reader can see which name it was.
-      unresolvedNames: [],
-      renders: { EXACT: 0, SOUND_SET: 0, HEURISTIC: 0 },
-      // The rule of SERVER_MENU_SUFFIXES, and the numbers behind whichever way
-      // it went, so a reader can check it rather than take it. `detectedBy`
-      // names what fired it, so a later rule cannot be mistaken for this one.
-      serverDriven: {
-        detected: false, detectedBy: null, routes: 0,
-        ceiling: SERVER_MENU_ROUTE_CEILING, menuEndpoints: [],
-      },
-      // What the profile asked for and what was used. `nameSource` is refused
-      // when it asks for a source this engine does not read.
-      nameSource: { asked: 'none', used: 'none', refused: null },
-      pathRule: null,
-      codeRegex: null,
-      codeLength: null,
-      enabled: false,
-      // A screen is a router declaration or a SERVER-RENDERED PAGE (RM48), and
-      // a hybrid application has both. Counted apart, because they are found by
-      // two different routes and a reader comparing them is asking a real
-      // question.
-      byKind: { router: 0, page: 0, nexacro: 0 },
-    },
+    screens: emptyScreenStats(),
     // The server-rendered pages: how many templates this run read, how many of
     // them a handler names, and what the view names that resolved to nothing
     // were. `unrendered` is the honest other half — a fragment nobody pulls in

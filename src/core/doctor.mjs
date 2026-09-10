@@ -80,10 +80,16 @@ function majorOf(version) {
  * }} probes
  * @returns {{schema:string, checks:object[], ok:boolean, counts:{ok:number,warn:number,missing:number}}}
  */
-export function buildDoctorReport(probes = {}) {
-  const checks = [];
-
-  // ---- Node ---------------------------------------------------------------
+/**
+ * THE TOOLCHAIN EVERY RUN NEEDS: Node, git, the SQL lane's interpreter, the JDK
+ * and the web lane's vendored parser.
+ *
+ * git is REQUIRED, not optional: the analysed unit is a COMMIT (SPEC §2.1), the
+ * incremental plan is a `git diff`, and the overlay is the working-tree
+ * difference from a commit. Without git the engine can still parse, but every
+ * one of those becomes "unknown", which is a different product.
+ */
+function requiredChecks(probes, checks) {
   const nodeVersion = probes.node?.version ?? null;
   const nodeMajor = majorOf(nodeVersion);
   checks.push(check(
@@ -128,6 +134,20 @@ export function buildDoctorReport(probes = {}) {
     probes.sqlglot?.ok ? null : 'run `cascade setup --force`, which rebuilds the interpreter and installs the pinned requirements (docs/setup/sql-lane.md)',
   ));
 
+  laneChecks(probes, checks);
+}
+
+/**
+ * THE TWO LANE TOOLCHAINS: the JDK the Java lane parses with, and the web lane's
+ * VENDORED parser.
+ *
+ * The JDK detail is the WHOLE search, not just its verdict: on a machine with
+ * three half-JDKs, "no JDK found" is useless and "JAVA_HOME/bin has java but no
+ * javac; the homebrew keg has both" is actionable. The parser is checked by
+ * PARSING rather than by stat-ing the file, because a bundle that loads and
+ * cannot parse is the failure that would otherwise surface as "0 frontend calls".
+ */
+function laneChecks(probes, checks) {
   // ---- JDK ----------------------------------------------------------------
   // The detail is the WHOLE search, not just its verdict: on a machine with
   // three half-JDKs, "no JDK found" is useless and "JAVA_HOME/bin has java but
@@ -167,7 +187,18 @@ export function buildDoctorReport(probes = {}) {
       : 're-checkout adapters/web/vendor/babel-parser.cjs (it is vendored, not installed; see adapters/web/vendor/README.md)',
   ));
 
-  // ---- optional DB drivers (SPEC §12; RM6) --------------------------------
+}
+
+/**
+ * WHAT IS OPTIONAL, and reported anyway: the database drivers, Docker, the
+ * registry and the cache directory.
+ *
+ * A driver is optional on purpose, because the extraction path never connects to
+ * a database (SPEC §2.3), so a missing one costs `cascade catalog fetch` and
+ * nothing else. "Which dialect can I fetch today" is a question the error
+ * message alone answers too late.
+ */
+function optionalChecks(probes, checks) {
   // OPTIONAL on purpose: the extraction path never connects to a database
   // (§2.3), so a missing driver costs you `cascade catalog fetch` and nothing
   // else. Reported anyway, because "which dialect can I fetch today" is a
@@ -221,6 +252,12 @@ export function buildDoctorReport(probes = {}) {
     probes.cache?.ok ? null : 'make the directory writable, or point $XDG_CACHE_HOME somewhere you own. Without it every run is cold',
   ));
 
+}
+
+export function buildDoctorReport(probes = {}) {
+  const checks = [];
+  requiredChecks(probes, checks);
+  optionalChecks(probes, checks);
   const counts = { ok: 0, warn: 0, missing: 0 };
   for (const c of checks) counts[c.status] += 1;
   const ok = checks.every((c) => !c.required || c.status === 'ok');

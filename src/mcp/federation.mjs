@@ -73,52 +73,35 @@ export const DEFAULT_FEDERATION_HOPS = 3;
  *          has to LIST the calls that leave the pack, because "register the
  *          project that serves these" is the remedy.
  */
-export function makeFederator(ctx, args = {}) {
-  const host = ctx && ctx.federation && typeof ctx.federation.ids === 'function' ? ctx.federation : null;
-  const self = (host && typeof host.self === 'string' && host.self.length > 0)
-    ? host.self
-    : (ctx && ctx.basis && typeof ctx.basis.project === 'string' ? ctx.basis.project : null);
-  const wanted = args.federate !== false;
-  const maxCrossings = Number.isInteger(args.federationHops) && args.federationHops >= 0
-    ? args.federationHops
-    : DEFAULT_FEDERATION_HOPS;
-
-  // Every federated project and its sidecar, read ONCE per answer. A project
-  // whose sidecar is missing or unreadable stays in the list with a null index:
-  // it is still a project this server serves, and the answer has to say that it
-  // could not be asked.
+/**
+ * EVERY FEDERATED PROJECT AND ITS SIDECAR, read ONCE per answer.
+ *
+ * A project whose sidecar is missing or unreadable stays in the list with a null
+ * index: it is still a project this server serves, and the answer has to say
+ * that it could not be asked.
+ */
+function federationEntries(host, wanted, self, skippedById) {
   const entries = [];
-  const skippedById = new Map();
-  if (host && wanted) {
-    for (const id of host.ids()) {
-      const r = host.indexOf(id);
-      if (r && r.ok) entries.push({ id, index: r.index });
-      else {
-        entries.push({ id, index: null });
-        if (id !== self) skippedById.set(id, { project: id, reason: r && r.reason === 'unreadable' ? 'unreadable' : 'no-index' });
-      }
-    }
+  if (!host || !wanted) return entries;
+  for (const id of host.ids()) {
+    const r = host.indexOf(id);
+    if (r && r.ok) { entries.push({ id, index: r.index }); continue; }
+    entries.push({ id, index: null });
+    if (id !== self) skippedById.set(id, { project: id, reason: r && r.reason === 'unreadable' ? 'unreadable' : 'no-index' });
   }
-  const siblingCount = entries.filter((e) => e.id !== self).length;
-  const available = !!host && wanted && siblingCount > 0;
+  return entries;
+}
 
-  const crossed = [];
-  const unmatched = [];
-  // Calls this answer did not even ASK about, because the crossing cap was
-  // already spent. They are not `unmatched`: nobody looked, so "none of the
-  // registered projects serves it" would be a claim this answer cannot make.
-  const hopCapped = [];
-  // Calls that leave this pack from code NO route on the picture reaches: a
-  // scheduled job, a startup listener, a tool function an AI model calls. They
-  // are real calls (`overview.federation` counts them) and they are not on a
-  // picture drawn from routes, so the picture has to say so rather than let a
-  // reader read the silence as "this project calls nobody".
-  const offPicture = [];
-  const siblings = new Map(); // project id -> the basis entry it contributed
+/**
+ * THE SIBLING'S CONTEXT, loaded through the host's own cache and budget.
+ *
+ * THE SIDECAR MUST STILL DESCRIBE THE PACK. It is derived from the pack and is
+ * not part of its digest, so a pack rebuilt without rewriting the sidecar would
+ * let an old route list answer for a new graph. Such a sidecar is refused.
+ */
+function makeProjectCtx(ctx, host, { self, entries, skippedById, siblings }) {
   const ctxCache = new Map(); // project id -> ctx or null
-
-  /** The sibling's context, loaded through the host's own cache and budget. */
-  function projectCtx(id) {
+  return function projectCtx(id) {
     if (id === self) return ctx;
     if (ctxCache.has(id)) return ctxCache.get(id);
     let sib;
@@ -129,9 +112,6 @@ export function makeFederator(ctx, args = {}) {
       ctxCache.set(id, null);
       return null;
     }
-    // THE SIDECAR MUST STILL DESCRIBE THE PACK. It is derived from the pack and
-    // is not part of its digest, so a pack rebuilt without rewriting the sidecar
-    // would let an old route list answer for a new graph. Refuse it.
     const entry = entries.find((e) => e.id === id);
     const digest = sib && sib.basis ? sib.basis.buildDigest : null;
     if (!entry || !entry.index || entry.index.buildDigest !== digest) {
@@ -147,50 +127,23 @@ export function makeFederator(ctx, args = {}) {
     });
     ctxCache.set(id, sib);
     return sib;
-  }
+  };
+}
 
-  /** The graph node the sidecar promised, or null when the two disagree. */
-  function routeNode(graph, id, project, want) {
-    const n = graph.nodes.get(id);
-    const ok = n && n.kind === 'endpoint' && (want === 'outbound' ? n.outbound === true : n.outbound !== true);
-    if (!ok) {
-      skippedById.set(project, { project, reason: 'stale-index' });
-      return null;
-    }
-    return n;
-  }
-
-  function recordCrossing(from, call, to, grade, ambiguous, extra = {}) {
-    crossed.push({
-      from: { project: from.project, symbol: strip(from.id) },
-      route: { method: call.method, path: call.path },
-      service: call.service ?? null,
-      to: { project: to.project, endpoint: strip(to.endpoint) },
-      grade,
-      ambiguous,
-      ...extra,
-    });
-  }
-
-  const packProjectName = () => (ctx && ctx.pack && typeof ctx.pack.project === 'string' ? ctx.pack.project : null);
-  const selfServiceNames = () => (ctx && ctx.pack && Array.isArray(ctx.pack.serviceNames) ? ctx.pack.serviceNames : []);
-
-  function recordUnmatched(from, call, r) {
-    unmatched.push({
-      from: { project: from.project, symbol: strip(from.id) },
-      route: { method: call.method, path: call.path },
-      service: call.service ?? null,
-      checked: r ? r.checked : 0,
-      noIndex: r ? r.noIndex : 0,
-    });
-  }
-
-  // THE STATE THE REPORT AND THE CROSSINGS SHARE. Every walk in
-  // federation_cross.mjs and every sentence in federation_report.mjs takes this
-  // object and reads what it needs off it, so the lists a crossing appends to
-  // are the same lists the report words — one state, one account of what
-  // happened.
-  const f = {
+/**
+ * THE STATE THE REPORT AND THE CROSSINGS SHARE.
+ *
+ * Every walk in federation_cross.mjs and every sentence in
+ * federation_report.mjs takes this object and reads what it needs off it, so the
+ * lists a crossing appends to are the same lists the report words: one state,
+ * one account of what happened.
+ */
+function federationState(ctx, host, { self, wanted, available, entries, maxCrossings, skippedById }) {
+  const crossed = [];
+  const unmatched = [];
+  const siblings = new Map(); // project id -> the basis entry it contributed
+  const projectCtx = makeProjectCtx(ctx, host, { self, entries, skippedById, siblings });
+  return {
     self,
     wanted,
     available,
@@ -198,17 +151,69 @@ export function makeFederator(ctx, args = {}) {
     maxCrossings,
     crossed,
     unmatched,
-    hopCapped,
-    offPicture,
+    // Calls this answer did not even ASK about, because the crossing cap was
+    // already spent. They are not `unmatched`: nobody looked, so "none of the
+    // registered projects serves it" would be a claim this answer cannot make.
+    hopCapped: [],
+    // Calls that leave this pack from code NO route on the picture reaches: a
+    // scheduled job, a startup listener, a tool function an AI model calls. They
+    // are real calls (`overview.federation` counts them) and they are not on a
+    // picture drawn from routes, so the picture has to say so rather than let a
+    // reader read the silence as "this project calls nobody".
+    offPicture: [],
     siblings,
     skippedById,
     projectCtx,
-    routeNode,
-    recordCrossing,
-    recordUnmatched,
-    packProjectName,
-    selfServiceNames,
+    /** The graph node the sidecar promised, or null when the two disagree. */
+    routeNode(graph, id, project, want) {
+      const n = graph.nodes.get(id);
+      const ok = n && n.kind === 'endpoint' && (want === 'outbound' ? n.outbound === true : n.outbound !== true);
+      if (!ok) {
+        skippedById.set(project, { project, reason: 'stale-index' });
+        return null;
+      }
+      return n;
+    },
+    recordCrossing(from, call, to, grade, ambiguous, extra = {}) {
+      crossed.push({
+        from: { project: from.project, symbol: strip(from.id) },
+        route: { method: call.method, path: call.path },
+        service: call.service ?? null,
+        to: { project: to.project, endpoint: strip(to.endpoint) },
+        grade,
+        ambiguous,
+        ...extra,
+      });
+    },
+    recordUnmatched(from, call, r) {
+      unmatched.push({
+        from: { project: from.project, symbol: strip(from.id) },
+        route: { method: call.method, path: call.path },
+        service: call.service ?? null,
+        checked: r ? r.checked : 0,
+        noIndex: r ? r.noIndex : 0,
+      });
+    },
+    packProjectName: () => (ctx && ctx.pack && typeof ctx.pack.project === 'string' ? ctx.pack.project : null),
+    selfServiceNames: () => (ctx && ctx.pack && Array.isArray(ctx.pack.serviceNames) ? ctx.pack.serviceNames : []),
   };
+}
+
+export function makeFederator(ctx, args = {}) {
+  const host = ctx && ctx.federation && typeof ctx.federation.ids === 'function' ? ctx.federation : null;
+  const self = (host && typeof host.self === 'string' && host.self.length > 0)
+    ? host.self
+    : (ctx && ctx.basis && typeof ctx.basis.project === 'string' ? ctx.basis.project : null);
+  const wanted = args.federate !== false;
+  const maxCrossings = Number.isInteger(args.federationHops) && args.federationHops >= 0
+    ? args.federationHops
+    : DEFAULT_FEDERATION_HOPS;
+
+  const skippedById = new Map();
+  const entries = federationEntries(host, wanted, self, skippedById);
+  const siblingCount = entries.filter((e) => e.id !== self).length;
+  const available = !!host && wanted && siblingCount > 0;
+  const f = federationState(ctx, host, { self, wanted, available, entries, maxCrossings, skippedById });
 
   return {
     self,
@@ -221,7 +226,7 @@ export function makeFederator(ctx, args = {}) {
     crossUpEndpoints: (routes, opts) => crossUpEndpoints(f, routes, opts),
     crossUpScreens: (routes, opts) => crossUpScreens(f, routes, opts),
     crossMap: (graph, opts) => crossMap(f, graph, opts),
-    contextFor: projectCtx,
+    contextFor: f.projectCtx,
     saysAnything: () => saysAnything(f),
     block: () => block(f),
     siblingBasis: () => siblingBasis(f),

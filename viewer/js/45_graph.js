@@ -881,23 +881,12 @@ function mapSeedSatellite(m, anchorId, cache){
   const ang=(h%3600)/3600*2*Math.PI, d=52+(h%7)*7;
   m.x=g.x+Math.cos(ang)*d; m.y=g.y+Math.sin(ang)*d; m.z=g.z||0;
 }
-// ---- the view model: one answer → nodes and links the renderers understand ----
-// AT REST the picture is the SKELETON: one node per API group, one per table,
-// and one line per (group, table) that folds every endpoint touch under it.
-// That is 32 + 49 nodes on mall instead of 320, and the reader can see the
-// shape before deciding where to look. Unfolding a group (a click on it, its
-// chip, or the `endpoints` control) puts its endpoints back as satellites with
-// their own lines; the aggregate line stays, faded, so the two readings never
-// contradict each other. The ANSWER is untouched: this is a rendering, and the
-// census still counts every endpoint.
-function buildMapModel(dim){
-  const cache=mapCache(dim||'2d');
-  const a=GMAP.resp.answer;
-  mapIndexAnswer();
-  for(const id of [...GMAP.open]) if(!GMAP.answerById.has(id)) GMAP.open.delete(id);
+// WHICH ROUTES AND STATEMENTS ARE OPEN, from the groups the reader unfolded. A
+// statement is drawn only when one of the endpoints that runs it is open, and it
+// hangs off that endpoint's group.
+function mapOpenSets(a){
   const openEps=new Set();
   for(const g of GMAP.open) for(const ep of (GMAP.groupEps.get(g)||[])) openEps.add(ep);
-  // A statement is drawn only when one of the endpoints that runs it is open.
   const openStmts=new Set(), stmtAnchor=new Map();
   for(const l of a.links){
     if(l.kind==='executes' && openEps.has(l.source)){
@@ -905,21 +894,10 @@ function buildMapModel(dim){
       if(!stmtAnchor.has(l.target)) stmtAnchor.set(l.target, GMAP.epGroup.get(l.source));
     }
   }
-  const aggregates=mapAggregates();
-  // WHAT CAME FROM ANOTHER PACK IS NEVER FOLDED. A connected project's cluster
-  // is one route and what that route reaches, which is the whole point of
-  // drawing it; folding it into its skeleton would hide exactly the thing the
-  // reader opened the map for. So it is drawn whole, or not at all.
-  GMAP.fedProjects=[...new Set(a.nodes.map(mapFedOf).filter(Boolean))].sort();
-  GMAP.fedColor=fedRingColor(GMAP.fedProjects);
-  const wanted=a.nodes.filter((n)=>
-    mapFedOf(n) ? GMAP.fed
-      : (n.kind==='group' || n.kind==='table' || n.kind==='screen'
-        || (n.kind==='endpoint' && openEps.has(n.id))
-        || (n.kind==='statement' && openStmts.has(n.id))));
-  const vis=wanted.filter(n=>!GMAP.hidden.has(n.kind));
-  const on=new Set(vis.map(n=>n.id));
-  // ---- degree, from what this picture actually DRAWS -----------------------
+  return { openEps, openStmts, stmtAnchor };
+}
+// ---- degree, from what this picture actually DRAWS -----------------------
+function mapDegreeRule(aggregates, openEps){
   const groupTables=new Map();
   for(const x of aggregates){
     const s=groupTables.get(x.source);
@@ -929,7 +907,7 @@ function buildMapModel(dim){
   const touch=(tid, who)=>{ const s=tableTouchers.get(tid); if(s) s.add(who); else tableTouchers.set(tid, new Set([who])); };
   for(const x of aggregates) if(!GMAP.open.has(x.source)) touch(x.target, x.source);
   for(const ep of openEps) for(const tid of (GMAP.epTables.get(ep)||new Map()).keys()) touch(tid, ep);
-  const degreeOf=(n)=>{
+  return (n)=>{
     // A node from another pack keeps the degree the ANSWER gave it: this
     // picture never folds that cluster, so the drawing and the answer cannot
     // disagree about how connected it is. A project skeleton stands for the
@@ -949,14 +927,19 @@ function buildMapModel(dim){
     if(n.kind==='endpoint') return (GMAP.epTables.get(n.id)||new Map()).size;
     return n.degree||0;   // a statement keeps the degree the answer gave it
   };
-  const pane=mapWrapEl();
-  const paneW=(pane&&pane.clientWidth)||900, paneH=(pane&&pane.clientHeight)||620;
+}
+// One drawn node per visible answer node: its size, its colour, and where it
+// sits. A node this picture has already placed comes back PINNED, which is the
+// whole of the stability rule: the forces cannot move it, so an unfold, a fold,
+// a spotlight or a trip through Around leaves it exactly where the reader last
+// saw it, and a click aimed at it lands on it.
+function mapDrawnNodes(vis, dim, cache, degreeOf, stmtAnchor, paneW, paneH){
   // One band per connected project, in the order their hues were assigned, and
   // a running index inside each band so a cluster seeds as one ellipse.
   const fedBand=new Map(GMAP.fedProjects.map((x, i)=>[x, i]));
   const fedSize=new Map(), fedSeq=new Map();
   for(const n of vis){ const f=mapFedOf(n); if(f) fedSize.set(f, (fedSize.get(f)||0)+1); }
-  GMAP.nodes=vis.map((n, i)=>{
+  return vis.map((n, i)=>{
     const p=cache.get(n.id);
     const degree=degreeOf(n);
     const r=mapNodeRadius(n.kind, degree);
@@ -968,10 +951,6 @@ function buildMapModel(dim){
     const m={ id:n.id, kind:n.kind, label, degree, data:n, fed,
       r, val:r*r, val3:r*r*r, col:kindColor(n.kind), fill:kindFill(n.kind),
       ring:fed ? GMAP.fedColor(fed) : null, tip:mapNodeTip({...n, degree}) };
-    // A NODE THIS PICTURE HAS ALREADY PLACED COMES BACK PINNED. That is the
-    // whole of the stability rule: the forces cannot move it, so an unfold, a
-    // fold, a spotlight or a trip through Around leaves it exactly where the
-    // reader last saw it, and a click aimed at it lands on it.
     if(p){
       m.x=p.x; m.y=p.y; m.z=p.z||0;
       if(p.pin){ m.fx=p.x; m.fy=p.y; if(dim==='3d') m.fz=p.z||0; }
@@ -990,18 +969,16 @@ function buildMapModel(dim){
     if(n.kind==='screen') m.y=-paneH*0.55+((i%7)-3)*8;
     return m;
   });
-  // How many nodes this mount has to place. Nothing to place means nothing to
-  // simulate: the picture is repainted, not laid out again.
-  GMAP.loose=GMAP.nodes.reduce((n,x)=> n+(x.fx==null?1:0), 0);
-  GMAP.byId=new Map(GMAP.nodes.map(n=>[n.id,n]));
-  // ---- the line set --------------------------------------------------------
+}
+// ---- the line set --------------------------------------------------------
+// A SCREEN'S LINES AND A CROSSING FOLD THE WAY THE ENDPOINT LINES DO. While a
+// group is closed, a screen that calls routes inside it points at the GROUP and
+// the line says how many routes it stands for; opening the group moves the line
+// onto the routes themselves. One rule for both, so the picture never shows a
+// line leaving or entering a box that is not there.
+function mapRawLinks(a, aggregates, openEps, openStmts){
   const raw=[];
   for(const x of aggregates) raw.push(x);
-  // A SCREEN'S LINES FOLD THE WAY THE ENDPOINT LINES DO. While a group is
-  // closed, the screens that call routes inside it point at the GROUP, and the
-  // line says how many routes it stands for; opening the group moves them onto
-  // the routes themselves. One rule for both, so the picture never shows a
-  // screen pointing into a box that is not there.
   const screenLinks=new Map();
   for(const [sid, eps] of (GMAP.screenEps||new Map())){
     for(const [ep, grade] of eps){
@@ -1014,10 +991,6 @@ function buildMapModel(dim){
     }
   }
   for(const x of screenLinks.values()) raw.push(x);
-  // A CROSSING FOLDS THE WAY A SCREEN'S LINE DOES. While the calling endpoint's
-  // group is closed, the line leaves the GROUP and says how many routes stand
-  // behind it; opening the group moves it onto the route itself. One rule for
-  // both, so the picture never shows a line leaving a box that is not there.
   const crossings=new Map();
   for(const l of a.links){
     if(l.kind!=='calls' || !l.federated) continue;
@@ -1039,17 +1012,57 @@ function buildMapModel(dim){
     else if(l.kind==='touches'){ if(openEps.has(l.source)) raw.push(l); }
     else if(l.kind==='executes'){ if(openEps.has(l.source) || openStmts.has(l.source)) raw.push(l); }
   }
+  return raw;
+}
+// ---- the view model: one answer -> nodes and links the renderers understand ----
+// AT REST the picture is the SKELETON: one node per API group, one per table,
+// and one line per (group, table) that folds every endpoint touch under it.
+// That is 32 + 49 nodes on mall instead of 320, and the reader can see the
+// shape before deciding where to look. Unfolding a group (a click on it, its
+// chip, or the `endpoints` control) puts its endpoints back as satellites with
+// their own lines; the aggregate line stays, faded, so the two readings never
+// contradict each other. The ANSWER is untouched: this is a rendering, and the
+// census still counts every endpoint.
+function buildMapModel(dim){
+  const cache=mapCache(dim||'2d');
+  const a=GMAP.resp.answer;
+  mapIndexAnswer();
+  for(const id of [...GMAP.open]) if(!GMAP.answerById.has(id)) GMAP.open.delete(id);
+  const { openEps, openStmts, stmtAnchor }=mapOpenSets(a);
+  const aggregates=mapAggregates();
+  // WHAT CAME FROM ANOTHER PACK IS NEVER FOLDED. A connected project's cluster
+  // is one route and what that route reaches, which is the whole point of
+  // drawing it; folding it into its skeleton would hide exactly the thing the
+  // reader opened the map for. So it is drawn whole, or not at all.
+  GMAP.fedProjects=[...new Set(a.nodes.map(mapFedOf).filter(Boolean))].sort();
+  GMAP.fedColor=fedRingColor(GMAP.fedProjects);
+  const wanted=a.nodes.filter((n)=>
+    mapFedOf(n) ? GMAP.fed
+      : (n.kind==='group' || n.kind==='table' || n.kind==='screen'
+        || (n.kind==='endpoint' && openEps.has(n.id))
+        || (n.kind==='statement' && openStmts.has(n.id))));
+  const vis=wanted.filter(n=>!GMAP.hidden.has(n.kind));
+  const on=new Set(vis.map(n=>n.id));
+  const degreeOf=mapDegreeRule(aggregates, openEps);
+  const pane=mapWrapEl();
+  const paneW=(pane&&pane.clientWidth)||900, paneH=(pane&&pane.clientHeight)||620;
+  GMAP.nodes=mapDrawnNodes(vis, dim, cache, degreeOf, stmtAnchor, paneW, paneH);
+  // How many nodes this mount has to place. Nothing to place means nothing to
+  // simulate: the picture is repainted, not laid out again.
+  GMAP.loose=GMAP.nodes.reduce((n,x)=> n+(x.fx==null?1:0), 0);
+  GMAP.byId=new Map(GMAP.nodes.map(n=>[n.id,n]));
+  const raw=mapRawLinks(a, aggregates, openEps, openStmts);
   // A line is drawn only when BOTH its ends are on screen: a hidden kind takes
   // its links with it rather than leaving them hanging off nothing.
   GMAP.links=raw.filter(l=>on.has(l.source)&&on.has(l.target)).map((l,i)=>({
     i, sid:l.source, tid:l.target, source:l.source, target:l.target, data:l,
     col:mapLinkBaseColor(l), w:mapLinkWidth(l), curv:mapCurvature(l.kind),
-    // The aggregate line of an OPEN group is not deleted — the satellites are
+    // The aggregate line of an OPEN group is not deleted - the satellites are
     // the same touches drawn one by one, and a reader mid-unfold must be able
-    // to see that the two say the same thing — but it steps back to a whisper.
+    // to see that the two say the same thing - but it steps back to a whisper.
     faded: l.kind==='aggregate' && GMAP.open.has(l.source),
     // Grade is not drawable in 3D, so it lives in the tooltip and the rail in
-    // both renderers; in 2D a candidate endpoint→table chain is also DASHED.
+    // both renderers; in 2D a candidate endpoint to table chain is also DASHED.
     dash:(l.kind!=='member' && l.kind!=='joins' && l.grade==='SOUND_SET') ? [4,3] : null,
     tip:mapLinkTip(l),
   }));

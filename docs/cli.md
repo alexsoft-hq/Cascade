@@ -494,7 +494,7 @@ capture story.
 ## `cascade catalog discover`
 
 ```
-cascade catalog discover [--root <dir>] [--json]
+cascade catalog discover [--project <id>|--root <dir>] [--json]
 ```
 
 List the datasource configuration a tree carries — host, port, database,

@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Graph } from '../src/core/graph.mjs';
 import {
-  addWebFacts, webSymbolId, webEndpointId, routeMatches, httpClientPack, WEB_CALL_BASIS,
+  addWebFacts, webSymbolId, webEndpointId, routeMatches, httpClientPack, STRING_METHODS,
+  WEB_CALL_BASIS,
 } from '../src/adapters/web_bridge.mjs';
 
 // The web bridge, driven by HAND-WRITTEN facts, in the style of
@@ -899,7 +900,8 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   const stats = addWebFacts(g, []);
   assert.deepEqual(edgesOf(g), []);
   assert.deepEqual(stats.calls, {
-    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, template: 0,
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
+    stringMethod: 0, template: 0,
     nexacro: 0, nexacroUnreadable: 0, notAFunction: 0, passedAsValue: 0,
   });
   assert.deepEqual(stats.resolved, { SOUND_SET: 0, HEURISTIC: 0 });
@@ -1909,4 +1911,239 @@ test('a $routeProvider route names its controller directly, with no component in
   assert.deepEqual(rendersOf(g).map((e) => [e.from, e.to, e.evidence.rule]), [
     ['screen:/plain/list', 'symbol:static/scripts/legacy.controller.js#(module)', 'angular-controller'],
   ]);
+});
+
+// ---- B: where a screen LEADS, with no request in it (RM59) ----------------
+//
+// A router call changes which screen the browser shows and sends nothing, so
+// the bridge places no edge for one. What it answers is the question a single
+// file cannot: is the path this navigation names a screen this project
+// declares? The answer is recorded on the screen the navigation is written in.
+
+const navigation = (line, rec) => ({
+  kind: 'navigation', line, framework: 'test-router', rule: 'router-navigation',
+  sink: 'router.push', enclosing: 'openRows', ...rec,
+});
+const navigateTo = (t) => ({ arg: { kind: 'string', value: t }, resolved: [{ template: t, dynamicParts: 0, via: 'literal' }] });
+
+/** Two screens, and a navigation written in the component of the first. */
+const navigationFacts = (...extra) => [
+  ALIAS, ...clientFile(null), ...apiFile(),
+  ...viewFile({ extra }),
+  ...file('src/screens/panel/index.vue', fn(4, 'shell', { exported: 'default-member' })),
+  ...file('src/router/routes.js',
+    route(5, { path: '/panel', componentSource: '@/screens/panel/index.vue' }),
+    route(9, { path: '/panel/rows/:rowId', componentSource: '@/screens/panel/rows.vue' })),
+];
+
+test('a navigation whose path names a screen is recorded on the screen it is written in', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, navigationFacts(navigation(20, { to: navigateTo('/panel') })), SCREEN_ON);
+  assert.deepEqual(g.nodes.get('screen:/panel/rows/:rowId').navigatesTo, [{
+    to: 'screen:/panel',
+    path: '/panel',
+    match: 'exact',
+    rule: 'router-navigation',
+    framework: 'test-router',
+    sink: 'router.push',
+    file: 'src/screens/panel/rows.vue',
+    line: 20,
+  }]);
+  // The screen it leads TO says nothing: a navigation is one-way and the
+  // record sits where the code is written.
+  assert.equal(g.nodes.get('screen:/panel').navigatesTo, undefined);
+  assert.equal(stats.navigation.navigations, 1);
+  assert.equal(stats.navigation.navigationsToScreen, 1);
+  assert.equal(stats.navigation.navigationsUnmatched, 0);
+  assert.equal(stats.navigation.screensWithNavigation, 1);
+  assert.deepEqual(stats.navigation.byFramework, { 'test-router': 1 });
+});
+
+test('a navigation places no edge of any kind, and is in none of the call numbers', () => {
+  const g = graphWithRoutes();
+  const before = addWebFacts(graphWithRoutes(), navigationFacts(), SCREEN_ON);
+  const stats = addWebFacts(g, navigationFacts(navigation(20, { to: navigateTo('/panel') })), SCREEN_ON);
+  assert.equal(stats.calls.withUrl, before.calls.withUrl);
+  assert.equal(stats.unresolved.total, before.unresolved.total);
+  assert.equal(stats.outboundEndpoints, before.outboundEndpoints);
+  assert.deepEqual(g.edges.filter((e) => e.to === 'screen:/panel'), []);
+});
+
+test('a navigation into a screen with a parameter matches it the way a call matches a route', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, navigationFacts(navigation(20, { to: navigateTo('/panel/rows/{*}') })), SCREEN_ON);
+  const entry = g.nodes.get('screen:/panel/rows/:rowId').navigatesTo[0];
+  assert.equal(entry.to, 'screen:/panel/rows/:rowId');
+  assert.equal(entry.match, 'template');
+  assert.equal(stats.navigation.navigationsToScreen, 1);
+});
+
+test('a navigation to a path no screen declares is counted and listed, and nothing is invented', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, navigationFacts(navigation(20, { to: navigateTo('/somewhere/else') })), SCREEN_ON);
+  assert.equal(g.nodes.get('screen:/panel/rows/:rowId').navigatesTo, undefined);
+  assert.equal(stats.navigation.navigationsToScreen, 0);
+  assert.equal(stats.navigation.navigationsUnmatched, 1);
+  assert.deepEqual(stats.navigation.unmatchedPaths, [{ path: '/somewhere/else', count: 1 }]);
+});
+
+test('a navigation whose target this lane could not read is counted and nothing else', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, navigationFacts(navigation(20, {
+    to: { arg: { kind: 'ident', name: 'href' }, resolved: null, unresolved: 'parameter' },
+  })), SCREEN_ON);
+  assert.equal(stats.navigation.navigations, 1);
+  assert.equal(stats.navigation.navigationsUnmatched, 1);
+  assert.deepEqual(stats.navigation.unmatchedPaths, []);
+});
+
+test('a navigation written in a file no screen mounts is counted and recorded nowhere', () => {
+  // A shared component belongs to no one screen. Saying it belongs to every
+  // screen that mounts it would be a guess, so the count is the whole answer.
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [
+    ...navigationFacts(),
+    ...file('src/components/crumbs.vue', navigation(6, { to: navigateTo('/panel') })),
+  ], SCREEN_ON);
+  assert.equal(stats.navigation.navigations, 1);
+  assert.equal(stats.navigation.navigationsToScreen, 1);
+  assert.equal(stats.navigation.screensWithNavigation, 0);
+});
+
+// ---- B: a URL that IS an imported constant (RM59) -------------------------
+//
+// RM58 filled the HOLES a template was left with. A URL argument that is the
+// imported name itself resolved to nothing, and the value settles it in both
+// directions: a path resolves the call, and anything else was never a call.
+
+const wholeConstantApi = (value) => [
+  ...file('src/api/urls.js',
+    { kind: 'constant', line: 1, name: 'ROWS_URL', exported: true, value },
+    exp(1, 'ROWS_URL', 'const', { local: 'ROWS_URL' })),
+  ...file('src/api/rows.js',
+    imp(1, '@/http', [{ imported: 'default', local: 'client' }]),
+    imp(2, '@/api/urls', [{ imported: 'ROWS_URL', local: 'ROWS_URL' }]),
+    fn(3, 'listRows'),
+    exp(3, 'listRows', 'function', { local: 'listRows' }),
+    call(4, 'listRows', memberCallee('client', 'get'), importBinding('@/http', 'default'), {
+      arg: { kind: 'ident', name: 'ROWS_URL' },
+      resolved: null,
+      unresolved: 'imported-constant',
+      binding: { kind: 'import', source: '@/api/urls', imported: 'ROWS_URL' },
+    }, { value: 'GET', from: 'callee-name' })),
+];
+
+test('a URL that is nothing but an imported constant is read, and the call resolves', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [ALIAS, ...clientFile(null), ...wholeConstantApi('/plain/list')], SCREEN_ON);
+  const e = only(g);
+  assert.equal(e.to, webEndpointId('GET', '/plain/list'));
+  assert.deepEqual(e.evidence.url.substituted, [{ name: 'ROWS_URL', value: '/plain/list', from: 'import' }]);
+  assert.equal(stats.unresolved.byReason.importedConstant, 0);
+  assert.equal(stats.calls.withUrl, 1);
+});
+
+test('a constant that holds something other than a path says this was never a call', () => {
+  // `store.get(ACCESS_TOKEN)` is a browser-storage read that the verb-name
+  // convention reads as a URL argument, and the callee reaches no client this
+  // lane knows. The VALUE is what settles it.
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [ALIAS, ...clientFile(null),
+    ...file('src/api/urls.js',
+      { kind: 'constant', line: 1, name: 'TOKEN_KEY', exported: true, value: 'Access-Token' },
+      exp(1, 'TOKEN_KEY', 'const', { local: 'TOKEN_KEY' })),
+    ...file('src/api/session.js',
+      imp(1, 'some-storage', [{ imported: 'default', local: 'store' }]),
+      imp(2, '@/api/urls', [{ imported: 'TOKEN_KEY', local: 'TOKEN_KEY' }]),
+      fn(3, 'currentToken'),
+      call(4, 'currentToken', memberCallee('store', 'get'), importBinding('some-storage', 'default'), {
+        arg: { kind: 'ident', name: 'TOKEN_KEY' },
+        resolved: null,
+        unresolved: 'imported-constant',
+        binding: { kind: 'import', source: '@/api/urls', imported: 'TOKEN_KEY' },
+      }, { value: 'GET', from: 'callee-name' }))], SCREEN_ON);
+  assert.deepEqual(edgesOf(g), []);
+  assert.equal(stats.calls.withUrl, 0);
+  assert.equal(stats.calls.notUrlShaped, 1);
+  assert.equal(stats.unresolved.total, 0);
+});
+
+test('a constant this lane never read stays unresolved, counted by its own reason', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [ALIAS, ...clientFile(null),
+    ...file('src/api/rows.js',
+      imp(1, '@/http', [{ imported: 'default', local: 'client' }]),
+      imp(2, 'some-package/urls', [{ imported: 'ROWS_URL', local: 'ROWS_URL' }]),
+      fn(3, 'listRows'),
+      call(4, 'listRows', memberCallee('client', 'get'), importBinding('@/http', 'default'), {
+        arg: { kind: 'ident', name: 'ROWS_URL' },
+        resolved: null,
+        unresolved: 'imported-constant',
+        binding: { kind: 'import', source: 'some-package/urls', imported: 'ROWS_URL' },
+      }, { value: 'GET', from: 'callee-name' }))], SCREEN_ON);
+  assert.deepEqual(edgesOf(g), []);
+  assert.equal(stats.unresolved.byReason.importedConstant, 1);
+});
+
+// ---- B: a string method is never a sink (RM59) ----------------------------
+//
+// `pathname.startsWith('/auth/login/naver')` asks where the browser already is.
+// The argument is path-shaped by construction and the callee reaches no client,
+// which is exactly the shape of an untraced call, so it came out as a request to
+// a route nothing serves.
+
+const stringMethodFacts = (method) => [
+  ALIAS, ...clientFile(null),
+  ...file('src/api/rows.js',
+    imp(1, '@/http', [{ imported: 'default', local: 'client' }]),
+    fn(3, 'onRoute'),
+    call(4, 'onRoute', memberCallee('pathname', method), null,
+      literalUrl('/plain/list'), { value: 'GET', from: 'callee-name' })),
+];
+
+test('a call on a string method reaches no route, and is counted as itself', () => {
+  for (const method of ['startsWith', 'endsWith', 'includes', 'indexOf', 'split', 'replace', 'test', 'match']) {
+    const g = graphWithRoutes();
+    const stats = addWebFacts(g, stringMethodFacts(method), SCREEN_ON);
+    assert.deepEqual(edgesOf(g), [], `${method} placed an edge`);
+    assert.equal(stats.calls.stringMethod, 1, `${method} was not counted`);
+    assert.equal(stats.calls.withUrl, 0, `${method} was counted as a call`);
+    assert.equal(stats.calls.notUrlShaped, 0, `${method} was counted under the wrong reason`);
+  }
+});
+
+test('no method a declaration pack calls a VERB is on the list, so no real client can be silenced', () => {
+  // The rule is what keeps `pathname.startsWith('/x')` out of the graph, and the
+  // one way it could do harm is by naming a method some library really sends
+  // with. Held mechanically against every pack the lane reads rather than by
+  // reading the two lists side by side.
+  const pack = httpClientPack();
+  const verbs = new Set();
+  const take = (o) => {
+    for (const v of Object.keys(o.verbs ?? {})) verbs.add(v);
+    for (const v of o.generic ?? []) verbs.add(v);
+    for (const v of o.config?.methods ?? []) verbs.add(v);
+    for (const v of o.instanceFactories ?? []) verbs.add(v);
+  };
+  for (const l of pack.libraries ?? []) take(l);
+  for (const p of pack.platform ?? []) take(p);
+  for (const i of pack.injected ?? []) take(i);
+  assert.ok(verbs.size > 10, `expected the pack's verbs, found ${verbs.size}`);
+  const clash = [...verbs].filter((v) => STRING_METHODS.has(v)).sort();
+  assert.deepEqual(clash, [], `these are both a client verb and a string method: ${clash.join(', ')}`);
+});
+
+test('a project function named `split` that is CALLED by name is untouched', () => {
+  // The rule needs a member call (`x.split(…)`). A bare call to something this
+  // project declares is its own function, and silencing it would be a name rule.
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [ALIAS, ...clientFile(null),
+    ...file('src/api/rows.js',
+      imp(1, '@/http', [{ imported: 'default', local: 'client' }]),
+      fn(3, 'split'),
+      exp(3, 'split', 'function', { local: 'split' }),
+      call(4, 'split', memberCallee('client', 'get'), importBinding('@/http', 'default'),
+        literalUrl('/plain/list'), { value: 'GET', from: 'callee-name' }))], SCREEN_ON);
+  assert.equal(stats.calls.stringMethod, 0);
+  assert.equal(only(g).to, webEndpointId('GET', '/plain/list'));
 });

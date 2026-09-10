@@ -1343,6 +1343,168 @@ function parentDir(dir) {
 }
 
 /**
+ * EVERY COLLECTION THE CLASSIFIERS WRITE INTO, made in one place.
+ *
+ * They are made here rather than where each is first needed for the same reason
+ * the census is: a list that only exists once some classifier ran cannot be told
+ * apart from a list that came back empty.
+ */
+function discoveryCollections() {
+  return {
+    // One entry per frontend package.json, with what its dependencies declare.
+    webPackages: [],
+    // A FRONTEND WITH NO PACKAGE MANIFEST (RM47). Every directory that holds a
+    // frontend source file with no package.json above it inside its repository,
+    // with how many such files it holds; plus every `index.html` beside one, so
+    // the page's own `<script src>` list can say which of those directories the
+    // server really serves. The rule that turns these into roots runs after the
+    // walk, because it needs the whole file list.
+    looseWebFiles: new Map(), // rel dir -> file count
+    looseWebPaths: new Set(), // rel file path
+    looseIndexPages: new Map(), // rel dir -> abs index.html
+    // THE SERVER-RENDERED PAGES (RM48): every directory holding a file with a
+    // template engine's extension, with how many of each, plus a bounded sample of
+    // the files themselves so the engine can be read off the markup after the walk.
+    templateDirs: new Map(), // rel dir -> Map<ext, count>
+    templateSample: new Map(), // rel dir -> abs paths, at most a few
+    // A Nexacro client (RM56): the directories holding its forms and its application file.
+    nexacroForms: new Map(), // rel dir -> form count
+    nexacroApps: new Set(), // rel dir holding an `.xadl` application file
+    viewResolvers: [],
+    xmlViewResolvers: [], // …and the same settings written as Spring BEANS (RM55)
+    // Every OpenAPI / Swagger document in the tree, with the version it declares.
+    openapiDocuments: [],
+    ddlPaths: [],
+    // Every .sql that declares or amends a table, with its dialect and its role.
+    ddlCandidates: [],
+    // Connection-info candidates (SPEC §12.1 ①). Discovery only LISTS them; it
+    // never dials one, and it never reads a password value — src/core/dbconfig.mjs
+    // returns references, not secrets.
+    connectionCandidates: [],
+    dbTypeDeclarations: [], // the vendor the configuration NAMES (RM55): Globals.DbType and its kin
+    // What the project's own Spring configuration says about WHO it is and WHERE
+    // it forwards a request (RM46, src/core/springconfig.mjs). Both used to be
+    // typed into the profile by hand, and both are in the tree.
+    serviceNames: [],
+    gatewayRoutes: [],
+    externalConfigImports: [],
+    // The two lane inputs `cascade analyze` needs when it is run with no flags:
+    // which directories hold MyBatis mapper XML, and which directories are Java
+    // source roots (measured from each file's own `package` declaration, never
+    // assumed to be `src/main/java`).
+    mapperDirs: new Set(),
+    mapperFiles: [], // …and each file by name, with its namespace (RM56)
+    ibatisConfigs: [], // every `<sqlMapConfig>`, with what it says about statement namespaces
+    // enclosing repository so the manifest can give every repo an honest `kind`.
+    packageCounts: new Map(),
+  };
+}
+
+/**
+ * A fresh census, every counter at zero. One literal rather than a field added
+ * where it is first needed: a count that exists only after some classifier ran
+ * would read as "we did not look" where the truth is "there were none".
+ */
+function emptyDiscoveryCounts() {
+  return {
+    javaFiles: 0,
+    javaTestFiles: 0,
+    springHandlerFiles: 0,
+    mybatisMapperXml: 0,
+    // …and the same statements in the iBATIS 2 element (RM56). Counted apart
+    // from `mybatisMapperXml` because they are two conventions, and a census
+    // that added them up could not say which one a tree is written in.
+    ibatisSqlMapXml: 0,
+    ddlFiles: 0,
+    jpaEntityFiles: 0,
+    mybatisPlusFiles: 0,
+    kotlinFiles: 0,
+    frontendPackageJson: 0,
+    // The web lane's inputs (RM26): every source file it would read, and how
+    // many of those are single-file components.
+    webFiles: 0,
+    vueFiles: 0,
+  };
+}
+
+/**
+ * THE DECLARATIONS THE TREE CARRIES, each sorted before it leaves.
+ *
+ * Sorted for the same reason every other list here is: what a run reports must
+ * not depend on the order a directory happened to be walked in.
+ */
+function sortedDeclarations(d) {
+  return {
+    ddlDialectHint: d.ddlDialectHint,
+    dbTypeDeclarations: d.dbTypeDeclarations.slice(), // what the configuration says the database IS (RM55)
+    connectionCandidates: d.connectionCandidates
+      .slice()
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),
+    serviceNames: d.serviceNames.slice()
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+    gatewayRoutes: d.gatewayRoutes.slice()
+      .sort((a, b) => (a.front < b.front ? -1 : a.front > b.front ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+    externalConfigImports: d.externalConfigImports.slice()
+      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)),
+  };
+}
+
+/**
+ * WHAT THE WALK FOUND, in the order and the sort every consumer relies on.
+ *
+ * Every list is sorted before it leaves here, and each one says why beside it:
+ * a directory walk's order must not decide which document a run reads first,
+ * which DDL file is applied first, or which of two repositories a reader sees.
+ */
+function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots }) {
+  const {
+    counts, diagnostics, packageCounts, mapperDirs, mapperFiles, ibatisConfigs, webPackages,
+    viewResolvers, xmlViewResolvers, openapiDocuments, ddlPaths, ddlCandidates,
+  } = d;
+  return {
+    root,
+    repos,
+    counts,
+    buildTool: w.sawPom ? 'maven' : w.sawGradle ? 'gradle' : null,
+    packagePrefixes: coveringPrefixes(packageCounts, d.javaWithPackage),
+    mapperDirs: minimalRoots(mapperDirs),
+    mapperFiles: mapperFiles.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    ibatisConfigs: ibatisConfigs.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    // The web lane's roots and packages (RM26). `minimalRoots` for the same
+    // reason the mapper and java roots use it: the lane walks recursively, so
+    // listing a directory and one of its children would read the child twice.
+    webSourceRoots: minimalRoots(webPackages.map((p) => p.root)),
+    webPackages: webPackages.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    // The frontend roots that have no package manifest at all (RM47). Kept
+    // apart from `webSourceRoots` on purpose: those come from a dependency list
+    // that named a framework, these from where the files sit, and a reader has
+    // to be able to tell the two apart.
+    webVendoredRoots,
+    // WHERE A VIEW NAME IS RESOLVED (RM48), with the engine that renders it and
+    // the suffix the resolver appends. `cascade init` writes these to the
+    // profile, where they become the user's to correct, exactly like `webRoots`.
+    templateRoots,
+    // …and what the configuration actually said, so a reader can see whether a
+    // root came from a declared prefix or from where the files sit.
+    viewResolvers: [...viewResolvers, ...xmlViewResolvers]
+      .sort((a, b) => (a.engine < b.engine ? -1 : a.engine > b.engine ? 1 : a.file < b.file ? -1 : 1)),
+    // Sorted by path, like every other list here: a walk's order must not decide
+    // which document a run reads first.
+    openapiDocuments: openapiDocuments.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    javaSourceRoots: minimalRoots(javaRoots),
+    javaTestRoots: minimalRoots(javaTestRoots),
+    ddlPaths: ddlPaths.slice().sort(),
+    // Sorted by path: "applied in path order" has to mean the same thing on
+    // every machine, and a directory walk's order does not.
+    ddlCandidates: ddlCandidates.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    ...sortedDeclarations(d),
+    filesScanned: Math.min(w.filesScanned, maxFiles),
+    capped: w.capped,
+    diagnostics,
+  };
+}
+
+/**
  * THE TEMPLATE ROOTS (RM48). Which of the directories holding template files is
  * a ROOT depends on the view resolver settings and on what the markup itself
  * says: two engines share the `.html` extension, and only the root's own files
@@ -1423,75 +1585,36 @@ export function discover(root, io = {}) {
   }
 
   const diagnostics = [];
-  const counts = {
-    javaFiles: 0,
-    javaTestFiles: 0,
-    springHandlerFiles: 0,
-    mybatisMapperXml: 0,
-    // …and the same statements in the iBATIS 2 element (RM56). Counted apart
-    // from `mybatisMapperXml` because they are two conventions, and a census
-    // that added them up could not say which one a tree is written in.
-    ibatisSqlMapXml: 0,
-    ddlFiles: 0,
-    jpaEntityFiles: 0,
-    mybatisPlusFiles: 0,
-    kotlinFiles: 0,
-    frontendPackageJson: 0,
-    // The web lane's inputs (RM26): every source file it would read, and how
-    // many of those are single-file components.
-    webFiles: 0,
-    vueFiles: 0,
-  };
-  // One entry per frontend package.json, with what its dependencies declare.
-  const webPackages = [];
-  // A FRONTEND WITH NO PACKAGE MANIFEST (RM47). Every directory that holds a
-  // frontend source file with no package.json above it inside its repository,
-  // with how many such files it holds; plus every `index.html` beside one, so
-  // the page's own `<script src>` list can say which of those directories the
-  // server really serves. The rule that turns these into roots runs after the
-  // walk, because it needs the whole file list.
-  const looseWebFiles = new Map(); // rel dir -> file count
-  const looseWebPaths = new Set(); // rel file path
-  const looseIndexPages = new Map(); // rel dir -> abs index.html
-  // THE SERVER-RENDERED PAGES (RM48): every directory holding a file with a
-  // template engine's extension, with how many of each, plus a bounded sample of
-  // the files themselves so the engine can be read off the markup after the walk.
-  const templateDirs = new Map(); // rel dir -> Map<ext, count>
-  const templateSample = new Map(); // rel dir -> abs paths, at most a few
-  // A Nexacro client (RM56): the directories holding its forms and its application file.
-  const nexacroForms = new Map(); // rel dir -> form count
-  const nexacroApps = new Set(); // rel dir holding an `.xadl` application file
-  const viewResolvers = [];
-  const xmlViewResolvers = []; // …and the same settings written as Spring BEANS (RM55)
-  // Every OpenAPI / Swagger document in the tree, with the version it declares.
-  const openapiDocuments = [];
-  const ddlPaths = [];
-  // Every .sql that declares or amends a table, with its dialect and its role.
-  const ddlCandidates = [];
-  // Connection-info candidates (SPEC §12.1 ①). Discovery only LISTS them; it
-  // never dials one, and it never reads a password value — src/core/dbconfig.mjs
-  // returns references, not secrets.
-  const connectionCandidates = [];
-  const dbTypeDeclarations = []; // the vendor the configuration NAMES (RM55): Globals.DbType and its kin
-  // What the project's own Spring configuration says about WHO it is and WHERE
-  // it forwards a request (RM46, src/core/springconfig.mjs). Both used to be
-  // typed into the profile by hand, and both are in the tree.
-  const serviceNames = [];
-  const gatewayRoutes = [];
-  const externalConfigImports = [];
-  // The two lane inputs `cascade analyze` needs when it is run with no flags:
-  // which directories hold MyBatis mapper XML, and which directories are Java
-  // source roots (measured from each file's own `package` declaration, never
-  // assumed to be `src/main/java`).
-  const mapperDirs = new Set();
-  const mapperFiles = []; // …and each file by name, with its namespace (RM56)
-  const ibatisConfigs = []; // every `<sqlMapConfig>`, with what it says about statement namespaces
+  const counts = emptyDiscoveryCounts();
   const javaRoots = new Set();
   const javaTestRoots = new Set();
   // repoRel -> per-repo tallies; the walk attributes each file to the deepest
-  // enclosing repository so the manifest can give every repo an honest `kind`.
   const repoStats = new Map();
-  const packageCounts = new Map();
+  const collected = discoveryCollections();
+  const {
+    webPackages,
+    looseWebFiles,
+    looseWebPaths,
+    looseIndexPages,
+    templateDirs,
+    templateSample,
+    nexacroForms,
+    nexacroApps,
+    viewResolvers,
+    xmlViewResolvers,
+    openapiDocuments,
+    ddlPaths,
+    ddlCandidates,
+    connectionCandidates,
+    dbTypeDeclarations,
+    serviceNames,
+    gatewayRoutes,
+    externalConfigImports,
+    mapperDirs,
+    mapperFiles,
+    ibatisConfigs,
+    packageCounts,
+  } = collected;
 
   const rel = (abs) => {
     const r = path.relative(root, abs);
@@ -1562,59 +1685,9 @@ export function discover(root, io = {}) {
 
   const repos = [...repoStats.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
-  return {
-    root,
-    repos,
-    counts,
-    buildTool: w.sawPom ? 'maven' : w.sawGradle ? 'gradle' : null,
-    packagePrefixes: coveringPrefixes(packageCounts, d.javaWithPackage),
-    mapperDirs: minimalRoots(mapperDirs),
-    mapperFiles: mapperFiles.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
-    ibatisConfigs: ibatisConfigs.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
-    // The web lane's roots and packages (RM26). `minimalRoots` for the same
-    // reason the mapper and java roots use it: the lane walks recursively, so
-    // listing a directory and one of its children would read the child twice.
-    webSourceRoots: minimalRoots(webPackages.map((p) => p.root)),
-    webPackages: webPackages.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
-    // The frontend roots that have no package manifest at all (RM47). Kept
-    // apart from `webSourceRoots` on purpose: those come from a dependency list
-    // that named a framework, these from where the files sit, and a reader has
-    // to be able to tell the two apart.
-    webVendoredRoots,
-    // WHERE A VIEW NAME IS RESOLVED (RM48), with the engine that renders it and
-    // the suffix the resolver appends. `cascade init` writes these to the
-    // profile, where they become the user's to correct, exactly like `webRoots`.
-    templateRoots,
-    // …and what the configuration actually said, so a reader can see whether a
-    // root came from a declared prefix or from where the files sit.
-    viewResolvers: [...viewResolvers, ...xmlViewResolvers]
-      .sort((a, b) => (a.engine < b.engine ? -1 : a.engine > b.engine ? 1 : a.file < b.file ? -1 : 1)),
-    // Sorted by path, like every other list here: a walk's order must not decide
-    // which document a run reads first.
-    openapiDocuments: openapiDocuments.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
-    javaSourceRoots: minimalRoots(javaRoots),
-    javaTestRoots: minimalRoots(javaTestRoots),
-    ddlPaths: ddlPaths.slice().sort(),
-    // Sorted by path: "applied in path order" has to mean the same thing on
-    // every machine, and a directory walk's order does not.
-    ddlCandidates: ddlCandidates.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
-    ddlDialectHint: d.ddlDialectHint,
-    dbTypeDeclarations: dbTypeDeclarations.slice(), // what the configuration says the database IS (RM55)
-    connectionCandidates: connectionCandidates
-      .slice()
-      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),
-    // Sorted for the same reason every other list here is: what a run reports
-    // must not depend on the order a directory happened to be walked in.
-    serviceNames: serviceNames.slice()
-      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
-    gatewayRoutes: gatewayRoutes.slice()
-      .sort((a, b) => (a.front < b.front ? -1 : a.front > b.front ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
-    externalConfigImports: externalConfigImports.slice()
-      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)),
-    filesScanned: Math.min(w.filesScanned, maxFiles),
-    capped: w.capped,
-    diagnostics,
-  };
+  return discoveryAnswer(root, d, {
+    w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots,
+  });
 }
 
 /**

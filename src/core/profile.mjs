@@ -486,14 +486,15 @@ export function trustGapsFor(profile, axes = null) {
  * @param {Object} profile  a normalized profile
  * @returns {{kind:string, severity:string, key:string, reason:string}[]}
  */
-export function profileDiagnostics(profile) {
-  if (profile === null || typeof profile !== 'object' || Array.isArray(profile)) {
-    throw new ProfileError('profileDiagnostics expects a profile object');
-  }
-  const out = [];
-  const add = (kind, severity, key, reason) => out.push({ kind, severity, key, reason });
-
-  // --- consumed keys that still need something said ------------------------
+/**
+ * THE CONSUMED KEYS THAT STILL NEED SOMETHING SAID.
+ *
+ * A key this engine acts on can still leave a reader with a question: which
+ * default it fell back to, which rule it folded identifiers by, which pack it
+ * has no lane for. The identity rule is never silent, because the answer to "is
+ * this one table or two?" depends on it.
+ */
+function sayAboutConsumedKeys(profile, add) {
   if (Array.isArray(profile.packagePrefixes) && profile.packagePrefixes.length === 0) {
     add('PROFILE_DEFAULT_ASSUMED', 'info', 'packagePrefixes',
       'packagePrefixes is empty, so every type is treated as project code');
@@ -532,6 +533,18 @@ export function profileDiagnostics(profile) {
     }
   }
 
+  sayAboutPackDefaults(profile, add);
+}
+
+/**
+ * THE DEFAULTS A DECLARED PACK FALLS BACK TO, and the packs this engine has no
+ * lane for.
+ *
+ * A naming strategy nobody declared is the one that decides whether a mapping is
+ * EXACT or HEURISTIC, so the run says which default it used rather than leaving
+ * a reader to work it out from the grades.
+ */
+function sayAboutPackDefaults(profile, add) {
   for (const pack of Array.isArray(profile.frameworkPacks) ? profile.frameworkPacks : []) {
     if (!KNOWN_FRAMEWORK_PACKS.includes(pack)) {
       add('UNSUPPORTED_TECHNOLOGY', 'warn', 'frameworkPacks',
@@ -578,7 +591,15 @@ export function profileDiagnostics(profile) {
       'screenAxis.nameSource is "jsdoc-comment" and no lane here reads the comment above a component, so every screen title stays null and the screen axis is declared degraded. Use "route-meta" to read the route\'s own meta.title, or "none"');
   }
 
-  // --- recorded-not-acted keys: one diagnostic per non-default value --------
+}
+
+/**
+ * THE RECORDED-NOT-ACTED KEYS: one diagnostic per non-default value.
+ *
+ * Each of these is a declaration that is right and changes nothing, which is
+ * exactly the case nothing else would tell you about.
+ */
+function sayAboutRecordedKeys(profile, add) {
   const buildChanged = ['build.tool', 'build.javaRelease', 'build.profiles']
     .filter((k) => isNonDefault(k, readKeyPath(profile, k)));
   if (buildChanged.length > 0) {
@@ -638,6 +659,17 @@ export function profileDiagnostics(profile) {
       'calibration.firstRun is "require-baseline": a project with no sealed baseline fails the calibration gate instead of bootstrapping one. Seal the first one with `cascade analyze --accept-baseline`');
   }
 
+}
+
+export function profileDiagnostics(profile) {
+  if (profile === null || typeof profile !== 'object' || Array.isArray(profile)) {
+    throw new ProfileError('profileDiagnostics expects a profile object');
+  }
+  const out = [];
+  const add = (kind, severity, key, reason) => out.push({ kind, severity, key, reason });
+
+  sayAboutConsumedKeys(profile, add);
+  sayAboutRecordedKeys(profile, add);
   return out;
 }
 

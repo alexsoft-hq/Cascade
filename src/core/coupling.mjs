@@ -55,40 +55,19 @@ export const SHARED_VIA_CAP = 5;
  *                     readOnlyItems:number,groups:number,participatingGroups:number,
  *                     sharedStatements:number,statements:number,endpoints:number}}}
  */
-export function buildCoupling(graph, opts = {}) {
-  const axis = opts.axis ?? 'column';
-  if (axis !== 'column' && axis !== 'table') throw new CouplingError(`unknown axis: ${JSON.stringify(axis)}`);
-  const mode = opts.mode ?? 'conservative';
-  // Validated here and not only inside the walk: a pack with no endpoints would
-  // otherwise never reach chainWalk, and a bad mode would answer "empty" instead
-  // of failing.
-  if (!GRADE_SETS[mode]) throw new CouplingError(`unknown mode: ${JSON.stringify(mode)}`);
-  const depth = opts.depth ?? 8;
-  if (!Number.isInteger(depth) || depth < 1) throw new CouplingError(`depth must be a positive integer, got ${depth}`);
-
-  // 1./2. Every endpoint's forward walk (core/walks.mjs — the same walk the
-  // `map` view runs), folded into groups: how many endpoints each group has,
-  // and which groups can reach each statement. `walk` is that walk's own cut
-  // census, counted per DISTINCT start.
-  const { endpoints, walk } = walkEndpoints(graph, {
-    mode, depth, packageDepth: opts.packageDepth ?? null,
-    ...(opts.maxNodes != null ? { maxNodes: opts.maxNodes } : {}),
-  });
-  const endpointsPerGroup = new Map(); // group -> endpoint count
-  const stmtGroups = new Map(); // statement node id -> Set(group)
-  for (const ep of endpoints) {
-    endpointsPerGroup.set(ep.group, (endpointsPerGroup.get(ep.group) ?? 0) + 1);
-    for (const s of ep.statements) {
-      let gs = stmtGroups.get(s.id);
-      if (!gs) { gs = new Set(); stmtGroups.set(s.id, gs); }
-      gs.add(ep.group);
-    }
-  }
-
-  // 3. Each reached statement's items, split into the write side and the read
-  // side. Column axis: the statement's own READS/WRITES edges. Table axis: its
-  // EXECUTES edges, where `delete` is a WRITE — a delete changes what the next
-  // reader sees just as an update does.
+/**
+ * 3. EACH REACHED STATEMENT'S ITEMS, split into the write side and the read side.
+ *
+ * Column axis: the statement's own READS/WRITES edges. Table axis: its EXECUTES
+ * edges, where `delete` is a WRITE, because a delete changes what the next
+ * reader sees just as an update does.
+ *
+ * An EXECUTES edge whose access the lane did not record (or recorded as
+ * something this view has no rule for) is counted on BOTH sides: guessing "read"
+ * would silently drop a write, and dropping it would lose the table. The count
+ * is disclosed by the caller, never absorbed.
+ */
+function itemsPerGroup(graph, stmtGroups, axis) {
   const items = new Map(); // item key -> {writers: Map(group -> Set(stmt)), readers: same}
   const touch = (key, side, group, stmtId) => {
     let it = items.get(key);
@@ -98,10 +77,6 @@ export function buildCoupling(graph, opts = {}) {
     if (!stmts) { stmts = new Set(); byGroup.set(group, stmts); }
     stmts.add(stmtId);
   };
-  // An EXECUTES edge whose access the lane did not record (or recorded as
-  // something this view has no rule for) is counted on BOTH sides: guessing
-  // "read" would silently drop a write, and dropping it would lose the table.
-  // The count is disclosed by the caller, never absorbed.
   let unknownAccess = 0;
   for (const [stmtId, groups] of stmtGroups) {
     for (const e of graph.outEdges(stmtId)) {
@@ -120,6 +95,91 @@ export function buildCoupling(graph, opts = {}) {
       for (const g of groups) for (const side of sides) touch(key, side, g, stmtId);
     }
   }
+  return { items, unknownAccess };
+}
+
+/**
+ * 5. THE CELLS. An item read and written only inside ONE group couples nothing.
+ *
+ * "This pair rests on a shared statement": on AT LEAST ONE SIDE the item's whole
+ * evidence is fan-out statements - every statement that makes the writer a
+ * writer of it, or every statement that makes the reader a reader of it. The
+ * link is then an artefact of reachability at least as much as of the two
+ * groups' own code. The statements that carried it travel with the pair
+ * (`sharedVia`), so the reader sees THIS pair's evidence rather than the pack's
+ * global top of the list.
+ *
+ * An item only one SIDE of the walk ever touched is neither coupling nor
+ * self-only, and it is a third of a real pack's columns: counted apart so the
+ * four numbers add up to `items` rather than leaving a silent remainder.
+ */
+function couplingCells(items, isShared) {
+  const cells = new Map(); // key: writer + NUL + reader -> cell
+  const writesPerGroup = new Map();
+  const readsPerGroup = new Map();
+  const counted = { coupledItems: 0, selfOnlyItems: 0, writeOnlyItems: 0, readOnlyItems: 0 };
+  for (const [key, it] of items) {
+    const writers = [...it.writers.keys()].sort(cmp);
+    const readers = [...it.readers.keys()].sort(cmp);
+    for (const g of writers) writesPerGroup.set(g, (writesPerGroup.get(g) ?? 0) + 1);
+    for (const g of readers) readsPerGroup.set(g, (readsPerGroup.get(g) ?? 0) + 1);
+    if (!writers.length || !readers.length) { // written but never read here, or vice versa
+      if (writers.length) counted.writeOnlyItems += 1; else counted.readOnlyItems += 1;
+      continue;
+    }
+    let coupled = false;
+    for (const a of writers) {
+      for (const b of readers) {
+        if (a === b) continue; // the diagonal is not coupling between modules
+        coupled = true;
+        const k = `${a}\u0000${b}`;
+        let cell = cells.get(k);
+        if (!cell) { cell = { writer: a, reader: b, items: [], viaShared: 0, sharedVia: new Set() }; cells.set(k, cell); }
+        cell.items.push(key);
+        const wShared = allShared(it.writers.get(a), isShared);
+        const rShared = allShared(it.readers.get(b), isShared);
+        if (!wShared && !rShared) continue;
+        cell.viaShared += 1;
+        if (wShared) for (const sid of it.writers.get(a)) cell.sharedVia.add(strip(sid));
+        if (rShared) for (const sid of it.readers.get(b)) cell.sharedVia.add(strip(sid));
+      }
+    }
+    if (coupled) counted.coupledItems += 1; else counted.selfOnlyItems += 1;
+  }
+  return { cells, writesPerGroup, readsPerGroup, counted };
+}
+
+export function buildCoupling(graph, opts = {}) {
+  const axis = opts.axis ?? 'column';
+  if (axis !== 'column' && axis !== 'table') throw new CouplingError(`unknown axis: ${JSON.stringify(axis)}`);
+  const mode = opts.mode ?? 'conservative';
+  // Validated here and not only inside the walk: a pack with no endpoints would
+  // otherwise never reach chainWalk, and a bad mode would answer "empty" instead
+  // of failing.
+  if (!GRADE_SETS[mode]) throw new CouplingError(`unknown mode: ${JSON.stringify(mode)}`);
+  const depth = opts.depth ?? 8;
+  if (!Number.isInteger(depth) || depth < 1) throw new CouplingError(`depth must be a positive integer, got ${depth}`);
+
+  // 1./2. Every endpoint's forward walk (core/walks.mjs, the same walk the `map`
+  // view runs), folded into groups: how many endpoints each group has, and which
+  // groups can reach each statement. `walk` is that walk's own cut census,
+  // counted per DISTINCT start.
+  const { endpoints, walk } = walkEndpoints(graph, {
+    mode, depth, packageDepth: opts.packageDepth ?? null,
+    ...(opts.maxNodes != null ? { maxNodes: opts.maxNodes } : {}),
+  });
+  const endpointsPerGroup = new Map(); // group -> endpoint count
+  const stmtGroups = new Map(); // statement node id -> Set(group)
+  for (const ep of endpoints) {
+    endpointsPerGroup.set(ep.group, (endpointsPerGroup.get(ep.group) ?? 0) + 1);
+    for (const s of ep.statements) {
+      let gs = stmtGroups.get(s.id);
+      if (!gs) { gs = new Set(); stmtGroups.set(s.id, gs); }
+      gs.add(ep.group);
+    }
+  }
+
+  const { items, unknownAccess } = itemsPerGroup(graph, stmtGroups, axis);
 
   // 4. The fan-out disclosure: statements so many groups reach that attributing
   // them to any one group says little.
@@ -132,53 +192,7 @@ export function buildCoupling(graph, opts = {}) {
   }
   sharedStatements.sort((a, b) => (b.groups - a.groups) || cmp(a.statement, b.statement));
 
-  // 5. The cells. An item read and written only inside ONE group couples nothing.
-  const cells = new Map(); // key: writer + NUL + reader -> {writer, reader, items:[], viaShared, sharedVia:Set}
-  const writesPerGroup = new Map();
-  const readsPerGroup = new Map();
-  let coupledItems = 0;
-  let selfOnlyItems = 0;
-  // An item only one SIDE of the walk ever touched is neither coupling nor
-  // self-only, and it is a third of this pack's columns: counted apart so the
-  // four numbers add up to `items` rather than leaving a silent remainder.
-  let writeOnlyItems = 0;
-  let readOnlyItems = 0;
-  for (const [key, it] of items) {
-    const writers = [...it.writers.keys()].sort(cmp);
-    const readers = [...it.readers.keys()].sort(cmp);
-    for (const g of writers) writesPerGroup.set(g, (writesPerGroup.get(g) ?? 0) + 1);
-    for (const g of readers) readsPerGroup.set(g, (readsPerGroup.get(g) ?? 0) + 1);
-    if (!writers.length || !readers.length) { // written but never read here, or vice versa
-      if (writers.length) writeOnlyItems += 1; else readOnlyItems += 1;
-      continue;
-    }
-    let coupled = false;
-    for (const a of writers) {
-      for (const b of readers) {
-        if (a === b) continue; // the diagonal is not coupling between modules
-        coupled = true;
-        const k = `${a}\u0000${b}`;
-        let cell = cells.get(k);
-        if (!cell) { cell = { writer: a, reader: b, items: [], viaShared: 0, sharedVia: new Set() }; cells.set(k, cell); }
-        cell.items.push(key);
-        // "This pair rests on a shared statement": on AT LEAST ONE SIDE the
-        // item's whole evidence is fan-out statements — every statement that
-        // makes a a writer of it, or every statement that makes b a reader of
-        // it. The link is then an artefact of reachability at least as much as
-        // of the two groups' own code. The statements that carried it travel
-        // with the pair (`sharedVia`), so the reader sees THIS pair's evidence
-        // rather than the pack's global top of the list.
-        const wShared = allShared(it.writers.get(a), isShared);
-        const rShared = allShared(it.readers.get(b), isShared);
-        if (wShared || rShared) {
-          cell.viaShared += 1;
-          if (wShared) for (const sid of it.writers.get(a)) cell.sharedVia.add(strip(sid));
-          if (rShared) for (const sid of it.readers.get(b)) cell.sharedVia.add(strip(sid));
-        }
-      }
-    }
-    if (coupled) coupledItems += 1; else selfOnlyItems += 1;
-  }
+  const { cells, writesPerGroup, readsPerGroup, counted } = couplingCells(items, isShared);
 
   const pairs = [...cells.values()].map((c) => ({
     writer: c.writer, reader: c.reader, count: c.items.length,
@@ -206,10 +220,7 @@ export function buildCoupling(graph, opts = {}) {
     unknownAccess,
     summary: {
       items: items.size,
-      coupledItems,
-      selfOnlyItems,
-      writeOnlyItems,
-      readOnlyItems,
+      ...counted,
       groups: groups.length,
       participatingGroups: participating.size,
       sharedStatements: sharedStatements.length,

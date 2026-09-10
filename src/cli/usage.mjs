@@ -97,7 +97,7 @@ export const USAGE = Object.freeze({
     + '       --from-otel proposes from an OpenTelemetry trace instead, so the labels come from a RUN\n'
     + '       rather than from this engine. A run proves reach, so those cases score recall only.)\n',
   catalog:
-    '  cascade catalog discover [--root <dir>] [--json]\n'
+    '  cascade catalog discover [--project <id>|--root <dir>] [--json]\n'
     + '      (list the datasource connection info this tree carries: host, port, database, dialect,\n'
     + '       and WHETHER a password is there. No password value is read, printed or stored, and\n'
     + '       nothing is connected to.)\n'

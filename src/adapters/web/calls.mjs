@@ -393,6 +393,43 @@ function makeConstantOf({ files, resolver }) {
 }
 
 /**
+ * THE URL THAT IS NOTHING BUT AN IMPORTED CONSTANT.
+ *
+ * `get(ACCESS_TOKEN)` and `axios.get(POSTS_URL)` are the same shape as the holes
+ * above with the template taken away, and RM58 filled only the holes: a URL
+ * argument that IS the imported name resolved to nothing, so it was counted
+ * `importedConstant` and left. Measured on jsherp, 27 of 56 unresolved call
+ * sites were that, and not one of them was a URL: they are the keys of a
+ * browser-storage wrapper (`Vue.ls.get(ACCESS_TOKEN)`), which the verb-name
+ * convention reads as a URL argument and only the value can settle.
+ *
+ * So the value is read here too, and it decides the call in BOTH directions: a
+ * constant that holds a path resolves the call, and one that holds anything else
+ * is not URL-shaped, which is how `sinkOf` already recognises a call that never
+ * was one. Nothing is guessed either way, because the literal is in the source.
+ *
+ * @returns {{resolved:object[], substituted:object[], assumed:boolean}|null}
+ *          null when the URL is not a bare imported name
+ */
+function wholeImportedConstant(file, call, constantOf) {
+  const url = call.url ?? {};
+  if (Array.isArray(url.resolved) || url.unresolved !== 'imported-constant') return null;
+  const binding = url.binding ?? null;
+  const arg = url.arg ?? null;
+  if (binding === null || binding.kind !== 'import' || arg === null) return null;
+  const name = arg.kind === 'ident' ? arg.name
+    : arg.kind === 'member' ? [arg.root, ...(arg.path ?? [])].join('.') : null;
+  if (name === null) return null;
+  const got = constantOf(file, { kind: 'import', name, source: binding.source, imported: binding.imported });
+  if (typeof got.value !== 'string') return null;
+  return {
+    resolved: [{ template: got.value, dynamicParts: 0, via: 'imported-constant' }],
+    substituted: [{ name, value: got.value, from: 'import' }],
+    assumed: got.assumed === true,
+  };
+}
+
+/**
  * One call's URL candidates with every hole an IMPORTED constant explains
  * filled in, and what that took.
  *
@@ -511,6 +548,32 @@ function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
   };
 }
 
+/**
+ * THE METHODS THAT TAKE A PATH APART instead of asking for one.
+ *
+ * `pathname.startsWith('/auth/login/naver')` asks where the browser already is;
+ * `p.split('/')`, `s.replace('/a', '/b')` and `re.test(path)` are how every
+ * frontend reads a path. The argument is path-shaped by construction, so the URL
+ * rule sees a URL and the callee reached no client, which is exactly the shape of
+ * an untraced call: on the eGovFrame MSA template that was five of the nineteen
+ * paths no route answered. The METHOD NAME settles it, whatever the receiver is,
+ * because none of these sends anything.
+ *
+ * Applied ONLY to a call that reached no client, so a traced library instance
+ * that happens to publish one of these names is untouched: there the sink is the
+ * library, and this list is about a call that has no sink at all.
+ */
+export const STRING_METHODS = new Set([
+  'startsWith', 'endsWith', 'includes', 'indexOf', 'lastIndexOf', 'match', 'test',
+  'replace', 'replaceAll', 'split', 'localeCompare', 'padStart', 'padEnd', 'concat',
+]);
+
+/** Whether this callee is one of those, called as a member (`x.split(…)`). */
+function isStringMethod(callee) {
+  return !!callee && Array.isArray(callee.path) && callee.path.length >= 1
+    && STRING_METHODS.has(callee.path[callee.path.length - 1]);
+}
+
 /** Which of the six kinds of sink ONE call reached, or null when it is not a call at all. */
 function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
   const {
@@ -570,16 +633,27 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
       target,
     };
   }
-  // AN UNTRACED CALL IS ONLY A CALL WHEN ITS ARGUMENT LOOKS LIKE A URL.
-  //
-  // The worker records the first argument of any verb-named call as the
-  // URL, by the ecosystem's own convention, and that convention is right
-  // for `thing.get('/x')` and wrong for `Cookies.get('size')`. Nothing in
-  // ONE FILE can tell those apart; the bridge can, because it knows
-  // whether the callee reached a client library at all. So a call that
-  // reached none AND whose argument is not written like a path is not an
-  // HTTP call here: it is counted (`notUrlShaped`) and left alone, rather
-  // than becoming a route named `/size` that nothing serves.
+  return untracedSink(c, { resolved, absolute, target, stats });
+}
+
+/**
+ * AN UNTRACED CALL IS ONLY A CALL WHEN ITS ARGUMENT LOOKS LIKE A URL, and when
+ * its callee is not one of the methods that take a path apart.
+ *
+ * The worker records the first argument of any verb-named call as the URL, by
+ * the ecosystem's own convention, and that convention is right for
+ * `thing.get('/x')` and wrong for `Cookies.get('size')`. Nothing in ONE FILE can
+ * tell those apart; the bridge can, because it knows whether the callee reached
+ * a client library at all. So a call that reached none AND whose argument is not
+ * written like a path is not an HTTP call here: it is counted (`notUrlShaped`)
+ * and left alone, rather than becoming a route named `/size` that nothing serves.
+ * `pathname.startsWith('/x')` is the other half of the same problem, where the
+ * argument IS a path and only the method name says otherwise.
+ *
+ * @returns {{sink:object, target:(object|null)}|null} null when this is no call
+ */
+function untracedSink(c, { resolved, absolute, target, stats }) {
+  if (isStringMethod(c.callee)) { stats.calls.stringMethod += 1; return null; }
   if (!urlShaped(absolute, resolved)) { stats.calls.notUrlShaped += 1; return null; }
   stats.calls.untraced += 1;
   return {
@@ -622,8 +696,10 @@ export function classifyCallSites({
       if (!c.url) continue;
       // A HOLE ANOTHER MODULE'S CONSTANT EXPLAINS (RM58), filled before
       // anything else reads the template: what this call asks for is decided
-      // on the text with the constants in it.
-      const imported = withImportedConstants(file, c, c.url.resolved, constantOf);
+      // on the text with the constants in it. A URL that IS such a constant
+      // rather than a template with one in it is the same fact (RM59).
+      const imported = wholeImportedConstant(file, c, constantOf)
+        ?? withImportedConstants(file, c, c.url.resolved, constantOf);
       // Only text that CHANGED here needs the host and query taken off it: what
       // the worker resolved has already been through that, and running it again
       // over every call would quietly re-read URLs no constant touched.

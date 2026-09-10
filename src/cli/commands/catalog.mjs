@@ -97,9 +97,15 @@ function targetFromFlags({ opt, die }) {
 
 // ---- discover ---------------------------------------------------------------
 
-function runDiscover({ opt, flag, die }) {
+function runDiscover(ctx) {
+  const { opt, flag, die } = ctx;
   const asJson = flag('json');
-  const root = realPath(path.resolve(opt('root', process.cwd())));
+  // `--project` is a REGISTRY LOOKUP here as it is everywhere else. It used to
+  // be accepted and ignored, so `catalog discover --project mall` listed the
+  // working directory's datasources and called them mall's.
+  const resolved = opt('project') ? ctx.resolveOrDie() : null;
+  const ofProject = resolved && resolved.dotCascade ? path.dirname(resolved.dotCascade) : null;
+  const root = realPath(path.resolve(opt('root', ofProject ?? process.cwd())));
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) die(`--root ${root} is not a directory`);
   const discovery = discover(root, DISCOVER_IO);
   const candidates = discovery.connectionCandidates ?? [];
@@ -487,7 +493,7 @@ function runFetch(ctx) {
   const { opt, flag, die, resolveOrDie } = ctx;
   const asJson = flag('json');
   const root = realPath(path.resolve(opt('root', process.cwd())));
-  const resolved = resolveOrDie({ strictProject: false });
+  const resolved = resolveOrDie();
   if (!resolved.dotCascade) {
     die('no project state directory (.cascade/) for this target. Run `cascade init` first, so the snapshot has a home that is already gitignored');
   }
@@ -524,7 +530,7 @@ export function run(ctx) {
   if (sub === 'discover') runDiscover(ctx);
   if (sub === 'credentials') runCredentials(ctx);
   if (sub !== 'fetch') {
-    die('usage: cascade catalog discover [--root <dir>] [--json]\n'
+    die('usage: cascade catalog discover [--project <id>|--root <dir>] [--json]\n'
       + '       cascade catalog fetch [--project <id>|--root <dir>]\n'
       + '                             [--candidate <n> | --url <jdbc url> --user <u>\n'
       + '                              | --dialect <d> --host <h> [--port <p>] --database <db> --user <u>]\n'

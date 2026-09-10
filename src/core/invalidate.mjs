@@ -107,28 +107,44 @@ export const MODE_INCREMENTAL = 'incremental';
  *            sqlChanged:boolean, catalogChanged:boolean, webConfigChanged:boolean,
  *            reuse:{java:number, web:number}}}
  */
-export function planIncremental(input) {
-  const {
-    requestedMode = 'auto',
-    index = null,
-    changeset = null,
-    untracked = [],
-    selection,
-    workers,
-    engineVersion,
-    stillExists = () => true,
-  } = input ?? {};
-  if (!selection || typeof selection !== 'object') throw new InvalidateError('selection is required');
-  if (!workers || typeof workers !== 'object') throw new InvalidateError('workers is required');
-  if (typeof engineVersion !== 'string') throw new InvalidateError('engineVersion must be a string');
+/**
+ * A FILE THE PREVIOUS RUN READ IN A DIRTY STATE is not described by any commit,
+ * so `git diff <base>` cannot tell us whether it moved back. Re-read it, or drop
+ * it if it is gone: an untracked file that was deleted leaves no git trace.
+ */
+function reReadDirtyFiles(index, notes, cls) {
+  const { ddls, mapperDirs, webRoots, javaRoots, isTemplateFile, stillExists,
+    reparse, drop, reparseWeb, dropWeb, flags } = cls;
+  for (const f of index.base?.dirtyFiles ?? []) {
+    if (ddls.includes(f)) flags.catalogChanged = true;
+    if (f.endsWith('.xml') && underAny(f, mapperDirs)) flags.sqlChanged = true;
+    if (isWebConfigOf(f, webRoots)) flags.webConfigChanged = true;
+    if (f.endsWith('.java') && underAny(f, javaRoots)) {
+      if (stillExists(f)) { reparse.add(f); drop.delete(f); }
+      else { drop.add(f); reparse.delete(f); }
+    }
+    if ((isWebSourceFile(f) && underAny(f, webRoots)) || isTemplateFile(f)) {
+      if (stillExists(f)) { reparseWeb.add(f); dropWeb.delete(f); }
+      else { dropWeb.add(f); reparseWeb.delete(f); }
+    }
+  }
+  if ((index.base?.dirtyFiles ?? []).length > 0) {
+    notes.push(`${index.base.dirtyFiles.length} file(s) were dirty when the previous pack was built and are re-read, not reused: git cannot diff a working-tree state against a commit that never held it`);
+  }
+}
 
-  const cold = (reason) => ({
-    mode: MODE_COLD, reason, notes: [],
-    reparseJava: [], dropJava: [], reparseWeb: [], dropWeb: [],
-    sqlChanged: true, catalogChanged: true, webConfigChanged: true,
-    reuse: { java: 0, web: 0 },
-  });
-
+/**
+ * THE REASONS A RUN CANNOT BE INCREMENTAL AT ALL, in the order they are checked.
+ *
+ * Each one is a different generation of the same question: a shard is only
+ * reusable when the engine, the worker, the root and the selection behind it are
+ * the ones this run has. An UNKNOWN changeset is refused rather than read as an
+ * empty list of changes.
+ *
+ * @returns {object|null} the cold plan, or null when the run may be incremental
+ */
+function coldReason(input, cold) {
+  const { requestedMode, index, changeset, selection, workers, engineVersion } = input;
   if (requestedMode === MODE_COLD) return cold('--cold was given: every shard is ignored and every lane recomputed');
   if (!index) return cold('no previous facts-index.json beside the pack, so there is nothing to reuse');
   if (index.engineVersion !== engineVersion) {
@@ -151,6 +167,33 @@ export function planIncremental(input) {
     return cold(`the changeset is UNKNOWN: ${changeset?.reason ?? 'no changeset was produced'} (unknown is never read as an empty list of changes)`);
   }
   if (!Array.isArray(changeset.files)) return cold('the changeset carries no file list');
+  return null;
+}
+
+export function planIncremental(input) {
+  const {
+    requestedMode = 'auto',
+    index = null,
+    changeset = null,
+    untracked = [],
+    selection,
+    workers,
+    engineVersion,
+    stillExists = () => true,
+  } = input ?? {};
+  if (!selection || typeof selection !== 'object') throw new InvalidateError('selection is required');
+  if (!workers || typeof workers !== 'object') throw new InvalidateError('workers is required');
+  if (typeof engineVersion !== 'string') throw new InvalidateError('engineVersion must be a string');
+
+  const cold = (reason) => ({
+    mode: MODE_COLD, reason, notes: [],
+    reparseJava: [], dropJava: [], reparseWeb: [], dropWeb: [],
+    sqlChanged: true, catalogChanged: true, webConfigChanged: true,
+    reuse: { java: 0, web: 0 },
+  });
+
+  const early = coldReason({ requestedMode, index, changeset, selection, workers, engineVersion }, cold);
+  if (early !== null) return early;
 
   // ---- classify ------------------------------------------------------------
   const notes = [];
@@ -194,25 +237,12 @@ export function planIncremental(input) {
   for (const f of changeset.files) consider(f.status, f.repoPath);
   for (const f of untracked) consider('A', f);
 
-  // A file the PREVIOUS run read in a dirty state is not described by any commit,
-  // so `git diff <base>` cannot tell us whether it moved back. Re-read it, or drop
-  // it if it is gone (an untracked file that was deleted leaves no git trace).
-  for (const f of index.base?.dirtyFiles ?? []) {
-    if (ddls.includes(f)) catalogChanged = true;
-    if (f.endsWith('.xml') && underAny(f, mapperDirs)) sqlChanged = true;
-    if (isWebConfigOf(f, webRoots)) webConfigChanged = true;
-    if (f.endsWith('.java') && underAny(f, javaRoots)) {
-      if (stillExists(f)) { reparse.add(f); drop.delete(f); }
-      else { drop.add(f); reparse.delete(f); }
-    }
-    if ((isWebSourceFile(f) && underAny(f, webRoots)) || isTemplateFile(f)) {
-      if (stillExists(f)) { reparseWeb.add(f); dropWeb.delete(f); }
-      else { dropWeb.add(f); reparseWeb.delete(f); }
-    }
-  }
-  if ((index.base?.dirtyFiles ?? []).length > 0) {
-    notes.push(`${index.base.dirtyFiles.length} file(s) were dirty when the previous pack was built and are re-read, not reused: git cannot diff a working-tree state against a commit that never held it`);
-  }
+  const flags = { sqlChanged, catalogChanged, webConfigChanged };
+  reReadDirtyFiles(index, notes, {
+    ddls, mapperDirs, webRoots, javaRoots, isTemplateFile, stillExists,
+    reparse, drop, reparseWeb, dropWeb, flags,
+  });
+  ({ sqlChanged, catalogChanged, webConfigChanged } = flags);
 
   // A deletion wins over a re-parse: git decomposes a rename into D(old)+A(new)
   // (§11.1 rule 3), and the two paths are different files. The same rule holds

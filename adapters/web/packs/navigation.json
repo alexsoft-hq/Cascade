@@ -1,0 +1,72 @@
+{
+  "pack": "navigation",
+  "why": "A single-page app changes the screen by asking its ROUTER, not by asking the server. `router.push('/auth/login')` swaps the component the browser is already showing; no request leaves the machine. Read as an HTTP call it becomes a route nothing serves, and in a multi-service pack such a false call can even try to cross into a sibling project. So the navigation sinks are declared here, per router, the same way the HTTP clients are declared in http-clients.json: a call on one of these is a screen change, and the web lane records where it goes instead of pretending a request was sent. A server-rendered page is the other case and is left alone: there a link IS a request, and the sink is what tells the two apart, not the file kind.",
+  "routers": [
+    {
+      "framework": "next",
+      "modules": ["next/router", "next/navigation"],
+      "hooks": ["useRouter"],
+      "methods": ["push", "replace", "prefetch"],
+      "urlArg": 0,
+      "urlKeys": ["pathname"]
+    },
+    {
+      "framework": "vue-router",
+      "modules": ["vue-router"],
+      "hooks": ["useRouter"],
+      "receivers": ["$router"],
+      "why": "`this.$router` is the router the framework itself puts on every component, so its name is part of Vue's own vocabulary rather than a habit of one project. The composition form binds the same object to a name of its own, which is what `hooks` covers.",
+      "methods": ["push", "replace"],
+      "urlArg": 0,
+      "urlKeys": ["path"]
+    },
+    {
+      "framework": "react-router",
+      "modules": ["react-router", "react-router-dom"],
+      "hooks": ["useNavigate"],
+      "hookValueIsACall": true,
+      "why": "`useNavigate()` hands back the navigate FUNCTION itself, so the call is on the name the hook was assigned to and there is no method to name. `redirect(...)` is the same act written as an import.",
+      "functions": ["redirect"],
+      "methods": [],
+      "urlArg": 0,
+      "urlKeys": ["pathname"]
+    }
+  ],
+  "elements": [
+    {
+      "framework": "next",
+      "element": "Link",
+      "modules": ["next/link"],
+      "pathAttr": "href"
+    },
+    {
+      "framework": "react-router",
+      "element": "Link",
+      "modules": ["react-router", "react-router-dom"],
+      "pathAttr": "to"
+    },
+    {
+      "framework": "react-router",
+      "element": "Navigate",
+      "modules": ["react-router", "react-router-dom"],
+      "pathAttr": "to"
+    },
+    {
+      "framework": "vue-router",
+      "element": "router-link",
+      "pathAttr": "to",
+      "markup": true,
+      "why": "A `<router-link>` is written in a single-file component's `<template>`, and this worker parses a component's `<script>` blocks and not its markup. The sink is declared here because it is one; it is not reached yet, and docs/setup/web-lane.md says so rather than leaving a reader to find out."
+    }
+  ],
+  "globals": [
+    {
+      "framework": "browser",
+      "receivers": ["window.location", "location"],
+      "why": "The address bar is on `window`, so no file imports it and nothing binds it. Setting `href` or calling `assign` / `replace` on it opens another page: it is the browser doing the navigating, which is the one thing every one of these routers ends up asking for.",
+      "methods": ["assign", "replace"],
+      "properties": ["href"],
+      "urlArg": 0
+    }
+  ]
+}

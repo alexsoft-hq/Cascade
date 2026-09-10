@@ -30,6 +30,7 @@
 
 import { calleeOf, eachChild, isFunctionNode, propOf } from './ast.mjs';
 import { HOP_GUARD } from './calls.mjs';
+import { navigationElementOf } from './navigation.mjs';
 import { customElementTags, soleElementTag } from './templates.mjs';
 
 /** Whether one pack would read this object literal as a route declaration. */
@@ -165,6 +166,11 @@ function jsxAttr(element, name) {
 /** A `<Route path=… element=…>` element, and the routes written inside it. */
 export function visitJsx(ctx, node, env, parentLine) {
   const { packs, lineOf, relFile, emit } = ctx;
+  // `<Link href="/auth/join">` is a navigation written as markup (RM59). It is
+  // recorded beside whatever else this element is, because an element can be
+  // both a link and a route declaration in a framework that nests them.
+  const navigation = navigationElementOf(ctx, node, env);
+  if (navigation !== null) emit(navigation, navigation.line);
   const open = node.openingElement;
   const tag = open && open.name && open.name.type === 'JSXIdentifier' ? open.name.name : null;
   let emitted = null;

@@ -34,7 +34,7 @@ import { sha256File } from '../../state.mjs';
  * which project this is; `analyzeRoot` asks it where that project lives.
  */
 export function analyzeTarget({ opt, die, resolveOrDie, readProfile }) {
-    const resolved = resolveOrDie({ strictProject: false });
+    const resolved = resolveOrDie({ alsoNames: true });
     const out = opt('out', resolved.packDir);
     // WHAT GETS ANALYZED. This used to be `--root` or cwd, full stop, so
     // `cascade analyze --project mall` run from anywhere else analyzed the

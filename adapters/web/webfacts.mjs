@@ -87,6 +87,15 @@
 // exports stays a hole here, with its specifier on it, because one file cannot
 // follow an import: the bridge finishes those.
 //
+// webfacts/9 SEPARATES A NAVIGATION FROM A REQUEST (RM59). A single-page app
+// changes the screen by asking its own router — `router.push('/auth/login')`,
+// `<Link href="/auth/join">`, `location.href = '/'` — and nothing leaves the
+// machine. Read as HTTP calls those became routes nothing serves, so the sinks
+// are declared per router in `packs/navigation.json` and a call on one of them
+// prints a `navigation` record instead of a `call` record: which router, which
+// sink, and the path as written. Whether that path is a screen this project
+// declares is a question about the whole tree, so the bridge answers it.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -97,7 +106,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/8';
+const VERSION = 'webfacts/9';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -112,7 +121,8 @@ const babel = require('./vendor/babel-parser.cjs');
 import {
   calleeOf, eachChild, keyName, propOf, Scope, summarizeArg, toPosix,
 } from './lib/ast.mjs';
-import { nexacroObjects, visitCall } from './lib/calls.mjs';
+import { buildUrl, nexacroObjects, visitCall } from './lib/calls.mjs';
+import { navigationSpec } from './lib/navigation.mjs';
 import {
   MAX_FORM_BYTES, NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT, nexacroAssetDirs, nexacroFormOf,
   nexacroIncludes, nexacroScriptBlocks, nexacroServices, nexacroTypedefUrl, resolveIncludeFile,
@@ -320,164 +330,139 @@ function analyzeFile(ctx) {
   return { records, recoveredErrors, parseErrors, relFile };
 }
 
-/** One parsed program (a whole file, or one script block of a Vue file). */
-function analyzeProgram(program, st) {
-  const { block, top, emit, relFile, packs } = st;
-  const off = block.lineOffset;
-  const lineOf = (n) => (n && n.loc ? n.loc.start.line + off : 1 + off);
-  const endLineOf = (n) => (n && n.loc ? n.loc.end.line + off : lineOf(n));
-  const columnOf = (n) => (n && n.loc ? n.loc.start.column : 0);
-
-  const moduleScope = new Scope(null, true);
-  // Code outside any named function is the module's own body; inside a
-  // `<script setup>` block it is the component's setup, which is a different
-  // place a call can come from and worth telling apart.
-  const moduleEnclosing = block.setup === true ? '(setup)' : '(module)';
-
-  /**
-   * The HTML template a record points at, read for its custom element tags.
-   *
-   * `templateUrl: 'scripts/owner-list/owner-list.template.html'` is a path the
-   * SERVER resolves, not one this file's directory does, so finding it is the
-   * caller's job (`main` walks up from each source root). What is recorded is
-   * the file that was found and the tags in it; when nothing was found, the url
-   * is recorded as written, so a reader can see what was looked for.
-   */
-  const attachTemplate = (rec, templateUrl) => {
+/**
+ * THE HTML TEMPLATE a record points at, read for its custom element tags.
+ *
+ * `templateUrl: 'scripts/owner-list/owner-list.template.html'` is a path the
+ * SERVER resolves, not one this file's directory does, so finding it is the
+ * caller's job (`main` walks up from each source root). What is recorded is the
+ * file that was found and the tags in it; when nothing was found, the url is
+ * recorded as written, so a reader can see what was looked for.
+ */
+function attachTemplateWith(st) {
+  return (rec, templateUrl) => {
     rec.templateUrl = templateUrl;
     const found = typeof st.templateOf === 'function' ? st.templateOf(templateUrl) : null;
     if (found === null) return;
     rec.templateFile = found.file;
     if (found.tags.length > 0) rec.templateTags = found.tags;
   };
+}
 
-  // ---- the walk -----------------------------------------------------------
-  const routeHandled = new Set();
-  // The object literals a router pack recognizes as ROUTE DECLARATIONS, and the
-  // calls a pack lists as declaring rather than sending. Both are filled in
-  // before the walk, and both exist for one reason: `{url: '/owners'}` inside
-  // `$stateProvider.state(…)` is a route, and reading it as an HTTP call put
-  // eight endpoints in a pack that nothing serves.
-  const routeObjects = new Set();
-  const declarationCalls = new Set();
-  // Function nodes the framework INJECTS into: a parameter named `$http` there
-  // is the client, and a parameter of the same name anywhere else is not.
-  const injectionTargets = new Set();
-  const injectedClients = new Map(
-    (packs.flatMap((p) => p.injected ?? [])).map((c) => [c.name, c]),
-  );
-
-  // THE CLIENT A PAGE LOADS WITH A SCRIPT TAG (RM48). It is on `window`, so no
-  // file imports it and nothing binds it: every rule that follows a name to what
-  // it is bound to sees a call on an unknown global. What makes it a client is
-  // the pack's own list of global names plus the method called, and the same two
-  // things say which argument is the URL and what verb the call sends.
+/**
+ * THE SETS AND MAPS THE WALK CARRIES, all filled in before it starts.
+ *
+ * `routeObjects` and `declarationCalls` exist for one reason: `{url: '/owners'}`
+ * inside `$stateProvider.state(…)` is a route, and reading it as an HTTP call
+ * put eight endpoints in a pack that nothing serves. `injectionTargets` is the
+ * function nodes the framework injects into, so a parameter named `$http` is a
+ * client THERE and nowhere else. `globalClients` is the client a page loads with
+ * a `<script>` tag (RM48): it is on `window`, so no file imports it and nothing
+ * binds it, and what makes it a client is the pack's own list of global names.
+ */
+function walkState(packs) {
   const globalClients = new Map();
   for (const p of packs) {
     for (const g of p.platform ?? []) {
       for (const name of g.globals ?? []) globalClients.set(name, g);
     }
   }
-
-  /**
-   * @param {Object} node
-   * @param {{scope:Scope, func:Object|null, defaultExport:boolean}} env
-   */
-  const visit = (node, env) => {
-    if (!node) return;
-    switch (node.type) {
-      case 'ImportDeclaration':
-        recordImport(ctx, node);
-        return;
-      case 'ExportNamedDeclaration':
-        visitExportNamed(ctx, node, env);
-        return;
-      case 'ExportDefaultDeclaration':
-        visitExportDefault(ctx, node, env);
-        return;
-      case 'ExportAllDeclaration':
-        emit({
-          kind: 'export', file: relFile, line: lineOf(node), name: '*', of: 'reexport',
-          source: node.source.value,
-        }, lineOf(node));
-        return;
-      case 'VariableDeclaration':
-        visitVariableDeclaration(ctx, node, env, null);
-        return;
-      case 'FunctionDeclaration': {
-        const name = node.id ? node.id.name : 'default';
-        const entry = env.func === null ? declareFunction(ctx, node, name, null, env.scope, env) : null;
-        visitFunctionBody(ctx, node, env, entry);
-        return;
-      }
-      case 'ClassDeclaration':
-      case 'ClassExpression':
-        visitClass(ctx, node, env, null);
-        return;
-      case 'TSEnumDeclaration':
-        if (env.scope.isModule && node.id) recordConstant(ctx, node.id.name, node, false, lineOf(node));
-        return;
-      case 'FunctionExpression':
-      case 'ArrowFunctionExpression':
-        // Reached only as an anonymous expression (a callback, an IIFE): it
-        // gets no record of its own and whatever it does is attributed to the
-        // nearest enclosing NAMED function.
-        visitFunctionBody(ctx, node, env, null);
-        return;
-      case 'CallExpression':
-      case 'OptionalCallExpression':
-      case 'NewExpression':
-        visitCall(ctx, node, env);
-        return;
-      case 'AssignmentExpression':
-        visitAssignment(ctx, node, env);
-        return;
-      case 'ObjectExpression':
-        visitObject(ctx, node, env, false);
-        return;
-      case 'ArrayExpression':
-        visitArray(ctx, node, env);
-        return;
-      case 'JSXElement':
-        visitJsx(ctx, node, env, null);
-        return;
-      default:
-        break;
-    }
-    eachChild(node, (child) => visit(child, env));
-  };
-
-  // THE WALK'S CONTEXT. Everything a rule in `lib/routers.mjs` is allowed to
-  // look at, in one object, so a reader can tell at a signature what a rule can
-  // reach. `visit` goes in as a lambda because the walk is declared below this
-  // line and nothing calls it until the walk starts.
-  const ctx = {
-    packs,
-    st,
-    top,
-    emit,
-    relFile,
-    lineOf,
-    attachTemplate,
-    routeHandled,
-    routeObjects,
-    declarationCalls,
-    injectionTargets,
-    injectedClients,
+  return {
+    routeHandled: new Set(),
+    routeObjects: new Set(),
+    declarationCalls: new Set(),
+    injectionTargets: new Set(),
+    injectedClients: new Map((packs.flatMap((p) => p.injected ?? [])).map((c) => [c.name, c])),
     globalClients,
-    moduleScope,
-    moduleEnclosing,
-    endLineOf,
-    columnOf,
-    bindingOf: (root, scope, classInfo) => bindingOf(ctx, root, scope, classInfo),
-    isRequireCall: (n, env) => isRequireCall(ctx, n, env),
-    calleeOf,
-    eachChild,
-    keyName,
-    summarizeArg,
-    anyPackSeesARoute,
-    visit: (node, env) => visit(node, env),
+    // THE NAVIGATION SINKS (RM59): the calls that change the screen instead of
+    // sending a request. Flattened from the packs once and shared by every file.
+    navigation: navigationSpec(packs),
   };
+}
+
+/**
+ * ONE NODE, handed to whichever rule owns its shape.
+ *
+ * A node type that is not here is walked through: its children are visited and
+ * it contributes nothing itself. That is the default on purpose, because a
+ * syntax tree has a hundred node types and this lane has an opinion about
+ * fourteen of them.
+ */
+function dispatch(ctx, node, env) {
+  const { emit, relFile, lineOf } = ctx;
+  if (!node) return;
+  switch (node.type) {
+    case 'ImportDeclaration':
+      recordImport(ctx, node);
+      return;
+    case 'ExportNamedDeclaration':
+      visitExportNamed(ctx, node, env);
+      return;
+    case 'ExportDefaultDeclaration':
+      visitExportDefault(ctx, node, env);
+      return;
+    case 'ExportAllDeclaration':
+      emit({
+        kind: 'export', file: relFile, line: lineOf(node), name: '*', of: 'reexport',
+        source: node.source.value,
+      }, lineOf(node));
+      return;
+    case 'VariableDeclaration':
+      visitVariableDeclaration(ctx, node, env, null);
+      return;
+    case 'FunctionDeclaration': {
+      const name = node.id ? node.id.name : 'default';
+      const entry = env.func === null ? declareFunction(ctx, node, name, null, env.scope, env) : null;
+      visitFunctionBody(ctx, node, env, entry);
+      return;
+    }
+    case 'ClassDeclaration':
+    case 'ClassExpression':
+      visitClass(ctx, node, env, null);
+      return;
+    case 'TSEnumDeclaration':
+      if (env.scope.isModule && node.id) recordConstant(ctx, node.id.name, node, false, lineOf(node));
+      return;
+    case 'FunctionExpression':
+    case 'ArrowFunctionExpression':
+      // Reached only as an anonymous expression (a callback, an IIFE): it
+      // gets no record of its own and whatever it does is attributed to the
+      // nearest enclosing NAMED function.
+      visitFunctionBody(ctx, node, env, null);
+      return;
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+    case 'NewExpression':
+      visitCall(ctx, node, env);
+      return;
+    case 'AssignmentExpression':
+      visitAssignment(ctx, node, env);
+      return;
+    case 'ObjectExpression':
+      visitObject(ctx, node, env, false);
+      return;
+    case 'ArrayExpression':
+      visitArray(ctx, node, env);
+      return;
+    case 'JSXElement':
+      visitJsx(ctx, node, env, null);
+      return;
+    default:
+      break;
+  }
+  eachChild(node, (child) => ctx.visit(child, env));
+}
+
+/**
+ * THE SCANS THAT RUN BEFORE THE WALK, and the walk itself.
+ *
+ * Each scan answers a question the walk cannot answer as it goes: what the top
+ * level declares (a function at the top of a file calls one declared at the
+ * bottom), which packs this file's registrars name, which names are local to
+ * this module, which functions the framework injects into, and the routes a
+ * chain or a registrar declares.
+ */
+function runTheWalk(ctx, program, st, packs, moduleScope) {
   // A NEXACRO FILE IS READ AGAINST ITS OWN CLIENT (RM56): its typedef's service
   // prefixes, and the options objects it binds to a name, both settled here.
   if (st.nexacro) ctx.nexacro = { services: st.nexacro.services, objects: nexacroObjects(ctx, program) };
@@ -493,7 +478,47 @@ function analyzeProgram(program, st) {
   chainRoutes(ctx, program);
   registrationScan(ctx, program);
   registrarRoutes(ctx, program, rootEnv);
-  for (const stmt of program.body) visit(stmt, rootEnv);
+  for (const stmt of program.body) ctx.visit(stmt, rootEnv);
+}
+
+/** One parsed program (a whole file, or one script block of a Vue file). */
+function analyzeProgram(program, st) {
+  const { block, top, emit, relFile, packs } = st;
+  const off = block.lineOffset;
+  const lineOf = (n) => (n && n.loc ? n.loc.start.line + off : 1 + off);
+  const moduleScope = new Scope(null, true);
+
+  // THE WALK'S CONTEXT. Everything a rule in `lib/routers.mjs` is allowed to
+  // look at, in one object, so a reader can tell at a signature what a rule can
+  // reach. `visit` goes in as a lambda because `dispatch` reads the context back
+  // out of it and nothing calls either until the walk starts.
+  const ctx = {
+    packs,
+    st,
+    top,
+    emit,
+    relFile,
+    lineOf,
+    attachTemplate: attachTemplateWith(st),
+    ...walkState(packs),
+    moduleScope,
+    // Code outside any named function is the module's own body; inside a
+    // `<script setup>` block it is the component's setup, which is a different
+    // place a call can come from and worth telling apart.
+    moduleEnclosing: block.setup === true ? '(setup)' : '(module)',
+    endLineOf: (n) => (n && n.loc ? n.loc.end.line + off : lineOf(n)),
+    columnOf: (n) => (n && n.loc ? n.loc.start.column : 0),
+    bindingOf: (root, scope, classInfo) => bindingOf(ctx, root, scope, classInfo),
+    buildUrl: (summary, scope) => buildUrl(ctx, summary, scope),
+    isRequireCall: (n, env) => isRequireCall(ctx, n, env),
+    calleeOf,
+    eachChild,
+    keyName,
+    summarizeArg,
+    anyPackSeesARoute,
+    visit: (node, env) => dispatch(ctx, node, env),
+  };
+  runTheWalk(ctx, program, st, packs, moduleScope);
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,14 +1393,15 @@ function analyzeSource(abs, cfg) {
   for (const r of res.records) push(relFile, r.rec, r.line, r.order);
 }
 
-function main(argv) {
-  const { root, roots, webRoots, templateRoots, configsOnly } = parseArgs(argv);
-  const { templateRootOf, templateOf } = makeTemplateFinder({ root, roots, webRoots, templateRoots });
-  const packs = loadPacks(path.join(HERE, 'packs'));
-
-  // The package directory each source root belongs to, resolved BEFORE the walk:
-  // it is one of the two places where a `dist`/`build` really is output.
-  const out = { envFiles: new Set() };
+/**
+ * WHICH PACKAGE each source root belongs to, and what each package depends on.
+ *
+ * Resolved BEFORE the walk, for two reasons: a package directory is one of the
+ * two places where a `dist` / `build` really is output rather than an ordinary
+ * word, and a `filesystem` registrar fires only inside a package that declares
+ * the framework whose convention it states.
+ */
+function packagesOf(roots) {
   const pkgDirs = new Set();
   const pkgOfRoot = new Map();
   for (const r of roots) {
@@ -1384,6 +1410,95 @@ function main(argv) {
     pkgOfRoot.set(abs, pkg);
     pkgDirs.add(pkg);
   }
+  const depsOfPkg = new Map();
+  for (const dir of [...pkgDirs].sort()) depsOfPkg.set(dir, packageDependencies(dir));
+  const packageOf = (abs) => {
+    let best = null;
+    for (const dir of depsOfPkg.keys()) {
+      if (abs !== dir && !abs.startsWith(dir + path.sep)) continue;
+      if (best === null || dir.length > best.length) best = dir;
+    }
+    return best;
+  };
+  return { pkgDirs, pkgOfRoot, depsOfPkg, packageOf };
+}
+
+/**
+ * THE PACKAGE-LEVEL CONFIGURATION: every `.env` value, dev-server proxy rule and
+ * path alias each package declares, plus the files those were read from.
+ *
+ * A config file the walk also picked up (a source root that IS the package
+ * directory) is taken out of the file set, so it is not read twice.
+ */
+function readTheConfigs(pkgDirs, root, out, found) {
+  const configRecords = [];
+  const configParsed = [];
+  for (const dir of [...pkgDirs].sort()) {
+    const res = readPackageConfig(dir, root, out);
+    configRecords.push(...res.records);
+    configParsed.push(...res.parsedFiles);
+  }
+  for (const p of configParsed) found.delete(path.resolve(root, p.rel));
+  return { configRecords, configParsed };
+}
+
+/**
+ * The config records put into the per-file buckets, before any source is read.
+ *
+ * Config files that WERE parsed count as files, like any other source; the
+ * dotenv and JSON ones are not parsed by the parser, so they do not.
+ */
+function pushTheConfigs({ configRecords, configParsed }, byFile, push) {
+  const tallies = { files: 0, parseErrors: 0, recoveredErrors: 0 };
+  for (const p of configParsed) {
+    tallies.files += 1;
+    if (p.failed) continue;
+    push(p.rel, { kind: 'file', file: p.rel, line: 1, lang: p.lang, recoveredErrors: p.recoveredErrors }, 1, -1);
+    tallies.recoveredErrors += p.recoveredErrors;
+  }
+  for (const rec of configRecords) {
+    if (rec.kind === 'parse_error') { tallies.parseErrors += 1; push(rec.file, rec, rec.line, 0); continue; }
+    push(rec.file, rec, rec.line, byFile.has(rec.file) ? byFile.get(rec.file).length : 0);
+  }
+  return tallies;
+}
+
+/**
+ * THE STREAM: a header, every record in file and line order, and the summary
+ * that counts what the lines before it said.
+ */
+function printTheStream({ root, roots, byFile, tallies, out, apiFilesSkipped, sourceList, configsOnly }) {
+  const { files, parseErrors, recoveredErrors } = tallies;
+  const write = [];
+  write.push(JSON.stringify({
+    kind: 'header', schema: SCHEMA, version: VERSION, root,
+    roots: roots.map((r) => toPosix(path.relative(root, path.resolve(r))) || '.').sort(),
+    files, parseErrors,
+  }));
+  const counts = emptyCounts({
+    files, parseErrors, recoveredErrors, envFiles: out.envFiles.size, apiFiles: apiFilesSkipped.count,
+  });
+  for (const relFile of [...byFile.keys()].sort()) {
+    for (const { rec } of orderRecords(byFile.get(relFile))) {
+      tally(rec, counts);
+      write.push(JSON.stringify(rec));
+    }
+  }
+  for (const file of sourceList) write.push(JSON.stringify({ kind: 'sourceFile', file }));
+  write.push(JSON.stringify({
+    kind: 'summary', version: VERSION,
+    ...(configsOnly ? { configsOnly: true, sourceFiles: sourceList.length } : {}),
+    ...counts,
+  }));
+  process.stdout.write(write.join('\n') + '\n');
+}
+
+function main(argv) {
+  const { root, roots, webRoots, templateRoots, configsOnly } = parseArgs(argv);
+  const { templateRootOf, templateOf } = makeTemplateFinder({ root, roots, webRoots, templateRoots });
+  const packs = loadPacks(path.join(HERE, 'packs'));
+  const out = { envFiles: new Set() };
+  const { pkgDirs, pkgOfRoot, depsOfPkg, packageOf } = packagesOf(roots);
 
   const found = new Set();
   const isTemplateFile = (abs) => templateRootOf(abs) !== null;
@@ -1398,20 +1513,7 @@ function main(argv) {
   const nexacroRootOf = (abs) => nexacroRoots.find((r) => abs === r || abs.startsWith(r + path.sep)) ?? null;
   const typedefOf = makeNexacroTypedefs();
 
-  // WHAT EACH PACKAGE DEPENDS ON, read once per package directory: a
-  // `filesystem` registrar fires only inside a package that declares the
-  // framework whose convention it states.
-  const depsOfPkg = new Map();
-  for (const dir of [...pkgDirs].sort()) depsOfPkg.set(dir, packageDependencies(dir));
   const apiFilesSkipped = { count: 0 };
-  const packageOf = (abs) => {
-    let best = null;
-    for (const dir of depsOfPkg.keys()) {
-      if (abs !== dir && !abs.startsWith(dir + path.sep)) continue;
-      if (best === null || dir.length > best.length) best = dir;
-    }
-    return best;
-  };
   const routesFromTree = (abs, relFile) => {
     const pkg = packageOf(abs);
     if (pkg === null) return { records: [], apiHandler: false };
@@ -1420,80 +1522,26 @@ function main(argv) {
     return { records: res.records, apiHandler: res.apiFiles > 0 };
   };
 
-  const configRecords = [];
-  const configParsed = [];
-  for (const dir of [...pkgDirs].sort()) {
-    const res = readPackageConfig(dir, root, out);
-    configRecords.push(...res.records);
-    configParsed.push(...res.parsedFiles);
-  }
-  // A config file the walk also picked up (a source root that IS the package
-  // directory) must not be read twice.
-  for (const p of configParsed) found.delete(path.resolve(root, p.rel));
-
-
+  const configs = readTheConfigs(pkgDirs, root, out, found);
   const byFile = new Map();
   const push = (rel, rec, line, order) => {
     if (!byFile.has(rel)) byFile.set(rel, []);
     byFile.get(rel).push({ rec, line, order });
   };
-
-  let files = 0;
-  let parseErrors = 0;
-  let recoveredErrors = 0;
-
-  // Config files that WERE parsed count as files, like any other source; the
-  // dotenv and JSON ones are not parsed by the parser, so they do not.
-  for (const p of configParsed) {
-    files += 1;
-    if (!p.failed) {
-      push(p.rel, { kind: 'file', file: p.rel, line: 1, lang: p.lang, recoveredErrors: p.recoveredErrors }, 1, -1);
-      recoveredErrors += p.recoveredErrors;
-    }
-  }
-  for (const rec of configRecords) {
-    if (rec.kind === 'parse_error') { parseErrors += 1; push(rec.file, rec, rec.line, 0); continue; }
-    push(rec.file, rec, rec.line, byFile.has(rec.file) ? byFile.get(rec.file).length : 0);
-  }
+  const tallies = pushTheConfigs(configs, byFile, push);
 
   const sorted = [...found].sort();
   // `--configs-only` LISTS these files and parses none of them. The list is
-  // printed after the config records below, in the same sorted order.
+  // printed after the config records, in the same sorted order.
   const sourceList = configsOnly ? sorted.map((abs) => toPosix(path.relative(root, abs))) : [];
-  const tallies = { files, parseErrors, recoveredErrors };
   for (const abs of configsOnly ? [] : sorted) {
     analyzeSource(abs, {
       root, packs, templateRootOf, templateOf, push, counts: tallies, routesFromTree,
       nexacroRootOf, typedefOf,
     });
   }
-  ({ files, parseErrors, recoveredErrors } = tallies);
 
-  // ---- print --------------------------------------------------------------
-  const write = [];
-  write.push(JSON.stringify({
-    kind: 'header', schema: SCHEMA, version: VERSION, root,
-    roots: roots.map((r) => toPosix(path.relative(root, path.resolve(r))) || '.').sort(),
-    files, parseErrors,
-  }));
-
-  const counts = emptyCounts({
-    files, parseErrors, recoveredErrors, envFiles: out.envFiles.size, apiFiles: apiFilesSkipped.count,
-  });
-
-  for (const relFile of [...byFile.keys()].sort()) {
-    for (const { rec } of orderRecords(byFile.get(relFile))) {
-      tally(rec, counts);
-      write.push(JSON.stringify(rec));
-    }
-  }
-  for (const file of sourceList) write.push(JSON.stringify({ kind: 'sourceFile', file }));
-  write.push(JSON.stringify({
-    kind: 'summary', version: VERSION,
-    ...(configsOnly ? { configsOnly: true, sourceFiles: sourceList.length } : {}),
-    ...counts,
-  }));
-  process.stdout.write(write.join('\n') + '\n');
+  printTheStream({ root, roots, byFile, tallies, out, apiFilesSkipped, sourceList, configsOnly });
 }
 
 main(process.argv.slice(2));

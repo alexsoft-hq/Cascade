@@ -13,6 +13,7 @@
 // WHAT IT MUST NEVER KNOW ABOUT: the graph, the routes a pack serves, the other
 // files in the tree.
 
+import { navigationOf } from './navigation.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
@@ -301,71 +302,68 @@ function methodOf(callee, summaries, platformSink, globalClient = null) {
   return v ? { value: v, from: 'config' } : null;
 }
 
-/** One call, read for what it sends and for what it hands over. */
-export function visitCall(ctx, node, env) {
-  const {
-    lineOf, relFile, emit, packs, top, declarationCalls, calleeOf, bindingOf, isRequireCall,
-    summarizeArg, moduleEnclosing, anyPackSeesARoute, eachChild,
-  } = ctx;
-  const visit = (n, e) => ctx.visit(n, e);
-  const isNew = node.type === 'NewExpression';
-  const calleeNode = node.callee;
-  // `import('x')` is not a call to anything this file declares: it is the
-  // route-component form, and it is recorded as a dynamic import.
+/**
+ * THE FOUR THINGS A CALL CAN BE BEFORE IT CAN BE A REQUEST.
+ *
+ * Each of them ends the walk of this node, and each is a different reason:
+ *   a dynamic import  `import('x')` is the route-component form, not a call to
+ *                     anything this file declares
+ *   a transaction     the ONE way a Nexacro client sends a request (RM56), read
+ *                     first because every rule below would fail to see it
+ *   `require('x')`    the CommonJS spelling of an import
+ *   a declaration     a call a pack lists as DECLARING rather than sending.
+ *                     `$urlRouterProvider.otherwise('/welcome')` names the route
+ *                     to fall back to; reading it as a request put `ANY /welcome`
+ *                     in the pack and let a frontend "call" a table it never
+ *                     touches. Its arguments are still walked, because a real
+ *                     call can sit inside one
+ *
+ * @returns {{record:(object|null), walkArgs:boolean}|null} null when this call
+ *          is none of them and the request rules should read it
+ */
+function beforeARequest(ctx, node, env, { isNew, calleeNode, callee, line }) {
+  const { relFile, packs, declarationCalls, isRequireCall } = ctx;
   if (!isNew && calleeNode && calleeNode.type === 'Import') {
     const arg = node.arguments[0];
-    const line = lineOf(node);
-    if (arg && arg.type === 'StringLiteral') {
-      emit({ kind: 'import', file: relFile, line, source: arg.value, specifiers: [], dynamic: true }, line);
-    }
-    for (const a of node.arguments) visit(a, env);
-    return;
+    const record = arg && arg.type === 'StringLiteral'
+      ? { kind: 'import', file: relFile, line, source: arg.value, specifiers: [], dynamic: true } : null;
+    return { record, walkArgs: true };
   }
-  const callee = calleeNode ? calleeOf(calleeNode) : null;
-  const line = lineOf(node);
-
-  // A NEXACRO TRANSACTION (RM56), read before anything else here would fail to
-  // recognise it. `nexacroTransactionOf` says why.
   const transaction = isNew ? null : nexacroTransactionOf(ctx, node, env, callee, line);
-  if (transaction !== null) {
-    emit(transaction, line);
-    for (const a of node.arguments) visit(a, env);
-    return;
-  }
-
-  // `require('x')` is the CommonJS spelling of an import.
+  if (transaction !== null) return { record: transaction, walkArgs: true };
   if (isRequireCall(node, env)) {
-    emit({
-      kind: 'import', file: relFile, line, source: node.arguments[0].value,
-      specifiers: env.requireLocal ? [{ imported: 'default', local: env.requireLocal }] : [],
-      dynamic: false,
-    }, line);
-    return;
+    return {
+      record: {
+        kind: 'import', file: relFile, line, source: node.arguments[0].value,
+        specifiers: env.requireLocal ? [{ imported: 'default', local: env.requireLocal }] : [],
+        dynamic: false,
+      },
+      walkArgs: false,
+    };
   }
-
-  // A CALL A PACK LISTS AS A DECLARATION SENDS NOTHING.
-  // `$urlRouterProvider.otherwise('/welcome')` names the route to fall back
-  // to; reading it as a request put `ANY /welcome` in the pack and let a
-  // frontend "call" a table it never touches. The arguments are still walked,
-  // because a real call can sit inside one.
   if (!isNew && callee !== null) {
     const declared = packs.some((p) => (p.declarationCalls ?? []).some(
       (d) => (d.receivers ?? []).includes(callee.root)
         && (d.methods ?? []).includes(callee.path.length > 0 ? callee.path[callee.path.length - 1] : callee.root),
     ));
-    if (declared || declarationCalls.has(node)) {
-      for (const a of node.arguments) visit(a, env);
-      return;
-    }
+    if (declared || declarationCalls.has(node)) return { record: null, walkArgs: true };
   }
+  return null;
+}
 
-  const argNodes = node.arguments.slice(0, 3);
-  // AN OBJECT A ROUTER PACK READS AS A ROUTE IS NOT A REQUEST. Its `path` or
-  // `url` is where the browser goes, not where a request is sent, and the
-  // route reader has already recorded it as one.
-  const routeArg = argNodes.map((a) => anyPackSeesARoute(packs, a));
-  const summaries = argNodes.map((a) => summarizeArg(a));
-  const binding = callee ? bindingOf(callee.root, env.scope, env.classInfo) : null;
+/**
+ * THE CALL RECORD, when this call is one this lane records at all.
+ *
+ * It is recorded when the callee goes through a name this file BINDS, or when
+ * an argument carries a URL, or when it reached a browser sink or a client the
+ * framework injected. Anything else is one of the tens of thousands of ordinary
+ * calls a frontend makes, and putting those in the stream would bury the ones
+ * that matter.
+ *
+ * @returns {object|null} the record, or null when this call is not one
+ */
+function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summaries, binding }) {
+  const { relFile, top, moduleEnclosing } = ctx;
   let platformSink = platformSinkOf(ctx, { isNew, callee, binding });
   const globalClient = globalClientOf(ctx, { isNew, callee, binding });
   if (globalClient !== null) platformSink = globalClient.client.name;
@@ -380,43 +378,79 @@ export function visitCall(ctx, node, env) {
   const goesThroughABinding = binding !== null
     && (binding.kind === 'import' || (binding.kind === 'local' && top.bindings.has(binding.name)) || throughThis);
   const carriesUrl = summaries.some((s, i) => !routeArg[i] && argCarriesUrl(s));
-
   // THE CLIENT THE FRAMEWORK HANDED IN. `$http` is a parameter, so nothing in
   // this file binds it and every rule above sees a call on an unknown name.
   // What makes it a client is the pack's own list plus where the function
   // sits, and both were settled before the walk. The verb has to be one the
   // pack names, so `$http.pending` is still nothing.
   const injected = injectedClientOf({ isNew, callee, env });
-  if (callee !== null && (goesThroughABinding || carriesUrl || platformSink !== null || injected !== null)) {
-    const rec = {
-      kind: 'call', file: relFile, line,
-      enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : moduleEnclosing,
-      callee: isNew ? { ...callee, shape: 'new' } : callee,
-      binding,
-      args: summaries,
-      url: null,
-      method: null,
-      platformSink,
-      ...(injected !== null ? { injected } : {}),
-    };
-    if (env.func) rec.__enclosingEntry = env.func;
-
-    const urlSummary = urlArgumentOf(ctx, {
-      callee, summaries, routeArg, platformSink, globalClient, env,
-    });
-    if (urlSummary !== null) rec.url = buildUrl(ctx, urlSummary, env.scope);
-
-    // ---- the method -------------------------------------------------
-    rec.method = methodOf(callee, summaries, platformSink, globalClient);
-
-    // ---- the functions this call HANDS OVER --------------------------
-    // Left off when there are none, so a frontend's tens of thousands of
-    // ordinary call records do not each grow an empty list.
-    const refs = fnRefsOf(ctx, node.arguments, env);
-    if (refs.length > 0) rec.fnRefs = refs;
-
-    emit(rec, line);
+  if (callee === null || !(goesThroughABinding || carriesUrl || platformSink !== null || injected !== null)) {
+    return null;
   }
+  const rec = {
+    kind: 'call', file: relFile, line,
+    enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : moduleEnclosing,
+    callee: isNew ? { ...callee, shape: 'new' } : callee,
+    binding,
+    args: summaries,
+    url: null,
+    method: null,
+    platformSink,
+    ...(injected !== null ? { injected } : {}),
+  };
+  if (env.func) rec.__enclosingEntry = env.func;
+  const urlSummary = urlArgumentOf(ctx, {
+    callee, summaries, routeArg, platformSink, globalClient, env,
+  });
+  if (urlSummary !== null) rec.url = buildUrl(ctx, urlSummary, env.scope);
+  rec.method = methodOf(callee, summaries, platformSink, globalClient);
+  // The functions this call HANDS OVER, left off when there are none so a
+  // frontend's ordinary call records do not each grow an empty list.
+  const refs = fnRefsOf(ctx, node.arguments, env);
+  if (refs.length > 0) rec.fnRefs = refs;
+  return rec;
+}
+
+/** One call, read for what it sends and for what it hands over. */
+export function visitCall(ctx, node, env) {
+  const {
+    lineOf, emit, packs, calleeOf, bindingOf, summarizeArg, anyPackSeesARoute, eachChild,
+  } = ctx;
+  const visit = (n, e) => ctx.visit(n, e);
+  const isNew = node.type === 'NewExpression';
+  const calleeNode = node.callee;
+  const line = lineOf(node);
+  const callee = !isNew && calleeNode && calleeNode.type === 'Import'
+    ? null : (calleeNode ? calleeOf(calleeNode) : null);
+
+  const early = beforeARequest(ctx, node, env, { isNew, calleeNode, callee, line });
+  if (early !== null) {
+    if (early.record !== null) emit(early.record, line);
+    if (early.walkArgs) for (const a of node.arguments) visit(a, env);
+    return;
+  }
+
+  const argNodes = node.arguments.slice(0, 3);
+  // AN OBJECT A ROUTER PACK READS AS A ROUTE IS NOT A REQUEST. Its `path` or
+  // `url` is where the browser goes, not where a request is sent, and the
+  // route reader has already recorded it as one.
+  const routeArg = argNodes.map((a) => anyPackSeesARoute(packs, a));
+  const summaries = argNodes.map((a) => summarizeArg(a));
+  const binding = callee ? bindingOf(callee.root, env.scope, env.classInfo) : null;
+
+  // A NAVIGATION IS NOT A REQUEST (RM59). `router.push('/auth/login')` swaps
+  // the component the browser is already showing; nothing leaves the machine.
+  // Read before any of the HTTP rules, because every one of them would see a
+  // path-shaped argument and call it a request.
+  const navigation = navigationOf(ctx, { isNew, callee, binding, env, argNodes, line });
+  if (navigation !== null) {
+    emit(navigation, line);
+    for (const a of node.arguments) visit(a, env);
+    return;
+  }
+
+  const rec = httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summaries, binding });
+  if (rec !== null) emit(rec, line);
 
   for (const a of node.arguments) visit(a, env);
   if (calleeNode && calleeNode.type !== 'Identifier') {

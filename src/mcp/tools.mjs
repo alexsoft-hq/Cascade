@@ -397,14 +397,12 @@ export function screen_impact(graph, args, ctx) {
  * files are echoed. A changed file with no node (new file, uncovered lane) is
  * reported in `unmatchedFiles` — "0 impact" there means unknown, not safe.
  */
-export function changed_impact(graph, args, ctx) {
-  // The live overlay, when the caller wired one (CLI / server). It carries the
-  // graph BUILT FROM THE BYTES ON DISK; without it this tool falls back to the
-  // base pack, which is the pre-edit structure, and says so in `note`.
-  const ov = overlayOf(ctx);
-  const applied = !!(ov && ov.applied && ov.graph);
-  const g = applied ? ov.graph : graph;
-
+/**
+ * WHICH FILES CHANGED, from the argument, from the overlay, or from the server's
+ * own git base. A tool asked with none of the three is refused rather than
+ * answered empty.
+ */
+function changedFilesOf(args, ov, ctx) {
   let files = args && Array.isArray(args.files) ? args.files : null;
   if (!files && ov && Array.isArray(ov.dirtyFiles)) files = ov.dirtyFiles;
   if (!files) {
@@ -415,15 +413,16 @@ export function changed_impact(graph, args, ctx) {
   if (!Array.isArray(files)) {
     throw new ToolError('bad-input', 'changed_impact needs a "files" array (changed paths), or a server configured with a git base');
   }
-  const mode = reachMode(args.mode || 'conservative');
-  if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
-  const { limit, offset } = paging(args);
+  return files;
+}
 
-  const r = changeImpact(g, files, { mode });
-  // A row is PROVISIONAL when its node exists only in the overlay — the base
-  // graph never had that id. It is a MARKER beside the grade, not a grade: the
-  // lattice is untouched (I-1), and an AI reader must not report a provisional
-  // row as confirmed (§10.3).
+/**
+ * The three result lists, each row marked PROVISIONAL when its node exists only
+ * in the overlay: the base graph never had that id. It is a MARKER beside the
+ * grade, not a grade: the lattice is untouched (I-1), and an AI reader must not
+ * report a provisional row as confirmed (§10.3).
+ */
+function changedImpactRows(g, r) {
   const prov = (id) => (g.nodes.get(id)?.provisional === true ? { provisional: true } : null);
   const eps = r.upstreamEndpoints.map((e) => {
     // How many FRONTEND functions call this route. An edited controller does not
@@ -445,6 +444,23 @@ export function changed_impact(graph, args, ctx) {
     id: c.id.slice('column:'.length), grade: c.grade,
     ...(c.viaHttp ? { viaHttp: true, httpHops: c.httpHops } : {}), ...prov(c.id),
   }));
+  return { eps, calledEps, cols };
+}
+
+export function changed_impact(graph, args, ctx) {
+  // The live overlay, when the caller wired one (CLI / server). It carries the
+  // graph BUILT FROM THE BYTES ON DISK; without it this tool falls back to the
+  // base pack, which is the pre-edit structure, and says so in `note`.
+  const ov = overlayOf(ctx);
+  const applied = !!(ov && ov.applied && ov.graph);
+  const g = applied ? ov.graph : graph;
+  const files = changedFilesOf(args, ov, ctx);
+  const mode = reachMode(args.mode || 'conservative');
+  if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
+  const { limit, offset } = paging(args);
+
+  const r = changeImpact(g, files, { mode });
+  const { eps, calledEps, cols } = changedImpactRows(g, r);
   const epShown = eps.slice(offset, offset + limit);
   const calledShown = calledEps.slice(offset, offset + limit);
   const colShown = cols.slice(offset, offset + limit);
@@ -461,7 +477,7 @@ export function changed_impact(graph, args, ctx) {
   const answer = {
     changedFiles: r.changedFiles,
     // Nested so the contract's top-level empty-list check applies only to the
-    // RESULT lists below — an empty unmatchedFiles means "all matched", not an
+    // RESULT lists below: an empty unmatchedFiles means "all matched", not an
     // unexplained empty result.
     files: {
       matched: r.matchedFiles,
@@ -695,9 +711,16 @@ export function neighborhood(graph, args, ctx) {
 const ERD_LIMIT_DEFAULT = 400;
 const ERD_LIMIT_MAX = 5000;
 
-export function erd(graph, args, ctx) {
-  const hops = clamp(args.hops, 1, 4, 1);
-  const limit = clamp(args.limit, 1, ERD_LIMIT_MAX, ERD_LIMIT_DEFAULT);
+/**
+ * WHICH TABLES THIS ERD DRAWS: one table's join neighbourhood, or the whole
+ * schema, with the cap applied BEFORE the columns are gathered.
+ *
+ * Cutting after would pay the cost the cap exists to avoid. Kept: the focus
+ * table always, then the most-joined tables (join degree over the whole pack,
+ * ties by name), because an ERD with its hubs removed is not a smaller ERD, it
+ * is a different one.
+ */
+function erdTableSet(graph, ctx, args, { hops, limit }) {
   let focusKey = null;
   let tset;
   let focusLimits = [];
@@ -720,10 +743,6 @@ export function erd(graph, args, ctx) {
   } else {
     tset = new Set([...graph.nodes.values()].filter((n) => n.kind === 'table').map((n) => n.id));
   }
-  // The cap, applied BEFORE the columns are gathered — cutting after would pay
-  // the cost the cap exists to avoid. Kept: the focus table always, then the
-  // most-joined tables (join degree over the whole pack, ties by name), because
-  // an ERD with its hubs removed is not a smaller ERD, it is a different one.
   const tablesTotal = tset.size;
   if (tset.size > limit) {
     const joinDegree = new Map();
@@ -740,20 +759,21 @@ export function erd(graph, args, ctx) {
     });
     tset = new Set(ranked.slice(0, limit));
   }
-  const tablesCut = tablesTotal - tset.size;
+  return { tset, focusKey, focusLimits, tablesTotal, tablesCut: tablesTotal - tset.size };
+}
 
-  const withCols = !!focusKey;
+/** The rows and the lines: each table with its column count, and each join once. */
+function erdShape(graph, tset, withCols) {
   const colsByTable = new Map();
   const countByTable = new Map();
   for (const e of graph.edges) {
     if (e.type !== 'DECLARES' || !tset.has(e.from)) continue;
     countByTable.set(e.from, (countByTable.get(e.from) || 0) + 1);
-    if (withCols) {
-      const c = graph.nodes.get(e.to) || {};
-      const arr = colsByTable.get(e.from) || [];
-      arr.push({ column: c.name ?? strip(e.to).split('.').pop(), type: c.type ?? null, comment: c.comment ?? null, pk: c.pk === true });
-      colsByTable.set(e.from, arr);
-    }
+    if (!withCols) continue;
+    const c = graph.nodes.get(e.to) || {};
+    const arr = colsByTable.get(e.from) || [];
+    arr.push({ column: c.name ?? strip(e.to).split('.').pop(), type: c.type ?? null, comment: c.comment ?? null, pk: c.pk === true });
+    colsByTable.set(e.from, arr);
   }
   const tables = [...tset].map((id) => {
     const n = graph.nodes.get(id) || {};
@@ -767,13 +787,33 @@ export function erd(graph, args, ctx) {
   for (const e of graph.edges) {
     if (e.type !== 'JOINS' || !tset.has(e.from) || !tset.has(e.to)) continue;
     const k = e.from + '|' + e.to;
-    if (seen.has(k)) continue; seen.add(k);
-    const fromT = strip(e.from), toT = strip(e.to);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const fromT = strip(e.from);
+    const toT = strip(e.to);
     const cols = e.evidence?.columns ?? [];
     relationships.push({ from: fromT, to: toT, columns: cols, statements: e.evidence?.count ?? 1, grade: e.grade, cardinality: cardinalityOf(graph, fromT, toT, cols) });
   }
   relationships.sort((a, b) => (a.from + a.to < b.from + b.to ? -1 : 1));
+  return { tables, relationships };
+}
 
+/** What this ERD added from other packs, and what its own cap left out. */
+function erdLimitsFor(limits, { federated, tablesCut, tablesTotal, limit, focusKey }) {
+  if (federated.length) {
+    limits.push({ scope: 'erd', reason: `${federated.length} other registered project(s) are on this answer under \`federated\` (${federated.map((f) => f.project).join(', ')}), holding only the tables a request from THIS project reaches over an HTTP call. Their relationships are their own joins between those tables. No relationship on this answer joins two projects, because two services share no foreign key: the only thing that connects the clusters is the call, and \`via\` names the route it went through` });
+    limits.push({ scope: 'erd', reason: `the walk into another project runs at mode=${ERD_FEDERATION_MODE}, depth ${ERD_FEDERATION_DEPTH}, which is the default \`map\` and \`flow\` walk. \`erd\` takes no mode or depth of its own, so a table a wider walk would reach there is unknown rather than absent` });
+  }
+  if (tablesCut > 0) {
+    limits.push({ scope: 'erd', reason: `table cap ${limit} reached, so ${tablesCut} of ${tablesTotal} table(s) in scope are not drawn (we keep the most-joined${focusKey ? ', and the focus table always' : ''}). Every relationship between a kept and a cut table went with them. Raise limit (max ${ERD_LIMIT_MAX}); what is missing is unknown, not absent` });
+  }
+}
+
+export function erd(graph, args, ctx) {
+  const hops = clamp(args.hops, 1, 4, 1);
+  const limit = clamp(args.limit, 1, ERD_LIMIT_MAX, ERD_LIMIT_DEFAULT);
+  const { tset, focusKey, focusLimits, tablesTotal, tablesCut } = erdTableSet(graph, ctx, args, { hops, limit });
+  const { tables, relationships } = erdShape(graph, tset, !!focusKey);
   const answer = { focus: focusKey, hops: focusKey ? hops : null, limit, tables, relationships };
 
   // THE CONNECTED PROJECTS (RM45). This pack's ERD is untouched. What is added
@@ -796,13 +836,7 @@ export function erd(graph, args, ctx) {
   if (relationships.length === 0) empty.relationships = tables.length > 1 ? 'none' : 'not-in-this-axis';
   if (Object.keys(empty).length) answer.empty = empty;
   const limits = [...(ctx.limits ?? []), ...focusLimits, ...fed.limits()];
-  if (federated.length) {
-    limits.push({ scope: 'erd', reason: `${federated.length} other registered project(s) are on this answer under \`federated\` (${federated.map((f) => f.project).join(', ')}), holding only the tables a request from THIS project reaches over an HTTP call. Their relationships are their own joins between those tables. No relationship on this answer joins two projects, because two services share no foreign key: the only thing that connects the clusters is the call, and \`via\` names the route it went through` });
-    limits.push({ scope: 'erd', reason: `the walk into another project runs at mode=${ERD_FEDERATION_MODE}, depth ${ERD_FEDERATION_DEPTH}, which is the default \`map\` and \`flow\` walk. \`erd\` takes no mode or depth of its own, so a table a wider walk would reach there is unknown rather than absent` });
-  }
-  if (tablesCut > 0) {
-    limits.push({ scope: 'erd', reason: `table cap ${limit} reached, so ${tablesCut} of ${tablesTotal} table(s) in scope are not drawn (we keep the most-joined${focusKey ? ', and the focus table always' : ''}). Every relationship between a kept and a cut table went with them. Raise limit (max ${ERD_LIMIT_MAX}); what is missing is unknown, not absent` });
-  }
+  erdLimitsFor(limits, { federated, tablesCut, tablesTotal, limit, focusKey });
   // An ERD is a picture, not a page: `truncated` declares the true total with no
   // nextOffset (the same rule `map` follows), and the cut itself is in `limits`.
   const trunc = [
@@ -1134,14 +1168,14 @@ export function coupling(graph, args, ctx) {
  * attribution by reachability, the tables no endpoint touches, and whatever the
  * node cap refused to draw — is said out loud in `limits`.
  */
-export function map(graph, args, ctx) {
-  args = args || {};
+/** The four bounds and the layer list `map` takes, each refused by name when it is wrong. */
+function mapArgs(args) {
   const mode = reachMode(args.mode || 'conservative');
   if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
   const depth = clamp(args.depth, 1, 8, 8);
   const limit = clamp(args.limit, 1, MAP_LIMIT_MAX, MAP_LIMIT_DEFAULT);
   // The node cap is in the wrong unit for §13's promise. MEASURED on a 400-table
-  // / 3 800-endpoint pack: 4 227 nodes — well under the 6 000 default — carry
+  // / 3 800-endpoint pack: 4 227 nodes (well under the 6 000 default) carry
   // 12 200 links and serialise to 2.5 MB, and nothing in the answer said so.
   // So the map is also bounded by the MEASURED size of its own payload, and a
   // caller who really wants a bigger picture raises it deliberately.
@@ -1153,81 +1187,55 @@ export function map(graph, args, ctx) {
       throw new ToolError('bad-input', `unknown layer: ${JSON.stringify(l)}. The only recognised layer is ${MAP_LAYERS.join(', ')}`);
     }
   }
+  return { mode, depth, limit, maxBytes, asked };
+}
 
-  // THE CONNECTED PROJECTS (RM45). This map stops where the pack stops: a route
-  // this project CALLS and does not serve is an outbound node nothing walks.
-  // When another registered project serves that route, its own picture OF THAT
-  // ROUTE is drawn beside this one and joined to the calling endpoint by the
-  // line the crossing is. It is never a merge of two packs: two services share
-  // no foreign key, so a relationship line between them would be a lie, and
-  // what is drawn is only what THIS project's requests reach.
-  const fed = makeFederator(ctx, args);
-  const crossings = fed.crossMap(graph, { mode, depth, layers: asked });
-  const drawn = federatedPicture(crossings, fed.self);
-
-  const m = buildMap(graph, {
-    mode, depth, layers: asked, limit, maxBytes, packageDepth: packageDepthOf(ctx),
-    ...(drawn.nodes.length ? { extra: { nodes: drawn.nodes, links: drawn.links } } : {}),
-  });
-  const s = m.summary;
-  // The census of what came from another pack, in this answer's own words. The
-  // engine counted it under a neutral name (it does not know what federation
-  // is); the tool is where it gets called what it is.
-  const keptIds = new Set(m.nodes.map((n) => n.id));
-  const cutFederated = drawn.nodes.filter((n) => !keptIds.has(n.id));
+/**
+ * The census of what came from another pack, in this answer's own words.
+ *
+ * The engine counted it under a neutral name (it does not know what federation
+ * is); the tool is where it gets called what it is.
+ */
+function mapFederatedCensus(m, s, fed) {
   if (s.extra) delete s.extra;
-  if (fed.available) {
-    s.federated = {
-      projects: [...new Set(m.nodes.filter((n) => n.project && n.kind !== 'project').map((n) => n.project))].sort(cmpStr),
-      // How many nodes on this picture BELONG to another pack. The `project:`
-      // skeleton is this answer's own drawing device, not something another
-      // pack contains, so it is not counted here.
-      nodes: m.nodes.reduce((n, x) => n + (x.project && x.kind !== 'project' ? 1 : 0), 0),
-      // Every line that touches a node from another pack: the sibling's own
-      // lines, the crossings, and the skeleton's own members.
-      links: m.links.reduce((n, l) => n + (l.project ? 1 : 0), 0),
-    };
-  }
-  const answer = {
-    mode, depth, layers: m.layers, limit, maxBytes,
-    nodes: m.nodes,
-    links: m.links,
-    summary: s,
+  if (!fed.available) return;
+  s.federated = {
+    projects: [...new Set(m.nodes.filter((n) => n.project && n.kind !== 'project').map((n) => n.project))].sort(cmpStr),
+    // How many nodes on this picture BELONG to another pack. The `project:`
+    // skeleton is this answer's own drawing device, not something another pack
+    // contains, so it is not counted here.
+    nodes: m.nodes.reduce((n, x) => n + (x.project && x.kind !== 'project' ? 1 : 0), 0),
+    // Every line that touches a node from another pack: the sibling's own
+    // lines, the crossings, and the skeleton's own members.
+    links: m.links.reduce((n, l) => n + (l.project ? 1 : 0), 0),
   };
-  if (fed.saysAnything()) answer.federation = fed.block();
-  // No endpoints at all is "the Java lane never ran", not "this system relates
-  // nothing" — the difference between not-shipped and none.
-  const noAxis = !hasCodeAxis(graph, ctx);
-  const empty = {};
-  if (m.nodes.length === 0) empty.nodes = noAxis ? 'not-shipped' : 'none';
-  if (m.links.length === 0) empty.links = noAxis ? 'not-shipped' : 'none';
-  if (Object.keys(empty).length) answer.empty = empty;
+}
 
-  const limits = [...(ctx.limits ?? []),
-    groupingLimit('map', ctx),
-    { scope: 'map', reason: `a table is on this map because a walk (${mode}, depth ${depth}) from an endpoint reaches a statement that touches it. It is the same forward walk \`flow\` draws, and what a deeper or wider walk would add is unknown, not absent` },
-    ...fed.limits(),
-  ];
+/** What this picture drew from other packs, and what the budget took back out of it. */
+function mapFederationLimits(limits, drawn, cutFederated) {
   if (drawn.nodes.length) {
     limits.push({ scope: 'map', reason: `${drawn.nodes.length} node(s) on this map come from ${drawn.projects.length} other registered project(s) (${drawn.projects.join(', ')}), reached over an HTTP call this server matched to a route they serve. Each carries \`project\`, and only what THIS project's requests reach is drawn: no line here joins two projects' tables, because two services share no foreign key` });
   }
-  if (cutFederated.length) {
-    const byProject = new Map();
-    for (const n of cutFederated) {
-      const key = n.kind === 'project' ? n.label : n.project;
-      const held = byProject.get(key) ?? { whole: false, kinds: new Map() };
-      // The skeleton node is not a kind a reader counts. Its absence means the
-      // WHOLE of that project's cluster went, which is the fact worth saying.
-      if (n.kind === 'project') held.whole = true;
-      else held.kinds.set(n.kind, (held.kinds.get(n.kind) ?? 0) + 1);
-      byProject.set(key, held);
-    }
-    const said = [...byProject.entries()].sort((a, b) => cmpStr(a[0], b[0])).map(([project, held]) => {
-      const kinds = [...held.kinds.entries()].sort((a, b) => cmpStr(a[0], b[0])).map(([k, n]) => `${n} ${k}`).join(', ');
-      return `${project} (${held.whole ? `the whole cluster: ${kinds}` : kinds})`;
-    });
-    limits.push({ scope: 'map', reason: `the answer budget cut ${cutFederated.length} node(s) that came from another project before it cut any of this project's: ${said.join('; ')}. A federated node gives way first inside its kind, and a cluster goes whole once the route it hangs off goes, because a table with no line to it says nothing. The pack you asked about survives a cut intact. What is missing is unknown, not absent` });
+  if (cutFederated.length === 0) return;
+  const byProject = new Map();
+  for (const n of cutFederated) {
+    const key = n.kind === 'project' ? n.label : n.project;
+    const held = byProject.get(key) ?? { whole: false, kinds: new Map() };
+    // The skeleton node is not a kind a reader counts. Its absence means the
+    // WHOLE of that project's cluster went, which is the fact worth saying.
+    if (n.kind === 'project') held.whole = true;
+    else held.kinds.set(n.kind, (held.kinds.get(n.kind) ?? 0) + 1);
+    byProject.set(key, held);
   }
+  const said = [...byProject.entries()].sort((a, b) => cmpStr(a[0], b[0])).map(([project, held]) => {
+    const kinds = [...held.kinds.entries()].sort((a, b) => cmpStr(a[0], b[0])).map(([k, n]) => `${n} ${k}`).join(', ');
+    return `${project} (${held.whole ? `the whole cluster: ${kinds}` : kinds})`;
+  });
+  limits.push({ scope: 'map', reason: `the answer budget cut ${cutFederated.length} node(s) that came from another project before it cut any of this project's: ${said.join('; ')}. A federated node gives way first inside its kind, and a cluster goes whole once the route it hangs off goes, because a table with no line to it says nothing. The pack you asked about survives a cut intact. What is missing is unknown, not absent` });
+}
+
+/** What this picture LEFT OUT: the schema it does not reach, and the budget's own cuts. */
+function mapCoverLimits(limits, m, s, { limit, maxBytes }) {
   if (s.tablesTouched < s.tables) {
     limits.push({ scope: 'map', reason: `${s.tablesTouched} of ${s.tables} table(s) in the pack are reached from an endpoint. The other ${s.tables - s.tablesTouched} are NOT drawn: they are in the schema, and no endpoint we analysed touches them` });
   }
@@ -1240,10 +1248,9 @@ export function map(graph, args, ctx) {
       limits.push({ scope: 'map', reason: `${s.screens} of ${s.screensTotal} screen(s) in this pack reach a route this map draws. The other ${s.screensTotal - s.screens} are NOT drawn: nothing we could follow leaves them, which is unknown rather than "this screen calls nothing"` });
     }
   }
-  const cutBy = (kind, total) => total - (s.shown[kind] ?? 0);
   const cuts = [];
   for (const [kind, total] of [['statements', s.statements ?? 0], ['screens', s.screens ?? 0], ['endpoints', s.endpoints], ['tables', s.tablesTouched]]) {
-    const n = cutBy(kind, total);
+    const n = total - (s.shown[kind] ?? 0);
     if (n > 0) cuts.push(`${n} ${kind}`);
   }
   if (cuts.length) {
@@ -1254,7 +1261,10 @@ export function map(graph, args, ctx) {
   if (s.shown.groups > limit) {
     limits.push({ scope: 'map', reason: `${s.shown.groups} groups go past the node cap ${limit} on their own. We never cut groups, so this answer is bigger than the cap you asked for` });
   }
-  // What the walks did not look at, in the same words `flow` and `coupling` use.
+}
+
+/** What the WALKS did not look at, in the same words `flow` and `coupling` use. */
+function mapWalkLimits(limits, s, { mode, depth }) {
   const w = s.walk;
   if (w.depthCut > 0) {
     limits.push({ scope: 'map', reason: `depth cap ${depth} reached at ${w.depthCut} call(s) across ${w.depthCutStarts} endpoint chain(s). Tables past the cap are on no endpoint's line here, and they are unknown, not absent` });
@@ -1262,7 +1272,7 @@ export function map(graph, args, ctx) {
   if (w.nodeCapStarts > 0) {
     limits.push({ scope: 'map', reason: `node cap reached from ${w.nodeCapStarts} handler(s). Those chains are bigger than one walk, and what they reach beyond the cap is unknown, not absent` });
   }
-  // Not a cut — a shape (see the same note in `coupling`). The node's
+  // Not a cut, a shape (see the same note in `coupling`). The node's
   // `handlerShort` names the primary handler; `handlers` on it says how many
   // there are, and the map drew the lines of ALL of them.
   if (w.generated > 0) {
@@ -1280,8 +1290,56 @@ export function map(graph, args, ctx) {
       ? `${w.byMode} link(s) below the grade floor of mode=${mode} were not walked. A missing line here can be the mode, not an absence. Try mode=${wider}`
       : `${w.byMode} link(s) are RUNTIME_ONLY/UNRESOLVED, and no mode walks them, so a missing line here is what the analyzer could not resolve, not the mode` });
   }
+}
 
-  // A map cannot be PAGED — the second page of a picture is not a picture — so
+export function map(graph, args, ctx) {
+  args = args || {};
+  const { mode, depth, limit, maxBytes, asked } = mapArgs(args);
+
+  // THE CONNECTED PROJECTS (RM45). This map stops where the pack stops: a route
+  // this project CALLS and does not serve is an outbound node nothing walks.
+  // When another registered project serves that route, its own picture OF THAT
+  // ROUTE is drawn beside this one and joined to the calling endpoint by the
+  // line the crossing is. It is never a merge of two packs: two services share
+  // no foreign key, so a relationship line between them would be a lie, and
+  // what is drawn is only what THIS project's requests reach.
+  const fed = makeFederator(ctx, args);
+  const crossings = fed.crossMap(graph, { mode, depth, layers: asked });
+  const drawn = federatedPicture(crossings, fed.self);
+
+  const m = buildMap(graph, {
+    mode, depth, layers: asked, limit, maxBytes, packageDepth: packageDepthOf(ctx),
+    ...(drawn.nodes.length ? { extra: { nodes: drawn.nodes, links: drawn.links } } : {}),
+  });
+  const s = m.summary;
+  const keptIds = new Set(m.nodes.map((n) => n.id));
+  const cutFederated = drawn.nodes.filter((n) => !keptIds.has(n.id));
+  mapFederatedCensus(m, s, fed);
+  const answer = {
+    mode, depth, layers: m.layers, limit, maxBytes,
+    nodes: m.nodes,
+    links: m.links,
+    summary: s,
+  };
+  if (fed.saysAnything()) answer.federation = fed.block();
+  // No endpoints at all is "the Java lane never ran", not "this system relates
+  // nothing": the difference between not-shipped and none.
+  const noAxis = !hasCodeAxis(graph, ctx);
+  const empty = {};
+  if (m.nodes.length === 0) empty.nodes = noAxis ? 'not-shipped' : 'none';
+  if (m.links.length === 0) empty.links = noAxis ? 'not-shipped' : 'none';
+  if (Object.keys(empty).length) answer.empty = empty;
+
+  const limits = [...(ctx.limits ?? []),
+    groupingLimit('map', ctx),
+    { scope: 'map', reason: `a table is on this map because a walk (${mode}, depth ${depth}) from an endpoint reaches a statement that touches it. It is the same forward walk \`flow\` draws, and what a deeper or wider walk would add is unknown, not absent` },
+    ...fed.limits(),
+  ];
+  mapFederationLimits(limits, drawn, cutFederated);
+  mapCoverLimits(limits, m, s, { limit, maxBytes });
+  mapWalkLimits(limits, s, { mode, depth });
+
+  // A map cannot be PAGED (the second page of a picture is not a picture) so
   // both fields declare their true total with no nextOffset, the way `coupling`
   // declares its shared-statement disclosure. The cut itself is in `limits`.
   const trunc = [
@@ -1690,57 +1748,36 @@ const crossedRows = Object.values(federated).reduce((n, rows) => n + rows.length
 }
 
 
-export function flow(graph, args, ctx) {
-  args = args || {}; // called with no arguments at all: that is list mode, not a crash
-  const direction = args.direction == null || args.direction === '' ? 'down' : String(args.direction);
-  if (direction !== 'down' && direction !== 'up') throw new ToolError('bad-input', 'direction must be down | up');
-  const up = direction === 'up';
-  const has = (k) => args[k] != null && args[k] !== '';
-
-  let entryKind;
+/**
+ * WHICH KIND OF THING THIS WALK STARTS AT, and the refusals that say why not.
+ *
+ * An endpoint is where a request ENTERS: nothing in this graph calls it, so
+ * there is nothing upstream of one. A column, a table and a statement are the
+ * other end of the same chain, so walking DOWN from one is the same mistake in
+ * the other direction. Both are refused by name rather than answered empty.
+ *
+ * @returns {string|null} the entry key, or null when this is list mode
+ */
+function flowEntryKind(args, up, has) {
   if (up) {
-    // An endpoint is where a request ENTERS: nothing in this graph calls it.
     if (has('endpoint')) throw new ToolError('bad-input', 'an endpoint has nothing upstream. direction=up starts at a column, table, statement or method (symbol=)');
     const given = UP_ENTRY_KINDS.filter(has);
     if (given.length > 1) throw new ToolError('bad-input', `pass exactly one of ${UP_ENTRY_KINDS.join(' / ')}, got ${given.join(', ')}`);
     if (given.length === 0) throw new ToolError('bad-input', `direction=up needs a target: one of ${UP_ENTRY_KINDS.join(' / ')} (there is no list mode upstream)`);
-    entryKind = given[0];
-  } else {
-    const wrong = ['column', 'table', 'statement'].filter(has);
-    if (wrong.length) throw new ToolError('bad-input', `${wrong.join('/')} is a direction=up target. direction=down starts at an endpoint, a screen or a method (symbol=)`);
-    const given = ['endpoint', 'screen', 'symbol'].filter(has);
-    if (given.length > 1) throw new ToolError('bad-input', `pass exactly one of endpoint / screen / symbol, got ${given.join(', ')}`);
-    if (given.length === 0) return flowList(graph, args, ctx);
-    [entryKind] = given;
+    return given[0];
   }
+  const wrong = ['column', 'table', 'statement'].filter(has);
+  if (wrong.length) throw new ToolError('bad-input', `${wrong.join('/')} is a direction=up target. direction=down starts at an endpoint, a screen or a method (symbol=)`);
+  const given = ['endpoint', 'screen', 'symbol'].filter(has);
+  if (given.length > 1) throw new ToolError('bad-input', `pass exactly one of endpoint / screen / symbol, got ${given.join(', ')}`);
+  return given.length === 0 ? null : given[0];
+}
 
-  const mode = reachMode(args.mode || 'conservative');
-  if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
-  // Measured on mall: the deepest a column sits below its nearest endpoint is 8
-  // hops, so the reverse walk defaults to the full 8 and the node cap is the
-  // real guard. Walking down, 6 already reaches the tables on every endpoint.
-  // A SCREEN IS FURTHER OUT than a handler: its own function, the api function
-  // it calls, the route, the handler, the service, the mapper, the statement is
-  // seven hops before a table is even in sight. So a screen entry defaults to
-  // the full 8, the way the reverse walk does.
-  const depth = clamp(args.depth, 1, 8, (up || entryKind === 'screen') ? 8 : 6);
-  const limit = clamp(args.limit, 1, 200, 40);
-  // Paging a walk would page a picture: the lists are one connected drawing, so
-  // a caller wanting more raises the limit rather than sliding a window.
-  if (args.offset != null) throw new ToolError('bad-input', 'offset is not accepted in chain mode. Raise limit instead');
-
-  const found = flowEntry(graph, args, ctx, { entryKind, up });
-  if (found.missing) return found.missing;
-  const { start, entry, entryLimits, handlerNote } = found;
-
-  const w = chainWalk(graph, { start, direction, mode, maxDepth: depth });
-  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth });
-
-
-  // Everything the walk skipped, said once — in limits AND in walk.note, so the
-  // page has a single place to read it.
-  const limits = [...(ctx.limits ?? []), ...entryLimits, ...fed.limits()];
-  const notes = [];
+/**
+ * EVERYTHING THE WALK SKIPPED, said once: in `limits` and in `walk.note`, so the
+ * page has a single place to read it.
+ */
+function flowNotes(limits, notes, { w, up, depth, mode, handlerNote, codeAxis, crossedRows }) {
   const note = (reason) => { limits.push({ scope: 'flow', reason }); notes.push(reason); };
   if (handlerNote) note(handlerNote);
   if (w.cut.depth > 0) {
@@ -1764,11 +1801,84 @@ export function flow(graph, args, ctx) {
   // No code axis at all: the lanes above the SQL are not empty, they were never
   // shipped. Said here as well as in `empty`, so a reader of the note alone
   // cannot mistake this picture for "nothing calls this column".
-  const codeAxis = hasCodeAxis(graph, ctx);
   if (!codeAxis) note('this pack has no code axis, because the Java lane did not run. The picture stops at the statements, and the service and endpoint columns are not shipped rather than empty');
   if (crossedRows > 0) {
     note(`${crossedRows} row(s) below come from another project, across an HTTP call this server matched to a route that project serves. Each one carries \`project\`, and \`walk\` and \`layers\` describe THIS project's walk only`);
   }
+}
+
+/**
+ * THE LANES THIS ANSWER HAS, plus one the crossings can add.
+ *
+ * Walking down from a ROUTE there is no endpoint lane: a route is where that
+ * walk starts, so nothing below it is one. A crossing does put a route in it,
+ * because the request left this project and entered another project's route and
+ * that row has nowhere else to go. It sits where the walk would have drawn it,
+ * before the services.
+ *
+ * A lane the TARGET sits on the wrong side of is "not in this axis", not "none",
+ * and a CODE lane on a pack with no code axis is "not-shipped": "none" would
+ * read as "no endpoint reaches this column" when the Java lane was never run.
+ */
+function flowLanes(answer, { w, up, direction, federated, limit, codeAxis }) {
+  const empty = {};
+  const trunc = [];
+  const laneList = [...(w.laneNames ?? FLOW_LANES[direction])];
+  if (!up && (federated.endpoints ?? []).length > 0 && !laneList.includes('endpoints')) {
+    const at = laneList.indexOf('services');
+    laneList.splice(at < 0 ? laneList.length : at, 0, 'endpoints');
+  }
+  for (const field of laneList) {
+    // A lane is this project's rows plus whatever the crossings added to it.
+    // Sorted by the SAME rule the walk sorts by, with the project as the last
+    // tiebreak so two projects' rows with one name keep a fixed order.
+    const all = (federated[field] ?? []).length > 0 ? sortFlowLane(field, [...w[field], ...federated[field]]) : w[field];
+    const shown = all.slice(0, limit);
+    answer[field] = shown;
+    if (shown.length === 0) {
+      empty[field] = w.emptyReason[field]
+        ?? ((field === 'services' || field === 'endpoints') && !codeAxis ? 'not-shipped' : 'none');
+    }
+    trunc.push({ field, shown: shown.length, total: all.length, order: FLOW_ORDER[field], nextOffset: shown.length < all.length ? shown.length : null });
+  }
+  return { empty, trunc };
+}
+
+export function flow(graph, args, ctx) {
+  args = args || {}; // called with no arguments at all: that is list mode, not a crash
+  const direction = args.direction == null || args.direction === '' ? 'down' : String(args.direction);
+  if (direction !== 'down' && direction !== 'up') throw new ToolError('bad-input', 'direction must be down | up');
+  const up = direction === 'up';
+  const has = (k) => args[k] != null && args[k] !== '';
+  const entryKind = flowEntryKind(args, up, has);
+  if (entryKind === null) return flowList(graph, args, ctx);
+
+  const mode = reachMode(args.mode || 'conservative');
+  if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
+  // Measured on mall: the deepest a column sits below its nearest endpoint is 8
+  // hops, so the reverse walk defaults to the full 8 and the node cap is the
+  // real guard. Walking down, 6 already reaches the tables on every endpoint.
+  // A SCREEN IS FURTHER OUT than a handler: its own function, the api function
+  // it calls, the route, the handler, the service, the mapper, the statement is
+  // seven hops before a table is even in sight. So a screen entry defaults to
+  // the full 8, the way the reverse walk does.
+  const depth = clamp(args.depth, 1, 8, (up || entryKind === 'screen') ? 8 : 6);
+  const limit = clamp(args.limit, 1, 200, 40);
+  // Paging a walk would page a picture: the lists are one connected drawing, so
+  // a caller wanting more raises the limit rather than sliding a window.
+  if (args.offset != null) throw new ToolError('bad-input', 'offset is not accepted in chain mode. Raise limit instead');
+
+  const found = flowEntry(graph, args, ctx, { entryKind, up });
+  if (found.missing) return found.missing;
+  const { start, entry, entryLimits, handlerNote } = found;
+
+  const w = chainWalk(graph, { start, direction, mode, maxDepth: depth });
+  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth });
+
+  const limits = [...(ctx.limits ?? []), ...entryLimits, ...fed.limits()];
+  const notes = [];
+  const codeAxis = hasCodeAxis(graph, ctx);
+  flowNotes(limits, notes, { w, up, depth, mode, handlerNote, codeAxis, crossedRows });
 
   const answer = {
     entry,
@@ -1785,40 +1895,11 @@ export function flow(graph, args, ctx) {
       endLane: w.endLane,
       note: notes.length ? notes.join('  ') : null,
     },
-    // The same walk folded per hop. A census, so `limit` never cuts it — that
-    // is why it carries no truncated entry.
+    // The same walk folded per hop. A census, so `limit` never cuts it, which is
+    // why it carries no truncated entry.
     layers: w.layers,
   };
-  const empty = {};
-  const trunc = [];
-  // THE LANES THIS ANSWER HAS, plus one the crossings can add. Walking down from
-  // a ROUTE there is no endpoint lane — a route is where that walk starts, so
-  // nothing below it is one. A crossing does put a route in it: the request left
-  // this project and entered another project's route, and that row has nowhere
-  // else to go. It sits where the walk would have drawn it, before the services.
-  const laneList = [...(w.laneNames ?? FLOW_LANES[direction])];
-  if (!up && (federated.endpoints ?? []).length > 0 && !laneList.includes('endpoints')) {
-    const at = laneList.indexOf('services');
-    laneList.splice(at < 0 ? laneList.length : at, 0, 'endpoints');
-  }
-  for (const field of laneList) {
-    // A lane is this project's rows plus whatever the crossings added to it.
-    // Sorted by the SAME rule the walk sorts by, with the project as the last
-    // tiebreak so two projects' rows with one name keep a fixed order.
-    const all = (federated[field] ?? []).length > 0 ? sortFlowLane(field, [...w[field], ...federated[field]]) : w[field];
-    const shown = all.slice(0, limit);
-    answer[field] = shown;
-    // A lane the TARGET sits on the wrong side of is "not in this axis", not
-    // "none" — the walk says which, this only reports it. And a CODE lane on a
-    // pack with no code axis is "not-shipped", the same word endpoint_impact,
-    // transactions and flow-list use: "none" would read as "no endpoint reaches
-    // this column", when the Java lane was simply never run.
-    if (shown.length === 0) {
-      empty[field] = w.emptyReason[field]
-        ?? ((field === 'services' || field === 'endpoints') && !codeAxis ? 'not-shipped' : 'none');
-    }
-    trunc.push({ field, shown: shown.length, total: all.length, order: FLOW_ORDER[field], nextOffset: shown.length < all.length ? shown.length : null });
-  }
+  const { empty, trunc } = flowLanes(answer, { w, up, direction, federated, limit, codeAxis });
   if (answer.layers.length === 0) empty.layers = 'none'; // a walk that reached nothing has no layers
   if (Object.keys(empty).length) answer.empty = empty;
   answer.federation = fed.block();
@@ -2332,117 +2413,139 @@ function browseNoneReason(graph, ctx, kind) {
  * Every row of one kind, each with the lower-cased text `query` matches.
  * @returns {{row:Object, hay:string}[]}
  */
-function browseRows(graph, kind, census, opts) {
+/** One row per TABLE: its columns, the statements on each side of it, and its reach. */
+function browseTableRows(graph, census, opts) {
   const out = [];
-  if (kind === 'table') {
-    for (const n of graph.nodes.values()) {
-      if (n.kind !== 'table') continue;
-      let columns = 0;
-      for (const e of graph.outEdges(n.id)) if (e.type === 'DECLARES') columns += 1;
-      // A statement is a reader or a writer of this table by the access ITS
-      // EXECUTES edge carries; a delete is a write (it changes the rows).
-      const read = new Set();
-      const write = new Set();
-      for (const e of graph.inEdges(n.id)) {
-        if (e.type !== 'EXECUTES') continue;
-        const access = graph.edgeAt(e.idx)?.evidence?.access;
-        (access === 'write' || access === 'delete' ? write : read).add(e.from);
-      }
-      const eps = census.tableEps.get(n.id) ?? EMPTY_SET;
-      const groups = new Set();
-      for (const ep of eps) groups.add(opts.groupOf(ep));
-      const row = {
-        table: strip(n.id), comment: n.comment ?? null, columns,
-        statementsRead: read.size, statementsWrite: write.size,
-        endpoints: eps.size, groups: groups.size,
-        ...(opts.reach ? { screens: (opts.reach.tables.get(n.id) ?? EMPTY_SET).size } : {}),
-      };
-      out.push({ row, hay: `${row.table} ${row.comment ?? ''}`.toLowerCase() });
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'table') continue;
+    let columns = 0;
+    for (const e of graph.outEdges(n.id)) if (e.type === 'DECLARES') columns += 1;
+    // A statement is a reader or a writer of this table by the access ITS
+    // EXECUTES edge carries; a delete is a write (it changes the rows).
+    const read = new Set();
+    const write = new Set();
+    for (const e of graph.inEdges(n.id)) {
+      if (e.type !== 'EXECUTES') continue;
+      const access = graph.edgeAt(e.idx)?.evidence?.access;
+      (access === 'write' || access === 'delete' ? write : read).add(e.from);
     }
-    return out;
+    const eps = census.tableEps.get(n.id) ?? EMPTY_SET;
+    const groups = new Set();
+    for (const ep of eps) groups.add(opts.groupOf(ep));
+    const row = {
+      table: strip(n.id), comment: n.comment ?? null, columns,
+      statementsRead: read.size, statementsWrite: write.size,
+      endpoints: eps.size, groups: groups.size,
+      ...(opts.reach ? { screens: (opts.reach.tables.get(n.id) ?? EMPTY_SET).size } : {}),
+    };
+    out.push({ row, hay: `${row.table} ${row.comment ?? ''}`.toLowerCase() });
   }
-  if (kind === 'column') {
-    // One table's columns are matched by the id prefix, the same rule
-    // `table_usage` counts them by: a pack with no DB catalog has column nodes
-    // that no DECLARES edge points at, and they still belong to their table.
-    const prefix = opts.tableKey == null ? null : `column:${opts.tableKey}.`;
-    for (const n of graph.nodes.values()) {
-      if (n.kind !== 'column') continue;
-      if (prefix !== null && !n.id.startsWith(prefix)) continue;
-      let reads = 0;
-      let writes = 0;
-      for (const e of graph.inEdges(n.id)) {
-        if (e.type === 'READS') reads += 1;
-        else if (e.type === 'WRITES') writes += 1;
-      }
-      const key = strip(n.id);
-      const row = {
-        column: key, table: tableOf(key), type: n.type ?? null, pk: n.pk === true,
-        comment: n.comment ?? null, reads, writes,
-        endpoints: (census.colEps.get(n.id) ?? EMPTY_SET).size,
-        ...(opts.reach ? { screens: (opts.reach.columns.get(n.id) ?? EMPTY_SET).size } : {}),
-      };
-      out.push({ row, hay: `${row.column} ${row.comment ?? ''}`.toLowerCase() });
+  return out;
+}
+
+/**
+ * One row per COLUMN, of one table or of all of them.
+ *
+ * One table's columns are matched by the id prefix, the same rule `table_usage`
+ * counts them by: a pack with no DB catalog has column nodes that no DECLARES
+ * edge points at, and they still belong to their table.
+ */
+function browseColumnRows(graph, census, opts) {
+  const out = [];
+  // One table's columns are matched by the id prefix, the same rule
+  // `table_usage` counts them by: a pack with no DB catalog has column nodes
+  // that no DECLARES edge points at, and they still belong to their table.
+  const prefix = opts.tableKey == null ? null : `column:${opts.tableKey}.`;
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'column') continue;
+    if (prefix !== null && !n.id.startsWith(prefix)) continue;
+    let reads = 0;
+    let writes = 0;
+    for (const e of graph.inEdges(n.id)) {
+      if (e.type === 'READS') reads += 1;
+      else if (e.type === 'WRITES') writes += 1;
     }
-    return out;
+    const key = strip(n.id);
+    const row = {
+      column: key, table: tableOf(key), type: n.type ?? null, pk: n.pk === true,
+      comment: n.comment ?? null, reads, writes,
+      endpoints: (census.colEps.get(n.id) ?? EMPTY_SET).size,
+      ...(opts.reach ? { screens: (opts.reach.columns.get(n.id) ?? EMPTY_SET).size } : {}),
+    };
+    out.push({ row, hay: `${row.column} ${row.comment ?? ''}`.toLowerCase() });
   }
-  if (kind === 'statement') {
-    for (const n of graph.nodes.values()) {
-      if (n.kind !== 'statement') continue;
-      const tables = new Set();
-      for (const e of graph.outEdges(n.id)) if (e.type === 'EXECUTES') tables.add(e.to);
-      const row = {
-        statement: strip(n.id), type: n.statementType ?? null, tables: tables.size,
-        // The statement's own two honesty flags, carried from the lanes: text
-        // spliced into the SQL at run time, and a column list the bridge could
-        // not fully resolve. Both make the row a lower bound.
-        hasUnresolved: n.hasUnresolved === true, hasStringSubst: n.hasStringSubst === true,
-        file: n.file ?? null, line: n.line ?? null,
-        endpoints: (census.stmtEps.get(n.id) ?? EMPTY_SET).size,
-      };
-      out.push({ row, hay: `${row.statement} ${row.file ?? ''}`.toLowerCase() });
-    }
-    return out;
+  return out;
+}
+
+/** One row per STATEMENT, with the two honesty flags the lanes put on it. */
+function browseStatementRows(graph, census) {
+  const out = [];
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'statement') continue;
+    const tables = new Set();
+    for (const e of graph.outEdges(n.id)) if (e.type === 'EXECUTES') tables.add(e.to);
+    const row = {
+      statement: strip(n.id), type: n.statementType ?? null, tables: tables.size,
+      // The statement's own two honesty flags, carried from the lanes: text
+      // spliced into the SQL at run time, and a column list the bridge could
+      // not fully resolve. Both make the row a lower bound.
+      hasUnresolved: n.hasUnresolved === true, hasStringSubst: n.hasStringSubst === true,
+      file: n.file ?? null, line: n.line ?? null,
+      endpoints: (census.stmtEps.get(n.id) ?? EMPTY_SET).size,
+    };
+    out.push({ row, hay: `${row.statement} ${row.file ?? ''}`.toLowerCase() });
   }
-  if (kind === 'screen') {
-    for (const r of screenCensus(graph).rows) {
-      const row = {
-        screen: r.path ?? strip(r.id),
-        path: r.path,
-        label: r.label,
-        title: r.title,
-        group: r.group,
-        component: r.component,
-        // A screen the router never declared, seen only in a recording. It has
-        // no component and no RENDERS edge, and the row says which it is.
-        source: r.source,
-        // A PAGE, not a router screen (RM48): the template the view resolver
-        // found and the route(s) a handler renders it on. Absent on a router
-        // screen rather than null, so the two kinds read as two kinds.
-        ...(r.source === 'view' ? { kind: 'page', template: r.template, engine: r.engine, routes: r.paths ?? [] } : {}),
-        endpoints: r.endpoints.size,
-        tables: r.tables.size,
-        observed: r.observed,
-      };
-      out.push({ row, hay: `${row.screen} ${row.label ?? ''} ${row.title ?? ''} ${row.component ?? ''}`.toLowerCase() });
-    }
-    return out;
+  return out;
+}
+
+/** One row per SCREEN, router-declared, server-rendered or seen only in a recording. */
+function browseScreenRows(graph) {
+  const out = [];
+  for (const r of screenCensus(graph).rows) {
+    const row = {
+      screen: r.path ?? strip(r.id),
+      path: r.path,
+      label: r.label,
+      title: r.title,
+      group: r.group,
+      component: r.component,
+      // A screen the router never declared, seen only in a recording. It has
+      // no component and no RENDERS edge, and the row says which it is.
+      source: r.source,
+      // A PAGE, not a router screen (RM48): the template the view resolver
+      // found and the route(s) a handler renders it on. Absent on a router
+      // screen rather than null, so the two kinds read as two kinds.
+      ...(r.source === 'view' ? { kind: 'page', template: r.template, engine: r.engine, routes: r.paths ?? [] } : {}),
+      endpoints: r.endpoints.size,
+      tables: r.tables.size,
+      observed: r.observed,
+    };
+    out.push({ row, hay: `${row.screen} ${row.label ?? ''} ${row.title ?? ''} ${row.component ?? ''}`.toLowerCase() });
   }
-  if (kind === 'endpoint') {
-    for (const n of graph.nodes.values()) {
-      if (n.kind !== 'endpoint') continue;
-      const reach = census.endpoints.get(n.id);
-      if (!reach) continue;   // outbound: a route this pack calls and does not serve
-      const { handlerIds, handlerShort } = endpointHandler(graph, n);
-      const row = {
-        endpoint: strip(n.id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
-        group: opts.groupOf(n.id), handlerShort, handlers: handlerIds.length,
-        statements: reach.statements.size, tables: reach.tables.size,
-      };
-      out.push({ row, hay: `${row.httpMethod ?? ''} ${row.path ?? ''} ${handlerIds.map(strip).join(' ')}`.toLowerCase() });
-    }
-    return out;
+  return out;
+}
+
+/** One row per ROUTE this pack SERVES. An outbound one is a route it calls and does not serve. */
+function browseEndpointRows(graph, census, opts) {
+  const out = [];
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'endpoint') continue;
+    const reach = census.endpoints.get(n.id);
+    if (!reach) continue;   // outbound: a route this pack calls and does not serve
+    const { handlerIds, handlerShort } = endpointHandler(graph, n);
+    const row = {
+      endpoint: strip(n.id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
+      group: opts.groupOf(n.id), handlerShort, handlers: handlerIds.length,
+      statements: reach.statements.size, tables: reach.tables.size,
+    };
+    out.push({ row, hay: `${row.httpMethod ?? ''} ${row.path ?? ''} ${handlerIds.map(strip).join(' ')}`.toLowerCase() });
   }
+  return out;
+}
+
+/** One row per SYMBOL: a method this pack read, with what the lanes marked on it. */
+function browseSymbolRows(graph) {
+  const out = [];
   for (const n of graph.nodes.values()) {
     if (n.kind !== 'symbol') continue;
     const key = strip(n.id);
@@ -2455,6 +2558,16 @@ function browseRows(graph, kind, census, opts) {
     out.push({ row, hay: key.toLowerCase() });
   }
   return out;
+}
+
+/** The rows one `browse` kind is made of, each kind read straight off the graph. */
+function browseRows(graph, kind, census, opts) {
+  if (kind === 'table') return browseTableRows(graph, census, opts);
+  if (kind === 'column') return browseColumnRows(graph, census, opts);
+  if (kind === 'statement') return browseStatementRows(graph, census);
+  if (kind === 'screen') return browseScreenRows(graph);
+  if (kind === 'endpoint') return browseEndpointRows(graph, census, opts);
+  return browseSymbolRows(graph);
 }
 
 /**

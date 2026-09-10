@@ -180,16 +180,33 @@ export function manifestAt(dotCascade) {
 }
 
 // Locate the project the command should act on (src/core/resolve.mjs decides;
-// this only supplies the flags). `strictProject` is false for `analyze`, where
-// --project has always also named the pack: an unregistered id there falls back
-// to the root/cwd `.cascade/` with a visible note instead of failing.
-export function resolveOrDie({ opt, die }, { strictProject = true } = {}) {
+// this only supplies the flags).
+//
+// AN UNKNOWN `--project` IS A TYPO, NOT AN INSTRUCTION. `analyze`, `estimate`
+// and `catalog` used to print the error and CARRY ON against the working
+// directory: `cascade analyze --project mall` with `mal` typed analyzed whatever
+// directory the shell was in and wrote a pack calling itself `mal`. A reader had
+// one line of stderr between that and believing they had just re-analyzed mall.
+// So an unknown id dies here with the registered ids, the way `mcp` and `view`
+// always have.
+//
+// `alsoNames` marks the one command where `--project` has a SECOND meaning:
+// `analyze` LABELS the pack it writes with it, which test/project_identity.test.mjs
+// seals ("an explicit --project is used when nothing else names the project").
+// There an unknown id is fatal only when nothing else names the target, because
+// with `--root` or `--pack` given the working directory is never taken and the
+// name is metadata. With neither, an unknown id retargeted the run at the working
+// directory, which is the defect.
+//
+// `init` (which REGISTERS the name) and `pack` (where `--project` only labels the
+// output) never look one up in the first place.
+export function resolveOrDie({ opt, die }, { alsoNames = false } = {}) {
   const args = { pack: opt('pack'), project: opt('project'), root: opt('root'), cwd: process.cwd(), env: process.env };
   try {
     return resolveProject(args);
   } catch (e) {
-    if (strictProject) die(e.message);
-    process.stderr.write(`${e.message}\n  -> continuing with the local .cascade/ (the name is used for the pack only)\n`);
+    if (!alsoNames || (!args.pack && !args.root)) return die(e.message);
+    process.stderr.write(`${e.message}\n  -> ${args.root ? '--root' : '--pack'} names the target, so the id is used for the pack's own name and nothing else\n`);
     return resolveProject({ ...args, project: undefined });
   }
 }

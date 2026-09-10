@@ -10,6 +10,95 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **A router navigation is not an HTTP call.** `router.push('/auth/login')`
+  changes which screen the browser shows: the component on screen is swapped for
+  another one the application already has, and nothing is sent to a server. Read
+  as an HTTP call it became a route nothing serves, graded UNRESOLVED, and in a
+  pack of several services such a false call could try to cross into a sibling.
+  The sinks are a new declaration pack, `adapters/web/packs/navigation.json`,
+  because every router spells it differently and each spelling is fixed by its
+  framework: `next/router` and `next/navigation`
+  `useRouter().push|replace|prefetch`, `next/link` `<Link href>`, `vue-router`
+  `push|replace` (through `this.$router` and through a name `useRouter()` was
+  assigned to), `react-router[-dom]` `useNavigate()(...)`, `redirect(...)`,
+  `<Link to>` and `<Navigate to>`, plus the browser's own
+  `window.location.href|assign|replace` and `location.href`. What makes a call a
+  navigation is never the name a project gives its router: it is the hook the
+  value came from, the property the framework itself puts on a component, the
+  module a JSX element was imported from, or a global nothing in the file
+  declares. A server-rendered page keeps its links as GET calls, because there a
+  link IS a request. The web worker is `webfacts/9`.
+- **A screen says where it leads.** When a navigation's path names a screen this
+  project declares, it is recorded on the screen it is written in as
+  `navigatesTo`, sorted, with the evidence rule `router-navigation`, the sink,
+  and the file and line. It is DATA on the node and not an edge: a screen change
+  is not a hop on the round trip from a screen to a column, and an edge would put
+  it in every walk. Three numbers say what happened
+  (`laneStats.web.navigation.navigations`, `navigationsToScreen`,
+  `navigationsUnmatched`), with the paths that named no screen listed, and one
+  census line reports them.
+
+### Changed
+
+- **The web lane counts fewer calls, and the same resolved ones.** Measured over
+  the seventeen-repository corpus, call sites fall where a navigation was being
+  counted as a request: the MSA template 217 to 178, litemall 191 to 178,
+  jeecg-boot 963 to 950, ngrinder 77 to 69, mall 153 to 151, ruoyi-vue 142 to 141.
+  jsh-erp falls 221 to 194 for the imported-constant fix below, and not one of its
+  eight navigations was being counted as a call. The string-method fix below takes
+  seven of those totals down again; the baseline records the end of both. Calls RESOLVED fall in two places only, by four
+  navigations that had matched a route by coincidence of path: ngrinder 66 to 63
+  (`$router.push('/script/detail/…')`, `$router.push('/perftest/{id}')`,
+  `$router.push('/script/list/')`) and ruoyi-vue 122 to 121
+  (`router.push('/login')` matching `POST /login`). Every other guarded number in
+  the corpus, `endpointColumnPairs` and screens reaching a table included, is
+  identical.
+- **Every one of the engine's long functions is taken apart.** All 27 functions
+  over 120 lines are now named steps, none of them over 60 lines, and the
+  repository has none left over 120. The code-shape ratchet is re-sealed
+  downward on 25 files, and nothing a caller can see moved: the sixteen pack
+  digests and 3,035 recorded answers are byte-identical across the refactoring.
+
+### Fixed
+
+- **An unknown `--project` is a typo, not an instruction.** `cascade analyze
+  --project mal` (for `mall`) printed `unknown project "mal"`, then `-> continuing
+  with the local .cascade/`, and analyzed whatever directory the shell happened to
+  be in, writing a pack that called itself `mal`. One line of stderr stood between
+  a reader and believing they had just re-analyzed mall. `estimate` and `catalog
+  fetch` did the same, and `catalog discover` accepted the flag and ignored it
+  altogether. Measured across every command: those four fell through, and
+  `golden`, `otel-methods`, `impact`, `verify`, `mcp` and `view` already died with
+  the registered ids listed. All of them now do, with exit 2, and analyze nothing.
+  Two places keep a second meaning and say so: `init` REGISTERS the name it is
+  given, `pack` only labels its output with it, and `analyze --project <id>
+  --root <dir>` keeps the id as the pack's own name because the tree is named and
+  the working directory is never taken (the run states which flag chose it).
+- **A URL that IS an imported constant is read, not just a template with one in
+  it.** RM58 filled the holes a template was left with, and left a URL argument
+  that is the imported name itself (`get(TOKEN_KEY)`) resolving to nothing,
+  counted `importedConstant`. The value settles it in both directions now: a
+  constant holding a path resolves the call, and one holding anything else says
+  the call was never an HTTP call at all. Measured on jsh-erp, where all 27 of
+  the `importedConstant` unresolved sites were browser-storage reads through a
+  verb-named method (`Vue.ls.get(ACCESS_TOKEN)`): 221 call sites to 194, 56
+  unresolved to 29, and the same 165 resolved.
+- **A string method is never an HTTP sink.**
+  `pathname.startsWith('/auth/login/naver')` asks where the browser already is,
+  and `p.split('/')`, `s.replace('/a', '/b')` and `re.test(path)` are how every
+  frontend reads a path. The argument is path-shaped by construction and the
+  callee reaches no client, which is exactly the shape of an untraced call, so
+  each one became a route nothing serves. A call that reached no client and whose
+  method is one of fourteen string and regular-expression methods is now counted
+  as `calls.stringMethod` and placed nowhere; a call that DID reach a client is
+  untouched, and a test holds the list apart from every verb the declaration packs
+  name. Measured: the MSA template's paths that no route answers fall from 19 to
+  14 and its call sites from 178 to 173, jeecg-boot 950 to 938, ruoyi-vue 141 to
+  138, and four more repositories lose one each. No repository loses a resolved
+  call, and no other guarded number in the corpus moves.
+
 ## [0.8.3] - 2026-09-10
 
 A URL built on a constant is a URL: the module constant carrying a base

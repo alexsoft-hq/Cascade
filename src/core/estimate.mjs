@@ -224,6 +224,96 @@ axes.push({
  * (RM47), and a SERVER-RENDERED application has no frontend source root at all
  * (RM48) — its pages are template files a `@Controller` names.
  */
+/**
+ * THE OPENAPI DOCUMENTS this run will read.
+ *
+ * No framework pack gates it: a document is a document, and a project that ships
+ * one has said what it serves.
+ */
+function openapiAxis(discovery, profile, axes) {
+// The OpenAPI documents this run will read. No framework pack gates it: a
+// document is a document, and a project that ships one has said what it
+// serves.
+const openapiDocs = discovery.openapiDocuments ?? [];
+const declaredDocs = Array.isArray(profile.openapi && profile.openapi.documents) ? profile.openapi.documents : [];
+const willReadDocs = declaredDocs.length > 0 ? declaredDocs.length : openapiDocs.length;
+axes.push({
+  axis: 'openapi',
+  status: willReadDocs > 0 ? 'shipped' : 'not-shipped',
+  reason: willReadDocs > 0
+    ? `${willReadDocs} OpenAPI / Swagger document(s) will be read${declaredDocs.length > 0 ? ', as the profile declares them' : ''}: `
+      + `${(declaredDocs.length > 0 ? declaredDocs : openapiDocs.map((d) => d.path)).slice(0, 5).join(', ')}`
+      + `${willReadDocs > 5 ? `, and ${willReadDocs - 5} more` : ''}. `
+      + 'Every route they declare becomes an endpoint, and the ones this code does not serve are reported as drift rather than dropped'
+    : 'no .json/.yaml/.yml file in this tree carries a top-level `openapi` or `swagger` key, so no route is declared to this run',
+  counts: {
+    openapiDocuments: willReadDocs,
+    byVersion: openapiDocs.reduce((acc, d) => ({ ...acc, [d.version]: (acc[d.version] ?? 0) + 1 }), {}),
+  },
+});
+}
+
+/**
+ * THE SCREEN AXIS, before anything has been parsed.
+ *
+ * Two of the three things that decide it ARE knowable here: whether a router
+ * declaration pack is declared (the packs are what let the worker recognize a
+ * route object at all) and whether the profile turned the axis on. The third,
+ * how many route declarations there really are, is not until the lane runs; the
+ * LAST run's count is reported instead when there is one, said as such.
+ */
+function screenAxisEstimate(discovery, profile, n, packs, axes, { prevRoutes, willReadWeb, templateRoots, templateEngines, webFiles }) {
+// THE SCREEN AXIS, before anything has been parsed. Two of the three things
+// that decide it ARE knowable here: whether a router declaration pack is
+// declared (the packs are what let the worker recognize a route object at
+// all) and whether the profile turned the axis on. The third — how many route
+// declarations there really are — is not, until the lane runs; the LAST run's
+// count is reported instead when there is one, said as such.
+const routerPacks = SCREEN_PACKS.filter((p) => packs.includes(p));
+// The same three-state switch `cascade analyze` resolves, over the evidence
+// an estimate has: the packages discovery found in THIS tree. An estimate
+// cannot know about a frontend a later `--web-src` will point outside it, and
+// says so in the reason rather than promising no screens.
+const screenGate = screenAxisOf(profile, {
+  webPackages: discovery?.webPackages ?? [],
+  templateRoots,
+});
+const screenEnabled = screenGate.enabled;
+const lastRoutes = Number.isInteger(prevRoutes) ? prevRoutes : null;
+const willBuildScreens = willReadWeb && screenEnabled && (routerPacks.length > 0 || templateRoots.length > 0);
+axes.push({
+  axis: 'screen',
+  // DEGRADED before the fact, like the web axis and for the same reason: what
+  // separates shipped from degraded is whether every route's component
+  // resolves to a file, and that is not knowable until the lane has run.
+  status: willBuildScreens ? 'degraded' : 'not-shipped',
+  reason: willBuildScreens
+    ? `the web lane will turn ${routerPacks.length > 0 ? `the route declarations it finds into screens (router pack(s): ${routerPacks.join(', ')})` : ''}`
+      + `${routerPacks.length > 0 && templateRoots.length > 0 ? ', and ' : ''}`
+      + `${templateRoots.length > 0 ? `every template a controller names into a page (${templateEngines.join(', ')})` : ''}`
+      + `${routerPacks.length > 0 && lastRoutes !== null ? `; the last run recorded ${lastRoutes} route declaration(s)` : ''}`
+      + `. ${routerPacks.length > 0
+        ? 'A route\'s screen gets a RENDERS edge onto the functions of the component it mounts, and a route whose component this lane cannot resolve is counted rather than dropped'
+        : 'A page gets a RENDERS edge onto its own inline scripts and onto every template it includes, and a view name that resolves to no template this run read is counted rather than dropped'}`
+    : !willReadWeb
+      ? (screenEnabled
+        ? 'the profile enables the screen axis, but no web lane will run to record the routes a screen would come from'
+        : 'no web lane will run, so there is no router declaration to build a screen from')
+      : !screenEnabled
+        ? `the web lane will run and the screen axis is off: ${screenGate.reason}. Set screenAxis.enabled to true in the profile to build screens anyway`
+        : 'the web lane will run and frameworkPacks names no router pack (vue-router, react-router), so no route object is recognized and there is nothing to build a screen from',
+  counts: {
+    frontendPackages: n('frontendPackageJson'),
+    webFiles,
+    routerPacks,
+    enabled: screenEnabled,
+    enabledFrom: screenGate.from,
+    lastRunRoutes: lastRoutes,
+    templateRoots: templateRoots.length,
+  },
+});
+}
+
 function webAxes(discovery, profile, n, packs, axes, { prevRoutes }) {
 // The web lane runs unflagged only when the profile declares the `web` pack,
 // the same rule the other three lanes follow.
@@ -288,75 +378,10 @@ axes.push({
     templateEngines,
   },
 });
-// The OpenAPI documents this run will read. No framework pack gates it: a
-// document is a document, and a project that ships one has said what it
-// serves.
-const openapiDocs = discovery.openapiDocuments ?? [];
-const declaredDocs = Array.isArray(profile.openapi && profile.openapi.documents) ? profile.openapi.documents : [];
-const willReadDocs = declaredDocs.length > 0 ? declaredDocs.length : openapiDocs.length;
-axes.push({
-  axis: 'openapi',
-  status: willReadDocs > 0 ? 'shipped' : 'not-shipped',
-  reason: willReadDocs > 0
-    ? `${willReadDocs} OpenAPI / Swagger document(s) will be read${declaredDocs.length > 0 ? ', as the profile declares them' : ''}: `
-      + `${(declaredDocs.length > 0 ? declaredDocs : openapiDocs.map((d) => d.path)).slice(0, 5).join(', ')}`
-      + `${willReadDocs > 5 ? `, and ${willReadDocs - 5} more` : ''}. `
-      + 'Every route they declare becomes an endpoint, and the ones this code does not serve are reported as drift rather than dropped'
-    : 'no .json/.yaml/.yml file in this tree carries a top-level `openapi` or `swagger` key, so no route is declared to this run',
-  counts: {
-    openapiDocuments: willReadDocs,
-    byVersion: openapiDocs.reduce((acc, d) => ({ ...acc, [d.version]: (acc[d.version] ?? 0) + 1 }), {}),
-  },
-});
-// THE SCREEN AXIS, before anything has been parsed. Two of the three things
-// that decide it ARE knowable here: whether a router declaration pack is
-// declared (the packs are what let the worker recognize a route object at
-// all) and whether the profile turned the axis on. The third — how many route
-// declarations there really are — is not, until the lane runs; the LAST run's
-// count is reported instead when there is one, said as such.
-const routerPacks = SCREEN_PACKS.filter((p) => packs.includes(p));
-// The same three-state switch `cascade analyze` resolves, over the evidence
-// an estimate has: the packages discovery found in THIS tree. An estimate
-// cannot know about a frontend a later `--web-src` will point outside it, and
-// says so in the reason rather than promising no screens.
-const screenGate = screenAxisOf(profile, {
-  webPackages: discovery?.webPackages ?? [],
-  templateRoots,
-});
-const screenEnabled = screenGate.enabled;
-const lastRoutes = Number.isInteger(prevRoutes) ? prevRoutes : null;
-const willBuildScreens = willReadWeb && screenEnabled && (routerPacks.length > 0 || templateRoots.length > 0);
-axes.push({
-  axis: 'screen',
-  // DEGRADED before the fact, like the web axis and for the same reason: what
-  // separates shipped from degraded is whether every route's component
-  // resolves to a file, and that is not knowable until the lane has run.
-  status: willBuildScreens ? 'degraded' : 'not-shipped',
-  reason: willBuildScreens
-    ? `the web lane will turn ${routerPacks.length > 0 ? `the route declarations it finds into screens (router pack(s): ${routerPacks.join(', ')})` : ''}`
-      + `${routerPacks.length > 0 && templateRoots.length > 0 ? ', and ' : ''}`
-      + `${templateRoots.length > 0 ? `every template a controller names into a page (${templateEngines.join(', ')})` : ''}`
-      + `${routerPacks.length > 0 && lastRoutes !== null ? `; the last run recorded ${lastRoutes} route declaration(s)` : ''}`
-      + `. ${routerPacks.length > 0
-        ? 'A route\'s screen gets a RENDERS edge onto the functions of the component it mounts, and a route whose component this lane cannot resolve is counted rather than dropped'
-        : 'A page gets a RENDERS edge onto its own inline scripts and onto every template it includes, and a view name that resolves to no template this run read is counted rather than dropped'}`
-    : !willReadWeb
-      ? (screenEnabled
-        ? 'the profile enables the screen axis, but no web lane will run to record the routes a screen would come from'
-        : 'no web lane will run, so there is no router declaration to build a screen from')
-      : !screenEnabled
-        ? `the web lane will run and the screen axis is off: ${screenGate.reason}. Set screenAxis.enabled to true in the profile to build screens anyway`
-        : 'the web lane will run and frameworkPacks names no router pack (vue-router, react-router), so no route object is recognized and there is nothing to build a screen from',
-  counts: {
-    frontendPackages: n('frontendPackageJson'),
-    webFiles,
-    routerPacks,
-    enabled: screenEnabled,
-    enabledFrom: screenGate.from,
-    lastRunRoutes: lastRoutes,
-    templateRoots: templateRoots.length,
-  },
-});
+  openapiAxis(discovery, profile, axes);
+  screenAxisEstimate(discovery, profile, n, packs, axes, {
+    prevRoutes, willReadWeb, templateRoots, templateEngines, webFiles,
+  });
   return { webPackDeclared, willReadWeb };
 }
 

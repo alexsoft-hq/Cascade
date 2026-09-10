@@ -1,0 +1,9 @@
+{
+  "name": "web-navigation-fixture",
+  "private": true,
+  "dependencies": {
+    "next": "13.0.0",
+    "react-router-dom": "6.0.0",
+    "vue-router": "4.0.0"
+  }
+}

@@ -540,88 +540,131 @@ export function readSpringDatasourceYaml(text, diagnostics = null, filePath = ''
  *        which lines are worth a diagnostic. Omitted, everything is of interest.
  * @returns {{doc:number, keyPath:(string|number)[], value:(string|null), line:number}[]}
  */
-export function readYamlLeaves(text, opts = {}) {
-  const interest = typeof opts.interest === 'function' ? opts.interest : () => true;
-  const sequences = opts.sequences === true;
-  const diagnostics = opts.diagnostics ?? null;
-  const filePath = opts.filePath ?? '';
-
-  const leaves = [];
-  const lines = String(text ?? '').split(/\r?\n/);
-  let doc = 0;
-  // A frame is a mapping key (`kind: 'map'`) or one entry of a block sequence
-  // (`kind: 'item'`). `indent` is the column the frame OWNS: a child sits
-  // deeper than it, a sibling sits at it.
-  /** @type {{kind:string, indent:number, key?:string, index?:number, line:number, hadChild:boolean, seq?:number}[]} */
-  let stack = [];
-
-  const pathOf = () => stack.map((s) => (s.kind === 'item' ? s.index : s.key));
-
+/**
+ * THE READER'S OWN STATE: the leaves found so far, and the frame stack that says
+ * where in the document the next line sits.
+ *
+ * A frame is a mapping key (`kind: 'map'`) or one entry of a block sequence
+ * (`kind: 'item'`). `indent` is the column the frame OWNS: a child sits deeper
+ * than it, a sibling sits at it.
+ */
+function yamlReader(opts) {
+  const st = {
+    interest: typeof opts.interest === 'function' ? opts.interest : () => true,
+    sequences: opts.sequences === true,
+    diagnostics: opts.diagnostics ?? null,
+    filePath: opts.filePath ?? '',
+    leaves: [],
+    doc: 0,
+    /** @type {{kind:string, indent:number, key?:string, index?:number, line:number, hadChild:boolean, seq?:number}[]} */
+    stack: [],
+  };
+  st.pathOf = () => st.stack.map((f) => (f.kind === 'item' ? f.index : f.key));
   // A `key:` with no value is a mapping node UNTIL the indentation proves it had
   // no children; only then is it an empty scalar (`password:` = no password).
-  const closeNode = (node) => {
+  st.closeNode = (node) => {
     if (node.kind !== 'map' || node.hadChild) return;
-    const keys = [...pathOf(), node.key];
-    if (interest(keys)) leaves.push({ doc, keyPath: keys, value: null, line: node.line });
+    const keys = [...st.pathOf(), node.key];
+    if (st.interest(keys)) st.leaves.push({ doc: st.doc, keyPath: keys, value: null, line: node.line });
   };
-  const popTo = (indent) => {
-    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
-      closeNode(stack.pop());
+  st.popTo = (indent) => {
+    while (st.stack.length > 0 && st.stack[st.stack.length - 1].indent >= indent) {
+      st.closeNode(st.stack.pop());
     }
   };
-  const endDoc = () => { popTo(-1); stack = []; };
-  const noteChild = () => { if (stack.length > 0) stack[stack.length - 1].hadChild = true; };
+  st.endDoc = () => { st.popTo(-1); st.stack = []; };
+  st.warn = (lineNo, why) => diag(st.diagnostics, 'warn', 'UNSUPPORTED_YAML', st.filePath, `line ${lineNo} ${why}`);
+  return st;
+}
 
-  /** One `key: value` (or `key:`) entry, at the column it was written in. */
-  const mapEntry = (content, indent, lineNo) => {
-    const here = pathOf();
-    const split = splitYamlKey(content);
-    if (!split) {
-      if (interest(here)) {
-        diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-          `line ${lineNo} under ${here.join('.')} is not a \`key: value\` mapping entry; it was skipped`);
-      }
-      return;
-    }
-    const { key, value } = split;
-    noteChild();
+/** One `key: value` (or `key:`) entry, at the column it was written in. */
+function yamlMapEntry(st, content, indent, lineNo) {
+  const here = st.pathOf();
+  const split = splitYamlKey(content);
+  if (!split) {
+    if (st.interest(here)) st.warn(lineNo, `under ${here.join('.')} is not a \`key: value\` mapping entry; it was skipped`);
+    return;
+  }
+  const { key, value } = split;
+  if (st.stack.length > 0) st.stack[st.stack.length - 1].hadChild = true;
 
-    if (value === '') {
-      stack.push({ kind: 'map', indent, key, line: lineNo, hadChild: false, seq: 0 });
-      return;
-    }
+  if (value === '') {
+    st.stack.push({ kind: 'map', indent, key, line: lineNo, hadChild: false, seq: 0 });
+    return;
+  }
 
-    const keys = [...here, key];
-    if (!interest(keys)) return;
+  const keys = [...here, key];
+  if (!st.interest(keys)) return;
 
-    // A flow SEQUENCE of scalars is the one flow collection this reader reads,
-    // and only when the caller asked for sequences: `predicates: [Path=/a/**]`
-    // is how half the Spring documentation spells a list. A nested one, or a
-    // flow mapping, is still refused rather than half-read.
-    if (sequences && value.startsWith('[') && value.endsWith(']')
-      && !/[[{]/.test(value.slice(1, -1))) {
-      const items = splitFlowScalars(value.slice(1, -1));
-      items.forEach((item, index) => {
-        leaves.push({ doc, keyPath: [...keys, index], value: unquoteYaml(item), line: lineNo });
-      });
-      return;
-    }
+  // A flow SEQUENCE of scalars is the one flow collection this reader reads, and
+  // only when the caller asked for sequences: `predicates: [Path=/a/**]` is how
+  // half the Spring documentation spells a list. A nested one, or a flow
+  // mapping, is still refused rather than half-read.
+  if (st.sequences && value.startsWith('[') && value.endsWith(']')
+    && !/[[{]/.test(value.slice(1, -1))) {
+    splitFlowScalars(value.slice(1, -1)).forEach((item, index) => {
+      st.leaves.push({ doc: st.doc, keyPath: [...keys, index], value: unquoteYaml(item), line: lineNo });
+    });
+    return;
+  }
 
-    if (/^[|>&*!]/.test(value) || value.startsWith('{') || value.startsWith('[') || key === '<<') {
-      diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-        `line ${lineNo} (${keys.join('.')}) uses a YAML construct this reader does not interpret (block scalar, flow collection, anchor/alias or merge key); it was skipped rather than guessed`);
-      return;
-    }
-    leaves.push({ doc, keyPath: keys, value: unquoteYaml(value), line: lineNo });
-  };
+  if (/^[|>&*!]/.test(value) || value.startsWith('{') || value.startsWith('[') || key === '<<') {
+    st.warn(lineNo, `(${keys.join('.')}) uses a YAML construct this reader does not interpret (block scalar, flow collection, anchor/alias or merge key); it was skipped rather than guessed`);
+    return;
+  }
+  st.leaves.push({ doc: st.doc, keyPath: keys, value: unquoteYaml(value), line: lineNo });
+}
 
+/**
+ * One entry of a BLOCK SEQUENCE, `- …`.
+ *
+ * A dash may sit at its parent key's own column (YAML allows both), so a frame
+ * AT this column is popped only when it is a sibling entry of the same sequence
+ * rather than the mapping key that owns it.
+ */
+function yamlSequenceEntry(st, content, indent, lineNo) {
+  if (!st.sequences) {
+    st.popTo(indent);
+    const here = st.pathOf();
+    if (st.interest(here)) st.warn(lineNo, `starts a sequence under ${here.join('.')}; this reader reads block mappings only, so the entry was skipped`);
+    return;
+  }
+  st.popTo(indent + 1);
+  while (st.stack.length > 0 && st.stack[st.stack.length - 1].kind === 'item'
+    && st.stack[st.stack.length - 1].indent === indent) {
+    st.closeNode(st.stack.pop());
+  }
+  const owner = st.stack.length > 0 ? st.stack[st.stack.length - 1] : null;
+  if (!owner || owner.kind !== 'map') {
+    if (st.interest(st.pathOf())) st.warn(lineNo, 'starts a sequence that belongs to no mapping key; it was skipped');
+    return;
+  }
+  owner.hadChild = true;
+  const index = owner.seq ?? 0;
+  owner.seq = index + 1;
+  const rest = content === '-' ? '' : content.slice(2).trim();
+  st.stack.push({ kind: 'item', indent, index, line: lineNo, hadChild: rest !== '', seq: 0 });
+  if (rest === '') return;
+  // `- key: value` on one line: the entry's first mapping key, at the column it
+  // really occupies, so its own children line up under it.
+  const inlineIndent = indent + (content.length - content.slice(2).length)
+    + (content.slice(2).length - content.slice(2).trimStart().length);
+  if (splitYamlKey(rest)) { yamlMapEntry(st, rest, inlineIndent, lineNo); return; }
+  // `- StripPrefix=2`: a scalar entry of the list.
+  const keys = st.pathOf();
+  if (st.interest(keys)) st.leaves.push({ doc: st.doc, keyPath: keys, value: unquoteYaml(rest), line: lineNo });
+}
+
+export function readYamlLeaves(text, opts = {}) {
+  const st = yamlReader(opts);
+  const lines = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const raw = lines[i];
     const lineNo = i + 1;
     if (/^\s*$/.test(raw)) continue;
     if (/^\s*#/.test(raw)) continue;
-    if (/^---\s*$/.test(raw) || /^---\s+/.test(raw)) { endDoc(); doc += 1; continue; }
-    if (/^\.\.\.\s*$/.test(raw)) { endDoc(); continue; }
+    if (/^---\s*$/.test(raw) || /^---\s+/.test(raw)) { st.endDoc(); st.doc += 1; continue; }
+    if (/^\.\.\.\s*$/.test(raw)) { st.endDoc(); continue; }
 
     const indentMatch = /^[ \t]*/.exec(raw)[0];
     const content = stripYamlComment(raw.slice(indentMatch.length));
@@ -630,64 +673,20 @@ export function readYamlLeaves(text, opts = {}) {
 
     if (indentMatch.includes('\t')) {
       // Only complain when it could concern us; a tab elsewhere is not our file.
-      if (interest(pathOf())) {
-        diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-          `line ${lineNo} is indented with a tab, which YAML forbids and this reader does not interpret; the line was skipped`);
-      }
+      if (st.interest(st.pathOf())) st.warn(lineNo, 'is indented with a tab, which YAML forbids and this reader does not interpret; the line was skipped');
       continue;
     }
 
     if (content.startsWith('- ') || content === '-') {
-      if (!sequences) {
-        popTo(indent);
-        const here = pathOf();
-        if (interest(here)) {
-          diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-            `line ${lineNo} starts a sequence under ${here.join('.')}; this reader reads block mappings only, so the entry was skipped`);
-        }
-        continue;
-      }
-      // A dash may sit at its parent key's own column (YAML allows both), so a
-      // frame AT this column is popped only when it is a sibling entry of the
-      // same sequence rather than the mapping key that owns it.
-      popTo(indent + 1);
-      while (stack.length > 0 && stack[stack.length - 1].kind === 'item'
-        && stack[stack.length - 1].indent === indent) {
-        closeNode(stack.pop());
-      }
-      const owner = stack.length > 0 ? stack[stack.length - 1] : null;
-      if (!owner || owner.kind !== 'map') {
-        if (interest(pathOf())) {
-          diag(diagnostics, 'warn', 'UNSUPPORTED_YAML', filePath,
-            `line ${lineNo} starts a sequence that belongs to no mapping key; it was skipped`);
-        }
-        continue;
-      }
-      owner.hadChild = true;
-      const index = owner.seq ?? 0;
-      owner.seq = index + 1;
-      const rest = content === '-' ? '' : content.slice(2).trim();
-      stack.push({ kind: 'item', indent, index, line: lineNo, hadChild: rest !== '', seq: 0 });
-      if (rest === '') continue;
-      // `- key: value` on one line: the entry's first mapping key, at the column
-      // it really occupies, so its own children line up under it.
-      const inlineIndent = indent + (content.length - content.slice(2).length)
-        + (content.slice(2).length - content.slice(2).trimStart().length);
-      if (splitYamlKey(rest)) {
-        mapEntry(rest, inlineIndent, lineNo);
-        continue;
-      }
-      // `- StripPrefix=2`: a scalar entry of the list.
-      const keys = pathOf();
-      if (interest(keys)) leaves.push({ doc, keyPath: keys, value: unquoteYaml(rest), line: lineNo });
+      yamlSequenceEntry(st, content, indent, lineNo);
       continue;
     }
 
-    popTo(indent);
-    mapEntry(content, indent, lineNo);
+    st.popTo(indent);
+    yamlMapEntry(st, content, indent, lineNo);
   }
-  endDoc();
-  return leaves;
+  st.endDoc();
+  return st.leaves;
 }
 
 /** `a, b, "c, d"` split on the commas OUTSIDE quotes, trimmed, blanks dropped. */

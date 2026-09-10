@@ -297,6 +297,70 @@ for (const l of extraLinks) links.push(l);
  * must not be decided by what an earlier cut already removed — and the byte
  * budget then cuts further, by halving, until the answer fits.
  */
+/**
+ * 5b. THE BYTE BUDGET (SPEC §13).
+ *
+ * The node cap is in the wrong unit for the promise §13 makes. Measured on a
+ * 400-table / 3 800-endpoint pack: 4 227 nodes, comfortably UNDER the default
+ * cap of 6 000, carry 12 200 links and serialise to 2.5 MB, and the answer
+ * called itself complete. A picture that large is neither drawable nor
+ * returnable, and "no cut" was a true statement about nodes and a false one
+ * about the answer.
+ *
+ * So the map is also cut to fit `maxBytes` OF ITS OWN MEASURED SERIALISATION,
+ * not an estimate but the real JSON.stringify of the nodes and links. The first
+ * pass computes the true bytes-per-element and cuts to the target directly; at
+ * most MAX_BYTE_ROUNDS passes run, and the last one is allowed to be a little
+ * under rather than a little over. The cut uses the SAME order as the node cap
+ * (least-connected of statements, then endpoints, then tables; groups never), so
+ * a byte-cut map and a node-cut map are the same picture at different sizes.
+ */
+function mapByteBudget(nodes, links, { cutQueue, dropFirst, apply, drop, applied, cutBy, maxBytes }) {
+  let bytes;
+  // How many ELEMENTS (nodes + links) survive each prefix of the cut queue.
+  // Dropping one node also drops every link touching it, so the two cannot be
+  // traded one for one: computed exactly, once, in O(links), by walking the
+  // queue and counting each link the first time either of its ends goes.
+  const incident = new Map();
+  links.forEach((l, i) => {
+    for (const end of [l.source, l.target]) {
+      const arr = incident.get(end);
+      if (arr) arr.push(i); else incident.set(end, [i]);
+    }
+  });
+  const gone = new Uint8Array(links.length);
+  // elementsAfter[i] = elements left after dropping the first i queue entries.
+  const elementsAfter = new Array(cutQueue.length + 1);
+  elementsAfter[0] = nodes.length + links.length;
+  let linksLeft = links.length;
+  for (let i = 0; i < cutQueue.length; i += 1) {
+    for (const li of incident.get(cutQueue[i]) ?? []) {
+      if (!gone[li]) { gone[li] = 1; linksLeft -= 1; }
+    }
+    elementsAfter[i + 1] = (nodes.length - (i + 1)) + linksLeft;
+  }
+  const dropForTarget = (target) => {
+    // The SMALLEST prefix that fits: cut as little as the budget allows.
+    for (let i = 0; i <= cutQueue.length; i += 1) if (elementsAfter[i] <= target) return i;
+    return cutQueue.length;
+  };
+  let held = drop;
+  let out = applied;
+  let by = cutBy;
+  for (let round = 0; round < MAX_BYTE_ROUNDS; round += 1) {
+    bytes = sizeOf(out.keptNodes, out.keptLinks);
+    const elements = out.keptNodes.length + out.keptLinks.length;
+    if (bytes <= maxBytes || elements === 0) break;
+    // The MEASURED bytes per element of what is on the table right now; aim a
+    // little under the budget so the next measurement is not a coin flip.
+    const target = Math.max(1, Math.floor(elements * (maxBytes / bytes) * 0.95));
+    held = dropFirst(Math.max(held.size + 1, dropForTarget(target)));
+    by = 'byte-budget';
+    out = apply(held);
+  }
+  return { applied: out, cutBy: by, bytes };
+}
+
 function mapCaps(nodes, links, { fromOutside, limit, opts }) {
 // ---- 5. the node cap ----------------------------------------------------
 // Degree over the FULL link set decides who survives: cutting the map must
@@ -356,72 +420,19 @@ if (fromOutside.size && dropCount > 0) {
   }
   dropCount = lo;
 }
-let drop = dropFirst(dropCount);
+const drop = dropFirst(dropCount);
 let cutBy = drop.size ? 'node-cap' : null;
 let applied = apply(drop);
 
-// ---- 5b. the BYTE budget (SPEC §13) ------------------------------------
-// The node cap is in the wrong unit for the promise §13 makes. Measured on a
-// 400-table / 3 800-endpoint pack: 4 227 nodes — comfortably UNDER the default
-// cap of 6 000 — carry 12 200 links and serialise to 2.5 MB, and the answer
-// called itself complete. A picture that large is neither drawable nor
-// returnable, and "no cut" was a true statement about nodes and a false one
-// about the answer.
-//
-// So the map is also cut to fit `maxBytes` OF ITS OWN MEASURED SERIALISATION —
-// not an estimate, the real JSON.stringify of the nodes and links. The first
-// pass computes the true bytes-per-element and cuts to the target directly;
-// at most MAX_BYTE_ROUNDS passes run, and the last one is allowed to be a
-// little under rather than a little over. The cut uses the SAME order as the
-// node cap (least-connected of statements, then endpoints, then tables;
-// groups never), so a byte-cut map and a node-cut map are the same picture at
-// different sizes. `summary.shown` and the caller's `truncated` say exactly
-// what went.
 const maxBytes = opts.maxBytes ?? null;
 if (maxBytes != null && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
   throw new MapError(`maxBytes must be a positive integer or null, got ${maxBytes}`);
 }
 let bytes;
 if (maxBytes != null) {
-  // How many ELEMENTS (nodes + links) survive each prefix of the cut queue.
-  // Dropping one node also drops every link touching it, so the two cannot be
-  // traded one for one — computed exactly, once, in O(links): walking the
-  // queue and counting each link the first time either of its ends goes.
-  const incident = new Map();
-  links.forEach((l, i) => {
-    for (const end of [l.source, l.target]) {
-      const arr = incident.get(end);
-      if (arr) arr.push(i); else incident.set(end, [i]);
-    }
-  });
-  const gone = new Uint8Array(links.length);
-  // elementsAfter[i] = elements left after dropping the first i queue entries.
-  const elementsAfter = new Array(cutQueue.length + 1);
-  elementsAfter[0] = nodes.length + links.length;
-  let linksLeft = links.length;
-  for (let i = 0; i < cutQueue.length; i += 1) {
-    for (const li of incident.get(cutQueue[i]) ?? []) {
-      if (!gone[li]) { gone[li] = 1; linksLeft -= 1; }
-    }
-    elementsAfter[i + 1] = (nodes.length - (i + 1)) + linksLeft;
-  }
-  const dropForTarget = (target) => {
-    // The SMALLEST prefix that fits — cut as little as the budget allows.
-    for (let i = 0; i <= cutQueue.length; i += 1) if (elementsAfter[i] <= target) return i;
-    return cutQueue.length;
-  };
-  for (let round = 0; round < MAX_BYTE_ROUNDS; round += 1) {
-    bytes = sizeOf(applied.keptNodes, applied.keptLinks);
-    const elements = applied.keptNodes.length + applied.keptLinks.length;
-    if (bytes <= maxBytes || elements === 0) break;
-    // The MEASURED bytes per element of what is on the table right now; aim a
-    // little under the budget so the next measurement is not a coin flip.
-    const target = Math.max(1, Math.floor(elements * (maxBytes / bytes) * 0.95));
-    const nextDrop = Math.max(drop.size + 1, dropForTarget(target));
-    drop = dropFirst(nextDrop);
-    cutBy = 'byte-budget';
-    applied = apply(drop);
-  }
+  ({ applied, cutBy, bytes } = mapByteBudget(nodes, links, {
+    cutQueue, dropFirst, apply, drop, applied, cutBy, maxBytes,
+  }));
 }
 const kept = applied.keptNodes;
 const keptLinks = applied.keptLinks;

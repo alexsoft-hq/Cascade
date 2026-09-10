@@ -30,6 +30,10 @@ export function emptyCounts({ files, parseErrors, recoveredErrors, envFiles, api
     calls: 0, callsWithUrl: 0,
     urlByShape: { literal: 0, template: 0, constant: 0, unresolved: 0 },
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
+    // The calls that change the SCREEN rather than send a request (RM59),
+    // counted by the router whose sink was called, so a reader can see at a
+    // glance which router a frontend navigates with.
+    navigations: 0, navigationsByFramework: {},
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles,
     platformSinks: { fetch: 0, xhr: 0, jquery: 0 },
@@ -68,6 +72,29 @@ export function orderRecords(recs) {
   ));
 }
 
+/**
+ * One CALL record's four counts: the sink it went to, the client the framework
+ * injected, what said which method it sends, and the shape of its URL.
+ */
+function tallyCall(rec, counts) {
+  counts.calls += 1;
+  if (typeof rec.platformSink === 'string') {
+    counts.platformSinks[rec.platformSink] = (counts.platformSinks[rec.platformSink] ?? 0) + 1;
+  }
+  if (rec.injected) counts.injectedCalls += 1;
+  if (rec.method && rec.method.from) {
+    counts.methodBySource[rec.method.from] = (counts.methodBySource[rec.method.from] ?? 0) + 1;
+  }
+  if (rec.url) {
+    counts.callsWithUrl += 1;
+    const first = rec.url.resolved && rec.url.resolved[0];
+    if (!first) counts.urlByShape.unresolved += 1;
+    else if (first.via === 'literal') counts.urlByShape.literal += 1;
+    else if (first.via === 'template') counts.urlByShape.template += 1;
+    else counts.urlByShape.constant += 1;
+  }
+}
+
 /** Add one record to the summary. */
 export function tally(rec, counts) {
   switch (rec.kind) {
@@ -93,6 +120,10 @@ export function tally(rec, counts) {
     case 'binding': counts.bindings += 1; break;
     case 'class': counts.classes += 1; break;
     case 'assign': counts.assigns += 1; break;
+    case 'navigation':
+      counts.navigations += 1;
+      counts.navigationsByFramework[rec.framework] = (counts.navigationsByFramework[rec.framework] ?? 0) + 1;
+      break;
     case 'route':
       counts.routes += 1;
       counts.byPack[rec.pack] = (counts.byPack[rec.pack] ?? 0) + 1;
@@ -107,25 +138,9 @@ export function tally(rec, counts) {
       else if (rec.what === 'proxy') counts.proxies += 1;
       else if (rec.what === 'env') counts.envRecords += 1;
       break;
-    case 'call': {
-      counts.calls += 1;
-      if (typeof rec.platformSink === 'string') {
-        counts.platformSinks[rec.platformSink] = (counts.platformSinks[rec.platformSink] ?? 0) + 1;
-      }
-      if (rec.injected) counts.injectedCalls += 1;
-      if (rec.method && rec.method.from) {
-        counts.methodBySource[rec.method.from] = (counts.methodBySource[rec.method.from] ?? 0) + 1;
-      }
-      if (rec.url) {
-        counts.callsWithUrl += 1;
-        const first = rec.url.resolved && rec.url.resolved[0];
-        if (!first) counts.urlByShape.unresolved += 1;
-        else if (first.via === 'literal') counts.urlByShape.literal += 1;
-        else if (first.via === 'template') counts.urlByShape.template += 1;
-        else counts.urlByShape.constant += 1;
-      }
+    case 'call':
+      tallyCall(rec, counts);
       break;
-    }
     default: break;
   }
 }

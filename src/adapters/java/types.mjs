@@ -420,6 +420,88 @@ function indexedType(r) {
  *            enclosingChainOf:(fqn:string)=>string[], topLevelOf:(fqn:string)=>string,
  *            resolveType:(ownerFqn:string, simple:string)=>(string|null)}}
  */
+/**
+ * THE ENCLOSING TYPES OF A NESTED TYPE, rebuilt from its own record.
+ *
+ * A nested type has no compilation unit of its own: the worker keys every import
+ * and wildcard by the TOP-LEVEL type, because that is where the file's `import`
+ * lines belong, and it stamps the FILE's package on every type it sees. So
+ * `a.b.Outer.Inner` carries `pkg = "a.b"`, and everything after the package is
+ * the nesting, `Outer.Inner`. That is all it takes to rebuild the scope chain,
+ * which is why the worker needs no new record for this.
+ *
+ * Innermost first; the LAST entry is the top-level type, which is the key the
+ * imports are under. EMPTY for a top-level type, so a caller can tell the two
+ * apart without asking again.
+ *
+ * WHAT IT COST TO NOT HAVE THIS: every call inside one of litemall's 76
+ * generated `…Example.GeneratedCriteria` classes looked up `List` under the key
+ * `…Example.GeneratedCriteria`, where there are no imports at all, and 288 calls
+ * came back unresolved that a top-level class in the same file resolves without
+ * trouble.
+ */
+function makeEnclosingChainOf(types) {
+  return (fqn) => {
+    const t = types.get(fqn);
+    if (!t) return EMPTY_CHAIN;
+    const pkg = t.pkg ?? '';
+    const nest = pkg ? (fqn.startsWith(`${pkg}.`) ? fqn.slice(pkg.length + 1) : null) : fqn;
+    if (nest == null || !nest.includes('.')) return EMPTY_CHAIN;
+    const segs = nest.split('.');
+    const out = [];
+    for (let i = segs.length - 1; i >= 1; i -= 1) {
+      const outer = segs.slice(0, i).join('.');
+      out.push(pkg ? `${pkg}.${outer}` : outer);
+    }
+    return out;
+  };
+}
+
+/**
+ * Resolve a simple type name seen inside `ownerFqn` to a fully-qualified type,
+ * in the order the LANGUAGE resolves it, which is also decreasing certainty:
+ *   1. a member type in scope: this type's own nested types, then each
+ *      enclosing type's                                (exact)
+ *   2. an explicit single-type import of the FILE      (exact)
+ *   3. the same package, if that type is known         (exact)
+ *   4. an on-demand (wildcard) import package that contains a known type
+ *   5. java.lang, which every compilation unit imports on demand
+ *   6. a globally UNIQUE app type with that simple name (sound: no ambiguity)
+ *
+ * None is compiler-verified, so callers still grade the resulting edge
+ * SOUND_SET. Rules 1, 3, 4 and 6 yield a type the lane really parsed; rules 2
+ * and 5 can yield one it never saw (an imported library class, a JDK class),
+ * which is how a call OUT of the project gets an edge that says so instead of
+ * being reported as a failure. Returns null when none of the six applies: we
+ * never invent a package.
+ */
+function makeResolveType({ types, importsByOwner, wildcardsByOwner, simpleIndex, enclosingChainOf }) {
+  return (ownerFqn, simple) => {
+    if (!simple) return null;
+    const chain = enclosingChainOf(ownerFqn);
+    for (const scope of [ownerFqn, ...chain]) {
+      const guess = `${scope}.${simple}`;
+      if (types.has(guess)) return guess;
+    }
+    const top = chain.length > 0 ? chain[chain.length - 1] : ownerFqn;
+    const imp = importsByOwner.get(top);
+    if (imp && imp.has(simple)) return imp.get(simple);
+    const t = types.get(ownerFqn);
+    if (t && t.pkg) {
+      const guess = `${t.pkg}.${simple}`;
+      if (types.has(guess)) return guess;
+    }
+    for (const pkg of wildcardsByOwner.get(top) ?? []) {
+      const guess = `${pkg}.${simple}`;
+      if (types.has(guess)) return guess;
+    }
+    if (JAVA_LANG.has(simple)) return `java.lang.${simple}`;
+    const uniq = simpleIndex.get(simple);
+    if (uniq && uniq.size === 1) return [...uniq][0];
+    return null;
+  };
+}
+
 export function buildTypeIndex(javaFacts) {
   const types = new Map();
   const typesByFile = new Map();
@@ -467,83 +549,15 @@ export function buildTypeIndex(javaFacts) {
     s.add(fqn); simpleIndex.set(simple, s);
   }
 
-  // THE ENCLOSING TYPES OF A NESTED TYPE, rebuilt from its own record.
-  //
-  // A nested type has no compilation unit of its own: the worker keys every
-  // import and wildcard by the TOP-LEVEL type, because that is where the file's
-  // `import` lines belong, and it stamps the FILE's package on every type it
-  // sees. So `a.b.Outer.Inner` carries `pkg = "a.b"`, and everything after the
-  // package is the nesting — `Outer.Inner`. That is all it takes to rebuild the
-  // scope chain, which is why the worker needs no new record for this.
-  //
-  // Innermost first; the LAST entry is the top-level type, which is the key the
-  // imports are under. EMPTY for a top-level type, so a caller can tell the two
-  // apart without asking again.
-  //
-  // WHAT IT COST TO NOT HAVE THIS: every call inside one of litemall's 76
-  // generated `…Example.GeneratedCriteria` classes looked up `List` under the
-  // key `…Example.GeneratedCriteria`, where there are no imports at all, and
-  // 288 calls came back unresolved that a top-level class in the same file
-  // resolves without trouble.
-  const enclosingChainOf = (fqn) => {
-    const t = types.get(fqn);
-    if (!t) return EMPTY_CHAIN;
-    const pkg = t.pkg ?? '';
-    const nest = pkg ? (fqn.startsWith(`${pkg}.`) ? fqn.slice(pkg.length + 1) : null) : fqn;
-    if (nest == null || !nest.includes('.')) return EMPTY_CHAIN;
-    const segs = nest.split('.');
-    const out = [];
-    for (let i = segs.length - 1; i >= 1; i -= 1) {
-      const outer = segs.slice(0, i).join('.');
-      out.push(pkg ? `${pkg}.${outer}` : outer);
-    }
-    return out;
-  };
-  /** The top-level type a (possibly nested) type belongs to — the imports' key. */
+  const enclosingChainOf = makeEnclosingChainOf(types);
+  /** The top-level type a (possibly nested) type belongs to: the imports' key. */
   const topLevelOf = (fqn) => {
     const chain = enclosingChainOf(fqn);
     return chain.length > 0 ? chain[chain.length - 1] : fqn;
   };
-
-  // Resolve a simple type name seen inside `ownerFqn` to a fully-qualified type,
-  // in the order the LANGUAGE resolves it, which is also decreasing certainty:
-  //   1. a member type in scope — this type's own nested types, then each
-  //      enclosing type's                              (exact)
-  //   2. an explicit single-type import of the FILE    (exact)
-  //   3. the same package, if that type is known       (exact)
-  //   4. an on-demand (wildcard) import package that contains a known type
-  //   5. java.lang, which every compilation unit imports on demand
-  //   6. a globally UNIQUE app type with that simple name (sound: no ambiguity)
-  // None is compiler-verified, so callers still grade the resulting edge
-  // SOUND_SET. Rules 1, 3, 4 and 6 yield a type the lane really parsed; rules 2
-  // and 5 can yield one it never saw (an imported library class, a JDK class),
-  // which is how a call OUT of the project gets an edge that says so instead of
-  // being reported as a failure. Returns null when none of the six applies — we
-  // never invent a package.
-  const resolveType = (ownerFqn, simple) => {
-    if (!simple) return null;
-    const chain = enclosingChainOf(ownerFqn);
-    for (const scope of [ownerFqn, ...chain]) {
-      const guess = `${scope}.${simple}`;
-      if (types.has(guess)) return guess;
-    }
-    const top = chain.length > 0 ? chain[chain.length - 1] : ownerFqn;
-    const imp = importsByOwner.get(top);
-    if (imp && imp.has(simple)) return imp.get(simple);
-    const t = types.get(ownerFqn);
-    if (t && t.pkg) {
-      const guess = `${t.pkg}.${simple}`;
-      if (types.has(guess)) return guess;
-    }
-    for (const pkg of wildcardsByOwner.get(top) ?? []) {
-      const guess = `${pkg}.${simple}`;
-      if (types.has(guess)) return guess;
-    }
-    if (JAVA_LANG.has(simple)) return `java.lang.${simple}`;
-    const uniq = simpleIndex.get(simple);
-    if (uniq && uniq.size === 1) return [...uniq][0];
-    return null;
-  };
+  const resolveType = makeResolveType({
+    types, importsByOwner, wildcardsByOwner, simpleIndex, enclosingChainOf,
+  });
 
   return {
     types, typesByFile, filesByFqn, importsByOwner, wildcardsByOwner, simpleIndex,
