@@ -64,6 +64,33 @@ export const TYPES_OUTSIDE_ROOTS_LISTED = 25;
  *          parseErrors:number, parsedFiles:number}} seed
  * @returns {object}
  */
+/**
+ * WHICH RESOLUTION RULE PRODUCED HOW MANY EDGES, WHICH FAILED HOW OFTEN, AND WHY.
+ *
+ * Without the first split "1568 calls, 8617 unresolved" is a number nobody can
+ * act on: the two halves come from rules with very different reach. The third
+ * map is the half a reader can act on. The rule split names the piece of THIS
+ * ENGINE that failed; the reason names what was MISSING from the run. One of the
+ * four reasons is a thing somebody can fix in a minute (a module that was never
+ * passed as a source root) and the other three are boundaries of what a
+ * parse-only lane can see, and a single total buries the difference.
+ */
+function emptyCallCensus() {
+  return {
+    callsByRule: {
+      'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
+      'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
+      'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
+      'generated-field': 0, 'wildcard-jdk': 0, 'spring-model-attribute': 0,
+    },
+    unresolvedCallsByRule: {
+      'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
+      'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
+    },
+    unresolvedCallsByReason: Object.fromEntries(UNRESOLVED_REASONS.map((r) => [r, 0])),
+  };
+}
+
 export function emptyJavaStats({ generatedSources, parseErrors, parsedFiles }) {
   return {
     endpoints: 0, handles: 0, calls: 0, dispatch: 0, implementsStmt: 0,
@@ -76,26 +103,7 @@ export function emptyJavaStats({ generatedSources, parseErrors, parsedFiles }) {
     // compare them at all (src/core/calibration.mjs, `javaParseErrors`).
     parseErrors,
     parsedFiles,
-    // Which resolution rule produced how many edges, and which failed how often.
-    // Without this split "1568 calls, 8617 unresolved" is a number nobody can act
-    // on: the two halves come from rules with very different reach.
-    callsByRule: {
-      'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
-      'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
-      'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
-      'generated-field': 0, 'wildcard-jdk': 0,
-    },
-    unresolvedCallsByRule: {
-      'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
-      'super-enclosing': 0, 'type-param-unbound': 0, 'inherited-field': 0,
-    },
-    // …AND WHY, which is the half a reader can act on. The rule split above
-    // names the piece of THIS ENGINE that failed; this names what was MISSING
-    // from the run. One of the four is a thing somebody can fix in a minute (a
-    // module that was never passed as a source root) and the other three are
-    // boundaries of what a parse-only lane can see, and a single total buries
-    // the difference.
-    unresolvedCallsByReason: Object.fromEntries(UNRESOLVED_REASONS.map((r) => [r, 0])),
+    ...emptyCallCensus(),
     // The `project-type-outside-roots` reason, NAMED: which package, which
     // simple name, how many call sites. Up to TYPES_OUTSIDE_ROOTS_LISTED of
     // them — "pass --java-src <module>/src/main/java" is only advice if it says
@@ -118,6 +126,11 @@ export function emptyJavaStats({ generatedSources, parseErrors, parsedFiles }) {
     // lands on something with a body (§2). `overapproximated` counts the ones
     // that fell back to the ancestor method itself.
     inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
+    // The calls SPRING makes and no line of source writes: a `@ModelAttribute`
+    // method runs before every handler of its controller. `methods` and `edges`
+    // are what the rule followed; the other three are what it deliberately did
+    // not, counted rather than guessed at (see `placeModelAttributeCalls`).
+    modelAttribute: { methods: 0, edges: 0, onAdvice: 0, onSuperclass: 0, inheritedHandlers: 0 },
     // What a mapping annotation turned out to MEAN (src/adapters/java_bridge.mjs
     // `classifyRouteHolder`): a route this pack serves, a route it CALLS over
     // HTTP, or a route contract an interface declares for somebody else to serve.

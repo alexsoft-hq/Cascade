@@ -24,6 +24,15 @@ combination classifies above the lattice, and a second checks totality: an
 evidence shape the table does not know falls to a conservative `HEURISTIC` with
 a `POLICY_GAP` diagnostic, never to silence.
 
+**A call the FRAMEWORK makes can still be `EXACT`.** Nearly every call edge is a
+candidate set, because resolving one means reading a receiver without a compiler.
+A few are not calls that were resolved at all: Spring runs a controller's
+`@ModelAttribute` method before each of its handlers, and a JPA association whose
+fetch is EAGER is loaded with the row that owns it. Nothing was narrowed there,
+so nothing was promoted; the annotation and the framework's own contract state
+the fact, and the edge states exactly what they state. It is still graded down by
+anything weaker on the way, like every other edge.
+
 A walk is graded by its **weakest link**: a chain that passes through one
 `SOUND_SET` call is `SOUND_SET`, however exact the rest of it was.
 

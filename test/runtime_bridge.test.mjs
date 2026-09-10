@@ -911,7 +911,10 @@ test('the synthetic capture covers every route, which is what makes the relation
   assert.equal(population['endpoint->tables'], 17);
   assert.equal(found.cases.length, 17);
   assert.equal(found.relations['endpoint->tables'].cases, population['endpoint->tables']);
-  assert.equal(found.relations['endpoint->tables'].empty, 8, 'eight routes ran no SQL, and that is what the pack says too');
+  // Two, not eight. Since RM54 the JPA lane follows the eager fetch plan and a
+  // handler reaches its controller's @ModelAttribute methods, so the only routes
+  // this pack answers nothing for are the welcome page and the crash page.
+  assert.equal(found.relations['endpoint->tables'].empty, 2, 'two routes ran no SQL, and that is what the pack says too');
   assert.equal(found.stats.unmatched.endpoint, 0);
   // It is SYNTHETIC and says so in its own first field, because a corpus built
   // from a file whose labels came out of this engine proves nothing about this

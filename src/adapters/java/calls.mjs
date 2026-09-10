@@ -19,15 +19,22 @@
 // statistic is printed. It is handed the fact index, the type index and the one
 // primitive that writes a symbol node, and it writes calls.
 //
-// EVERY EDGE HERE IS SOUND_SET AND NOT ONE IS EXACT: calls are resolved from the
-// parse tree WITHOUT compiler binding or overload resolution, so the target set
-// is a sound over-approximation and never a proof. The rule on each edge says
-// which of the eight it rested on, because they fail in different ways.
+// EVERY EDGE A RULE RESOLVES IS SOUND_SET AND NOT ONE IS EXACT: calls are
+// resolved from the parse tree WITHOUT compiler binding or overload resolution,
+// so the target set is a sound over-approximation and never a proof. The rule on
+// each edge says which of the eight it rested on, because they fail in different
+// ways.
+//
+// The one exception is the call nobody wrote: Spring runs a controller's
+// `@ModelAttribute` methods before each of its handlers, and that edge resolves
+// nothing at all. It is EXACT because the annotation and the framework's own
+// contract state it (`placeModelAttributeCalls`, RM54).
 
 import {
   cmp, extendsChainWithBindings, findDeclaringAncestor, inheritorsOfTypeParam,
   isProjectPackage, looksLikeTypeName, ownerOf, resolveInheritedField,
-  JDK_WILDCARD_PACKAGES, LOMBOK_LOGGERS, LOMBOK_LOG_FIELD, SUPER_CHAIN_LIMIT, UNKNOWN_PLACE,
+  CONTROLLER_ANNOTATIONS, JDK_WILDCARD_PACKAGES, LOMBOK_LOGGERS, LOMBOK_LOG_FIELD,
+  SUPER_CHAIN_LIMIT, UNKNOWN_PLACE,
 } from './types.mjs';
 import { IDENTIFIER_SAMPLE_LIMIT, TYPES_OUTSIDE_ROOTS_LISTED, UNRESOLVED_REASONS } from './stats.mjs';
 
@@ -75,7 +82,11 @@ export const CALL_RULE_BASIS = Object.freeze({
   'generated-field': 'the receiver names no variable the file declares and no field any ancestor declares, but the enclosing type carries a Lombok logging annotation, which GENERATES a `log` field no line of source spells. The edge names the logger type that annotation creates, which is outside this project, so the chain ends here. That is where it really ends at run time too',
   'wildcard-jdk': 'the receiver\'s type is named by an on-demand import of a `java.*`, `javax.*` or `jakarta.*` package and no analyzed type declares it, so the target is that package\'s type: the JDK is a closed world this lane never reads, and the call leaves the project whichever of those packages it is in',
   'inherited-member-call': 'a call in the body of a method this class only INHERITS, instantiated for this class: the ancestor wrote the call site, and the ancestor\'s type parameters were replaced by what this subclass binds them to, so the edge names this subclass\'s collaborator and not every subclass\'s. Same standing (SOUND_SET) as the rule that resolved the call in the ancestor, plus one assumption the compiler would check: that this class really inherits that body rather than an intervening one this lane never parsed',
+  'spring-model-attribute': 'Spring invokes a @ModelAttribute method of the controller before each of its handlers; the framework, not a line of source, makes the call',
 });
+
+/** The annotations that make a class a Spring `@ControllerAdvice`. */
+export const CONTROLLER_ADVICE_ANNOTATIONS = Object.freeze(['ControllerAdvice', 'RestControllerAdvice']);
 
 /**
  * THE TWO THINGS EVERY RULE BELOW GOES THROUGH: one that writes an edge and one
@@ -694,6 +705,99 @@ export function placeCallEdges(ctx, cw) {
   }
 }
 
+
+// ---- the calls the FRAMEWORK makes: @ModelAttribute --------------------------
+//
+// THE HOLE THIS CLOSES (RM54, measured). `GET /owners/{ownerId}/edit` in
+// spring-petclinic answered NO table, and a real agent capture of that request
+// shows it reading four. The owner is loaded by `OwnerController#findOwner`, a
+// `@ModelAttribute("owner")` method Spring runs before every handler of that
+// controller — and no line of source calls it, so no call record could name it
+// and no edge led to it. `PetController` and `VisitController` have the same
+// shape, and 3 of the 10 routes in that capture were dark for this one reason.
+//
+// EXACT, and the only rule here that is. Every other edge in this module is a
+// parse-tree resolution without compiler binding, so the target set is an
+// over-approximation. This one is not resolving anything: the annotation and
+// Spring's own contract say the method runs before each handler of the class,
+// and the edge says exactly that.
+//
+// WHAT IS NOT FOLLOWED, and is counted instead of being guessed: a
+// @ControllerAdvice's model attributes (they run for controllers this rule
+// cannot name from one class), the model attributes a controller INHERITS from a
+// base class, and handlers a controller inherits rather than declares.
+
+/**
+ * The handlers each type DECLARES, from the endpoint facts. Keyed by the type
+ * the mapping was written on, so a handler a subclass only inherits belongs to
+ * the class that declared it, and not to both.
+ */
+function handlersByDeclaringType(endpoints) {
+  const out = new Map();
+  for (const e of endpoints ?? []) {
+    if (!e || !e.handler || !e.handlerType) continue;
+    const name = e.handler.slice(e.handler.lastIndexOf('#') + 1);
+    const set = out.get(e.handlerType) ?? new Set();
+    set.add(name);
+    out.set(e.handlerType, set);
+  }
+  return out;
+}
+
+/** `handler --MAY_CALL--> @ModelAttribute method`, once per pair, for every controller. */
+export function placeModelAttributeCalls(ctx) {
+  const { g, stats, types, superOf, endpoints, ensureSymbol } = ctx;
+  const handlersOf = handlersByDeclaringType(endpoints);
+  const census = stats.modelAttribute;
+  const emitted = new Set();
+  for (const fqn of [...types.keys()].sort(cmp)) {
+    const t = types.get(fqn);
+    const declared = t.modelAttributeMethods ?? [];
+    if (declared.length === 0) continue;
+    const annotations = t.annotations ?? [];
+    if (annotations.some((a) => CONTROLLER_ADVICE_ANNOTATIONS.includes(a))) {
+      census.onAdvice += declared.length;
+      continue;
+    }
+    if (!annotations.some((a) => CONTROLLER_ANNOTATIONS.includes(a))) {
+      // A base class a controller may EXTEND. Spring runs its model attributes
+      // for the subclass's handlers; this rule stays inside one class.
+      census.onSuperclass += declared.length;
+      continue;
+    }
+    census.methods += declared.length;
+    census.inheritedHandlers += inheritedHandlerCount(fqn, superOf, handlersOf);
+    for (const handler of [...(handlersOf.get(fqn) ?? new Set())].sort(cmp)) {
+      for (const attribute of declared) {
+        if (handler === attribute) continue; // a handler that is its own model attribute calls nothing
+        const key = `${fqn}#${handler} ${attribute}`;
+        if (emitted.has(key)) continue;
+        emitted.add(key);
+        g.addEdge({
+          from: ensureSymbol(`${fqn}#${handler}`), to: ensureSymbol(`${fqn}#${attribute}`),
+          type: 'MAY_CALL', grade: 'EXACT',
+          evidence: { rule: 'spring-model-attribute', basis: CALL_RULE_BASIS['spring-model-attribute'], attribute },
+        });
+        stats.calls += 1;
+        stats.callsByRule['spring-model-attribute'] += 1;
+        census.edges += 1;
+      }
+    }
+  }
+}
+
+/** How many handlers this controller only INHERITS, which this rule does not reach. */
+function inheritedHandlerCount(fqn, superOf, handlersOf) {
+  let cur = superOf.get(fqn) ?? null;
+  let hops = 0;
+  let n = 0;
+  while (cur && hops < SUPER_CHAIN_LIMIT) {
+    n += (handlersOf.get(cur) ?? new Set()).size;
+    cur = superOf.get(cur) ?? null;
+    hops += 1;
+  }
+  return n;
+}
 
 /**
  * The actionable reason, NAMED. Ordered by how much of the gap each one is, then

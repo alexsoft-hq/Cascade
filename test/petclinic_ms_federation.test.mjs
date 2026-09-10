@@ -194,10 +194,15 @@ test('petclinic-ms split five ways: the answer crosses from one pack into the ne
   // @GetMapping("owners/{ownerId}") under @RequestMapping("/api/gateway").
   const flow = host.callTool('flow', { project: 'api-gateway', endpoint: 'GET /api/gateway/owners/{ownerId}' });
   assertContract(flow);
+  // `pets` and `types` ride in with `owners`: customers-service's `Owner.pets` is
+  // `fetch = EAGER` and `Pet.type` is a @ManyToOne, so one query over there reads
+  // three tables (RM54's fetch plan). Each row still names the pack it is in.
   assert.deepEqual(flow.answer.tables.map((x) => [x.table, x.project, x.grade, x.viaHttp === true]), [
     ['owners', 'customers-service', 'SOUND_SET', true],
+    ['pets', 'customers-service', 'SOUND_SET', true],
+    ['types', 'customers-service', 'SOUND_SET', true],
     ['visits', 'visits-service', 'SOUND_SET', true],
-  ], 'the two tables live in two OTHER packs, and each row names the one it is in');
+  ], 'the tables live in two OTHER packs, and each row names the one it is in');
   // The handler on the far side of each crossing, at the hops the crossing puts
   // it at: the client method is hop 1 here, the route it calls is hop 2, and the
   // controller that answers it is hop 3 over there.
@@ -258,11 +263,16 @@ test('petclinic-ms split five ways: the answer crosses from one pack into the ne
   // customers-service still names the screens that show it.
   const screens = host.callTool('screen_impact', { project: 'customers-service', column: 'owners.first_name' });
   assertContract(screens);
+  // Five, not three: the two pet screens read an owner column as well, because
+  // `Pet.owner` is a @ManyToOne and a @ManyToOne is eager by the JPA default, so
+  // loading a pet loads the owner row with it (RM54's fetch plan).
   assert.deepEqual(screens.answer.screens.map((s) => [s.screen, s.project, s.grade, s.endpoints]), [
     ['/owners', 'api-gateway', 'SOUND_SET', ['GET /owners']],
     ['/owners/:ownerId/edit', 'api-gateway', 'SOUND_SET', ['POST /owners', 'PUT /owners/{ownerId}']],
+    ['/owners/:ownerId/new-pet', 'api-gateway', 'SOUND_SET', ['GET /owners/*/pets/{petId}', 'PUT /owners/*/pets/{petId}']],
+    ['/owners/:ownerId/pets/:petId', 'api-gateway', 'SOUND_SET', ['GET /owners/*/pets/{petId}', 'PUT /owners/*/pets/{petId}']],
     ['/owners/new', 'api-gateway', 'SOUND_SET', ['POST /owners', 'PUT /owners/{ownerId}']],
-  ], 'customers-service has no screen of its own, and these three are the gateway\'s');
+  ], 'customers-service has no screen of its own, and these five are the gateway\'s');
   assert.deepEqual(screens.basis.siblings.map((s) => s.project), ['api-gateway', 'genai-service']);
 
   // ---- 4. the project that serves it is not registered -------------------
@@ -270,8 +280,10 @@ test('petclinic-ms split five ways: the answer crosses from one pack into the ne
   const partial = createProjectHost({ registry: withoutVisits, loadProject, log: () => {} });
   const cut = partial.callTool('flow', { project: 'api-gateway', endpoint: 'GET /api/gateway/owners/{ownerId}' });
   assertContract(cut);
-  assert.deepEqual(cut.answer.tables.map((x) => [x.table, x.project]), [['owners', 'customers-service']],
-    'customers-service is still crossed; visits-service is not there to cross into');
+  assert.deepEqual(cut.answer.tables.map((x) => [x.table, x.project]),
+    [['owners', 'customers-service'], ['pets', 'customers-service'], ['types', 'customers-service']],
+    'customers-service is still crossed, with the tables its eager fetch plan brings; '
+    + 'visits-service is not there to cross into');
   assert.deepEqual(cut.answer.federation.unmatched.map((u) => [u.route.method, u.route.path, u.checked, u.noIndex]),
     [['GET', '/pets/visits', 3, 0]]);
   const said = cut.limits.filter((l) => l.scope === 'federation');

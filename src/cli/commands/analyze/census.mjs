@@ -208,6 +208,14 @@ export function sayJavaLane(jstats) {
   const im = jstats.inheritedMembers ?? { synthesized: 0, calls: 0 };
   process.stderr.write(`Java lane: ${jstats.callsByRule['interface-dispatch-inherited'] ?? 0} dispatch edge(s) to a method the implementor only INHERITS: `
     + `${im.synthesized} member(s) instantiated for their concrete class, ${im.calls} call(s) carried into them\n`);
+  // The calls SPRING makes and no line of source writes. Said out loud with what
+  // the rule deliberately did NOT follow beside it, so a reader can tell "there
+  // are none here" from "there are some and this lane left them alone".
+  const ma = jstats.modelAttribute ?? { methods: 0, edges: 0, onAdvice: 0, onSuperclass: 0, inheritedHandlers: 0 };
+  if (ma.methods + ma.onAdvice + ma.onSuperclass > 0) {
+    process.stderr.write(`Java lane: ${ma.methods} @ModelAttribute method(s) on a controller, ${ma.edges} handler edge(s) drawn; `
+      + `${ma.onAdvice} on a @ControllerAdvice, ${ma.onSuperclass} on a base class and ${ma.inheritedHandlers} inherited handler(s) NOT followed\n`);
+  }
   if (jstats.duplicateFqns.count > 0) {
     // Not a warning: a multi-module repo declaring one FQN twice is normal
     // (jeecg-boot's local-api / cloud-api pair). Said out loud so nobody
@@ -227,6 +235,14 @@ export function sayJpaLane(jpaStats) {
     + `${jpaStats.repositories} repositories, ${jpaStats.statements} statements (${byType}), `
     + `${jpaStats.joins} association join(s), ${jpaStats.unresolvedStatements} statement(s) with an unresolved part, `
     + `naming strategy ${jpaStats.namingStrategy} (${jpaStats.namingStrategyDeclared ? 'declared' : 'ASSUMED: derived names are HEURISTIC'})\n`);
+  // WHAT THE FETCH PLAN LEFT OUT. A lazy association a page touches after the
+  // query has run is a real read, and it happens where this lane cannot see it.
+  // The number says how much of the row is behind that door.
+  if (jpaStats.lazyAssociationsNotFollowed > 0) {
+    process.stderr.write(`JPA lane: ${jpaStats.lazyAssociationsNotFollowed} lazy association(s) were not followed, `
+      + 'so a page that touches one after the query has run makes a second query this lane does not show. '
+      + 'The statements that skipped one say so in their own limits\n');
+  }
   for (const u of jpaStats.unresolved.slice(0, 10)) {
     process.stderr.write(`  [warn] JPA_UNRESOLVED ${u.statement ?? '(mapping)'}: ${u.reason} (${u.detail})\n`);
   }

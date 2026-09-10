@@ -94,7 +94,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/9";
+    static final String VERSION = "javafacts/10";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -455,6 +455,12 @@ public class JavaFacts {
             typeRec.put("declaredMethods", declaredMethodsOf(ct));
             // …and where each of them is declared, aligned index-for-index.
             typeRec.put("declaredMethodLines", declaredMethodLinesOf(ct));
+            // The methods this type declares that carry `@ModelAttribute`
+            // (javafacts/10). Spring runs them before each handler of the class, so
+            // nothing in the source calls them and no call record can name them.
+            // EVIDENCE ONLY: which of these types is a controller, and which of its
+            // methods are handlers, is decided in src/adapters/java/calls.mjs.
+            typeRec.put("modelAttributeMethods", modelAttributeMethodsOf(ct));
             typeRec.put("file", rel);
             sink.types++;
             sink.add("2type" + SEP + fqn, typeRec);
@@ -740,6 +746,14 @@ public class JavaFacts {
             rec.put("embeddable", embeddable);
             rec.put("superclass", ext);
             rec.put("attributes", attrs);
+            // The named fetch plans this entity DECLARES (javafacts/10):
+            // `@NamedEntityGraph(name = "Owner.pets", attributeNodes = …)`, which a
+            // repository method then names with `@EntityGraph(value = "Owner.pets")`.
+            // Recorded here because the name is declared on the ENTITY and used in
+            // another file; the bridge is the only place that holds both.
+            // `subgraphs` are not read — a nested plan is a fetch this lane does not
+            // follow, and the bridge says so rather than half-following it.
+            rec.put("namedEntityGraphs", namedEntityGraphsOf(typeAnns));
             rec.put("line", lineOf(ct));
             rec.put("file", rel);
             sink.entities++;
@@ -772,6 +786,16 @@ public class JavaFacts {
             at.put("transient", names.contains("Transient"));
             at.put("relation", relation);
             at.put("mappedBy", (rel != null) ? firstString(annAttr(rel, "mappedBy")) : null);
+            // WHEN THE ROW ON THE OTHER SIDE IS LOADED (javafacts/10). Written
+            // down or not written down, and nothing more: `fetch = FetchType.EAGER`
+            // is "EAGER", an annotation that leaves it out is null. What null MEANS
+            // is the JPA specification's default and it depends on the relation
+            // kind, so src/adapters/jpa_bridge.mjs decides it, not this file.
+            at.put("fetch", (rel != null) ? fetchTypeOf(annAttr(rel, "fetch")) : null);
+            // `targetEntity = Pet.class`, when the mapping spells the other side out
+            // instead of leaving it to the field's type. `typeArgSimple` already
+            // carries the generic argument, so this is the OTHER way of writing it.
+            at.put("targetEntity", (rel != null) ? classLiteralSimpleName(annAttr(rel, "targetEntity")) : null);
             at.put("cascade", (rel != null) ? memberNames(annAttr(rel, "cascade")) : new ArrayList<String>());
             at.put("joinColumn", (join != null) ? firstString(annAttr(join, "name")) : null);
             if (joinTable != null) {
@@ -839,6 +863,12 @@ public class JavaFacts {
                 mr.put("params", params);
                 mr.put("query", query);
                 mr.put("modifying", annotationNames(ma).contains("Modifying"));
+                // The fetch plan THIS METHOD asks for (javafacts/10):
+                // `@EntityGraph(attributePaths = {"pets"})` names the paths outright,
+                // `@EntityGraph("Owner.pets")` names a plan the ENTITY declares. Both
+                // are recorded as written; resolving the name against the entity's
+                // @NamedEntityGraph is the bridge's job, because only it holds both files.
+                mr.put("entityGraph", entityGraphOf(ma));
                 methods.add(mr);
             }
 
@@ -2324,6 +2354,120 @@ public class JavaFacts {
         {"OneToOne", "oneToOne"},
         {"ManyToMany", "manyToMany"},
     };
+
+    /**
+     * The `fetch =` attribute of a relation annotation, as one of JPA's two
+     * FetchType constants. `FetchType.EAGER`, a static-imported `EAGER` and
+     * `value = FetchType.EAGER` all read the same; anything else (an attribute
+     * that is not written, a constant this file cannot resolve) is null, which
+     * means "not written down" and leaves the default to the bridge.
+     */
+    static String fetchTypeOf(ExpressionTree e) {
+        String name = firstMemberName(e);
+        if ("EAGER".equals(name) || "LAZY".equals(name)) return name;
+        return null;
+    }
+
+    /** The simple type name of a class literal (`Pet.class` -> "Pet"), or null. */
+    static String classLiteralSimpleName(ExpressionTree e) {
+        if (!(e instanceof MemberSelectTree)) return null;
+        MemberSelectTree ms = (MemberSelectTree) e;
+        if (!"class".equals(ms.getIdentifier().toString())) return null;
+        return typeSimpleName(ms.getExpression());
+    }
+
+    /**
+     * `@NamedEntityGraph(name = …, attributeNodes = {@NamedAttributeNode("pets")})`
+     * on an entity, and every one inside a `@NamedEntityGraphs`. Each comes back as
+     * {name, attributePaths}. A node's `subgraph =` is NOT read: a nested plan is a
+     * fetch this lane does not follow, and half-following it would be worse than
+     * saying so.
+     */
+    static List<Object> namedEntityGraphsOf(List<AnnotationTree> typeAnns) {
+        List<Object> out = new ArrayList<>();
+        for (AnnotationTree a : typeAnns) {
+            String simple = typeSimpleName(a.getAnnotationType());
+            if ("NamedEntityGraph".equals(simple)) addNamedEntityGraph(a, out);
+            else if ("NamedEntityGraphs".equals(simple)) {
+                for (AnnotationTree nested : nestedAnnotations(annAttr(a, "value"))) addNamedEntityGraph(nested, out);
+            }
+        }
+        return out;
+    }
+
+    static void addNamedEntityGraph(AnnotationTree a, List<Object> out) {
+        Map<String, Object> g = new LinkedHashMap<>();
+        g.put("name", firstString(annAttr(a, "name")));
+        List<String> paths = new ArrayList<>();
+        for (AnnotationTree node : nestedAnnotations(annAttr(a, "attributeNodes"))) {
+            String v = firstString(annAttr(node, "value"));
+            if (v == null) v = firstString(annAttr(node, "name"));
+            if (v != null) paths.add(v);
+        }
+        g.put("attributePaths", paths);
+        out.add(g);
+    }
+
+    /**
+     * `@EntityGraph` on a repository method: the paths it names outright
+     * (`attributePaths = {"pets"}`) or the name of a plan the entity declares
+     * (`value = "Owner.pets"`). Null when the method carries no @EntityGraph.
+     */
+    static Map<String, Object> entityGraphOf(List<AnnotationTree> ma) {
+        AnnotationTree a = annNamed(ma, "EntityGraph");
+        if (a == null) return null;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", firstString(annAttr(a, "value")));
+        out.put("attributePaths", stringValues(annAttr(a, "attributePaths")));
+        return out;
+    }
+
+    /** Every nested annotation of an expression that may be one annotation or an array of them. */
+    static List<AnnotationTree> nestedAnnotations(ExpressionTree e) {
+        List<AnnotationTree> out = new ArrayList<>();
+        if (e instanceof AnnotationTree) out.add((AnnotationTree) e);
+        else if (e instanceof NewArrayTree) {
+            List<? extends ExpressionTree> inits = ((NewArrayTree) e).getInitializers();
+            if (inits != null) for (ExpressionTree it : inits) {
+                if (it instanceof AnnotationTree) out.add((AnnotationTree) it);
+            }
+        }
+        return out;
+    }
+
+    /** Every string literal of an expression that may be one literal or an array of them. */
+    static List<String> stringValues(ExpressionTree e) {
+        List<String> out = new ArrayList<>();
+        if (e instanceof LiteralTree) {
+            String s = firstString(e);
+            if (s != null) out.add(s);
+        } else if (e instanceof NewArrayTree) {
+            List<? extends ExpressionTree> inits = ((NewArrayTree) e).getInitializers();
+            if (inits != null) for (ExpressionTree it : inits) {
+                String s = firstString(it);
+                if (s != null) out.add(s);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The methods a type declares that carry `@ModelAttribute`. A PARAMETER may
+     * carry the same annotation (`handler(@ModelAttribute Owner owner)`) and that
+     * is a different thing entirely — a binding, not a method Spring runs — so only
+     * the method's own modifiers are read. Declaration order, first spelling wins.
+     */
+    static List<String> modelAttributeMethodsOf(ClassTree ct) {
+        List<String> out = new ArrayList<>();
+        for (Tree member : ct.getMembers()) {
+            if (!(member instanceof MethodTree)) continue;
+            MethodTree m = (MethodTree) member;
+            if (!annotationNames(m.getModifiers().getAnnotations()).contains("ModelAttribute")) continue;
+            String name = m.getName().toString();
+            if (!out.contains(name)) out.add(name);
+        }
+        return out;
+    }
 
     /** Spring Data base repository interfaces this worker recognises by simple name. */
     static final String[] REPOSITORY_BASES = {

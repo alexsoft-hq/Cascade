@@ -12,6 +12,7 @@ import {
   classifyRouteHolder,
   JAVA_LANG_TYPES,
   LOMBOK_LOGGERS,
+  CALL_RULE_BASIS,
 } from '../src/adapters/java_bridge.mjs';
 import { chainWalk } from '../src/core/chain.mjs';
 import { handlersOf, primaryHandlerOf } from '../src/core/walks.mjs';
@@ -402,7 +403,7 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
       'super-enclosing': 0, 'type-param-binding': 0, 'interface-dispatch': 0,
       'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
-      'generated-field': 0, 'wildcard-jdk': 0,
+      'generated-field': 0, 'wildcard-jdk': 0, 'spring-model-attribute': 0,
     },
     unresolvedCallsByRule: {
       'field-receiver': 0, 'this-field': 0, 'unqualified-enclosing': 0,
@@ -417,6 +418,9 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
     identifierReceivers: { total: 0, inheritedField: 0, generatedField: 0, staticReceiver: 0, unresolved: 0 },
     unresolvedIdentifiers: [],
     inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
+    // The calls Spring makes and no line of source writes: nothing here carries
+    // @ModelAttribute, so the rule followed nothing and skipped nothing.
+    modelAttribute: { methods: 0, edges: 0, onAdvice: 0, onSuperclass: 0, inheritedHandlers: 0 },
     routeContracts: 0, contractOnlyRoutes: 0,
     httpCalls: 0, httpCallsResolved: 0, httpCallsUnresolved: 0,
     // The two producers of the edge, and the imperative calls that produced
@@ -554,7 +558,7 @@ test('every MAY_CALL edge names the rule that produced it', () => {
     'field-receiver': 1, 'this-field': 1, 'unqualified-enclosing': 1, 'interface-dispatch': 1,
     'super-enclosing': 0, 'type-param-binding': 0,
     'inherited-field': 0, 'interface-dispatch-inherited': 0, 'inherited-member-call': 0,
-    'generated-field': 0, 'wildcard-jdk': 0,
+    'generated-field': 0, 'wildcard-jdk': 0, 'spring-model-attribute': 0,
   });
   // The `this.field` spelling resolves through the SAME field, so it must reach
   // the same target as the bare one — only the recorded rule differs.
@@ -1834,4 +1838,130 @@ test('an imperative call whose VERB the worker could not read is matched on the 
   assert.equal(chainWalk(g, {
     start: symbolId('com.example.Client#fetch'), mode: 'conservative', edgeTypes: FLOW_EDGE_TYPES,
   }).walked, 0, 'a walk that only trusts checked links does not cross it');
+});
+
+// ---------------------------------------------------------------------------
+// the calls the FRAMEWORK makes: @ModelAttribute (RM54)
+//
+// Spring runs a controller's `@ModelAttribute` methods before every handler of
+// that controller. No line of source calls them, so until this rule nothing led
+// to them: on spring-petclinic, `GET /owners/{ownerId}/edit` answered no table
+// while a real agent capture of that request read four.
+// ---------------------------------------------------------------------------
+
+/** A controller with model-attribute methods, its handlers, and what they call. */
+function controllerWithModelAttributes(extra = {}) {
+  return [
+    typeRec('com.example.OwnerController', {
+      file: 'com/example/OwnerController.java',
+      annotations: extra.annotations ?? ['Controller'],
+      declaredMethods: ['findOwner/1', 'edit/0', 'save/1'],
+      declaredMethodLines: [10, 20, 30],
+      modelAttributeMethods: extra.modelAttributeMethods ?? ['findOwner'],
+    }),
+    {
+      kind: 'endpoint', httpMethod: 'GET', path: '/owners/{ownerId}/edit',
+      handler: 'com.example.OwnerController#edit', handlerType: 'com.example.OwnerController',
+      line: 20, file: 'com/example/OwnerController.java',
+    },
+    {
+      kind: 'endpoint', httpMethod: 'POST', path: '/owners/{ownerId}/edit',
+      handler: 'com.example.OwnerController#save', handlerType: 'com.example.OwnerController',
+      line: 30, file: 'com/example/OwnerController.java',
+    },
+  ];
+}
+
+test('a @ModelAttribute method is called by EVERY handler of its controller, and the edge is EXACT', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, controllerWithModelAttributes(), { packagePrefixes: ['com.example'] });
+  const edges = g.edges.filter((e) => e.type === 'MAY_CALL' && e.evidence?.rule === 'spring-model-attribute');
+  assert.deepEqual(edges.map((e) => `${e.from} -> ${e.to}`).sort(), [
+    `${symbolId('com.example.OwnerController#edit')} -> ${symbolId('com.example.OwnerController#findOwner')}`,
+    `${symbolId('com.example.OwnerController#save')} -> ${symbolId('com.example.OwnerController#findOwner')}`,
+  ]);
+  // EXACT, and the only rule in this module that is: nothing was resolved here.
+  // Spring's own contract says the method runs before each handler.
+  assert.deepEqual([...new Set(edges.map((e) => e.grade))], ['EXACT']);
+  assert.equal(edges[0].evidence.basis, CALL_RULE_BASIS['spring-model-attribute']);
+  assert.equal(edges[0].evidence.attribute, 'findOwner');
+  assert.equal(stats.callsByRule['spring-model-attribute'], 2);
+  assert.deepEqual(stats.modelAttribute, {
+    methods: 1, edges: 2, onAdvice: 0, onSuperclass: 0, inheritedHandlers: 0,
+  });
+});
+
+test('the same facts in the other order place the same @ModelAttribute edges, once each', () => {
+  const facts = controllerWithModelAttributes({ modelAttributeMethods: ['findOwner', 'clock'] });
+  const a = new Graph();
+  addJavaFacts(a, facts, { packagePrefixes: ['com.example'] });
+  const b = new Graph();
+  addJavaFacts(b, [facts[2], facts[0], facts[1]], { packagePrefixes: ['com.example'] });
+  const keys = (g) => g.edges.filter((e) => e.evidence?.rule === 'spring-model-attribute')
+    .map((e) => `${e.from}|${e.to}`).sort();
+  assert.equal(keys(a).length, 4, 'two handlers, two model attributes');
+  assert.equal(new Set(keys(a)).size, 4, 'and not one edge twice');
+  assert.deepEqual(keys(a), keys(b));
+});
+
+test('a @ControllerAdvice model attribute is NOT followed, and is counted instead', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    ...controllerWithModelAttributes({ modelAttributeMethods: [] }),
+    typeRec('com.example.GlobalAdvice', {
+      file: 'com/example/GlobalAdvice.java', annotations: ['ControllerAdvice'],
+      declaredMethods: ['currentUser/0'], declaredMethodLines: [5],
+      modelAttributeMethods: ['currentUser'],
+    }),
+  ], { packagePrefixes: ['com.example'] });
+  assert.deepEqual(g.edges.filter((e) => e.evidence?.rule === 'spring-model-attribute'), [],
+    'which controllers an advice runs for is not a fact about one class');
+  assert.equal(stats.modelAttribute.onAdvice, 1);
+  assert.equal(stats.modelAttribute.edges, 0);
+});
+
+test('a model attribute a controller INHERITS is not followed, and neither is an inherited handler', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    // The base declares the model attribute AND a handler; the subclass declares
+    // neither. Spring runs both for the subclass, and this rule stays inside one
+    // class rather than guessing at the chain.
+    typeRec('com.example.BaseController', {
+      file: 'com/example/BaseController.java', annotations: [],
+      declaredMethods: ['common/0', 'list/0'], declaredMethodLines: [4, 8],
+      modelAttributeMethods: ['common'],
+    }),
+    {
+      kind: 'endpoint', httpMethod: 'GET', path: '/base/list',
+      handler: 'com.example.BaseController#list', handlerType: 'com.example.BaseController',
+      line: 8, file: 'com/example/BaseController.java',
+    },
+    typeRec('com.example.ChildController', {
+      file: 'com/example/ChildController.java', annotations: ['Controller'], extends: 'BaseController',
+      declaredMethods: ['own/0'], declaredMethodLines: [12],
+      modelAttributeMethods: ['pageSize'],
+    }),
+    {
+      kind: 'endpoint', httpMethod: 'GET', path: '/child/own',
+      handler: 'com.example.ChildController#own', handlerType: 'com.example.ChildController',
+      line: 12, file: 'com/example/ChildController.java',
+    },
+  ], { packagePrefixes: ['com.example'] });
+  const edges = g.edges.filter((e) => e.evidence?.rule === 'spring-model-attribute');
+  assert.deepEqual(edges.map((e) => `${e.from} -> ${e.to}`), [
+    `${symbolId('com.example.ChildController#own')} -> ${symbolId('com.example.ChildController#pageSize')}`,
+  ], 'only the handler and the model attribute the SAME class declares');
+  assert.equal(stats.modelAttribute.onSuperclass, 1, 'the base class\'s own model attribute');
+  assert.equal(stats.modelAttribute.inheritedHandlers, 1, 'and the handler the child only inherits');
+});
+
+test('a class that is not a controller at all gets no @ModelAttribute edge', () => {
+  const g = new Graph();
+  const stats = addJavaFacts(g, [
+    typeRec('com.example.PlainBean', {
+      declaredMethods: ['thing/0'], declaredMethodLines: [3], modelAttributeMethods: ['thing'],
+    }),
+  ], { packagePrefixes: ['com.example'] });
+  assert.deepEqual(g.edges.filter((e) => e.evidence?.rule === 'spring-model-attribute'), []);
+  assert.equal(stats.modelAttribute.onSuperclass, 1);
 });

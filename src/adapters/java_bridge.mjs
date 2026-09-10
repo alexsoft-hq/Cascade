@@ -66,7 +66,8 @@ import {
 } from './java/routes.mjs';
 import {
   makeEmitter, makeGeneratedFields, makeInheritance, makeInheritorsFor, makeWildcardPlacer,
-  placeCallEdges, reportTypesOutsideRoots, runDispatchToFixpoint, CALL_RULES, CALL_RULE_BASIS,
+  placeCallEdges, placeModelAttributeCalls, reportTypesOutsideRoots, runDispatchToFixpoint,
+  CALL_RULES, CALL_RULE_BASIS,
 } from './java/calls.mjs';
 import {
   bindStatements, mapperOwnersOf, markTransactions, registerMethodSymbols,
@@ -187,7 +188,8 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
  *        the same failure as a call it could not resolve).
  *        generatedSources: the profile's declaration of what machine-written
  *        code looks like in THIS project — symbols of a matching type get
- *        `generated:true`. Undeclared classifies nothing.
+ *        `generated:true`. Undeclared classifies NOTHING (SPEC §6.2): the engine
+ *        never decides on its own that somebody's code is machine-written.
  *        gatewayRoutes: the profile's declared prefix map, applied to an
  *        IMPERATIVE HTTP call's path the way the web bridge applies it to a
  *        frontend call, so a service that calls another through a gateway
@@ -202,9 +204,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
   if (!(g instanceof Graph)) throw new JavaBridgeError('g must be a Graph');
   if (!Array.isArray(javaFacts)) throw new JavaBridgeError('javaFacts must be an array');
   const packagePrefixes = Array.isArray(opts.packagePrefixes) ? opts.packagePrefixes.slice().sort() : [];
-  // The profile's generated-source declaration (SPEC §6.2). Absent = nothing is
-  // classified: the engine never decides on its own that somebody's code is
-  // machine-written.
+  // `generatedSources` absent means NOTHING is classified (SPEC §6.2).
   const generatedSources = opts.generatedSources && typeof opts.generatedSources === 'object'
     ? opts.generatedSources : { annotations: [], pathGlobs: [] };
   const gatewayRoutes = opts.gatewayRoutes && typeof opts.gatewayRoutes === 'object' ? opts.gatewayRoutes : {};
@@ -253,6 +253,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
   Object.assign(cw, makeWildcardPlacer(ctx));
   Object.assign(cw, makeInheritance(ctx, cw));
   placeCallEdges(ctx, cw);
+  placeModelAttributeCalls(ctx); // …and the call the FRAMEWORK makes, which no line of source writes
   reportTypesOutsideRoots(ctx, cw);
   runDispatchToFixpoint(ctx, cw);
 

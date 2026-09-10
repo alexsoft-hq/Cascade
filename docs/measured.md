@@ -51,8 +51,8 @@ suite.
 | [jeequan/jeepay](https://github.com/jeequan/jeepay) | `ba371119` | 126 / 134 | 22 / 23 | 302 / 314 | 0 / 0 | 0 / 5 | 3554 |
 | [xuxueli/xxl-job](https://github.com/xuxueli/xxl-job) | `e74c784f` | 31 / 42 | 7 / 8 | 70 / 71 | 24 / 31 | 6 / 11 | 528 |
 | [mybatis/jpetstore-6](https://github.com/mybatis/jpetstore-6) | `ebb36b39` | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 | 243 |
-| [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 9 / 17 | 4 / 7 | 18 / 24 | 12 / 13 | 3 / 8 | 83 |
-| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 5 / 7 | 20 / 24 | 14 / 14 | 8 / 9 | 54 |
+| [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 | 196 |
+| [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 | 99 |
 
 The last column is the sixth, and it is guarded the other way up. It adds up,
 over every endpoint, how many distinct columns that one endpoint reaches, and a
@@ -196,11 +196,21 @@ JavaScript, and every screen it has is a JSP file a `@Controller` named.
 | What | The number |
 |---|---|
 | census | 17 endpoints, 6 statements, 7 tables, 24 columns |
-| reach | 9 of 17 endpoints reach a statement, 4 tables, 18 columns |
+| reach | 15 of 17 endpoints reach a statement, 7 tables, 24 columns |
 | pages | 12 Thymeleaf templates, 8 of them a controller names |
 
 It has no mapper XML at all: every statement in it is one the JPA bridge derived
 from an entity mapping, a derived query name or a `@Query`.
+
+It is also the project a real OpenTelemetry agent capture is kept for
+(`test/fixtures/otel/petclinic-agent.log`, ten routes), and that recording is
+what moved these numbers. Of the ten routes it observed, six read tables the pack
+did not name, for two reasons: the JPA lane stopped at the entity the repository
+method names instead of following the eager associations that come back with it,
+and nothing in the graph led to a `@ModelAttribute` method, which is where two of
+those routes load their owner. Both are read now, and all ten routes score. The
+two routes the pack still answers nothing for are the welcome page and the crash
+page, which run no SQL.
 
 ## The incremental oracle
 

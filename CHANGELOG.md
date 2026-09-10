@@ -10,6 +10,54 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Fixed
+
+- **A JPA query reads more tables than it names, and the lane now follows them.**
+  RM53's real OpenTelemetry capture of spring-petclinic disagreed with the pack on
+  six of the ten routes it observed. `OwnerRepository.findByLastNameStartingWith`
+  was said to read `owners`; the run read `owners, pets, types, visits`, because
+  `Owner.pets` is `@OneToMany(fetch = EAGER)`, `Pet.type` is a `@ManyToOne` (eager
+  by the JPA default) and `Pet.visits` is eager too. `VetRepository.findAll` was
+  said to read `vets`; the run read `vets, vet_specialties, specialties` through a
+  `@ManyToMany(fetch = EAGER)` and its `@JoinTable`. Every statement whose result
+  is an entity now carries that closure: each association whose effective fetch is
+  EAGER, recursively, cycle-safe, capped at eight hops, with the target's table,
+  its columns and any join table it crossed. The query's own plan overrides the
+  mapping, so a `JOIN FETCH` and every `@EntityGraph` attribute path (written out,
+  or named through the entity's `@NamedEntityGraph`) is followed whatever
+  `fetch =` says. A LAZY association stays OUT and is counted, because a
+  collection a page touches after the query has run is a real read this lane
+  cannot see: the statement carries one sentence saying so and the lane reports
+  the total. `delete` now follows `cascade = ALL/REMOVE` the way `save` already
+  followed `ALL/PERSIST/MERGE`. Every one of those edges names its rule
+  (`jpa-eager-fetch` with `explicit`/`default`, `jpql-join-fetch`,
+  `jpa-entity-graph`, `jpa-cascade`) and the attribute path it came in on, so a
+  table nobody expected can be traced back to the field that brought it.
+- **A `@ModelAttribute` method is reachable from the handlers Spring runs it for.**
+  `GET /owners/{ownerId}/edit` and `GET /owners/{ownerId}/pets/new` answered no
+  table at all, because the owner is loaded by `OwnerController#findOwner`, a
+  `@ModelAttribute("owner")` method the framework runs before every handler of
+  that controller, and no line of source calls it, so no edge led to it. There is
+  now a `MAY_CALL` from every handler of a `@Controller`/`@RestController` to
+  every `@ModelAttribute` method the same class declares, rule
+  `spring-model-attribute`, graded EXACT because nothing was resolved: the
+  framework's own contract says the method runs. A `@ControllerAdvice`'s model
+  attributes, ones a controller inherits, and handlers a controller inherits are
+  NOT followed and are counted instead. A `@ModelAttribute` on a parameter is a
+  binding, not a method Spring runs, and is never read as one.
+- Measured, on the corpus: spring-petclinic goes from 9 of 17 endpoints reaching a
+  statement to 15, from 4 tables to 7 and from 18 columns to 24; petclinic-ms from
+  5 tables to 7 and 20 columns to 24. All six recall misses in the real capture
+  close. The nine other pinned repositories do not move by one number.
+
+### Changed
+
+- The Java worker is `javafacts/10`: an entity attribute records `fetch` and
+  `targetEntity`, an entity records the `@NamedEntityGraph` plans it declares, a
+  repository method records its `@EntityGraph`, and a type records the methods it
+  declares that carry `@ModelAttribute`. All of it is evidence as written, joined
+  and decided in the bridges.
+
 ## [0.6.0] - 2026-09-10
 
 The release where the running program does the certifying and the viewer

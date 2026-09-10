@@ -203,9 +203,14 @@ test('petclinic-ms: the imperative HTTP calls draw the cross-service edges', { t
     },
   };
   const flow = callTool('flow', { endpoint: 'GET /api/gateway/owners/{ownerId}' }, ctx).answer;
+  // `pets` and `types` come with `owners`, and not from a second call: since
+  // RM54 the JPA lane follows the eager fetch plan, and customers-service's
+  // `Owner.pets` is `fetch = EAGER` with `Pet.type` a @ManyToOne, so the query
+  // behind that route reads three tables while naming one.
   assert.deepEqual(
     flow.tables.map((x) => [x.table, x.grade, x.viaHttp === true]).sort(),
-    [['owners', 'SOUND_SET', true], ['visits', 'SOUND_SET', true]],
+    [['owners', 'SOUND_SET', true], ['pets', 'SOUND_SET', true],
+      ['types', 'SOUND_SET', true], ['visits', 'SOUND_SET', true]],
     'the gateway route reaches customers-service and visits-service data over the HTTP hop',
   );
   // …and the two clients are on the path, one hop from the controller.
@@ -288,7 +293,10 @@ test('petclinic-ms: the imperative HTTP calls draw the cross-service edges', { t
   // The whole sentence, end to end: a screen in the gateway to a column a
   // service owns, with the HTTP hop in the middle.
   const screenFlow = callTool('flow', { screen: '/owners' }, ctx).answer;
-  assert.deepEqual(screenFlow.tables.map((x) => [x.table, x.grade, x.viaHttp === true]), [['owners', 'SOUND_SET', true]]);
+  // Three tables, one query: `Owner.pets` is `fetch = EAGER` and `Pet.type` is a
+  // @ManyToOne, so the owner list over there reads the pets and their types too.
+  assert.deepEqual(screenFlow.tables.map((x) => [x.table, x.grade, x.viaHttp === true]),
+    [['owners', 'SOUND_SET', true], ['pets', 'SOUND_SET', true], ['types', 'SOUND_SET', true]]);
   const back = callTool('screen_impact', { column: 'owners.first_name' }, ctx).answer;
   assert.ok(back.screens.some((s) => s.screen === '/owners'),
     `the column names the screen: ${back.screens.map((s) => s.screen).join(', ')}`);

@@ -334,6 +334,39 @@ export function namespaceOfStatementKey(key) {
 }
 
 /**
+ * One `type` record, as the index holds it. Every field is defended, because the
+ * stream may come from a fact cache written by an older worker: a missing list
+ * reads as empty rather than throwing halfway through building the index.
+ *
+ * `declaredMethodLines` is aligned index-for-index with `declaredMethods`
+ * (javafacts/7), so a member a subclass only INHERITS can still be previewed at
+ * the line that really declares it. `modelAttributeMethods` (javafacts/10) is
+ * what Spring runs before each handler of a controller, which no line of source
+ * calls, and `placeModelAttributeCalls` in calls.mjs is what draws that edge.
+ * @param {object} r
+ */
+function indexedType(r) {
+  const list = (v) => (Array.isArray(v) ? v : []);
+  return {
+    typeKind: r.typeKind,
+    pkg: r.package ?? null,
+    abstract: r.abstract === true,
+    implementsSimple: list(r.implements),
+    implementsArgs: list(r.implementsArgs),
+    annotations: list(r.annotations),
+    extendsSimple: r.extends ?? null,
+    extendsArgs: list(r.extendsArgs),
+    typeParams: list(r.typeParams),
+    typeParamBounds: list(r.typeParamBounds),
+    client: (r.client && typeof r.client === 'object') ? r.client : null,
+    declaredMethods: list(r.declaredMethods),
+    declaredMethodLines: list(r.declaredMethodLines),
+    modelAttributeMethods: list(r.modelAttributeMethods),
+    file: r.file ?? null,
+  };
+}
+
+/**
  * The TYPE half of the fact index: which types the lane saw, what each file
  * imported, and the simple-name -> FQN resolver built from both.
  *
@@ -362,24 +395,7 @@ export function buildTypeIndex(javaFacts) {
   for (const r of javaFacts ?? []) {
     if (!r || typeof r !== 'object') continue;
     if (r.kind === 'type') {
-      types.set(r.fqn, {
-        typeKind: r.typeKind, pkg: r.package ?? null,
-        abstract: r.abstract === true,
-        implementsSimple: Array.isArray(r.implements) ? r.implements : [],
-        implementsArgs: Array.isArray(r.implementsArgs) ? r.implementsArgs : [],
-        annotations: Array.isArray(r.annotations) ? r.annotations : [],
-        extendsSimple: r.extends ?? null,
-        extendsArgs: Array.isArray(r.extendsArgs) ? r.extendsArgs : [],
-        typeParams: Array.isArray(r.typeParams) ? r.typeParams : [],
-        typeParamBounds: Array.isArray(r.typeParamBounds) ? r.typeParamBounds : [],
-        client: (r.client && typeof r.client === 'object') ? r.client : null,
-        declaredMethods: Array.isArray(r.declaredMethods) ? r.declaredMethods : [],
-        // Aligned index-for-index with `declaredMethods` (javafacts/7): where each
-        // one is declared, so a member a subclass only INHERITS can still be
-        // previewed at the line that really declares it.
-        declaredMethodLines: Array.isArray(r.declaredMethodLines) ? r.declaredMethodLines : [],
-        file: r.file ?? null,
-      });
+      types.set(r.fqn, indexedType(r));
       // TWO FILES CAN DECLARE THE SAME FQN. Not a mistake and not rare: jeecg-boot
       // ships `org.jeecg.common.system.api.ISysBaseAPI` twice — a plain interface
       // in `jeecg-system-local-api` and a @FeignClient with 100 mappings in

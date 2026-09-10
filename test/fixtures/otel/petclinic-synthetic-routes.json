@@ -1,5 +1,5 @@
 {
- "_comment": "SYNTHETIC, and not a capture. Every span here was generated from the spring-petclinic pack's OWN endpoint->tables answers, one span tree per route: a server span carrying http.route and http.request.method, and under it one JDBC span per table that pack says the route reaches. A route the pack answers no table for gets a server span with nothing under it, which is the honest record of a request that ran no SQL. WHAT IT IS FOR: the shape of a run that exercised every one of the 17 routes, which test/fixtures/otel/petclinic-agent.log (a real agent capture of 10 of them) cannot show. WHAT IT IS NOT: evidence about this engine. Its labels came from the engine, so a golden corpus built from it passes by construction; the real capture is the one that can disagree, and it does. It carries no host, no concrete URL, no process or thread attribute and no bound parameter, which is the rule the real capture is kept under.",
+ "_comment": "SYNTHETIC, and not a capture. Every span here was generated from the spring-petclinic pack's OWN endpoint->tables answers, one span tree per route: a server span carrying http.route and http.request.method, and under it one JDBC span per table that pack says the route reaches. A route the pack answers no table for gets a server span with nothing under it, which is the honest record of a request that ran no SQL. WHAT IT IS FOR: the shape of a run that exercised every one of the 17 routes, which test/fixtures/otel/petclinic-agent.log (a real agent capture of 10 of them) cannot show. WHAT IT IS NOT: evidence about this engine. Its labels came from the engine, so a golden corpus built from it passes by construction; the real capture is the one that can disagree, and it does. It carries no host, no concrete URL, no process or thread attribute and no bound parameter, which is the rule the real capture is kept under. REGENERATED in RM54, from the answers the JPA lane gives once it follows the eager fetch plan and once a @ModelAttribute method is reachable from the handlers Spring runs it for: the routes that used to answer nothing now answer the tables an eager Owner or Vet loads.",
  "resourceSpans": [
   {
    "resource": {
@@ -93,8 +93,8 @@
        "parentSpanId": "",
        "name": "GET /owners/find",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400009000000",
-       "endTimeUnixNano": "1788836400010000000",
+       "startTimeUnixNano": "1788836400015000000",
+       "endTimeUnixNano": "1788836400016000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -116,8 +116,8 @@
        "parentSpanId": "",
        "name": "GET /owners/new",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400011000000",
-       "endTimeUnixNano": "1788836400012000000",
+       "startTimeUnixNano": "1788836400025000000",
+       "endTimeUnixNano": "1788836400026000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -139,8 +139,8 @@
        "parentSpanId": "",
        "name": "GET /owners/{ownerId}",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400013000000",
-       "endTimeUnixNano": "1788836400014000000",
+       "startTimeUnixNano": "1788836400035000000",
+       "endTimeUnixNano": "1788836400036000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -162,8 +162,8 @@
        "parentSpanId": "",
        "name": "GET /owners/{ownerId}/edit",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400017000000",
-       "endTimeUnixNano": "1788836400018000000",
+       "startTimeUnixNano": "1788836400045000000",
+       "endTimeUnixNano": "1788836400046000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -185,8 +185,8 @@
        "parentSpanId": "",
        "name": "GET /owners/{ownerId}/pets/new",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400019000000",
-       "endTimeUnixNano": "1788836400020000000",
+       "startTimeUnixNano": "1788836400055000000",
+       "endTimeUnixNano": "1788836400056000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -208,8 +208,8 @@
        "parentSpanId": "",
        "name": "GET /owners/{ownerId}/pets/{petId}/edit",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400021000000",
-       "endTimeUnixNano": "1788836400022000000",
+       "startTimeUnixNano": "1788836400065000000",
+       "endTimeUnixNano": "1788836400066000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -231,8 +231,8 @@
        "parentSpanId": "",
        "name": "GET /owners/{ownerId}/pets/{petId}/visits/new",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400023000000",
-       "endTimeUnixNano": "1788836400024000000",
+       "startTimeUnixNano": "1788836400075000000",
+       "endTimeUnixNano": "1788836400076000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -254,8 +254,8 @@
        "parentSpanId": "",
        "name": "GET /vets",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400025000000",
-       "endTimeUnixNano": "1788836400026000000",
+       "startTimeUnixNano": "1788836400085000000",
+       "endTimeUnixNano": "1788836400086000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -277,8 +277,8 @@
        "parentSpanId": "",
        "name": "GET /vets.html",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400029000000",
-       "endTimeUnixNano": "1788836400030000000",
+       "startTimeUnixNano": "1788836400093000000",
+       "endTimeUnixNano": "1788836400094000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -300,8 +300,8 @@
        "parentSpanId": "",
        "name": "POST /owners/new",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400033000000",
-       "endTimeUnixNano": "1788836400034000000",
+       "startTimeUnixNano": "1788836400101000000",
+       "endTimeUnixNano": "1788836400102000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -323,8 +323,8 @@
        "parentSpanId": "",
        "name": "POST /owners/{ownerId}/edit",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400041000000",
-       "endTimeUnixNano": "1788836400042000000",
+       "startTimeUnixNano": "1788836400111000000",
+       "endTimeUnixNano": "1788836400112000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -346,8 +346,8 @@
        "parentSpanId": "",
        "name": "POST /owners/{ownerId}/pets/new",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400049000000",
-       "endTimeUnixNano": "1788836400050000000",
+       "startTimeUnixNano": "1788836400121000000",
+       "endTimeUnixNano": "1788836400122000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -369,8 +369,8 @@
        "parentSpanId": "",
        "name": "POST /owners/{ownerId}/pets/{petId}/edit",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400057000000",
-       "endTimeUnixNano": "1788836400058000000",
+       "startTimeUnixNano": "1788836400131000000",
+       "endTimeUnixNano": "1788836400132000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -392,8 +392,8 @@
        "parentSpanId": "",
        "name": "POST /owners/{ownerId}/pets/{petId}/visits/new",
        "kind": "SPAN_KIND_SERVER",
-       "startTimeUnixNano": "1788836400065000000",
-       "endTimeUnixNano": "1788836400066000000",
+       "startTimeUnixNano": "1788836400141000000",
+       "endTimeUnixNano": "1788836400142000000",
        "attributes": [
         {
          "key": "http.request.method",
@@ -446,13 +446,100 @@
        ]
       },
       {
-       "traceId": "00000006c0ffee000000000000000000",
-       "spanId": "0006000000000002",
-       "parentSpanId": "0006000000000001",
+       "traceId": "00000003c0ffee000000000000000000",
+       "spanId": "0003000000000003",
+       "parentSpanId": "0003000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400009000000",
+       "endTimeUnixNano": "1788836400010000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000003c0ffee000000000000000000",
+       "spanId": "0003000000000004",
+       "parentSpanId": "0003000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400011000000",
+       "endTimeUnixNano": "1788836400012000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000003c0ffee000000000000000000",
+       "spanId": "0003000000000005",
+       "parentSpanId": "0003000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400013000000",
+       "endTimeUnixNano": "1788836400014000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000004c0ffee000000000000000000",
+       "spanId": "0004000000000002",
+       "parentSpanId": "0004000000000001",
        "name": "SELECT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400015000000",
-       "endTimeUnixNano": "1788836400016000000",
+       "startTimeUnixNano": "1788836400017000000",
+       "endTimeUnixNano": "1788836400018000000",
        "attributes": [
         {
          "key": "db.system",
@@ -475,13 +562,854 @@
        ]
       },
       {
-       "traceId": "0000000bc0ffee000000000000000000",
-       "spanId": "000b000000000002",
-       "parentSpanId": "000b000000000001",
-       "name": "SELECT petclinic.vets",
+       "traceId": "00000004c0ffee000000000000000000",
+       "spanId": "0004000000000003",
+       "parentSpanId": "0004000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400019000000",
+       "endTimeUnixNano": "1788836400020000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000004c0ffee000000000000000000",
+       "spanId": "0004000000000004",
+       "parentSpanId": "0004000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400021000000",
+       "endTimeUnixNano": "1788836400022000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000004c0ffee000000000000000000",
+       "spanId": "0004000000000005",
+       "parentSpanId": "0004000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400023000000",
+       "endTimeUnixNano": "1788836400024000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000005c0ffee000000000000000000",
+       "spanId": "0005000000000002",
+       "parentSpanId": "0005000000000001",
+       "name": "SELECT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
        "startTimeUnixNano": "1788836400027000000",
        "endTimeUnixNano": "1788836400028000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "owners"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from owners t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000005c0ffee000000000000000000",
+       "spanId": "0005000000000003",
+       "parentSpanId": "0005000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400029000000",
+       "endTimeUnixNano": "1788836400030000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000005c0ffee000000000000000000",
+       "spanId": "0005000000000004",
+       "parentSpanId": "0005000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400031000000",
+       "endTimeUnixNano": "1788836400032000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000005c0ffee000000000000000000",
+       "spanId": "0005000000000005",
+       "parentSpanId": "0005000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400033000000",
+       "endTimeUnixNano": "1788836400034000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000006c0ffee000000000000000000",
+       "spanId": "0006000000000002",
+       "parentSpanId": "0006000000000001",
+       "name": "SELECT petclinic.owners",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400037000000",
+       "endTimeUnixNano": "1788836400038000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "owners"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from owners t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000006c0ffee000000000000000000",
+       "spanId": "0006000000000003",
+       "parentSpanId": "0006000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400039000000",
+       "endTimeUnixNano": "1788836400040000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000006c0ffee000000000000000000",
+       "spanId": "0006000000000004",
+       "parentSpanId": "0006000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400041000000",
+       "endTimeUnixNano": "1788836400042000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000006c0ffee000000000000000000",
+       "spanId": "0006000000000005",
+       "parentSpanId": "0006000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400043000000",
+       "endTimeUnixNano": "1788836400044000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000007c0ffee000000000000000000",
+       "spanId": "0007000000000002",
+       "parentSpanId": "0007000000000001",
+       "name": "SELECT petclinic.owners",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400047000000",
+       "endTimeUnixNano": "1788836400048000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "owners"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from owners t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000007c0ffee000000000000000000",
+       "spanId": "0007000000000003",
+       "parentSpanId": "0007000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400049000000",
+       "endTimeUnixNano": "1788836400050000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000007c0ffee000000000000000000",
+       "spanId": "0007000000000004",
+       "parentSpanId": "0007000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400051000000",
+       "endTimeUnixNano": "1788836400052000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000007c0ffee000000000000000000",
+       "spanId": "0007000000000005",
+       "parentSpanId": "0007000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400053000000",
+       "endTimeUnixNano": "1788836400054000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000008c0ffee000000000000000000",
+       "spanId": "0008000000000002",
+       "parentSpanId": "0008000000000001",
+       "name": "SELECT petclinic.owners",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400057000000",
+       "endTimeUnixNano": "1788836400058000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "owners"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from owners t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000008c0ffee000000000000000000",
+       "spanId": "0008000000000003",
+       "parentSpanId": "0008000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400059000000",
+       "endTimeUnixNano": "1788836400060000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000008c0ffee000000000000000000",
+       "spanId": "0008000000000004",
+       "parentSpanId": "0008000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400061000000",
+       "endTimeUnixNano": "1788836400062000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000008c0ffee000000000000000000",
+       "spanId": "0008000000000005",
+       "parentSpanId": "0008000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400063000000",
+       "endTimeUnixNano": "1788836400064000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000009c0ffee000000000000000000",
+       "spanId": "0009000000000002",
+       "parentSpanId": "0009000000000001",
+       "name": "SELECT petclinic.owners",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400067000000",
+       "endTimeUnixNano": "1788836400068000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "owners"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from owners t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000009c0ffee000000000000000000",
+       "spanId": "0009000000000003",
+       "parentSpanId": "0009000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400069000000",
+       "endTimeUnixNano": "1788836400070000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000009c0ffee000000000000000000",
+       "spanId": "0009000000000004",
+       "parentSpanId": "0009000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400071000000",
+       "endTimeUnixNano": "1788836400072000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000009c0ffee000000000000000000",
+       "spanId": "0009000000000005",
+       "parentSpanId": "0009000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400073000000",
+       "endTimeUnixNano": "1788836400074000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000ac0ffee000000000000000000",
+       "spanId": "000a000000000002",
+       "parentSpanId": "000a000000000001",
+       "name": "SELECT petclinic.owners",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400077000000",
+       "endTimeUnixNano": "1788836400078000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "owners"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from owners t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000ac0ffee000000000000000000",
+       "spanId": "000a000000000003",
+       "parentSpanId": "000a000000000001",
+       "name": "SELECT petclinic.pets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400079000000",
+       "endTimeUnixNano": "1788836400080000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "pets"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from pets t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000ac0ffee000000000000000000",
+       "spanId": "000a000000000004",
+       "parentSpanId": "000a000000000001",
+       "name": "SELECT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400081000000",
+       "endTimeUnixNano": "1788836400082000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from types t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000ac0ffee000000000000000000",
+       "spanId": "000a000000000005",
+       "parentSpanId": "000a000000000001",
+       "name": "SELECT petclinic.visits",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400083000000",
+       "endTimeUnixNano": "1788836400084000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "visits"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from visits t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000bc0ffee000000000000000000",
+       "spanId": "000b000000000002",
+       "parentSpanId": "000b000000000001",
+       "name": "SELECT petclinic.specialties",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400087000000",
+       "endTimeUnixNano": "1788836400088000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "specialties"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from specialties t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000bc0ffee000000000000000000",
+       "spanId": "000b000000000003",
+       "parentSpanId": "000b000000000001",
+       "name": "SELECT petclinic.vet_specialties",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400089000000",
+       "endTimeUnixNano": "1788836400090000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "vet_specialties"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from vet_specialties t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000bc0ffee000000000000000000",
+       "spanId": "000b000000000004",
+       "parentSpanId": "000b000000000001",
+       "name": "SELECT petclinic.vets",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400091000000",
+       "endTimeUnixNano": "1788836400092000000",
        "attributes": [
         {
          "key": "db.system",
@@ -507,10 +1435,68 @@
        "traceId": "0000000cc0ffee000000000000000000",
        "spanId": "000c000000000002",
        "parentSpanId": "000c000000000001",
+       "name": "SELECT petclinic.specialties",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400095000000",
+       "endTimeUnixNano": "1788836400096000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "specialties"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from specialties t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000cc0ffee000000000000000000",
+       "spanId": "000c000000000003",
+       "parentSpanId": "000c000000000001",
+       "name": "SELECT petclinic.vet_specialties",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400097000000",
+       "endTimeUnixNano": "1788836400098000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "vet_specialties"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "select t1_0.id from vet_specialties t1_0 where t1_0.id=?"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000cc0ffee000000000000000000",
+       "spanId": "000c000000000004",
+       "parentSpanId": "000c000000000001",
        "name": "SELECT petclinic.vets",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400031000000",
-       "endTimeUnixNano": "1788836400032000000",
+       "startTimeUnixNano": "1788836400099000000",
+       "endTimeUnixNano": "1788836400100000000",
        "attributes": [
         {
          "key": "db.system",
@@ -538,8 +1524,8 @@
        "parentSpanId": "000d000000000001",
        "name": "INSERT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400035000000",
-       "endTimeUnixNano": "1788836400036000000",
+       "startTimeUnixNano": "1788836400103000000",
+       "endTimeUnixNano": "1788836400104000000",
        "attributes": [
         {
          "key": "db.system",
@@ -567,8 +1553,8 @@
        "parentSpanId": "000d000000000001",
        "name": "INSERT petclinic.pets",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400037000000",
-       "endTimeUnixNano": "1788836400038000000",
+       "startTimeUnixNano": "1788836400105000000",
+       "endTimeUnixNano": "1788836400106000000",
        "attributes": [
         {
          "key": "db.system",
@@ -594,10 +1580,39 @@
        "traceId": "0000000dc0ffee000000000000000000",
        "spanId": "000d000000000004",
        "parentSpanId": "000d000000000001",
+       "name": "INSERT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400107000000",
+       "endTimeUnixNano": "1788836400108000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "insert into types (id) values (?)"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000dc0ffee000000000000000000",
+       "spanId": "000d000000000005",
+       "parentSpanId": "000d000000000001",
        "name": "INSERT petclinic.visits",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400039000000",
-       "endTimeUnixNano": "1788836400040000000",
+       "startTimeUnixNano": "1788836400109000000",
+       "endTimeUnixNano": "1788836400110000000",
        "attributes": [
         {
          "key": "db.system",
@@ -625,8 +1640,8 @@
        "parentSpanId": "000e000000000001",
        "name": "INSERT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400043000000",
-       "endTimeUnixNano": "1788836400044000000",
+       "startTimeUnixNano": "1788836400113000000",
+       "endTimeUnixNano": "1788836400114000000",
        "attributes": [
         {
          "key": "db.system",
@@ -654,8 +1669,8 @@
        "parentSpanId": "000e000000000001",
        "name": "INSERT petclinic.pets",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400045000000",
-       "endTimeUnixNano": "1788836400046000000",
+       "startTimeUnixNano": "1788836400115000000",
+       "endTimeUnixNano": "1788836400116000000",
        "attributes": [
         {
          "key": "db.system",
@@ -681,10 +1696,39 @@
        "traceId": "0000000ec0ffee000000000000000000",
        "spanId": "000e000000000004",
        "parentSpanId": "000e000000000001",
+       "name": "INSERT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400117000000",
+       "endTimeUnixNano": "1788836400118000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "insert into types (id) values (?)"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000ec0ffee000000000000000000",
+       "spanId": "000e000000000005",
+       "parentSpanId": "000e000000000001",
        "name": "INSERT petclinic.visits",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400047000000",
-       "endTimeUnixNano": "1788836400048000000",
+       "startTimeUnixNano": "1788836400119000000",
+       "endTimeUnixNano": "1788836400120000000",
        "attributes": [
         {
          "key": "db.system",
@@ -712,8 +1756,8 @@
        "parentSpanId": "000f000000000001",
        "name": "INSERT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400051000000",
-       "endTimeUnixNano": "1788836400052000000",
+       "startTimeUnixNano": "1788836400123000000",
+       "endTimeUnixNano": "1788836400124000000",
        "attributes": [
         {
          "key": "db.system",
@@ -741,8 +1785,8 @@
        "parentSpanId": "000f000000000001",
        "name": "INSERT petclinic.pets",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400053000000",
-       "endTimeUnixNano": "1788836400054000000",
+       "startTimeUnixNano": "1788836400125000000",
+       "endTimeUnixNano": "1788836400126000000",
        "attributes": [
         {
          "key": "db.system",
@@ -768,10 +1812,39 @@
        "traceId": "0000000fc0ffee000000000000000000",
        "spanId": "000f000000000004",
        "parentSpanId": "000f000000000001",
+       "name": "INSERT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400127000000",
+       "endTimeUnixNano": "1788836400128000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "insert into types (id) values (?)"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "0000000fc0ffee000000000000000000",
+       "spanId": "000f000000000005",
+       "parentSpanId": "000f000000000001",
        "name": "INSERT petclinic.visits",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400055000000",
-       "endTimeUnixNano": "1788836400056000000",
+       "startTimeUnixNano": "1788836400129000000",
+       "endTimeUnixNano": "1788836400130000000",
        "attributes": [
         {
          "key": "db.system",
@@ -799,8 +1872,8 @@
        "parentSpanId": "0010000000000001",
        "name": "INSERT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400059000000",
-       "endTimeUnixNano": "1788836400060000000",
+       "startTimeUnixNano": "1788836400133000000",
+       "endTimeUnixNano": "1788836400134000000",
        "attributes": [
         {
          "key": "db.system",
@@ -828,8 +1901,8 @@
        "parentSpanId": "0010000000000001",
        "name": "INSERT petclinic.pets",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400061000000",
-       "endTimeUnixNano": "1788836400062000000",
+       "startTimeUnixNano": "1788836400135000000",
+       "endTimeUnixNano": "1788836400136000000",
        "attributes": [
         {
          "key": "db.system",
@@ -855,10 +1928,39 @@
        "traceId": "00000010c0ffee000000000000000000",
        "spanId": "0010000000000004",
        "parentSpanId": "0010000000000001",
+       "name": "INSERT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400137000000",
+       "endTimeUnixNano": "1788836400138000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "insert into types (id) values (?)"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000010c0ffee000000000000000000",
+       "spanId": "0010000000000005",
+       "parentSpanId": "0010000000000001",
        "name": "INSERT petclinic.visits",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400063000000",
-       "endTimeUnixNano": "1788836400064000000",
+       "startTimeUnixNano": "1788836400139000000",
+       "endTimeUnixNano": "1788836400140000000",
        "attributes": [
         {
          "key": "db.system",
@@ -886,8 +1988,8 @@
        "parentSpanId": "0011000000000001",
        "name": "INSERT petclinic.owners",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400067000000",
-       "endTimeUnixNano": "1788836400068000000",
+       "startTimeUnixNano": "1788836400143000000",
+       "endTimeUnixNano": "1788836400144000000",
        "attributes": [
         {
          "key": "db.system",
@@ -915,8 +2017,8 @@
        "parentSpanId": "0011000000000001",
        "name": "INSERT petclinic.pets",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400069000000",
-       "endTimeUnixNano": "1788836400070000000",
+       "startTimeUnixNano": "1788836400145000000",
+       "endTimeUnixNano": "1788836400146000000",
        "attributes": [
         {
          "key": "db.system",
@@ -942,10 +2044,39 @@
        "traceId": "00000011c0ffee000000000000000000",
        "spanId": "0011000000000004",
        "parentSpanId": "0011000000000001",
+       "name": "INSERT petclinic.types",
+       "kind": "SPAN_KIND_CLIENT",
+       "startTimeUnixNano": "1788836400147000000",
+       "endTimeUnixNano": "1788836400148000000",
+       "attributes": [
+        {
+         "key": "db.system",
+         "value": {
+          "stringValue": "h2"
+         }
+        },
+        {
+         "key": "db.sql.table",
+         "value": {
+          "stringValue": "types"
+         }
+        },
+        {
+         "key": "db.statement",
+         "value": {
+          "stringValue": "insert into types (id) values (?)"
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "00000011c0ffee000000000000000000",
+       "spanId": "0011000000000005",
+       "parentSpanId": "0011000000000001",
        "name": "INSERT petclinic.visits",
        "kind": "SPAN_KIND_CLIENT",
-       "startTimeUnixNano": "1788836400071000000",
-       "endTimeUnixNano": "1788836400072000000",
+       "startTimeUnixNano": "1788836400149000000",
+       "endTimeUnixNano": "1788836400150000000",
        "attributes": [
         {
          "key": "db.system",

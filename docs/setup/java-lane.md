@@ -374,8 +374,75 @@ as SQL.
 
 `save*` writes **every** mapped column of the row (a JPA merge writes the whole
 entity) and follows `cascade = ALL/PERSIST/MERGE` associations to the child
-rows. A cascaded write is capped at **SOUND_SET**: the cascade is declared in the
-source, but whether a given call has a dirty child is a runtime fact.
+rows. `delete*` removes the row and follows `cascade = ALL/REMOVE` the same way.
+A cascaded reach is capped at **SOUND_SET**: the cascade is declared in the
+source, but whether a given call has a child to write or remove is a runtime
+fact. `orphanRemoval` is not read.
+
+### The fetch plan: what a query really reads
+
+A repository method names one entity and reads several tables. Nothing in the
+source says so, and the database does it anyway: an association whose fetch is
+EAGER comes back in the same round trip, and so does everything eager on the rows
+it brought with it. In spring-petclinic, `OwnerRepository.findById` names
+`owners` and the running query reads four tables, because `Owner.pets` is
+`fetch = EAGER`, `Pet.type` is a `@ManyToOne` (eager unless the mapping says
+otherwise) and `Pet.visits` is eager too.
+
+So every statement whose result is an entity carries that closure:
+
+| Rule (`evidence.rule`) | What it followed |
+|---|---|
+| `jpa-eager-fetch` | an association whose effective fetch is EAGER. `evidence.fetch` says `explicit` when the mapping wrote `fetch = EAGER`, and `default` when it wrote nothing and the JPA specification decided (a to-one is eager, a to-many is lazy) |
+| `jpql-join-fetch` | a `JOIN FETCH` / `LEFT JOIN FETCH` in the method's own JPQL. The query overrides the mapping, so this is followed whatever `fetch =` says |
+| `jpa-entity-graph` | an `@EntityGraph` attribute path on the method, written out or named through the entity's `@NamedEntityGraph`. Same override, same reason |
+| `jpa-cascade` | a `save` or a `delete` reaching a child row through `cascade` |
+
+Every followed edge carries `evidence.path`, the attribute path from the entity
+the query returns (`Owner.pets.visits`), so a table nobody expected can be traced
+back to the field that brought it. The rule itself is EXACT — the annotation and
+the specification decide it, nothing was resolved — and the edge is graded the
+weakest link of that and the names the mapping left to the naming strategy, as
+every other edge in this lane is.
+
+Three things it deliberately does not do:
+
+- **A LAZY association stays out.** A lazy collection a page touches after the
+  query has run is a real read, and it happens where this lane cannot see it: in
+  the template, not in the query. Following it would put reads in the answer that
+  many requests never make. Each statement that skipped one says so in
+  `jpaEvidence.limits`, and `overview` counts them all under
+  `jpa.lazyAssociationsNotFollowed`.
+- **A `save` follows cascade and not fetch.** A merge writes a row; it is not a
+  query whose result somebody reads.
+- **The plan stops at eight associations deep**, cycle-safe, with
+  `fetch-depth-capped` on the statement when it hit the cap. A path that names no
+  association of the entity is reported as `fetch-path-unresolved`, and an
+  `@EntityGraph` naming a plan no entity in the pack declares as
+  `entity-graph-unresolved`. A nested `@NamedSubgraph` is not read.
+
+### `@ModelAttribute`: the call Spring makes and no line of source writes
+
+Spring runs a controller's `@ModelAttribute` methods before **every** handler of
+that controller. Nothing calls them, so nothing led to them, and
+`GET /owners/{ownerId}/edit` in spring-petclinic answered no table while a real
+agent capture of that request read four: the owner is loaded by
+`OwnerController#findOwner`, a `@ModelAttribute("owner")` method.
+
+The lane now draws that edge: `MAY_CALL` from every handler of a
+`@Controller`/`@RestController` class to every `@ModelAttribute` method the
+**same class** declares, rule `spring-model-attribute`, graded **EXACT** —
+nothing was resolved, the framework's own contract says the method runs.
+
+What it does not follow, and counts instead (`laneStats.modelAttribute`):
+
+- a `@ControllerAdvice`'s model attributes (`onAdvice`), because which
+  controllers an advice runs for is not a fact about one class;
+- model attributes a controller INHERITS from a base class (`onSuperclass`);
+- handlers a controller inherits rather than declares (`inheritedHandlers`).
+
+A `@ModelAttribute` on a PARAMETER (`save(@ModelAttribute Owner owner)`) is a
+binding, not a method Spring runs, and is never read as one.
 
 ### The naming-strategy rule, and how to declare it
 
@@ -414,6 +481,8 @@ the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
 - `@Embedded` / `@Embeddable` attributes produce no column (recorded, not guessed).
 - `@SecondaryTable`, `@Inheritance` strategies, `@AttributeOverride`,
   `@Convert`, `@ElementCollection` are not modelled.
+- Hibernate's own `@Fetch` and `@BatchSize` are not read: they change how a fetch
+  is issued, not whether it happens.
 - A named query (`@Query(name = "…")`, `@NamedQuery`) is not read.
 - `flush()` gets no statement of its own: it writes what the other statements in
   the transaction already made pending.

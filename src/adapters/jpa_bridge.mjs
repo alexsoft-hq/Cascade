@@ -22,6 +22,15 @@
 // mapping, the attribute mapping, how the query part resolved), so a chain that
 // leaned on an assumed naming strategy can never come back EXACT.
 //
+// AND A QUERY READS MORE TABLES THAN IT NAMES. `findById` on an Owner whose
+// `pets` is `fetch = EAGER` issues one round trip that brings the pets back, and
+// their `type` with them, because a @ManyToOne is eager unless the mapping says
+// otherwise. So every statement whose result is an entity carries that closure,
+// and the query's own plan (a JOIN FETCH, an @EntityGraph) overrides the
+// mapping. LAZY stays out and is counted: a collection a page touches after the
+// query has run is a real read, and it happens where this lane cannot see it.
+// See `fetchClosure` below.
+//
 // Runs AFTER `addJavaFacts` (it needs the symbol nodes) and after the SQL
 // bridge (it stitches onto the catalog's table/column nodes). Pure: a Graph and
 // a fact array in, the same Graph mutated and a stats object out.
@@ -55,6 +64,34 @@ export const BUILTIN_METHODS = Object.freeze({
 
 /** Cascade kinds that make a save() reach the associated rows. */
 const SAVING_CASCADES = new Set(['ALL', 'PERSIST', 'MERGE']);
+
+/** Cascade kinds that make a delete() reach the associated rows. */
+const REMOVING_CASCADES = new Set(['ALL', 'REMOVE']);
+
+/**
+ * The associations JPA loads WITH their owner when the mapping does not say. The
+ * specification's default, not a guess: a to-one is EAGER, a to-many is LAZY.
+ */
+const DEFAULT_EAGER_RELATIONS = new Set(['manyToOne', 'oneToOne']);
+
+/**
+ * How far one statement's fetch plan is followed before it is cut. Eight hops of
+ * eager associations is already a query no reader expected; past that the answer
+ * says it stopped rather than growing without end on a mapping that loops.
+ */
+const FETCH_DEPTH_CAP = 8;
+
+/**
+ * WHAT EACH FETCH RULE DID, in one sentence, for `evidence.basis`. All four are
+ * read off the mapping or the query, so the RULE is exact; what the edge ends up
+ * graded is the weakest link of that and the names it had to derive.
+ */
+export const JPA_FETCH_RULE_BASIS = Object.freeze({
+  'jpa-eager-fetch': 'the association is fetched EAGERLY, so the row on the other side comes back with this one in the same round trip. `fetch = EAGER` when the mapping writes it, and the JPA default when it does not: a to-one is eager, a to-many is lazy',
+  'jpql-join-fetch': 'the query itself writes JOIN FETCH along this association, so it is loaded whatever the mapping says about fetching it',
+  'jpa-entity-graph': 'the repository method carries an @EntityGraph naming this attribute path, so it is loaded whatever the mapping says about fetching it',
+  'jpa-cascade': 'the association cascades this operation, so saving or deleting the owner reaches the row on the other side. Whether a given call has a child to write is decided at run time, so the reach is a candidate set and never a proof',
+});
 
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
 const weakest = (...gs) => gs.reduce((a, b) => (RANK[a] <= RANK[b] ? a : b), 'EXACT');
@@ -390,24 +427,15 @@ for (const e of entities.values()) {
       addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
     } else if (a.relation === 'manyToMany') {
       if (a.mappedBy) continue; // the owning side declares the join table
-      // Each half of a join table is graded on its OWN evidence: the table
-      // name, the owning column and the inverse column are three separate
-      // declarations, and any one of them may be left to the strategy.
-      const jt = a.joinTable;
-      const named = !!(jt && jt.name);
-      const joinTableName = named ? jt.name : physicalName(`${e.simple}${target.simple}`, strategy);
-      const tableNameGrade = named ? 'EXACT' : derivedGrade;
-      ensureTable(joinTableName, { joinTableFor: [e.fqn, target.fqn] });
-      const leftDeclared = !!(jt && jt.joinColumns && jt.joinColumns[0]);
-      const rightDeclared = !!(jt && jt.inverseJoinColumns && jt.inverseJoinColumns[0]);
-      const left = leftDeclared ? jt.joinColumns[0] : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`;
-      const right = rightDeclared ? jt.inverseJoinColumns[0] : `${physicalName(target.simple, strategy)}_${target.pkColumn ?? 'id'}`;
-      const leftGrade = weakest(e.tableGrade, tableNameGrade, leftDeclared ? 'EXACT' : derivedGrade);
-      const rightGrade = weakest(target.tableGrade, tableNameGrade, rightDeclared ? 'EXACT' : derivedGrade);
-      ensureColumn(joinTableName, left, leftGrade);
-      ensureColumn(joinTableName, right, rightGrade);
-      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(joinTableName), `${e.table}.${e.pkColumn ?? 'id'}=${joinTableName}.${left}`, leftGrade, stats);
-      addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(joinTableName), `${target.table}.${target.pkColumn ?? 'id'}=${joinTableName}.${right}`, rightGrade, stats);
+      const jt = joinTableOf(e, a, target, { strategy, derivedGrade });
+      // Kept on the attribute so a statement that FOLLOWS this association later
+      // reaches the same three names, graded the same way, instead of a second
+      // reading of the mapping that could differ from this one.
+      a.joinTableResolved = jt;
+      ensureTable(jt.table, { joinTableFor: [e.fqn, target.fqn] });
+      for (const c of jt.columns) ensureColumn(c.table, c.column, c.grade);
+      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(jt.table), `${e.table}.${e.pkColumn ?? 'id'}=${jt.table}.${jt.columns[0].column}`, jt.columns[0].grade, stats);
+      addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(jt.table), `${target.table}.${target.pkColumn ?? 'id'}=${jt.table}.${jt.columns[1].column}`, jt.columns[1].grade, stats);
     }
   }
 }
@@ -418,12 +446,37 @@ for (const e of entities.values()) {
   if (tnode && tnode.stub !== true) tnode.jpaCatalogMatch = true;
 }
 
-  return { tableIdOf, columnIdOf };
+  return { tableIdOf, columnIdOf, ensureTable, ensureColumn };
+}
+
+/**
+ * The physical JOIN TABLE an association crosses, and how sure each of its three
+ * names is. The table name, the owning column and the inverse column are three
+ * separate declarations, and any one of them may be left to the naming strategy,
+ * so each is graded on its own evidence.
+ */
+function joinTableOf(e, a, target, { strategy, derivedGrade }) {
+  const jt = a.joinTable;
+  const named = !!(jt && jt.name);
+  const table = named ? jt.name : physicalName(`${e.simple}${target.simple}`, strategy);
+  const nameGrade = named ? 'EXACT' : derivedGrade;
+  const leftDeclared = !!(jt && jt.joinColumns && jt.joinColumns[0]);
+  const rightDeclared = !!(jt && jt.inverseJoinColumns && jt.inverseJoinColumns[0]);
+  const left = leftDeclared ? jt.joinColumns[0] : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`;
+  const right = rightDeclared ? jt.inverseJoinColumns[0] : `${physicalName(target.simple, strategy)}_${target.pkColumn ?? 'id'}`;
+  return {
+    table,
+    grade: weakest(e.tableGrade, target.tableGrade, nameGrade),
+    columns: [
+      { table, column: left, grade: weakest(e.tableGrade, nameGrade, leftDeclared ? 'EXACT' : derivedGrade) },
+      { table, column: right, grade: weakest(target.tableGrade, nameGrade, rightDeclared ? 'EXACT' : derivedGrade) },
+    ],
+  };
 }
 
 /** 4. REPOSITORIES -> STATEMENTS: what each declared method runs. */
 function repositoryStatements(g, entities, repositories, ctx) {
-  const { resolveType, tableIdOf, columnIdOf, stats } = ctx;
+  const { resolveType, stats } = ctx;
 // ---- 4. repositories -> statements --------------------------------------
 const repoByFqn = new Map();
 for (const rec of repositories) {
@@ -444,7 +497,7 @@ for (const rec of repositories) {
   for (const m of rec.methods ?? []) {
     if (emittedHere.has(m.name)) continue;
     emittedHere.add(m.name);
-    addQueryStatement(g, { repo: rec, method: m, entity, entities, resolveType, stats, tableIdOf, columnIdOf });
+    addQueryStatement(g, { ...ctx, repo: rec, method: m, entity, entities });
   }
 }
 
@@ -457,7 +510,7 @@ for (const rec of repositories) {
  * declares them and a caller still runs them.
  */
 function builtinStatements(g, entities, repoByFqn, calls, ctx) {
-  const { resolveType, tableIdOf, columnIdOf, stats } = ctx;
+  const { resolveType, stats } = ctx;
 // ---- 5. built-ins the service calls but the repository never declared ----
 const wanted = new Map(); // "repoFqn#method" -> {repoFqn, method}
 for (const c of calls) {
@@ -473,7 +526,7 @@ for (const c of calls) {
 for (const { repoFqn, method } of [...wanted.values()].sort((a, b) => cmp(`${a.repoFqn}#${a.method}`, `${b.repoFqn}#${b.method}`))) {
   const r = repoByFqn.get(repoFqn);
   if (!r.entity) continue;
-  addBuiltinStatement(g, { repoFqn, method, entity: r.entity, file: r.rec.file ?? null, entities, resolveType, stats, tableIdOf, columnIdOf });
+  addBuiltinStatement(g, { ...ctx, repoFqn, method, entity: r.entity, file: r.rec.file ?? null, entities });
   stats.builtins += 1;
 }
 
@@ -513,21 +566,47 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     statements: 0, statementsByType: { derived: 0, jpql: 0, native: 0, builtin: 0 },
     implementsStmt: 0, unresolvedStatements: 0, unresolved: [],
     builtins: 0, namingStrategy: strategy, namingStrategyDeclared: declared,
+    // Associations a statement's fetch plan reached and did NOT follow, because
+    // they are LAZY. Each one is a read that happens when something asks for it
+    // later, which is a moment this lane cannot see (see `applyFetchPlan`).
+    lazyAssociationsNotFollowed: 0,
   };
   if (entityRecords.size === 0 && repositories.length === 0) return stats;
 
   const naming = { strategy, derivedGrade, namingEvidence, stats };
   const entities = entityTables(entityRecords, naming);
   attributesThroughSuperclasses(entities, entityRecords, { resolveType, ...naming });
-  const { tableIdOf, columnIdOf } = tableColumnAndJoinNodes(g, entities, {
+  const nodes = tableColumnAndJoinNodes(g, entities, {
     opts, schema, resolveType, strategy, derivedGrade, stats,
   });
-  const repoByFqn = repositoryStatements(g, entities, repositories, {
-    resolveType, tableIdOf, columnIdOf, stats,
-  });
-  builtinStatements(g, entities, repoByFqn, calls, { resolveType, tableIdOf, columnIdOf, stats });
+  // What a STATEMENT needs to follow a fetch plan: the entity model, the naming
+  // rules the join tables are derived by, the two node writers, and the named
+  // fetch plans the entities declare.
+  const stmtCtx = {
+    ...nodes, resolveType, stats, strategy, derivedGrade,
+    namedGraphs: namedEntityGraphs(entityRecords),
+  };
+  const repoByFqn = repositoryStatements(g, entities, repositories, stmtCtx);
+  builtinStatements(g, entities, repoByFqn, calls, stmtCtx);
 
   return stats;
+}
+
+/**
+ * Every `@NamedEntityGraph` the entities declare, by name. The plan is declared
+ * on the ENTITY and named by a repository method in another file, so this is the
+ * one place that holds both halves.
+ */
+function namedEntityGraphs(entityRecords) {
+  const out = new Map();
+  for (const rec of entityRecords.values()) {
+    for (const g of rec.namedEntityGraphs ?? []) {
+      if (!g || typeof g.name !== 'string' || g.name.length === 0) continue;
+      if (out.has(g.name)) continue; // first declaration wins, as the stream is sorted
+      out.set(g.name, (Array.isArray(g.attributePaths) ? g.attributePaths : []).filter((p) => typeof p === 'string' && p.length > 0));
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +619,9 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
  * @Transient field, a collection, or the inverse side of an association.
  */
 function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
-  const targetSimple = a.typeArgSimple ?? a.typeSimple ?? null;
+  // `targetEntity = Pet.class` is the mapping saying the other side outright, so
+  // it wins over the field's own type — which for a raw `List pets` says nothing.
+  const targetSimple = a.targetEntity ?? a.typeArgSimple ?? a.typeSimple ?? null;
   const explicitColumn = typeof a.column === 'string' && a.column.length > 0;
   const explicitJoin = typeof a.joinColumn === 'string' && a.joinColumn.length > 0;
   // A @JoinTable(name=…, joinColumns=@JoinColumn(name=…)) declares the physical
@@ -580,40 +661,77 @@ function addQueryStatement(g, ctx) {
   const q = method.query;
   const type = q ? (q.native ? 'native' : 'jpql') : 'derived';
 
-  const unresolved = [];
-  const reads = [];   // {table, column, grade}
-  const writes = [];
-  const tableAccess = new Map(); // table -> {access, grade}
-
-  if (type === 'native') {
-    // The SQL lane owns a native query: `analyze` feeds its text to lineage.py
-    // alongside the mapper statements, so the READS/WRITES on this node come
-    // from the same analyzer the MyBatis statements go through. Here we only
-    // declare the node and bind the method to it.
-    if (!q.text) unresolved.push({ reason: 'empty-native-query', detail: '@Query(nativeQuery=true) carries no SQL' });
-  } else if (type === 'jpql') {
-    const read = readJpql(q.text ?? '');
-    for (const d of read.diagnostics) unresolved.push(d);
-    if (read.ok) {
-      resolveJpqlRefs(read, ctx, { reads, writes, tableAccess, unresolved });
-    } else {
-      unresolved.push({ reason: 'jpql-unreadable', detail: String(q.text ?? '').slice(0, 200) });
-    }
-  } else {
-    const parsed = parseDerivedQuery(method.name);
-    if (!parsed.ok) {
-      unresolved.push({ reason: 'derived-name-unreadable', detail: parsed.reason });
-    } else {
-      resolveDerivedRefs(parsed, ctx, { reads, writes, tableAccess, unresolved });
-    }
-  }
+  // {table, column, grade, evidence} in `reads`/`writes`; table -> {access, grade}
+  const sink = { reads: [], writes: [], tableAccess: new Map(), unresolved: [] };
+  const query = readQueryRefs(type, q, ctx, sink);
+  // …and everything the query does NOT name and still loads: the eager closure,
+  // plus the paths the query's own plan forces (JOIN FETCH, @EntityGraph).
+  const forced = [...query.forced, ...entityGraphPaths(ctx, sink)];
+  const limits = query.root ? applyFetchPlan(query.root, ctx, forced, sink) : [];
 
   emitStatement(g, {
     sid, key, type, file: repo.file ?? null, line: method.line ?? null,
-    member: `${repo.fqn}#${method.name}`, reads, writes, tableAccess, unresolved, stats,
+    member: `${repo.fqn}#${method.name}`, ...sink, stats,
     tableIdOf: ctx.tableIdOf, columnIdOf: ctx.columnIdOf,
-    evidence: { repository: repo.fqn, method: method.name, base: repo.base },
+    evidence: {
+      repository: repo.fqn, method: method.name, base: repo.base,
+      ...(limits.length > 0 ? { limits } : {}),
+    },
   });
+}
+
+/**
+ * WHAT THE QUERY ITSELF SAYS: the columns it names, the entity its result IS,
+ * and the paths its own text forces to be loaded. A native query is the SQL
+ * lane's — `analyze` feeds its text to lineage.py alongside the mapper
+ * statements — so nothing is read here beyond declaring the node.
+ * @returns {{root:(object|null), forced:{path:string, rule:string}[]}}
+ */
+function readQueryRefs(type, q, ctx, sink) {
+  const none = { root: null, forced: [] };
+  if (type === 'native') {
+    if (!q.text) sink.unresolved.push({ reason: 'empty-native-query', detail: '@Query(nativeQuery=true) carries no SQL' });
+    return none;
+  }
+  if (type === 'jpql') {
+    const read = readJpql(q.text ?? '');
+    for (const d of read.diagnostics) sink.unresolved.push(d);
+    if (!read.ok) {
+      sink.unresolved.push({ reason: 'jpql-unreadable', detail: String(q.text ?? '').slice(0, 200) });
+      return none;
+    }
+    return resolveJpqlRefs(read, ctx, sink);
+  }
+  const parsed = parseDerivedQuery(ctx.method.name);
+  if (!parsed.ok) {
+    sink.unresolved.push({ reason: 'derived-name-unreadable', detail: parsed.reason });
+    return none;
+  }
+  return resolveDerivedRefs(parsed, ctx, sink);
+}
+
+/**
+ * The attribute paths a method's `@EntityGraph` asks for. Written out
+ * (`attributePaths = {"pets"}`) they are read as they stand; named
+ * (`@EntityGraph("Owner.pets")`) they are resolved against the
+ * `@NamedEntityGraph` the entity declares, and a name no entity in this pack
+ * declares is REPORTED rather than quietly followed or quietly dropped.
+ */
+function entityGraphPaths(ctx, sink) {
+  const eg = ctx.method && ctx.method.entityGraph;
+  if (!eg || typeof eg !== 'object') return [];
+  const written = Array.isArray(eg.attributePaths) ? eg.attributePaths.filter((p) => typeof p === 'string' && p.length > 0) : [];
+  if (written.length > 0) return written.map((path) => ({ path, rule: 'jpa-entity-graph' }));
+  if (typeof eg.name !== 'string' || eg.name.length === 0) return [];
+  const named = (ctx.namedGraphs ?? new Map()).get(eg.name);
+  if (!named) {
+    sink.unresolved.push({
+      reason: 'entity-graph-unresolved',
+      detail: `@EntityGraph("${eg.name}") names no @NamedEntityGraph this pack saw, so the paths it would have loaded are not followed`,
+    });
+    return [];
+  }
+  return named.map((path) => ({ path, rule: 'jpa-entity-graph' }));
 }
 
 /** A derived query's predicate/order columns, resolved through the entity model. */
@@ -657,6 +775,9 @@ function resolveDerivedRefs(parsed, ctx, sink) {
     mark(sink.tableAccess, t.table, access === 'delete' && t.table === entity.table ? 'delete' : 'read', t.grade);
   }
   mark(sink.tableAccess, entity.table, access === 'delete' ? 'delete' : 'read', entity.tableGrade);
+  // A SELECT's result IS the entity, so the fetch plan applies to it. A derived
+  // DELETE removes rows and returns none, so nothing is fetched with them.
+  return { root: access === 'delete' ? null : entity, forced: [] };
 }
 
 /** A JPQL query's aliases and paths, resolved through the entity model. */
@@ -666,6 +787,11 @@ function resolveJpqlRefs(read, ctx, sink) {
 
   // alias -> entity. Roots name an entity; a join alias walks an association.
   const aliasEntity = new Map();
+  // …and alias -> the path that reached it FROM the first root, so a
+  // `JOIN FETCH` written off a join alias is still a path this fetch plan can
+  // follow from the entity the query returns.
+  const aliasFrom = new Map();
+  const forced = [];
   for (const root of read.roots) {
     const fqn = resolveType(ctx.repo.fqn, root.entity)
       ?? [...entities.keys()].find((k) => k.endsWith(`.${root.entity}`)) ?? null;
@@ -675,6 +801,7 @@ function resolveJpqlRefs(read, ctx, sink) {
       continue;
     }
     aliasEntity.set(root.alias, target);
+    aliasFrom.set(root.alias, { root: root.alias, path: [] });
   }
   for (const j of read.joins) {
     const base = aliasEntity.get(j.base);
@@ -694,7 +821,15 @@ function resolveJpqlRefs(read, ctx, sink) {
       sink.unresolved.push({ reason: 'jpql-join-unresolved', detail: `${j.base}.${j.path.join('.')} is not an association chain` });
       continue;
     }
+    const from = aliasFrom.get(j.base);
+    const reachedBy = from ? { root: from.root, path: [...from.path, ...j.path] } : null;
+    if (j.alias && reachedBy) aliasFrom.set(j.alias, reachedBy);
     if (j.alias) aliasEntity.set(j.alias, cur);
+    // JOIN FETCH is the query overriding the mapping: the association comes back
+    // loaded whatever `fetch =` says, so the whole row on the other side is read.
+    if (j.fetch === true && reachedBy && reachedBy.root === (read.roots[0] ?? {}).alias) {
+      forced.push({ path: reachedBy.path.join('.'), rule: 'jpql-join-fetch' });
+    }
     mark(sink.tableAccess, cur.table, 'read', cur.tableGrade);
   }
 
@@ -746,77 +881,261 @@ function resolveJpqlRefs(read, ctx, sink) {
       if (owner) mark(sink.tableAccess, owner.table, 'delete', owner.tableGrade);
     }
   }
+  // Only a SELECT hands back entities, so only a SELECT has a fetch plan.
+  const first = read.roots[0];
+  return { root: read.kind === 'select' && first ? (aliasEntity.get(first.alias) ?? null) : null, forced };
+}
+
+// ---------------------------------------------------------------------------
+// the fetch plan: what one statement really loads
+// ---------------------------------------------------------------------------
+
+/**
+ * IS THIS ASSOCIATION LOADED WITH ITS OWNER? `fetch =` when the mapping writes
+ * it, and the JPA specification's default when it does not: a to-one is EAGER,
+ * a to-many is LAZY. `how` says which of the two answered, because a reader
+ * deciding how far to trust the reach is entitled to know whether a line of
+ * source said it or a specification did.
+ */
+function effectiveFetch(a) {
+  const written = typeof a.fetch === 'string' ? a.fetch.toUpperCase() : null;
+  if (written === 'EAGER' || written === 'LAZY') return { eager: written === 'EAGER', how: 'explicit' };
+  return { eager: DEFAULT_EAGER_RELATIONS.has(a.relation), how: 'default' };
+}
+
+/** The join table one FOLLOWED association crosses, or null when it crosses none. */
+function crossedJoinTable(owner, a, target, ctx) {
+  if (a.joinTableResolved) return a.joinTableResolved;
+  // The inverse side of a @ManyToMany: the OWNING side declared the table, and
+  // `mappedBy` names the attribute that did.
+  if (a.mappedBy) {
+    const owning = target.attributes.get(a.mappedBy);
+    return owning && owning.joinTableResolved ? owning.joinTableResolved : null;
+  }
+  if (a.relation === 'manyToMany' || (a.joinTable && a.joinTable.name)) {
+    return joinTableOf(owner, a, target, ctx);
+  }
+  return null;
+}
+
+/**
+ * WHAT ONE STATEMENT REALLY LOADS. A query on an entity does not stop at that
+ * entity's own row: every association JPA is told to fetch EAGERLY comes back
+ * with it, in the same round trip, and so does everything eager on THOSE rows.
+ * petclinic's `Owner.pets` is `fetch = EAGER`, `Pet.type` is a @ManyToOne (eager
+ * unless the mapping says otherwise) and `Pet.visits` is eager too, so
+ * `findById(1)` reads four tables while naming one.
+ *
+ * THE QUERY'S OWN PLAN WINS over the mapping: a `JOIN FETCH` and every
+ * `@EntityGraph` attribute path is followed whatever `fetch =` says.
+ *
+ * LAZY STAYS OUT, and is counted. A lazy collection a page touches later IS a
+ * read, and it is one this lane cannot see: it happens when the template asks,
+ * not when the query runs. Following it would put reads in the answer that many
+ * requests never make.
+ *
+ * @returns {{reached:object[], diagnostics:object[], lazy:number}}
+ */
+function fetchClosure(root, ctx, forced) {
+  const { entities, resolveType } = ctx;
+  const reached = [];
+  const diagnostics = [];
+  let lazy = 0;
+  const wanted = forcedIndex(forced);
+  const used = new Set();
+  const seen = new Set([root.fqn]);
+  const queue = [{ entity: root, path: [], depth: 0, grade: 'EXACT' }];
+  const hop = (cur, a, rule, fetch) => {
+    const targetFqn = a.targetSimple ? resolveType(cur.entity.fqn, a.targetSimple) : null;
+    const target = targetFqn ? entities.get(targetFqn) : null;
+    if (!target) return; // reported once per mapping by `tableColumnAndJoinNodes`
+    if (seen.has(target.fqn)) return; // a mapping that loops back is followed once
+    if (cur.depth + 1 > FETCH_DEPTH_CAP) {
+      diagnostics.push({
+        reason: 'fetch-depth-capped',
+        detail: `${root.simple}.${[...cur.path, a.name].join('.')} is more than ${FETCH_DEPTH_CAP} associations deep, so this statement's fetch plan stops here`,
+      });
+      return;
+    }
+    seen.add(target.fqn);
+    const path = [...cur.path, a.name];
+    const grade = weakest(cur.grade, a.grade ?? 'EXACT', target.tableGrade);
+    reached.push({ entity: target, joinTable: crossedJoinTable(cur.entity, a, target, ctx), path, grade, rule, fetch });
+    queue.push({ entity: target, path, depth: cur.depth + 1, grade });
+  };
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    for (const a of cur.entity.attributes.values()) {
+      if (!a.relation || a.transient === true) continue;
+      const key = [...cur.path, a.name].join('.');
+      if (wanted.has(key)) { used.add(key); hop(cur, a, wanted.get(key), null); continue; }
+      const f = effectiveFetch(a);
+      if (!f.eager) { lazy += 1; continue; }
+      hop(cur, a, 'jpa-eager-fetch', f.how);
+    }
+  }
+  for (const key of [...wanted.keys()].sort(cmp)) {
+    if (used.has(key)) continue;
+    diagnostics.push({
+      reason: 'fetch-path-unresolved',
+      detail: `${root.simple}.${key} (${wanted.get(key)}) names no association of this entity, so nothing was loaded for it`,
+    });
+  }
+  return { reached, diagnostics, lazy };
+}
+
+/**
+ * The paths a query's own plan forces, keyed by the dotted path from the root.
+ * EVERY PREFIX IS FORCED TOO: `@EntityGraph(attributePaths = {"pets.visits"})`
+ * cannot load the visits without loading the pets, so asking for the leaf asks
+ * for every hop that reaches it.
+ */
+function forcedIndex(forced) {
+  const wanted = new Map();
+  for (const f of forced ?? []) {
+    const segs = String(f.path ?? '').split('.').filter((s) => s.length > 0);
+    for (let i = 1; i <= segs.length; i += 1) {
+      const key = segs.slice(0, i).join('.');
+      if (!wanted.has(key)) wanted.set(key, f.rule);
+    }
+  }
+  return wanted;
+}
+
+/**
+ * Everything the fetch plan brings in, added to one statement's reads exactly as
+ * the bridge adds the root entity's own: the table it lands on, every mapped
+ * column of it, and the join table it crossed to get there.
+ * @returns {string[]} the `limits` sentences this statement has to carry
+ */
+function applyFetchPlan(root, ctx, forced, sink) {
+  const { reached, diagnostics, lazy } = fetchClosure(root, ctx, forced);
+  for (const r of reached) {
+    const evidence = {
+      via: r.rule, rule: r.rule, basis: JPA_FETCH_RULE_BASIS[r.rule],
+      path: `${root.simple}.${r.path.join('.')}`, ...(r.fetch ? { fetch: r.fetch } : {}),
+    };
+    if (r.joinTable) {
+      ctx.ensureTable(r.joinTable.table, { joinTableFor: [root.fqn, r.entity.fqn] });
+      for (const c of r.joinTable.columns) {
+        ctx.ensureColumn(c.table, c.column, c.grade);
+        sink.reads.push({ ...c, grade: weakest(r.grade, c.grade), evidence });
+      }
+      mark(sink.tableAccess, r.joinTable.table, 'read', weakest(r.grade, r.joinTable.grade), evidence);
+    }
+    for (const c of columnsOf(r.entity)) sink.reads.push({ ...c, grade: weakest(r.grade, c.grade), evidence });
+    mark(sink.tableAccess, r.entity.table, 'read', r.grade, evidence);
+  }
+  for (const d of diagnostics) sink.unresolved.push(d);
+  ctx.stats.lazyAssociationsNotFollowed += lazy;
+  return lazy === 0 ? [] : [
+    `${lazy} association(s) reachable from ${root.simple} are LAZY, so this statement does not read them. `
+    + 'A page that touches one after the query has run makes a second query, and that read is not in this answer.',
+  ];
 }
 
 /** A CrudRepository built-in: what `save`/`delete`/`findById` do to the row. */
-function addBuiltinStatement(g, { repoFqn, method, entity, file, entities, resolveType, stats, tableIdOf, columnIdOf }) {
+function addBuiltinStatement(g, ctx) {
+  const { repoFqn, method, entity, file, stats, tableIdOf, columnIdOf } = ctx;
   const key = statementKey(repoFqn, method);
   const sid = nodeId('statement', key);
   const family = BUILTIN_METHODS[method];
-  const reads = [];
-  const writes = [];
-  const tableAccess = new Map();
-  const unresolved = [];
+  const sink = { reads: [], writes: [], tableAccess: new Map(), unresolved: [] };
+  let limits = [];
   let evidenceNote;
 
   if (family === 'save') {
     evidenceNote = 'a JPA save() merges the whole entity, so every mapped column of the row is written';
-    for (const c of columnsOf(entity)) writes.push(c);
-    mark(tableAccess, entity.table, 'write', entity.tableGrade);
-    // CASCADE. `@OneToMany(cascade = ALL)` means saving the parent reaches the
-    // children — that is written in the source, so it is not a guess. Whether a
-    // given call actually has a dirty child is runtime, so the reach is a SOUND
-    // candidate set and is capped at SOUND_SET, never EXACT.
-    for (const reached of cascadeClosure(entity, entities, resolveType)) {
-      for (const c of columnsOf(reached.entity)) {
-        writes.push({ ...c, grade: weakest(c.grade, 'SOUND_SET', reached.grade), via: 'jpa-cascade' });
-      }
-      mark(tableAccess, reached.entity.table, 'write', weakest(reached.grade, 'SOUND_SET'));
-    }
+    for (const c of columnsOf(entity)) sink.writes.push(c);
+    mark(sink.tableAccess, entity.table, 'write', entity.tableGrade);
+    applyCascade(entity, ctx, sink, 'save');
   } else if (family === 'delete') {
     evidenceNote = 'a JPA delete() removes the row; its columns are not individually written';
-    mark(tableAccess, entity.table, 'delete', entity.tableGrade);
+    mark(sink.tableAccess, entity.table, 'delete', entity.tableGrade);
+    applyCascade(entity, ctx, sink, 'delete');
   } else if (family === 'findById') {
     evidenceNote = 'a by-id lookup reads the row through its primary key';
     if (entity.pkColumn) {
-      reads.push({ table: entity.table, column: entity.pkColumn, grade: entity.tableGrade });
+      sink.reads.push({ table: entity.table, column: entity.pkColumn, grade: entity.tableGrade });
     } else {
-      unresolved.push({ reason: 'no-primary-key', detail: `${entity.fqn} declares no @Id, so the by-id lookup names no column` });
+      sink.unresolved.push({ reason: 'no-primary-key', detail: `${entity.fqn} declares no @Id, so the by-id lookup names no column` });
     }
-    mark(tableAccess, entity.table, 'read', entity.tableGrade);
+    mark(sink.tableAccess, entity.table, 'read', entity.tableGrade);
+    limits = applyFetchPlan(entity, ctx, [], sink);
   } else {
     evidenceNote = 'reads every mapped column of the row';
-    for (const c of columnsOf(entity)) reads.push(c);
-    mark(tableAccess, entity.table, 'read', entity.tableGrade);
+    for (const c of columnsOf(entity)) sink.reads.push(c);
+    mark(sink.tableAccess, entity.table, 'read', entity.tableGrade);
+    limits = applyFetchPlan(entity, ctx, [], sink);
   }
   emitStatement(g, {
     // The REPOSITORY's file, not the entity's: this statement belongs to the
     // interface the service called, even though no line of it is written down.
     sid, key, type: 'builtin', file: file ?? null, line: null,
-    member: `${repoFqn}#${method}`, reads, writes, tableAccess, unresolved, stats,
+    member: `${repoFqn}#${method}`, ...sink, stats,
     tableIdOf, columnIdOf,
-    evidence: { repository: repoFqn, method, builtin: family, note: evidenceNote },
+    evidence: {
+      repository: repoFqn, method, builtin: family, note: evidenceNote,
+      ...(limits.length > 0 ? { limits } : {}),
+    },
   });
 }
 
-/** The entities a `save()` reaches through cascading associations. */
-function cascadeClosure(root, entities, resolveType) {
+/**
+ * CASCADE. `@OneToMany(cascade = ALL)` means saving the parent reaches the
+ * children, and removing the parent removes them — that is written in the
+ * source, so it is not a guess. Whether a given call actually HAS a dirty or a
+ * present child is runtime, so the reach is a SOUND candidate set and is capped
+ * at SOUND_SET, never EXACT.
+ *
+ * A delete writes no columns, for the same reason the root delete writes none:
+ * the row goes away whole. `orphanRemoval` is not read, so a child a save
+ * detaches rather than cascades to is a row this lane does not follow.
+ */
+function applyCascade(entity, ctx, sink, operation) {
+  for (const reached of cascadeClosure(entity, ctx, operation)) {
+    const evidence = {
+      via: 'jpa-cascade', rule: 'jpa-cascade', basis: JPA_FETCH_RULE_BASIS['jpa-cascade'],
+      path: `${entity.simple}.${reached.path.join('.')}`, operation,
+    };
+    const grade = weakest(reached.grade, 'SOUND_SET');
+    if (reached.joinTable) {
+      ctx.ensureTable(reached.joinTable.table, { joinTableFor: [entity.fqn, reached.entity.fqn] });
+      for (const c of reached.joinTable.columns) ctx.ensureColumn(c.table, c.column, c.grade);
+      if (operation === 'save') {
+        for (const c of reached.joinTable.columns) sink.writes.push({ ...c, grade: weakest(grade, c.grade), evidence });
+      }
+      mark(sink.tableAccess, reached.joinTable.table, operation === 'save' ? 'write' : 'delete', weakest(grade, reached.joinTable.grade), evidence);
+    }
+    if (operation === 'save') {
+      for (const c of columnsOf(reached.entity)) sink.writes.push({ ...c, grade: weakest(c.grade, grade), evidence, via: 'jpa-cascade' });
+    }
+    mark(sink.tableAccess, reached.entity.table, operation === 'save' ? 'write' : 'delete', grade, evidence);
+  }
+}
+
+/** The entities a `save()` or a `delete()` reaches through cascading associations. */
+function cascadeClosure(root, ctx, operation = 'save') {
+  const { entities, resolveType } = ctx;
+  const kinds = operation === 'delete' ? REMOVING_CASCADES : SAVING_CASCADES;
   const out = [];
   const seen = new Set([root.fqn]);
-  const queue = [{ entity: root, grade: 'EXACT' }];
+  const queue = [{ entity: root, path: [], depth: 0, grade: 'EXACT' }];
   while (queue.length > 0) {
     const cur = queue.shift();
+    if (cur.depth >= FETCH_DEPTH_CAP) continue;
     for (const a of cur.entity.attributes.values()) {
       if (!a.relation || a.transient === true) continue;
       const cascades = Array.isArray(a.cascade) ? a.cascade : [];
-      if (!cascades.some((c) => SAVING_CASCADES.has(String(c).toUpperCase()))) continue;
+      if (!cascades.some((c) => kinds.has(String(c).toUpperCase()))) continue;
       const targetFqn = a.targetSimple ? resolveType(cur.entity.fqn, a.targetSimple) : null;
       const target = targetFqn ? entities.get(targetFqn) : null;
       if (!target || seen.has(target.fqn)) continue;
       seen.add(target.fqn);
       const grade = weakest(cur.grade, a.grade, target.tableGrade);
-      out.push({ entity: target, grade });
-      queue.push({ entity: target, grade });
+      const path = [...cur.path, a.name];
+      out.push({ entity: target, path, grade, joinTable: crossedJoinTable(cur.entity, a, target, ctx) });
+      queue.push({ entity: target, path, depth: cur.depth + 1, grade });
     }
   }
   return out;
@@ -861,7 +1180,8 @@ function emitStatement(g, a) {
   for (const [table, acc] of [...tableAccess.entries()].sort((x, y) => cmp(x[0], y[0]))) {
     g.addEdge({
       from: sid, to: tableIdOf(table),
-      type: 'EXECUTES', grade: acc.grade, evidence: { access: acc.access, via: 'jpa' },
+      type: 'EXECUTES', grade: acc.grade,
+      evidence: { access: acc.access, via: 'jpa', ...(acc.evidence ?? {}) },
     });
   }
   const emitted = new Set();
@@ -873,7 +1193,7 @@ function emitStatement(g, a) {
       emitted.add(dedupe);
       g.addEdge({
         from: sid, to: cid, type: edgeType, grade: c.grade,
-        evidence: { via: c.via ?? 'jpa' },
+        evidence: c.evidence ?? { via: c.via ?? 'jpa' },
       });
     }
   }
@@ -916,12 +1236,15 @@ function makeLookup(entities, resolveType) {
   };
 }
 
-function mark(map, table, access, grade) {
+function mark(map, table, access, grade, evidence = null) {
   const prev = map.get(table);
   // write beats read for the same table (a statement that writes it also touches it)
   const rank = { read: 0, delete: 1, write: 2 };
-  if (!prev || rank[access] > rank[prev.access]) map.set(table, { access, grade });
-  else if (prev.access === access) map.set(table, { access, grade: weakest(prev.grade, grade) });
+  if (!prev || rank[access] > rank[prev.access]) map.set(table, { access, grade, evidence });
+  // The FIRST evidence for an access is kept: a table the query itself names is
+  // marked before the fetch plan runs, and "the query names it" outranks "the
+  // fetch plan also reaches it" as the reason it is touched.
+  else if (prev.access === access) map.set(table, { access, grade: weakest(prev.grade, grade), evidence: prev.evidence ?? evidence });
 }
 
 function addJoin(g, seen, aId, bId, columns, grade, stats) {

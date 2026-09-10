@@ -227,7 +227,13 @@ test('spring-petclinic: the JPA lane, end to end', { timeout: 900000 }, (t) => {
   //    — a SOUND candidate set (the child may be clean), never EXACT.
   // -----------------------------------------------------------------------
   const vd = ask('column_impact', { column: 'visits.visit_date' });
+  // The two READS are RM54's fetch plan: `Owner.pets` is `fetch = EAGER` and
+  // `Pet.visits` is eager too, so a query that hands back an Owner brings the
+  // visit rows with it in the same round trip. EXACT because the annotations and
+  // the JPA specification decide it: nothing here was resolved or narrowed.
   assert.deepEqual(vd.answer.statements.map((s) => [s.id.replace(R, ''), s.access, s.grade]).sort(), [
+    ['findById', 'read', 'EXACT'],
+    ['findByLastNameStartingWith', 'read', 'EXACT'],
     ['save', 'write', 'SOUND_SET'],
     ['saveAndFlush', 'write', 'SOUND_SET'],
   ]);
