@@ -222,6 +222,19 @@
   .cmpgrid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; }
   @media (max-width:1100px){ .cmpgrid { grid-template-columns:minmax(0,1fr); } }
   .warnpanel { border-color:var(--warn); }
+  /* The Overview's summary picture: groups left, table families right, the links
+     drawn between them in an SVG that sits in the middle column. */
+  .sumgrid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; margin-top:8px; }
+  @media (max-width:1100px){ .sumgrid { grid-template-columns:minmax(0,1fr); } }
+  .sumpic { display:grid; grid-template-columns:minmax(160px,1fr) minmax(80px,1.2fr) minmax(160px,1fr); position:relative; }
+  .sumcol { display:flex; flex-direction:column; gap:8px; }
+  .sumlinks { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
+  .sumbox { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; padding:7px 10px;
+    border:1px solid var(--frame); background:var(--g1); color:var(--t1); cursor:pointer; font:inherit; }
+  .sumbox.sel { box-shadow:inset 3px 0 0 var(--t1); }
+  .sumbox.sumothers { border-style:dashed; }
+  .sumname { font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
+  .sumdetail .list { max-height:60vh; overflow:auto; }
   /* THE SNAPSHOT BAND and the page an exported file is (48_snapshot.js). The
      band spans the masthead grid like the note above it. In the file there is
      one tab, no project list, no rail and nothing that would ask a server. */
@@ -1163,6 +1176,8 @@
       </div>
       <div class="ovherocol" id="ovherocol"></div>
     </div>
+    <!-- THE SUMMARY PICTURE (50_summary.js): a fold, asked for when opened. -->
+    <div id="ovsummary"></div>
     <div id="ovfold"></div>
     <div class="ovgrid">
       <div id="ovpanels" class="ovpanels"></div>
@@ -1452,6 +1467,7 @@
 <script src="/viewer/js/47_transactions.js"></script>
 <script src="/viewer/js/48_snapshot.js"></script>
 <script src="/viewer/js/49_compare.js"></script>
+<script src="/viewer/js/50_summary.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

@@ -349,6 +349,19 @@
           </div>
         </div>
       </div>
+      <div id="ovsummary">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              The whole pack in a few boxes: which parts of the code reach which families of tables.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
       <div id="ovfold">
         <div class="panel ovfoldwrap">
           <div class="fold">

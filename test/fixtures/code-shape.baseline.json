@@ -3417,6 +3417,54 @@
     "xmlViewEngineOf/1"
    ]
   },
+  "src/core/summary.mjs": {
+   "maxLines": 36,
+   "maxBranches": 16,
+   "longest": "summaryAnswer",
+   "branchiest": "descendGroups",
+   "functions": [
+    "bareTable",
+    "buildSummary",
+    "buildSummary/1",
+    "buildSummary/2",
+    "cmp",
+    "commonTokens",
+    "descendGroups",
+    "descendGroups/1",
+    "descendGroups/2",
+    "familyRow",
+    "familyRule",
+    "familyRule/1",
+    "familyRule/2",
+    "familyRule/3",
+    "foldRanked",
+    "foldRanked/1",
+    "groupRow",
+    "groupRule",
+    "groupRule/1",
+    "largest",
+    "packageOf",
+    "pathGroups",
+    "pathGroups/1",
+    "pathGroups/1/1",
+    "summaryAnswer",
+    "summaryAnswer/1",
+    "summaryAnswer/10",
+    "summaryAnswer/11",
+    "summaryAnswer/2",
+    "summaryAnswer/3",
+    "summaryAnswer/4",
+    "summaryAnswer/5",
+    "summaryAnswer/6",
+    "summaryAnswer/7",
+    "summaryAnswer/8",
+    "summaryAnswer/9",
+    "tablesOfEndpoint",
+    "tablesOfEndpoint/1",
+    "tablesOfEndpoint/2",
+    "weakest"
+   ]
+  },
   "src/core/trust.mjs": {
    "maxLines": 62,
    "maxBranches": 27,
@@ -3979,6 +4027,18 @@
     "packOf",
     "pack_diff",
     "pack_diff/1"
+   ]
+  },
+  "src/mcp/tools_summary.mjs": {
+   "maxLines": 27,
+   "maxBranches": 11,
+   "longest": "summary",
+   "branchiest": "summary",
+   "functions": [
+    "familyLimit",
+    "groupLimit",
+    "readArgs",
+    "summary"
    ]
   },
   "src/viewer/chain_svg.mjs": {
@@ -5250,6 +5310,31 @@
     "renderCompareChrome/3",
     "resetCompare",
     "side"
+   ]
+  },
+  "viewer/js/50_summary.js": {
+   "maxLines": 22,
+   "maxBranches": 9,
+   "longest": "drawSummaryLinks",
+   "branchiest": "drawSummaryLinks",
+   "functions": [
+    "boxOf",
+    "drawSummaryLinks",
+    "loadSummary",
+    "onclick",
+    "renderSummary",
+    "renderSummary/1",
+    "renderSummary/2",
+    "renderSummary/3",
+    "renderSummaryFold",
+    "renderSummaryFold/1",
+    "summaryBox",
+    "summaryDetail",
+    "summaryDetail/1",
+    "summaryDetail/2",
+    "summaryDetail/3",
+    "summaryDetail/4",
+    "summaryRuleLine"
    ]
   },
   "viewer/js/90_boot.js": {

@@ -43,6 +43,7 @@ async function loadOverview(){
 }
 function renderOverview(){
   const r=OV.resp; if(!r) return;
+  renderSummaryFold();
   const a=r.answer;
   byId('ovcards').replaceChildren(...ovKpis(a));
   byId('ovhero').classList.remove('hidden');

@@ -65,8 +65,8 @@ function fullCtx(graph) {
 // TOOLS — catalog contents
 // ---------------------------------------------------------------------------
 
-test('TOOLS has exactly overview, search, browse, column_impact, endpoint_impact, screen_impact, transactions, flow, erd, coupling, map, neighborhood, changed_impact, pack_diff, table_usage, projects', () => {
-  assert.deepEqual(new Set(Object.keys(TOOLS)), new Set(['overview', 'search', 'browse', 'column_impact', 'endpoint_impact', 'screen_impact', 'transactions', 'flow', 'erd', 'coupling', 'map', 'neighborhood', 'changed_impact', 'pack_diff', 'table_usage', 'projects']));
+test('TOOLS has exactly overview, search, browse, column_impact, endpoint_impact, screen_impact, transactions, flow, erd, coupling, map, neighborhood, changed_impact, pack_diff, summary, table_usage, projects', () => {
+  assert.deepEqual(new Set(Object.keys(TOOLS)), new Set(['overview', 'search', 'browse', 'column_impact', 'endpoint_impact', 'screen_impact', 'transactions', 'flow', 'erd', 'coupling', 'map', 'neighborhood', 'changed_impact', 'pack_diff', 'summary', 'table_usage', 'projects']));
 });
 
 test('TOOLS: each entry has a non-empty description', () => {
@@ -105,7 +105,7 @@ test('toolList: returns {schema:CATALOG_SCHEMA, tools:[...]}', () => {
   const list = toolList();
   assert.equal(list.schema, CATALOG_SCHEMA);
   assert.ok(Array.isArray(list.tools));
-  assert.equal(list.tools.length, 16);
+  assert.equal(list.tools.length, 17);
 });
 
 test('toolList: each entry exposes ONLY name/description/inputSchema — no fn leaking', () => {

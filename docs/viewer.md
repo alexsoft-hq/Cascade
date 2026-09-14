@@ -104,6 +104,36 @@ which is to register the project that serves them. On a project that calls
 nobody the panel is absent, because a panel saying zero about something this
 pack does not do is noise.
 
+#### The summary
+
+A fold under the Overview's cards draws the whole pack in about ten boxes a side:
+groups of routes on the left, families of tables on the right, and one line per
+group and family, as thick as the tables behind it and dashed by the weakest
+grade on the way. It is closed until you open it, because it walks every route in
+the pack. A box opens beside the picture into what it holds: a group's routes,
+each with **Flow**, or a family's tables, each with **Impact**. Boxes past ten are
+folded into one `(others)` box on each side, and their lines go to it, so nothing
+the walk reached is left off.
+
+**The boxes are read, not declared**, and the line over the picture says which
+rule made them:
+
+- a group is the handler's package cut to `moduleAttribution.packageDepth`
+  segments when the profile declares it;
+- otherwise it is where the handler code sits, read below every package level
+  that one branch holds four in five of the routes of (`egovframework.com` in
+  eGovFrame, `org.jeecg.modules` in jeecg-boot), with a stray branch beside it
+  as a box of its own;
+- when every handler sits in one package, or there is no handler, it is the
+  route path, read the same way (`/api/mdm/...` under a shared `/api` is `mdm`);
+- a table family is the tables whose names start with the same word below a
+  shared prefix (`t_ds_task` under `t_ds`), or the same letters when the names
+  carry no underscore (eGovFrame's `COMTN...`, `COMTH...`).
+
+These are patterns in the code and the schema, not modules anybody declared, and
+the `summary` tool's limits say so. When one box still holds most of the routes,
+a limit says that too.
+
 ### The browse rail
 
 Explore, Flow and Impact open on a LIST, not on an empty search box: a column

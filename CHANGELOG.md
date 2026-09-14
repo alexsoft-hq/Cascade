@@ -40,6 +40,14 @@ Each dated section below is one round of work. The round protocol is in
 - **A Compare tab.** When the server serves another pack, the viewer compares the
   project on screen with it through `pack_diff`, conditions first, with Flow
   buttons on the endpoints above the change and the evidence rail beside it.
+- **The whole pack in about ten boxes.** The MCP tool `summary` and a fold on the
+  viewer's Overview group the routes by where their handler code sits and the
+  reached tables by name family, with one link per group and family carrying the
+  tables, routes and weakest grade behind it. A box opens into its routes (with
+  Flow) or tables (with Impact), boxes past ten fold into `(others)`, and the
+  rule that made the boxes is stated. On the corpus it reads eGovFrame common
+  components as `uss`, `cop`, `sym`, jeecg-boot as `system`, `airag`, `demo`,
+  and the MES as `mdm`, `operation`, `production`.
 - **A pack records what it was analyzed under.** `meta.analysis` holds the worker
   versions, the normalized profile's digest, the engine version and fingerprint,
   the opt-out flags and the source roots. It is metadata, so no pack digest moves.

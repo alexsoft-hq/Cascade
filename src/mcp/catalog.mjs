@@ -10,6 +10,7 @@
 
 import * as tools from './tools.mjs';
 import { pack_diff } from './tools_diff.mjs';
+import { summary } from './tools_summary.mjs';
 import { assertContract } from './contract.mjs';
 import { axisLimits, axisKnownGaps } from '../core/lanes.mjs';
 
@@ -464,6 +465,23 @@ export const TOOLS = Object.freeze({
       },
     },
     fn: tools.changed_impact,
+  },
+  summary: {
+    description:
+      'The whole pack in about ten boxes a side, for a reader who needs the shape of the system '
+      + 'before any one route: groups of routes by where their handler code sits, the table families '
+      + 'they reach, and a link per group and family with the tables, routes and weakest grade behind '
+      + 'it. Every box lists its members, so a group opens down to its routes and a family to its '
+      + 'tables. READ `limits`: unless the profile declares moduleAttribution.packageDepth, a group is '
+      + 'read from the package tree (below the package every handler shares) and a family from the '
+      + 'table names, which are patterns and not declared modules. The boxes past `limit` are folded '
+      + 'into `otherGroups` and `otherFamilies`, and their links into an `(others)` box, so nothing '
+      + 'the walk reached is dropped.',
+    inputSchema: {
+      type: 'object',
+      properties: { mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] }, depth: { type: 'integer' }, limit: { type: 'integer' } },
+    },
+    fn: summary,
   },
   pack_diff: {
     description:
