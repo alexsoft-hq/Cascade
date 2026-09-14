@@ -60,7 +60,9 @@ function renderSnapshotChrome(){
   const flow=SNAP.calls.find((c)=>c.name==='flow');
   const a=flow ? flow.answer : null;
   const limits=a && Array.isArray(a.limits) ? a.limits.length : 0;
-  const truncated=a && a.truncated && Array.isArray(a.truncated.fields) ? a.truncated.fields.length : 0;
+  // A list is CUT only when it shows fewer rows than it has; a list shown whole is
+  // a truncation line too, and counting those would report cuts that are not there.
+  const truncated=a && a.truncated && Array.isArray(a.truncated.fields) ? a.truncated.fields.filter((f)=>f.shown<f.total).length : 0;
   const trust=a && a.trust && a.trust.trustLevel ? a.trust.trustLevel : '?';
   const m=SNAP.meta||{};
   const tabName=SNAP.tab==='impact' ? t('tab.impact') : t('tab.flow');

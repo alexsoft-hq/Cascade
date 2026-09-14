@@ -119,7 +119,19 @@ test('the file boots with no network, draws the chain, and says in its band what
   const text = band.textContent;
   assert.match(text, /Flow from screen \/rows, mode conservative, depth 8, up to 40 rows/);
   assert.match(text, new RegExp(`exported ${AT.replace(/\./g, '\\.')} from pack [0-9a-f]{12}`));
-  assert.match(text, /this answer: trust UNCERTIFIED, \d+ limit\(s\), \d+ cut list\(s\)/);
+  const flow = carried(out.html).calls.find((c) => c.name === 'flow').answer;
+  assert.match(text, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} limit\\(s\\), 0 cut list\\(s\\)`),
+    'a list shown whole is not counted as cut');
+});
+
+test('a list the answer really cut is counted as cut, in the band and on the command line', async (t) => {
+  const { host } = await startViewer(t, ['delta']);
+  const out = exportSnapshot(host, { tab: 'flow', args: { screen: '/rows', limit: 1 }, generatedAt: AT });
+  const flow = out.snapshot.calls.find((c) => c.name === 'flow').answer;
+  const cut = flow.truncated.fields.filter((f) => f.shown < f.total);
+  assert.ok(cut.length > 0, `the fixture has a lane longer than one row: ${JSON.stringify(flow.truncated.fields)}`);
+  const page = await bootFile(out.html);
+  assert.match(page.byId.get('snapbar').textContent, new RegExp(`${cut.length} cut list\\(s\\)`));
 });
 
 test('a question the file does not hold is answered with a sentence, not a guess', async (t) => {
@@ -194,7 +206,7 @@ test('cascade export writes the same file the Export button gets, from a pack on
   const run = cli(['--endpoint', 'GET /rows', '--out', out]);
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /wrote .*x\.html \(\d+ bytes\): flow from endpoint GET \/rows, mode conservative, depth 6, limit 40/);
-  assert.match(run.stdout, /trust \w+, \d+ limit\(s\), \d+ cut list\(s\)/);
+  assert.match(run.stdout, /trust \w+, \d+ limit\(s\), 0 cut list\(s\)/);
   const fromCli = carried(fs.readFileSync(out, 'utf8'));
   // The button's file for the same question carries the same answers; only the
   // moment it was written, and the project id a bare pack is served under, differ.

@@ -45,7 +45,7 @@ export function run(cli) {
   fs.writeFileSync(file, out.html, 'utf8');
   const flow = out.snapshot.calls.find((c) => c.name === 'flow').answer;
   const limits = Array.isArray(flow.limits) ? flow.limits.length : 0;
-  const cut = flow.truncated && Array.isArray(flow.truncated.fields) ? flow.truncated.fields.length : 0;
+  const cut = flow.truncated && Array.isArray(flow.truncated.fields) ? flow.truncated.fields.filter((f) => f.shown < f.total).length : 0;
   process.stdout.write(`wrote ${file} (${out.bytes} bytes): ${tab} from ${out.snapshot.entry.kind} ${out.snapshot.entry.value}, `
     + `mode ${out.snapshot.args.mode}, depth ${out.snapshot.args.depth}, limit ${out.snapshot.args.limit}\n`);
   process.stdout.write(`trust ${flow.trust?.trustLevel ?? 'unknown'}, ${limits} limit(s), ${cut} cut list(s). The file carries all of them, `
