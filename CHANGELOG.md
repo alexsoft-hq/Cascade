@@ -10,6 +10,12 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-09-14
+
+Cascade's answers leave the screen: one answer as an HTML file, an SVG or a PNG,
+two packs compared, and the whole pack in about ten boxes. Nothing to install
+besides Cascade.
+
 ### Added
 
 - **One Flow or Impact answer as one HTML file.** The viewer's **Export** button
@@ -52,13 +58,6 @@ Each dated section below is one round of work. The round protocol is in
   versions, the normalized profile's digest, the engine version and fingerprint,
   the opt-out flags and the source roots. It is metadata, so no pack digest moves.
   A pack built before it has none, and a diff says those conditions are unknown.
-
-### Fixed
-
-- **A snapshot counts a list as cut only when it shows fewer rows than it has.**
-  A Flow answer whose lanes were all shown whole said "3 cut list(s)".
-- **An export asks for no more rows than the `flow` tool answers** (200), instead
-  of passing a larger limit through to be refused.
 
 ## [0.8.7] - 2026-09-14
 
@@ -2489,7 +2488,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.7...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.8...HEAD
+[0.8.8]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.4...v0.8.5
