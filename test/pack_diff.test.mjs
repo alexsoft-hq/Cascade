@@ -18,12 +18,16 @@ import { Graph, nodeId } from '../src/core/graph.mjs';
 import { projectPack } from '../src/core/pack.mjs';
 import { PACK_DIFF_SCHEMA, compareConditions, diffPacks } from '../src/core/pack_diff.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
+import { createProjectHost, packFingerprint } from '../src/mcp/projects.mjs';
+import { writeAtomic } from '../src/cli/pack_history.mjs';
 import { assertContract } from '../src/mcp/contract.mjs';
 import { startViewer } from './helpers/viewer_fixtures.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const WORKERS = { java: 'javafacts/12', lineage: 'lineage/3', catalog: 'catalog-ddl/4', mybatis: 'mybatis-extract/2', web: 'webfacts/13' };
-const ANALYSIS = { workers: WORKERS, profileDigest: 'p'.repeat(64), enginePrint: 'e'.repeat(64), engineVersion: '0.8.8', optOuts: [], selection: { javaRoots: ['src'] } };
+const ANALYSIS = { workers: WORKERS, profileDigest: 'p'.repeat(64), enginePrint: 'e'.repeat(64), engineVersion: '0.8.8', optOuts: [], selection: { javaRoots: ['src'] },
+  invocation: { ddl: [], mappers: [], javaSrc: [], webSrc: [], openapi: [], har: [], otel: [], noDdl: false, noMappers: false, noJava: false, noWeb: false, noOpenapi: false, profile: null },
+  external: { catalogSnapshot: null, evidence: [] } };
 const AXES = { catalog: { status: 'shipped' }, statements: { status: 'shipped' }, code: { status: 'shipped' } };
 
 /** One state of the project: a route, its handler, a service, a mapper statement, a table. */
@@ -83,6 +87,19 @@ test('two packs of the same code and the same analysis differ in nothing', () =>
   const d = diffPacks(packOf(state({ head: true })), packOf(state({ head: true })));
   assert.equal(d.samePack, true);
   assert.deepEqual([d.nodes.added, d.nodes.removed, d.edges.added, d.edges.removed, d.edges.regraded, d.endpointsTouched.total], [0, 0, 0, 0, 0, 0]);
+});
+
+test('two packs that both record their analysis but not their flags are not taken to agree on them', () => {
+  const { invocation: _i, external: _e, ...old } = ANALYSIS;
+  const c = compareConditions(packOf(state({ head: true }), { analysis: old }), packOf(state({ head: true }), { analysis: old }));
+  assert.equal(c.verdict, 'unknown');
+  assert.deepEqual(c.unknown, ['catalogSnapshot', 'evidence', 'flags']);
+});
+
+test('where the profile file sat is not a difference in how the packs were read, and its content is', () => {
+  const at = (profile, profileDigest = ANALYSIS.profileDigest) => packOf(state({ head: true }), { analysis: { ...ANALYSIS, profileDigest, invocation: { ...ANALYSIS.invocation, profile } } });
+  assert.equal(compareConditions(at(null), at('conventions/strict.json')).verdict, 'same');
+  assert.deepEqual(compareConditions(at(null), at(null, 'q'.repeat(64))).differences.map((d) => d.what), ['profileDigest']);
 });
 
 test('a difference in how the packs were analyzed is said first, and a removal on a changed axis is marked', () => {
@@ -182,8 +199,37 @@ test('a served project whose pack was republished is read again, so its head is 
   const file = path.join(first.packDir, 'pack.json');
   const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(host.ctxFor('alpha'), first, 'nothing changed: the same context');
-  const later = new Date(Date.now() + 5000);
-  fs.writeFileSync(file, JSON.stringify(pack));
-  fs.utimesSync(file, later, later);
-  assert.notEqual(host.ctxFor('alpha'), first, 'a republished pack is read again');
+  // A build of the SAME size and modification time, renamed into place the way analyze publishes.
+  const before = fs.statSync(file);
+  const builtAt = pack.meta.builtAt.replace(/\d(?=\D*$)/, (c) => String((Number(c) + 1) % 10));
+  const next = JSON.stringify({ ...pack, meta: { ...pack.meta, builtAt } });
+  assert.equal(next.length, JSON.stringify(pack).length);
+  writeAtomic(file, next);
+  fs.utimesSync(file, before.atime, before.mtime);
+  const second = host.ctxFor('alpha');
+  assert.notEqual(second, first, 'a republished pack is read again');
+  assert.equal(second.pack.builtAt, builtAt, 'and what is read is the new build');
+  // A copy that restores the size and the modification time exactly is still a new file.
+  const stat = (ino, ctimeMs) => ({ statSync: () => ({ ino, size: 10, mtimeMs: 1000, ctimeMs }) });
+  const entry = { dotCascadePath: '/nowhere/.cascade' };
+  assert.notEqual(packFingerprint(entry, stat(1, 1000)), packFingerprint(entry, stat(2, 1000)), 'another inode');
+  assert.notEqual(packFingerprint(entry, stat(1, 1000)), packFingerprint(entry, stat(1, 2000)), 'another change time');
+});
+
+test('a served project\'s route sidecar is read again once its pack is republished, from the list as from a tool', () => {
+  let build = 1;
+  let reads = 0;
+  const host = createProjectHost({
+    registry: { projects: [{ id: 'alpha', dotCascadePath: '/nowhere/.cascade' }] },
+    loadProject: () => ({ graph: new Graph(), pack: {} }),
+    fingerprint: () => `build-${build}`,
+    readIndex: () => { reads += 1; return { ok: true, index: { serves: Array.from({ length: build }), calls: [] } }; },
+    log: () => {},
+  });
+  assert.equal(host.list()[0].federation.serves, 1);
+  assert.equal(host.list()[0].federation.serves, 1);
+  assert.equal(reads, 1, 'one build, one read');
+  build = 2;
+  assert.equal(host.list()[0].federation.serves, 2, 'the list does not answer from the old build\'s sidecar');
+  assert.equal(typeof packFingerprint({ dotCascadePath: '/nowhere/.cascade' }), 'object', 'no pack on disk is no fingerprint');
 });

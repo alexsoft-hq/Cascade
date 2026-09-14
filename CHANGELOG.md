@@ -28,8 +28,14 @@ Each dated section below is one round of work. The round protocol is in
 - **A pack records its repository.** `meta.base` holds the commit its history
   starts from (none for a shallow clone), the `origin` remote with credentials
   removed, and the project's folder in the repository, so two projects of one
-  monorepo are told apart. `meta.analysis` records the lane flags, the catalog
+  monorepo are told apart, even beside a pack built before the folder was
+  recorded. The root commit is the one along first parents, so merging in an
+  unrelated history does not change it. `meta.analysis` records the lane flags
+  (as the files they named, whatever directory they were typed in), the catalog
   snapshot and the runtime evidence files, and a diff compares them.
+- **Sidecars name their pack.** `facts-index.json` carries `packDigest`, and it
+  and `routes.json` are published before the pack under the same lock, so a
+  reader never takes an index written for another build.
 
 ### Fixed
 

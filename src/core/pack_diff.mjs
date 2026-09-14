@@ -90,11 +90,21 @@ function runConditions(a) {
   if (!a) return { flags: null, catalogSnapshot: null, evidence: null };
   const ext = a.external ?? null;
   return {
-    flags: a.invocation ? JSON.stringify(a.invocation) : null,
+    // Where the profile file sat is not how it was read; `profileDigest` is.
+    flags: a.invocation ? JSON.stringify({ ...a.invocation, profile: undefined }) : null,
     catalogSnapshot: ext ? String(ext.catalogSnapshot ?? 'none') : null,
     evidence: ext ? (ext.evidence ?? []).join(' ') || 'none' : null,
   };
 }
+
+/**
+ * Whether a condition one pack or both did not record is said as unknown.
+ * Recorded on one side only is not a difference: it is a thing nobody knows.
+ * Absent on BOTH is said too when both packs record their analysis: two packs
+ * that cannot say which flags they were given are not known to agree on them.
+ * (When a pack records no analysis at all, one line below says so for all of it.)
+ */
+const unrecorded = (k, bv, hv, bothRecorded) => bv !== hv || !ANALYSIS_KEYS.has(k) || bothRecorded;
 
 /**
  * Whether the two packs were analyzed the same way, and every way they were not.
@@ -109,8 +119,7 @@ export function compareConditions(basePack, headPack) {
   for (const k of keys) {
     const bv = b.flat[k] ?? null;
     const hv = h.flat[k] ?? null;
-    // Recorded on one side only is not a difference: it is a thing nobody knows.
-    if (bv === null || hv === null) { if (bv !== hv || !ANALYSIS_KEYS.has(k)) unknown.push(k); continue; }
+    if (bv === null || hv === null) { if (unrecorded(k, bv, hv, b.recorded && h.recorded)) unknown.push(k); continue; }
     if (bv !== hv) differences.push({ what: k, base: bv, head: hv });
   }
   if (!b.recorded || !h.recorded) {

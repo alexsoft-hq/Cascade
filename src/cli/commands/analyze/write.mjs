@@ -317,7 +317,6 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
   }
   const writeDir = red ? `${out}-rejected` : out;
   const writeIndexFile = path.join(writeDir, 'facts-index.json');
-  publishPack(writeDir, { pack, index: result.index, keep: calibrated && !red });
   const routesIndex = buildRoutesIndex(g, {
     project: pack.meta?.project ?? projectId ?? null,
     buildDigest: pack.digest,
@@ -329,7 +328,7 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
     // beside the pack, never in it, so neither choice moves a digest.
     serviceNames: serviceNames.names,
   });
-  fs.writeFileSync(path.join(writeDir, ROUTES_FILE), serializeRoutesIndex(routesIndex));
+  publishPack(writeDir, { pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red });
   if (calibrated) {
     fs.mkdirSync(calibrationDir, { recursive: true });
     fs.writeFileSync(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
@@ -337,24 +336,44 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
   return { writeDir, writeIndexFile, routesIndex };
 }
 
-/** A path as a comparison can use it: relative to the project root inside it, real and absolute outside. */
-export function portablePath(p, root) {
-  const abs = realPath(path.resolve(root, p));
-  const rel = path.relative(realPath(root), abs);
-  return rel.startsWith('..') || path.isAbsolute(rel) ? abs : (rel.split(path.sep).join('/') || '.');
+/**
+ * A path as a comparison can use it: relative to the project root when it is
+ * inside the REPOSITORY (`db/schema.sql`, or `../shared/src` for a folder beside
+ * the project), because a checkout of the same repository elsewhere, a base
+ * commit's worktree among them, has the same layout; real and absolute outside
+ * the repository, where there is only one of it. Without a repository, the
+ * project root is the boundary. `from` is what a relative `p` is relative to.
+ */
+export function portablePath(p, root, { repoTop = null, from = root } = {}) {
+  const abs = realPath(path.resolve(from, p));
+  const top = realPath(repoTop ?? root);
+  const inRepo = abs === top || abs.startsWith(top + path.sep);
+  return inRepo ? (path.relative(realPath(root), abs).split(path.sep).join('/') || '.') : abs;
+}
+
+/** The repository's top, from the project root and the folder the project sits in; null outside git. */
+function repoTopOf(root, projectPath) {
+  if (typeof projectPath !== 'string') return null;
+  return path.resolve(root, ...projectPath.split('/').filter(Boolean).map(() => '..'));
 }
 
 /** Every path string in a selection, made portable; everything else as it is. */
-function portableSelection(sel, root) {
+function portableSelection(sel, root, opts) {
   const walk = (v, key) => {
     if (Array.isArray(v)) return v.map((x) => walk(x, key));
     if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
-    if (typeof v !== 'string' || key === 'root' || key === 'sqlArgs' || key === 'packagePrefixes' || key === 'engine' || key === 'kind' || key === 'suffix') return v;
-    return portablePath(v, root);
+    if (typeof v !== 'string' || NOT_PATHS.has(key)) return v;
+    return portablePath(v, root, opts);
   };
+  // The checkout's own root is where it sits, not how it was read; a NESTED `root`
+  // (a template root) is a path like any other.
   const { root: _root, ...rest } = sel ?? {};
   return walk(rest, null);
 }
+
+const NOT_PATHS = new Set(['sqlArgs', 'packagePrefixes', 'engine', 'kind', 'suffix']);
+/** Flags whose order does not matter to the lanes, which sort and de-duplicate them; `--ddl` order is the migration order. */
+const UNORDERED_FLAGS = ['mappers', 'javaSrc', 'webSrc', 'openapi', 'har', 'otel'];
 
 /**
  * WHAT THIS PACK WAS ANALYZED UNDER, recorded so two packs can be compared
@@ -365,18 +384,21 @@ function portableSelection(sel, root) {
  * commit (a database snapshot, a recording). Paths are portable: relative to the
  * project root inside it, so a checkout elsewhere records the same thing.
  */
-function analysisRecord({ flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base, profileFile, dotCascade, catalogMeta }) {
+export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base, profileFile, dotCascade, catalogMeta, cwd = process.cwd() }) {
   const root = base?.repoPath ?? selectionRel.root;
-  const list = (xs) => (xs ?? []).map((p) => portablePath(p, root));
+  const repoTop = repoTopOf(root, base?.projectPath);
+  // A flag is relative to the shell it was typed in (src/core/lanes.mjs), not to the project.
+  const list = (xs) => (xs ?? []).map((p) => portablePath(p, root, { repoTop, from: cwd }));
   const defaultProfile = dotCascade ? realPath(path.join(dotCascade, 'profile.json')) : null;
+  const invocation = { ddl: list(flags.ddl) };
+  for (const k of UNORDERED_FLAGS) invocation[k] = [...new Set(list(flags[k]))].sort();
   return {
     workers: workerVersions(), profileDigest, enginePrint: enginePrintNow, engineVersion: engineIdentity().version,
-    optOuts, selection: portableSelection(selectionRel, root),
+    optOuts, selection: portableSelection(selectionRel, root, { repoTop }),
     invocation: {
-      ddl: list(flags.ddl), mappers: list(flags.mappers), javaSrc: list(flags.javaSrc), webSrc: list(flags.webSrc),
-      openapi: list(flags.openapi), har: list(flags.har), otel: list(flags.otel),
+      ...invocation,
       noDdl: !!flags.noDdl, noMappers: !!flags.noMappers, noJava: !!flags.noJava, noWeb: !!flags.noWeb, noOpenapi: !!flags.noOpenapi,
-      profile: profileFile && realPath(profileFile) !== defaultProfile ? portablePath(profileFile, root) : null,
+      profile: profileFile && realPath(profileFile) !== defaultProfile ? portablePath(profileFile, root, { repoTop, from: cwd }) : null,
     },
     external: {
       catalogSnapshot: catalogMeta?.source === 'snapshot' ? catalogMeta.sha256 ?? null : null,
@@ -387,17 +409,23 @@ function analysisRecord({ flags, selectionRel, optOuts, profileDigest, enginePri
 
 /**
  * THE PACK, PUBLISHED. Under the project's write lock: a certified run keeps a
- * copy of the pack it replaces (pack_history.mjs), the new pack and its index are
- * each renamed into place whole, and the history is pruned only after that. A
- * failure while keeping or pruning is said and does not stop the publish.
+ * copy of the pack it replaces (pack_history.mjs), then the sidecars are renamed
+ * into place whole, and THE PACK LAST: its rename is the moment the new build is
+ * published, and a server notices a build by its pack. Each sidecar names the
+ * digest of the pack it belongs to (`packDigest`, `buildDigest`), so a sidecar
+ * that got ahead of its pack (a run that died between the renames, a reader
+ * between them) is refused by its reader instead of being read with the wrong
+ * pack. The history is pruned only after the pack is in place. A failure while
+ * keeping or pruning is said and does not stop the publish.
  */
-function publishPack(writeDir, { pack, index, keep }) {
+export function publishPack(writeDir, { pack, index, routes, keep }) {
   withPackLock(writeDir, () => {
     const warn = (what, e) => process.stderr.write(`pack history: could not ${what} (${e.message}); the pack is published all the same\n`);
     let kept = null;
     if (keep) { try { kept = keepPreviousPack(writeDir, pack); } catch (e) { warn('keep the pack this run replaces', e); } }
+    writeAtomic(path.join(writeDir, 'facts-index.json'), serializeIndex({ ...index, packDigest: pack.digest }));
+    if (routes !== undefined) writeAtomic(path.join(writeDir, ROUTES_FILE), routes);
     writeAtomic(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
-    writeAtomic(path.join(writeDir, 'facts-index.json'), serializeIndex(index));
     if (kept) { try { pruneHistory(writeDir); } catch (e) { warn('prune the history', e); } }
   });
 }

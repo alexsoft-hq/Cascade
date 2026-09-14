@@ -33,10 +33,11 @@ function keepEarlierBuild(host, id) {
   host.ctxFor(id);
 }
 
-async function bootWith(t, { ids = ['alpha', 'beta'], earlier = [], hash = '' } = {}) {
+async function bootWith(t, { ids = ['alpha', 'beta'], earlier = [], hash = '', hold = () => null } = {}) {
   const { html, base, host } = await startViewer(t, ids);
   for (const id of earlier) keepEarlierBuild(host, id);
-  const page = await boot({ html, hash, origin: base, answer: (url, opts) => fetch(base + url, opts) });
+  // `hold` may return a promise that a request waits on before it is answered.
+  const page = await boot({ html, hash, origin: base, answer: async (url, opts) => { await hold(url, opts); return fetch(base + url, opts); } });
   return page;
 }
 
@@ -81,4 +82,25 @@ test('switching to a project with no earlier build hides the tab and drops the o
   await settle(page.ctx);
   assert.equal(ev(page.ctx, 'CMP.resp'), null);
   assert.equal(tabButton(page).classList.contains('hidden'), true);
+});
+
+test('an answer for the old project that arrives after a switch is not drawn for the new one', async (t) => {
+  let release;
+  let held = false;
+  const gate = new Promise((r) => { release = r; });
+  const heldBeta = (_url, opts) => {
+    const body = opts && typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+    if (!(body && body.name === 'pack_diff' && body.project === 'beta')) return null;
+    held = true;
+    return gate;
+  };
+  const page = await bootWith(t, { earlier: ['alpha', 'beta'], hash: '#p=beta&tab=compare', hold: heldBeta });
+  for (let i = 0; i < 40 && !page.calls.some((c) => c.body && c.body.name === 'pack_diff'); i += 1) await settle(page.ctx, 1);
+  assert.equal(held, true, 'the beta answer is on its way when the switch happens');
+  ev(page.ctx, "switchProject('alpha')");
+  for (let i = 0; i < 40 && !ev(page.ctx, 'CMP.resp'); i += 1) await settle(page.ctx, 1);
+  assert.equal(ev(page.ctx, 'CMP.resp.basis.project'), 'alpha');
+  release();
+  await settle(page.ctx, 5);
+  assert.equal(ev(page.ctx, 'CMP.resp.basis.project'), 'alpha', 'the late beta answer was dropped');
 });

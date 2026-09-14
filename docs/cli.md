@@ -700,13 +700,16 @@ which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x
   is used as it is. Otherwise the commit is checked out in a temporary git
   worktree, given this project's manifest and the profile the current pack was
   analyzed with, and analyzed with the very lane flags the current pack recorded
-  (`--ddl`, `--mappers`, `--no-java` and the rest), into a scratch directory:
+  (`--ddl`, `--mappers`, `--no-java` and the rest; a pack records each flag as
+  the file it named, relative to the project when it is in the repository, so a
+  flag typed from another directory replays the same file), into a scratch directory:
   nothing is registered or sealed, and the worktree is removed afterwards (a
   removal that fails is an error that says what to clean). A path inside the
   repository, in the profile or in a flag, is read at that commit; one outside it
   (a frontend checked out beside the repository, a DB snapshot in
   `.cascade/catalog`) has no older version, is read as it is today, and the
-  output lists every such path. A current pack that does not record how it was
+  output lists every such path. A profile the current pack did not read is not
+  read at the base either, even when that commit tracks one. A current pack that does not record how it was
   analyzed (built before this release) is refused: run `cascade analyze` once. A
   shallow clone may not hold the commit, and the command says to fetch it.
 - `--base <pack>` — a pack on disk instead: a `pack.json`, the directory holding
@@ -734,9 +737,11 @@ repository is unknown.
 **The pack history.** Every certified `analyze` copies the pack it replaces into
 `.cascade/history/`, one directory per build, and keeps the five most recent. A
 rebuild that changed nothing (same commit, same digest) keeps nothing. The copy
-is made under the project's write lock, before the new pack is renamed into
-place, and the history is pruned only after that, so the pack being served is
-always the old one or the new one. A build made with uncommitted edits is kept
+is made under the project's write lock; then the fact index and the route index
+are renamed into place, each naming the digest of the pack it belongs to, and the
+pack last. A reader that finds a sidecar written for another build refuses it
+rather than reading it with the wrong pack. The history is pruned only after
+that, so the pack being served is always the old one or the new one. A build made with uncommitted edits is kept
 but never chosen by its commit. The viewer's Compare tab and the MCP tool
 `pack_diff { base_commit }` choose their base from here, and a server notices a
 pack republished under it and reads the new one.
@@ -745,7 +750,8 @@ pack republished under it and reads the new one.
 another profile, with a lane or an axis missing, gives a different pack too. So
 the two packs' lanes, identity rule, axes, worker versions, profile digest,
 engine, opt-out flags, lane flags, source roots, catalog snapshot and runtime
-evidence files are compared before anything is counted,
+evidence files are compared before anything is counted (two packs that both
+leave one of these unrecorded are not taken to agree on it),
 and every one that differs is printed. A removed node whose axis changed between
 the packs is marked, because an unread catalog and a dropped table look alike in
 a list of ids. A pack built before 0.8.8 records no workers, profile or engine,

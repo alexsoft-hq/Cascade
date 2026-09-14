@@ -27,23 +27,25 @@
  */
 export function normalizeRemote(url) {
   if (typeof url !== 'string' || url.trim() === '') return null;
-  const s = bareRemote(url.trim());
-  // The host is case-blind and a default port says nothing; any other port is
-  // another server. The path keeps its case, except on hosts known to ignore it.
+  const { scheme, s } = bareRemote(url.trim());
+  // The host is case-blind, and the port its scheme uses anyway says nothing; any
+  // other port is another server (port 22 under https is not https). The path
+  // keeps its case, except on hosts known to ignore it.
   const m = /^([^/:]+)(?::(\d+))?(\/.*)?$/.exec(s);
   if (!m) return s;
-  const host = m[1].toLowerCase();
-  const port = m[2] && !DEFAULT_PORTS.has(m[2]) ? `:${m[2]}` : '';
-  return `${host}${port}${CASE_BLIND_HOSTS.has(host) ? (m[3] ?? '').toLowerCase() : (m[3] ?? '')}`;
+  const [host, port, rest = ''] = [m[1].toLowerCase(), m[2] && DEFAULT_PORT[scheme] !== m[2] ? `:${m[2]}` : '', m[3]];
+  return `${host}${port}${CASE_BLIND_HOSTS.has(host) ? rest.toLowerCase() : rest}`;
 }
 
-const DEFAULT_PORTS = new Set(['22', '80', '443']);
+/** The port each scheme uses when none is written. The scp form (`user@host:path`) is ssh. */
+const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', 'git+ssh': '22', 'ssh+git': '22', git: '9418' };
 
-/** A remote without its scheme, its credentials, a trailing slash or `.git`: `host[:port]/path`. */
-function bareRemote(s) {
-  const scp = /^[^@/]+@([^:/]+):(?!\d+\/)(.+)$/.exec(s);
-  const noScheme = scp ? `${scp[1]}/${scp[2]}` : s.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '');
-  return noScheme.replace(/\/+$/, '').replace(/\.git$/i, '');
+/** A remote's scheme, and the remote without it, its credentials, a trailing slash or `.git`: `host[:port]/path`. */
+function bareRemote(url) {
+  const scp = /^[^@/]+@([^:/]+):(?!\d+\/)(.+)$/.exec(url);
+  const scheme = scp ? 'ssh' : (/^([a-z+]+):\/\//i.exec(url)?.[1].toLowerCase() ?? null);
+  const noScheme = scp ? `${scp[1]}/${scp[2]}` : url.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '');
+  return { scheme, s: noScheme.replace(/\/+$/, '').replace(/\.git$/i, '') };
 }
 
 /** Hosting services whose repository paths ignore letter case. */
@@ -76,13 +78,23 @@ const evidenceFor = (a, b) => historyEvidence(a, b) ?? checkoutEvidence(a, b);
 function historyEvidence(a, b) {
   const field = ['rootCommit', 'remote'].find((f) => a[f] && b[f]);
   if (!field) return null;
-  // ONE REPOSITORY, TWO PROJECTS: a monorepo keeps several projects in folders of
-  // one history, and they share a root commit and a remote. The folder tells them apart.
-  if (a[field] === b[field] && differentFolders(a, b)) return ['project folder', 'projectPath'];
-  return [field === 'rootCommit' ? 'root commit' : 'remote', field];
+  return (a[field] === b[field] && projectEvidence(a, b)) || [field === 'rootCommit' ? 'root commit' : 'remote', field];
+}
+
+/**
+ * ONE REPOSITORY, TWO PROJECTS: a monorepo keeps several projects in folders of
+ * one history, and they share a root commit and a remote. The folder tells them
+ * apart. A pack built before the folder was recorded cannot say which project of
+ * the repository it is, and two project ids that differ still can.
+ */
+function projectEvidence(a, b) {
+  if (differentFolders(a, b)) return ['project folder', 'projectPath'];
+  if (oneFolderUnknown(a, b) && a.project && b.project && a.project !== b.project) return ['project id', 'project'];
+  return null;
 }
 
 const differentFolders = (a, b) => a.projectPath !== null && b.projectPath !== null && a.projectPath !== b.projectPath;
+const oneFolderUnknown = (a, b) => (a.projectPath === null) !== (b.projectPath === null);
 
 /** For packs that recorded no history: the same checkout, or two project ids that differ. */
 function checkoutEvidence(a, b) {

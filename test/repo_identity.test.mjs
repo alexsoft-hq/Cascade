@@ -11,9 +11,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { normalizeRemote, sameRepository } from '../src/core/repo_identity.mjs';
-import { HISTORY_KEEP, keepPreviousPack, listHistory, loadHistoryPack, pruneHistory, withPackLock } from '../src/cli/pack_history.mjs';
-import { cleanupWorktree, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
+import { HISTORY_KEEP, historyDirOf, keepPreviousPack, listHistory, loadHistoryPack, pruneHistory, withPackLock } from '../src/cli/pack_history.mjs';
+import { cleanupWorktree, copyConventions, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
+import { repositoryIdentity } from '../src/cli/commands/analyze/inputs.mjs';
 
 const packAt = (base, project = 'shop', digest = 'd') => ({ digest, meta: { project, builtAt: '2026-09-14T00:00:00.000Z', base }, nodes: [], edges: [] });
 
@@ -27,6 +29,10 @@ test('a remote is the same repository however it is written, a token in it is no
   assert.equal(normalizeRemote('https://git.example.com:8443/Team/App.git'), 'git.example.com:8443/Team/App', 'a port that is not a default one stays');
   assert.notEqual(normalizeRemote('https://git.example.com:8443/team/app'), normalizeRemote('https://git.example.com:9443/team/app'));
   assert.notEqual(normalizeRemote('https://git.example.com/Team/App'), normalizeRemote('https://git.example.com/team/app'), 'a self-hosted path keeps its case');
+  assert.equal(normalizeRemote('https://github.com:443/org/repo'), 'github.com/org/repo', 'https on its own port');
+  assert.equal(normalizeRemote('git://example.com:9418/team/app'), 'example.com/team/app', 'the git protocol on its own port');
+  assert.notEqual(normalizeRemote('https://git.example.com:22/team/app'), normalizeRemote('https://git.example.com/team/app'), 'port 22 is ssh\'s, not https\'s');
+  assert.notEqual(normalizeRemote('ssh://git.example.com:443/team/app'), normalizeRemote('ssh://git.example.com/team/app'), 'port 443 is https\'s, not ssh\'s');
   assert.equal(normalizeRemote(''), null);
 });
 
@@ -156,12 +162,89 @@ test('the lane flags the head was analyzed with are replayed at the base, inside
   assert.deepEqual(outside, ['/elsewhere/front/src']);
 });
 
-test('a worktree git would not remove is an error that says how to remove it, not a success', () => {
+test('a worktree git would not remove, or would not list, is an error that says how to remove it, not a success', () => {
+  // Git and the file removal are both stand-ins: this test deletes nothing on disk.
   const calls = [];
-  const stuck = (_cmd, args) => { calls.push(args.slice(2).join(' ')); return { status: args[2] === 'worktree' && args[3] === 'list' ? 0 : 1, stdout: 'worktree /tmp/wt\n' }; };
-  const left = cleanupWorktree({ repoRoot: '/r', worktreeRoot: '/tmp/wt', run: stuck });
-  assert.match(left, /still registered in \/r\. Remove it with: git -C \/r worktree remove --force \/tmp\/wt/);
+  const removed = [];
+  const rm = (p) => removed.push(p);
+  const stuck = (_cmd, args) => { calls.push(args.slice(2).join(' ')); return { status: args[2] === 'worktree' && args[3] === 'list' ? 0 : 1, stdout: 'worktree /nowhere/wt\n' }; };
+  const left = cleanupWorktree({ repoRoot: '/r', worktreeRoot: '/nowhere/wt', run: stuck, rm });
+  assert.match(left, /may still be registered in \/r\. Remove it with: git -C \/r worktree remove --force \/nowhere\/wt/);
   assert.ok(calls.includes('worktree prune'), 'it tried to prune before giving up');
+  assert.deepEqual(removed, ['/nowhere/wt']);
+  const blind = () => ({ status: 128, stdout: '' });
+  assert.match(cleanupWorktree({ repoRoot: '/r', worktreeRoot: '/nowhere/wt', run: blind, rm }), /may still be registered/, 'a list git could not give proves nothing was removed');
   const clean = () => ({ status: 0, stdout: 'worktree /r\n' });
-  assert.equal(cleanupWorktree({ repoRoot: '/r', worktreeRoot: '/tmp/wt', run: clean }), null);
+  assert.equal(cleanupWorktree({ repoRoot: '/r', worktreeRoot: '/nowhere/wt', run: clean, rm }), null);
+});
+
+test('a monorepo project is told from its neighbour even when one of the two packs was built before folders were recorded', () => {
+  const r = (a, b) => { const v = sameRepository(packAt(a.base, a.project), packAt(b.base, b.project)); return [v.verdict, v.by]; };
+  assert.deepEqual(r({ project: 'api', base: { rootCommit: 'a1' } }, { project: 'web', base: { rootCommit: 'a1', projectPath: 'apps/web' } }), ['different', 'project id']);
+  assert.deepEqual(r({ project: 'web', base: { rootCommit: 'a1' } }, { project: 'web', base: { rootCommit: 'a1', projectPath: 'apps/web' } }), ['same', 'root commit'], 'the same project across the upgrade');
+});
+
+test('the root commit is the one along first parents, so merging in an unrelated history does not make the repository another', (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-roots-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
+  git('init', '-q', '-b', 'main');
+  fs.mkdirSync(path.join(dir, 'app'));
+  fs.writeFileSync(path.join(dir, 'app', 'a.txt'), '1');
+  git('add', '-A'); git('commit', '-q', '-m', 'one');
+  const before = repositoryIdentity(path.join(dir, 'app'), dir);
+  git('checkout', '-q', '--orphan', 'vendored'); git('rm', '-q', '-rf', '.');
+  fs.writeFileSync(path.join(dir, 'b.txt'), '2');
+  git('add', '-A'); git('commit', '-q', '-m', 'other history');
+  git('checkout', '-q', 'main'); git('merge', '-q', '--allow-unrelated-histories', '-m', 'merge', 'vendored');
+  assert.equal(git('rev-list', '--max-parents=0', 'HEAD').split('\n').length, 2, 'the merge added a second root');
+  const after = repositoryIdentity(path.join(dir, 'app'), dir);
+  assert.equal(after.rootCommit, before.rootCommit);
+  assert.equal(after.projectPath, 'app');
+});
+
+test('an index that lists one build twice is rebuilt, and pruning never deletes a build the index keeps', (t) => {
+  const { dir, packDir, write } = projectDir(t);
+  write(packAt({ commit: 'b'.repeat(40) }, 'shop', digestOf(2)));
+  const kept = keepPreviousPack(packDir, packAt({ commit: 'c'.repeat(40) }, 'shop', digestOf(3)));
+  const index = path.join(dir, '.cascade', 'history', 'index.json');
+  fs.writeFileSync(index, JSON.stringify({ schema: 'cascade:pack-history:1', entries: Array.from({ length: HISTORY_KEEP + 1 }, () => kept) }));
+  pruneHistory(packDir);
+  assert.deepEqual(listHistory(packDir).map((e) => e.id), [kept.id], 'the duplicates were not trusted');
+  assert.equal(fs.existsSync(path.join(historyDirOf(packDir), kept.id, 'pack.json')), true);
+});
+
+test('a commit never names a build whose pack says it was made with uncommitted edits, whatever the index says', (t) => {
+  const { dir, packDir, write } = projectDir(t);
+  write(packAt({ commit: 'b'.repeat(40), dirty: false }, 'shop', digestOf(2)));
+  const kept = keepPreviousPack(packDir, packAt({ commit: 'c'.repeat(40) }, 'shop', digestOf(3)));
+  const file = path.join(dir, '.cascade', 'history', kept.id, 'pack.json');
+  const body = JSON.parse(fs.readFileSync(file, 'utf8'));
+  body.meta.base.dirty = true;
+  fs.writeFileSync(file, JSON.stringify(body));
+  assert.equal(loadHistoryPack(packDir, { commit: 'bbbbbbb' }), null);
+  fs.rmSync(file);
+  assert.equal(loadHistoryPack(packDir, { id: kept.id }), null, 'a build pruned since the index was read is not an error');
+});
+
+test('a run whose lock was broken does not remove the lock of the run that broke it', (t) => {
+  const { packDir } = projectDir(t);
+  const lock = path.join(packDir, '.write.lock');
+  withPackLock(packDir, () => fs.writeFileSync(lock, 'another-run'));
+  assert.equal(fs.readFileSync(lock, 'utf8'), 'another-run');
+});
+
+test('the base reads no profile when the current pack read none, even when the commit tracks one', (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-conv-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dotCascade = path.join(root, 'repo', '.cascade');
+  const target = path.join(root, 'wt', '.cascade');
+  fs.mkdirSync(dotCascade, { recursive: true });
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(dotCascade, 'manifest.json'), JSON.stringify({ project: 'shop', repositories: [{ path: '..' }] }));
+  fs.writeFileSync(path.join(target, 'profile.json'), JSON.stringify({ tracked: 'at that commit' }));
+  copyConventions({ dotCascade, target, projectRoot: path.join(root, 'repo'), repoRoot: path.join(root, 'repo'), worktreeRoot: path.join(root, 'wt'), invocation: { profile: null }, commit: 'c'.repeat(40) }, []);
+  assert.equal(fs.existsSync(path.join(target, 'profile.json')), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(target, 'manifest.json'), 'utf8')).repositories[0].commit, 'c'.repeat(40));
 });

@@ -21,6 +21,7 @@
 // history directory; an index that cannot be read is rebuilt from the
 // directories rather than forgotten.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -38,7 +39,8 @@ const LOCK_WAIT_MS = 60 * 1000;
 /** The history directory beside a pack directory. */
 export const historyDirOf = (packDir) => path.join(path.dirname(path.resolve(packDir)), 'history');
 
-const validEntry = (e) => e && typeof e === 'object' && typeof e.id === 'string' && ID_RE.test(e.id);
+const validEntry = (e) => e && typeof e === 'object' && typeof e.id === 'string' && ID_RE.test(e.id)
+  && (e.commit === null || typeof e.commit === 'string') && typeof e.dirty === 'boolean' && e.id.endsWith(`-${e.digest}`);
 
 /** One entry's line in the index: enough to choose it without opening the pack. */
 function entryOf(id, meta, digest) {
@@ -64,7 +66,9 @@ function scanEntries(dir) {
 function readIndex(dir) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(dir, INDEX), 'utf8'));
-    if (j && j.schema === SCHEMA && Array.isArray(j.entries) && j.entries.every(validEntry)) return j.entries;
+    // One entry per id: a kept set and a pruned set that share an id would delete a build the index still lists.
+    const unique = (es) => new Set(es.map((e) => e.id)).size === es.length;
+    if (j && j.schema === SCHEMA && Array.isArray(j.entries) && j.entries.every(validEntry) && unique(j.entries)) return j.entries;
   } catch { /* rebuilt below */ }
   return scanEntries(dir);
 }
@@ -93,20 +97,31 @@ function acquireLock(lock, { until, staleMs, log }) {
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
- * The project's write lock, held for the time `fn` runs. A lock older than a run
- * could last is taken to be a dead run's and is broken, and saying so.
+ * The project's write lock, held for the time `fn` runs: only the publish, which
+ * takes seconds, so a lock older than a run could last is taken to be a dead
+ * run's and is broken, and saying so. Each holder writes its own token and
+ * removes the lock only while the token is still its own: a run whose lock was
+ * broken must not then remove the lock of the run that broke it.
  */
 export function withPackLock(packDir, fn, { waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS, log = (s) => process.stderr.write(`${s}\n`) } = {}) {
   fs.mkdirSync(packDir, { recursive: true });
   const lock = path.join(packDir, '.write.lock');
   const fd = acquireLock(lock, { until: Date.now() + waitMs, staleMs, log });
+  const token = `${process.pid}:${crypto.randomUUID()}`;
   try {
-    fs.writeSync(fd, String(process.pid));
+    fs.writeSync(fd, token);
     return fn();
   } finally {
     fs.closeSync(fd);
-    fs.rmSync(lock, { force: true });
+    releaseLock(lock, token);
   }
+}
+
+/** Remove the lock while it is still this holder's. */
+function releaseLock(lock, token) {
+  let holder = null;
+  try { holder = fs.readFileSync(lock, 'utf8'); } catch { /* already gone */ }
+  if (holder === token) fs.rmSync(lock, { force: true });
 }
 
 /** The id a pack is kept under, or null for a pack with no digest this module can name. */
@@ -174,7 +189,17 @@ function pickEntry(entries, { id, commit }) {
 export function loadHistoryPack(packDir, { id = null, commit = null } = {}) {
   const want = pickEntry(listHistory(packDir), { id, commit });
   if (!want) return null;
-  const pack = JSON.parse(fs.readFileSync(path.join(historyDirOf(packDir), want.id, 'pack.json'), 'utf8'));
-  if (pack.digest !== want.digest || (pack.meta?.base?.commit ?? null) !== want.commit) return null;
-  return { entry: want, pack };
+  const pack = readKept(packDir, want.id);
+  return pack && sameEntry(pack, want) ? { entry: want, pack } : null;
+}
+
+/** A kept pack, or null when it is gone (pruned by another run since the index was read) or unreadable. */
+function readKept(packDir, id) {
+  try { return JSON.parse(fs.readFileSync(path.join(historyDirOf(packDir), id, 'pack.json'), 'utf8')); } catch { return null; }
+}
+
+/** Whether the pack is the build its entry names: its digest, its commit, and whether it was clean. */
+function sameEntry(pack, entry) {
+  const b = pack.meta?.base ?? {};
+  return pack.digest === entry.digest && (b.commit ?? null) === entry.commit && (b.dirty === true) === entry.dirty;
 }

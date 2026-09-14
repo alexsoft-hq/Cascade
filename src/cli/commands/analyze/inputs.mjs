@@ -302,11 +302,14 @@ export function changesetOf({ rootAbs, out, gitTop, headCommit, toRootRel }) {
 /**
  * WHICH REPOSITORY THIS IS, for comparing two packs later (src/core/repo_identity.mjs):
  * the commit its history starts from, unless the clone is shallow and has no
- * real start, and the `origin` remote.
+ * real start, the `origin` remote, and the project's folder in the repository.
+ * The start is the one reached along FIRST parents: a merge that brings in an
+ * unrelated history adds a second root, and that must not make the same
+ * repository another one from the merge on.
  */
-function repositoryIdentity(rootAbs, gitTop) {
+export function repositoryIdentity(rootAbs, gitTop) {
   const shallow = (gitText(rootAbs, ['rev-parse', '--is-shallow-repository']) ?? '').trim() === 'true';
-  const roots = shallow ? [] : (gitText(rootAbs, ['rev-list', '--max-parents=0', 'HEAD']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean).sort();
+  const roots = shallow ? [] : (gitText(rootAbs, ['rev-list', '--first-parent', '--max-parents=0', 'HEAD']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
   // Normalized HERE, before anything is written: a remote URL can carry a user
   // name or a token (`https://user:token@example.com/...`), and a pack is not where it goes.
   const remote = normalizeRemote((gitText(rootAbs, ['remote', 'get-url', 'origin']) ?? '').trim() || null);

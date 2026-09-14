@@ -42,7 +42,8 @@ export function repointPaths(value, opts, outside = []) {
   if (Array.isArray(value)) return value.map((v) => repointPaths(v, opts, outside));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, repointPaths(v, opts, outside)]));
   if (typeof value !== 'string') return value;
-  const relative = value.startsWith('./') || value.startsWith('../') || value === '..' || value === '.';
+  // `..\\front\\src` is as relative on Windows as `../front/src` is everywhere.
+  const relative = /^\.\.?(?:[\\/]|$)/.test(value);
   if (!relative && !path.isAbsolute(value)) return value;
   const moved = moveIntoWorktree(path.resolve(opts.fromDir, value), opts, outside);
   return relative && inside(moved, opts.worktreeRoot) ? (path.relative(opts.toDir, moved).split(path.sep).join('/') || '.') : moved;
@@ -73,13 +74,12 @@ const tail = (s, n = 8) => String(s ?? '').trim().split('\n').slice(-n).join('\n
 export function basePackAt({ rev, dotCascade: given, packDir, headPack, die, env = process.env }) {
   const dotCascade = realPath(given);
   const projectRoot = realPath(path.dirname(dotCascade));
-  const repoTop = (gitText(projectRoot, ['rev-parse', '--show-toplevel']) ?? '').trim();
-  if (!repoTop) die(`${projectRoot} is not in a git repository, so there is no other commit to compare with`);
-  const repoRoot = realPath(repoTop);
-  const commit = (gitText(repoRoot, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]) ?? '').trim();
-  if (!commit) {
-    const shallow = (gitText(repoRoot, ['rev-parse', '--is-shallow-repository']) ?? '').trim() === 'true';
-    die(`no commit ${JSON.stringify(rev)} in ${repoRoot}${shallow ? '. This clone is shallow and may not hold it: fetch it first (git fetch origin <rev>, or git fetch --unshallow)' : ''}`);
+  const { repoRoot, commit } = commitOf(projectRoot, rev, die);
+  // Checked before the history too: a kept build that also records no invocation
+  // would otherwise compare as "the same" to a head that cannot say how it was read.
+  const invocation = headPack.meta?.analysis?.invocation;
+  if (!invocation) {
+    die('the current pack does not record how it was analyzed, so its base cannot be analyzed the same way. Run `cascade analyze` once, then compare');
   }
   const kept = loadHistoryPack(packDir, { commit });
   let note = null;
@@ -88,16 +88,25 @@ export function basePackAt({ rev, dotCascade: given, packDir, headPack, die, env
     if (c.verdict === 'same') return { pack: kept.pack, from: 'history', commit, outside: [], entry: kept.entry };
     note = `the kept build at this commit was analyzed differently (${[...c.differences.map((d) => d.what), ...c.unknown].join(', ')}), so it was built again`;
   }
-  const invocation = headPack.meta?.analysis?.invocation;
-  if (!invocation) {
-    die('the current pack does not record how it was analyzed, so its base cannot be analyzed the same way. Run `cascade analyze` once, then compare');
-  }
   try {
     return { ...buildInWorktree({ commit, dotCascade, repoRoot, projectRoot, invocation, env }), note };
   } catch (e) {
     if (e instanceof BaseCommitError) die(e.message);
     throw e;
   }
+}
+
+/** The repository holding the project, and the full sha `rev` names in it; a refusal saying why when there is none. */
+function commitOf(projectRoot, rev, die) {
+  const repoTop = (gitText(projectRoot, ['rev-parse', '--show-toplevel']) ?? '').trim();
+  if (!repoTop) die(`${projectRoot} is not in a git repository, so there is no other commit to compare with`);
+  const repoRoot = realPath(repoTop);
+  const commit = (gitText(repoRoot, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]) ?? '').trim();
+  if (!commit) {
+    const shallow = (gitText(repoRoot, ['rev-parse', '--is-shallow-repository']) ?? '').trim() === 'true';
+    die(`no commit ${JSON.stringify(rev)} in ${repoRoot}${shallow ? '. This clone is shallow and may not hold it: fetch it first (git fetch origin <rev>, or git fetch --unshallow)' : ''}`);
+  }
+  return { repoRoot, commit };
 }
 
 /** The lane flags the current pack was analyzed with, pointed at the worktree. */
@@ -114,13 +123,15 @@ export function replayFlags(invocation, { projectRoot, repoRoot, worktreeRoot },
 }
 
 /** This project's manifest and the profile the current pack read, re-pointed into the worktree's `.cascade`. */
-function copyConventions({ dotCascade, target, projectRoot, repoRoot, worktreeRoot, invocation, commit }, outside) {
+export function copyConventions({ dotCascade, target, projectRoot, repoRoot, worktreeRoot, invocation, commit }, outside) {
   const opts = { fromDir: dotCascade, toDir: target, repoRoot, worktreeRoot };
   const profileSrc = invocation.profile
     ? (path.isAbsolute(invocation.profile) ? invocation.profile : path.join(projectRoot, invocation.profile))
     : path.join(dotCascade, 'profile.json');
   for (const [src, name] of [[path.join(dotCascade, 'manifest.json'), 'manifest.json'], [profileSrc, 'profile.json']]) {
-    if (!fs.existsSync(src)) continue;
+    // What the current pack did NOT read is replayed too: a profile the commit
+    // tracks but the current checkout lacks would read the base another way.
+    if (!fs.existsSync(src)) { fs.rmSync(path.join(target, name), { force: true }); continue; }
     const doc = JSON.parse(fs.readFileSync(src, 'utf8'));
     if (name === 'manifest.json' && Array.isArray(doc.repositories)) doc.repositories = doc.repositories.map((r) => (r.path === '..' ? { ...r, commit } : r));
     fs.writeFileSync(path.join(target, name), `${JSON.stringify(repointPaths(doc, opts, outside), null, 2)}\n`);
@@ -140,7 +151,7 @@ function buildInWorktree({ commit, dotCascade, repoRoot, projectRoot, invocation
   const worktreeRoot = path.join(scratch, 'worktree');
   const add = spawnSync('git', ['-C', repoRoot, 'worktree', 'add', '--detach', worktreeRoot, commit], { encoding: 'utf8' });
   let result;
-  let leftover;
+  let failure = null;
   try {
     if (add.status !== 0) throw new BaseCommitError(`could not check out ${commit.slice(0, 12)} in a worktree: ${tail(add.stderr)}`);
     const worktreeProject = path.join(worktreeRoot, path.relative(repoRoot, projectRoot));
@@ -153,10 +164,14 @@ function buildInWorktree({ commit, dotCascade, repoRoot, projectRoot, invocation
     const run = spawnSync(process.execPath, [CLI_PATH, 'analyze', '--root', worktreeProject, '--out', out, ...flags], { encoding: 'utf8', env, maxBuffer: 1 << 26 });
     if (run.status !== 0 || !fs.existsSync(path.join(out, 'pack.json'))) throw new BaseCommitError(`analyzing ${commit.slice(0, 12)} failed:\n${tail(run.stderr)}`);
     result = { pack: JSON.parse(fs.readFileSync(path.join(out, 'pack.json'), 'utf8')), from: 'worktree', commit, outside: [...new Set(outside)].sort() };
-  } finally {
-    leftover = cleanupWorktree({ repoRoot, worktreeRoot });
-    fs.rmSync(scratch, { recursive: true, force: true });
+  } catch (e) {
+    failure = e;
   }
+  const leftover = cleanupWorktree({ repoRoot, worktreeRoot });
+  fs.rmSync(scratch, { recursive: true, force: true });
+  // Both are said: why the base failed, and what is left to clean by hand.
+  if (failure && leftover) throw new BaseCommitError(`${failure.message}\n${leftover}`);
+  if (failure) throw failure;
   if (leftover) throw new BaseCommitError(leftover);
   return result;
 }
@@ -165,15 +180,18 @@ function buildInWorktree({ commit, dotCascade, repoRoot, projectRoot, invocation
  * Remove the temporary worktree and check that git no longer lists it.
  * @returns {string|null} what is left to clean by hand, or null when nothing is
  */
-export function cleanupWorktree({ repoRoot, worktreeRoot, run = spawnSync }) {
+export function cleanupWorktree({ repoRoot, worktreeRoot, run = spawnSync, rm = fs.rmSync }) {
   run('git', ['-C', repoRoot, 'worktree', 'remove', '--force', worktreeRoot], { encoding: 'utf8' });
-  const listed = () => String(run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }).stdout ?? '')
-    .split('\n').some((l) => l === `worktree ${worktreeRoot}`);
+  // A list git could not give is not an empty list: it proves nothing was removed.
+  const listed = () => {
+    const r = run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+    return r.status !== 0 || String(r.stdout ?? '').split('\n').some((l) => l === `worktree ${worktreeRoot}`);
+  };
   if (listed()) {
-    fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    rm(worktreeRoot, { recursive: true, force: true });
     run('git', ['-C', repoRoot, 'worktree', 'prune'], { encoding: 'utf8' });
   }
   return listed()
-    ? `the temporary worktree ${worktreeRoot} is still registered in ${repoRoot}. Remove it with: git -C ${repoRoot} worktree remove --force ${worktreeRoot} && git -C ${repoRoot} worktree prune`
+    ? `the temporary worktree ${worktreeRoot} may still be registered in ${repoRoot}. Remove it with: git -C ${repoRoot} worktree remove --force ${worktreeRoot} && git -C ${repoRoot} worktree prune`
     : null;
 }

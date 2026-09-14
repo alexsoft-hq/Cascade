@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadHistoryPack } from '../src/cli/pack_history.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
@@ -38,6 +39,7 @@ function setup(t) {
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const env = { ...process.env, CASCADE_HOME: path.join(work, 'home'), XDG_CACHE_HOME: path.join(work, 'cache') };
   const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, maxBuffer: 1 << 28 });
+  cli.from = (cwd, ...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd, maxBuffer: 1 << 28 });
   const repo = path.join(work, 'shop');
   write(repo, 'db/schema.sql', SCHEMA_1);
   write(repo, 'src/main/resources/mapper/ItemMapper.xml', mapper(''));
@@ -88,6 +90,21 @@ test('a project compared with its own earlier commit: from its history, and buil
   assert.match(text.stdout, /^conditions: the same/m);
 
   assert.match(cli('diff', '--root', repo, '--base-commit', 'no-such-rev').stderr, /no commit "no-such-rev"/);
+
+  // A current pack that cannot say how it was analyzed is refused even when the
+  // history holds a build that cannot say either: two silences are not agreement.
+  write(repo, 'README.md', 'shop\n');
+  git(repo, 'add', 'README.md');
+  git(repo, 'commit', '-q', '-m', 'three');
+  ok(cli('analyze', '--root', repo));
+  assert.ok(loadHistoryPack(path.join(repo, '.cascade', 'pack'), { commit: git(repo, 'rev-parse', 'HEAD~1').trim() }), 'the history holds a clean build at HEAD~1');
+  const strip = (file) => { const p = JSON.parse(fs.readFileSync(file, 'utf8')); delete p.meta.analysis.invocation; fs.writeFileSync(file, JSON.stringify(p)); };
+  const kept = JSON.parse(fs.readFileSync(path.join(repo, '.cascade', 'history', 'index.json'), 'utf8')).entries;
+  for (const e of kept) strip(path.join(repo, '.cascade', 'history', e.id, 'pack.json'));
+  strip(path.join(repo, '.cascade', 'pack', 'pack.json'));
+  const refused = cli('diff', '--root', repo, '--base-commit', 'HEAD~1');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /does not record how it was analyzed/);
 });
 
 test('a pack of another repository is refused, with the way to compare a project with itself', { timeout: 600000 }, (t) => {
@@ -118,10 +135,12 @@ test('a head analyzed with explicit lane flags gets a base analyzed with the sam
   write(repo, 'src/main/resources/mapper/ItemMapper.xml', mapper(STOCK));
   git(repo, 'add', 'db', 'src');
   git(repo, 'commit', '-q', '-m', 'two');
-  const flags = ['--ddl', path.join(repo, 'db', 'schema.sql'), '--mappers', path.join(repo, 'src', 'main', 'resources', 'mapper'), '--no-java'];
-  ok(cli('analyze', '--root', repo, ...flags));
+  // Typed from the directory ABOVE the project, the way a shell in a workspace would.
+  const flags = ['--ddl', path.join('shop', 'db', 'schema.sql'), '--mappers', path.join('shop', 'src', 'main', 'resources', 'mapper'), '--no-java'];
+  ok(cli.from(path.dirname(repo), 'analyze', '--root', repo, ...flags));
   const head = JSON.parse(fs.readFileSync(path.join(repo, '.cascade', 'pack', 'pack.json'), 'utf8'));
-  assert.deepEqual(head.meta.analysis.invocation.ddl, ['db/schema.sql'], 'a flag inside the project is recorded relative to it');
+  assert.deepEqual(head.meta.analysis.invocation.ddl, ['db/schema.sql'], 'a flag typed relative to the shell is recorded relative to the project');
+  assert.deepEqual(head.meta.analysis.invocation.mappers, ['src/main/resources/mapper']);
   assert.equal(head.meta.analysis.invocation.noJava, true);
 
   const d = JSON.parse(ok(cli('diff', '--root', repo, '--base-commit', 'HEAD~1', '--json')).stdout);
@@ -129,7 +148,7 @@ test('a head analyzed with explicit lane flags gets a base analyzed with the sam
   assert.equal(d.conditions.verdict, 'same', `the base replayed the head's flags: ${JSON.stringify(d.conditions)}`);
   assert.ok(d.nodes.addedIds.includes('column:shop_item.stock'), 'and it read the schema of its own commit');
 
-  delete head.meta.analysis;
+  delete head.meta.analysis.invocation;
   fs.writeFileSync(path.join(repo, '.cascade', 'pack', 'pack.json'), JSON.stringify(head));
   const refused = cli('diff', '--root', repo, '--base-commit', 'HEAD~1');
   assert.notEqual(refused.status, 0);

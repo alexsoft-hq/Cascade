@@ -378,6 +378,20 @@ function mapperAlternativesOf(profile, packDir) {
     .map((f) => path.resolve(packDir, f)))].sort();
 }
 
+/**
+ * The fact index, and only when it was written for THIS pack: an index written for
+ * another build (published ahead of its pack, or left by a run that died between
+ * the two) would lay this pack's overlay over other shards. An index from before
+ * indexes named their pack is taken as it is.
+ */
+export function indexOfPack(indexFile, pack, stale) {
+  const index = readIndex(indexFile, stale);
+  if (index.packDigest && pack.digest && index.packDigest !== pack.digest) {
+    stale(`the fact index beside the pack belongs to build ${index.packDigest}, and the pack is build ${pack.digest}`);
+  }
+  return index;
+}
+
 export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
   const indexFile = path.join(packDir, 'facts-index.json');
   const stale = (msg) => { throw new OverlayStaleError(`${msg}. Run \`cascade analyze\` to rebuild the pack and its fact cache`); };
@@ -385,7 +399,7 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
   let index = null;
   const load = () => {
     if (index) return index;
-    index = readIndex(indexFile, stale);
+    index = indexOfPack(indexFile, pack, stale);
     return index;
   };
 

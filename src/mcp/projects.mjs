@@ -84,15 +84,17 @@ export function packProxyBytes(entry, io = fs) {
 }
 
 /**
- * WHICH BUILD OF A PACK IS ON DISK: its size and modification time, or null when
- * there is none. A context loaded from one build must not keep answering once
+ * WHICH BUILD OF A PACK IS ON DISK: its inode, size, modification and change
+ * times, or null when there is none. `analyze` renames a new file into place, so
+ * a new build is a new inode and a new change time even when a copy restored the
+ * old size and modification time. A context loaded from one build must not keep answering once
  * `cascade analyze` has published another, least of all beside a pack history
  * read fresh from disk, where the old head would be compared with itself.
  */
 export function packFingerprint(entry, io = fs) {
   try {
     const st = io.statSync(path.join(packDirOf(entry), 'pack.json'));
-    return `${st.size}:${st.mtimeMs}`;
+    return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
   } catch { return null; }
 }
 
@@ -117,15 +119,19 @@ export function packFingerprint(entry, io = fs) {
 // than trying the file again on every question.
 function indexOf(h, projectId) {
   const { indexes, byId, readIndex } = h;
-  if (indexes.has(projectId)) return indexes.get(projectId);
   const entry = byId.get(projectId);
+  // A sidecar read for one build is not the next build's: the list and the route
+  // lookups check the pack on disk as the tool context does.
+  const onDisk = entry ? h.fingerprint(entry) : null;
+  const held = indexes.get(projectId);
+  if (held && held.fingerprint === onDisk) return held.r;
   let r;
   if (!entry) r = { ok: false, reason: 'unknown', detail: `this server does not serve ${projectId}` };
   else {
     try { r = readIndex(entry); }
     catch (e) { r = { ok: false, reason: 'unreadable', detail: (e && e.message) || String(e) }; }
   }
-  indexes.set(projectId, r);
+  indexes.set(projectId, { r, fingerprint: onDisk });
   return r;
 }
 
@@ -349,7 +355,7 @@ export function createProjectHost(cfg = {}) {
     // Read once per project per server and remembered, INCLUDING the failure: a
     // project with no sidecar is not federated, and the answer says so rather
     // than trying the file again on every question.
-    indexes: new Map(), // id -> {ok:true,index} | {ok:false,reason,detail}
+    indexes: new Map(), // id -> {r: {ok:true,index} | {ok:false,reason,detail}, fingerprint}
     readIndex: typeof cfg.readIndex === 'function' ? cfg.readIndex : (entry) => readRoutesIndex(packDirOf(entry)),
     counters: { evictions: 0, hits: 0, misses: 0 },
   };
