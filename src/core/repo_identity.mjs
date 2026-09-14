@@ -42,7 +42,8 @@ const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', 'git+ssh': '22', 'ss
 
 /** A remote's scheme, and the remote without it, its credentials, a trailing slash or `.git`: `host[:port]/path`. */
 function bareRemote(url) {
-  const scp = /^[^@/]+@([^:/]+):(?!\d+\/)(.+)$/.exec(url);
+  // `user@host:path`: what follows the colon is a path, digits and all (scp has no port).
+  const scp = /^[^@/]+@([^:/]+):(.+)$/.exec(url);
   const scheme = scp ? 'ssh' : (/^([a-z+]+):\/\//i.exec(url)?.[1].toLowerCase() ?? null);
   const noScheme = scp ? `${scp[1]}/${scp[2]}` : url.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '');
   return { scheme, s: noScheme.replace(/\/+$/, '').replace(/\.git$/i, '') };

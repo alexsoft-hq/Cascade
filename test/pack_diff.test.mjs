@@ -27,7 +27,7 @@ const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const WORKERS = { java: 'javafacts/12', lineage: 'lineage/3', catalog: 'catalog-ddl/4', mybatis: 'mybatis-extract/2', web: 'webfacts/13' };
 const ANALYSIS = { workers: WORKERS, profileDigest: 'p'.repeat(64), enginePrint: 'e'.repeat(64), engineVersion: '0.8.8', optOuts: [], selection: { javaRoots: ['src'] },
   invocation: { ddl: [], mappers: [], javaSrc: [], webSrc: [], openapi: [], har: [], otel: [], noDdl: false, noMappers: false, noJava: false, noWeb: false, noOpenapi: false, profile: null },
-  external: { catalogSnapshot: null, evidence: [] } };
+  external: { catalogSnapshot: null, evidence: [], sources: {} } };
 const AXES = { catalog: { status: 'shipped' }, statements: { status: 'shipped' }, code: { status: 'shipped' } };
 
 /** One state of the project: a route, its handler, a service, a mapper statement, a table. */
@@ -93,7 +93,7 @@ test('two packs that both record their analysis but not their flags are not take
   const { invocation: _i, external: _e, ...old } = ANALYSIS;
   const c = compareConditions(packOf(state({ head: true }), { analysis: old }), packOf(state({ head: true }), { analysis: old }));
   assert.equal(c.verdict, 'unknown');
-  assert.deepEqual(c.unknown, ['catalogSnapshot', 'evidence', 'flags']);
+  assert.deepEqual(c.unknown, ['catalogSnapshot', 'evidence', 'externalSources', 'flags']);
 });
 
 test('where the profile file sat is not a difference in how the packs were read, and its content is', () => {

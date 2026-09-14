@@ -9,6 +9,7 @@
 // Everything that DECIDES is pure and lives in src/core/{calibration,receipt}.mjs;
 // this is the filesystem those decisions are handed.
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -309,7 +310,7 @@ export function updateRegistry({ opt }, { resolved, out, lanes, builtAt }) {
  * each trace this run read. A changed trace is then a changed input rather than
  * a pack that quietly says something new.
  */
-export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile, projectId, serviceNames, otelFiles, relOf, afterPack = null }) {
+export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile, projectId, serviceNames, otelFiles, relOf, afterPack = null, lockDir = path.dirname(path.resolve(out)) }) {
   if (otelFiles.length > 0) {
     result.index.runtimeEvidence = {
       otel: otelFiles.map((f) => ({ path: relOf(f), sha256: sha256File(f) })),
@@ -337,11 +338,11 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
     fs.mkdirSync(calibrationDir, { recursive: true });
     writeAtomic(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
   };
-  // One lock for the project whether the run is certified or rejected: both write
-  // the one gate verdict, and a rejected run must not land between a certified
-  // run's pack and its receipt.
+  // One lock for the project's state whether the run is certified or rejected, and
+  // whichever `--out` it writes: they share the gate verdict, the baseline, the
+  // receipt and the pack history beside the pack directory.
   publishPack(writeDir, {
-    pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir: out,
+    pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir: calibrated ? lockDir : out,
     afterPack: () => { writeVerdict(); afterPack?.({ writeDir, writeIndexFile }); },
   });
   return { writeDir, writeIndexFile, routesIndex };
@@ -405,9 +406,10 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
   // selection is not: a replay of `--mappers src --mappers src` must select the same.
   const invocation = { ddl: list(flags.ddl) };
   for (const k of UNORDERED_FLAGS) invocation[k] = list(flags[k]).sort();
+  const selection = portableSelection(selectionRel, root, { repoTop });
   return {
     workers: workerVersions(), profileDigest, enginePrint: enginePrintNow, engineVersion: engineIdentity().version,
-    optOuts, selection: portableSelection(selectionRel, root, { repoTop }),
+    optOuts, selection,
     invocation: {
       ...invocation,
       noDdl: !!flags.noDdl, noMappers: !!flags.noMappers, noJava: !!flags.noJava, noWeb: !!flags.noWeb, noOpenapi: !!flags.noOpenapi,
@@ -416,8 +418,45 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
     external: {
       catalogSnapshot: catalogMeta?.source === 'snapshot' ? catalogMeta.sha256 ?? null : null,
       evidence: [...evidence].sort(),
+      sources: externalSourcesOf([invocation, selection]),
     },
   };
+}
+
+/**
+ * WHAT WAS READ FROM OUTSIDE THE REPOSITORY, by content. A path outside the
+ * repository (a frontend checked out beside it) is recorded absolute, and its
+ * content changes without any commit of this project, so a path alone cannot
+ * say two packs read the same thing. Each such path gets a digest of the files
+ * under it, and two packs whose outside inputs differ are said to be analyzed
+ * under different conditions.
+ */
+function externalSourcesOf(records) {
+  const found = new Set();
+  const walk = (v) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    else if (typeof v === 'string' && path.isAbsolute(v)) found.add(v);
+  };
+  walk(records);
+  return Object.fromEntries([...found].sort().map((p) => [p, contentDigestOf(p)]));
+}
+
+/** A digest of a file, or of every file under a directory by relative path (no `node_modules`, no `.git`); `missing` when it is gone. */
+function contentDigestOf(abs) {
+  const lines = [];
+  const visit = (p, rel) => {
+    const st = fs.statSync(p, { throwIfNoEntry: false });
+    if (!st) return;
+    if (st.isFile()) { lines.push(`${rel}\t${sha256File(p)}`); return; }
+    if (!st.isDirectory()) return;
+    for (const name of fs.readdirSync(p).sort()) {
+      if (name !== 'node_modules' && name !== '.git') visit(path.join(p, name), rel ? `${rel}/${name}` : name);
+    }
+  };
+  if (!fs.existsSync(abs)) return 'missing';
+  visit(abs, '');
+  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
 /**
@@ -491,7 +530,7 @@ export function writeArtifacts({ g, pack, result, out, red, calibrated, gate, ve
   };
   const { writeDir, writeIndexFile, routesIndex } = writePackAndIndex({
     g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile,
-    projectId, serviceNames, otelFiles, relOf, afterPack: certify,
+    projectId, serviceNames, otelFiles, relOf, afterPack: certify, lockDir: stateDir,
   });
 
   if (red) {

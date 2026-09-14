@@ -32,11 +32,14 @@ Each dated section below is one round of work. The round protocol is in
   recorded. The root commit is the one along first parents, so merging in an
   unrelated history does not change it. `meta.analysis` records the lane flags
   (as the files they named, whatever directory they were typed in), the catalog
-  snapshot and the runtime evidence files, and a diff compares them.
+  snapshot, the runtime evidence files and a content digest of every input
+  outside the repository, and a diff compares them. A kept build whose outside
+  inputs differ from the current pack's is not used as a base; the base is
+  built again and the outside paths are listed.
 - **Sidecars name their pack.** `facts-index.json` carries `packDigest`, and it
   and `routes.json` are published before the pack, and the gate's verdict,
-  baseline and receipt after it, all under one project lock that a rejected run
-  takes too, so a reader never takes an index written for another build, a pack
+  baseline and receipt after it, all under one lock on the project's state
+  (`.cascade/.write.lock`) that a rejected run and any `--out` take too, so a reader never takes an index written for another build, a pack
   that failed to publish is never certified, and two analyses of one project
   never interleave. `cascade verify` checks that the index names the pack beside
   it. A server reads a project again when its pack, indexes, gate verdict, golden

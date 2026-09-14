@@ -746,8 +746,8 @@ interleave. A reader that finds a sidecar written for another build refuses it
 rather than reading it with the wrong pack, and a server reads a project again
 when its pack, indexes, verdict, golden corpus, profile or manifest change. The
 history is pruned after that, even when certifying failed, so the pack being
-served is always the old one or the new one. The lock (`.cascade/pack/.write.lock`)
-is never broken automatically, because two runs that both judged it abandoned
+served is always the old one or the new one. The lock (`.cascade/.write.lock`,
+one per project whichever `--out` a certified run writes) is never broken automatically, because two runs that both judged it abandoned
 would both publish: one left behind by an analyze killed while publishing is
 named in the refusal, with its process id, and is removed by hand. A build made with uncommitted edits is kept
 but never chosen by its commit. The viewer's Compare tab and the MCP tool
@@ -757,8 +757,10 @@ pack republished under it and reads the new one.
 **The conditions come first.** The same code read by a newer worker, under
 another profile, with a lane or an axis missing, gives a different pack too. So
 the two packs' lanes, identity rule, axes, worker versions, profile digest,
-engine, opt-out flags, lane flags, source roots, catalog snapshot and runtime
-evidence files are compared before anything is counted (two packs that both
+engine, opt-out flags, lane flags, source roots, catalog snapshot, runtime
+evidence files and the content of every input outside the repository (a
+frontend checked out beside it changes with no commit, so its path alone says
+nothing) are compared before anything is counted (two packs that both
 leave one of these unrecorded are not taken to agree on it),
 and every one that differs is printed. A removed node whose axis changed between
 the packs is marked, because an unread catalog and a dropped table look alike in

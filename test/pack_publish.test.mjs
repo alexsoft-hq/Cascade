@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { analysisRecord, publishPack } from '../src/cli/commands/analyze/write.mjs';
+import { analysisRecord, publishPack, writePackAndIndex } from '../src/cli/commands/analyze/write.mjs';
+import { compareConditions } from '../src/core/pack_diff.mjs';
+import { Graph } from '../src/core/graph.mjs';
 import { HISTORY_KEEP, historyDirOf, listHistory } from '../src/cli/pack_history.mjs';
 import { indexOfPack } from '../src/cli/overlay_provider.mjs';
 import { emptyIndex } from '../src/core/facts_store.mjs';
@@ -119,4 +121,34 @@ test('the history is held to its size even when certifying the new pack fails, a
   assert.throws(() => publishPack(dir, { pack: packOf(HISTORY_KEEP + 2), index, keep: true, afterPack: () => { throw new Error('receipt could not be written'); } }), /receipt could not be written/);
   assert.equal(listHistory(dir).length, HISTORY_KEEP, 'pruned all the same');
   assert.equal(fs.existsSync(orphan), false, 'a build directory the index does not list is removed');
+});
+
+test('a certified run holds the lock of the project\'s state, so two outputs of one project that share a history take turns', (t) => {
+  const top = layout(t);
+  const dotCascade = path.join(top, 'repo/service/.cascade');
+  const index = emptyIndex({ project: 'shop', engineVersion: INCREMENTAL_ENGINE_VERSION, workers: workerVersions(), root: top, selection: {} });
+  let held = null;
+  writePackAndIndex({
+    g: new Graph(), pack: { digest: 'aaaaaaaaaaaa', meta: { project: 'shop' }, nodes: [], edges: [] }, result: { index }, out: path.join(dotCascade, 'custom'),
+    red: false, calibrated: true, gateState: { verdict: 'GREEN' }, calibrationDir: path.join(dotCascade, 'calibration'), gateStateFile: path.join(dotCascade, 'calibration', 'gate-state.json'),
+    projectId: 'shop', serviceNames: { names: [] }, otelFiles: [], relOf: (p) => p, lockDir: dotCascade,
+    afterPack: () => { held = [fs.existsSync(path.join(dotCascade, '.write.lock')), fs.existsSync(path.join(dotCascade, 'custom', '.write.lock')), fs.existsSync(path.join(dotCascade, 'calibration', 'gate-state.json'))]; },
+  });
+  assert.deepEqual(held, [true, false, true], 'the state directory\'s lock, with the verdict already written');
+});
+
+test('what was read from outside the repository is recorded by content, and a change to it is a difference in conditions', (t) => {
+  const top = layout(t);
+  fs.writeFileSync(path.join(top, 'front/src/App.vue'), '<template>one</template>');
+  fs.mkdirSync(path.join(top, 'front/src/node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(top, 'front/src/node_modules/lib.js'), 'x');
+  const first = recordOf(top, { webSrc: [path.join(top, 'front/src')] });
+  assert.deepEqual(Object.keys(first.external.sources), [path.join(top, 'front/src')], 'only the outside root; paths in the repository are versioned by the commit');
+  fs.writeFileSync(path.join(top, 'front/src/node_modules/lib.js'), 'y');
+  assert.deepEqual(recordOf(top, { webSrc: [path.join(top, 'front/src')] }).external.sources, first.external.sources, 'node_modules is not read, so it is not counted');
+  fs.writeFileSync(path.join(top, 'front/src/App.vue'), '<template>two</template>');
+  const second = recordOf(top, { webSrc: [path.join(top, 'front/src')] });
+  const pack = (analysis) => ({ digest: 'x', meta: { lanes: ['web'], analysis }, nodes: [], edges: [] });
+  assert.deepEqual(compareConditions(pack(first), pack(second)).differences.map((d) => d.what), ['externalSources']);
+  assert.deepEqual(compareConditions(pack(first), pack(first)).differences, []);
 });

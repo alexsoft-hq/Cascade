@@ -163,16 +163,47 @@ export function keepPreviousPack(packDir, next) {
   return entries[0];
 }
 
-/** The copy and the index line that lists it, both or neither: a copy the index does not list is a build nobody can choose. */
+/**
+ * The copy and the index line that lists it. A build already kept under this id
+ * (the same build kept once before) is used as it is; a new copy is made in a
+ * staging directory and renamed into place whole. A failure removes only what
+ * THIS call made, never a build that was there before it.
+ */
 function copyIntoHistory(dir, id, file, entries) {
-  fs.mkdirSync(path.join(dir, id), { recursive: true });
+  if (!keptIntact(path.join(dir, id), id)) stageCopy(dir, id, file);
+  writeAtomic(path.join(dir, INDEX), `${JSON.stringify({ schema: SCHEMA, entries }, null, 2)}\n`);
+}
+
+/** A new copy, made whole beside the history and renamed into place; on failure only the staging copy goes. */
+function stageCopy(dir, id, file) {
+  const [target, staging] = [path.join(dir, id), path.join(dir, `${STAGING}${id}-${process.pid}`)];
   try {
-    fs.copyFileSync(file, path.join(dir, id, 'pack.json'));
-    writeAtomic(path.join(dir, INDEX), `${JSON.stringify({ schema: SCHEMA, entries }, null, 2)}\n`);
+    fs.mkdirSync(staging, { recursive: true });
+    fs.copyFileSync(file, path.join(staging, 'pack.json'));
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.renameSync(staging, target);
   } catch (e) {
-    fs.rmSync(path.join(dir, id), { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
     throw e;
   }
+}
+
+const STAGING = '.staging-';
+
+/** Whether a kept directory holds the build its id names. */
+function keptIntact(target, id) {
+  try { return id.endsWith(`-${JSON.parse(fs.readFileSync(path.join(target, 'pack.json'), 'utf8')).digest}`); } catch { return false; }
+}
+
+/**
+ * A directory this module made and the index no longer lists: a build id's shape
+ * holding nothing but a pack, or a staging directory left by a run that died.
+ * Anything else in the history directory is not this module's to remove.
+ */
+function removableLeftover(dir, name, kept) {
+  if (name.startsWith(STAGING)) return true;
+  if (!ID_RE.test(name) || kept.has(name)) return false;
+  try { return fs.readdirSync(path.join(dir, name)).every((n) => n === 'pack.json'); } catch { return false; }
 }
 
 /** Remove what is past the kept count. Called after the new pack is in place. */
@@ -181,10 +212,10 @@ export function pruneHistory(packDir, keep = HISTORY_KEEP) {
   if (!fs.existsSync(dir)) return;
   const entries = readIndex(dir);
   const kept = new Set(entries.slice(0, keep).map((e) => e.id));
-  // Past the kept count, and any build directory the index does not list (a keep
-  // that failed half way): only names of the one shape this module writes, so
-  // nothing outside the history is ever a target.
-  const names = fs.readdirSync(dir).filter((n) => ID_RE.test(n) && !kept.has(n));
+  // Past the kept count, and any build directory the index does not list: only
+  // what this module made (runs of one project take turns on the lock, so no
+  // other run is staging a copy meanwhile).
+  const names = fs.readdirSync(dir).filter((n) => removableLeftover(dir, n, kept));
   for (const name of names) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
   writeAtomic(path.join(dir, INDEX), `${JSON.stringify({ schema: SCHEMA, entries: entries.slice(0, keep) }, null, 2)}\n`);
 }

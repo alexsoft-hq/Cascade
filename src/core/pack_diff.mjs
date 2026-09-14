@@ -40,7 +40,7 @@ const AXIS_OF_KIND = Object.freeze({
 });
 
 /** The conditions only `meta.analysis` records; both absent is said once, not per key. */
-const ANALYSIS_KEYS = new Set(['profileDigest', 'enginePrint', 'engineVersion', 'optOuts', 'sourceRoots', 'flags', 'catalogSnapshot', 'evidence']);
+const ANALYSIS_KEYS = new Set(['profileDigest', 'enginePrint', 'engineVersion', 'optOuts', 'sourceRoots', 'flags', 'catalogSnapshot', 'evidence', 'externalSources']);
 
 const idKind = (id) => String(id).slice(0, String(id).indexOf(':'));
 
@@ -87,13 +87,15 @@ function conditionsOf(pack) {
  * what changes without a commit (a database snapshot, a recording).
  */
 function runConditions(a) {
-  if (!a) return { flags: null, catalogSnapshot: null, evidence: null };
+  if (!a) return { flags: null, catalogSnapshot: null, evidence: null, externalSources: null };
   const ext = a.external ?? null;
   return {
     // Where the profile file sat is not how it was read; `profileDigest` is.
     flags: a.invocation ? JSON.stringify({ ...a.invocation, profile: undefined }) : null,
     catalogSnapshot: ext ? String(ext.catalogSnapshot ?? 'none') : null,
     evidence: ext ? (ext.evidence ?? []).join(' ') || 'none' : null,
+    // What was read from outside the repository, by content: it changes with no commit.
+    externalSources: ext?.sources ? Object.entries(ext.sources).map(([p, d]) => `${p}=${d}`).join(' ') || 'none' : null,
   };
 }
 

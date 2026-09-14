@@ -33,6 +33,7 @@ test('a remote is the same repository however it is written, a token in it is no
   assert.equal(normalizeRemote('git://example.com:9418/team/app'), 'example.com/team/app', 'the git protocol on its own port');
   assert.notEqual(normalizeRemote('https://git.example.com:22/team/app'), normalizeRemote('https://git.example.com/team/app'), 'port 22 is ssh\'s, not https\'s');
   assert.notEqual(normalizeRemote('ssh://git.example.com:443/team/app'), normalizeRemote('ssh://git.example.com/team/app'), 'port 443 is https\'s, not ssh\'s');
+  assert.equal(normalizeRemote('git@git.example.com:2026/team.git'), normalizeRemote('ssh://git@git.example.com/2026/team.git'), 'a path after the scp colon is a path, even when it starts with digits');
   assert.equal(normalizeRemote(''), null);
 });
 
@@ -258,4 +259,31 @@ test('the base reads no profile when the current pack read none, even when the c
   copyConventions({ dotCascade, target, projectRoot: path.join(root, 'repo'), repoRoot: path.join(root, 'repo'), worktreeRoot: path.join(root, 'wt'), invocation: { profile: external }, commit: 'c'.repeat(40) }, outside);
   assert.deepEqual(outside, [external]);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, 'profile.json'), 'utf8')), { packagePrefixes: ['com.example'] });
+});
+
+test('keeping a build that is already kept never removes it, even when the index cannot be written', (t) => {
+  const { dir, packDir, write } = projectDir(t);
+  write(packAt({ commit: 'b'.repeat(40) }, 'shop', digestOf(2)));
+  const kept = keepPreviousPack(packDir, packAt({ commit: 'c'.repeat(40) }, 'shop', digestOf(3)));
+  const index = path.join(dir, '.cascade', 'history', 'index.json');
+  fs.rmSync(index);
+  fs.mkdirSync(path.join(index, 'blocked'), { recursive: true });
+  assert.throws(() => keepPreviousPack(packDir, packAt({ commit: 'd'.repeat(40) }, 'shop', digestOf(4))));
+  assert.equal(fs.existsSync(path.join(historyDirOf(packDir), kept.id, 'pack.json')), true, 'the build kept before this call is still there');
+});
+
+test('pruning removes only what the history made: a stray build copy and a dead run\'s staging, not a folder somebody put there', (t) => {
+  const { packDir, write } = projectDir(t);
+  write(packAt({ commit: 'b'.repeat(40) }, 'shop', digestOf(2)));
+  keepPreviousPack(packDir, packAt({ commit: 'c'.repeat(40) }, 'shop', digestOf(3)));
+  const history = historyDirOf(packDir);
+  const stray = path.join(history, 'abcdefabcdef-0123456789ab');
+  const staging = path.join(history, '.staging-abcdefabcdef-0123456789ab-1');
+  const theirs = path.join(history, 'fedcbafedcba-0123456789ab');
+  for (const d of [stray, staging, theirs]) fs.mkdirSync(d);
+  fs.writeFileSync(path.join(stray, 'pack.json'), '{}');
+  fs.writeFileSync(path.join(theirs, 'notes.txt'), 'mine');
+  pruneHistory(packDir);
+  assert.deepEqual([fs.existsSync(stray), fs.existsSync(staging), fs.existsSync(theirs)], [false, false, true]);
+  assert.equal(listHistory(packDir).length, 1);
 });
