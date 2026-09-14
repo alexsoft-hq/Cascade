@@ -37,6 +37,8 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
  * a dependency in the direction this lane does not have.
  */
 const FORM_SUBMIT_RULE = 'form-submit';
+/** The rule a WebSquare submission call carries: `adapters/web/lib/websquare_calls.mjs` names it too. */
+const SUBMISSION_RULE = 'websquare-submission';
 const LOCATION_REQUEST_RULE = 'location-request';
 
 /** What each evidence layer actually did, in one sentence, for `evidence.basis`. */
@@ -53,6 +55,8 @@ export const WEB_CALL_BASIS = Object.freeze({
   // RM56. A Nexacro client sends every request through one framework call, so
   // there is no client library to trace and no wrapper chain to follow.
   nexacro: 'the screen calls `transaction(…)`, which is the ONE way a Nexacro client sends a request: the framework opens the connection and the url is the argument, or the property of the options object, that it reads. The service prefix on the front of it (`svcurl::`) is resolved through the application typedef\'s own `<Service prefixid url>` list, so nothing here was matched by name',
+  // RM63. A WebSquare page declares its requests and sends one by naming it.
+  websquare: 'the page sends a submission it declares in its own model (`<xf:submission id action method>`), by a call a declaration pack names (adapters/web/packs/websquare.json): the address and the method are the declaration\'s, or the options object\'s the call is handed, so nothing had to be traced and nothing was matched by name',
 });
 
 /**
@@ -610,6 +614,10 @@ function pageSinkOf(c, { isTemplate, resolved, absolute, stats }) {
     stats.calls.nexacro += 1;
     return flatSink('nexacro', 'transaction');
   }
+  if (c.websquare) {
+    stats.calls.websquare += 1;
+    return flatSink('websquare', 'submission');
+  }
   if (c.formSubmit) {
     // An action the page fills in whole from an expression (`${url}`) is an
     // address this lane cannot read, which is a different finding from a route.
@@ -708,11 +716,13 @@ function untracedSink(c, { resolved, absolute, target, stats }) {
  * A call with no url at all, counted where it is a request this lane knows
  * happens and cannot follow — which is not the same finding as no request.
  *   a transaction   a Nexacro `transaction(…)` whose url is built elsewhere (RM56)
+ *   a submission    a WebSquare submission whose action this lane cannot read (RM63)
  *   a form submit   its own scope assigned no action and its `<form>` element
  *                   names none this lane can read (RM60)
  */
 function countAddressless(c, stats) {
   if (c.nexacro) stats.calls.nexacroUnreadable += 1;
+  else if (c.websquare) stats.calls.websquareUnreadable += 1;
   else if (c.formSubmit) stats.calls.formSubmitsWithoutAddress += 1;
 }
 
@@ -836,9 +846,11 @@ function callEvidence(site, { written, full, via, absolute, prefixEvidence, decl
   const { call, sink } = site;
   const evidence = {
     rule: call.nexacro ? 'nexacro-transaction'
+      : call.websquare ? SUBMISSION_RULE
       : call.formSubmit ? FORM_SUBMIT_RULE
         : site.template && call.template ? call.template.rule : 'web-http-call',
     ...(call.nexacro ? { nexacro: call.nexacro } : {}),
+    ...(call.websquare ? { websquare: call.websquare } : {}),
     basis: WEB_CALL_BASIS[sink.kind],
     // WHICH FORM, AND WHERE THE METHOD CAME FROM (RM60). A page has a dozen
     // forms and a reader checking this edge needs to know which one was

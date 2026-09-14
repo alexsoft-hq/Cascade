@@ -76,7 +76,7 @@ export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, 
       // The SAME identity rule the lineage worker matches statements with
       // (§8.1): it is what decides whether two files declaring `SUPPLIER` and
       // `supplier` declare one table or two.
-      return parseJsonl(runpy('catalog_ddl.py', ['--identifier-case', sqlArgs.identifierCase, ...ddls]));
+      return parseJsonl(runpy('catalog_ddl.py', catalogWorkerArgs(sqlArgs, ddls)));
     },
     mybatis: () => {
       process.stderr.write('SQL lane: mybatis statements…\n');
@@ -235,6 +235,16 @@ export function annotationLineage({ javaSrc, result, store, prevIndex, catalog, 
  * MyBatis statement. Run AFTER the Java lane produced the repository facts and
  * BEFORE the graph is built, so those statements arrive as ordinary lineage.
  */
+/**
+ * The DDL catalog worker's arguments. The dialect only when it is not MySQL, the
+ * worker's own default, so a MySQL project's catalog is computed from the
+ * arguments it always was (RM63).
+ */
+function catalogWorkerArgs(sqlArgs, ddls) {
+  const dialectArgs = sqlArgs.dialect && sqlArgs.dialect !== 'mysql' ? ['--dialect', sqlArgs.dialect] : [];
+  return [...dialectArgs, '--identifier-case', sqlArgs.identifierCase, ...ddls];
+}
+
 export function nativeQueryLineage({ javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runners, diagnostics, discovery = null }) {
   // …and the two statements every eGovFrame table id generator runs (RM62): SQL
   // a class in a jar executes, written from the bean's properties, and read by

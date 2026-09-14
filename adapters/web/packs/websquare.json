@@ -1,0 +1,9 @@
+{
+  "pack": "websquare",
+  "why": "A WebSquare screen declares its requests in the model (`<xf:submission id action method>`) and sends one from script by naming it. The engine's own call takes the submission's id as a string, and the common library WebSquare's own application template ships beside it takes the submission object the page binds to that id, or an options object that carries the id and the address itself. Which calls send a submission is declared here, so a product whose common library spells it differently adds its spelling rather than a rule.",
+  "submissionSinks": [
+    { "receiver": "$p", "method": "executeSubmission", "argIs": "id" },
+    { "receiver": "$c.sbm", "method": "execute", "argIs": "submission" },
+    { "receiver": "$c.sbm", "method": "executeDynamic", "argIs": "options", "idKey": "id", "actionKey": "action", "methodKey": "method" }
+  ]
+}

@@ -288,6 +288,32 @@
     "screen": "shipped"
    }
   },
+  "mes4u": {
+   "sha": "ed57f3db9e1eca6bcad4a4afb20225f72f8663c9",
+   "endpoints": 115,
+   "endpointsReachingAStatement": 110,
+   "statements": 135,
+   "statementsReached": 119,
+   "tables": 43,
+   "tablesReached": 41,
+   "columns": 673,
+   "columnsReached": 483,
+   "webCalls": 148,
+   "webCallsResolved": 113,
+   "screens": 47,
+   "screensReachingATable": 0,
+   "endpointColumnPairs": 1409,
+   "axes": {
+    "catalog": "shipped",
+    "statements": "shipped",
+    "jpa": "degraded",
+    "mybatisPlus": "not-shipped",
+    "column": "shipped",
+    "code": "shipped",
+    "web": "degraded",
+    "screen": "degraded"
+   }
+  },
   "nexacro-egov": {
    "sha": "deb90f902e9f1af141bb58226eb1a9e8aa15bd69",
    "endpoints": 21,
@@ -412,6 +438,32 @@
     "catalog": "shipped",
     "statements": "not-shipped",
     "jpa": "degraded",
+    "mybatisPlus": "not-shipped",
+    "column": "degraded",
+    "code": "shipped",
+    "web": "shipped",
+    "screen": "degraded"
+   }
+  },
+  "websquare-wrm": {
+   "sha": "19e0c19cf1d2cc563046b72861ec8f90c6efbc30",
+   "endpoints": 96,
+   "endpointsReachingAStatement": 82,
+   "statements": 133,
+   "statementsReached": 123,
+   "tables": 27,
+   "tablesReached": 27,
+   "columns": 222,
+   "columnsReached": 205,
+   "webCalls": 119,
+   "webCallsResolved": 111,
+   "screens": 159,
+   "screensReachingATable": 40,
+   "endpointColumnPairs": 277,
+   "axes": {
+    "catalog": "not-shipped",
+    "statements": "shipped",
+    "jpa": "not-shipped",
     "mybatisPlus": "not-shipped",
     "column": "degraded",
     "code": "shipped",

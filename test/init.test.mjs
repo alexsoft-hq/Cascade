@@ -225,6 +225,25 @@ test('buildProfile with nothing naming the vendor keeps today\'s behaviour, and 
   assert.match(hit.reason, /nothing in this tree says which database it runs on/);
 });
 
+test('one vendor\'s schema and no MySQL marker: the dialect is what the connections agree on, then what the schema is written in (RM63)', () => {
+  const pg = { ...vendorDdl('postgres', 'schema.sql'), path: 'pgschemascript.sql', dialectFrom: 'content' };
+  const one = { ddlPaths: ['pgschemascript.sql'], ddlCandidates: [pg], ddlDialectHint: null };
+  const opts = { root: '/p/app', manifestDir: '/p/app/.cascade' };
+  // The schema's own text is the last word when nothing else speaks.
+  assert.deepEqual(buildProfile(discovery(one), opts).profile.sqlDialects, { main: 'postgres' });
+  // Every jdbc url naming one database outranks it.
+  const oracleUrls = { ...one, connectionCandidates: [{ dialect: 'oracle' }, { dialect: 'oracle' }] };
+  assert.deepEqual(buildProfile(discovery(oracleUrls), opts).profile.sqlDialects, { main: 'oracle' });
+  // Urls that disagree say nothing, and the schema's text decides.
+  const mixed = { ...one, connectionCandidates: [{ dialect: 'oracle' }, { dialect: 'mysql' }] };
+  assert.deepEqual(buildProfile(discovery(mixed), opts).profile.sqlDialects, { main: 'postgres' });
+  // A MySQL marker in the DDL keeps its old precedence.
+  assert.deepEqual(buildProfile(discovery({ ...one, ddlDialectHint: 'mysql' }), opts).profile.sqlDialects, { main: 'mysql' });
+  // A schema whose text names no dialect, and no url: nothing is guessed.
+  const plain = { ...one, ddlCandidates: [{ ...pg, dialect: null, dialectFrom: null }] };
+  assert.deepEqual(buildProfile(discovery(plain), opts).profile.sqlDialects, {});
+});
+
 test('buildProfile records the OpenAPI documents discovery found, manifest-relative and sorted', () => {
   const { profile } = buildProfile(
     discovery({ openapiDocuments: [{ path: 'api/openapi.yaml', version: '3' }, { path: 'api/legacy.json', version: '2' }] }),

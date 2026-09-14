@@ -35,7 +35,8 @@ rather than "0 frontend calls".
 
 Under each source root, recursively: `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
 `.tsx`, the `<script>` blocks of `.vue` single-file components, and the
-`<Script>` blocks of a Nexacro client's `.xfdl` forms and `.xjs` scripts. A Vue file's
+`<Script>` blocks of a Nexacro client's `.xfdl` forms and `.xjs` scripts, and the
+`<script>` blocks of a WebSquare client's `.xml` pages. A Vue file's
 line numbers are the lines in the `.vue` file, template included, so a fact
 points where you would put your cursor.
 
@@ -396,6 +397,78 @@ The in and out **datasets** a transaction names (75 of them in the sample read
 for this) are not read, and measuring said they need not be: they are data flow
 inside the browser, and what impact needs is the call, which the transaction
 already carries.
+
+### A WebSquare client
+
+WebSquare is the other frontend a Korean public sector or financial system is
+likely to be written in, and it is XML too. A screen is an `.xml` page: its
+requests are declared in the model, and its script sends one by naming it.
+
+```xml
+<html xmlns:w2="http://www.inswave.com/websquare" xmlns:xf="http://www.w3.org/2002/xforms">
+  <head meta_screenId="SP001M01" meta_screenName="Sample list">
+    <xf:model>
+      <xf:submission id="sbm_search" action="/sample/searchSample" method="post"/>
+    </xf:model>
+    <script type="text/javascript"><![CDATA[
+      scwin.btn_search_onclick = function () { $c.sbm.execute(sbm_search); };
+    ]]></script>
+```
+
+`.xml` is also the extension of a Spring context, a MyBatis mapper and a Maven
+build, so a file is a page by **what it says**, not by where it is: its root
+element carries the `xmlns:w2="http://www.inswave.com/websquare"` namespace.
+`cascade init` calls the deepest directory that holds nine pages in ten a **web
+root of kind `websquare`**, so a page template a tooling folder keeps outside the
+application does not drag the root up to the repository's top:
+
+```json
+"webRoots": [{ "root": "../WebContent", "kind": "websquare", "from": "discovery" }],
+"frameworkPacks": ["spring-mvc", "mybatis-xml", "web", "websquare"]
+```
+
+Under a WebSquare root the lane reads pages and **nothing else**. The engine's
+own runtime ships beside the application in `websquare/` (several hundred `.js`
+files, and XML pages of its own), and it is the vendor's, as `nexacro14lib/` is
+Nexacro's.
+
+What each page gives:
+
+- **the screen.** One page, one screen. `meta_screenId` is what the application
+  calls it, `meta_screenName` is what a user reads on it, and its address is its
+  path under the root with `.xml` kept, because that is the address the
+  application opens it by (`/ui/SP/SP001.xml`). A page whose
+  `<w2:type>` is `COMMON` is a library of shared functions, not a screen;
+- **the script.** Every `<script>` without a `src`, CDATA wrapper taken off, goes
+  through the same JavaScript reader a `.js` does, with the page's own line
+  numbers. A page declares its handlers on `scwin`
+  (`scwin.btn_search_onclick = function () {…}`), and a call hangs off the handler;
+- **the calls.** A call that sends a submission becomes one `call` record, with
+  the address and method the `<xf:submission>` declares. Three spellings are read,
+  and which calls they are is a declaration in `adapters/web/packs/websquare.json`,
+  not a rule:
+
+  | the call | names the submission by |
+  |---|---|
+  | `$p.executeSubmission("sbm_x")` | its id, as a string (the engine's own call) |
+  | `$c.sbm.execute(sbm_x)` | the object the page binds to that id (the common library WebSquare's template ships) |
+  | `$c.sbm.executeDynamic({ id, action, method })` | an options object that carries the address itself |
+
+  A submission that names no `method` posts, as WebSquare does;
+- **the navigations.** `$c.win.openPopup(url)` and `$c.win.openMenu(name, url)`
+  open another page, and they are navigations, never requests;
+- **no request at all:** anything under the engine's own `WebSquare.*` namespace,
+  such as `WebSquare.core.getConfiguration(…)`, which reads the engine's
+  configuration by an XPath.
+
+The edge is `CALLS_HTTP` with `evidence.rule` `websquare-submission`, graded by
+the route match like every other frontend call. A call naming a submission the
+page never declared, or an options object this lane cannot read, is **counted**
+(`laneStats.web.calls.websquareUnreadable`) rather than dropped.
+
+What a submission sends and receives (its `ref` and `target` data lists) is not
+read, for the reason a Nexacro dataset is not: it is data flow inside the
+browser, and what impact needs is the call.
 
 ### Next.js: the file tree IS the route table
 

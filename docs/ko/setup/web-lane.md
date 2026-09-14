@@ -34,7 +34,8 @@ statement 하나를 파싱해 보는 `web lane parser (vendored)` 줄이 있으�
 
 각 소스 루트 아래를 재귀적으로 훑어 `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
 `.tsx`, `.vue` 단일 파일 컴포넌트의 `<script>` 블록, 그리고 Nexacro 클라이언트의
-`.xfdl` 폼과 `.xjs` 스크립트의 `<Script>` 블록을 읽습니다. `.vue` 파일의 줄
+`.xfdl` 폼과 `.xjs` 스크립트의 `<Script>` 블록, WebSquare 클라이언트의 `.xml`
+페이지 안 `<script>` 블록을 읽습니다. `.vue` 파일의 줄
 번호는 템플릿까지 포함한 `.vue` 파일 안의 줄이므로, 사실이 가리키는 자리가
 여러분이 커서를 놓을 자리입니다.
 
@@ -377,6 +378,77 @@ Nexacro 루트 아래에서 이 레인은 `.xfdl` 과 `.xjs` 만 읽고 **그 �
 transaction 이 이름 대는 in/out **데이터셋**(이번에 읽은 샘플에서 75 개)은 읽지
 않으며, 측정해 보니 읽을 필요도 없었습니다. 그것은 브라우저 안의 데이터 흐름이고,
 영향 분석에 필요한 것은 호출인데 transaction 기록이 이미 그것을 싣고 있습니다.
+
+### WebSquare 클라이언트
+
+한국 공공·금융 시스템에서 Nexacro 다음으로 자주 보는 프런트엔드가 WebSquare 입니다.
+이것도 XML 입니다. 화면 하나가 `.xml` 페이지 하나이고, 요청은 모델에 미리
+선언해 두고 스크립트에서 그 이름을 불러 보냅니다.
+
+```xml
+<html xmlns:w2="http://www.inswave.com/websquare" xmlns:xf="http://www.w3.org/2002/xforms">
+  <head meta_screenId="SP001M01" meta_screenName="Sample list">
+    <xf:model>
+      <xf:submission id="sbm_search" action="/sample/searchSample" method="post"/>
+    </xf:model>
+    <script type="text/javascript"><![CDATA[
+      scwin.btn_search_onclick = function () { $c.sbm.execute(sbm_search); };
+    ]]></script>
+```
+
+그런데 `.xml` 은 Spring 설정, MyBatis 매퍼, Maven 빌드 파일의 확장자이기도
+합니다. 그래서 위치가 아니라 **내용**으로 페이지를 가립니다. 루트 요소에
+`xmlns:w2="http://www.inswave.com/websquare"` 네임스페이스가 있으면 페이지입니다.
+`cascade init` 은 페이지 열에 아홉 이상을 담은 가장 깊은 디렉터리를 **`websquare`
+종류의 웹 루트**로 잡습니다. 도구 폴더에 페이지 템플릿 하나가 떨어져 있어도
+루트가 저장소 꼭대기로 끌려 올라가지 않게 하려는 규칙입니다.
+
+```json
+"webRoots": [{ "root": "../WebContent", "kind": "websquare", "from": "discovery" }],
+"frameworkPacks": ["spring-mvc", "mybatis-xml", "web", "websquare"]
+```
+
+WebSquare 루트 아래에서는 페이지만 읽고 **나머지는 읽지 않습니다**. 엔진 런타임이
+애플리케이션 옆 `websquare/` 에 같이 들어 있기 때문입니다. 수백 개의 `.js` 와
+엔진 자체의 XML 페이지가 있는데, 이건 벤더 것입니다. Nexacro 의 `nexacro14lib/`
+를 안 읽는 것과 같은 이유입니다.
+
+페이지 하나에서 얻는 것은 이렇습니다.
+
+- **화면.** 페이지 하나가 화면 하나입니다. `meta_screenId` 는 애플리케이션이
+  부르는 이름, `meta_screenName` 은 사용자가 화면에서 읽는 제목입니다. 주소는
+  루트 아래 경로에 `.xml` 을 붙인 그대로입니다(`/ui/SP/SP001.xml`). 애플리케이션이
+  실제로 그 주소로 페이지를 열기 때문입니다. `<w2:type>` 이 `COMMON` 인 페이지는
+  화면이 아니라 공용 함수 모음으로 봅니다.
+- **스크립트.** `src` 가 없는 `<script>` 는 CDATA 껍데기를 벗겨서 `.js` 와 같은
+  JavaScript 리더로 읽습니다. 줄 번호는 페이지 파일의 줄 번호를 그대로 씁니다.
+  핸들러는 `scwin` 에 선언하므로(`scwin.btn_search_onclick = function () {…}`)
+  호출이 모듈이 아니라 그 핸들러에 매달립니다.
+- **호출.** submission 을 보내는 호출 하나가 `call` 기록 하나가 됩니다. 주소와
+  메서드는 `<xf:submission>` 선언에서 가져옵니다. 읽는 철자는 셋이고, 어떤 호출이
+  보내는 호출인지는 규칙이 아니라 `adapters/web/packs/websquare.json` 의 선언입니다.
+
+  | 호출 | submission 을 가리키는 방법 |
+  |---|---|
+  | `$p.executeSubmission("sbm_x")` | id 문자열 (엔진 자체 호출) |
+  | `$c.sbm.execute(sbm_x)` | 페이지가 그 id 에 묶어 둔 객체 (WebSquare 템플릿이 주는 공통 라이브러리) |
+  | `$c.sbm.executeDynamic({ id, action, method })` | 주소를 직접 담은 옵션 객체 |
+
+  `method` 가 없는 submission 은 WebSquare 동작대로 POST 로 봅니다.
+- **화면 전환.** `$c.win.openPopup(url)` 과 `$c.win.openMenu(name, url)` 은 다른
+  페이지를 여는 동작입니다. 요청이 아니라 화면 전환으로 기록합니다.
+- **요청이 아닌 것.** 엔진 자체 네임스페이스인 `WebSquare.*` 아래 호출은 요청으로
+  보지 않습니다. 예를 들어 `WebSquare.core.getConfiguration(…)` 은 XPath 로 엔진
+  설정을 읽을 뿐입니다.
+
+엣지는 `evidence.rule` 이 `websquare-submission` 인 `CALLS_HTTP` 이고, 등급은 다른
+프런트엔드 호출과 똑같이 라우트 대조로 정합니다. 페이지가 선언하지 않은
+submission 을 부르거나, 이 레인이 읽을 수 없는 옵션 객체를 넘기면 버리지 않고
+**셉니다**(`laneStats.web.calls.websquareUnreadable`).
+
+submission 이 주고받는 데이터 목록(`ref`, `target`)은 읽지 않습니다. Nexacro
+데이터셋을 안 읽는 것과 같은 이유입니다. 브라우저 안의 데이터 흐름이고, 영향
+분석에 필요한 건 호출 자체입니다.
 
 ### Next.js: 파일 트리가 곧 라우트 표
 

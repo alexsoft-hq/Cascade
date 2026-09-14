@@ -330,6 +330,12 @@ export function sayMpLane(mpStats) {
  * The three Java-side lanes, in the order they ran, folded into the one
  * `laneStats` object the pack records.
  */
+/** The screens a client's own page files are (RM56, RM63), named only where there are some. */
+function clientScreensPhrase(pg) {
+  const n = (k) => (Number.isInteger(pg[k]) && pg[k] > 0 ? pg[k] : 0);
+  return `${n('nexacro') > 0 ? ` and ${n('nexacro')} Nexacro form(s)` : ''}${n('websquare') > 0 ? ` and ${n('websquare')} WebSquare page(s)` : ''}`;
+}
+
 export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   let laneStats = jstats;
   sayJavaLane(jstats);
@@ -441,7 +447,7 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
   const pg = s.byKind ?? { router: 0, page: 0 };
   // …and the third kind of screen (RM56): a Nexacro form, which no route
   // declares and no handler renders. Named only where there is one.
-  const forms = Number.isInteger(pg.nexacro) && pg.nexacro > 0 ? ` and ${pg.nexacro} Nexacro form(s)` : '';
+  const forms = clientScreensPhrase(pg);
   process.stderr.write(`Web lane: ${s.enabled ? `${s.screens} screen(s) from ${s.declared} route declaration(s), ${pg.page} page(s) a controller renders${forms}` : `the screen axis is off, so 0 screen(s) from ${s.declared} route declaration(s)`}, `
     + `${s.withComponent} with a component (${s.componentUnresolved} unresolved), `
     + `${s.renders.EXACT} exact, ${s.renders.SOUND_SET} candidate and ${s.renders.HEURISTIC ?? 0} heuristic RENDERS edge(s); `

@@ -227,10 +227,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/3")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/4")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/3",
+            "catalog-ddl/4",
         )
 
 

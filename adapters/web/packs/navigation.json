@@ -72,6 +72,20 @@
       "methods": ["assign", "replace"],
       "properties": ["href"],
       "urlArg": 0
+    },
+    {
+      "framework": "websquare",
+      "receivers": ["$c.win", "$p"],
+      "why": "A WebSquare screen opens another screen by handing the engine its page file: `$c.win.openPopup(\"/cm/xml/messageBox.xml\")`. The engine loads that page into a window inside the same browser page, and no request to the application is sent for it.",
+      "methods": ["openPopup"],
+      "urlArg": 0
+    },
+    {
+      "framework": "websquare",
+      "receivers": ["$c.win"],
+      "why": "`$c.win.openMenu(menuName, \"/ui/SP/SP001M01.xml\", menuCode)` opens a menu's screen in a tab of the main page, with the page file as its second argument.",
+      "methods": ["openMenu"],
+      "urlArg": 1
     }
   ]
 }

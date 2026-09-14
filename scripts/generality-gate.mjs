@@ -112,6 +112,11 @@ export const CORPUS = Object.freeze([
   { id: 'egov-msa-edu', url: 'https://github.com/eGovFramework/egovframe-msa-edu', sha: '777f697cb685c8e6da903e79f3270fd89896ab1a', ddl: null, note: 'eGovFrame MSA teaching project: Spring Boot over ten source roots with JPA, and two Next.js frontends inside this repository, so an unconfigured init reads them with no flag' },
   { id: 'nexacro-egov', url: 'https://github.com/nexacro-spring/nexacro-sample-egov', sha: 'deb90f902e9f1af141bb58226eb1a9e8aa15bd69', ddl: null, note: 'eGovFrame backend under a Nexacro client: 32 .xfdl screens inside this repository calling *.do, which no router pack reads yet' },
   { id: 'ngrinder', url: 'https://github.com/naver/ngrinder', sha: '2a6da2995cf0010a78b6f63da6aef98560719090', ddl: null, note: 'Spring Boot + JPA + FreeMarker + vue-router: modern Korean OSS, the control for the five eGovFrame entries; its frontend is inside this repository' },
+  // The two things a Korean SI system is written in that none of the above has
+  // (RM63): a WebSquare client, and business logic kept in stored routines that a
+  // mapper only calls.
+  { id: 'websquare-wrm', url: 'https://github.com/inswave/WRM-Public', sha: '19e0c19cf1d2cc563046b72861ec8f90c6efbc30', ddl: null, note: 'WebSquare Rapid Model: eGovFrame backend under a WebSquare client of XML pages inside this repository, no DDL shipped' },
+  { id: 'mes4u', url: 'https://github.com/sindohmes/mes4u', sha: 'ed57f3db9e1eca6bcad4a4afb20225f72f8663c9', ddl: null, note: 'Spring Boot + MyBatis over PostgreSQL, with part of its logic in PL/pgSQL functions its mappers call, and a React frontend inside this repository' },
 ]);
 
 /**

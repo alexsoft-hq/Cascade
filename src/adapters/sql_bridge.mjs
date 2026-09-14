@@ -22,6 +22,36 @@ export function columnKey(schema, table, column) {
   return schema ? `${schema}.${table}.${column}` : `${table}.${column}`;
 }
 /**
+ * One statement's EXECUTES, READS and WRITES edges.
+ *
+ * A table or a column a stored routine reaches (RM63) is a candidate: every
+ * statement the routine's body holds is one it CAN run, and which branch runs
+ * is a run-time question, the reading a MyBatis `<if>` gets.
+ */
+function placeLineageEdges(g, sid, r, { tk, ck }) {
+  for (const t of r.tables ?? []) {
+    const viaRoutine = t.via === 'routine';
+    g.addEdge({
+      from: sid,
+      to: nodeId('table', tk(t.schema, t.table)),
+      type: 'EXECUTES',
+      grade: viaRoutine ? 'SOUND_SET' : 'EXACT',
+      evidence: { access: t.access, ...(viaRoutine ? { via: 'routine', routines: (r.routines ?? []).map((x) => x.name) } : {}) },
+    });
+  }
+  for (const c of r.columns ?? []) {
+    if (c.access !== 'read' && c.access !== 'write') continue; // deletes carry no column write; guard anyway
+    g.addEdge({
+      from: sid,
+      to: nodeId('column', ck(c.schema, c.table, c.column)),
+      type: c.access === 'write' ? 'WRITES' : 'READS',
+      grade: c.via === 'routine' ? 'SOUND_SET' : 'EXACT',
+      ...(c.via === 'routine' ? { evidence: { via: 'routine' } } : {}),
+    });
+  }
+}
+
+/**
  * The key a statement is looked up by at run time.
  *
  * MyBatis always joins the namespace on. iBATIS with `useStatementNamespaces`
@@ -213,24 +243,7 @@ export function buildGraphFromSql(catalogRecords, lineageRecords, options = {}) 
       ...(r.hasStringSubst === true ? { hasStringSubst: true } : {}),
       ...(r.schemaUnknown === true ? { schemaUnknown: true } : {}),
     });
-    for (const t of r.tables ?? []) {
-      g.addEdge({
-        from: sid,
-        to: nodeId('table', tk(t.schema, t.table)),
-        type: 'EXECUTES',
-        grade: 'EXACT',
-        evidence: { access: t.access },
-      });
-    }
-    for (const c of r.columns ?? []) {
-      if (c.access !== 'read' && c.access !== 'write') continue; // deletes carry no column write; guard anyway
-      g.addEdge({
-        from: sid,
-        to: nodeId('column', ck(c.schema, c.table, c.column)),
-        type: c.access === 'write' ? 'WRITES' : 'READS',
-        grade: 'EXACT',
-      });
-    }
+    placeLineageEdges(g, sid, r, { tk, ck });
   }
 
   // JOINS: table↔table relationships recovered from the mapper SQL (this schema

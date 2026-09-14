@@ -995,6 +995,8 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 | eGovFramework/egovframe-web-sample | 5 / 6 | 2 / 2 | 5 / 5 | 8 / 8 | 2 / 2 |
 | nexacro-spring/nexacro-sample-egov | 10 / 21 | 5 / 5 | 46 / 46 | 7 / 7 | 4 / 30 |
 | naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 63 / 69 | 0 / 19 |
+| inswave/WRM-Public | 82 / 96 | 27 / 27 | 205 / 222 | 111 / 119 | 40 / 159 |
+| sindohmes/mes4u | 110 / 115 | 41 / 43 | 483 / 673 | 113 / 148 | 0 / 47 |
 
 ```bash
 node scripts/generality-gate.mjs --fetch     # clone every pin, then run

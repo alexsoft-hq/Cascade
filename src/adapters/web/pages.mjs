@@ -72,6 +72,13 @@ function makeIncludeClosure(includedBy) {
 }
 
 /**
+ * THE CLIENTS WHOSE PAGE FILE IS THE SCREEN: a Nexacro form (RM56) and a
+ * WebSquare page (RM63). No route declares one and no handler renders one; a
+ * user opens it.
+ */
+export const CLIENT_SCREEN_ENGINES = new Set(['nexacro', 'websquare']);
+
+/**
  * The JavaScript names that hold the CONTEXT PATH for one page: the ones its
  * own scripts assign, plus the ones every template it includes assigns. A
  * layout writes `var base_url = '${request.contextPath}'` once and every page
@@ -145,7 +152,7 @@ export function indexTemplates({ fileNames, files, opts }) {
   // is rendered, and so is every script it includes.
   const rendered = renderedTemplatesOf(viewRecords, templateByName, includeClosure);
   for (const [file, t] of templatesByFile) {
-    if (t.engine !== 'nexacro') continue; // a shared script is rendered THROUGH the form that includes it
+    if (!CLIENT_SCREEN_ENGINES.has(t.engine)) continue; // a shared script is rendered THROUGH the form that includes it
     rendered.add(file);
     for (const other of includeClosure(file).keys()) rendered.add(other);
   }
@@ -176,19 +183,21 @@ export function buildNexacroScreens({ templatesByFile, screenNodes, stats, axis 
   let built = 0;
   for (const file of [...templatesByFile.keys()].sort()) {
     const t = templatesByFile.get(file);
-    if (t.engine !== 'nexacro') continue;
+    if (!CLIENT_SCREEN_ENGINES.has(t.engine)) continue;
     const name = typeof t.name === 'string' && t.name !== '' ? t.name : file;
     // KEYED BY ITS PATH, the way a router's screen is. A form's path in the
     // client IS its identity — one form, one path, no handler naming it — so a
     // reader who saw `/packageB/Pattern/Pattern_01` in a list can hand that
     // string straight back to `flow`. A path a router already claimed keeps the
     // router's screen; nothing is merged.
-    const path = `/${name}`;
+    // A WebSquare page is opened by its file (`/ui/SP/SP001M01.xml`), and that
+    // is the address a navigation names.
+    const path = t.engine === 'websquare' ? `/${name}${t.suffix ?? ''}` : `/${name}`;
     const id = nodeId('screen', path);
     if (screenNodes.has(id)) continue;
-    const node = pageNodeOf(name, file, 'nexacro', axis);
+    const node = pageNodeOf(name, file, t.engine, axis);
     node.id = id;
-    node.source = 'nexacro';
+    node.source = t.engine;
     node.path = path;
     node.paths = [path];
     // The form's own id and the words on its title bar. A screen a reader can
@@ -197,7 +206,7 @@ export function buildNexacroScreens({ templatesByFile, screenNodes, stats, axis 
     node.name = t.formId ?? name;
     node.title = t.title ?? null;
     screenNodes.set(id, node);
-    stats.screens.byKind.nexacro += 1;
+    stats.screens.byKind[t.engine] = (stats.screens.byKind[t.engine] ?? 0) + 1;
     built += 1;
   }
   return built;

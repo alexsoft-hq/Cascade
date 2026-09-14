@@ -138,6 +138,15 @@ Swapping to Oracle is then an edit of `catalog.ddl`, not a walk of the tree.
 No answer means no answer: `catalog.source` stays `"none"`, the diagnostic names
 the vendors it found, and you pick.
 
+**A tree that ships ONE vendor's schema** has nothing to choose between, but it
+still has a dialect, and `init` writes it to `sqlDialects.main` in this order: a
+MySQL marker in the DDL itself (backquotes, `ENGINE=`), then the vendor every
+jdbc url agrees on, then the dialect the schema file's own text is written in
+(`SERIAL`, a `::type` cast or `OWNER TO` for PostgreSQL; `VARCHAR2(` or `NUMBER(`
+for Oracle). With none of them the key stays empty. Measured on a PostgreSQL MES
+whose schema is one `pg_dump`: before this rule its catalog was parsed as MySQL
+and not one of its tables was read.
+
 
 ### One mapper, shipped once per vendor
 
@@ -232,6 +241,61 @@ is a `duplicate_statement_id` warning naming both.
 
 The Java side of the same shape is in `docs/setup/java-lane.md`: which receivers
 run an iBATIS statement, and how a bare id binds.
+
+## 2c. Stored routines
+
+A mapper that writes `{call p_close_order(?, ?)}` names a procedure, and the
+tables are inside the procedure. Korean SI systems keep a large share of their
+business logic that way, in Oracle packages and PostgreSQL functions, and a
+lineage that stops at the call stops before the tables. So the catalog reads the
+routines the DDL declares, and a statement that calls one is read through it.
+
+**What the catalog reads**, as text, from the same DDL files:
+
+| written | read as |
+|---|---|
+| `CREATE [OR REPLACE] FUNCTION\|PROCEDURE name(...) ... AS $$ body $$` | a PostgreSQL routine; any `$tag$` quote works, and `LANGUAGE` is recorded |
+| `CREATE [OR REPLACE] PROCEDURE\|FUNCTION name ... IS\|AS ... END;` then `/` | an Oracle, Tibero or Altibase routine |
+| `CREATE [OR REPLACE] PACKAGE BODY pkg IS PROCEDURE p ... FUNCTION f ...` | one routine per member, named `pkg.p` and `pkg.f` |
+
+A comment or a string literal that says `CREATE FUNCTION` is not a routine. Each
+one is a `routine` record in the catalog stream, beside the tables.
+
+**What a routine runs** is every `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`
+and `WITH` its body holds, taken out of the control flow around it (`IF … THEN`,
+`FOR r IN … LOOP`, cursor declarations). PL/SQL's own `SELECT a INTO v FROM t`
+loses its `INTO v`, so the rest is SQL. A branch is not modelled: every statement
+a body holds is one it CAN run, which is the reading a MyBatis `<if>` already gets.
+
+**How a statement reaches one.** A statement names a routine by
+`{call x}`, `{? = call x}`, `CALL x`, `EXEC x`, `PERFORM x`, a `BEGIN x(...); END;`
+block, or `x(...)` inside its SQL. The name is looked up case-insensitively, whole
+(`app.p_close_order`) or bare (`p_close_order`). A bare name two routines share is
+not looked up by its bare spelling: which one an unqualified call reaches is the
+database's search path, and it is not guessed. A routine that calls a routine is
+followed four deep, and a cycle stops at the names already read.
+
+What the routines reach joins the statement's own facts marked
+`"via": "routine"`, and the statement's record lists what was read:
+
+```json
+"routines": [
+  { "name": "app.p_close_order", "depth": 1, "statements": 3, "parsed": 3 },
+  { "name": "app.f_log", "depth": 2, "statements": 2, "parsed": 2 }
+]
+```
+
+On the graph those are `EXECUTES`, `READS` and `WRITES` edges graded
+**SOUND_SET**, with the routine names in the evidence. The statement's own SQL
+stays EXACT. When the catalog holds any routine, a statement that is nothing but a
+call is not handed to the parser at all, so it records no parse failure. A statement that calls no routine is
+byte-identical to what it was.
+
+**What it does not do.** A routine the DDL does not declare is not read, and
+routines are read from DDL files only, not from a live database. SQL a body builds
+as a string and runs (`EXECUTE IMMEDIATE`, `EXECUTE format(...)`) is not read. A
+trigger is not followed: a statement that writes a table does not reach what a
+trigger on that table runs.
 
 ## 3. Where the table and column comments come from
 

@@ -902,7 +902,7 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   assert.deepEqual(stats.calls, {
     withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
     stringMethod: 0, template: 0, formSubmits: 0, locationRequests: 0, formSubmitsWithoutAddress: 0,
-    nexacro: 0, nexacroUnreadable: 0, notAFunction: 0, passedAsValue: 0,
+    nexacro: 0, nexacroUnreadable: 0, websquare: 0, websquareUnreadable: 0, notAFunction: 0, passedAsValue: 0,
   });
   assert.deepEqual(stats.resolved, { SOUND_SET: 0, HEURISTIC: 0 });
   assert.equal(stats.instances, 0);

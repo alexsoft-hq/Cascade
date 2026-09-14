@@ -97,6 +97,7 @@ const PRIVATE_IPV4 = /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01
 // Hosts this project may legitimately name. Each entry says why it is here.
 const ALLOWED_HOSTS = new Set([
   'github.com',        // source/issue links, and the upstream URLs cited in NOTICE
+  'www.inswave.com',   // the XML namespace a WebSquare page declares itself with; an identifier, never fetched
   'api.github.com',    // GitHub REST API
   'localhost',         // local servers
   '127.0.0.1',         // ditto (the viewer binds here)

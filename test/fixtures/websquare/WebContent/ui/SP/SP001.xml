@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ev="http://www.w3.org/2001/xml-events"
+	xmlns:w2="http://www.inswave.com/websquare" xmlns:xf="http://www.w3.org/2002/xforms">
+	<head meta_screenId="SP001" meta_screenName="Sample list">
+		<w2:type>COMPONENT</w2:type>
+		<xf:model>
+			<xf:submission id="sbm_search" ref="data:json,dma_search" action="/sample/search" method="post" mediatype="application/json">
+			</xf:submission>
+			<xf:submission id="sbm_detail" action="/sample/detail?x=1" method="get"/>
+			<xf:submission id="sbm_nomethod" action="/sample/save"/>
+		</xf:model>
+		<script type="text/javascript" lazy="false"><![CDATA[
+scwin.btn_search_onclick = function () {
+    $c.sbm.execute(sbm_search);
+};
+
+scwin.btn_detail_onclick = function () {
+    $p.executeSubmission("sbm_detail");
+};
+
+scwin.btn_save_onclick = function () {
+    $c.sbm.execute(sbm_nomethod, { data: 1 });
+};
+
+scwin.loadCodes = function () {
+    const option = { id: "sbm_codes", action: "/common/codes", method: "post" };
+    $c.sbm.executeDynamic(option, {});
+};
+
+scwin.btn_missing_onclick = function () {
+    $c.sbm.execute(sbm_nowhere);
+};
+
+scwin.btn_popup_onclick = function () {
+    $c.win.openPopup("/ui/SP/SP002.xml", { width: 400 });
+};
+
+scwin.readConfig = function () {
+    return WebSquare.core.getConfiguration("/WebSquare/processMsg/@value");
+};
+]]></script>
+	</head>
+	<body></body>
+</html>

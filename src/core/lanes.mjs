@@ -736,11 +736,12 @@ function screenAxis(web, har, opts = {}) {
   const pages = s.byKind && Number.isInteger(s.byKind.page) ? s.byKind.page : 0;
   // …and a Nexacro client declares no routes either (RM56): its screens are its
   // FORMS, so a run that read forms has screens whatever the route count says.
-  const forms = s.byKind && Number.isInteger(s.byKind.nexacro) ? s.byKind.nexacro : 0;
-  if ((s.declared ?? 0) === 0 && pages === 0 && forms === 0) {
+  // A WebSquare client is the same (RM63): its screens are its pages.
+  const clients = clientScreenPhrases(s.byKind);
+  if ((s.declared ?? 0) === 0 && pages === 0 && clients.length === 0) {
     return {
       status: 'not-shipped',
-      reason: 'the screen axis is enabled and the web lane recorded no route declaration, no page a controller renders and no Nexacro form, so there is nothing to build a screen from. '
+      reason: 'the screen axis is enabled and the web lane recorded no route declaration, no page a controller renders, no Nexacro form and no WebSquare page, so there is nothing to build a screen from. '
         + 'The router packs (adapters/web/packs) name the conventions a route object is recognized by; a router none of them describes is read by none of them',
     };
   }
@@ -789,11 +790,18 @@ function screenAxis(web, har, opts = {}) {
   return {
     status: 'degraded',
     reason: `we built ${s.screens ?? 0} screen(s) from ${s.declared} route declaration(s)`
-      + (forms > 0
-        ? `, ${pages} page(s) a controller renders and ${forms} Nexacro form(s), `
+      + (clients.length > 0
+        ? `, ${pages} page(s) a controller renders and ${clients.join(' and ')}, `
         : ` and ${pages} page(s) a controller renders, `)
       + `and part of that is not the whole picture: ${why.join('; ')}.${observed}`,
   };
+}
+
+/** The screens a client with no router is made of, one phrase per kind that has any. */
+function clientScreenPhrases(byKind) {
+  const count = (k) => (byKind && Number.isInteger(byKind[k]) ? byKind[k] : 0);
+  return [[count('nexacro'), 'Nexacro form(s)'], [count('websquare'), 'WebSquare page(s)']]
+    .filter(([n]) => n > 0).map(([n, what]) => `${n} ${what}`);
 }
 
 /** Past this share of unresolved components the screen axis is degraded (RM30 §F). */

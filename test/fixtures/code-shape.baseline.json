@@ -257,13 +257,14 @@
    ]
   },
   "adapters/web/lib/templates.mjs": {
-   "maxLines": 71,
+   "maxLines": 61,
    "maxBranches": 21,
    "longest": "templateRecordsOf",
    "branchiest": "templateIncludes",
    "functions": [
     "add",
     "add/1",
+    "add/2",
     "attributesOf",
     "blankOut",
     "countLines",
@@ -279,6 +280,7 @@
     "one",
     "one/1",
     "resolveIncludeName",
+    "resolvedIncludesOf",
     "siteOf",
     "soleElementTag",
     "stripContextPath",
@@ -287,6 +289,7 @@
     "templateFormElements/1",
     "templateForms",
     "templateForms/1",
+    "templateImports",
     "templateIncludes",
     "templateLinks",
     "templateLinks/1",
@@ -303,6 +306,36 @@
     "thymeleafFragmentTemplate"
    ]
   },
+  "adapters/web/lib/websquare.mjs": {
+   "maxLines": 19,
+   "maxBranches": 10,
+   "longest": "websquareScriptBlocks",
+   "branchiest": "submissionSinks",
+   "functions": [
+    "attrsOf",
+    "countLines",
+    "isWebSquarePage",
+    "pick",
+    "submissionSinks",
+    "websquarePageOf",
+    "websquareScriptBlocks",
+    "websquareSubmissions"
+   ]
+  },
+  "adapters/web/lib/websquare_calls.mjs": {
+   "maxLines": 20,
+   "maxBranches": 19,
+   "longest": "websquareSubmissionOf",
+   "branchiest": "submissionOf",
+   "functions": [
+    "actionPath",
+    "isEngineCall",
+    "objectOf",
+    "stringProp",
+    "submissionOf",
+    "websquareSubmissionOf"
+   ]
+  },
   "adapters/web/webfacts.mjs": {
    "maxLines": 75,
    "maxBranches": 44,
@@ -317,6 +350,11 @@
     "applyNexacroRoots/1",
     "applyNexacroRoots/2",
     "applyNexacroRoots/3",
+    "applyWebSquareRoots",
+    "applyWebSquareRoots/1",
+    "applyWebSquareRoots/2",
+    "applyWebSquareRoots/2/1",
+    "applyWebSquareRoots/3",
     "assumedAlias",
     "attachTemplateWith",
     "attachTemplateWith/1",
@@ -399,6 +437,9 @@
     "walkState",
     "walkState/1",
     "walkState/2",
+    "webSquareRootOf",
+    "webSquareRootOf/1",
+    "websquareTemplateRecord",
     "withoutScriptBlocks",
     "withoutScriptBlocks/1"
    ]
@@ -970,6 +1011,15 @@
     "spanFacets",
     "spanTimeIso",
     "spelledTable",
+    "spellingsOf",
+    "statementOfObservation",
+    "statementOfObservation/1",
+    "statementOfObservation/2",
+    "statementOfObservation/3",
+    "statementOfObservation/4",
+    "statementOfObservation/4/1",
+    "statementOfObservation/4/2",
+    "statementOfObservation/4/3",
     "tableSpellings",
     "tablesInSql",
     "writeNodeMarks",
@@ -981,8 +1031,8 @@
    ]
   },
   "src/adapters/sql_bridge.mjs": {
-   "maxLines": 97,
-   "maxBranches": 40,
+   "maxLines": 80,
+   "maxBranches": 33,
    "longest": "buildGraphFromSql",
    "branchiest": "buildGraphFromSql",
    "functions": [
@@ -995,6 +1045,8 @@
     "foldedKey/1",
     "graphSpellingIndex",
     "matchKey",
+    "placeLineageEdges",
+    "placeLineageEdges/1",
     "put",
     "register",
     "settle",
@@ -1097,7 +1149,7 @@
   },
   "src/adapters/web/pages.mjs": {
    "maxLines": 55,
-   "maxBranches": 19,
+   "maxBranches": 18,
    "longest": "buildPageScreens",
    "branchiest": "buildPageScreens",
    "functions": [
@@ -1105,6 +1157,7 @@
     "buildPageScreens",
     "buildPageScreens/1",
     "buildPageScreens/2",
+    "buildPageScreens/3",
     "countTemplates",
     "indexTemplates",
     "indexTemplates/1",
@@ -1119,8 +1172,11 @@
     "makeIncludedBy/1/2",
     "pageNodeOf",
     "pageNodeOf/1",
+    "placeImports",
+    "placeImports/1",
     "placeRedirect",
     "placeRedirect/1",
+    "renderAndImport",
     "renderEdge",
     "renderedTemplatesOf",
     "routesByHandler"
@@ -1330,10 +1386,12 @@
   },
   "src/cli/commands/analyze/census.mjs": {
    "maxLines": 47,
-   "maxBranches": 19,
+   "maxBranches": 17,
    "longest": "sayJavaLane",
    "branchiest": "sayWebBridge",
    "functions": [
+    "clientScreensPhrase",
+    "n",
     "sayDdlChoice",
     "sayHarLane",
     "sayIdGenerators",
@@ -1401,6 +1459,8 @@
    "branchiest": "graphOf",
    "functions": [
     "certify",
+    "certify/1",
+    "certify/2",
     "factsOf",
     "graphOf",
     "graphOf/1",
@@ -1457,6 +1517,7 @@
     "assembleAll",
     "assembleAll/1",
     "catalog",
+    "catalogWorkerArgs",
     "diag",
     "java",
     "laneRunners",
@@ -1466,6 +1527,9 @@
     "mybatis",
     "mybatisArgv",
     "nativeQueryLineage",
+    "nativeQueryLineage/1",
+    "nativeQueryLineage/2",
+    "nativeQueryLineage/3",
     "readOpenApiDocs",
     "runLanes",
     "runLanes/1",
@@ -1490,6 +1554,7 @@
     "buildPack/1",
     "goldenSummaryOf",
     "runGate",
+    "runGate/1",
     "sayGate",
     "sayGate/1",
     "sayGate/2",
@@ -2260,6 +2325,7 @@
     "covers/1",
     "ddlDialectFromPath",
     "ddlDialectTokenOf",
+    "depthOf",
     "dirsUnder",
     "dirsUnder/1",
     "discover",
@@ -2330,6 +2396,7 @@
     "templateRootsOf/5",
     "templateRootsOf/6",
     "under",
+    "under/1",
     "underWebRootDir",
     "underWebRootDir/1",
     "underWebRootDir/2",
@@ -2338,7 +2405,10 @@
     "walk/2",
     "walk/3",
     "walk/4",
-    "walk/5"
+    "walk/5",
+    "webSquareRoots",
+    "webSquareRoots/1",
+    "webSquareRoots/2"
    ]
   },
   "src/core/doctor.mjs": {
@@ -2636,6 +2706,9 @@
     "isPlainObject",
     "lanesOf",
     "rel",
+    "singleVendorDialect",
+    "singleVendorDialect/1",
+    "singleVendorDialect/2",
     "slugify",
     "toPosix",
     "vendorCatalog",
@@ -2971,6 +3044,7 @@
     "screensCensus/4",
     "screensCensus/5",
     "screensCensus/6",
+    "screensCensus/7",
     "strip",
     "unresolvedReasonSentence",
     "unresolvedReasonSentence/1",

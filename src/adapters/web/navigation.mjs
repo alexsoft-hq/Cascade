@@ -67,7 +67,10 @@ export function buildScreenIndex(screenNodes) {
     // file. A navigation in a shared component belongs to no screen by that
     // rule, and is counted without being recorded anywhere — saying it belongs
     // to every screen that mounts the component would be a guess.
-    const file = typeof node.component === 'string' ? node.component : null;
+    // A client whose page file IS the screen (a Nexacro form, a WebSquare page)
+    // has no component: the file the navigation is written in is the screen's own.
+    const file = typeof node.component === 'string' ? node.component
+      : (node.source === 'nexacro' || node.source === 'websquare') && typeof node.file === 'string' ? node.file : null;
     if (file !== null) {
       if (!byComponent.has(file)) byComponent.set(file, []);
       byComponent.get(file).push(id);

@@ -16,6 +16,7 @@
 import { navigationOf } from './navigation.mjs';
 import { formCall } from './forms.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
+import { isEngineCall, websquareSubmissionOf } from './websquare_calls.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
 export const VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
@@ -330,8 +331,9 @@ function beforeARequest(ctx, node, env, { isNew, calleeNode, callee, line }) {
       ? { kind: 'import', file: relFile, line, source: arg.value, specifiers: [], dynamic: true } : null;
     return { record, walkArgs: true };
   }
-  const transaction = isNew ? null : nexacroTransactionOf(ctx, node, env, callee, line);
+  const transaction = isNew ? null : (nexacroTransactionOf(ctx, node, env, callee, line) ?? websquareSubmissionOf(ctx, node, env, callee, line));
   if (transaction !== null) return { record: transaction, walkArgs: true };
+  if (isEngineCall(ctx, callee)) return { record: null, walkArgs: true };
   if (isRequireCall(node, env)) {
     return {
       record: {

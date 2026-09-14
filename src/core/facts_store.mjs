@@ -433,7 +433,7 @@ function summariseCall(r, counts) {
 function summariseFile(r, counts) {
   // A Nexacro form is a template of its own kind (RM56): markup with its
   // scripts inside it, which is what every other entry here is.
-  if (r.lang === 'template' || r.lang === 'nexacro') counts.templates.files += 1;
+  if (r.lang === 'template' || r.lang === 'nexacro' || r.lang === 'websquare') counts.templates.files += 1;
   else if (r.apiHandler === true) { counts.jsFiles += 1; counts.apiFiles += 1; }
   else if (r.lang === 'vue') counts.vueFiles += 1;
   else if (r.lang === 'ts' || r.lang === 'tsx') counts.tsFiles += 1;

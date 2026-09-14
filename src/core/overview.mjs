@@ -225,6 +225,7 @@ function screensCensus(graph, { mode, depth }, screenNodes, webScreenStats) {
   let observedScreens = 0;
   let depthCutScreens = 0;
   const nexacroScreens = screenNodes.filter((n) => n.source === 'nexacro').length;
+  const websquareScreens = screenNodes.filter((n) => n.source === 'websquare').length;
   for (const s of sw.screens) {
     if (s.endpoints.length > 0) reachingAnEndpoint += 1;
     if (s.tables.length > 0) reachingATable += 1;
@@ -243,9 +244,10 @@ function screensCensus(graph, { mode, depth }, screenNodes, webScreenStats) {
     // a caller reads and a key that appears everywhere at zero would say
     // "this product could have Nexacro screens" about every product there is.
     byKind: {
-      router: screenNodes.filter((n) => n.source !== 'view' && n.source !== 'nexacro').length,
+      router: screenNodes.filter((n) => !['view', 'nexacro', 'websquare'].includes(n.source)).length,
       page: screenNodes.filter((n) => n.source === 'view').length,
       ...(nexacroScreens > 0 ? { nexacro: nexacroScreens } : {}),
+      ...(websquareScreens > 0 ? { websquare: websquareScreens } : {}),
     },
     reachingAnEndpoint,
     reachingATable,

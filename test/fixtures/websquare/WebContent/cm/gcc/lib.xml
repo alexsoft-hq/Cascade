@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:w2="http://www.inswave.com/websquare">
+	<head meta_screenId="$c.lib"><w2:type>COMMON</w2:type>
+		<script type="text/javascript"><![CDATA[
+scwin.helper = function () { return 1; };
+]]></script>
+	</head>
+</html>

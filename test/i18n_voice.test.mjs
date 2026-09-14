@@ -341,6 +341,7 @@ test('the web worker is English, carries no NUL byte, and the vendored parser is
     'adapters/web/lib/ast.mjs', 'adapters/web/lib/calls.mjs', 'adapters/web/lib/emit.mjs',
     'adapters/web/lib/forms.mjs', 'adapters/web/lib/imports.mjs', 'adapters/web/lib/navigation.mjs',
     'adapters/web/lib/nexacro.mjs', 'adapters/web/lib/routers.mjs', 'adapters/web/lib/templates.mjs',
+    'adapters/web/lib/websquare.mjs', 'adapters/web/lib/websquare_calls.mjs',
     'adapters/web/webfacts.mjs',
   ]);
   const CJK = /[\u1100-\u11ff\u3000-\u30ff\u3130-\u318f\u4e00-\u9fff\uac00-\ud7af]/;

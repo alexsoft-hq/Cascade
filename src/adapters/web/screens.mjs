@@ -577,7 +577,7 @@ export function placeRendersEdges({
     nodesToAdd.set(id, node);
     // A page and a Nexacro form take the same road: what the screen runs is its
     // OWN file's scripts, plus whatever the files it pulls in do (RM48, RM56).
-    if (node.source === 'view' || node.source === 'nexacro') { pageRenders(id, node, ctx); continue; }
+    if (node.source === 'view' || node.source === 'nexacro' || node.source === 'websquare') { pageRenders(id, node, ctx); continue; }
     const byRegistry = registryTargets.get(id);
     if (byRegistry !== undefined) { registryRenders(id, byRegistry, ctx); continue; }
     if (node.component !== null) componentRenders(id, node.component, ctx);

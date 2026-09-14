@@ -228,7 +228,10 @@ export const ROUTER_PACKS = Object.freeze(ROUTER_DEPS.map(([name]) => name));
  * client has no package manifest at all: it is XML forms and an application
  * file, and what says "there are screens here" is the forms themselves.
  */
-export const VENDORED_SCREEN_PACKS = Object.freeze(['nexacro']);
+/** The namespace a WebSquare page's root element carries (RM63). */
+const WEBSQUARE_PAGE_RE = /xmlns:w2\s*=\s*["']http:\/\/www\.inswave\.com\/websquare/;
+
+export const VENDORED_SCREEN_PACKS = Object.freeze(['nexacro', 'websquare']);
 
 /** Every pack that declares SCREENS, whichever way it declares them. */
 export const SCREEN_PACKS = Object.freeze([...ROUTER_PACKS, ...VENDORED_SCREEN_PACKS]);
@@ -857,6 +860,12 @@ function classifyXmlFile(d, f) {
   if (lower.endsWith('.xml')) {
     const text = read(absFile);
     if (text === null) return;
+    // A WEBSQUARE PAGE (RM63) is an `.xml` too, and says so on its root element.
+    if (WEBSQUARE_PAGE_RE.test(text.slice(0, 4096))) {
+      const dir = rel(path.dirname(absFile));
+      d.websquarePages.set(dir, (d.websquarePages.get(dir) ?? 0) + 1);
+      return true;
+    }
     if (MYBATIS_MAPPER_RE.test(text)) {
       counts.mybatisMapperXml += 1;
       mapperDirs.add(rel(path.dirname(absFile)));
@@ -1307,6 +1316,36 @@ counts.webVendoredFiles = webVendoredRoots.reduce((n, r) => n + r.files, 0);
  *
  * @returns {{root:string, files:number, forms:number, routerPacks:string[], kind:string}[]}
  */
+/**
+ * THE WEBSQUARE CLIENT (RM63): the topmost directory its pages share. A
+ * WebSquare application keeps its screens under `ui/` and its shared pages under
+ * `cm/`, beside the engine's runtime in `websquare/`, so the root is where the
+ * pages meet and the lane reads only pages under it.
+ */
+/** How many segments a relative directory has; the tree's own root has none. */
+const depthOf = (dir) => (dir === '' ? 0 : dir.split('/').length);
+
+function webSquareRoots(d) {
+  const dirs = [...d.websquarePages.keys()].sort();
+  if (dirs.length === 0) return [];
+  let total = 0;
+  for (const [, n] of d.websquarePages) total += n;
+  // THE DEEPEST DIRECTORY HOLDING NINE PAGES IN TEN. A repository keeps the odd
+  // page outside its application (a template in a tooling folder), and taking
+  // the common ancestor of every page would make the repository itself the
+  // client and drop every other frontend in it.
+  const under = (dir) => [...d.websquarePages].reduce((n, [p, c]) => n + (dir === '' || p === dir || p.startsWith(`${dir}/`) ? c : 0), 0);
+  const candidates = new Set(['']);
+  for (const dir of dirs) {
+    const parts = dir.split('/');
+    for (let i = 1; i <= parts.length; i += 1) candidates.add(parts.slice(0, i).join('/'));
+  }
+  const root = [...candidates].filter((c) => under(c) * 10 >= total * 9)
+    .sort((a, b) => depthOf(b) - depthOf(a) || (a < b ? -1 : 1))[0];
+  const pages = under(root);
+  return [{ root, files: pages, forms: pages, routerPacks: ['websquare'], kind: 'websquare' }];
+}
+
 function nexacroRoots(d) {
   const { nexacroForms, nexacroApps } = d;
   const formDirs = [...nexacroForms.keys()].sort();
@@ -1372,6 +1411,7 @@ function discoveryCollections() {
     // A Nexacro client (RM56): the directories holding its forms and its application file.
     nexacroForms: new Map(), // rel dir -> form count
     nexacroApps: new Set(), // rel dir holding an `.xadl` application file
+    websquarePages: new Map(), // rel dir -> WebSquare page count (RM63)
     viewResolvers: [],
     xmlViewResolvers: [], // …and the same settings written as Spring BEANS (RM55)
     idGenerators: [], // eGovFrame table id generators declared as beans (RM62)
@@ -1604,7 +1644,7 @@ export function discover(root, io = {}) {
     templateDirs,
     templateSample,
     nexacroForms,
-    nexacroApps,
+    nexacroApps, websquarePages,
     viewResolvers,
     xmlViewResolvers, idGenerators,
     openapiDocuments,
@@ -1661,7 +1701,7 @@ export function discover(root, io = {}) {
     read,
     root,
     serviceNames,
-    nexacroApps,
+    nexacroApps, websquarePages,
     nexacroForms,
     templateDirs,
     templateSample,
@@ -1684,7 +1724,7 @@ export function discover(root, io = {}) {
 
   walk(root, [], true, false);
 
-  const webVendoredRoots = [...looseWebRoots(d), ...nexacroRoots(d)]
+  const webVendoredRoots = [...looseWebRoots(d), ...nexacroRoots(d), ...webSquareRoots(d)]
     .sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
   const templateRoots = templateRootsFrom(d);
 

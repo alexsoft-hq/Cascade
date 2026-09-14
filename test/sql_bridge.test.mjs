@@ -348,3 +348,34 @@ test('buildGraphFromSql: header records and unknown kinds in catalog/lineage are
   // (stubbed from lineage READS), statement:updateByPrimaryKey.
   assert.equal(g.nodes.size, 4);
 });
+
+// ---------------------------------------------------------------------------
+// A statement that calls a stored routine (RM63)
+// ---------------------------------------------------------------------------
+
+test('what a called routine reaches is a SOUND_SET candidate that names the routine, and the statement\'s own SQL stays EXACT', () => {
+  const g = buildGraphFromSql(
+    [catalogHeader(), tableRecord(), priceColumnRecord(), idColumnRecord()],
+    [lineageHeader(), {
+      kind: 'lineage', namespace: 'com.x.PmsProductMapper', id: 'reprice', type: 'update',
+      tables: [
+        { table: 'pms_product', access: 'read' },
+        { table: 'pms_product', access: 'write', via: 'routine' },
+      ],
+      columns: [
+        { table: 'pms_product', column: 'id', access: 'read' },
+        { table: 'pms_product', column: 'price', access: 'write', via: 'routine' },
+      ],
+      routines: [{ name: 'app.p_reprice', depth: 1, statements: 2, parsed: 2 }],
+      file: 'x.xml', line: 40,
+    }],
+  );
+  const sid = nodeId('statement', 'com.x.PmsProductMapper.reprice');
+  const out = g.edges.filter((e) => e.from === sid).map((e) => [e.type, e.to, e.grade, e.evidence ?? null]);
+  assert.deepEqual(out.sort(), [
+    ['EXECUTES', 'table:pms_product', 'EXACT', { access: 'read' }],
+    ['EXECUTES', 'table:pms_product', 'SOUND_SET', { access: 'write', via: 'routine', routines: ['app.p_reprice'] }],
+    ['READS', 'column:pms_product.id', 'EXACT', null],
+    ['WRITES', 'column:pms_product.price', 'SOUND_SET', { via: 'routine' }],
+  ].sort());
+});

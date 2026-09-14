@@ -118,7 +118,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/12';
+const VERSION = 'webfacts/13';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -140,6 +140,9 @@ import {
   MAX_FORM_BYTES, NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT, nexacroAssetDirs, nexacroFormOf,
   nexacroIncludes, nexacroScriptBlocks, nexacroServices, nexacroTypedefUrl, resolveIncludeFile,
 } from './lib/nexacro.mjs';
+import {
+  isWebSquarePage, MAX_PAGE_BYTES, submissionSinks, websquarePageOf, websquareScriptBlocks, websquareSubmissions,
+} from './lib/websquare.mjs';
 import { emptyCounts, orderRecords, tally } from './lib/emit.mjs';
 import {
   bindingOf, declareFunction, hoist, isRequireCall, recordConstant, recordImport, visitArray,
@@ -163,7 +166,7 @@ import {
 // form, which is one screen, and the shared script it includes. Both hold
 // JavaScript inside an XML wrapper, and both are read here for the same reason
 // a `.vue` is: that is where the frontend's code is written.
-const EXTENSIONS = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue', NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT];
+const EXTENSIONS = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue', NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT, '.xml'];
 
 /**
  * Directories that are never first-party source, WHEREVER they sit. A vendored
@@ -192,6 +195,9 @@ function langOf(file) {
   // A Nexacro FORM and a Nexacro SCRIPT are read the same way -- both wrap
   // their JavaScript in `<Script>` -- and only the form is a screen.
   if (file.endsWith(NEXACRO_FORM_EXT) || file.endsWith(NEXACRO_SCRIPT_EXT)) return 'nexacro';
+  // An `.xml` reaches here only when it is a WebSquare page (RM63): every other
+  // XML file was dropped when the files were collected.
+  if (file.endsWith('.xml')) return 'websquare';
   if (file.endsWith('.vue')) return 'vue';
   if (file.endsWith('.tsx')) return 'tsx';
   if (file.endsWith('.ts')) return 'ts';
@@ -501,6 +507,8 @@ function runTheWalk(ctx, program, st, packs, moduleScope) {
   // A NEXACRO FILE IS READ AGAINST ITS OWN CLIENT (RM56): its typedef's service
   // prefixes, and the options objects it binds to a name, both settled here.
   if (st.nexacro) ctx.nexacro = { services: st.nexacro.services, objects: nexacroObjects(ctx, program) };
+  // …and a WebSquare page against its own model (RM63): the submissions it declares.
+  if (st.websquare) ctx.websquare = st.websquare;
   hoist(ctx, program.body);
   st.registrarPacks = new Set();
   registrarScan(ctx, program);
@@ -1126,6 +1134,77 @@ function nexacroTemplateRecord({ abs, relFile, text, root, clientRoot, typedef, 
 }
 
 // ---------------------------------------------------------------------------
+// A WebSquare client (RM63)
+// ---------------------------------------------------------------------------
+//
+// AN XML FILE IS A WEBSQUARE PAGE BY WHAT IT SAYS, NOT BY WHERE IT IS. `.xml` is
+// the extension of a Spring context, a MyBatis mapper and a Maven build as much
+// as of a WebSquare screen, so every collected `.xml` is kept only when its root
+// element carries the WebSquare namespace. A source root that holds a page is a
+// WebSquare client, and under it only pages are read: the engine's own runtime
+// (`websquare/`, several hundred `.js` files) is the vendor's, like Nexacro's.
+
+/**
+ * The WebSquare roots among the files collected, with every `.xml` that is not
+ * a page dropped, and every non-page file under a WebSquare root dropped too.
+ *
+ * @returns {{webSquareRoots:string[]}}
+ */
+function applyWebSquareRoots(found, roots) {
+  const pages = new Set();
+  for (const abs of [...found]) {
+    if (!abs.endsWith('.xml')) continue;
+    let head;
+    try {
+      const fd = fs.openSync(abs, 'r');
+      const buf = Buffer.alloc(4096);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      fs.closeSync(fd);
+      head = buf.subarray(0, n).toString('utf8');
+    } catch { head = ''; }
+    if (isWebSquarePage(head)) pages.add(abs);
+    else found.delete(abs);
+  }
+  if (pages.size === 0) return { webSquareRoots: [] };
+  const webSquareRoots = roots.map((x) => path.resolve(x)).sort()
+    .filter((r) => [...pages].some((p) => p.startsWith(r + path.sep)));
+  for (const abs of [...found]) {
+    const root = webSquareRoots.find((r) => abs.startsWith(r + path.sep));
+    if (root === undefined) continue;
+    // The engine's own runtime sits in `websquare/` beside the application, and
+    // its pages are the vendor's, not screens of this application.
+    const engine = abs.startsWith(path.join(root, 'websquare') + path.sep);
+    if (!pages.has(abs) || engine) found.delete(abs);
+  }
+  return { webSquareRoots };
+}
+
+/**
+ * The `template` record one WebSquare page produces: a screen, by the rules a
+ * Nexacro form already follows. Its path is its path under the client root.
+ */
+function websquareTemplateRecord({ abs, relFile, text, root, clientRoot, scripts }) {
+  const page = websquarePageOf(text);
+  const nameRel = toPosix(path.relative(clientRoot, abs));
+  return {
+    kind: 'template', file: relFile, line: 1,
+    // A LIBRARY IS NOT A SCREEN: `<w2:type>COMMON</w2:type>` holds functions
+    // other pages call, the way a Nexacro `.xjs` does.
+    engine: page.type === 'COMMON' ? 'websquare-library' : 'websquare',
+    root: toPosix(path.relative(root, clientRoot)),
+    name: nameRel.endsWith('.xml') ? nameRel.slice(0, -4) : nameRel,
+    suffix: '.xml',
+    includes: [],
+    contextVars: [],
+    scripts,
+    forms: 0,
+    links: 0,
+    formId: page.id,
+    title: page.title,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Routes that are not declared anywhere: the FILE TREE (RM56)
 // ---------------------------------------------------------------------------
 //
@@ -1376,6 +1455,7 @@ function makeTemplateFinder({ root, roots, webRoots, templateRoots }) {
  */
 function scriptBlocksOf({ text, lang, tmpl }) {
   if (lang === 'nexacro') return nexacroScriptBlocks(text);
+  if (lang === 'websquare') return websquareScriptBlocks(text);
   if (tmpl !== null) return templateScriptBlocks(text, tmpl.engine);
   if (lang === 'vue') return vueBlocks(text);
   return [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
@@ -1391,7 +1471,7 @@ function scriptBlocksOf({ text, lang, tmpl }) {
 function sourceTextOf(abs, { relFile, lang, push, counts }) {
   let stat;
   try { stat = fs.statSync(abs); } catch { stat = { size: 0 }; }
-  if (stat.size > (lang === 'nexacro' ? MAX_FORM_BYTES : MAX_FILE_BYTES)) {
+  if (stat.size > (lang === 'nexacro' ? MAX_FORM_BYTES : lang === 'websquare' ? MAX_PAGE_BYTES : MAX_FILE_BYTES)) {
     push(relFile, {
       kind: 'file', file: relFile, line: 1, lang, recoveredErrors: 0, skipped: 'too-large',
     }, 1, -1);
@@ -1415,7 +1495,7 @@ function sourceTextOf(abs, { relFile, lang, push, counts }) {
  * an object rather than in the enclosing scope.
  */
 function analyzeSource(abs, cfg) {
-  const { root, packs, templateRootOf, templateOf, push, counts, routesFromTree, nexacroRootOf, typedefOf } = cfg;
+  const { root, packs, templateRootOf, templateOf, push, counts, routesFromTree, nexacroRootOf, typedefOf, webSquareRootOf } = cfg;
   const relFile = toPosix(path.relative(root, abs));
   // THE ROUTE THE FILE TREE DECLARES (RM56), before the file is even read: a
   // Next.js page is a page because of where it sits, and it is a page whether
@@ -1435,16 +1515,17 @@ function analyzeSource(abs, cfg) {
   const typedef = isNexacro && typedefOf !== undefined ? typedefOf(abs, text) : null;
   const blocks = scriptBlocksOf({ text, lang, tmpl });
   const res = analyzeFile({
-    relFile, blocks, packs, lang: tmpl !== null || lang === 'nexacro' ? 'js' : lang, templateOf,
+    relFile, blocks, packs, lang: tmpl !== null || lang === 'nexacro' || lang === 'websquare' ? 'js' : lang, templateOf,
     // A PAGE IS READ AS A PAGE ALL THE WAY THROUGH (RM60): its engine, so a
     // literal a template directive wrote a path into is read as one, and its
     // `<form>` elements, so a form submitted from script knows what it sends.
     ...(tmpl !== null ? { templateEngine: tmpl.engine, formElements: templateFormElements(text) } : {}),
     ...(typedef !== null ? { nexacro: { services: typedef.services } } : {}),
+    ...(lang === 'websquare' ? { websquare: { submissions: websquareSubmissions(text), sinks: submissionSinks(packs) } } : {}),
   });
   const fileRec = {
     kind: 'file', file: relFile, line: 1,
-    lang: lang === 'nexacro' ? 'nexacro' : tmpl !== null ? 'template' : lang,
+    lang: lang === 'nexacro' || lang === 'websquare' ? lang : tmpl !== null ? 'template' : lang,
     recoveredErrors: res.recoveredErrors,
     // A SERVER HANDLER OF THE FRONTEND'S OWN (RM56): a file under a file-tree
     // router's api directory. Read like any other source, and marked so the
@@ -1467,7 +1548,9 @@ function analyzeSource(abs, cfg) {
     push(relFile, { kind: 'parse_error', file: relFile, line: pe.line, col: pe.col, message: pe.message }, pe.line, 0);
     counts.parseErrors += 1;
   }
-  if (lang === 'nexacro') {
+  if (lang === 'websquare') {
+    push(relFile, websquareTemplateRecord({ abs, relFile, text, root, clientRoot: webSquareRootOf(abs) ?? root, scripts: blocks.length }), 1, -0.5);
+  } else if (lang === 'nexacro') {
     push(relFile, nexacroTemplateRecord({
       abs, relFile, text, root, clientRoot: nexacroRootOf(abs) ?? root,
       typedef: typedef ?? { dir: null, dirs: new Map() }, scripts: blocks.length,
@@ -1601,6 +1684,9 @@ function main(argv) {
   const { nexacroRoots } = applyNexacroRoots(found, roots);
   const nexacroRootOf = (abs) => nexacroRoots.find((r) => abs === r || abs.startsWith(r + path.sep)) ?? null;
   const typedefOf = makeNexacroTypedefs();
+  // A WEBSQUARE CLIENT (RM63): which XML files are pages, and the rest dropped.
+  const { webSquareRoots } = applyWebSquareRoots(found, roots);
+  const webSquareRootOf = (abs) => webSquareRoots.find((r) => abs === r || abs.startsWith(r + path.sep)) ?? null;
 
   const apiFilesSkipped = { count: 0 };
   const routesFromTree = (abs, relFile) => {
@@ -1626,7 +1712,7 @@ function main(argv) {
   for (const abs of configsOnly ? [] : sorted) {
     analyzeSource(abs, {
       root, packs, templateRootOf, templateOf, push, counts: tallies, routesFromTree,
-      nexacroRootOf, typedefOf,
+      nexacroRootOf, typedefOf, webSquareRootOf,
     });
   }
 

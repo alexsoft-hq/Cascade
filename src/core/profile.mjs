@@ -101,7 +101,7 @@ const CATALOG_SOURCES = Object.freeze(['jdbc', 'file', 'none']);
  * else a profile declares is reported as UNSUPPORTED_TECHNOLOGY and skipped —
  * never silently ignored (§7.3).
  */
-export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'next-pages', 'nexacro']);
+export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'next-pages', 'nexacro', 'websquare']);
 
 /**
  * The physical naming strategies `jpa.namingStrategy` may name (SPEC §18.2).
@@ -757,8 +757,8 @@ if ('webRoots' in obj) {
     if (!isObject(entry) || typeof entry.root !== 'string' || entry.root === '') {
       throw new ProfileError(`${shape} must be an object with a non-empty "root" path, relative to this profile's directory`);
     }
-    if ('kind' in entry && entry.kind !== 'vendored' && entry.kind !== 'declared' && entry.kind !== 'nexacro') {
-      throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it), "nexacro" (a Nexacro client, which is a vendored root whose files are .xfdl forms) or "declared" (you typed it)`);
+    if ('kind' in entry && !['vendored', 'declared', 'nexacro', 'websquare'].includes(entry.kind)) {
+      throw new ProfileError(`${shape}.kind must be "vendored" (discovery found it), "nexacro" (a Nexacro client, which is a vendored root whose files are .xfdl forms), "websquare" (a WebSquare client, whose files are XML pages) or "declared" (you typed it)`);
     }
     if ('from' in entry && entry.from !== null && typeof entry.from !== 'string') {
       throw new ProfileError(`${shape}.from must be null or a string saying where this root came from`);

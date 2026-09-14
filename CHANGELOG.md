@@ -29,6 +29,28 @@ Each dated section below is one round of work. The round protocol is in
   a route-naming `<jsp:include page>` in a rendered page, or in a template it
   includes, give the rendering handler a SOUND_SET call onto that route, rule
   `template-import`.
+- **A WebSquare client is read.** An `.xml` whose root element carries the
+  WebSquare namespace is a page, and a page is a screen at the address the
+  application opens it by. A call that sends a submission the page declares
+  (`$p.executeSubmission("id")`, `$c.sbm.execute(sbm_x)`,
+  `$c.sbm.executeDynamic({...})`) is a `CALLS_HTTP` edge with the declaration's
+  address and method, rule `websquare-submission`. `$c.win.openPopup` and
+  `$c.win.openMenu` are navigations, and the engine's own runtime in `websquare/`
+  is not read. On WebSquare's own sample application, 111 of 119 calls reach a
+  route and 40 of 159 screens reach a table, where before the lane read no page.
+  docs/setup/web-lane.md has the section.
+- **A call to a stored routine reaches the routine's tables.** The catalog reads
+  PostgreSQL functions, Oracle procedures and functions, and the members of an
+  Oracle package body from the DDL. A statement that calls one, in any of the call
+  spellings, gets the tables and columns of every statement the routine's body
+  runs, and of the routines it calls in turn, four deep, as SOUND_SET edges that
+  name the routine. On a PostgreSQL MES whose mappers call 45 functions, statements
+  reaching a table go from 105 to 131 of 135. docs/setup/sql-lane.md has the
+  section.
+- **A project that ships one vendor's schema gets that vendor's dialect.** With no
+  MySQL marker in the DDL, `init` takes the vendor every jdbc url agrees on, then
+  the dialect the schema's own text is written in. The same MES was parsed as
+  MySQL before, and read none of its 33 tables.
 
 ### Fixed
 
@@ -48,13 +70,21 @@ Each dated section below is one round of work. The round protocol is in
   by every route that renders it.
 - **A trace or a recording is part of the calibration pin**, so adding one is a
   REPIN. A pack built without one keeps its pin.
+- **A client with no router ships its screen axis.** A run whose screens are all
+  Nexacro forms or WebSquare pages no longer says there was nothing to build a
+  screen from, and the sentence names each kind.
 
 ### Changed
 
 - **Measured over the corpus**, the three eGovFrame rows rise (business template
   endpoints reaching a statement 163 -> 188 of 219, screens reaching a table
   73 -> 77 of 84) and nothing else moves. The sixteen registered pack digests are
-  identical. The web worker is `webfacts/12`.
+  identical.
+- **Two repositories join the corpus**, inswave/WRM-Public and sindohmes/mes4u,
+  and docs/measured.md keeps their numbers from before the round beside the ones
+  after. The seventeen rows already there do not move. The web worker is
+  `webfacts/13`, the catalog worker `catalog-ddl/4` and the lineage worker
+  `lineage/3`, so a cached analysis is redone once.
 
 ## [0.8.6] - 2026-09-14
 

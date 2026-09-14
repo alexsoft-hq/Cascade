@@ -57,6 +57,9 @@ suite.
 Six more repositories joined this corpus in RM55 and are measured in [their own
 section](#the-korean-market-held-out-first), which keeps the measurement taken
 BEFORE any rule was written for them beside the one after.
+Two more joined in RM63, a WebSquare client and a system whose logic sits in
+stored routines, and [their section](#websquare-and-stored-routines-rm63) does the
+same.
 
 The last column is the sixth, and it is guarded the other way up. It adds up,
 over every endpoint, how many distinct columns that one endpoint reaches, and a
@@ -717,6 +720,70 @@ On the corpus the three eGovFrame rows move up and nothing else does:
 the rise is the menu tables every page imports and the key table every insert
 advances, which are the relations the runs above recorded. The sixteen pack
 digests of the registered projects are identical.
+
+## WebSquare and stored routines (RM63)
+
+Two things a Korean SI system is written in were missing from everything above:
+a **WebSquare** client, and business logic kept in **stored routines** that a
+mapper only calls. One public repository of each was cloned, pinned and measured
+with the engine as it stood, before a rule was written, and again after.
+
+| Repository | Pinned at | Endpoints reaching a statement | Tables reached | Columns reached | Frontend calls resolved | Screens reaching a table | Endpoint to column pairs |
+|---|---|---|---|---|---|---|---|
+| [inswave/WRM-Public](https://github.com/inswave/WRM-Public) | `19e0c19c` | 82 / 96 | 27 / 27 | 205 / 222 | **0 / 0 -> 111 / 119** | **0 / 2 -> 40 / 159** | 277 |
+| [sindohmes/mes4u](https://github.com/sindohmes/mes4u) | `ed57f3db` | 110 / 115 | **29 / 30 -> 41 / 43** | **307 / 387 -> 483 / 673** | 113 / 148 | 0 / 47 | **618 -> 1409** |
+
+**WRM-Public** is WebSquare's own sample application over an eGovFrame backend.
+Before, the lane read none of its `.xml` pages. The product had two screens, the
+two views a controller returns to host the WebSquare engine, and not one frontend
+call. After, every page is a screen at the address the application opens it by.
+Of the 119 calls that carry an address, 111 reach a route this pack serves, and
+the eight that do not are what they look like:
+
+- three load a static JSON file that sits beside the pages;
+- three post to `*.pwkjson` addresses of another product, which no controller
+  here serves;
+- one sends the address of another page, and one is a sample that asks for `/sample/404`
+  on purpose.
+
+Three more calls name a submission the page never declares, or hand over an
+options object this lane cannot read, and they are counted, not dropped. 110 of
+the 159 pages send nothing, and 79 of those screens are page templates under
+`cm/template`. The repository ships no DDL, so a column is attributed only where
+a statement names it.
+
+**mes4u** is a manufacturing execution system on Spring Boot, MyBatis and
+PostgreSQL. Its schema is one `pg_dump` of 33 tables and 45 PL/pgSQL functions,
+and 29 of its 135 statements call one of them. Before, the catalog
+was parsed as MySQL, because nothing told `init` otherwise, and not one of the 33
+tables was read. After, the dialect is PostgreSQL, read off the schema's own text,
+and a call reaches the tables of the function and of what the function calls:
+statements that reach a table go from 105 to 131 of 135, and 854 edges run
+through a routine, each SOUND_SET. The endpoint-to-column pairs more than double.
+That rise is the point: every column a function touches is now reached by every
+endpoint above the statement that calls it.
+
+**What the gate itself caught while these two were added**, both fixed before the
+rows were recorded:
+
+- every WebSquare call edge carried an empty `basis`, and a pack of this client
+  failed its own digest check when it was read back from disk;
+- a run that built 159 screens from WebSquare pages said its screen axis had
+  nothing to build a screen from.
+
+**What is left, and named:**
+
+- mes4u's 47 screens reach no table in the default mode. Its request wrapper takes
+  its base address from `VUE_APP_BASE_API`, which its three `.env` files set three
+  different ways, so the prefix is chosen by how many calls it matches, and all 117 call edges
+  that reach a route are HEURISTIC. The web axis says so, and names
+  `gatewayRoutes` as the key to declare;
+- mes4u commits its built frontend under `src/main/resources/static/js/`, and 27
+  of its screens are declared twice, once in the source and once in the bundle;
+- a WebSquare submission's `ref` and `target` data lists are not read.
+
+The seventeen rows already in the corpus did not move by one number, and the
+sixteen pack digests of the registered projects are identical.
 
 ## The goldens
 

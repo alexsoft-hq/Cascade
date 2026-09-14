@@ -36,6 +36,9 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from routines import extract_routines  # noqa: E402
+
 CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 
 # Worker version — the identity of THIS parser's output shape. It rides in the
@@ -52,7 +55,11 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        same records as /2 except for the header, which now names every source
 #        file and carries the per-file counts. ``--identifier-case`` says what
 #        makes two names THE SAME NAME when the fold decides it.
-CATALOG_VERSION = "catalog-ddl/3"
+#   /4 - the STORED ROUTINES a file declares (``CREATE FUNCTION|PROCEDURE``, an
+#        Oracle ``PACKAGE BODY``) follow the tables as ``routine`` records with
+#        their body text, so a statement that calls one can be read through it.
+#        A file that declares none parses to the records /3 wrote.
+CATALOG_VERSION = "catalog-ddl/4"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -225,10 +232,10 @@ class _Table(object):
         self.declared_in = declared_in
 
 
-def _parse_statements(sql_text, diagnostics, source):
+def _parse_statements(sql_text, diagnostics, source, dialect="mysql"):
     """sqlglot.parse with the same salvage path the single-file reader had."""
     try:
-        return sqlglot.parse(sql_text, read="mysql")
+        return sqlglot.parse(sql_text, read=dialect)
     except ParseError as e:
         _diag(
             diagnostics,
@@ -238,7 +245,7 @@ def _parse_statements(sql_text, diagnostics, source):
             "full parse of %s failed, salvaging with error_level=IGNORE: %s"
             % (source, str(e).replace("\n", " ")),
         )
-        return sqlglot.parse(sql_text, read="mysql", error_level=sqlglot.ErrorLevel.IGNORE)
+        return sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE)
 
 
 def _apply_create(stmt, tables, schema, diagnostics, source, identifier_case="exact"):
@@ -400,7 +407,7 @@ def _apply_alter(stmt, tables, schema, diagnostics, source, identifier_case="exa
                      tbl.name))
 
 
-def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_case="exact"):
+def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_case="exact", dialect="mysql"):
     """Fold several DDL files, IN THE ORDER GIVEN, into catalog records.
 
     ``files`` — a sequence of ``(source_label, sql_text)``. The label appears in
@@ -416,9 +423,11 @@ def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_cas
     """
     tables = {}   # folded table name -> _Table (the record keeps the name as written)
     per_file = []
+    routines = []
     for source, sql_text in files:
         before = len(tables)
-        statements = _parse_statements(sql_text, diagnostics, source)
+        routines.extend(extract_routines(sql_text, source))
+        statements = _parse_statements(sql_text, diagnostics, source, dialect)
         alters = 0
         for stmt in statements:
             if stmt is None:
@@ -463,15 +472,23 @@ def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_cas
             n_columns += 1
             body.append(rec)
 
+    # THE ROUTINES, after every table, in name order and then in the order the
+    # files declared them: the last declaration of a name is the one a database
+    # that ran these files holds, and the lineage reads the last.
+    for r in sorted(routines, key=lambda r: r["name"].lower()):
+        body.append({"kind": "routine", "schema": schema, "name": r["name"], "routineKind": r["routineKind"],
+                     "language": r["language"], "body": r["body"], "source": r["source"], "line": r["line"]})
+
     header = {
         "kind": "header",
         "schema": CATALOG_SCHEMA,
         "version": CATALOG_VERSION,
         "source": None,  # filled by the CLI (basenames); None when parsed in-memory
-        "dialect": "mysql",
+        "dialect": dialect,
         "tables": len(ordered),
         "columns": n_columns,
         "commented": n_commented,
+        **({"routines": len(routines)} if routines else {}),
         # Which file contributed what, so "7 tables" can be checked against the
         # files rather than taken on faith.
         "files": per_file,
@@ -503,6 +520,8 @@ def main(argv=None):
                         help="paths to the MySQL DDL .sql dumps, applied IN THIS ORDER")
     parser.add_argument("--schema", default=None,
                         help="schema name to stamp on records (default: null)")
+    parser.add_argument("--dialect", default="mysql",
+                        help="the SQL dialect the files are written in (default: mysql)")
     parser.add_argument("--identifier-case", default="exact", choices=list(_IDENTIFIER_CASES),
                         dest="identifier_case",
                         help="what makes two table names the SAME table when "
@@ -520,7 +539,7 @@ def main(argv=None):
 
     diagnostics = []
     records = parse_ddl_catalog_files(files, schema=args.schema, diagnostics=diagnostics,
-                                      identifier_case=args.identifier_case)
+                                      identifier_case=args.identifier_case, dialect=args.dialect)
 
     # Stamp the source basenames only (determinism §2.1 — no absolute path).
     records[0]["source"] = "ddl:" + ",".join(name for name, _ in files)

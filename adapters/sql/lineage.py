@@ -68,6 +68,7 @@ from identifier_case import (  # noqa: E402
     identifier_case_for_dialect,
     sqlglot_dialect,
 )
+from routines import embedded_statements, is_pure_call, routine_names_in  # noqa: E402
 
 SQLFACTS_SCHEMA = "cascade:sqlfacts:1"
 
@@ -82,7 +83,12 @@ SQLFACTS_SCHEMA = "cascade:sqlfacts:1"
 #        (a MySQL dump written lower-case, say) the output is byte-identical to
 #        /1; where they disagreed, /1 invented a second table, so shards from
 #        the two generations must not share a key.
-LINEAGE_VERSION = "lineage/2"
+#   /3 - a statement that CALLS a stored routine the catalog holds is read
+#        through the routine: the tables and columns of every statement its body
+#        runs, and of the routines that body calls in turn, join the statement's
+#        own facts marked ``"via": "routine"``, and ``routines`` lists what was
+#        read. A statement that calls none is byte-identical to /2.
+LINEAGE_VERSION = "lineage/3"
 
 # sqlglot logs "unsupported syntax, falling back to Command" as a bare WARNING to
 # the root logger's stderr handler; that would corrupt our structured JSONL
@@ -884,8 +890,82 @@ def _finalize(tables, columns, unresolved, joins=None, joins_dropped=0):
 # Stream
 # --------------------------------------------------------------------------- #
 
+# How many routines deep a call is followed: a routine that calls a routine that
+# calls a routine is read, and a cycle is stopped by the names already read.
+ROUTINE_DEPTH = 4
+
+
+def build_routine_index(catalog_records):
+    """The stored routines of the catalog, by lower-cased name and by bare name.
+
+    A bare name two routines share (``a.save`` and ``b.save``) is not indexed by
+    its bare spelling: which one an unqualified call reaches is the database's
+    search path, and it is not guessed here.
+    """
+    full, bare, clash = {}, {}, set()
+    for r in catalog_records or []:
+        if r.get("kind") != "routine" or not r.get("name"):
+            continue
+        name = str(r["name"])
+        full[name.lower()] = r
+        short = name.split(".")[-1].lower()
+        if short in bare and bare[short] is not r and str(bare[short]["name"]).lower() != name.lower():
+            clash.add(short)
+        bare[short] = r
+    for short in clash:
+        bare.pop(short, None)
+    return {"full": full, "bare": bare}
+
+
+def _routine_of(index, name):
+    key = str(name).lower()
+    return index["full"].get(key) or index["bare"].get(key.split(".")[-1])
+
+
+def _routine_facts(sql, index, schema_index, default_schema, dialect, depth, visited):
+    """The tables and columns the routines one SQL text calls reach, read through their bodies."""
+    out = {"tables": set(), "columns": set(), "routines": []}
+    if depth > ROUTINE_DEPTH:
+        return out
+    for name in routine_names_in(sql):
+        r = _routine_of(index, name)
+        if r is None or str(r["name"]).lower() in visited:
+            continue
+        visited.add(str(r["name"]).lower())
+        inner = embedded_statements(r.get("body") or "")
+        parsed = 0
+        for inner_sql, kind, _offset in inner:
+            a = analyze_statement(inner_sql, kind, schema_index, default_schema=default_schema,
+                                  diagnostics=None, dialect=dialect)
+            if not any(u["reason"] in ("parse_failed", "unsupported_syntax") for u in a["unresolved"]):
+                parsed += 1
+            out["tables"].update((t["table"], t["access"]) for t in a["tables"])
+            out["columns"].update((c["table"], c["column"], c["access"]) for c in a["columns"])
+            sub = _routine_facts(inner_sql, index, schema_index, default_schema, dialect, depth + 1, visited)
+            out["tables"] |= sub["tables"]
+            out["columns"] |= sub["columns"]
+            out["routines"].extend(sub["routines"])
+        out["routines"].append({"name": r["name"], "depth": depth, "statements": len(inner), "parsed": parsed})
+    return out
+
+
+def _with_routines(analysis, sql, routine_index, schema_index, default_schema, dialect):
+    """One statement's analysis with what the routines it calls reach joined to it."""
+    rf = _routine_facts(sql, routine_index, schema_index, default_schema, dialect, 1, set())
+    if not rf["routines"]:
+        return analysis, []
+    own_t = {(t["table"], t["access"]) for t in analysis["tables"]}
+    own_c = {(c["table"], c["column"], c["access"]) for c in analysis["columns"]}
+    tables = analysis["tables"] + [{"table": t, "access": a, "via": "routine"}
+                                   for (t, a) in sorted(rf["tables"] - own_t)]
+    columns = analysis["columns"] + [{"table": t, "column": c, "access": a, "via": "routine"}
+                                     for (t, c, a) in sorted(rf["columns"] - own_c)]
+    routines = sorted(rf["routines"], key=lambda r: (r["depth"], str(r["name"]).lower()))
+    return dict(analysis, tables=tables, columns=columns), routines
+
+
 def analyze_stream(statement_records, schema_index, diagnostics=None,
-                   default_schema=None, dialect=DEFAULT_DIALECT):
+                   default_schema=None, dialect=DEFAULT_DIALECT, routine_index=None):
     """Map piece-2 statement records to lineage records (header first).
 
     Non-``statement`` records (e.g. piece-2's header) are ignored. Each statement
@@ -905,14 +985,18 @@ def analyze_stream(statement_records, schema_index, diagnostics=None,
         if rec.get("kind") != "statement":
             continue
         n_stmts += 1
-        analysis = analyze_statement(
-            rec.get("sql") or "",
-            rec.get("type"),
-            schema_index,
-            default_schema=default_schema,
-            diagnostics=diagnostics,
-            dialect=dialect,
-        )
+        sql = rec.get("sql") or ""
+        has_routines = bool(routine_index and (routine_index["full"] or routine_index["bare"]))
+        if has_routines and is_pure_call(sql):
+            # `{call p_x(?, ?)}` is no SQL a parser reads: what it runs is the routine.
+            analysis = _finalize(set(), set(), [])
+        else:
+            analysis = analyze_statement(sql, rec.get("type"), schema_index,
+                                         default_schema=default_schema, diagnostics=diagnostics,
+                                         dialect=dialect)
+        routines = []
+        if has_routines:
+            analysis, routines = _with_routines(analysis, sql, routine_index, schema_index, default_schema, dialect)
         n_table_facts += len(analysis["tables"])
         n_col_facts += len(analysis["columns"])
         n_unres_cols += sum(
@@ -939,6 +1023,7 @@ def analyze_stream(statement_records, schema_index, diagnostics=None,
             "schemaUnknown": bool(rec.get("schemaUnknown")),
             "file": rec.get("file"),
             "line": rec.get("line"),
+            **({"routines": routines} if routines else {}),
         })
 
     header = {
@@ -1039,7 +1124,8 @@ def main(argv=None):
     records = analyze_stream(statement_records, schema_index,
                              diagnostics=diagnostics,
                              default_schema=args.default_schema,
-                             dialect=args.dialect)
+                             dialect=args.dialect,
+                             routine_index=build_routine_index(catalog_records))
 
     out = sys.stdout
     try:

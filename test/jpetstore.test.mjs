@@ -131,7 +131,7 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
   assert.match(analyze.stderr, /"columns":86/, analyze.stderr);
   // HSQLDB syntax parses without a single warning: lower-case `create table`,
   // no backticks, `decimal(10,2)`, and a named PK constraint per table.
-  assert.match(analyze.stderr, /"version":"catalog-ddl\/3","warnings":0/, analyze.stderr);
+  assert.match(analyze.stderr, /"version":"catalog-ddl\/4","warnings":0/, analyze.stderr);
 
   // -----------------------------------------------------------------------
   // 2. the statements, hand-counted from the mapper XML.

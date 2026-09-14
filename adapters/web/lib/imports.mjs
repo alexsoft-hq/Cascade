@@ -567,11 +567,14 @@ export function visitArray(ctx, node, env, defaultMember) {
  */
 function nexacroHandlerName(ctx, node, env) {
   const left = node.left;
-  if (!ctx.nexacro || env.func !== null || !env.scope.isModule) return null;
+  if (!(ctx.nexacro || ctx.websquare) || env.func !== null || !env.scope.isModule) return null;
   if (!left || (left.type !== 'MemberExpression' && left.type !== 'OptionalMemberExpression')) return null;
   const right = node.right;
   if (!right || (right.type !== 'FunctionExpression' && right.type !== 'ArrowFunctionExpression')) return null;
   const c = calleeOf(left);
+  // …and a WebSquare page on `scwin` (RM63), the object the engine gives every
+  // screen for its own functions: `scwin.btn_search_onclick = function () {…}`.
+  if (ctx.websquare) return c && c.root === 'scwin' && c.path.length >= 1 ? `scwin.${c.path.join('.')}` : null;
   return c && c.root === 'this' && c.path.length >= 1 ? c.path.join('.') : null;
 }
 

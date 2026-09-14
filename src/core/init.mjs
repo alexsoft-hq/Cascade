@@ -10,7 +10,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { MANIFEST_SCHEMA } from './manifest.mjs';
-import { normalizeProfile, validateProfile } from './profile.mjs';
+import { normalizeProfile, SQL_DIALECT_ALIASES, validateProfile } from './profile.mjs';
 import { SCREEN_PACKS } from './discover.mjs';
 import { DEFAULT_PORTS } from './dbconfig.mjs';
 import { chooseCatalogVendor, chooseVendorMappers, groupDdlByVendor, groupMappersByVendor } from './lanes.mjs';
@@ -194,8 +194,27 @@ function declareDialect(discovery, { existing }) {
       connections: discovery.connectionCandidates ?? [],
     })
     : { vendor: null, from: 'none', why: 'this tree ships one vendor\'s schema, so there is nothing to choose', at: null };
-  const main = chosen.vendor ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null);
+  const main = chosen.vendor ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null) ?? singleVendorDialect(discovery, vendors);
   return { ...chosen, vendors, main };
+}
+
+/**
+ * THE DATABASE OF A PROJECT THAT SHIPS ONE VENDOR'S SCHEMA (RM63), when no MySQL
+ * marker answered: the vendor every connection string agrees on, then the
+ * dialect the schema files' own text is written in. Measured on a PostgreSQL MES
+ * whose one schema file is a `pg_dump` (its data rows make it a migration, not a
+ * schema, by role): the catalog was parsed as MySQL and read none of its 33
+ * tables.
+ */
+function singleVendorDialect(discovery, vendors) {
+  if (vendors.size > 1) return null;
+  const known = [...new Set(Object.values(SQL_DIALECT_ALIASES))];
+  const byConnection = chooseCatalogVendor({
+    vendors: known, dbTypes: discovery.dbTypeDeclarations ?? [], connections: discovery.connectionCandidates ?? [],
+  });
+  if (byConnection.vendor !== null) return byConnection.vendor;
+  const written = [...new Set((discovery.ddlCandidates ?? []).map((c) => c.dialect).filter((d) => known.includes(d)))];
+  return written.length === 1 ? written[0] : null;
 }
 
 /**
@@ -408,7 +427,7 @@ const discoveredWebRoots = vendoredRoots.map((r) => ({
   // A Nexacro client is a vendored root with a kind of its own (RM56): the
   // lane reads its `.xfdl` forms and steps over the vendor runtime beside
   // them, and a reader has to be able to see which root that is.
-  kind: r.kind === 'nexacro' ? 'nexacro' : 'vendored',
+  kind: r.kind === 'nexacro' || r.kind === 'websquare' ? r.kind : 'vendored',
   from: 'discovery',
 }));
 const declaredWebRoots = Array.isArray(existing?.webRoots) ? existing.webRoots : null;

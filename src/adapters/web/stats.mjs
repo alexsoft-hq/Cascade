@@ -102,7 +102,7 @@ function emptyScreenStats() {
     // a hybrid application has both. Counted apart, because they are found by
     // two different routes and a reader comparing them is asking a real
     // question.
-    byKind: { router: 0, page: 0, nexacro: 0 },
+    byKind: { router: 0, page: 0, nexacro: 0, websquare: 0 },
   };
 }
 
@@ -139,6 +139,8 @@ function emptyCallStats() {
     // A Nexacro screen's `transaction(…)` (RM56), and the ones with no url.
     nexacro: 0,
     nexacroUnreadable: 0,
+    websquare: 0,
+    websquareUnreadable: 0,
     // A call onto an imported name that is not a function this lane read: a
     // constant, a component, a client instance. No CALLS edge, and counted so
     // the missing hop is a number rather than a silence.
