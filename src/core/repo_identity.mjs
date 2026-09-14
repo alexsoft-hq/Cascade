@@ -42,8 +42,9 @@ const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', 'git+ssh': '22', 'ss
 
 /** A remote's scheme, and the remote without it, its credentials, a trailing slash or `.git`: `host[:port]/path`. */
 function bareRemote(url) {
-  // `user@host:path`: what follows the colon is a path, digits and all (scp has no port).
-  const scp = /^[^@/]+@([^:/]+):(.+)$/.exec(url);
+  // `[user@]host:path` with no scheme: what follows the colon is a path, digits and
+  // all (scp has no port), as git reads it.
+  const scp = /^[a-z+]+:\/\//i.test(url) ? null : /^(?:[^@/]+@)?([^:/]+):(.+)$/.exec(url);
   const scheme = scp ? 'ssh' : (/^([a-z+]+):\/\//i.exec(url)?.[1].toLowerCase() ?? null);
   const noScheme = scp ? `${scp[1]}/${scp[2]}` : url.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '');
   return { scheme, s: noScheme.replace(/\/+$/, '').replace(/\.git$/i, '') };
@@ -57,7 +58,12 @@ export function repositoryOf(pack) {
   const m = pack?.meta ?? {};
   const b = m.base ?? {};
   const projectPath = typeof b.projectPath === 'string' ? b.projectPath : null;
-  return { project: m.project ?? null, repoPath: b.repoPath ?? null, rootCommit: b.rootCommit ?? null, remote: normalizeRemote(b.remote ?? null), commit: b.commit ?? null, projectPath };
+  return { project: m.project ?? null, repoPath: b.repoPath ?? null, rootCommit: b.rootCommit ?? null, remote: storedRemote(b.remote), commit: b.commit ?? null, projectPath };
+}
+
+/** The analyzer records the remote already normalized; normalizing it again would read its `host:port/path` as an scp path. */
+function storedRemote(remote) {
+  return typeof remote === 'string' && remote ? remote : null;
 }
 
 /**

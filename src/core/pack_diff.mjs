@@ -95,8 +95,16 @@ function runConditions(a) {
     catalogSnapshot: ext ? String(ext.catalogSnapshot ?? 'none') : null,
     evidence: ext ? (ext.evidence ?? []).join(' ') || 'none' : null,
     // What was read from outside the repository, by content: it changes with no commit.
-    externalSources: ext?.sources ? Object.entries(ext.sources).map(([p, d]) => `${p}=${d}`).join(' ') || 'none' : null,
+    externalSources: externalCondition(ext),
   };
+}
+
+/** The outside inputs as one comparable string; null (unknown) when there is no record or one of them could not be read. */
+function externalCondition(ext) {
+  if (!ext?.sources) return null;
+  const entries = Object.entries(ext.sources);
+  if (entries.some(([, d]) => d === 'unreadable')) return null;
+  return entries.map(([p, d]) => `${p}=${d}`).join(' ') || 'none';
 }
 
 /**

@@ -13,11 +13,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { normalizeRemote, sameRepository } from '../src/core/repo_identity.mjs';
+import { digest12 } from '../src/core/canonical.mjs';
 import { HISTORY_KEEP, historyDirOf, keepPreviousPack, listHistory, loadHistoryPack, pruneHistory, withPackLock } from '../src/cli/pack_history.mjs';
-import { cleanupWorktree, copyConventions, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
+import { basePackAt, cleanupWorktree, copyConventions, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
+import { contentDigestOf } from '../src/cli/external_sources.mjs';
 import { repositoryIdentity } from '../src/cli/commands/analyze/inputs.mjs';
 
-const packAt = (base, project = 'shop', digest = 'd') => ({ digest, meta: { project, builtAt: '2026-09-14T00:00:00.000Z', base }, nodes: [], edges: [] });
+// A pack whose digest is the real digest of its body: the history checks it. `digestOf(i)` names build i.
+const BODIES = new Map();
+const digestOf = (i) => { const nodes = [{ id: `endpoint:GET /build-${i}` }]; const d = digest12({ nodes, edges: [] }); BODIES.set(d, nodes); return d; };
+const packAt = (base, project = 'shop', digest = 'd') => ({ digest, meta: { project, builtAt: '2026-09-14T00:00:00.000Z', base }, nodes: BODIES.get(digest) ?? [], edges: [] });
 
 test('a remote is the same repository however it is written, a token in it is not kept, and another port is another server', () => {
   for (const u of ['https://github.com/Org/Repo.git', 'ssh://github.com:22/org/repo', 'https://github.com/org/repo/']) {
@@ -34,6 +39,10 @@ test('a remote is the same repository however it is written, a token in it is no
   assert.notEqual(normalizeRemote('https://git.example.com:22/team/app'), normalizeRemote('https://git.example.com/team/app'), 'port 22 is ssh\'s, not https\'s');
   assert.notEqual(normalizeRemote('ssh://git.example.com:443/team/app'), normalizeRemote('ssh://git.example.com/team/app'), 'port 443 is https\'s, not ssh\'s');
   assert.equal(normalizeRemote('git@git.example.com:2026/team.git'), normalizeRemote('ssh://git@git.example.com/2026/team.git'), 'a path after the scp colon is a path, even when it starts with digits');
+  assert.equal(normalizeRemote('git.example.com:2026/team.git'), 'git.example.com/2026/team', 'with no user too');
+  assert.notEqual(normalizeRemote('git.example.com:2026/team.git'), normalizeRemote('ssh://git.example.com:2026/team.git'), 'port 2026 is a port only after a scheme');
+  const stored = (remote) => packAt({ remote });
+  assert.equal(sameRepository(stored(normalizeRemote('ssh://git.example.com:2026/team')), stored(normalizeRemote('git.example.com:2026/team'))).verdict, 'different', 'a recorded remote is compared as recorded, not normalized twice');
   assert.equal(normalizeRemote(''), null);
 });
 
@@ -62,7 +71,6 @@ function projectDir(t) {
   fs.mkdirSync(packDir, { recursive: true });
   return { dir, packDir, write: (p) => fs.writeFileSync(path.join(packDir, 'pack.json'), JSON.stringify(p)) };
 }
-const digestOf = (i) => String(i).padStart(12, '0');
 
 test('a certified run keeps a copy of the pack it replaces, the newest few, and not a rebuild of the same build', (t) => {
   const { dir, packDir, write } = projectDir(t);
@@ -286,4 +294,39 @@ test('pruning removes only what the history made: a stray build copy and a dead 
   pruneHistory(packDir);
   assert.deepEqual([fs.existsSync(stray), fs.existsSync(staging), fs.existsSync(theirs)], [false, false, true]);
   assert.equal(listHistory(packDir).length, 1);
+});
+
+test('a kept pack whose body was edited under its old digest is neither handed out nor reused', (t) => {
+  const { dir, packDir, write } = projectDir(t);
+  write(packAt({ commit: 'b'.repeat(40) }, 'shop', digestOf(2)));
+  const kept = keepPreviousPack(packDir, packAt({ commit: 'c'.repeat(40) }, 'shop', digestOf(3)));
+  const file = path.join(dir, '.cascade', 'history', kept.id, 'pack.json');
+  const body = JSON.parse(fs.readFileSync(file, 'utf8'));
+  body.nodes.push({ id: 'table:t' });
+  fs.writeFileSync(file, JSON.stringify(body));
+  assert.equal(loadHistoryPack(packDir, { commit: 'bbbbbbb' }), null);
+  keepPreviousPack(packDir, packAt({ commit: 'd'.repeat(40) }, 'shop', digestOf(4)));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).nodes, BODIES.get(digestOf(2)), 'keeping the same build again restores it from the pack');
+});
+
+test('the base is looked up in the tree the pack read, and refused when what it read outside the repository has changed since', (t) => {
+  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reproduce-')));
+  t.after(() => fs.rmSync(top, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
+  const tree = path.join(top, 'other');
+  fs.mkdirSync(tree);
+  fs.writeFileSync(path.join(tree, 'a.txt'), '1');
+  for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'one']]) execFileSync('git', ['-C', tree, ...args], { env, stdio: 'ignore' });
+  // The configuration sits in a directory that is not a repository at all.
+  const dotCascade = path.join(top, 'mine', '.cascade');
+  fs.mkdirSync(path.join(dotCascade, 'pack'), { recursive: true });
+  const front = path.join(top, 'front');
+  fs.mkdirSync(front);
+  fs.writeFileSync(path.join(front, 'App.vue'), 'one');
+  const head = { meta: { base: { repoPath: tree }, analysis: { invocation: { webSrc: [front] }, external: { sources: { [front]: contentDigestOf(front) } } } } };
+  fs.writeFileSync(path.join(front, 'App.vue'), 'two');
+  const die = (msg) => { throw new Error(msg); };
+  assert.throws(() => basePackAt({ rev: 'HEAD', dotCascade, packDir: path.join(dotCascade, 'pack'), headPack: head, die }),
+    new RegExp(`inputs outside the repository have changed since the current pack was analyzed \\(${front.replace(/[/.]/g, '\\$&')}\\)`),
+    'found the commit in the tree the pack read, then refused on the changed frontend');
 });

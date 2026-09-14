@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { keepPreviousPack } from '../src/cli/pack_history.mjs';
+import { digest12 } from '../src/core/canonical.mjs';
 import { bootPage as boot, ev, settle } from './helpers/viewer_page.mjs';
 import { startViewer } from './helpers/viewer_fixtures.mjs';
 
@@ -23,9 +24,10 @@ function keepEarlierBuild(host, id) {
   const file = path.join(dir, 'pack.json');
   const current = JSON.parse(fs.readFileSync(file, 'utf8'));
   const earlier = JSON.parse(JSON.stringify(current));
-  earlier.digest = 'e0e0e0e0e0e0';
   earlier.meta.base = { commit: 'a'.repeat(40), dirty: false };
   earlier.nodes.push({ id: 'endpoint:GET /retired', kind: 'endpoint', path: '/retired', httpMethod: 'GET' });
+  // The history checks a kept pack's body against its digest, so the earlier build carries its real one.
+  earlier.digest = digest12({ nodes: earlier.nodes, edges: earlier.edges });
   fs.writeFileSync(file, JSON.stringify(earlier));
   keepPreviousPack(dir, current);
   fs.writeFileSync(file, JSON.stringify(current));
@@ -59,7 +61,7 @@ test('the Compare tab offers this project\'s earlier builds only, and draws the 
   const asked = page.calls.filter((c) => c.body && c.body.name === 'pack_diff');
   assert.equal(asked.length, 1);
   assert.equal(asked[0].body.project, 'beta');
-  assert.match(asked[0].body.arguments.base_history, /^aaaaaaaaaaaa-e0e0e0e0e0e0$/);
+  assert.match(asked[0].body.arguments.base_history, /^aaaaaaaaaaaa-[0-9a-f]{12}$/);
   const text = page.byId.get('cmpview').textContent;
   assert.match(text, /Removed nodes \(1\)/);
   assert.match(text, /endpoint:GET \/retired/);

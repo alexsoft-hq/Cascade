@@ -710,8 +710,12 @@ which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x
   `.cascade/catalog`) has no older version, is read as it is today, and the
   output lists every such path. A profile the current pack did not read is not
   read at the base either, even when that commit tracks one. A current pack that does not record how it was
-  analyzed (built before this release) is refused: run `cascade analyze` once. A
-  shallow clone may not hold the commit, and the command says to fetch it.
+  analyzed (built before this release) is refused: run `cascade analyze` once.
+  So is one whose inputs outside the repository have changed on disk since it
+  was analyzed, because a kept base would carry their old content and a rebuilt
+  one their new: run `cascade analyze`, then compare. The commit is looked up in
+  the tree the current pack read, which is not always the one its `.cascade`
+  sits in. A shallow clone may not hold the commit, and the command says to fetch it.
 - `--base <pack>` — a pack on disk instead: a `pack.json`, the directory holding
   it, or a `.cascade` directory.
 - `--head <pack>` — the pack with the change; default this project's pack.
@@ -736,7 +740,8 @@ repository is unknown.
 
 **The pack history.** Every certified `analyze` copies the pack it replaces into
 `.cascade/history/`, one directory per build, and keeps the five most recent. A
-rebuild that changed nothing (same commit, same digest) keeps nothing. The copy
+rebuild that changed nothing (same commit, same digest) keeps nothing. A kept
+pack whose nodes and edges no longer match its digest is not used. The copy
 is made under the project's write lock; then the fact index and the route index
 are renamed into place, each naming the digest of the pack it belongs to, then
 the pack; the gate's verdict, the baseline and the receipt follow the pack and

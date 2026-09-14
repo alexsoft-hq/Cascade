@@ -35,7 +35,9 @@ Each dated section below is one round of work. The round protocol is in
   snapshot, the runtime evidence files and a content digest of every input
   outside the repository, and a diff compares them. A kept build whose outside
   inputs differ from the current pack's is not used as a base; the base is
-  built again and the outside paths are listed.
+  built again and the outside paths are listed. A current pack whose outside
+  inputs changed on disk since it was analyzed is refused until it is analyzed
+  again.
 - **Sidecars name their pack.** `facts-index.json` carries `packDigest`, and it
   and `routes.json` are published before the pack, and the gate's verdict,
   baseline and receipt after it, all under one lock on the project's state

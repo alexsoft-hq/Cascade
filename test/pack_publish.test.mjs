@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { analysisRecord, publishPack, writePackAndIndex } from '../src/cli/commands/analyze/write.mjs';
 import { compareConditions } from '../src/core/pack_diff.mjs';
+import { contentDigestOf, externalSourcesOf } from '../src/cli/external_sources.mjs';
 import { Graph } from '../src/core/graph.mjs';
 import { HISTORY_KEEP, historyDirOf, listHistory } from '../src/cli/pack_history.mjs';
 import { indexOfPack } from '../src/cli/overlay_provider.mjs';
@@ -151,4 +152,24 @@ test('what was read from outside the repository is recorded by content, and a ch
   const pack = (analysis) => ({ digest: 'x', meta: { lanes: ['web'], analysis }, nodes: [], edges: [] });
   assert.deepEqual(compareConditions(pack(first), pack(second)).differences.map((d) => d.what), ['externalSources']);
   assert.deepEqual(compareConditions(pack(first), pack(first)).differences, []);
+});
+
+test('an outside input is hashed as the lanes read it: no link followed, no argument taken for a path, no lane that was off', (t) => {
+  const top = layout(t);
+  const front = path.join(top, 'front/src');
+  fs.writeFileSync(path.join(front, 'App.vue'), 'x');
+  fs.symlinkSync(front, path.join(front, 'self'));
+  assert.match(contentDigestOf(front), /^[0-9a-f]{16}$/, 'a link back into the tree does not loop');
+  const argument = path.join(top, 'audit-schema');
+  fs.mkdirSync(argument);
+  const sources = externalSourcesOf({ webSrc: [front], noWeb: true, ddl: [] }, { sqlArgs: ['--default-schema', argument], webRoots: [] });
+  assert.deepEqual(sources, {}, 'a lane turned off and an argument string are not inputs');
+  const locked = path.join(top, 'locked');
+  fs.mkdirSync(path.join(locked, 'inner'), { recursive: true });
+  fs.chmodSync(path.join(locked, 'inner'), 0o000);
+  let digest;
+  try { digest = contentDigestOf(locked); } finally { fs.chmodSync(path.join(locked, 'inner'), 0o755); }
+  if (process.getuid?.() !== 0) assert.equal(digest, 'unreadable');
+  const pack = (d) => ({ digest: 'x', meta: { lanes: ['web'], analysis: { external: { sources: { [locked]: d } } } }, nodes: [], edges: [] });
+  assert.ok(compareConditions(pack('unreadable'), pack('unreadable')).unknown.includes('externalSources'), 'two unreadable inputs are not taken to agree');
 });

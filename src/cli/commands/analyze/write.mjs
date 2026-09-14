@@ -9,7 +9,6 @@
 // Everything that DECIDES is pure and lives in src/core/{calibration,receipt}.mjs;
 // this is the filesystem those decisions are handed.
 
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -26,6 +25,7 @@ import { readRegistry, upsertProject, writeRegistryAtomic } from '../../../core/
 import { registrationTarget } from '../../../core/resolve.mjs';
 import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../../../mcp/federation.mjs';
 import { engineIdentity, realPath } from '../../env.mjs';
+import { externalSourcesOf } from '../../external_sources.mjs';
 import { keepPreviousPack, pruneHistory, withPackLock, writeAtomic } from '../../pack_history.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
 import { goldenAsk } from '../../serve.mjs';
@@ -418,45 +418,9 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
     external: {
       catalogSnapshot: catalogMeta?.source === 'snapshot' ? catalogMeta.sha256 ?? null : null,
       evidence: [...evidence].sort(),
-      sources: externalSourcesOf([invocation, selection]),
+      sources: externalSourcesOf(invocation, selection),
     },
   };
-}
-
-/**
- * WHAT WAS READ FROM OUTSIDE THE REPOSITORY, by content. A path outside the
- * repository (a frontend checked out beside it) is recorded absolute, and its
- * content changes without any commit of this project, so a path alone cannot
- * say two packs read the same thing. Each such path gets a digest of the files
- * under it, and two packs whose outside inputs differ are said to be analyzed
- * under different conditions.
- */
-function externalSourcesOf(records) {
-  const found = new Set();
-  const walk = (v) => {
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
-    else if (typeof v === 'string' && path.isAbsolute(v)) found.add(v);
-  };
-  walk(records);
-  return Object.fromEntries([...found].sort().map((p) => [p, contentDigestOf(p)]));
-}
-
-/** A digest of a file, or of every file under a directory by relative path (no `node_modules`, no `.git`); `missing` when it is gone. */
-function contentDigestOf(abs) {
-  const lines = [];
-  const visit = (p, rel) => {
-    const st = fs.statSync(p, { throwIfNoEntry: false });
-    if (!st) return;
-    if (st.isFile()) { lines.push(`${rel}\t${sha256File(p)}`); return; }
-    if (!st.isDirectory()) return;
-    for (const name of fs.readdirSync(p).sort()) {
-      if (name !== 'node_modules' && name !== '.git') visit(path.join(p, name), rel ? `${rel}/${name}` : name);
-    }
-  };
-  if (!fs.existsSync(abs)) return 'missing';
-  visit(abs, '');
-  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
 /**

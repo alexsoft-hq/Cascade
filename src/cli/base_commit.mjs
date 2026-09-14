@@ -29,6 +29,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { compareConditions } from '../core/pack_diff.mjs';
 import { CLI_PATH, gitText, realPath } from './env.mjs';
+import { changedSince } from './external_sources.mjs';
 import { loadHistoryPack } from './pack_history.mjs';
 
 /** Inside `root`, or `root` itself. */
@@ -73,14 +74,12 @@ const tail = (s, n = 8) => String(s ?? '').trim().split('\n').slice(-n).join('\n
  */
 export function basePackAt({ rev, dotCascade: given, packDir, headPack, die, env = process.env }) {
   const dotCascade = realPath(given);
-  const projectRoot = realPath(path.dirname(dotCascade));
+  // The tree the current pack READ, which is not always the one its `.cascade` sits
+  // in (`analyze --project mine --root other`): the commit is looked up there.
+  const projectRoot = realPath(headPack.meta?.base?.repoPath ?? path.dirname(dotCascade));
   const { repoRoot, commit } = commitOf(projectRoot, rev, die);
-  // Checked before the history too: a kept build that also records no invocation
-  // would otherwise compare as "the same" to a head that cannot say how it was read.
-  const invocation = headPack.meta?.analysis?.invocation;
-  if (!invocation) {
-    die('the current pack does not record how it was analyzed, so its base cannot be analyzed the same way. Run `cascade analyze` once, then compare');
-  }
+  refuseUnreproducible(headPack, die);
+  const invocation = headPack.meta.analysis.invocation;
   const kept = loadHistoryPack(packDir, { commit });
   let note = null;
   if (kept) {
@@ -93,6 +92,25 @@ export function basePackAt({ rev, dotCascade: given, packDir, headPack, die, env
   } catch (e) {
     if (e instanceof BaseCommitError) die(e.message);
     throw e;
+  }
+}
+
+/**
+ * A current pack whose analysis cannot be reproduced is refused, before the
+ * history is looked at, so a kept build is never chosen for a head that could not
+ * have been rebuilt: one that records no invocation (a kept build recording none
+ * either would compare as "the same"), and one whose inputs outside the
+ * repository have changed on disk since it was analyzed (the history would give
+ * the base the old content and a rebuild the new, and the answer would depend on
+ * which one happened to exist).
+ */
+function refuseUnreproducible(headPack, die) {
+  if (!headPack.meta?.analysis?.invocation) {
+    die('the current pack does not record how it was analyzed, so its base cannot be analyzed the same way. Run `cascade analyze` once, then compare');
+  }
+  const changed = changedSince(headPack.meta.analysis.external?.sources);
+  if (changed.length > 0) {
+    die(`inputs outside the repository have changed since the current pack was analyzed (${changed.join(', ')}). Run \`cascade analyze\`, then compare`);
   }
 }
 

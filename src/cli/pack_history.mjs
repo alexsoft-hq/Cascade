@@ -25,6 +25,7 @@
 // directories rather than forgotten.
 
 import crypto from 'node:crypto';
+import { digest12 } from '../core/canonical.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -190,10 +191,15 @@ function stageCopy(dir, id, file) {
 
 const STAGING = '.staging-';
 
-/** Whether a kept directory holds the build its id names. */
+/** Whether a kept directory holds the build its id names, by the digest of its nodes and edges and not only the one it states. */
 function keptIntact(target, id) {
-  try { return id.endsWith(`-${JSON.parse(fs.readFileSync(path.join(target, 'pack.json'), 'utf8')).digest}`); } catch { return false; }
+  let pack;
+  try { pack = JSON.parse(fs.readFileSync(path.join(target, 'pack.json'), 'utf8')); } catch { return false; }
+  return bodyIsDigest(pack) && id.endsWith(`-${pack.digest}`);
 }
+
+/** Whether a pack's nodes and edges are what its digest says: an edited body with its old digest is not that build. */
+const bodyIsDigest = (pack) => Array.isArray(pack?.nodes) && Array.isArray(pack?.edges) && digest12({ nodes: pack.nodes, edges: pack.edges }) === pack.digest;
 
 /**
  * A directory this module made and the index no longer lists: a build id's shape
@@ -255,5 +261,5 @@ function readKept(packDir, id) {
 /** Whether the pack is the build its entry names: its digest, its commit, and whether it was clean. */
 function sameEntry(pack, entry) {
   const b = pack.meta?.base ?? {};
-  return pack.digest === entry.digest && (b.commit ?? null) === entry.commit && (b.dirty === true) === entry.dirty;
+  return pack.digest === entry.digest && (b.commit ?? null) === entry.commit && (b.dirty === true) === entry.dirty && bodyIsDigest(pack);
 }
