@@ -28,8 +28,13 @@ export function projectMeta(host, project) {
     project: ctx.basis.project, projectId, digest: pack.digest, lanes: pack.meta?.lanes ?? null,
     builtAt: ctx.basis.builtAt, freshness: ctx.basis.freshness, base: pack.meta?.base ?? null,
     canSource: !!repoRoot, projects: host.list().map((p) => p.id),
+    // This project's earlier builds, which the Compare tab chooses its base from.
+    history: buildsOf(ctx),
   };
 }
+
+/** The earlier builds a served project keeps, or none for a context with no history. */
+const buildsOf = (ctx) => (ctx.history ? ctx.history.list() : []);
 
 /** The viewer's files, read from this engine's own tree. */
 function viewerAssets(root) {

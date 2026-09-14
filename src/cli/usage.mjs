@@ -143,10 +143,12 @@ export const USAGE = Object.freeze({
     + '      (one Flow or Impact answer as one HTML file that opens with no server: the viewer page, the\n'
     + '       answer, its grades, limits and cut lists inside. The viewer\'s Export button writes the same file)\n',
   diff:
-    '  cascade diff --base <pack> [--head <pack>] [--limit <n>] [--json]\n'
-    + '      (what changed between two packs of one project: nodes and edges added, removed or regraded,\n'
-    + '       and the endpoints and screens above them. A <pack> is a pack.json, its directory or a .cascade directory;\n'
-    + '       --head defaults to this project. The analysis conditions are compared first)\n',
+    '  cascade diff (--base-commit <rev> | --base <pack>) [--pack <dir> | --project <id> | --root <dir>] [--head <pack>]\n'
+    + '               [--limit <n>] [--json]\n'
+    + '      (what changed in one project since <rev>: nodes and edges added, removed or regraded, and the endpoints\n'
+    + '       and screens above them. The base comes from the project\'s pack history, or is analyzed now in a temporary\n'
+    + '       git worktree with the current profile. --base takes a pack.json, its directory or a .cascade directory;\n'
+    + '       packs of different repositories are refused. The analysis conditions are compared first)\n',
 });
 
 /**

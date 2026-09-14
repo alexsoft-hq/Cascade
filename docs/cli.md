@@ -683,22 +683,48 @@ screen it came from.
 ## `cascade diff`
 
 ```
-cascade diff --base <pack> [--head <pack>] [--limit <n>] [--json]
+cascade diff (--base-commit <rev> | --base <pack>) [--pack <dir> | --project <id> | --root <dir>] [--head <pack>]
+             [--limit <n>] [--json]
 ```
 
-What changed between two packs of one project, for a pull request or a release:
+What changed in one project since an earlier commit, for a pull request or a release:
 the routes, screens, tables, columns, statements and symbols that appeared or
 went away, the edges that appeared, went away or changed grade, and the
 endpoints and screens above any of that. A frontend change is above no endpoint,
 which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x`,
 `statement:ns.id`), so the two packs are compared by id with no guessing.
 
-- `--base <pack>` — the pack to compare against: a `pack.json`, the directory
-  holding it, or a `.cascade` directory.
+- `--base-commit <rev>` — this project at another commit (`main`, `HEAD~3`, a
+  sha). When the project's pack history holds a clean build at that commit it is
+  used as it is. Otherwise the commit is checked out in a temporary git worktree,
+  given this project's CURRENT manifest and profile (so both packs are read the
+  same way), and analyzed into a scratch directory: nothing is registered or
+  sealed, and the worktree is removed afterwards. A profile path inside the
+  repository is read at that commit; one outside it (a frontend checked out
+  beside the repository, a DB snapshot in `.cascade/catalog`) has no older
+  version, is read as it is today, and the output lists every such path. A
+  shallow clone may not hold the commit, and the command says to fetch it.
+- `--base <pack>` — a pack on disk instead: a `pack.json`, the directory holding
+  it, or a `.cascade` directory.
 - `--head <pack>` — the pack with the change; default this project's pack.
+- `--pack` / `--project` / `--root` — which project.
 - `--limit <n>` — how many ids each list prints (default 50). The counts are
   always whole, and a cut list says how much it left out.
 - `--json` — the whole difference as JSON (`cascade:pack-diff:1`).
+
+**Two different repositories are refused.** Their difference is everything, and
+a list of a thousand added routes reads like a review while meaning nothing. Each
+pack records where it was built (`meta.base`): the commit its history starts
+from (not for a shallow clone, whose oldest commit is only where the clone was
+cut), the `origin` remote without credentials, and the checkout path. The
+strongest evidence both packs carry decides; for packs built before these were
+recorded, two different project ids are two projects.
+
+**The pack history.** Every certified `analyze` moves the pack it replaces into
+`.cascade/history/`, one directory per build, and keeps the five most recent. A
+rebuild that changed nothing (same commit, same digest) keeps nothing. The
+viewer's Compare tab and the MCP tool `pack_diff { base_commit }` choose their
+base from here.
 
 **The conditions come first.** The same code read by a newer worker, under
 another profile, with a lane or an axis missing, gives a different pack too. So
@@ -713,5 +739,5 @@ equal.
 A renamed method is one removal and one addition. Nothing here judges whether a
 change is safe.
 
-The MCP tool `pack_diff` answers the same question when one server serves both
-packs under two ids ([mcp.md](mcp.md#the-tools)).
+The MCP tool `pack_diff` answers the same question from the project's pack
+history ([mcp.md](mcp.md#the-tools)).

@@ -10,6 +10,31 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **One project compared with an earlier commit of itself.**
+  `cascade diff --base-commit <rev>` takes the base from the project's pack
+  history, or checks the commit out in a temporary git worktree and analyzes it
+  with the current manifest and profile, into scratch: nothing is registered or
+  sealed, and the worktree is removed afterwards. Profile paths inside the
+  repository are read at that commit; paths outside it are read as they are today
+  and listed.
+- **A pack history.** A certified `analyze` keeps the pack it replaces in
+  `.cascade/history/`, the five most recent, so a project has earlier builds to be
+  compared with. `pack_diff` takes `base_commit` and `base_history`.
+- **A pack records its repository.** `meta.base` holds the commit its history
+  starts from (none for a shallow clone) and the `origin` remote with credentials
+  removed.
+
+### Fixed
+
+- **Two different projects are no longer compared.** The Compare tab offered
+  every other served project as a base, so on an ordinary registry it set one
+  codebase against another and listed everything as changed. The tab now offers
+  only the project's own earlier builds and is hidden without one, and
+  `cascade diff` and `pack_diff` refuse packs of different repositories, saying
+  which evidence showed it.
+
 ## [0.8.8] - 2026-09-14
 
 Cascade's answers leave the screen: one answer as an HTML file, an SVG or a PNG,

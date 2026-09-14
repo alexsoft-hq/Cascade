@@ -23,6 +23,7 @@ import { callTool } from '../mcp/catalog.mjs';
 import { createProjectHost, packDirOf, DEFAULT_BUDGET_MB } from '../mcp/projects.mjs';
 import { makeOverlayProvider } from './overlay_provider.mjs';
 import { calibrationStateOf, gitChangedFiles, ownStateOf } from './state.mjs';
+import { listHistory, loadHistoryPack } from './pack_history.mjs';
 
 // The pack's own metadata, as the `overview` tool reads it back out of ctx:
 // what this pack IS (project, digest, build time, lanes) and what it was built
@@ -251,8 +252,13 @@ export function loadServedProject(entry) {
     changedFiles: () => gitChangedFiles(pack.meta?.base, ownStateOf(pack.meta?.base, dir)),
     overlay: makeOverlayProvider({ packDir: dir, pack, baseGraph: graph, profile: prof }),
     packJson: pack,
-    packDir: dir,
+    packDir: dir, history: historyOf(dir),
   };
+}
+
+/** This project's earlier builds, as the tools read them (pack_history.mjs). */
+export function historyOf(dir) {
+  return { list: () => listHistory(dir), load: (q) => loadHistoryPack(dir, q) };
 }
 
 /**

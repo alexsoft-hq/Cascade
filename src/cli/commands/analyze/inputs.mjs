@@ -10,6 +10,7 @@
 // `src/core/profile.mjs` reads the convention. What lives here is the
 // filesystem and git edge those pure rules are handed.
 
+import { normalizeRemote } from '../../../core/repo_identity.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildChangeset } from '../../../core/changeset.mjs';
@@ -299,6 +300,20 @@ export function changesetOf({ rootAbs, out, gitTop, headCommit, toRootRel }) {
 }
 
 /**
+ * WHICH REPOSITORY THIS IS, for comparing two packs later (src/core/repo_identity.mjs):
+ * the commit its history starts from, unless the clone is shallow and has no
+ * real start, and the `origin` remote.
+ */
+function repositoryIdentity(rootAbs) {
+  const shallow = (gitText(rootAbs, ['rev-parse', '--is-shallow-repository']) ?? '').trim() === 'true';
+  const roots = shallow ? [] : (gitText(rootAbs, ['rev-list', '--max-parents=0', 'HEAD']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean).sort();
+  // Normalized HERE, before anything is written: a remote URL can carry a user
+  // name or a token (`https://user:token@example.com/...`), and a pack is not where it goes.
+  const remote = normalizeRemote((gitText(rootAbs, ['remote', 'get-url', 'origin']) ?? '').trim() || null);
+  return { rootCommit: roots[0] ?? null, shallow, remote };
+}
+
+/**
  * WHICH FILES MAKE THIS PACK PROVISIONAL. "Dirty" here means an ANALYSIS INPUT
  * differs from HEAD — that is what makes the pack the working tree's state
  * rather than a commit's certified one. An unrelated edited file elsewhere in
@@ -319,7 +334,7 @@ export function dirtyInputsOf({ rootAbs, headCommit, toRootRel, untrackedRel, se
     ...untrackedRel,
   ])].filter((f) => f !== null && isAnalysisInput(f)).sort();
   const base = headCommit
-    ? { repoPath: rootAbs, commit: headCommit, dirty: dirtyFiles.length > 0, dirtyFiles }
+    ? { repoPath: rootAbs, commit: headCommit, dirty: dirtyFiles.length > 0, dirtyFiles, ...repositoryIdentity(rootAbs) }
     : null;
     return { dirtyFiles, base };
 }

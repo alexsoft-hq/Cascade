@@ -7,6 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { diffPacks } from '../../core/pack_diff.mjs';
+import { differentRepositorySentence, sameRepository } from '../../core/repo_identity.mjs';
+import { basePackAt } from '../base_commit.mjs';
 
 /** A pack from a pack directory, a `.cascade/` directory or a pack.json path. */
 function readPackAt(arg, { die }) {
@@ -53,17 +55,37 @@ function printBody(out, d) {
   if (cutLists.length) out.write(`cut: ${cutLists.map((f) => `${f.field} ${f.shown} of ${f.total}`).join(', ')} (raise --limit, or --json)\n`);
 }
 
+/** The base: a pack on disk, or this project at another commit. */
+function baseOf(cli) {
+  const { opt, die, resolveOrDie } = cli;
+  const rev = opt('base-commit');
+  if (opt('base') && rev) die('give --base <pack> or --base-commit <rev>, not both');
+  if (opt('base')) return { ...readPackAt(opt('base'), cli), note: null };
+  if (!rev) die('name what to compare against: --base-commit <rev> (this project at another commit) or --base <pack>');
+  const resolved = resolveOrDie();
+  if (!resolved.dotCascade) die('--base-commit needs a project with a .cascade directory: run it inside one, or pass --root / --project');
+  process.stderr.write(`building the base: ${rev} of ${resolved.dotCascade}, in a temporary worktree unless the pack history holds it\n`);
+  const b = basePackAt({ rev, dotCascade: resolved.dotCascade, packDir: resolved.packDir, die });
+  const where = b.from === 'history' ? `from the pack history (${b.entry.id})` : 'built now in a temporary worktree, with this project\'s current profile';
+  const note = `base: commit ${b.commit.slice(0, 12)}, ${where}`
+    + (b.outside.length ? `\n  read as they are today, not at ${b.commit.slice(0, 12)}: ${b.outside.join(', ')}` : '');
+  return { file: null, pack: b.pack, note };
+}
+
 export function run(cli) {
   const { opt, flag, die, resolveOrDie } = cli;
-  const baseArg = opt('base');
-  if (!baseArg) die('name the pack to compare against: --base <pack dir | pack.json | .cascade dir>');
-  const base = readPackAt(baseArg, cli);
   const head = opt('head') ? readPackAt(opt('head'), cli) : readPackAt(resolveOrDie().packDir, cli);
+  const base = baseOf(cli);
   const rawLimit = opt('limit');
   const limit = rawLimit === undefined ? undefined : Number(rawLimit);
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) die(`--limit must be a positive whole number, got ${JSON.stringify(rawLimit)}`);
+  // Two different codebases differ in everything, and that is not a change.
+  const repo = sameRepository(base.pack, head.pack);
+  if (repo.verdict === 'different') die(differentRepositorySentence(repo));
   const d = diffPacks(base.pack, head.pack, { limit });
-  if (flag('json')) { process.stdout.write(`${JSON.stringify(d, null, 2)}\n`); return; }
+  if (flag('json')) { process.stdout.write(`${JSON.stringify({ ...d, baseNote: base.note }, null, 2)}\n`); return; }
+  if (base.note) process.stdout.write(`${base.note}\n`);
+  if (repo.verdict === 'unknown') process.stdout.write('repository: neither pack records which repository it was built from, so they may not be one codebase\n');
   printHeader(process.stdout, d);
   printBody(process.stdout, d);
 }

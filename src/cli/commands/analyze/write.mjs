@@ -25,6 +25,7 @@ import { readRegistry, upsertProject, writeRegistryAtomic } from '../../../core/
 import { registrationTarget } from '../../../core/resolve.mjs';
 import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../../../mcp/federation.mjs';
 import { engineIdentity, realPath } from '../../env.mjs';
+import { archivePreviousPack } from '../../pack_history.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
 import { goldenAsk } from '../../serve.mjs';
 import { runningEnginePrint, sha256File, stateDirOf, writeReceipt } from '../../state.mjs';
@@ -317,6 +318,8 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
   const writeDir = red ? `${out}-rejected` : out;
   const writeIndexFile = path.join(writeDir, 'facts-index.json');
   fs.mkdirSync(writeDir, { recursive: true });
+  // The pack this certified run replaces is kept, so a later change has a base (pack_history.mjs).
+  if (calibrated && !red) archivePreviousPack(writeDir, pack);
   fs.writeFileSync(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
   fs.writeFileSync(writeIndexFile, serializeIndex(result.index));
   const routesIndex = buildRoutesIndex(g, {

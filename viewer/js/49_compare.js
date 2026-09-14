@@ -1,4 +1,4 @@
-// 49_compare.js — the Compare tab: what changed between this project's pack and another one this server serves.
+// 49_compare.js — the Compare tab: what changed between this project's pack and an earlier build of the same project.
 //
 // ONE of the page's scripts, and they share ONE global scope: the numbers in the
 // file names are the order the browser runs them in (see the tags at the foot of
@@ -7,29 +7,45 @@
 // the same single scope the page always had, said in files a reader can find
 // their way around and a linter can read.
 
+// The base is chosen ONLY from this project's own pack history (the builds a
+// certified analyze kept when it replaced them), so the tab can never set one
+// project against another. With no earlier build kept the tab is not shown.
 // The tab reads the `pack_diff` answer (src/core/pack_diff.mjs) and draws it in
 // the order a reviewer has to read it: first whether the two packs were analyzed
 // the same way, then the counts, then the endpoints and screens above the change,
 // then the lists. Every value is the engine's; only the headings are the page's.
-const CMP = { resp:null, seq:0 };
+const CMP = { resp:null, seq:0, pending:false };
 
 /** The old project's comparison, gone, and the list of packs to compare with, re-read. */
 function resetCompare(){
-  CMP.seq++; CMP.resp=null;
+  CMP.seq++; CMP.resp=null; CMP.pending=false;
   byId('cmpview').replaceChildren();
   renderCompareChrome();
 }
-/** The tab exists only where there is another pack to compare with. */
+/** The earlier builds of the project on screen, newest first. */
+const compareBuilds=()=> (STATE.meta && Array.isArray(STATE.meta.history)) ? STATE.meta.history : [];
+/** The tab exists only where this project has an earlier build to compare with. */
 function renderCompareChrome(){
-  const others=STATE.projects.filter((p)=>p.id!==STATE.project);
+  const builds=compareBuilds();
   const tab=document.querySelector('.tab[data-tab="compare"]');
-  if(tab) tab.classList.toggle('hidden', others.length===0 || !!SNAP);
+  if(tab) tab.classList.toggle('hidden', builds.length===0 || !!SNAP);
   const sel=byId('cmpbase');
   if(!sel) return;
   const was=sel.value;
-  sel.replaceChildren(...others.map((p)=> el('option',{ value:p.id, textContent:p.id, title:projectTitle(p) })));
-  // The choice a reader made stays; otherwise the first other pack is the one shown.
-  sel.value = others.some((p)=>p.id===was) ? was : (others[0] ? others[0].id : '');
+  sel.replaceChildren(...builds.map(compareOption));
+  // The choice a reader made stays; otherwise the newest earlier build is the one shown.
+  sel.value = builds.some((b)=>b.id===was) ? was : (builds[0] ? builds[0].id : '');
+  compareWhenReady(sel);
+}
+/** One earlier build as a choice: its commit, when it was built, and whether it held uncommitted edits. */
+function compareOption(b){
+  const built=String(b.builtAt||'?').replace('T',' ').replace(/\..*$/,'');
+  return el('option',{ value:b.id, title:b.id,
+    textContent:t('compare.build',{ commit:String(b.commit||'?').slice(0,12), built })+(b.dirty ? ' '+t('compare.dirty') : '') });
+}
+/** A link that opens this tab lands before the builds are known; draw once they are. */
+function compareWhenReady(sel){
+  if(STATE.tab==='compare' && !CMP.resp && sel.value && !CMP.pending) drawCompare();
 }
 async function drawCompare(){
   const view=byId('cmpview');
@@ -38,8 +54,10 @@ async function drawCompare(){
   view.replaceChildren(el('div',{className:'empty',textContent:t('compare.loading')}));
   const mine=++CMP.seq;
   let r;
-  try{ r=await api('pack_diff',{ base, limit:200 }); }
+  CMP.pending=true;
+  try{ r=await api('pack_diff',{ base_history:base, limit:200 }); }
   catch(e){ if(stale(e)||mine!==CMP.seq) return; view.replaceChildren(errPanel(e)); return; }
+  finally{ if(mine===CMP.seq) CMP.pending=false; }
   if(mine!==CMP.seq) return;
   CMP.resp=r;
   renderCompare();

@@ -1369,6 +1369,23 @@
     "wantsHelp/1"
    ]
   },
+  "src/cli/base_commit.mjs": {
+   "maxLines": 36,
+   "maxBranches": 12,
+   "longest": "buildInWorktree",
+   "branchiest": "repointPaths",
+   "functions": [
+    "basePackAt",
+    "buildInWorktree",
+    "buildInWorktree/1",
+    "constructor",
+    "inside",
+    "repointPaths",
+    "repointPaths/1",
+    "repointPaths/2",
+    "tail"
+   ]
+  },
   "src/cli/commands/agent.mjs": {
    "maxLines": 46,
    "maxBranches": 8,
@@ -1496,6 +1513,8 @@
     "planOf",
     "readFile",
     "relOf",
+    "repositoryIdentity",
+    "repositoryIdentity/1",
     "selectionRecord",
     "selectionRecord/1",
     "selectionRecord/2",
@@ -1602,6 +1621,7 @@
    "longest": "printBody",
    "branchiest": "printHeader",
    "functions": [
+    "baseOf",
     "edge",
     "printBody",
     "printBody/1",
@@ -1943,6 +1963,26 @@
     "webOptions"
    ]
   },
+  "src/cli/pack_history.mjs": {
+   "maxLines": 16,
+   "maxBranches": 8,
+   "longest": "archivePreviousPack",
+   "branchiest": "archivePreviousPack",
+   "functions": [
+    "archivePreviousPack",
+    "archivePreviousPack/1",
+    "entryOf",
+    "historyDirOf",
+    "listHistory",
+    "listHistory/1",
+    "loadHistoryPack",
+    "loadHistoryPack/1",
+    "loadHistoryPack/2",
+    "loadHistoryPack/3",
+    "readIndex",
+    "writeIndex"
+   ]
+  },
   "src/cli/serve.mjs": {
    "maxLines": 44,
    "maxBranches": 11,
@@ -1953,6 +1993,9 @@
     "changedFiles",
     "goldenAsk",
     "goldenAsk/1",
+    "historyOf",
+    "list",
+    "load",
     "loadServedProject",
     "memoryBudgetBytes",
     "packMeta",
@@ -1970,6 +2013,7 @@
    "longest": "exportSnapshot",
    "branchiest": "projectMeta",
    "functions": [
+    "buildsOf",
     "callTool",
     "checkFormat",
     "exportSnapshot",
@@ -3172,6 +3216,8 @@
     "nodeChanges/6",
     "nodeChanges/7",
     "order",
+    "repositoryLine",
+    "repositoryLine/1",
     "row",
     "sideOf",
     "take",
@@ -3321,6 +3367,20 @@
     "validateRegistry",
     "validateRegistry/1",
     "writeRegistryAtomic"
+   ]
+  },
+  "src/core/repo_identity.mjs": {
+   "maxLines": 11,
+   "maxBranches": 10,
+   "longest": "repositoryOf",
+   "branchiest": "sameRepository",
+   "functions": [
+    "decide",
+    "differentRepositorySentence",
+    "normalizeRemote",
+    "repositoryOf",
+    "sameRepository",
+    "val"
    ]
   },
   "src/core/resolve.mjs": {
@@ -4019,11 +4079,12 @@
    ]
   },
   "src/mcp/tools_diff.mjs": {
-   "maxLines": 27,
-   "maxBranches": 13,
+   "maxLines": 24,
+   "maxBranches": 12,
    "longest": "pack_diff",
-   "branchiest": "pack_diff",
+   "branchiest": "baseOf",
    "functions": [
+    "baseOf",
     "packOf",
     "pack_diff",
     "pack_diff/1"
@@ -5288,6 +5349,9 @@
     "cmpConditions/1",
     "cmpConditions/2",
     "cmpList",
+    "compareBuilds",
+    "compareOption",
+    "compareWhenReady",
     "counts",
     "counts/1",
     "counts/1/1",
@@ -5306,8 +5370,6 @@
     "renderCompare/7",
     "renderCompareChrome",
     "renderCompareChrome/1",
-    "renderCompareChrome/2",
-    "renderCompareChrome/3",
     "resetCompare",
     "side"
    ]

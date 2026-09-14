@@ -265,10 +265,14 @@ the shell.
 
 ### Compare
 
-The tab appears when the server serves another pack besides the one on screen:
-the pack of the main branch and the pack of a change, say, registered under two
-ids. Open the change and pick the main branch; the tab asks `pack_diff` with it
-as the base ([cli.md](cli.md#cascade-diff) has what is compared).
+The tab compares the pack on screen with an earlier build of the SAME project,
+and appears only when the project has one: every certified `analyze` keeps the
+pack it replaces in `.cascade/history/`, the five most recent. Pick a build by
+its commit and build time; the tab asks `pack_diff` with it as the base
+([cli.md](cli.md#cascade-diff) has what is compared). It never offers another
+project, because two codebases differ in everything. For a commit the history
+does not hold, `cascade diff --base-commit <rev>` builds the base from the
+repository.
 
 The first panel says whether the two packs were analyzed the same way, and lists
 every condition that differs or is not recorded. Read it before the lists: a

@@ -26,6 +26,7 @@ import { serveHttp } from '../../src/mcp/http.mjs';
 import { computeTrust } from '../../src/core/trust.mjs';
 import { readSourceFor } from '../../src/viewer/source.mjs';
 import { exportSnapshot } from '../../src/cli/snapshot_export.mjs';
+import { listHistory, loadHistoryPack } from '../../src/cli/pack_history.mjs';
 import { ENGINE_ROOT } from './viewer_page.mjs';
 
 // ---------------------------------------------------------------------------
@@ -299,6 +300,7 @@ export async function startViewer(t, ids = ['alpha', 'beta']) {
         pack: { project: pack.meta.project, digest: pack.digest, builtAt: pack.meta.builtAt, lanes: pack.meta.lanes, base: null, ddl: null, axes: pack.meta.axes ?? null, laneStats: pack.meta.laneStats ?? null },
         packJson: pack,
         packDir: dir,
+        history: { list: () => listHistory(dir), load: (q) => loadHistoryPack(dir, q) },
       };
     },
   });
@@ -318,7 +320,7 @@ export async function startViewer(t, ids = ['alpha', 'beta']) {
       meta: (project) => {
         const { projectId } = host.resolveProjectArg(project ? { project } : {});
         const ctx = host.ctxFor(projectId);
-        return { project: ctx.basis.project, projectId, digest: ctx.packJson.digest, lanes: ctx.packJson.meta.lanes, builtAt: ctx.basis.builtAt, freshness: ctx.basis.freshness, base: null };
+        return { project: ctx.basis.project, projectId, digest: ctx.packJson.digest, lanes: ctx.packJson.meta.lanes, builtAt: ctx.basis.builtAt, freshness: ctx.basis.freshness, base: null, history: ctx.history.list() };
       },
       // The Export button's route, over the same host the page asks.
       exportSnapshot: (request) => exportSnapshot(host, { generatedAt: '2026-09-14T00:00:00.000Z', ...request }),

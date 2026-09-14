@@ -147,16 +147,22 @@ test('cascade diff prints the conditions before the counts, and --json the whole
   assert.match(cli('--base', path.join(work, 'nowhere'), '--head', head).stderr, /no pack at/);
 });
 
-test('pack_diff compares two served projects, names the other in basis.siblings, and a single pack says what to use instead', async (t) => {
+test('pack_diff refuses two different projects, and compares a project with an earlier build of its own', async (t) => {
   const { host } = await startViewer(t, ['alpha', 'beta']);
-  const resp = host.callTool('pack_diff', { project: 'beta', base: 'alpha' });
-  assertContract(resp);
-  assert.equal(resp.basis.project, 'beta');
-  assert.deepEqual(resp.basis.siblings.map((s) => s.project), ['alpha']);
-  assert.ok(resp.answer.nodes.added > 0 && resp.answer.nodes.removed > 0, 'two different projects differ');
-  assert.equal(resp.answer.conditions.verdict, 'unknown', 'fixture packs record no analysis block');
-  assert.equal(resp.limits.at(-1).scope, 'pack-diff');
+  assert.throws(() => host.callTool('pack_diff', { project: 'beta', base: 'alpha' }),
+    (e) => e.code === 'bad-input' && /different repositories \(project id: alpha and beta\)/.test(e.message));
   assert.throws(() => host.callTool('pack_diff', { project: 'beta', base: 'beta' }), (e) => e.code === 'bad-input');
-  const single = { graph: state({ head: true }), basis: { project: 'orders', buildDigest: 'x', builtAt: null, freshness: { verdict: 'unknown' } }, trust: {}, limits: [] };
-  assert.throws(() => callTool('pack_diff', { base: 'other' }, single), (e) => e.code === 'bad-input' && /cascade diff --base/.test(e.message));
+  const basis = { project: 'orders', buildDigest: 'x', builtAt: null, freshness: { verdict: 'unknown' } };
+  const head = state({ head: true });
+  const earlier = packOf(state({ head: false }));
+  const history = { list: () => [], load: (q) => (q.commit && 'a'.repeat(40).startsWith(q.commit) ? { entry: { id: 'e1' }, pack: earlier } : null) };
+  const ctx = { graph: head, basis, trust: {}, limits: [], pack: packOf(head).meta, history };
+  const r = callTool('pack_diff', { base_commit: 'aaaaaaa' }, ctx);
+  assertContract(r);
+  assert.equal(r.basis.siblings, undefined, 'an earlier build of this project is not another project');
+  assert.equal(r.answer.repository.verdict, 'same');
+  assert.deepEqual(r.answer.nodes.addedIds, ['endpoint:POST /orders', 'statement:x.OrderMapper.insert', 'symbol:x.OrderController#save']);
+  assert.throws(() => callTool('pack_diff', { base_commit: 'bbbbbbb' }, ctx), (e) => e.code === 'unknown-key' && /cascade diff --base-commit/.test(e.message));
+  assert.throws(() => callTool('pack_diff', {}, ctx), (e) => e.code === 'bad-input' && /exactly one base/.test(e.message));
+  assert.throws(() => callTool('pack_diff', { base: 'other' }, { ...ctx, history: undefined }), (e) => e.code === 'bad-input' && /base_commit/.test(e.message));
 });

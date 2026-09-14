@@ -388,4 +388,5 @@ function renderMetaChrome(){
   // reads: `sql + java`, one field of four.
   put('mlanes', m.lanes ? m.lanes.join(' + ') : '');
   renderMastChrome();
+  renderCompareChrome();
 }

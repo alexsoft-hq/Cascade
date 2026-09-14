@@ -24,6 +24,7 @@
 // addition), and any judgement of whether a change is safe.
 
 import { FLOW_EDGE_TYPES } from './graph.mjs';
+import { sameRepository } from './repo_identity.mjs';
 
 export const PACK_DIFF_SCHEMA = 'cascade:pack-diff:1';
 
@@ -70,7 +71,9 @@ function conditionsOf(pack) {
     enginePrint: a?.enginePrint ?? null,
     engineVersion: a?.engineVersion ?? null,
     optOuts: a ? (a.optOuts ?? []).join(' ') : null,
-    sourceRoots: a?.selection ? JSON.stringify(a.selection) : null,
+    // The roots as the project spells them: where the checkout sits on disk is not
+    // a condition, and a base built in a temporary worktree sits somewhere else.
+    sourceRoots: a?.selection ? JSON.stringify({ ...a.selection, root: undefined }) : null,
   };
   for (const [k, v] of Object.entries(a?.workers ?? {})) flat[`worker.${k}`] = v;
   for (const [k, v] of Object.entries(m.axes ?? {})) flat[`axis.${k}`] = v?.status ?? null;
@@ -214,6 +217,9 @@ function touchedEnds(basePack, headPack, nodes, edges) {
   return { endpoints: [...endpoints].sort(), screens: [...screens].sort() };
 }
 
+/** Whether the two packs are one codebase, and which evidence said so. */
+const repositoryLine = (basePack, headPack) => (({ verdict, by }) => ({ verdict, by }))(sameRepository(basePack, headPack));
+
 /** A list cut to `limit`, and the truncation line that says so. */
 function cut(field, list, limit) {
   const shown = Math.min(limit, list.length);
@@ -245,7 +251,7 @@ export function diffPacks(basePack, headPack, opts = {}) {
     schema: PACK_DIFF_SCHEMA,
     base: sideOf(basePack),
     head: sideOf(headPack),
-    samePack: basePack.digest === headPack.digest,
+    samePack: basePack.digest === headPack.digest, repository: repositoryLine(basePack, headPack),
     conditions: { verdict: conditions.verdict, differences: conditions.differences, unknown: conditions.unknown },
     nodes: { added: nodes.added.length, removed: nodes.removedRows.length, byKind: nodes.byKind, addedIds: na.shown, removedIds: nr.shown },
     edges: {

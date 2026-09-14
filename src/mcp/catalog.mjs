@@ -485,11 +485,13 @@ export const TOOLS = Object.freeze({
   },
   pack_diff: {
     description:
-      'What changed between two packs of one project, when this server serves both (the main '
-      + 'branch and a pull request, say, under two ids): the routes, screens, tables, columns, '
+      'What changed between two packs of ONE project: the routes, screens, tables, columns, '
       + 'statements and symbols that appeared or went away, the edges that appeared, went away or '
-      + 'changed grade, and the endpoints and screens above any of that. Pass the OTHER pack as `base`; the '
-      + 'project you address is the head. READ `answer.conditions` FIRST: a difference is a code '
+      + 'changed grade, and the endpoints and screens above any of that. The project you address is '
+      + 'the head. The base is an earlier build of it: `base_commit` (a commit the project\'s pack '
+      + 'history holds, seven characters or more) or `base_history` (an entry id); or `base`, another '
+      + 'served pack of the SAME repository. Packs of different repositories are refused. READ '
+      + '`answer.conditions` FIRST: a difference is a code '
       + 'change only when both packs were analyzed the same way (lanes, identity rule, axes, worker '
       + 'versions, profile digest, engine, flags, roots). When they were not, `limits` says so, and a '
       + 'removed node whose axis changed carries `axisChanged`, because an unread catalog and a '
@@ -497,8 +499,12 @@ export const TOOLS = Object.freeze({
       + 'at `limit` (default 50) with the totals in `truncated`.',
     inputSchema: {
       type: 'object',
-      properties: { base: { type: 'string', description: 'the served project id of the pack to compare against' }, limit: { type: 'integer' } },
-      required: ['base'],
+      properties: {
+        base_commit: { type: 'string', description: 'a commit this project\'s pack history holds (7+ characters)' },
+        base_history: { type: 'string', description: 'a pack history entry id' },
+        base: { type: 'string', description: 'another served project id, of the same repository' },
+        limit: { type: 'integer' },
+      },
     },
     fn: pack_diff,
   },
@@ -627,7 +633,7 @@ export function callTool(name, args, ctx) {
       // another served project: {self, ids, indexOf, ctxFor}. A single-pack
       // server has none, and the answer then LISTS the calls that leave the
       // pack instead of following them.
-      federation: ctx.federation,
+      federation: ctx.federation, history: ctx.history, // history: this project's earlier builds, for pack_diff
     });
   } catch (e) {
     if (e && e.name === 'ToolError') throw new DispatchError(e.code, e.message);
