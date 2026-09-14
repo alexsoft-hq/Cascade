@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-09-14
+
+Two eGovFrame applications checked against what ran, a WebSquare client read as
+screens and requests, and a call to a stored routine followed to its tables.
+
 ### Added
 
 - **Two eGovFrame applications checked against what ran.** The web sample and the
@@ -2433,7 +2438,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.3...v0.8.4
