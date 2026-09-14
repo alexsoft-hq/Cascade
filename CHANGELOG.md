@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-09-14
+
+A change is compared with the same project before it, never with another
+project, and a pack that says it was certified is the pack that was judged.
+
 ### Added
 
 - **One project compared with an earlier commit of itself.**
@@ -2571,7 +2576,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.8...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.9...HEAD
+[0.8.9]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.5...v0.8.6
