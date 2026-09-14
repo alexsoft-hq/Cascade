@@ -84,18 +84,31 @@ export function packProxyBytes(entry, io = fs) {
 }
 
 /**
- * WHICH BUILD OF A PACK IS ON DISK: its inode, size, modification and change
- * times, or null when there is none. `analyze` renames a new file into place, so
- * a new build is a new inode and a new change time even when a copy restored the
- * old size and modification time. A context loaded from one build must not keep answering once
- * `cascade analyze` has published another, least of all beside a pack history
- * read fresh from disk, where the old head would be compared with itself.
+ * WHICH BUILD OF A PACK IS ON DISK, with everything a loaded context reads beside
+ * it: the pack, its fact and route indexes, the gate's verdict and the golden
+ * corpus. A context loaded from one build must not keep answering once `cascade
+ * analyze` has published another, least of all beside a pack history read fresh
+ * from disk, where the old head would be compared with itself. Each file counts
+ * by inode, size, modification and change time: `analyze` renames a new file
+ * into place, so a new build is a new inode and a new change time even when a
+ * copy restored the old size and modification time. A context loaded while a
+ * publish was half done is read again on the next request, not kept. Null when
+ * there is no pack.
  */
 export function packFingerprint(entry, io = fs) {
-  try {
-    const st = io.statSync(path.join(packDirOf(entry), 'pack.json'));
-    return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-  } catch { return null; }
+  let dir;
+  try { dir = packDirOf(entry); } catch { return null; }
+  const pack = stampOf(io, path.join(dir, 'pack.json'));
+  if (pack === null) return null;
+  const dot = typeof entry.dotCascadePath === 'string' && entry.dotCascadePath ? path.resolve(entry.dotCascadePath) : null;
+  const beside = [path.join(dir, 'facts-index.json'), path.join(dir, 'routes.json')];
+  if (dot) beside.push(path.join(dot, 'calibration', 'gate-state.json'), path.join(dot, 'golden', 'cases.jsonl'));
+  return [pack, ...beside.map((f) => stampOf(io, f) ?? '-')].join('|');
+}
+
+/** One file's identity on disk, or null when it is not there. */
+function stampOf(io, file) {
+  try { const st = io.statSync(file); return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`; } catch { return null; }
 }
 
 /**
@@ -138,9 +151,11 @@ function indexOf(h, projectId) {
 /** The served projects, from the registry and the sidecars — no pack is parsed. */
 
 function list(h) {
-  const { entries, cache } = h;
+  const { entries } = h;
   return entries.map((e) => {
-    const held = cache.get(e.id);
+    // A context loaded from an earlier build is not described beside the new
+    // build's route index: it is dropped, and the project reads as not loaded.
+    const held = heldCurrent(h, e.id, h.fingerprint(e));
     const idx = h.indexOf(e.id);
     return {
       id: e.id,

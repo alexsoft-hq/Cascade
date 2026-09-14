@@ -37,19 +37,12 @@ export function run(ctx) {
   try { gateState = readJsonOrNull(path.join(stateDir, 'calibration', 'gate-state.json')); }
   catch (e) { gateState = { verdict: null, unreadable: e.message }; }
 
-  let packContentDigest;
-  const packFile = path.join(resolved.packDir, 'pack.json');
-  if (fs.existsSync(packFile)) {
-    try {
-      const p = JSON.parse(fs.readFileSync(packFile, 'utf8'));
-      packContentDigest = digest12({ nodes: p.nodes, edges: p.edges });
-    } catch (e) { packContentDigest = null; }
-  }
+  const { packContentDigest, packStoredDigest, indexPackDigest } = packDigestsOf(resolved.packDir);
 
   const now = new Date().toISOString();
   const result = receiptError
     ? { ok: false, checked: 1, expiresAt: null, disagreements: [{ check: 'receipt', expected: 'a readable cascade:receipt:1 document', found: receiptFile, reason: `the receipt could not be read: ${receiptError}` }] }
-    : verifyReceipt({ receipt, actual: { files, enginePrint: runningEnginePrint(), gateState, packContentDigest, now } });
+    : verifyReceipt({ receipt, actual: { files, enginePrint: runningEnginePrint(), gateState, packContentDigest, packStoredDigest, indexPackDigest, now } });
 
   const report = {
     schema: 'cascade:verify-report:1',
@@ -76,4 +69,25 @@ export function run(ctx) {
     process.stdout.write(`gate ${report.gate?.mode ?? 'unknown'} -> ${report.gate?.verdict ?? 'unknown'}\n`);
   }
   process.exit(0);
+}
+
+/**
+ * The pack's content digest recomputed from its nodes and edges, the digest it
+ * stores, and the pack digest its fact index names. Undefined content digest when
+ * there is no pack, null when it cannot be read.
+ */
+function packDigestsOf(packDir) {
+  let packContentDigest;
+  let packStoredDigest = null;
+  const packFile = path.join(packDir, 'pack.json');
+  if (fs.existsSync(packFile)) {
+    try {
+      const p = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+      packContentDigest = digest12({ nodes: p.nodes, edges: p.edges });
+      packStoredDigest = p.digest ?? null;
+    } catch { packContentDigest = null; }
+  }
+  let indexPackDigest = null;
+  try { indexPackDigest = readJsonOrNull(path.join(packDir, 'facts-index.json'))?.packDigest ?? null; } catch { /* an unreadable index is the file hash's to report */ }
+  return { packContentDigest, packStoredDigest, indexPackDigest };
 }

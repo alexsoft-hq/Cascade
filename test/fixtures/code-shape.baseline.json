@@ -1370,14 +1370,17 @@
    ]
   },
   "src/cli/base_commit.mjs": {
-   "maxLines": 29,
+   "maxLines": 28,
    "maxBranches": 9,
    "longest": "buildInWorktree",
    "branchiest": "repointPaths",
    "functions": [
+    "attempt",
     "basePackAt",
     "basePackAt/1",
     "buildInWorktree",
+    "buildInWorktree/1",
+    "buildInWorktree/2",
     "cleanupWorktree",
     "commitOf",
     "constructor",
@@ -1578,6 +1581,7 @@
    "longest": "buildPack",
    "branchiest": "runGate",
    "functions": [
+    "afterPack",
     "analysisRecord",
     "buildPack",
     "buildPack/1",
@@ -1603,8 +1607,10 @@
     "walk/2",
     "warn",
     "writeArtifacts",
+    "writeArtifacts/1",
     "writePackAndIndex",
-    "writePackAndIndex/1"
+    "writePackAndIndex/1",
+    "writePackAndIndex/2"
    ]
   },
   "src/cli/commands/catalog.mjs": {
@@ -1827,11 +1833,12 @@
    ]
   },
   "src/cli/commands/verify.mjs": {
-   "maxLines": 65,
-   "maxBranches": 17,
+   "maxLines": 58,
+   "maxBranches": 15,
    "longest": "run",
    "branchiest": "run",
    "functions": [
+    "packDigestsOf",
     "run",
     "run/1",
     "run/2"
@@ -3373,8 +3380,8 @@
    ]
   },
   "src/core/receipt.mjs": {
-   "maxLines": 83,
-   "maxBranches": 40,
+   "maxLines": 69,
+   "maxBranches": 30,
    "longest": "verifyReceipt",
    "branchiest": "verifyReceipt",
    "functions": [
@@ -3383,6 +3390,8 @@
     "buildReceipt/1",
     "buildReceipt/2",
     "constructor",
+    "fileChecks",
+    "indexOfThisPack",
     "receiptTtlDaysOf",
     "verifyReceipt"
    ]
@@ -3887,9 +3896,11 @@
     "metaSummary",
     "packDirOf",
     "packFingerprint",
+    "packFingerprint/1",
     "packProxyBytes",
     "resolveProjectArg",
     "serverCtx",
+    "stampOf",
     "stats",
     "unknownProject"
    ]

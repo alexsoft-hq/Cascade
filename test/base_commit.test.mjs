@@ -136,11 +136,12 @@ test('a head analyzed with explicit lane flags gets a base analyzed with the sam
   git(repo, 'add', 'db', 'src');
   git(repo, 'commit', '-q', '-m', 'two');
   // Typed from the directory ABOVE the project, the way a shell in a workspace would.
-  const flags = ['--ddl', path.join('shop', 'db', 'schema.sql'), '--mappers', path.join('shop', 'src', 'main', 'resources', 'mapper'), '--no-java'];
+  // The mapper root is given twice: the selection keeps both, and so must the replay.
+  const flags = ['--ddl', path.join('shop', 'db', 'schema.sql'), '--mappers', path.join('shop', 'src', 'main', 'resources', 'mapper'), '--mappers', path.join('shop', 'src', 'main', 'resources', 'mapper'), '--no-java'];
   ok(cli.from(path.dirname(repo), 'analyze', '--root', repo, ...flags));
   const head = JSON.parse(fs.readFileSync(path.join(repo, '.cascade', 'pack', 'pack.json'), 'utf8'));
   assert.deepEqual(head.meta.analysis.invocation.ddl, ['db/schema.sql'], 'a flag typed relative to the shell is recorded relative to the project');
-  assert.deepEqual(head.meta.analysis.invocation.mappers, ['src/main/resources/mapper']);
+  assert.deepEqual(head.meta.analysis.invocation.mappers, ['src/main/resources/mapper', 'src/main/resources/mapper']);
   assert.equal(head.meta.analysis.invocation.noJava, true);
 
   const d = JSON.parse(ok(cli('diff', '--root', repo, '--base-commit', 'HEAD~1', '--json')).stdout);

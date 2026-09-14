@@ -35,7 +35,7 @@ test('a flag is recorded as the file the run read: relative to the shell it was 
   const top = layout(t);
   const r = recordOf(top, { ddl: ['../repo/service/db'], mappers: ['../repo/service/mapper-b', '../repo/service/mapper-a', '../repo/service/mapper-b'] });
   assert.deepEqual(r.invocation.ddl, ['db'], 'typed from another directory, recorded relative to the project');
-  assert.deepEqual(r.invocation.mappers, ['mapper-a', 'mapper-b'], 'the lanes sort and de-duplicate mapper roots, so the record does too');
+  assert.deepEqual(r.invocation.mappers, ['mapper-a', 'mapper-b', 'mapper-b'], 'sorted as the selection sorts them, and kept twice as the selection keeps them, so a replay selects the same');
 });
 
 test('a folder beside the project in the same repository is recorded relative, and a checkout outside the repository absolute', (t) => {
@@ -70,4 +70,29 @@ test('the sidecars name the pack they belong to and the pack goes last, so a rea
   fs.writeFileSync(path.join(dir, 'facts-index.json'), JSON.stringify(legacy));
   assert.equal(indexOfPack(path.join(dir, 'facts-index.json'), { digest: 'bbbbbbbbbbbb' }, stale).packDigest, undefined, 'an index from before indexes named their pack is read as it is');
   assert.deepEqual(fs.readdirSync(dir).filter((n) => n.includes('.tmp-') || n === '.write.lock'), [], 'nothing half-written and no lock left behind');
+});
+
+test('the pack is published last and the receipt after it, all under the lock, and a pack that cannot be written leaves the old one served', (t) => {
+  const top = layout(t);
+  const dir = path.join(top, 'repo/service/.cascade/pack');
+  const index = emptyIndex({ project: 'shop', engineVersion: INCREMENTAL_ENGINE_VERSION, workers: workerVersions(), root: top, selection: {} });
+  const seen = [];
+  const exists = (name) => fs.existsSync(path.join(dir, name));
+  publishPack(dir, {
+    pack: { digest: 'aaaaaaaaaaaa', meta: {}, nodes: [], edges: [] }, index, routes: '{}\n', keep: false,
+    beforePack: () => seen.push(['before', exists('facts-index.json'), exists('routes.json'), exists('pack.json'), exists('.write.lock')]),
+    afterPack: () => seen.push(['after', exists('pack.json'), exists('.write.lock')]),
+  });
+  assert.deepEqual(seen, [['before', true, true, false, true], ['after', true, true]], 'sidecars, then the verdict, then the pack, then the receipt, every step inside the lock');
+
+  // The pack's own rename fails (a directory where the file goes): the index is the
+  // new build's, the pack is not replaced, nothing is certified, and the lock is freed.
+  const blocked = path.join(top, 'blocked/.cascade/pack');
+  fs.mkdirSync(path.join(blocked, 'pack.json', 'x'), { recursive: true });
+  let certified = false;
+  assert.throws(() => publishPack(blocked, { pack: { digest: 'bbbbbbbbbbbb', meta: {}, nodes: [], edges: [] }, index, keep: false, afterPack: () => { certified = true; } }));
+  assert.equal(certified, false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(blocked, 'facts-index.json'), 'utf8')).packDigest, 'bbbbbbbbbbbb', 'the index went first');
+  assert.throws(() => indexOfPack(path.join(blocked, 'facts-index.json'), { digest: 'cccccccccccc' }, (m) => { throw new Error(m); }), /belongs to build bbbbbbbbbbbb/, 'and a reader of the old pack refuses it');
+  assert.deepEqual(fs.readdirSync(blocked).filter((n) => n.includes('.tmp-') || n === '.write.lock'), []);
 });

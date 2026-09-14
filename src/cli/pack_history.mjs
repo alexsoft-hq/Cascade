@@ -77,7 +77,7 @@ function readIndex(dir) {
 export function writeAtomic(file, text) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
+  try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
 }
 
 /** Take the lock file, waiting for a live holder and breaking a dead one's. */

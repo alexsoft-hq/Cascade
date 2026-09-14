@@ -74,6 +74,46 @@ export function buildReceipt(input) {
 }
 
 /**
+ * The fact index was written for THIS pack: files that each match a hash can
+ * still be two builds' files, if a receipt was ever taken between two publishes.
+ * @returns {number} how many checks ran
+ */
+function indexOfThisPack(actual, add) {
+  if (actual.indexPackDigest == null || actual.packStoredDigest == null) return 0;
+  if (actual.indexPackDigest !== actual.packStoredDigest) {
+    add('index-pack-digest', actual.packStoredDigest, actual.indexPackDigest, 'the fact index beside the pack was written for another build of it');
+  }
+  return 1;
+}
+
+/**
+ * Every file the receipt names, recomputed from the bytes on disk, and every
+ * receipt file on disk the receipt does not name.
+ * @returns {number} how many checks ran
+ */
+function fileChecks(receipt, actual, add) {
+  let checked = 0;
+  const seen = new Set();
+  for (const f of receipt.files ?? []) {
+    checked += 1;
+    seen.add(f.name);
+    const found = actual.files ? actual.files[f.name] : undefined;
+    if (found === undefined) {
+      add(`file:${f.name}`, f.sha256, null, `the receipt covers ${f.name} but there is no such file to hash. This is never "verified" on partial evidence`);
+    } else if (found !== f.sha256) {
+      add(`file:${f.name}`, f.sha256, found, `${f.name} has changed since the receipt was written`);
+    }
+  }
+  for (const name of Object.keys(actual.files ?? {})) {
+    if (RECEIPT_FILES.includes(name) && !seen.has(name) && actual.files[name] !== null) {
+      checked += 1;
+      add(`file:${name}`, null, actual.files[name], `${name} exists but the receipt does not cover it, so the receipt describes a different run`);
+    }
+  }
+  return checked;
+}
+
+/**
  * Recompute and compare. Returns a structured verdict; the caller turns a
  * non-ok result into exit code 4 (SPEC §17.4 — structured, not prose).
  *
@@ -99,23 +139,7 @@ export function verifyReceipt(input) {
   let checked = 0;
 
   // 1. every file the receipt names, recomputed from the bytes on disk
-  const seen = new Set();
-  for (const f of receipt.files ?? []) {
-    checked += 1;
-    seen.add(f.name);
-    const found = actual.files ? actual.files[f.name] : undefined;
-    if (found === undefined) {
-      add(`file:${f.name}`, f.sha256, null, `the receipt covers ${f.name} but there is no such file to hash. This is never "verified" on partial evidence`);
-    } else if (found !== f.sha256) {
-      add(`file:${f.name}`, f.sha256, found, `${f.name} has changed since the receipt was written`);
-    }
-  }
-  for (const name of Object.keys(actual.files ?? {})) {
-    if (RECEIPT_FILES.includes(name) && !seen.has(name) && actual.files[name] !== null) {
-      checked += 1;
-      add(`file:${name}`, null, actual.files[name], `${name} exists but the receipt does not cover it, so the receipt describes a different run`);
-    }
-  }
+  checked += fileChecks(receipt, actual, add);
 
   // 2. the pack's own content digest, recomputed from its nodes and edges
   if (actual.packContentDigest !== undefined && receipt.pack && receipt.pack.digest != null) {
@@ -125,6 +149,8 @@ export function verifyReceipt(input) {
         'the pack\'s content digest recomputed from its own nodes and edges does not match the one the receipt recorded');
     }
   }
+
+  checked += indexOfThisPack(actual, add);
 
   // 3. the engine that is RUNNING versus the engine that signed
   checked += 1;

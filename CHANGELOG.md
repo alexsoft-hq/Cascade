@@ -33,9 +33,13 @@ Each dated section below is one round of work. The round protocol is in
   unrelated history does not change it. `meta.analysis` records the lane flags
   (as the files they named, whatever directory they were typed in), the catalog
   snapshot and the runtime evidence files, and a diff compares them.
-- **Sidecars name their pack.** `facts-index.json` carries `packDigest`, and it
-  and `routes.json` are published before the pack under the same lock, so a
-  reader never takes an index written for another build.
+- **Sidecars name their pack.** `facts-index.json` carries `packDigest`, and it,
+  `routes.json` and the gate's verdict are published before the pack, and the
+  baseline and receipt after it, all under one lock, so a reader never takes an
+  index written for another build and two analyses of one project never
+  interleave. `cascade verify` checks that the index names the pack beside it. A
+  server reads a project again when its pack, indexes, gate verdict or golden
+  corpus change.
 
 ### Fixed
 

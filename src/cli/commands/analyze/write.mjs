@@ -309,7 +309,7 @@ export function updateRegistry({ opt }, { resolved, out, lanes, builtAt }) {
  * each trace this run read. A changed trace is then a changed input rather than
  * a pack that quietly says something new.
  */
-export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile, projectId, serviceNames, otelFiles, relOf }) {
+export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile, projectId, serviceNames, otelFiles, relOf, afterPack = null }) {
   if (otelFiles.length > 0) {
     result.index.runtimeEvidence = {
       otel: otelFiles.map((f) => ({ path: relOf(f), sha256: sha256File(f) })),
@@ -328,11 +328,13 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
     // beside the pack, never in it, so neither choice moves a digest.
     serviceNames: serviceNames.names,
   });
-  publishPack(writeDir, { pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red });
-  if (calibrated) {
+  // The gate's verdict is written BEFORE the pack it judges is published, so a
+  // server that reads the new pack reads the verdict on it and not the last one.
+  const beforePack = calibrated ? () => {
     fs.mkdirSync(calibrationDir, { recursive: true });
-    fs.writeFileSync(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
-  }
+    writeAtomic(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
+  } : null;
+  publishPack(writeDir, { pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, beforePack, afterPack: () => afterPack?.({ writeDir, writeIndexFile }) });
   return { writeDir, writeIndexFile, routesIndex };
 }
 
@@ -372,7 +374,7 @@ function portableSelection(sel, root, opts) {
 }
 
 const NOT_PATHS = new Set(['sqlArgs', 'packagePrefixes', 'engine', 'kind', 'suffix']);
-/** Flags whose order does not matter to the lanes, which sort and de-duplicate them; `--ddl` order is the migration order. */
+/** Flags whose order the selection does not keep (it sorts them); `--ddl` order is the migration order. */
 const UNORDERED_FLAGS = ['mappers', 'javaSrc', 'webSrc', 'openapi', 'har', 'otel'];
 
 /**
@@ -390,8 +392,10 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
   // A flag is relative to the shell it was typed in (src/core/lanes.mjs), not to the project.
   const list = (xs) => (xs ?? []).map((p) => portablePath(p, root, { repoTop, from: cwd }));
   const defaultProfile = dotCascade ? realPath(path.join(dotCascade, 'profile.json')) : null;
+  // Sorted as the selection sorts them, and NOT de-duplicated, because the
+  // selection is not: a replay of `--mappers src --mappers src` must select the same.
   const invocation = { ddl: list(flags.ddl) };
-  for (const k of UNORDERED_FLAGS) invocation[k] = [...new Set(list(flags[k]))].sort();
+  for (const k of UNORDERED_FLAGS) invocation[k] = list(flags[k]).sort();
   return {
     workers: workerVersions(), profileDigest, enginePrint: enginePrintNow, engineVersion: engineIdentity().version,
     optOuts, selection: portableSelection(selectionRel, root, { repoTop }),
@@ -418,14 +422,18 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
  * pack. The history is pruned only after the pack is in place. A failure while
  * keeping or pruning is said and does not stop the publish.
  */
-export function publishPack(writeDir, { pack, index, routes, keep }) {
+export function publishPack(writeDir, { pack, index, routes, keep, beforePack = null, afterPack = null }) {
   withPackLock(writeDir, () => {
     const warn = (what, e) => process.stderr.write(`pack history: could not ${what} (${e.message}); the pack is published all the same\n`);
     let kept = null;
     if (keep) { try { kept = keepPreviousPack(writeDir, pack); } catch (e) { warn('keep the pack this run replaces', e); } }
     writeAtomic(path.join(writeDir, 'facts-index.json'), serializeIndex({ ...index, packDigest: pack.digest }));
     if (routes !== undefined) writeAtomic(path.join(writeDir, ROUTES_FILE), routes);
+    beforePack?.();
     writeAtomic(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
+    // Still under the lock: the baseline and the receipt hash what THIS run put
+    // on disk, and no other run of the project can publish in between.
+    afterPack?.();
     if (kept) { try { pruneHistory(writeDir); } catch (e) { warn('prune the history', e); } }
   });
 }
@@ -453,41 +461,32 @@ export function sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, 
  * previously certified pack exactly where it was.
  */
 export function writeArtifacts({ g, pack, result, out, red, calibrated, gate, verdict, gateState, overrideOf, enginePrintNow, pin, metrics, profileDigest, catalogDigest, baseline, profile, stateDir, calibrationDir, baselineFile, gateStateFile, receiptFile, builtAt, goldenSummaryDoc, projectId, serviceNames, otelFiles, relOf }) {
+  sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, goldenSummaryDoc });
+  const certify = red ? null : ({ writeDir, writeIndexFile }) => {
+    // Seal (or re-seal) the baseline: the "previous certified run" moves forward
+    // on every run the gate let through, so tomorrow's comparison is against
+    // today, not against the first run this project ever did.
+    if (calibrated && (gate.reseal || overrideOf)) {
+      const sealed = sealBaseline({ sealedAt: builtAt, enginePrint: enginePrintNow, pin, profileDigest, catalogDigest, metrics });
+      fs.writeFileSync(baselineFile, JSON.stringify(sealed, null, 2) + '\n');
+      process.stderr.write(`baseline ${baseline ? 're-sealed' : 'sealed'} at ${baselineFile} (${Object.keys(metrics.ratios).length} ratios, ${Object.keys(metrics.counts).length} counts)\n`);
+    }
+    // The receipt (SPEC §14.4): what this certified run produced, hashed.
+    if (calibrated) {
+      const receipt = writeReceipt({ receiptFile, stateDir, builtAt, profile, print: enginePrintNow, pack, gateState, files: [path.join(writeDir, 'pack.json'), writeIndexFile, gateStateFile] });
+      process.stderr.write(`receipt ${receiptFile}: expires ${receipt.expiresAt} (verify with \`cascade verify\`)\n`);
+    }
+  };
   const { writeDir, writeIndexFile, routesIndex } = writePackAndIndex({
     g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile,
-    projectId, serviceNames, otelFiles, relOf,
+    projectId, serviceNames, otelFiles, relOf, afterPack: certify,
   });
-  sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, goldenSummaryDoc });
-
-  // Seal (or re-seal) the baseline: the "previous certified run" moves forward
-  // on every run the gate let through, so tomorrow's comparison is against
-  // today, not against the first run this project ever did.
-  if (calibrated && !red && (gate.reseal || overrideOf)) {
-    const sealed = sealBaseline({ sealedAt: builtAt, enginePrint: enginePrintNow, pin, profileDigest, catalogDigest, metrics });
-    fs.writeFileSync(baselineFile, JSON.stringify(sealed, null, 2) + '\n');
-    process.stderr.write(`baseline ${baseline ? 're-sealed' : 'sealed'} at ${baselineFile} (${Object.keys(metrics.ratios).length} ratios, ${Object.keys(metrics.counts).length} counts)\n`);
-  }
 
   if (red) {
     process.stderr.write(`REJECTED: the pack was written to ${path.join(writeDir, 'pack.json')} and the certified pack at ${path.join(out, 'pack.json')} was NOT touched\n`
       + '  a regression is not a new snapshot: fix it. If this drop is the intended new normal, re-run with `--accept-baseline`,\n'
       + '  which re-seals the baseline from THIS run. That is the only override, and it is a human decision.\n');
     process.exit(3);
-  }
-
-  // The receipt (SPEC §14.4): what this certified run produced, hashed.
-  if (calibrated) {
-    const receipt = writeReceipt({
-      receiptFile,
-      stateDir,
-      builtAt,
-      profile,
-      print: enginePrintNow,
-      pack,
-      gateState,
-      files: [path.join(writeDir, 'pack.json'), writeIndexFile, gateStateFile],
-    });
-    process.stderr.write(`receipt ${receiptFile}: expires ${receipt.expiresAt} (verify with \`cascade verify\`)\n`);
   }
   return { writeDir, writeIndexFile, routesIndex };
 }

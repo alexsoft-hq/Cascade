@@ -233,3 +233,24 @@ test('a served project\'s route sidecar is read again once its pack is republish
   assert.equal(host.list()[0].federation.serves, 2, 'the list does not answer from the old build\'s sidecar');
   assert.equal(typeof packFingerprint({ dotCascadePath: '/nowhere/.cascade' }), 'object', 'no pack on disk is no fingerprint');
 });
+
+test('a context loaded from an earlier build is dropped from the list once anything it reads is republished', () => {
+  let build = 1;
+  const host = createProjectHost({
+    registry: { projects: [{ id: 'alpha', dotCascadePath: '/nowhere/.cascade' }] },
+    loadProject: () => ({ graph: new Graph(), pack: { digest: `d${build}` } }),
+    measureBytes: () => 1,
+    fingerprint: () => `build-${build}`,
+    readIndex: () => ({ ok: false, reason: 'absent' }),
+    log: () => {},
+  });
+  host.ctxFor('alpha');
+  assert.equal(host.list()[0].loaded, true);
+  build = 2;
+  assert.deepEqual([host.list()[0].loaded, host.list()[0].meta], [false, null], 'never the old build\'s metadata beside the new build\'s routes');
+  // What counts as republished: the gate's verdict written after the pack changes the fingerprint too.
+  const at = { ino: 1, size: 1, mtimeMs: 1, ctimeMs: 1 };
+  const io = (gate) => ({ statSync: (f) => (f.endsWith('gate-state.json') ? gate : at) });
+  const entry = { dotCascadePath: '/nowhere/.cascade' };
+  assert.notEqual(packFingerprint(entry, io({ ...at, ino: 2 })), packFingerprint(entry, io({ ...at, ino: 3 })));
+});

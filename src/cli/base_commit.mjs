@@ -167,13 +167,17 @@ function buildInWorktree({ commit, dotCascade, repoRoot, projectRoot, invocation
   } catch (e) {
     failure = e;
   }
-  const leftover = cleanupWorktree({ repoRoot, worktreeRoot });
-  fs.rmSync(scratch, { recursive: true, force: true });
+  const leftover = [attempt(() => cleanupWorktree({ repoRoot, worktreeRoot })), attempt(() => { fs.rmSync(scratch, { recursive: true, force: true }); return null; })].filter(Boolean);
   // Both are said: why the base failed, and what is left to clean by hand.
-  if (failure && leftover) throw new BaseCommitError(`${failure.message}\n${leftover}`);
+  if (failure && leftover.length) throw new BaseCommitError([failure.message, ...leftover].join('\n'));
   if (failure) throw failure;
-  if (leftover) throw new BaseCommitError(leftover);
+  if (leftover.length) throw new BaseCommitError(leftover.join('\n'));
   return result;
+}
+
+/** A cleanup step's message: what it returned, or why it threw, so no cleanup error hides the failure before it. */
+function attempt(step) {
+  try { return step(); } catch (e) { return `cleanup failed: ${e.message}`; }
 }
 
 /**

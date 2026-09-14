@@ -429,3 +429,17 @@ test('tamper (e2): a sealed case cannot be passed by trimming its probe list', (
   assert.equal(r.status, 'FAIL');
   assert.match(r.reason, /labels stay hidden/);
 });
+
+test('a fact index written for another build of the pack is caught even when every file matches its hash', (t) => {
+  const { dir } = certifiedProject(t);
+  const receipt = JSON.parse(fs.readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+  const files = {};
+  for (const name of ['pack/pack.json', 'pack/facts-index.json', 'calibration/gate-state.json']) files[name] = sha256File(path.join(dir, name));
+  const gateState = JSON.parse(fs.readFileSync(path.join(dir, 'calibration', 'gate-state.json'), 'utf8'));
+  const p = JSON.parse(fs.readFileSync(path.join(dir, 'pack', 'pack.json'), 'utf8'));
+  const actual = { files, enginePrint: ENGINE_1, gateState, packContentDigest: digest12({ nodes: p.nodes, edges: p.edges }), packStoredDigest: p.digest, now: new Date().toISOString() };
+  assert.equal(verifyReceipt({ receipt, actual: { ...actual, indexPackDigest: p.digest } }).ok, true);
+  const r = verifyReceipt({ receipt, actual: { ...actual, indexPackDigest: 'ffffffffffff' } });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.disagreements.map((d) => d.check), ['index-pack-digest']);
+});
