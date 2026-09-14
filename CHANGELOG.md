@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-09-14
+
+A form submitted from script is a request, a server page's `location.href` is a
+GET, and the last two navigation sinks are read.
+
 ### Added
 
 - **A form submitted from script is a request.** `document.listForm.action =
@@ -2320,7 +2325,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.1...v0.8.2
