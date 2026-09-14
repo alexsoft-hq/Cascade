@@ -628,8 +628,11 @@ Hibernate turns `Owner`/`lastName` into a physical `owners`/`last_name` with a
 naming strategy the application configures. This engine does not run your
 application, but it reads where the application declares the strategy:
 `spring.jpa.hibernate.naming.physical-strategy` (or
-`spring.jpa.properties.hibernate.physical_naming_strategy`) in the project's
-`application.properties`/`application.yml`, in any spelling Spring binds. A
+`spring.jpa.properties.hibernate.physical_naming_strategy`) in the
+`application*.properties`/`application*.yml` beside each Java source root the run
+reads (`src/main/resources`, and its `config/` directory), in any spelling Spring
+binds, whether the roots were named by flags or discovered. Another module's
+configuration is not read for this one. A
 recognized class there is a declaration, and the run says so
 (`JPA_NAMING_FROM_CONFIGURATION`). A class this engine does not model, or two
 configuration files that name different strategies, declare nothing it can

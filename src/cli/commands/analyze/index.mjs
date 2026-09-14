@@ -25,7 +25,7 @@ import {
 } from './lanes.mjs';
 import { withPackLock } from '../../pack_history.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
-import { analyzeTarget, incrementalPlan, laneSelection } from './inputs.mjs';
+import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection } from './inputs.mjs';
 
 /**
  * The profile's "jpa.namingStrategy is not declared" finding, replaced by what the
@@ -62,7 +62,8 @@ function prepare(ctx) {
     flags, discovery, sel, ddls, ddl, snapshot, snapshotProvenance, snapshotSha256,
     mappers, javaSrc, webSrc, openapiFiles, harFiles, otelFiles, diagnostics: selected,
   } = laneSelection(ctx, { root, profile, resolved, diagnostics: profileFindings });
-  const diagnostics = withJpaNaming(selected, jpaNamingOf(profile, discovery));
+  const jpaNaming = jpaNamingOf(profile, jpaNamingConfigured(javaSrc, root, selected));
+  const diagnostics = withJpaNaming(selected, jpaNaming);
 
   sayNoSchemaFetched(profile, { ddls, snapshot, resolved, root });
 
@@ -108,7 +109,7 @@ function prepare(ctx) {
     resolved, out, root, profile, profileFile, manifest, diagnostics, flags, discovery, sel,
     ddls, ddl, snapshot, snapshotProvenance, snapshotSha256, mappers, javaSrc, webSrc,
     openapiFiles, harFiles, otelFiles, serviceNames, screenGate, py, runpy, sqlArgs,
-    selectionRel, prevIndex, base, baseCommit, projectId, plan, store, relOf, absOf,
+    selectionRel, prevIndex, base, baseCommit, projectId, plan, store, relOf, absOf, jpaNaming,
   };
 }
 
@@ -157,7 +158,7 @@ function factsOf(ctx, prepared, tmpDir) {
 function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJpa, runMp, mpOpts, fragmentLineage }) {
   const {
     root, profile, discovery, sel, ddls, snapshot, mappers, javaSrc, webSrc,
-    openapiFiles, harFiles, otelFiles, screenGate, sqlArgs, resolved, base, relOf, diagnostics, manifest,
+    openapiFiles, harFiles, otelFiles, screenGate, sqlArgs, resolved, base, relOf, diagnostics, manifest, jpaNaming,
   } = prepared;
   const openapiDocs = readOpenApiDocs(ctx, { openapiFiles, root, diagnostics });
   const { webFacts, webWorkerStats } = webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root, relOf });
@@ -166,7 +167,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
     runtimeStats, otelTraces, webBridgeMs,
   } = assembleAll({
     result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs,
-    screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf,
+    screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming,
   });
   let laneStats = null;
   if (runJava) {

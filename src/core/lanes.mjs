@@ -145,15 +145,16 @@ export function serviceNamesOf(profile, discovery = null) {
  * profile's when it declares one; otherwise the one the project's own Spring
  * configuration names (`spring.jpa.hibernate.naming.physical-strategy`), which
  * is a declaration too: the project wrote it down, and the application runs by
- * it. A configuration that names a class this engine does not model, or files
+ * it. `configured` is what `findJpaNamingStrategies` (./springconfig.mjs) read
+ * from the configuration beside the Java source roots the run reads. A configuration that names a class this engine does not model, or files
  * that name different strategies, declare nothing this engine can apply, and the
  * names it derives stay HEURISTIC.
  * @returns {{strategy:(string|null), from:('profile'|'configuration'|'unreadable'|'none'), files:string[], classNames:string[]}}
  */
-export function jpaNamingOf(profile, discovery = null) {
+export function jpaNamingOf(profile, configured = []) {
   const declared = profile?.jpa?.namingStrategy ?? null;
   if (declared != null) return { strategy: declared, from: 'profile', files: [], classNames: [] };
-  const found = Array.isArray(discovery?.jpaNamingStrategies) ? discovery.jpaNamingStrategies : [];
+  const found = Array.isArray(configured) ? configured : [];
   if (found.length === 0) return { strategy: null, from: 'none', files: [], classNames: [] };
   const strategies = [...new Set(found.map((f) => f.strategy))];
   const files = [...new Set(found.map((f) => f.file))].sort();

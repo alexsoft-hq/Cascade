@@ -1088,10 +1088,10 @@ test('selectLanes: --mappers is the user speaking, so nothing is read past', () 
 
 test('the naming strategy is the profile\'s, else the one the configuration names, and never one of two that disagree', () => {
   const at = (strategy, file, className = 'X') => ({ strategy, file, className, line: 1 });
-  assert.equal(jpaNamingOf({ jpa: { namingStrategy: 'identity' } }, { jpaNamingStrategies: [at('spring-snake-case', 'a')] }).strategy, 'identity', 'the profile wins');
-  assert.deepEqual(jpaNamingOf({ jpa: { namingStrategy: null } }, { jpaNamingStrategies: [at('spring-snake-case', 'a'), at('spring-snake-case', 'b')] }),
+  assert.equal(jpaNamingOf({ jpa: { namingStrategy: 'identity' } }, [at('spring-snake-case', 'a')]).strategy, 'identity', 'the profile wins');
+  assert.deepEqual(jpaNamingOf({ jpa: { namingStrategy: null } }, [at('spring-snake-case', 'a'), at('spring-snake-case', 'b')]),
     { strategy: 'spring-snake-case', from: 'configuration', files: ['a', 'b'], classNames: ['X'] });
-  assert.equal(jpaNamingOf({}, { jpaNamingStrategies: [at('spring-snake-case', 'a'), at('identity', 'b-prod')] }).from, 'unreadable', 'two files that disagree declare nothing');
-  assert.equal(jpaNamingOf({}, { jpaNamingStrategies: [at(null, 'a', 'com.example.Own')] }).strategy, null, 'a strategy this engine does not model');
+  assert.equal(jpaNamingOf({}, [at('spring-snake-case', 'a'), at('identity', 'b-prod')]).from, 'unreadable', 'two files that disagree declare nothing');
+  assert.equal(jpaNamingOf({}, [at(null, 'a', 'com.example.Own')]).strategy, null, 'a strategy this engine does not model');
   assert.equal(jpaNamingOf({}, null).from, 'none');
 });

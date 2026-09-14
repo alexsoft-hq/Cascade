@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { analysisRecord, publishPack, writePackAndIndex } from '../src/cli/commands/analyze/write.mjs';
+import { jpaNamingConfigured } from '../src/cli/commands/analyze/inputs.mjs';
 import { compareConditions } from '../src/core/pack_diff.mjs';
 import { changedSince, contentDigestOf, externalSourcesOf } from '../src/cli/external_sources.mjs';
 import { Graph } from '../src/core/graph.mjs';
@@ -227,4 +228,19 @@ test('an outside frontend\'s package configuration above its source root is an o
   assert.deepEqual(changedSince(analysis), [`${pkg}#package-config`, `${app}#package-config`].sort());
   fs.writeFileSync(path.join(pkg, 'vite.config.ts'), 'export default {}');
   assert.notEqual(externalSourcesOf({ webSrc: [src] }, {})[`${pkg}#package-config`], first[`${pkg}#package-config`], 'a config file added is a change');
+});
+
+test('the naming strategy is read from the configuration beside the Java roots the run reads, and from no other module', (t) => {
+  const top = layout(t);
+  const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(top, rel)), { recursive: true }); fs.writeFileSync(path.join(top, rel), text); };
+  put('shop/core/src/main/java/Keep.java', '');
+  put('shop/boot/src/main/java/App.java', '');
+  put('shop/boot/src/main/resources/config/application.yml', 'spring:\n  jpa:\n    hibernate:\n      naming:\n        physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy\n');
+  put('shop/legacy/src/main/java/Old.java', '');
+  put('shop/legacy/src/main/resources/application.properties', 'spring.jpa.hibernate.naming.physical-strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl\n');
+  put('shop/boot/src/test/resources/application.properties', 'spring.jpa.hibernate.naming.physical-strategy=com.example.TestOnly\n');
+  const read = (roots) => jpaNamingConfigured(roots.map((r) => path.join(top, 'shop', r, 'src/main/java')), path.join(top, 'shop'));
+  assert.deepEqual(read(['core', 'boot']).map((f) => [f.file, f.strategy]), [['boot/src/main/resources/config/application.yml', 'spring-snake-case']],
+    'the config/ directory Spring Boot also reads; the legacy module is not analyzed, and test resources are not beside src/main/java');
+  assert.deepEqual(read(['boot', 'legacy']).map((f) => f.strategy), ['spring-snake-case', 'identity'], 'two analyzed modules that disagree are both said');
 });

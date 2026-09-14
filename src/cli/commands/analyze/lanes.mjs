@@ -23,7 +23,6 @@ import { assembleGraph } from '../../../core/assemble.mjs';
 import { webFactsSummary, catalogDigestOf as catalogDigestForShards } from '../../../core/facts_store.mjs';
 import { runLanesWithShards, runLineageForStatements } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
-import { jpaNamingOf } from '../../../core/lanes.mjs';
 import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane } from '../../lanes_run.mjs';
@@ -447,7 +446,7 @@ export function webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root,
  * rule handed in is the SAME one the lineage worker matched with, so a bridge
  * cannot key a table differently from the worker that resolved it.
  */
-export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf }) {
+export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null }) {
   // The web bridge's own wall time, measured around the bridge and not around
   // the whole assembly: it is the number the lane line reports, so it has to
   // be the bridge's and nobody else's. Printed, never written into the pack —
@@ -481,7 +480,8 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
       idGenerators: discovery?.idGenerators ?? [],
     } : null,
     jpa: runJpa ? {
-      namingStrategy: jpaNamingOf(profile, discovery).strategy,
+      // The profile's strategy, else the one the project's configuration names (index.mjs).
+      namingStrategy: jpaNaming ? jpaNaming.strategy : profile.jpa?.namingStrategy ?? null,
       schema: sqlArgs.defaultSchema,
       identifierCase: sqlArgs.identifierCase,
     } : null,

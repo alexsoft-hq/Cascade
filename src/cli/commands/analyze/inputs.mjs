@@ -19,6 +19,7 @@ import { createFactsStore, nodeFactsIo, validateIndex } from '../../../core/fact
 import { INCREMENTAL_ENGINE_VERSION } from '../../../core/incremental.mjs';
 import { planIncremental, underAny, MODE_COLD } from '../../../core/invalidate.mjs';
 import { selectLanes } from '../../../core/lanes.mjs';
+import { findJpaNamingStrategies, looksLikeSpringConfigFile } from '../../../core/springconfig.mjs';
 import { loadManifest } from '../../../core/manifest.mjs';
 import { profileDiagnostics, sqlDialectOf } from '../../../core/profile.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
@@ -411,4 +412,39 @@ export function incrementalPlan(ctx, { root, out, profile, manifest, resolved, s
     resolved, manifest, rootAbs, prevIndex, changeset, untrackedRel, selectionRel, absOf,
   });
   return { selectionRel, prevIndex, base, baseCommit, projectId, plan, store, relOf, absOf };
+}
+
+/**
+ * THE JPA NAMING STRATEGY THE PROJECT CONFIGURES, read from the Spring
+ * configuration BESIDE THE JAVA SOURCE ROOTS THIS RUN READS: `src/main/resources`
+ * next to `src/main/java`, and its `config/` directory, where Spring Boot looks.
+ * The same place whether the roots came from flags or from discovery, so a run
+ * with every lane named gets the same grades as one without; and only the
+ * modules this run analyzes, so another module's configuration is not taken for
+ * theirs.
+ * @param {string[]} javaSrc  absolute Java source roots
+ * @param {string} root  the analyzed root, which file paths are said relative to
+ * @param {Object[]|null} [diagnostics]
+ */
+export function jpaNamingConfigured(javaSrc, root, diagnostics = null) {
+  const files = [];
+  for (const src of [...new Set((javaSrc ?? []).map((p) => path.resolve(p)))].sort()) {
+    if (path.basename(src) !== 'java') continue;
+    const resources = path.join(path.dirname(src), 'resources');
+    for (const dir of [resources, path.join(resources, 'config')]) files.push(...springConfigFilesIn(dir, root));
+  }
+  return findJpaNamingStrategies(files, diagnostics);
+}
+
+/** The Spring configuration files directly in one directory, read, with root-relative paths. */
+function springConfigFilesIn(dir, root) {
+  let names;
+  try { names = fs.readdirSync(dir).sort(); } catch { return []; }
+  const out = [];
+  for (const name of names) {
+    const rel = path.relative(root, path.join(dir, name)).split(path.sep).join('/');
+    if (!looksLikeSpringConfigFile(rel)) continue;
+    try { out.push({ path: rel, text: fs.readFileSync(path.join(dir, name), 'utf8') }); } catch { /* unreadable: nothing declared by it */ }
+  }
+  return out;
 }

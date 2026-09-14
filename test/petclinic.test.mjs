@@ -312,11 +312,14 @@ test('spring-petclinic: the naming strategy its configuration declares turns the
   const profile = JSON.parse(fs.readFileSync(path.join(repo, '.cascade', 'profile.json'), 'utf8'));
   assert.equal(profile.jpa.namingStrategy, null);
 
+  // Every lane is named, so the tree is not discovered: the configuration beside
+  // the Java source root is read all the same.
   const analyze = cli([
     'analyze', '--root', repo, '--project', 'petclinic',
-    '--ddl', path.join(repo, DDL_REL), '--java-src', path.join(repo, SRC_REL), '--no-mappers',
+    '--ddl', path.join(repo, DDL_REL), '--java-src', path.join(repo, SRC_REL), '--no-mappers', '--no-web', '--no-openapi',
   ]);
   assert.equal(analyze.status, 0, analyze.stderr);
+  assert.doesNotMatch(analyze.stderr, /discovering the tree/);
   assert.match(analyze.stderr, /naming strategy spring-snake-case \(declared\)/);
   assert.match(analyze.stderr, /JPA_NAMING_FROM_CONFIGURATION jpa\.namingStrategy: .*PhysicalNamingStrategySnakeCaseImpl in src\/main\/resources\/application\.properties/);
   assert.doesNotMatch(analyze.stderr, /PROFILE_DEFAULT_ASSUMED jpa\.namingStrategy/, 'the finding that it was assumed is replaced, not repeated');
