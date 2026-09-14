@@ -31,10 +31,26 @@ Each dated section below is one round of work. The round protocol is in
   a removal on an axis that changed between them is marked, because an unread
   catalog and a dropped table look alike. The MCP tool `pack_diff` answers the
   same question for two projects one server serves. docs/cli.md has the details.
+- **The same answer as one picture.** `cascade export --format svg` and the
+  viewer's **SVG** button draw a Flow or Impact answer as one SVG: every row with
+  its grade badge, every link with its grade's dash, each cut lane's missing rows,
+  the question and trust line, and every limit word for word. **PNG** is that SVG
+  drawn by the browser, so nothing is installed. A link whose source row was cut
+  is not drawn, and the picture counts those.
+- **A Compare tab.** When the server serves another pack, the viewer compares the
+  project on screen with it through `pack_diff`, conditions first, with Flow
+  buttons on the endpoints above the change and the evidence rail beside it.
 - **A pack records what it was analyzed under.** `meta.analysis` holds the worker
   versions, the normalized profile's digest, the engine version and fingerprint,
   the opt-out flags and the source roots. It is metadata, so no pack digest moves.
   A pack built before it has none, and a diff says those conditions are unknown.
+
+### Fixed
+
+- **A snapshot counts a list as cut only when it shows fewer rows than it has.**
+  A Flow answer whose lanes were all shown whole said "3 cut list(s)".
+- **An export asks for no more rows than the `flow` tool answers** (200), instead
+  of passing a larger limit through to be refused.
 
 ## [0.8.7] - 2026-09-14
 

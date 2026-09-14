@@ -139,7 +139,7 @@ export const USAGE = Object.freeze({
   export:
     '  cascade export [--pack <dir> | --project <id> | --root <dir>] [--tab flow|impact]\n'
     + '                 (--endpoint|--screen|--symbol|--table|--column|--statement) <name>\n'
-    + '                 [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--out <file>]\n'
+    + '                 [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--format html|svg] [--out <file>]\n'
     + '      (one Flow or Impact answer as one HTML file that opens with no server: the viewer page, the\n'
     + '       answer, its grades, limits and cut lists inside. The viewer\'s Export button writes the same file)\n',
   diff:

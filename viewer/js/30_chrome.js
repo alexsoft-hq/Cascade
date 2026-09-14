@@ -69,7 +69,7 @@ function setLang(lang){
 }
 
 // ---------- tabs / init ----------
-const TABNAMES=['overview','explore','flow','impact','coupling','graph','erd','tx'];
+const TABNAMES=['overview','explore','flow','impact','coupling','graph','erd','tx','compare'];
 const CHAINTABS={flow:FLOWV, impact:IMPACTV};
 // Showing a tab and LOADING a tab are two different things: a project switch
 // empties every tab's cache and then asks the visible one to fill itself again,
@@ -91,6 +91,7 @@ function loadTab(name){
     else ovMapMount();
   }
   if (name==='tx' && !document.getElementById('txview').hasChildNodes()) loadTx();
+  if (name==='compare' && !byId('cmpview').hasChildNodes()) drawCompare();
   // Explore, Flow and Impact open SHOWING the pack: the rail draws what it
   // already holds, and asks the server for its list exactly once.
   // A snapshot holds one answer and no list to browse, so it opens no rail.
@@ -301,6 +302,7 @@ function applyChrome(){
   for(const n of document.querySelectorAll('[data-t-title]')) n.title=t(n.dataset.tTitle);
   for(const n of document.querySelectorAll('[data-t-ph]')) n.placeholder=t(n.dataset.tPh);
   renderProjectChrome();
+  renderCompareChrome();
   renderLangChrome();
   renderMastChrome();
   renderGraphChrome();

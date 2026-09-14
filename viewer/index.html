@@ -218,6 +218,10 @@
      the page. Empty once the meta has landed, so it takes no room at all. */
   .mnote { grid-column:1 / -1; grid-row:4; font-size:12px; color:var(--t2); padding:0 0 4px; }
   .mnote:empty { display:none; }
+  /* The Compare tab: the lists on the left, the evidence rail on the right, as on Flow. */
+  .cmpgrid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; }
+  @media (max-width:1100px){ .cmpgrid { grid-template-columns:minmax(0,1fr); } }
+  .warnpanel { border-color:var(--warn); }
   /* THE SNAPSHOT BAND and the page an exported file is (48_snapshot.js). The
      band spans the masthead grid like the note above it. In the file there is
      one tab, no project list, no rail and nothing that would ask a server. */
@@ -227,7 +231,7 @@
   .snapbar .snapwarn { color:var(--warn); }
   body.snapshot .tab:not(.snaptab), body.snapshot .browserail, body.snapshot .brtoggle,
   body.snapshot .showall, body.snapshot #fdraw, body.snapshot #idraw,
-  body.snapshot #fexport, body.snapshot #iexport, body.snapshot button.moreb, body.snapshot #langseg, body.snapshot #mbuildbtn { display:none !important; }
+  body.snapshot #fexports, body.snapshot #iexports, body.snapshot button.moreb, body.snapshot #langseg, body.snapshot #mbuildbtn { display:none !important; }
   body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr) 320px; grid-template-areas:"canvas side"; }
   @media (max-width:1660px){ body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas" "side"; } }
   /* Tabs are WORDS ON A RULE: the active one is underlined in the endpoint hue,
@@ -1130,6 +1134,7 @@
     <button type="button" class="tab" data-tab="graph" data-t="tab.graph">Graph</button>
     <button type="button" class="tab" data-tab="erd" data-t="tab.erd">ERD</button>
     <button type="button" class="tab" data-tab="tx" data-t="tab.tx">Transactions</button>
+    <button type="button" class="tab hidden" data-tab="compare" data-t="tab.compare">Compare</button>
   </div>
 </header>
 
@@ -1213,7 +1218,7 @@
       <span class="seg" id="fview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
       <button id="fflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
       <button id="fdraw" class="primary" data-t="btn.draw">Draw</button>
-      <button id="fexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button>
+      <span class="seg" id="fexports"><button id="fexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="fsvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="fpng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button></span>
       <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.flow"></div>
@@ -1255,7 +1260,7 @@
       <span class="seg" id="iview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
       <button id="iflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
       <button id="idraw" class="primary" data-t="btn.draw">Draw</button>
-      <button id="iexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button>
+      <span class="seg" id="iexports"><button id="iexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="isvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="ipng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button></span>
       <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.impact"></div>
@@ -1380,6 +1385,18 @@
     <div class="hint" data-t-fold="hint.tx"></div>
     <div id="txview"></div>
   </div>
+
+  <!-- COMPARE TAB (49_compare.js): shown only when this server serves another
+       pack to compare this one with. -->
+  <div id="tab-compare" class="hidden">
+    <div class="searchbar">
+      <span class="comment" data-t="compare.base.label">compare this project against</span>
+      <select id="cmpbase" data-t-title="compare.base.title" title="the pack this one is compared with"></select>
+      <button id="cmpdraw" class="primary" data-t="btn.draw">Draw</button>
+    </div>
+    <div class="hint" data-t-fold="hint.compare"></div>
+    <div id="cmpview"></div>
+  </div>
 </div>
 <!-- The drawer's backdrop. One for all three tabs: only one rail is ever open,
      because only one tab is ever on screen. -->
@@ -1434,6 +1451,7 @@
 <script src="/viewer/js/46_erd.js"></script>
 <script src="/viewer/js/47_transactions.js"></script>
 <script src="/viewer/js/48_snapshot.js"></script>
+<script src="/viewer/js/49_compare.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

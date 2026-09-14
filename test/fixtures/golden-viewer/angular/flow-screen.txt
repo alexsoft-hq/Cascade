@@ -107,6 +107,7 @@
       <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
       <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
       <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+      <button class="tab hidden" data-t="tab.compare" data-tab="compare" onclick type="button">…</button>
     </div>
   </header>
   <div class="wrap">
@@ -156,7 +157,15 @@
         </span>
         <button id="fflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
         <button id="fdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <button id="fexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">Export</button>
+        <span id="fexports" class="seg">
+          <button id="fexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">Export</button>
+          <button id="fsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+            SVG
+          </button>
+          <button id="fpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+            PNG
+          </button>
+        </span>
         <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
       <div class="hint hintfold" data-t-fold="hint.flow">
@@ -607,6 +616,7 @@
     <div id="tab-graph" class="hidden">…</div>
     <div id="tab-erd" class="hidden">…</div>
     <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-compare" class="hidden">…</div>
   </div>
   <div id="brscrim" class="brscrim" onclick></div>
   <div id="srcpane" class="srcpane hidden" role="complementary">…</div>

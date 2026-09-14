@@ -13,33 +13,62 @@
 // file with the same generator `cascade export` uses (src/viewer/snapshot.mjs),
 // so the button and the command line cannot write two different files for one
 // question. The page only saves what comes back.
-const exportButtonOf=(v)=> byId(v.name==='flow' ? 'fexport' : 'iexport');
+const EXPORT_BUTTONS={ flow:{html:'fexport', svg:'fsvg', png:'fpng'}, impact:{html:'iexport', svg:'isvg', png:'ipng'} };
 /** A picture with no answer on screen has nothing to write. */
 function refreshExportButtons(){
   for(const v of [FLOWV, IMPACTV]){
-    const b=exportButtonOf(v);
-    if(b) b.disabled = !!SNAP || !(v.resp && v.args);
+    for(const id of Object.values(EXPORT_BUTTONS[v.name])){
+      const b=byId(id);
+      if(b) b.disabled = !!SNAP || !(v.resp && v.args);
+    }
   }
 }
-async function exportChain(v){
+/**
+ * HTML and SVG are written by the server; a PNG is the SVG drawn by THIS
+ * browser, so nothing has to be installed anywhere to make one.
+ */
+async function exportChain(v, format='html'){
   if(SNAP || !v.resp || !v.args) return;
-  const btn=exportButtonOf(v);
-  btn.disabled=true;
+  for(const id of Object.values(EXPORT_BUTTONS[v.name])) byId(id).disabled=true;
   try{
-    const body={ tab:v.name, arguments:v.args, lang:I18N.lang, ...(STATE.project ? {project:STATE.project} : {}) };
+    const body={ tab:v.name, arguments:v.args, lang:I18N.lang, format: format==='html' ? 'html' : 'svg', ...(STATE.project ? {project:STATE.project} : {}) };
     const r=await fetch('/api/export', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
     const j=await r.json();
     if(j.error) throw new Error(j.error.code+': '+j.error.message);
-    snapshotSave(j.answer.filename, j.answer.html);
+    const a=j.answer;
+    if(format==='html') snapshotSave(a.filename, a.html, 'text/html;charset=utf-8');
+    else if(format==='svg') snapshotSave(a.filename, a.svg, 'image/svg+xml');
+    else snapshotSave(a.filename.replace(/\.svg$/, '.png'), await svgToPng(a.svg), 'image/png');
   }catch(e){
     vside(v).prepend(errPanel(e));
   }finally{
     refreshExportButtons();
   }
 }
+/**
+ * The SVG drawn onto a canvas at twice its size, as a PNG. The side is capped so
+ * a very tall answer still fits the largest canvas a browser will make.
+ */
+async function svgToPng(svg){
+  const url=URL.createObjectURL(new Blob([svg], {type:'image/svg+xml'}));
+  try{
+    const img=new Image();
+    await new Promise((ok, no)=>{ img.onload=ok; img.onerror=()=>no(new Error(t('export.png.failed'))); img.src=url; });
+    const w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+    const scale=Math.min(2, 16000/Math.max(w, h, 1));
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.round(w*scale); canvas.height=Math.round(h*scale);
+    const ctx=canvas.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0);
+    return await new Promise((ok, no)=> canvas.toBlob((b)=> b ? ok(b) : no(new Error(t('export.png.failed'))), 'image/png'));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 /** Hand the file to the browser's own download, and let go of it after. */
-function snapshotSave(filename, html){
-  const url=URL.createObjectURL(new Blob([html], {type:'text/html;charset=utf-8'}));
+function snapshotSave(filename, data, type){
+  const url=URL.createObjectURL(data instanceof Blob ? data : new Blob([data], {type}));
   const a=document.createElement('a');
   a.href=url; a.download=filename;
   document.body.append(a); a.click(); a.remove();

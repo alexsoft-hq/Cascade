@@ -191,7 +191,7 @@ test('the Export button is off until a chain is drawn, then posts the question t
   const sent = page.calls.find((c) => c.url === '/api/export');
   assert.ok(sent, 'the page asked the server for the file');
   assert.equal(JSON.stringify(sent.body.arguments), ev(page.ctx, 'JSON.stringify(FLOWV.args)'));
-  assert.deepEqual({ ...sent.body, arguments: null }, { tab: 'flow', arguments: null, lang: 'en', project: 'delta' });
+  assert.deepEqual({ ...sent.body, arguments: null }, { tab: 'flow', arguments: null, lang: 'en', format: 'html', project: 'delta' });
   assert.deepEqual(sent.body.arguments, { screen: '/rows', mode: 'conservative', depth: 8, limit: 40 });
 });
 

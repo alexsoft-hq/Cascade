@@ -45,9 +45,9 @@ const DEFAULT_MODE = 'conservative';
 const DEPTH_MIN = 1;
 const DEPTH_MAX = 8;
 
-/** The row limit a chain opens on, and the most one snapshot may ask for. */
+/** The row limit a chain opens on, and the most the `flow` tool answers. */
 const DEFAULT_LIMIT = 40;
-const LIMIT_MAX = 1000;
+const LIMIT_MAX = 200;
 
 export class SnapshotError extends Error {
   constructor(code, message) {

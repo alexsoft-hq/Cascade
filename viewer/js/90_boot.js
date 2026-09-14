@@ -57,8 +57,9 @@ document.addEventListener('keydown', (e)=>{
 // Both lane tabs are wired by the same function — one behaviour, two pictures.
 wireChainToolbar(FLOWV);
 wireChainToolbar(IMPACTV);
-byId('fexport').onclick=()=>exportChain(FLOWV);
-byId('iexport').onclick=()=>exportChain(IMPACTV);
+for(const v of [FLOWV, IMPACTV]) for(const [format, id] of Object.entries(EXPORT_BUTTONS[v.name])) byId(id).onclick=()=>exportChain(v, format);
+byId('cmpdraw').onclick=()=>drawCompare();
+byId('cmpbase').onchange=()=>drawCompare();
 // The Graph tab's entry box is the SAME typeahead the lane tabs use (one
 // resolution rule, so a focus is never a guessed kind); only what a commit
 // draws differs.

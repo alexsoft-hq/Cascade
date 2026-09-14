@@ -206,7 +206,7 @@ function resetProjectState(){
   byId('etable').value='';
   byId('erdside').replaceChildren(); byId('erdiso').replaceChildren();
   byId('ehonesty').replaceChildren(); byId('erdleg').replaceChildren();
-  byId('txview').replaceChildren();
+  byId('txview').replaceChildren(); resetCompare();
 }
 async function loadMeta(){
   const forProject=STATE.project, mine=STATE.seq;

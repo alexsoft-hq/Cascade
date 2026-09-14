@@ -324,8 +324,12 @@ function handleExport(method, body, deps, project) {
   if (!body || typeof body !== 'object') return err(400, 'bad-request', 'JSON body required');
   if (typeof deps.exportSnapshot !== 'function') return err(404, 'not-found', 'this server does not write snapshots');
   try {
-    const out = deps.exportSnapshot({ project, tab: body.tab, args: body.arguments || {}, lang: typeof body.lang === 'string' ? body.lang : 'en' });
-    return { status: 200, json: { answer: { filename: out.filename, bytes: out.bytes, html: out.html } } };
+    const out = deps.exportSnapshot({
+      project, tab: body.tab, args: body.arguments || {},
+      lang: typeof body.lang === 'string' ? body.lang : 'en', format: typeof body.format === 'string' ? body.format : 'html',
+    });
+    const file = out.svg !== undefined ? { svg: out.svg } : { html: out.html };
+    return { status: 200, json: { answer: { filename: out.filename, bytes: out.bytes, ...file } } };
   } catch (e) {
     return dispatchErr(e, 'export-error', 'export failed');
   }

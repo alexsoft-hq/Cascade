@@ -666,6 +666,10 @@ The viewer's **Export** button writes the same file for the same question. See
   screen, as the tabs open).
 - `--limit <n>` — rows per lane before the list is cut (default 40). A cut list
   says so in the file.
+- `--format html|svg` — `html` (default) writes the page with the answer inside;
+  `svg` writes one picture of the same answer for a slide or a document, with
+  every row, grade dash, cut and limit drawn in it. The viewer turns the same SVG
+  into a PNG with its **PNG** button.
 - `--lang en|ko` — the language of the page's own words. The engine's words
   (grades, limits, reasons) are never translated.
 - `--out <file>` — where to write; default `cascade-<project>-<tab>-<entry>.html`

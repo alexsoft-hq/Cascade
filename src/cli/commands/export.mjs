@@ -34,20 +34,26 @@ export function run(cli) {
   const { opt, die } = cli;
   const { tab, args } = questionOf(cli);
   const lang = opt('lang', 'en');
+  const format = opt('format', 'html');
   const host = cli.servedHost('export');
   let out;
   try {
-    out = exportSnapshot(host, { project: opt('project'), tab, args, lang });
+    out = exportSnapshot(host, { project: opt('project'), tab, args, lang, format });
   } catch (e) {
     die(`${e.code ? `${e.code}: ` : ''}${e.message}`);
   }
   const file = path.resolve(opt('out', out.filename));
-  fs.writeFileSync(file, out.html, 'utf8');
+  fs.writeFileSync(file, out.format === 'svg' ? out.svg : out.html, 'utf8');
+  printSummary(file, out);
+}
+
+/** What was written, and what the answer inside it is worth. */
+function printSummary(file, out) {
   const flow = out.snapshot.calls.find((c) => c.name === 'flow').answer;
   const limits = Array.isArray(flow.limits) ? flow.limits.length : 0;
   const cut = flow.truncated && Array.isArray(flow.truncated.fields) ? flow.truncated.fields.filter((f) => f.shown < f.total).length : 0;
-  process.stdout.write(`wrote ${file} (${out.bytes} bytes): ${tab} from ${out.snapshot.entry.kind} ${out.snapshot.entry.value}, `
+  process.stdout.write(`wrote ${file} (${out.bytes} bytes): ${out.snapshot.tab} from ${out.snapshot.entry.kind} ${out.snapshot.entry.value}, `
     + `mode ${out.snapshot.args.mode}, depth ${out.snapshot.args.depth}, limit ${out.snapshot.args.limit}\n`);
   process.stdout.write(`trust ${flow.trust?.trustLevel ?? 'unknown'}, ${limits} limit(s), ${cut} cut list(s). The file carries all of them, `
-    + 'and opens in a browser with no server\n');
+    + (out.format === 'svg' ? 'and is one picture a document can hold\n' : 'and opens in a browser with no server\n'));
 }

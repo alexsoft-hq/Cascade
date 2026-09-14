@@ -11,6 +11,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildSnapshot, snapshotFilename, snapshotHtml, snapshotQueryFromArgs } from '../viewer/snapshot.mjs';
+import { chainSvg, drawingPalette } from '../viewer/chain_svg.mjs';
+import { VIEWER_STRINGS, makeT } from '../viewer/i18n.mjs';
 import { ENGINE_ROOT, engineIdentity } from './env.mjs';
 
 /**
@@ -42,14 +44,27 @@ function viewerAssets(root) {
   };
 }
 
+/** The formats one question can be written in. */
+export const EXPORT_FORMATS = Object.freeze(['html', 'svg']);
+
+/** A format this exporter has not got is refused before any tool runs. */
+function checkFormat(format) {
+  if (EXPORT_FORMATS.includes(format)) return;
+  const e = new Error(`format must be ${EXPORT_FORMATS.join(' or ')}, got ${JSON.stringify(format)}`);
+  e.code = 'bad-input';
+  throw e;
+}
+
 /**
- * One snapshot file for one question about one served project.
+ * One snapshot file for one question about one served project: the HTML page
+ * with the answer inside, or the SVG picture of the same answer.
  *
  * @param {object} host  the project host `cascade view` and `cascade export` both build
- * @param {{project?:string, tab:string, args:object, lang?:string, generatedAt?:string, root?:string}} request
- * @returns {{html:string, filename:string, bytes:number, snapshot:object}}
+ * @param {{project?:string, tab:string, args:object, lang?:string, format?:string, generatedAt?:string, root?:string}} request
+ * @returns {{format:string, html?:string, svg?:string, filename:string, bytes:number, snapshot:object}}
  */
-export function exportSnapshot(host, { project, tab, args, lang = 'en', generatedAt = new Date().toISOString(), root = ENGINE_ROOT }) {
+export function exportSnapshot(host, { project, tab, args, lang = 'en', format = 'html', generatedAt = new Date().toISOString(), root = ENGINE_ROOT }) {
+  checkFormat(format);
   const query = snapshotQueryFromArgs(tab, args);
   const meta = projectMeta(host, project);
   const projectId = meta.projectId;
@@ -59,7 +74,20 @@ export function exportSnapshot(host, { project, tab, args, lang = 'en', generate
     query, project: listed, meta, lang, catalogs: assets.catalogs, generatedAt, engine: engineIdentity(root),
     callTool: (name, a) => host.callTool(name, { ...a, project: projectId }),
   });
-  const title = `Cascade snapshot: ${projectId}, ${query.tab} from ${query.entry.value}`;
+  const filename = snapshotFilename(projectId, query);
+  return format === 'svg' ? svgFile(snapshot, assets, filename) : htmlFile(snapshot, assets, filename, `Cascade snapshot: ${projectId}, ${query.tab} from ${query.entry.value}`);
+}
+
+/** The SVG picture of the answer, in the snapshot's language and the light theme's colours. */
+function svgFile(snapshot, assets, filename) {
+  const t = makeT({ ...VIEWER_STRINGS, ...assets.catalogs }, snapshot.lang);
+  const fonts = { sans: assets.readFont('IBM-Plex-Sans-latin.woff2'), mono: assets.readFont('IBM-Plex-Mono-400-latin.woff2') };
+  const svg = chainSvg(snapshot, { t, palette: drawingPalette(assets.html), fonts });
+  return { format: 'svg', svg, filename: filename.replace(/\.html$/, '.svg'), bytes: Buffer.byteLength(svg, 'utf8'), snapshot };
+}
+
+/** The viewer page with the answer inside. */
+function htmlFile(snapshot, assets, filename, title) {
   const html = snapshotHtml({ html: assets.html, snapshot, title, readScript: assets.readScript, readLib: assets.readLib, readFont: assets.readFont });
-  return { html, filename: snapshotFilename(projectId, query), bytes: Buffer.byteLength(html, 'utf8'), snapshot };
+  return { format: 'html', html, filename, bytes: Buffer.byteLength(html, 'utf8'), snapshot };
 }

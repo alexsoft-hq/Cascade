@@ -21,8 +21,11 @@ const HTML = fs.readFileSync(path.join(ROOT, 'viewer', 'index.html'), 'utf8');
 // into viewer/js/*.js it is a question about all of them, and a scan that read
 // only the HTML would say every key was dead.
 const JS_DIR = path.join(ROOT, 'viewer', 'js');
+// The SVG picture of an answer (src/viewer/chain_svg.mjs) writes the page's own
+// words too, from the same catalogue, so it is read as part of the page.
 const PAGE = [HTML, ...fs.readdirSync(JS_DIR).sort()
-  .map((f) => fs.readFileSync(path.join(JS_DIR, f), 'utf8'))].join('\n');
+  .map((f) => fs.readFileSync(path.join(JS_DIR, f), 'utf8')),
+fs.readFileSync(path.join(ROOT, 'src', 'viewer', 'chain_svg.mjs'), 'utf8')].join('\n');
 const CATALOG = { en: VIEWER_STRINGS.en, ko: KO };
 
 /**

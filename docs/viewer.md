@@ -223,6 +223,32 @@ guessing. **chain** and **by hop** still work, because they are two drawings of
 the same answer. Names that the live page cuts with an ellipsis wrap in the
 file, because a printed page has no pointer to hover them with.
 
+**SVG** and **PNG**, beside Export, save the same answer as one picture for a
+slide or a document. The server draws the SVG from the answer: the lanes, one
+row per node with its grade badge, one connector per link with its grade's dash
+(solid EXACT, dashed SOUND_SET, dotted HEURISTIC), a cut lane's count of the rows
+it left out, the question and the trust line above, and every limit word for word
+below. A link whose source row is in a cut list is not drawn, and the picture
+says how many. The PNG is that SVG drawn by your browser, at twice its size, so
+nothing has to be installed. `cascade export --format svg` writes the SVG from
+the shell.
+
+### Compare
+
+The tab appears when the server serves another pack besides the one on screen:
+the pack of the main branch and the pack of a change, say, registered under two
+ids. Open the change and pick the main branch; the tab asks `pack_diff` with it
+as the base ([cli.md](cli.md#cascade-diff) has what is compared).
+
+The first panel says whether the two packs were analyzed the same way, and lists
+every condition that differs or is not recorded. Read it before the lists: a
+difference is a code change only when the analysis did not change. Then come
+the counts by kind and by edge type, the endpoints above the change (each with
+a Flow button) and the screens above it, and the nodes and edges that were added,
+removed or regraded. A removed node whose axis changed between the packs says so.
+The evidence rail beside the lists carries the trust level, the limits and every
+cut list.
+
 ### Coupling
 
 Two API groups can depend on each other without ever calling each other: one
