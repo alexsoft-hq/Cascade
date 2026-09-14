@@ -989,10 +989,10 @@ Explore, Flow, Impact 는 빈 검색창이 아니라 **목록**으로 열립니�
 | mybatis/jpetstore-6 | 11 / 22 | 12 / 13 | 77 / 86 | 52 / 53 | 16 / 16 |
 | spring-projects/spring-petclinic | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 |
 | spring-petclinic-microservices | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 |
-| eGovFramework/egovframe-enterprise-business-template | 163 / 219 | 30 / 35 | 218 / 288 | 333 / 357 | 73 / 84 |
-| eGovFramework/egovframe-common-components | 999 / 1193 | 165 / 179 | 1680 / 1862 | 2075 / 2157 | 555 / 657 |
+| eGovFramework/egovframe-enterprise-business-template | 188 / 219 | 32 / 36 | 223 / 288 | 333 / 357 | 77 / 84 |
+| eGovFramework/egovframe-common-components | 999 / 1193 | 166 / 179 | 1682 / 1862 | 2075 / 2157 | 555 / 657 |
 | eGovFramework/egovframe-msa-edu | 90 / 163 | 20 / 25 | 191 / 270 | 137 / 173 | 33 / 56 |
-| eGovFramework/egovframe-web-sample | 5 / 6 | 1 / 1 | 5 / 5 | 8 / 8 | 2 / 2 |
+| eGovFramework/egovframe-web-sample | 5 / 6 | 2 / 2 | 5 / 5 | 8 / 8 | 2 / 2 |
 | nexacro-spring/nexacro-sample-egov | 10 / 21 | 5 / 5 | 46 / 46 | 7 / 7 | 4 / 30 |
 | naver/ngrinder | 30 / 124 | 7 / 9 | 92 / 114 | 63 / 69 | 0 / 19 |
 

@@ -192,7 +192,7 @@ export function emptyWebStats() {
     // or a page nobody serves, whose links are nobody's calls.
     templates: {
       files: 0, byEngine: {}, rendered: 0, unrendered: 0, includes: 0,
-      views: 0, viewNames: 0, redirects: 0, unresolvedViews: 0,
+      views: 0, viewNames: 0, redirects: 0, unresolvedViews: 0, imports: 0,
       // View names that resolved to no template this run read, counted by
       // OCCURRENCE. `viewNames` counts occurrences too and `byKind.page` counts
       // distinct pages, so the two can never be subtracted from one another:

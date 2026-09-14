@@ -181,7 +181,7 @@ export function goldenSummaryOf({ goldenDir, g, pack, profile }) {
  * a `-rejected` directory and leaving the certified one where it was (§7.2 — a
  * failed run never mixes with the good snapshot).
  */
-export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt }) {
+export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt, evidenceFiles = [] }) {
   const { calibrated, stateDir, calibrationDir, goldenDir, baselineFile, gateStateFile, receiptFile } = stateFiles(resolved, out);
 
   const sqlStats = sqlLaneTallies(lineage);
@@ -196,6 +196,7 @@ export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineag
   const pin = pinOf({
     commit: base?.commit ?? null, dirty: base?.dirty === true,
     selection: selectionRel, optOuts, profileDigest, catalogDigest,
+    evidence: evidenceFiles.map(([kind, f]) => `${kind}:${sha256File(f)}`),
   });
   const enginePrintNow = runningEnginePrint();
 

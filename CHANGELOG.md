@@ -10,6 +10,52 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **Two eGovFrame applications checked against what ran.** The web sample and the
+  enterprise business template were built, run under the OpenTelemetry Java agent
+  and driven in a headless browser. The web sample reaches **RUNTIME_PASS**: every
+  route and every statement the run exercised is what the pack says, and the seven
+  screen-to-route pairs the browser recorded are all `form-submit` edges the pack
+  already had. The business template is **GOLDEN_FAIL** by one route in 107
+  (`/EgovPageLink.do`, whose view name comes from a list by index), with 70 of 70
+  statements right. docs/measured.md has the numbers, and
+  docs/setup/runtime-evidence.md the recipe.
+- **The key a service asks a generator for.** A call on a field injected by the
+  name of an `EgovTableIdGnrServiceImpl` bean, to a `getNext…Id` method, reaches
+  the table that bean advances, through the two statements the class runs, rule
+  `egov-id-generator`. Only generators a field asks for produce statements.
+- **A page that imports a route runs it in its own request.** `<c:import url>` and
+  a route-naming `<jsp:include page>` in a rendered page, or in a template it
+  includes, give the rendering handler a SOUND_SET call onto that route, rule
+  `template-import`.
+
+### Fixed
+
+- **A table named in two cases is one table** when a trace is compared with the
+  pack, and a golden case labels it in the pack's spelling.
+- **A DAO's SQL joins the statement the DAO binds**, through its `IMPLEMENTS_STMT`
+  edge, narrowed by the tables the run read when it binds several.
+- **An id that already starts with its namespace is not prefixed again**, as
+  MyBatis keys it: 112 statements of the business template and 43 of the common
+  components bound nothing before.
+- **`cascade otel-methods` says a MyBatis mapper needs the agent's MyBatis
+  switch** (`-Dotel.instrumentation.mybatis.enabled=true`), without which no
+  mapper method has a span.
+- **A browser recording of a server-rendered app**: a request that opens a page is
+  placed on the page its Referer names, one a redirect sent and one typed in the
+  address bar on none, `;jsessionid=` is not part of a path, and a page is known
+  by every route that renders it.
+- **A trace or a recording is part of the calibration pin**, so adding one is a
+  REPIN. A pack built without one keeps its pin.
+
+### Changed
+
+- **Measured over the corpus**, the three eGovFrame rows rise (business template
+  endpoints reaching a statement 163 -> 188 of 219, screens reaching a table
+  73 -> 77 of 84) and nothing else moves. The sixteen registered pack digests are
+  identical. The web worker is `webfacts/12`.
+
 ## [0.8.6] - 2026-09-14
 
 Older form spellings name their form, a router declared with its type is a

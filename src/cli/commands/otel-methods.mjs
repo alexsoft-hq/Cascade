@@ -34,9 +34,27 @@ export function run(ctx) {
       + 'and no method that reaches a statement, so there is no caller for a trace to see\n');
     process.exit(0);
   }
+  sayWhatToPass(inc);
+  process.exit(0);
+}
+
+/** What the line holds, and how to hand it to the agent. */
+function sayWhatToPass(inc) {
   process.stderr.write(`${inc.methodCount} method(s) in ${inc.classCount} class(es): `
     + `${inc.handlers} route handler(s) and ${inc.statementReachers} method(s) that reach a statement. `
     + 'Pass it to the agent as -Dotel.instrumentation.methods.include=<this line>, quoted, and run once with traffic. '
     + 'See docs/setup/runtime-evidence.md\n');
-  process.exit(0);
+  sayMapperMethods(inc.mapperMethods);
+}
+
+/**
+ * THE SWITCH A MyBatis PROJECT ALSO NEEDS (RM62). Measured on the eGovFrame web
+ * sample: with the method list alone, all six statements came back attached to
+ * the service method above them and none to a statement of the pack.
+ */
+function sayMapperMethods(count) {
+  if (!(count > 0)) return;
+  process.stderr.write(`${count} of them are MyBatis mapper methods. A mapper is an interface answered by a proxy built at run time, `
+    + 'so naming its methods gives no span: also pass -Dotel.instrumentation.mybatis.enabled=true, which is off by default, '
+    + 'or every statement of this pack comes back matched to the service above it and to no statement\n');
 }

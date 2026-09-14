@@ -15,6 +15,8 @@
 // modules in this directory. It builds an object of zeroes and hands it over;
 // the steps fill it in as they go. It imports nothing.
 
+import { emptyIdGeneratorCensus } from './idgnr.mjs';
+
 
 /**
  * WHY A CALL IS STILL UNRESOLVED, in the four words a reader can act on.
@@ -134,6 +136,9 @@ function emptyKoreanMarketCensus() {
       sites: 0, narrowed: 0, notAnInterface: 0, typeNotRead: 0, noImplementor: 0,
       unknownName: 0, ambiguousName: 0, notAnImplementor: 0, transactionBoundary: 0,
     },
+    // The eGovFrame table id generator (RM62): the calls that allocate a key,
+    // and how many of them reached the table the bean advances.
+    idGenerators: emptyIdGeneratorCensus(),
   };
 }
 

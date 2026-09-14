@@ -1284,6 +1284,19 @@ A `redirect:` or a `forward:` is not a page at all. It names a route of this
 same application, so it becomes `symbol --CALLS_HTTP--> endpoint` (GET, rule
 `view-redirect`), graded by the route match like any other call.
 
+**A page that imports a route runs it inside its own request.**
+`<c:import url="/sym/mms/EgovHeader.do"/>` is not a link: the container runs that
+route while it renders this page and writes the output in place, and a
+`<jsp:include page>` that names a route rather than a template is the same. So the
+handler that renders the page gets `symbol --CALLS_HTTP--> endpoint` onto each
+imported route, rule `template-import`, graded SOUND_SET by the route match, for
+imports written in the page or in any template it includes. A page's links stay
+off the walk, because they are the next request; an import is this one. Measured
+on the eGovFrame enterprise business template: 70 pages import the header, the
+footer and the left menu, 398 import edges in all, and a run of its list screens
+read the menu tables on 20 of the 26 routes it exercised, which the pack did not
+reach until this rule.
+
 A page's RENDERS edges are its own code and what it pulls in:
 
 - **EXACT**, rule `template-own`, onto every function of the page's inline
@@ -1599,7 +1612,25 @@ the page each one belongs to). Firefox and Edge write the same format.
   dropped: a recording that lands nowhere is usually a prefix nobody declared.
 - A page whose path matches no screen the source declares becomes a screen of its
   own, with `source: "har"`, `observed: true` and no RENDERS edge, because no
-  source line says which component it mounts.
+  source line says which component it mounts. A page a controller renders is
+  matched by **every** route that renders it (`paths` on the screen node), so the
+  edit form of a server-rendered app is one screen whether `/addView.do` or
+  `/editView.do` opened it.
+- A path parameter is not part of the route: a container that cannot set a
+  cookie writes the session into the address (`/list.do;jsessionid=…`), and it is
+  read as `/list.do`.
+- **Which screen sent a request.** A request made inside a page (a `fetch`, an
+  XHR) belongs to the page it was made on, which is what the HAR's `pageref`
+  says. A request that OPENS a page (an HTML response or a redirect) does not:
+  the HAR files it under the page it opens, and the page that sent it is the one
+  its **Referer** names. A server-rendered app sends almost everything that way,
+  as a link or a form submit, so there the Referer is the only place the sender is
+  written down. A request a redirect sent (`302` then the `redirectURL`) and a
+  page opened with no Referer (typed, bookmarked) are placed on no screen, and
+  counted as `followedRedirects` and `openedByAddress`. Measured on the eGovFrame
+  web sample, driven through both of its screens in a browser: seven
+  screen-to-route pairs were observed, and every one is a `form-submit` edge the
+  static analysis already had.
 
 ### What RUNTIME_ONLY means
 
@@ -1617,7 +1648,8 @@ lastSeen, methods}`. That grade sits below the floor of **every** query mode, so
 `observed: true` lands on the screen node and on the endpoint node, and on the
 rows of `flow`, `browse kind=screen` and `screen_impact` that name them. The
 census is on `meta.laneStats.har`: `{files, entries, matched, unmatched, assets,
-pagesWithoutScreen, pairs, screensObserved, endpointsObserved, unmatchedPaths}`.
+pagesWithoutScreen, sentByReferer, followedRedirects, openedByAddress, pairs,
+screensObserved, endpointsObserved, unmatchedPaths}`.
 
 ## What the generality gate measures
 

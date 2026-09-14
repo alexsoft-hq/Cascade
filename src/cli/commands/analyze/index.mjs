@@ -122,7 +122,7 @@ function factsOf(ctx, prepared, tmpDir) {
     if (!lanes.includes('sql')) lanes.push('sql');
   }
   lineage = [...lineage, ...nativeQueryLineage({
-    javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runners, diagnostics,
+    javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runners, diagnostics, discovery: prepared.discovery,
   })];
   const { runJava, runJpa, runMp } = whichLanesAssemble(profile, result, javaSrc);
   const { mpOpts, fragmentLineage } = wrapperFragmentLineage({
@@ -233,7 +233,10 @@ function certify(ctx, prepared, facts) {
   const {
     calibrated, verdict, red, gate, gateState, goldenSummaryDoc, overrideOf, enginePrintNow, pin, metrics,
     profileDigest, catalogDigest, baseline, stateDir, calibrationDir, baselineFile, gateStateFile, receiptFile,
-  } = runGate(ctx, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt });
+  } = runGate(ctx, {
+    g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt,
+    evidenceFiles: [...prepared.harFiles.map((f) => ['har', f]), ...prepared.otelFiles.map((f) => ['otel', f])],
+  });
   const { writeDir, writeIndexFile, routesIndex } = writeArtifacts({
     g, pack, result, out, red, calibrated, gate, verdict, gateState, overrideOf, enginePrintNow, pin, metrics,
     profileDigest, catalogDigest, baseline, profile, stateDir, calibrationDir, baselineFile, gateStateFile,

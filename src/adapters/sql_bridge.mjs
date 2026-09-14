@@ -29,7 +29,13 @@ export function columnKey(schema, table, column) {
  * so an empty namespace is the bare id, not a key that starts with a dot.
  */
 export function statementKey(namespace, id) {
-  return namespace ? `${namespace}.${id}` : String(id);
+  // MyBatis does not prefix an id that already starts with its own namespace
+  // (`MapperBuilderAssistant.applyCurrentNamespace`): `<mapper namespace="loginDAO">`
+  // with `<select id="loginDAO.actionLogin">` is the statement a DAO calls as
+  // "loginDAO.actionLogin". Measured on the eGovFrame business template, 112 of
+  // 1 435 statements are written that way.
+  if (!namespace) return String(id);
+  return String(id).startsWith(`${namespace}.`) ? String(id) : `${namespace}.${id}`;
 }
 
 /**

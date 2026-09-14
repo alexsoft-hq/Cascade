@@ -70,7 +70,7 @@ import {
   runDispatchToFixpoint, CALL_RULES, CALL_RULE_BASIS,
 } from './java/calls.mjs';
 import {
-  bindStatements, bindStatementIds, mapperOwnersOf, markTransactions, registerMethodSymbols,
+  bindStatements, bindNamedStatements, mapperOwnersOf, markTransactions, registerMethodSymbols,
 } from './java/persistence.mjs';
 import {
   classifyGeneratedTypes, duplicateFqnCensus, emptyJavaStats, pathGlobMatcher, UNRESOLVED_REASONS,
@@ -261,7 +261,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
   // ---- the last hop, and the transaction boundaries -----------------------
   registerMethodSymbols(ctx);
   bindStatements(ctx, mapperOwnersOf(ctx));
-  bindStatementIds(ctx); // …and the statement a DAO names outright (RM55)
+  bindNamedStatements(ctx, opts.idGenerators); // …and the SQL no mapper declares (RM55, RM62)
   markTransactions(ctx);
   return stats;
 }

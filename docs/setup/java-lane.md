@@ -205,7 +205,13 @@ public class CmmnCodeManageDAO extends EgovAbstractMapper {
 That literal **is** the key MyBatis looks the statement up by at run time, and
 the mapper XML declares the same key as its `namespace` plus the statement's
 `id`. There is nothing between the two to resolve, so the edge is EXACT, with
-`evidence.rule` `mybatis-statement-id`.
+`evidence.rule` `mybatis-statement-id`. An `id` that already starts with the
+namespace is not prefixed again, which is what MyBatis itself does
+(`MapperBuilderAssistant.applyCurrentNamespace`): `<mapper namespace="loginDAO">`
+with `<select id="loginDAO.actionLogin">` is the statement `loginDAO.actionLogin`.
+Measured, 112 of the 1,435 statements of the eGovFrame enterprise business
+template and 43 of the common components are written that way, and until this was
+read their DAO calls bound nothing.
 
 This is the whole persistence layer of eGovFrame, which is the framework Korean
 public sector projects are required to build on: 1,288 call sites in
@@ -486,6 +492,38 @@ two into a screen. See [the web lane](web-lane.md) for the page end of it.
   which is why the edge is SOUND_SET and its evidence says so.
 - Reflection, AOP proxies, and runtime wiring are out of scope (that is the
   `RUNTIME_ONLY` axis, not built).
+
+### The key a service asks a generator for
+
+An eGovFrame service does not number its own rows. It asks a bean:
+
+```java
+@Resource(name = "egovIdGnrService")
+private EgovIdGnrService egovIdGnrService;
+...
+String id = egovIdGnrService.getNextStringId();
+```
+
+The bean is an `EgovTableIdGnrServiceImpl` declared in a Spring XML, and it hands
+the key out by reading and advancing a row of its own table, so the service reads
+and writes that table and no mapper says so. A real run of the eGovFrame web
+sample recorded it: `POST /addSample.do` touched `SAMPLE` and `IDS`, and the pack
+knew only `SAMPLE`.
+
+So the lane reads the bean (its `name` or `id`, and the `table`, `tableName`,
+`tableNameFieldName` and `nextIdFieldName` properties, with the class's own
+defaults `ids`, `id`, `table_name` and `next_id` where the bean sets none, read off
+the class file of `egovframe-rte-fdl-idgnr` 5.0.1), writes the two statements the
+class runs through the SQL lane like any other statement
+(`SELECT next_id FROM IDS WHERE table_name = ? FOR UPDATE` and
+`UPDATE IDS SET next_id = ? WHERE table_name = ?`), and binds a call on a field
+injected by that bean's name, to one of the `getNext…Id` methods, to a symbol of
+that bean, rule `egov-id-generator`, SOUND_SET. Each bean has its own symbol: the
+interface method every generator shares would otherwise hand every generator's
+table to every caller. A sequence or UUID generator touches no table and is not
+read. Measured: the common components declare 115 generators and bind 116 of
+the 119 calls that ask one by an injected field, and the business template
+declares 111 and binds all 9, every one onto `COMTECOPSEQ` or `IDS`.
 
 ## JPA / Spring Data
 

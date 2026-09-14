@@ -34,6 +34,7 @@ export const PAGE_RENDERS_BASIS = Object.freeze({
   view: 'the handler returns this view NAME as a literal, and the view resolver joins its configured prefix and suffix onto that literal to find the file. The name is the resolver\'s exact input, so nothing here was matched or guessed',
   constant: 'the handler returns a `static final String` its own class declares, and the field is initialised with this literal on the line above. Both are in one file, so the name is read rather than resolved, and it is the resolver\'s exact input like any other literal',
   helper: 'the handler returns a call to a private method of its own class, and every return of that method is a literal or one of the class\'s own constants. Both are in one file and the method is read one level deep, so a return inside it that is itself a call would have left the page unnamed rather than guessed',
+  import: 'the page this handler renders imports another route of this application while it renders (`<c:import url>` or a `<jsp:include page>` that names a route), in its own markup or in a template it includes. The container runs that route inside the same request, so what that route reads is read by this one. Matched against the routes this pack serves like any other call',
   redirect: 'the handler returns `redirect:` or `forward:` with a path, which sends the browser (or the container) to another route of this same application. It is a call onto that route, matched against the routes this pack serves like any other call',
 });
 
@@ -268,6 +269,45 @@ function placeRedirect({ symbol, view, g, nodesToAdd, edges, stats, matchUrl }) 
   }
 }
 
+/**
+ * THE ROUTES A RENDERED PAGE RUNS INSIDE ITS OWN REQUEST (RM62), as calls of
+ * the handler that renders it. The page's links are the NEXT request and stay
+ * off the walk; an import is this one, so it is on it.
+ */
+function placeImports({ symbol, file, templatesByFile, includeClosure, g, edges, stats, matchUrl, placed, ownPaths }) {
+  if (!g.nodes.has(symbol)) return;
+  for (const from of [file, ...includeClosure(file).keys()]) {
+    for (const imp of templatesByFile.get(from)?.imports ?? []) {
+      const full = normalizeUrl(imp.url);
+      if (!namesARoute(full)) continue;
+      const found = matchUrl(full, 'GET');
+      for (const r of found.routes.slice().sort((a, b) => cmp(a.id, b.id))) {
+        if (placed.has(`${symbol} ${r.id}`) || ownPaths.has(g.nodes.get(r.id)?.path)) continue;
+        placed.add(`${symbol} ${r.id}`);
+        stats.templates.imports += 1;
+        edges.push({
+          from: symbol, to: r.id, type: 'CALLS_HTTP', grade: 'SOUND_SET',
+          evidence: {
+            rule: 'template-import', basis: PAGE_RENDERS_BASIS.import, kind: imp.kind, template: from,
+            url: { written: imp.written, template: full }, match: found.how,
+            ...(found.routes.length > 1 ? { candidates: found.routes.length } : {}),
+          },
+        });
+      }
+    }
+  }
+}
+
+/** Which (handler, route) import edges one build has placed, so a pair is one edge. */
+const PLACED = new WeakMap();
+
+/** A rendered page's RENDERS_PAGE edge, and the routes it imports inside the same request. */
+function renderAndImport({ symbol, id, name, view, file, t, pageEdges, templatesByFile, includeClosure, g, edges, stats, matchUrl, paths }) {
+  if (g.nodes.has(symbol)) pageEdges.push(renderEdge(symbol, id, name, view, file, t));
+  if (!PLACED.has(edges)) PLACED.set(edges, new Set());
+  placeImports({ symbol, file, templatesByFile, includeClosure, g, edges, stats, matchUrl, placed: PLACED.get(edges), ownPaths: new Set(paths) });
+}
+
 /** The screen node one rendered view name produces, the first time that name is seen. */
 function pageNodeOf(name, file, engine, { pathRule, codeRegex, codeLength }) {
   const segments = name.split('/').filter((x) => x !== '');
@@ -339,7 +379,7 @@ function renderEdge(symbol, id, name, view, file, t) {
  */
 export function buildPageScreens({
   g, viewRecords, templatesByFile, templateByName, screenNodes, nodesToAdd, edges,
-  stats, matchUrl, axis,
+  stats, matchUrl, axis, includeClosure = () => new Map(),
 }) {
   const pageEdges = [];
   const handlersOf = new Map(); // screen id -> the symbols that render it
@@ -381,7 +421,7 @@ export function buildPageScreens({
       node.declaredAt.push({ file: v.file, line: v.line ?? null });
       if (!handlersOf.has(id)) handlersOf.set(id, new Set());
       handlersOf.get(id).add(symbol);
-      if (g.nodes.has(symbol)) pageEdges.push(renderEdge(symbol, id, name, view, file, t));
+      renderAndImport({ symbol, id, name, view, file, t, pageEdges, templatesByFile, includeClosure, g, edges, stats, matchUrl, paths });
     }
   }
   stats.templates.viewNamesUnplaced = [...unresolvedViews.values()].reduce((n, x) => n + x, 0);

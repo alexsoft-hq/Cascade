@@ -296,7 +296,7 @@ function unescapeXml(s) {
  * `<bean>` elements so an INNER bean does not end its parent early.
  *
  * @param {string} text
- * @returns {{className:string, id:(string|null), props:Map<string,string>, line:number}[]}
+ * @returns {{className:string, id:(string|null), name:(string|null), props:Map<string,string>, line:number}[]}
  */
 export function springBeansOf(text) {
   // A COMMENTED-OUT BEAN IS NOT A BEAN. Measured on nexacro-sample-egov, whose
@@ -335,7 +335,10 @@ export function springBeansOf(text) {
         if (first) props.set(name, unescapeXml(first[1].trim()));
       }
     }
-    out.push({ className, id: attrs.get('id') ?? null, props, line: lineAt(body, m.index) });
+    // `name` is the other way a bean is named, and the one eGovFrame writes: its
+    // first alias is the name a `@Resource(name = …)` asks the container for.
+    const alias = (attrs.get('name') ?? '').split(/[,;\s]+/).find((a) => a !== '') ?? null;
+    out.push({ className, id: attrs.get('id') ?? null, name: alias, props, line: lineAt(body, m.index) });
   }
   return out;
 }
@@ -410,6 +413,55 @@ export function findXmlViewResolvers(files) {
     || cmp(a.file, b.file) || (a.line - b.line));
   return out;
 }
+
+/**
+ * THE eGovFrame TABLE ID GENERATORS a Spring bean XML declares (RM62).
+ *
+ * `EgovTableIdGnrServiceImpl` hands out the next key for a table by reading and
+ * advancing a row of its own table, so every service that asks it for an id
+ * reads and writes that table. The SQL it runs is fixed by the class, and the
+ * table and column names are its properties. The defaults below are the
+ * initial values of those fields in `egovframe-rte-fdl-idgnr` 5.0.1, read off
+ * the class file, and a record says for each name whether the bean set it.
+ * A sequence or UUID generator touches no table and yields no record.
+ *
+ * @param {{path:string, text:string}[]} files
+ * @returns {{bean:string, className:string, table:string, key:string,
+ *            keyColumn:string, nextIdColumn:string, from:object, file:string, line:number}[]}
+ *          sorted by bean name, then file
+ */
+export function findIdGenerators(files) {
+  const out = [];
+  for (const file of files ?? []) {
+    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
+    if (!looksLikeSpringBeansXml(file.text)) continue;
+    for (const bean of springBeansOf(file.text)) {
+      if (!/(?:^|\.)EgovTableIdGnrServiceImpl$/.test(bean.className)) continue;
+      const name = bean.name ?? bean.id;
+      if (name === null) continue;
+      const prop = (key, fallback) => {
+        const v = bean.props.get(key);
+        return typeof v === 'string' && v.trim() !== '' ? [v.trim(), 'bean'] : [fallback, 'default'];
+      };
+      const [table, tableFrom] = prop('table', ID_GENERATOR_DEFAULTS.table);
+      const [key, keyFrom] = prop('tableName', ID_GENERATOR_DEFAULTS.tableName);
+      const [keyColumn, keyColumnFrom] = prop('tableNameFieldName', ID_GENERATOR_DEFAULTS.tableNameFieldName);
+      const [nextIdColumn, nextIdFrom] = prop('nextIdFieldName', ID_GENERATOR_DEFAULTS.nextIdFieldName);
+      out.push({
+        bean: name, className: bean.className, table, key, keyColumn, nextIdColumn,
+        from: { table: tableFrom, key: keyFrom, keyColumn: keyColumnFrom, nextIdColumn: nextIdFrom },
+        file: file.path, line: bean.line,
+      });
+    }
+  }
+  out.sort((a, b) => cmp(a.bean, b.bean) || cmp(a.file, b.file) || (a.line - b.line));
+  return out;
+}
+
+/** The initial field values of `EgovTableIdGnrServiceImpl`, egovframe-rte-fdl-idgnr 5.0.1. */
+export const ID_GENERATOR_DEFAULTS = Object.freeze({
+  table: 'ids', tableName: 'id', tableNameFieldName: 'table_name', nextIdFieldName: 'next_id',
+});
 
 /** Which engine one resolver bean renders with: its suffix first, then its classes. */
 function xmlViewEngineOf(bean, suffix) {

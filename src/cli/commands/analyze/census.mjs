@@ -333,6 +333,7 @@ export function sayMpLane(mpStats) {
 export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   let laneStats = jstats;
   sayJavaLane(jstats);
+  sayIdGenerators(jstats.idGenerators);
   if (runJpa) {
     laneStats = { ...jstats, jpa: jpaStats };
     sayJpaLane(jpaStats);
@@ -342,6 +343,19 @@ export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
     sayMpLane(mpStats);
   }
   return laneStats;
+}
+
+/**
+ * THE KEYS A SERVICE ASKS A GENERATOR FOR (RM62). Said only where a Spring XML
+ * declares a table id generator, because only there can a call allocate a key
+ * from a table no mapper names.
+ */
+function sayIdGenerators(ig) {
+  if (!ig || ig.declared === 0) return;
+  process.stderr.write(`Java lane: ${ig.declared} table id generator bean(s) declared, ${ig.sites} call(s) ask one for a key, `
+    + `${ig.bound} bound to the table the bean advances`
+    + `${ig.notABean > 0 ? `, ${ig.notABean} ask a bean name no generator has` : ''}`
+    + `${ig.noStatement > 0 ? `, ${ig.noStatement} whose generator SQL did not come back from the SQL lane` : ''}\n`);
 }
 
 /**
@@ -396,6 +410,7 @@ function sayNavigationsAndPages(webBridgeStats) {
     process.stderr.write(`Web lane: ${tp.files} template(s) (${Object.entries(tp.byEngine).sort().map(([e, n]) => `${n} ${e}`).join(', ')}), `
       + `${tp.rendered} of them rendered by a handler or pulled into one, ${tp.unrendered} named by nothing; `
       + `${tp.views} handler(s) name a view (${tp.viewNames} view name(s), ${tp.redirects} redirect(s), `
+      + `${tp.imports ?? 0} route(s) a rendered page imports inside its own request, `
       + `${tp.unresolvedViews} return(s) this engine could not read)\n`);
     for (const u of (tp.unresolvedViewNames ?? []).slice(0, 5)) {
       process.stderr.write(`  [warn] VIEW_NAME_UNRESOLVED ${u.name} (${u.count} handler(s)): no template under a declared template root answers to that name, so that page is not here\n`);
@@ -453,6 +468,10 @@ export function sayHarLane(harStats) {
     + `${harStats.matched} matched a route this pack serves, ${harStats.unmatched} matched none, ${harStats.assets} static asset(s); `
     + `${harStats.pairs} screen-to-route pair(s) observed over ${harStats.screensObserved} screen(s) and ${harStats.endpointsObserved} route(s), `
     + `${harStats.pagesWithoutScreen} page(s) the source never declared\n`);
+  if ((harStats.sentByReferer ?? 0) + (harStats.followedRedirects ?? 0) > 0) {
+    process.stderr.write(`HAR lane: ${harStats.sentByReferer ?? 0} request(s) that opened a page were placed on the page their Referer names, `
+      + `and ${harStats.followedRedirects ?? 0} a redirect sent and ${harStats.openedByAddress ?? 0} opened from the address bar were placed on no screen, because no screen sent them\n`);
+  }
   for (const u of harStats.unreadable) {
     process.stderr.write(`  [warn] HAR_UNREADABLE ${u.file}: ${u.reason}\n`);
   }

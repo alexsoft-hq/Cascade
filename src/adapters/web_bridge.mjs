@@ -239,7 +239,7 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
       g,
       viewRecords: templates.viewRecords,
       templatesByFile: templates.templatesByFile,
-      templateByName: templates.templateByName,
+      templateByName: templates.templateByName, includeClosure: templates.includeClosure,
       screenNodes,
       nodesToAdd,
       edges,

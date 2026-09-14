@@ -237,7 +237,12 @@ export function inventoryOf(graph) {
   // `src/core/overview.mjs` has counted mapper methods this way all along.
   const binders = new Set();
   for (const e of graph.edges ?? []) {
-    if (e.type === 'IMPLEMENTS_STMT' && typeof e.from === 'string' && e.from.startsWith('symbol:')) binders.add(strip(e.from));
+    if (e.type !== 'IMPLEMENTS_STMT' || typeof e.from !== 'string' || !e.from.startsWith('symbol:')) continue;
+    // A key generator's symbol (RM62) binds the SQL a class in a jar runs. No
+    // span names it and no reviewer would label it a mapper method, so it is not
+    // in the pool a `method -> statement` case is drawn from.
+    if (e.evidence?.rule === 'egov-id-generator') continue;
+    binders.add(strip(e.from));
   }
   inv.mapperMethods = [...binders];
   for (const k of Object.keys(inv)) inv[k].sort();

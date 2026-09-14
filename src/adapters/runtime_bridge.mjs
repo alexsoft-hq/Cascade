@@ -137,6 +137,57 @@ export function tablesInSql(sql) {
   return [...out].sort();
 }
 
+/**
+ * THE PACK'S OWN SPELLING of every table it holds, keyed by the name folded to
+ * lower case, whole and by its last segment.
+ *
+ * An unquoted SQL identifier names the same table whatever its case: Oracle and
+ * HSQLDB fold it up, PostgreSQL down, and a mapper written `UPDATE SAMPLE` is
+ * the table the run reports as `sample`. The trace reader folds to lower case
+ * because it cannot know the schema's convention. The pack can, so a name read
+ * off a span is written the way the pack writes it before anything compares it.
+ *
+ * @param {import('../core/graph.mjs').Graph} g
+ * @returns {Map<string, string[]>}
+ */
+export function tableSpellings(g) {
+  const out = new Map();
+  const add = (key, spelled) => {
+    if (!out.has(key)) out.set(key, []);
+    if (!out.get(key).includes(spelled)) out.get(key).push(spelled);
+  };
+  for (const n of g.nodes.values()) {
+    if (n.kind !== 'table' || typeof n.id !== 'string' || !n.id.startsWith('table:')) continue;
+    const spelled = n.id.slice('table:'.length);
+    add(spelled.toLowerCase(), spelled);
+    const last = spelled.slice(spelled.lastIndexOf('.') + 1);
+    if (last !== spelled) add(last.toLowerCase(), spelled);
+  }
+  return out;
+}
+
+/** The spellings of one graph, built once however many observations ask. */
+const SPELLINGS = new WeakMap();
+function spellingsOf(g) {
+  if (!SPELLINGS.has(g)) SPELLINGS.set(g, tableSpellings(g));
+  return SPELLINGS.get(g);
+}
+
+/**
+ * One table name read off a span, in the pack's spelling when exactly one table
+ * of the pack answers to it, and as the run wrote it otherwise. Two tables that
+ * differ only in case, or in schema, are not merged by a guess.
+ */
+export function spelledTable(name, spellings) {
+  const folded = String(name).toLowerCase();
+  const whole = spellings.get(folded) ?? [];
+  if (whole.length === 1) return whole[0];
+  if (whole.length > 1) return name;
+  const last = folded.slice(folded.lastIndexOf('.') + 1);
+  const byLast = last === folded ? [] : (spellings.get(last) ?? []);
+  return byLast.length === 1 ? byLast[0] : name;
+}
+
 /** A span's UTC timestamp as ISO-8601, from an OTLP nanosecond string. */
 export function spanTimeIso(nanos) {
   if (nanos === null || nanos === undefined) return null;
@@ -617,6 +668,73 @@ export function readOtelTrace(text, opts = {}) {
  * @returns {object} the census (see `stats` below)
  */
 /**
+ * THE STATEMENT A METHOD SPAN'S SQL BELONGS TO, or why none is named.
+ *
+ * Two conventions bind a method to its SQL. A MyBatis mapper interface names its
+ * statement after itself (`x.UserMapper#find` runs `x.UserMapper.find`), and the
+ * id is read straight off the span. A DAO names it with a string
+ * (`insert("SysLog.logInsertSysLogSummary", vo)`), and the Java lane has already
+ * bound the method to that statement with an `IMPLEMENTS_STMT` edge. Measured on
+ * the eGovFrame business template: every one of 57 statement observations was a
+ * DAO method, and the first convention alone joined none of them.
+ *
+ * Through the edges, a method bound to one statement is that statement. One
+ * bound to several is narrowed by the tables the run's SQL named, compared
+ * without regard to case, and only one statement left is a match. Anything else
+ * is counted, never guessed.
+ *
+ * @returns {{id:(string|null), key:string}}
+ */
+export function statementOfObservation(g, o, spellings = spellingsOf(g)) {
+  const key = `${o.ownerType}.${o.method}`;
+  const byName = nodeId('statement', key);
+  if (g.nodes.has(byName)) return { id: byName, key };
+  const symId = symbolId(`${o.ownerType}#${o.method}`);
+  if (!g.nodes.has(symId)) return { id: null, key };
+  const bound = g.outEdges(symId).filter((e) => e.type === 'IMPLEMENTS_STMT').map((e) => e.to);
+  if (bound.length === 1) return { id: bound[0], key };
+  const ran = new Set((o.tables ?? []).map((t) => spelledTable(t, spellings).toLowerCase()));
+  const fits = bound.filter((sid) => {
+    const touched = g.outEdges(sid).filter((e) => e.type === 'EXECUTES').map((e) => e.to.slice('table:'.length).toLowerCase());
+    return ran.size > 0 && [...ran].every((t) => touched.includes(t));
+  });
+  return fits.length === 1 ? { id: fits[0], key } : { id: null, key: bound.length > 1 ? `${key} (${bound.length} bound statements, ${fits.length} fit the tables the run read)` : key };
+}
+
+/**
+ * The `observed` marks on NODES: a statement or a route the run reached, and the
+ * tables a statement's SQL named at run time, in the pack's own spelling.
+ */
+function writeNodeMarks(g, nodeMarks, stats) {
+  const spellings = tableSpellings(g);
+  for (const id of [...nodeMarks.keys()].sort()) {
+    const m = nodeMarks.get(id);
+    if (!g.nodes.has(id)) continue;
+    const n = g.nodes.get(id);
+    const tables = [...new Set([...m.tables].map((t) => spelledTable(t, spellings)))].sort();
+    // WHAT THE RUN TOUCHED AND THE SOURCE DID NOT. Recorded beside the
+    // statically derived tables, never instead of them, and compared without
+    // regard to case: `SAMPLE` in the mapper and `sample` in the span are one table.
+    const staticTables = n.kind === 'statement'
+      ? g.outEdges(id).filter((e) => e.type === 'EXECUTES').map((e) => e.to.slice('table:'.length).toLowerCase())
+      : [];
+    const extra = tables.filter((t) => {
+      const folded = t.toLowerCase();
+      return !staticTables.includes(folded) && !staticTables.some((st) => st.split('.').pop() === folded.split('.').pop());
+    });
+    g.addNode({
+      id,
+      observed: true,
+      observedCount: m.count,
+      ...(tables.length > 0 ? { observedTables: tables } : {}),
+    });
+    if (extra.length > 0) stats.tablesOnlyAtRunTime += extra.length;
+    if (n.kind === 'statement') stats.statementsObserved += 1;
+    if (n.kind === 'endpoint') stats.endpointsObserved += 1;
+  }
+}
+
+/**
  * WHAT A TRACE SAW, folded onto the graph's own edges and nodes. Nothing is
  * added to the graph here: this only counts, so the same observation seen in
  * three files is one mark with a count of three and three file names.
@@ -684,8 +802,8 @@ for (const rec of list) {
         noteUnmatched('statement', `(no mapper method) ${o.tables.join(', ') || '(no table read)'}`);
         continue;
       }
-      const stmtId = nodeId('statement', `${o.ownerType}.${o.method}`);
-      if (!g.nodes.has(stmtId)) { noteUnmatched('statement', `${o.ownerType}.${o.method}`); continue; }
+      const { id: stmtId, key: stmtKey } = statementOfObservation(g, o);
+      if (stmtId === null) { noteUnmatched('statement', stmtKey); continue; }
       stats.matched.statement += 1;
       markNode(stmtId, o.count, rec.file, o.tables);
       // The mapper method that runs it, so a reader looking at the CODE side
@@ -806,27 +924,7 @@ export function addRuntimeFacts(g, traces, opts = {}) {
     };
     stats.edgesObserved += 1;
   }
-  for (const id of [...nodeMarks.keys()].sort()) {
-    const m = nodeMarks.get(id);
-    if (!g.nodes.has(id)) continue;
-    const n = g.nodes.get(id);
-    const tables = [...m.tables].sort();
-    // WHAT THE RUN TOUCHED AND THE SOURCE DID NOT. Recorded beside the
-    // statically derived tables, never instead of them.
-    const staticTables = n.kind === 'statement'
-      ? g.outEdges(id).filter((e) => e.type === 'EXECUTES').map((e) => e.to.slice('table:'.length))
-      : [];
-    const extra = tables.filter((t) => !staticTables.includes(t) && !staticTables.includes(t.split('.').pop()));
-    g.addNode({
-      id,
-      observed: true,
-      observedCount: m.count,
-      ...(tables.length > 0 ? { observedTables: tables } : {}),
-    });
-    if (extra.length > 0) stats.tablesOnlyAtRunTime += extra.length;
-    if (n.kind === 'statement') stats.statementsObserved += 1;
-    if (n.kind === 'endpoint') stats.endpointsObserved += 1;
-  }
+  writeNodeMarks(g, nodeMarks, stats);
   for (const key of [...added.keys()].sort()) {
     const a = added.get(key);
     g.addEdge({
@@ -979,7 +1077,7 @@ function caseFold(packDigest) {
  * service, an actuator endpoint, a route added after this pack was built.
  */
 function foldRouteCases(rec, fold, ctx) {
-  const { routesByPath, allRoutes, stats, unmatched } = ctx;
+  const { routesByPath, allRoutes, stats, unmatched, spellings } = ctx;
   for (const row of rec.routeTables ?? []) {
     const hit = matchRoute(routesByPath, allRoutes, row.path, row.httpMethod);
     if (!hit) {
@@ -988,7 +1086,8 @@ function foldRouteCases(rec, fold, ctx) {
       unmatched.set(k, (unmatched.get(k) ?? 0) + 1);
       continue;
     }
-    fold.add('endpoint->tables', { endpoint: keyOf(hit.id) }, row.tables, {
+    const tables = [...new Set(row.tables.map((t) => spelledTable(t, spellings)))].sort();
+    fold.add('endpoint->tables', { endpoint: keyOf(hit.id) }, tables, {
       file: rec.file, spans: row.statementSpans, observed: row.requests, window: rec.window,
     });
     stats.routes += 1;
@@ -1018,8 +1117,9 @@ function foldStatementCases(rec, fold, ctx) {
       continue;
     }
     const member = `${o.ownerType}#${o.method}`;
-    const stmtId = nodeId('statement', `${o.ownerType}.${o.method}`);
-    if (!g.nodes.has(symbolId(member)) || !g.nodes.has(stmtId)) { note(member); continue; }
+    const found = statementOfObservation(g, o, ctx.spellings);
+    if (!g.nodes.has(symbolId(member)) || found.id === null) { note(member); continue; }
+    const stmtId = found.id;
     fold.add('method->statements', { symbol: member }, [keyOf(stmtId)], {
       file: rec.file, spans: o.count, observed: o.count, window: rec.window,
     });
@@ -1053,7 +1153,7 @@ export function otelGoldenCases(g, traces, opts = {}) {
   const unmatched = new Map();
   const unreadable = [];
   const { routesByPath, allRoutes } = servedRouteIndex(g);
-  const ctx = { g, routesByPath, allRoutes, stats, unmatched };
+  const ctx = { g, routesByPath, allRoutes, stats, unmatched, spellings: tableSpellings(g) };
   for (const rec of Array.isArray(traces) ? traces : []) {
     if (!rec || typeof rec !== 'object') continue;
     stats.files += 1;
@@ -1196,6 +1296,11 @@ export function otelMethodsInclude(g) {
     methodCount,
     handlers: [...handlers].filter((id) => kept.has(id)).length,
     statementReachers: [...reachers].filter((id) => kept.has(id)).length,
+    // MyBatis MAPPER methods (RM62). A mapper is an interface and the object
+    // that answers it is a proxy MyBatis builds at run time, so naming its
+    // methods to the agent produces no span. The agent's own MyBatis
+    // instrumentation names them, and it is off unless it is switched on.
+    mapperMethods: [...kept].filter((id) => g.nodes.get(id)?.mapperMethod === true).length,
   };
 }
 

@@ -100,23 +100,29 @@
   },
   "adapters/web/lib/forms.mjs": {
    "maxLines": 26,
-   "maxBranches": 25,
+   "maxBranches": 20,
    "longest": "jqueryFormCall",
-   "branchiest": "formElementName",
+   "branchiest": "jqueryFormCall",
    "functions": [
     "addressOf",
     "addressOf/1",
+    "callFormName",
     "elementUrlOf",
     "formActionAssignment",
     "formCall",
+    "formCreated",
+    "formCreated/1",
     "formElementIndex",
     "formElementName",
+    "formElementName/1",
     "formMethodAssignment",
     "formReceiverText",
     "formSubmitRecords",
     "inOrder",
     "inOrder/1",
+    "initOf",
     "jqueryFormCall",
+    "memberFormName",
     "methodOf",
     "mine",
     "push",
@@ -185,7 +191,9 @@
     "routerFactoryOf",
     "routerLinkRecords",
     "routerLinkRecords/1",
+    "routerLocalsOf",
     "routerModuleOf",
+    "routerTypeOf",
     "sameTag",
     "writtenOf"
    ]
@@ -406,16 +414,21 @@
    ]
   },
   "src/adapters/har_bridge.mjs": {
-   "maxLines": 45,
-   "maxBranches": 29,
-   "longest": "readHar",
+   "maxLines": 36,
+   "maxBranches": 18,
+   "longest": "readEntries",
    "branchiest": "readHar",
    "functions": [
     "addHarFacts",
     "cmp",
     "constructor",
+    "emptyHarStats",
+    "harEntryOf",
     "harIndex",
     "harIndex/1",
+    "harIndex/2",
+    "headerOf",
+    "headerOf/1",
     "isAssetPath",
     "isAssetPath/1",
     "makeMatchServed",
@@ -430,12 +443,16 @@
     "readHar",
     "readHar/1",
     "readHar/2",
+    "redirectTargetsOf",
     "requestPathOf",
     "requestPathOf/1",
+    "requestPathOf/2",
     "screenPathMatches",
     "screensOfPages",
     "screensOfPages/1",
     "screensOfPages/2",
+    "senderOf",
+    "senderOf/1",
     "writeHarPairs",
     "writeHarPairs/1",
     "writeHarPairs/2"
@@ -507,6 +524,27 @@
     "runDispatchToFixpoint"
    ]
   },
+  "src/adapters/java/idgnr.mjs": {
+   "maxLines": 35,
+   "maxBranches": 15,
+   "longest": "bindIdGenerators",
+   "branchiest": "bindIdGenerators",
+   "functions": [
+    "beanNameOf",
+    "bindIdGenerators",
+    "bindIdGenerators/1",
+    "bindIdGenerators/2",
+    "bindIdGenerators/3",
+    "bindIdGenerators/4",
+    "emptyIdGeneratorCensus",
+    "firstPerBean",
+    "firstPerBean/1",
+    "firstPerBean/2",
+    "generatorSymbol",
+    "idGeneratorStatements",
+    "namespaceOf"
+   ]
+  },
   "src/adapters/java/persistence.mjs": {
    "maxLines": 30,
    "maxBranches": 10,
@@ -514,6 +552,7 @@
    "branchiest": "sessionTypesOf",
    "functions": [
     "bareStatementIndex",
+    "bindNamedStatements",
     "bindStatementIds",
     "bindStatementIds/1",
     "bindStatements",
@@ -877,9 +916,6 @@
     "addRuntimeFacts/1",
     "addRuntimeFacts/2",
     "addRuntimeFacts/3",
-    "addRuntimeFacts/4",
-    "addRuntimeFacts/5",
-    "addRuntimeFacts/6",
     "attrValue",
     "attributesOf",
     "bucket",
@@ -902,6 +938,7 @@
     "foldObservations/4",
     "foldObservations/5",
     "foldRouteCases",
+    "foldRouteCases/1",
     "foldRouteTables",
     "foldRouteTables/1",
     "foldRouteTables/2",
@@ -924,6 +961,7 @@
     "otelMethodsInclude/1",
     "otelMethodsInclude/2",
     "otelMethodsInclude/3",
+    "otelMethodsInclude/4",
     "readOtelTrace",
     "readTraceForm",
     "resourceSpansOnLine",
@@ -931,7 +969,15 @@
     "servedRouteIndex",
     "spanFacets",
     "spanTimeIso",
-    "tablesInSql"
+    "spelledTable",
+    "tableSpellings",
+    "tablesInSql",
+    "writeNodeMarks",
+    "writeNodeMarks/1",
+    "writeNodeMarks/2",
+    "writeNodeMarks/3",
+    "writeNodeMarks/4",
+    "writeNodeMarks/4/1"
    ]
   },
   "src/adapters/sql_bridge.mjs": {
@@ -1040,6 +1086,7 @@
     "placeNavigations",
     "placeNavigations/1",
     "placeOne",
+    "routerReachedBy",
     "screenMatchPath",
     "screenMatchPath/1",
     "screensFor",
@@ -1289,6 +1336,7 @@
    "functions": [
     "sayDdlChoice",
     "sayHarLane",
+    "sayIdGenerators",
     "sayIdentity",
     "sayJavaLane",
     "sayJavaLane/1",
@@ -1598,12 +1646,14 @@
    ]
   },
   "src/cli/commands/otel-methods.mjs": {
-   "maxLines": 24,
+   "maxLines": 21,
    "maxBranches": 5,
    "longest": "run",
    "branchiest": "run",
    "functions": [
-    "run"
+    "run",
+    "sayMapperMethods",
+    "sayWhatToPass"
    ]
   },
   "src/cli/commands/pack.mjs": {
@@ -2223,6 +2273,7 @@
     "discoveryAnswer/5",
     "discoveryAnswer/6",
     "discoveryAnswer/7",
+    "discoveryAnswer/8",
     "discoveryCollections",
     "emptyDiscoveryCounts",
     "isTestPath",
@@ -3136,6 +3187,8 @@
     "findGatewayRoutes",
     "findGatewayRoutes/1",
     "findGatewayRoutes/2",
+    "findIdGenerators",
+    "findIdGenerators/1",
     "findServiceNames",
     "findServiceNames/1",
     "findViewResolvers",
@@ -3152,6 +3205,7 @@
     "normalizeKey",
     "pathPatterns",
     "pathPatterns/1",
+    "prop",
     "refuse",
     "relaxedKey",
     "resolvePlaceholder",
@@ -3162,6 +3216,7 @@
     "splitPatterns/1",
     "splitPatterns/2",
     "springBeansOf",
+    "springBeansOf/1",
     "springConfigEntries",
     "springConfigEntries/1",
     "springConfigEntries/2",

@@ -481,6 +481,34 @@ export function templateLinks(text) {
 }
 
 /**
+ * THE ROUTES A PAGE RUNS WHILE IT RENDERS (RM62).
+ *
+ * `<c:import url="/sym/mms/EgovHeader.do"/>` is not a link: the container runs
+ * that route inside the request that is rendering this page, and writes its
+ * output in place. An eGovFrame layout imports its header, footer and menu that
+ * way on every page, so every page's request reads the menu tables. A
+ * `<jsp:include page>` that names a route rather than a template is the same.
+ * An address with a host, a static asset and a template file are not routes.
+ *
+ * @param {string} text
+ * @param {string} engine
+ * @returns {{written:string, kind:string, url:string}[]}
+ */
+export function templateImports(text, engine) {
+  if (engine !== 'jsp') return [];
+  const src = String(text ?? '');
+  const out = [];
+  const add = (written, kind) => {
+    const url = templateUrlOf(written);
+    if (url === null || /\.(?:jspf?|tagx?|html?|xml)$/i.test(url)) return;
+    if (!out.some((e) => e.kind === kind && e.url === url)) out.push({ written: String(written).trim(), kind, url });
+  };
+  for (const m of src.matchAll(/<c:import\b[^>]*\burl\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) add(m[1] ?? m[2], 'c-import');
+  for (const m of src.matchAll(/<jsp:include\b[^>]*\bpage\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) add(m[1] ?? m[2], 'jsp-include');
+  return out;
+}
+
+/**
  * The templates one template pulls in, as written.
  *
  * JSP and FreeMarker resolve an include against the INCLUDING FILE's directory
@@ -598,6 +626,22 @@ function stripContextPath(records, isContextVar) {
   }
 }
 
+/** The templates one template includes, resolved to files under its template root. */
+function resolvedIncludesOf(text, tmpl, { fromDir, rootRel }) {
+  const includes = [];
+  for (const inc of templateIncludes(text, tmpl.engine)) {
+    const target = resolveIncludeName(inc.written, { fromDir, relativeTo: inc.relativeTo, suffix: tmpl.suffix });
+    if (target === null) continue;
+    includes.push({
+      written: inc.written,
+      kind: inc.kind,
+      name: target,
+      file: `${rootRel === '' ? '' : `${rootRel}/`}${target}${tmpl.suffix}`,
+    });
+  }
+  return includes;
+}
+
 /**
  * Everything one template file says, on top of what its inline scripts said.
  *
@@ -629,28 +673,18 @@ export function templateRecordsOf(a) {
 
   stripContextPath(records, isContextVar);
 
-  const includes = [];
-  for (const inc of templateIncludes(text, tmpl.engine)) {
-    const target = resolveIncludeName(inc.written, { fromDir, relativeTo: inc.relativeTo, suffix: tmpl.suffix });
-    if (target === null) continue;
-    includes.push({
-      written: inc.written,
-      kind: inc.kind,
-      name: target,
-      file: `${rootRel === '' ? '' : `${rootRel}/`}${target}${tmpl.suffix}`,
-    });
-  }
+  const includes = resolvedIncludesOf(text, tmpl, { fromDir, rootRel });
 
   const out = [];
   const forms = templateForms(text);
   const links = templateLinks(text);
-  out.push({
+  const imports = templateImports(text, tmpl.engine);  out.push({
     order: -0.5,
     line: 1,
     rec: {
       kind: 'template', file: relFile, line: 1,
       engine: tmpl.engine, root: rootRel, name, suffix: tmpl.suffix,
-      includes, contextVars,
+      includes, contextVars, ...(imports.length > 0 ? { imports } : {}),
       scripts: a.scripts ?? 0, forms: forms.length, links: links.length,
     },
   });

@@ -238,7 +238,8 @@ export function enginePrint(input) {
  *
  * @param {{commit:(string|null), dirty:boolean,
  *          selection:{ddl:(string|null), mapperDirs:string[], javaRoots:string[], sqlArgs?:string[]},
- *          optOuts?:string[], profileDigest:string, catalogDigest:(string|null)}} input
+ *          optOuts?:string[], profileDigest:string, catalogDigest:(string|null),
+ *          evidence?:string[]}} input  `evidence`: `<kind>:<sha256>` of every trace and recording read
  * @returns {{commit:(string|null), dirty:boolean, inputsDigest:string}}
  */
 export function pinOf(input) {
@@ -253,6 +254,12 @@ export function pinOf(input) {
     optOuts: [...(input.optOuts ?? [])].sort(),
     profileDigest: input.profileDigest ?? null,
     catalogDigest: input.catalogDigest ?? null,
+    // THE RECORDINGS (RM62). A trace or a browser recording is read into the
+    // pack, so a run with one analyzed something a run without it did not, and
+    // adding a trace is a REPIN rather than a nondeterminism. Written only when
+    // there is one, so the pin of every pack built without evidence is the one
+    // it already had.
+    ...(Array.isArray(input.evidence) && input.evidence.length > 0 ? { evidence: [...input.evidence].sort() } : {}),
   }));
   return {
     commit: typeof input.commit === 'string' && input.commit.length > 0 ? input.commit : null,

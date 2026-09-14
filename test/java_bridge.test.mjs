@@ -429,6 +429,8 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
       sites: 0, narrowed: 0, notAnInterface: 0, typeNotRead: 0, noImplementor: 0,
       unknownName: 0, ambiguousName: 0, notAnImplementor: 0, transactionBoundary: 0,
     },
+    // RM62: no Spring XML declared a table id generator, so nothing was bound.
+    idGenerators: { declared: 0, sites: 0, bound: 0, notABean: 0, noStatement: 0, repeated: 0 },
     inheritedMembers: { synthesized: 0, calls: 0, overapproximated: 0 },
     // The calls Spring makes and no line of source writes: nothing here carries
     // @ModelAttribute, so the rule followed nothing and skipped nothing.

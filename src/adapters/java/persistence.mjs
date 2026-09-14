@@ -23,6 +23,7 @@
 // what SQL a statement runs. It reads the statement NODES the SQL bridge already
 // put on the graph and matches them by name; the SQL is the SQL lane's business.
 
+import { bindIdGenerators } from './idgnr.mjs';
 import { nodeId } from '../../core/graph.mjs';
 import {
   cmp, memberToStatementKey, namespaceOfStatementKey, ownerOf, resolveInheritedField,
@@ -334,6 +335,16 @@ export function bindStatementIds(ctx) {
     .slice(0, STATEMENT_ID_SAMPLE_LIMIT);
 }
 
+
+/**
+ * THE SQL A METHOD REACHES WITHOUT A MAPPER DECLARING IT: the statement a DAO
+ * names by its string id (RM55), and the two statements an eGovFrame table id
+ * generator runs when a service asks it for a key (RM62).
+ */
+export function bindNamedStatements(ctx, idGenerators = []) {
+  bindStatementIds(ctx);
+  bindIdGenerators(ctx, idGenerators);
+}
 
 /** The @Transactional boundaries, marked on their own symbols. */
 export function markTransactions(ctx) {

@@ -110,6 +110,31 @@ petclinic 에서는 10 개 클래스의 32 개 메서드입니다. 큰 프로젝
 되는데, 셸이 감당하기는 하지만 `.properties` 파일이나 JVM 인자 파일에 넣는 편이
 읽기 편합니다.
 
+**MyBatis 매퍼에는 스위치가 하나 더 필요합니다.** 매퍼는 인터페이스이고, 실제
+호출은 MyBatis 가 실행 중에 만든 프록시가 받습니다. 그래서 메서드 이름을 에이전트에
+넘겨도 span 이 생기지 않습니다. 에이전트의 MyBatis 계측이 이 메서드들에 이름을
+붙이는데, 기본값이 꺼져 있습니다.
+
+```
+-Dotel.instrumentation.mybatis.enabled=true
+```
+
+pack 에 매퍼 메서드가 있으면 `otel-methods` 가 이 말을 해 줍니다. 전자정부 웹
+샘플에서 재 보니, 메서드 목록만 넘겼을 때는 statement 6 개가 모두 위의 서비스
+메서드에 붙고 statement 에는 하나도 붙지 않았습니다. 스위치를 켜니 6 개가 모두
+붙었습니다. statement id 로 MyBatis 를 부르는 DAO 클래스는 평범한 클래스라서
+메서드 목록만으로 충분합니다.
+
+목록이 길면 명령줄보다 에이전트 설정 파일로 넘기는 편이 쉽습니다. 컨테이너 시작
+스크립트(`catalina.sh`)는 `CATALINA_OPTS` 안의 `;` 와 `[` 를 셸 문법으로 읽기
+때문입니다.
+
+```
+-Dotel.javaagent.configuration-file=agent.properties
+```
+
+그 파일 안에 `otel.instrumentation.methods.include=<목록>` 을 적습니다.
+
 ### 3. 트래픽과 함께 한 번 실행하기
 
 ```
@@ -252,9 +277,22 @@ spring-petclinic 에서 위 실행의 결과입니다.
 **매칭되지 않음으로 셉니다.** 이 pack 이 한 번도 읽지 않은 심볼은 이 레인이 만들어
 낼 심볼이 아니기 때문입니다.
 
-**statement.** SQL 을 담은 span 은 그것이 돈 mapper 메서드에 귀속되고,
-`owner.method` statement 노드와 그리로 들어가는 `IMPLEMENTS_STMT` 엣지에 관측
-표시가 붙습니다. SQL 이 실제로 지목한 테이블은 노드에 `observedTables` 로
+**statement.** SQL 을 담은 span 은 그 SQL 을 실행한 메서드에 귀속되고, 두 가지
+방법으로 statement 에 붙습니다. 순서대로 봅니다.
+
+1. 메서드 이름을 딴 statement(`x.UserMapper#find` 는 `x.UserMapper.find`).
+   MyBatis 매퍼 인터페이스가 이렇게 키를 잡습니다.
+2. 그 메서드가 이미 `IMPLEMENTS_STMT` 엣지로 묶어 둔 statement.
+   `selectList("loginDAO.actionLogin")` 을 부르는 DAO 가 이렇게 키를 잡습니다.
+   묶인 statement 가 하나면 그것이고, 여럿이면 실행 중 SQL 이 지목한 테이블로
+   좁혀서 하나만 남을 때만 붙입니다.
+
+전자정부 기업업무 템플릿에서 재 보니 statement 관측이 전부 DAO 메서드였고, 첫 번째
+방법만으로는 57 건 중 하나도 붙지 않았습니다. 붙은 statement 노드와 그리로 들어가는
+`IMPLEMENTS_STMT` 엣지에 관측 표시가 붙습니다. span 에서 읽은 테이블 이름은 비교하기
+전에 pack 이 쓰는 표기로 바꿉니다. 따옴표 없는 SQL 식별자는 대소문자와 상관없이
+같은 테이블이고, 매퍼에 `UPDATE SAMPLE` 로 쓴 테이블이 HSQLDB span 에서는
+`sample` 로 나오기 때문입니다. SQL 이 실제로 지목한 테이블은 노드에 `observedTables` 로
 기록되는데, 정적으로 유도된 `EXECUTES` 엣지 **옆에** 놓이지 그것을 대신하지
 않습니다. 동적 SQL 이나 `@DS` 전환이 실행 시점에 고른 테이블은 보여 줄 발견이지
 적용할 정정이 아닙니다.
@@ -275,7 +313,10 @@ spring-petclinic 에서 위 실행의 결과입니다.
 트레이스 파일의 **내용 해시는 facts index 에 들어갑니다.** pack 의 다른 모든
 입력이 내용 주소로 다뤄지는 것과 같습니다. 그래서 pack 과 그것이 만들어진 캡처는
 어느 캡처를 주장하는지에 대해 어긋날 수 없습니다. 같은 트레이스는 언제나 같은
-pack 다이제스트를 냅니다.
+pack 다이제스트를 냅니다. 보정 게이트의 **pin** 에도 브라우저 기록과 함께
+들어갑니다. 트레이스를 더한 실행은 트레이스 없는 실행과 다른 것을 분석했으니,
+게이트는 이를 비결정성이 아니라 REPIN 으로 봅니다. 트레이스 없이 만든 pack 은
+원래 pin 을 그대로 유지합니다.
 
 ## 그다음에 보이는 것
 

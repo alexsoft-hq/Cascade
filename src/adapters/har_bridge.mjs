@@ -45,7 +45,11 @@ export function requestPathOf(url) {
   const scheme = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i.exec(s);
   if (scheme) s = s.slice(scheme[0].length);
   const cut = Math.min(...['?', '#'].map((c) => (s.indexOf(c) < 0 ? s.length : s.indexOf(c))));
-  return normalizeUrlPath(s.slice(0, cut));
+  // A PATH PARAMETER is not part of the route. A servlet container that cannot
+  // set a cookie writes the session into the address (`/list.do;jsessionid=…`),
+  // and it strips `;…` from every segment before it maps the request.
+  const path = s.slice(0, cut).split('/').map((seg) => (seg.includes(';') ? seg.slice(0, seg.indexOf(';')) : seg)).join('/');
+  return normalizeUrlPath(path);
 }
 
 /**
@@ -115,18 +119,8 @@ export function readHar(text, opts = {}) {
   }
   const entries = [];
   for (const e of log.entries) {
-    if (!e || typeof e !== 'object') continue;
-    const req = e.request && typeof e.request === 'object' ? e.request : null;
-    if (!req || typeof req.url !== 'string') continue;
-    entries.push({
-      pageref: typeof e.pageref === 'string' ? e.pageref : null,
-      method: typeof req.method === 'string' ? req.method.toUpperCase() : 'GET',
-      path: requestPathOf(req.url),
-      url: req.url,
-      mimeType: e.response && e.response.content && typeof e.response.content.mimeType === 'string'
-        ? e.response.content.mimeType : '',
-      at: typeof e.startedDateTime === 'string' ? e.startedDateTime : null,
-    });
+    const entry = harEntryOf(e);
+    if (entry !== null) entries.push(entry);
   }
   // THE PAGE'S OWN URL, which the HAR format does not state. `log.pages[]`
   // carries an id and a title and no address, so the address is read from the
@@ -145,6 +139,54 @@ export function readHar(text, opts = {}) {
     });
   }
   return { file, pages, entries, unreadable: null };
+}
+
+/** One HAR entry as this bridge reads it, or null when it carries no request URL. */
+function harEntryOf(e) {
+  if (!e || typeof e !== 'object') return null;
+  const req = e.request && typeof e.request === 'object' ? e.request : null;
+  if (!req || typeof req.url !== 'string') return null;
+  const res = e.response && typeof e.response === 'object' ? e.response : {};
+  return {
+    pageref: typeof e.pageref === 'string' ? e.pageref : null,
+    method: typeof req.method === 'string' ? req.method.toUpperCase() : 'GET',
+    path: requestPathOf(req.url),
+    url: req.url,
+    mimeType: res.content && typeof res.content.mimeType === 'string' ? res.content.mimeType : '',
+    status: Number.isInteger(res.status) ? res.status : 0,
+    redirectURL: typeof res.redirectURL === 'string' ? res.redirectURL : '',
+    referer: headerOf(req.headers, 'referer'),
+    at: typeof e.startedDateTime === 'string' ? e.startedDateTime : null,
+  };
+}
+
+/** The HAR lane's census, before any recording is read. */
+function emptyHarStats() {
+  return {
+    files: 0,
+    entries: 0,
+    matched: 0,
+    unmatched: 0,
+    assets: 0,
+    pagesWithoutScreen: 0,
+    // RM62: requests that opened a page, attributed to the page their Referer
+    // names, and requests a redirect sent, attributed to no screen.
+    sentByReferer: 0,
+    followedRedirects: 0,
+    openedByAddress: 0,
+    pairs: 0,
+    screensObserved: 0,
+    endpointsObserved: 0,
+    unmatchedPaths: [],
+    unreadable: [],
+  };
+}
+
+/** One request header by name, case-insensitive, or null. */
+function headerOf(headers, name) {
+  if (!Array.isArray(headers)) return null;
+  const h = headers.find((x) => x && typeof x.name === 'string' && x.name.toLowerCase() === name);
+  return h && typeof h.value === 'string' && h.value !== '' ? h.value : null;
 }
 
 /**
@@ -210,8 +252,16 @@ function harIndex(g) {
   allRoutes.sort();
   const screens = [];
   for (const n of g.nodes.values()) {
-    if (n.kind !== 'screen' || typeof n.path !== 'string') continue;
-    screens.push({ id: n.id, path: n.path });
+    if (n.kind !== 'screen') continue;
+    // A PAGE A HANDLER RENDERS (RM48) is reached by every route that renders
+    // it, and `paths` lists them: the register form of a server-rendered app is
+    // the same screen whether `/addSampleView.do` or `/updateSampleView.do`
+    // opened it.
+    const paths = new Set([
+      ...(typeof n.path === 'string' ? [n.path] : []),
+      ...(Array.isArray(n.paths) ? n.paths.filter((p) => typeof p === 'string') : []),
+    ]);
+    for (const path of paths) screens.push({ id: n.id, path });
   }
   screens.sort((a, b) => b.path.length - a.path.length || cmp(a.path, b.path));
   return { routesByPath, allRoutes, screens };
@@ -280,8 +330,57 @@ function screensOfPages(rec, screens, newScreens, g, stats) {
   return screenOfPage;
 }
 
+/**
+ * THE REQUESTS A REDIRECT SENT, by page and path. The browser follows a `302`
+ * on its own, so the request after it was sent by the server's answer and not
+ * by anything on a screen.
+ */
+function redirectTargetsOf(rec) {
+  const out = new Set();
+  for (const e of rec.entries) {
+    if (e.status >= 300 && e.status < 400 && e.redirectURL !== '') out.add(`${e.pageref} ${requestPathOf(e.redirectURL)}`);
+  }
+  return out;
+}
+
+/**
+ * WHICH SCREEN SENT ONE REQUEST (RM62).
+ *
+ * A request made from inside a page (a `fetch`, an XHR) belongs to the page it
+ * was made on, which is what `pageref` says. A request that OPENS a page does
+ * not: the HAR files it under the page it opens, and the page that sent it is
+ * the one its `Referer` names. A server-rendered app sends almost everything
+ * that way, a link or a form submit, so on such an app the Referer is the only
+ * place the sender is written down. A request a redirect sent names no screen
+ * at all, and is counted.
+ */
+function senderOf(e, { screenOfPage, redirected, screens, newScreens, stats }) {
+  if (e.method === 'GET' && redirected.has(`${e.pageref} ${e.path}`)) {
+    stats.followedRedirects += 1;
+    return null;
+  }
+  const opensAPage = (e.status >= 300 && e.status < 400) || /text\/html/i.test(e.mimeType);
+  // A page opened with no Referer was typed or bookmarked: no screen sent it,
+  // whether or not the source declares the page it opened.
+  if (opensAPage && e.referer === null) {
+    stats.openedByAddress += 1;
+    return null;
+  }
+  if (opensAPage && e.referer !== null) {
+    const from = pageRoutePathOf(e.referer);
+    const hit = (screens ?? []).find((sc) => screenPathMatches(sc.path, from));
+    const id = hit ? hit.id : webScreenId(from);
+    if (hit || newScreens.has(id)) {
+      stats.sentByReferer += 1;
+      return id;
+    }
+  }
+  return e.pageref !== null ? screenOfPage.get(e.pageref) ?? null : null;
+}
+
 /** One recording's requests, folded into (screen, route) pairs. */
-function readEntries(rec, screenOfPage, { matchServed, pairs, unmatched, observedScreens, observedEndpoints, stats }) {
+function readEntries(rec, screenOfPage, { matchServed, pairs, unmatched, observedScreens, observedEndpoints, stats, screens, newScreens }) {
+  const redirected = redirectTargetsOf(rec);
   for (const e of rec.entries) {
     stats.entries += 1;
     if (isAssetPath(e.path)) { stats.assets += 1; continue; }
@@ -295,7 +394,7 @@ function readEntries(rec, screenOfPage, { matchServed, pairs, unmatched, observe
       continue;
     }
     stats.matched += 1;
-    const screenId = e.pageref !== null ? screenOfPage.get(e.pageref) ?? null : null;
+    const screenId = senderOf(e, { screenOfPage, redirected, screens, newScreens, stats });
     if (screenId === null) continue; // a request with no page: matched, and on no screen
     const key = `${screenId}|${found.route.id}`;
     let acc = pairs.get(key);
@@ -358,19 +457,7 @@ function writeHarPairs(g, { newScreens, pairs, unmatched, observedScreens, obser
 
 export function addHarFacts(g, recordings, opts = {}) {
   const rules = prefixRules(opts.prefix);
-  const stats = {
-    files: 0,
-    entries: 0,
-    matched: 0,
-    unmatched: 0,
-    assets: 0,
-    pagesWithoutScreen: 0,
-    pairs: 0,
-    screensObserved: 0,
-    endpointsObserved: 0,
-    unmatchedPaths: [],
-    unreadable: [],
-  };
+  const stats = emptyHarStats();
   const index = harIndex(g);
   const matchServed = makeMatchServed(index, rules);
   const out = {
@@ -381,6 +468,7 @@ export function addHarFacts(g, recordings, opts = {}) {
     observedScreens: new Set(),
     observedEndpoints: new Set(),
     stats,
+    screens: index.screens,
   };
 
   for (const rec of (Array.isArray(recordings) ? recordings : [])) {

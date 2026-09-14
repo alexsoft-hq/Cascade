@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { nativeQueryStatements } from '../../../adapters/jpa_bridge.mjs';
+import { idGeneratorStatements } from '../../../adapters/java/idgnr.mjs';
 import { wrapperFragmentStatements } from '../../../adapters/mp_bridge.mjs';
 import { annotationMapperXml, restampToJavaSource } from '../../../adapters/mybatis_annotation.mjs';
 import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
@@ -234,17 +235,30 @@ export function annotationLineage({ javaSrc, result, store, prevIndex, catalog, 
  * MyBatis statement. Run AFTER the Java lane produced the repository facts and
  * BEFORE the graph is built, so those statements arrive as ordinary lineage.
  */
-export function nativeQueryLineage({ javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runners, diagnostics }) {
-  const nativeStmts = javaSrc.length > 0 ? nativeQueryStatements(result.javaFacts) : [];
+export function nativeQueryLineage({ javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runners, diagnostics, discovery = null }) {
+  // …and the two statements every eGovFrame table id generator runs (RM62): SQL
+  // a class in a jar executes, written from the bean's properties, and read by
+  // the same analyzer so its table and columns are facts of the same lane.
+  const jpaStmts = javaSrc.length > 0 ? nativeQueryStatements(result.javaFacts) : [];
+  // Only the generators a field of this source asks for by name: a bean nobody
+  // injects runs no SQL in this application, and its statements would only be
+  // statements no route reaches.
+  const asked = new Set(result.javaFacts.filter((r) => r && r.kind === 'field' && r.beanName).map((r) => r.beanName));
+  const idgnrStmts = javaSrc.length > 0 ? idGeneratorStatements((discovery?.idGenerators ?? []).filter((g) => asked.has(g.bean))) : [];
+  const nativeStmts = [...jpaStmts, ...idgnrStmts];
   if (nativeStmts.length === 0) return [];
+  const what = [
+    ...(jpaStmts.length > 0 ? [`${jpaStmts.length} native @Query statement(s)`] : []),
+    ...(idgnrStmts.length > 0 ? [`${idgnrStmts.length} table id generator statement(s)`] : []),
+  ].join(' and ');
   if (!fs.existsSync(py)) {
     diagnostics.push({
       kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-      reason: `${nativeStmts.length} @Query(nativeQuery=true) statement(s) were found but there is no venv python at ${py} to analyze their SQL. See docs/setup/sql-lane.md. Those statements carry no table or column fact in this pack`,
+      reason: `${what} were found but there is no venv python at ${py} to analyze their SQL. See docs/setup/sql-lane.md. Those statements carry no table or column fact in this pack`,
     });
     return [];
   }
-  process.stderr.write(`JPA lane: ${nativeStmts.length} native @Query statement(s) -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
+  process.stderr.write(`${idgnrStmts.length > 0 ? 'Java' : 'JPA'} lane: ${what} -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
   const nat = runLineageForStatements({
     store, index: prevIndex, statements: nativeStmts,
     catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
@@ -452,6 +466,8 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
       // half of the same problem: a Java service that calls another service
       // through a declared gateway prefix has nowhere else to say so.
       gatewayRoutes: profile.gatewayRoutes ?? {},
+      // The table id generators the Spring XMLs declare (RM62).
+      idGenerators: discovery?.idGenerators ?? [],
     } : null,
     jpa: runJpa ? {
       namingStrategy: profile.jpa?.namingStrategy ?? null,

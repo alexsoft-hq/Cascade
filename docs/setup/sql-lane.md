@@ -216,6 +216,11 @@ What is different about the older element, and what this lane does with it:
 | `<iterate open close conjunction>` | the body ONCE, with `open`/`close` folded in |
 | `<include refid>` / `<sql id>` | resolved, in the same index the MyBatis fragments use |
 
+**What a MyBatis statement is called** is its namespace plus its id, except that
+an id already starting with its namespace is not prefixed again, the rule MyBatis
+applies itself: `<mapper namespace="loginDAO">` with
+`<select id="loginDAO.actionLogin">` is `loginDAO.actionLogin`.
+
 **What an iBATIS statement is called** depends on one setting.
 `<sqlMapConfig><settings useStatementNamespaces="true"/>` makes the runtime key
 `namespace.id`; without it — and iBATIS' own default is without it — the key is

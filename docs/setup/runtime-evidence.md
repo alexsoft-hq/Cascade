@@ -106,7 +106,32 @@ It prints one line on stdout, ready to paste:
 org.springframework.samples.petclinic.owner.OwnerController[findOwner,findPaginatedForOwnersLastName,initCreationForm,…];org.springframework.samples.petclinic.owner.OwnerRepository[findById,…];…
 ```
 
-On petclinic that is 32 methods in 10 classes. On a large project it is tens of
+On petclinic that is 32 methods in 10 classes.
+
+**A MyBatis mapper needs one more switch.** A mapper is an interface, and the
+object that answers it is a proxy MyBatis builds at run time, so naming its
+methods to the agent gives no span. The agent's own MyBatis instrumentation names
+them, and it is off by default:
+
+```
+-Dotel.instrumentation.mybatis.enabled=true
+```
+
+`otel-methods` says so when the pack has mapper methods. Measured on the
+eGovFrame web sample: with the method list alone, all six statements came back
+attached to the service method above them and none to a statement; with the
+switch, all six joined. A DAO class that calls MyBatis by a statement id is an
+ordinary class, and the method list is enough for it.
+
+A long list is easier to hand over in the agent's configuration file than on a
+command line, and a container's start script (`catalina.sh`) reads `;` and `[`
+in `CATALINA_OPTS` as shell:
+
+```
+-Dotel.javaagent.configuration-file=agent.properties
+```
+
+with `otel.instrumentation.methods.include=<the line>` in that file. On a large project it is tens of
 thousands of characters, which a shell will still carry but a `.properties` file
 or a JVM argument file reads more comfortably.
 
@@ -257,9 +282,22 @@ it. Anything else the trace saw is **counted as unmatched**, with the key it
 could not place, because a symbol this pack never read is not a symbol this lane
 may invent.
 
-**Statements.** A span carrying SQL is attributed to the mapper method it ran
-under, and the statement node `owner.method` is marked observed together with the
-`IMPLEMENTS_STMT` edge into it. The tables the SQL really named are recorded on
+**Statements.** A span carrying SQL is attributed to the method it ran under,
+and joined to a statement in two ways, in order:
+
+1. the statement named after the method (`x.UserMapper#find` runs
+   `x.UserMapper.find`), which is how a MyBatis mapper interface is keyed;
+2. the statement the method already binds with an `IMPLEMENTS_STMT` edge, which
+   is how a DAO that calls `selectList("loginDAO.actionLogin")` is keyed. One
+   bound statement is that statement; several are narrowed by the tables the
+   run's SQL named, and only one left is a match.
+
+Measured on the eGovFrame enterprise business template, every statement
+observation was a DAO method, and the first way alone joined none of 57. The
+statement node is marked observed together with the `IMPLEMENTS_STMT` edge into
+it. A table name read off a span is written the way the pack writes it before it
+is compared: an unquoted SQL identifier names the same table in any case, and a
+mapper written `UPDATE SAMPLE` is the table an HSQLDB span reports as `sample`. The tables the SQL really named are recorded on
 the node as `observedTables`, **beside** the statically derived `EXECUTES` edges
 and never instead of them: a table that dynamic SQL or an `@DS` switch chose at
 run time is a finding to show, not a correction to apply.
@@ -280,7 +318,10 @@ therefore carries none of that system's data into the analysis.
 The trace file's **content hash joins the facts index**, the way every other
 input to a pack is content-addressed, so a pack and the capture it was built from
 can never disagree about which capture is being claimed, and the same trace
-always produces the same pack digest.
+always produces the same pack digest. It joins the calibration **pin** too, with a
+browser recording's: a run that adds a trace analyzed something a run without
+one did not, so the gate calls it a REPIN and not a nondeterminism. A pack built
+with no trace keeps the pin it had.
 
 ## What you see afterwards
 

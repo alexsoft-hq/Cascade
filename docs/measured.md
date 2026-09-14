@@ -642,6 +642,82 @@ missing ideas.
 - **Nothing else moves.** Every guarded number on the fifteen other repositories
   and all sixteen pack digests are identical, so every recorded MCP answer is too.
 
+## Checked against what ran: two eGovFrame applications (RM62)
+
+Everything above is what the engine READ. This is what two eGovFrame
+applications DID, and how much of it the pack already said. Each was built from
+its pinned clone, deployed on Tomcat 10.1 with the OpenTelemetry Java agent
+2.31.1 and its in-memory HSQLDB, and driven in a headless browser: the web sample
+through every button of its two screens, the enterprise business template signed
+in as its administrator, through 27 list screens and their search buttons, and
+then through every route without a path variable (130). Nothing in either
+application was changed apart from the business template's `Globals.DbType`,
+which its own comment says to set to `hsql` to run without a database.
+
+| | web sample | business template |
+|---|---|---|
+| trust level | **RUNTIME_PASS** | GOLDEN_FAIL |
+| `endpoint -> tables`, cases a run labelled | 6 of 6 routes, 6 right | 107 of 238 routes, 106 right |
+| `method -> statements` | 6 of 6, all right | 70, all right |
+| screen-to-route pairs a browser recorded | 7, each a `form-submit` edge the pack had | 14, each an edge the pack had |
+
+**The one route the business template got wrong** is `/EgovPageLink.do`. Its
+handler returns a view name taken from a list a Spring XML declares
+(`egovPageLinkWhitelist`) by the index the request carries, so no literal says
+which page it renders, and the menu tables that page imports are not reached. One
+miss in 107 puts the Wilson lower bound at 0.9489 against a 0.95 target, and
+the verdict says FAIL rather than rounding.
+
+**What the runs found wrong in the engine**, each fixed in this release and each
+shown on the numbers above:
+
+- a table named in two cases. The mapper writes `UPDATE SAMPLE`, the HSQLDB
+  span reports `sample`, and the two were compared as different tables: every
+  observed statement of the web sample was marked as touching a table only the
+  run saw;
+- a MyBatis mapper interface is answered by a proxy, so naming its methods to the
+  agent produced no span, and all six statements of the web sample joined none;
+  the agent's own MyBatis switch names them, and `otel-methods` now says so;
+- the key a service asks a generator for. `POST /addSample.do` touched `IDS`
+  through `egovIdGnrService`, a bean no mapper mentions (rule
+  `egov-id-generator`);
+- a DAO names its statement with a string, so a span's SQL has to join through the
+  `IMPLEMENTS_STMT` edge the Java lane drew; the method's own name joined none of
+  the business template's 57 statement observations;
+- an id written with its own namespace (`loginDAO.actionLogin` in
+  `namespace="loginDAO"`) was prefixed twice, and 112 of the business template's
+  statements bound nothing;
+- `<c:import url="/sym/mms/EgovHeader.do"/>` runs the header route inside the
+  page's own request: 20 of the first 26 routes exercised read the menu tables,
+  and the pack reached none of them (rule `template-import`);
+- a browser recording of a server-rendered app filed every form submit under the
+  page it opened, not the page that sent it (read from the Referer now), kept
+  `;jsessionid=` in the path, and knew a page by only one of the routes that
+  render it;
+- a trace added to a run was not part of the calibration pin, so the gate called
+  the edges it added a nondeterminism.
+
+**What the runs left** is honest and named: 116 hops a servlet filter wrapped
+around a controller (`RUNTIME_ONLY`, shown and never walked, the shape an aspect
+has), the schema scripts HSQLDB runs at start-up (no method above that SQL), and
+the requests for a web font on another host. Neither application's
+`column -> endpoints` or `statement -> columns` can be labelled by a run, and both
+are listed as not shown rather than counted against the level.
+
+On the corpus the three eGovFrame rows move up and nothing else does:
+
+| Repository | Endpoints reaching a statement | Tables reached | Columns reached | Screens reaching a table |
+|---|---|---|---|---|
+| egovframe-web-sample | 5 / 6 | 1 / 1 -> 2 / 2 | 5 / 5 | 2 / 2 |
+| egovframe-enterprise-business-template | 163 -> 188 / 219 | 30 / 35 -> 32 / 36 | 218 -> 223 / 288 | 73 -> 77 / 84 |
+| egovframe-common-components | 999 / 1193 | 165 -> 166 / 179 | 1680 -> 1682 / 1862 | 555 / 657 |
+
+`endpointColumnPairs` rose past the gate's ceiling on the business template
+(2099 -> 4417) and the common components (9647 -> 10131), and both were accepted:
+the rise is the menu tables every page imports and the key table every insert
+advances, which are the relations the runs above recorded. The sixteen pack
+digests of the registered projects are identical.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

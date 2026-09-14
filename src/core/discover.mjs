@@ -21,7 +21,7 @@ import path from 'node:path';
 import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
 import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
-  findViewResolvers, findXmlViewResolvers, findDbTypeDeclarations, looksLikeSpringBeansXml,
+  findViewResolvers, findXmlViewResolvers, findIdGenerators, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
 
@@ -853,7 +853,7 @@ function classifyKotlinFile(d, f) {
  */
 function classifyXmlFile(d, f) {
   const { absFile, lower, rel } = f;
-  const { counts, mapperDirs, mapperFiles, ibatisConfigs, read, xmlViewResolvers } = d;
+  const { counts, mapperDirs, mapperFiles, ibatisConfigs, read, xmlViewResolvers, idGenerators } = d;
   if (lower.endsWith('.xml')) {
     const text = read(absFile);
     if (text === null) return;
@@ -901,6 +901,8 @@ function classifyXmlFile(d, f) {
     const relFile = rel(absFile);
     if (!isTestPath(relFile) && looksLikeSpringBeansXml(text)) {
       xmlViewResolvers.push(...findXmlViewResolvers([{ path: relFile, text }]));
+      // …and, in the same documents, the table id generators a service asks for a key (RM62).
+      idGenerators.push(...findIdGenerators([{ path: relFile, text }]));
     }
     return true;
   }
@@ -1372,6 +1374,7 @@ function discoveryCollections() {
     nexacroApps: new Set(), // rel dir holding an `.xadl` application file
     viewResolvers: [],
     xmlViewResolvers: [], // …and the same settings written as Spring BEANS (RM55)
+    idGenerators: [], // eGovFrame table id generators declared as beans (RM62)
     // Every OpenAPI / Swagger document in the tree, with the version it declares.
     openapiDocuments: [],
     ddlPaths: [],
@@ -1459,7 +1462,7 @@ function sortedDeclarations(d) {
 function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots }) {
   const {
     counts, diagnostics, packageCounts, mapperDirs, mapperFiles, ibatisConfigs, webPackages,
-    viewResolvers, xmlViewResolvers, openapiDocuments, ddlPaths, ddlCandidates,
+    viewResolvers, xmlViewResolvers, idGenerators, openapiDocuments, ddlPaths, ddlCandidates,
   } = d;
   return {
     root,
@@ -1488,6 +1491,8 @@ function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos
     // root came from a declared prefix or from where the files sit.
     viewResolvers: [...viewResolvers, ...xmlViewResolvers]
       .sort((a, b) => (a.engine < b.engine ? -1 : a.engine > b.engine ? 1 : a.file < b.file ? -1 : 1)),
+    // The table id generators (RM62), sorted by bean name then file.
+    idGenerators: idGenerators.slice().sort((a, b) => (a.bean < b.bean ? -1 : a.bean > b.bean ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line)),
     // Sorted by path, like every other list here: a walk's order must not decide
     // which document a run reads first.
     openapiDocuments: openapiDocuments.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
@@ -1601,7 +1606,7 @@ export function discover(root, io = {}) {
     nexacroForms,
     nexacroApps,
     viewResolvers,
-    xmlViewResolvers,
+    xmlViewResolvers, idGenerators,
     openapiDocuments,
     ddlPaths,
     ddlCandidates,
@@ -1662,7 +1667,7 @@ export function discover(root, io = {}) {
     templateSample,
     viewResolvers,
     webPackages,
-    xmlViewResolvers,
+    xmlViewResolvers, idGenerators,
   };
   const classify = (absFile, name, repoKey, dirEntries, inPackage) => {
     classifyFile(d, {
