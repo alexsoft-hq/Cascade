@@ -637,6 +637,27 @@ test('the JPA physical naming strategy a project configures is read, in every sp
     { path: 'old/src/main/resources/application.properties', text: 'spring.jpa.properties.hibernate.physical_naming_strategy=org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy\n' },
     { path: 'own/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.physical-strategy=com.example.OurNaming\n' },
   ], diagnostics);
-  assert.deepEqual(found.map((f) => [f.file.split('/')[0], f.strategy]), [['app', 'spring-snake-case'], ['old', 'spring-snake-case'], ['own', null], ['svc', 'identity']]);
+  assert.deepEqual(found.map((f) => [f.file.split('/')[0], f.strategy, f.conditional]), [
+    ['app', 'snake-case-hibernate7', false], // PhysicalNamingStrategySnakeCaseImpl exists from Hibernate 7.0 on
+    ['old', 'snake-case-hibernate6', false], // Spring Boot 2's own class, letters only
+    ['own', null, false],
+    ['svc', 'identity', false],
+  ]);
   assert.deepEqual(diagnostics.map((d) => [d.kind, d.path]), [['JPA_NAMING_STRATEGY_UNMODELLED', 'own/src/main/resources/application.properties']]);
+});
+
+test('a naming strategy that applies only under a profile is marked conditional, and Hibernate\'s passed-through key counts only as Hibernate spells it', () => {
+  const found = findJpaNamingStrategies([
+    { path: 'a/src/main/resources/application-dev.properties', text: 'spring.jpa.hibernate.naming.physical-strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl\n' },
+    { path: 'b/src/main/resources/application.yml', text: [
+      'spring:', '  jpa:', '    hibernate:', '      naming:', '        physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy',
+      '---', 'spring:', '  config:', '    activate:', '      on-profile: legacy', '  jpa:', '    hibernate:', '      naming:', '        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl', '',
+    ].join('\n') },
+    { path: 'c/src/main/resources/application.properties', text: 'spring.jpa.properties.hibernate.physical-naming-strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl\n' },
+  ]);
+  assert.deepEqual(found.map((f) => [f.file.split('/')[0], f.strategy, f.conditional]), [
+    ['a', 'identity', true],
+    ['b', 'spring-snake-case', false],
+    ['b', 'identity', true],
+  ], 'the kebab-case spelling of a map key under spring.jpa.properties is not the property Hibernate reads');
 });

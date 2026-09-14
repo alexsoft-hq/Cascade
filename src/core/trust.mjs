@@ -103,9 +103,25 @@ function goldenVerdict(wilson, gatePassing) {
  * A PASSING VERDICT COUNTS FOR THE PACK IT JUDGED. The gate state names the digest
  * of the pack it judged; a served pack with another digest was not judged by it
  * (a publish whose verdict was never written, a verdict from another build).
- * A gate state from before verdicts named their pack is taken as it is.
+ * A gate state from before verdicts named their pack still counts, and says so
+ * (`calibration-gate-unbound`) until the next analyze records the digest.
  */
 const judgedAnotherBuild = (gateState, packDigest) => typeof gateState?.packDigest === 'string' && typeof packDigest === 'string' && gateState.packDigest !== packDigest;
+
+/** Whether the gate stands behind this pack, with the gap that says why not (or why only loosely). */
+function gateStanding(gateState, packDigest, { gaps, gatesNotShown }) {
+  const passing = !!gateState && PASSING_GATES.includes(gateState.verdict) && !judgedAnotherBuild(gateState, packDigest);
+  if (!passing) {
+    gaps.add(gateGap(gateState));
+    gatesNotShown.push('calibration-gate');
+  } else if (unbound(gateState, packDigest)) {
+    gaps.add('calibration-gate-unbound');
+  }
+  return passing;
+}
+
+/** A passing verdict from before verdicts named their pack: it stands, and says it cannot be tied to this one. */
+const unbound = (gateState, packDigest) => typeof packDigest === 'string' && typeof gateState?.packDigest !== 'string';
 
 /** Why the gate does not stand behind this pack: no state, a verdict on another build, or a red one. */
 function gateGap(gateState) {
@@ -133,13 +149,9 @@ export function computeTrust(input = {}) {
   const goldenCases = Number.isInteger(golden?.approvedCases) ? golden.approvedCases : 0;
   const relations = golden?.summary && typeof golden.summary.relations === 'object' ? golden.summary.relations : null;
   const wilson = relations ? wilsonView(relations) : null;
-  const gatePassing = !!gateState && PASSING_GATES.includes(gateState.verdict) && !judgedAnotherBuild(gateState, input.packDigest);
+  const gatePassing = gateStanding(gateState, input.packDigest, { gaps, gatesNotShown });
 
   let level = TRUST_LEVELS[0]; // UNCERTIFIED unless everything below says otherwise
-  if (!gatePassing) {
-    gaps.add(gateGap(gateState));
-    gatesNotShown.push('calibration-gate');
-  }
 
   if (goldenCases === 0) {
     gaps.add('no-project-golden');

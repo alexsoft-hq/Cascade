@@ -636,7 +636,12 @@ configuration is not read for this one. A
 recognized class there is a declaration, and the run says so
 (`JPA_NAMING_FROM_CONFIGURATION`). A class this engine does not model, or two
 configuration files that name different strategies, declare nothing it can
-apply, and the run says that too.
+apply, and the run says that too. So does a strategy that only a profile-specific
+file (`application-dev.yml`) or a document activated by a profile names, or a
+profile that names another strategy than the base configuration: which profile
+runs is not in the tree. Under `spring.jpa.properties` the key counts only as
+Hibernate spells it (`hibernate.physical_naming_strategy`), because Spring binds
+that map verbatim.
 
 When neither the profile nor the configuration declares it, the engine
 **assumes** Spring Boot's default and grades every name it derived that way
@@ -654,16 +659,19 @@ same mappings become EXACT:
 }
 ```
 
-- `"spring-snake-case"` — Spring Boot's default (`CamelCaseToUnderscoresNamingStrategy`,
-  and Hibernate's `PhysicalNamingStrategySnakeCaseImpl` and Spring Boot 2's
-  `SpringPhysicalNamingStrategy`, which are the same rule). Exactly Hibernate's
-  rule: a `.` becomes `_`, and an underscore goes before a capital only when a
-  lower-case letter is on both sides of it, never before the last character, so
-  `lastName` is `last_name` but `userID` is `userid` and `myURLValue` is
-  `myurlvalue`. Hibernate 7 (Spring Boot 4) also counts a digit as lower-case,
-  so the two versions spell `address2Line` differently (`address2line`,
-  `address2_line`); a name like that is graded HEURISTIC even under a declared
-  strategy, because the project's Hibernate version decides it.
+- `"spring-snake-case"` — Spring Boot's default, `CamelCaseToUnderscoresNamingStrategy`.
+  Exactly Hibernate's rule: a `.` becomes `_`, and an underscore goes before a
+  capital only when a lower-case letter is on both sides of it, never before the
+  last character, so `lastName` is `last_name` but `userID` is `userid` and
+  `myURLValue` is `myurlvalue`. Hibernate 7 (Spring Boot 4) also counts a digit as
+  lower-case, so the two versions spell `address2Line` differently (`address2line`,
+  `address2_line`). This class exists in both, so a name like that is graded
+  HEURISTIC even when this strategy is declared: the project's Hibernate version
+  decides it.
+- `"snake-case-hibernate6"` — the same rule, letters only, fixed: Spring Boot 2's
+  `SpringPhysicalNamingStrategy`.
+- `"snake-case-hibernate7"` — the rule that counts digits, fixed:
+  `PhysicalNamingStrategySnakeCaseImpl`, which exists from Hibernate 7.0 on.
 - `"identity"` — the logical name is the physical name (Hibernate's
   `PhysicalNamingStrategyStandardImpl`, what you get with
   `spring.jpa.hibernate.naming.physical-strategy` set to it).

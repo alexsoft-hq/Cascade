@@ -375,7 +375,10 @@ test('a passing verdict counts only for the pack it judged', () => {
   assert.equal(other.trustLevel, TRUST_LEVELS[0], 'a verdict on another build does not certify this one');
   assert.ok(other.knownGaps.includes('calibration-gate-other-build'));
   assert.ok(!other.knownGaps.includes('calibration-gate-red'));
-  assert.equal(computeTrust({ gateState: GREEN_GATE, golden, packDigest: 'bbbbbbbbbbbb' }).trustLevel, TRUST_LEVELS[3], 'a verdict from before verdicts named their pack is taken as it is');
+  const legacy = computeTrust({ gateState: GREEN_GATE, golden, packDigest: 'bbbbbbbbbbbb' });
+  assert.equal(legacy.trustLevel, TRUST_LEVELS[3], 'a verdict from before verdicts named their pack still stands');
+  assert.ok(legacy.knownGaps.includes('calibration-gate-unbound'), 'and says it cannot be tied to this pack');
+  assert.ok(!computeTrust({ gateState: judged, golden, packDigest: 'aaaaaaaaaaaa' }).knownGaps.includes('calibration-gate-unbound'));
   const red = computeTrust({ gateState: { ...judged, verdict: 'RED' }, golden, packDigest: 'bbbbbbbbbbbb' });
   assert.ok(red.knownGaps.includes('calibration-gate-red'), 'a rejected run is still said as red');
 });

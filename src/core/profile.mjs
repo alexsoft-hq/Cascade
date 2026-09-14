@@ -109,7 +109,7 @@ export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc',
  * Spring Boot's default and grades every name it derived HEURISTIC, so an
  * assumption can never travel as a confirmed mapping (I-1).
  */
-export const JPA_NAMING_STRATEGIES = Object.freeze(['spring-snake-case', 'identity']);
+export const JPA_NAMING_STRATEGIES = Object.freeze(['spring-snake-case', 'snake-case-hibernate6', 'snake-case-hibernate7', 'identity']);
 
 /**
  * The physical naming strategies `mybatisPlus.namingStrategy` may name (SPEC

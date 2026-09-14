@@ -230,6 +230,24 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
   };
 }
 
+/** A refusal raised while the project's lock is held, carried out of it. */
+class RefusedUnderLock extends Error {}
+
+/**
+ * Run `fn` with the project's lock held, and a context whose `die` does not exit
+ * there: `process.exit` skips the `finally` that releases the lock, so a refusal
+ * inside (an unusable baseline) would leave a lock no run could take again. The
+ * refusal is thrown, the lock released, and the command dies outside it.
+ */
+function underLock(ctx, lockDir, fn) {
+  try {
+    return withPackLock(lockDir, () => fn({ ...ctx, die: (msg) => { throw new RefusedUnderLock(msg); } }));
+  } catch (e) {
+    if (e instanceof RefusedUnderLock) return ctx.die(e.message);
+    throw e;
+  }
+}
+
 /**
  * THE PACK, THE GATE THAT JUDGES IT, AND WHAT THAT LEAVES ON DISK. A regression
  * exits 3 once the project's lock is released, which is why this runs inside the
@@ -253,8 +271,8 @@ function certify(ctx, prepared, facts) {
   // the later one could seal a regression of the earlier. So the baseline is read,
   // the gate evaluated and everything written with the project's lock held.
   const state = stateFiles(resolved, out);
-  const written = withPackLock(lockDirFor({ calibrated: state.calibrated, stateDir: state.stateDir, out }), () => {
-    const gated = runGate(ctx, {
+  const written = underLock(ctx, lockDirFor({ calibrated: state.calibrated, stateDir: state.stateDir, out }), (lockedCtx) => {
+    const gated = runGate(lockedCtx, {
       g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt,
       evidenceFiles: [...prepared.harFiles.map((f) => ['har', f]), ...prepared.otelFiles.map((f) => ['otel', f])],
     });

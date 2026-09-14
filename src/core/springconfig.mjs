@@ -47,7 +47,7 @@ const SERVICE_NAME_KEY = 'spring.application.name';
 const ROUTES_KEY_RE = /^spring\.cloud\.gateway(?:\.server\.webflux|\.server\.webmvc|\.mvc)?\.routes\.(\d+)\.(.+)$/;
 
 /** The key path prefixes this reader is interested in at all. */
-const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway|thymeleaf|freemarker|velocity|mvc\.view|jpa)(?:\.|$)/;
+const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway|thymeleaf|freemarker|velocity|mvc\.view|jpa|profiles)(?:\.|$)/;
 
 /**
  * THE VIEW RESOLVERS, and what each one calls its prefix and its suffix.
@@ -568,14 +568,25 @@ export function findServiceNames(files, diagnostics = null) {
  * JPA bridge grades on its own (src/adapters/jpa_bridge.mjs, springPhysicalName).
  */
 const JPA_PHYSICAL_STRATEGIES = Object.freeze({
-  'org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy': 'spring-snake-case',
+  // Spring Boot 2's own class: letters only, whatever Hibernate runs under it.
+  'org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy': 'snake-case-hibernate6',
+  // Hibernate 5.5-6.x (letters only), and in 7 a deprecated subclass of the next one (digits too).
   'org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy': 'spring-snake-case',
-  'org.hibernate.boot.model.naming.PhysicalNamingStrategySnakeCaseImpl': 'spring-snake-case',
+  // Exists from Hibernate 7.0 on, so naming it fixes the rule that counts digits.
+  'org.hibernate.boot.model.naming.PhysicalNamingStrategySnakeCaseImpl': 'snake-case-hibernate7',
   'org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl': 'identity',
 });
 
-/** Where a Spring project names its physical naming strategy: Spring Boot's own key, and Hibernate's passed through. */
-const JPA_NAMING_KEYS = new Set(['spring.jpa.hibernate.naming.physical-strategy', 'spring.jpa.properties.hibernate.physical-naming-strategy']);
+/** Spring Boot's own key, in any spelling its relaxed binding accepts. */
+const BOOT_NAMING_KEY = 'spring.jpa.hibernate.naming.physical-strategy';
+/** Hibernate's key passed through `spring.jpa.properties`: a map key, bound VERBATIM, so only this spelling counts. */
+const PASSTHROUGH_NAMING_KEY = 'spring.jpa.properties.hibernate.physical_naming_strategy';
+const isNamingKey = (key) => relaxedKey(key) === BOOT_NAMING_KEY || key === PASSTHROUGH_NAMING_KEY;
+
+/** A profile-specific file (`application-dev.yml`, `bootstrap.yml` and its kin): applied only when that context is. */
+const PROFILE_FILE_RE = /^(?:application-[^./]+|bootstrap(?:-[^./]+)?)\.(?:ya?ml|properties)$/i;
+/** A key that makes the document it sits in apply only under some profile. */
+const ACTIVATION_KEY_RE = /^spring\.(?:config\.activate\.on-profile|profiles)$/;
 
 /**
  * The JPA physical naming strategy each file declares. A class this engine does
@@ -590,17 +601,32 @@ export function findJpaNamingStrategies(files, diagnostics = null) {
   const out = [];
   for (const file of files ?? []) {
     if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
-    for (const e of springConfigEntries(file, diagnostics).filter((x) => JPA_NAMING_KEYS.has(relaxedKey(x.key)))) {
+    const entries = springConfigEntries(file, diagnostics);
+    const conditional = conditionalDocuments(file.path, entries);
+    for (const e of entries.filter((x) => isNamingKey(x.key))) {
       const className = resolvePlaceholder(e.value)?.trim() ?? null;
       const strategy = className === null ? null : JPA_PHYSICAL_STRATEGIES[className] ?? null;
       if (strategy === null) {
         diag(diagnostics, 'info', 'JPA_NAMING_STRATEGY_UNMODELLED', file.path,
           `${e.key} on line ${e.line} is ${JSON.stringify(e.value)}, a naming strategy this engine does not model, so the names it derives stay HEURISTIC`);
       }
-      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line });
+      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line, conditional: conditional(e.doc) });
     }
   }
   return out.sort((a, b) => cmp(a.file, b.file) || a.line - b.line);
+}
+
+/**
+ * Which documents of a file apply only under some profile: every one of a
+ * profile-specific file, and a document that carries an activation key. A
+ * `.properties` file is one document to this reader, so an activation key
+ * anywhere in it makes all of it conditional: undecided rather than wrong.
+ * @returns {(doc:number) => boolean}
+ */
+function conditionalDocuments(filePath, entries) {
+  if (PROFILE_FILE_RE.test(path.posix.basename(filePath.split('\\').join('/')))) return () => true;
+  const activated = new Set(entries.filter((e) => ACTIVATION_KEY_RE.test(relaxedKey(e.key))).map((e) => e.doc));
+  return (doc) => activated.has(doc);
 }
 
 /**

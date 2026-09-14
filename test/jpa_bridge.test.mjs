@@ -131,6 +131,17 @@ test('a name the Hibernate version decides is never EXACT, even under a declared
   const table = [...g.nodes.values()].find((n) => n.kind === 'table');
   assert.equal(table.id, tableId('address2book'));
   assert.equal(table.jpaMappingGrade, 'HEURISTIC', 'Address2Book is address2_book under Hibernate 7');
+
+  // A class that fixes the version fixes the name.
+  const seven = G();
+  addJpaFacts(seven, facts, { namingStrategy: 'snake-case-hibernate7' });
+  const t7 = [...seven.nodes.values()].find((n) => n.kind === 'table');
+  assert.deepEqual([t7.id, t7.jpaMappingGrade], [tableId('address2_book'), 'EXACT']);
+  assert.ok(seven.nodes.has(colId('address2_book', 'line2_text')));
+  const six = G();
+  addJpaFacts(six, facts, { namingStrategy: 'snake-case-hibernate6' });
+  const t6 = [...six.nodes.values()].find((n) => n.kind === 'table');
+  assert.deepEqual([t6.id, t6.jpaMappingGrade], [tableId('address2book'), 'EXACT']);
 });
 
 // ---------------------------------------------------------------------------

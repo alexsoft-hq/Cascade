@@ -320,7 +320,8 @@ test('spring-petclinic: the naming strategy its configuration declares turns the
   ]);
   assert.equal(analyze.status, 0, analyze.stderr);
   assert.doesNotMatch(analyze.stderr, /discovering the tree/);
-  assert.match(analyze.stderr, /naming strategy spring-snake-case \(declared\)/);
+  // PhysicalNamingStrategySnakeCaseImpl exists from Hibernate 7.0 on, so it fixes the rule.
+  assert.match(analyze.stderr, /naming strategy snake-case-hibernate7 \(declared\)/);
   assert.match(analyze.stderr, /JPA_NAMING_FROM_CONFIGURATION jpa\.namingStrategy: .*PhysicalNamingStrategySnakeCaseImpl in src\/main\/resources\/application\.properties/);
   assert.doesNotMatch(analyze.stderr, /PROFILE_DEFAULT_ASSUMED jpa\.namingStrategy/, 'the finding that it was assumed is replaced, not repeated');
 

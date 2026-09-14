@@ -41,8 +41,16 @@ import { parseDerivedQuery, resolvePropertyPath } from '../core/derived_query.mj
 import { readJpql } from '../core/jpql_lite.mjs';
 import { tableKey, columnKey, statementKey, graphSpellingIndex } from './sql_bridge.mjs';
 
-/** The naming strategies this bridge can apply. */
-export const NAMING_STRATEGIES = Object.freeze(['spring-snake-case', 'identity']);
+/**
+ * The naming strategies this bridge can apply. `spring-snake-case` is Spring
+ * Boot's default as a version-independent rule: where Hibernate 6 and 7 spell a
+ * name differently it cannot say which, and grades the name HEURISTIC. The two
+ * versioned ones are the rule a named implementation class fixes:
+ * `snake-case-hibernate6` (Spring Boot 2's SpringPhysicalNamingStrategy, letters
+ * only) and `snake-case-hibernate7` (PhysicalNamingStrategySnakeCaseImpl, which
+ * exists from Hibernate 7.0 on and counts digits).
+ */
+export const NAMING_STRATEGIES = Object.freeze(['spring-snake-case', 'snake-case-hibernate6', 'snake-case-hibernate7', 'identity']);
 
 /** What an undeclared `jpa.namingStrategy` is ASSUMED to be (Spring Boot's default). */
 export const ASSUMED_NAMING_STRATEGY = 'spring-snake-case';
@@ -135,9 +143,7 @@ function underscored(s, soft) {
 export const snakeCase = (name) => springPhysicalName(name).name;
 
 /** The physical name a strategy gives a logical one. */
-export function physicalName(logical, strategy) {
-  return strategy === 'identity' ? String(logical ?? '') : snakeCase(logical);
-}
+export const physicalName = (logical, strategy) => derivedName(logical, strategy, 'EXACT').name;
 
 /**
  * A name the ENGINE derives, and its grade: the strategy's grade, except that a
@@ -147,6 +153,8 @@ export function physicalName(logical, strategy) {
 function derivedName(logical, strategy, derivedGrade) {
   if (strategy === 'identity') return { name: String(logical ?? ''), grade: derivedGrade };
   const n = springPhysicalName(logical);
+  if (strategy === 'snake-case-hibernate7') return { name: n.hibernate7, grade: derivedGrade };
+  if (strategy === 'snake-case-hibernate6') return { name: n.name, grade: derivedGrade };
   return { name: n.name, grade: n.versionDependent ? 'HEURISTIC' : derivedGrade };
 }
 

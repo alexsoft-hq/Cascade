@@ -51,9 +51,14 @@ Each dated section below is one round of work. The round protocol is in
   `spring.jpa.hibernate.naming.physical-strategy` (and Hibernate's
   `physical_naming_strategy`) in `application.properties`/`application.yml`
   declares the strategy when the profile does not, so names derived by it are
-  graded as declared. spring-petclinic declares
-  `PhysicalNamingStrategySnakeCaseImpl`, and its derived column mappings are now
-  EXACT with no profile change.
+  graded as declared. It is read beside the Java source roots the run reads,
+  whether those were named by flags or discovered. A declaration only a profile
+  applies, or one a profile contradicts, declares nothing. The implementation
+  class fixes the rule where it can: `SpringPhysicalNamingStrategy` is
+  `snake-case-hibernate6`, `PhysicalNamingStrategySnakeCaseImpl` (Hibernate 7
+  only) is `snake-case-hibernate7`, and both are new `jpa.namingStrategy` values.
+  spring-petclinic declares `PhysicalNamingStrategySnakeCaseImpl`, and its derived
+  column mappings are now EXACT with no profile change.
 
 ### Fixed
 
@@ -67,17 +72,24 @@ Each dated section below is one round of work. The round protocol is in
   underscore before a capital when the letter before it was lower-case OR the
   letter after it was, so it derived `user_id` for `userID` and `my_url_value`
   for `myURLValue` where Spring and Hibernate produce `userid` and `myurlvalue`.
-  A dot is now an underscore too. A name Hibernate 7 spells differently (a digit
-  beside a capital) is graded HEURISTIC even under a declared strategy.
+  A dot is now an underscore too. Under `spring-snake-case` a name Hibernate 7
+  spells differently (a digit beside a capital) is graded HEURISTIC. **After
+  upgrading**, a project that declares a snake-case strategy and has fields such
+  as `userID` gets different column names on its next `analyze`, which the gate
+  may reject as a drop: check the renamed columns against the schema, then run
+  `cascade analyze --accept-baseline` once.
 - **The gate judges a run against the baseline as it is when the run publishes.**
   The baseline was read before the write lock was taken, so of two analyses of
   one project the later could be judged against a baseline the earlier had
   already re-sealed. The gate now runs under the project's lock; a run waits for
   a running holder (up to ten minutes, saying for which process) and refuses at
-  once a lock whose process is not running.
+  once a lock whose process is not running. A run refused inside the lock (an
+  unusable baseline) releases it before it exits.
 - **A passing verdict counts only for the pack it judged.** The gate state records
   the pack's digest, and a server whose pack has another digest reports
-  `calibration-gate-other-build` instead of taking the verdict as its own.
+  `calibration-gate-other-build` instead of taking the verdict as its own. A
+  verdict written before this release still stands, with
+  `calibration-gate-unbound`, until the next `analyze`.
 - **A project listing never mixes two builds.** A row read while a publish landed
   is read again.
 

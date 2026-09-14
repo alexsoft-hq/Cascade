@@ -64,3 +64,29 @@ test('a run waiting for the project\'s lock is judged against the baseline seale
   assert.match(stderr, /^gate: \S+ -> RED/m);
   assert.equal(fs.existsSync(lock), false, 'the rejected run released the lock before it exited');
 });
+
+test('a run refused inside the lock (an unusable baseline) releases it, so the next run can go once the baseline is fixed', { timeout: 600000 }, (t) => {
+  if (!fs.existsSync(VENV_PY)) { t.skip(`no venv python at ${VENV_PY}`); return; }
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-lock-die-'));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  const env = { ...process.env, ...GIT_ENV, CASCADE_HOME: path.join(work, 'home'), XDG_CACHE_HOME: path.join(work, 'cache') };
+  const repo = path.join(work, 'shop');
+  for (const [rel, body] of [['db/schema.sql', SCHEMA], ['src/main/resources/mapper/ItemMapper.xml', MAPPER]]) {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), body);
+  }
+  for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'one']]) execFileSync('git', ['-C', repo, ...args], { env, stdio: 'ignore' });
+  const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, maxBuffer: 1 << 28 });
+  assert.equal(cli('init', '--root', repo, '--project', 'shop').status, 0);
+  assert.equal(cli('analyze', '--root', repo).status, 0);
+  const baselineFile = path.join(repo, '.cascade', 'calibration', 'baseline.json');
+  const good = fs.readFileSync(baselineFile, 'utf8');
+  fs.writeFileSync(baselineFile, '{ not a baseline');
+  const refused = cli('analyze', '--root', repo);
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /the sealed baseline at .* is unusable/);
+  assert.equal(fs.existsSync(path.join(repo, '.cascade', '.write.lock')), false, 'no lock is left behind');
+  fs.writeFileSync(baselineFile, good);
+  const again = cli('analyze', '--root', repo);
+  assert.equal(again.status, 0, again.stderr);
+});

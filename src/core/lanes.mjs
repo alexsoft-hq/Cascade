@@ -146,7 +146,10 @@ export function serviceNamesOf(profile, discovery = null) {
  * configuration names (`spring.jpa.hibernate.naming.physical-strategy`), which
  * is a declaration too: the project wrote it down, and the application runs by
  * it. `configured` is what `findJpaNamingStrategies` (./springconfig.mjs) read
- * from the configuration beside the Java source roots the run reads. A configuration that names a class this engine does not model, or files
+ * from the configuration beside the Java source roots the run reads. A strategy
+ * only a profile-specific file or document names is not proven to apply, and a
+ * profile that names another one than the base configuration makes the active
+ * profile decide: neither is a declaration this engine can apply. A configuration that names a class this engine does not model, or files
  * that name different strategies, declare nothing this engine can apply, and the
  * names it derives stay HEURISTIC.
  * @returns {{strategy:(string|null), from:('profile'|'configuration'|'unreadable'|'none'), files:string[], classNames:string[]}}
@@ -156,11 +159,14 @@ export function jpaNamingOf(profile, configured = []) {
   if (declared != null) return { strategy: declared, from: 'profile', files: [], classNames: [] };
   const found = Array.isArray(configured) ? configured : [];
   if (found.length === 0) return { strategy: null, from: 'none', files: [], classNames: [] };
-  const strategies = [...new Set(found.map((f) => f.strategy))];
   const files = [...new Set(found.map((f) => f.file))].sort();
   const classNames = [...new Set(found.map((f) => f.className))].sort();
-  const one = strategies.length === 1 && strategies[0] !== null;
-  return { strategy: one ? strategies[0] : null, from: one ? 'configuration' : 'unreadable', files, classNames };
+  // What applies whatever profile is active decides, and a profile-only
+  // declaration must agree with it: which profile runs is not in the tree.
+  const always = [...new Set(found.filter((f) => !f.conditional).map((f) => f.strategy))];
+  const everything = [...new Set(found.map((f) => f.strategy))];
+  const one = always.length === 1 && always[0] !== null && everything.length === 1;
+  return { strategy: one ? always[0] : null, from: one ? 'configuration' : 'unreadable', files, classNames };
 }
 
 /** The axes a pack declares, in the order `overview` lists them. */
