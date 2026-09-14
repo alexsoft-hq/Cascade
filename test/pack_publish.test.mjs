@@ -261,4 +261,11 @@ test('the Spring configuration beside an outside Java root is an outside input, 
   assert.deepEqual(changedSince(analysis), [], 'a file the naming strategy is not read from is not this input');
   fs.writeFileSync(path.join(resources, 'config', 'application.yml'), 'spring:\n  jpa: {}\n');
   assert.deepEqual(changedSince(analysis), [`${resources}#spring-config`], 'a configuration file added in config/ is a change');
+  // A configuration directory that cannot be read is not one with no configuration in it.
+  if (process.getuid?.() !== 0) {
+    fs.chmodSync(path.join(resources, 'config'), 0o000);
+    let now;
+    try { now = externalSourcesOf(invocation, {})[`${resources}#spring-config`]; } finally { fs.chmodSync(path.join(resources, 'config'), 0o755); }
+    assert.equal(now, 'unreadable');
+  }
 });

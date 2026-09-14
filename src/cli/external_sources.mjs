@@ -99,9 +99,12 @@ export function springConfigFilesBeside(javaRoot) {
     .flatMap(([dir, rel]) => namesIn(dir).filter((n) => looksLikeSpringConfigFile(`${rel}/${n}`)).map((n) => path.join(dir, n)));
 }
 
-/** A directory's entries, sorted; none when it cannot be listed. */
+/** A directory's entries, sorted; none when it is not there. A directory that is there and cannot be read throws: that is not "no configuration". */
 function namesIn(dir) {
-  try { return fs.readdirSync(dir).sort(); } catch { return []; }
+  try { return fs.readdirSync(dir).sort(); } catch (e) {
+    if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return [];
+    throw e;
+  }
 }
 
 /**

@@ -430,7 +430,9 @@ export function incrementalPlan(ctx, { root, out, profile, manifest, resolved, s
 export function jpaNamingConfigured(javaSrc, root, diagnostics = null) {
   const files = [];
   for (const src of [...new Set((javaSrc ?? []).map((p) => path.resolve(p)))].sort()) {
-    for (const abs of springConfigFilesBeside(src)) {
+    let beside = [];
+    try { beside = springConfigFilesBeside(src); } catch { /* a resources directory that cannot be read declares nothing here; the outside-input digest records it as unreadable */ }
+    for (const abs of beside) {
       try { files.push({ path: path.relative(root, abs).split(path.sep).join('/'), text: fs.readFileSync(abs, 'utf8') }); } catch { /* unreadable: nothing declared by it */ }
     }
   }
