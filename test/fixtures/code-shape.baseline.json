@@ -1931,7 +1931,8 @@
     "externalSourcesOf/1",
     "externalSourcesOf/2",
     "visit",
-    "visit/1"
+    "visitDirectory",
+    "visitDirectory/1"
    ]
   },
   "src/cli/lanes_run.mjs": {

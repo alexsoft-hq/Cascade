@@ -168,6 +168,13 @@ test('an outside input is hashed as a lane reads it: links followed without loop
   const linked = contentDigestOf(front);
   fs.writeFileSync(path.join(shared, 'Gen.java'), 'class Gen { int x; }');
   assert.notEqual(contentDigestOf(front), linked);
+  // A link re-pointed from one directory the walk has already hashed to another it has too.
+  for (const [d, f] of [['a', 'A.java'], ['b', 'B.java']]) { fs.mkdirSync(path.join(front, d)); fs.writeFileSync(path.join(front, d, f), f); }
+  fs.symlinkSync(path.join(front, 'a'), path.join(front, 'zz'));
+  const before = contentDigestOf(front);
+  fs.rmSync(path.join(front, 'zz'));
+  fs.symlinkSync(path.join(front, 'b'), path.join(front, 'zz'));
+  assert.notEqual(contentDigestOf(front), before, 'zz -> a re-pointed to zz -> b');
   // The project's own output written under the root after the digest is not an input.
   const settled = contentDigestOf(front);
   fs.mkdirSync(path.join(front, '.cascade', 'pack'), { recursive: true });
