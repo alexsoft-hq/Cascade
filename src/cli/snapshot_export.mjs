@@ -11,13 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildSnapshot, snapshotFilename, snapshotHtml, snapshotQueryFromArgs } from '../viewer/snapshot.mjs';
-import { ENGINE_ROOT } from './env.mjs';
-
-/** The engine's own name and version, as a snapshot records who wrote it. */
-export function engineIdentity(root = ENGINE_ROOT) {
-  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  return { name: pkg.name, version: pkg.version };
-}
+import { ENGINE_ROOT, engineIdentity } from './env.mjs';
 
 /**
  * What `/api/meta` answers for one served project, so the page reads the same

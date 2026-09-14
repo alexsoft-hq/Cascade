@@ -99,6 +99,7 @@ above.
 | `coupling` | Which API group writes what another group reads — the DB sharing no call edge shows | `axis` `mode` `depth` `limit` `offset` |
 | `map` | The whole pack as one relation map: groups, endpoints, the tables they reach, and the joins between them | `mode` `depth` `layers` `limit` `maxBytes` |
 | `neighborhood` | The graph slice around one focus node, for a visual view | `node` `column` `table` `statement` `endpoint` `symbol` `direction` `hops` `limit` |
+| `pack_diff` | What changed between two packs of one project this server serves (a main branch and a pull request under two ids): nodes and edges added, removed or regraded, and the endpoints and screens above them. Read `answer.conditions` first: a difference is a code change only when both packs were analyzed the same way. The other pack is `base`, the addressed project is the head | `base*` `limit` |
 | `changed_impact` | The working-tree overlay: I edited these files — what is the blast radius? Re-parses the dirty files on each call. An edited component file also reports `touched.screens`, the screens its functions are drawn on | `files` `mode` `limit` `offset` |
 
 Grades, the `mode` floors, and what `limits` / `truncated` mean are in

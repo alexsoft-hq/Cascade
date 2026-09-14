@@ -45,6 +45,8 @@ export function packMeta(pack) {
     // leaves nothing behind — that is why it is counted at ingest).
     axes: pack.meta?.axes ?? null,
     laneStats: pack.meta?.laneStats ?? null,
+    // What the pack was analyzed under, for comparing two packs (pack_diff).
+    analysis: pack.meta?.analysis ?? null,
   };
 }
 

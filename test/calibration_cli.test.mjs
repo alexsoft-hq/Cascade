@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { diffPacks } from '../src/core/pack_diff.mjs';
+import { workerVersions } from '../src/core/worker_versions.mjs';
 
 // The calibration layer as a USER meets it: `cascade analyze` judging a run,
 // `cascade verify` recomputing the receipt, `cascade golden` proposing and
@@ -111,6 +113,14 @@ test('the calibration gate, the receipt and the base-only diff, end to end', { t
   assert.match(second.stderr, /^gate: NO_CHANGE -> GREEN - no metric dropped/m);
   const pack2 = JSON.parse(fs.readFileSync(path.join(dot, 'pack', 'pack.json'), 'utf8'));
   assert.equal(pack2.digest, pack1.digest);
+  // What the pack was analyzed under is recorded, so two runs can be compared,
+  // and two identical runs compare as the same analysis with nothing changed.
+  assert.deepEqual(pack1.meta.analysis.workers, workerVersions());
+  assert.match(pack1.meta.analysis.profileDigest, /^[0-9a-f]{64}$/);
+  assert.match(pack1.meta.analysis.enginePrint, /^[0-9a-f]{64}$/);
+  const same = diffPacks(pack1, pack2);
+  assert.equal(same.conditions.verdict, 'same', JSON.stringify(same.conditions));
+  assert.deepEqual([same.nodes.added, same.nodes.removed, same.edges.added, same.edges.removed, same.edges.regraded], [0, 0, 0, 0, 0]);
 
   // ---- 3. the receipt verifies -------------------------------------------
   const ok = cli(['verify', '--root', repo]);

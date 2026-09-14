@@ -9,6 +9,7 @@
 // the description to choose a tool, so honesty here is part of the contract.
 
 import * as tools from './tools.mjs';
+import { pack_diff } from './tools_diff.mjs';
 import { assertContract } from './contract.mjs';
 import { axisLimits, axisKnownGaps } from '../core/lanes.mjs';
 
@@ -463,6 +464,25 @@ export const TOOLS = Object.freeze({
       },
     },
     fn: tools.changed_impact,
+  },
+  pack_diff: {
+    description:
+      'What changed between two packs of one project, when this server serves both (the main '
+      + 'branch and a pull request, say, under two ids): the routes, screens, tables, columns, '
+      + 'statements and symbols that appeared or went away, the edges that appeared, went away or '
+      + 'changed grade, and the endpoints and screens above any of that. Pass the OTHER pack as `base`; the '
+      + 'project you address is the head. READ `answer.conditions` FIRST: a difference is a code '
+      + 'change only when both packs were analyzed the same way (lanes, identity rule, axes, worker '
+      + 'versions, profile digest, engine, flags, roots). When they were not, `limits` says so, and a '
+      + 'removed node whose axis changed carries `axisChanged`, because an unread catalog and a '
+      + 'dropped table look alike. A renamed method is one removal and one addition. Lists are cut '
+      + 'at `limit` (default 50) with the totals in `truncated`.',
+    inputSchema: {
+      type: 'object',
+      properties: { base: { type: 'string', description: 'the served project id of the pack to compare against' }, limit: { type: 'integer' } },
+      required: ['base'],
+    },
+    fn: pack_diff,
   },
   table_usage: {
     description:

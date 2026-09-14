@@ -15,11 +15,11 @@
 /** The commands the dispatch table answers to, in the order the usage lists them. */
 export const COMMANDS = Object.freeze([
   'setup', 'doctor', 'init', 'agent', 'analyze', 'otel-methods', 'estimate',
-  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export',
+  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export', 'diff',
 ]);
 
 /** The first line: what a reader sees before any detail. */
-export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export> …\n';
+export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export|diff> …\n';
 
 /**
  * The last word, after every command: where a pack is looked for. It belongs to
@@ -142,6 +142,11 @@ export const USAGE = Object.freeze({
     + '                 [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--out <file>]\n'
     + '      (one Flow or Impact answer as one HTML file that opens with no server: the viewer page, the\n'
     + '       answer, its grades, limits and cut lists inside. The viewer\'s Export button writes the same file)\n',
+  diff:
+    '  cascade diff --base <pack> [--head <pack>] [--limit <n>] [--json]\n'
+    + '      (what changed between two packs of one project: nodes and edges added, removed or regraded,\n'
+    + '       and the endpoints and screens above them. A <pack> is a pack.json, its directory or a .cascade directory;\n'
+    + '       --head defaults to this project. The analysis conditions are compared first)\n',
 });
 
 /**

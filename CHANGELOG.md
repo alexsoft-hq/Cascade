@@ -23,6 +23,18 @@ Each dated section below is one round of work. The round protocol is in
   guessing, and the controls that would ask one are switched off. The file opens
   in the light theme, and names the live page cuts short wrap. About 0.9 MB.
   docs/viewer.md and docs/cli.md have the details.
+- **What changed between two packs.** `cascade diff --base <pack> [--head <pack>]`
+  lists the nodes and edges that appeared, went away or changed grade, and the
+  endpoints and screens above them. Node ids are meanings, so nothing is matched
+  by guess. The two packs' analysis conditions are compared first (lanes,
+  identity rule, axes, worker versions, profile digest, engine, flags, roots), and
+  a removal on an axis that changed between them is marked, because an unread
+  catalog and a dropped table look alike. The MCP tool `pack_diff` answers the
+  same question for two projects one server serves. docs/cli.md has the details.
+- **A pack records what it was analyzed under.** `meta.analysis` holds the worker
+  versions, the normalized profile's digest, the engine version and fingerprint,
+  the opt-out flags and the source roots. It is metadata, so no pack digest moves.
+  A pack built before it has none, and a diff says those conditions are unknown.
 
 ## [0.8.7] - 2026-09-14
 

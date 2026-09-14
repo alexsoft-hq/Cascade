@@ -24,7 +24,8 @@ import { registryPath } from '../../../core/paths.mjs';
 import { readRegistry, upsertProject, writeRegistryAtomic } from '../../../core/registry.mjs';
 import { registrationTarget } from '../../../core/resolve.mjs';
 import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../../../mcp/federation.mjs';
-import { realPath } from '../../env.mjs';
+import { engineIdentity, realPath } from '../../env.mjs';
+import { workerVersions } from '../../../core/worker_versions.mjs';
 import { goldenAsk } from '../../serve.mjs';
 import { runningEnginePrint, sha256File, stateDirOf, writeReceipt } from '../../state.mjs';
 
@@ -240,6 +241,14 @@ const gateState = gateStateOf({
 pack.meta.calibration = {
   mode: gate.mode, verdict, baselineSealedAt: gate.baselineSealedAt,
   firstRun: profile.calibration?.firstRun ?? null,
+};
+// WHAT THIS PACK WAS ANALYZED UNDER (src/core/pack_diff.mjs). Two packs differ in
+// the code only when these agree, so they are recorded where a later comparison
+// can read them: the worker versions, the normalized profile's digest, the engine,
+// the opt-out flags and the source roots. Metadata, so outside the digest.
+pack.meta.analysis = {
+  workers: workerVersions(), profileDigest, enginePrint: enginePrintNow,
+  engineVersion: engineIdentity().version, optOuts, selection: selectionRel,
 };
 
   return {

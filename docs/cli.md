@@ -675,3 +675,39 @@ The viewer's **Export** button writes the same file for the same question. See
 The command prints the trust level and how many limits and cut lists the
 answer carries, because a file handed to someone else is read without the
 screen it came from.
+
+## `cascade diff`
+
+```
+cascade diff --base <pack> [--head <pack>] [--limit <n>] [--json]
+```
+
+What changed between two packs of one project, for a pull request or a release:
+the routes, screens, tables, columns, statements and symbols that appeared or
+went away, the edges that appeared, went away or changed grade, and the
+endpoints and screens above any of that. A frontend change is above no endpoint,
+which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x`,
+`statement:ns.id`), so the two packs are compared by id with no guessing.
+
+- `--base <pack>` — the pack to compare against: a `pack.json`, the directory
+  holding it, or a `.cascade` directory.
+- `--head <pack>` — the pack with the change; default this project's pack.
+- `--limit <n>` — how many ids each list prints (default 50). The counts are
+  always whole, and a cut list says how much it left out.
+- `--json` — the whole difference as JSON (`cascade:pack-diff:1`).
+
+**The conditions come first.** The same code read by a newer worker, under
+another profile, with a lane or an axis missing, gives a different pack too. So
+the two packs' lanes, identity rule, axes, worker versions, profile digest,
+engine, opt-out flags and source roots are compared before anything is counted,
+and every one that differs is printed. A removed node whose axis changed between
+the packs is marked, because an unread catalog and a dropped table look alike in
+a list of ids. A pack built before 0.8.8 records no workers, profile or engine,
+and the diff then says those conditions are unknown rather than assuming them
+equal.
+
+A renamed method is one removal and one addition. Nothing here judges whether a
+change is safe.
+
+The MCP tool `pack_diff` answers the same question when one server serves both
+packs under two ids ([mcp.md](mcp.md#the-tools)).

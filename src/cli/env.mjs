@@ -33,6 +33,12 @@ export const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.u
  * binary's own absolute path and not this module's: a client starts the server
  * from a working directory nobody controls.
  */
+/** The engine's own name and version, read from its package.json. */
+export function engineIdentity(root = ENGINE_ROOT) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  return { name: pkg.name, version: pkg.version };
+}
+
 export const CLI_PATH = realPath(path.join(ENGINE_ROOT, 'bin', 'cascade.mjs'));
 
 /**

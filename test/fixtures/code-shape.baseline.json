@@ -1596,6 +1596,33 @@
     "updateProfileCatalog"
    ]
   },
+  "src/cli/commands/diff.mjs": {
+   "maxLines": 19,
+   "maxBranches": 9,
+   "longest": "printBody",
+   "branchiest": "printHeader",
+   "functions": [
+    "edge",
+    "printBody",
+    "printBody/1",
+    "printBody/2",
+    "printBody/3",
+    "printBody/4",
+    "printBody/5",
+    "printBody/6",
+    "printBody/7",
+    "printBody/8",
+    "printHeader",
+    "readPackAt",
+    "readPackAt/1",
+    "run",
+    "section",
+    "section/1",
+    "short",
+    "side",
+    "sign"
+   ]
+  },
   "src/cli/commands/doctor.mjs": {
    "maxLines": 27,
    "maxBranches": 8,
@@ -1805,6 +1832,7 @@
    "branchiest": "listMapperXml",
    "functions": [
     "catalogPathsOf",
+    "engineIdentity",
     "findJdk",
     "gitHead",
     "gitText",
@@ -1941,7 +1969,6 @@
    "branchiest": "projectMeta",
    "functions": [
     "callTool",
-    "engineIdentity",
     "exportSnapshot",
     "exportSnapshot/1",
     "projectMeta",
@@ -3108,6 +3135,48 @@
     "projectPack/3"
    ]
   },
+  "src/core/pack_diff.mjs": {
+   "maxLines": 29,
+   "maxBranches": 15,
+   "longest": "diffPacks",
+   "branchiest": "conditionsOf",
+   "functions": [
+    "axisOf",
+    "bump",
+    "byKindThenId",
+    "compareConditions",
+    "compareConditions/1",
+    "compareConditions/2",
+    "conditionsOf",
+    "cut",
+    "diffPacks",
+    "diffPacks/1",
+    "diffPacks/2",
+    "edgeChanges",
+    "edgeChanges/1",
+    "edgeKey",
+    "edgesByKey",
+    "idKind",
+    "kindRank",
+    "nodeChanges",
+    "nodeChanges/1",
+    "nodeChanges/2",
+    "nodeChanges/3",
+    "nodeChanges/4",
+    "nodeChanges/5",
+    "nodeChanges/6",
+    "nodeChanges/7",
+    "order",
+    "row",
+    "sideOf",
+    "take",
+    "touchedEnds",
+    "touchedEnds/1",
+    "touchedEnds/2",
+    "touchedEnds/3",
+    "upstream"
+   ]
+  },
   "src/core/paths.mjs": {
    "maxLines": 24,
    "maxBranches": 7,
@@ -3894,6 +3963,17 @@
     "truncField",
     "trustFor",
     "widerMode"
+   ]
+  },
+  "src/mcp/tools_diff.mjs": {
+   "maxLines": 27,
+   "maxBranches": 13,
+   "longest": "pack_diff",
+   "branchiest": "pack_diff",
+   "functions": [
+    "packOf",
+    "pack_diff",
+    "pack_diff/1"
    ]
   },
   "src/viewer/graphlayout.mjs": {
