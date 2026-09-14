@@ -30,6 +30,15 @@ import { gatewayRouteOf } from '../../core/profile.mjs';
 /** Hosts that mean "this machine", so an absolute URL to one is not another deployable. */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
 
+/**
+ * The two evidence rules RM60 added, spelled here the way the worker stamps
+ * them. The word is written twice on purpose, the same way `router-navigation`
+ * is: the bridge does not import from the worker, so a shared constant would be
+ * a dependency in the direction this lane does not have.
+ */
+const FORM_SUBMIT_RULE = 'form-submit';
+const LOCATION_REQUEST_RULE = 'location-request';
+
 /** What each evidence layer actually did, in one sentence, for `evidence.basis`. */
 export const WEB_CALL_BASIS = Object.freeze({
   platform: 'the call goes to a browser sink (fetch / XMLHttpRequest), which sends the request itself: the URL argument is the URL by contract, and no rule had to decide that this call is an HTTP call',
@@ -38,6 +47,9 @@ export const WEB_CALL_BASIS = Object.freeze({
   wrapper: 'the callee was traced through the project\'s own wrapper(s) to a client library instance, by following what each name is BOUND to in its file and what each wrapper forwards. The chain is on the edge; every hop is a binding this lane read, not a name it recognized',
   untraced: 'the argument is URL-shaped but the callee could not be traced to any sink: the call may send this URL or may only build it, so the edge says a rule guessed and the grade is HEURISTIC',
   template: 'the page itself makes this request: a `<form action=…>` posts to it, or a link opens it. The markup names the path and the attribute names the method, so nothing had to be traced and nothing was assumed',
+  // RM60. The two requests a server-rendered page makes from its own script.
+  form: 'the page assigns this address to a form and submits that form from script (`form.action = …; form.submit()`), which is how a server-rendered page sends everything it does not send with a link. Nothing had to be traced: the address is the assignment nearest before the submit on the same form, and the method is what the page assigned, or the `method` of the `<form>` element that name resolves to',
+  location: 'the page tells the browser to load this address (`location.href = …`, `location.assign(…)`). A server-rendered page has no router, so nothing but the server can answer it: the browser fetches the route, exactly as it does for a link in the same page, and the method is GET by that contract',
   // RM56. A Nexacro client sends every request through one framework call, so
   // there is no client library to trace and no wrapper chain to follow.
   nexacro: 'the screen calls `transaction(…)`, which is the ONE way a Nexacro client sends a request: the framework opens the connection and the url is the argument, or the property of the options object, that it reads. The service prefix on the front of it (`svcurl::`) is resolved through the application typedef\'s own `<Service prefixid url>` list, so nothing here was matched by name',
@@ -574,24 +586,54 @@ function isStringMethod(callee) {
     && STRING_METHODS.has(callee.path[callee.path.length - 1]);
 }
 
+/** A sink with nothing to trace: one call, one url, one contract. */
+const flatSink = (kind, module) => ({ sink: { kind, module, instance: null, chain: [], depth: 0 }, target: null });
+
+/** The answer for a call that turned out to be no call at all, as distinct from "not one of these". */
+const NO_CALL = Object.freeze({ none: true });
+
+/**
+ * THE REQUESTS THAT GO THROUGH NO CLIENT AT ALL, and each is a contract rather
+ * than a trace:
+ *   a transaction   the ONE way a Nexacro client sends a request (RM56), read
+ *                   first because that file is also a template
+ *   a form submit   `form.action = …; form.submit()` (RM60). Read wherever it
+ *                   is written, because the idiom is JavaScript and not markup
+ *   the address bar `location.href = …` in a PAGE (RM60): a server-rendered
+ *                   page has no router, so the browser fetches the route
+ *   a form or link  the markup's own two (RM48)
+ *
+ * @returns {{sink:object, target:null}|null} null when this call is none of them
+ */
+function pageSinkOf(c, { isTemplate, resolved, absolute, stats }) {
+  if (c.nexacro) {
+    stats.calls.nexacro += 1;
+    return flatSink('nexacro', 'transaction');
+  }
+  if (c.formSubmit) {
+    // An action the page fills in whole from an expression (`${url}`) is an
+    // address this lane cannot read, which is a different finding from a route.
+    if (!urlShaped(absolute, resolved)) { stats.calls.formSubmitsWithoutAddress += 1; return NO_CALL; }
+    stats.calls.formSubmits += 1;
+    return flatSink('form', FORM_SUBMIT_RULE);
+  }
+  if (!isTemplate || !c.template || typeof c.template.rule !== 'string') return null;
+  if (c.template.rule === LOCATION_REQUEST_RULE) {
+    stats.calls.locationRequests += 1;
+    return flatSink('location', c.template.rule);
+  }
+  stats.calls.template += 1;
+  return flatSink('template', c.template.rule);
+}
+
 /** Which of the six kinds of sink ONE call reached, or null when it is not a call at all. */
 function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
   const {
     platformOf, injectedClients, calleeTarget, sinkVerb, wrappers, noteInstance, stats,
   } = deps;
   const platform = platformOf(c);
-  // A NEXACRO TRANSACTION IS A REQUEST BY CONTRACT (RM56): one call, one url,
-  // nothing to trace. First, because that file is also a template.
-  if (c.nexacro) {
-    stats.calls.nexacro += 1;
-    return { sink: { kind: 'nexacro', module: 'transaction', instance: null, chain: [], depth: 0 }, target: null };
-  }
-  if (isTemplate && c.template && typeof c.template.rule === 'string') {
-    // A FORM AND A LINK ARE THE PAGE'S OWN CALLS. Nothing had to be traced:
-    // the markup names the path and the attribute names the method.
-    stats.calls.template += 1;
-    return { sink: { kind: 'template', module: c.template.rule, instance: null, chain: [], depth: 0 }, target: null };
-  }
+  const own = pageSinkOf(c, { isTemplate, resolved, absolute, stats });
+  if (own !== null) return own === NO_CALL ? null : own;
   if (platform) {
     stats.calls.platform += 1;
     return { sink: { kind: 'platform', module: platform.name, instance: null, chain: [], depth: 0 }, target: null };
@@ -663,6 +705,18 @@ function untracedSink(c, { resolved, absolute, target, stats }) {
 }
 
 /**
+ * A call with no url at all, counted where it is a request this lane knows
+ * happens and cannot follow — which is not the same finding as no request.
+ *   a transaction   a Nexacro `transaction(…)` whose url is built elsewhere (RM56)
+ *   a form submit   its own scope assigned no action and its `<form>` element
+ *                   names none this lane can read (RM60)
+ */
+function countAddressless(c, stats) {
+  if (c.nexacro) stats.calls.nexacroUnreadable += 1;
+  else if (c.formSubmit) stats.calls.formSubmitsWithoutAddress += 1;
+}
+
+/**
  * The FIRST of the two passes over the calls: what each call site is, and which
  * URLs each client instance sends.
  *
@@ -690,10 +744,7 @@ export function classifyCallSites({
       continue;
     }
     for (const c of f.calls) {
-      // A TRANSACTION WITH NO URL (RM56) is a request this lane knows happens
-      // and cannot follow, which is not the same finding as no request.
-      if (c.nexacro && !c.url) { stats.calls.nexacroUnreadable += 1; continue; }
-      if (!c.url) continue;
+      if (!c.url) { countAddressless(c, stats); continue; }
       // A HOLE ANOTHER MODULE'S CONSTANT EXPLAINS (RM58), filled before
       // anything else reads the template: what this call asks for is decided
       // on the text with the constants in it. A URL that IS such a constant
@@ -785,9 +836,15 @@ function callEvidence(site, { written, full, via, absolute, prefixEvidence, decl
   const { call, sink } = site;
   const evidence = {
     rule: call.nexacro ? 'nexacro-transaction'
-      : site.template && call.template ? call.template.rule : 'web-http-call',
+      : call.formSubmit ? FORM_SUBMIT_RULE
+        : site.template && call.template ? call.template.rule : 'web-http-call',
     ...(call.nexacro ? { nexacro: call.nexacro } : {}),
     basis: WEB_CALL_BASIS[sink.kind],
+    // WHICH FORM, AND WHERE THE METHOD CAME FROM (RM60). A page has a dozen
+    // forms and a reader checking this edge needs to know which one was
+    // submitted, and whether the method was assigned, read off the `<form>`
+    // element, or never found at all.
+    ...(call.formSubmit ? { form: call.formSubmit } : {}),
     ...(site.template && call.template ? { attribute: call.template.attr, wrote: call.template.written } : {}),
     sink: { kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth },
     // `written` is the path as the code spells it, `template` the path this

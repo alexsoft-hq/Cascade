@@ -97,6 +97,77 @@ function targetsOf(rec) {
 }
 
 /**
+ * THE CANDIDATES THE IMPORT SETTLES (RM60).
+ *
+ * `import router from '@/router'` followed by `router.push('/x')` is a
+ * navigation only if that module really holds a router, and one file cannot say.
+ * The worker leaves the specifier on the record; the same module index every
+ * other cross-file question in this lane goes through answers it, and a
+ * specifier that leads anywhere else is dropped exactly as it was before.
+ *
+ * @returns {object[]} the candidates that turned out to be navigations
+ */
+function fromRouterModule(file, files, resolver) {
+  const out = [];
+  for (const rec of files.get(file).navigationCandidates ?? []) {
+    const spec = rec.specifier ?? null;
+    if (spec === null || typeof spec.source !== 'string') continue;
+    const r = resolver.resolveSpecifier(file, spec.source);
+    const target = r.file ? (files.get(r.file)?.routerModule ?? null) : null;
+    if (target === null) continue;
+    const { specifier, ...rest } = rec;
+    out.push({ ...rest, kind: 'navigation', framework: target.framework ?? rec.framework ?? 'unknown' });
+  }
+  return out;
+}
+
+/**
+ * ONE NAVIGATION, counted and — when its path names a screen — recorded on the
+ * screen it is written in.
+ */
+function placeOne(rec, { file, index, entries, unmatched, stats }) {
+  const nav = stats.navigation;
+  nav.navigations += 1;
+  const framework = rec.framework ?? 'unknown';
+  nav.byFramework[framework] = (nav.byFramework[framework] ?? 0) + 1;
+  const via = rec.via ?? 'unknown';
+  nav.bySource[via] = (nav.bySource[via] ?? 0) + 1;
+  const found = [];
+  for (const path of targetsOf(rec)) {
+    const hit = screensFor(index, path);
+    if (hit.how === null) {
+      const key = normalizeUrl(path);
+      unmatched.set(key, (unmatched.get(key) ?? 0) + 1);
+      continue;
+    }
+    for (const id of hit.ids) found.push({ id, path: normalizeUrl(path), how: hit.how });
+  }
+  if (found.length === 0) {
+    nav.navigationsUnmatched += 1;
+    // WHY a navigation names no screen. `named` is a route this router reaches
+    // by its declared name and not by a path; `bound` is a `:to` the component
+    // computes; `path` is an address that named no screen this lane found,
+    // which is the one a reader can act on.
+    const kind = rec.targetKind ?? (targetsOf(rec).length > 0 ? 'path' : 'expression');
+    nav.unmatchedByKind[kind] = (nav.unmatchedByKind[kind] ?? 0) + 1;
+    return;
+  }
+  nav.navigationsToScreen += 1;
+  for (const from of index.byComponent.get(file) ?? []) {
+    if (!entries.has(from)) entries.set(from, new Map());
+    const mine = entries.get(from);
+    for (const f of found) {
+      const entry = {
+        to: f.id, path: f.path, match: f.how, rule: NAVIGATION_RULE,
+        framework, sink: rec.sink ?? null, via, file, line: rec.line ?? null,
+      };
+      const key = JSON.stringify(entry);
+      if (!mine.has(key)) mine.set(key, entry);
+    }
+  }
+}
+
+/**
  * WHERE EACH SCREEN LEADS, recorded on the screen the navigation is written in.
  *
  * One entry per (screen it leads to, place it is written), sorted, so two runs
@@ -106,40 +177,16 @@ function targetsOf(rec) {
  *
  * @returns {{unmatched:Map<string,number>}} the paths that name no screen
  */
-export function placeNavigations({ fileNames, files, screenNodes, stats }) {
+export function placeNavigations({ fileNames, files, screenNodes, stats, resolver }) {
   const index = buildScreenIndex(screenNodes);
   const entries = new Map(); // screen id -> entry key -> entry
   const unmatched = new Map();
   for (const file of fileNames) {
-    for (const rec of files.get(file).navigations ?? []) {
-      stats.navigation.navigations += 1;
-      const framework = rec.framework ?? 'unknown';
-      stats.navigation.byFramework[framework] = (stats.navigation.byFramework[framework] ?? 0) + 1;
-      const found = [];
-      for (const path of targetsOf(rec)) {
-        const hit = screensFor(index, path);
-        if (hit.how === null) {
-          const key = normalizeUrl(path);
-          unmatched.set(key, (unmatched.get(key) ?? 0) + 1);
-          continue;
-        }
-        for (const id of hit.ids) found.push({ id, path: normalizeUrl(path), how: hit.how });
-      }
-      if (found.length === 0) { stats.navigation.navigationsUnmatched += 1; continue; }
-      stats.navigation.navigationsToScreen += 1;
-      for (const from of index.byComponent.get(file) ?? []) {
-        if (!entries.has(from)) entries.set(from, new Map());
-        const mine = entries.get(from);
-        for (const f of found) {
-          const entry = {
-            to: f.id, path: f.path, match: f.how, rule: NAVIGATION_RULE,
-            framework, sink: rec.sink ?? null, file, line: rec.line ?? null,
-          };
-          const key = JSON.stringify(entry);
-          if (!mine.has(key)) mine.set(key, entry);
-        }
-      }
-    }
+    const navigations = [
+      ...(files.get(file).navigations ?? []),
+      ...fromRouterModule(file, files, resolver),
+    ];
+    for (const rec of navigations) placeOne(rec, { file, index, entries, unmatched, stats });
   }
   for (const [id, mine] of entries) {
     const node = screenNodes.get(id);

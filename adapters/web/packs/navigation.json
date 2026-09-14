@@ -1,6 +1,6 @@
 {
   "pack": "navigation",
-  "why": "A single-page app changes the screen by asking its ROUTER, not by asking the server. `router.push('/auth/login')` swaps the component the browser is already showing; no request leaves the machine. Read as an HTTP call it becomes a route nothing serves, and in a multi-service pack such a false call can even try to cross into a sibling project. So the navigation sinks are declared here, per router, the same way the HTTP clients are declared in http-clients.json: a call on one of these is a screen change, and the web lane records where it goes instead of pretending a request was sent. A server-rendered page is the other case and is left alone: there a link IS a request, and the sink is what tells the two apart, not the file kind.",
+  "why": "A single-page app changes the screen by asking its ROUTER, not by asking the server. `router.push('/auth/login')` swaps the component the browser is already showing; no request leaves the machine. Read as an HTTP call it becomes a route nothing serves, and in a multi-service pack such a false call can even try to cross into a sibling project. So the navigation sinks are declared here, per router, the same way the HTTP clients are declared in http-clients.json: a call on one of these is a screen change, and the web lane records where it goes instead of pretending a request was sent. A server-rendered page is the other case: there a link IS a request, and so is the address bar. Measured on the eGovFrame corpus, every `location.href` in a JSP is a `<c:url>` naming a controller of the same application, and a page has no router that could answer it, so on the browser global the file kind is the fact that decides and the web lane reads it as a GET call.",
   "routers": [
     {
       "framework": "next",
@@ -17,8 +17,13 @@
       "receivers": ["$router"],
       "why": "`this.$router` is the router the framework itself puts on every component, so its name is part of Vue's own vocabulary rather than a habit of one project. The composition form binds the same object to a name of its own, which is what `hooks` covers.",
       "methods": ["push", "replace"],
+      "module": {
+        "factories": ["createRouter", "default"],
+        "why": "A Vue application builds its router once, in a module of its own, and hands it to the app: `createRouter({routes})` in vue-router 4, `new VueRouter({routes})` (the module's default export, whatever the file calls it) in vue-router 3. Every other file reaches that router by importing the module, and then writes `router.push(...)` with no `this` and no hook in sight. So the factory names are declared here, the worker records which module IS a router, and the bridge follows the import."
+      },
       "urlArg": 0,
-      "urlKeys": ["path"]
+      "urlKeys": ["path"],
+      "nameKeys": ["name"]
     },
     {
       "framework": "react-router",
@@ -55,15 +60,14 @@
       "framework": "vue-router",
       "element": "router-link",
       "pathAttr": "to",
-      "markup": true,
-      "why": "A `<router-link>` is written in a single-file component's `<template>`, and this worker parses a component's `<script>` blocks and not its markup. The sink is declared here because it is one; it is not reached yet, and docs/setup/web-lane.md says so rather than leaving a reader to find out."
+      "why": "A `<router-link>` is written in a single-file component's `<template>`, and it imports nothing: vue-router registers the tag for the whole application, so the tag name IS the declaration. That is why this entry lists no modules, and why the reader is the template reader's tag scanner rather than the JavaScript walk."
     }
   ],
   "globals": [
     {
       "framework": "browser",
       "receivers": ["window.location", "location"],
-      "why": "The address bar is on `window`, so no file imports it and nothing binds it. Setting `href` or calling `assign` / `replace` on it opens another page: it is the browser doing the navigating, which is the one thing every one of these routers ends up asking for.",
+      "why": "The address bar is on `window`, so no file imports it and nothing binds it. Setting `href` or calling `assign` / `replace` on it tells the browser to open another address, and WHAT THAT IS depends on the file it is written in. In a single-page app it is a screen change like any other: the router serves the path and nothing leaves the machine. In a server-rendered page there is no router, so the browser goes and fetches it, which makes it a GET request to this application exactly as `<a href>` in the same page is. So this is the one sink whose reading the file kind decides, and it is the file kind because a page having no router is a fact about the page rather than about the sink.",
       "methods": ["assign", "replace"],
       "properties": ["href"],
       "urlArg": 0

@@ -46,6 +46,16 @@ function emptyNavigationStats() {
     navigationsUnmatched: 0,
     screensWithNavigation: 0,
     byFramework: {},
+    // WHERE THE SINK WAS FOUND (RM60): a hook's value, the framework's own
+    // `this.$router`, the browser global, an import of the app's own router
+    // module, a JSX element, a `<router-link>` in markup. A reader comparing
+    // two of these is asking a real question, because each is a different rule
+    // and a project that navigates one way only says so here.
+    bySource: {},
+    // WHY an unmatched navigation named no screen: a named route, a bound
+    // attribute, a path nothing declares, or an expression this lane could not
+    // read. A count with no reason beside it cannot be acted on.
+    unmatchedByKind: {},
     unmatchedPaths: [],
   };
 }
@@ -116,6 +126,16 @@ function emptyCallStats() {
     stringMethod: 0,
     // A form or a link in a server-rendered page (RM48).
     template: 0,
+    // A form whose address is assigned in script and submitted from script
+    // (RM60), and the address bar of a server page, which is a GET request for
+    // the same reason a link in it is. Both are calls of the PAGE, so they are
+    // counted apart from the markup's own two.
+    formSubmits: 0,
+    locationRequests: 0,
+    // A form submitted from script whose address this lane could not find: no
+    // action assigned in the submit's own scope and no readable `action` on
+    // the `<form>` element. A request that happens and that no edge carries.
+    formSubmitsWithoutAddress: 0,
     // A Nexacro screen's `transaction(…)` (RM56), and the ones with no url.
     nexacro: 0,
     nexacroUnreadable: 0,

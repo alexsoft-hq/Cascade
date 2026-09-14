@@ -415,6 +415,7 @@ function summariseCall(r, counts) {
     counts.platformSinks[r.platformSink] = (counts.platformSinks[r.platformSink] ?? 0) + 1;
   }
   if (r.injected) counts.injectedCalls += 1;
+  if (r.formSubmit) counts[r.url ? 'formSubmits' : 'formSubmitsWithoutAddress'] += 1;
   if (r.method && r.method.from) {
     counts.methodBySource[r.method.from] = (counts.methodBySource[r.method.from] ?? 0) + 1;
   }
@@ -425,6 +426,84 @@ function summariseCall(r, counts) {
     else if (first.via === 'literal') counts.urlByShape.literal += 1;
     else if (first.via === 'template') counts.urlByShape.template += 1;
     else counts.urlByShape.constant += 1;
+  }
+}
+
+/** One `file` record: which language, and whether it was read at all. */
+function summariseFile(r, counts) {
+  // A Nexacro form is a template of its own kind (RM56): markup with its
+  // scripts inside it, which is what every other entry here is.
+  if (r.lang === 'template' || r.lang === 'nexacro') counts.templates.files += 1;
+  else if (r.apiHandler === true) { counts.jsFiles += 1; counts.apiFiles += 1; }
+  else if (r.lang === 'vue') counts.vueFiles += 1;
+  else if (r.lang === 'ts' || r.lang === 'tsx') counts.tsFiles += 1;
+  else counts.jsFiles += 1;
+  if (r.skipped) counts.skippedFiles += 1;
+  counts.recoveredErrors += r.recoveredErrors ?? 0;
+}
+
+/** One `template` record: the page, and everything it holds. */
+function summariseTemplate(r, counts) {
+  counts.templates.byEngine[r.engine] = (counts.templates.byEngine[r.engine] ?? 0) + 1;
+  counts.templates.scripts += r.scripts ?? 0;
+  counts.templates.forms += r.forms ?? 0;
+  counts.templates.links += r.links ?? 0;
+  counts.templates.includes += (r.includes ?? []).length;
+  counts.templates.contextVars += (r.contextVars ?? []).length;
+}
+
+/** One `navigation` record: which router, and where the sink was found (RM60). */
+function summariseNavigation(r, counts) {
+  counts.navigations += 1;
+  counts.navigationsByFramework[r.framework] = (counts.navigationsByFramework[r.framework] ?? 0) + 1;
+  counts.navigationsBySource[r.via] = (counts.navigationsBySource[r.via] ?? 0) + 1;
+}
+
+/** The record kinds a project's TREE declares: a route, a registration, a config. */
+function summariseDeclaration(r, counts, envFiles) {
+  if (r.kind === 'route') {
+    counts.routes += 1;
+    counts.byPack[r.pack] = (counts.byPack[r.pack] ?? 0) + 1;
+    if (typeof r.templateFile === 'string') counts.templatesRead += 1;
+    return;
+  }
+  if (r.kind === 'registration') {
+    counts.registrations[r.what] = (counts.registrations[r.what] ?? 0) + 1;
+    if (typeof r.templateFile === 'string') counts.templatesRead += 1;
+    return;
+  }
+  if (r.what === 'alias') counts.aliases += 1;
+  else if (r.what === 'proxy') counts.proxies += 1;
+  else if (r.what === 'env') { counts.envRecords += 1; envFiles.add(r.file); }
+}
+
+/**
+ * One record of the assembled stream, counted into the summary.
+ *
+ * `seen` carries the three sets the counts are folded from at the end: the files
+ * that produced a `file` record, the ones that produced only an error, and the
+ * `.env` files a config record named.
+ */
+function summariseRecord(r, counts, seen) {
+  switch (r.kind) {
+    case 'file': seen.withFileRecord.add(r.file); summariseFile(r, counts); break;
+    case 'template': summariseTemplate(r, counts); break;
+    case 'parse_error': counts.parseErrors += 1; seen.errorOnly.add(r.file); break;
+    case 'import': counts.imports += 1; break;
+    case 'export': counts.exports += 1; break;
+    case 'function': counts.functions += 1; break;
+    case 'constant': counts.constants += 1; break;
+    case 'binding': counts.bindings += 1; break;
+    case 'class': counts.classes += 1; break;
+    case 'assign': counts.assigns += 1; break;
+    case 'navigation': summariseNavigation(r, counts); break;
+    case 'navigationCandidate': counts.navigationCandidates += 1; break;
+    case 'routerModule': counts.routerModules += 1; break;
+    case 'route':
+    case 'registration':
+    case 'config': summariseDeclaration(r, counts, seen.envFiles); break;
+    case 'call': summariseCall(r, counts); break;
+    default: break;
   }
 }
 
@@ -454,8 +533,13 @@ export function webFactsSummary(records) {
     apiFiles: 0,
     urlByShape: { literal: 0, template: 0, constant: 0, unresolved: 0 },
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
-    // The calls that change the SCREEN rather than send a request (RM59).
-    navigations: 0, navigationsByFramework: {},
+    // A form whose address is assigned in script and submitted from script (RM60).
+    formSubmits: 0, formSubmitsWithoutAddress: 0,
+    // The calls that change the SCREEN rather than send a request (RM59), by
+    // router and by where the sink was found (RM60).
+    navigations: 0, navigationsByFramework: {}, navigationsBySource: {},
+    // `router.push(…)` on an imported name, and the modules that ARE a router (RM60).
+    navigationCandidates: 0, routerModules: 0,
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles: 0,
     platformSinks: { fetch: 0, xhr: 0, jquery: 0 },
@@ -469,63 +553,10 @@ export function webFactsSummary(records) {
   const withFileRecord = new Set();
   const errorOnly = new Set();
   const envFiles = new Set();
+  const seen = { withFileRecord, errorOnly, envFiles };
   for (const r of records) {
     if (!r || typeof r !== 'object') continue;
-    switch (r.kind) {
-      case 'file':
-        withFileRecord.add(r.file);
-        // A Nexacro form is a template of its own kind (RM56): markup with its
-        // scripts inside it, which is what every other entry here is.
-        if (r.lang === 'template' || r.lang === 'nexacro') counts.templates.files += 1;
-        else if (r.apiHandler === true) { counts.jsFiles += 1; counts.apiFiles += 1; }
-        else if (r.lang === 'vue') counts.vueFiles += 1;
-        else if (r.lang === 'ts' || r.lang === 'tsx') counts.tsFiles += 1;
-        else counts.jsFiles += 1;
-        if (r.skipped) counts.skippedFiles += 1;
-        counts.recoveredErrors += r.recoveredErrors ?? 0;
-        break;
-      case 'template':
-        counts.templates.byEngine[r.engine] = (counts.templates.byEngine[r.engine] ?? 0) + 1;
-        counts.templates.scripts += r.scripts ?? 0;
-        counts.templates.forms += r.forms ?? 0;
-        counts.templates.links += r.links ?? 0;
-        counts.templates.includes += (r.includes ?? []).length;
-        counts.templates.contextVars += (r.contextVars ?? []).length;
-        break;
-      case 'parse_error':
-        counts.parseErrors += 1;
-        errorOnly.add(r.file);
-        break;
-      case 'import': counts.imports += 1; break;
-      case 'export': counts.exports += 1; break;
-      case 'function': counts.functions += 1; break;
-      case 'constant': counts.constants += 1; break;
-      case 'binding': counts.bindings += 1; break;
-      case 'class': counts.classes += 1; break;
-      case 'assign': counts.assigns += 1; break;
-      case 'navigation':
-        counts.navigations += 1;
-        counts.navigationsByFramework[r.framework] = (counts.navigationsByFramework[r.framework] ?? 0) + 1;
-        break;
-      case 'route':
-        counts.routes += 1;
-        counts.byPack[r.pack] = (counts.byPack[r.pack] ?? 0) + 1;
-        if (typeof r.templateFile === 'string') counts.templatesRead += 1;
-        break;
-      case 'registration':
-        counts.registrations[r.what] = (counts.registrations[r.what] ?? 0) + 1;
-        if (typeof r.templateFile === 'string') counts.templatesRead += 1;
-        break;
-      case 'config':
-        if (r.what === 'alias') counts.aliases += 1;
-        else if (r.what === 'proxy') counts.proxies += 1;
-        else if (r.what === 'env') { counts.envRecords += 1; envFiles.add(r.file); }
-        break;
-      case 'call':
-        summariseCall(r, counts);
-        break;
-      default: break;
-    }
+    summariseRecord(r, counts, seen);
   }
   // A file the worker READ is one that produced a `file` record, plus one it
   // could not parse or could not read at all: those produce a parse_error and no

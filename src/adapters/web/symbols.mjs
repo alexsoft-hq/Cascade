@@ -80,12 +80,34 @@ function sortOneFile(f) {
   f.assigns.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.calls.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.navigations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.navigationCandidates.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.routes.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.registrations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   // The LAST import of a local name is the one in scope, and imports are now
   // in line order, so a later one legitimately shadows an earlier one.
   for (const imp of f.imports) {
     for (const s of imp.specifiers ?? []) f.importOf.set(s.local, { source: imp.source, imported: s.imported });
+  }
+}
+
+/** One record put in the bucket its kind belongs to. */
+function bucket(f, r) {
+  switch (r.kind) {
+    case 'import': f.imports.push(r); break;
+    case 'export': f.exports.push(r); break;
+    case 'function': f.functions.set(r.name, r); break;
+    case 'constant': f.constants.set(r.name, r); break;
+    case 'binding': f.bindings.set(r.name, r); break;
+    case 'class': f.classes.set(r.name, r); break;
+    case 'assign': f.assigns.push(r); break;
+    case 'call': f.calls.push(r); break;
+    case 'navigation': f.navigations.push(r); break;
+    case 'navigationCandidate': f.navigationCandidates.push(r); break;
+    case 'routerModule': f.routerModule = r; break;
+    case 'route': f.routes.push(r); break;
+    case 'registration': f.registrations.push(r); break;
+    case 'template': f.template = r; break;
+    default: break;
   }
 }
 
@@ -112,6 +134,10 @@ export function indexWebFacts(records) {
         registrations: [],
         // The calls that change the SCREEN rather than send a request (RM59).
         navigations: [],
+        // `router.push(…)` on an imported name, and whether THIS file is the
+        // module such an import reaches (RM60).
+        navigationCandidates: [],
+        routerModule: null,
         // The one record a server-rendered page carries about itself (RM48).
         template: null,
         importOf: new Map(),
@@ -126,22 +152,7 @@ export function indexWebFacts(records) {
     if (r.kind === 'config') { configs.push(r); continue; }
     if (typeof r.file !== 'string') continue;
     if (r.kind === 'file') { parsed.add(r.file); fileOf(r.file); continue; }
-    const f = fileOf(r.file);
-    switch (r.kind) {
-      case 'import': f.imports.push(r); break;
-      case 'export': f.exports.push(r); break;
-      case 'function': f.functions.set(r.name, r); break;
-      case 'constant': f.constants.set(r.name, r); break;
-      case 'binding': f.bindings.set(r.name, r); break;
-      case 'class': f.classes.set(r.name, r); break;
-      case 'assign': f.assigns.push(r); break;
-      case 'call': f.calls.push(r); break;
-      case 'navigation': f.navigations.push(r); break;
-      case 'route': f.routes.push(r); break;
-      case 'registration': f.registrations.push(r); break;
-      case 'template': f.template = r; break;
-      default: break;
-    }
+    bucket(fileOf(r.file), r);
   }
   for (const f of files.values()) sortOneFile(f);
   return { files, configs, parsed, fileNames: [...files.keys()].sort() };

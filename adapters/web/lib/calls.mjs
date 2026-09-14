@@ -14,6 +14,7 @@
 // files in the tree.
 
 import { navigationOf } from './navigation.mjs';
+import { formCall } from './forms.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
@@ -411,6 +412,34 @@ function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summari
   return rec;
 }
 
+/**
+ * THE TWO THINGS A CALL CAN BE INSTEAD OF A REQUEST, once it is known to be a
+ * call at all.
+ *
+ *   a navigation  `router.push('/x')` changes the screen and sends nothing
+ *                 (RM59). It is recorded here and the walk of this node ends
+ *   a form        `form.submit()`, and jQuery's `$('#f').attr('action', url)`
+ *                 (RM60). Nothing is emitted: the address is on another line,
+ *                 so the record is written once the whole file has been read
+ *                 (`lib/forms.mjs`), and the call itself is nothing else — it
+ *                 goes through no client and carries no URL
+ *
+ * @returns {boolean} whether this call was one of them
+ */
+function readTheCall(ctx, node, env, { isNew, callee, binding, argNodes, line }) {
+  if (isNew) return false;
+  // A NAVIGATION IS NOT A REQUEST (RM59). `router.push('/auth/login')` swaps
+  // the component the browser is already showing; nothing leaves the machine.
+  // Read before any of the HTTP rules, because every one of them would see a
+  // path-shaped argument and call it a request.
+  const navigation = navigationOf(ctx, { isNew, callee, binding, env, argNodes, line });
+  if (navigation !== null) {
+    ctx.emit(navigation, line);
+    return true;
+  }
+  return formCall(ctx, node, env, callee);
+}
+
 /** One call, read for what it sends and for what it hands over. */
 export function visitCall(ctx, node, env) {
   const {
@@ -438,13 +467,7 @@ export function visitCall(ctx, node, env) {
   const summaries = argNodes.map((a) => summarizeArg(a));
   const binding = callee ? bindingOf(callee.root, env.scope, env.classInfo) : null;
 
-  // A NAVIGATION IS NOT A REQUEST (RM59). `router.push('/auth/login')` swaps
-  // the component the browser is already showing; nothing leaves the machine.
-  // Read before any of the HTTP rules, because every one of them would see a
-  // path-shaped argument and call it a request.
-  const navigation = navigationOf(ctx, { isNew, callee, binding, env, argNodes, line });
-  if (navigation !== null) {
-    emit(navigation, line);
+  if (readTheCall(ctx, node, env, { isNew, callee, binding, argNodes, line })) {
     for (const a of node.arguments) visit(a, env);
     return;
   }
@@ -687,6 +710,24 @@ export function viaOf(ctx, summary) {
   return 'literal';
 }
 
+/**
+ * ONE CANDIDATE READ AS A PAGE WRITES IT (RM60).
+ *
+ * In a server-rendered page the template engine writes the path into the script
+ * before the browser sees it, so `"<c:url value='/x.do'/>"` IS `/x.do`. The
+ * literal that carries no such directive is left exactly as it was.
+ *
+ * The holes go when the text changes: `{*}` and the hole list have to line up
+ * for anything downstream to fill one in, and after a rewrite they no longer do.
+ */
+function throughTemplateUrl(ctx, cand) {
+  if (typeof ctx.templateUrl !== 'function' || typeof cand.template !== 'string') return cand;
+  const read = ctx.templateUrl(cand.template);
+  if (read === null || read === cand.template) return cand;
+  const { holes, ...rest } = cand;
+  return { ...rest, template: read, dynamicParts: (read.match(/\{\*\}/g) ?? []).length };
+}
+
 /** One call's URL: what it resolved to, or why it did not. */
 export function buildUrl(ctx, summary, scope) {
   const { top } = ctx;
@@ -711,7 +752,8 @@ export function buildUrl(ctx, summary, scope) {
   }
   let query = null;
   let absolute = null;
-  resolved = resolved.map((r) => {
+  resolved = resolved.map((cand) => {
+    const r = throughTemplateUrl(ctx, cand);
     let t = r.template;
     const abs = /^(https?:)?\/\/([^/]+)(\/.*)?$/.exec(t);
     if (abs) {

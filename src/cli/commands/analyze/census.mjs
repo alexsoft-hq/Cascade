@@ -164,6 +164,22 @@ export function sayDdlChoice(sel) {
   }
 }
 
+/**
+ * WHAT A SCRIPT ASKS FOR WITHOUT NAMING A CLIENT (RM60): a form whose address it
+ * assigned and then submitted, and the router module a bare `router.push(…)`
+ * goes through.
+ *
+ * Said whenever the tree holds one, because a page that submits every one of
+ * its forms this way would otherwise read as a page that asks the server for
+ * nothing at all.
+ */
+function sayWhatScriptAsksFor(w) {
+  if ((w.formSubmits ?? 0) === 0 && (w.routerModules ?? 0) === 0) return;
+  process.stderr.write(`  read from script: ${w.formSubmits ?? 0} form(s) submitted after their action was assigned, `
+    + `${w.routerModules ?? 0} router module(s), `
+    + `${w.navigationCandidates ?? 0} call(s) on a name imported from one\n`);
+}
+
 export function sayWebWorker(webWorkerStats, { webFacts, profile, resolved, root, relOf }) {
   const t = webWorkerStats.templates;
   const u = webWorkerStats.urlByShape;
@@ -178,6 +194,7 @@ export function sayWebWorker(webWorkerStats, { webFacts, profile, resolved, root
       + `${t.links ?? 0} link(s), ${t.includes ?? 0} include(s), `
       + `${t.contextVars ?? 0} variable(s) holding the context path\n`);
   }
+  sayWhatScriptAsksFor(webWorkerStats);
   // WHAT A FILE-TREE ROUTER KEEPS BESIDE ITS PAGES (RM56). `pages/api/**` is
   // code this frontend SERVES, and a screen count with no word about it reads
   // as pages going missing.
@@ -328,6 +345,22 @@ export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
 }
 
 /**
+ * WHAT A PAGE ASKS FOR WITHOUT A CLIENT (RM60). A server-rendered page sends
+ * most of what it sends by submitting a form from script or by handing the
+ * browser an address, and neither goes through anything a client rule would
+ * recognise. Said whenever there is one, because a page that works this way
+ * would otherwise read as a page that asks the server for nothing.
+ */
+function sayPageScriptRequests(cs) {
+  const without = cs.formSubmitsWithoutAddress ?? 0;
+  if ((cs.formSubmits ?? 0) + (cs.locationRequests ?? 0) + without === 0) return;
+  process.stderr.write(`Web lane: ${cs.formSubmits ?? 0} form(s) submitted from script and `
+    + `${cs.locationRequests ?? 0} address(es) a page loads itself, both read as requests of the page: `
+    + 'a page has no router, so nothing but the server can answer them'
+    + `${without > 0 ? `; ${without} more form submit(s) name no address this lane can read` : ''}\n`);
+}
+
+/**
  * WHERE THE SCREENS LEAD (RM59), and THE PAGES (RM48).
  *
  * A router call changes the screen inside the browser and sends nothing, so it
@@ -342,15 +375,19 @@ function sayNavigationsAndPages(webBridgeStats) {
   // browser and sends nothing, so it is in none of the call numbers above. It
   // is said here, always, because zero navigations on a single-page app is
   // itself a finding.
-  const nv = webBridgeStats.navigation ?? { navigations: 0, navigationsToScreen: 0, navigationsUnmatched: 0, screensWithNavigation: 0, byFramework: {}, unmatchedPaths: [] };
+  const nv = webBridgeStats.navigation ?? { navigations: 0, navigationsToScreen: 0, navigationsUnmatched: 0, screensWithNavigation: 0, byFramework: {}, bySource: {}, unmatchedByKind: {}, unmatchedPaths: [] };
   const routers = Object.entries(nv.byFramework).sort().map(([f, n]) => `${n} ${f}`).join(', ') || 'none';
-  process.stderr.write(`Web lane: ${nv.navigations} navigation(s) (${routers}), `
-    + `${nv.navigationsToScreen} name a screen this pack declares and ${nv.navigationsUnmatched} name none, `
+  const sources = Object.entries(nv.bySource ?? {}).sort().map(([f, n]) => `${n} ${f}`).join(', ') || 'none';
+  const kinds = Object.entries(nv.unmatchedByKind ?? {}).sort().map(([f, n]) => `${n} ${f}`).join(', ');
+  process.stderr.write(`Web lane: ${nv.navigations} navigation(s) (${routers}; found by ${sources}), `
+    + `${nv.navigationsToScreen} name a screen this pack declares and ${nv.navigationsUnmatched} name none`
+    + `${kinds === '' ? '' : ` (${kinds})`}, `
     + `recorded on ${nv.screensWithNavigation} screen(s). A navigation changes the screen without asking the server, `
     + 'so it is not a call and it places no edge\n');
   for (const u of (nv.unmatchedPaths ?? []).slice(0, 5)) {
     process.stderr.write(`  [warn] WEB_NO_SCREEN ${u.path} (${u.count} navigation(s)): the router goes there and no screen this lane found declares it\n`);
   }
+  sayPageScriptRequests(webBridgeStats.calls ?? {});
   // THE PAGES (RM48). A template a handler names is a page; one nothing
   // names is a fragment or dead markup, and saying how many of each is what
   // stops a silence from reading as "this application has no pages".

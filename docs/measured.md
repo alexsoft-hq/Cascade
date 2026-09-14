@@ -511,6 +511,100 @@ exist fetch a JDBC connection for table metadata. A Nexacro transaction's in and
 out datasets (75 in the sample) are data flow inside the browser, and what
 impact needs is the call, which the transaction record already carries.
 
+### And the same corpus once a page's own script is read (RM60)
+
+The eGovFrame standard is a form whose address is assigned in JavaScript and
+submitted from JavaScript, and until this round the lane read none of it. Three
+of the seventeen entries are written that way, and one of them — the framework's
+own sample — went from reaching nothing at all to reaching everything it has.
+
+| Repository | Frontend calls | Calls resolved | Screens reaching a table | Endpoint to column pairs |
+|---|---|---|---|---|
+| egovframe-web-sample | **0 -> 8** | **0 -> 8** | **0 / 2 -> 2 / 2** | 5 |
+| egovframe-enterprise-business-template | **134 -> 357** | **122 -> 333** | **55 / 84 -> 72 / 84** | 2099 |
+| egovframe-common-components | **810 -> 2156** | **765 -> 2074** | **470 / 657 -> 550 / 657** | 9647 |
+| apache/dolphinscheduler | **233 -> 234** | 219 | 0 / 44 | 6216 |
+| jeecgboot/JeecgBoot | **938 -> 936** | 584 | 25 / 181 | 15997 |
+| the other twelve | unchanged | unchanged | unchanged | unchanged |
+
+- **Half the common components' pages did not parse, and now all do.** A JSP tag
+  written inside a JavaScript string brings its own quotes with it
+  (`var pagetitle = "<spring:message code="comCmm.unitContent.20"/>";`, and
+  `'<c:url value='/images/…'/>'`), which ends the string early and costs the
+  whole block. Measured: 348 blocks in 347 of the 739 pages on the common
+  components and 21 of 90 on the business template, all of those two shapes.
+  The tags are now taken out before the script is parsed, and 0 pages fail on
+  either repository.
+- **Where the eGovFrame calls come from.** On the business template: 189 form
+  submits, 34 addresses the page hands the browser, the 130 the markup already
+  gave, and 4 untraced calls. On the common components: 1206, 122 and 785, plus
+  28 platform calls (`$.ajax` and friends in pages that used not to parse). On
+  the sample: 8 form submits and nothing else, which is the whole of what that
+  application does.
+- **One scope is all a submit reads.** A search function that only submits sends
+  the form element's own `action`, never the address a pagination function
+  assigned above it. Measured before the rule was scoped, 11 of 139 form-submit
+  edges on the business template and 56 of 569 on the common components had
+  borrowed a neighbour's address; after it, 0. Across every page read, the
+  business template's submits take their address from an assignment in scope 177
+  times and from the form element 12 times, and 8 find none; the common
+  components' 1254, 67 and 143. A submit with no address is counted
+  (`formSubmitsWithoutAddress`: 8 and 134 on the rendered pages) and places no
+  edge.
+- **How the method was decided** on the sample: 3 assigned in the script and 5
+  read off the `<form>` element. A form the page does not declare leaves the
+  method unknown, the route is matched against `ANY`, and the evidence says the
+  form element was not found.
+- **What is still unanswered.** The business template goes from 12 unresolved
+  call sites to 24 (19 no route serves the path, 4 built from a parameter, 1 all
+  holes) and the common components from 45 to 82 (49, 25, 4 all holes, 4 outside
+  the pack). Both rose because there are two and three times as many calls; the
+  share that lands rose on both.
+- **Navigations fall where they were never navigations.** A server-rendered page
+  has no router, so `location.href` in a JSP is the browser fetching a route.
+  The business template goes 27 -> 4 and the common components 66 -> 8. What is
+  left is `location.href = ""` (a reload, 4 on each), an address that is nothing
+  but a page expression, and on the common components two that name a screen. RM59's sentence that the sink alone decides was wrong for the
+  browser global, and this is the measurement that says so.
+- **`webCalls` moves on exactly two other entries, and both are right.**
+  dolphinscheduler gains one: `utils/downloadFile.ts` builds a `<form>`, assigns
+  `form.action = param.url` and submits it, which is a request this lane could
+  not see before and still cannot follow (the address is a parameter, so it is
+  counted unresolved). jeecg-boot loses two: `router.push('/online/...')` and
+  `router.push('/myapps/...')` on a name imported from its own router module,
+  which the untraced-call rule had been reading as HTTP calls to routes nothing
+  serves. Neither was resolved before, so `webCallsResolved` is identical on all
+  seventeen.
+- **Where the screens lead, by the rule that found them.** Navigations rise on
+  six entries and the new sources are the whole of the rise:
+
+  | Repository | Navigations | hook | receiver | global | router-module | router-link |
+  |---|---|---|---|---|---|---|
+  | litemall | 56 -> 76 | 0 | 55 | 1 | 0 | **20** |
+  | naver/ngrinder | 14 -> 31 | 0 | 13 | 1 | 0 | **17** |
+  | ruoyi-vue | 5 -> 20 | 3 | 0 | 2 | **7** | **8** |
+  | jeecgboot/JeecgBoot | 30 -> 35 | 19 | 0 | 11 | 0 | **5** |
+  | macrozheng/mall | 32 -> 38 | 32 | 0 | 0 | 0 | **6** |
+  | jsh-erp | 8 -> 12 | 0 | 5 | 3 | 0 | **4** |
+  | apache/dolphinscheduler | 33 -> 34 | 32 | 0 | 1 | **1** | 0 |
+  | egovframe-msa-edu | 68 -> 68 | 68 | 0 | 0 | 0 | 0 |
+
+- **The bare `router.push` is mostly not what it looks like.** Counted as text,
+  dolphinscheduler has 35 of them, jeecg-boot 39, mall-front 32 and
+  ruoyi-vue-front 26. Read, almost all of dolphinscheduler's and all of
+  mall-front's are `const router = useRouter()`, which RM59 already followed;
+  only 1 and 0 respectively go through an imported module. ruoyi-vue's 7 do, and
+  jeecg-boot's do not: its router module exports a NAMED `router` assigned at run
+  time (`export let router = null; … setRouter(r)`), and following a mutable
+  binding to a value another function assigns would be a guess. That is the
+  measured limit of this rule.
+- **Nothing else moves.** `endpointColumnPairs`, tables, columns, statements and
+  endpoints reaching a statement are identical on all seventeen. Fourteen of the
+  sixteen pack digests are identical; the two that move are jsh-erp and litemall,
+  the two registered projects whose components hold a `<router-link>`, and every
+  recorded MCP answer for both is byte for byte what it was apart from the build
+  digest it quotes.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

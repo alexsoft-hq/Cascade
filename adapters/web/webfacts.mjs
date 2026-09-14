@@ -96,6 +96,18 @@
 // sink, and the path as written. Whether that path is a screen this project
 // declares is a question about the whole tree, so the bridge answers it.
 //
+// webfacts/10 READS THE LAST TWO WAYS A PAGE ASKS FOR A ROUTE (RM60). A form
+// whose address is assigned in script and submitted from script is a request,
+// and it is how every eGovFrame page is written: `form.action = "<c:url …/>"`
+// followed by `form.submit()` prints one `call` record with the rule
+// `form-submit`, the method taken from the assignment, from the `<form>`
+// element or from nowhere. In a page, `location.href = …` is a GET call for the
+// same reason a link is one, and a string literal a template directive wrote a
+// path into is read by the same rule an attribute is. Two more navigations join
+// them: `router.push(…)` on a name imported from the app's own router module
+// (recorded as a candidate the bridge resolves), and `<router-link to>` in a
+// single-file component's markup.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -106,7 +118,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/9';
+const VERSION = 'webfacts/10';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -122,7 +134,8 @@ import {
   calleeOf, eachChild, keyName, propOf, Scope, summarizeArg, toPosix,
 } from './lib/ast.mjs';
 import { buildUrl, nexacroObjects, visitCall } from './lib/calls.mjs';
-import { navigationSpec } from './lib/navigation.mjs';
+import { formElementIndex, formSubmitRecords } from './lib/forms.mjs';
+import { navigationSpec, routerLinkRecords, routerModuleOf } from './lib/navigation.mjs';
 import {
   MAX_FORM_BYTES, NEXACRO_FORM_EXT, NEXACRO_SCRIPT_EXT, nexacroAssetDirs, nexacroFormOf,
   nexacroIncludes, nexacroScriptBlocks, nexacroServices, nexacroTypedefUrl, resolveIncludeFile,
@@ -138,7 +151,8 @@ import {
   registrarRoutes, registrarScan, registrationScan, visitJsx,
 } from './lib/routers.mjs';
 import {
-  customElementTags, MAX_TEMPLATE_BYTES, templateRecordsOf, templateScriptBlocks,
+  customElementTags, MAX_TEMPLATE_BYTES, templateFormElements, templateRecordsOf,
+  templateScriptBlocks, templateScriptUrl,
 } from './lib/templates.mjs';
 
 // ---------------------------------------------------------------------------
@@ -278,6 +292,10 @@ function analyzeFile(ctx) {
   };
   const usedFunctionNames = new Map();
   const funcEntries = [];
+  // THE FORM IDIOM (RM60): the halves of `form.action = …; form.submit()`, in
+  // the order the page runs them. Shared across a file's script blocks, because
+  // the assignment and the submit are as often in two of them as in one.
+  const formEvents = [];
 
   let recoveredErrors = 0;
   const parseErrors = [];
@@ -295,7 +313,7 @@ function analyzeFile(ctx) {
     recoveredErrors += (ast.errors || []).length;
     try {
       analyzeProgram(ast.program, {
-        ...ctx, block, top, emit, funcEntries, usedFunctionNames, packs,
+        ...ctx, block, top, emit, funcEntries, usedFunctionNames, packs, formEvents,
       });
     } catch (e) {
       // One file this worker cannot read must not silence the other 1600. The
@@ -308,9 +326,30 @@ function analyzeFile(ctx) {
     }
   }
 
-  // The name rule has to be POSITION-INDEPENDENT (the bridge's symbol key is
-  // `<file>#<name>`), so a second function of the same name is `name~2` in LINE
-  // order, never in walk order.
+  // A FORM SUBMITTED FROM SCRIPT IS A REQUEST (RM60). Written now, before the
+  // names below are settled, so that a call site inside a function whose name
+  // repeats gets the same final name every other call in it gets.
+  for (const r of formSubmitRecords({
+    relFile,
+    events: formEvents,
+    elements: formElementIndex(ctx.formElements),
+    moduleEnclosing: '(module)',
+  })) records.push(r);
+
+  settleFunctionNames({ records, funcEntries, usedFunctionNames });
+  return { records, recoveredErrors, parseErrors, relFile };
+}
+
+/**
+ * THE FINAL NAME OF EVERY FUNCTION IN ONE FILE, and the calls stamped with it.
+ *
+ * The name rule has to be POSITION-INDEPENDENT (the bridge's symbol key is
+ * `<file>#<name>`), so a second function of the same name is `name~2` in LINE
+ * order, never in walk order. Every call was recorded against the function
+ * ENTRY rather than against a name, so the name it prints is the final one
+ * whatever order the walk found things in.
+ */
+function settleFunctionNames({ records, funcEntries, usedFunctionNames }) {
   funcEntries.sort((a, b) => a.line - b.line || a.column - b.column);
   for (const f of funcEntries) {
     const n = (usedFunctionNames.get(f.baseName) ?? 0) + 1;
@@ -318,16 +357,12 @@ function analyzeFile(ctx) {
     f.finalName = n === 1 ? f.baseName : `${f.baseName}~${n}`;
     if (f.record) f.record.name = f.finalName;
   }
-  // Every call was recorded against the function ENTRY, so the name it prints
-  // is the final one whatever order the walk found things in.
   for (const r of records) {
     if (r.rec.kind === 'call' && r.rec.__enclosingEntry) {
       r.rec.enclosing = r.rec.__enclosingEntry.finalName ?? r.rec.__enclosingEntry.baseName;
       delete r.rec.__enclosingEntry;
     }
   }
-
-  return { records, recoveredErrors, parseErrors, relFile };
 }
 
 /**
@@ -479,6 +514,12 @@ function runTheWalk(ctx, program, st, packs, moduleScope) {
   registrationScan(ctx, program);
   registrarRoutes(ctx, program, rootEnv);
   for (const stmt of program.body) ctx.visit(stmt, rootEnv);
+  // WHETHER THIS FILE IS THE APP'S ROUTER MODULE (RM60), which is what makes a
+  // bare `router.push('/x')` in another file a navigation. Asked AFTER the walk,
+  // because what makes `createRouter(...)` a router is where the name came
+  // from, and the imports are recorded as the walk goes past them.
+  const routerModule = routerModuleOf(ctx, program);
+  if (routerModule !== null) ctx.emit(routerModule, 1);
 }
 
 /** One parsed program (a whole file, or one script block of a Vue file). */
@@ -506,6 +547,13 @@ function analyzeProgram(program, st) {
     // `<script setup>` block it is the component's setup, which is a different
     // place a call can come from and worth telling apart.
     moduleEnclosing: block.setup === true ? '(setup)' : '(module)',
+    // THE PAGE THIS SCRIPT IS WRITTEN IN (RM60), or null in a source file. Two
+    // rules read it: a string literal a template engine wrote a path into, and
+    // the browser global, which is a request in a page and a screen change in a
+    // single-page app.
+    template: st.templateEngine ?? null,
+    templateUrl: st.templateEngine ? templateScriptUrl : null,
+    formEvents: st.formEvents ?? null,
     endLineOf: (n) => (n && n.loc ? n.loc.end.line + off : lineOf(n)),
     columnOf: (n) => (n && n.loc ? n.loc.start.column : 0),
     bindingOf: (root, scope, classInfo) => bindingOf(ctx, root, scope, classInfo),
@@ -556,6 +604,19 @@ function vueBlocks(text) {
     SCRIPT_OPEN.lastIndex = close;
   }
   return blocks;
+}
+
+/**
+ * A single-file component's MARKUP: the whole file with every `<script>` block
+ * blanked out, line for line.
+ *
+ * The blanking is what keeps a tag scan honest. A `<script>` block can hold a
+ * string that reads like markup, and the scripts have already been read by the
+ * parser; what is left is the `<template>` and the `<style>`, which is where a
+ * `<router-link>` is written.
+ */
+function withoutScriptBlocks(text) {
+  return String(text ?? '').replace(/<script\b[\s\S]*?<\/script\s*>/gi, (m) => m.replace(/[^\n]/g, ' '));
 }
 
 // ---------------------------------------------------------------------------
@@ -1309,6 +1370,44 @@ function makeTemplateFinder({ root, roots, webRoots, templateRoots }) {
 }
 
 /**
+ * The blocks of JavaScript one file holds, whatever the file is wrapped in: a
+ * Nexacro form's `<Script>`, a page's inline `<script>`, a single-file
+ * component's several script blocks, or the whole file.
+ */
+function scriptBlocksOf({ text, lang, tmpl }) {
+  if (lang === 'nexacro') return nexacroScriptBlocks(text);
+  if (tmpl !== null) return templateScriptBlocks(text, tmpl.engine);
+  if (lang === 'vue') return vueBlocks(text);
+  return [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
+}
+
+/**
+ * ONE FILE'S BYTES, or null when this run does not read them.
+ *
+ * A file too big to be anything but a bundle is RECORDED as skipped rather than
+ * dropped in silence, and one that cannot be read at all is a parse error with
+ * the reason on it. Either way the count says the lane looked.
+ */
+function sourceTextOf(abs, { relFile, lang, push, counts }) {
+  let stat;
+  try { stat = fs.statSync(abs); } catch { stat = { size: 0 }; }
+  if (stat.size > (lang === 'nexacro' ? MAX_FORM_BYTES : MAX_FILE_BYTES)) {
+    push(relFile, {
+      kind: 'file', file: relFile, line: 1, lang, recoveredErrors: 0, skipped: 'too-large',
+    }, 1, -1);
+    return null;
+  }
+  try { return fs.readFileSync(abs, 'utf8'); } catch (e) {
+    push(relFile, {
+      kind: 'parse_error', file: relFile, line: 1, col: 0,
+      message: `cannot read file: ${e.message}`,
+    }, 1, 0);
+    counts.parseErrors += 1;
+    return null;
+  }
+}
+
+/**
  * ONE source file, read: its `file` record, its parse errors, the records its
  * scripts produced, and — when it is a template — the page's own call sites.
  *
@@ -1329,35 +1428,18 @@ function analyzeSource(abs, cfg) {
   }
   const lang = langOf(abs);
   counts.files += 1;
-  let stat;
-  try { stat = fs.statSync(abs); } catch { stat = { size: 0 }; }
-  if (stat.size > (lang === 'nexacro' ? MAX_FORM_BYTES : MAX_FILE_BYTES)) {
-    push(relFile, {
-      kind: 'file', file: relFile, line: 1, lang, recoveredErrors: 0, skipped: 'too-large',
-    }, 1, -1);
-    return;
-  }
-  let text;
-  try { text = fs.readFileSync(abs, 'utf8'); } catch (e) {
-    push(relFile, {
-      kind: 'parse_error', file: relFile, line: 1, col: 0,
-      message: `cannot read file: ${e.message}`,
-    }, 1, 0);
-    counts.parseErrors += 1;
-    return;
-  }
+  const text = sourceTextOf(abs, { relFile, lang, push, counts });
+  if (text === null) return;
   const tmpl = templateRootOf(abs);
   const isNexacro = lang === 'nexacro' || (nexacroRootOf !== undefined && nexacroRootOf(abs) !== null);
   const typedef = isNexacro && typedefOf !== undefined ? typedefOf(abs, text) : null;
-  const blocks = lang === 'nexacro'
-    ? nexacroScriptBlocks(text)
-    : tmpl !== null
-      ? templateScriptBlocks(text, tmpl.engine)
-      : lang === 'vue'
-        ? vueBlocks(text)
-        : [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
+  const blocks = scriptBlocksOf({ text, lang, tmpl });
   const res = analyzeFile({
     relFile, blocks, packs, lang: tmpl !== null || lang === 'nexacro' ? 'js' : lang, templateOf,
+    // A PAGE IS READ AS A PAGE ALL THE WAY THROUGH (RM60): its engine, so a
+    // literal a template directive wrote a path into is read as one, and its
+    // `<form>` elements, so a form submitted from script knows what it sends.
+    ...(tmpl !== null ? { templateEngine: tmpl.engine, formElements: templateFormElements(text) } : {}),
     ...(typedef !== null ? { nexacro: { services: typedef.services } } : {}),
   });
   const fileRec = {
@@ -1371,6 +1453,13 @@ function analyzeSource(abs, cfg) {
   };
   if (lang === 'vue' && tmpl === null) {
     fileRec.blocks = blocks.map((b) => ({ lang: b.lang, setup: b.setup, line: b.line }));
+    // `<router-link to="/x">` IS A NAVIGATION (RM60), and it is written in the
+    // half of the file this worker does not parse. Read with the template
+    // reader's own tag scanner, over the markup with the scripts blanked out so
+    // every line number is still the line in the `.vue` file.
+    for (const rec of routerLinkRecords(
+      { relFile, navigation: navigationSpec(packs) }, withoutScriptBlocks(text),
+    )) push(relFile, rec, rec.line, -0.25);
   }
   push(relFile, fileRec, 1, -1);
   counts.recoveredErrors += res.recoveredErrors;

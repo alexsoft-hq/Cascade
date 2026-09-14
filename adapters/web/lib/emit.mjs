@@ -30,10 +30,21 @@ export function emptyCounts({ files, parseErrors, recoveredErrors, envFiles, api
     calls: 0, callsWithUrl: 0,
     urlByShape: { literal: 0, template: 0, constant: 0, unresolved: 0 },
     methodBySource: { 'callee-name': 0, config: 0, positional: 0 },
+    // A form whose address is assigned in script and submitted from script
+    // (RM60). Counted apart from the calls a client library sends, because
+    // nothing about it goes through a client.
+    formSubmits: 0, formSubmitsWithoutAddress: 0,
     // The calls that change the SCREEN rather than send a request (RM59),
     // counted by the router whose sink was called, so a reader can see at a
-    // glance which router a frontend navigates with.
-    navigations: 0, navigationsByFramework: {},
+    // glance which router a frontend navigates with, and by WHERE the sink was
+    // found (RM60).
+    navigations: 0, navigationsByFramework: {}, navigationsBySource: {},
+    // `router.push(…)` on an imported name (RM60). Whether the module it comes
+    // from really holds a router is the bridge's question, so this counts what
+    // was offered rather than what was taken.
+    navigationCandidates: 0,
+    // The modules that ARE a router: `export default createRouter({routes})`.
+    routerModules: 0,
     routes: 0, byPack: {}, aliases: 0, proxies: 0, envRecords: 0,
     envFiles,
     platformSinks: { fetch: 0, xhr: 0, jquery: 0 },
@@ -82,6 +93,7 @@ function tallyCall(rec, counts) {
     counts.platformSinks[rec.platformSink] = (counts.platformSinks[rec.platformSink] ?? 0) + 1;
   }
   if (rec.injected) counts.injectedCalls += 1;
+  if (rec.formSubmit) counts[rec.url ? 'formSubmits' : 'formSubmitsWithoutAddress'] += 1;
   if (rec.method && rec.method.from) {
     counts.methodBySource[rec.method.from] = (counts.methodBySource[rec.method.from] ?? 0) + 1;
   }
@@ -95,24 +107,40 @@ function tallyCall(rec, counts) {
   }
 }
 
+/** One `file` record: which language, and whether it was read at all. */
+function tallyFile(rec, counts) {
+  if (rec.lang === 'template' || rec.lang === 'nexacro') counts.templates.files += 1;
+  else if (rec.lang === 'vue') counts.vueFiles += 1;
+  else if (rec.lang === 'ts' || rec.lang === 'tsx') counts.tsFiles += 1;
+  else { counts.jsFiles += 1; if (rec.apiHandler === true) counts.apiFiles += 1; }
+  if (rec.skipped) counts.skippedFiles += 1;
+}
+
+/** One `template` record: the page, and everything it holds. */
+function tallyTemplate(rec, counts) {
+  counts.templates.byEngine[rec.engine] = (counts.templates.byEngine[rec.engine] ?? 0) + 1;
+  counts.templates.scripts += rec.scripts ?? 0;
+  counts.templates.forms += rec.forms ?? 0;
+  counts.templates.links += rec.links ?? 0;
+  counts.templates.includes += (rec.includes ?? []).length;
+  counts.templates.contextVars += (rec.contextVars ?? []).length;
+}
+
+/** One `navigation` record: which router, and where the sink was found (RM60). */
+function tallyNavigation(rec, counts) {
+  counts.navigations += 1;
+  counts.navigationsByFramework[rec.framework] = (counts.navigationsByFramework[rec.framework] ?? 0) + 1;
+  counts.navigationsBySource[rec.via] = (counts.navigationsBySource[rec.via] ?? 0) + 1;
+}
+
 /** Add one record to the summary. */
 export function tally(rec, counts) {
   switch (rec.kind) {
-    case 'file':
-      if (rec.lang === 'template' || rec.lang === 'nexacro') counts.templates.files += 1;
-      else if (rec.lang === 'vue') counts.vueFiles += 1;
-      else if (rec.lang === 'ts' || rec.lang === 'tsx') counts.tsFiles += 1;
-      else { counts.jsFiles += 1; if (rec.apiHandler === true) counts.apiFiles += 1; }
-      if (rec.skipped) counts.skippedFiles += 1;
-      break;
-    case 'template':
-      counts.templates.byEngine[rec.engine] = (counts.templates.byEngine[rec.engine] ?? 0) + 1;
-      counts.templates.scripts += rec.scripts ?? 0;
-      counts.templates.forms += rec.forms ?? 0;
-      counts.templates.links += rec.links ?? 0;
-      counts.templates.includes += (rec.includes ?? []).length;
-      counts.templates.contextVars += (rec.contextVars ?? []).length;
-      break;
+    case 'file': tallyFile(rec, counts); break;
+    case 'template': tallyTemplate(rec, counts); break;
+    case 'navigation': tallyNavigation(rec, counts); break;
+    case 'navigationCandidate': counts.navigationCandidates += 1; break;
+    case 'routerModule': counts.routerModules += 1; break;
     case 'import': counts.imports += 1; break;
     case 'export': counts.exports += 1; break;
     case 'function': counts.functions += 1; break;
@@ -120,10 +148,6 @@ export function tally(rec, counts) {
     case 'binding': counts.bindings += 1; break;
     case 'class': counts.classes += 1; break;
     case 'assign': counts.assigns += 1; break;
-    case 'navigation':
-      counts.navigations += 1;
-      counts.navigationsByFramework[rec.framework] = (counts.navigationsByFramework[rec.framework] ?? 0) + 1;
-      break;
     case 'route':
       counts.routes += 1;
       counts.byPack[rec.pack] = (counts.byPack[rec.pack] ?? 0) + 1;

@@ -98,7 +98,7 @@ const EXPR_MARKER = '__cascade_expr__';
  * the root every path in the page is written from, so a URL built on it is a
  * URL written from the root and the prefix is the empty string.
  */
-const CTX_MARKER = '__cascade_ctx__';
+export const CTX_MARKER = '__cascade_ctx__';
 
 /** An expression that yields the context path: `…contextPath`, however qualified. */
 const CONTEXT_PATH_EXPR = /^[\w.$\s]*\bcontextPath\s*$/;
@@ -147,6 +147,58 @@ function interpolationMarker(expr) {
 }
 
 /**
+ * The JSP custom tags that DO something and SAY nothing: control flow, a
+ * variable set, a parameter handed to the tag around it. What is left of one in
+ * a script is nothing at all.
+ */
+const JSP_CONTROL_TAGS = new Set([
+  'c:if', 'c:foreach', 'c:fortokens', 'c:choose', 'c:when', 'c:otherwise',
+  'c:set', 'c:remove', 'c:catch', 'c:param', 'c:import', 'spring:param',
+]);
+
+/** The two tags that write an address: `<c:url value>` and `<spring:url value>`. */
+const JSP_URL_TAGS = new Set(['c:url', 'spring:url']);
+
+/** One custom tag: `<prefix:name …>`, `<prefix:name …/>` or `</prefix:name>`, quoted values allowed. */
+const JSP_TAG_RE = /<(\/?)([A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/g;
+
+/**
+ * A JSP custom tag taken out of a script, lines kept (RM60).
+ *
+ * THE TAG IS THE JSP'S, NOT THE SCRIPT'S. The page is rendered before the
+ * browser sees it, so `var t = "<spring:message code="x"/>";` is a string with
+ * text in it by then, and the double quotes inside the tag are the JSP's own
+ * attribute syntax. Left in place they end the JavaScript string early, and
+ * the whole block fails to parse: measured, that was 348 of the 739 pages of
+ * the eGovFrame common components losing every call their scripts make.
+ *
+ * So a tag becomes what it renders to, as far as a reader of the script can
+ * tell. An address tag becomes its address, written from the application root
+ * (the context-path marker in front, the way `${pageContext.request.contextPath}`
+ * becomes one). A closing tag and a control tag become nothing. Every other tag
+ * is a value the server fills in, so it becomes the interpolation marker. None
+ * of the three leaves a quote behind.
+ */
+export function neutralizeJspTags(code) {
+  const one = (text, depth) => String(text).replace(JSP_TAG_RE, (m, closing, rawName, attrs) => {
+    const name = rawName.toLowerCase();
+    if (closing === '/' || JSP_CONTROL_TAGS.has(name)) return blankOut(m);
+    if (!JSP_URL_TAGS.has(name)) return keepLines(EXPR_MARKER, m);
+    const written = attributesOf(attrs).get('value');
+    if (written === undefined) return keepLines(EXPR_MARKER, m);
+    const inner = depth > 0 ? one(written, depth - 1) : written;
+    // The address the tag writes, from the root: a context path in front of it
+    // is the root itself, and any other expression in it is a hole, spelled the
+    // way this lane spells one, so `/cop/bbs${prefix}/list.do` stays a path.
+    const value = inner.replace(/^\s*[$#]\{[^{}]*\bcontextPath\s*\}/, '')
+      .replace(/[$#]\{[^{}]*\}/g, '{*}').split(EXPR_MARKER).join('{*}')
+      .replace(/["'\n]/g, '');
+    return keepLines(`${CTX_MARKER}${value}`, m);
+  });
+  return one(code, 2);
+}
+
+/**
  * A template's own directives taken out of one `<script>` block, so what is left
  * is JavaScript.
  *
@@ -170,6 +222,7 @@ export function neutralizeScript(code, engine) {
     out = out.replace(/<%@[\s\S]*?%>/g, blankOut);
     out = out.replace(/<%=([\s\S]*?)%>/g, (m) => keepLines(EXPR_MARKER, m));
     out = out.replace(/<%[\s\S]*?%>/g, blankOut);
+    out = neutralizeJspTags(out);
   }
   if (engine === 'thymeleaf' || engine === 'plain-html') {
     // `[[…]]` and `[(…)]` are Thymeleaf's inline expressions. A link expression
@@ -278,6 +331,85 @@ export function templateUrlOf(raw) {
   if (ASSET_PREFIXES.some((p) => lower === p || lower.startsWith(`${p}/`))) return null;
   if (ASSET_EXTENSIONS.some((e) => lower.endsWith(e))) return null;
   return s;
+}
+
+/**
+ * A STRING LITERAL WRITTEN IN A PAGE'S INLINE SCRIPT, read as a path (RM60).
+ *
+ * `location.href = "<c:url value='/x.do'/>"` and `<a href="<c:url value='/x.do'/>">`
+ * are the same address written in the same file, and until now only the second
+ * was read: the first came out as the tag's own text, which names no route. The
+ * tag is not markup here, it is the JSP writing a path INTO the script before
+ * the browser ever sees it, so it is filled in and the result goes through the
+ * same reader an attribute does.
+ *
+ * A literal with no such directive in it answers null, and the caller keeps the
+ * text as written: this rule is about what a template engine put there, not
+ * about every string a page's script holds.
+ *
+ * @param {string} raw  the literal (or the flattened template) as written
+ * @returns {string|null} the path from the app root, or null when this is not one
+ */
+export function templateScriptUrl(raw) {
+  const s = String(raw ?? '');
+  if (s === '') return null;
+  let filled = false;
+  const text = s.replace(/<(?:c|spring):url\b((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/gi, (whole, attrs) => {
+    const value = attributesOf(attrs).get('value');
+    if (value === undefined) return whole;
+    filled = true;
+    return value;
+  });
+  if (!filled && !(s.startsWith('@{') && s.endsWith('}'))) return null;
+  // The page's own expressions are already placeholders by the time a script
+  // block is parsed, so `<c:url value='/cop/bbs${prefix}/list.do'/>` arrives
+  // with the marker in it. It is a hole like any other, and this lane spells
+  // one `{*}`. THE CONTEXT PATH IS NOT: it is the app root, taken off the front
+  // by the page reader further down, so its marker rides through untouched.
+  const ctx = text.startsWith(CTX_MARKER);
+  const read = templateUrlOf((ctx ? text.slice(CTX_MARKER.length) : text).split(EXPR_MARKER).join('{*}'));
+  if (read === null) return null;
+  return ctx ? `${CTX_MARKER}${read}` : read;
+}
+
+/**
+ * EVERY `<form>` A TEMPLATE DECLARES, with the name a script calls it by and
+ * the method it sends (RM60).
+ *
+ * `templateForms` above answers a different question: which forms are call sites
+ * of the page because their `action` is written in the markup. This one is the
+ * table a SCRIPT is read against — a form whose action is assigned in JavaScript
+ * has no `action` attribute at all — so every form is listed, whether or not it
+ * names an address.
+ *
+ * THE DEFAULT IS THE TAG'S. `<form>` is HTML and sends GET; `<form:form>` is
+ * Spring's own tag and sends POST. Neither is a guess: both are written in the
+ * specification the page is rendered by.
+ *
+ * @param {string} text
+ * @returns {{tag:string, name:(string|null), id:(string|null), action:(string|null), method:string, line:number}[]}
+ */
+export function templateFormElements(text) {
+  const src = String(text ?? '');
+  const out = [];
+  const re = new RegExp(TAG_RE.source, 'g');
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const tag = m[1].toLowerCase();
+    if (tag !== 'form' && tag !== 'form:form') continue;
+    const attrs = attributesOf(m[2]);
+    const spelled = (attrs.get('th:method') ?? attrs.get('method') ?? '').trim().toUpperCase();
+    const actionAttr = ['th:action', 'data-th-action', 'action'].find((a) => attrs.has(a)) ?? null;
+    out.push({
+      tag,
+      name: attrs.get('name') ?? null,
+      id: attrs.get('id') ?? null,
+      action: actionAttr === null ? null : attrs.get(actionAttr),
+      method: VERBS.has(spelled) ? spelled : (tag === 'form:form' ? 'POST' : 'GET'),
+      line: countLines(src.slice(0, m.index)) + 1,
+    });
+  }
+  return out;
 }
 
 /** `'/a/{b}(b=${x})'` -> `'/a/{b}'`: the trailing balanced parenthesis, dropped. */
@@ -435,6 +567,37 @@ export function resolveIncludeName(written, how) {
 }
 
 /**
+ * THE APP ROOT TAKEN OFF THE FRONT of every address a page's scripts wrote.
+ *
+ * A URL written on the application's context path is a URL written from the
+ * root, so the marker the neutraliser left is taken off and the record says the
+ * context path was there. A URL built on a NAME the context path was assigned
+ * to is stripped the same way when the name is assigned in this file.
+ */
+function stripContextPath(records, isContextVar) {
+  for (const { rec } of records) {
+    // A navigation left in a page (an address with no path) is written on the
+    // same root, and the marker is no part of where it goes either.
+    const url = rec.kind === 'call' ? rec.url : rec.kind === 'navigation' ? rec.to : null;
+    if (!url || !Array.isArray(url.resolved)) continue;
+    let stripped = false;
+    url.resolved = url.resolved.map((r) => {
+      if (typeof r.template !== 'string') return r;
+      if (r.template.startsWith(CTX_MARKER)) {
+        stripped = true;
+        return { ...r, template: r.template.slice(CTX_MARKER.length) };
+      }
+      if (typeof url.base === 'string' && isContextVar.has(url.base) && r.template.startsWith('{*}')) {
+        stripped = true;
+        return { ...r, template: r.template.slice(3), dynamicParts: Math.max(0, (r.dynamicParts ?? 1) - 1) };
+      }
+      return r;
+    });
+    if (stripped) url.contextPath = true;
+  }
+}
+
+/**
  * Everything one template file says, on top of what its inline scripts said.
  *
  * It also EDITS the calls the scripts produced, in the one way only this file
@@ -463,23 +626,7 @@ export function templateRecordsOf(a) {
     .map((r) => r.rec.name))].sort();
   const isContextVar = new Set(contextVars);
 
-  for (const { rec } of records) {
-    if (rec.kind !== 'call' || !rec.url || !Array.isArray(rec.url.resolved)) continue;
-    let stripped = false;
-    rec.url.resolved = rec.url.resolved.map((r) => {
-      if (typeof r.template !== 'string') return r;
-      if (r.template.startsWith(CTX_MARKER)) {
-        stripped = true;
-        return { ...r, template: r.template.slice(CTX_MARKER.length) };
-      }
-      if (typeof rec.url.base === 'string' && isContextVar.has(rec.url.base) && r.template.startsWith('{*}')) {
-        stripped = true;
-        return { ...r, template: r.template.slice(3), dynamicParts: Math.max(0, (r.dynamicParts ?? 1) - 1) };
-      }
-      return r;
-    });
-    if (stripped) rec.url.contextPath = true;
-  }
+  stripContextPath(records, isContextVar);
 
   const includes = [];
   for (const inc of templateIncludes(text, tmpl.engine)) {

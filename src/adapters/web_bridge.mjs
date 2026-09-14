@@ -256,7 +256,7 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
   summariseScreens({
     stats, screenNodes, unresolvedSpecifiers, unresolvedNames: registry.unresolvedNames,
   });
-  placeNavigations({ fileNames, files, screenNodes, stats });
+  placeNavigations({ fileNames, files, screenNodes, stats, resolver });
   for (const e of pageEdges) edges.push(e);
   placeRendersEdges({
     screenNodes,

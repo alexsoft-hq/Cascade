@@ -161,9 +161,21 @@ Four things are read out of each template, and nothing else:
   NEUTRALISED first — FreeMarker's `<#…>`, `</#…>`, `<@…>` and `${…}`, JSP's
   `<%…%>`, `<%=…%>` and `${…}`, Thymeleaf's `[[…]]` and `[(…)]` — into
   placeholders that keep every line where it was, and what is left goes through
-  the SAME JavaScript reader every `.js` file goes through. A block that still
-  does not parse is a `parse_error` on that block and costs the run nothing. A
-  `<script src=…>` is a file of its own and is never an inline block.
+  the SAME JavaScript reader every `.js` file goes through. A JSP **custom tag**
+  (`<prefix:name …>`, `<prefix:name …/>`, `</prefix:name>`) is the page's, not
+  the script's, and it is taken out the same way: `<c:url>` and `<spring:url>`
+  become their `value` written from the application root (an expression inside
+  the value is a hole), a closing tag and a control tag (`c:if`, `c:forEach`,
+  `c:choose`, `c:when`, `c:otherwise`, `c:set` and the like) become nothing, and
+  every other tag becomes a value placeholder. None of them leaves a quote
+  behind, which is what used to end a JavaScript string early:
+  `var pagetitle = "<spring:message code="comCmm.unitContent.20"/>";` and
+  `buttonImage: '<c:url value='/images/…/bu_icon_carlendar.gif'/>'` each cost the
+  whole block, and measured, 348 blocks in 347 of the 739 pages of the eGovFrame
+  common components (21 of 90 pages of the business template) lost every call
+  their scripts make. After it, none fail. A block that still does not parse is a
+  `parse_error` on that block and costs the run nothing. A `<script src=…>` is a
+  file of its own and is never an inline block.
 - **the forms.** `<form action>`, `th:action="@{…}"`, `<form:form action>`: one
   call site each, the method from the attribute and GET when there is none.
 - **the links.** A `href` or `th:href` that names a path from the app root. A
@@ -187,6 +199,111 @@ serves. So a page's prefix is the empty string and `prefix.from` is
 "/things/list"` in a page that includes it is read the same way: the worker
 records the NAME the URL was built on, and the bridge closes the hole with the
 include graph.
+
+**A path written into the script is a path.** A template engine fills a `<c:url>`
+or a `<spring:url>` in before the browser ever sees the page, so
+`location.href = "<c:url value='/things/list.do'/>"` is the address
+`/things/list.do` as plainly as `<a href="<c:url value='/things/list.do'/>">` is.
+Every string literal a page's script hands to the URL reader goes through the
+same rule an attribute does: the tag is filled in, the app's own expressions
+(`${…}`) are the holes they already are, a query string is dropped, and a static
+asset is not a route.
+
+#### A form submitted from script is a request
+
+This is the shape every eGovFrame page is written in, and there is no HTTP
+client anywhere in it:
+
+```jsp
+<form:form modelAttribute="sampleVO" id="listForm" name="listForm" method="post">
+…
+function fn_egov_select(id) {
+    document.listForm.id.value = id;
+    document.listForm.action = "<c:url value='/updateSampleView.do'/>";
+    document.listForm.submit();
+}
+function fn_egov_link_page(pageNo) {
+    document.listForm.pageIndex.value = pageNo;
+    document.listForm.action = "<c:url value='/egovSampleList.do'/>";
+    document.listForm.method = "get";
+    document.listForm.submit();
+}
+```
+
+An address assigned to a form's `action`, followed by `submit()` on the same
+form, is an HTTP call to that address. Rule `form-submit`.
+
+**The same form** means the same receiver expression AS WRITTEN.
+`document.listForm`, `document.forms['listForm']`, `document.forms.listForm`,
+`document.getElementById('listForm')`, a variable bound to one of those, and
+jQuery's `$('#listForm').attr('action', url)` / `.prop('action', url)` followed
+by `$('#listForm').submit()` are all read; two mentions of the same text are one
+form. An `.action` with no `submit()` after it is **not** a call: it is a form the
+user submits with a button, whose address the template reader already has from
+the markup.
+
+**One scope is all a submit reads.** A submit takes the assignment nearest before
+it in the SAME scope: the enclosing function, or the module's own body, which is
+one scope. The pages this idiom comes from have a search function that only
+submits, beside a pagination function that assigns an address and submits:
+
+```js
+function linkPage(pageNo) { document.listForm.pageIndex.value = pageNo;
+  document.listForm.action = "<c:url value='/sym/ccm/cde/EgovCcmCmmnDetailCodeList.do'/>";
+  document.listForm.submit(); }
+function fnSearch() { document.listForm.pageIndex.value = 1; document.listForm.submit(); }
+```
+
+`fnSearch` does not send what `linkPage` assigned. A page reloads on every submit,
+so another function's assignment is gone by the time this one runs, and what it
+sends is the `action` the `<form>` element carries in the markup, read by the same
+reader the markup form goes through. The evidence says which it was
+(`form.actionFrom`: `assigned` or `form element`). A submit whose own scope
+assigned nothing and whose form element names no address this lane can read
+places no edge and is counted (`laneStats.web.calls.formSubmitsWithoutAddress`),
+as is one whose whole address is a page expression (`"${url}"`). The scope is the
+function itself, not its name, so two functions a page happens to name alike
+(`fn_x`, `fn_x~2`) are two scopes. Measured before this rule was scoped:
+11 of 139 form-submit edges on the business template and 56 of 569 on the common
+components had borrowed another function's address.
+
+**The method**, in this order:
+
+1. a `.method = "get"` / `"post"` assigned on the same form in the same scope,
+   before the submit — the page said so itself;
+2. else the `method` attribute of the `<form>` element the name or id resolves
+   to in the same page, where Spring's `<form:form>` sends POST and HTML's
+   `<form>` sends GET. Neither default is a guess: both are written in the
+   specification the page is rendered by;
+3. else nothing, the route is matched against `ANY`, and the evidence says the
+   form element was not found in this file.
+
+The evidence names the form as the source writes it and where the method came
+from (`assigned`, `form element`, `not found`), and the census counts the sources
+(`methodBySource`, `laneStats.web.calls.formSubmits`). Matching and grading are
+the page's links': nothing rises above SOUND_SET on a call, because which handler
+answers a path is the route table's answer and not the markup's.
+
+Measured on the pinned corpus, this is the largest single gap the lane had:
+`egovframe-sample` went from **0** calls to **8**, and its list screen from
+reaching no table to reaching the one it lists; the business template reads 189
+form submits (177 with an address assigned in scope, 12 with the form element's)
+and the common components 1206.
+
+#### In a page, `location.href` is a GET request
+
+RM59 said the sink tells a navigation from a request and the file kind does not.
+Measured, that is wrong for the browser's own global. Every `location.href` in
+the eGovFrame corpus is a `<c:url>` naming a controller of the same application,
+and a server-rendered page has **no router**: nothing but the server can answer
+the address, so the browser goes and fetches it, exactly as it does for a link in
+the same page. So in a template file `location.href = …`,
+`window.location.href = …`, `location.assign(…)` and `location.replace(…)` are
+GET calls with the same URL rule, rule `location-request`, matched and graded as
+the page's links. In a source file they stay navigations.
+
+An address that resolves to no path — `location.href = ""`, a `#`, a download, an
+address with a host — is not a route and stays a navigation there too.
 
 
 ### A Nexacro client
@@ -557,17 +674,44 @@ router spells it differently and each spelling is fixed by its framework:
 |---|---|
 | `next/router`, `next/navigation` | `useRouter().push` / `.replace` / `.prefetch` |
 | `next/link` | `<Link href=...>` |
-| `vue-router` | `this.$router.push` / `.replace`, and the same two on a name `useRouter()` was assigned to |
+| `vue-router` | `this.$router.push` / `.replace`, the same two on a name `useRouter()` was assigned to, the same two on a name imported from the app's own router module, and `<router-link to=...>` in a component's markup |
 | `react-router`, `react-router-dom` | `useNavigate()(...)`, `redirect(...)`, `<Link to=...>`, `<Navigate to=...>` |
-| the browser | `window.location.href = ...`, `location.href = ...`, `window.location.assign(...)` / `.replace(...)` |
+| the browser | `window.location.href = ...`, `location.href = ...`, `window.location.assign(...)` / `.replace(...)` — **in a source file**. In a server-rendered page the same sink is a GET request, because a page has no router |
 
 What makes a call a navigation is never the NAME the code gives the router. It
 is the hook it was made by (`const nav = useRouter()` reads the same as
 `const router = useRouter()`), the property the framework itself puts on a
 component (`this.$router`), the module a JSX element was imported from (a `Link`
-from a component library is a component, not a link), or a global nothing in the
-file declares (`window.location`). A `push` on something this lane cannot show
-to be a router is still a call.
+from a component library is a component, not a link), the module an imported name
+came from, or a global nothing in the file declares (`window.location`). A `push`
+on something this lane cannot show to be a router is still a call.
+
+**The app's own router module.** A Vue application builds its router once, in a
+module of its own, and every other file writes `router.push('/x')` on a name it
+imported from there — no `this`, no hook, nothing in the file saying what
+`router` is. So the worker records which module IS a router (its default export
+is `createRouter({routes})`, or `new VueRouter({routes})` / `new Router({routes})`
+where the class came from `vue-router`, handed to `export default` straight or
+through a `const`), and records a `router.push` / `.replace` on any imported name
+as a CANDIDATE carrying the specifier. The bridge resolves that specifier through
+the same module index every other cross-file question in this lane goes through:
+when it lands on a router module the candidate is a navigation (`via`
+`router-module`), and when it lands anywhere else it is dropped, exactly as it
+was before the rule existed. `list.push(x)` on an imported array stays what it
+is.
+
+Measured, a module whose router is a NAMED export assigned at run time
+(`export let router = null; … setRouter(r)`, which is jeecg-boot's shape) is not
+read: following a mutable binding to a value another function assigns is a guess,
+and this lane does not make one.
+
+**`<router-link to="/x">`** is written in a single-file component's `<template>`,
+which the JavaScript parser never sees. It is read with the template reader's own
+tag scanner — one element name, one attribute, no template language — over the
+`.vue` file with its `<script>` blocks blanked out, so every line number is still
+the line in the `.vue` file. `<RouterLink>` and `<router-link>` are the same tag.
+A bound `:to` is a value the component computes and is counted as a navigation
+this lane cannot follow.
 
 The path is read as text (`push('/x')`) or off the object a router takes instead
 (`push({pathname: '/x', query})`, `push({path: '/x'})`), and the query string is
@@ -595,21 +739,22 @@ belongs to every screen that mounts the component would be a guess.
 
 Three numbers say what happened (`laneStats.web.navigation`): `navigations`,
 `navigationsToScreen` and `navigationsUnmatched`, with `unmatchedPaths` listing
-the paths that named no screen. A path that names none is a real finding either
+the paths that named no screen. `bySource` says which of the rules above found
+each one (`hook`, `receiver`, `global`, `import`, `element`, `router-module`,
+`router-link`) and `unmatchedByKind` says why the ones that matched nothing did
+not: `named` is a route the router reaches by its declared name rather than by a
+path (`push({ name: 'user' })`), `bound` is a `:to` the component computes,
+`path` is an address that named no screen this lane found, and `expression` is a
+target the file did not state. A path that names none is a real finding either
 way round: a screen this lane did not find, or a page the framework owns (Next's
 `/404` is excluded from the screen list by the `next-pages` pack, so a
 `router.push('/404')` honestly matches nothing).
 
-**A server-rendered page keeps its links as GET calls.** There a link IS a
-request: the browser asks the server for the next page. The pack decides by the
-SINK, not by the file kind, so nothing about the rules above changed.
-
-**What is declared and not yet read.** `<router-link to=...>` is written in a
-single-file component's `<template>` block, and this worker parses a component's
-`<script>` blocks and not its markup. The sink is in the pack because it is one;
-it never fires today. Nor does `router.push` on an application's OWN router
-module (`import router from '@/router'`), which would need that module traced to
-a `createRouter(...)` the way an axios instance is traced.
+**A server-rendered page keeps its links as GET calls**, and its address bar with
+them. There a link IS a request: the browser asks the server for the next page,
+and a page has no router that could answer it instead. The SINK decides
+everywhere except on the browser global, where the file kind does — see "In a
+page, `location.href` is a GET request" above.
 
 ## What the bridge does with them, and its honest grade
 

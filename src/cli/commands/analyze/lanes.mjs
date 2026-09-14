@@ -389,9 +389,16 @@ export function webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root,
       urlByShape: { literal: u.literal, template: u.template, constant: u.constant, unresolved: u.unresolved },
       methodBySource: summary.methodBySource ?? {},
       routes: summary.routes, byPack: summary.byPack ?? {},
-      // The calls that change the SCREEN rather than send a request (RM59).
+      // The calls that change the SCREEN rather than send a request (RM59),
+      // and where each sink was found (RM60).
       navigations: summary.navigations ?? 0,
       navigationsByFramework: summary.navigationsByFramework ?? {},
+      navigationsBySource: summary.navigationsBySource ?? {},
+      navigationCandidates: summary.navigationCandidates ?? 0,
+      routerModules: summary.routerModules ?? 0,
+      // A form submitted from script (RM60).
+      formSubmits: summary.formSubmits ?? 0,
+      formSubmitsWithoutAddress: summary.formSubmitsWithoutAddress ?? 0,
       apiFiles: summary.apiFiles ?? 0,
       aliases: summary.aliases, proxies: summary.proxies, envFiles: summary.envFiles,
       platformSinks: summary.platformSinks ?? {},

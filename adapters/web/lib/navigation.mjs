@@ -14,21 +14,99 @@
 // ONE FILE IS ALL IT SEES. Whether the path a navigation names is a screen this
 // project declares is a question about the whole tree, so it is the bridge's:
 // what is recorded here is the sink that was called and the path as written.
+// `router.push(...)` on an IMPORTED name is the same kind of question — whether
+// the module it comes from holds a router — so that one comes out as a
+// CANDIDATE with the specifier on it and the bridge finishes it (RM60).
 //
-// WHAT IT MUST NEVER KNOW ABOUT: the graph, the screens, the other files.
+// THE ONE PLACE THE FILE KIND DECIDES (RM60): the browser's own global. A
+// server-rendered page has no router, so `location.href = '/x.do'` written in a
+// JSP is the browser fetching a route of this application, and it comes out as
+// a call. In a source file the same sink stays a navigation.
+//
+// WHAT IT MUST NEVER KNOW ABOUT: the graph, the screens, the other files. It
+// reads a template's URL rules from `templates.mjs` because a page writes its
+// paths the way a page writes them, wherever in the page they are written.
 
 import { calleeOf, propOf, summarizeArg } from './ast.mjs';
+import { attributesOf, CTX_MARKER, templateUrlOf } from './templates.mjs';
 
 /** The evidence rule every navigation record carries, worker and bridge alike. */
 export const NAVIGATION_RULE = 'router-navigation';
+
+/**
+ * The evidence rule a SERVER PAGE's `location.href` carries (RM60).
+ *
+ * RM59 said the sink tells a navigation from a request and the file kind does
+ * not. Measured, that is wrong for the browser's own global: a server-rendered
+ * page has no router, so `location.href = "<c:url value='/x.do'/>"` in a JSP is
+ * the browser fetching a route of this same application, which is exactly what
+ * `<a href>` two lines below it is. In a source file the sink stays a
+ * navigation, because there a router really is what answers.
+ */
+export const LOCATION_REQUEST_RULE = 'location-request';
 
 /** One key made of the module and the name it exports, so a renamed import is still the same hook. */
 const importKey = (source, imported) => `${source} ${imported}`;
 
 const NAV_SPECS = new WeakMap();
 
+/** An empty set of lookups, before any pack has been read into it. */
+function emptySpec() {
+  return {
+    hooks: new Map(),
+    functions: new Map(),
+    receivers: new Map(),
+    globals: [],
+    elements: [],
+    markupElements: [],
+    // THE APP'S OWN ROUTER MODULE (RM60): the calls that BUILD one, and the
+    // methods a name bound to one is navigated through.
+    moduleFactories: new Map(),
+    moduleMethods: new Set(),
+    moduleShape: null,
+  };
+}
+
+/** One `routers` entry, read into the lookups a walk asks. */
+function readRouter(r, out) {
+  const shape = {
+    framework: r.framework,
+    methods: new Set(r.methods ?? []),
+    valueIsACall: r.hookValueIsACall === true,
+    urlArg: Number.isInteger(r.urlArg) ? r.urlArg : 0,
+    urlKeys: r.urlKeys ?? [],
+    nameKeys: r.nameKeys ?? [],
+  };
+  for (const m of r.modules ?? []) {
+    for (const h of r.hooks ?? []) out.hooks.set(importKey(m, h), shape);
+    for (const f of r.functions ?? []) out.functions.set(importKey(m, f), shape);
+    for (const f of r.module?.factories ?? []) out.moduleFactories.set(importKey(m, f), shape);
+  }
+  if (r.module) {
+    out.moduleShape = shape;
+    for (const m of shape.methods) out.moduleMethods.add(m);
+  }
+  for (const name of r.receivers ?? []) out.receivers.set(name, shape);
+}
+
 /**
- * The navigation pack, flattened into the four lookups a walk needs.
+ * One `elements` entry.
+ *
+ * AN ELEMENT NAMES ITS ROUTER TWO WAYS. A JSX element is a name the file
+ * IMPORTED, and the import is what makes it a navigation rather than one of the
+ * dozen other components called `Link`. A single-file component's
+ * `<router-link>` imports nothing: the framework registers the tag globally, so
+ * the tag itself is the whole declaration, and the entry says which by whether
+ * it lists modules at all.
+ */
+function readElement(e, out) {
+  const shape = { framework: e.framework, element: e.element, pathAttr: e.pathAttr, urlKeys: [] };
+  if (Array.isArray(e.modules)) out.elements.push({ ...shape, modules: new Set(e.modules) });
+  else out.markupElements.push(shape);
+}
+
+/**
+ * The navigation pack, flattened into the lookups a walk needs.
  *
  * Memoized on the packs array itself: the packs are read once per process and
  * every file is walked against the same array, so this is built once.
@@ -40,28 +118,11 @@ export function navigationSpec(packs) {
   if (!Array.isArray(packs)) return null;
   const cached = NAV_SPECS.get(packs);
   if (cached !== undefined) return cached;
-  const hooks = new Map();
-  const functions = new Map();
-  const receivers = new Map();
-  const globals = [];
-  const elements = [];
+  const out = emptySpec();
   for (const p of packs) {
-    for (const r of p.routers ?? []) {
-      const shape = {
-        framework: r.framework,
-        methods: new Set(r.methods ?? []),
-        valueIsACall: r.hookValueIsACall === true,
-        urlArg: Number.isInteger(r.urlArg) ? r.urlArg : 0,
-        urlKeys: r.urlKeys ?? [],
-      };
-      for (const m of r.modules ?? []) {
-        for (const h of r.hooks ?? []) hooks.set(importKey(m, h), shape);
-        for (const f of r.functions ?? []) functions.set(importKey(m, f), shape);
-      }
-      for (const name of r.receivers ?? []) receivers.set(name, shape);
-    }
+    for (const r of p.routers ?? []) readRouter(r, out);
     for (const g of p.globals ?? []) {
-      globals.push({
+      out.globals.push({
         framework: g.framework,
         receivers: new Set(g.receivers ?? []),
         methods: new Set(g.methods ?? []),
@@ -70,21 +131,11 @@ export function navigationSpec(packs) {
         urlKeys: [],
       });
     }
-    // A sink written in MARKUP is declared and not read: this worker parses a
-    // single-file component's `<script>` blocks, not its `<template>`.
-    for (const e of p.elements ?? []) {
-      if (e.markup === true || !Array.isArray(e.modules)) continue;
-      elements.push({
-        framework: e.framework,
-        element: e.element,
-        modules: new Set(e.modules),
-        pathAttr: e.pathAttr,
-        urlKeys: [],
-      });
-    }
+    for (const e of p.elements ?? []) readElement(e, out);
   }
-  const spec = hooks.size + functions.size + receivers.size + globals.length + elements.length === 0
-    ? null : { hooks, functions, receivers, globals, elements };
+  const total = out.hooks.size + out.functions.size + out.receivers.size
+    + out.globals.length + out.elements.length + out.markupElements.length;
+  const spec = total === 0 ? null : out;
   NAV_SPECS.set(packs, spec);
   return spec;
 }
@@ -126,21 +177,40 @@ function navigationSinkOf(ctx, spec, { callee, binding, env }) {
   if (method !== null && binding !== null && binding.kind === 'global') {
     const receiver = [callee.root, ...callee.path.slice(0, -1)].join('.');
     for (const g of spec.globals) {
-      if (g.receivers.has(receiver) && g.methods.has(method)) return { shape: g, sink: `${receiver}.${method}` };
+      if (g.receivers.has(receiver) && g.methods.has(method)) {
+        return { shape: g, sink: `${receiver}.${method}`, via: 'global' };
+      }
     }
   }
   if (method !== null && callee.root === 'this' && callee.path.length === 2) {
     const r = spec.receivers.get(callee.path[0]) ?? null;
-    if (r !== null && r.methods.has(method)) return { shape: r, sink: `${callee.path[0]}.${method}` };
+    if (r !== null && r.methods.has(method)) {
+      return { shape: r, sink: `${callee.path[0]}.${method}`, via: 'receiver' };
+    }
   }
   const hook = hookRouterOf(ctx, spec, callee.root, env.scope);
   if (hook !== null) {
-    if (method === null && hook.valueIsACall) return { shape: hook, sink: `${callee.root}()` };
-    if (method !== null && hook.methods.has(method)) return { shape: hook, sink: `${callee.root}.${method}` };
+    if (method === null && hook.valueIsACall) return { shape: hook, sink: `${callee.root}()`, via: 'hook' };
+    if (method !== null && hook.methods.has(method)) {
+      return { shape: hook, sink: `${callee.root}.${method}`, via: 'hook' };
+    }
   }
-  if (method === null && binding !== null && binding.kind === 'import') {
-    const f = spec.functions.get(importKey(binding.source, binding.imported)) ?? null;
-    if (f !== null) return { shape: f, sink: `${callee.root}()` };
+  if (binding !== null && binding.kind === 'import') {
+    if (method === null) {
+      const f = spec.functions.get(importKey(binding.source, binding.imported)) ?? null;
+      if (f !== null) return { shape: f, sink: `${callee.root}()`, via: 'import' };
+    } else if (spec.moduleMethods.has(method) && callee.path.length === 1) {
+      // THE APP'S OWN ROUTER MODULE (RM60). `import router from '@/router'`
+      // followed by `router.push('/x')` is a navigation, and whether the module
+      // really holds a router is a question about ANOTHER FILE. So this is a
+      // candidate carrying the specifier, and the bridge finishes it.
+      return {
+        shape: { ...(spec.moduleShape ?? { urlArg: 0, urlKeys: [], nameKeys: [] }), framework: null },
+        sink: `${callee.root}.${method}`,
+        via: 'router-module',
+        candidate: { source: binding.source, imported: binding.imported },
+      };
+    }
   }
   return null;
 }
@@ -155,41 +225,98 @@ function navigationSinkOf(ctx, spec, { callee, binding, env }) {
  */
 function navigationTargetOf(ctx, shape, argNodes, scope) {
   const at = argNodes[shape.urlArg] ?? null;
-  if (at === null || at === undefined) return null;
-  if (at.type !== 'ObjectExpression') return ctx.buildUrl(summarizeArg(at), scope);
+  if (at === null || at === undefined) return { to: null, targetKind: null };
+  if (at.type !== 'ObjectExpression') return { to: ctx.buildUrl(summarizeArg(at), scope), targetKind: null };
   for (const key of shape.urlKeys) {
     const v = propOf(at, key);
-    if (v !== null) return ctx.buildUrl(summarizeArg(v), scope);
+    if (v !== null) return { to: ctx.buildUrl(summarizeArg(v), scope), targetKind: null };
   }
-  return null;
+  // A NAMED ROUTE (`push({ name: 'user' })`) names a route declaration rather
+  // than a path. It is a real navigation and this lane cannot say where it
+  // lands, so it is counted as unmatched under its own name.
+  for (const key of shape.nameKeys ?? []) {
+    if (propOf(at, key) !== null) return { to: null, targetKind: 'named' };
+  }
+  return { to: null, targetKind: null };
 }
 
-/** The record one navigation prints: which sink, and where it goes. */
-function navigationRecord(ctx, { shape, sink }, { to, line, env }) {
+/** The record one navigation prints: which sink, where it goes, and how it was found. */
+function navigationRecord(ctx, hit, { to, targetKind, line, env }) {
   return {
-    kind: 'navigation',
+    kind: hit.candidate === undefined ? 'navigation' : 'navigationCandidate',
     file: ctx.relFile,
     line,
     enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : ctx.moduleEnclosing,
-    framework: shape.framework,
-    sink,
+    framework: hit.shape.framework,
+    sink: hit.sink,
+    via: hit.via,
     rule: NAVIGATION_RULE,
     to,
+    ...(targetKind ? { targetKind } : {}),
+    ...(hit.candidate === undefined ? {} : { specifier: hit.candidate }),
   };
+}
+
+/**
+ * A SERVER PAGE'S ADDRESS BAR IS A REQUEST (RM60): the same call record a link
+ * in the same page produces, so it is matched, graded and counted as one.
+ */
+function locationRequestRecord(ctx, hit, { to, line, env }) {
+  return {
+    kind: 'call', file: ctx.relFile, line,
+    enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : ctx.moduleEnclosing,
+    callee: { shape: 'template', root: LOCATION_REQUEST_RULE, path: [], name: LOCATION_REQUEST_RULE },
+    binding: null,
+    args: [],
+    url: to,
+    method: { value: 'GET', from: 'location-href' },
+    platformSink: null,
+    template: { rule: LOCATION_REQUEST_RULE, attr: hit.sink, written: writtenOf(to) },
+  };
+}
+
+/** The address as the source spells it, for the evidence to quote. */
+function writtenOf(to) {
+  const arg = to === null ? null : (to.arg ?? null);
+  if (arg === null) return null;
+  if (arg.kind === 'string') return arg.value;
+  if (arg.kind === 'template') return arg.template;
+  return null;
+}
+
+/**
+ * Whether this sink, in this file, is a request rather than a screen change.
+ *
+ * Only the browser's own global, and only in a template: a page has no router,
+ * so nothing else could answer the address it loads.
+ */
+function isARequest(ctx, hit, to) {
+  if (hit.via !== 'global' || typeof ctx.template !== 'string') return false;
+  const resolved = to === null ? null : to.resolved;
+  // A page writes its paths from the app root, and a JSP tag or an EL context
+  // path arrives here as the marker for it; the page reader takes the marker
+  // off afterwards. What is left has to be a route: a path, and not an asset.
+  const aRoute = (t) => {
+    const path = t.startsWith(CTX_MARKER) ? t.slice(CTX_MARKER.length) : t;
+    return path.startsWith('/') && templateUrlOf(path) !== null;
+  };
+  return Array.isArray(resolved) && resolved.length > 0
+    && resolved.every((r) => typeof r.template === 'string' && aRoute(r.template));
 }
 
 /**
  * ONE CALL, read for a screen change rather than a request.
  *
- * @returns {object|null} the navigation record, or null when this is not one
+ * @returns {object|null} the record, or null when this call is neither
  */
 export function navigationOf(ctx, { isNew, callee, binding, env, argNodes, line }) {
   const spec = ctx.navigation ?? null;
   if (spec === null || isNew || callee === null) return null;
   const hit = navigationSinkOf(ctx, spec, { callee, binding, env });
   if (hit === null) return null;
-  const to = navigationTargetOf(ctx, hit.shape, argNodes, env.scope);
-  return navigationRecord(ctx, hit, { to, line, env });
+  const { to, targetKind } = navigationTargetOf(ctx, hit.shape, argNodes, env.scope);
+  if (isARequest(ctx, hit, to)) return locationRequestRecord(ctx, hit, { to, line, env });
+  return navigationRecord(ctx, hit, { to, targetKind, line, env });
 }
 
 /**
@@ -211,9 +338,10 @@ export function navigationAssignmentOf(ctx, node, env) {
   for (const g of spec.globals) {
     if (!g.receivers.has(receiver) || !g.properties.has(property)) continue;
     const to = ctx.buildUrl(summarizeArg(node.right), env.scope);
-    return navigationRecord(ctx, { shape: g, sink: `${receiver}.${property}` }, {
-      to, line: ctx.lineOf(node), env,
-    });
+    const hit = { shape: g, sink: `${receiver}.${property}`, via: 'global' };
+    const line = ctx.lineOf(node);
+    if (isARequest(ctx, hit, to)) return locationRequestRecord(ctx, hit, { to, line, env });
+    return navigationRecord(ctx, hit, { to, targetKind: null, line, env });
   }
   return null;
 }
@@ -253,9 +381,108 @@ export function navigationElementOf(ctx, node, env) {
     if (attr === null) continue;
     const value = attr.type === 'JSXExpressionContainer' ? attr.expression : attr;
     const to = ctx.buildUrl(summarizeArg(value), env.scope);
-    return navigationRecord(ctx, { shape: e, sink: `<${tag} ${e.pathAttr}>` }, {
-      to, line: ctx.lineOf(node), env,
+    return navigationRecord(ctx, { shape: e, sink: `<${tag} ${e.pathAttr}>`, via: 'element' }, {
+      to, targetKind: null, line: ctx.lineOf(node), env,
     });
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// The app's own router module, and the tag a single-file component navigates by
+// ---------------------------------------------------------------------------
+
+/** The router a factory call builds, or null when this call builds none. */
+function routerFactoryOf(ctx, spec, node) {
+  const callee = node.callee ?? null;
+  if (!callee || callee.type !== 'Identifier') return null;
+  const imp = ctx.top.imports.get(callee.name) ?? null;
+  if (imp === null) return null;
+  return spec.moduleFactories.get(importKey(imp.source, imp.imported)) ?? null;
+}
+
+/**
+ * WHETHER THIS FILE IS THE APP'S ROUTER MODULE (RM60).
+ *
+ * `createRouter({ routes })` (or `new VueRouter({ routes })`) handed straight to
+ * `export default`, or bound to a name that is. Nothing else counts: a file that
+ * builds a router and keeps it to itself is not what
+ * `import router from '@/router'` reaches.
+ *
+ * @returns {object|null} the `routerModule` record, or null
+ */
+export function routerModuleOf(ctx, program) {
+  const spec = ctx.navigation ?? null;
+  if (spec === null || spec.moduleFactories.size === 0) return null;
+  const built = new Map(); // name -> shape
+  let exported = null;
+  for (const stmt of program.body ?? []) {
+    if (stmt.type === 'VariableDeclaration') {
+      for (const d of stmt.declarations) {
+        if (!d.init || (d.init.type !== 'CallExpression' && d.init.type !== 'NewExpression')) continue;
+        if (!d.id || d.id.type !== 'Identifier') continue;
+        const shape = routerFactoryOf(ctx, spec, d.init);
+        if (shape !== null) built.set(d.id.name, shape);
+      }
+      continue;
+    }
+    if (stmt.type !== 'ExportDefaultDeclaration') continue;
+    const d = stmt.declaration;
+    if (!d) continue;
+    if (d.type === 'CallExpression' || d.type === 'NewExpression') exported = routerFactoryOf(ctx, spec, d);
+    else if (d.type === 'Identifier') exported = built.get(d.name) ?? null;
+  }
+  if (exported === null) return null;
+  return {
+    kind: 'routerModule', file: ctx.relFile, line: 1, framework: exported.framework,
+  };
+}
+
+/** Whether a tag as written is the element the pack names, kebab or Pascal. */
+const sameTag = (a, b) => String(a).toLowerCase().split('-').join('') === String(b).toLowerCase().split('-').join('');
+
+/** One tag of a single-file component's markup, attributes and all. */
+const MARKUP_TAG_RE = /<([a-zA-Z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/g;
+
+/**
+ * `<router-link to="/x">`, which is a navigation written in a component's
+ * MARKUP (RM60).
+ *
+ * The tag scanner is the template reader's, and no template language is parsed:
+ * one element name, one attribute, and the line it sits on. A bound `:to` is a
+ * value the component computes, so it is a navigation this lane cannot follow
+ * and is counted as one.
+ *
+ * @param {string} text  the `<template>` half of a `.vue` file, lines intact
+ * @returns {object[]} navigation records
+ */
+export function routerLinkRecords(ctx, text) {
+  const spec = ctx.navigation ?? null;
+  const src = String(text ?? '');
+  if (spec === null || spec.markupElements.length === 0 || src === '') return [];
+  const out = [];
+  const re = new RegExp(MARKUP_TAG_RE.source, 'g');
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const e = spec.markupElements.find((x) => sameTag(m[1], x.element));
+    if (e === undefined) continue;
+    const attrs = attributesOf(m[2]);
+    const line = (src.slice(0, m.index).match(/\n/g) ?? []).length + 1;
+    const bound = attrs.has(`:${e.pathAttr}`) || attrs.has(`v-bind:${e.pathAttr}`);
+    const written = attrs.get(e.pathAttr);
+    if (!bound && written === undefined) continue;
+    const path = bound ? null : templateUrlOf(written);
+    out.push({
+      kind: 'navigation', file: ctx.relFile, line,
+      enclosing: '(template)',
+      framework: e.framework,
+      sink: `<${m[1]} ${bound ? `:${e.pathAttr}` : e.pathAttr}>`,
+      via: 'router-link',
+      rule: NAVIGATION_RULE,
+      to: path === null ? null
+        : { arg: { kind: 'string', value: path }, resolved: [{ template: path, dynamicParts: 0, via: 'literal' }] },
+      ...(bound ? { targetKind: 'bound' } : {}),
+    });
+  }
+  return out;
 }

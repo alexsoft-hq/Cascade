@@ -10,6 +10,89 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **A form submitted from script is a request.** `document.listForm.action =
+  "<c:url value='/updateSampleView.do'/>"` followed by
+  `document.listForm.submit()` is how every eGovFrame page sends what it does not
+  send with a link, and there is no HTTP client anywhere in it. An address
+  assigned to a form's `action`, followed by `submit()` on the same form, is now
+  a `CALLS_HTTP` call of the page, evidence rule `form-submit`. "The same form"
+  is the same receiver as written: `document.listForm`,
+  `document.forms['listForm']`, `document.getElementById('listForm')`, a variable
+  bound to one of those, and jQuery's `$('#listForm').attr('action', url)` with
+  `$('#listForm').submit()`. The assignment nearest before the submit is the one
+  that counts, and an `.action` with no `submit()` after it is not a call — it is
+  a form the user submits with a button, whose address the markup already gives.
+  The method is the one assigned between the two halves, else the `method` of the
+  `<form>` element the name resolves to (Spring's `<form:form>` posts, HTML's
+  `<form>` gets), else nothing, and the evidence says which. Counted in
+  `laneStats.web.calls.formSubmits`, with `methodBySource` gaining `form-assigned`
+  and `form-element`, and one census line. **A submit reads one scope**: the
+  action must be assigned in the same function (or the module body), because a
+  page reloads on submit and another function's assignment is gone by then. A
+  submit whose own scope assigned nothing sends the `action` of its `<form>`
+  element (`form.actionFrom: 'form element'`), and one with no readable address
+  anywhere places no edge and is counted as `formSubmitsWithoutAddress`.
+- **A JSP tag written inside a script no longer breaks the block.**
+  `var t = "<spring:message code="x"/>";` brought its own quotes into a
+  JavaScript string and cost the page every call its scripts make: 347 of the 739
+  pages of the eGovFrame common components and 21 of 90 of the business template.
+  JSP custom tags are now taken out before a page's script is parsed, lines kept:
+  `<c:url>` / `<spring:url>` become their address from the application root,
+  closing and control tags become nothing, and every other tag a value
+  placeholder. No page of either repository fails to parse now.
+- **In a server-rendered page, `location.href` is a GET request.** A page has no
+  router, so nothing but the server can answer the address the browser is handed:
+  `location.href = …`, `window.location.href = …`, `location.assign(…)` and
+  `location.replace(…)` in a template file are GET calls matched and graded like
+  the page's links, evidence rule `location-request`. In a source file they stay
+  navigations. This corrects the sentence 0.8.4 wrote: on the browser's own
+  global the file kind is the fact that decides, and the measurement is in
+  docs/measured.md.
+- **A path a template engine writes into a script is a path.** Every string
+  literal a page's inline script hands to the URL reader now goes through the same
+  rule an attribute does, so `"<c:url value='/x.do'/>"` and `"<spring:url …/>"`
+  are read as `/x.do` wherever in the page they are written.
+- **The app's own router module is a router.** A `router.push('/x')` on a name
+  imported from a module whose default export is `createRouter({routes})` (or
+  `new VueRouter({routes})` where the class came from `vue-router`) is a
+  navigation, `via` `router-module`. The worker records which module IS a router
+  and leaves the call as a candidate carrying its specifier; the bridge resolves
+  it through the module index the rest of the lane already uses, and drops it when
+  the specifier leads anywhere else.
+- **`<router-link to="/x">` is read.** A single-file component's `<template>` is
+  scanned for `<router-link>` / `<RouterLink>` with the template reader's own tag
+  scanner — one element, one attribute, no template language — and a static `to`
+  is a navigation to that path. A bound `:to` is counted as one this lane cannot
+  follow. Line numbers are the line in the `.vue` file.
+- **The navigation census says which rule found each one, and why the rest
+  matched nothing.** `laneStats.web.navigation.bySource` counts `hook`,
+  `receiver`, `global`, `import`, `element`, `router-module` and `router-link`;
+  `unmatchedByKind` counts `named` (a route reached by its declared name),
+  `bound`, `path` and `expression`. The web worker is `webfacts/10`.
+
+### Changed
+
+- **The eGovFrame corpus reaches what it always reached.** Measured over the
+  seventeen-repository corpus: egovframe-web-sample 0 call sites to 8, all 8
+  resolved, and its screens reaching a table 0 / 2 to 2 / 2; the enterprise
+  business template 134 to 357 call sites, 122 to 333 resolved, 55 / 84 to
+  72 / 84 screens; the common components 810 to 2156, 765 to 2074, 470 / 657 to
+  550 / 657. Navigations fall where they were never navigations: the business
+  template 27 to 4, the common components 66 to 8. Two other entries move and
+  both are corrections: dolphinscheduler gains one call (a `<form>` built and
+  submitted in `utils/downloadFile.ts`) and jeecg-boot loses two false ones
+  (`router.push` on an imported router, read until now as an HTTP call to a route
+  nothing serves). `endpointColumnPairs`, tables, columns and endpoints reaching
+  a statement are identical on all seventeen, and `webCallsResolved` on the
+  fourteen that are not eGovFrame.
+- **Two pack digests move**, jsh-erp and litemall, the two registered projects
+  whose components hold a `<router-link>`. Every recorded MCP answer for both is
+  byte for byte what it was apart from the build digest it quotes.
+- **The Korean documentation mirror catches up** with `docs/ko/concepts.md`,
+  `docs/ko/viewer.md` and `docs/ko/setup/web-lane.md`.
+
 ## [0.8.4] - 2026-09-10
 
 A screen change is not a request, an unknown project is an error, and no

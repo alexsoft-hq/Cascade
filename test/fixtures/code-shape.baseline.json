@@ -60,6 +60,7 @@
     "platformSinkOf",
     "propertyKeyName",
     "put",
+    "readTheCall",
     "reduceName",
     "reduceSummary",
     "refBindingOf",
@@ -67,6 +68,7 @@
     "resolveSummary",
     "resolvesToUrl",
     "resolvesToUrl/1",
+    "throughTemplateUrl",
     "urlArgumentOf",
     "viaOf",
     "visit",
@@ -80,9 +82,9 @@
    ]
   },
   "adapters/web/lib/emit.mjs": {
-   "maxLines": 48,
-   "maxBranches": 35,
-   "longest": "tally",
+   "maxLines": 46,
+   "maxBranches": 23,
+   "longest": "emptyCounts",
    "branchiest": "tally",
    "functions": [
     "KIND_RANK",
@@ -90,7 +92,35 @@
     "orderRecords",
     "orderRecords/1",
     "tally",
-    "tallyCall"
+    "tallyCall",
+    "tallyFile",
+    "tallyNavigation",
+    "tallyTemplate"
+   ]
+  },
+  "adapters/web/lib/forms.mjs": {
+   "maxLines": 26,
+   "maxBranches": 25,
+   "longest": "jqueryFormCall",
+   "branchiest": "formElementName",
+   "functions": [
+    "addressOf",
+    "addressOf/1",
+    "elementUrlOf",
+    "formActionAssignment",
+    "formCall",
+    "formElementIndex",
+    "formElementName",
+    "formMethodAssignment",
+    "formReceiverText",
+    "formSubmitRecords",
+    "inOrder",
+    "inOrder/1",
+    "jqueryFormCall",
+    "methodOf",
+    "mine",
+    "push",
+    "submitRecord"
    ]
   },
   "adapters/web/lib/imports.mjs": {
@@ -130,21 +160,34 @@
    ]
   },
   "adapters/web/lib/navigation.mjs": {
-   "maxLines": 52,
-   "maxBranches": 27,
-   "longest": "navigationSpec",
-   "branchiest": "navigationSpec",
+   "maxLines": 42,
+   "maxBranches": 26,
+   "longest": "navigationSinkOf",
+   "branchiest": "navigationSinkOf",
    "functions": [
+    "aRoute",
+    "emptySpec",
     "hookRouterOf",
     "importKey",
+    "isARequest",
+    "isARequest/1",
     "jsxAttr",
+    "locationRequestRecord",
     "navigationAssignmentOf",
     "navigationElementOf",
     "navigationOf",
     "navigationRecord",
     "navigationSinkOf",
     "navigationSpec",
-    "navigationTargetOf"
+    "navigationTargetOf",
+    "readElement",
+    "readRouter",
+    "routerFactoryOf",
+    "routerLinkRecords",
+    "routerLinkRecords/1",
+    "routerModuleOf",
+    "sameTag",
+    "writtenOf"
    ]
   },
   "adapters/web/lib/nexacro.mjs": {
@@ -206,10 +249,10 @@
    ]
   },
   "adapters/web/lib/templates.mjs": {
-   "maxLines": 87,
-   "maxBranches": 22,
+   "maxLines": 71,
+   "maxBranches": 21,
    "longest": "templateRecordsOf",
-   "branchiest": "templateRecordsOf",
+   "branchiest": "templateIncludes",
    "functions": [
     "add",
     "add/1",
@@ -220,13 +263,20 @@
     "dropTrailingParens",
     "interpolationMarker",
     "keepLines",
+    "neutralizeJspTags",
     "neutralizeScript",
     "neutralizeScript/1",
     "neutralizeScript/2",
     "neutralizeScript/3",
+    "one",
+    "one/1",
     "resolveIncludeName",
     "siteOf",
     "soleElementTag",
+    "stripContextPath",
+    "stripContextPath/1",
+    "templateFormElements",
+    "templateFormElements/1",
     "templateForms",
     "templateForms/1",
     "templateIncludes",
@@ -235,8 +285,9 @@
     "templateRecordsOf",
     "templateRecordsOf/1",
     "templateRecordsOf/2",
-    "templateRecordsOf/3",
     "templateScriptBlocks",
+    "templateScriptUrl",
+    "templateScriptUrl/1",
     "templateUrlOf",
     "templateUrlOf/1",
     "templateUrlOf/2",
@@ -245,13 +296,12 @@
    ]
   },
   "adapters/web/webfacts.mjs": {
-   "maxLines": 77,
+   "maxLines": 75,
    "maxBranches": 44,
-   "longest": "analyzeSource",
+   "longest": "readBundlerConfig",
    "branchiest": "readBundlerConfig",
    "functions": [
     "analyzeFile",
-    "analyzeFile/1",
     "analyzeProgram",
     "analyzeSource",
     "analyzeSource/1",
@@ -327,6 +377,10 @@
     "runTheWalk/1",
     "runTheWalk/2",
     "scan",
+    "scriptBlocksOf",
+    "settleFunctionNames",
+    "settleFunctionNames/1",
+    "sourceTextOf",
     "templateOf",
     "templateRootOf",
     "visit",
@@ -336,7 +390,9 @@
     "walk/2",
     "walkState",
     "walkState/1",
-    "walkState/2"
+    "walkState/2",
+    "withoutScriptBlocks",
+    "withoutScriptBlocks/1"
    ]
   },
   "bin/cascade.mjs": {
@@ -904,7 +960,7 @@
    ]
   },
   "src/adapters/web/calls.mjs": {
-   "maxLines": 61,
+   "maxLines": 58,
    "maxBranches": 29,
    "longest": "classifyCallSites",
    "branchiest": "makeCalleeTarget",
@@ -914,8 +970,10 @@
     "classifyCallSites",
     "collectCallPairs",
     "consider",
+    "countAddressless",
     "countSite",
     "countUrlCensus",
+    "flatSink",
     "fullUrlOf",
     "fullUrlOf/1",
     "functionsReachingHttp",
@@ -945,6 +1003,7 @@
     "namesARoute",
     "namesARoute/1",
     "noteCaller",
+    "pageSinkOf",
     "placeCandidate",
     "placeCandidate/1",
     "placeHttpEdges",
@@ -971,14 +1030,16 @@
    ]
   },
   "src/adapters/web/navigation.mjs": {
-   "maxLines": 45,
-   "maxBranches": 26,
-   "longest": "placeNavigations",
-   "branchiest": "placeNavigations",
+   "maxLines": 41,
+   "maxBranches": 19,
+   "longest": "placeOne",
+   "branchiest": "placeOne",
    "functions": [
     "buildScreenIndex",
+    "fromRouterModule",
     "placeNavigations",
     "placeNavigations/1",
+    "placeOne",
     "screenMatchPath",
     "screenMatchPath/1",
     "screensFor",
@@ -1126,11 +1187,12 @@
    ]
   },
   "src/adapters/web/symbols.mjs": {
-   "maxLines": 47,
+   "maxLines": 36,
    "maxBranches": 25,
    "longest": "indexWebFacts",
    "branchiest": "initValue",
    "functions": [
+    "bucket",
     "carry",
     "collectInstances",
     "externalInit",
@@ -1158,6 +1220,7 @@
     "sortOneFile/5",
     "sortOneFile/6",
     "sortOneFile/7",
+    "sortOneFile/8",
     "throughStars",
     "throughStars/1",
     "throughStars/2",
@@ -1250,8 +1313,11 @@
     "sayNavigationsAndPages",
     "sayNavigationsAndPages/1",
     "sayNavigationsAndPages/2",
+    "sayNavigationsAndPages/3",
+    "sayNavigationsAndPages/4",
     "sayNoSchemaFetched",
     "sayOpenApiLane",
+    "sayPageScriptRequests",
     "sayResult",
     "sayResult/1",
     "sayResult/2",
@@ -1276,6 +1342,7 @@
     "sayWebBridge/5/1",
     "sayWebWorker",
     "sayWebWorker/1",
+    "sayWhatScriptAsksFor",
     "under"
    ]
   },
@@ -2283,10 +2350,10 @@
    ]
   },
   "src/core/facts_store.mjs": {
-   "maxLines": 93,
-   "maxBranches": 43,
-   "longest": "webFactsSummary",
-   "branchiest": "webFactsSummary",
+   "maxLines": 59,
+   "maxBranches": 22,
+   "longest": "createFactsStore",
+   "branchiest": "javaRecordSortKey",
    "functions": [
     "assembleJavaFacts",
     "assembleJavaFacts/1",
@@ -2326,6 +2393,11 @@
     "sqlStmtsShardKey/1",
     "sqlStmtsShardKey/2",
     "summariseCall",
+    "summariseDeclaration",
+    "summariseFile",
+    "summariseNavigation",
+    "summariseRecord",
+    "summariseTemplate",
     "validateIndex",
     "webFactsSummary",
     "webRecordSortKey",
