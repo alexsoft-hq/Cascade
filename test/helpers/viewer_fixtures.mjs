@@ -25,6 +25,7 @@ import { toolList } from '../../src/mcp/catalog.mjs';
 import { serveHttp } from '../../src/mcp/http.mjs';
 import { computeTrust } from '../../src/core/trust.mjs';
 import { readSourceFor } from '../../src/viewer/source.mjs';
+import { exportSnapshot } from '../../src/cli/snapshot_export.mjs';
 import { ENGINE_ROOT } from './viewer_page.mjs';
 
 // ---------------------------------------------------------------------------
@@ -319,6 +320,8 @@ export async function startViewer(t, ids = ['alpha', 'beta']) {
         const ctx = host.ctxFor(projectId);
         return { project: ctx.basis.project, projectId, digest: ctx.packJson.digest, lanes: ctx.packJson.meta.lanes, builtAt: ctx.basis.builtAt, freshness: ctx.basis.freshness, base: null };
       },
+      // The Export button's route, over the same host the page asks.
+      exportSnapshot: (request) => exportSnapshot(host, { generatedAt: '2026-09-14T00:00:00.000Z', ...request }),
       // The same closure bin/cascade.mjs installs, over the working tree above.
       source: (nodeId, project, opts) => {
         const { projectId } = host.resolveProjectArg(project ? { project } : {});
@@ -330,5 +333,5 @@ export async function startViewer(t, ids = ['alpha', 'beta']) {
     },
   });
   t.after(() => new Promise((r) => server.close(r)));
-  return { html, base: `http://127.0.0.1:${server.address().port}` };
+  return { html, base: `http://127.0.0.1:${server.address().port}`, host };
 }

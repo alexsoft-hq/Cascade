@@ -57,6 +57,8 @@ document.addEventListener('keydown', (e)=>{
 // Both lane tabs are wired by the same function — one behaviour, two pictures.
 wireChainToolbar(FLOWV);
 wireChainToolbar(IMPACTV);
+byId('fexport').onclick=()=>exportChain(FLOWV);
+byId('iexport').onclick=()=>exportChain(IMPACTV);
 // The Graph tab's entry box is the SAME typeahead the lane tabs use (one
 // resolution rule, so a focus is never a guessed kind); only what a commit
 // draws differs.
@@ -144,8 +146,7 @@ document.addEventListener('visibilitychange', ()=>{
   // choice back. Nothing is rendered yet to re-render.
   setTheme(lsGet(LS_THEME) || THEMES[0], true);
   // ...and the one flow preference the map and the two lane views share.
-  flowPrefLoad();
-  fedPrefLoad();
+  flowPrefLoad(); fedPrefLoad();
   const kl = document.getElementById('klegend');
   KINDS.forEach(k=> kl.append(el('span',{},[ kindDot(k, 11), k ])));
   renderLineLegend();
@@ -153,6 +154,7 @@ document.addEventListener('visibilitychange', ()=>{
   renderMapLegend('ovmapleg');
   graphPaneWatch();
   ovMapWheelGate();
+  if(SNAP){ await snapshotBoot(); return; }   // an exported file asks nobody
   // Every translation is fetched at start-up, not on the first click: the
   // toggle names each language in ITS OWN language, and it cannot do that for a
   // catalogue it has not read.

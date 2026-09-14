@@ -31,7 +31,8 @@ async function loadOverview(){
   // Explore rail draws. The overview answer carries the screen CENSUS but no
   // per-screen rows, and the page must not invent them. Drawn when it lands, so
   // nothing on this tab waits for it.
-  if(!r.answer.screens) return;
+  // A snapshot shows no Overview tab, so it carries no screen list for it.
+  if(!r.answer.screens || SNAP) return;
   const mine=STATE.seq, forProject=STATE.project;
   let b;
   try { b=await api('browse',{kind:'screen', sort:'tables', limit:OV_HUB_TOP}); }

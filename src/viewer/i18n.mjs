@@ -232,6 +232,15 @@ export const VIEWER_STRINGS = {
     'view.lanes': 'chain',
     'view.layers': 'by hop',
     'btn.draw': 'Draw',
+    'btn.export': 'Export',
+    'btn.export.title': 'save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside',
+    'snap.title': 'Snapshot',
+    'snap.question': '{tab} from {kind} {value}, mode {mode}, depth {depth}, up to {limit} rows',
+    'snap.when': 'exported {generated} from pack {digest}, built {built}, Cascade {version}',
+    'snap.honesty': 'this answer: trust {trust}, {limits} limit(s), {truncated} cut list(s), each one named in the rail beside the picture',
+    'snap.only': 'This file holds this one answer. Anything else you ask here says it is not in the file.',
+    'snap.miss': 'This file holds only the answer it was exported with. Open the project in Cascade to ask anything else.',
+    'snap.miss.source': 'The source is read from the working tree, and this file does not carry one.',
     // ---- the fold, used on every tab ------------------------------------
     // The only words the fold itself carries: the accessible name of the
     // chevron. There is no "more" label — the chevron and `aria-expanded` say

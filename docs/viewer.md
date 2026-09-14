@@ -194,6 +194,35 @@ motion gets a static arrowhead instead, and no animation at all.
 Two views share the toolbar: **chain** draws the whole path left to right, and
 **by hop** groups the same rows one step at a time, with a census per hop.
 
+#### Exporting one answer
+
+**Export** on the Flow or the Impact toolbar saves the picture on screen as one
+HTML file, for a report, a design review or a message to someone who has no
+Cascade. `cascade export` writes the same file from the shell
+([cli.md](cli.md#cascade-export)).
+
+The file is this page with the answer inside: the markup, the stylesheet, the
+scripts, the fonts, the chosen language, and the tool answers the picture was
+drawn from, exactly as the server returned them. So it opens in any browser with
+no server and no network, and it is drawn by the same code that draws the live
+tab. Nothing is re-rendered for export, which is what keeps a HEURISTIC line
+dashed and a cut list marked as cut.
+
+A band under the masthead says what the file is before anything else does: the
+one question it answers (tab, entry, mode, depth, row limit), when it was
+exported and from which pack, and this answer's trust level with how many limits
+and cut lists it carries. The evidence rail beside the picture names each of
+them, as on the live page. The file opens in the light theme; the theme toggle
+still works.
+
+A file answers only the question it was exported with. The controls that would
+ask a different one (the entry, mode and depth) are switched off, the browse
+rail and the other tabs are not there, and anything else that would reach the
+server, the source pane included, says it is not in the file rather than
+guessing. **chain** and **by hop** still work, because they are two drawings of
+the same answer. Names that the live page cuts with an ellipsis wrap in the
+file, because a printed page has no pointer to hover them with.
+
 ### Coupling
 
 Two API groups can depend on each other without ever calling each other: one

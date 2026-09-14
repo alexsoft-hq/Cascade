@@ -100,6 +100,7 @@
       <div class="foldbody"></div>
     </div>
     <div id="proj" class="mnote"></div>
+    <div id="snapbar" class="snapbar hidden" role="note"></div>
     <div class="tabs">
       <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
       <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
@@ -159,6 +160,7 @@
         </span>
         <button id="iflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
         <button id="idraw" class="primary" data-t="btn.draw" onclick>Draw</button>
+        <button id="iexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">Export</button>
         <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
       <div class="hint hintfold" data-t-fold="hint.impact">

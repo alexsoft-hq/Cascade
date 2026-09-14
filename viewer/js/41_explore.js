@@ -8,6 +8,8 @@
 // their way around and a linter can read.
 
 async function fetchSource(nodeId, whole) {
+  // The source is read from the working tree, which a snapshot does not carry.
+  if(SNAP){ const e=new Error(t('snap.miss.source')); e.code='not-in-snapshot'; throw e; }
   const forProject=STATE.project, mine=STATE.seq;
   const r = await fetch(withProject('/api/source?node=' + encodeURIComponent(nodeId) + (whole?'&whole=1':'')));
   if(mine!==STATE.seq || forProject!==STATE.project) throw staleAnswer(forProject);

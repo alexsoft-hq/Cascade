@@ -301,7 +301,7 @@ function makeChainView(o){
     name:o.name, direction:o.direction,
     wrapId:o.wrapId, sideId:o.sideId, entryId:o.entryId, sugId:o.sugId,
     modeId:o.modeId, depthId:o.depthId, segId:o.segId,
-    resp:null, limit:40, sel:null, view:'lanes',
+    resp:null, args:null, limit:40, sel:null, view:'lanes',
     layerOpen:new Set(),          // hops whose rows are expanded in layers mode
     // A late answer is NEVER the current answer: every async render carries a
     // sequence number and drops itself if a newer request has started since.

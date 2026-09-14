@@ -100,6 +100,7 @@
       <div class="foldbody"></div>
     </div>
     <div id="proj" class="mnote"></div>
+    <div id="snapbar" class="snapbar hidden" role="note"></div>
     <div class="tabs">
       <button class="tab active" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
       <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>

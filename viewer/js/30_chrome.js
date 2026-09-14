@@ -9,6 +9,7 @@
 
 async function loadCatalog(lang){
   if(lang==='en' || I18N.catalog[lang]) return;
+  if(SNAP){ const c=SNAP.catalogs && SNAP.catalogs[lang]; if(c) I18N.catalog[lang]=c; return; }
   try{
     const r=await fetch('/i18n/'+encodeURIComponent(lang)+'.json');
     if(!r.ok) return;
@@ -92,7 +93,8 @@ function loadTab(name){
   if (name==='tx' && !document.getElementById('txview').hasChildNodes()) loadTx();
   // Explore, Flow and Impact open SHOWING the pack: the rail draws what it
   // already holds, and asks the server for its list exactly once.
-  if (RAILDEF[name]) railOpenTab(name);
+  // A snapshot holds one answer and no list to browse, so it opens no rail.
+  if (RAILDEF[name] && !SNAP) railOpenTab(name);
   const v=CHAINTABS[name];
   if (v){
     if(!vwrap(v).hasChildNodes()) drawChain(v);
@@ -305,6 +307,7 @@ function applyChrome(){
   renderMetaChrome();
   renderCascadeRail();
   renderAuthoredChrome();
+  renderSnapshotChrome();
   document.documentElement.lang=I18N.lang;
 }
 // A TAB HINT, folded. The `data-t-fold` attribute names a PAIR of catalogue keys:

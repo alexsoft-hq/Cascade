@@ -24,6 +24,7 @@
 //   mcp           serve the tool catalog over stdio           docs/mcp.md
 //   impact        query one pack from the shell               docs/cli.md
 //   view          serve the viewer over HTTP                  docs/viewer.md
+//   export        one Flow or Impact answer as an HTML file   docs/viewer.md
 
 import { wantsHelp } from '../src/cli/args.mjs';
 import { makeContext } from '../src/cli/context.mjs';
@@ -42,11 +43,12 @@ import * as pack from '../src/cli/commands/pack.mjs';
 import * as mcp from '../src/cli/commands/mcp.mjs';
 import * as impact from '../src/cli/commands/impact.mjs';
 import * as view from '../src/cli/commands/view.mjs';
+import * as exportCmd from '../src/cli/commands/export.mjs';
 
 /** Command name -> the module that runs it. Keyed by the usage text's order. */
 const DISPATCH = Object.freeze({
   setup, doctor, init, agent, analyze, 'otel-methods': otelMethods, estimate,
-  verify, golden, catalog, pack, mcp, impact, view,
+  verify, golden, catalog, pack, mcp, impact, view, export: exportCmd,
 });
 
 const argv = process.argv.slice(2);

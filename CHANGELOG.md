@@ -10,6 +10,20 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **One Flow or Impact answer as one HTML file.** The viewer's **Export** button
+  and the new `cascade export` command write the same file for the same question:
+  the viewer's own page with the tool answers inside, the fonts and the chosen
+  language included, so it opens in any browser with no server and no network. It
+  is drawn by the code that draws the live tab, so grades, limits and cut lists
+  are the ones the live page shows. A band under the masthead names the question,
+  the pack, the export time and this answer's trust, limits and cut lists. Every
+  question the file does not hold, the source pane included, says so instead of
+  guessing, and the controls that would ask one are switched off. The file opens
+  in the light theme, and names the live page cuts short wrap. About 0.9 MB.
+  docs/viewer.md and docs/cli.md have the details.
+
 ## [0.8.7] - 2026-09-14
 
 Two eGovFrame applications checked against what ran, a WebSquare client read as

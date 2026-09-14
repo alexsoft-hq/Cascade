@@ -7,10 +7,35 @@
 // the same single scope the page always had, said in files a reader can find
 // their way around and a linter can read.
 
+// ---------- a snapshot: the answers are in the file ----------------------------
+// An exported file (src/viewer/snapshot.mjs) carries the tool answers its picture
+// was drawn from in `window.CASCADE_SNAPSHOT`. Then there is no server: every
+// question is looked up among those answers by its tool and its arguments, and a
+// question the file does not hold says so in a sentence rather than guessing.
+const SNAP = (typeof window!=='undefined' && window.CASCADE_SNAPSHOT && window.CASCADE_SNAPSHOT.schema==='cascade:snapshot:1')
+  ? window.CASCADE_SNAPSHOT : null;
+/** The questions a snapshot was asked and could not answer, for the tests to read. */
+const SNAP_MISSES = [];
+/** Arguments as one comparable string: keys sorted, undefined values dropped. */
+function snapCanon(v){
+  if(Array.isArray(v)) return '['+v.map(snapCanon).join(',')+']';
+  if(v && typeof v==='object') return '{'+Object.keys(v).filter(k=>v[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+snapCanon(v[k])).join(',')+'}';
+  return JSON.stringify(v);
+}
+function snapAnswer(name, args){
+  const key=snapCanon(args||{});
+  const hit=SNAP.calls.find(c=>c.name===name && snapCanon(c.args||{})===key);
+  if(hit) return hit.answer;
+  SNAP_MISSES.push({name, args});
+  const e=new Error(t('snap.miss')); e.code='not-in-snapshot';
+  throw e;
+}
+
 const withProject = (url) => STATE.project ? url + (url.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(STATE.project) : url;
 const staleAnswer=(p)=>{ const e=new Error('answer for project '+p+' was dropped: the page has moved on'); e.stale=true; return e; };
 const stale=(e)=> !!(e && e.stale);
 const api = async (name, args={}) => {
+  if(SNAP) return snapAnswer(name, args);
   const forProject=STATE.project, mine=STATE.seq;
   const body = forProject ? {name, arguments:args, project:forProject} : {name, arguments:args};
   const r = await fetch('/api/call', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
@@ -30,6 +55,7 @@ const api = async (name, args={}) => {
  * answer is still dropped if the reader switches while it is in flight.
  */
 const apiFor = async (project, name, args={}) => {
+  if(SNAP) return snapAnswer(name, {...args, project});
   const mine=STATE.seq, was=STATE.project;
   const r = await fetch('/api/call', { method:'POST', headers:{'content-type':'application/json'},
     body:JSON.stringify({name, arguments:args, project}) });
@@ -155,7 +181,7 @@ function resetProjectState(){
     if(RAILDEF[tab].chipsId) byId(RAILDEF[tab].chipsId).replaceChildren();
   }
   for(const v of [FLOWV, IMPACTV]){
-    v.seq++; v.resp=null; v.sel=null; v.pick=null; v.limit=40;
+    v.seq++; v.resp=null; v.args=null; v.sel=null; v.pick=null; v.limit=40;
     v.rows.clear(); v.linkSpecs=[]; v.paths=[]; v.layerOpen.clear();
     const w=vwrap(v); w.classList.remove('layersmode'); w.replaceChildren();
     vside(v).replaceChildren();
@@ -185,6 +211,7 @@ function resetProjectState(){
 async function loadMeta(){
   const forProject=STATE.project, mine=STATE.seq;
   STATE.meta=null; renderMetaChrome();
+  if(SNAP){ STATE.meta=SNAP.meta; renderMetaChrome(); return; }
   let m;
   try{ m=await (await fetch(withProject('/api/meta'))).json(); }
   catch(e){ return; }
@@ -194,6 +221,7 @@ async function loadMeta(){
 // Which projects this server serves. Registry only — asking does not load a
 // single pack (`meta` is null until a project has answered something).
 async function loadProjects(){
+  if(SNAP){ STATE.projects=[SNAP.project]; return; }
   try{
     const j=await (await fetch('/api/projects')).json();
     if(j && !j.error && j.answer && Array.isArray(j.answer.projects)) STATE.projects=j.answer.projects;

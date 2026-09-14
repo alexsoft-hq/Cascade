@@ -138,7 +138,8 @@ async function drawChain(v, keepLimit){
     // Not a grey box telling the reader to type: the lead sentence and five
     // rows off the top of the list the rail already holds.
     wrap.classList.remove('layersmode');
-    side.replaceChildren(); v.resp=null;
+    side.replaceChildren(); v.resp=null; v.args=null;
+    refreshExportButtons();
     railIdle(v.name);
     return;
   }
@@ -168,8 +169,9 @@ async function drawChain(v, keepLimit){
   let r; try{ r=await api('flow',args); }
   catch(e){ if(stale(e)||mine!==v.seq) return; wrap.replaceChildren(errPanel(e)); side.replaceChildren(); return; }
   if(mine!==v.seq) return;   // a newer Draw is in flight — this answer is stale
-  v.resp=r; v.sel=null;
+  v.resp=r; v.args=args; v.sel=null;
   renderChain(v, r);
+  refreshExportButtons();
   // WHICH pick this picture is of, said the way the URL says it: the kind is
   // the one the tool was actually asked with, never guessed back out of the
   // name. The answer is kept so the Back button can re-draw it for nothing.

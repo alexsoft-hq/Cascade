@@ -218,6 +218,18 @@
      the page. Empty once the meta has landed, so it takes no room at all. */
   .mnote { grid-column:1 / -1; grid-row:4; font-size:12px; color:var(--t2); padding:0 0 4px; }
   .mnote:empty { display:none; }
+  /* THE SNAPSHOT BAND and the page an exported file is (48_snapshot.js). The
+     band spans the masthead grid like the note above it. In the file there is
+     one tab, no project list, no rail and nothing that would ask a server. */
+  .snapbar { grid-column:1 / -1; grid-row:4; display:flex; flex-wrap:wrap; gap:4px 14px; align-items:baseline;
+    font-size:12px; color:var(--t2); padding:6px 10px; margin:0 0 6px; border:1px solid var(--frame); background:var(--g2); }
+  .snapbar strong { color:var(--t1); font-weight:600; }
+  .snapbar .snapwarn { color:var(--warn); }
+  body.snapshot .tab:not(.snaptab), body.snapshot .browserail, body.snapshot .brtoggle,
+  body.snapshot .showall, body.snapshot #fdraw, body.snapshot #idraw,
+  body.snapshot #fexport, body.snapshot #iexport, body.snapshot button.moreb, body.snapshot #langseg, body.snapshot #mbuildbtn { display:none !important; }
+  body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr) 320px; grid-template-areas:"canvas side"; }
+  @media (max-width:1660px){ body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas" "side"; } }
   /* Tabs are WORDS ON A RULE: the active one is underlined in the endpoint hue,
      sitting on the header's own bottom hairline. No folders, no fills. */
   .tabs { grid-column:1 / -1; grid-row:5; display:flex; gap:24px; flex-wrap:wrap; margin-top:10px;
@@ -227,7 +239,7 @@
     header { grid-template-columns:auto minmax(0,1fr); row-gap:6px; }
     .mchips { grid-column:1 / -1; grid-row:3; justify-self:start; justify-content:flex-start; }
     .mfolds { grid-row:4; }
-    .mnote { grid-row:5; }
+    .mnote, .snapbar { grid-row:5; }
     .tabs { grid-row:6; margin-top:4px; }
   }
   .tab { padding:8px 0 11px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px;
@@ -606,6 +618,8 @@
      and never below a few characters. */
   .fname { font-family:var(--mono); font-size:12px; flex:1 1 auto; min-width:6ch; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
+  /* A report has no pointer to hover a cut name with, so in a snapshot a name wraps instead. */
+  body.snapshot .fname { white-space:normal; overflow-wrap:anywhere; text-overflow:clip; }
   /* ...and the chip that says which project a federated row came from is what
      gives way: it shrinks, ellipsises, and keeps the whole id in its tooltip. */
   .tag.fproj { flex:0 1 auto; max-width:45%; overflow:hidden;
@@ -1104,6 +1118,9 @@
   </div>
   <div class="mfolds" id="mfolds"></div>
   <div class="mnote" id="proj">loading…</div>
+  <!-- AN EXPORTED FILE SAYS SO FIRST (48_snapshot.js): the one question it
+       answers, when and from which pack, and how much the answer is worth. -->
+  <div class="snapbar hidden" id="snapbar" role="note"></div>
   <div class="tabs">
     <button type="button" class="tab active" data-tab="overview" data-t="tab.overview">Overview</button>
     <button type="button" class="tab" data-tab="explore" data-t="tab.explore">Explore</button>
@@ -1196,6 +1213,7 @@
       <span class="seg" id="fview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
       <button id="fflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
       <button id="fdraw" class="primary" data-t="btn.draw">Draw</button>
+      <button id="fexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button>
       <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.flow"></div>
@@ -1237,6 +1255,7 @@
       <span class="seg" id="iview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
       <button id="iflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
       <button id="idraw" class="primary" data-t="btn.draw">Draw</button>
+      <button id="iexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button>
       <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.impact"></div>
@@ -1414,6 +1433,7 @@
 <script src="/viewer/js/45_graph.js"></script>
 <script src="/viewer/js/46_erd.js"></script>
 <script src="/viewer/js/47_transactions.js"></script>
+<script src="/viewer/js/48_snapshot.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

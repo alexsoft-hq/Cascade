@@ -15,11 +15,11 @@
 /** The commands the dispatch table answers to, in the order the usage lists them. */
 export const COMMANDS = Object.freeze([
   'setup', 'doctor', 'init', 'agent', 'analyze', 'otel-methods', 'estimate',
-  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view',
+  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export',
 ]);
 
 /** The first line: what a reader sees before any detail. */
-export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view> …\n';
+export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export> …\n';
 
 /**
  * The last word, after every command: where a pack is looked for. It belongs to
@@ -136,6 +136,12 @@ export const USAGE = Object.freeze({
     '  cascade view [--pack <dir> | --project <id> ... | --root <dir>] [--port 4319] [--memory-budget <MB>]\n'
     + '      (same project selection as `mcp`; the page shows one project at a time. Open it with\n'
     + '       ?project=<id> when the server serves several)\n',
+  export:
+    '  cascade export [--pack <dir> | --project <id> | --root <dir>] [--tab flow|impact]\n'
+    + '                 (--endpoint|--screen|--symbol|--table|--column|--statement) <name>\n'
+    + '                 [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--out <file>]\n'
+    + '      (one Flow or Impact answer as one HTML file that opens with no server: the viewer page, the\n'
+    + '       answer, its grades, limits and cut lists inside. The viewer\'s Export button writes the same file)\n',
 });
 
 /**

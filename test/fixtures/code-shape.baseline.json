@@ -1628,6 +1628,21 @@
     "run"
    ]
   },
+  "src/cli/commands/export.mjs": {
+   "maxLines": 21,
+   "maxBranches": 6,
+   "longest": "run",
+   "branchiest": "run",
+   "functions": [
+    "questionOf",
+    "questionOf/1",
+    "questionOf/2",
+    "questionOf/3",
+    "questionOf/4",
+    "run",
+    "run/1"
+   ]
+  },
   "src/cli/commands/golden.mjs": {
    "maxLines": 20,
    "maxBranches": 6,
@@ -1752,15 +1767,15 @@
    ]
   },
   "src/cli/commands/view.mjs": {
-   "maxLines": 52,
-   "maxBranches": 7,
+   "maxLines": 45,
+   "maxBranches": 4,
    "longest": "viewerDeps",
    "branchiest": "viewerDeps",
    "functions": [
     "callTool",
     "contextOf",
+    "exportSnapshot",
     "meta",
-    "meta/1",
     "readFile",
     "run",
     "run/1",
@@ -1917,6 +1932,26 @@
     "servedEntries/1",
     "servedHost",
     "servedProfile"
+   ]
+  },
+  "src/cli/snapshot_export.mjs": {
+   "maxLines": 14,
+   "maxBranches": 4,
+   "longest": "exportSnapshot",
+   "branchiest": "projectMeta",
+   "functions": [
+    "callTool",
+    "engineIdentity",
+    "exportSnapshot",
+    "exportSnapshot/1",
+    "projectMeta",
+    "projectMeta/1",
+    "readFont",
+    "readLib",
+    "readScript",
+    "viewerAssets",
+    "viewerAssets/1",
+    "viewerAssets/2"
    ]
   },
   "src/cli/state.mjs": {
@@ -2775,7 +2810,7 @@
   },
   "src/core/lanes.mjs": {
    "maxLines": 96,
-   "maxBranches": 54,
+   "maxBranches": 52,
    "longest": "declareAxes",
    "branchiest": "screenAxis",
    "functions": [
@@ -2821,9 +2856,13 @@
     "chooseWebLanes/7",
     "chooseWebLanes/7/1",
     "chooseWebLanes/8",
+    "clientScreenPhrases",
+    "clientScreenPhrases/1",
+    "clientScreenPhrases/2",
     "codeAxisNotes",
     "codeAxisNotes/1",
     "codeAxisNotes/2",
+    "count",
     "declareAxes",
     "groupDdlByVendor",
     "groupDdlByVendor/1",
@@ -3534,8 +3573,8 @@
    ]
   },
   "src/mcp/http.mjs": {
-   "maxLines": 53,
-   "maxBranches": 29,
+   "maxLines": 51,
+   "maxBranches": 27,
    "longest": "handleApi",
    "branchiest": "handleApi",
    "functions": [
@@ -3549,6 +3588,7 @@
     "dispatchErr",
     "err",
     "handleApi",
+    "handleExport",
     "handleI18n",
     "handleVendor",
     "handleViewerJs",
@@ -3932,6 +3972,30 @@
     "t"
    ]
   },
+  "src/viewer/snapshot.mjs": {
+   "maxLines": 22,
+   "maxBranches": 10,
+   "longest": "snapshotHtml",
+   "branchiest": "snapshotQuery",
+   "functions": [
+    "bad",
+    "buildSnapshot",
+    "buildSnapshot/1",
+    "constructor",
+    "escapeHtml",
+    "inlineScript",
+    "intIn",
+    "scriptJson",
+    "slug",
+    "snapshotFilename",
+    "snapshotHtml",
+    "snapshotHtml/1",
+    "snapshotHtml/2",
+    "snapshotQuery",
+    "snapshotQueryFromArgs",
+    "snapshotQueryFromArgs/1"
+   ]
+  },
   "src/viewer/source.mjs": {
    "maxLines": 86,
    "maxBranches": 36,
@@ -4062,6 +4126,11 @@
     "loadProjects",
     "readHash",
     "resetProjectState",
+    "snapAnswer",
+    "snapAnswer/1",
+    "snapCanon",
+    "snapCanon/1",
+    "snapCanon/2",
     "stale",
     "staleAnswer",
     "switchProject",
@@ -5001,11 +5070,27 @@
     "showTx/3"
    ]
   },
+  "viewer/js/48_snapshot.js": {
+   "maxLines": 26,
+   "maxBranches": 20,
+   "longest": "snapshotBoot",
+   "branchiest": "renderSnapshotChrome",
+   "functions": [
+    "exportButtonOf",
+    "exportChain",
+    "refreshExportButtons",
+    "renderSnapshotChrome",
+    "renderSnapshotChrome/1",
+    "snapshotBoot",
+    "snapshotSave",
+    "snapshotSave/1"
+   ]
+  },
   "viewer/js/90_boot.js": {
    "maxLines": 43,
    "maxBranches": 17,
    "longest": "init",
-   "branchiest": "<file>/13",
+   "branchiest": "<file>/15",
    "functions": [
     "<file>/1",
     "<file>/1/1",
@@ -5013,10 +5098,12 @@
     "<file>/11",
     "<file>/12",
     "<file>/13",
-    "<file>/13/1",
     "<file>/14",
-    "<file>/14/1",
     "<file>/15",
+    "<file>/15/1",
+    "<file>/16",
+    "<file>/16/1",
+    "<file>/17",
     "<file>/2",
     "<file>/3",
     "<file>/4",

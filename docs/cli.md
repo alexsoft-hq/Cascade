@@ -642,3 +642,36 @@ the server serves several. See [viewer.md](viewer.md).
 - `--project <id>` — repeat to narrow the served set.
 - `--pack <dir>` / `--root <dir>` — serve one pack.
 - `--memory-budget <MB>` — MB of pack JSON held in memory (default 512).
+
+## `cascade export`
+
+```
+cascade export [--pack <dir> | --project <id> | --root <dir>] [--tab flow|impact]
+               (--endpoint|--screen|--symbol|--table|--column|--statement) <name>
+               [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--out <file>]
+```
+
+Write one Flow or Impact answer as one HTML file. The file is the viewer's own
+page with the answer inside, so it opens in any browser with no server and no
+network, and it draws the same grades, limits and cut lists the live page does.
+The viewer's **Export** button writes the same file for the same question. See
+[viewer.md](viewer.md#exporting-one-answer).
+
+- `--tab flow|impact` — which tab's picture (default `flow`).
+- `--endpoint`, `--screen`, `--symbol` start a Flow picture; `--table`, `--column`,
+  `--statement`, `--symbol` start an Impact one. Give exactly one.
+- `--mode strict|conservative|heuristic` — which edge grades the walk may use
+  (default `conservative`).
+- `--depth 1-8` — how many calls deep (default 6 for Flow, 8 for Impact and for a
+  screen, as the tabs open).
+- `--limit <n>` — rows per lane before the list is cut (default 40). A cut list
+  says so in the file.
+- `--lang en|ko` — the language of the page's own words. The engine's words
+  (grades, limits, reasons) are never translated.
+- `--out <file>` — where to write; default `cascade-<project>-<tab>-<entry>.html`
+  in the current directory.
+- `--pack` / `--project` / `--root` — which project.
+
+The command prints the trust level and how many limits and cut lists the
+answer carries, because a file handed to someone else is read without the
+screen it came from.

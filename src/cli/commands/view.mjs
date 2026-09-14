@@ -11,6 +11,7 @@ import path from 'node:path';
 import { toolList } from '../../mcp/catalog.mjs';
 import { serveHttp } from '../../mcp/http.mjs';
 import { readSourceFor } from '../../viewer/source.mjs';
+import { exportSnapshot, projectMeta } from '../snapshot_export.mjs';
 import { ENGINE_ROOT } from '../env.mjs';
 
 // `cli` rather than `ctx`, because the tool context below is called `ctx` too
@@ -28,7 +29,7 @@ export function run(cli) {
   const mark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark.svg'), 'utf8');
   const markDark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark-dark.svg'), 'utf8');
   const port = Number(opt('port', '4319'));
-  serveHttp({ http, port, deps: viewerDeps(host, served), html, mark, markDark }).then(({ port: p }) => {
+  serveHttp({ http, port, deps: viewerDeps(host), html, mark, markDark }).then(({ port: p }) => {
     process.stderr.write(`cascade viewer at http://127.0.0.1:${p}/  serving ${served.length} project(s) [${served.map((x) => x.id).join(', ')}], `
       + `budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
     if (served.length > 1) {
@@ -43,7 +44,7 @@ export function run(cli) {
  * host, and the four directories it may read a file out of. Nothing else on
  * disk is reachable through any route.
  */
-function viewerDeps(host, served) {
+function viewerDeps(host) {
   const contextOf = (project) => {
     const { projectId } = host.resolveProjectArg(project ? { project } : {});
     return { projectId, ctx: host.ctxFor(projectId) };
@@ -51,16 +52,9 @@ function viewerDeps(host, served) {
   return {
     toolList,
     callTool: (name, args) => host.callTool(name, args),
-    meta: (project) => {
-      const { projectId, ctx } = contextOf(project);
-      const pack = ctx.packJson;
-      const repoRoot = pack.meta?.base?.repoPath ?? null;
-      return {
-        project: ctx.basis.project, projectId, digest: pack.digest, lanes: pack.meta?.lanes ?? null,
-        builtAt: ctx.basis.builtAt, freshness: ctx.basis.freshness, base: pack.meta?.base ?? null,
-        canSource: !!repoRoot, projects: served.map((p) => p.id),
-      };
-    },
+    meta: (project) => projectMeta(host, project),
+    // The Export button: one answer, written as a file that opens anywhere.
+    exportSnapshot: (request) => exportSnapshot(host, request),
     // The two vendored MIT browser bundles the Graph tab's map renderers load
     // (viewer/vendor — see NOTICE). Served from THIS directory only; nothing
     // else on disk is reachable through /vendor.

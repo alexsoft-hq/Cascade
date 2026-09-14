@@ -257,13 +257,20 @@ function projectOf(body, query) {
  * @param {{toolList:()=>object, callTool:(name:string,args:object)=>object}} deps
  * @returns {{status:number, json:object}}
  */
+/** The one method each API route answers; any other is a 405 that names it. */
+const API_METHODS = Object.freeze({
+  '/api/source': 'GET', '/api/meta': 'GET', '/api/tools': 'GET', '/api/projects': 'GET',
+  '/api/call': 'POST', '/api/export': 'POST',
+});
+
 export function handleApi(method, pathname, body, deps, query) {
+  const wanted = API_METHODS[pathname];
+  if (wanted && method !== wanted) return err(405, 'method-not-allowed', `use ${wanted} for ${pathname}`);
   // Which project the request is about, if it says: `?project=` on a GET,
   // `body.project` (or `body.arguments.project`) on a POST. A single-project
   // server ignores it; a multi-project one refuses to guess without it (409).
   const project = projectOf(body, query);
   if (pathname === '/api/source') {
-    if (method !== 'GET') return err(405, 'method-not-allowed', 'use GET for /api/source');
     const node = query && (typeof query.get === 'function' ? query.get('node') : query.node);
     if (!node) return err(400, 'bad-request', 'node query param required');
     if (typeof deps.source !== 'function') return err(404, 'not-found', 'source preview not available (no repo path in this pack)');
@@ -276,24 +283,21 @@ export function handleApi(method, pathname, body, deps, query) {
     catch (e) { return dispatchErr(e, 'source-error', 'source read failed'); }
   }
   if (pathname === '/api/meta') {
-    if (method !== 'GET') return err(405, 'method-not-allowed', 'use GET for /api/meta');
     try { return { status: 200, json: (deps.meta && deps.meta(project)) || {} }; }
     catch (e) { return dispatchErr(e, 'meta-error', 'meta failed'); }
   }
   if (pathname === '/api/tools') {
-    if (method !== 'GET') return err(405, 'method-not-allowed', 'use GET for /api/tools');
     return { status: 200, json: deps.toolList() };
   }
   if (pathname === '/api/projects') {
     // The registry listing, through the SAME dispatcher the AI calls over stdio
     // (§13: one catalog, two transports) — so the page and the model cannot be
     // told different things about which projects exist.
-    if (method !== 'GET') return err(405, 'method-not-allowed', 'use GET for /api/projects');
     try { return { status: 200, json: deps.callTool('projects', {}) }; }
     catch (e) { return dispatchErr(e, 'error', 'projects failed'); }
   }
+  if (pathname === '/api/export') return handleExport(method, body, deps, project);
   if (pathname === '/api/call') {
-    if (method !== 'POST') return err(405, 'method-not-allowed', 'use POST for /api/call');
     if (!body || typeof body !== 'object') return err(400, 'bad-request', 'JSON body required');
     const name = body.name;
     const args = { ...(body.arguments || {}), ...(project ? { project } : {}) };
@@ -309,6 +313,22 @@ export function handleApi(method, pathname, body, deps, query) {
     }
   }
   return err(404, 'not-found', `no route: ${method} ${pathname}`);
+}
+
+/**
+ * ONE ANSWER AS A FILE (src/viewer/snapshot.mjs): the tab and the tool arguments
+ * the picture on screen was drawn from, written by the same generator `cascade
+ * export` uses. The file comes back in the JSON; the page saves it.
+ */
+function handleExport(method, body, deps, project) {
+  if (!body || typeof body !== 'object') return err(400, 'bad-request', 'JSON body required');
+  if (typeof deps.exportSnapshot !== 'function') return err(404, 'not-found', 'this server does not write snapshots');
+  try {
+    const out = deps.exportSnapshot({ project, tab: body.tab, args: body.arguments || {}, lang: typeof body.lang === 'string' ? body.lang : 'en' });
+    return { status: 200, json: { answer: { filename: out.filename, bytes: out.bytes, html: out.html } } };
+  } catch (e) {
+    return dispatchErr(e, 'export-error', 'export failed');
+  }
 }
 
 /** A thrown dispatch/tool error as structured JSON with its §17.4 status. */
