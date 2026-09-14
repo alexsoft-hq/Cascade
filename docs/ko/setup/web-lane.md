@@ -223,7 +223,9 @@ function fn_egov_link_page(pageNo) {
 
 **같은 폼**이란 **쓰인 그대로** 같은 수신자 표현식이라는 뜻입니다.
 `document.listForm`, `document.forms['listForm']`, `document.forms.listForm`,
-`document.getElementById('listForm')`, 그중 하나에 묶인 변수, 그리고 jQuery 의
+`document.all['listForm']`, `document.getElementById('listForm')`, 그중 하나에
+묶인 변수(오래된 브라우저를 위해 옛 전자정부 페이지가 쓰는
+`getElementById('listForm') || document.forms['listForm']` 도 포함), 그리고 jQuery 의
 `$('#listForm').attr('action', url)` / `.prop('action', url)` 뒤에 오는
 `$('#listForm').submit()` 을 모두 읽습니다. 같은 텍스트가 두 번 나오면 같은
 폼입니다. 뒤따르는 `submit()` 이 없는 `.action` 대입은 호출이 **아닙니다.**
@@ -257,16 +259,22 @@ function fnSearch() { document.listForm.pageIndex.value = 1; document.listForm.s
 
 **메서드**는 이 순서로 정합니다.
 
-1. submit 앞에서 같은 스코프 안에 같은 폼에 대입된 `.method = "get"` /
-   `"post"`. 페이지가 스스로 말한 것입니다.
+1. 같은 스코프 안에서 submit 앞에 같은 폼에 대입된 `.method = "get"` /
+   `"post"`. 주소 대입보다 앞이든 뒤든 셉니다. 페이지가 스스로 말한 것입니다.
 2. 없으면, 그 이름이나 id 로 같은 페이지에서 찾아지는 `<form>` 엘리먼트의
    `method` 속성. Spring 의 `<form:form>` 은 POST 로, HTML 의 `<form>` 은 GET 으로
    보냅니다. 둘 다 추측이 아니라 이 페이지가 그려지는 규격에 쓰여 있는 값입니다.
-3. 그것도 없으면 메서드 없이 `ANY` 로 라우트를 대조하고, 증거가 이 파일에서 폼
-   엘리먼트를 찾지 못했다고 말합니다.
+   Spring 태그는 `id` 가 없으면 `id="<modelAttribute>"` 로 그립니다. 그래서
+   `document.getElementById('groupManage')` 는 `<form:form modelAttribute="groupManage">`
+   를 찾고, 이 레인도 똑같이 찾습니다.
+3. 페이지가 직접 만든 폼(`document.createElement('form')`)이면 GET. 아무도
+   메서드를 정하지 않았을 때 HTML 이 보내는 값입니다.
+4. 그것도 없으면 메서드 없이 `ANY` 로 라우트를 대조하고, 증거가 이 파일에서 폼
+   엘리먼트를 찾지 못했다고 말합니다. 폼을 인자로 받는 함수(`function save(form)`)가
+   이 경우입니다.
 
 증거에는 소스가 쓴 그대로의 폼 이름과 메서드의 출처(`assigned`, `form element`,
-`not found`)가 실리고, 집계가 출처별로 셉니다(`methodBySource`,
+`created by the page`, `not found`)가 실리고, 집계가 출처별로 셉니다(`methodBySource`,
 `laneStats.web.calls.formSubmits`). 대조와 등급은 페이지 링크와 같습니다. 호출은
 무엇도 SOUND_SET 위로 올라가지 않습니다. 어느 핸들러가 그 경로에 답하는지는
 마크업이 아니라 라우트 표가 답하는 것이기 때문입니다.
@@ -275,7 +283,13 @@ function fnSearch() { document.listForm.pageIndex.value = 1; document.listForm.s
 하나였습니다. `egovframe-sample` 은 호출 **0 개**에서 **8 개**가 되었고, 목록
 화면은 아무 테이블에도 닿지 못하던 상태에서 자기가 나열하는 그 테이블에
 닿았습니다. business template 은 form submit 189 개(스코프 안 대입 177, 폼
-엘리먼트 12)를, common components 는 1206 개를 읽습니다.
+엘리먼트 12)를, common components 는 1207 개를 읽습니다. 위의 폼 이름 형태와
+메서드 출처는 첫 측정이 남은 것을 보여 준 뒤에 넓혔습니다. 메서드를 모르는
+submit 이 business template 에서 47 개에서 12 개로, common components 에서 281 개에서
+98 개로 줄었고, 그만큼 form-submit 엣지 35 개와 181 개가 HEURISTIC 에서 SOUND_SET
+으로 올라갔습니다. common components 에 남은 98 개는 인자로 받은 폼 29, 이
+페이지에 없는 폼 이름 25, 함수 밖에서 선언한 변수 24, 페이지를 감싼 프레임
+(`parent.document`) 12, 기타 8 입니다.
 
 #### 페이지 안에서 `location.href` 는 GET 요청입니다
 
@@ -666,20 +680,29 @@ MSA 템플릿에서 그것은 "URL 을 가진 호출" 217 개 중 39 개였습�
 **앱 자신의 라우터 모듈.** Vue 애플리케이션은 라우터를 자기 모듈 하나에서 한 번
 만들고, 다른 모든 파일은 거기서 import 한 이름 위에 `router.push('/x')` 를
 씁니다. `this` 도 없고 훅도 없고, `router` 가 무엇인지 말해 주는 것이 그 파일에
-아무것도 없습니다. 그래서 워커는 어느 모듈이 라우터**인지**를 기록하고(기본
-export 가 `createRouter({routes})` 이거나, 클래스를 `vue-router` 에서 가져온
-`new VueRouter({routes})` / `new Router({routes})` 이고, `export default` 에
-곧바로 또는 `const` 를 거쳐 넘겨진 것), import 된 이름 위의
-`router.push` / `.replace` 는 지시자를 실은 **후보**로 기록합니다. 브리지는 이
-레인의 다른 모든 파일 간 질문이 지나는 그 모듈 색인으로 지시자를 풉니다. 라우터
-모듈에 내려앉으면 후보는 화면 전환이 되고(`via` 가 `router-module`), 다른 데
-내려앉으면 이 규칙이 있기 전과 똑같이 버려집니다. import 한 배열 위의
-`list.push(x)` 는 원래 그대로입니다.
+아무것도 없습니다. 그래서 워커는 어느 모듈이 라우터**인지**, 그리고 그 모듈의
+어떤 이름이 라우터를 담는지 기록합니다. `createRouter({routes})` 에 묶인 이름,
+클래스를 `vue-router` 에서 가져온 `new VueRouter({routes})` / `new Router({routes})`
+에 묶인 이름, 라우터의 **타입으로 선언한** 이름(`Router` 를 `vue-router` 에서
+import 한 `export let router: Router`. 시작할 때 setter 가 채우는 라우터를 앱이 이렇게
+씁니다), 그리고 기본 export 가 그중 하나이거나 그런 호출을 `export default` 에
+곧바로 넘긴 것인지입니다. import 된 이름 위의 `router.push` / `.replace` 는 지시자와
+import 한 이름을 실은 **후보**로 기록합니다.
 
-측정해 보니, 라우터를 실행 시점에 대입되는 **이름 있는** export 로 내보내는 모듈
-(`export let router = null; … setRouter(r)`, jeecg-boot 의 모양)은 읽지 않습니다.
-다른 함수가 대입하는 값을 향해 변경 가능한 바인딩을 따라가는 것은 추측이고, 이
-레인은 추측하지 않습니다.
+브리지는 이 레인의 다른 모든 파일 간 질문이 지나는 그 모듈 색인으로 지시자를
+풉니다. 기본 import 는 그 모듈의 기본 export 가 라우터인지 묻습니다. 이름 있는
+import 는 re-export(`export { router } from './router'`, 또는
+`import { router } from './router'; export { router }`)를 끝까지 따라가 그 이름을
+선언한 파일에 닿고, 그 파일이 그 이름을 라우터를 담은 이름으로 기록해 두었어야
+합니다. 그러면 후보는 화면 전환이 되고(`via` 가 `router-module`), 아니면 이 규칙이
+있기 전과 똑같이 버려집니다. import 한 배열 위의 `list.push(x)` 는, 그 배열을
+라우터와 같은 모듈에서 export 했더라도 원래 그대로입니다.
+
+규칙이 기대는 사실은 setter 가 아니라 선언된 타입입니다. jeecg-boot 는
+`export let router: Router = null as unknown as Router` 로 선언하고 `setRouter(r)` 에서
+채웁니다. setter 가 넣는 값을 따라가는 것은 추측이고, 타입이 있으니 그럴 필요가
+없습니다. 측정해 보니 jeecg-boot 의 화면 전환이 35 개에서 54 개로 늘었고, 그중 19 개가
+라우터 모듈을 거칩니다. 어느 리포지토리의 호출 지점도 바뀌지 않았습니다.
 
 **`<router-link to="/x">`** 는 단일 파일 컴포넌트의 `<template>` 에 쓰이며,
 JavaScript 파서는 그것을 보지 못합니다. 그래서 템플릿 리더 자신의 태그

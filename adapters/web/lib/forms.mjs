@@ -73,37 +73,69 @@ export function formReceiverText(node) {
 /**
  * THE NAME OR ID the form element carries, when the receiver says which one.
  *
- * Four ways a page reaches a form, and every one of them names it in the text:
- * `document.listForm`, `document.forms['listForm']`,
+ * The ways a page reaches a form, and every one of them names it in the text:
+ * `document.listForm`, `document.forms['listForm']`, `document.all['listForm']`,
  * `document.getElementById('listForm')` and jQuery's `$('#listForm')`. A name
- * bound to one of those is followed to it; a form handed in as a parameter names
- * nothing, and the method then has no form element to come from.
+ * bound to one of those is followed to it, and `a || b` (a page's fallback for
+ * an old browser) names whatever its first half names. A form handed in as a
+ * parameter names nothing, and the method then has no form element to come from.
  *
  * @returns {string|null}
  */
 export function formElementName(node, scope, depth = 0) {
   if (!node || depth > NAME_DEPTH) return null;
-  if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
-    const c = calleeOf(node);
-    if (c === null || c.root !== 'document') return null;
-    if (c.path.length === 1) return c.path[0];
-    if (c.path.length === 2 && c.path[0] === 'forms') return c.path[1];
-    return null;
+  if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') return memberFormName(node);
+  if (node.type === 'CallExpression' || node.type === 'OptionalCallExpression') return callFormName(node);
+  if (node.type === 'LogicalExpression' && (node.operator === '||' || node.operator === '??')) {
+    return formElementName(node.left, scope, depth + 1) ?? formElementName(node.right, scope, depth + 1);
   }
+  return initOf(node, scope, (init) => formElementName(init, scope, depth + 1));
+}
+
+/** `document.x`, `document.forms['x']`, `document.all['x']`: the name after `document`. */
+function memberFormName(node) {
+  const c = calleeOf(node);
+  if (c === null || c.root !== 'document') return null;
+  if (c.path.length === 1) return c.path[0];
+  if (c.path.length === 2 && (c.path[0] === 'forms' || c.path[0] === 'all') && c.path[1] !== '*') return c.path[1];
+  return null;
+}
+
+/** `document.getElementById('x')` and jQuery's `$('#x')`: the id the call is handed. */
+function callFormName(node) {
+  const c = node.callee ? calleeOf(node.callee) : null;
+  const arg = (node.arguments ?? [])[0];
+  if (c === null || !arg || arg.type !== 'StringLiteral') return null;
+  if (c.path.length > 0 && c.path[c.path.length - 1] === 'getElementById') return arg.value;
+  if (c.path.length === 0 && arg.value.startsWith('#')) return arg.value.slice(1);
+  return null;
+}
+
+/** What a name was bound to where it was declared, handed to `then`, or null. */
+function initOf(node, scope, then) {
+  if (!node || node.type !== 'Identifier' || !scope) return null;
+  const found = scope.find(node.name);
+  const init = found === null ? null : (found.names.get(node.name) ?? null);
+  return init === null ? null : then(init);
+}
+
+/**
+ * WHETHER THE PAGE BUILT THIS FORM ITSELF: `document.createElement('form')`,
+ * directly or through the name it was bound to. Such a form has no markup to
+ * read a method from, and HTML says what it sends when nobody assigns one: GET.
+ *
+ * @returns {boolean}
+ */
+export function formCreated(node, scope, depth = 0) {
+  if (!node || depth > NAME_DEPTH) return false;
   if (node.type === 'CallExpression' || node.type === 'OptionalCallExpression') {
     const c = node.callee ? calleeOf(node.callee) : null;
     const arg = (node.arguments ?? [])[0];
-    if (c === null || !arg || arg.type !== 'StringLiteral') return null;
-    if (c.path.length > 0 && c.path[c.path.length - 1] === 'getElementById') return arg.value;
-    if (c.path.length === 0 && arg.value.startsWith('#')) return arg.value.slice(1);
-    return null;
+    return c !== null && c.path[c.path.length - 1] === 'createElement'
+      && (c.root === 'document' || c.path.includes('document'))
+      && arg !== undefined && arg.type === 'StringLiteral' && arg.value.toLowerCase() === 'form';
   }
-  if (node.type === 'Identifier' && scope) {
-    const found = scope.find(node.name);
-    const init = found === null ? null : (found.names.get(node.name) ?? null);
-    return init === null ? null : formElementName(init, scope, depth + 1);
-  }
-  return null;
+  return initOf(node, scope, (init) => formCreated(init, scope, depth + 1)) === true;
 }
 
 /** One event, stamped so that two runs over the same file pair them the same way. */
@@ -129,6 +161,7 @@ export function formActionAssignment(ctx, node, env) {
     what: 'action', key, line: ctx.lineOf(node),
     url: ctx.buildUrl(summarizeArg(node.right), env.scope),
     name: formElementName(left.object, env.scope),
+    created: formCreated(left.object, env.scope),
     func: env.func ?? null,
   });
   return true;
@@ -166,6 +199,7 @@ export function formCall(ctx, node, env, callee) {
   push(ctx, {
     what: 'submit', key, line: ctx.lineOf(node),
     name: formElementName(node.callee.object, env.scope),
+    created: formCreated(node.callee.object, env.scope),
     func: env.func ?? null,
     enclosing: env.func ? (env.func.finalName ?? env.func.baseName) : ctx.moduleEnclosing,
   });
@@ -208,21 +242,31 @@ const inOrder = (events) => events.slice().sort((a, b) => a.line - b.line || a.s
  *
  * @param {object[]} assigned  the method assignments on this form in this scope, before the submit
  * @param {object|undefined} el  the `<form>` element the name resolves to, when there is one
+ * @param {boolean} created  whether the page built the form with `document.createElement`
  * @returns {{value:(string|null), from:(string|null), source:string}}
  */
-function methodOf(assigned, el) {
+function methodOf(assigned, el, created) {
   if (assigned.length > 0) {
     return { value: assigned[assigned.length - 1].value, from: 'form-assigned', source: 'assigned' };
   }
   if (el !== undefined) return { value: el.method, from: 'form-element', source: 'form element' };
+  if (created) return { value: 'GET', from: 'form-created', source: 'created by the page' };
   return { value: null, from: null, source: 'not found' };
 }
 
-/** One `<form>` table, looked up by the two names a script can reach it through. */
+/**
+ * One `<form>` table, looked up by the names a script can reach it through.
+ *
+ * Spring's `<form:form modelAttribute="groupManage">` with no `id` renders
+ * `id="groupManage"`: the tag's reference documentation shows it, and it is what
+ * `document.getElementById('groupManage')` finds in the browser. So the model
+ * attribute is a key exactly when the tag left the id to it.
+ */
 export function formElementIndex(elements) {
   const out = new Map();
   for (const el of elements ?? []) {
-    for (const key of [el.name, el.id]) {
+    const rendered = el.tag === 'form:form' && !el.id ? (el.model ?? null) : null;
+    for (const key of [el.name, el.id, rendered]) {
       if (typeof key === 'string' && key !== '' && !out.has(key)) out.set(key, el);
     }
   }
@@ -255,7 +299,7 @@ function elementUrlOf(el) {
  * walk's entry for it), never its name, so two functions a page happens to
  * name alike are two scopes; the module's own body is one scope.
  *
- * @returns {{action:(object|null), url:(object|null), actionFrom:(string|null), assigned:object[], el:(object|undefined)}}
+ * @returns {{action:(object|null), url:(object|null), actionFrom:(string|null), assigned:object[], el:(object|undefined), created:boolean}}
  */
 function addressOf(ordered, i, elements) {
   const submit = ordered[i];
@@ -267,15 +311,19 @@ function addressOf(ordered, i, elements) {
   const action = at < 0 ? null : ordered[at];
   const name = (action && action.name) ?? submit.name ?? null;
   const el = name === null ? undefined : elements.get(name);
-  const assigned = ordered.slice(at + 1, i).filter((e) => e.what === 'method' && mine(e));
-  if (action !== null) return { action, url: action.url ?? null, actionFrom: 'assigned', assigned, el, name };
+  // A method assigned ANYWHERE before the submit in this scope counts, before the
+  // address or after it: `f.method = 'post'; f.action = url; f.submit()` is how a
+  // page writes a form it built itself.
+  const assigned = ordered.slice(0, i).filter((e) => e.what === 'method' && mine(e));
+  const created = submit.created === true || (action !== null && action.created === true);
+  if (action !== null) return { action, url: action.url ?? null, actionFrom: 'assigned', assigned, el, name, created };
   const url = elementUrlOf(el);
-  return { action: null, url, actionFrom: url === null ? null : 'form element', assigned, el, name };
+  return { action: null, url, actionFrom: url === null ? null : 'form element', assigned, el, name, created };
 }
 
 /** The call record one submit is, once its address is known. */
 function submitRecord({ relFile, submit, found, moduleEnclosing }) {
-  const method = methodOf(found.assigned, found.el);
+  const method = methodOf(found.assigned, found.el, found.created);
   return {
     kind: 'call', file: relFile, line: submit.line,
     enclosing: submit.enclosing ?? moduleEnclosing,

@@ -235,7 +235,9 @@ form, is an HTTP call to that address. Rule `form-submit`.
 
 **The same form** means the same receiver expression AS WRITTEN.
 `document.listForm`, `document.forms['listForm']`, `document.forms.listForm`,
-`document.getElementById('listForm')`, a variable bound to one of those, and
+`document.all['listForm']`, `document.getElementById('listForm')`, a variable
+bound to one of those (or to `getElementById('listForm') || document.forms['listForm']`,
+the fallback older eGovFrame pages write for old browsers), and
 jQuery's `$('#listForm').attr('action', url)` / `.prop('action', url)` followed
 by `$('#listForm').submit()` are all read; two mentions of the same text are one
 form. An `.action` with no `submit()` after it is **not** a call: it is a form the
@@ -270,16 +272,23 @@ components had borrowed another function's address.
 **The method**, in this order:
 
 1. a `.method = "get"` / `"post"` assigned on the same form in the same scope,
-   before the submit — the page said so itself;
+   anywhere before the submit, before the address or after it. The page said so
+   itself;
 2. else the `method` attribute of the `<form>` element the name or id resolves
    to in the same page, where Spring's `<form:form>` sends POST and HTML's
    `<form>` sends GET. Neither default is a guess: both are written in the
-   specification the page is rendered by;
-3. else nothing, the route is matched against `ANY`, and the evidence says the
-   form element was not found in this file.
+   specification the page is rendered by. Spring's tag renders
+   `id="<modelAttribute>"` when it is given no `id`, so
+   `document.getElementById('groupManage')` finds
+   `<form:form modelAttribute="groupManage">`, and so does this lane;
+3. else, for a form the page built itself (`document.createElement('form')`),
+   GET, which is what HTML sends when nobody assigns a method;
+4. else nothing, the route is matched against `ANY`, and the evidence says the
+   form element was not found in this file. A form handed in as a parameter
+   (`function save(form)`) is this case.
 
 The evidence names the form as the source writes it and where the method came
-from (`assigned`, `form element`, `not found`), and the census counts the sources
+from (`assigned`, `form element`, `created by the page`, `not found`), and the census counts the sources
 (`methodBySource`, `laneStats.web.calls.formSubmits`). Matching and grading are
 the page's links': nothing rises above SOUND_SET on a call, because which handler
 answers a path is the route table's answer and not the markup's.
@@ -288,7 +297,14 @@ Measured on the pinned corpus, this is the largest single gap the lane had:
 `egovframe-sample` went from **0** calls to **8**, and its list screen from
 reaching no table to reaching the one it lists; the business template reads 189
 form submits (177 with an address assigned in scope, 12 with the form element's)
-and the common components 1206.
+and the common components 1207. The receiver spellings and the method sources
+above were widened once the first measurement named what was left: on the
+business template the submits with no method fell from 47 to 12, and on the
+common components from 281 to 98, which moved 35 and 181 edges from HEURISTIC to
+SOUND_SET. Of the 98 left on the common components, 29 are a form handed in as a
+parameter, 25 name a form this page does not declare, 24 use a variable declared
+outside the function, 12 reach the frame around the page (`parent.document`), and
+8 are other spellings.
 
 #### In a page, `location.href` is a GET request
 
@@ -689,21 +705,31 @@ on something this lane cannot show to be a router is still a call.
 **The app's own router module.** A Vue application builds its router once, in a
 module of its own, and every other file writes `router.push('/x')` on a name it
 imported from there — no `this`, no hook, nothing in the file saying what
-`router` is. So the worker records which module IS a router (its default export
-is `createRouter({routes})`, or `new VueRouter({routes})` / `new Router({routes})`
-where the class came from `vue-router`, handed to `export default` straight or
-through a `const`), and records a `router.push` / `.replace` on any imported name
-as a CANDIDATE carrying the specifier. The bridge resolves that specifier through
-the same module index every other cross-file question in this lane goes through:
-when it lands on a router module the candidate is a navigation (`via`
-`router-module`), and when it lands anywhere else it is dropped, exactly as it
-was before the rule existed. `list.push(x)` on an imported array stays what it
-is.
+`router` is. So the worker records which module IS a router and which of its
+module-level names hold one: a name bound to `createRouter({routes})`, or to
+`new VueRouter({routes})` / `new Router({routes})` where the class came from
+`vue-router`; a name DECLARED with the router's type (`export let router: Router`,
+with `Router` imported from `vue-router`, which is how an application writes a
+router a setter fills at start-up); and whether the default export is one of
+those or such a call handed to `export default` straight. It records a
+`router.push` / `.replace` on any imported name as a CANDIDATE carrying the
+specifier and the name imported. The bridge resolves that specifier through
+the same module index every other cross-file question in this lane goes through.
+A default import asks whether the module's default export is a router; a named
+import is followed through every re-export (`export { router } from './router'`,
+or `import { router } from './router'; export { router }`) to the file that
+declares the name, and that file must list the name as one holding a router.
+When it does the candidate is a navigation (`via` `router-module`), and when it
+does not it is dropped, exactly as it was before the rule existed. `list.push(x)`
+on an imported array stays what it is, even when the array is exported from the
+very module the router is.
 
-Measured, a module whose router is a NAMED export assigned at run time
-(`export let router = null; … setRouter(r)`, which is jeecg-boot's shape) is not
-read: following a mutable binding to a value another function assigns is a guess,
-and this lane does not make one.
+The declared type is the fact the rule rests on, not the setter. jeecg-boot
+writes `export let router: Router = null as unknown as Router` and fills it in
+`setRouter(r)`; following the value a setter assigns would be a guess, and the
+type makes it unnecessary. Measured, jeecg-boot's navigations go from 35 to 54,
+19 of them through its router module, and not one call site of any repository
+changes.
 
 **`<router-link to="/x">`** is written in a single-file component's `<template>`,
 which the JavaScript parser never sees. It is read with the template reader's own

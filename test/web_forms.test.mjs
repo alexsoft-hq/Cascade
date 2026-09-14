@@ -100,6 +100,24 @@ test('the method is the assignment, then the form element, and then nothing at a
   assert.equal(at.get(49).formSubmit.name, undefined);
 });
 
+test('the older spellings name their form too, and a form the page built sends GET unless told otherwise', () => {
+  const calls = callsOf(readPage(), 'WEB-INF/jsp/things/Legacy.jsp');
+  const byFn = Object.fromEntries(calls.map((c) => [c.enclosing, [c.formSubmit.name ?? null, c.method?.value ?? null, c.formSubmit.methodFrom]]));
+  assert.deepEqual(byFn, {
+    // `document.all['x']` and `getElementById('x') || document.forms['x']` both name the form.
+    fn_all: ['legacyForm', 'GET', 'form element'],
+    fn_fallback: ['legacyForm', 'GET', 'form element'],
+    // `<form:form modelAttribute="thingVO">` renders `id="thingVO"`.
+    fn_model: ['thingVO', 'POST', 'form element'],
+    // A method assigned before the address still counts, in the same scope.
+    fn_built: [null, 'POST', 'assigned'],
+    // HTML's default for a form nobody gave a method.
+    fn_built_default: [null, 'GET', 'created by the page'],
+    // A form handed in as a parameter names nothing, and the record says so.
+    fn_param: [null, null, 'not found'],
+  });
+});
+
 test('an `.action` with no `submit()` after it is the markup\'s business, not a call', () => {
   const records = readPage();
   assert.equal(records.some((r) => r.kind === 'call' && urlOf(r).includes('/things/never.do')), false);
@@ -198,26 +216,37 @@ test('in a single-file component the same sink is still a navigation', () => {
 // 3. the app's own router module
 // ---------------------------------------------------------------------------
 
-test('a module whose default export is a router says so, in both spellings', () => {
+test('a module that exports a router says so, in both spellings, and names the names that hold one', () => {
   const records = readSpa();
   assert.deepEqual(
-    records.filter((r) => r.kind === 'routerModule').map((r) => [r.file, r.framework]),
-    [['src/router/index.js', 'vue-router'], ['src/router/legacy.js', 'vue-router']],
+    records.filter((r) => r.kind === 'routerModule').map((r) => [r.file, r.framework, r.default, r.locals]),
+    [
+      // `export let router: Router`, filled by a setter: the declared type is the fact.
+      ['src/router/holder.ts', 'vue-router', false, ['router']],
+      ['src/router/index.js', 'vue-router', true, ['router']],
+      ['src/router/legacy.js', 'vue-router', true, []],
+    ],
   );
+  // A module that only re-exports a router declares nothing itself: which name
+  // an import reaches through it is the bridge's question.
+  assert.equal(records.some((r) => r.kind === 'routerModule' && r.file === 'src/router/entry.ts'), false);
 });
 
 test('a call on an imported name is a CANDIDATE, and the specifier rides with it', () => {
   const records = readSpa();
   const candidates = records.filter((r) => r.kind === 'navigationCandidate');
-  assert.deepEqual(candidates.map((c) => [c.line, c.sink, c.specifier.source]), [
-    [18, 'router.push', '@/router'],
-    [21, 'legacy.replace', '@/router/legacy'],
-    [24, 'router.push', '@/router'],
-    [27, 'rows.push', '@/lib/rows'],
+  assert.deepEqual(candidates.map((c) => [c.file, c.line, c.sink, c.specifier.source]).map(([f, ...rest]) => [f.split('/').pop(), ...rest]), [
+    ['Holder.ts', 6, 'router.push', '@/router/entry'],
+    ['Holder.ts', 11, 'extraRoutes.push', '@/router/entry'],
+    ['Panel.vue', 18, 'router.push', '@/router'],
+    ['Panel.vue', 21, 'legacy.replace', '@/router/legacy'],
+    ['Panel.vue', 24, 'router.push', '@/router'],
+    ['Panel.vue', 27, 'rows.push', '@/lib/rows'],
   ]);
+  assert.deepEqual(candidates.find((c) => c.line === 6).specifier, { source: '@/router/entry', imported: 'router' });
   // A named route names a route declaration and not a path, and the record says so.
-  assert.equal(candidates.find((c) => c.line === 24).targetKind, 'named');
-  assert.equal(candidates.find((c) => c.line === 24).to, null);
+  assert.equal(candidates.find((c) => c.line === 24 && c.file.endsWith('Panel.vue')).targetKind, 'named');
+  assert.equal(candidates.find((c) => c.line === 24 && c.file.endsWith('Panel.vue')).to, null);
 });
 
 // ---------------------------------------------------------------------------
@@ -292,12 +321,14 @@ test('a form submit and an address bar become CALLS_HTTP edges of the page, grad
 test('a candidate becomes a navigation only when the module it names holds a router', () => {
   const g = backend({ 'GET /rows.json': 'com.example.RowController#rows' });
   const stats = addWebFacts(g, readSpa(), { screenAxis: { enabled: true } });
-  // Three of the four candidates lead to a router module; `rows.push` leads to
-  // an array and is dropped, exactly as it was before this rule existed.
-  assert.equal(stats.navigation.bySource['router-module'], 3);
+  // Four of the six candidates lead to a router: three through a default export,
+  // one through a named import, a re-export and a declared type. `rows.push` and
+  // `extraRoutes.push` lead to arrays and are dropped, the second although it is
+  // exported from the very module the router is.
+  assert.equal(stats.navigation.bySource['router-module'], 4);
   assert.equal(stats.navigation.bySource['router-link'], 3);
   assert.equal(stats.navigation.bySource.global, 1);
-  assert.equal(stats.navigation.navigations, 7);
+  assert.equal(stats.navigation.navigations, 8);
   // A navigation places no edge and is no call, whatever it is found by.
   assert.equal(stats.calls.withUrl, 0);
   assert.deepEqual(g.edges.filter((e) => e.type === 'CALLS_HTTP'), []);

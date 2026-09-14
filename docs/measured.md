@@ -605,6 +605,43 @@ own sample — went from reaching nothing at all to reaching everything it has.
   recorded MCP answer for both is byte for byte what it was apart from the build
   digest it quotes.
 
+### The two gaps the page's own script left (RM61)
+
+RM60 named what it did not read, and both turned out to be spellings rather than
+missing ideas.
+
+- **A submit whose method nobody could name.** On the business template 47 form
+  submits and on the common components 281 matched their route against `ANY`.
+  Read one by one, most named their form in a way the rule did not follow:
+  `document.all['x']`, `getElementById('x') || document.forms['x']`, a
+  `<form:form modelAttribute="x">` with no `id` (Spring renders `id="x"`), and a
+  form the page built with `document.createElement('form')` whose method was
+  assigned BEFORE its address. After those four:
+
+  | Repository | Submits with no method | HEURISTIC form-submit edges |
+  |---|---|---|
+  | egovframe-enterprise-business-template | 47 -> 12 | 45 -> 10 |
+  | egovframe-common-components | 281 -> 98 | 276 -> 95 |
+
+  Of the 98 left on the common components, 29 are a form handed in as a
+  parameter, 25 name a form the page does not declare, 24 use a variable declared
+  outside the function, 12 reach the frame around the page, and 8 are other
+  spellings. `document.all['formList']` also placed one call that was not placed
+  before (`EgovCntcInsttDetail.jsp`), so the common components read 2157 calls,
+  2075 resolved, and 555 of 657 screens reach a table (550 before); the business
+  template reaches 73 of 84 (72).
+- **jeecg-boot's router.** Its module writes
+  `export let router: Router = null as unknown as Router` and fills it in
+  `setRouter(r)`. The rule now reads a module-level name DECLARED with
+  vue-router's `Router` type as a router, and follows a named import through
+  re-exports (`src/router/index.ts` re-exports it from `src/router/router.ts`).
+  jeecg-boot's navigations go from 35 to 54, 19 through the router module. Its
+  call sites do not change, and neither does any other repository's navigation
+  count. Removing the type annotation drops every one of them on both a cold and an
+  incremental run: the setter is never followed.
+- **Nothing else moves.** Every guarded number on the fifteen other repositories
+  and all sixteen pack digests are identical, so every recorded MCP answer is too.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

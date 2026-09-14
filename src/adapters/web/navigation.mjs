@@ -97,7 +97,29 @@ function targetsOf(rec) {
 }
 
 /**
- * THE CANDIDATES THE IMPORT SETTLES (RM60).
+ * THE ROUTER MODULE AN IMPORT REALLY REACHES, or null.
+ *
+ * A default import asks whether the module's default export is a router. A
+ * named one (`import { router } from '/@/router'`) is followed through every
+ * re-export to the file that declares the name, and that file must list the
+ * name as one it binds to a router. A record written before names were listed
+ * (RM60) said only that the default export was one.
+ */
+function routerReachedBy(file, spec, files, resolver) {
+  const r = resolver.resolveSpecifier(file, spec.source);
+  if (!r.file) return null;
+  if (spec.imported === 'default' || spec.imported === undefined) {
+    const rm = files.get(r.file)?.routerModule ?? null;
+    return rm !== null && rm.default !== false ? rm : null;
+  }
+  const hit = resolver.resolveExport(r.file, spec.imported, 0);
+  if (!hit || !hit.file) return null;
+  const rm = files.get(hit.file)?.routerModule ?? null;
+  return rm !== null && (rm.locals ?? []).includes(hit.name) ? rm : null;
+}
+
+/**
+ * THE CANDIDATES THE IMPORT SETTLES (RM60, RM61).
  *
  * `import router from '@/router'` followed by `router.push('/x')` is a
  * navigation only if that module really holds a router, and one file cannot say.
@@ -112,8 +134,7 @@ function fromRouterModule(file, files, resolver) {
   for (const rec of files.get(file).navigationCandidates ?? []) {
     const spec = rec.specifier ?? null;
     if (spec === null || typeof spec.source !== 'string') continue;
-    const r = resolver.resolveSpecifier(file, spec.source);
-    const target = r.file ? (files.get(r.file)?.routerModule ?? null) : null;
+    const target = routerReachedBy(file, spec, files, resolver);
     if (target === null) continue;
     const { specifier, ...rest } = rec;
     out.push({ ...rest, kind: 'navigation', framework: target.framework ?? rec.framework ?? 'unknown' });

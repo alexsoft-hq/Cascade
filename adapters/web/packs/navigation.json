@@ -19,7 +19,8 @@
       "methods": ["push", "replace"],
       "module": {
         "factories": ["createRouter", "default"],
-        "why": "A Vue application builds its router once, in a module of its own, and hands it to the app: `createRouter({routes})` in vue-router 4, `new VueRouter({routes})` (the module's default export, whatever the file calls it) in vue-router 3. Every other file reaches that router by importing the module, and then writes `router.push(...)` with no `this` and no hook in sight. So the factory names are declared here, the worker records which module IS a router, and the bridge follows the import."
+        "types": ["Router"],
+        "why": "A Vue application builds its router once, in a module of its own, and hands it to the app: `createRouter({routes})` in vue-router 4, `new VueRouter({routes})` (the module's default export, whatever the file calls it) in vue-router 3. Every other file reaches that router by importing the module, and then writes `router.push(...)` with no `this` and no hook in sight. So the factory names are declared here, the worker records which module IS a router, and the bridge follows the import. Some applications keep the router in a variable a setter fills at start-up (`export let router: Router`), so no factory call is ever bound to the name. What makes that name a router is the type it is declared with, so the type is declared here too."
       },
       "urlArg": 0,
       "urlKeys": ["path"],

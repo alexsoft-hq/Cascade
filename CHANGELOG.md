@@ -10,6 +10,30 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **A form a page reaches the old way names its form.** `document.all['x']`,
+  `getElementById('x') || document.forms['x']` and a `<form:form modelAttribute="x">`
+  with no `id` (Spring renders `id="x"`) now lead a form submit to its form
+  element, and so to its method. A method assigned anywhere before the submit in
+  the same scope counts, and a form the page built with
+  `document.createElement('form')` sends GET unless it is given a method, as HTML
+  says. On the eGovFrame business template the submits with no method fall from 47
+  to 12 and on the common components from 281 to 98, moving 35 and 181 form-submit
+  edges from HEURISTIC to SOUND_SET.
+- **A router declared with its type is a router.** `export let router: Router`,
+  with `Router` imported from `vue-router`, is read as the app's router module even
+  when a setter fills it at start-up, and a named import reaches it through
+  re-exports. jeecg-boot's navigations go from 35 to 54, 19 of them through its
+  router module. The web worker is `webfacts/11`.
+
+### Changed
+
+- **Measured over the corpus**, the eGovFrame common components read 2157 calls
+  (2156), 2075 resolved (2074) and 555 of 657 screens reaching a table (550); the
+  business template 73 of 84 (72). Every other guarded number on the seventeen
+  repositories, and all sixteen pack digests, are identical.
+
 ## [0.8.5] - 2026-09-14
 
 A form submitted from script is a request, a server page's `location.href` is a

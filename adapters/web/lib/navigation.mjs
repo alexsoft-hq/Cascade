@@ -62,6 +62,7 @@ function emptySpec() {
     // THE APP'S OWN ROUTER MODULE (RM60): the calls that BUILD one, and the
     // methods a name bound to one is navigated through.
     moduleFactories: new Map(),
+    moduleTypes: new Map(),
     moduleMethods: new Set(),
     moduleShape: null,
   };
@@ -81,6 +82,7 @@ function readRouter(r, out) {
     for (const h of r.hooks ?? []) out.hooks.set(importKey(m, h), shape);
     for (const f of r.functions ?? []) out.functions.set(importKey(m, f), shape);
     for (const f of r.module?.factories ?? []) out.moduleFactories.set(importKey(m, f), shape);
+    for (const t of r.module?.types ?? []) out.moduleTypes.set(importKey(m, t), shape);
   }
   if (r.module) {
     out.moduleShape = shape;
@@ -402,39 +404,72 @@ function routerFactoryOf(ctx, spec, node) {
 }
 
 /**
- * WHETHER THIS FILE IS THE APP'S ROUTER MODULE (RM60).
+ * The router a declared TYPE says a name holds: `let router: Router`, with
+ * `Router` imported from the router the pack declares. A type-only import is
+ * an import all the same.
+ */
+function routerTypeOf(ctx, spec, id) {
+  const ann = id && id.typeAnnotation ? id.typeAnnotation.typeAnnotation : null;
+  if (!ann || ann.type !== 'TSTypeReference' || !ann.typeName || ann.typeName.type !== 'Identifier') return null;
+  const imp = ctx.top.imports.get(ann.typeName.name) ?? null;
+  return imp === null ? null : (spec.moduleTypes.get(importKey(imp.source, imp.imported)) ?? null);
+}
+
+/** The module-level names this file binds to a router, by factory call or by declared type. */
+function routerLocalsOf(ctx, spec, body) {
+  const locals = new Map(); // name -> shape
+  for (const stmt of body) {
+    const decl = stmt.type === 'ExportNamedDeclaration' ? stmt.declaration : stmt;
+    if (!decl || decl.type !== 'VariableDeclaration') continue;
+    for (const d of decl.declarations) {
+      if (!d.id || d.id.type !== 'Identifier') continue;
+      const built = d.init && (d.init.type === 'CallExpression' || d.init.type === 'NewExpression')
+        ? routerFactoryOf(ctx, spec, d.init) : null;
+      const shape = built ?? routerTypeOf(ctx, spec, d.id);
+      if (shape !== null) locals.set(d.id.name, shape);
+    }
+  }
+  return locals;
+}
+
+/**
+ * WHETHER THIS FILE IS THE APP'S ROUTER MODULE (RM60, RM61).
  *
- * `createRouter({ routes })` (or `new VueRouter({ routes })`) handed straight to
- * `export default`, or bound to a name that is. Nothing else counts: a file that
- * builds a router and keeps it to itself is not what
- * `import router from '@/router'` reaches.
+ * A router this file exports, three ways: `createRouter({ routes })` (or
+ * `new VueRouter({ routes })`) handed straight to `export default`; a
+ * module-level name bound to such a call; and a module-level name DECLARED
+ * with the router's type, which is how an application writes a router a setter
+ * fills at start-up. The record lists those names and whether the default
+ * export is one; which of them an import really reaches, through however many
+ * re-exports, is the bridge's question.
  *
  * @returns {object|null} the `routerModule` record, or null
  */
 export function routerModuleOf(ctx, program) {
   const spec = ctx.navigation ?? null;
-  if (spec === null || spec.moduleFactories.size === 0) return null;
-  const built = new Map(); // name -> shape
+  if (spec === null || spec.moduleFactories.size + spec.moduleTypes.size === 0) return null;
+  const body = program.body ?? [];
+  const locals = routerLocalsOf(ctx, spec, body);
   let exported = null;
-  for (const stmt of program.body ?? []) {
-    if (stmt.type === 'VariableDeclaration') {
-      for (const d of stmt.declarations) {
-        if (!d.init || (d.init.type !== 'CallExpression' && d.init.type !== 'NewExpression')) continue;
-        if (!d.id || d.id.type !== 'Identifier') continue;
-        const shape = routerFactoryOf(ctx, spec, d.init);
-        if (shape !== null) built.set(d.id.name, shape);
-      }
-      continue;
+  for (const stmt of body) {
+    if (stmt.type === 'ExportDefaultDeclaration' && stmt.declaration) {
+      const d = stmt.declaration;
+      if (d.type === 'CallExpression' || d.type === 'NewExpression') exported = routerFactoryOf(ctx, spec, d);
+      else if (d.type === 'Identifier') exported = locals.get(d.name) ?? null;
     }
-    if (stmt.type !== 'ExportDefaultDeclaration') continue;
-    const d = stmt.declaration;
-    if (!d) continue;
-    if (d.type === 'CallExpression' || d.type === 'NewExpression') exported = routerFactoryOf(ctx, spec, d);
-    else if (d.type === 'Identifier') exported = built.get(d.name) ?? null;
+    if (stmt.type !== 'ExportNamedDeclaration' || stmt.source) continue;
+    for (const sp of stmt.specifiers ?? []) {
+      const local = sp.local ? (sp.local.name ?? sp.local.value) : null;
+      const as = sp.exported ? (sp.exported.name ?? sp.exported.value) : local;
+      if (as === 'default' && locals.has(local)) exported = locals.get(local);
+    }
   }
-  if (exported === null) return null;
+  const any = exported ?? locals.values().next().value ?? null;
+  if (any === null) return null;
   return {
-    kind: 'routerModule', file: ctx.relFile, line: 1, framework: exported.framework,
+    kind: 'routerModule', file: ctx.relFile, line: 1, framework: any.framework,
+    default: exported !== null,
+    locals: [...locals.keys()].sort(),
   };
 }
 

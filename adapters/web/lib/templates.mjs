@@ -387,7 +387,7 @@ export function templateScriptUrl(raw) {
  * specification the page is rendered by.
  *
  * @param {string} text
- * @returns {{tag:string, name:(string|null), id:(string|null), action:(string|null), method:string, line:number}[]}
+ * @returns {{tag:string, name:(string|null), id:(string|null), model:(string|null), action:(string|null), method:string, line:number}[]}
  */
 export function templateFormElements(text) {
   const src = String(text ?? '');
@@ -404,6 +404,7 @@ export function templateFormElements(text) {
       tag,
       name: attrs.get('name') ?? null,
       id: attrs.get('id') ?? null,
+      model: tag === 'form:form' ? (attrs.get('modelattribute') ?? attrs.get('commandname') ?? null) : null,
       action: actionAttr === null ? null : attrs.get(actionAttr),
       method: VERBS.has(spelled) ? spelled : (tag === 'form:form' ? 'POST' : 'GET'),
       line: countLines(src.slice(0, m.index)) + 1,
