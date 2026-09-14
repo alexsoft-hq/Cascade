@@ -199,7 +199,10 @@ function keptIntact(target, id) {
 }
 
 /** Whether a pack's nodes and edges are what its digest says: an edited body with its old digest is not that build. */
-const bodyIsDigest = (pack) => Array.isArray(pack?.nodes) && Array.isArray(pack?.edges) && digest12({ nodes: pack.nodes, edges: pack.edges }) === pack.digest;
+function bodyIsDigest(pack) {
+  if (!Array.isArray(pack?.nodes) || !Array.isArray(pack?.edges)) return false;
+  try { return digest12({ nodes: pack.nodes, edges: pack.edges }) === pack.digest; } catch { return false; }
+}
 
 /**
  * A directory this module made and the index no longer lists: a build id's shape

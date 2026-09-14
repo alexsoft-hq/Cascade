@@ -714,8 +714,9 @@ which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x
   So is one whose inputs outside the repository have changed on disk since it
   was analyzed, because a kept base would carry their old content and a rebuilt
   one their new: run `cascade analyze`, then compare. The commit is looked up in
-  the tree the current pack read, which is not always the one its `.cascade`
-  sits in. A shallow clone may not hold the commit, and the command says to fetch it.
+  the checkout the `.cascade` sits in (a copied project uses its own), or in the
+  tree the current pack recorded when only that one is the repository the pack
+  was built from (`analyze --root` elsewhere). A shallow clone may not hold the commit, and the command says to fetch it.
 - `--base <pack>` — a pack on disk instead: a `pack.json`, the directory holding
   it, or a `.cascade` directory.
 - `--head <pack>` — the pack with the change; default this project's pack.

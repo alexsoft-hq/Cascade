@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { normalizeRemote, sameRepository } from '../src/core/repo_identity.mjs';
 import { digest12 } from '../src/core/canonical.mjs';
 import { HISTORY_KEEP, historyDirOf, keepPreviousPack, listHistory, loadHistoryPack, pruneHistory, withPackLock } from '../src/cli/pack_history.mjs';
-import { basePackAt, cleanupWorktree, copyConventions, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
+import { analyzedTreeOf, basePackAt, cleanupWorktree, copyConventions, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
 import { contentDigestOf } from '../src/cli/external_sources.mjs';
 import { repositoryIdentity } from '../src/cli/commands/analyze/inputs.mjs';
 
@@ -323,10 +323,31 @@ test('the base is looked up in the tree the pack read, and refused when what it 
   const front = path.join(top, 'front');
   fs.mkdirSync(front);
   fs.writeFileSync(path.join(front, 'App.vue'), 'one');
-  const head = { meta: { base: { repoPath: tree }, analysis: { invocation: { webSrc: [front] }, external: { sources: { [front]: contentDigestOf(front) } } } } };
+  const head = { meta: { base: { repoPath: tree, ...repositoryIdentity(tree, tree) }, analysis: { invocation: { webSrc: [front] }, external: { sources: { [front]: contentDigestOf(front) } } } } };
   fs.writeFileSync(path.join(front, 'App.vue'), 'two');
   const die = (msg) => { throw new Error(msg); };
   assert.throws(() => basePackAt({ rev: 'HEAD', dotCascade, packDir: path.join(dotCascade, 'pack'), headPack: head, die }),
     new RegExp(`inputs outside the repository have changed since the current pack was analyzed \\(${front.replace(/[/.]/g, '\\$&')}\\)`),
     'found the commit in the tree the pack read, then refused on the changed frontend');
+});
+
+test('a copied project compares in its own checkout, and a pack analyzed with --root elsewhere compares in the tree it read', (t) => {
+  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-tree-')));
+  t.after(() => fs.rmSync(top, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
+  const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
+  const repoWith = (dir, file) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, file), file); git(dir, 'init', '-q', '-b', 'main'); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', file); return dir; };
+  const a = repoWith(path.join(top, 'a'), 'one.txt');
+  const b = path.join(top, 'b');
+  execFileSync('git', ['clone', '-q', a, b], { env, stdio: 'ignore' });
+  fs.writeFileSync(path.join(b, 'two.txt'), 'two'); git(b, 'add', '-A'); git(b, 'commit', '-q', '-m', 'two');
+  const headOf = (repoPath) => ({ meta: { base: { repoPath, ...repositoryIdentity(repoPath, repoPath) } } });
+  fs.mkdirSync(path.join(b, '.cascade'));
+  assert.equal(analyzedTreeOf(path.join(b, '.cascade'), headOf(a)), b, 'the copy still records the original path, and its own checkout is the same repository: it is used');
+
+  const mine = repoWith(path.join(top, 'mine'), 'mine.txt');
+  const other = repoWith(path.join(top, 'other'), 'other.txt');
+  fs.mkdirSync(path.join(mine, '.cascade'));
+  assert.equal(analyzedTreeOf(path.join(mine, '.cascade'), headOf(other)), other, 'the configuration\'s tree is another repository and the recorded one is the pack\'s');
+  assert.equal(analyzedTreeOf(path.join(mine, '.cascade'), headOf(path.join(top, 'gone'))), mine, 'a recorded path that is gone falls back to the configuration\'s tree');
 });

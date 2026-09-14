@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { compareConditions } from '../core/pack_diff.mjs';
 import { CLI_PATH, gitText, realPath } from './env.mjs';
 import { changedSince } from './external_sources.mjs';
+import { repositoryIdentity } from './commands/analyze/inputs.mjs';
 import { loadHistoryPack } from './pack_history.mjs';
 
 /** Inside `root`, or `root` itself. */
@@ -74,9 +75,7 @@ const tail = (s, n = 8) => String(s ?? '').trim().split('\n').slice(-n).join('\n
  */
 export function basePackAt({ rev, dotCascade: given, packDir, headPack, die, env = process.env }) {
   const dotCascade = realPath(given);
-  // The tree the current pack READ, which is not always the one its `.cascade` sits
-  // in (`analyze --project mine --root other`): the commit is looked up there.
-  const projectRoot = realPath(headPack.meta?.base?.repoPath ?? path.dirname(dotCascade));
+  const projectRoot = analyzedTreeOf(dotCascade, headPack);
   const { repoRoot, commit } = commitOf(projectRoot, rev, die);
   refuseUnreproducible(headPack, die);
   const invocation = headPack.meta.analysis.invocation;
@@ -93,6 +92,29 @@ export function basePackAt({ rev, dotCascade: given, packDir, headPack, die, env
     if (e instanceof BaseCommitError) die(e.message);
     throw e;
   }
+}
+
+/**
+ * THE TREE THE CURRENT PACK READ, where the commit is looked up. Normally the one
+ * its `.cascade` sits in, and that stays the answer for a project copied or moved
+ * elsewhere, whose pack still records the old path. The recorded path is taken
+ * instead only when the configuration's own tree is NOT the repository and folder
+ * the pack recorded and the recorded tree IS (`analyze --project mine --root other`).
+ */
+export function analyzedTreeOf(dotCascade, headPack) {
+  const own = realPath(path.dirname(dotCascade));
+  const recorded = headPack.meta?.base?.repoPath;
+  if (!recorded || !fs.existsSync(recorded) || realPath(recorded) === own) return own;
+  return !sameCheckout(own, headPack.meta.base) && sameCheckout(realPath(recorded), headPack.meta.base) ? realPath(recorded) : own;
+}
+
+/** Whether a directory is the repository (by root commit, else remote) and the folder in it that a pack recorded. */
+function sameCheckout(dir, base) {
+  const top = (gitText(dir, ['rev-parse', '--show-toplevel']) ?? '').trim();
+  if (!top) return false;
+  const id = repositoryIdentity(dir, realPath(top));
+  const field = ['rootCommit', 'remote'].find((f) => id[f] && base[f]);
+  return !!field && id[field] === base[field] && (typeof base.projectPath !== 'string' || id.projectPath === base.projectPath);
 }
 
 /**

@@ -1375,6 +1375,7 @@
    "longest": "buildInWorktree",
    "branchiest": "repointPaths",
    "functions": [
+    "analyzedTreeOf",
     "attempt",
     "basePackAt",
     "basePackAt/1",
@@ -1396,6 +1397,8 @@
     "repointPaths",
     "repointPaths/1",
     "repointPaths/2",
+    "sameCheckout",
+    "sameCheckout/1",
     "tail",
     "where"
    ]
@@ -1927,7 +1930,8 @@
     "externalSourcesOf",
     "externalSourcesOf/1",
     "externalSourcesOf/2",
-    "visit"
+    "visit",
+    "visit/1"
    ]
   },
   "src/cli/lanes_run.mjs": {

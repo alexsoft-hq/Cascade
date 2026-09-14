@@ -154,12 +154,25 @@ test('what was read from outside the repository is recorded by content, and a ch
   assert.deepEqual(compareConditions(pack(first), pack(first)).differences, []);
 });
 
-test('an outside input is hashed as the lanes read it: no link followed, no argument taken for a path, no lane that was off', (t) => {
+test('an outside input is hashed as a lane reads it: links followed without looping, no project output, no argument taken for a path, no lane that was off', (t) => {
   const top = layout(t);
   const front = path.join(top, 'front/src');
   fs.writeFileSync(path.join(front, 'App.vue'), 'x');
   fs.symlinkSync(front, path.join(front, 'self'));
   assert.match(contentDigestOf(front), /^[0-9a-f]{16}$/, 'a link back into the tree does not loop');
+  // The Java lane follows links, so a changed link target is a changed input.
+  const shared = path.join(top, 'shared-generated');
+  fs.mkdirSync(shared);
+  fs.writeFileSync(path.join(shared, 'Gen.java'), 'class Gen {}');
+  fs.symlinkSync(shared, path.join(front, 'generated'));
+  const linked = contentDigestOf(front);
+  fs.writeFileSync(path.join(shared, 'Gen.java'), 'class Gen { int x; }');
+  assert.notEqual(contentDigestOf(front), linked);
+  // The project's own output written under the root after the digest is not an input.
+  const settled = contentDigestOf(front);
+  fs.mkdirSync(path.join(front, '.cascade', 'pack'), { recursive: true });
+  fs.writeFileSync(path.join(front, '.cascade', 'pack', 'pack.json'), '{}');
+  assert.equal(contentDigestOf(front), settled);
   const argument = path.join(top, 'audit-schema');
   fs.mkdirSync(argument);
   const sources = externalSourcesOf({ webSrc: [front], noWeb: true, ddl: [] }, { sqlArgs: ['--default-schema', argument], webRoots: [] });

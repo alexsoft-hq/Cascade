@@ -9,11 +9,14 @@
 // (src/core/pack_diff.mjs), and a base commit refuses a current pack whose outside
 // inputs have changed on disk since it was analyzed (src/cli/base_commit.mjs).
 //
-// THE DIGEST reads what the lanes would read: regular files, by path relative to
-// the root, with no `node_modules` or `.git` and no symbolic links (a link can
-// loop, and the web lane does not follow links either). A root that is gone is
-// `missing`; a root that could not be read is `unreadable`, which is never taken
-// to agree with anything.
+// THE DIGEST reads at least what any lane would read: every regular file by path
+// relative to the root, FOLLOWING symbolic links (the Java lane follows them, so a
+// changed link target is a changed input), each real directory once (a link back
+// into the tree does not loop), with no `node_modules`, `.git` or `.cascade` (a
+// project's own output is not its input). Reading more than one lane reads can
+// only call two inputs different that the lane would call the same, never the
+// other way round. A root that is gone is `missing`; a root that could not be
+// read is `unreadable`, which is never taken to agree with anything.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -53,18 +56,22 @@ export function contentDigestOf(abs) {
   if (!fs.existsSync(abs)) return 'missing';
   const lines = [];
   try {
-    visit(abs, '', lines);
+    visit(abs, '', { lines, seen: new Set() });
   } catch {
     return UNREADABLE;
   }
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
-function visit(p, rel, lines) {
-  const st = fs.lstatSync(p);
-  if (st.isFile()) { lines.push(`${rel}\t${sha256File(p)}`); return; }
+const SKIPPED = new Set(['node_modules', '.git', '.cascade']);
+
+function visit(p, rel, walk) {
+  const st = fs.statSync(p);
+  if (st.isFile()) { walk.lines.push(`${rel}\t${sha256File(p)}`); return; }
   if (!st.isDirectory()) return;
-  for (const name of fs.readdirSync(p).sort()) {
-    if (name !== 'node_modules' && name !== '.git') visit(path.join(p, name), rel ? `${rel}/${name}` : name, lines);
-  }
+  const real = fs.realpathSync(p);
+  if (walk.seen.has(real)) { walk.lines.push(`${rel}\t-> seen`); return; }
+  walk.seen.add(real);
+  const names = fs.readdirSync(p).filter((name) => !SKIPPED.has(name)).sort();
+  for (const name of names) visit(path.join(p, name), rel ? `${rel}/${name}` : name, walk);
 }
