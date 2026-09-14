@@ -11,9 +11,10 @@
 //
 // THE DIGEST reads at least what any lane would read: every regular file by path
 // relative to the root, FOLLOWING symbolic links (the Java lane follows them, so a
-// changed link target is a changed input), every path a link makes reachable
-// hashed under that path, and a link back into a directory it sits in recorded
-// as the directory it returns to instead of looping, with no `node_modules`, `.git` or `.cascade` (a
+// changed link target is a changed input), each real directory read once under
+// the first path that reaches it, and every other path to it (a link, a loop)
+// recorded as that first path, so a link pointed elsewhere changes the digest and
+// no arrangement of links reads a tree twice, with no `node_modules`, `.git` or `.cascade` (a
 // project's own output is not its input). Reading more than one lane reads can
 // only call two inputs different that the lane would call the same, never the
 // other way round. A root that is gone is `missing`; a root that could not be
@@ -57,7 +58,7 @@ export function contentDigestOf(abs) {
   if (!fs.existsSync(abs)) return 'missing';
   const lines = [];
   try {
-    visit(abs, '', { lines, ancestors: new Map() });
+    visit(abs, '', { lines, firstPath: new Map() });
   } catch {
     return UNREADABLE;
   }
@@ -72,15 +73,10 @@ function visit(p, rel, walk) {
   else if (st.isDirectory()) visitDirectory(p, rel, walk);
 }
 
-/**
- * Only a directory on the way down is a loop, recorded as the path it returns to.
- * The same directory reached by two paths is hashed under both, so a link pointed
- * somewhere else changes the digest.
- */
+/** A real directory read once; any later path to it is recorded as the path it was first read under. */
 function visitDirectory(p, rel, walk) {
   const real = fs.realpathSync(p);
-  if (walk.ancestors.has(real)) { walk.lines.push(`${rel}\t-> ${walk.ancestors.get(real) || '.'}`); return; }
-  walk.ancestors.set(real, rel);
+  if (walk.firstPath.has(real)) { walk.lines.push(`${rel}\t-> ${walk.firstPath.get(real) || '.'}`); return; }
+  walk.firstPath.set(real, rel);
   for (const name of fs.readdirSync(p).filter((n) => !SKIPPED.has(n)).sort()) visit(path.join(p, name), rel ? `${rel}/${name}` : name, walk);
-  walk.ancestors.delete(real);
 }

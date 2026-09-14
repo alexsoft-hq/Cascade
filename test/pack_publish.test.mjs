@@ -175,6 +175,15 @@ test('an outside input is hashed as a lane reads it: links followed without loop
   fs.rmSync(path.join(front, 'zz'));
   fs.symlinkSync(path.join(front, 'b'), path.join(front, 'zz'));
   assert.notEqual(contentDigestOf(front), before, 'zz -> a re-pointed to zz -> b');
+  // Links that multiply paths (each level's x and y both point at the next) read each directory once.
+  const chain = path.join(top, 'chain');
+  const depth = 16;
+  for (let i = 0; i <= depth; i += 1) fs.mkdirSync(path.join(chain, `d${i}`), { recursive: true });
+  fs.writeFileSync(path.join(chain, `d${depth}`, 'Leaf.java'), 'class Leaf {}');
+  for (let i = 0; i < depth; i += 1) for (const l of ['x', 'y']) fs.symlinkSync(path.join(chain, `d${i + 1}`), path.join(chain, `d${i}`, l));
+  const started = Date.now();
+  assert.match(contentDigestOf(chain), /^[0-9a-f]{16}$/);
+  assert.ok(Date.now() - started < 2000, 'sixteen levels of doubled links take no time, because nothing is read twice');
   // The project's own output written under the root after the digest is not an input.
   const settled = contentDigestOf(front);
   fs.mkdirSync(path.join(front, '.cascade', 'pack'), { recursive: true });
