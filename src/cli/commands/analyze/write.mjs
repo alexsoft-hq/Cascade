@@ -25,7 +25,7 @@ import { readRegistry, upsertProject, writeRegistryAtomic } from '../../../core/
 import { registrationTarget } from '../../../core/resolve.mjs';
 import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../../../mcp/federation.mjs';
 import { engineIdentity, realPath } from '../../env.mjs';
-import { archivePreviousPack } from '../../pack_history.mjs';
+import { keepPreviousPack, pruneHistory, withPackLock, writeAtomic } from '../../pack_history.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
 import { goldenAsk } from '../../serve.mjs';
 import { runningEnginePrint, sha256File, stateDirOf, writeReceipt } from '../../state.mjs';
@@ -195,10 +195,10 @@ export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineag
     flags.noMappers ? '--no-mappers' : null,
     flags.noJava ? '--no-java' : null,
   ].filter(Boolean);
+  const evidence = evidenceFiles.map(([kind, f]) => `${kind}:${sha256File(f)}`);
   const pin = pinOf({
     commit: base?.commit ?? null, dirty: base?.dirty === true,
-    selection: selectionRel, optOuts, profileDigest, catalogDigest,
-    evidence: evidenceFiles.map(([kind, f]) => `${kind}:${sha256File(f)}`),
+    selection: selectionRel, optOuts, profileDigest, catalogDigest, evidence,
   });
   const enginePrintNow = runningEnginePrint();
 
@@ -247,10 +247,10 @@ pack.meta.calibration = {
 // the code only when these agree, so they are recorded where a later comparison
 // can read them: the worker versions, the normalized profile's digest, the engine,
 // the opt-out flags and the source roots. Metadata, so outside the digest.
-pack.meta.analysis = {
-  workers: workerVersions(), profileDigest, enginePrint: enginePrintNow,
-  engineVersion: engineIdentity().version, optOuts, selection: selectionRel,
-};
+pack.meta.analysis = analysisRecord({
+  flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base,
+  profileFile: pack.meta.profile, dotCascade: resolved.dotCascade, catalogMeta: pack.meta.catalog,
+});
 
   return {
     calibrated, verdict, red, gate, gateState, goldenSummaryDoc, overrideOf, enginePrintNow, pin, metrics,
@@ -317,11 +317,7 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
   }
   const writeDir = red ? `${out}-rejected` : out;
   const writeIndexFile = path.join(writeDir, 'facts-index.json');
-  fs.mkdirSync(writeDir, { recursive: true });
-  // The pack this certified run replaces is kept, so a later change has a base (pack_history.mjs).
-  if (calibrated && !red) archivePreviousPack(writeDir, pack);
-  fs.writeFileSync(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
-  fs.writeFileSync(writeIndexFile, serializeIndex(result.index));
+  publishPack(writeDir, { pack, index: result.index, keep: calibrated && !red });
   const routesIndex = buildRoutesIndex(g, {
     project: pack.meta?.project ?? projectId ?? null,
     buildDigest: pack.digest,
@@ -339,6 +335,71 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
     fs.writeFileSync(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
   }
   return { writeDir, writeIndexFile, routesIndex };
+}
+
+/** A path as a comparison can use it: relative to the project root inside it, real and absolute outside. */
+export function portablePath(p, root) {
+  const abs = realPath(path.resolve(root, p));
+  const rel = path.relative(realPath(root), abs);
+  return rel.startsWith('..') || path.isAbsolute(rel) ? abs : (rel.split(path.sep).join('/') || '.');
+}
+
+/** Every path string in a selection, made portable; everything else as it is. */
+function portableSelection(sel, root) {
+  const walk = (v, key) => {
+    if (Array.isArray(v)) return v.map((x) => walk(x, key));
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+    if (typeof v !== 'string' || key === 'root' || key === 'sqlArgs' || key === 'packagePrefixes' || key === 'engine' || key === 'kind' || key === 'suffix') return v;
+    return portablePath(v, root);
+  };
+  const { root: _root, ...rest } = sel ?? {};
+  return walk(rest, null);
+}
+
+/**
+ * WHAT THIS PACK WAS ANALYZED UNDER, recorded so two packs can be compared
+ * (src/core/pack_diff.mjs) and a base commit can be analyzed the SAME way
+ * (src/cli/base_commit.mjs): the workers, the profile's digest, the engine, the
+ * opt-out flags, the source roots, the lane flags this run was given, which
+ * profile file it read, and the content of every input that changes without a
+ * commit (a database snapshot, a recording). Paths are portable: relative to the
+ * project root inside it, so a checkout elsewhere records the same thing.
+ */
+function analysisRecord({ flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base, profileFile, dotCascade, catalogMeta }) {
+  const root = base?.repoPath ?? selectionRel.root;
+  const list = (xs) => (xs ?? []).map((p) => portablePath(p, root));
+  const defaultProfile = dotCascade ? realPath(path.join(dotCascade, 'profile.json')) : null;
+  return {
+    workers: workerVersions(), profileDigest, enginePrint: enginePrintNow, engineVersion: engineIdentity().version,
+    optOuts, selection: portableSelection(selectionRel, root),
+    invocation: {
+      ddl: list(flags.ddl), mappers: list(flags.mappers), javaSrc: list(flags.javaSrc), webSrc: list(flags.webSrc),
+      openapi: list(flags.openapi), har: list(flags.har), otel: list(flags.otel),
+      noDdl: !!flags.noDdl, noMappers: !!flags.noMappers, noJava: !!flags.noJava, noWeb: !!flags.noWeb, noOpenapi: !!flags.noOpenapi,
+      profile: profileFile && realPath(profileFile) !== defaultProfile ? portablePath(profileFile, root) : null,
+    },
+    external: {
+      catalogSnapshot: catalogMeta?.source === 'snapshot' ? catalogMeta.sha256 ?? null : null,
+      evidence: [...evidence].sort(),
+    },
+  };
+}
+
+/**
+ * THE PACK, PUBLISHED. Under the project's write lock: a certified run keeps a
+ * copy of the pack it replaces (pack_history.mjs), the new pack and its index are
+ * each renamed into place whole, and the history is pruned only after that. A
+ * failure while keeping or pruning is said and does not stop the publish.
+ */
+function publishPack(writeDir, { pack, index, keep }) {
+  withPackLock(writeDir, () => {
+    const warn = (what, e) => process.stderr.write(`pack history: could not ${what} (${e.message}); the pack is published all the same\n`);
+    let kept = null;
+    if (keep) { try { kept = keepPreviousPack(writeDir, pack); } catch (e) { warn('keep the pack this run replaces', e); } }
+    writeAtomic(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
+    writeAtomic(path.join(writeDir, 'facts-index.json'), serializeIndex(index));
+    if (kept) { try { pruneHistory(writeDir); } catch (e) { warn('prune the history', e); } }
+  });
 }
 
 /** The gate's verdict, its findings, and the golden score beside them. */

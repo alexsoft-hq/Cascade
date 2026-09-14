@@ -40,7 +40,7 @@ const AXIS_OF_KIND = Object.freeze({
 });
 
 /** The conditions only `meta.analysis` records; both absent is said once, not per key. */
-const ANALYSIS_KEYS = new Set(['profileDigest', 'enginePrint', 'engineVersion', 'optOuts', 'sourceRoots']);
+const ANALYSIS_KEYS = new Set(['profileDigest', 'enginePrint', 'engineVersion', 'optOuts', 'sourceRoots', 'flags', 'catalogSnapshot', 'evidence']);
 
 const idKind = (id) => String(id).slice(0, String(id).indexOf(':'));
 
@@ -71,13 +71,29 @@ function conditionsOf(pack) {
     enginePrint: a?.enginePrint ?? null,
     engineVersion: a?.engineVersion ?? null,
     optOuts: a ? (a.optOuts ?? []).join(' ') : null,
-    // The roots as the project spells them: where the checkout sits on disk is not
-    // a condition, and a base built in a temporary worktree sits somewhere else.
+    // The roots as the project spells them (portable paths, no checkout root): where
+    // the checkout sits is not a condition, and a base built in a worktree sits elsewhere.
     sourceRoots: a?.selection ? JSON.stringify({ ...a.selection, root: undefined }) : null,
+    ...runConditions(a),
   };
   for (const [k, v] of Object.entries(a?.workers ?? {})) flat[`worker.${k}`] = v;
   for (const [k, v] of Object.entries(m.axes ?? {})) flat[`axis.${k}`] = v?.status ?? null;
   return { flat, recorded: a !== null };
+}
+
+/**
+ * The lane flags the run was given (the same roots named on the command line and
+ * found by discovery are not read the same way: mapper alternatives, for one), and
+ * what changes without a commit (a database snapshot, a recording).
+ */
+function runConditions(a) {
+  if (!a) return { flags: null, catalogSnapshot: null, evidence: null };
+  const ext = a.external ?? null;
+  return {
+    flags: a.invocation ? JSON.stringify(a.invocation) : null,
+    catalogSnapshot: ext ? String(ext.catalogSnapshot ?? 'none') : null,
+    evidence: ext ? (ext.evidence ?? []).join(' ') || 'none' : null,
+  };
 }
 
 /**

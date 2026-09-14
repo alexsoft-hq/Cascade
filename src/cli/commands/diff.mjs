@@ -56,7 +56,7 @@ function printBody(out, d) {
 }
 
 /** The base: a pack on disk, or this project at another commit. */
-function baseOf(cli) {
+function baseOf(cli, head) {
   const { opt, die, resolveOrDie } = cli;
   const rev = opt('base-commit');
   if (opt('base') && rev) die('give --base <pack> or --base-commit <rev>, not both');
@@ -65,9 +65,10 @@ function baseOf(cli) {
   const resolved = resolveOrDie();
   if (!resolved.dotCascade) die('--base-commit needs a project with a .cascade directory: run it inside one, or pass --root / --project');
   process.stderr.write(`building the base: ${rev} of ${resolved.dotCascade}, in a temporary worktree unless the pack history holds it\n`);
-  const b = basePackAt({ rev, dotCascade: resolved.dotCascade, packDir: resolved.packDir, die });
-  const where = b.from === 'history' ? `from the pack history (${b.entry.id})` : 'built now in a temporary worktree, with this project\'s current profile';
+  const b = basePackAt({ rev, dotCascade: resolved.dotCascade, packDir: resolved.packDir, headPack: head.pack, die });
+  const where = b.from === 'history' ? `from the pack history (${b.entry.id})` : 'built now in a temporary worktree, the way the current pack was analyzed';
   const note = `base: commit ${b.commit.slice(0, 12)}, ${where}`
+    + (b.note ? `\n  ${b.note}` : '')
     + (b.outside.length ? `\n  read as they are today, not at ${b.commit.slice(0, 12)}: ${b.outside.join(', ')}` : '');
   return { file: null, pack: b.pack, note };
 }
@@ -75,7 +76,7 @@ function baseOf(cli) {
 export function run(cli) {
   const { opt, flag, die, resolveOrDie } = cli;
   const head = opt('head') ? readPackAt(opt('head'), cli) : readPackAt(resolveOrDie().packDir, cli);
-  const base = baseOf(cli);
+  const base = baseOf(cli, head);
   const rawLimit = opt('limit');
   const limit = rawLimit === undefined ? undefined : Number(rawLimit);
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) die(`--limit must be a positive whole number, got ${JSON.stringify(rawLimit)}`);

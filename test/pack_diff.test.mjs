@@ -57,11 +57,11 @@ function state({ head }) {
 
 const packOf = (g, meta = {}) => JSON.parse(JSON.stringify(projectPack(g, {
   project: 'orders', builtAt: '2026-09-14T00:00:00.000Z', lanes: ['sql', 'java'], identifierCase: 'fold-lower',
-  axes: AXES, analysis: ANALYSIS, base: { commit: 'a'.repeat(40), dirty: false }, ...meta,
+  axes: AXES, analysis: ANALYSIS, base: { commit: 'a'.repeat(40), dirty: false, rootCommit: 'r'.repeat(40) }, ...meta,
 })));
 
 test('every node and edge that appeared, went away or changed grade is listed, and the endpoints above them', () => {
-  const d = diffPacks(packOf(state({ head: false })), packOf(state({ head: true }), { base: { commit: 'b'.repeat(40), dirty: false } }));
+  const d = diffPacks(packOf(state({ head: false })), packOf(state({ head: true }), { base: { commit: 'b'.repeat(40), dirty: false, rootCommit: 'r'.repeat(40) } }));
   assert.equal(d.schema, PACK_DIFF_SCHEMA);
   assert.equal(d.samePack, false);
   assert.equal(d.conditions.verdict, 'same');
@@ -98,6 +98,15 @@ test('a difference in how the packs were analyzed is said first, and a removal o
     { what: 'worker.java', base: 'javafacts/12', head: 'javafacts/13' },
   ]);
   assert.deepEqual(d.nodes.removedIds, [{ id: 'column:orders.legacy_code', axisChanged: 'catalog' }]);
+});
+
+test('what changes without a commit is a condition: a database snapshot, a recording, the lane flags', () => {
+  const withExternal = (external, invocation = { ddl: [], mappers: ['src/main/resources/mapper'] }) => packOf(state({ head: true }), { analysis: { ...ANALYSIS, invocation, external } });
+  const base = withExternal({ catalogSnapshot: 'a'.repeat(64), evidence: [] });
+  assert.deepEqual(compareConditions(base, withExternal({ catalogSnapshot: 'b'.repeat(64), evidence: [] })).differences.map((d) => d.what), ['catalogSnapshot']);
+  assert.deepEqual(compareConditions(base, withExternal({ catalogSnapshot: 'a'.repeat(64), evidence: ['har:1'] })).differences.map((d) => d.what), ['evidence']);
+  assert.deepEqual(compareConditions(base, withExternal({ catalogSnapshot: 'a'.repeat(64), evidence: [] }, { ddl: [], mappers: [] })).differences.map((d) => d.what), ['flags'],
+    'the same roots named on the command line or found by discovery are not read the same way');
 });
 
 test('a condition one pack does not record is unknown, never equal', () => {
@@ -150,7 +159,7 @@ test('cascade diff prints the conditions before the counts, and --json the whole
 test('pack_diff refuses two different projects, and compares a project with an earlier build of its own', async (t) => {
   const { host } = await startViewer(t, ['alpha', 'beta']);
   assert.throws(() => host.callTool('pack_diff', { project: 'beta', base: 'alpha' }),
-    (e) => e.code === 'bad-input' && /different repositories \(project id: alpha and beta\)/.test(e.message));
+    (e) => e.code === 'bad-input' && /different repositories \(project id: "alpha" and "beta"\)/.test(e.message));
   assert.throws(() => host.callTool('pack_diff', { project: 'beta', base: 'beta' }), (e) => e.code === 'bad-input');
   const basis = { project: 'orders', buildDigest: 'x', builtAt: null, freshness: { verdict: 'unknown' } };
   const head = state({ head: true });
@@ -165,4 +174,16 @@ test('pack_diff refuses two different projects, and compares a project with an e
   assert.throws(() => callTool('pack_diff', { base_commit: 'bbbbbbb' }, ctx), (e) => e.code === 'unknown-key' && /cascade diff --base-commit/.test(e.message));
   assert.throws(() => callTool('pack_diff', {}, ctx), (e) => e.code === 'bad-input' && /exactly one base/.test(e.message));
   assert.throws(() => callTool('pack_diff', { base: 'other' }, { ...ctx, history: undefined }), (e) => e.code === 'bad-input' && /base_commit/.test(e.message));
+});
+
+test('a served project whose pack was republished is read again, so its head is never an old build beside the new history', async (t) => {
+  const { host } = await startViewer(t, ['alpha']);
+  const first = host.ctxFor('alpha');
+  const file = path.join(first.packDir, 'pack.json');
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(host.ctxFor('alpha'), first, 'nothing changed: the same context');
+  const later = new Date(Date.now() + 5000);
+  fs.writeFileSync(file, JSON.stringify(pack));
+  fs.utimesSync(file, later, later);
+  assert.notEqual(host.ctxFor('alpha'), first, 'a republished pack is read again');
 });

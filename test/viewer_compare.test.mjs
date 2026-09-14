@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { archivePreviousPack } from '../src/cli/pack_history.mjs';
+import { keepPreviousPack } from '../src/cli/pack_history.mjs';
 import { bootPage as boot, ev, settle } from './helpers/viewer_page.mjs';
 import { startViewer } from './helpers/viewer_fixtures.mjs';
 
@@ -27,8 +27,10 @@ function keepEarlierBuild(host, id) {
   earlier.meta.base = { commit: 'a'.repeat(40), dirty: false };
   earlier.nodes.push({ id: 'endpoint:GET /retired', kind: 'endpoint', path: '/retired', httpMethod: 'GET' });
   fs.writeFileSync(file, JSON.stringify(earlier));
-  archivePreviousPack(dir, current);
+  keepPreviousPack(dir, current);
   fs.writeFileSync(file, JSON.stringify(current));
+  // The served context was loaded before the pack file was touched; it reads it again.
+  host.ctxFor(id);
 }
 
 async function bootWith(t, { ids = ['alpha', 'beta'], earlier = [], hash = '' } = {}) {
@@ -60,6 +62,16 @@ test('the Compare tab offers this project\'s earlier builds only, and draws the 
   const text = page.byId.get('cmpview').textContent;
   assert.match(text, /Removed nodes \(1\)/);
   assert.match(text, /endpoint:GET \/retired/);
+});
+
+test('switching between two projects that both keep builds asks the new project with its OWN build', async (t) => {
+  const page = await bootWith(t, { earlier: ['alpha', 'beta'], hash: '#p=beta&tab=compare' });
+  for (let i = 0; i < 40 && !ev(page.ctx, 'CMP.resp'); i += 1) await settle(page.ctx, 1);
+  ev(page.ctx, "switchProject('alpha')");
+  for (let i = 0; i < 40 && !ev(page.ctx, 'CMP.resp'); i += 1) await settle(page.ctx, 1);
+  const asked = page.calls.filter((c) => c.body && c.body.name === 'pack_diff');
+  assert.deepEqual(asked.map((c) => c.body.project), ['beta', 'alpha'], 'one request per project, none with the old project\'s build');
+  assert.equal(ev(page.ctx, 'CMP.resp.basis.project'), 'alpha');
 });
 
 test('switching to a project with no earlier build hides the tab and drops the old comparison', async (t) => {

@@ -147,7 +147,7 @@ export const USAGE = Object.freeze({
     + '               [--limit <n>] [--json]\n'
     + '      (what changed in one project since <rev>: nodes and edges added, removed or regraded, and the endpoints\n'
     + '       and screens above them. The base comes from the project\'s pack history, or is analyzed now in a temporary\n'
-    + '       git worktree with the current profile. --base takes a pack.json, its directory or a .cascade directory;\n'
+    + '       git worktree with the profile and lane flags the current pack recorded. --base takes a pack.json, its directory or a .cascade directory;\n'
     + '       packs of different repositories are refused. The analysis conditions are compared first)\n',
 });
 

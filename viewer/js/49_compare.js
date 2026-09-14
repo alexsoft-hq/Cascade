@@ -23,7 +23,9 @@ function resetCompare(){
   renderCompareChrome();
 }
 /** The earlier builds of the project on screen, newest first. */
-const compareBuilds=()=> (STATE.meta && Array.isArray(STATE.meta.history)) ? STATE.meta.history : [];
+// Only the metadata OF THE PROJECT ON SCREEN counts: right after a switch the old
+// project's is still in memory, and its builds are not this project's.
+const compareBuilds=()=> (STATE.meta && STATE.meta.projectId===STATE.project && Array.isArray(STATE.meta.history)) ? STATE.meta.history : [];
 /** The tab exists only where this project has an earlier build to compare with. */
 function renderCompareChrome(){
   const builds=compareBuilds();

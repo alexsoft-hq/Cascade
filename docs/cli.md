@@ -695,14 +695,19 @@ which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x
 `statement:ns.id`), so the two packs are compared by id with no guessing.
 
 - `--base-commit <rev>` — this project at another commit (`main`, `HEAD~3`, a
-  sha). When the project's pack history holds a clean build at that commit it is
-  used as it is. Otherwise the commit is checked out in a temporary git worktree,
-  given this project's CURRENT manifest and profile (so both packs are read the
-  same way), and analyzed into a scratch directory: nothing is registered or
-  sealed, and the worktree is removed afterwards. A profile path inside the
-  repository is read at that commit; one outside it (a frontend checked out
-  beside the repository, a DB snapshot in `.cascade/catalog`) has no older
-  version, is read as it is today, and the output lists every such path. A
+  sha). When the project's pack history holds a build at that commit that was
+  made from a clean checkout AND analyzed the same way as the current pack, it
+  is used as it is. Otherwise the commit is checked out in a temporary git
+  worktree, given this project's manifest and the profile the current pack was
+  analyzed with, and analyzed with the very lane flags the current pack recorded
+  (`--ddl`, `--mappers`, `--no-java` and the rest), into a scratch directory:
+  nothing is registered or sealed, and the worktree is removed afterwards (a
+  removal that fails is an error that says what to clean). A path inside the
+  repository, in the profile or in a flag, is read at that commit; one outside it
+  (a frontend checked out beside the repository, a DB snapshot in
+  `.cascade/catalog`) has no older version, is read as it is today, and the
+  output lists every such path. A current pack that does not record how it was
+  analyzed (built before this release) is refused: run `cascade analyze` once. A
   shallow clone may not hold the commit, and the command says to fetch it.
 - `--base <pack>` — a pack on disk instead: a `pack.json`, the directory holding
   it, or a `.cascade` directory.
@@ -716,20 +721,31 @@ which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x
 a list of a thousand added routes reads like a review while meaning nothing. Each
 pack records where it was built (`meta.base`): the commit its history starts
 from (not for a shallow clone, whose oldest commit is only where the clone was
-cut), the `origin` remote without credentials, and the checkout path. The
-strongest evidence both packs carry decides; for packs built before these were
-recorded, two different project ids are two projects.
+cut), the `origin` remote without credentials, the project's folder inside the
+repository, and the checkout path. The strongest evidence both packs carry
+decides. Two projects in folders of one repository (a monorepo) share a root
+commit and a remote, and are told apart by the folder. Remotes agree across
+`https`, `ssh` and scp forms and a default port; another port is another
+server, and the path keeps its letter case except on GitHub, GitLab and
+Bitbucket. For packs built before these were recorded, two different project
+ids are two projects; an equal id alone proves nothing, and the diff says the
+repository is unknown.
 
-**The pack history.** Every certified `analyze` moves the pack it replaces into
+**The pack history.** Every certified `analyze` copies the pack it replaces into
 `.cascade/history/`, one directory per build, and keeps the five most recent. A
-rebuild that changed nothing (same commit, same digest) keeps nothing. The
-viewer's Compare tab and the MCP tool `pack_diff { base_commit }` choose their
-base from here.
+rebuild that changed nothing (same commit, same digest) keeps nothing. The copy
+is made under the project's write lock, before the new pack is renamed into
+place, and the history is pruned only after that, so the pack being served is
+always the old one or the new one. A build made with uncommitted edits is kept
+but never chosen by its commit. The viewer's Compare tab and the MCP tool
+`pack_diff { base_commit }` choose their base from here, and a server notices a
+pack republished under it and reads the new one.
 
 **The conditions come first.** The same code read by a newer worker, under
 another profile, with a lane or an axis missing, gives a different pack too. So
 the two packs' lanes, identity rule, axes, worker versions, profile digest,
-engine, opt-out flags and source roots are compared before anything is counted,
+engine, opt-out flags, lane flags, source roots, catalog snapshot and runtime
+evidence files are compared before anything is counted,
 and every one that differs is printed. A removed node whose axis changed between
 the packs is marked, because an unread catalog and a dropped table look alike in
 a list of ids. A pack built before 0.8.8 records no workers, profile or engine,

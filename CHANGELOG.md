@@ -14,17 +14,22 @@ Each dated section below is one round of work. The round protocol is in
 
 - **One project compared with an earlier commit of itself.**
   `cascade diff --base-commit <rev>` takes the base from the project's pack
-  history, or checks the commit out in a temporary git worktree and analyzes it
-  with the current manifest and profile, into scratch: nothing is registered or
-  sealed, and the worktree is removed afterwards. Profile paths inside the
-  repository are read at that commit; paths outside it are read as they are today
-  and listed.
+  history when it holds a clean build analyzed the same way, or checks the commit
+  out in a temporary git worktree and analyzes it with the manifest, the profile
+  and the lane flags the current pack was analyzed with, into scratch: nothing is
+  registered or sealed, and a worktree that could not be removed is an error.
+  Paths inside the repository are read at that commit; paths outside it are read
+  as they are today and listed.
 - **A pack history.** A certified `analyze` keeps the pack it replaces in
   `.cascade/history/`, the five most recent, so a project has earlier builds to be
-  compared with. `pack_diff` takes `base_commit` and `base_history`.
+  compared with. The copy is made under a write lock before the new pack is
+  renamed into place. `pack_diff` takes `base_commit` and `base_history`, and a
+  server reads a pack republished under it.
 - **A pack records its repository.** `meta.base` holds the commit its history
-  starts from (none for a shallow clone) and the `origin` remote with credentials
-  removed.
+  starts from (none for a shallow clone), the `origin` remote with credentials
+  removed, and the project's folder in the repository, so two projects of one
+  monorepo are told apart. `meta.analysis` records the lane flags, the catalog
+  snapshot and the runtime evidence files, and a diff compares them.
 
 ### Fixed
 

@@ -304,13 +304,15 @@ export function changesetOf({ rootAbs, out, gitTop, headCommit, toRootRel }) {
  * the commit its history starts from, unless the clone is shallow and has no
  * real start, and the `origin` remote.
  */
-function repositoryIdentity(rootAbs) {
+function repositoryIdentity(rootAbs, gitTop) {
   const shallow = (gitText(rootAbs, ['rev-parse', '--is-shallow-repository']) ?? '').trim() === 'true';
   const roots = shallow ? [] : (gitText(rootAbs, ['rev-list', '--max-parents=0', 'HEAD']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean).sort();
   // Normalized HERE, before anything is written: a remote URL can carry a user
   // name or a token (`https://user:token@example.com/...`), and a pack is not where it goes.
   const remote = normalizeRemote((gitText(rootAbs, ['remote', 'get-url', 'origin']) ?? '').trim() || null);
-  return { rootCommit: roots[0] ?? null, shallow, remote };
+  // Where the project sits inside the repository: a monorepo holds several.
+  const projectPath = gitTop ? path.relative(gitTop, realPath(rootAbs)).split(path.sep).join('/') : null;
+  return { rootCommit: roots[0] ?? null, shallow, remote, projectPath };
 }
 
 /**
@@ -319,7 +321,7 @@ function repositoryIdentity(rootAbs) {
  * rather than a commit's certified one. An unrelated edited file elsewhere in
  * the repository does not.
  */
-export function dirtyInputsOf({ rootAbs, headCommit, toRootRel, untrackedRel, selectionRel }) {
+export function dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untrackedRel, selectionRel }) {
   // "Dirty" for this pack means an ANALYSIS INPUT differs from HEAD — that is
   // what makes the pack provisional rather than a commit's certified state
   // (§2.1 item 2). An unrelated edited file elsewhere in the repo does not.
@@ -334,7 +336,7 @@ export function dirtyInputsOf({ rootAbs, headCommit, toRootRel, untrackedRel, se
     ...untrackedRel,
   ])].filter((f) => f !== null && isAnalysisInput(f)).sort();
   const base = headCommit
-    ? { repoPath: rootAbs, commit: headCommit, dirty: dirtyFiles.length > 0, dirtyFiles, ...repositoryIdentity(rootAbs) }
+    ? { repoPath: rootAbs, commit: headCommit, dirty: dirtyFiles.length > 0, dirtyFiles, ...repositoryIdentity(rootAbs, gitTop) }
     : null;
     return { dirtyFiles, base };
 }
@@ -401,7 +403,7 @@ export function incrementalPlan(ctx, { root, out, profile, manifest, resolved, s
   const { gitTop, headCommit, toRootRel, relOf, absOf } = pathSpellings(rootAbs);
   const selectionRel = selectionRecord({ rootAbs, javaSrc, mappers, webSrc, sel, ddls, snapshot, sqlArgs, profile, relOf });
   const { prevIndex, changeset, untrackedRel, baseCommit } = changesetOf({ rootAbs, out, gitTop, headCommit, toRootRel });
-  const { base } = dirtyInputsOf({ rootAbs, headCommit, toRootRel, untrackedRel, selectionRel });
+  const { base } = dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untrackedRel, selectionRel });
   const { projectId, plan, store } = planOf(ctx, {
     resolved, manifest, rootAbs, prevIndex, changeset, untrackedRel, selectionRel, absOf,
   });

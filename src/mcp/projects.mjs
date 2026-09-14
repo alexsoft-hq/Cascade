@@ -84,6 +84,19 @@ export function packProxyBytes(entry, io = fs) {
 }
 
 /**
+ * WHICH BUILD OF A PACK IS ON DISK: its size and modification time, or null when
+ * there is none. A context loaded from one build must not keep answering once
+ * `cascade analyze` has published another, least of all beside a pack history
+ * read fresh from disk, where the old head would be compared with itself.
+ */
+export function packFingerprint(entry, io = fs) {
+  try {
+    const st = io.statSync(path.join(packDirOf(entry), 'pack.json'));
+    return `${st.size}:${st.mtimeMs}`;
+  } catch { return null; }
+}
+
+/**
  * A project-scoped context factory: the registry in, a bounded lazy cache of
  * loaded project contexts out.
  *
@@ -172,11 +185,21 @@ function evictToBudget(h, keepId) {
  * serve, `pack-unreadable` for a pack that cannot be read or cannot fit.
  */
 
+/** The context in the cache, unless a newer build was published since it was loaded: then it is dropped. */
+function heldCurrent(h, projectId, onDisk) {
+  const held = h.cache.get(projectId);
+  if (!held || held.fingerprint === onDisk) return held ?? null;
+  h.cache.delete(projectId);
+  h.indexes.delete(projectId);
+  return null;
+}
+
 function ctxFor(h, projectId) {
   const { byId, cache, loadProject, measureBytes, now, counters, budgetBytes } = h;
   const entry = byId.get(projectId);
   if (!entry) throw unknownProject(projectId, h.ids());
-  const held = cache.get(projectId);
+  const onDisk = h.fingerprint(entry);
+  const held = heldCurrent(h, projectId, onDisk);
   if (held) {
     counters.hits += 1;
     cache.delete(projectId);
@@ -220,7 +243,7 @@ function ctxFor(h, projectId) {
     ctx.federation = { self: projectId, ids: h.ids, indexOf: h.indexOf, ctxFor: h.ctxFor };
   }
   const stamp = now();
-  cache.set(projectId, { ctx, bytes, loadedAt: stamp, lastUsedAt: stamp });
+  cache.set(projectId, { ctx, bytes, loadedAt: stamp, lastUsedAt: stamp, fingerprint: onDisk });
   h.evictToBudget(projectId);
   return ctx;
 }
@@ -317,7 +340,7 @@ export function createProjectHost(cfg = {}) {
     loadProject,
     budgetBytes,
     now,
-    measureBytes,
+    measureBytes, fingerprint: typeof cfg.fingerprint === 'function' ? cfg.fingerprint : packFingerprint,
     log,
     cache,
     // THE ROUTE INDEX, READ FROM THE SIDECAR AND NEVER FROM THE PACK (RM44).
