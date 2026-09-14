@@ -107,7 +107,9 @@ export function packFingerprint(entry, io = fs) {
   return [pack, ...beside.map((f) => stampOf(io, f) ?? '-')].join('|');
 }
 
-/** One file's identity on disk, or null when it is not there. */
+/** One file's identity on disk (inode, size, modification and change times), or null when it is not there. */
+export const fileStamp = (file, io = fs) => stampOf(io, file);
+
 function stampOf(io, file) {
   try { const st = io.statSync(file); return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`; } catch { return null; }
 }
@@ -152,32 +154,49 @@ function indexOf(h, projectId) {
 /** The served projects, from the registry and the sidecars — no pack is parsed. */
 
 function list(h) {
-  const { entries } = h;
-  return entries.map((e) => {
-    // A context loaded from an earlier build is not described beside the new
-    // build's route index: it is dropped, and the project reads as not loaded.
-    const held = heldCurrent(h, e.id, h.fingerprint(e));
-    const idx = h.indexOf(e.id);
-    return {
-      id: e.id,
-      dotCascadePath: e.dotCascadePath ?? null,
-      stack: Array.isArray(e.stack) ? e.stack.slice() : [],
-      lastCertifiedAt: e.lastCertifiedAt ?? null,
-      loaded: !!held,
-      bytes: held ? held.bytes : null,
-      // WHETHER THIS PROJECT CAN BE FEDERATED, from its sidecar alone. A
-      // project with no index is not crossed into and not crossed out of, and
-      // this is where a reader finds out why an answer stopped at a call.
-      federation: idx.ok
-        ? { index: 'present', serves: idx.index.serves.length, calls: idx.index.calls.length }
-        : { index: 'absent', reason: idx.reason },
-      // What the pack SAYS about itself — only for a project whose pack is
-      // already in memory. Reading it for an unloaded project would mean
-      // parsing the pack, which is exactly what listing must not do (§15 M8):
-      // `null` here means "not loaded", never "this pack has no metadata".
-      meta: held ? metaSummary(held.ctx) : null,
-    };
-  });
+  return h.entries.map((e) => rowOfOneBuild(h, e));
+}
+
+/**
+ * One project's row, read from one build. The row joins the loaded context and
+ * the route sidecar, two reads a publish can land between; when the project's
+ * fingerprint moved while the row was read, the row is read again, so it never
+ * carries one build's metadata beside another build's routes.
+ */
+function rowOfOneBuild(h, e) {
+  let row = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const before = h.fingerprint(e);
+    row = listRow(h, e, before);
+    if (h.fingerprint(e) === before) return row;
+  }
+  return row;
+}
+
+function listRow(h, e, fingerprint) {
+  // A context loaded from an earlier build is not described beside the new
+  // build's route index: it is dropped, and the project reads as not loaded.
+  const held = heldCurrent(h, e.id, fingerprint);
+  const idx = h.indexOf(e.id);
+  return {
+    id: e.id,
+    dotCascadePath: e.dotCascadePath ?? null,
+    stack: Array.isArray(e.stack) ? e.stack.slice() : [],
+    lastCertifiedAt: e.lastCertifiedAt ?? null,
+    loaded: !!held,
+    bytes: held ? held.bytes : null,
+    // WHETHER THIS PROJECT CAN BE FEDERATED, from its sidecar alone. A
+    // project with no index is not crossed into and not crossed out of, and
+    // this is where a reader finds out why an answer stopped at a call.
+    federation: idx.ok
+      ? { index: 'present', serves: idx.index.serves.length, calls: idx.index.calls.length }
+      : { index: 'absent', reason: idx.reason },
+    // What the pack SAYS about itself — only for a project whose pack is
+    // already in memory. Reading it for an unloaded project would mean
+    // parsing the pack, which is exactly what listing must not do (§15 M8):
+    // `null` here means "not loaded", never "this pack has no metadata".
+    meta: held ? metaSummary(held.ctx) : null,
+  };
 }
 
 
@@ -207,10 +226,17 @@ function evictToBudget(h, keepId) {
  * serve, `pack-unreadable` for a pack that cannot be read or cannot fit.
  */
 
+/**
+ * Whether the files a context says it read beyond the pack's own directory (a
+ * profile the pack names elsewhere) are as they were when it read them. A loader
+ * lists them in `ctx.watchFiles` as `{file, stamp}`, stamped before reading.
+ */
+const watchedUnchanged = (ctx) => (Array.isArray(ctx?.watchFiles) ? ctx.watchFiles : []).every((w) => stampOf(fs, w.file) === w.stamp);
+
 /** The context in the cache, unless a newer build was published since it was loaded: then it is dropped. */
 function heldCurrent(h, projectId, onDisk) {
   const held = h.cache.get(projectId);
-  if (!held || held.fingerprint === onDisk) return held ?? null;
+  if (!held || (held.fingerprint === onDisk && watchedUnchanged(held.ctx))) return held ?? null;
   h.cache.delete(projectId);
   h.indexes.delete(projectId);
   return null;

@@ -41,11 +41,19 @@ Each dated section below is one round of work. The round protocol is in
 - **Sidecars name their pack.** `facts-index.json` carries `packDigest`, and it
   and `routes.json` are published before the pack, and the gate's verdict,
   baseline and receipt after it, all under one lock on the project's state
-  (`.cascade/.write.lock`) that a rejected run and any `--out` take too, so a reader never takes an index written for another build, a pack
-  that failed to publish is never certified, and two analyses of one project
-  never interleave. `cascade verify` checks that the index names the pack beside
-  it. A server reads a project again when its pack, indexes, gate verdict, golden
-  corpus, profile or manifest change.
+  (`.cascade/.write.lock`) that a rejected run and any `--out` take too, so a
+  reader never takes an index written for another build, a pack that failed to
+  publish is never certified, and two analyses of one project never interleave.
+  `cascade verify` checks that the index names the pack beside it. A server reads
+  a project again when its pack, indexes, gate verdict, golden corpus, profile or
+  manifest change, or a profile the pack names outside `.cascade`.
+- **The JPA naming strategy a project configures is read.**
+  `spring.jpa.hibernate.naming.physical-strategy` (and Hibernate's
+  `physical_naming_strategy`) in `application.properties`/`application.yml`
+  declares the strategy when the profile does not, so names derived by it are
+  graded as declared. spring-petclinic declares
+  `PhysicalNamingStrategySnakeCaseImpl`, and its derived column mappings are now
+  EXACT with no profile change.
 
 ### Fixed
 
@@ -55,6 +63,23 @@ Each dated section below is one round of work. The round protocol is in
   only the project's own earlier builds and is hidden without one, and
   `cascade diff` and `pack_diff` refuse packs of different repositories, saying
   which evidence showed it.
+- **JPA snake-case names follow Hibernate's rule exactly.** The engine put an
+  underscore before a capital when the letter before it was lower-case OR the
+  letter after it was, so it derived `user_id` for `userID` and `my_url_value`
+  for `myURLValue` where Spring and Hibernate produce `userid` and `myurlvalue`.
+  A dot is now an underscore too. A name Hibernate 7 spells differently (a digit
+  beside a capital) is graded HEURISTIC even under a declared strategy.
+- **The gate judges a run against the baseline as it is when the run publishes.**
+  The baseline was read before the write lock was taken, so of two analyses of
+  one project the later could be judged against a baseline the earlier had
+  already re-sealed. The gate now runs under the project's lock; a run waits for
+  a running holder (up to ten minutes, saying for which process) and refuses at
+  once a lock whose process is not running.
+- **A passing verdict counts only for the pack it judged.** The gate state records
+  the pack's digest, and a server whose pack has another digest reports
+  `calibration-gate-other-build` instead of taking the verdict as its own.
+- **A project listing never mixes two builds.** A row read while a publish landed
+  is read again.
 
 ## [0.8.8] - 2026-09-14
 

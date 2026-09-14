@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { Graph, nodeId } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
-import { addJpaFacts, nativeQueryStatements, normalizeBindParameters, snakeCase, physicalName } from '../src/adapters/jpa_bridge.mjs';
+import { springPhysicalName, addJpaFacts, nativeQueryStatements, normalizeBindParameters, snakeCase, physicalName } from '../src/adapters/jpa_bridge.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 
@@ -104,14 +104,33 @@ const gradeOf = (g, type_, from, to) => (g.edges.find((e) => e.type === type_ &&
 // naming
 // ---------------------------------------------------------------------------
 
-test('snakeCase follows Spring Boot: CamelCase -> snake_case, acronyms kept whole', () => {
+test('snakeCase is Hibernate\'s own rule: an underscore only between a lower-case letter and an upper-case one followed by a lower-case one', () => {
+  // Each expectation is what CamelCaseToUnderscoresNamingStrategy (Hibernate 5.5-6.x,
+  // Spring Boot 2.6-3.x) and Spring Boot 2's SpringPhysicalNamingStrategy produce.
   assert.equal(snakeCase('lastName'), 'last_name');
   assert.equal(snakeCase('PetType'), 'pet_type');
   assert.equal(snakeCase('Owner'), 'owner');
   assert.equal(snakeCase('birthDate'), 'birth_date');
   assert.equal(snakeCase('URL'), 'url');
-  assert.equal(snakeCase('myURLValue'), 'my_url_value');
+  assert.equal(snakeCase('myURLValue'), 'myurlvalue', 'no lower-case letter on both sides of any capital');
+  assert.equal(snakeCase('userID'), 'userid');
+  assert.equal(snakeCase('fooBarX'), 'foo_barx', 'the last character never gets an underscore');
+  assert.equal(snakeCase('address.city'), 'address_city', 'a dot becomes an underscore');
   assert.equal(physicalName('lastName', 'identity'), 'lastName');
+  // Hibernate 7 counts a digit as lower-case on either side: the two rules part only there.
+  assert.deepEqual(springPhysicalName('address2Line'), { name: 'address2line', versionDependent: true, hibernate7: 'address2_line' });
+  assert.deepEqual(springPhysicalName('lastName'), { name: 'last_name', versionDependent: false, hibernate7: 'last_name' });
+});
+
+test('a name the Hibernate version decides is never EXACT, even under a declared strategy', () => {
+  const g = G();
+  const facts = [
+    { kind: 'entity', fqn: 'x.Address2Book', entity: true, attributes: [{ name: 'id', id: true, typeSimple: 'Long' }, { name: 'line2Text', typeSimple: 'String' }, { name: 'city', typeSimple: 'String' }] },
+  ];
+  addJpaFacts(g, facts, { namingStrategy: 'spring-snake-case' });
+  const table = [...g.nodes.values()].find((n) => n.kind === 'table');
+  assert.equal(table.id, tableId('address2book'));
+  assert.equal(table.jpaMappingGrade, 'HEURISTIC', 'Address2Book is address2_book under Hibernate 7');
 });
 
 // ---------------------------------------------------------------------------

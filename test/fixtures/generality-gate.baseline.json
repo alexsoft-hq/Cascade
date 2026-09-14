@@ -437,9 +437,9 @@
    "axes": {
     "catalog": "shipped",
     "statements": "not-shipped",
-    "jpa": "degraded",
+    "jpa": "shipped",
     "mybatisPlus": "not-shipped",
-    "column": "degraded",
+    "column": "shipped",
     "code": "shipped",
     "web": "shipped",
     "screen": "degraded"

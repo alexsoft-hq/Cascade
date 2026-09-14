@@ -93,7 +93,11 @@ A relation that cannot be scored does **not** drag a level down. It is named in
 were not measured" are two different facts and demoting the first loses both.
 
 `trust.knownGaps` also carries the axis declarations (`column-axis-degraded`,
-`code-axis-not-shipped`, …).
+`code-axis-not-shipped`, …), and says why the calibration gate does not stand
+behind the answer: `no-calibration-state`, `calibration-gate-red`, or
+`calibration-gate-other-build`, a passing verdict that judged another build of
+the pack than the one answering (its verdict records the digest of the pack it
+judged).
 
 **`limits`** — what the engine could not see, in sentences, each scoped. A depth
 cap that bit, a `${}` substitution it refused to guess at, an axis that was

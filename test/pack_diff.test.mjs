@@ -18,7 +18,7 @@ import { Graph, nodeId } from '../src/core/graph.mjs';
 import { projectPack } from '../src/core/pack.mjs';
 import { PACK_DIFF_SCHEMA, compareConditions, diffPacks } from '../src/core/pack_diff.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
-import { createProjectHost, packFingerprint } from '../src/mcp/projects.mjs';
+import { createProjectHost, fileStamp, packFingerprint } from '../src/mcp/projects.mjs';
 import { writeAtomic } from '../src/cli/pack_history.mjs';
 import { assertContract } from '../src/mcp/contract.mjs';
 import { startViewer } from './helpers/viewer_fixtures.mjs';
@@ -253,4 +253,39 @@ test('a context loaded from an earlier build is dropped from the list once anyth
   const io = (gate) => ({ statSync: (f) => (f.endsWith('gate-state.json') ? gate : at) });
   const entry = { dotCascadePath: '/nowhere/.cascade' };
   assert.notEqual(packFingerprint(entry, io({ ...at, ino: 2 })), packFingerprint(entry, io({ ...at, ino: 3 })));
+});
+
+test('a served context is read again when a profile it read outside the pack directory changes', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-watch-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const profile = path.join(dir, 'conventions.json');
+  fs.writeFileSync(profile, '{"a":1}');
+  let loads = 0;
+  const host = createProjectHost({
+    registry: { projects: [{ id: 'alpha', dotCascadePath: '/nowhere/.cascade' }] },
+    loadProject: () => { loads += 1; return { graph: new Graph(), pack: {}, watchFiles: [{ file: profile, stamp: fileStamp(profile) }] }; },
+    measureBytes: () => 1, fingerprint: () => 'same-build', readIndex: () => ({ ok: false, reason: 'absent' }), log: () => {},
+  });
+  host.ctxFor('alpha');
+  host.ctxFor('alpha');
+  assert.equal(loads, 1);
+  fs.rmSync(profile);
+  fs.writeFileSync(profile, '{"a":2}');
+  host.ctxFor('alpha');
+  assert.equal(loads, 2, 'the profile it answered with changed');
+});
+
+test('a project list row is read again when a publish lands between its two reads, so it never mixes two builds', () => {
+  let build = 1;
+  const host = createProjectHost({
+    registry: { projects: [{ id: 'alpha', dotCascadePath: '/nowhere/.cascade' }] },
+    loadProject: () => ({ graph: new Graph(), pack: { digest: `d${build}` } }),
+    measureBytes: () => 1,
+    fingerprint: () => `build-${build}`,
+    // The publish lands while the sidecar is being read, once.
+    readIndex: () => { const r = { ok: true, index: { serves: Array.from({ length: build }), calls: [] } }; if (build === 1) build = 2; return r; },
+    log: () => {},
+  });
+  const row = host.list()[0];
+  assert.equal(row.federation.serves, 2, 'the row was read again after the build moved');
 });

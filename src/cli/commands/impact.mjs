@@ -99,7 +99,7 @@ export function run(cli) {
       builtAt: pack.meta?.builtAt ?? null, freshness: { verdict: 'unknown' },
       ...(runtimeEvidenceBasis(pack) ?? {}),
     },
-    trust: computeTrust({ ...calibrationStateOf(resolvedFor.dotCascade), knownGaps: trustGapsFor(impactProfile, pack.meta?.axes ?? null) }),
+    trust: computeTrust({ ...calibrationStateOf(resolvedFor.dotCascade), packDigest: pack.digest, knownGaps: trustGapsFor(impactProfile, pack.meta?.axes ?? null) }),
     limits: [], pack: packMeta(pack), profile: impactProfile,
     ...(overlayProvider ? { overlay: overlayProvider } : {}),
   };

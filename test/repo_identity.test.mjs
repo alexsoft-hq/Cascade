@@ -122,13 +122,23 @@ test('a damaged history index removes nothing outside the history, and is rebuil
 test('two runs take turns on the pack lock, and a lock left behind is never broken by a run, however old', (t) => {
   const { packDir } = projectDir(t);
   const lock = path.join(packDir, '.write.lock');
+  // A running holder (the process that started this test) is waited for, then named.
+  const said = [];
+  fs.writeFileSync(lock, String(process.ppid));
+  assert.throws(() => withPackLock(packDir, () => 'x', { waitMs: 300, log: (s) => said.push(s) }), new RegExp(`analyze process ${process.ppid} \\(running\\) holds`));
+  assert.match(said[0], /^waiting for analyze process \d+ \(running\)/);
+  // This process holding it already is a bug, refused at once rather than waited out.
   fs.writeFileSync(lock, String(process.pid));
-  assert.throws(() => withPackLock(packDir, () => 'x', { waitMs: 300 }), new RegExp(`analyze process ${process.pid} \\(running\\) holds`));
+  const started = Date.now();
+  assert.throws(() => withPackLock(packDir, () => 'x'), /this process already holds/);
+  assert.ok(Date.now() - started < 5000);
   // Two runs that both judged an old lock abandoned would both break it and both publish.
   const old = (Date.now() - 24 * 60 * 60 * 1000) / 1000;
   fs.utimesSync(lock, old, old);
   fs.writeFileSync(lock, '999999');
-  assert.throws(() => withPackLock(packDir, () => 'x', { waitMs: 300 }), /\(not running\) holds .*remove the file/);
+  const refusedAt = Date.now();
+  assert.throws(() => withPackLock(packDir, () => 'x'), /\(not running\) holds .*killed while it held the lock.*remove the file/);
+  assert.ok(Date.now() - refusedAt < 5000, 'a holder that is not running is refused at once, not waited out');
   fs.rmSync(lock);
   assert.equal(withPackLock(packDir, () => 'ran'), 'ran');
   assert.equal(fs.existsSync(lock), false, 'the lock is released after the run');
@@ -301,10 +311,11 @@ test('a kept pack whose body was edited under its old digest is neither handed o
   write(packAt({ commit: 'b'.repeat(40) }, 'shop', digestOf(2)));
   const kept = keepPreviousPack(packDir, packAt({ commit: 'c'.repeat(40) }, 'shop', digestOf(3)));
   const file = path.join(dir, '.cascade', 'history', kept.id, 'pack.json');
+  assert.ok(loadHistoryPack(packDir, { commit: 'bbbbbbb' }), 'intact, and remembered as verified');
   const body = JSON.parse(fs.readFileSync(file, 'utf8'));
   body.nodes.push({ id: 'table:t' });
   fs.writeFileSync(file, JSON.stringify(body));
-  assert.equal(loadHistoryPack(packDir, { commit: 'bbbbbbb' }), null);
+  assert.equal(loadHistoryPack(packDir, { commit: 'bbbbbbb' }), null, 'an edit after it was verified is hashed again, not trusted from memory');
   keepPreviousPack(packDir, packAt({ commit: 'd'.repeat(40) }, 'shop', digestOf(4)));
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).nodes, BODIES.get(digestOf(2)), 'keeping the same build again restores it from the pack');
 });

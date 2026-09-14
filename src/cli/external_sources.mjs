@@ -27,9 +27,22 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isWebPackageConfigFile } from '../core/invalidate.mjs';
-import { sha256File } from './state.mjs';
+
 
 export const UNREADABLE = 'unreadable';
+
+const CHUNK = 1 << 20;
+
+/** A file's sha256, read a megabyte at a time: an outside tree can hold files far larger than a source file. */
+function sha256File(file) {
+  const [hash, buf, fd] = [createHash('sha256'), Buffer.allocUnsafe(CHUNK), fs.openSync(file, 'r')];
+  try {
+    for (let n = fs.readSync(fd, buf, 0, CHUNK, null); n > 0; n = fs.readSync(fd, buf, 0, CHUNK, null)) hash.update(buf.subarray(0, n));
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest('hex');
+}
 
 /** The input lists a run was given, with the flag that turns each lane off. */
 const INVOCATION_LANES = [['ddl', 'noDdl'], ['mappers', 'noMappers'], ['javaSrc', 'noJava'], ['webSrc', 'noWeb'], ['openapi', 'noOpenapi'], ['har', null], ['otel', null]];

@@ -47,7 +47,7 @@ const SERVICE_NAME_KEY = 'spring.application.name';
 const ROUTES_KEY_RE = /^spring\.cloud\.gateway(?:\.server\.webflux|\.server\.webmvc|\.mvc)?\.routes\.(\d+)\.(.+)$/;
 
 /** The key path prefixes this reader is interested in at all. */
-const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway|thymeleaf|freemarker|velocity|mvc\.view)(?:\.|$)/;
+const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway|thymeleaf|freemarker|velocity|mvc\.view|jpa)(?:\.|$)/;
 
 /**
  * THE VIEW RESOLVERS, and what each one calls its prefix and its suffix.
@@ -559,6 +559,48 @@ export function findServiceNames(files, diagnostics = null) {
   }
   out.sort((a, b) => cmp(a.name, b.name) || cmp(a.file, b.file));
   return out;
+}
+
+/**
+ * THE PHYSICAL NAMING STRATEGY CLASSES Spring and Hibernate ship, by the rule the
+ * profile's `jpa.namingStrategy` calls them. The three snake-case classes are one
+ * rule (Hibernate copied Spring's); Hibernate 7 widened it to digits, which the
+ * JPA bridge grades on its own (src/adapters/jpa_bridge.mjs, springPhysicalName).
+ */
+const JPA_PHYSICAL_STRATEGIES = Object.freeze({
+  'org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy': 'spring-snake-case',
+  'org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy': 'spring-snake-case',
+  'org.hibernate.boot.model.naming.PhysicalNamingStrategySnakeCaseImpl': 'spring-snake-case',
+  'org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl': 'identity',
+});
+
+/** Where a Spring project names its physical naming strategy: Spring Boot's own key, and Hibernate's passed through. */
+const JPA_NAMING_KEYS = new Set(['spring.jpa.hibernate.naming.physical-strategy', 'spring.jpa.properties.hibernate.physical-naming-strategy']);
+
+/**
+ * The JPA physical naming strategy each file declares. A class this engine does
+ * not model (the project's own strategy, a placeholder) is listed with a null
+ * strategy and said once, so it can never pass for Spring's default.
+ *
+ * @param {{path:string, text:string}[]} files
+ * @param {Object[]|null} [diagnostics]
+ * @returns {{strategy:(string|null), className:string, file:string, line:number}[]} sorted by file, then line
+ */
+export function findJpaNamingStrategies(files, diagnostics = null) {
+  const out = [];
+  for (const file of files ?? []) {
+    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
+    for (const e of springConfigEntries(file, diagnostics).filter((x) => JPA_NAMING_KEYS.has(relaxedKey(x.key)))) {
+      const className = resolvePlaceholder(e.value)?.trim() ?? null;
+      const strategy = className === null ? null : JPA_PHYSICAL_STRATEGIES[className] ?? null;
+      if (strategy === null) {
+        diag(diagnostics, 'info', 'JPA_NAMING_STRATEGY_UNMODELLED', file.path,
+          `${e.key} on line ${e.line} is ${JSON.stringify(e.value)}, a naming strategy this engine does not model, so the names it derives stay HEURISTIC`);
+      }
+      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line });
+    }
+  }
+  return out.sort((a, b) => cmp(a.file, b.file) || a.line - b.line);
 }
 
 /**

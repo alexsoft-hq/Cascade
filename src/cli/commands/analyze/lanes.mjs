@@ -23,6 +23,7 @@ import { assembleGraph } from '../../../core/assemble.mjs';
 import { webFactsSummary, catalogDigestOf as catalogDigestForShards } from '../../../core/facts_store.mjs';
 import { runLanesWithShards, runLineageForStatements } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
+import { jpaNamingOf } from '../../../core/lanes.mjs';
 import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane } from '../../lanes_run.mjs';
@@ -480,7 +481,7 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
       idGenerators: discovery?.idGenerators ?? [],
     } : null,
     jpa: runJpa ? {
-      namingStrategy: profile.jpa?.namingStrategy ?? null,
+      namingStrategy: jpaNamingOf(profile, discovery).strategy,
       schema: sqlArgs.defaultSchema,
       identifierCase: sqlArgs.identifierCase,
     } : null,

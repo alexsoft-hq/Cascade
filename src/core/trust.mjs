@@ -100,10 +100,25 @@ function goldenVerdict(wilson, gatePassing) {
 }
 
 /**
+ * A PASSING VERDICT COUNTS FOR THE PACK IT JUDGED. The gate state names the digest
+ * of the pack it judged; a served pack with another digest was not judged by it
+ * (a publish whose verdict was never written, a verdict from another build).
+ * A gate state from before verdicts named their pack is taken as it is.
+ */
+const judgedAnotherBuild = (gateState, packDigest) => typeof gateState?.packDigest === 'string' && typeof packDigest === 'string' && gateState.packDigest !== packDigest;
+
+/** Why the gate does not stand behind this pack: no state, a verdict on another build, or a red one. */
+function gateGap(gateState) {
+  if (!gateState) return 'no-calibration-state';
+  return PASSING_GATES.includes(gateState.verdict) ? 'calibration-gate-other-build' : 'calibration-gate-red';
+}
+
+/**
  * The trust block every response carries.
  *
  * @param {{gateState?:Object|null, golden?:Object|null, axes?:string[],
- *          knownGaps?:string[]}} input
+ *          knownGaps?:string[], packDigest?:string}} input  `packDigest`: the pack
+ *          the answer is from, which a passing verdict must have judged
  * @returns {{trustLevel:string, axes:string[], gatesNotShown:string[],
  *            knownGaps:string[], basis:{goldenCases:number, wilson:Object|null,
  *            gate:Object|null}}}
@@ -118,14 +133,11 @@ export function computeTrust(input = {}) {
   const goldenCases = Number.isInteger(golden?.approvedCases) ? golden.approvedCases : 0;
   const relations = golden?.summary && typeof golden.summary.relations === 'object' ? golden.summary.relations : null;
   const wilson = relations ? wilsonView(relations) : null;
-  const gatePassing = !!gateState && PASSING_GATES.includes(gateState.verdict);
+  const gatePassing = !!gateState && PASSING_GATES.includes(gateState.verdict) && !judgedAnotherBuild(gateState, input.packDigest);
 
   let level = TRUST_LEVELS[0]; // UNCERTIFIED unless everything below says otherwise
-  if (!gateState) {
-    gaps.add('no-calibration-state');
-    gatesNotShown.push('calibration-gate');
-  } else if (!gatePassing) {
-    gaps.add('calibration-gate-red');
+  if (!gatePassing) {
+    gaps.add(gateGap(gateState));
     gatesNotShown.push('calibration-gate');
   }
 

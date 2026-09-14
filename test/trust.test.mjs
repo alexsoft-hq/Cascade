@@ -366,3 +366,16 @@ test('the contract refuses a trust level nobody could have computed', async () =
   shape.trust.trustLevel = computeTrust({}).trustLevel;
   assert.ok(makeResponse(shape));
 });
+
+test('a passing verdict counts only for the pack it judged', () => {
+  const golden = { approvedCases: 400 * RELATIONS.length, summary: summaryWith(400, 400) };
+  const judged = { ...GREEN_GATE, packDigest: 'aaaaaaaaaaaa' };
+  assert.equal(computeTrust({ gateState: judged, golden, packDigest: 'aaaaaaaaaaaa' }).trustLevel, TRUST_LEVELS[3]);
+  const other = computeTrust({ gateState: judged, golden, packDigest: 'bbbbbbbbbbbb' });
+  assert.equal(other.trustLevel, TRUST_LEVELS[0], 'a verdict on another build does not certify this one');
+  assert.ok(other.knownGaps.includes('calibration-gate-other-build'));
+  assert.ok(!other.knownGaps.includes('calibration-gate-red'));
+  assert.equal(computeTrust({ gateState: GREEN_GATE, golden, packDigest: 'bbbbbbbbbbbb' }).trustLevel, TRUST_LEVELS[3], 'a verdict from before verdicts named their pack is taken as it is');
+  const red = computeTrust({ gateState: { ...judged, verdict: 'RED' }, golden, packDigest: 'bbbbbbbbbbbb' });
+  assert.ok(red.knownGaps.includes('calibration-gate-red'), 'a rejected run is still said as red');
+});

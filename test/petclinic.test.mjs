@@ -43,6 +43,8 @@ const FIXTURE = process.env.CASCADE_PETCLINIC
   ?? path.resolve(ENGINE_ROOT, '..', 'target-examples', 'spring-petclinic');
 
 const DDL_REL = 'src/main/resources/db/mysql/schema.sql';
+const PROPS_REL = 'src/main/resources/application.properties';
+const NAMING_LINE = 'spring.jpa.hibernate.naming.physical-strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategySnakeCaseImpl';
 const SRC_REL = 'src/main/java';
 
 function preflight() {
@@ -92,6 +94,12 @@ test('spring-petclinic: the JPA lane, end to end', { timeout: 900000 }, (t) => {
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const repo = path.join(work, 'repo');
   cloneFixture(repo);
+  // petclinic DECLARES its physical naming strategy in application.properties
+  // (the next test reads it). This one measures a project that declares nothing,
+  // so the clone loses that one line and every derived name is an assumption.
+  const props = fs.readFileSync(path.join(repo, PROPS_REL), 'utf8');
+  assert.ok(props.includes(NAMING_LINE), 'the pinned commit declares the snake-case strategy');
+  fs.writeFileSync(path.join(repo, PROPS_REL), props.split('\n').filter((l) => l !== NAMING_LINE).join('\n'));
 
   const cli = (args) => spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8', maxBuffer: 1 << 28,
@@ -175,8 +183,8 @@ test('spring-petclinic: the JPA lane, end to end', { timeout: 900000 }, (t) => {
   //    owner/OwnerRepository.java:45 declares
   //       Page<Owner> findByLastNameStartingWith(String lastName, Pageable pageable);
   //    `lastName` is Person.lastName (model/Person.java, @Column(length=30) with
-  //    NO name), so the column name is DERIVED -> HEURISTIC while the profile
-  //    declares no jpa.namingStrategy.
+  //    NO name), so the column name is DERIVED -> HEURISTIC while neither the
+  //    profile nor the (edited) configuration declares a naming strategy.
   //    OwnerController/VisitController/PetController call owners.save(..) and
   //    owners.saveAndFlush(..), and a JPA save writes the whole row.
   // -----------------------------------------------------------------------
@@ -284,7 +292,7 @@ test('spring-petclinic: the JPA lane, end to end', { timeout: 900000 }, (t) => {
   assert.ok(pack.meta.laneStats.parsedFiles > 20, `parsedFiles=${pack.meta.laneStats.parsedFiles}`);
 });
 
-test('spring-petclinic: a DECLARED naming strategy turns the derived mappings EXACT', { timeout: 900000 }, (t) => {
+test('spring-petclinic: the naming strategy its configuration declares turns the derived mappings EXACT', { timeout: 900000 }, (t) => {
   const why = preflight();
   if (why) { t.skip(why); return; }
 
@@ -299,13 +307,10 @@ test('spring-petclinic: a DECLARED naming strategy turns the derived mappings EX
   });
   assert.equal(cli(['init', '--root', repo, '--project', 'petclinic']).status, 0);
 
-  // Spring Boot's default IS CamelCase -> snake_case, and petclinic's
-  // application.properties sets no naming strategy — so declaring it here is a
-  // statement of fact about the project, which is exactly what the key is for.
-  const profilePath = path.join(repo, '.cascade', 'profile.json');
-  const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
-  profile.jpa.namingStrategy = 'spring-snake-case';
-  fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2) + '\n');
+  // Nothing is typed into the profile: application.properties names
+  // PhysicalNamingStrategySnakeCaseImpl, and the application runs by it.
+  const profile = JSON.parse(fs.readFileSync(path.join(repo, '.cascade', 'profile.json'), 'utf8'));
+  assert.equal(profile.jpa.namingStrategy, null);
 
   const analyze = cli([
     'analyze', '--root', repo, '--project', 'petclinic',
@@ -313,6 +318,8 @@ test('spring-petclinic: a DECLARED naming strategy turns the derived mappings EX
   ]);
   assert.equal(analyze.status, 0, analyze.stderr);
   assert.match(analyze.stderr, /naming strategy spring-snake-case \(declared\)/);
+  assert.match(analyze.stderr, /JPA_NAMING_FROM_CONFIGURATION jpa\.namingStrategy: .*PhysicalNamingStrategySnakeCaseImpl in src\/main\/resources\/application\.properties/);
+  assert.doesNotMatch(analyze.stderr, /PROFILE_DEFAULT_ASSUMED jpa\.namingStrategy/, 'the finding that it was assumed is replaced, not repeated');
 
   const { pack, ask } = askOf(path.join(repo, '.cascade', 'pack'));
   assert.equal(pack.meta.axes.jpa.status, 'shipped');

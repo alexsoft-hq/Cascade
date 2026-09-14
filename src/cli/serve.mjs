@@ -20,7 +20,7 @@ import { registryPath } from '../core/paths.mjs';
 import { resolveProject } from '../core/resolve.mjs';
 import { slugify } from '../core/init.mjs';
 import { callTool } from '../mcp/catalog.mjs';
-import { createProjectHost, packDirOf, DEFAULT_BUDGET_MB } from '../mcp/projects.mjs';
+import { createProjectHost, fileStamp, packDirOf, DEFAULT_BUDGET_MB } from '../mcp/projects.mjs';
 import { makeOverlayProvider } from './overlay_provider.mjs';
 import { calibrationStateOf, gitChangedFiles, ownStateOf } from './state.mjs';
 import { listHistory, loadHistoryPack } from './pack_history.mjs';
@@ -83,6 +83,15 @@ export function runtimeEvidenceBasis(pack) {
   };
 }
 
+/** The files a served profile can come from, in the order they are tried. */
+const profileCandidates = (packDir, pack) => [pack?.meta?.profile, path.join(packDir, '..', 'profile.json')].filter(Boolean);
+
+/** The served profile, and the files it could come from stamped BEFORE it is read, so a change while it is read is a change. */
+function watchedProfile(dir, pack) {
+  const watchFiles = profileCandidates(dir, pack).map((file) => ({ file, stamp: fileStamp(file) }));
+  return { prof: servedProfile(dir, pack), watchFiles };
+}
+
 /**
  * The profile a SERVER answers with: the file the pack recorded at analyze time
  * when it is still there, else the profile beside the pack. Null when neither
@@ -90,8 +99,7 @@ export function runtimeEvidenceBasis(pack) {
  * inventing a convention.
  */
 export function servedProfile(packDir, pack) {
-  const candidates = [pack?.meta?.profile, path.join(packDir, '..', 'profile.json')].filter(Boolean);
-  for (const f of candidates) {
+  for (const f of profileCandidates(packDir, pack)) {
     if (!fs.existsSync(f)) continue;
     try { return loadProfile(f); } catch (e) { process.stderr.write(`profile ${f} ignored: ${e.message}\n`); }
   }
@@ -218,9 +226,9 @@ export function loadServedProject(entry) {
   const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (pack.schema !== PACK_SCHEMA) throw new Error(`unexpected pack schema in ${file}: ${pack.schema}`);
   const graph = loadPack(pack, { verifyDigest: true });
-  const prof = servedProfile(dir, pack);
+  const { prof, watchFiles } = watchedProfile(dir, pack);
   return {
-    graph,
+    watchFiles, graph,
     basis: {
       // The id the CLIENT addressed (the registry id / the `project` argument),
       // not the name the pack happens to carry: on a server holding several
@@ -245,7 +253,7 @@ export function loadServedProject(entry) {
     // COMPUTED (SPEC §14.3 MUST): this project's last gate verdict plus its
     // approved golden corpus. A bare `--pack` has no `.cascade/` to read and
     // computes from NO state — UNCERTIFIED with `no-calibration-state`.
-    trust: computeTrust({ ...calibrationStateOf(entry.dotCascadePath ?? null), knownGaps: trustGapsFor(prof, pack.meta?.axes ?? null) }),
+    trust: computeTrust({ ...calibrationStateOf(entry.dotCascadePath ?? null), packDigest: pack.digest, knownGaps: trustGapsFor(prof, pack.meta?.axes ?? null) }),
     limits: [],
     pack: packMeta(pack),
     profile: prof,

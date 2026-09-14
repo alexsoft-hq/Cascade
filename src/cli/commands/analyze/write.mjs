@@ -235,6 +235,8 @@ const gateState = gateStateOf({
   goldenSummary: goldenSummaryDoc,
   extra: {
     enginePrint: enginePrintNow,
+    // The pack this verdict judged: a server counts a passing verdict only for it (src/core/trust.mjs).
+    packDigest: pack.digest,
     pin,
     thresholds: gate.thresholds,
     ...(overrideOf ? { acceptedByHuman: true, overrideOf } : {}),
@@ -310,7 +312,7 @@ export function updateRegistry({ opt }, { resolved, out, lanes, builtAt }) {
  * each trace this run read. A changed trace is then a changed input rather than
  * a pack that quietly says something new.
  */
-export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile, projectId, serviceNames, otelFiles, relOf, afterPack = null, lockDir = path.dirname(path.resolve(out)) }) {
+export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile, projectId, serviceNames, otelFiles, relOf, afterPack = null, lockDir = out }) {
   if (otelFiles.length > 0) {
     result.index.runtimeEvidence = {
       otel: otelFiles.map((f) => ({ path: relOf(f), sha256: sha256File(f) })),
@@ -342,7 +344,7 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
   // whichever `--out` it writes: they share the gate verdict, the baseline, the
   // receipt and the pack history beside the pack directory.
   publishPack(writeDir, {
-    pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir: calibrated ? lockDir : out,
+    pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir,
     afterPack: () => { writeVerdict(); afterPack?.({ writeDir, writeIndexFile }); },
   });
   return { writeDir, writeIndexFile, routesIndex };
@@ -437,7 +439,9 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
  * keeping or pruning is said and does not stop the publish.
  */
 export function publishPack(writeDir, { pack, index, routes, keep, lockDir = writeDir, afterPack = null }) {
-  withPackLock(lockDir, () => {
+  // `lockDir: false` is a caller that already holds the project's lock.
+  const locked = (fn) => (lockDir === false ? fn() : withPackLock(lockDir, fn));
+  locked(() => {
     const warn = (what, e) => process.stderr.write(`pack history: could not ${what} (${e.message}); the pack is published all the same\n`);
     if (keep) { try { keepPreviousPack(writeDir, pack); } catch (e) { warn('keep the pack this run replaces', e); } }
     fs.mkdirSync(writeDir, { recursive: true });
@@ -475,7 +479,7 @@ export function sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, 
  * A RED run stops here with exit 3, leaving the previously certified pack exactly
  * where it was.
  */
-export function writeArtifacts({ g, pack, result, out, red, calibrated, gate, verdict, gateState, overrideOf, enginePrintNow, pin, metrics, profileDigest, catalogDigest, baseline, profile, stateDir, calibrationDir, baselineFile, gateStateFile, receiptFile, builtAt, goldenSummaryDoc, projectId, serviceNames, otelFiles, relOf }) {
+export function writeArtifacts({ g, pack, result, out, red, calibrated, gate, verdict, gateState, overrideOf, enginePrintNow, pin, metrics, profileDigest, catalogDigest, baseline, profile, stateDir, calibrationDir, baselineFile, gateStateFile, receiptFile, builtAt, goldenSummaryDoc, projectId, serviceNames, otelFiles, relOf, locked = false }) {
   sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, goldenSummaryDoc });
   const certify = red ? null : ({ writeDir, writeIndexFile }) => {
     // Seal (or re-seal) the baseline: the "previous certified run" moves forward
@@ -494,14 +498,25 @@ export function writeArtifacts({ g, pack, result, out, red, calibrated, gate, ve
   };
   const { writeDir, writeIndexFile, routesIndex } = writePackAndIndex({
     g, pack, result, out, red, calibrated, gateState, calibrationDir, gateStateFile,
-    projectId, serviceNames, otelFiles, relOf, afterPack: certify, lockDir: stateDir,
+    projectId, serviceNames, otelFiles, relOf, afterPack: certify, lockDir: lockDirFor({ locked, calibrated, stateDir, out }),
   });
+  if (red && !locked) rejectRun({ writeDir, out });
+  return { writeDir, writeIndexFile, routesIndex, rejected: red };
+}
 
-  if (red) {
-    process.stderr.write(`REJECTED: the pack was written to ${path.join(writeDir, 'pack.json')} and the certified pack at ${path.join(out, 'pack.json')} was NOT touched\n`
-      + '  a regression is not a new snapshot: fix it. If this drop is the intended new normal, re-run with `--accept-baseline`,\n'
-      + '  which re-seals the baseline from THIS run. That is the only override, and it is a human decision.\n');
-    process.exit(3);
-  }
-  return { writeDir, writeIndexFile, routesIndex };
+/**
+ * Where the publish takes its lock: nowhere when the caller holds the project's
+ * lock already, the project's state directory for a certified or rejected run
+ * (they share the verdict, the baseline, the receipt and the history), and the
+ * output directory of a one-off `--out` build. The analyze command decides the
+ * same way when it takes the lock around the gate (index.mjs).
+ */
+export const lockDirFor = ({ locked = false, calibrated, stateDir, out }) => (locked ? false : calibrated ? stateDir : out);
+
+/** A RED run's last word, and exit 3. Called once the project's lock is released. */
+export function rejectRun({ writeDir, out }) {
+  process.stderr.write(`REJECTED: the pack was written to ${path.join(writeDir, 'pack.json')} and the certified pack at ${path.join(out, 'pack.json')} was NOT touched\n`
+    + '  a regression is not a new snapshot: fix it. If this drop is the intended new normal, re-run with `--accept-baseline`,\n'
+    + '  which re-seals the baseline from THIS run. That is the only override, and it is a human decision.\n');
+  process.exit(3);
 }

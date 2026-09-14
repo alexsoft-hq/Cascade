@@ -743,7 +743,8 @@ repository is unknown.
 `.cascade/history/`, one directory per build, and keeps the five most recent. A
 rebuild that changed nothing (same commit, same digest) keeps nothing. A kept
 pack whose nodes and edges no longer match its digest is not used. The copy
-is made under the project's write lock; then the fact index and the route index
+is made under the project's write lock, which a run takes before its gate reads
+the sealed baseline and holds until its receipt is written; then the fact index and the route index
 are renamed into place, each naming the digest of the pack it belongs to, then
 the pack; the gate's verdict, the baseline and the receipt follow the pack and
 are written before the lock is released, so a pack that failed to publish is
@@ -753,9 +754,11 @@ rather than reading it with the wrong pack, and a server reads a project again
 when its pack, indexes, verdict, golden corpus, profile or manifest change. The
 history is pruned after that, even when certifying failed, so the pack being
 served is always the old one or the new one. The lock (`.cascade/.write.lock`,
-one per project whichever `--out` a certified run writes) is never broken automatically, because two runs that both judged it abandoned
-would both publish: one left behind by an analyze killed while publishing is
-named in the refusal, with its process id, and is removed by hand. A build made with uncommitted edits is kept
+one per project whichever `--out` a certified run writes) makes a second run
+wait, saying for which process, for up to ten minutes. It is never broken
+automatically, because two runs that both judged it abandoned would both
+publish: a lock whose process is not running on this machine (an analyze that
+was killed) is refused at once, with its process id, and is removed by hand. A build made with uncommitted edits is kept
 but never chosen by its commit. The viewer's Compare tab and the MCP tool
 `pack_diff { base_commit }` choose their base from here, and a server notices a
 pack republished under it and reads the new one.

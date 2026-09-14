@@ -537,7 +537,7 @@ as SQL.
 | From | To | Grade |
 |---|---|---|
 | `@Entity` + `@Table(name="owners")` | the table `owners` | **EXACT** — the source says so |
-| `@Entity` with no `@Table` | the table the naming strategy gives | **EXACT** if `jpa.namingStrategy` is declared, else **HEURISTIC** |
+| `@Entity` with no `@Table` | the table the naming strategy gives | **EXACT** if the naming strategy is declared (in the profile or the project's Spring configuration), else **HEURISTIC** |
 | `@Column(name="visit_date")` | that column | **EXACT** |
 | a field with no `@Column` | the column the naming strategy gives | as above |
 | `@Id` | the primary-key column | **EXACT** |
@@ -626,13 +626,23 @@ binding, not a method Spring runs, and is never read as one.
 
 Hibernate turns `Owner`/`lastName` into a physical `owners`/`last_name` with a
 naming strategy the application configures. This engine does not run your
-application, so when the profile is silent it **assumes** Spring Boot's default
-(CamelCase → snake_case, lower-cased) and grades every name it derived that way
-`HEURISTIC` — which means `endpoint_impact` at the default `conservative` mode
+application, but it reads where the application declares the strategy:
+`spring.jpa.hibernate.naming.physical-strategy` (or
+`spring.jpa.properties.hibernate.physical_naming_strategy`) in the project's
+`application.properties`/`application.yml`, in any spelling Spring binds. A
+recognized class there is a declaration, and the run says so
+(`JPA_NAMING_FROM_CONFIGURATION`). A class this engine does not model, or two
+configuration files that name different strategies, declare nothing it can
+apply, and the run says that too.
+
+When neither the profile nor the configuration declares it, the engine
+**assumes** Spring Boot's default and grades every name it derived that way
+`HEURISTIC`, which means `endpoint_impact` at the default `conservative` mode
 returns **nothing** for such a column, and says why in `limits`.
 
 That is not a bug to work around; it is the engine refusing to present a guess as
-a fact. Declare the rule and the same mappings become EXACT:
+a fact. Declare the rule in the profile (it wins over the configuration) and the
+same mappings become EXACT:
 
 ```json
 {
@@ -641,11 +651,21 @@ a fact. Declare the rule and the same mappings become EXACT:
 }
 ```
 
-- `"spring-snake-case"` — Spring Boot's default (`CamelCaseToUnderscoresNamingStrategy`).
+- `"spring-snake-case"` — Spring Boot's default (`CamelCaseToUnderscoresNamingStrategy`,
+  and Hibernate's `PhysicalNamingStrategySnakeCaseImpl` and Spring Boot 2's
+  `SpringPhysicalNamingStrategy`, which are the same rule). Exactly Hibernate's
+  rule: a `.` becomes `_`, and an underscore goes before a capital only when a
+  lower-case letter is on both sides of it, never before the last character, so
+  `lastName` is `last_name` but `userID` is `userid` and `myURLValue` is
+  `myurlvalue`. Hibernate 7 (Spring Boot 4) also counts a digit as lower-case,
+  so the two versions spell `address2Line` differently (`address2line`,
+  `address2_line`); a name like that is graded HEURISTIC even under a declared
+  strategy, because the project's Hibernate version decides it.
 - `"identity"` — the logical name is the physical name (Hibernate's
   `PhysicalNamingStrategyStandardImpl`, what you get with
   `spring.jpa.hibernate.naming.physical-strategy` set to it).
-- `null` (the default) — undeclared, assume the Spring Boot default, grade HEURISTIC.
+- `null` (the default) — take the strategy the project's Spring configuration
+  names, and when it names none, assume the Spring Boot default and grade HEURISTIC.
 
 A name the source spells out with `@Table`/`@Column`/`@JoinColumn`/`@JoinTable`
 is EXACT either way — the strategy is never consulted for it.

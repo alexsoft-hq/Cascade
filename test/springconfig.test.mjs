@@ -4,7 +4,7 @@ import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
   springConfigEntries, resolvePlaceholder, frontPrefixOf, backPrefixOf, serviceOfUri,
   findViewResolvers, relaxedKey, findXmlViewResolvers, findDbTypeDeclarations,
-  looksLikeSpringBeansXml, springBeansOf,
+  looksLikeSpringBeansXml, springBeansOf, findJpaNamingStrategies,
 } from '../src/core/springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from '../src/core/profile.mjs';
 
@@ -627,4 +627,16 @@ test('a DbType-shaped property names the database vendor, and only a routable on
   assert.deepEqual(findDbTypeDeclarations([{ path: 'a.properties', text: 'Globals.DbType=dm8\n' }], routable), []);
   // A key that is not asking which database this is.
   assert.deepEqual(findDbTypeDeclarations([{ path: 'a.properties', text: 'Globals.DbTypeLabel=mysql\n' }], routable), []);
+});
+
+test('the JPA physical naming strategy a project configures is read, in every spelling Spring binds, and a class this engine does not model is said', () => {
+  const diagnostics = [];
+  const found = findJpaNamingStrategies([
+    { path: 'app/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.physical-strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategySnakeCaseImpl\n' },
+    { path: 'svc/src/main/resources/application.yml', text: 'spring:\n  jpa:\n    hibernate:\n      naming:\n        physicalStrategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl\n' },
+    { path: 'old/src/main/resources/application.properties', text: 'spring.jpa.properties.hibernate.physical_naming_strategy=org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy\n' },
+    { path: 'own/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.physical-strategy=com.example.OurNaming\n' },
+  ], diagnostics);
+  assert.deepEqual(found.map((f) => [f.file.split('/')[0], f.strategy]), [['app', 'spring-snake-case'], ['old', 'spring-snake-case'], ['own', null], ['svc', 'identity']]);
+  assert.deepEqual(diagnostics.map((d) => [d.kind, d.path]), [['JPA_NAMING_STRATEGY_UNMODELLED', 'own/src/main/resources/application.properties']]);
 });

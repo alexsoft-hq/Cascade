@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { addHarFacts, readHar } from '../../../adapters/har_bridge.mjs';
-import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf } from '../../../core/lanes.mjs';
+import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf, jpaNamingOf } from '../../../core/lanes.mjs';
 import { ENGINE_ROOT, SCRATCH, listMapperXml, noSqlPython, sqlPython } from '../../env.mjs';
 import { webPackagesRead } from '../../lanes_run.mjs';
 import {
@@ -23,8 +23,24 @@ import {
   annotationLineage, assembleAll, nativeQueryLineage, readOpenApiDocs, runLanes,
   webWorkerStatsOf, whichLanesAssemble, wrapperFragmentLineage,
 } from './lanes.mjs';
-import { buildPack, runGate, updateRegistry, writeArtifacts } from './write.mjs';
+import { withPackLock } from '../../pack_history.mjs';
+import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
 import { analyzeTarget, incrementalPlan, laneSelection } from './inputs.mjs';
+
+/**
+ * The profile's "jpa.namingStrategy is not declared" finding, replaced by what the
+ * project's own configuration says when it names the strategy, or names one this
+ * engine cannot apply. The profile itself is not changed: its digest is part of
+ * what the gate pins, and the configuration is read from the tree every run.
+ */
+function withJpaNaming(diagnostics, naming) {
+  if (naming.from !== 'configuration' && naming.from !== 'unreadable') return diagnostics;
+  const said = naming.from === 'configuration'
+    ? { kind: 'JPA_NAMING_FROM_CONFIGURATION', severity: 'info', reason: `jpa.namingStrategy is not declared in the profile, and the project's configuration names it (${naming.classNames.join(', ')} in ${naming.files.join(', ')}): names the mapping did not spell out are derived by ${naming.strategy} and graded as declared` }
+    : { kind: 'JPA_NAMING_UNREADABLE', severity: 'info', reason: `the project's configuration names ${naming.classNames.join(', ')} in ${naming.files.join(', ')}, which is not one strategy this engine can apply, so names the mapping did not spell out stay HEURISTIC; declare jpa.namingStrategy in the profile to settle it` };
+  const rest = diagnostics.filter((d) => !(d.kind === 'PROFILE_DEFAULT_ASSUMED' && d.key === 'jpa.namingStrategy'));
+  return [...rest, { ...said, key: 'jpa.namingStrategy' }];
+}
 
 /**
  * EVERYTHING THIS RUN DECIDES BEFORE A WORKER STARTS, and the census that says
@@ -46,7 +62,7 @@ function prepare(ctx) {
     flags, discovery, sel, ddls, ddl, snapshot, snapshotProvenance, snapshotSha256,
     mappers, javaSrc, webSrc, openapiFiles, harFiles, otelFiles, diagnostics: selected,
   } = laneSelection(ctx, { root, profile, resolved, diagnostics: profileFindings });
-  const diagnostics = selected;
+  const diagnostics = withJpaNaming(selected, jpaNamingOf(profile, discovery));
 
   sayNoSchemaFetched(profile, { ddls, snapshot, resolved, root });
 
@@ -214,9 +230,9 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
 }
 
 /**
- * THE PACK, THE GATE THAT JUDGES IT, AND WHAT THAT LEAVES ON DISK. The gate
- * exits 3 from inside `writeArtifacts` on a regression, which is why this runs
- * inside the scratch directory's `try`.
+ * THE PACK, THE GATE THAT JUDGES IT, AND WHAT THAT LEAVES ON DISK. A regression
+ * exits 3 once the project's lock is released, which is why this runs inside the
+ * scratch directory's `try`.
  */
 function certify(ctx, prepared, facts) {
   const {
@@ -230,18 +246,21 @@ function certify(ctx, prepared, facts) {
     projectId, lanes, base, ddl, ddls, snapshot, snapshotProvenance, snapshotSha256, sqlArgs, axes,
     laneStats, webStats, openapiStats, harStats, runtimeStats, diagnostics, profileFile, st, baseCommit,
   });
-  const {
-    calibrated, verdict, red, gate, gateState, goldenSummaryDoc, overrideOf, enginePrintNow, pin, metrics,
-    profileDigest, catalogDigest, baseline, stateDir, calibrationDir, baselineFile, gateStateFile, receiptFile,
-  } = runGate(ctx, {
-    g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt,
-    evidenceFiles: [...prepared.harFiles.map((f) => ['har', f]), ...prepared.otelFiles.map((f) => ['otel', f])],
+  // ONE LOCK FROM THE GATE TO THE RECEIPT. The gate judges this run against the
+  // sealed baseline, and the baseline is what another run of the project re-seals:
+  // two runs that both read the old baseline would both be judged against it, and
+  // the later one could seal a regression of the earlier. So the baseline is read,
+  // the gate evaluated and everything written with the project's lock held.
+  const state = stateFiles(resolved, out);
+  const written = withPackLock(lockDirFor({ calibrated: state.calibrated, stateDir: state.stateDir, out }), () => {
+    const gated = runGate(ctx, {
+      g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt,
+      evidenceFiles: [...prepared.harFiles.map((f) => ['har', f]), ...prepared.otelFiles.map((f) => ['otel', f])],
+    });
+    return writeArtifacts({ ...gated, g, pack, result, out, profile, builtAt, projectId, serviceNames, otelFiles, relOf, locked: true });
   });
-  const { writeDir, writeIndexFile, routesIndex } = writeArtifacts({
-    g, pack, result, out, red, calibrated, gate, verdict, gateState, overrideOf, enginePrintNow, pin, metrics,
-    profileDigest, catalogDigest, baseline, profile, stateDir, calibrationDir, baselineFile, gateStateFile,
-    receiptFile, builtAt, goldenSummaryDoc, projectId, serviceNames, otelFiles, relOf,
-  });
+  if (written.rejected) rejectRun({ writeDir: written.writeDir, out });
+  const { writeDir, writeIndexFile, routesIndex } = written;
   sayResult({ writeDir, writeIndexFile, pack, routesIndex, axes, lanes, st, plan, result, projectId, base, webSrc, mappers, ddls });
   updateRegistry(ctx, { resolved, out, lanes, builtAt });
 }

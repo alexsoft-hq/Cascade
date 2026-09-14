@@ -20,7 +20,7 @@
 import path from 'node:path';
 import { findConnectionCandidates, looksLikeConnectionFile } from './dbconfig.mjs';
 import {
-  findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
+  findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile, findJpaNamingStrategies,
   findViewResolvers, findXmlViewResolvers, findIdGenerators, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
@@ -675,6 +675,7 @@ export function classifyDdlFile(relPath, text) {
  *   ddlDialectHint:('mysql'|null),
  *   connectionCandidates:Object[],
  *   serviceNames:{name:string, file:string}[],
+ *   jpaNamingStrategies:{strategy:(string|null), className:string, file:string, line:number}[],
  *   gatewayRoutes:{front:string, to:string, service:(string|null), file:string, id:(string|null)}[],
  *   externalConfigImports:{file:string, value:string}[],
  *   filesScanned:number,
@@ -983,7 +984,7 @@ function classifySpringConfig(d, f) {
   const { absFile, rel } = f;
   const {
     connectionCandidates, dbTypeDeclarations, diagnostics, externalConfigImports,
-    gatewayRoutes, read, serviceNames, viewResolvers,
+    gatewayRoutes, read, serviceNames, viewResolvers, jpaNamingStrategies,
   } = d;
   // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
   // `locale*/` is a presentation resource, and reading it produced diagnostics
@@ -1002,6 +1003,7 @@ function classifySpringConfig(d, f) {
     const one = [{ path: relFile, text }];
     if (springConfig) {
       serviceNames.push(...findServiceNames(one, diagnostics));
+      jpaNamingStrategies.push(...findJpaNamingStrategies(one, diagnostics));
       gatewayRoutes.push(...findGatewayRoutes(one, diagnostics));
       externalConfigImports.push(...findExternalConfigImports(one));
       viewResolvers.push(...findViewResolvers(one, diagnostics));
@@ -1429,6 +1431,7 @@ function discoveryCollections() {
     // it forwards a request (RM46, src/core/springconfig.mjs). Both used to be
     // typed into the profile by hand, and both are in the tree.
     serviceNames: [],
+    jpaNamingStrategies: [], // the physical naming strategy spring.jpa names, per file
     gatewayRoutes: [],
     externalConfigImports: [],
     // The two lane inputs `cascade analyze` needs when it is run with no flags:
@@ -1485,6 +1488,8 @@ function sortedDeclarations(d) {
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.url < b.url ? -1 : a.url > b.url ? 1 : 0)),
     serviceNames: d.serviceNames.slice()
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+    jpaNamingStrategies: d.jpaNamingStrategies.slice()
+      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line)),
     gatewayRoutes: d.gatewayRoutes.slice()
       .sort((a, b) => (a.front < b.front ? -1 : a.front > b.front ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     externalConfigImports: d.externalConfigImports.slice()
@@ -1652,7 +1657,7 @@ export function discover(root, io = {}) {
     ddlCandidates,
     connectionCandidates,
     dbTypeDeclarations,
-    serviceNames,
+    serviceNames, jpaNamingStrategies,
     gatewayRoutes,
     externalConfigImports,
     mapperDirs,
@@ -1700,7 +1705,7 @@ export function discover(root, io = {}) {
     packageCounts,
     read,
     root,
-    serviceNames,
+    serviceNames, jpaNamingStrategies,
     nexacroApps, websquarePages,
     nexacroForms,
     templateDirs,

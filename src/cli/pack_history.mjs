@@ -36,7 +36,8 @@ const INDEX = 'index.json';
 const SCHEMA = 'cascade:pack-history:1';
 /** The only id this module writes: up to 12 hex of the commit (or `no-commit`), and the 12-hex digest. */
 const ID_RE = /^(?:[0-9a-f]{1,12}|no-commit)-[0-9a-f]{12}$/;
-const LOCK_WAIT_MS = 60 * 1000;
+/** How long a run waits for another run of the project that is still going: the gate, the golden score and the publish. */
+const LOCK_WAIT_MS = 10 * 60 * 1000;
 
 /** The history directory beside a pack directory. */
 export const historyDirOf = (packDir) => path.join(path.dirname(path.resolve(packDir)), 'history');
@@ -88,37 +89,60 @@ export function writeAtomic(file, text) {
   }
 }
 
-/** Take the lock file, waiting for its holder; a refusal that names the holder when the wait runs out. */
-function acquireLock(lock, { until }) {
+/**
+ * Take the lock file, waiting for a holder that is running. A holder that is not
+ * running on this machine is refused at once rather than waited for or broken
+ * (a run killed while it held the lock); so is one still holding it when the wait
+ * runs out. Either refusal names the holder and says how to remove the file.
+ */
+function acquireLock(lock, { until, log }) {
+  let said = false;
   for (;;) {
     try { return fs.openSync(lock, 'wx'); } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (Date.now() > until) throw new Error(`${holderOf(lock)} holds ${lock}. Wait for it to finish; if no analyze of this project is running (one was killed while publishing), remove the file`, { cause: e });
+      const holder = holderOf(lock);
+      const refusal = refusalFor(lock, holder, until);
+      if (refusal) throw new Error(refusal, { cause: e });
+      if (!said) { log(`waiting for ${holder.name}, which holds ${lock}`); said = true; }
       sleepMs(250);
     }
   }
 }
 
-/** Who a lock says holds it, for the refusal: the process id and whether it is still running on this machine. */
+/** Why the lock cannot be waited for, or null when its holder is running and there is time left. */
+function refusalFor(lock, holder, until) {
+  // The lock is not re-entrant: this process waiting for itself would wait out the whole timeout.
+  if (holder.pid === process.pid) return `this process already holds ${lock}; a lock taken twice by one run is a bug`;
+  return holder.running === false || Date.now() > until ? lockRefusal(lock, holder) : null;
+}
+
+const lockRefusal = (lock, holder) => `${holder.name} holds ${lock}. `
+  + (holder.running === false
+    ? 'That process is not running on this machine: an analyze was killed while it held the lock. If no analyze of this project is running anywhere (another machine or container sharing the directory), remove the file'
+    : 'Wait for it to finish; if no analyze of this project is running, remove the file');
+
+/** Who a lock says holds it: the process id, and whether it runs on this machine (null when that cannot be told). */
 function holderOf(lock) {
   let pid = null;
   try { pid = Number.parseInt(fs.readFileSync(lock, 'utf8'), 10); } catch { /* gone or unreadable */ }
-  if (!Number.isInteger(pid) || pid <= 0) return 'another analyze of this project';
-  try { process.kill(pid, 0); return `analyze process ${pid} (running)`; } catch (e) { return `analyze process ${pid} (${e.code === 'ESRCH' ? 'not running' : 'state unknown'})`; }
+  if (!Number.isInteger(pid) || pid <= 0) return { pid: null, name: 'another analyze of this project', running: null };
+  try { process.kill(pid, 0); return { pid, name: `analyze process ${pid} (running)`, running: true }; } catch (e) {
+    return e.code === 'ESRCH' ? { pid, name: `analyze process ${pid} (not running)`, running: false } : { pid, name: `analyze process ${pid}`, running: null };
+  }
 }
 
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
- * The project's write lock, held for the time `fn` runs: only the publish, which
- * takes seconds. Each holder writes its own token and removes the lock only while
- * the token is still its own, so a lock somebody removed by hand and another run
- * took is not removed from under that run.
+ * The project's write lock, held for the time `fn` runs: the gate, the golden
+ * score and the publish. Each holder writes its own token and removes the lock
+ * only while the token is still its own, so a lock somebody removed by hand and
+ * another run took is not removed from under that run.
  */
-export function withPackLock(packDir, fn, { waitMs = LOCK_WAIT_MS } = {}) {
+export function withPackLock(packDir, fn, { waitMs = LOCK_WAIT_MS, log = (s) => process.stderr.write(`${s}\n`) } = {}) {
   fs.mkdirSync(packDir, { recursive: true });
   const lock = path.join(packDir, '.write.lock');
-  const fd = acquireLock(lock, { until: Date.now() + waitMs });
+  const fd = acquireLock(lock, { until: Date.now() + waitMs, log });
   const token = `${process.pid}:${crypto.randomUUID()}`;
   try {
     fs.writeSync(fd, token);
@@ -193,9 +217,42 @@ const STAGING = '.staging-';
 
 /** Whether a kept directory holds the build its id names, by the digest of its nodes and edges and not only the one it states. */
 function keptIntact(target, id) {
+  const read = readVerified(path.join(target, 'pack.json'));
+  return !!read && read.intact && id.endsWith(`-${read.pack.digest}`);
+}
+
+/**
+ * VERIFIED BODIES, remembered by the file's identity on disk (inode, size,
+ * modification and change time, and the digest it states). Hashing a pack of
+ * tens of megabytes is a tenth of a second; a server comparing with the same kept
+ * build again and again does it once. Any write to the file changes its change
+ * time, which no tool can set back, so an edited body is hashed again.
+ */
+const verifiedBodies = new Map();
+const VERIFIED_KEEP = 64;
+
+const statKey = (file) => { try { const st = fs.statSync(file); return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`; } catch { return null; } };
+
+/**
+ * A kept pack, parsed, and whether its body is what its digest says. The file is
+ * stamped before and after it is read; only a read the file did not change under
+ * is remembered, so a verdict is never kept for bytes other than the ones hashed.
+ * @returns {{pack:object, intact:boolean}|null} null when the file cannot be read
+ */
+function readVerified(file) {
+  const before = statKey(file);
   let pack;
-  try { pack = JSON.parse(fs.readFileSync(path.join(target, 'pack.json'), 'utf8')); } catch { return false; }
-  return bodyIsDigest(pack) && id.endsWith(`-${pack.digest}`);
+  try { pack = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  const key = before !== null && before === statKey(file) ? `${before}:${pack?.digest}` : null;
+  if (key !== null && verifiedBodies.get(file) === key) return { pack, intact: true };
+  const intact = bodyIsDigest(pack);
+  if (intact && key !== null) remember(file, key);
+  return { pack, intact };
+}
+
+function remember(file, key) {
+  if (verifiedBodies.size >= VERIFIED_KEEP) verifiedBodies.delete(verifiedBodies.keys().next().value);
+  verifiedBodies.set(file, key);
 }
 
 /** Whether a pack's nodes and edges are what its digest says: an edited body with its old digest is not that build. */
@@ -252,17 +309,17 @@ function pickEntry(entries, { id, commit }) {
 export function loadHistoryPack(packDir, { id = null, commit = null } = {}) {
   const want = pickEntry(listHistory(packDir), { id, commit });
   if (!want) return null;
-  const pack = readKept(packDir, want.id);
-  return pack && sameEntry(pack, want) ? { entry: want, pack } : null;
+  const read = readKept(packDir, want.id);
+  return read && sameEntry(read, want) ? { entry: want, pack: read.pack } : null;
 }
 
 /** A kept pack, or null when it is gone (pruned by another run since the index was read) or unreadable. */
 function readKept(packDir, id) {
-  try { return JSON.parse(fs.readFileSync(path.join(historyDirOf(packDir), id, 'pack.json'), 'utf8')); } catch { return null; }
+  return readVerified(path.join(historyDirOf(packDir), id, 'pack.json'));
 }
 
-/** Whether the pack is the build its entry names: its digest, its commit, and whether it was clean. */
-function sameEntry(pack, entry) {
-  const b = pack.meta?.base ?? {};
-  return pack.digest === entry.digest && (b.commit ?? null) === entry.commit && (b.dirty === true) === entry.dirty && bodyIsDigest(pack);
+/** Whether the pack is the build its entry names: its digest, its commit, whether it was clean, and a body that is that digest. */
+function sameEntry(read, entry) {
+  const b = read.pack.meta?.base ?? {};
+  return read.intact && read.pack.digest === entry.digest && (b.commit ?? null) === entry.commit && (b.dirty === true) === entry.dirty;
 }

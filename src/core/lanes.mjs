@@ -140,6 +140,28 @@ export function serviceNamesOf(profile, discovery = null) {
   };
 }
 
+/**
+ * THE JPA PHYSICAL NAMING STRATEGY THIS RUN APPLIES, and where it was read. The
+ * profile's when it declares one; otherwise the one the project's own Spring
+ * configuration names (`spring.jpa.hibernate.naming.physical-strategy`), which
+ * is a declaration too: the project wrote it down, and the application runs by
+ * it. A configuration that names a class this engine does not model, or files
+ * that name different strategies, declare nothing this engine can apply, and the
+ * names it derives stay HEURISTIC.
+ * @returns {{strategy:(string|null), from:('profile'|'configuration'|'unreadable'|'none'), files:string[], classNames:string[]}}
+ */
+export function jpaNamingOf(profile, discovery = null) {
+  const declared = profile?.jpa?.namingStrategy ?? null;
+  if (declared != null) return { strategy: declared, from: 'profile', files: [], classNames: [] };
+  const found = Array.isArray(discovery?.jpaNamingStrategies) ? discovery.jpaNamingStrategies : [];
+  if (found.length === 0) return { strategy: null, from: 'none', files: [], classNames: [] };
+  const strategies = [...new Set(found.map((f) => f.strategy))];
+  const files = [...new Set(found.map((f) => f.file))].sort();
+  const classNames = [...new Set(found.map((f) => f.className))].sort();
+  const one = strategies.length === 1 && strategies[0] !== null;
+  return { strategy: one ? strategies[0] : null, from: one ? 'configuration' : 'unreadable', files, classNames };
+}
+
 /** The axes a pack declares, in the order `overview` lists them. */
 export const AXES = Object.freeze(['catalog', 'statements', 'column', 'jpa', 'mybatisPlus', 'code', 'web', 'screen']);
 

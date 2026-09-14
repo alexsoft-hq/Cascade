@@ -97,32 +97,57 @@ const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND
 const weakest = (...gs) => gs.reduce((a, b) => (RANK[a] <= RANK[b] ? a : b), 'EXACT');
 
 /**
- * Spring Boot's default physical naming: CamelCase -> snake_case, lower-cased.
- * `lastName` -> `last_name`, `PetType` -> `pet_type`, `URL` -> `url`.
- * @param {string} name
- * @returns {string}
+ * SPRING BOOT'S PHYSICAL NAMING, as Hibernate and Spring actually implement it
+ * (Spring Boot 2's SpringPhysicalNamingStrategy, Hibernate's
+ * CamelCaseToUnderscoresNamingStrategy and PhysicalNamingStrategySnakeCaseImpl):
+ * a `.` becomes `_`; an underscore goes before an upper-case letter only when the
+ * letter before it AND the letter after it are lower-case, and never before the
+ * last character; then everything is lower-cased. So `lastName` is `last_name`,
+ * but `myURLValue` is `myurlvalue` and `userID` is `userid`, because an acronym
+ * has no lower-case letter on both sides.
+ *
+ * THE RULE CHANGED ONCE. Hibernate 7 (Spring Boot 4) also counts a DIGIT as a
+ * lower-case letter on either side, so `address2Line` is `address2line` before it
+ * and `address2_line` after it. Which one a project runs cannot be read from the
+ * source, so a name the two rules spell differently is `versionDependent`, and
+ * the bridge never grades it EXACT (see `derivedName`).
+ * @param {string} logical
+ * @returns {{name:string, versionDependent:boolean, hibernate7:string}}
  */
-export function snakeCase(name) {
-  const s = String(name ?? '');
+export function springPhysicalName(logical) {
+  const s = String(logical ?? '').replace(/\./g, '_');
+  const beforeSeven = underscored(s, (c) => /\p{Ll}/u.test(c)).toLowerCase();
+  const hibernate7 = underscored(s, (c) => /[\p{Ll}\p{Nd}]/u.test(c)).toLowerCase();
+  return { name: beforeSeven, versionDependent: beforeSeven !== hibernate7, hibernate7 };
+}
+
+/** The underscores Hibernate's loop inserts: before an upper-case letter between two `soft` characters, the last character excepted. */
+function underscored(s, soft) {
   let out = '';
   for (let i = 0; i < s.length; i += 1) {
-    const c = s[i];
-    const isUpper = c >= 'A' && c <= 'Z';
-    if (isUpper && i > 0) {
-      const prev = s[i - 1];
-      const next = i + 1 < s.length ? s[i + 1] : '';
-      const prevIsLowerOrDigit = /[a-z0-9]/.test(prev);
-      const nextIsLower = /[a-z]/.test(next);
-      if (prevIsLowerOrDigit || nextIsLower) out += '_';
-    }
-    out += c.toLowerCase();
+    if (i > 0 && i < s.length - 1 && soft(s[i - 1]) && /\p{Lu}/u.test(s[i]) && soft(s[i + 1])) out += '_';
+    out += s[i];
   }
   return out;
 }
 
+/** Spring Boot's physical name for a logical one (the rule before Hibernate 7; see `springPhysicalName`). */
+export const snakeCase = (name) => springPhysicalName(name).name;
+
 /** The physical name a strategy gives a logical one. */
 export function physicalName(logical, strategy) {
   return strategy === 'identity' ? String(logical ?? '') : snakeCase(logical);
+}
+
+/**
+ * A name the ENGINE derives, and its grade: the strategy's grade, except that a
+ * name Hibernate 7 spells differently from the versions before it is HEURISTIC
+ * whatever the profile declares, because the project's Hibernate version decides it.
+ */
+function derivedName(logical, strategy, derivedGrade) {
+  if (strategy === 'identity') return { name: String(logical ?? ''), grade: derivedGrade };
+  const n = springPhysicalName(logical);
+  return { name: n.name, grade: n.versionDependent ? 'HEURISTIC' : derivedGrade };
 }
 
 /**
@@ -272,11 +297,12 @@ for (const [fqn, rec] of entityRecords) {
   stats.entities += 1;
   const simple = fqn.slice(fqn.lastIndexOf('.') + 1);
   const explicit = typeof rec.tableName === 'string' && rec.tableName.length > 0;
-  const table = explicit ? rec.tableName : physicalName(simple, strategy);
+  const derived = derivedName(simple, strategy, derivedGrade);
+  const table = explicit ? rec.tableName : derived.name;
   entities.set(fqn, {
     fqn, simple, record: rec,
     table,
-    tableGrade: explicit ? 'EXACT' : derivedGrade,
+    tableGrade: explicit ? 'EXACT' : derived.grade,
     tableEvidence: explicit ? 'declared' : namingEvidence,
     attributes: null, // filled below, once the superclass chain is walked
     pkColumn: null,
@@ -406,22 +432,18 @@ for (const e of entities.values()) {
     const pairGrade = weakest(e.tableGrade, target.tableGrade, a.grade);
     if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
       if (a.mappedBy) continue; // the OTHER side owns the column
-      const col = a.column ?? `${physicalName(a.name, strategy)}_${target.pkColumn ?? 'id'}`;
-      // Record the resolved name back on the attribute, so the column this
-      // association owns is part of the row every statement reads and writes.
-      a.column = col;
-      if (!a.grade) a.grade = pairGrade;
-      ensureColumn(e.table, col, pairGrade);
-      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, pairGrade, stats);
+      const { col, colGrade } = ownedForeignKey(a, target, { strategy, pairGrade });
+      ensureColumn(e.table, col, colGrade);
+      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, colGrade, stats);
     } else if (a.relation === 'oneToMany') {
       // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
       // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
       // other side already declared it. Either way this table gains no column.
-      const col = a.joinColumn ?? (a.mappedBy ? null : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`);
+      const { col, colGrade } = inboundForeignKey(a, e, { strategy, pairGrade });
       if (col) {
-        ensureColumn(target.table, col, pairGrade);
+        ensureColumn(target.table, col, colGrade);
         if (!target.inboundColumns.some((c) => c.column === col)) {
-          target.inboundColumns.push({ column: col, grade: pairGrade });
+          target.inboundColumns.push({ column: col, grade: colGrade });
         }
       }
       addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
@@ -450,6 +472,31 @@ for (const e of entities.values()) {
 }
 
 /**
+ * The foreign key a @ManyToOne / @OneToOne owns on its own table: the column it
+ * declares, or `<attribute>_<target pk>` by the strategy. The resolved name and
+ * grade are recorded back on the attribute, so the column is part of the row
+ * every statement reads and writes.
+ */
+function ownedForeignKey(a, target, { strategy, pairGrade }) {
+  const derivedFk = !a.column;
+  const fk = derivedName(`${a.name}_${target.pkColumn ?? 'id'}`, strategy, pairGrade);
+  const col = a.column ?? fk.name;
+  const colGrade = derivedFk ? weakest(pairGrade, fk.grade) : pairGrade;
+  a.column = col;
+  if (!a.grade) a.grade = colGrade;
+  else if (derivedFk && fk.grade !== pairGrade) a.grade = weakest(a.grade, fk.grade);
+  return { col, colGrade };
+}
+
+/** The foreign key a unidirectional @OneToMany puts on the TARGET table: its @JoinColumn, or `<entity>_<pk>` by the strategy; none with `mappedBy`. */
+function inboundForeignKey(a, e, { strategy, pairGrade }) {
+  if (a.joinColumn) return { col: a.joinColumn, colGrade: pairGrade };
+  if (a.mappedBy) return { col: null, colGrade: pairGrade };
+  const fk = derivedName(`${e.simple}_${e.pkColumn ?? 'id'}`, strategy, pairGrade);
+  return { col: fk.name, colGrade: weakest(pairGrade, fk.grade) };
+}
+
+/**
  * The physical JOIN TABLE an association crosses, and how sure each of its three
  * names is. The table name, the owning column and the inverse column are three
  * separate declarations, and any one of them may be left to the naming strategy,
@@ -458,18 +505,18 @@ for (const e of entities.values()) {
 function joinTableOf(e, a, target, { strategy, derivedGrade }) {
   const jt = a.joinTable;
   const named = !!(jt && jt.name);
-  const table = named ? jt.name : physicalName(`${e.simple}${target.simple}`, strategy);
-  const nameGrade = named ? 'EXACT' : derivedGrade;
-  const leftDeclared = !!(jt && jt.joinColumns && jt.joinColumns[0]);
-  const rightDeclared = !!(jt && jt.inverseJoinColumns && jt.inverseJoinColumns[0]);
-  const left = leftDeclared ? jt.joinColumns[0] : `${physicalName(e.simple, strategy)}_${e.pkColumn ?? 'id'}`;
-  const right = rightDeclared ? jt.inverseJoinColumns[0] : `${physicalName(target.simple, strategy)}_${target.pkColumn ?? 'id'}`;
+  const derivedTable = derivedName(`${e.simple}${target.simple}`, strategy, derivedGrade);
+  const table = named ? jt.name : derivedTable.name;
+  const nameGrade = named ? 'EXACT' : derivedTable.grade;
+  const side = (declaredName, simple, pk) => (declaredName ? { name: declaredName, grade: 'EXACT' } : derivedName(`${simple}_${pk ?? 'id'}`, strategy, derivedGrade));
+  const left = side(jt?.joinColumns?.[0], e.simple, e.pkColumn);
+  const right = side(jt?.inverseJoinColumns?.[0], target.simple, target.pkColumn);
   return {
     table,
     grade: weakest(e.tableGrade, target.tableGrade, nameGrade),
     columns: [
-      { table, column: left, grade: weakest(e.tableGrade, nameGrade, leftDeclared ? 'EXACT' : derivedGrade) },
-      { table, column: right, grade: weakest(target.tableGrade, nameGrade, rightDeclared ? 'EXACT' : derivedGrade) },
+      { table, column: left.name, grade: weakest(e.tableGrade, nameGrade, left.grade) },
+      { table, column: right.name, grade: weakest(target.tableGrade, nameGrade, right.grade) },
     ],
   };
 }
@@ -643,10 +690,11 @@ function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
     if (a.mappedBy) return { ...base, column: null, grade: 'EXACT', reason: 'mappedBy: the other side owns the column' };
     return { ...base, column: explicitJoin ? a.joinColumn : null, grade: explicitJoin ? 'EXACT' : derivedGrade };
   }
+  const derived = derivedName(a.name, strategy, derivedGrade);
   return {
     ...base,
-    column: explicitColumn ? a.column : physicalName(a.name, strategy),
-    grade: explicitColumn ? 'EXACT' : derivedGrade,
+    column: explicitColumn ? a.column : derived.name,
+    grade: explicitColumn ? 'EXACT' : derived.grade,
   };
 }
 
