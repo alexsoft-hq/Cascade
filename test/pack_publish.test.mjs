@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { analysisRecord, publishPack, writePackAndIndex } from '../src/cli/commands/analyze/write.mjs';
 import { compareConditions } from '../src/core/pack_diff.mjs';
-import { contentDigestOf, externalSourcesOf } from '../src/cli/external_sources.mjs';
+import { changedSince, contentDigestOf, externalSourcesOf } from '../src/cli/external_sources.mjs';
 import { Graph } from '../src/core/graph.mjs';
 import { HISTORY_KEEP, historyDirOf, listHistory } from '../src/cli/pack_history.mjs';
 import { indexOfPack } from '../src/cli/overlay_provider.mjs';
@@ -144,7 +144,7 @@ test('what was read from outside the repository is recorded by content, and a ch
   fs.mkdirSync(path.join(top, 'front/src/node_modules'), { recursive: true });
   fs.writeFileSync(path.join(top, 'front/src/node_modules/lib.js'), 'x');
   const first = recordOf(top, { webSrc: [path.join(top, 'front/src')] });
-  assert.deepEqual(Object.keys(first.external.sources), [path.join(top, 'front/src')], 'only the outside root; paths in the repository are versioned by the commit');
+  assert.deepEqual(Object.keys(first.external.sources), [path.join(top, 'front/src'), `${path.join(top, 'front/src')}#package-config`], 'only the outside root and its package configuration; paths in the repository are versioned by the commit');
   fs.writeFileSync(path.join(top, 'front/src/node_modules/lib.js'), 'y');
   assert.deepEqual(recordOf(top, { webSrc: [path.join(top, 'front/src')] }).external.sources, first.external.sources, 'node_modules is not read, so it is not counted');
   fs.writeFileSync(path.join(top, 'front/src/App.vue'), '<template>two</template>');
@@ -201,4 +201,21 @@ test('an outside input is hashed as a lane reads it: links followed without loop
   if (process.getuid?.() !== 0) assert.equal(digest, 'unreadable');
   const pack = (d) => ({ digest: 'x', meta: { lanes: ['web'], analysis: { external: { sources: { [locked]: d } } } }, nodes: [], edges: [] });
   assert.ok(compareConditions(pack('unreadable'), pack('unreadable')).unknown.includes('externalSources'), 'two unreadable inputs are not taken to agree');
+});
+
+test('an outside frontend\'s package configuration above its source root is an outside input too', (t) => {
+  const top = layout(t);
+  const pkg = path.join(top, 'front');
+  fs.writeFileSync(path.join(pkg, 'package.json'), '{"name":"front"}');
+  fs.writeFileSync(path.join(pkg, '.env'), 'VITE_API_BASE=/v1');
+  fs.writeFileSync(path.join(pkg, 'README.md'), 'not configuration');
+  const src = path.join(pkg, 'src');
+  const first = externalSourcesOf({ webSrc: [src] }, {});
+  assert.deepEqual(Object.keys(first), [`${pkg}#package-config`, src]);
+  fs.writeFileSync(path.join(pkg, 'README.md'), 'still not configuration');
+  assert.deepEqual(changedSince(first), [], 'a file the web lane does not read is not an input');
+  fs.writeFileSync(path.join(pkg, '.env'), 'VITE_API_BASE=/v2');
+  assert.deepEqual(changedSince(first), [`${pkg}#package-config`], 'the base URL the calls are resolved with changed');
+  fs.writeFileSync(path.join(pkg, 'vite.config.ts'), 'export default {}');
+  assert.notEqual(externalSourcesOf({ webSrc: [src] }, {})[`${pkg}#package-config`], first[`${pkg}#package-config`], 'a config file added is a change');
 });

@@ -766,7 +766,8 @@ the two packs' lanes, identity rule, axes, worker versions, profile digest,
 engine, opt-out flags, lane flags, source roots, catalog snapshot, runtime
 evidence files and the content of every input outside the repository (a
 frontend checked out beside it changes with no commit, so its path alone says
-nothing) are compared before anything is counted (two packs that both
+nothing; its package configuration above the source root, `.env*` and the
+rest, counts too) are compared before anything is counted (two packs that both
 leave one of these unrecorded are not taken to agree on it),
 and every one that differs is printed. A removed node whose axis changed between
 the packs is marked, because an unread catalog and a dropped table look alike in

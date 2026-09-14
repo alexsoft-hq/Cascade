@@ -17,12 +17,16 @@
 // no arrangement of links reads a tree twice, with no `node_modules`, `.git` or `.cascade` (a
 // project's own output is not its input). Reading more than one lane reads can
 // only call two inputs different that the lane would call the same, never the
-// other way round. A root that is gone is `missing`; a root that could not be
+// other way round. A frontend root also reads its PACKAGE configuration from the
+// nearest `package.json` above it (`.env*`, the dev-server and path-alias
+// configs, `tsconfig.json`), which sits outside the root: those files are one
+// more input, `<package dir>#package-config`. A root that is gone is `missing`; a root that could not be
 // read is `unreadable`, which is never taken to agree with anything.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isWebPackageConfigFile } from '../core/invalidate.mjs';
 import { sha256File } from './state.mjs';
 
 export const UNREADABLE = 'unreadable';
@@ -37,20 +41,47 @@ const INVOCATION_LANES = [['ddl', 'noDdl'], ['mappers', 'noMappers'], ['javaSrc'
  * @param {object} selection   `meta.analysis.selection`, paths portable
  * @returns {Object<string,string>} absolute path -> digest, sorted by path
  */
-export function externalSourcesOf(invocation, selection) {
-  const paths = new Set();
-  for (const [key, off] of INVOCATION_LANES) {
-    if (!(off && invocation?.[off])) for (const p of invocation?.[key] ?? []) paths.add(p);
-  }
-  for (const key of ['javaRoots', 'mapperDirs', 'webRoots', 'ddls']) for (const p of selection?.[key] ?? []) paths.add(p);
-  for (const t of selection?.templateRoots ?? []) paths.add(t?.root);
-  const outside = [...paths].filter((p) => typeof p === 'string' && path.isAbsolute(p)).sort();
-  return Object.fromEntries(outside.map((p) => [p, contentDigestOf(p)]));
+export function externalSourcesOf(invocation = {}, selection = {}) {
+  const paths = inputPathsOf(invocation ?? {}, selection ?? {}).filter(isOutside);
+  const webRoots = [...(invocation?.noWeb ? [] : invocation?.webSrc ?? []), ...(selection?.webRoots ?? [])].filter(isOutside);
+  const keys = new Set([...paths, ...webRoots.map((root) => `${packageDirOf(root)}${PACKAGE_CONFIG}`)]);
+  return Object.fromEntries([...keys].sort().map((p) => [p, digestOfSource(p)]));
 }
+
+const isOutside = (p) => typeof p === 'string' && path.isAbsolute(p);
+
+/** Every input path of the lanes that ran, as recorded. */
+function inputPathsOf(invocation, selection) {
+  const paths = INVOCATION_LANES.flatMap(([key, off]) => (off && invocation[off] ? [] : invocation[key] ?? []));
+  for (const key of ['javaRoots', 'mapperDirs', 'webRoots', 'ddls']) paths.push(...(selection[key] ?? []));
+  return [...paths, ...(selection.templateRoots ?? []).map((t) => t?.root)];
+}
+
+const PACKAGE_CONFIG = '#package-config';
 
 /** The recorded outside inputs whose content on disk is not what was recorded, as `path` strings. */
 export function changedSince(sources) {
-  return Object.entries(sources ?? {}).filter(([p, d]) => d === UNREADABLE || contentDigestOf(p) !== d).map(([p]) => p);
+  return Object.entries(sources ?? {}).filter(([p, d]) => d === UNREADABLE || digestOfSource(p) !== d).map(([p]) => p);
+}
+
+/** One recorded source's digest now: a path's content, or a package directory's configuration files. */
+function digestOfSource(key) {
+  if (!key.endsWith(PACKAGE_CONFIG)) return contentDigestOf(key);
+  const dir = key.slice(0, -PACKAGE_CONFIG.length);
+  try {
+    const files = fs.readdirSync(dir).filter((n) => isWebPackageConfigFile(n) && fs.statSync(path.join(dir, n)).isFile()).sort();
+    return createHash('sha256').update(files.map((n) => `${n}\t${sha256File(path.join(dir, n))}`).join('\n')).digest('hex').slice(0, 16);
+  } catch {
+    return fs.existsSync(dir) ? UNREADABLE : 'missing';
+  }
+}
+
+/** The directory holding the nearest `package.json` at or above a frontend root, as the web lane finds it; the root itself when there is none. */
+function packageDirOf(root) {
+  for (let cur = root; ; cur = path.dirname(cur)) {
+    if (fs.existsSync(path.join(cur, 'package.json'))) return cur;
+    if (path.dirname(cur) === cur) return root;
+  }
 }
 
 /** A digest of a file, or of every regular file under a directory; `missing` when it is gone, `unreadable` when it cannot be read. */
