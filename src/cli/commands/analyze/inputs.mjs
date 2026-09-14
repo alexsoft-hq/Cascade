@@ -19,7 +19,8 @@ import { createFactsStore, nodeFactsIo, validateIndex } from '../../../core/fact
 import { INCREMENTAL_ENGINE_VERSION } from '../../../core/incremental.mjs';
 import { planIncremental, underAny, MODE_COLD } from '../../../core/invalidate.mjs';
 import { selectLanes } from '../../../core/lanes.mjs';
-import { findJpaNamingStrategies, looksLikeSpringConfigFile } from '../../../core/springconfig.mjs';
+import { findJpaNamingStrategies } from '../../../core/springconfig.mjs';
+import { springConfigFilesBeside } from '../../external_sources.mjs';
 import { loadManifest } from '../../../core/manifest.mjs';
 import { profileDiagnostics, sqlDialectOf } from '../../../core/profile.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
@@ -429,22 +430,9 @@ export function incrementalPlan(ctx, { root, out, profile, manifest, resolved, s
 export function jpaNamingConfigured(javaSrc, root, diagnostics = null) {
   const files = [];
   for (const src of [...new Set((javaSrc ?? []).map((p) => path.resolve(p)))].sort()) {
-    if (path.basename(src) !== 'java') continue;
-    const resources = path.join(path.dirname(src), 'resources');
-    for (const dir of [resources, path.join(resources, 'config')]) files.push(...springConfigFilesIn(dir, root));
+    for (const abs of springConfigFilesBeside(src)) {
+      try { files.push({ path: path.relative(root, abs).split(path.sep).join('/'), text: fs.readFileSync(abs, 'utf8') }); } catch { /* unreadable: nothing declared by it */ }
+    }
   }
   return findJpaNamingStrategies(files, diagnostics);
-}
-
-/** The Spring configuration files directly in one directory, read, with root-relative paths. */
-function springConfigFilesIn(dir, root) {
-  let names;
-  try { names = fs.readdirSync(dir).sort(); } catch { return []; }
-  const out = [];
-  for (const name of names) {
-    const rel = path.relative(root, path.join(dir, name)).split(path.sep).join('/');
-    if (!looksLikeSpringConfigFile(rel)) continue;
-    try { out.push({ path: rel, text: fs.readFileSync(path.join(dir, name), 'utf8') }); } catch { /* unreadable: nothing declared by it */ }
-  }
-  return out;
 }

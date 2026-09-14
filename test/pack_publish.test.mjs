@@ -244,3 +244,21 @@ test('the naming strategy is read from the configuration beside the Java roots t
     'the config/ directory Spring Boot also reads; the legacy module is not analyzed, and test resources are not beside src/main/java');
   assert.deepEqual(read(['boot', 'legacy']).map((f) => f.strategy), ['spring-snake-case', 'identity'], 'two analyzed modules that disagree are both said');
 });
+
+test('the Spring configuration beside an outside Java root is an outside input, because the JPA naming strategy is read from it', (t) => {
+  const top = layout(t);
+  const java = path.join(top, 'front', 'app', 'src', 'main', 'java');
+  const resources = path.join(top, 'front', 'app', 'src', 'main', 'resources');
+  fs.mkdirSync(java, { recursive: true });
+  fs.mkdirSync(path.join(resources, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(java, 'UserProfile.java'), 'class UserProfile {}');
+  fs.writeFileSync(path.join(resources, 'application.properties'), 'spring.jpa.hibernate.naming.physical-strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl\n');
+  fs.writeFileSync(path.join(resources, 'messages.properties'), 'x=1');
+  const invocation = { javaSrc: [java] };
+  const analysis = { invocation, selection: {}, external: { sources: externalSourcesOf(invocation, {}) } };
+  assert.ok(Object.keys(analysis.external.sources).includes(`${resources}#spring-config`));
+  fs.writeFileSync(path.join(resources, 'messages.properties'), 'x=2');
+  assert.deepEqual(changedSince(analysis), [], 'a file the naming strategy is not read from is not this input');
+  fs.writeFileSync(path.join(resources, 'config', 'application.yml'), 'spring:\n  jpa: {}\n');
+  assert.deepEqual(changedSince(analysis), [`${resources}#spring-config`], 'a configuration file added in config/ is a change');
+});

@@ -20,13 +20,16 @@
 // other way round. A frontend root also reads its PACKAGE configuration from the
 // nearest `package.json` above it (`.env*`, the dev-server and path-alias
 // configs, `tsconfig.json`), which sits outside the root: those files are one
-// more input, `<package dir>#package-config`. A root that is gone is `missing`; a root that could not be
+// more input, `<package dir>#package-config`. A Java root reads the Spring
+// configuration beside it for its JPA naming strategy (`src/main/resources` and
+// its `config/`, see `springConfigFilesBeside`): `<resources dir>#spring-config`. A root that is gone is `missing`; a root that could not be
 // read is `unreadable`, which is never taken to agree with anything.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isWebPackageConfigFile } from '../core/invalidate.mjs';
+import { looksLikeSpringConfigFile } from '../core/springconfig.mjs';
 
 
 export const UNREADABLE = 'unreadable';
@@ -55,13 +58,21 @@ const INVOCATION_LANES = [['ddl', 'noDdl'], ['mappers', 'noMappers'], ['javaSrc'
  * @returns {Object<string,string>} absolute path -> digest, sorted by path
  */
 export function externalSourcesOf(invocation = {}, selection = {}) {
-  const paths = inputPathsOf(invocation ?? {}, selection ?? {}).filter(isOutside);
-  const webRoots = [...(invocation?.noWeb ? [] : invocation?.webSrc ?? []), ...(selection?.webRoots ?? [])].filter(isOutside);
-  const keys = new Set([...paths, ...webRoots.map((root) => `${packageDirOf(root)}${PACKAGE_CONFIG}`)]);
+  const keys = new Set([...inputPathsOf(invocation ?? {}, selection ?? {}).filter(isOutside), ...configKeysOf(invocation ?? {}, selection ?? {})]);
   return Object.fromEntries([...keys].sort().map((p) => [p, digestOfSource(p)]));
 }
 
 const isOutside = (p) => typeof p === 'string' && path.isAbsolute(p);
+
+/** The configuration an outside root reads beside it: a frontend's package configuration, a Java root's Spring configuration. */
+function configKeysOf(invocation, selection) {
+  const webRoots = [...(invocation.noWeb ? [] : invocation.webSrc ?? []), ...(selection.webRoots ?? [])].filter(isOutside);
+  const javaRoots = [...(invocation.noJava ? [] : invocation.javaSrc ?? []), ...(selection.javaRoots ?? [])].filter(isOutside);
+  return [
+    ...webRoots.map((root) => `${packageDirOf(root)}${PACKAGE_CONFIG}`),
+    ...javaRoots.filter((root) => path.basename(root) === 'java').map((root) => `${path.join(path.dirname(root), 'resources')}${SPRING_CONFIG}`),
+  ];
+}
 
 /** Every input path of the lanes that ran, as recorded. */
 function inputPathsOf(invocation, selection) {
@@ -71,6 +82,27 @@ function inputPathsOf(invocation, selection) {
 }
 
 const PACKAGE_CONFIG = '#package-config';
+const SPRING_CONFIG = '#spring-config';
+
+/**
+ * The Spring configuration files a Java source root reads its JPA naming strategy
+ * from: the `application*`/`bootstrap*` files directly in `src/main/resources`
+ * beside `src/main/java`, and in its `config/` directory. One list, for the run
+ * that reads them (analyze/inputs.mjs) and for the digest that says when they changed.
+ * @param {string} javaRoot  absolute
+ * @returns {string[]} absolute, sorted
+ */
+export function springConfigFilesBeside(javaRoot) {
+  if (path.basename(javaRoot) !== 'java') return [];
+  const resources = path.join(path.dirname(javaRoot), 'resources');
+  return [[resources, 'resources'], [path.join(resources, 'config'), 'resources/config']]
+    .flatMap(([dir, rel]) => namesIn(dir).filter((n) => looksLikeSpringConfigFile(`${rel}/${n}`)).map((n) => path.join(dir, n)));
+}
+
+/** A directory's entries, sorted; none when it cannot be listed. */
+function namesIn(dir) {
+  try { return fs.readdirSync(dir).sort(); } catch { return []; }
+}
 
 /**
  * The outside inputs that are not what an analysis recorded: computed again from
@@ -89,11 +121,20 @@ export function changedSince(analysis) {
 
 /** One recorded source's digest now: a path's content, or a package directory's configuration files. */
 function digestOfSource(key) {
+  if (key.endsWith(SPRING_CONFIG)) {
+    const resources = key.slice(0, -SPRING_CONFIG.length);
+    return filesDigest(resources, () => springConfigFilesBeside(path.join(path.dirname(resources), 'java')));
+  }
   if (!key.endsWith(PACKAGE_CONFIG)) return contentDigestOf(key);
   const dir = key.slice(0, -PACKAGE_CONFIG.length);
+  return filesDigest(dir, () => fs.readdirSync(dir).filter((n) => isWebPackageConfigFile(n) && fs.statSync(path.join(dir, n)).isFile()).sort().map((n) => path.join(dir, n)));
+}
+
+/** A digest of a set of files, named relative to `dir`; `missing` when `dir` is gone, `unreadable` when a file cannot be read. */
+function filesDigest(dir, list) {
   try {
-    const files = fs.readdirSync(dir).filter((n) => isWebPackageConfigFile(n) && fs.statSync(path.join(dir, n)).isFile()).sort();
-    return createHash('sha256').update(files.map((n) => `${n}\t${sha256File(path.join(dir, n))}`).join('\n')).digest('hex').slice(0, 16);
+    const lines = list().map((f) => `${path.relative(dir, f).split(path.sep).join('/')}\t${sha256File(f)}`);
+    return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
   } catch {
     return fs.existsSync(dir) ? UNREADABLE : 'missing';
   }
