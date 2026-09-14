@@ -16,7 +16,7 @@ import { normalizeRemote, sameRepository } from '../src/core/repo_identity.mjs';
 import { digest12 } from '../src/core/canonical.mjs';
 import { HISTORY_KEEP, historyDirOf, keepPreviousPack, listHistory, loadHistoryPack, pruneHistory, withPackLock } from '../src/cli/pack_history.mjs';
 import { analyzedTreeOf, basePackAt, cleanupWorktree, copyConventions, replayFlags, repointPaths } from '../src/cli/base_commit.mjs';
-import { contentDigestOf } from '../src/cli/external_sources.mjs';
+import { externalSourcesOf } from '../src/cli/external_sources.mjs';
 import { repositoryIdentity } from '../src/cli/commands/analyze/inputs.mjs';
 
 // A pack whose digest is the real digest of its body: the history checks it. `digestOf(i)` names build i.
@@ -323,7 +323,8 @@ test('the base is looked up in the tree the pack read, and refused when what it 
   const front = path.join(top, 'front');
   fs.mkdirSync(front);
   fs.writeFileSync(path.join(front, 'App.vue'), 'one');
-  const head = { meta: { base: { repoPath: tree, ...repositoryIdentity(tree, tree) }, analysis: { invocation: { webSrc: [front] }, external: { sources: { [front]: contentDigestOf(front) } } } } };
+  const invocation = { webSrc: [front] };
+  const head = { meta: { base: { repoPath: tree, ...repositoryIdentity(tree, tree) }, analysis: { invocation, selection: {}, external: { sources: externalSourcesOf(invocation, {}) } } } };
   fs.writeFileSync(path.join(front, 'App.vue'), 'two');
   const die = (msg) => { throw new Error(msg); };
   assert.throws(() => basePackAt({ rev: 'HEAD', dotCascade, packDir: path.join(dotCascade, 'pack'), headPack: head, die }),

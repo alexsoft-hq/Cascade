@@ -59,9 +59,19 @@ function inputPathsOf(invocation, selection) {
 
 const PACKAGE_CONFIG = '#package-config';
 
-/** The recorded outside inputs whose content on disk is not what was recorded, as `path` strings. */
-export function changedSince(sources) {
-  return Object.entries(sources ?? {}).filter(([p, d]) => d === UNREADABLE || digestOfSource(p) !== d).map(([p]) => p);
+/**
+ * The outside inputs that are not what an analysis recorded: computed again from
+ * its recorded invocation and selection, so an input that appeared (a nearer
+ * `package.json` above a frontend root) counts as well as one whose content
+ * changed or that went away.
+ * @param {{invocation?:object, selection?:object, external?:object}} analysis  `meta.analysis`
+ * @returns {string[]} the keys that differ, sorted
+ */
+export function changedSince(analysis) {
+  const recorded = analysis?.external?.sources ?? {};
+  const now = externalSourcesOf(analysis?.invocation, analysis?.selection);
+  const keys = [...new Set([...Object.keys(recorded), ...Object.keys(now)])].sort();
+  return keys.filter((k) => recorded[k] === UNREADABLE || recorded[k] !== now[k]);
 }
 
 /** One recorded source's digest now: a path's content, or a package directory's configuration files. */

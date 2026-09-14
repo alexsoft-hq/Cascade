@@ -209,13 +209,22 @@ test('an outside frontend\'s package configuration above its source root is an o
   fs.writeFileSync(path.join(pkg, 'package.json'), '{"name":"front"}');
   fs.writeFileSync(path.join(pkg, '.env'), 'VITE_API_BASE=/v1');
   fs.writeFileSync(path.join(pkg, 'README.md'), 'not configuration');
-  const src = path.join(pkg, 'src');
-  const first = externalSourcesOf({ webSrc: [src] }, {});
+  const app = path.join(pkg, 'app');
+  const src = path.join(app, 'src');
+  fs.mkdirSync(src, { recursive: true });
+  const invocation = { webSrc: [src] };
+  const first = externalSourcesOf(invocation, {});
+  const analysis = { invocation, selection: {}, external: { sources: first } };
   assert.deepEqual(Object.keys(first), [`${pkg}#package-config`, src]);
   fs.writeFileSync(path.join(pkg, 'README.md'), 'still not configuration');
-  assert.deepEqual(changedSince(first), [], 'a file the web lane does not read is not an input');
+  assert.deepEqual(changedSince(analysis), [], 'a file the web lane does not read is not an input');
   fs.writeFileSync(path.join(pkg, '.env'), 'VITE_API_BASE=/v2');
-  assert.deepEqual(changedSince(first), [`${pkg}#package-config`], 'the base URL the calls are resolved with changed');
+  assert.deepEqual(changedSince(analysis), [`${pkg}#package-config`], 'the base URL the calls are resolved with changed');
+  fs.writeFileSync(path.join(pkg, '.env'), 'VITE_API_BASE=/v1');
+  // A nearer package appears between the root and the one recorded: the lane now reads ITS configuration.
+  fs.writeFileSync(path.join(app, 'package.json'), '{"name":"app"}');
+  fs.writeFileSync(path.join(app, '.env'), 'VITE_API_BASE=/v3');
+  assert.deepEqual(changedSince(analysis), [`${pkg}#package-config`, `${app}#package-config`].sort());
   fs.writeFileSync(path.join(pkg, 'vite.config.ts'), 'export default {}');
   assert.notEqual(externalSourcesOf({ webSrc: [src] }, {})[`${pkg}#package-config`], first[`${pkg}#package-config`], 'a config file added is a change');
 });

@@ -130,7 +130,7 @@ function refuseUnreproducible(headPack, die) {
   if (!headPack.meta?.analysis?.invocation) {
     die('the current pack does not record how it was analyzed, so its base cannot be analyzed the same way. Run `cascade analyze` once, then compare');
   }
-  const changed = changedSince(headPack.meta.analysis.external?.sources);
+  const changed = headPack.meta.analysis.external?.sources ? changedSince(headPack.meta.analysis) : [];
   if (changed.length > 0) {
     die(`inputs outside the repository have changed since the current pack was analyzed (${changed.join(', ')}). Run \`cascade analyze\`, then compare`);
   }
