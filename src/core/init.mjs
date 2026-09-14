@@ -184,6 +184,16 @@ if (webPackages.length > 0 || vendoredRoots.length > 0) {
  * which is the rule that was here before and still answers for every
  * single-vendor repository.
  */
+/** Every dialect a profile may name. */
+const KNOWN_DIALECTS = new Set(Object.keys(SQL_DIALECT_ALIASES));
+
+/**
+ * The dialects a single-vendor tree's own text or urls may name: the three a
+ * parser of their own reads. H2's and HSQLDB's markers (`IDENTITY`) are too loose
+ * to name a database by, and a Korean vendor is named by a path, not by text.
+ */
+const INFERRED_DIALECTS = Object.freeze(['mysql', 'oracle', 'postgres']);
+
 function declareDialect(discovery, { existing }) {
   const vendors = groupDdlByVendor(discovery.ddlCandidates ?? []);
   const chosen = vendors.size > 1
@@ -194,7 +204,10 @@ function declareDialect(discovery, { existing }) {
       connections: discovery.connectionCandidates ?? [],
     })
     : { vendor: null, from: 'none', why: 'this tree ships one vendor\'s schema, so there is nothing to choose', at: null };
-  const main = chosen.vendor ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null) ?? singleVendorDialect(discovery, vendors);
+  // A dialect somebody already wrote down stands, as it does for a tree of several vendors.
+  const written = vendors.size <= 1 && KNOWN_DIALECTS.has(existing?.sqlDialects?.main) ? existing.sqlDialects.main : null;
+  const main = chosen.vendor ?? written ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null)
+    ?? singleVendorDialect(discovery, vendors);
   return { ...chosen, vendors, main };
 }
 
@@ -208,7 +221,7 @@ function declareDialect(discovery, { existing }) {
  */
 function singleVendorDialect(discovery, vendors) {
   if (vendors.size > 1) return null;
-  const known = [...new Set(Object.values(SQL_DIALECT_ALIASES))];
+  const known = INFERRED_DIALECTS;
   const byConnection = chooseCatalogVendor({
     vendors: known, dbTypes: discovery.dbTypeDeclarations ?? [], connections: discovery.connectionCandidates ?? [],
   });

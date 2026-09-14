@@ -139,8 +139,9 @@ No answer means no answer: `catalog.source` stays `"none"`, the diagnostic names
 the vendors it found, and you pick.
 
 **A tree that ships ONE vendor's schema** has nothing to choose between, but it
-still has a dialect, and `init` writes it to `sqlDialects.main` in this order: a
-MySQL marker in the DDL itself (backquotes, `ENGINE=`), then the vendor every
+still has a dialect, and `init` writes it to `sqlDialects.main` in this order: the
+dialect a profile already declares, then a MySQL marker in the DDL itself
+(backquotes, `ENGINE=`), then the vendor every
 jdbc url agrees on, then the dialect the schema file's own text is written in
 (`SERIAL`, a `::type` cast or `OWNER TO` for PostgreSQL; `VARCHAR2(` or `NUMBER(`
 for Oracle). With none of them the key stays empty. Measured on a PostgreSQL MES

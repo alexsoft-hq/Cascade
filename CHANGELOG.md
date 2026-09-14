@@ -53,8 +53,9 @@ screens and requests, and a call to a stored routine followed to its tables.
   reaching a table go from 105 to 131 of 135. docs/setup/sql-lane.md has the
   section.
 - **A project that ships one vendor's schema gets that vendor's dialect.** With no
-  MySQL marker in the DDL, `init` takes the vendor every jdbc url agrees on, then
-  the dialect the schema's own text is written in. The same MES was parsed as
+  dialect in the profile and no MySQL marker in the DDL, `init` takes the vendor
+  every jdbc url agrees on, then the dialect the schema's own text is written in.
+  A dialect the profile already declares stands, also under `init --force`. The same MES was parsed as
   MySQL before, and read none of its 33 tables.
 
 ### Fixed

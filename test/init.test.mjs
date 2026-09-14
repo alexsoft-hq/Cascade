@@ -239,6 +239,8 @@ test('one vendor\'s schema and no MySQL marker: the dialect is what the connecti
   assert.deepEqual(buildProfile(discovery(mixed), opts).profile.sqlDialects, { main: 'postgres' });
   // A MySQL marker in the DDL keeps its old precedence.
   assert.deepEqual(buildProfile(discovery({ ...one, ddlDialectHint: 'mysql' }), opts).profile.sqlDialects, { main: 'mysql' });
+  // A dialect the profile on disk already declares stands over both.
+  assert.deepEqual(buildProfile(discovery(oracleUrls), { ...opts, existing: { sqlDialects: { main: 'tibero' } } }).profile.sqlDialects, { main: 'tibero' });
   // A schema whose text names no dialect, and no url: nothing is guessed.
   const plain = { ...one, ddlCandidates: [{ ...pg, dialect: null, dialectFrom: null }] };
   assert.deepEqual(buildProfile(discovery(plain), opts).profile.sqlDialects, {});
