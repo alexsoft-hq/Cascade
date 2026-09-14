@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-09-14
+
+Older form spellings name their form, a router declared with its type is a
+router, and the Korean documentation is rewritten in plain Korean.
+
 ### Added
 
 - **A form a page reaches the old way names its form.** `document.all['x']`,
@@ -33,6 +38,9 @@ Each dated section below is one round of work. The round protocol is in
   (2156), 2075 resolved (2074) and 555 of 657 screens reaching a table (550); the
   business template 73 of 84 (72). Every other guarded number on the seventeen
   repositories, and all sixteen pack digests, are identical.
+- **The Korean documentation reads like a colleague explaining, not a translated
+  manual.** README.ko and the six pages under `docs/ko` keep every heading, code
+  block, table, link and number, and say the same things in shorter sentences.
 
 ## [0.8.5] - 2026-09-14
 
@@ -2349,7 +2357,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.2...v0.8.3
