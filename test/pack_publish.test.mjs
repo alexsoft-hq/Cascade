@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { analysisRecord, publishPack } from '../src/cli/commands/analyze/write.mjs';
+import { HISTORY_KEEP, historyDirOf, listHistory } from '../src/cli/pack_history.mjs';
 import { indexOfPack } from '../src/cli/overlay_provider.mjs';
 import { emptyIndex } from '../src/core/facts_store.mjs';
 import { INCREMENTAL_ENGINE_VERSION } from '../src/core/incremental.mjs';
@@ -72,7 +73,7 @@ test('the sidecars name the pack they belong to and the pack goes last, so a rea
   assert.deepEqual(fs.readdirSync(dir).filter((n) => n.includes('.tmp-') || n === '.write.lock'), [], 'nothing half-written and no lock left behind');
 });
 
-test('the pack is published last and the receipt after it, all under the lock, and a pack that cannot be written leaves the old one served', (t) => {
+test('the pack is published last and the verdict and receipt after it, all under the lock, and a pack that cannot be written leaves the old one served', (t) => {
   const top = layout(t);
   const dir = path.join(top, 'repo/service/.cascade/pack');
   const index = emptyIndex({ project: 'shop', engineVersion: INCREMENTAL_ENGINE_VERSION, workers: workerVersions(), root: top, selection: {} });
@@ -80,19 +81,42 @@ test('the pack is published last and the receipt after it, all under the lock, a
   const exists = (name) => fs.existsSync(path.join(dir, name));
   publishPack(dir, {
     pack: { digest: 'aaaaaaaaaaaa', meta: {}, nodes: [], edges: [] }, index, routes: '{}\n', keep: false,
-    beforePack: () => seen.push(['before', exists('facts-index.json'), exists('routes.json'), exists('pack.json'), exists('.write.lock')]),
-    afterPack: () => seen.push(['after', exists('pack.json'), exists('.write.lock')]),
+    afterPack: () => seen.push([exists('facts-index.json'), exists('routes.json'), exists('pack.json'), exists('.write.lock')]),
   });
-  assert.deepEqual(seen, [['before', true, true, false, true], ['after', true, true]], 'sidecars, then the verdict, then the pack, then the receipt, every step inside the lock');
+  assert.deepEqual(seen, [[true, true, true, true]], 'sidecars, then the pack, then what certifies it, every step inside the lock');
 
   // The pack's own rename fails (a directory where the file goes): the index is the
-  // new build's, the pack is not replaced, nothing is certified, and the lock is freed.
+  // new build's, the pack is not replaced, nothing certifies it, and the lock is freed.
   const blocked = path.join(top, 'blocked/.cascade/pack');
   fs.mkdirSync(path.join(blocked, 'pack.json', 'x'), { recursive: true });
   let certified = false;
   assert.throws(() => publishPack(blocked, { pack: { digest: 'bbbbbbbbbbbb', meta: {}, nodes: [], edges: [] }, index, keep: false, afterPack: () => { certified = true; } }));
-  assert.equal(certified, false);
+  assert.equal(certified, false, 'no verdict or receipt is written for a pack that was not published');
   assert.equal(JSON.parse(fs.readFileSync(path.join(blocked, 'facts-index.json'), 'utf8')).packDigest, 'bbbbbbbbbbbb', 'the index went first');
   assert.throws(() => indexOfPack(path.join(blocked, 'facts-index.json'), { digest: 'cccccccccccc' }, (m) => { throw new Error(m); }), /belongs to build bbbbbbbbbbbb/, 'and a reader of the old pack refuses it');
   assert.deepEqual(fs.readdirSync(blocked).filter((n) => n.includes('.tmp-') || n === '.write.lock'), []);
+});
+
+test('a rejected run takes the project\'s lock, not one of its own', (t) => {
+  const top = layout(t);
+  const out = path.join(top, 'repo/service/.cascade/pack');
+  const index = emptyIndex({ project: 'shop', engineVersion: INCREMENTAL_ENGINE_VERSION, workers: workerVersions(), root: top, selection: {} });
+  let where = null;
+  publishPack(`${out}-rejected`, { pack: { digest: 'aaaaaaaaaaaa', meta: {}, nodes: [], edges: [] }, index, keep: false, lockDir: out,
+    afterPack: () => { where = [fs.existsSync(path.join(out, '.write.lock')), fs.existsSync(path.join(`${out}-rejected`, '.write.lock'))]; } });
+  assert.deepEqual(where, [true, false]);
+});
+
+test('the history is held to its size even when certifying the new pack fails, and a half-kept build does not linger', (t) => {
+  const top = layout(t);
+  const dir = path.join(top, 'repo/service/.cascade/pack');
+  const index = emptyIndex({ project: 'shop', engineVersion: INCREMENTAL_ENGINE_VERSION, workers: workerVersions(), root: top, selection: {} });
+  const packOf = (i) => ({ digest: String(i).padStart(12, '0'), meta: { builtAt: `2026-09-14T00:00:${String(i).padStart(2, '0')}.000Z`, base: { commit: String(i % 10).repeat(40) } }, nodes: [], edges: [] });
+  for (let i = 1; i <= HISTORY_KEEP + 1; i += 1) publishPack(dir, { pack: packOf(i), index, keep: true });
+  assert.equal(listHistory(dir).length, HISTORY_KEEP);
+  const orphan = path.join(historyDirOf(dir), 'abcdefabcdef-0123456789ab');
+  fs.mkdirSync(orphan);
+  assert.throws(() => publishPack(dir, { pack: packOf(HISTORY_KEEP + 2), index, keep: true, afterPack: () => { throw new Error('receipt could not be written'); } }), /receipt could not be written/);
+  assert.equal(listHistory(dir).length, HISTORY_KEEP, 'pruned all the same');
+  assert.equal(fs.existsSync(orphan), false, 'a build directory the index does not list is removed');
 });

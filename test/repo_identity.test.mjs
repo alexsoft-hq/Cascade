@@ -110,16 +110,18 @@ test('a damaged history index removes nothing outside the history, and is rebuil
   assert.deepEqual(listHistory(packDir), [], 'a directory whose pack lost the digest in its name is not a kept build');
 });
 
-test('two runs take turns on the pack lock, and a lock a dead run left is broken', (t) => {
+test('two runs take turns on the pack lock, and a lock left behind is never broken by a run, however old', (t) => {
   const { packDir } = projectDir(t);
   const lock = path.join(packDir, '.write.lock');
-  fs.writeFileSync(lock, '1');
-  assert.throws(() => withPackLock(packDir, () => 'x', { waitMs: 300 }), /another analyze of this project holds/);
-  const old = (Date.now() - 20 * 60 * 1000) / 1000;
+  fs.writeFileSync(lock, String(process.pid));
+  assert.throws(() => withPackLock(packDir, () => 'x', { waitMs: 300 }), new RegExp(`analyze process ${process.pid} \\(running\\) holds`));
+  // Two runs that both judged an old lock abandoned would both break it and both publish.
+  const old = (Date.now() - 24 * 60 * 60 * 1000) / 1000;
   fs.utimesSync(lock, old, old);
-  const said = [];
-  assert.equal(withPackLock(packDir, () => 'ran', { log: (s) => said.push(s) }), 'ran');
-  assert.match(said[0], /breaking it/);
+  fs.writeFileSync(lock, '999999');
+  assert.throws(() => withPackLock(packDir, () => 'x', { waitMs: 300 }), /\(not running\) holds .*remove the file/);
+  fs.rmSync(lock);
+  assert.equal(withPackLock(packDir, () => 'ran'), 'ran');
   assert.equal(fs.existsSync(lock), false, 'the lock is released after the run');
 });
 
@@ -247,4 +249,13 @@ test('the base reads no profile when the current pack read none, even when the c
   copyConventions({ dotCascade, target, projectRoot: path.join(root, 'repo'), repoRoot: path.join(root, 'repo'), worktreeRoot: path.join(root, 'wt'), invocation: { profile: null }, commit: 'c'.repeat(40) }, []);
   assert.equal(fs.existsSync(path.join(target, 'profile.json')), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(target, 'manifest.json'), 'utf8')).repositories[0].commit, 'c'.repeat(40));
+
+  // A profile kept outside the repository is read as it is today, and said to be.
+  const external = path.join(root, 'conventions', 'strict.json');
+  fs.mkdirSync(path.dirname(external), { recursive: true });
+  fs.writeFileSync(external, JSON.stringify({ packagePrefixes: ['com.example'] }));
+  const outside = [];
+  copyConventions({ dotCascade, target, projectRoot: path.join(root, 'repo'), repoRoot: path.join(root, 'repo'), worktreeRoot: path.join(root, 'wt'), invocation: { profile: external }, commit: 'c'.repeat(40) }, outside);
+  assert.deepEqual(outside, [external]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, 'profile.json'), 'utf8')), { packagePrefixes: ['com.example'] });
 });

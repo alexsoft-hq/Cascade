@@ -328,13 +328,22 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
     // beside the pack, never in it, so neither choice moves a digest.
     serviceNames: serviceNames.names,
   });
-  // The gate's verdict is written BEFORE the pack it judges is published, so a
-  // server that reads the new pack reads the verdict on it and not the last one.
-  const beforePack = calibrated ? () => {
+  // The gate's verdict is written AFTER the pack it judges is published: a pack
+  // that failed to publish must not leave its verdict on the pack still served.
+  // A server that read the new pack before the verdict landed reads the project
+  // again on its next request, because the verdict is part of what it watches.
+  const writeVerdict = () => {
+    if (!calibrated) return;
     fs.mkdirSync(calibrationDir, { recursive: true });
     writeAtomic(gateStateFile, JSON.stringify(gateState, null, 2) + '\n');
-  } : null;
-  publishPack(writeDir, { pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, beforePack, afterPack: () => afterPack?.({ writeDir, writeIndexFile }) });
+  };
+  // One lock for the project whether the run is certified or rejected: both write
+  // the one gate verdict, and a rejected run must not land between a certified
+  // run's pack and its receipt.
+  publishPack(writeDir, {
+    pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir: out,
+    afterPack: () => { writeVerdict(); afterPack?.({ writeDir, writeIndexFile }); },
+  });
   return { writeDir, writeIndexFile, routesIndex };
 }
 
@@ -412,29 +421,31 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
 }
 
 /**
- * THE PACK, PUBLISHED. Under the project's write lock: a certified run keeps a
- * copy of the pack it replaces (pack_history.mjs), then the sidecars are renamed
- * into place whole, and THE PACK LAST: its rename is the moment the new build is
- * published, and a server notices a build by its pack. Each sidecar names the
- * digest of the pack it belongs to (`packDigest`, `buildDigest`), so a sidecar
- * that got ahead of its pack (a run that died between the renames, a reader
- * between them) is refused by its reader instead of being read with the wrong
- * pack. The history is pruned only after the pack is in place. A failure while
+ * THE PACK, PUBLISHED. Under the project's write lock (in `lockDir`, the project's
+ * pack directory, also for a rejected run written beside it): a certified run
+ * keeps a copy of the pack it replaces (pack_history.mjs), then the sidecars are
+ * renamed into place whole, and THE PACK LAST: its rename is the moment the new
+ * build is published. Each sidecar names the digest of the pack it belongs to
+ * (`packDigest`, `buildDigest`), so a sidecar that got ahead of its pack (a run
+ * that died between the renames, a reader between them) is refused by its
+ * reader instead of being read with the wrong pack. `afterPack` (the verdict, the
+ * baseline, the receipt) runs after the pack and still under the lock. The
+ * history is pruned after that, even when `afterPack` failed. A failure while
  * keeping or pruning is said and does not stop the publish.
  */
-export function publishPack(writeDir, { pack, index, routes, keep, beforePack = null, afterPack = null }) {
-  withPackLock(writeDir, () => {
+export function publishPack(writeDir, { pack, index, routes, keep, lockDir = writeDir, afterPack = null }) {
+  withPackLock(lockDir, () => {
     const warn = (what, e) => process.stderr.write(`pack history: could not ${what} (${e.message}); the pack is published all the same\n`);
-    let kept = null;
-    if (keep) { try { kept = keepPreviousPack(writeDir, pack); } catch (e) { warn('keep the pack this run replaces', e); } }
+    if (keep) { try { keepPreviousPack(writeDir, pack); } catch (e) { warn('keep the pack this run replaces', e); } }
+    fs.mkdirSync(writeDir, { recursive: true });
     writeAtomic(path.join(writeDir, 'facts-index.json'), serializeIndex({ ...index, packDigest: pack.digest }));
     if (routes !== undefined) writeAtomic(path.join(writeDir, ROUTES_FILE), routes);
-    beforePack?.();
     writeAtomic(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
-    // Still under the lock: the baseline and the receipt hash what THIS run put
-    // on disk, and no other run of the project can publish in between.
-    afterPack?.();
-    if (kept) { try { pruneHistory(writeDir); } catch (e) { warn('prune the history', e); } }
+    try {
+      afterPack?.();
+    } finally {
+      if (keep) { try { pruneHistory(writeDir); } catch (e) { warn('prune the history', e); } }
+    }
   });
 }
 
@@ -455,10 +466,11 @@ export function sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, 
 }
 
 /**
- * WHAT LANDS ON DISK once the gate has judged the run, in order: the pack and
- * its sidecars, the gate's own lines, the re-sealed baseline on a run the gate
- * let through, and the receipt. A RED run stops here with exit 3, leaving the
- * previously certified pack exactly where it was.
+ * WHAT LANDS ON DISK once the gate has judged the run, in order: the gate's own
+ * lines on stderr, then, under the project's lock, the pack and its sidecars, the
+ * verdict, the re-sealed baseline on a run the gate let through, and the receipt.
+ * A RED run stops here with exit 3, leaving the previously certified pack exactly
+ * where it was.
  */
 export function writeArtifacts({ g, pack, result, out, red, calibrated, gate, verdict, gateState, overrideOf, enginePrintNow, pin, metrics, profileDigest, catalogDigest, baseline, profile, stateDir, calibrationDir, baselineFile, gateStateFile, receiptFile, builtAt, goldenSummaryDoc, projectId, serviceNames, otelFiles, relOf }) {
   sayGate({ calibrated, gate, verdict, overrideOf, gateStateFile, goldenSummaryDoc });

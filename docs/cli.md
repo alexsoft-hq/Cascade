@@ -739,12 +739,17 @@ repository is unknown.
 rebuild that changed nothing (same commit, same digest) keeps nothing. The copy
 is made under the project's write lock; then the fact index and the route index
 are renamed into place, each naming the digest of the pack it belongs to, then
-the gate's verdict, and the pack last; the baseline and the receipt are written
-after the pack and before the lock is released, so two analyses of one project
-never interleave. A reader that finds a sidecar written for another build refuses
-it rather than reading it with the wrong pack, and a server reads a project
-again when the pack or anything beside it changes. The history is pruned only
-after that, so the pack being served is always the old one or the new one. A build made with uncommitted edits is kept
+the pack; the gate's verdict, the baseline and the receipt follow the pack and
+are written before the lock is released, so a pack that failed to publish is
+never certified and two analyses of one project (a rejected one included) never
+interleave. A reader that finds a sidecar written for another build refuses it
+rather than reading it with the wrong pack, and a server reads a project again
+when its pack, indexes, verdict, golden corpus, profile or manifest change. The
+history is pruned after that, even when certifying failed, so the pack being
+served is always the old one or the new one. The lock (`.cascade/pack/.write.lock`)
+is never broken automatically, because two runs that both judged it abandoned
+would both publish: one left behind by an analyze killed while publishing is
+named in the refusal, with its process id, and is removed by hand. A build made with uncommitted edits is kept
 but never chosen by its commit. The viewer's Compare tab and the MCP tool
 `pack_diff { base_commit }` choose their base from here, and a server notices a
 pack republished under it and reads the new one.

@@ -122,16 +122,22 @@ export function replayFlags(invocation, { projectRoot, repoRoot, worktreeRoot },
   return argv;
 }
 
+/** The profile file the current pack read: the one its invocation named, or the one beside the manifest. */
+function profileFileOf(invocation, { dotCascade, projectRoot }) {
+  if (!invocation.profile) return path.join(dotCascade, 'profile.json');
+  return path.isAbsolute(invocation.profile) ? invocation.profile : path.join(projectRoot, invocation.profile);
+}
+
 /** This project's manifest and the profile the current pack read, re-pointed into the worktree's `.cascade`. */
 export function copyConventions({ dotCascade, target, projectRoot, repoRoot, worktreeRoot, invocation, commit }, outside) {
   const opts = { fromDir: dotCascade, toDir: target, repoRoot, worktreeRoot };
-  const profileSrc = invocation.profile
-    ? (path.isAbsolute(invocation.profile) ? invocation.profile : path.join(projectRoot, invocation.profile))
-    : path.join(dotCascade, 'profile.json');
+  const profileSrc = profileFileOf(invocation, { dotCascade, projectRoot });
   for (const [src, name] of [[path.join(dotCascade, 'manifest.json'), 'manifest.json'], [profileSrc, 'profile.json']]) {
     // What the current pack did NOT read is replayed too: a profile the commit
     // tracks but the current checkout lacks would read the base another way.
     if (!fs.existsSync(src)) { fs.rmSync(path.join(target, name), { force: true }); continue; }
+    // A profile kept outside the repository has no version at that commit: today's is read, and listed.
+    if (!inside(realPath(src), repoRoot)) outside.push(realPath(src));
     const doc = JSON.parse(fs.readFileSync(src, 'utf8'));
     if (name === 'manifest.json' && Array.isArray(doc.repositories)) doc.repositories = doc.repositories.map((r) => (r.path === '..' ? { ...r, commit } : r));
     fs.writeFileSync(path.join(target, name), `${JSON.stringify(repointPaths(doc, opts, outside), null, 2)}\n`);

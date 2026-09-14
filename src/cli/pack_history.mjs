@@ -13,7 +13,10 @@
 // one and rename it over it in one step, and only then prune the history. A
 // failure while keeping or pruning is a warning, and the served pack is either the
 // old one or the new one, never neither. Two analyses of one project take turns
-// on the lock, so neither can move a pack the other is about to keep.
+// on the lock, so neither can move a pack the other is about to keep. A lock is
+// never broken automatically: two runs that both judged it abandoned would both
+// break it and both publish. It covers seconds of writing, so one that stays is
+// a run killed while publishing, and the refusal says how to remove it.
 //
 // AN INDEX IS DATA, NOT A LIST OF PATHS TO DELETE. Every entry's id is checked
 // against the one shape this module writes before anything is copied or
@@ -32,8 +35,6 @@ const INDEX = 'index.json';
 const SCHEMA = 'cascade:pack-history:1';
 /** The only id this module writes: up to 12 hex of the commit (or `no-commit`), and the 12-hex digest. */
 const ID_RE = /^(?:[0-9a-f]{1,12}|no-commit)-[0-9a-f]{12}$/;
-/** How long a lock may stand before it is taken to belong to a run that died. */
-const LOCK_STALE_MS = 15 * 60 * 1000;
 const LOCK_WAIT_MS = 60 * 1000;
 
 /** The history directory beside a pack directory. */
@@ -76,37 +77,47 @@ function readIndex(dir) {
 /** Write a file by renaming a finished copy over it, so a reader sees the old bytes or the new ones. */
 export function writeAtomic(file, text) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmp, text);
-  try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    // The failure that matters is the write's; a temp file that will not go is only added to it.
+    try { fs.rmSync(tmp, { force: true }); } catch (cleanup) { e.message += ` (and ${tmp} could not be removed: ${cleanup.message})`; }
+    throw e;
+  }
 }
 
-/** Take the lock file, waiting for a live holder and breaking a dead one's. */
-function acquireLock(lock, { until, staleMs, log }) {
+/** Take the lock file, waiting for its holder; a refusal that names the holder when the wait runs out. */
+function acquireLock(lock, { until }) {
   for (;;) {
     try { return fs.openSync(lock, 'wx'); } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      let age;
-      try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; }
-      if (age > staleMs) { log(`pack lock ${lock} is ${Math.round(age / 1000)}s old, so the run that took it is gone: breaking it`); fs.rmSync(lock, { force: true }); continue; }
-      if (Date.now() > until) throw new Error(`another analyze of this project holds ${lock}; wait for it to finish, or remove the file if no analyze is running`, { cause: e });
+      if (Date.now() > until) throw new Error(`${holderOf(lock)} holds ${lock}. Wait for it to finish; if no analyze of this project is running (one was killed while publishing), remove the file`, { cause: e });
       sleepMs(250);
     }
   }
+}
+
+/** Who a lock says holds it, for the refusal: the process id and whether it is still running on this machine. */
+function holderOf(lock) {
+  let pid = null;
+  try { pid = Number.parseInt(fs.readFileSync(lock, 'utf8'), 10); } catch { /* gone or unreadable */ }
+  if (!Number.isInteger(pid) || pid <= 0) return 'another analyze of this project';
+  try { process.kill(pid, 0); return `analyze process ${pid} (running)`; } catch (e) { return `analyze process ${pid} (${e.code === 'ESRCH' ? 'not running' : 'state unknown'})`; }
 }
 
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
  * The project's write lock, held for the time `fn` runs: only the publish, which
- * takes seconds, so a lock older than a run could last is taken to be a dead
- * run's and is broken, and saying so. Each holder writes its own token and
- * removes the lock only while the token is still its own: a run whose lock was
- * broken must not then remove the lock of the run that broke it.
+ * takes seconds. Each holder writes its own token and removes the lock only while
+ * the token is still its own, so a lock somebody removed by hand and another run
+ * took is not removed from under that run.
  */
-export function withPackLock(packDir, fn, { waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS, log = (s) => process.stderr.write(`${s}\n`) } = {}) {
+export function withPackLock(packDir, fn, { waitMs = LOCK_WAIT_MS } = {}) {
   fs.mkdirSync(packDir, { recursive: true });
   const lock = path.join(packDir, '.write.lock');
-  const fd = acquireLock(lock, { until: Date.now() + waitMs, staleMs, log });
+  const fd = acquireLock(lock, { until: Date.now() + waitMs });
   const token = `${process.pid}:${crypto.randomUUID()}`;
   try {
     fs.writeSync(fd, token);
@@ -147,22 +158,34 @@ export function keepPreviousPack(packDir, next) {
   const id = historyIdOf(prev);
   if (!id || sameBuild(prev, next)) return null;
   const dir = historyDirOf(packDir);
-  fs.mkdirSync(path.join(dir, id), { recursive: true });
-  fs.copyFileSync(file, path.join(dir, id, 'pack.json'));
   const entries = [entryOf(id, prev.meta, prev.digest), ...readIndex(dir).filter((e) => e.id !== id)];
-  writeAtomic(path.join(dir, INDEX), `${JSON.stringify({ schema: SCHEMA, entries }, null, 2)}\n`);
+  copyIntoHistory(dir, id, file, entries);
   return entries[0];
+}
+
+/** The copy and the index line that lists it, both or neither: a copy the index does not list is a build nobody can choose. */
+function copyIntoHistory(dir, id, file, entries) {
+  fs.mkdirSync(path.join(dir, id), { recursive: true });
+  try {
+    fs.copyFileSync(file, path.join(dir, id, 'pack.json'));
+    writeAtomic(path.join(dir, INDEX), `${JSON.stringify({ schema: SCHEMA, entries }, null, 2)}\n`);
+  } catch (e) {
+    fs.rmSync(path.join(dir, id), { recursive: true, force: true });
+    throw e;
+  }
 }
 
 /** Remove what is past the kept count. Called after the new pack is in place. */
 export function pruneHistory(packDir, keep = HISTORY_KEEP) {
   const dir = historyDirOf(packDir);
+  if (!fs.existsSync(dir)) return;
   const entries = readIndex(dir);
-  for (const old of entries.slice(keep)) {
-    const target = path.resolve(dir, old.id);
-    if (!ID_RE.test(old.id) || path.dirname(target) !== path.resolve(dir)) continue;
-    fs.rmSync(target, { recursive: true, force: true });
-  }
+  const kept = new Set(entries.slice(0, keep).map((e) => e.id));
+  // Past the kept count, and any build directory the index does not list (a keep
+  // that failed half way): only names of the one shape this module writes, so
+  // nothing outside the history is ever a target.
+  const names = fs.readdirSync(dir).filter((n) => ID_RE.test(n) && !kept.has(n));
+  for (const name of names) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
   writeAtomic(path.join(dir, INDEX), `${JSON.stringify({ schema: SCHEMA, entries: entries.slice(0, keep) }, null, 2)}\n`);
 }
 

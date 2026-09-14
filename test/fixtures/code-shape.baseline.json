@@ -1390,6 +1390,7 @@
     "listed",
     "listed/1",
     "moveIntoWorktree",
+    "profileFileOf",
     "replayFlags",
     "repointPaths",
     "repointPaths/1",
@@ -1610,7 +1611,7 @@
     "writeArtifacts/1",
     "writePackAndIndex",
     "writePackAndIndex/1",
-    "writePackAndIndex/2"
+    "writeVerdict"
    ]
   },
   "src/cli/commands/catalog.mjs": {
@@ -1994,15 +1995,17 @@
    ]
   },
   "src/cli/pack_history.mjs": {
-   "maxLines": 14,
+   "maxLines": 13,
    "maxBranches": 7,
-   "longest": "keepPreviousPack",
+   "longest": "scanEntries",
    "branchiest": "validEntry",
    "functions": [
     "acquireLock",
+    "copyIntoHistory",
     "entryOf",
     "historyDirOf",
     "historyIdOf",
+    "holderOf",
     "keepPreviousPack",
     "keepPreviousPack/1",
     "listHistory",
@@ -2012,6 +2015,8 @@
     "pickEntry/1",
     "pickEntry/2",
     "pruneHistory",
+    "pruneHistory/1",
+    "pruneHistory/2",
     "readIndex",
     "readKept",
     "releaseLock",
@@ -2025,7 +2030,6 @@
     "unique/1",
     "validEntry",
     "withPackLock",
-    "withPackLock/1",
     "writeAtomic"
    ]
   },

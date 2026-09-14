@@ -84,9 +84,10 @@ export function packProxyBytes(entry, io = fs) {
 }
 
 /**
- * WHICH BUILD OF A PACK IS ON DISK, with everything a loaded context reads beside
- * it: the pack, its fact and route indexes, the gate's verdict and the golden
- * corpus. A context loaded from one build must not keep answering once `cascade
+ * WHICH BUILD OF A PACK IS ON DISK, with what a loaded context reads beside it:
+ * the pack, its fact and route indexes, the gate's verdict, the golden corpus, and
+ * the project's profile and manifest (a profile the pack names elsewhere is not
+ * watched). A context loaded from one build must not keep answering once `cascade
  * analyze` has published another, least of all beside a pack history read fresh
  * from disk, where the old head would be compared with itself. Each file counts
  * by inode, size, modification and change time: `analyze` renames a new file
@@ -102,7 +103,7 @@ export function packFingerprint(entry, io = fs) {
   if (pack === null) return null;
   const dot = typeof entry.dotCascadePath === 'string' && entry.dotCascadePath ? path.resolve(entry.dotCascadePath) : null;
   const beside = [path.join(dir, 'facts-index.json'), path.join(dir, 'routes.json')];
-  if (dot) beside.push(path.join(dot, 'calibration', 'gate-state.json'), path.join(dot, 'golden', 'cases.jsonl'));
+  if (dot) beside.push(path.join(dot, 'calibration', 'gate-state.json'), path.join(dot, 'golden', 'cases.jsonl'), path.join(dot, 'profile.json'), path.join(dot, 'manifest.json'));
   return [pack, ...beside.map((f) => stampOf(io, f) ?? '-')].join('|');
 }
 
