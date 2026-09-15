@@ -93,7 +93,7 @@ function marksFor(base, commitSha = null) {
   const marks = [
     [base, '<base>'],
     [ENGINE_ROOT.replace(/\/$/, ''), '<engine>'],
-    [fs.realpathSync(os.tmpdir()), '<tmp>'],
+    [fs.realpathSync.native(os.tmpdir()), '<tmp>'],
     [os.homedir(), '<home>'],
   ];
   if (commitSha) {
@@ -239,7 +239,7 @@ async function recordTree(outDir, base, tree) {
 /** Record the whole list into `outDir`. Returns how many files it wrote. */
 export async function record(outDir) {
   fs.rmSync(outDir, { recursive: true, force: true });
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-cli-snap-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-cli-snap-')));
   try {
     recordGeneral(outDir, base);
     for (const tree of TREES) await recordTree(outDir, base, tree);

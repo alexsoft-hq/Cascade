@@ -353,7 +353,7 @@ test('writeInitFiles keeps existing files unless forced', (t) => {
 // A tmp dir under its REAL path: on macOS os.tmpdir() is a symlink (/var ->
 // /private/var), and the registry stores the resolved directory.
 function tmpDir(t, prefix) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -505,7 +505,7 @@ test('cascade init: the same directory reached through a symlink is the SAME pro
 
   const reg = JSON.parse(fs.readFileSync(path.join(home, 'registry.json'), 'utf8'));
   assert.equal(reg.projects.length, 1, JSON.stringify(reg.projects, null, 2));
-  assert.equal(reg.projects[0].dotCascadePath, fs.realpathSync(path.join(real, '.cascade')));
+  assert.equal(reg.projects[0].dotCascadePath, fs.realpathSync.native(path.join(real, '.cascade')));
 });
 
 test('cascade init: a tree with no git repository fails with an explanation and writes nothing', (t) => {

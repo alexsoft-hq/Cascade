@@ -209,7 +209,7 @@ test('lanes_run: --root wins over everything, and a registered project brings it
 });
 
 test('lanes_run: a glob expands in typed order with each match sorted, and a miss passes through', (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-ddl-')));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-ddl-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const name of ['b', 'a']) {
     fs.mkdirSync(path.join(dir, name), { recursive: true });
@@ -227,7 +227,7 @@ test('lanes_run: a glob expands in typed order with each match sorted, and a mis
 });
 
 test('lanes_run: webPackagesRead finds the nearest package.json above each root, once', (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-web-')));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-web-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'front', 'src', 'views'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'front', 'package.json'), JSON.stringify({ dependencies: { 'vue-router': '4.0.0' } }));

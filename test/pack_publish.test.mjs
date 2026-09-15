@@ -26,7 +26,7 @@ import { workerVersions } from '../src/core/worker_versions.mjs';
 const canDenyRead = process.platform !== 'win32' && process.getuid?.() !== 0;
 
 function layout(t) {
-  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-record-')));
+  const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-record-')));
   t.after(() => fs.rmSync(top, { recursive: true, force: true }));
   for (const d of ['repo/service/db', 'repo/service/mapper-b', 'repo/service/mapper-a', 'repo/shared/src', 'repo/templates', 'front/src', 'shell']) {
     fs.mkdirSync(path.join(top, d), { recursive: true });

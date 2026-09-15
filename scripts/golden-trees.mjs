@@ -378,7 +378,7 @@ export function scrubberFor(base) {
   // (on Windows the last expands an 8.3 short name to the long one git prints).
   // A path is then spelled with `/` whatever the platform, so a golden recorded
   // on one platform is compared on another.
-  const roots = [...new Set([base, fs.realpathSync(base), fs.realpathSync.native(base), os.tmpdir(), fs.realpathSync(os.tmpdir()), fs.realpathSync.native(os.tmpdir())])]
+  const roots = [...new Set([base, fs.realpathSync.native(base), fs.realpathSync.native(base), os.tmpdir(), fs.realpathSync.native(os.tmpdir()), fs.realpathSync.native(os.tmpdir())])]
     .sort((a, b) => b.length - a.length);
   return function scrub(value) {
     if (typeof value === 'string') {

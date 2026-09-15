@@ -2531,7 +2531,7 @@ test("the editor control remembers the reader's editor, and its link carries tha
   const link = () => byId.get('srchd').querySelector('.srcopen');
   // The ABSOLUTE path is the SERVER's — this page never builds one — so the
   // link can only be right if /api/source answered it.
-  assert.match(link().getAttribute('href'), /^vscode:\/\/file\/.*\/GMapper\.xml:3:1$/);
+  assert.match(link().getAttribute('href'), /^vscode:\/\/file\/.*[\\/]GMapper\.xml:3:1$/);
 
   sel.value = 'idea';
   sel.onchange({ target: sel });

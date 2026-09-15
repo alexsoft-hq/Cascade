@@ -27,7 +27,7 @@ const TRACE_FIXTURE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'otel', 'orders
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 function tmpDir(t, prefix) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

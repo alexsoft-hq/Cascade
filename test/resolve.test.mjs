@@ -63,7 +63,7 @@ test('an unknown --project against an empty registry says the registry is empty 
     (e) => {
       assert.ok(e instanceof ResolveError);
       assert.match(e.message, /unknown project "ghost"/);
-      assert.match(e.message, /registry at \/home\/\.cascade\/registry\.json is empty/);
+      assert.ok(e.message.includes(`registry at ${path.join(ENV.CASCADE_HOME, 'registry.json')} is empty`), e.message);
       assert.match(e.message, /cascade init/);
       return true;
     },
@@ -102,13 +102,13 @@ test('empty-string flags are treated as absent, not as an empty path', () => {
 });
 
 test('registrationTarget accepts a pack written inside the resolved .cascade', () => {
-  const resolved = { dotCascade: '/p/a/.cascade', projectId: 'alpha' };
-  assert.deepEqual(registrationTarget(resolved, '/p/a/.cascade/pack', CWD), { dotCascade: '/p/a/.cascade', projectId: 'alpha' });
-  assert.deepEqual(registrationTarget(resolved, '/p/a/.cascade', CWD), { dotCascade: '/p/a/.cascade', projectId: 'alpha' });
+  const resolved = { dotCascade: at('/p/a/.cascade'), projectId: 'alpha' };
+  assert.deepEqual(registrationTarget(resolved, at('/p/a/.cascade/pack'), CWD), { dotCascade: at('/p/a/.cascade'), projectId: 'alpha' });
+  assert.deepEqual(registrationTarget(resolved, at('/p/a/.cascade'), CWD), { dotCascade: at('/p/a/.cascade'), projectId: 'alpha' });
 });
 
 test('registrationTarget refuses a bare --out elsewhere, and a pack-flag resolution', () => {
-  const resolved = { dotCascade: '/p/a/.cascade', projectId: 'alpha' };
+  const resolved = { dotCascade: at('/p/a/.cascade'), projectId: 'alpha' };
   assert.equal(registrationTarget(resolved, '/tmp/scratch/pack', CWD), null);
   assert.equal(registrationTarget(resolved, '/p/a/.cascade-other/pack', CWD), null);
   assert.equal(registrationTarget({ dotCascade: null, projectId: null }, '/p/a/.cascade/pack', CWD), null);
@@ -116,7 +116,7 @@ test('registrationTarget refuses a bare --out elsewhere, and a pack-flag resolut
 });
 
 test('registrationTarget resolves a relative --out against cwd', () => {
-  const resolved = { dotCascade: '/work/here/.cascade', projectId: null };
-  assert.deepEqual(registrationTarget(resolved, '.cascade/pack', CWD), { dotCascade: '/work/here/.cascade', projectId: null });
+  const resolved = { dotCascade: path.join(CWD, '.cascade'), projectId: null };
+  assert.deepEqual(registrationTarget(resolved, '.cascade/pack', CWD), { dotCascade: path.join(CWD, '.cascade'), projectId: null });
   assert.equal(registrationTarget(resolved, '../elsewhere/pack', CWD), null);
 });

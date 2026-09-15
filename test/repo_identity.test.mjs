@@ -162,7 +162,7 @@ test('a profile path inside the repository is read in the worktree, and one outs
 });
 
 test('a path spelled through a symlink is still inside the repository, and the base reads it in the worktree', (t) => {
-  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-alias-')));
+  const real = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-alias-')));
   t.after(() => fs.rmSync(real, { recursive: true, force: true }));
   const repoRoot = path.join(real, 'repo');
   fs.mkdirSync(path.join(repoRoot, 'db'), { recursive: true });
@@ -170,8 +170,9 @@ test('a path spelled through a symlink is still inside the repository, and the b
   const alias = path.join(real, 'alias');
   fs.symlinkSync(repoRoot, alias);
   const outside = [];
-  const doc = repointPaths({ ddl: [path.join(alias, 'db', 'schema.sql')] }, { fromDir: path.join(repoRoot, '.cascade'), toDir: '/wt/.cascade', repoRoot, worktreeRoot: '/wt' }, outside);
-  assert.deepEqual(doc.ddl, ['/wt/db/schema.sql']);
+  const wt = path.resolve('/wt');
+  const doc = repointPaths({ ddl: [path.join(alias, 'db', 'schema.sql')] }, { fromDir: path.join(repoRoot, '.cascade'), toDir: path.join(wt, '.cascade'), repoRoot, worktreeRoot: wt }, outside);
+  assert.deepEqual(doc.ddl, [path.join(wt, 'db', 'schema.sql')]);
   assert.deepEqual(outside, []);
 });
 
@@ -208,7 +209,7 @@ test('a monorepo project is told from its neighbour even when one of the two pac
 });
 
 test('the root commit is the one along first parents, so merging in an unrelated history does not make the repository another', (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-roots-')));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-roots-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
@@ -259,7 +260,7 @@ test('a run whose lock was broken does not remove the lock of the run that broke
 });
 
 test('the base reads no profile when the current pack read none, even when the commit tracks one', (t) => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-conv-')));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-conv-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const dotCascade = path.join(root, 'repo', '.cascade');
   const target = path.join(root, 'wt', '.cascade');
@@ -323,7 +324,7 @@ test('a kept pack whose body was edited under its old digest is neither handed o
 });
 
 test('the base is looked up in the tree the pack read, and refused when what it read outside the repository has changed since', (t) => {
-  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reproduce-')));
+  const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reproduce-')));
   t.after(() => fs.rmSync(top, { recursive: true, force: true }));
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
   const tree = path.join(top, 'other');
@@ -346,7 +347,7 @@ test('the base is looked up in the tree the pack read, and refused when what it 
 });
 
 test('a copied project compares in its own checkout, and a pack analyzed with --root elsewhere compares in the tree it read', (t) => {
-  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-tree-')));
+  const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-tree-')));
   t.after(() => fs.rmSync(top, { recursive: true, force: true }));
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
   const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();

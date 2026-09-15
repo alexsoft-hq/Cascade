@@ -53,7 +53,7 @@ const REGISTRY = JSON.stringify({
  * hide it.
  */
 function runIsolated(t, argv, { withRegistry = true } = {}) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-unknown-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-unknown-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const cwd = path.join(base, 'cwd');
   const home = path.join(base, 'home');
@@ -142,7 +142,7 @@ test('`pack` only LABELS its output with --project, and never looks one up', (t)
   assert.equal(r.exit, 0, said.slice(0, 400));
   assert.doesNotMatch(said, /unknown project/);
   assert.deepEqual(r.cwdEntries, ['out']);
-  assert.match(said, /wrote out\/pack\.json/);
+  assert.match(said, /wrote out[\\/]pack\.json/);
 });
 
 test('a command with NO --project still takes the working directory', (t) => {

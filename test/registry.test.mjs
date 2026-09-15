@@ -68,7 +68,7 @@ test('upsertProject refuses an id already held by another directory, and says ho
     (e) => {
       assert.ok(e instanceof RegistryError);
       assert.match(e.message, /ambiguous project id "alpha"/);
-      assert.match(e.message, /\/p\/one\/\.cascade/);
+      assert.ok(e.message.includes(at('/p/one/.cascade')), e.message);
       assert.match(e.message, /--force/);
       return true;
     },

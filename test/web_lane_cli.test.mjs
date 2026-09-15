@@ -28,7 +28,7 @@ const OPENAPI_FIXTURE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'openapi');
 const ANGULAR_FIXTURE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'web-angular');
 
 function tmpDir(t, prefix) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

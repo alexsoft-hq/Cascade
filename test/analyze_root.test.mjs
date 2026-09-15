@@ -24,7 +24,7 @@ const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
 
 function tmpDir(t, prefix) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -110,14 +110,14 @@ test('analyze --project <id> from an unrelated cwd analyzes the REGISTERED proje
   const res = analyze(['--project', 'mine'], { CASCADE_HOME: home }, elsewhere, t);
   assert.equal(res.code, 0, res.stderr);
   const banner = bannerOf(res.stderr);
-  assert.equal(banner.root, fs.realpathSync(mine), 'the banner names the registered project\'s own root');
+  assert.equal(banner.root, fs.realpathSync.native(mine), 'the banner names the registered project\'s own root');
   assert.equal(banner.from, "the registered project's manifest");
 
   // And the pack it wrote says the same thing, so nothing downstream can
   // disagree with the banner.
   const pack = JSON.parse(fs.readFileSync(path.join(mine, '.cascade', 'pack', 'pack.json'), 'utf8'));
   assert.equal(pack.meta.project, 'mine');
-  assert.equal(fs.realpathSync(pack.meta.base.repoPath), fs.realpathSync(mine));
+  assert.equal(fs.realpathSync.native(pack.meta.base.repoPath), fs.realpathSync.native(mine));
   // The tables are the registered tree's, not the one we ran from.
   const names = pack.nodes.filter((n) => n.kind === 'table').map((n) => n.id);
   assert.ok(names.some((n) => n.includes('mine_row')), `expected mine_row among ${names.join(', ')}`);
@@ -135,11 +135,11 @@ test('--root still wins over the registry, and says so', (t) => {
   const res = analyze(['--project', 'mine', '--root', other], { CASCADE_HOME: home }, base, t);
   assert.equal(res.code, 0, res.stderr);
   const banner = bannerOf(res.stderr);
-  assert.equal(banner.root, fs.realpathSync(other));
+  assert.equal(banner.root, fs.realpathSync.native(other));
   assert.equal(banner.from, '--root');
 
   const pack = JSON.parse(fs.readFileSync(path.join(mine, '.cascade', 'pack', 'pack.json'), 'utf8'));
-  assert.equal(fs.realpathSync(pack.meta.base.repoPath), fs.realpathSync(other),
+  assert.equal(fs.realpathSync.native(pack.meta.base.repoPath), fs.realpathSync.native(other),
     'the operator named the tree; the registry only said where the pack goes');
 });
 
@@ -158,7 +158,7 @@ test('a registered project with NO manifest falls back to the directory its .cas
   const res = analyze(['--project', 'mine'], { CASCADE_HOME: home }, elsewhere, t);
   assert.equal(res.code, 0, res.stderr);
   const banner = bannerOf(res.stderr);
-  assert.equal(banner.root, fs.realpathSync(mine));
+  assert.equal(banner.root, fs.realpathSync.native(mine));
   assert.equal(banner.from, 'the registered project, which has no manifest');
 });
 
@@ -172,7 +172,7 @@ test('with nothing to resolve, the current directory is still the answer', (t) =
   const res = analyze([], { CASCADE_HOME: home }, mine, t);
   assert.equal(res.code, 0, res.stderr);
   const banner = bannerOf(res.stderr);
-  assert.equal(banner.root, fs.realpathSync(mine));
+  assert.equal(banner.root, fs.realpathSync.native(mine));
   assert.equal(banner.from, 'the current directory');
 });
 
@@ -232,7 +232,7 @@ test('estimate --project <id> from an unrelated cwd describes the REGISTERED pro
 
   const res = run(['estimate', '--project', 'mine'], { CASCADE_HOME: home }, elsewhere);
   const banner = estimateBanner(res.stdout);
-  assert.equal(banner.root, fs.realpathSync(mine), 'the banner names the registered project\'s own root');
+  assert.equal(banner.root, fs.realpathSync.native(mine), 'the banner names the registered project\'s own root');
   assert.equal(banner.from, "the registered project's manifest");
   assert.equal(banner.project, 'mine');
   assert.equal(javaFilesOf(res.stdout), 4,
@@ -242,7 +242,7 @@ test('estimate --project <id> from an unrelated cwd describes the REGISTERED pro
   // project's single file, so the assertion above is measuring the root and not
   // a constant.
   const control = run(['estimate', '--project', 'elsewhere'], { CASCADE_HOME: home }, mine);
-  assert.equal(estimateBanner(control.stdout).root, fs.realpathSync(elsewhere));
+  assert.equal(estimateBanner(control.stdout).root, fs.realpathSync.native(elsewhere));
   assert.equal(javaFilesOf(control.stdout), 1);
 });
 
@@ -255,7 +255,7 @@ test('estimate: --root still wins over the registry, and the banner says which r
 
   const res = run(['estimate', '--project', 'mine', '--root', other], { CASCADE_HOME: home }, base);
   const banner = estimateBanner(res.stdout);
-  assert.equal(banner.root, fs.realpathSync(other));
+  assert.equal(banner.root, fs.realpathSync.native(other));
   assert.equal(banner.from, '--root');
   assert.equal(javaFilesOf(res.stdout), 1, 'the operator named the tree');
 });
@@ -268,7 +268,7 @@ test('estimate: with nothing to resolve, the current directory is still the answ
 
   const res = run(['estimate'], { CASCADE_HOME: home }, mine);
   const banner = estimateBanner(res.stdout);
-  assert.equal(banner.root, fs.realpathSync(mine));
+  assert.equal(banner.root, fs.realpathSync.native(mine));
   assert.equal(banner.from, 'the current directory');
   assert.equal(javaFilesOf(res.stdout), 4);
 });

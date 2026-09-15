@@ -349,13 +349,29 @@ export function diffDirs(a, b) {
   const onlyInA = [...inA].filter((f) => !inB.has(f)).sort();
   const onlyInB = [...inB].filter((f) => !inA.has(f)).sort();
   const differ = [];
+  const where = {};
   let same = 0;
   for (const f of [...inA].filter((x) => inB.has(x)).sort()) {
     const ba = fs.readFileSync(path.join(a, f));
     const bb = fs.readFileSync(path.join(b, f));
-    if (ba.equals(bb)) same++; else differ.push(f);
+    if (ba.equals(bb)) { same++; continue; }
+    differ.push(f);
+    where[f] = firstDifference(ba.toString('utf8'), bb.toString('utf8'));
   }
-  return { onlyInA, onlyInB, differ, same };
+  return { onlyInA, onlyInB, differ, same, where };
+}
+
+/** The first line two texts disagree on, both sides, so a report says WHAT moved and not only which file. */
+function firstDifference(a, b) {
+  const la = a.split('\n');
+  const lb = b.split('\n');
+  const n = Math.max(la.length, lb.length);
+  for (let i = 0; i < n; i += 1) {
+    if (la[i] === lb[i]) continue;
+    const cut = (s) => (s === undefined ? '<no line>' : s.length > 160 ? `${s.slice(0, 160)}…` : s);
+    return `line ${i + 1}: recorded ${cut(la[i]).trim()} | now ${cut(lb[i]).trim()}`;
+  }
+  return 'the files differ only in their length';
 }
 
 function optAll(argv, name) {

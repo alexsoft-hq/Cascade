@@ -462,7 +462,7 @@ import os from 'node:os';
 
 /** A throwaway package: a real `build`/`dist` at the boundaries, one deeper down. */
 function skipTree(t) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webskip-')));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webskip-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const write = (rel, text) => {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
@@ -592,7 +592,7 @@ test('neither the worker nor a router pack names a wrapper or a project from the
 
 /** A backend directory with a frontend package sitting beside it. */
 function besideTree(t) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webbeside-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webbeside-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const write = (rel, text) => {
     fs.mkdirSync(path.dirname(path.join(base, rel)), { recursive: true });
@@ -677,7 +677,7 @@ test('a frontend BESIDE the analyzed root keeps its package config, stamped with
 test('a source root with no package.json anywhere above it is still its own package', (t) => {
   // The unchanged half of the rule: the walk stops at the filesystem root and
   // the source root itself is the package, exactly as before.
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webnopkg-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webnopkg-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   fs.mkdirSync(path.join(base, 'lone', 'src'), { recursive: true });
   fs.writeFileSync(path.join(base, 'lone', 'src', 'a.js'), "export const a = '/a'\n", 'utf8');
@@ -701,7 +701,7 @@ test('a source root with no package.json anywhere above it is still its own pack
 
 /** The worker's records for one throwaway file. */
 function recordsFor(t, name, text) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webmember-')));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-webmember-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', name), text, 'utf8');

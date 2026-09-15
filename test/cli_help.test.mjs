@@ -30,7 +30,7 @@ const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
  * command's answer look clean.
  */
 function runIsolated(t, argv) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-help-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-help-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const cwd = path.join(base, 'cwd');
   const home = path.join(base, 'home');

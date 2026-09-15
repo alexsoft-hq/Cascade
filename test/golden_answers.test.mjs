@@ -54,7 +54,7 @@ const RECORD = process.env.CASCADE_RECORD_GOLDEN === '1';
 // ---------------------------------------------------------------------------
 
 function tmpDir(t, prefix) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -124,7 +124,7 @@ test('every answer the server gives over the three fixture trees is the one it g
   const report = [
     ...d.onlyInA.map((f) => `  gone: ${f}`),
     ...d.onlyInB.map((f) => `  new:  ${f}`),
-    ...d.differ.map((f) => `  differs: ${f}`),
+    ...d.differ.map((f) => `  differs: ${f} (${d.where[f]})`),
   ].slice(0, 40).join('\n');
   assert.deepEqual(
     { gone: d.onlyInA.length, added: d.onlyInB.length, differ: d.differ.length },
