@@ -10,6 +10,11 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-09-15
+
+The suite runs on Windows, a grade that rose is not a dropped edge, and the
+viewer is never shown stale after an update.
+
 ### Fixed
 
 - **Windows.** The suite now runs on Windows in CI, and the first run found
@@ -2612,7 +2617,8 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.9...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.10...HEAD
+[0.8.10]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.6...v0.8.7
