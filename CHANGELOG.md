@@ -12,6 +12,18 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Fixed
 
+- **Windows.** The suite now runs on Windows in CI, and the first run found
+  what a Windows user would have: a project's own paths compared as two trees
+  (the temp directory's 8.3 short name against the long one git prints), so
+  `diff --base-commit`, the outside-input check and the repository identity all
+  went wrong; the credentials file refused for reporting mode 0666, which is
+  every file on Windows; the SQL lane's Python looked for in `.venv/bin`, where
+  Windows never puts it; a shard path joined with `/`. Every path is now
+  compared by its native real path, the credentials file is protected by the
+  profile directory it sits under and is described that way, `cascade setup`
+  builds and finds `.venv\Scripts\python.exe`, and the census prints
+  repository-relative paths with `/`, as a pack records them.
+
 - **A grade that rose is not a dropped edge.** The gate counted edges per exact
   grade, so a project whose derived JPA names became EXACT on upgrading (its
   configured naming strategy read for the first time) emptied the HEURISTIC rows

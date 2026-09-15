@@ -979,7 +979,7 @@ test('serviceNamesOf: no profile key and no discovery is `none`, not a guess', (
 // one mapper, shipped once per vendor (RM56)
 // --------------------------------------------------------------------------
 
-const M = (path, namespace) => ({ path, namespace, kind: 'mapper' });
+const M = (file, namespace) => ({ path: file, namespace, kind: 'mapper' });
 
 test('groupMappersByVendor: one namespace and one path apart from a vendor word is one set', () => {
   const sets = groupMappersByVendor([
