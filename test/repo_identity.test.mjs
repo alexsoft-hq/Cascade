@@ -342,7 +342,7 @@ test('the base is looked up in the tree the pack read, and refused when what it 
   fs.writeFileSync(path.join(front, 'App.vue'), 'two');
   const die = (msg) => { throw new Error(msg); };
   assert.throws(() => basePackAt({ rev: 'HEAD', dotCascade, packDir: path.join(dotCascade, 'pack'), headPack: head, die }),
-    new RegExp(`inputs outside the repository have changed since the current pack was analyzed \\(${front.replace(/[/.]/g, '\\$&')}\\)`),
+    new RegExp(`inputs outside the repository have changed since the current pack was analyzed \\(${front.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`),
     'found the commit in the tree the pack read, then refused on the changed frontend');
 });
 
