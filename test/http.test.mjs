@@ -489,11 +489,12 @@ test('handleI18n reads through an injected readFile — it never guesses a body'
 
 const VENDOR_DIR = fileURLToPath(new URL('../viewer/vendor', import.meta.url));
 
-test('GET /vendor/force-graph.min.js: 200 with the real file, JS content type and a day of cache', () => {
+test('GET /vendor/force-graph.min.js: 200 with the real file, JS content type, revalidated on every load by its ETag', () => {
   const r = handleVendor('GET', '/vendor/force-graph.min.js', { vendorDir: VENDOR_DIR });
   assert.equal(r.status, 200);
   assert.equal(r.headers['content-type'], 'application/javascript; charset=utf-8');
-  assert.equal(r.headers['cache-control'], 'public, max-age=86400');
+  assert.equal(r.headers['cache-control'], 'no-cache');
+  assert.match(r.headers.etag, /^"[0-9a-f]{16}"$/);
   const body = Buffer.from(r.body).toString('utf8');
   assert.match(body, /^\/\/ Version 1\.51\.4 force-graph/, 'the vendored UMD build, unmodified');
   assert.equal(Buffer.byteLength(r.body), nodeFs.statSync(VENDOR_DIR + '/force-graph.min.js').size, 'the whole file, byte for byte');
@@ -532,7 +533,7 @@ test('GET /vendor/fonts/<face>.woff2: 200, font/woff2, and a YEAR of immutable c
   const lic = handleVendor('GET', '/vendor/fonts/OFL-IBM-Plex.txt', { vendorDir: VENDOR_DIR });
   assert.equal(lic.status, 200);
   assert.equal(lic.headers['content-type'], 'text/plain; charset=utf-8');
-  assert.equal(lic.headers['cache-control'], 'public, max-age=86400');
+  assert.equal(lic.headers['cache-control'], 'no-cache');
 });
 
 test('GET /vendor/<missing>: 404', () => {
@@ -609,8 +610,8 @@ function fakeHttp() {
   const module = {
     createServer(h) { handler = h; return { listen: (port, host, cb) => cb() }; },
   };
-  const call = (method, url) => new Promise((resolve) => {
-    const req = { method, url, setEncoding() {}, on(ev, cb) { if (ev === 'end') cb(); } };
+  const call = (method, url, reqHeaders = {}) => new Promise((resolve) => {
+    const req = { method, url, headers: reqHeaders, setEncoding() {}, on(ev, cb) { if (ev === 'end') cb(); } };
     const res = {
       writeHead(status, headers) { this.status = status; this.headers = headers || {}; },
       end(body) { resolve({ status: this.status, headers: this.headers, body }); },
@@ -630,12 +631,22 @@ test('serveHttp: /, /vendor/<file>, /api/tools and an unknown path, through an i
   assert.equal(page.status, 200);
   assert.equal(page.headers['content-type'], 'text/html; charset=utf-8');
   assert.match(page.body, /<title>page<\/title>/);
+  // THE PAGE IS NEVER SHOWN STALE AFTER AN UPDATE: it and every script of its
+  // own are revalidated on each load, and an unchanged one costs no bytes.
+  assert.equal(page.headers['cache-control'], 'no-cache');
+  assert.match(page.headers.etag, /^"[0-9a-f]{16}"$/);
+  const same = await fake.call('GET', '/', { 'if-none-match': page.headers.etag });
+  assert.equal(same.status, 304);
+  assert.equal(same.body, '');
+  assert.equal(same.headers.etag, page.headers.etag);
+  assert.equal((await fake.call('GET', '/', { 'if-none-match': '"0000000000000000"' })).status, 200, 'another build of the page is sent whole');
 
   const bundle = await fake.call('GET', '/vendor/force-graph.min.js');
   assert.equal(bundle.status, 200);
   assert.equal(bundle.headers['content-type'], 'application/javascript; charset=utf-8');
-  assert.equal(bundle.headers['cache-control'], 'public, max-age=86400');
+  assert.equal(bundle.headers['cache-control'], 'no-cache');
   assert.match(Buffer.from(bundle.body).toString('utf8'), /^\/\/ Version 1\.51\.4 force-graph/);
+  assert.equal((await fake.call('GET', '/vendor/force-graph.min.js', { 'if-none-match': bundle.headers.etag })).status, 304);
 
   const licence = await fake.call('GET', '/vendor/LICENSE-3d-force-graph.txt');
   assert.equal(licence.status, 200);

@@ -9,6 +9,7 @@
 // also serves the static viewer file, the page's own scripts, the two vendored
 // browser bundles and the translation catalogues.
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,16 +22,23 @@ const VENDOR_TYPES = Object.freeze({
   '.md': 'text/plain; charset=utf-8',
   '.woff2': 'font/woff2',
 });
-// How long a browser may keep each kind. A bundle can be replaced by an update
-// under the SAME name, so it gets a day. A font file NEVER changes under its
-// name — the name carries the family, the weight and the subset, and a new cut
-// is a new file — so it is immutable for a year: the page then repaints on a
-// reload without going back for a face it already has.
+// How long a browser may keep each kind. A bundle, a script of the page's own
+// and the page itself are all replaced under the SAME name when the engine is
+// updated, and a page that keeps yesterday's script against today's server asks
+// for things the server no longer answers. So none of them is kept on trust:
+// each carries an ETag of its bytes and `no-cache`, which makes the browser ask
+// once per load whether it still has the current one (a 304, no body, on a
+// local server) and never shows an old build after an update. A font file NEVER
+// changes under its name — the name carries the family, the weight and the
+// subset, and a new cut is a new file — so it is immutable for a year.
 const VENDOR_CACHE = Object.freeze({
   '.woff2': 'public, max-age=31536000, immutable',
 });
-const VENDOR_CACHE_DEFAULT = 'public, max-age=86400';
+const REVALIDATE = 'no-cache';
 const VENDOR_PREFIX = '/vendor/';
+
+/** A strong ETag of a body: the browser sends it back, and an unchanged file is a 304. */
+export const etagOf = (body) => `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"`;
 
 /**
  * Serve one file out of the viewer's vendor directory. Confined to that
@@ -51,7 +59,7 @@ export function handleVendor(method, pathname, deps) {
     prefix: VENDOR_PREFIX,
     dir: deps && deps.vendorDir,
     types: VENDOR_TYPES,
-    cacheFor: (ext) => (Object.hasOwn(VENDOR_CACHE, ext) ? VENDOR_CACHE[ext] : VENDOR_CACHE_DEFAULT),
+    cacheFor: (ext) => (Object.hasOwn(VENDOR_CACHE, ext) ? VENDOR_CACHE[ext] : REVALIDATE),
     deps,
   });
 }
@@ -83,7 +91,7 @@ function serveFromDir({ method, pathname, prefix, dir, types, cacheFor, deps }) 
   let body;
   try { body = readFile(abs); }
   catch { return vendorErr(404, 'not found'); }
-  return { status: 200, headers: { 'content-type': types[ext], 'cache-control': cacheFor(ext) }, body };
+  return { status: 200, headers: { 'content-type': types[ext], 'cache-control': cacheFor(ext), etag: etagOf(body) }, body };
 }
 
 function vendorErr(status, message) {
@@ -97,8 +105,8 @@ const I18N_PREFIX = '/i18n/';
 
 // The page's own scripts. `viewer/js/*.js` are classic scripts sharing one
 // global scope, loaded in the numbered order their names make explicit, and
-// they are served like the vendored bundles: a day of cache, one directory, no
-// escaping it.
+// they are served like the vendored bundles: revalidated on every load, one
+// directory, no escaping it.
 const VIEWER_JS_TYPES = Object.freeze({ '.js': 'application/javascript; charset=utf-8' });
 const VIEWER_JS_PREFIX = '/viewer/js/';
 
@@ -123,11 +131,11 @@ export function classicSource(text) {
   return String(text).replace(/^export /gm, '');
 }
 
-// What the two mark routes answer with. A day of cache: the file can be
-// replaced under the same name by an update, the way a bundle can.
+// What the two mark routes answer with: revalidated on every load, like a
+// bundle, because an update can replace the drawing under the same name.
 const SVG_HEADERS = Object.freeze({
   'content-type': 'image/svg+xml; charset=utf-8',
-  'cache-control': 'public, max-age=86400',
+  'cache-control': REVALIDATE,
 });
 
 /**
@@ -153,16 +161,16 @@ export function handleI18n(method, pathname, deps) {
     prefix: I18N_PREFIX,
     dir: deps && deps.i18nDir,
     types: I18N_TYPES,
-    // No cache: a translator editing ko.json wants a reload to show the edit.
-    cacheFor: () => 'no-cache',
+    // A translator editing ko.json wants a reload to show the edit.
+    cacheFor: () => REVALIDATE,
     deps,
   });
 }
 
 /**
- * Serve one of the page's own scripts out of `viewer/js`. Same rule as /vendor,
- * same day of cache: these files change when the engine is updated, under the
- * same names.
+ * Serve one of the page's own scripts out of `viewer/js`. Same rule as /vendor:
+ * these files change when the engine is updated, under the same names, so each
+ * is revalidated on every load.
  *
  * @param {string} method
  * @param {string} pathname  "/viewer/js/<name>.js"
@@ -175,7 +183,7 @@ export function handleViewerJs(method, pathname, deps) {
     prefix: VIEWER_JS_PREFIX,
     dir: deps && deps.viewerJsDir,
     types: VIEWER_JS_TYPES,
-    cacheFor: () => VENDOR_CACHE_DEFAULT,
+    cacheFor: () => REVALIDATE,
     deps,
   });
 }
@@ -205,11 +213,26 @@ export function handleViewerLib(method, pathname, deps) {
   let text;
   try { text = readFile(path.join(path.resolve(dir), `${stem}.mjs`)); }
   catch { return vendorErr(404, 'not found'); }
+  const body = classicSource(String(text));
   return {
     status: 200,
-    headers: { 'content-type': VIEWER_JS_TYPES['.js'], 'cache-control': VENDOR_CACHE_DEFAULT },
-    body: classicSource(String(text)),
+    headers: { 'content-type': VIEWER_JS_TYPES['.js'], 'cache-control': REVALIDATE, etag: etagOf(body) },
+    body,
   };
+}
+
+/**
+ * Answer a static route: the file, or a 304 with no body when the browser's
+ * `If-None-Match` names the ETag it would get, which is what makes `no-cache`
+ * cost one round trip and no bytes on a page that has not changed.
+ */
+function sendStatic(req, res, out) {
+  const wanted = req.headers && req.headers['if-none-match'];
+  if (out.status === 200 && out.headers.etag && wanted === out.headers.etag) {
+    const { 'content-type': _type, ...rest } = out.headers;
+    return send(res, 304, rest, '');
+  }
+  return send(res, out.status, out.headers, out.body);
 }
 
 /**
@@ -364,6 +387,8 @@ function err(status, code, message) {
  * @returns {Promise<{server:object, port:number}>}
  */
 export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, mark = null, markDark = null }) {
+  // The page, hashed once: it is one string for the life of the server.
+  const pageHeaders = { 'content-type': 'text/html; charset=utf-8', 'cache-control': REVALIDATE, etag: etagOf(html) };
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, `http://${host}`);
@@ -377,37 +402,19 @@ export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, m
         });
         return;
       }
-      if (pathname === '/vendor' || pathname.startsWith(VENDOR_PREFIX)) {
-        const out = handleVendor(req.method, pathname, deps);
-        return send(res, out.status, out.headers, out.body);
-      }
-      if (pathname === '/i18n' || pathname.startsWith(I18N_PREFIX)) {
-        const out = handleI18n(req.method, pathname, deps);
-        return send(res, out.status, out.headers, out.body);
-      }
-      if (pathname.startsWith(VIEWER_JS_PREFIX)) {
-        const out = handleViewerJs(req.method, pathname, deps);
-        return send(res, out.status, out.headers, out.body);
-      }
-      if (pathname.startsWith(VIEWER_LIB_PREFIX)) {
-        const out = handleViewerLib(req.method, pathname, deps);
-        return send(res, out.status, out.headers, out.body);
-      }
-      if (pathname === '/' || pathname === '/index.html') {
-        return send(res, 200, { 'content-type': 'text/html; charset=utf-8' }, html);
-      }
+      if (pathname === '/vendor' || pathname.startsWith(VENDOR_PREFIX)) return sendStatic(req, res, handleVendor(req.method, pathname, deps));
+      if (pathname === '/i18n' || pathname.startsWith(I18N_PREFIX)) return sendStatic(req, res, handleI18n(req.method, pathname, deps));
+      if (pathname.startsWith(VIEWER_JS_PREFIX)) return sendStatic(req, res, handleViewerJs(req.method, pathname, deps));
+      if (pathname.startsWith(VIEWER_LIB_PREFIX)) return sendStatic(req, res, handleViewerLib(req.method, pathname, deps));
+      if (pathname === '/' || pathname === '/index.html') return sendStatic(req, res, { status: 200, headers: pageHeaders, body: html });
       // The mark, as a file, for anything that cannot inline it (a README
       // rendered elsewhere, a slide, a link) — one for a light ground and one
       // for a dark one, because the dark variant is a different drawing, not a
       // recolouring the browser could do for itself. The page does not fetch
       // either: it carries the same geometry as an inline <symbol> and a
       // data-URI favicon, so a machine with no network still sees the mark.
-      if (pathname === '/cascade-mark.svg' && mark != null) {
-        return send(res, 200, SVG_HEADERS, mark);
-      }
-      if (pathname === '/cascade-mark-dark.svg' && markDark != null) {
-        return send(res, 200, SVG_HEADERS, markDark);
-      }
+      if (pathname === '/cascade-mark.svg' && mark != null) return sendStatic(req, res, { status: 200, headers: { ...SVG_HEADERS, etag: etagOf(mark) }, body: mark });
+      if (pathname === '/cascade-mark-dark.svg' && markDark != null) return sendStatic(req, res, { status: 200, headers: { ...SVG_HEADERS, etag: etagOf(markDark) }, body: markDark });
       send(res, 404, { 'content-type': 'text/plain' }, 'not found');
     });
     server.listen(port, host, () => resolve({ server, port: boundPort(server, port) }));

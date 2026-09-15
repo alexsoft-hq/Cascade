@@ -10,6 +10,16 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Fixed
+
+- **The viewer is never shown stale after an update.** The page, its own scripts
+  and the vendored bundles were served with a day of cache under unchanging
+  names, so a browser that had the viewer open before `npm install` kept
+  yesterday's page against today's server for up to a day (and its Compare tab
+  asked for what the server no longer answers). Each is now revalidated on every
+  load by an ETag of its bytes: an unchanged file is a 304 with no body, a
+  changed one is sent whole. Fonts stay immutable, because a new cut is a new file.
+
 ## [0.8.9] - 2026-09-14
 
 A change is compared with the same project before it, never with another
