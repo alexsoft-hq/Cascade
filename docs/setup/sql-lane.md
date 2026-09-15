@@ -36,6 +36,11 @@ python3 -m venv .venv
 .venv/bin/pip install -r adapters/sql/requirements.txt
 ```
 
+On Windows the interpreter lands in `.venv\Scripts\python.exe`, and that is
+where a run looks for it there; the same two lines read
+`py -m venv .venv` and `.venv\Scripts\python.exe -m pip install -r adapters\sql\requirements.txt`.
+`CASCADE_PYTHON` names another interpreter on any platform.
+
 The version is pinned in `adapters/sql/requirements.txt`, not chosen at install
 time. sqlglot ships often, and a different version parses some statements
 differently, which would move the pack digest. The digest has to be

@@ -2,11 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { measurePack } from '../src/core/estimate.mjs';
+import { Graph } from '../src/core/graph.mjs';
 import { normalizeProfile } from '../src/core/profile.mjs';
 import {
-  calibrationMetrics, sqlLaneTallies, enginePrint, isEngineSourcePath, pinOf, samePin,
-  profileDigestOf, sealBaseline, validateBaseline, gateEvaluate, gateLine, lowerIsBetter,
-  BASELINE_SCHEMA, GATE_MODES, METRICS_SCHEMA, CalibrationError,
+  calibrationMetrics, sqlLaneTallies, enginePrint, isEngineSourcePath, pinOf, samePin, profileDigestOf, sealBaseline, validateBaseline, gateEvaluate, gateLine, lowerIsBetter, BASELINE_SCHEMA, GATE_MODES, METRICS_SCHEMA, CalibrationError, orStrongerCounts,
 } from '../src/core/calibration.mjs';
 
 // SPEC §14.2 / §15 M3. The gate compares this run against the PREVIOUS
@@ -71,15 +70,19 @@ test('calibrationMetrics reuses estimate.mjs rather than re-deriving the ratios'
   }
 });
 
-test('calibrationMetrics counts nodes by kind and edges by type/grade', () => {
+test('calibrationMetrics counts nodes by kind, and edges by type at each grade or stronger', () => {
   const { graph } = fixtureGraph();
   const m = calibrationMetrics(graph, {});
   assert.equal(m.counts['node:table'], 1);
   assert.equal(m.counts['node:column'], 2);
   assert.equal(m.counts['node:statement'], 2);
-  assert.equal(m.counts['edge:DECLARES/EXACT'], 2);
-  assert.equal(m.counts['edge:READS/EXACT'], 2);
-  assert.equal(m.counts['edge:EXECUTES/EXACT'], 2);
+  assert.equal(m.counts['edge:DECLARES/EXACT+'], 2);
+  assert.equal(m.counts['edge:READS/EXACT+'], 2);
+  assert.equal(m.counts['edge:EXECUTES/EXACT+'], 2);
+  // Every type carries all five rows, so a row never vanishes because a grade did.
+  assert.equal(m.counts['edge:EXECUTES/HEURISTIC+'], 2);
+  assert.equal(m.counts['edge:EXECUTES/UNRESOLVED+'], 2);
+  assert.equal(m.schema, 'cascade:calibration-metrics:2');
   // A kind with nothing in it is simply absent — and the gate reads a missing
   // count as zero, so a census row that vanishes is a drop, not a silence.
   assert.equal(Object.hasOwn(m.counts, 'node:endpoint'), false);
@@ -417,4 +420,72 @@ test('a ratio whose numerator actually FELL gets no wider-lane excuse', () => {
   const f = gate.findings.find((x) => x.metric === 'callsResolved');
   assert.equal(f.kind, 'regression');
   assert.equal(/numerator ROSE/.test(f.reason), false, 'a real regression must not be dressed up');
+});
+
+// ---------------------------------------------------------------------------
+// Edge rows count "this grade or stronger": a grade that rises is not a loss
+// ---------------------------------------------------------------------------
+
+/** A graph of one table, three statements, and one EXECUTES edge per grade given, so only the edge rows move between two of them. */
+function executesAt(grades) {
+  const g = new Graph();
+  g.addNode({ id: 'table:t', kind: 'table', name: 't' });
+  for (let i = 0; i < 3; i += 1) g.addNode({ id: `statement:s${i}`, kind: 'statement', name: `s${i}` });
+  grades.forEach((grade, i) => g.addEdge({ from: `statement:s${i}`, to: 'table:t', type: 'EXECUTES', grade }));
+  return g;
+}
+const gateOver = (baselineGraph, currentGraph, { baselineSchema = null } = {}) => {
+  const base = calibrationMetrics(baselineGraph, {});
+  const metrics = baselineSchema ? { ...perGradeCounts(baselineGraph), schema: baselineSchema } : base;
+  const baseline = sealBaseline({ sealedAt: 'x', enginePrint: 'e1', pin: { commit: 'c', dirty: false, inputsDigest: 'i' }, metrics });
+  return gateEvaluate({ baseline, current: { enginePrint: 'e2', pin: baseline.pin, profileDigest: null, catalogDigest: null, metrics: calibrationMetrics(currentGraph, {}) }, profile: {} });
+};
+/** What a baseline sealed before 0.8.10 held: edges counted per exact grade. */
+function perGradeCounts(graph) {
+  const counts = {};
+  for (const e of graph.edges) counts[`edge:${e.type}/${e.grade}`] = (counts[`edge:${e.type}/${e.grade}`] ?? 0) + 1;
+  for (const n of graph.nodes.values()) counts[`node:${n.kind}`] = (counts[`node:${n.kind}`] ?? 0) + 1;
+  return { ratios: calibrationMetrics(graph, {}).ratios, counts };
+}
+
+test('an edge whose grade rose is not a dropped edge: the weaker rows keep it and the stronger ones gain it', () => {
+  const r = gateOver(executesAt(['HEURISTIC', 'HEURISTIC', 'EXACT']), executesAt(['EXACT', 'EXACT', 'EXACT']));
+  assert.equal(r.verdict, 'GREEN', JSON.stringify(r.findings.filter((f) => f.severity === 'error')));
+  assert.deepEqual(r.findings.filter((f) => f.kind === 'improvement').map((f) => f.metric), ['edge:EXECUTES/EXACT+', 'edge:EXECUTES/SOUND_SET+']);
+});
+
+test('an edge that is gone drops every row it was in, and one whose grade fell drops the stronger rows only', () => {
+  const gone = gateOver(executesAt(['HEURISTIC', 'HEURISTIC', 'EXACT']), executesAt(['HEURISTIC', 'EXACT']));
+  assert.equal(gone.verdict, 'RED');
+  assert.deepEqual(gone.findings.filter((f) => f.kind === 'regression').map((f) => f.metric), ['edge:EXECUTES/HEURISTIC+', 'edge:EXECUTES/RUNTIME_ONLY+', 'edge:EXECUTES/UNRESOLVED+']);
+  const fell = gateOver(executesAt(['EXACT', 'EXACT', 'EXACT']), executesAt(['EXACT', 'EXACT', 'HEURISTIC']));
+  assert.equal(fell.verdict, 'RED');
+  assert.deepEqual(fell.findings.filter((f) => f.kind === 'regression').map((f) => f.metric), ['edge:EXECUTES/EXACT+', 'edge:EXECUTES/SOUND_SET+']);
+  assert.ok(fell.findings.every((f) => f.metric !== 'edge:EXECUTES/HEURISTIC+' || f.kind !== 'regression'), 'the edge is still there at HEURISTIC or stronger');
+});
+
+test('a whole edge type that vanished is a loss in every one of its rows', () => {
+  const g = executesAt(['EXACT']);
+  const r = gateOver(g, new Graph());
+  assert.equal(r.verdict, 'RED');
+  assert.ok(r.findings.some((f) => f.kind === 'regression' && f.metric === 'edge:EXECUTES/EXACT+' && f.relativeDrop === 1));
+});
+
+test('a baseline sealed before 0.8.10 (per-grade rows) is summed into the cumulative rows exactly, so the same rise is no loss there either', () => {
+  const before = executesAt(['HEURISTIC', 'HEURISTIC', 'EXACT']);
+  const rose = gateOver(before, executesAt(['EXACT', 'EXACT', 'EXACT']), { baselineSchema: 'cascade:calibration-metrics:1' });
+  assert.equal(rose.verdict, 'GREEN', JSON.stringify(rose.findings.filter((f) => f.severity === 'error')));
+  assert.ok(!rose.findings.some((f) => f.kind === 'new-metric' || f.kind === 'missing-metric'), 'every row pairs with a converted one');
+  const lost = gateOver(before, executesAt(['EXACT', 'EXACT']), { baselineSchema: 'cascade:calibration-metrics:1' });
+  assert.equal(lost.verdict, 'RED', 'a lost edge is still a lost edge against an old baseline');
+  assert.deepEqual(orStrongerCounts({ schema: 'cascade:calibration-metrics:1', counts: { 'node:table': 1, 'edge:EXECUTES/EXACT': 1, 'edge:EXECUTES/HEURISTIC': 2 } }),
+    { 'node:table': 1, 'edge:EXECUTES/EXACT+': 1, 'edge:EXECUTES/SOUND_SET+': 1, 'edge:EXECUTES/HEURISTIC+': 3, 'edge:EXECUTES/RUNTIME_ONLY+': 3, 'edge:EXECUTES/UNRESOLVED+': 3 });
+});
+
+test('the same graph under the same engine and pin is NO_CHANGE and GREEN with the cumulative rows too', () => {
+  const g = executesAt(['HEURISTIC', 'EXACT']);
+  const metrics = calibrationMetrics(g, {});
+  const baseline = sealBaseline({ sealedAt: 'x', enginePrint: 'e1', pin: { commit: 'c', dirty: false, inputsDigest: 'i' }, metrics });
+  const r = gateEvaluate({ baseline, current: { enginePrint: 'e1', pin: baseline.pin, profileDigest: null, catalogDigest: null, metrics: calibrationMetrics(g, {}) }, profile: {} });
+  assert.deepEqual([r.mode, r.verdict], ['NO_CHANGE', 'GREEN']);
 });

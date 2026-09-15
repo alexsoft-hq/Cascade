@@ -69,6 +69,8 @@ export const FLOW_EDGE_TYPES = Object.freeze([
 
 // Grade rank for "weakest link" path grading (mirrors policy lattice).
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
+/** The same rank, for anything that has to count "this grade or stronger" (src/core/calibration.mjs). */
+export const GRADE_RANK = RANK;
 
 // Query grade sets (SPEC §3.3).
 export const GRADE_SETS = Object.freeze({

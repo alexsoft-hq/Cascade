@@ -12,6 +12,17 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Fixed
 
+- **A grade that rose is not a dropped edge.** The gate counted edges per exact
+  grade, so a project whose derived JPA names became EXACT on upgrading (its
+  configured naming strategy read for the first time) emptied the HEURISTIC rows
+  and was rejected for a "100% drop" of edges that were all still there.
+  Edge rows now count each grade or stronger (`edge:READS/HEURISTIC+`), so a
+  rise never shrinks a row, an edge that is gone still does, and a grade that
+  fell shrinks the stronger rows. A baseline sealed before this release is
+  summed into the same rows before it is compared, exactly, so nothing is
+  re-sealed on trust. Measured on the eleven registered projects: ten GREEN as
+  before, and spring-petclinic GREEN with eleven improvements instead of RED.
+
 - **The viewer is never shown stale after an update.** The page, its own scripts
   and the vendored bundles were served with a day of cache under unchanging
   names, so a browser that had the viewer open before `npm install` kept

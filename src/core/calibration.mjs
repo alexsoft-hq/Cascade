@@ -47,11 +47,20 @@
 
 import { sha256, canonicalJson } from './canonical.mjs';
 import { measurePack, ratio } from './estimate.mjs';
-import { NODE_KINDS } from './graph.mjs';
+import { GRADE_RANK, NODE_KINDS } from './graph.mjs';
 
 export const BASELINE_SCHEMA = 'cascade:calibration-baseline:1';
 export const GATE_STATE_SCHEMA = 'cascade:golden-gate-state:1';
-export const METRICS_SCHEMA = 'cascade:calibration-metrics:1';
+export const METRICS_SCHEMA = 'cascade:calibration-metrics:2';
+/**
+ * The metrics of a baseline sealed before 0.8.10: edges counted per exact grade
+ * (`edge:READS/HEURISTIC` = the READS edges graded HEURISTIC and no other). Read
+ * by `metricPairs`, which sums those into the cumulative rows of schema 2 before
+ * comparing, so an old baseline is compared exactly, never re-sealed on trust.
+ */
+const METRICS_SCHEMA_1 = 'cascade:calibration-metrics:1';
+/** Every grade an edge can carry, strongest first. */
+const EDGE_GRADES = Object.freeze(['EXACT', 'SOUND_SET', 'HEURISTIC', 'RUNTIME_ONLY', 'UNRESOLVED']);
 
 /** The four moving-parts modes plus "there is nothing to compare with" (§14.2). */
 export const GATE_MODES = Object.freeze(['NO_SEAL', 'NO_CHANGE', 'ENGINE_MOVED', 'REPIN', 'BOTH_MOVED']);
@@ -167,12 +176,22 @@ export function calibrationMetrics(graph, packMeta = {}) {
   for (const kind of NODE_KINDS) {
     if (byKind.has(kind)) counts[`node:${kind}`] = byKind.get(kind);
   }
-  const byEdge = new Map();
+  // EDGES BY TYPE, AT EACH GRADE OR STRONGER. `edge:READS/HEURISTIC+` is every
+  // READS edge graded HEURISTIC, SOUND_SET or EXACT. Counted this way, an edge
+  // whose grade RISES (a naming strategy the project declared, read for the first
+  // time) leaves every row where it was or adds to one, and only an edge that is
+  // GONE, or one whose grade FELL, makes a row smaller. Counted per exact grade,
+  // as before, a rise emptied the weaker row and read as a total loss. Every
+  // type gets all five rows, so a row is never absent because a grade is.
+  const byType = new Map();
   for (const e of graph.edges) {
-    const key = `edge:${e.type}/${e.grade}`;
-    byEdge.set(key, (byEdge.get(key) ?? 0) + 1);
+    if (!byType.has(e.type)) byType.set(e.type, []);
+    byType.get(e.type).push(GRADE_RANK[e.grade] ?? 0);
   }
-  for (const key of [...byEdge.keys()].sort()) counts[key] = byEdge.get(key);
+  for (const type of [...byType.keys()].sort()) {
+    const ranks = byType.get(type);
+    for (const grade of EDGE_GRADES) counts[`edge:${type}/${grade}+`] = ranks.filter((r) => r >= GRADE_RANK[grade]).length;
+  }
 
   return { schema: METRICS_SCHEMA, ratios: sortKeys(ratios), counts: sortKeys(counts) };
 }
@@ -530,12 +549,12 @@ function metricPairs(baseMetrics, curMetrics) {
     out.push({ metric, baselineRaw: b, currentRaw: c, same, drop: dropOf(metric, b.pct, c.pct) });
   }
 
-  const countNames = new Set([
-    ...Object.keys(baseMetrics.counts ?? {}), ...Object.keys(curMetrics.counts ?? {}),
-  ]);
+  const baseCounts = orStrongerCounts(baseMetrics);
+  const curCounts = orStrongerCounts(curMetrics);
+  const countNames = new Set([...Object.keys(baseCounts), ...Object.keys(curCounts)]);
   for (const metric of [...countNames].sort()) {
-    const b = (baseMetrics.counts ?? {})[metric];
-    const c = (curMetrics.counts ?? {})[metric];
+    const b = baseCounts[metric];
+    const c = curCounts[metric];
     if (b == null || c == null) {
       // A census row is absent when the count is zero, so a vanished row IS a
       // drop to zero — not an unmeasurable metric.
@@ -553,6 +572,29 @@ function metricPairs(baseMetrics, curMetrics) {
  * The RELATIVE QUALITY DROP. Positive means "this run is worse". For a metric
  * whose smaller value is the better one, a rise is the drop.
  */
+/**
+ * A metrics document's counts in the cumulative rows of schema 2. Schema 1
+ * counted edges per exact grade; its rows are summed here, exactly, into "this
+ * grade or stronger" rows, so a baseline sealed before 0.8.10 is compared as it
+ * would have been sealed today. A count that is not an edge row is as it is.
+ */
+export function orStrongerCounts(metrics) {
+  const counts = metrics?.counts ?? {};
+  if (metrics?.schema !== METRICS_SCHEMA_1 && metrics?.schema !== undefined) return counts;
+  const out = {};
+  const perType = new Map();
+  for (const [key, n] of Object.entries(counts)) {
+    const m = /^edge:(.+)\/([A-Z_]+)$/.exec(key);
+    if (!m) { out[key] = n; continue; }
+    if (!perType.has(m[1])) perType.set(m[1], []);
+    perType.get(m[1]).push([GRADE_RANK[m[2]] ?? 0, n]);
+  }
+  for (const [type, rows] of perType) {
+    for (const grade of EDGE_GRADES) out[`edge:${type}/${grade}+`] = rows.filter(([r]) => r >= GRADE_RANK[grade]).reduce((a, [, n]) => a + n, 0);
+  }
+  return out;
+}
+
 function dropOf(metric, baselineValue, currentValue) {
   const b = Number(baselineValue);
   const c = Number(currentValue);
