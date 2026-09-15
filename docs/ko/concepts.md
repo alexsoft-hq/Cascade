@@ -93,7 +93,12 @@ GREEN 이나 BOOTSTRAP 이 아니면 `UNCERTIFIED`, 승인된 골든 사례가 �
 서로 다른 사실입니다. 앞의 것을 강등하면 둘 다 잃기 때문입니다.
 
 `trust.knownGaps` 는 축 선언(`column-axis-degraded`, `code-axis-not-shipped`
-같은 것)도 함께 실어 나릅니다.
+같은 것)도 함께 실어 나르고, 보정 게이트가 왜 이 답을 보증하지 않는지도
+말합니다. `no-calibration-state`, `calibration-gate-red`, 그리고
+`calibration-gate-other-build` 는 답하는 pack 이 아닌 다른 빌드를 판정한 통과
+판정입니다(판정은 자기가 판정한 pack 의 다이제스트를 기록합니다). 다이제스트를
+기록하기 전에 쓰인 통과 판정은 다음 `analyze` 까지 `calibration-gate-unbound`
+를 붙인 채 유효합니다.
 
 **`limits`** 는 엔진이 보지 못한 것을 문장으로, 각각 범위를 붙여 적은
 것입니다. 물린 깊이 제한, 추측하기를 거부한 `${}` 치환, 아예 만들어지지 않은

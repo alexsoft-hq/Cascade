@@ -74,7 +74,7 @@ SAST 와 CodeQL 은 취약점을 찾습니다. Cascade 는 변경이 어디까�
 | Java Spring MVC 컨트롤러 | `@RestController` / `@Controller` 의 매핑 애너테이션을 JDK 자체 컴파일러의 파싱 전용 모드로 읽습니다. Gradle 도 Maven 도 의존성 classpath 도 쓰지 않습니다 | 구체 컨트롤러 메서드의 매핑은 `EXACT`, 인터페이스 선언의 매핑을 구현체가 서빙하는 경우는 `SOUND_SET` | 런타임에 조립되는 컨트롤러, 프로그램적으로 등록되는 핸들러 |
 | MyBatis XML 과 애너테이션 | `<mapper namespace>` 파일, 전역 fragment 인덱스로 해석되는 `<include refid>`, 그리고 `@Select` / `@Insert` / `@Update` / `@Delete` 안에 쓰인 SQL | `EXACT`. statement id 는 매퍼 인터페이스 FQN 과 메서드 이름 그 자체이기 때문입니다 | `${}` 치환. 추측하지 않고 진단으로 기록합니다 |
 | MyBatis-Plus | `@TableName`, `@TableField`, `@TableId`, `@TableLogic`, `BaseMapper` / `IService` / `ServiceImpl` 의 빌트인, 그리고 condition wrapper 가 들고 있는 메서드 레퍼런스와 리터럴 | 소스가 테이블이나 컬럼 이름을 직접 쓴 경우 `EXACT`, 네이밍 규칙을 가정해야 했던 경우 `HEURISTIC` | 조건이 HTTP 쿼리 스트링에서 오는 wrapper. 테이블은 사실로 남기고 컬럼은 런타임 결정으로 표시합니다 |
-| JPA 와 Spring Data | `@Entity`, `@Table`, `@Column`, `@Id`, `@JoinColumn`, `@JoinTable`, `@MappedSuperclass`, 파생 쿼리 메서드 이름, JPQL `@Query`, SQL 분석기를 거치는 네이티브 `@Query`, 그리고 호출자가 실제로 도달한 리포지터리 빌트인 | 매핑이 이름을 직접 쓰거나 `jpa.namingStrategy` 가 선언된 경우 `EXACT`, 전략을 가정한 경우 `HEURISTIC` | `@Embedded`, `@SecondaryTable`, `@Inheritance`, `@AttributeOverride`, `@Convert`, `@ElementCollection`, named query |
+| JPA 와 Spring Data | `@Entity`, `@Table`, `@Column`, `@Id`, `@JoinColumn`, `@JoinTable`, `@MappedSuperclass`, 파생 쿼리 메서드 이름, JPQL `@Query`, SQL 분석기를 거치는 네이티브 `@Query`, 그리고 호출자가 실제로 도달한 리포지터리 빌트인 | 매핑이 이름을 직접 쓰거나 naming strategy 가 선언된 경우(프로파일의 `jpa.namingStrategy`, 또는 프로젝트 설정의 `spring.jpa.hibernate.naming.physical-strategy`) `EXACT`, 전략을 가정한 경우 `HEURISTIC` | `@Embedded`, `@SecondaryTable`, `@Inheritance`, `@AttributeOverride`, `@Convert`, `@ElementCollection`, named query |
 | SQL DDL 카탈로그 | `CREATE TABLE` 과 `ALTER TABLE` 의 타입, null 허용 여부, 기본키, 주석을 방언별로 읽습니다. MySQL 과 MariaDB, PostgreSQL, Oracle, 그리고 ANSI 파서를 쓰는 H2 와 HSQLDB. 방언마다 식별자 대소문자 규칙이 따로 있습니다 | `EXACT` | 이 엔진이 라우팅할 수 없는 방언. MySQL 로 간주하지 않고 거부합니다 |
 | 라이브 카탈로그 fetch | 읽기 전용 커넥션 하나로 테이블, 컬럼, 주석, 기본키를 읽어 스냅샷으로 고정합니다 | `EXACT` | 메타데이터 이외의 모든 것. 테이블 데이터는 절대 select 하지 않고, 분석 자체는 DB 에 접속하지 않습니다 |
 | 프런트엔드 | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` 와 `.vue` 단일 파일 컴포넌트의 `<script>` 블록. `axios`, `fetch`, `XMLHttpRequest` 와 프로젝트가 직접 만든 래퍼를 실제로 요청을 보내는 지점까지 추적합니다. `vue-router` 와 `react-router` 선언은 화면으로 합성되고, OpenAPI 3 과 Swagger 2 문서는 선언된 라우트로, HAR 기록은 런타임 증거로 읽습니다 | 요청을 보내는 클라이언트까지 추적된 호출은 `SOUND_SET`, 라우트가 선언한 파일로 가는 `RENDERS` 엣지는 `EXACT` | import 된 컴포넌트의 어느 함수가 실제로 실행되는지. 이것은 런타임 질문이므로 `SOUND_SET` 에 머무릅니다 |
@@ -547,6 +547,31 @@ limit [overlay]: HEAD moved past the pack's base commit; the answer below is the
 약속이 아니라, 같은 바이트를 전체 재분석한 결과와 비교하는 테스트가 실제로
 확인한 것입니다.
 
+### 커밋 이후의 변화
+
+오버레이는 아직 커밋하지 않은 편집에 답합니다. 이미 커밋한 편집에는
+`cascade diff --base-commit <rev>` 가 그 커밋 시점의 같은 프로젝트와 지금을
+비교합니다. 생기거나 없어진 라우트·화면·테이블·컬럼·statement, 등급이 바뀐
+엣지, 그리고 그 위에 있는 엔드포인트입니다. 기준 pack 은 인증된 `analyze` 가
+그 빌드를 남겨 두었으면 프로젝트 자신의 기록에서 가져오고, 없으면 임시 git
+worktree 에서 지금 pack 과 같은 방식으로 새로 분석합니다. 등록도 봉인도 하지
+않습니다. spring-petclinic 을 40 커밋 전과 비교한 결과입니다.
+
+```
+base: commit b5a630b1994b, built now in a temporary worktree, the way the current pack was analyzed
+base  60eb0629ec1b  petclinic  commit b5a630b199  built 2026-09-14T10:22:23.266Z
+head  2e3d4b9bd778  petclinic  commit 818c4136ea  built 2026-09-14T10:22:02.018Z
+conditions: the same (lanes, identity rule, axes, workers, profile, engine, flags, roots)
+nodes: +4 -0  (statement +1, symbol +3)
+edges: +25 -2 regraded 20  (EXECUTES +3/~1, IMPLEMENTS_STMT +1, MAY_CALL +6/-2/~1, READS ~11, WRITES +15/~7)
+endpoints above the change: 15
+```
+
+조건 비교가 먼저 나옵니다. 같은 코드라도 다른 워커로 읽거나 축 하나가
+빠지면 다른 pack 이 되기 때문입니다. 서로 다른 프로젝트끼리는 거부합니다.
+그 차이는 전부이고, 라우트 천 개가 추가됐다는 목록은 리뷰처럼 보이지만
+아무 뜻이 없습니다.
+
 ## 여러 프로젝트, 한 서버
 
 `cascade init` 은 `~/.cascade/registry.json` 에 프로젝트당 한 줄을 씁니다. 그
@@ -712,6 +737,13 @@ node bin/cascade.mjs analyze --root <repo> --web-src <front/src> --accept-baseli
 없습니다. 그 pack 은 `<packDir>-rejected/` 로 가고, 인증된 pack 은 있던 자리에
 그대로 남고, 명령은 종료 코드 3 으로 끝납니다.
 
+게이트가 비교하는 엣지 수는 타입별로 **그 등급 이상**을 셉니다
+(`edge:READS/HEURISTIC+` 는 HEURISTIC, SOUND_SET, EXACT 로 매겨진 READS 엣지
+전부). 그래서 프로젝트가 naming strategy 를 선언해 엣지 등급이 올라가면 어느
+칸도 줄지 않아 감소로 읽히지 않고, 엣지가 사라지면 있던 칸이 전부 줄고, 등급이
+내려가면 더 강한 칸이 줄어듭니다. 0.8.10 이전에 봉인한 기준선은 비교 전에 같은
+칸으로 합산되므로, 업그레이드가 아무것도 믿고 다시 봉인하지 않습니다.
+
 게이트 옆에서 `cascade golden` 이 프로젝트 자신의 라벨링된 코퍼스를 관리합니다.
 도구는 사례를 **제안**하고 **사람**이 승인하며, 해시가 어느 것을 홀드아웃으로
 뺄지 정하고, `check` 가 승인된 사례를 실제 배포되는 MCP 도구를 통해 채점합니다.
@@ -845,6 +877,17 @@ mall 에서는 76 개 테이블에 27 개 관계가 있고 그중 32 개 테이�
 
 모든 `@Transactional` 메서드와, 그것을 통해 커밋 하나가 건드릴 수 있는 범위입니다.
 mall 에는 35 개가 있고 가장 큰 것은 15 개 테이블에 닿습니다.
+
+### Compare
+
+이 프로젝트가 이전 빌드 이후 무엇이 바뀌었는지 보여 줍니다. 인증된 `analyze` 는
+덮어쓰는 이전 pack 을 `.cascade/history/` 에 최근 다섯 개까지 남기고, 하나라도
+있으면 탭이 나타납니다. 다른 프로젝트를 기준으로 내놓는 일은 없습니다. 서로
+다른 코드베이스는 모든 것이 다르기 때문입니다. 첫 패널은 두 빌드를 같은
+방식으로 분석했는지 말해 줍니다. 목록보다 먼저 읽으십시오. 분석 방식이 그대로일
+때만 차이가 곧 코드 변경입니다. 기록에 없는 커밋은 `cascade diff --base-commit`
+이 저장소에서 기준 pack 을 만듭니다.
+
 
 ### 소스 창
 
@@ -1053,8 +1096,8 @@ node --test test/overlay_integration.test.mjs   # the overlay omits nothing a fu
 ## 저장소 구조
 
 ```
-bin/cascade.mjs          the CLI: doctor | init | analyze | estimate | verify | golden |
-                         catalog discover|fetch | pack | impact | mcp | view
+bin/cascade.mjs          the CLI: setup | doctor | init | agent | analyze | estimate | verify |
+                         golden | catalog discover|fetch | pack | impact | mcp | view | export | diff
 src/core/                the pure engine, the project layer and the incremental core
 src/mcp/                  the response contract, the query tools, the tool catalog, the stdio and
                          HTTP servers, and the multi-project host
@@ -1071,6 +1114,7 @@ scripts/                 generality-gate.mjs, the memory measurements, the java 
 test/                    the suite: goldens, the incremental oracle, the gates, the docs drift checks
 docs/                    the docs site: concepts, cli, mcp, viewer, measured, setup/, and ko/
 <project>/.cascade/      per-project state: manifest.json, profile.json, and pack/ and catalog/
+                         and history/, the last five certified packs, for `diff` and the Compare tab
 ~/.cascade/registry.json where the tool remembers which project lives where
 $XDG_CACHE_HOME/cascade/  the regenerable fact shards, always outside your source tree
 ```

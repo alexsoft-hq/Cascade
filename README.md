@@ -75,7 +75,7 @@ surface; these are the six worth learning first.
 | Java Spring MVC controllers | `@RestController` / `@Controller` mapping annotations, parsed with the JDK's own compiler in parse-only mode. No Gradle, no Maven, no dependency classpath | `EXACT` for a mapping on a concrete controller method; `SOUND_SET` for a mapping on an interface the implementer serves | a controller assembled at run time; a handler registered programmatically |
 | MyBatis XML and annotations | `<mapper namespace>` files, `<include refid>` fragments resolved through a global index, and SQL written in `@Select` / `@Insert` / `@Update` / `@Delete` | `EXACT`: a statement id **is** the mapper interface FQN plus the method | a `${}` substitution, which is recorded as a diagnostic rather than guessed at |
 | MyBatis-Plus | `@TableName`, `@TableField`, `@TableId`, `@TableLogic`, the `BaseMapper` / `IService` / `ServiceImpl` built-ins, and condition wrappers down to the method references and literals they carry | `EXACT` where the source names the table or column; `HEURISTIC` where a naming rule had to be assumed | a wrapper whose conditions come from an HTTP query string: the table stays a fact, the columns are marked decided at run time |
-| JPA and Spring Data | `@Entity`, `@Table`, `@Column`, `@Id`, `@JoinColumn`, `@JoinTable`, `@MappedSuperclass`, derived query method names, JPQL `@Query`, native `@Query` through the SQL analyzer, and the repository built-ins a caller reached | `EXACT` where the mapping spells the name out or `jpa.namingStrategy` is declared; `HEURISTIC` where the strategy was assumed | `@Embedded`, `@SecondaryTable`, `@Inheritance`, `@AttributeOverride`, `@Convert`, `@ElementCollection`, named queries |
+| JPA and Spring Data | `@Entity`, `@Table`, `@Column`, `@Id`, `@JoinColumn`, `@JoinTable`, `@MappedSuperclass`, derived query method names, JPQL `@Query`, native `@Query` through the SQL analyzer, and the repository built-ins a caller reached | `EXACT` where the mapping spells the name out or the naming strategy is declared, in the profile (`jpa.namingStrategy`) or in the project's own `spring.jpa.hibernate.naming.physical-strategy`; `HEURISTIC` where the strategy was assumed | `@Embedded`, `@SecondaryTable`, `@Inheritance`, `@AttributeOverride`, `@Convert`, `@ElementCollection`, named queries |
 | SQL DDL catalogs | `CREATE TABLE` and `ALTER TABLE` with types, nullability, primary keys and comments, per dialect: MySQL and MariaDB, PostgreSQL, Oracle, and H2 and HSQLDB through the ANSI parser. Each dialect brings its own identifier-case rule | `EXACT` | a dialect this engine cannot route, which is refused rather than parsed as MySQL |
 | Live catalog fetch | one read-only connection that reads tables, columns, comments and primary keys and writes a pinned snapshot | `EXACT` | anything but metadata: no table data is ever selected, and analysis itself never connects |
 | Frontends | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` and the `<script>` blocks of `.vue` single-file components; `axios` and `fetch` and `XMLHttpRequest` and the project's own wrappers traced to whichever of them sends the request; `vue-router` and `react-router` declarations composed into screens; OpenAPI 3 and Swagger 2 documents as declared routes; HAR recordings as runtime evidence | `SOUND_SET` for a call traced to a client that sends it; `EXACT` for a `RENDERS` edge onto the file a route declares | which of an imported component's functions really runs, which is a run-time question and stays `SOUND_SET` |
@@ -550,6 +550,32 @@ frontend. Nothing is written while it runs: not the pack, not the fact cache.
 The overlay may over-approximate; it may **not** omit, and that is a test rather
 than a promise, comparing it against a full re-analysis of the same bytes.
 
+### Since a commit
+
+The overlay answers for edits you have not committed. For the edits you have,
+`cascade diff --base-commit <rev>` compares the project with itself as it was
+at that commit: the routes, screens, tables, columns and statements that
+appeared or went away, the edges that changed grade, and the endpoints above
+any of that. The base comes from the project's own history when a certified
+`analyze` kept that build, and is otherwise analyzed now in a temporary git
+worktree, the way the current pack was, with nothing registered or sealed.
+spring-petclinic, forty commits back:
+
+```
+base: commit b5a630b1994b, built now in a temporary worktree, the way the current pack was analyzed
+base  60eb0629ec1b  petclinic  commit b5a630b199  built 2026-09-14T10:22:23.266Z
+head  2e3d4b9bd778  petclinic  commit 818c4136ea  built 2026-09-14T10:22:02.018Z
+conditions: the same (lanes, identity rule, axes, workers, profile, engine, flags, roots)
+nodes: +4 -0  (statement +1, symbol +3)
+edges: +25 -2 regraded 20  (EXECUTES +3/~1, IMPLEMENTS_STMT +1, MAY_CALL +6/-2/~1, READS ~11, WRITES +15/~7)
+endpoints above the change: 15
+```
+
+The conditions come first, because the same code read by another worker or
+with an axis missing gives a different pack too. Two different projects are
+refused: their difference is everything, and a list of a thousand added routes
+reads like a review while meaning nothing.
+
 ## Several projects, one server
 
 `cascade init` writes one line per project into `~/.cascade/registry.json`, and
@@ -716,6 +742,14 @@ against today. It is the only override there is. A `RED` run is never silently
 discarded: its pack goes to `<packDir>-rejected/`, the certified pack is left
 exactly where it was, and the command exits 3.
 
+The edge counts the gate compares are per type at each grade **or stronger**
+(`edge:READS/HEURISTIC+` is every READS edge graded HEURISTIC, SOUND_SET or
+EXACT). So an edge whose grade rises, say because the project's naming
+strategy was declared, shrinks no row and is not a drop; an edge that is gone
+still shrinks every row it was in, and a grade that fell shrinks the stronger
+rows. A baseline sealed before 0.8.10 is summed into the same rows before it is
+compared, so an upgrade re-seals nothing on trust.
+
 Alongside the gate, `cascade golden` keeps the project's own labelled corpus.
 The tool **proposes** cases and a **human** approves them, a hash decides which
 are held out, and `check` scores the approved ones through the shipped MCP
@@ -855,6 +889,17 @@ touch](docs/assets/screens/transactions.png)
 
 Every `@Transactional` method, and what one commit can touch through it. mall
 has 35 of them, and the largest reaches 15 tables.
+
+### Compare
+
+What changed in this project since an earlier build of it. Every certified
+`analyze` keeps the pack it replaces in `.cascade/history/`, the five most
+recent, and the tab appears once the project has one. It never offers another
+project as a base, because two codebases differ in everything. The first panel
+says whether the two builds were analyzed the same way; read it before the
+lists, because a difference is a code change only when the analysis did not
+change. For a commit the history does not hold, `cascade diff --base-commit`
+builds the base from the repository.
 
 ### The source pane
 
@@ -1075,8 +1120,8 @@ node --test test/overlay_integration.test.mjs   # the overlay omits nothing a fu
 ## Layout of the repository
 
 ```
-bin/cascade.mjs          the CLI: doctor | init | analyze | estimate | verify | golden |
-                         catalog discover|fetch | pack | impact | mcp | view
+bin/cascade.mjs          the CLI: setup | doctor | init | agent | analyze | estimate | verify |
+                         golden | catalog discover|fetch | pack | impact | mcp | view | export | diff
 src/core/                the pure engine: determinism, the grade lattice, the graph, the pack,
                          the response protocol, the working-tree overlay, the chain walk; plus
                          the project layer (discover, init, profile, lanes, estimate, registry,
@@ -1104,8 +1149,9 @@ test/                    the suite, including the goldens, the incremental oracl
                          the documentation drift checks
 docs/                    the docs site: concepts, cli, mcp, viewer, measured, setup/, and ko/
 <project>/.cascade/      per-project state: manifest.json (repositories pinned to full commits),
-                         profile.json (the reading convention), and pack/ and catalog/, both
-                         gitignored because they carry your SQL text and column comments
+                         profile.json (the reading convention), pack/ and catalog/, both
+                         gitignored because they carry your SQL text and column comments, and
+                         history/, the last five certified packs, for `diff` and the Compare tab
 ~/.cascade/registry.json where the tool remembers which project lives where
 $XDG_CACHE_HOME/cascade/  the regenerable fact shards, always outside your source tree. Delete it
                          and the next run is cold
