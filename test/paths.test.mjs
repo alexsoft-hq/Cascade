@@ -35,7 +35,7 @@ test("cacheDir('proj', {}) ends with /cascade/proj under the default cache base"
 
 test('cacheDir honors XDG_CACHE_HOME override', () => {
   const d = cacheDir('proj', { XDG_CACHE_HOME: '/c' });
-  assert.ok(d.startsWith('/c/'), `expected ${d} to start with /c/`);
+  assert.ok(d.startsWith(path.join('/c', 'cascade')), `expected ${d} to start with ${path.join('/c', 'cascade')}`);
 });
 
 test('cacheDir throws PathsError on invalid projectId', () => {
@@ -58,8 +58,8 @@ test('registryPath / configPath are under homeDir and end with the right filenam
   assert.ok(configPath(env).endsWith('config.json'));
 });
 
-test("dotCascade('/p') === '/p/.cascade'", () => {
-  assert.equal(dotCascade('/p'), '/p/.cascade');
+test("dotCascade('/p') is '/p/.cascade' in the platform's spelling", () => {
+  assert.equal(dotCascade('/p'), path.join('/p', '.cascade'));
 });
 
 test('dotCascade throws PathsError on non-string/empty projectRoot', () => {
@@ -69,7 +69,7 @@ test('dotCascade throws PathsError on non-string/empty projectRoot', () => {
 
 test('projectPaths returns the documented shape, all under .cascade', () => {
   const p = projectPaths('/p');
-  const root = '/p/.cascade';
+  const root = path.join('/p', '.cascade');
   assert.equal(p.manifest, path.join(root, 'manifest.json'));
   // SPEC §6.2 shows the profile in YAML; JSON is that shape in the form a
   // dependency-free core can read, so `cascade init` writes profile.json.
@@ -84,7 +84,7 @@ test('projectPaths returns the documented shape, all under .cascade', () => {
 
 test('casPath matches /cas/edges-<digest12> and lives under the cache dir, not the project', () => {
   const cp = casPath('proj', 'edges', { x: 1 }, {});
-  assert.match(cp, /\/cas\/edges-[0-9a-f]{12}$/);
+  assert.match(cp, /[\\/]cas[\\/]edges-[0-9a-f]{12}$/);
   assert.ok(cp.startsWith(cacheDir('proj', {})));
 });
 

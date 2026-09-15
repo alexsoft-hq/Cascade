@@ -195,7 +195,7 @@ test('output: listOfFive keeps five names and counts the rest exactly', () => {
 test('lanes_run: --root wins over everything, and a registered project brings its own tree', () => {
   assert.deepEqual(
     analyzeRoot({ source: 'registry', dotCascade: '/reg/.cascade' }, '/given', '/cwd'),
-    { root: '/given', from: '--root' },
+    { root: path.resolve('/cwd', '/given'), from: '--root' },
   );
   assert.deepEqual(
     analyzeRoot({ source: 'local', dotCascade: null }, undefined, '/cwd'),

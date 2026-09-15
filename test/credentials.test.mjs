@@ -112,7 +112,7 @@ test('credentialsPath follows CASCADE_HOME, which is what lets a test have its o
 test('set creates the file at 0600, and a second entry for the same server under another user is kept', (t) => {
   const { file } = sandbox(t);
   setCredential(file, { server: SERVER_ONE, user: 'shop_app', password: SECRET });
-  assert.equal(modeOf(file), '600');
+  if (process.platform !== 'win32') assert.equal(modeOf(file), '600'); // Windows keeps no such bits
   setCredential(file, { server: SERVER_ONE, user: 'reporting', password: OTHER });
   assert.deepEqual(listCredentials(file), [
     { server: SERVER_ONE, user: 'shop_app' },
@@ -142,6 +142,7 @@ test('remove deletes exactly one entry', (t) => {
 });
 
 test('a file group or others can read is REFUSED, with the chmod that fixes it', (t) => {
+  if (process.platform === 'win32') { t.skip('Windows keeps no group or other bits: nothing to refuse'); return; }
   const { file } = sandbox(t);
   setCredential(file, { server: SERVER_ONE, user: 'shop_app', password: SECRET });
   for (const mode of [0o644, 0o640, 0o604]) {
@@ -180,7 +181,7 @@ test('cascade catalog credentials set stores one, list shows it, and NEITHER pri
   assert.match(set.stderr, /stored the password for mysql:\/\/db\.example\.com:3306\/shop as user shop_app/);
   assert.equal(set.stdout.includes(SECRET), false);
   assert.equal(set.stderr.includes(SECRET), false);
-  assert.equal(modeOf(file), '600');
+  if (process.platform !== 'win32') assert.equal(modeOf(file), '600');
   assert.equal(findPassword(file, SERVER_ONE, 'shop_app'), SECRET);
 
   const list = run(env, ['catalog', 'credentials', 'list']);
@@ -208,6 +209,7 @@ test('cascade catalog credentials remove takes one entry away and says how many 
 });
 
 test('the command refuses a file that group or others can read, and names the chmod', (t) => {
+  if (process.platform === 'win32') { t.skip('Windows keeps no group or other bits: nothing to refuse'); return; }
   const { base, file, env } = sandbox(t);
   makeProject(base, env);
   setCredential(file, { server: SERVER_ONE, user: 'shop_app', password: SECRET });

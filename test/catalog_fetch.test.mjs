@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
+import { MODE_NOTE } from '../src/core/credentials.mjs';
 
 // `cascade catalog` as a USER meets it (SPEC §12, §15 M5):
 //
@@ -371,7 +372,7 @@ test('analyze with catalog.source=jdbc and no snapshot fails with db-catalog-mis
   assert.ok(line, `expected a structured db-catalog-missing line, got:\n${r.stderr}`);
   const doc = JSON.parse(line);
   assert.equal(doc.error, 'db-catalog-missing');
-  assert.match(doc.expected, /\.cascade\/catalog\/columns\.jsonl$/);
+  assert.match(doc.expected, /\.cascade[\\/]catalog[\\/]columns\.jsonl$/);
   assert.match(doc.remedy, /cascade catalog fetch/);
   assert.match(r.stderr, /never connects to a database/);
 });
@@ -513,7 +514,7 @@ test('fetch takes the password from the credentials file when no variable names 
   const r = run(env, ['catalog', 'fetch', '--root', root, '--candidate', '1', '--yes']);
   assert.equal(r.status, 0, r.stderr);
   // The confirmation names the FILE as the source, and never its contents.
-  assert.match(r.stderr, new RegExp(`password *from ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(mode 0600`));
+  assert.match(r.stderr, new RegExp(`password *from ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(${MODE_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   assert.equal(r.stderr.includes(SECRET), false);
   // The stub exits 9 unless the password arrived through the environment, so a
   // status of 0 IS the proof that the file's secret reached the worker that way.
@@ -555,7 +556,8 @@ test('with no variable, no entry and no terminal, fetch dies naming all four sou
   assert.equal(fs.existsSync(env.CASCADE_TEST_ARGV_LOG), false, 'the worker must not have run');
 });
 
-test('a credentials file the group can read stops the fetch, with the chmod to run', () => {
+test('a credentials file the group can read stops the fetch, with the chmod to run', (t) => {
+  if (process.platform === 'win32') { t.skip('Windows keeps no group or other bits: nothing to refuse'); return; }
   const { root, env } = makeSandbox();
   assert.equal(run(env, ['init', '--root', root, '--project', 'shop']).status, 0);
   const file = writeCredFile(env, SECRET);

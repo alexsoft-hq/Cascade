@@ -130,7 +130,10 @@ export const DISCOVER_IO = {
 // one spelling would otherwise register as a second project), so resolve links
 // here, at the filesystem edge. A path that does not exist is returned as given.
 export function realPath(p) {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  // The NATIVE resolver: on Windows it also expands an 8.3 short name
+  // (`C:\Users\RUNNER~1`, which is what the temp directory is spelled as) to
+  // the long one git prints, so two spellings of one directory compare equal.
+  try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
 }
 
 /**

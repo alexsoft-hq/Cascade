@@ -137,7 +137,7 @@ test('`init` REGISTERS the name it is given, so an unknown id is not an error th
 });
 
 test('`pack` only LABELS its output with --project, and never looks one up', (t) => {
-  const r = runIsolated(t, ['pack', '--catalog', '/dev/null', '--lineage', '/dev/null', '--out', 'out', '--project', 'nope']);
+  const r = runIsolated(t, ['pack', '--catalog', os.devNull, '--lineage', os.devNull, '--out', 'out', '--project', 'nope']);
   const said = `${r.stdout}${r.stderr}`;
   assert.equal(r.exit, 0, said.slice(0, 400));
   assert.doesNotMatch(said, /unknown project/);

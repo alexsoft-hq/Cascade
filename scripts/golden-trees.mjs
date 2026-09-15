@@ -374,11 +374,17 @@ export function commit(dir) {
  * markers so the golden describes the ANSWER and nothing else.
  */
 export function scrubberFor(base) {
-  const roots = [base, fs.realpathSync(os.tmpdir())];
+  // Every spelling of the temp root: as given, resolved, and resolved natively
+  // (on Windows the last expands an 8.3 short name to the long one git prints).
+  // A path is then spelled with `/` whatever the platform, so a golden recorded
+  // on one platform is compared on another.
+  const roots = [...new Set([base, fs.realpathSync(base), fs.realpathSync.native(base), os.tmpdir(), fs.realpathSync(os.tmpdir()), fs.realpathSync.native(os.tmpdir())])]
+    .sort((a, b) => b.length - a.length);
   return function scrub(value) {
     if (typeof value === 'string') {
       let out = value;
       for (const root of roots) out = out.split(root).join('<tmp>');
+      if (out.includes('<tmp>')) out = out.split('\\').join('/');
       // A 40-hex git object name, wherever it appears: `base.commit`, an
       // overlay's HEAD, a freshness verdict's reason.
       return out.replace(/\b[0-9a-f]{40}\b/g, '<commit>');

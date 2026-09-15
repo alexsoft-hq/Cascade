@@ -173,7 +173,7 @@ function visit(p, rel, walk) {
 
 /** A real directory read once; any later path to it is recorded as the path it was first read under. */
 function visitDirectory(p, rel, walk) {
-  const real = fs.realpathSync(p);
+  const real = fs.realpathSync.native(p);
   if (walk.firstPath.has(real)) { walk.lines.push(`${rel}\t-> ${walk.firstPath.get(real) || '.'}`); return; }
   walk.firstPath.set(real, rel);
   for (const name of fs.readdirSync(p).filter((n) => !SKIPPED.has(n)).sort()) visit(path.join(p, name), rel ? `${rel}/${name}` : name, walk);

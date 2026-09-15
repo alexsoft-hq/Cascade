@@ -407,9 +407,9 @@ test('selectLanes: --web-src names the frontend root, and it is resolved against
   const r = selectLanes({
     flags: { webSrc: ['front/src'] },
     profile: normalizeProfile({}),
-    root: ROOT, cwd: '/tmp/elsewhere', manifestDir: DOT,
+    root: ROOT, cwd: path.resolve('/tmp/elsewhere'), manifestDir: DOT,
   });
-  assert.deepEqual(r.webSrc, ['/tmp/elsewhere/front/src']);
+  assert.deepEqual(r.webSrc, [path.resolve('/tmp/elsewhere', 'front/src')]);
   assert.equal(r.sources.webSrc, 'flag');
   assert.ok(r.lanes.includes('web'));
 });
@@ -826,7 +826,7 @@ test('selectLanes: an explicit --ddl overrides the classification entirely — a
     discovery: discovery({ ddlCandidates: [ddlCandidate({ path: 'sql/schema.sql' })] }),
     root: ROOT, manifestDir: DOT,
   });
-  assert.deepEqual(r.ddls.map((p) => path.relative(ROOT, p)), ['sql/schema.sql', 'sql/upgrade/2.0.sql']);
+  assert.deepEqual(r.ddls.map((p) => path.relative(ROOT, p).split(path.sep).join('/')), ['sql/schema.sql', 'sql/upgrade/2.0.sql']);
   assert.equal(r.ddlChoice, null);
 });
 
@@ -1051,9 +1051,10 @@ test('chooseVendorMappers: with no vendor chosen at all, the first copy by path 
 });
 
 test('selectLanes: mappers.alternatives becomes the file list the statement lane reads past', () => {
+  const repo = path.resolve('/repo');
   const sel = selectLanes({
-    root: '/repo',
-    manifestDir: '/repo/.cascade',
+    root: repo,
+    manifestDir: path.join(repo, '.cascade'),
     profile: {
       frameworkPacks: ['mybatis-xml'],
       mappers: {
@@ -1065,10 +1066,10 @@ test('selectLanes: mappers.alternatives becomes the file list the statement lane
     },
     discovery: { mapperDirs: ['src/main/resources/mapper'] },
   });
-  assert.deepEqual(sel.mappers, ['/repo/src/main/resources/mapper']);
+  assert.deepEqual(sel.mappers, [path.join(repo, 'src/main/resources/mapper')]);
   assert.deepEqual(sel.mapperAlternatives, [
-    '/repo/src/main/resources/mapper/EgovA_SQL_oracle.xml',
-    '/repo/src/main/resources/mapper/EgovA_SQL_tibero.xml',
+    path.join(repo, 'src/main/resources/mapper/EgovA_SQL_oracle.xml'),
+    path.join(repo, 'src/main/resources/mapper/EgovA_SQL_tibero.xml'),
   ]);
 });
 

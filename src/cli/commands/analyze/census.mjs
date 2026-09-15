@@ -13,6 +13,9 @@ import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { cacheDir } from '../../../core/paths.mjs';
 import { listOfFive } from '../../output.mjs';
 
+/** A path the census prints, relative and spelled with `/` on every platform, the way a pack records it. */
+const relPosix = (from, to) => path.relative(from, to).split(path.sep).join('/');
+
 export function sayNoSchemaFetched(profile, { ddls, snapshot, resolved, root }) {
   // THE ONE REMINDER. This project told `init` where its database is, nobody
   // has fetched the schema, and the run is about to produce a pack whose ERD
@@ -25,7 +28,7 @@ export function sayNoSchemaFetched(profile, { ddls, snapshot, resolved, root }) 
     // The profile stores that path relative to the manifest directory; the
     // reader is standing in the repository, so it is shown from there.
     const from = resolved.dotCascade
-      ? path.relative(path.resolve(root), path.resolve(resolved.dotCascade, profile.catalog.connectionFrom)) || profile.catalog.connectionFrom
+      ? relPosix(path.resolve(root), path.resolve(resolved.dotCascade, profile.catalog.connectionFrom)) || profile.catalog.connectionFrom
       : profile.catalog.connectionFrom;
     process.stderr.write(`no schema has been fetched: the profile records a database at ${from} `
       + 'and nothing has read it, so this pack gets no ERD relationship lines and partial column answers. '
@@ -45,10 +48,10 @@ export function sayLaneLine({ sel, snapshot, snapshotProvenance, ddls, mappers, 
   process.stderr.write(`lanes [${sel.lanes.join(',')}]: ${catalogLine}; `
     + `mappers ${mappers.length} dir(s) (${sel.sources.mappers}); `
     + `java-src ${javaSrc.length} root(s) (${sel.sources.javaSrc}${excluded}); `
-    + `web ${webSrc.length > 0 ? `${webSrc.map((d) => path.relative(root, d) || '.').join(', ')} (${sel.sources.webSrc})` : 'none'}; `
-    + `openapi ${openapiFiles.length > 0 ? `${openapiFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.openapi})` : 'none'}; `
-    + `har ${harFiles.length > 0 ? `${harFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.har})` : 'none'}; `
-    + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => path.relative(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
+    + `web ${webSrc.length > 0 ? `${webSrc.map((d) => relPosix(root, d) || '.').join(', ')} (${sel.sources.webSrc})` : 'none'}; `
+    + `openapi ${openapiFiles.length > 0 ? `${openapiFiles.map((f) => relPosix(root, f)).join(', ')} (${sel.sources.openapi})` : 'none'}; `
+    + `har ${harFiles.length > 0 ? `${harFiles.map((f) => relPosix(root, f)).join(', ')} (${sel.sources.har})` : 'none'}; `
+    + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => relPosix(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
 }
 
 /**
@@ -73,7 +76,7 @@ export function sayVendoredWebRoots(profile, { sel, webSrc, resolved, root }) {
   if (webSrc.length > 0 && sel.sources.webSrc !== 'flag') {
     const vendored = (profile.webRoots ?? [])
       .filter((r) => r && typeof r.root === 'string' && (r.kind ?? 'declared') === 'vendored')
-      .map((r) => path.relative(root, path.resolve(resolved.dotCascade ?? root, r.root)) || '.');
+      .map((r) => relPosix(root, path.resolve(resolved.dotCascade ?? root, r.root)) || '.');
     if (vendored.length > 0) {
       process.stderr.write(`web roots from the profile: ${vendored.length} vendored (no package manifest): ${listOfFive(vendored)}\n`);
     }
@@ -133,7 +136,7 @@ export function sayScreenAxisAndTemplates(screenGate, { sel, webSrc, root }) {
   // a `@Controller` would come out with no screen.
   if (sel.templateRoots.length > 0) {
     process.stderr.write(`template roots ${sel.templateRoots.length} (${sel.sources.templateRoots}): `
-      + `${sel.templateRoots.map((t) => `${path.relative(root, t.root) || '.'} ${t.engine} ${t.suffix}`).join(', ')}\n`);
+      + `${sel.templateRoots.map((t) => `${relPosix(root, t.root) || '.'} ${t.engine} ${t.suffix}`).join(', ')}\n`);
   }
 }
 

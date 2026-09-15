@@ -56,7 +56,7 @@ test('buildManifest points the root repo at ".." — relative to the manifest FI
   assert.doesNotThrow(() => validateManifest(m, '/p/app/.cascade/manifest.json'));
   // …and it resolves back to the repo it came from.
   const norm = validateManifest(m, '/p/app/.cascade/manifest.json');
-  assert.equal(norm.repositories[0].absPath, '/p/app');
+  assert.equal(norm.repositories[0].absPath, path.resolve('/p/app'));
 });
 
 test('buildManifest gives a nested repo a path relative to the manifest dir and its own key', () => {

@@ -4,8 +4,10 @@ import path from 'node:path';
 import { resolveProject, registrationTarget, ResolveError } from '../src/core/resolve.mjs';
 import { emptyRegistry, upsertProject } from '../src/core/registry.mjs';
 
-const CWD = '/work/here';
-const ENV = { CASCADE_HOME: '/home/.cascade' };
+// Absolute paths in this platform's spelling: the resolver resolves what it is given.
+const at = (p) => path.resolve(p);
+const CWD = at('/work/here');
+const ENV = { CASCADE_HOME: at('/home/.cascade') };
 
 const registryWith = (...entries) => {
   let reg = emptyRegistry();
@@ -16,42 +18,42 @@ const empty = () => emptyRegistry();
 
 test('--pack wins over every other flag and implies no .cascade', () => {
   const r = resolveProject({
-    pack: 'out/pack', project: 'alpha', root: '/other', cwd: CWD, env: ENV,
-    readRegistry: registryWith({ id: 'alpha', dotCascadePath: '/p/alpha/.cascade', source: 'init' }),
+    pack: 'out/pack', project: 'alpha', root: at('/other'), cwd: CWD, env: ENV,
+    readRegistry: registryWith({ id: 'alpha', dotCascadePath: at('/p/alpha/.cascade'), source: 'init' }),
   });
-  assert.deepEqual(r, { packDir: '/work/here/out/pack', dotCascade: null, source: 'pack-flag', projectId: null });
+  assert.deepEqual(r, { packDir: path.join(CWD, 'out', 'pack'), dotCascade: null, source: 'pack-flag', projectId: null });
 });
 
 test('--project resolves through the registry, ahead of --root and cwd', () => {
   const r = resolveProject({
-    project: 'alpha', root: '/other', cwd: CWD, env: ENV,
-    readRegistry: registryWith({ id: 'alpha', dotCascadePath: '/p/alpha/.cascade', source: 'init' }),
+    project: 'alpha', root: at('/other'), cwd: CWD, env: ENV,
+    readRegistry: registryWith({ id: 'alpha', dotCascadePath: at('/p/alpha/.cascade'), source: 'init' }),
   });
   assert.deepEqual(r, {
-    packDir: path.join('/p/alpha/.cascade', 'pack'),
-    dotCascade: '/p/alpha/.cascade',
+    packDir: path.join(at('/p/alpha/.cascade'), 'pack'),
+    dotCascade: at('/p/alpha/.cascade'),
     source: 'registry',
     projectId: 'alpha',
   });
 });
 
 test('--root beats cwd', () => {
-  const r = resolveProject({ root: '/other/app', cwd: CWD, env: ENV, readRegistry: empty });
+  const r = resolveProject({ root: at('/other/app'), cwd: CWD, env: ENV, readRegistry: empty });
   assert.deepEqual(r, {
-    packDir: '/other/app/.cascade/pack', dotCascade: '/other/app/.cascade', source: 'root', projectId: null,
+    packDir: path.join(at('/other/app'), '.cascade', 'pack'), dotCascade: path.join(at('/other/app'), '.cascade'), source: 'root', projectId: null,
   });
 });
 
 test('a relative --root is resolved against cwd', () => {
   const r = resolveProject({ root: '../app', cwd: CWD, env: ENV, readRegistry: empty });
-  assert.equal(r.dotCascade, '/work/app/.cascade');
+  assert.equal(r.dotCascade, path.join(at('/work/app'), '.cascade'));
   assert.equal(r.source, 'root');
 });
 
 test('with no flags at all the project is the cwd .cascade', () => {
   const r = resolveProject({ cwd: CWD, env: ENV, readRegistry: empty });
   assert.deepEqual(r, {
-    packDir: '/work/here/.cascade/pack', dotCascade: '/work/here/.cascade', source: 'cwd', projectId: null,
+    packDir: path.join(CWD, '.cascade', 'pack'), dotCascade: path.join(CWD, '.cascade'), source: 'cwd', projectId: null,
   });
 });
 
@@ -73,8 +75,8 @@ test('an unknown --project against a populated registry lists the registered ids
     () => resolveProject({
       project: 'ghost', cwd: CWD, env: ENV,
       readRegistry: registryWith(
-        { id: 'zulu', dotCascadePath: '/p/z/.cascade', source: 'init' },
-        { id: 'alpha', dotCascadePath: '/p/a/.cascade', source: 'init' },
+        { id: 'zulu', dotCascadePath: at('/p/z/.cascade'), source: 'init' },
+        { id: 'alpha', dotCascadePath: at('/p/a/.cascade'), source: 'init' },
       ),
     }),
     (e) => {
@@ -88,10 +90,10 @@ test('an unknown --project against a populated registry lists the registered ids
 test('the registry is read from CASCADE_HOME, so the home tier is overridable in tests', () => {
   let seen = null;
   resolveProject({
-    project: 'alpha', cwd: CWD, env: { CASCADE_HOME: '/custom/home' },
-    readRegistry: (file) => { seen = file; return upsertProject(emptyRegistry(), { id: 'alpha', dotCascadePath: '/p/a/.cascade', source: 'init' }); },
+    project: 'alpha', cwd: CWD, env: { CASCADE_HOME: at('/custom/home') },
+    readRegistry: (file) => { seen = file; return upsertProject(emptyRegistry(), { id: 'alpha', dotCascadePath: at('/p/a/.cascade'), source: 'init' }); },
   });
-  assert.equal(seen, '/custom/home/registry.json');
+  assert.equal(seen, path.join(at('/custom/home'), 'registry.json'));
 });
 
 test('empty-string flags are treated as absent, not as an empty path', () => {

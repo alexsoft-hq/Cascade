@@ -19,10 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import {
-  credentialsPath, serverKey, findPassword, listCredentials,
-  setCredential, removeCredential, modeVerdict, isInside, CredentialsError,
-} from '../../core/credentials.mjs';
+import { credentialsPath, serverKey, findPassword, listCredentials, setCredential, removeCredential, modeVerdict, isInside, CredentialsError, MODE_NOTE } from '../../core/credentials.mjs';
 import { describeCandidate, parseConnectionUrl, DEFAULT_PORTS, CONNECTION_DIALECTS } from '../../core/dbconfig.mjs';
 import { discover } from '../../core/discover.mjs';
 import { writeStateFile } from '../../core/init.mjs';
@@ -191,7 +188,7 @@ function credentialsSet({ opt, die }, file, server, t) {
   let result;
   try { result = setCredential(file, { server, user: t.user, password: secret }); }
   catch (e) { die(e instanceof CredentialsError ? e.message : `cannot write ${file}: ${e.message}`); }
-  process.stderr.write(`${result.replaced ? 'replaced' : 'stored'} the password for ${server} as user ${t.user} in ${file} (mode 0600)\n`
+  process.stderr.write(`${result.replaced ? 'replaced' : 'stored'} the password for ${server} as user ${t.user} in ${file} (${MODE_NOTE})\n`
     + '  It is outside every project tree on purpose, so no copy, zip or push of a repository carries it.\n');
   process.exit(0);
 }
@@ -302,7 +299,7 @@ function passwordPlan({ die }, { credFile, server, target, passwordEnvOpt, passw
   const passwordSourceLine = {
     'env-named': `from the environment variable ${passwordEnv} (never from the command line, never stored)`,
     'env-default': `from the environment variable ${DEFAULT_PASSWORD_ENV} (never from the command line, never stored)`,
-    credentials: `from ${credFile} (mode 0600, this server and this user)`,
+    credentials: `from ${credFile} (${MODE_NOTE}, this server and this user)`,
     prompt: 'asked for here, not echoed, and stored only if you say so',
     nowhere: 'NOT AVAILABLE YET, see below',
   }[passwordFrom];
@@ -364,14 +361,14 @@ function readPassword({ die }, { passwordFrom, passwordEnv, credFile, server, ta
       + '  1. the variable named by --password-env <NAME>\n'
       + `  2. the environment variable ${DEFAULT_PASSWORD_ENV}\n`
       + `  3. an entry in ${credFile} for ${server} as user ${target.user}\n`
-      + '     (`cascade catalog credentials set --url <jdbc url> --user <u>` writes one, at mode 0600)\n'
+      + '     (`cascade catalog credentials set --url <jdbc url> --user <u>` writes one, at mode 0600 where the platform keeps one)\n'
       + '  4. a hidden prompt, when a terminal is attached\n'
       + '  This run has none of the four.');
   }
   if (offerToSave && confirmYesNo(`Save it in ${credFile} for next time? [y/N] `)) {
     try {
       setCredential(credFile, { server, user: target.user, password });
-      process.stderr.write(`saved ${server} as user ${target.user} in ${credFile} (mode 0600, outside every project tree)\n`);
+      process.stderr.write(`saved ${server} as user ${target.user} in ${credFile} (${MODE_NOTE}, outside every project tree)\n`);
     } catch (e) {
       process.stderr.write(`could not save it: ${e.message}\n  The fetch below runs anyway.\n`);
     }

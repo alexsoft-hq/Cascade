@@ -206,7 +206,8 @@ test('--client codex writes AGENTS.md and prints the TOML block for the config i
 
   assert.match(r.stdout, /^\[mcp_servers\.cascade\]$/m, 'the TOML block is printed');
   assert.match(r.stdout, /^command = ".*"$/m);
-  assert.match(r.stdout, /^args = \[".*bin\/cascade\.mjs", "mcp", "--project", "shop"\]$/m);
+  // TOML escapes a Windows backslash, so the separator before the file is `/` or `\\`.
+  assert.match(r.stdout, /^args = \[".*bin(?:\/|\\\\)cascade\.mjs", "mcp", "--project", "shop"\]$/m);
   assert.match(r.stdout, /config\.toml/, 'it says where the block goes');
   assert.equal(fs.existsSync(path.join(fx.root, 'config.toml')), false, 'nothing is written for Codex');
 });

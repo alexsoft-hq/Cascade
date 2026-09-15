@@ -168,7 +168,7 @@ test('discover lists nested repositories separately, sorted, with their own comm
     'api/.git/HEAD': 'x',
     'api/src/A.java': JAVA_SERVICE,
   });
-  const heads = (dir) => (dir.endsWith('/web') ? SHA('c') : dir.endsWith('/api') ? SHA('d') : SHA('e'));
+  const heads = (dir) => (/[\\/]web$/.test(dir) ? SHA('c') : /[\\/]api$/.test(dir) ? SHA('d') : SHA('e'));
   const d = discover(root, io(heads));
 
   assert.deepEqual(d.repos.map((r) => r.path), ['.', 'api', 'web']);
@@ -181,7 +181,7 @@ test('discover lists nested repositories separately, sorted, with their own comm
 
 test('discover excludes a repository with no HEAD and says so in a diagnostic', (t) => {
   const root = tree(t, { '.git/HEAD': 'x', 'empty/.git/HEAD': 'x', 'empty/a.txt': 'a' });
-  const d = discover(root, io((dir) => (dir.endsWith('/empty') ? null : SHA('f'))));
+  const d = discover(root, io((dir) => (/[\\/]empty$/.test(dir) ? null : SHA('f'))));
 
   assert.deepEqual(d.repos.map((r) => r.path), ['.']);
   const diag = d.diagnostics.find((x) => x.kind === 'REPOSITORY_WITHOUT_HEAD');

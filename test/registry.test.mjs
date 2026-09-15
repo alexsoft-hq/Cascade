@@ -15,6 +15,8 @@ import {
   RegistryError,
 } from '../src/core/registry.mjs';
 
+/** An absolute path in this platform's spelling: the registry resolves every path it is given. */
+const at = (p) => path.resolve(p);
 const entry = (id, dir, over = {}) => ({ id, dotCascadePath: dir, source: 'init', stack: ['sql'], lastCertifiedAt: null, ...over });
 
 function tmpHome(t) {
@@ -29,11 +31,11 @@ test('emptyRegistry declares the schema and has no projects', () => {
 
 test('upsertProject adds an entry, normalizes it and does not mutate the input', () => {
   const before = emptyRegistry();
-  const after = upsertProject(before, entry('alpha', '/p/alpha/.cascade'));
+  const after = upsertProject(before, entry('alpha', at('/p/alpha/.cascade')));
   assert.deepEqual(before.projects, [], 'input registry must not be mutated');
   assert.equal(after.projects.length, 1);
   assert.deepEqual(after.projects[0], {
-    id: 'alpha', dotCascadePath: '/p/alpha/.cascade', source: 'init', stack: ['sql'], lastCertifiedAt: null,
+    id: 'alpha', dotCascadePath: at('/p/alpha/.cascade'), source: 'init', stack: ['sql'], lastCertifiedAt: null,
   });
 });
 
@@ -45,8 +47,8 @@ test('upsertProject keeps entries sorted by id', () => {
 });
 
 test('upsertProject replaces the entry with the same .cascade path (one directory is one project)', () => {
-  let reg = upsertProject(emptyRegistry(), entry('alpha', '/p/a/.cascade'));
-  reg = upsertProject(reg, entry('alpha', '/p/a/.cascade', { source: 'analyze', stack: ['sql', 'java'], lastCertifiedAt: '2026-01-01T00:00:00.000Z' }));
+  let reg = upsertProject(emptyRegistry(), entry('alpha', at('/p/a/.cascade')));
+  reg = upsertProject(reg, entry('alpha', at('/p/a/.cascade'), { source: 'analyze', stack: ['sql', 'java'], lastCertifiedAt: '2026-01-01T00:00:00.000Z' }));
   assert.equal(reg.projects.length, 1);
   assert.equal(reg.projects[0].source, 'analyze');
   assert.deepEqual(reg.projects[0].stack, ['sql', 'java']);
@@ -54,15 +56,15 @@ test('upsertProject replaces the entry with the same .cascade path (one director
 });
 
 test('upsertProject renames the project that owns a path (same path, different id)', () => {
-  let reg = upsertProject(emptyRegistry(), entry('old', '/p/a/.cascade'));
-  reg = upsertProject(reg, entry('new', '/p/a/.cascade'));
+  let reg = upsertProject(emptyRegistry(), entry('old', at('/p/a/.cascade')));
+  reg = upsertProject(reg, entry('new', at('/p/a/.cascade')));
   assert.deepEqual(projectIds(reg), ['new']);
 });
 
 test('upsertProject refuses an id already held by another directory, and says how to resolve it', () => {
-  const reg = upsertProject(emptyRegistry(), entry('alpha', '/p/one/.cascade'));
+  const reg = upsertProject(emptyRegistry(), entry('alpha', at('/p/one/.cascade')));
   assert.throws(
-    () => upsertProject(reg, entry('alpha', '/p/two/.cascade')),
+    () => upsertProject(reg, entry('alpha', at('/p/two/.cascade'))),
     (e) => {
       assert.ok(e instanceof RegistryError);
       assert.match(e.message, /ambiguous project id "alpha"/);
@@ -74,24 +76,24 @@ test('upsertProject refuses an id already held by another directory, and says ho
 });
 
 test('upsertProject with force re-points an ambiguous id to the new directory', () => {
-  let reg = upsertProject(emptyRegistry(), entry('alpha', '/p/one/.cascade'));
-  reg = upsertProject(reg, entry('alpha', '/p/two/.cascade'), { force: true });
+  let reg = upsertProject(emptyRegistry(), entry('alpha', at('/p/one/.cascade')));
+  reg = upsertProject(reg, entry('alpha', at('/p/two/.cascade')), { force: true });
   assert.equal(reg.projects.length, 1);
-  assert.equal(reg.projects[0].dotCascadePath, '/p/two/.cascade');
+  assert.equal(reg.projects[0].dotCascadePath, at('/p/two/.cascade'));
 });
 
 test('upsertProject rejects malformed entries', () => {
   const reg = emptyRegistry();
-  assert.throws(() => upsertProject(reg, entry('Bad Id', '/p/a/.cascade')), RegistryError);
+  assert.throws(() => upsertProject(reg, entry('Bad Id', at('/p/a/.cascade'))), RegistryError);
   assert.throws(() => upsertProject(reg, entry('alpha', '')), RegistryError);
-  assert.throws(() => upsertProject(reg, entry('alpha', '/p/a/.cascade', { source: '' })), RegistryError);
-  assert.throws(() => upsertProject(reg, entry('alpha', '/p/a/.cascade', { stack: 'sql' })), RegistryError);
-  assert.throws(() => upsertProject(reg, entry('alpha', '/p/a/.cascade', { lastCertifiedAt: 7 })), RegistryError);
+  assert.throws(() => upsertProject(reg, entry('alpha', at('/p/a/.cascade'), { source: '' })), RegistryError);
+  assert.throws(() => upsertProject(reg, entry('alpha', at('/p/a/.cascade'), { stack: 'sql' })), RegistryError);
+  assert.throws(() => upsertProject(reg, entry('alpha', at('/p/a/.cascade'), { lastCertifiedAt: 7 })), RegistryError);
 });
 
 test('findProject / projectIds read an entry back', () => {
-  const reg = upsertProject(emptyRegistry(), entry('alpha', '/p/a/.cascade'));
-  assert.equal(findProject(reg, 'alpha').dotCascadePath, '/p/a/.cascade');
+  const reg = upsertProject(emptyRegistry(), entry('alpha', at('/p/a/.cascade')));
+  assert.equal(findProject(reg, 'alpha').dotCascadePath, at('/p/a/.cascade'));
   assert.equal(findProject(reg, 'nope'), null);
   assert.deepEqual(projectIds(reg), ['alpha']);
 });
@@ -128,7 +130,7 @@ test('readRegistry refuses malformed JSON rather than silently resetting the fil
 test('writeRegistryAtomic creates the home dir, round-trips, and leaves no temp file', (t) => {
   const home = tmpHome(t);
   const file = path.join(home, 'nested', 'registry.json');
-  const reg = upsertProject(emptyRegistry(), entry('alpha', '/p/a/.cascade'));
+  const reg = upsertProject(emptyRegistry(), entry('alpha', at('/p/a/.cascade')));
   writeRegistryAtomic(file, reg);
 
   assert.deepEqual(readRegistry(file), reg);

@@ -326,10 +326,11 @@ export async function snapshot({ out, projects = [], packs = [], cap = DEFAULT_C
 /** Every file under `dir`, as paths relative to it, sorted. */
 export function walkFiles(dir) {
   const out = [];
+  // Spelled with `/` on every platform: a golden recorded on one is looked up on another.
   const walk = (rel) => {
-    const abs = path.join(dir, rel);
+    const abs = path.join(dir, ...rel.split('/'));
     for (const entry of fs.readdirSync(abs, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      const next = rel ? path.join(rel, entry.name) : entry.name;
+      const next = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) walk(next);
       else out.push(next);
     }

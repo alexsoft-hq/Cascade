@@ -145,19 +145,20 @@ test('two runs take turns on the pack lock, and a lock left behind is never brok
 });
 
 test('a profile path inside the repository is read in the worktree, and one outside it stays where it is', () => {
-  const opts = { fromDir: '/r/app/.cascade', toDir: '/tmp/wt/app/.cascade', repoRoot: '/r/app', worktreeRoot: '/tmp/wt/app' };
+  const at = (p) => path.resolve(p);
+  const opts = { fromDir: at('/r/app/.cascade'), toDir: at('/tmp/wt/app/.cascade'), repoRoot: at('/r/app'), worktreeRoot: at('/tmp/wt/app') };
   const outside = [];
   const doc = repointPaths({
     catalog: { ddl: ['../db/schema.sql'] },
     webRoots: [{ root: '../../app-front/src', kind: 'vue' }],
-    templateRoots: [{ root: '/r/app/src/main/webapp' }],
+    templateRoots: [{ root: at('/r/app/src/main/webapp') }],
     note: 'just words',
   }, opts, outside);
   assert.deepEqual(doc.catalog.ddl, ['../db/schema.sql'], 'relative and inside: the same spelling, now resolving in the worktree');
-  assert.equal(doc.webRoots[0].root, '/r/app-front/src', 'outside the repository: today\'s checkout, by absolute path');
-  assert.equal(doc.templateRoots[0].root, '/tmp/wt/app/src/main/webapp', 'absolute and inside: moved into the worktree');
+  assert.equal(doc.webRoots[0].root, at('/r/app-front/src'), 'outside the repository: today\'s checkout, by absolute path');
+  assert.equal(doc.templateRoots[0].root, at('/tmp/wt/app/src/main/webapp'), 'absolute and inside: moved into the worktree');
   assert.equal(doc.note, 'just words');
-  assert.deepEqual(outside, ['/r/app-front/src']);
+  assert.deepEqual(outside, [at('/r/app-front/src')]);
 });
 
 test('a path spelled through a symlink is still inside the repository, and the base reads it in the worktree', (t) => {
@@ -175,12 +176,13 @@ test('a path spelled through a symlink is still inside the repository, and the b
 });
 
 test('the lane flags the head was analyzed with are replayed at the base, inside paths moved and outside ones listed', () => {
+  const at = (p) => path.resolve(p);
   const outside = [];
   const argv = replayFlags(
-    { ddl: ['db/schema.sql'], mappers: ['src/main/resources/mapper'], javaSrc: [], webSrc: ['/elsewhere/front/src'], openapi: [], har: [], otel: [], noJava: true },
-    { projectRoot: '/r/app', repoRoot: '/r/app', worktreeRoot: '/tmp/wt' }, outside);
-  assert.deepEqual(argv, ['--ddl', '/tmp/wt/db/schema.sql', '--mappers', '/tmp/wt/src/main/resources/mapper', '--web-src', '/elsewhere/front/src', '--no-java']);
-  assert.deepEqual(outside, ['/elsewhere/front/src']);
+    { ddl: ['db/schema.sql'], mappers: ['src/main/resources/mapper'], javaSrc: [], webSrc: [at('/elsewhere/front/src')], openapi: [], har: [], otel: [], noJava: true },
+    { projectRoot: at('/r/app'), repoRoot: at('/r/app'), worktreeRoot: at('/tmp/wt') }, outside);
+  assert.deepEqual(argv, ['--ddl', at('/tmp/wt/db/schema.sql'), '--mappers', at('/tmp/wt/src/main/resources/mapper'), '--web-src', at('/elsewhere/front/src'), '--no-java']);
+  assert.deepEqual(outside, [at('/elsewhere/front/src')]);
 });
 
 test('a worktree git would not remove, or would not list, is an error that says how to remove it, not a success', () => {

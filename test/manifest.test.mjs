@@ -36,7 +36,7 @@ test('a valid manifest object passes validateManifest', () => {
 
 test('§5 crux: repo absPath resolves relative to the manifest file directory (./app)', () => {
   const out = validateManifest(validManifestObj(), '/one/place/manifest.json');
-  assert.equal(out.repositories[0].absPath, '/one/place/app');
+  assert.equal(out.repositories[0].absPath, path.resolve('/one/place/app'));
 });
 
 test('§5 crux: repo absPath resolves relative to the manifest file directory (../web)', () => {
@@ -44,7 +44,7 @@ test('§5 crux: repo absPath resolves relative to the manifest file directory (.
     repositories: [{ key: 'web', path: '../web', commit: FULL_SHA, kind: 'frontend-web' }],
   });
   const out = validateManifest(obj, '/one/place/manifest.json');
-  assert.equal(out.repositories[0].absPath, '/one/web');
+  assert.equal(out.repositories[0].absPath, path.resolve('/one/web'));
 });
 
 test('§2.1: digest excludes repo path — identical manifests differing only in repo path (and manifestFilePath) produce the SAME manifestDigest', () => {

@@ -45,6 +45,7 @@
 // The single filesystem-backed adapter is `nodeFactsIo`, kept obviously apart at
 // the bottom of the file.
 
+import path from 'node:path';
 import { canonicalJson, sha256, digest12 } from './canonical.mjs';
 import { casDir } from './paths.mjs';
 
@@ -643,7 +644,7 @@ export function createFactsStore({ io, projectId, env = {} }) {
     if (!SHARD_KINDS.includes(kind)) throw new FactsStoreError(`unknown shard kind ${JSON.stringify(kind)}`);
     return casDir(projectId, kind, key, env);
   };
-  const fileFor = (kind, key) => `${dirFor(kind, key)}/${SHARD_FILE}`;
+  const fileFor = (kind, key) => path.join(dirFor(kind, key), SHARD_FILE);
 
   return {
     dirFor,
@@ -686,7 +687,7 @@ export function createFactsStore({ io, projectId, env = {} }) {
       if (!Array.isArray(records)) throw new FactsStoreError('records must be an array');
       const text = records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : '');
       const dir = dirFor(kind, key);
-      const file = `${dir}/${SHARD_FILE}`;
+      const file = path.join(dir, SHARD_FILE);
       io.mkdir(dir);
       io.writeFile(file, text);
       return { sha256: sha256(text), lines: records.length, file };

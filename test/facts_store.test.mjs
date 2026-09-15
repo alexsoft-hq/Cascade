@@ -344,7 +344,7 @@ test('store: write then read returns the same records, and reports sha256 + line
   assert.equal(store.has('javafacts', 'bbbbbbbbbbbb'), false);
   const r = store.read('javafacts', 'aaaaaaaaaaaa', { sha256: w.sha256, lines: w.lines });
   assert.deepEqual(r.records, [REC.typeA, REC.importA]);
-  assert.equal(store.fileFor('javafacts', 'aaaaaaaaaaaa'), '/cache/cascade/shop/cas/javafacts-aaaaaaaaaaaa/facts.jsonl');
+  assert.equal(store.fileFor('javafacts', 'aaaaaaaaaaaa'), path.join('/cache', 'cascade', 'shop', 'cas', 'javafacts-aaaaaaaaaaaa', 'facts.jsonl'));
 });
 
 test('store: an empty shard is a real answer ("analyzed, nothing in it")', () => {

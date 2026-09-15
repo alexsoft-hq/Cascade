@@ -7,6 +7,7 @@ import { createProjectHost } from '../src/mcp/projects.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { callTool as catalogCallTool, toolList as catalogToolList } from '../src/mcp/catalog.mjs';
 import { assertContract } from '../src/mcp/contract.mjs';
+import path from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Fixture — stub deps. handleApi only needs the shape {toolList, callTool,
@@ -477,7 +478,7 @@ test('handleI18n reads through an injected readFile — it never guesses a body'
   });
   assert.equal(r.status, 200);
   assert.equal(r.body, '{}');
-  assert.deepEqual(seen, ['/tmp/i18n-probe/xx.json']);
+  assert.deepEqual(seen, [path.resolve('/tmp/i18n-probe', 'xx.json')]);
 });
 
 // ---------------------------------------------------------------------------
@@ -586,7 +587,7 @@ test('handleVendor reads through an injected readFile — it never guesses a bod
   });
   assert.equal(r.status, 200);
   assert.equal(r.body, 'BODY');
-  assert.deepEqual(seen, ['/tmp/vendor-probe/anything.js']);
+  assert.deepEqual(seen, [path.resolve('/tmp/vendor-probe', 'anything.js')]);
 });
 
 test('/vendor is NOT an /api route: handleApi still 404s it, and /api/* is unchanged', () => {

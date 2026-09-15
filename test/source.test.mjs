@@ -175,7 +175,7 @@ test('extractCreateTable: with two tables in the same DDL, extracts only the req
 // readSourceFor
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = '/repo';
+const REPO_ROOT = path.resolve('/repo'); // an absolute root in this platform's spelling
 
 // Injected readFile: keyed by absolute path, records every path it was asked
 // to read so tests can assert both WHAT was read and (for the escape guard)
