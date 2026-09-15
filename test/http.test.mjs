@@ -641,6 +641,12 @@ test('serveHttp: /, /vendor/<file>, /api/tools and an unknown path, through an i
   assert.equal(same.body, '');
   assert.equal(same.headers.etag, page.headers.etag);
   assert.equal((await fake.call('GET', '/', { 'if-none-match': '"0000000000000000"' })).status, 200, 'another build of the page is sent whole');
+  // The header as browsers and proxies write it: a list, a weak tag, `*`.
+  assert.equal((await fake.call('GET', '/', { 'if-none-match': `"0000000000000000", ${page.headers.etag}` })).status, 304);
+  assert.equal((await fake.call('GET', '/', { 'if-none-match': `W/${page.headers.etag}` })).status, 304);
+  assert.equal((await fake.call('GET', '/', { 'if-none-match': '*' })).status, 304);
+  assert.equal((await fake.call('HEAD', '/', { 'if-none-match': page.headers.etag })).status, 304);
+  assert.equal((await fake.call('POST', '/', { 'if-none-match': page.headers.etag })).status, 200, 'only a GET or a HEAD is conditional');
 
   const bundle = await fake.call('GET', '/vendor/force-graph.min.js');
   assert.equal(bundle.status, 200);

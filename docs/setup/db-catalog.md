@@ -238,6 +238,11 @@ contain any character at all and JSON already says how to write one. The key is
 that group or others can open is **refused** with the exact `chmod 600` to run.
 That is `libpq`'s rule for `~/.pgpass`, and it is the whole reason a file like
 this is acceptable: a password anyone on the machine can read is not a secret.
+Windows keeps no such bits (every file reports 0666), so nothing is refused
+there and the messages say so: what keeps other accounts out is the access
+list of the directory the file is kept in (`%USERPROFILE%\.cascade` by
+default), which this engine does not read. Keep `CASCADE_HOME` on Windows
+somewhere only your account can open.
 `credentials list` prints servers and users and never a password.
 
 **Why the home and not the project.** A `.gitignore` is a convention, not a

@@ -42,6 +42,9 @@ Each dated section below is one round of work. The round protocol is in
   asked for what the server no longer answers). Each is now revalidated on every
   load by an ETag of its bytes: an unchanged file is a 304 with no body, a
   changed one is sent whole. Fonts stay immutable, because a new cut is a new file.
+  **Once, on upgrading to this release:** a browser that already holds the old
+  page under the old day of cache does not learn the new rule until it asks
+  again, so restart the viewer and reload the page hard (Shift+reload) one time.
 
 ## [0.8.9] - 2026-09-14
 

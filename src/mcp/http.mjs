@@ -224,15 +224,24 @@ export function handleViewerLib(method, pathname, deps) {
 /**
  * Answer a static route: the file, or a 304 with no body when the browser's
  * `If-None-Match` names the ETag it would get, which is what makes `no-cache`
- * cost one round trip and no bytes on a page that has not changed.
+ * cost one round trip and no bytes on a page that has not changed. Only a GET
+ * or a HEAD is conditional; the header is a list, `*` names any, and a weak
+ * tag (`W/"..."`) matches its strong one, as the standard reads it.
  */
 function sendStatic(req, res, out) {
-  const wanted = req.headers && req.headers['if-none-match'];
-  if (out.status === 200 && out.headers.etag && wanted === out.headers.etag) {
+  const conditional = req.method === 'GET' || req.method === 'HEAD';
+  if (conditional && out.status === 200 && out.headers.etag && etagMatches(req.headers && req.headers['if-none-match'], out.headers.etag)) {
     const { 'content-type': _type, ...rest } = out.headers;
     return send(res, 304, rest, '');
   }
   return send(res, out.status, out.headers, out.body);
+}
+
+/** Whether an `If-None-Match` value names this ETag: any tag in its list, weak or strong, or `*`. */
+function etagMatches(header, etag) {
+  if (typeof header !== 'string' || header.trim() === '') return false;
+  const tags = header.split(',').map((t) => t.trim()).filter(Boolean);
+  return tags.some((t) => t === '*' || t.replace(/^W\//, '') === etag);
 }
 
 /**

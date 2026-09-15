@@ -35,9 +35,10 @@ export const CREDENTIALS_MODE = 0o600;
 /**
  * How the file is kept from other accounts, said in every message that names
  * it: by its mode where there is one, and on Windows, which keeps no mode bits,
- * by the access list of the profile directory it sits under.
+ * by the access list of wherever it is kept (`%USERPROFILE%` by default, or the
+ * `CASCADE_HOME` chosen), which this engine does not read.
  */
-export const MODE_NOTE = process.platform === 'win32' ? 'no mode bits on Windows: kept under your profile directory' : 'mode 0600';
+export const MODE_NOTE = process.platform === 'win32' ? 'no mode bits on Windows: guarded by the access list of where it is kept' : 'mode 0600';
 
 /**
  * Where the credentials file is, for this environment.
@@ -126,9 +127,10 @@ export function isInside(file, projectRoot) {
 export function modeVerdict(file, platform = process.platform) {
   let st;
   try { st = fs.statSync(file); } catch { return { exists: false, ok: true, mode: null }; }
-  // Windows keeps no such bits (every file reports 0666), and what keeps other
-  // accounts out of `%USERPROFILE%` is the directory's own access list. There is
-  // nothing here to judge, so nothing is refused.
+  // Windows keeps no such bits (every file reports 0666); what keeps other
+  // accounts out is the access list of the directory the file is kept in, which
+  // this engine does not read. There is nothing here to judge, so nothing is
+  // refused, and the messages say so rather than claiming a mode.
   if (platform === 'win32') return { exists: true, ok: true, mode: null };
   const bits = st.mode & 0o777;
   return { exists: true, ok: (bits & 0o077) === 0, mode: '0' + bits.toString(8).padStart(3, '0') };
