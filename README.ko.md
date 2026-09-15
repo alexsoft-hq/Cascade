@@ -99,7 +99,12 @@ cascade doctor                          # 그 밖에 빠진 것이 있으면 말
 적었습니다.
 
 엔진 자체에는 **Node 20 이상**만 있으면 됩니다. 엔진과 서버에는 자체 npm
-의존성이 없으므로 패키지 바깥에서 받아 오는 것이 없습니다.
+의존성이 없으므로 패키지 바깥에서 받아 오는 것이 없습니다. macOS, Linux,
+Windows 세 곳 모두에서 CI 가 전체 테스트(끝까지 실행하는 e2e 포함)를 돌립니다.
+
+Windows 에서는 `cascade setup` 이 SQL 레인의 Python 을 `.venv\Scripts\python.exe` 에
+만들고, 실행도 거기서 찾습니다. JDK 는 `PATH` 의 `javac` 나 `JAVA_HOME` 아래의
+것을 씁니다.
 
 Java 레인에는 **JDK 17 이상**이 필요합니다. 이 레인은 JDK 자체 컴파일러의 Tree
 API 를 파싱 전용으로 쓰므로 `javac` 와 `java` 면 충분합니다.
@@ -108,6 +113,7 @@ API 를 파싱 전용으로 쓰므로 `javac` 와 `java` 면 충분합니다.
 brew install openjdk                          # macOS
 export JAVA_HOME=/opt/homebrew/opt/openjdk
 sudo apt-get install default-jdk              # Debian, Ubuntu
+winget install EclipseAdoptium.Temurin.21.JDK # Windows
 ```
 
 SQL 레인에는 **Python 3** 이 필요하고, 연결은 명령 하나로 끝납니다. `sqlglot`

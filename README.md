@@ -101,7 +101,12 @@ anything.
 
 **Node 20 or newer** for the engine itself, and nothing else. The engine and its
 servers have no npm dependencies of their own, so nothing is fetched beyond the
-package.
+package. macOS, Linux and Windows: the suite runs on all three in CI, the
+end-to-end runs included.
+
+On Windows, `cascade setup` builds the SQL lane's Python at `.venv\Scripts\python.exe`
+and that is where a run looks for it; the JDK is whatever `javac` is on `PATH`
+or under `JAVA_HOME`.
 
 **A JDK 17 or newer** for the Java lane. The lane uses the JDK's own compiler
 Tree API in parse-only mode, so `javac` and `java` are all it wants:
@@ -110,6 +115,7 @@ Tree API in parse-only mode, so `javac` and `java` are all it wants:
 brew install openjdk                          # macOS
 export JAVA_HOME=/opt/homebrew/opt/openjdk
 sudo apt-get install default-jdk              # Debian or Ubuntu
+winget install EclipseAdoptium.Temurin.21.JDK # Windows
 ```
 
 **Python 3** for the SQL lane, and one command to wire it up. The `sqlglot`

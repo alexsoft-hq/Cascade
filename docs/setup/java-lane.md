@@ -32,6 +32,9 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk   # or add its bin to PATH
 
 # Debian/Ubuntu
 sudo apt-get install default-jdk
+
+# Windows
+winget install EclipseAdoptium.Temurin.21.JDK
 ```
 
 ## Run it
