@@ -557,6 +557,11 @@ limit [overlay]: HEAD moved past the pack's base commit; the answer below is the
 worktree 에서 지금 pack 과 같은 방식으로 새로 분석합니다. 등록도 봉인도 하지
 않습니다. spring-petclinic 을 40 커밋 전과 비교한 결과입니다.
 
+같은 id 안의 컬럼 타입·트랜잭션 표식 같은 속성 변화와 엣지 증거의 변화도 이전값과
+새 값을 함께 보여 줍니다. 파일·줄만 옮긴 변화는 따로 표시하므로 정적 영향 API나
+화면 수를 늘리지 않습니다. 이 보고서는 두 정적 graph pack에 기록된 변화이며 모든
+소스 본문 변화나 실행 결과를 뜻하지는 않습니다.
+
 ```
 base: commit b5a630b1994b, built now in a temporary worktree, the way the current pack was analyzed
 base  60eb0629ec1b  petclinic  commit b5a630b199  built 2026-09-14T10:22:23.266Z
@@ -886,7 +891,9 @@ mall 에는 35 개가 있고 가장 큰 것은 15 개 테이블에 닿습니다.
 다른 코드베이스는 모든 것이 다르기 때문입니다. 첫 패널은 두 빌드를 같은
 방식으로 분석했는지 말해 줍니다. 목록보다 먼저 읽으십시오. 분석 방식이 그대로일
 때만 차이가 곧 코드 변경입니다. 기록에 없는 커밋은 `cascade diff --base-commit`
-이 저장소에서 기준 pack 을 만듭니다.
+이 저장소에서 기준 pack 을 만듭니다. Compare는 같은 속성·증거 변화와 위치만 바뀐
+기록을 구분해 보여 주며, 인쇄와 Markdown 내려받기에도 기준·조건·목록 제한을 함께
+남깁니다.
 
 
 ### 소스 창

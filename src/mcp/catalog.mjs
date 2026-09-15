@@ -487,7 +487,11 @@ export const TOOLS = Object.freeze({
     description:
       'What changed between two packs of ONE project: the routes, screens, tables, columns, '
       + 'statements and symbols that appeared or went away, the edges that appeared, went away or '
-      + 'changed grade, and the endpoints and screens above any of that. The project you address is '
+      + 'changed grade; changed node attributes (such as a column type or transaction marker); changed '
+      + 'edge evidence (such as access); and source-location-only moves separately. It keeps the exact '
+      + 'base and head values, including missing versus null and duplicate edge records. The endpoints and '
+      + 'screens above additions, removals, regrades and content changes are a static upstream result from '
+      + 'both packs; location-only moves do not add to them. The project you address is '
       + 'the head. The base is an earlier build of it: `base_commit` (a commit the project\'s pack '
       + 'history holds, seven characters or more) or `base_history` (an entry id); or `base`, another '
       + 'served pack of the SAME repository. Packs of different repositories are refused. READ '
@@ -495,8 +499,9 @@ export const TOOLS = Object.freeze({
       + 'change only when both packs were analyzed the same way (lanes, identity rule, axes, worker '
       + 'versions, profile digest, engine, flags, roots). When they were not, `limits` says so, and a '
       + 'removed node whose axis changed carries `axisChanged`, because an unread catalog and a '
-      + 'dropped table look alike. A renamed method is one removal and one addition. Lists are cut '
-      + 'at `limit` (default 50) with the totals in `truncated`.',
+      + 'dropped table look alike. A renamed method is one removal and one addition. This is recorded '
+      + 'graph change, not every source/body change or a safety verdict. Lists are cut at `limit` '
+      + '(default 50) with the totals in `truncated`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -633,7 +638,7 @@ export function callTool(name, args, ctx) {
       // another served project: {self, ids, indexOf, ctxFor}. A single-pack
       // server has none, and the answer then LISTS the calls that leave the
       // pack instead of following them.
-      federation: ctx.federation, history: ctx.history, // history: this project's earlier builds, for pack_diff
+      federation: ctx.federation, history: ctx.history, packJson: ctx.packJson, // history and exact raw pack, for pack_diff
     });
   } catch (e) {
     if (e && e.name === 'ToolError') throw new DispatchError(e.code, e.message);

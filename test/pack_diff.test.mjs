@@ -73,13 +73,21 @@ test('every node and edge that appeared, went away or changed grade is listed, a
   // The ends of a round trip list first.
   assert.deepEqual(d.nodes.addedIds, ['endpoint:POST /orders', 'statement:x.OrderMapper.insert', 'symbol:x.OrderController#save']);
   assert.deepEqual(d.nodes.removedIds, [{ id: 'column:orders.legacy_code' }]);
-  assert.deepEqual(d.nodes.byKind, { endpoint: { added: 1, removed: 0 }, statement: { added: 1, removed: 0 }, symbol: { added: 1, removed: 0 }, column: { added: 0, removed: 1 } });
+  assert.deepEqual(d.nodes.byKind, {
+    endpoint: { added: 1, removed: 0, changed: 0, moved: 0 },
+    statement: { added: 1, removed: 0, changed: 0, moved: 0 },
+    symbol: { added: 1, removed: 0, changed: 0, moved: 0 },
+    column: { added: 0, removed: 1, changed: 0, moved: 0 },
+  });
   assert.deepEqual(d.edges.regradedList, [{ from: 'symbol:x.OrderController#list', to: 'symbol:x.OrderService#list', type: 'CALLS', rule: 'field-receiver', base: 'EXACT', head: 'SOUND_SET' }]);
   assert.equal(d.edges.added, 3);
   assert.deepEqual(d.edges.removedList, [{ from: 'table:orders', to: 'column:orders.legacy_code', type: 'DECLARES', rule: null, grade: 'EXACT' }]);
   // Above the new route is the new route; above the regraded call is the old one.
-  assert.deepEqual(d.endpointsTouched, { total: 2, ids: ['endpoint:GET /orders', 'endpoint:POST /orders'] });
-  assert.deepEqual(d.screensTouched, { total: 0, ids: [] }, 'this project has no screens above anything');
+  assert.deepEqual(d.endpointsTouched, {
+    total: 2, ids: ['endpoint:GET /orders', 'endpoint:POST /orders'],
+    rows: [{ id: 'endpoint:GET /orders', base: true, head: true }, { id: 'endpoint:POST /orders', base: false, head: true }],
+  });
+  assert.deepEqual(d.screensTouched, { total: 0, ids: [], rows: [] }, 'this project has no screens above anything');
   assert.equal(d.truncated.any, false);
 });
 

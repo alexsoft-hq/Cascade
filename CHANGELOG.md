@@ -10,6 +10,29 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-09-15
+
+### Added
+
+- **Semantic pack diffs.** An existing node's column type, transaction marker or
+  other recorded attribute, and an existing edge's evidence such as SQL access,
+  previously shared the same identity and grade and therefore disappeared from a
+  diff. The report now retains exact base/head values, distinguishes absent from
+  `null`, preserves duplicate edge records, and lists content changes separately
+  from location-only moves. Static affected endpoints and screens are seeded by
+  additions, removals, regrades and content changes on both packs; a file/line
+  move alone does not enlarge them. The CLI, MCP `pack_diff` and Compare report
+  expose the same additive `cascade:pack-diff:1` fields; Compare can print or
+  download the report as Markdown with its conditions and cuts.
+
+### Fixed
+
+- **Untrusted CLI diff inputs.** `cascade diff` previously parsed a pack JSON
+  document and could print a no-change result after nodes or edges were edited
+  without updating its digest. It now verifies schema, graph records and the
+  node/edge digest for both supplied packs and a rebuilt base before comparison.
+  Execution metadata remains outside that digest by design.
+
 ## [0.8.10] - 2026-09-15
 
 The suite runs on Windows, a grade that rose is not a dropped edge, and the

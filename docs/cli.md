@@ -694,6 +694,21 @@ endpoints and screens above any of that. A frontend change is above no endpoint,
 which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x`,
 `statement:ns.id`), so the two packs are compared by id with no guessing.
 
+The report also separates an existing record whose **content** changed from one
+whose source location alone moved. For nodes, content includes every recorded
+nonidentity attribute other than `file`, `line` and `declaredAt`: a column type,
+access-related attribute or `@Transactional` marker can therefore be reviewed
+without pretending it was an addition. For edges, grade-only change remains a
+regrade; changed evidence (such as `access`) is reported with its complete
+base/head record group, including duplicate records, while source-location-only
+evidence is a move. Each changed field prints its exact base and head values;
+`<missing>` is different from `null`. Content changes, additions, removals and
+regrades seed the static upstream walk on both packs. A location-only move does
+not, so it cannot enlarge the affected endpoint or screen list. That walk follows
+the recorded relation graph on each side, including candidate-grade edges: its
+endpoints and screens are review candidates, not proof that a request ran or
+that behaviour changed.
+
 - `--base-commit <rev>` — this project at another commit (`main`, `HEAD~3`, a
   sha). When the project's pack history holds a build at that commit that was
   made from a clean checkout AND analyzed the same way as the current pack, it
@@ -722,8 +737,16 @@ which is why the screens are listed too. Node ids are meanings (`endpoint:GET /x
 - `--head <pack>` — the pack with the change; default this project's pack.
 - `--pack` / `--project` / `--root` — which project.
 - `--limit <n>` — how many ids each list prints (default 50). The counts are
-  always whole, and a cut list says how much it left out.
-- `--json` — the whole difference as JSON (`cascade:pack-diff:1`).
+  always whole, and every cut list says how many of its own rows it left out.
+- `--json` — the whole difference as JSON. The additive response schema remains
+  `cascade:pack-diff:1`; `comparisonVersion: 2` identifies the expanded record
+  comparator, while clients that read the older fields can continue to do so.
+
+**Packs are checked before comparison.** `diff` verifies the pack schema, graph
+records and content digest for the base and head before it prints any count. The
+digest covers graph nodes and edges, not execution metadata, so changing
+`meta.builtAt` does not make a graph change and is not authenticated by this
+check.
 
 **Two different repositories are refused.** Their difference is everything, and
 a list of a thousand added routes reads like a review while meaning nothing. Each
@@ -778,8 +801,11 @@ a list of ids. A pack built before 0.8.8 records no workers, profile or engine,
 and the diff then says those conditions are unknown rather than assuming them
 equal.
 
-A renamed method is one removal and one addition. Nothing here judges whether a
-change is safe.
+A renamed method is one removal and one addition. This is a comparison of what
+the two static graph packs record: it does not capture every source/body change,
+prove runtime behaviour or judge whether a change is safe. The Compare page
+shows the same report with print and Markdown-download actions; conditions and
+cut-list totals remain part of that report.
 
 The MCP tool `pack_diff` answers the same question from the project's pack
 history ([mcp.md](mcp.md#the-tools)).

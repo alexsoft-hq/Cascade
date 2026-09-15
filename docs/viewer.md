@@ -274,14 +274,58 @@ project, because two codebases differ in everything. For a commit the history
 does not hold, `cascade diff --base-commit <rev>` builds the base from the
 repository.
 
-The first panel says whether the two packs were analyzed the same way, and lists
-every condition that differs or is not recorded. Read it before the lists: a
-difference is a code change only when the analysis did not change. Then come
-the counts by kind and by edge type, the endpoints above the change (each with
-a Flow button) and the screens above it, and the nodes and edges that were added,
-removed or regraded. A removed node whose axis changed between the packs says so.
-The evidence rail beside the lists carries the trust level, the limits and every
-cut list.
+What the tab draws is one report, read from the top. The title names the
+project, the base and the head (commit, build time, pack digest, and whether the
+build held uncommitted changes). Then the conditions: whether the two packs were
+analyzed the same way, and every condition that differs or is not recorded. Read
+them before any count: a difference is a code change only when the analysis did
+not change. A panel headed "Read before the counts" follows when there is
+something to read first: every limit the engine states, every list cut at the
+limit the page asks for (200 rows; the totals in the headings are always whole),
+and, against a server older than this page, that node attributes and edge
+evidence were not compared at all. Then the summary, in four groups: content
+(nodes added, removed, or with a changed attribute), relationships (edges added
+or removed), evidence (edges whose grade changed, or whose evidence reads
+differently), and source location only (nodes and edges that moved in the
+source and mean the same). The by-kind and by-type lines under it use the
+legend printed with them.
+
+Next come the endpoints and the screens above the change, read from both packs:
+above what was added in the head, above what was removed in the base, and above
+what changed or was regraded in either. A move in the source adds nothing here. An end the head still has
+carries a Flow button; one the earlier build alone had is marked "earlier build
+only" and opens nothing, because there is no chain to walk in the pack on
+screen. "What to check" is a numbered list drawn from the counts and the flags
+alone: which panel to read first, how many ends to open, how many attribute and
+evidence records to read value by value. It carries no score and no verdict.
+
+Then the records. Changed attributes and changed evidence are shown per field,
+the value before and the value after, as text and never as markup: a string is
+quoted, so `"null"` and `null` read as what they are, a value the other pack does
+not record is said to be "(not recorded)", and a long value or one with a line
+break sits behind a fold. Every attribute is compared except the source location
+(file, line, declaration position). Then the edges whose grade changed, the
+nodes and edges added and removed (a removed node whose axis changed between the
+packs says so), and last the moves: nodes and edges whose file or line differs
+and nothing else, listed apart with their own explanation so a file diff is not
+mistaken for a graph change. A filter box above the report hides the rows that
+do not carry the text typed; the totals do not change. When there is nothing to
+list the report says which of these it is: the same pack, the same graph, a move
+in the source only, or an older server that compared ids and grades alone.
+
+Two buttons sit under the title. Print opens every fold and prints the report
+with the masthead, the tabs and the controls left out, in ink on paper whichever
+theme the screen had; the evidence rail with the trust level, the limits and the
+cut lists prints after the report. Save as Markdown writes the same report, from
+the answer already on screen and from nothing else, as a file named
+`cascade-compare-<project>-<base commit>-<head commit>.md`: the base and head
+with their whole commit, build time and digest, the trust level, the conditions,
+the limits, the summary, the ends, the guidance, every list, and a "Rows not
+shown" section naming each list the file holds in part. Every value in the file
+sits in a code span or a fenced block one backtick longer than any run of
+backticks inside it, so a pipe, a backtick or a tag in a comment stays text. The
+evidence rail beside the report carries the trust level, the limits and every
+cut list on screen.
 
 ### Coupling
 

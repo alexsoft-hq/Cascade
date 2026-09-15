@@ -559,6 +559,11 @@ appeared or went away, the edges that changed grade, and the endpoints above
 any of that. The base comes from the project's own history when a certified
 `analyze` kept that build, and is otherwise analyzed now in a temporary git
 worktree, the way the current pack was, with nothing registered or sealed.
+
+It also shows changed node attributes and edge evidence with exact before/after
+values, while keeping file/line-only moves apart so they do not inflate static
+affected APIs or screens. This is what the two graph packs record, not every
+source/body change or a runtime result.
 spring-petclinic, forty commits back:
 
 ```
@@ -899,7 +904,9 @@ project as a base, because two codebases differ in everything. The first panel
 says whether the two builds were analyzed the same way; read it before the
 lists, because a difference is a code change only when the analysis did not
 change. For a commit the history does not hold, `cascade diff --base-commit`
-builds the base from the repository.
+builds the base from the repository. The same report separates attribute and
+evidence changes from location-only moves, and can be printed or downloaded as
+Markdown with its base, conditions and cut-list totals.
 
 ### The source pane
 

@@ -7,20 +7,54 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { diffPacks } from '../../core/pack_diff.mjs';
+import { loadPack } from '../../core/pack.mjs';
 import { differentRepositorySentence, sameRepository } from '../../core/repo_identity.mjs';
 import { basePackAt } from '../base_commit.mjs';
 
 /** A pack from a pack directory, a `.cascade/` directory or a pack.json path. */
-function readPackAt(arg, { die }) {
+function readPackAt(arg, { die }, side) {
   const abs = path.resolve(arg);
   const candidates = [abs, path.join(abs, 'pack.json'), path.join(abs, 'pack', 'pack.json'), path.join(abs, '.cascade', 'pack', 'pack.json')];
   const file = candidates.find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
   if (!file) die(`no pack at ${abs}: give a pack.json, the directory holding it, or a .cascade directory`);
-  try { return { file, pack: JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch (e) { return die(`cannot read ${file}: ${e.message}`); }
+  let pack;
+  try { pack = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return die(`cannot read ${file}: ${e.message}`); }
+  return { file, pack: validatePack(pack, { die, side, file }) };
 }
 
-const sign = (n, s) => (n > 0 ? `${s}${n}` : null);
+/** Refuse a pack that cannot be trusted before comparing its projected records. */
+function validatePack(pack, { die, side, file = null }) {
+  try {
+    loadPack(pack, { verifyDigest: true });
+    return pack;
+  } catch (e) {
+    const where = file ? `${side} pack at ${file}` : `${side} pack`;
+    return die(`invalid ${where}: ${e.message}`);
+  }
+}
+
 const short = (d) => (d ? String(d).slice(0, 12) : '?');
+const count = (label, n) => (n ? `${label}${n}` : null);
+
+function marks(value, labels) {
+  return labels.map(([key, label]) => count(label, value[key])).filter(Boolean).join('/');
+}
+
+const nodeMarks = (value) => marks(value, [['added', '+'], ['removed', '-'], ['changed', 'changed '], ['moved', 'moved ']]);
+const edgeMarks = (value) => marks(value, [['added', '+'], ['removed', '-'], ['regraded', '~'], ['changed', 'changed '], ['moved', 'moved ']]);
+const groupMarks = (groups, marker) => Object.entries(groups).map(([name, value]) => `${name} ${marker(value)}`);
+
+function nodeLine(nodes) {
+  const changes = [count('changed ', nodes.changed), count('moved ', nodes.moved)].filter(Boolean).join(' ');
+  const byKind = groupMarks(nodes.byKind, nodeMarks);
+  return `nodes: +${nodes.added} -${nodes.removed}${changes ? ` ${changes}` : ''}${byKind.length ? `  (${byKind.join(', ')})` : ''}\n`;
+}
+
+function edgeLine(edges) {
+  const changes = [count('changed ', edges.changed), count('moved ', edges.moved)].filter(Boolean).join(' ');
+  const byType = groupMarks(edges.byType, edgeMarks);
+  return `edges: +${edges.added} -${edges.removed} regraded ${edges.regraded}${changes ? ` ${changes}` : ''}${byType.length ? `  (${byType.join(', ')})` : ''}\n`;
+}
 
 /** The two identity lines and the conditions, before any count. */
 function printHeader(out, d) {
@@ -36,21 +70,48 @@ function printHeader(out, d) {
 
 /** The counts, then the lists, each cut list named with its total. */
 function printBody(out, d) {
-  const byKind = Object.entries(d.nodes.byKind).map(([k, v]) => `${k} ${[sign(v.added, '+'), sign(v.removed, '-')].filter(Boolean).join('/')}`);
-  out.write(`nodes: +${d.nodes.added} -${d.nodes.removed}${byKind.length ? `  (${byKind.join(', ')})` : ''}\n`);
-  const byType = Object.entries(d.edges.byType).map(([k, v]) => `${k} ${[sign(v.added, '+'), sign(v.removed, '-'), sign(v.regraded, '~')].filter(Boolean).join('/')}`);
-  out.write(`edges: +${d.edges.added} -${d.edges.removed} regraded ${d.edges.regraded}${byType.length ? `  (${byType.join(', ')})` : ''}\n`);
+  out.write(nodeLine(d.nodes));
+  out.write(edgeLine(d.edges));
+  printTouched(out, d);
+  printLists(out, d);
+  printCuts(out, d);
+}
+
+function printTouched(out, d) {
   out.write(`endpoints above the change: ${d.endpointsTouched.total}\n`);
   for (const id of d.endpointsTouched.ids) out.write(`  ${id.slice('endpoint:'.length)}\n`);
   out.write(`screens above the change: ${d.screensTouched.total}\n`);
   for (const id of d.screensTouched.ids) out.write(`  ${id.slice('screen:'.length)}\n`);
-  const section = (title, rows) => { if (rows.length) out.write(`${title}\n${rows.map((r) => `  ${r}\n`).join('')}`); };
-  section('added nodes', d.nodes.addedIds);
-  section('removed nodes', d.nodes.removedIds.map((r) => (r.axisChanged ? `${r.id}  (the ${r.axisChanged} axis changed between the packs)` : r.id)));
-  const edge = (e) => `${e.from} -> ${e.to}  ${e.type}${e.rule ? ` [${e.rule}]` : ''}`;
-  section('added edges', d.edges.addedList.map((e) => `${edge(e)}  ${e.grade}`));
-  section('removed edges', d.edges.removedList.map((e) => `${edge(e)}  ${e.grade}`));
-  section('regraded edges', d.edges.regradedList.map((e) => `${edge(e)}  ${e.base} -> ${e.head}`));
+}
+
+function section(out, title, rows) {
+  if (rows.length) out.write(`${title}\n${rows.map((row) => `  ${row}\n`).join('')}`);
+}
+
+const edge = (row) => `${row.from} -> ${row.to}  ${row.type}${row.rule ? ` [${row.rule}]` : ''}`;
+const json = (value) => JSON.stringify(value) ?? 'undefined';
+const fieldValue = (field, side) => (field[`${side}Present`] ? json(field[side]) : '<missing>');
+const fieldLines = (fields) => fields.map((field) => `    ${field.name}: ${fieldValue(field, 'base')} -> ${fieldValue(field, 'head')}\n`).join('');
+const nodeChange = (row) => `  ${row.id}\n${fieldLines(row.fields)}`;
+const edgeChange = (row) => `  ${edge(row)}\n    base records: ${json(row.base)}\n    head records: ${json(row.head)}\n${fieldLines(row.fields)}`;
+
+function semanticSection(out, title, rows, total, render) {
+  if (rows.length) out.write(`${title} (shown ${rows.length} of ${total})\n${rows.map(render).join('')}`);
+}
+
+function printLists(out, d) {
+  section(out, 'added nodes', d.nodes.addedIds);
+  section(out, 'removed nodes', d.nodes.removedIds.map((row) => (row.axisChanged ? `${row.id}  (the ${row.axisChanged} axis changed between the packs)` : row.id)));
+  section(out, 'added edges', d.edges.addedList.map((row) => `${edge(row)}  ${row.grade}`));
+  section(out, 'removed edges', d.edges.removedList.map((row) => `${edge(row)}  ${row.grade}`));
+  section(out, 'regraded edges', d.edges.regradedList.map((row) => `${edge(row)}  ${row.base} -> ${row.head}`));
+  semanticSection(out, 'changed nodes', d.nodes.changedList ?? [], d.nodes.changed ?? 0, nodeChange);
+  semanticSection(out, 'moved nodes (location only)', d.nodes.movedList ?? [], d.nodes.moved ?? 0, nodeChange);
+  semanticSection(out, 'changed edges (content/evidence)', d.edges.changedList ?? [], d.edges.changed ?? 0, edgeChange);
+  semanticSection(out, 'moved edges (location only)', d.edges.movedList ?? [], d.edges.moved ?? 0, edgeChange);
+}
+
+function printCuts(out, d) {
   const cutLists = d.truncated.fields.filter((f) => f.nextOffset !== null);
   if (cutLists.length) out.write(`cut: ${cutLists.map((f) => `${f.field} ${f.shown} of ${f.total}`).join(', ')} (raise --limit, or --json)\n`);
 }
@@ -60,7 +121,7 @@ function baseOf(cli, head) {
   const { opt, die, resolveOrDie } = cli;
   const rev = opt('base-commit');
   if (opt('base') && rev) die('give --base <pack> or --base-commit <rev>, not both');
-  if (opt('base')) return { ...readPackAt(opt('base'), cli), note: null };
+  if (opt('base')) return { ...readPackAt(opt('base'), cli, 'base'), note: null };
   if (!rev) die('name what to compare against: --base-commit <rev> (this project at another commit) or --base <pack>');
   const resolved = resolveOrDie();
   if (!resolved.dotCascade) die('--base-commit needs a project with a .cascade directory: run it inside one, or pass --root / --project');
@@ -70,12 +131,12 @@ function baseOf(cli, head) {
   const note = `base: commit ${b.commit.slice(0, 12)}, ${where}`
     + (b.note ? `\n  ${b.note}` : '')
     + (b.outside.length ? `\n  read as they are today, not at ${b.commit.slice(0, 12)}: ${b.outside.join(', ')}` : '');
-  return { file: null, pack: b.pack, note };
+  return { file: null, pack: validatePack(b.pack, { die, side: 'rebuilt base' }), note };
 }
 
 export function run(cli) {
   const { opt, flag, die, resolveOrDie } = cli;
-  const head = opt('head') ? readPackAt(opt('head'), cli) : readPackAt(resolveOrDie().packDir, cli);
+  const head = opt('head') ? readPackAt(opt('head'), cli, 'head') : readPackAt(resolveOrDie().packDir, cli, 'head');
   const base = baseOf(cli, head);
   const rawLimit = opt('limit');
   const limit = rawLimit === undefined ? undefined : Number(rawLimit);

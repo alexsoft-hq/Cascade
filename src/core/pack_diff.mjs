@@ -25,6 +25,8 @@
 
 import { FLOW_EDGE_TYPES } from './graph.mjs';
 import { sameRepository } from './repo_identity.mjs';
+import { diffEdgeRecords, diffNodeRecords, materializePackDiff, touchedRows } from './pack_diff_fields.mjs';
+import { canonicalJson } from './canonical.mjs';
 
 export const PACK_DIFF_SCHEMA = 'cascade:pack-diff:1';
 
@@ -73,7 +75,7 @@ function conditionsOf(pack) {
     optOuts: a ? (a.optOuts ?? []).join(' ') : null,
     // The roots as the project spells them (portable paths, no checkout root): where
     // the checkout sits is not a condition, and a base built in a worktree sits elsewhere.
-    sourceRoots: a?.selection ? JSON.stringify({ ...a.selection, root: undefined }) : null,
+    sourceRoots: a?.selection ? canonicalJson({ ...a.selection, root: undefined }) : null,
     ...runConditions(a),
   };
   for (const [k, v] of Object.entries(a?.workers ?? {})) flat[`worker.${k}`] = v;
@@ -91,7 +93,7 @@ function runConditions(a) {
   const ext = a.external ?? null;
   return {
     // Where the profile file sat is not how it was read; `profileDigest` is.
-    flags: a.invocation ? JSON.stringify({ ...a.invocation, profile: undefined }) : null,
+    flags: a.invocation ? canonicalJson({ ...a.invocation, profile: undefined }) : null,
     catalogSnapshot: ext ? String(ext.catalogSnapshot ?? 'none') : null,
     evidence: ext ? (ext.evidence ?? []).join(' ') || 'none' : null,
     // What was read from outside the repository, by content: it changes with no commit.
@@ -102,7 +104,7 @@ function runConditions(a) {
 /** The outside inputs as one comparable string; null (unknown) when there is no record or one of them could not be read. */
 function externalCondition(ext) {
   if (!ext?.sources) return null;
-  const entries = Object.entries(ext.sources);
+  const entries = Object.entries(ext.sources).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   if (entries.some(([, d]) => d === 'unreadable')) return null;
   return entries.map(([p, d]) => `${p}=${d}`).join(' ') || 'none';
 }
@@ -145,75 +147,6 @@ const kindRank = (id) => {
   const i = KIND_ORDER.indexOf(idKind(id));
   return i < 0 ? KIND_ORDER.length : i;
 };
-const byKindThenId = (a, b) => kindRank(a) - kindRank(b) || (a < b ? -1 : a > b ? 1 : 0);
-
-/** The nodes one side has and the other does not, counted per kind. */
-function nodeChanges(basePack, headPack, changedAxes) {
-  const baseById = new Map(basePack.nodes.map((n) => [n.id, n]));
-  const headById = new Map(headPack.nodes.map((n) => [n.id, n]));
-  const added = [...headById.keys()].filter((id) => !baseById.has(id)).sort(byKindThenId);
-  const removed = [...baseById.keys()].filter((id) => !headById.has(id)).sort(byKindThenId);
-  const byKind = {};
-  const bump = (id, field) => {
-    const k = idKind(id);
-    byKind[k] ??= { added: 0, removed: 0 };
-    byKind[k][field] += 1;
-  };
-  for (const id of added) bump(id, 'added');
-  for (const id of removed) bump(id, 'removed');
-  const axisChanged = new Set(changedAxes);
-  const removedRows = removed.map((id) => {
-    const axis = axisOf(baseById.get(id));
-    return axis && axisChanged.has(axis) ? { id, axisChanged: axis } : { id };
-  });
-  const kindsInOrder = Object.fromEntries(Object.keys(byKind).sort((x, y) => kindRank(`${x}:`) - kindRank(`${y}:`) || (x < y ? -1 : 1)).map((k) => [k, byKind[k]]));
-  return { added, removedRows, byKind: kindsInOrder };
-}
-
-/** An edge's identity: its ends, its type and the rule that drew it. */
-const edgeKey = (e) => [e.from, e.to, e.type, e.evidence?.rule ?? ''].join('\n');
-
-/** Every edge of a pack by identity, with the grades its copies carry. */
-function edgesByKey(pack) {
-  const out = new Map();
-  for (const e of pack.edges) {
-    const k = edgeKey(e);
-    if (!out.has(k)) out.set(k, { from: e.from, to: e.to, type: e.type, rule: e.evidence?.rule ?? null, grades: [] });
-    out.get(k).grades.push(e.grade);
-  }
-  for (const v of out.values()) v.grades.sort();
-  return out;
-}
-
-/** The edges one side has and the other does not, and the ones whose grade moved. */
-function edgeChanges(basePack, headPack) {
-  const b = edgesByKey(basePack);
-  const h = edgesByKey(headPack);
-  const row = (v, grades) => ({ from: v.from, to: v.to, type: v.type, rule: v.rule, grade: grades.join('+') });
-  const added = [];
-  const removed = [];
-  const regraded = [];
-  for (const [k, v] of h) {
-    const was = b.get(k);
-    if (!was) added.push(row(v, v.grades));
-    else if (was.grades.join('+') !== v.grades.join('+')) {
-      regraded.push({ from: v.from, to: v.to, type: v.type, rule: v.rule, base: was.grades.join('+'), head: v.grades.join('+') });
-    }
-  }
-  for (const [k, v] of b) if (!h.has(k)) removed.push(row(v, v.grades));
-  const order = (x, y) => byKindThenId(x.from, y.from) || (x.to < y.to ? -1 : x.to > y.to ? 1 : 0) || (x.type < y.type ? -1 : 1);
-  const byType = {};
-  const bump = (list, field) => {
-    for (const e of list) {
-      byType[e.type] ??= { added: 0, removed: 0, regraded: 0 };
-      byType[e.type][field] += 1;
-    }
-  };
-  bump(added, 'added'); bump(removed, 'removed'); bump(regraded, 'regraded');
-  const typesInOrder = Object.fromEntries(Object.keys(byType).sort().map((k) => [k, byType[k]]));
-  return { added: added.sort(order), removed: removed.sort(order), regraded: regraded.sort(order), byType: typesInOrder };
-}
-
 /** Upstream over the flow edges of one pack: every node that can reach one of `starts`. */
 function upstream(pack, starts) {
   const flow = new Set(FLOW_EDGE_TYPES);
@@ -234,33 +167,18 @@ function upstream(pack, starts) {
 }
 
 /**
- * The endpoints and the screens above the change: on the head side above what
- * was added or regraded, on the base side above what was removed. A frontend
- * change is above no endpoint, which is why the screens are named too.
+ * Changed records are walked from both packs; additions and head regrades are
+ * walked from head, removals and base regrades from base. A frontend change is
+ * above no endpoint, which is why the screens are named too.
  */
 function touchedEnds(basePack, headPack, nodes, edges) {
-  const headStarts = [...edges.added, ...edges.regraded].map((e) => e.from).concat(nodes.added);
-  const baseStarts = edges.removed.map((e) => e.from).concat(nodes.removedRows.map((r) => r.id));
-  const endpoints = new Set();
-  const screens = new Set();
-  const take = (id) => {
-    if (id.startsWith('endpoint:')) endpoints.add(id);
-    else if (id.startsWith('screen:')) screens.add(id);
-  };
-  for (const id of upstream(headPack, headStarts)) take(id);
-  for (const id of upstream(basePack, baseStarts)) take(id);
-  return { endpoints: [...endpoints].sort(), screens: [...screens].sort() };
+  const headStarts = [...edges.added, ...edges.regraded, ...edges.changed].map((edge) => edge.from).concat(nodes.added, nodes.changed.map((node) => node.id));
+  const baseStarts = [...edges.removed, ...edges.regraded, ...edges.changed].map((edge) => edge.from).concat(nodes.removedRows.map((node) => node.id), nodes.changed.map((node) => node.id));
+  return touchedRows(upstream(basePack, baseStarts), upstream(headPack, headStarts), basePack.nodes.map((node) => node.id), headPack.nodes.map((node) => node.id));
 }
 
 /** Whether the two packs are one codebase, and which evidence said so. */
 const repositoryLine = (basePack, headPack) => (({ verdict, by }) => ({ verdict, by }))(sameRepository(basePack, headPack));
-
-/** A list cut to `limit`, and the truncation line that says so. */
-function cut(field, list, limit) {
-  const shown = Math.min(limit, list.length);
-  // No paging: a cut list says how much there is, and a larger limit shows it.
-  return { shown: list.slice(0, limit), trunc: { field, shown, total: list.length, order: 'kind, id asc', nextOffset: shown < list.length ? shown : null } };
-}
 
 /**
  * THE DIFFERENCE between two packs of one project.
@@ -272,29 +190,8 @@ function cut(field, list, limit) {
 export function diffPacks(basePack, headPack, opts = {}) {
   const limit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : PACK_DIFF_LIMIT;
   const conditions = compareConditions(basePack, headPack);
-  const nodes = nodeChanges(basePack, headPack, conditions.changedAxes);
-  const edges = edgeChanges(basePack, headPack);
-  const { endpoints, screens } = touchedEnds(basePack, headPack, nodes, edges);
-  const lists = [
-    cut('nodes.added', nodes.added, limit), cut('nodes.removed', nodes.removedRows, limit),
-    cut('edges.added', edges.added, limit), cut('edges.removed', edges.removed, limit),
-    cut('edges.regraded', edges.regraded, limit), cut('endpointsTouched', endpoints, limit),
-    cut('screensTouched', screens, limit),
-  ];
-  const [na, nr, ea, er, eg, et, st] = lists;
-  return {
-    schema: PACK_DIFF_SCHEMA,
-    base: sideOf(basePack),
-    head: sideOf(headPack),
-    samePack: basePack.digest === headPack.digest, repository: repositoryLine(basePack, headPack),
-    conditions: { verdict: conditions.verdict, differences: conditions.differences, unknown: conditions.unknown },
-    nodes: { added: nodes.added.length, removed: nodes.removedRows.length, byKind: nodes.byKind, addedIds: na.shown, removedIds: nr.shown },
-    edges: {
-      added: edges.added.length, removed: edges.removed.length, regraded: edges.regraded.length, byType: edges.byType,
-      addedList: ea.shown, removedList: er.shown, regradedList: eg.shown,
-    },
-    endpointsTouched: { total: endpoints.length, ids: et.shown },
-    screensTouched: { total: screens.length, ids: st.shown },
-    truncated: { any: lists.some((l) => l.trunc.nextOffset !== null), fields: lists.map((l) => l.trunc) },
-  };
+  const nodes = diffNodeRecords(basePack, headPack, conditions.changedAxes, kindRank, axisOf);
+  const edges = diffEdgeRecords(basePack, headPack);
+  const touched = touchedEnds(basePack, headPack, nodes, edges);
+  return materializePackDiff(PACK_DIFF_SCHEMA, basePack, headPack, conditions, nodes, edges, touched, limit, sideOf, repositoryLine(basePack, headPack));
 }
