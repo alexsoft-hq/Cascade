@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPack } from '../src/core/pack.mjs';
 import { changeImpact } from '../src/core/overlay.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 // OVERLAY ⊆ FULL, and DISCARD ON COMMIT (SPEC §10.2 MUST, §16.1 metamorphic).
 //
@@ -23,7 +24,7 @@ import { findJdk } from '../scripts/ci-java-smoke.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 function preflight() {
   if (!fs.existsSync(VENV_PY)) {

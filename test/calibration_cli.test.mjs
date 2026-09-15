@@ -7,6 +7,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { diffPacks } from '../src/core/pack_diff.mjs';
 import { workerVersions } from '../src/core/worker_versions.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 // The calibration layer as a USER meets it: `cascade analyze` judging a run,
 // `cascade verify` recomputing the receipt, `cascade golden` proposing and
@@ -18,7 +19,7 @@ import { workerVersions } from '../src/core/worker_versions.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 function preflight() {
   if (!fs.existsSync(VENV_PY)) {

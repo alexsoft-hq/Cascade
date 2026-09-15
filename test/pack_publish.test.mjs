@@ -22,6 +22,9 @@ import { emptyIndex } from '../src/core/facts_store.mjs';
 import { INCREMENTAL_ENGINE_VERSION } from '../src/core/incremental.mjs';
 import { workerVersions } from '../src/core/worker_versions.mjs';
 
+// A mode of 000 keeps nobody out on Windows, and root reads anything anywhere.
+const canDenyRead = process.platform !== 'win32' && process.getuid?.() !== 0;
+
 function layout(t) {
   const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-record-')));
   t.after(() => fs.rmSync(top, { recursive: true, force: true }));
@@ -199,7 +202,7 @@ test('an outside input is hashed as a lane reads it: links followed without loop
   fs.chmodSync(path.join(locked, 'inner'), 0o000);
   let digest;
   try { digest = contentDigestOf(locked); } finally { fs.chmodSync(path.join(locked, 'inner'), 0o755); }
-  if (process.getuid?.() !== 0) assert.equal(digest, 'unreadable');
+  if (canDenyRead) assert.equal(digest, 'unreadable');
   const pack = (d) => ({ digest: 'x', meta: { lanes: ['web'], analysis: { external: { sources: { [locked]: d } } } }, nodes: [], edges: [] });
   assert.ok(compareConditions(pack('unreadable'), pack('unreadable')).unknown.includes('externalSources'), 'two unreadable inputs are not taken to agree');
 });
@@ -262,7 +265,7 @@ test('the Spring configuration beside an outside Java root is an outside input, 
   fs.writeFileSync(path.join(resources, 'config', 'application.yml'), 'spring:\n  jpa: {}\n');
   assert.deepEqual(changedSince(analysis), [`${resources}#spring-config`], 'a configuration file added in config/ is a change');
   // A configuration directory that cannot be read is not one with no configuration in it.
-  if (process.getuid?.() !== 0) {
+  if (canDenyRead) {
     fs.chmodSync(path.join(resources, 'config'), 0o000);
     let now;
     try { now = externalSourcesOf(invocation, {})[`${resources}#spring-config`]; } finally { fs.chmodSync(path.join(resources, 'config'), 0o755); }

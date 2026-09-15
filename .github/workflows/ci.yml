@@ -1,5 +1,5 @@
-# CI — nine INDEPENDENT jobs:
-#   node · lint · python · db · java · petclinic · dco · fixtures · gate
+# CI — ten INDEPENDENT jobs:
+#   node · windows · lint · python · db · java · petclinic · dco · fixtures · gate
 #
 # There is no `needs:` between them and the node matrix does not fail fast, so a
 # missing or broken lane never hides the state of the others. Each job builds
@@ -68,6 +68,42 @@ jobs:
       - name: unit tests with coverage
         if: matrix.node == '22.x'
         run: npm test
+
+  # THE SAME SUITE ON WINDOWS. Most of the people this engine is for work on
+  # Windows, and every path an analysis writes down (a worktree, a lock file, a
+  # frontend beside the repository) is spelled differently there. The job builds
+  # the SQL lane's venv in Windows's own layout (`Scripts\python.exe`), so the
+  # end-to-end tests run rather than skip, and the step after them fails if they
+  # ever go back to skipping. Git Bash is the shell, so the steps read the same
+  # as the Linux job's.
+  windows:
+    name: windows (node 22.x)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: the SQL lane's venv, in Windows's own layout
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --disable-pip-version-check -r adapters/sql/requirements.txt
+      - name: unit tests
+        run: npm run test:quick
+      - name: the end-to-end CLI tests must RUN here, not skip
+        run: |
+          node --test test/analyze_root.test.mjs test/web_lane_cli.test.mjs test/base_commit.test.mjs test/analyze_lock.test.mjs 2>&1 | tee cli.log
+          grep -q 'skipped 0' cli.log || { echo 'an end-to-end CLI test SKIPPED on Windows: that is a failure, not a pass'; exit 1; }
 
   # The linter. Its own job, with no `needs:`, like everything else here: a rule
   # violation is a five-second answer and must not wait behind a thirty-second

@@ -38,10 +38,11 @@ import { callTool } from '../src/mcp/catalog.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { MALL_COMMIT, MALL_DIGEST, MALL_REPO, mallRepoWhyNot } from './helpers/mall_fixture.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 const gitOut = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 

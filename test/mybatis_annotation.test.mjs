@@ -22,10 +22,11 @@ import { fileURLToPath } from 'node:url';
 import { loadPack } from '../src/core/pack.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { annotationMapperXml, restampToJavaSource, annotationMapperFileName } from '../src/adapters/mybatis_annotation.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 const ann = (over) => ({
   kind: 'mapperAnnotationSql', ownerFqn: 'com.example.UserMapper', method: 'selectAll',

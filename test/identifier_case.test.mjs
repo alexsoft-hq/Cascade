@@ -22,9 +22,10 @@ import {
   buildGraphFromSql, catalogIdentity, foldedKey,
 } from '../src/adapters/sql_bridge.mjs';
 import { normalizeProfile, sqlIdentifierCaseOf, ProfileError, validateProfile } from '../src/core/profile.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 const PY_MODULE_DIR = path.join(ENGINE_ROOT, 'adapters', 'sql');
 
 // --------------------------------------------------------------------------

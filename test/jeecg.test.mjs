@@ -31,10 +31,11 @@ import { column_impact } from '../src/mcp/tools.mjs';
 import { buildOverview } from '../src/core/overview.mjs';
 import { handlersOf, multiHandlerRoutes } from '../src/core/walks.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 /**
  * The pinned commit. Every count below describes the SOURCE at this commit, so a

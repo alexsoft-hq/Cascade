@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { sqlVenvTarget } from '../../core/paths.mjs';
+import { sqlVenvTarget, venvPython } from '../../core/paths.mjs';
 import { ENGINE_ROOT, sqlPython } from '../env.mjs';
 
 export function run(ctx) {
@@ -23,7 +23,7 @@ export function run(ctx) {
   const target = flag('home')
     ? sqlVenvTarget({ engineRoot: ENGINE_ROOT, isCheckout: false })
     : sqlVenvTarget({ engineRoot: ENGINE_ROOT, isCheckout });
-  const targetPy = path.join(target, 'bin', 'python');
+  const targetPy = venvPython(target);
   const req = path.join(ENGINE_ROOT, 'adapters', 'sql', 'requirements.txt');
 
   const sqlglotVersion = (py) => {
@@ -73,7 +73,7 @@ export function run(ctx) {
   }
   process.stdout.write(`installing ${path.relative(ENGINE_ROOT, req)}…\n`);
   try {
-    execFileSync(path.join(target, 'bin', 'pip'), ['install', '--disable-pip-version-check', '-r', req], { stdio: ['ignore', 'inherit', 'inherit'] });
+    execFileSync(targetPy, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', req], { stdio: ['ignore', 'inherit', 'inherit'] }); // pip through the interpreter just built: the one place it is on every platform
   } catch (e) {
     die(`the requirements did not install into ${target}: ${(e && e.message) || e}`);
   }

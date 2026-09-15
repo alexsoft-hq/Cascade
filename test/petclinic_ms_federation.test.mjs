@@ -40,10 +40,11 @@ import { readRegistry } from '../src/core/registry.mjs';
 import { createProjectHost } from '../src/mcp/projects.mjs';
 import { assertContract } from '../src/mcp/contract.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 /** The pinned commit — the same one petclinic_ms.test.mjs scores against. */
 const PINNED_COMMIT = '3858f9c630cf989bb6809a86edf47c2be78dc9f1';

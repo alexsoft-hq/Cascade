@@ -1,0 +1,9 @@
+# Every text file is checked out with LF on every platform: a fixture's digest and a
+# byte-for-byte worker stream are what the tests compare, and a Windows checkout
+# with CRLF would compare something else.
+* text=auto eol=lf
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.tgz binary

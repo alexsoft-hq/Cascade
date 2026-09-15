@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 // `cascade catalog` as a USER meets it (SPEC §12, §15 M5):
 //
@@ -448,7 +449,7 @@ test('a refetched snapshot with the same schema changes the file hash but not th
 // the top, and still produces its pack. A partial answer is a supported answer.
 // ---------------------------------------------------------------------------
 
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 test('analyze on a recorded-but-unfetched connection prints one reminder and still writes the pack', (t) => {
   if (!fs.existsSync(VENV_PY)) {

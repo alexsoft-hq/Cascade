@@ -61,14 +61,24 @@ export function homeDir(env = process.env) {
  * @param {{engineRoot:string, env?:NodeJS.ProcessEnv}} a
  * @returns {{path:string, from:string}[]}
  */
-export function sqlPythonCandidates({ engineRoot, env = process.env }) {
+export function sqlPythonCandidates({ engineRoot, env = process.env, platform = process.platform }) {
   const out = [];
   if (typeof env.CASCADE_PYTHON === 'string' && env.CASCADE_PYTHON.length > 0) {
     out.push({ path: env.CASCADE_PYTHON, from: 'CASCADE_PYTHON' });
   }
-  out.push({ path: path.join(engineRoot, '.venv', 'bin', 'python'), from: "this checkout's own .venv" });
-  out.push({ path: path.join(homeDir(env), 'venv', 'bin', 'python'), from: 'the tool home, where `cascade setup` builds one' });
+  out.push({ path: venvPython(path.join(engineRoot, '.venv'), platform), from: "this checkout's own .venv" });
+  out.push({ path: venvPython(path.join(homeDir(env), 'venv'), platform), from: 'the tool home, where `cascade setup` builds one' });
   return out;
+}
+
+/**
+ * The interpreter inside a virtual environment, where `python -m venv` puts it:
+ * `bin/python` everywhere but Windows, `Scripts\python.exe` there.
+ * @param {string} venvDir
+ * @param {string} [platform]  `process.platform`
+ */
+export function venvPython(venvDir, platform = process.platform) {
+  return platform === 'win32' ? path.join(venvDir, 'Scripts', 'python.exe') : path.join(venvDir, 'bin', 'python');
 }
 
 /**

@@ -7,6 +7,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { canonicalJson } from '../src/core/canonical.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
+import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 // I-9 — THE INCREMENTAL CORRECTNESS ORACLE (SPEC §2.1 item 5, §11.2, §16.1).
 //
@@ -22,7 +23,7 @@ import { findJdk } from '../scripts/ci-java-smoke.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
-const VENV_PY = path.join(ENGINE_ROOT, '.venv', 'bin', 'python');
+const VENV_PY = sqlLaneVenv().python; // the CLI's own candidate list, so the skip guards the place the run will look in
 
 function preflight() {
   if (!fs.existsSync(VENV_PY)) {
