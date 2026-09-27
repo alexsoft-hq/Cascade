@@ -71,6 +71,14 @@ Each dated section below is one round of work. The round protocol is in
   `analyze` (`src/cli/java_sql.mjs`), from the fact cache without writing to
   it; the same file now gives the same answer both ways. OpenAPI documents, run
   traces and Spring XML id generators are still read by `analyze` only.
+- **A test fixture no longer votes for the schema's dialect.** With no dialect
+  declared, the default DDL set takes the dialect most schema files use, and it
+  counted the fixtures under `src/test` too, though they are never chosen. Where
+  they outnumber the real schema (ruoyi-vue-pro, once its copies for the
+  Chinese-market databases are told apart: twelve H2 fixtures, against two MySQL
+  schema files and five MySQL fixtures), the fixtures chose H2 and then not one
+  file was read. A profile that declares its dialect, as `cascade init` writes
+  for ruoyi-vue-pro, never took this path.
 - **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
   shipped in several dialects (ruoyi-vue-pro carries MySQL, PostgreSQL-family and
   others side by side) was read as MySQL, where a backslash escapes a quote; one

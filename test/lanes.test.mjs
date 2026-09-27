@@ -871,6 +871,19 @@ test('chooseDdlFiles: a schema file under src/test is a fixture, and is left out
   assert.match(c.skipped[0].reason, /src\/test\/. source root/);
 });
 
+test('chooseDdlFiles: a test fixture casts no vote for the dialect, since it is never chosen', () => {
+  // ruoyi-vue-pro's shape: two MySQL schema files, and more H2 fixtures under
+  // src/test. Counted, the fixtures won and not one schema file was chosen.
+  const c = chooseDdlFiles([
+    ddlCandidate({ path: 'sql/mysql/quartz.sql', dialect: 'mysql' }),
+    ddlCandidate({ path: 'sql/mysql/ruoyi-vue-pro.sql', dialect: 'mysql' }),
+    ...['bpm', 'infra', 'member'].map((m) => ddlCandidate({ path: `yudao-module-${m}/src/test/resources/sql/create_tables.sql`, dialect: 'h2', testPath: true })),
+  ], normalizeProfile({ sqlDialects: {} }));
+  assert.equal(c.dialect, 'mysql');
+  assert.deepEqual(c.chosen.map((x) => x.path), ['sql/mysql/quartz.sql', 'sql/mysql/ruoyi-vue-pro.sql']);
+  assert.equal(c.testFiles, 3);
+});
+
 test('chooseDdlFiles: nothing to choose from yields nothing, and says no dialect — never a guess', () => {
   const c = chooseDdlFiles([], normalizeProfile({ sqlDialects: {} }));
   assert.deepEqual(c.chosen, []);

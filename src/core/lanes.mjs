@@ -1030,8 +1030,11 @@ export function chooseDdlFiles(candidates, profile = {}) {
   let dialectFrom = dialect ? 'profile' : 'none';
   if (!dialect) {
     const tally = new Map();
+    // Only a file that can be chosen votes. A test fixture is left out below
+    // whatever its dialect, and ruoyi-vue-pro's H2 fixtures outnumber its two
+    // MySQL schema files: counted, they chose H2 and then no file at all.
     for (const c of list) {
-      if (c.role !== 'schema' || !c.dialect) continue;
+      if (c.role !== 'schema' || !c.dialect || c.testPath) continue;
       tally.set(c.dialect, (tally.get(c.dialect) ?? 0) + 1);
     }
     // A TIE IS REAL: a repository that ships its schema for MySQL AND for H2
