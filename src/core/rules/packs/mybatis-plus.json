@@ -7,7 +7,7 @@
       "id": "mybatis-plus.mapper",
       "kind": "java.type-role",
       "description": "A type whose own extends or implements clause names BaseMapper is a MyBatis-Plus mapper, and BaseMapper's first type argument is its entity. A mapper that reaches BaseMapper through an interface of the project's own is found from here by the MyBatis-Plus bridge, which follows each clause down to a type that plays a role and binds the type arguments on the way.",
-      "params": { "role": "mybatis-plus-mapper", "supertypes": ["BaseMapper"], "entityArg": 0 },
+      "params": { "role": "mybatis-plus-mapper", "supertypes": ["com.baomidou.mybatisplus.core.mapper.BaseMapper"], "entityArg": 0 },
       "examples": [
         {
           "source": "package com.example.mapper;\nimport com.baomidou.mybatisplus.core.mapper.BaseMapper;\npublic interface UserMapper extends BaseMapper<User> {}\n",
@@ -27,6 +27,16 @@
           "source": "package com.example.service;\npublic class UserFinder { private BaseMapper<User> mapper; }\n",
           "expect": [],
           "why": "a field of type BaseMapper makes nothing a mapper; only a supertype does"
+        },
+        {
+          "source": "package com.example.mapper;\nimport tk.mybatis.mapper.common.BaseMapper;\npublic interface UserMapper extends BaseMapper<User> {}\n",
+          "expect": [],
+          "why": "tk.mybatis has a BaseMapper too, and the import says this is that one"
+        },
+        {
+          "source": "package com.example.mapper;\npublic interface UserMapper extends com.baomidou.mybatisplus.core.mapper.BaseMapper<User> {}\n",
+          "expect": [{ "type": "com.example.mapper.UserMapper", "role": "mybatis-plus-mapper", "entity": "User" }],
+          "why": "written in full in the source: nothing in the file says it is another type"
         }
       ]
     },
@@ -34,7 +44,7 @@
       "id": "mybatis-plus.service-interface",
       "kind": "java.type-role",
       "description": "A type whose own extends or implements clause names IService is a MyBatis-Plus service interface, and IService's first type argument is its entity.",
-      "params": { "role": "mybatis-plus-service", "supertypes": ["IService"], "entityArg": 0 },
+      "params": { "role": "mybatis-plus-service", "supertypes": ["com.baomidou.mybatisplus.extension.service.IService"], "entityArg": 0 },
       "examples": [
         {
           "source": "package com.example.service;\nimport com.baomidou.mybatisplus.extension.service.IService;\npublic interface IUserService extends IService<User> {}\n",
@@ -50,7 +60,7 @@
       "id": "mybatis-plus.service-impl",
       "kind": "java.type-role",
       "description": "A class that extends ServiceImpl is a MyBatis-Plus service implementation: ServiceImpl's first type argument is its mapper and the second its entity. A class that binds only some of them, such as an abstract base, records what it binds.",
-      "params": { "role": "mybatis-plus-service", "supertypes": ["ServiceImpl"], "mapperArg": 0, "entityArg": 1 },
+      "params": { "role": "mybatis-plus-service", "supertypes": ["com.baomidou.mybatisplus.extension.service.impl.ServiceImpl"], "mapperArg": 0, "entityArg": 1 },
       "examples": [
         {
           "source": "package com.example.service.impl;\nimport com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;\npublic class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IUserService {}\n",

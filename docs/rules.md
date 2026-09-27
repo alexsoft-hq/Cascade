@@ -64,6 +64,17 @@ stop the run: which one wins is never decided by the order the packs load in.
 | `java.type-role` | after the Java worker's records are assembled, before the lanes are chosen | the supertypes a type's own extends and implements clauses name, and their type arguments | which role a type plays (a MyBatis-Plus mapper or service) and which of its type arguments is the entity or the mapper. Only the roots of a chain are matched: a type that reaches one through a type of the project's own is found by the bridge that reads the role |
 | `sql.dialect-path` | while discovering the tree | a file's path | which database a DDL or mapper file is for, from a whole word of its path. The first entry of a rule whose word is in the path wins, so a rule lists first the entry it prefers |
 
+### Supertypes written in full
+
+A `java.type-role` rule may write a supertype by its full name, and the
+MyBatis-Plus pack does: `com.baomidou.mybatisplus.core.mapper.BaseMapper`. Such
+a supertype is read as the rule's type unless the file means another type by
+that simple name: an import of another `BaseMapper` (tk.mybatis has one, and so
+do projects that write their own), or a type of that name the project declares
+in the file's package or in a package the file imports whole. A name written
+fully qualified in the source leaves nothing to read, and is read as the rule's
+type. A supertype written by its simple name alone is read by that name.
+
 ### A role a library declares
 
 Some libraries put their own base type between a project and the framework's.
@@ -91,8 +102,9 @@ project's source cannot show that relation, because it is in a jar. A
   table and columns) is capped at that grade, and the statement's evidence names
   the rule and the library type.
 - A supertype is read as the library's type only when its file means that
-  type: an import of that one name, else an import of its package, or the same
-  package. A type of the same name from elsewhere is not it.
+  type, read the way javac reads a name: an import of that one name decides,
+  else a type of the file's own package, else a package imported whole. A type
+  of the same name from elsewhere is not it.
 - When a rule for the framework's own type and a library rule both give a type
   the same answer, the type has one role, as sure as the surer rule.
 

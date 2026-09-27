@@ -32,7 +32,9 @@ Each dated section below is one round of work. The round protocol is in
   `params.library`: the type, what it is declared as, and where that is written.
   Such a rule is graded below EXACT (this one SOUND_SET), every link its roles
   give is capped there, and the statement's evidence names the rule. Only a
-  supertype its file imports from that library is read as it. On ruoyi-vue-pro,
+  supertype its file means as that library's type, read the way javac reads a
+  name (an import of that name, else a type of its own package, else a package
+  imported whole), is read as it. On ruoyi-vue-pro,
   endpoints reaching SQL rose from 78 to 2,626 of 3,213 and columns reached from
   13 to 8,010, through 2,718 generic statements graded SOUND_SET; the median
   endpoint reaches one table and the widest 23. Packs of the other MyBatis-Plus
@@ -86,6 +88,16 @@ Each dated section below is one round of work. The round protocol is in
   `analyze` (`src/cli/java_sql.mjs`), from the fact cache without writing to
   it; the same file now gives the same answer both ways. OpenAPI documents, run
   traces and Spring XML id generators are still read by `analyze` only.
+- **A type named like a MyBatis-Plus base, but another type, is not a mapper.**
+  The MyBatis-Plus rules now write their base types in full
+  (`com.baomidou.mybatisplus.core.mapper.BaseMapper`), and a supertype is read
+  as one unless its file means another type by that name: an import of another
+  `BaseMapper`, or a type of that name the project declares in the file's
+  package or in a package it imports whole. eladmin's 19 MapStruct mappers,
+  which extend eladmin's own `BaseMapper<D, E>`, were read as MyBatis-Plus
+  mappers of their DTOs, and a dolphinscheduler benchmark's `IService` as
+  MyBatis-Plus's. None of them had drawn an edge, so no pack moved; the 277
+  other role records across 24 local repositories are unchanged.
 - **A schema shipped for the Chinese-market databases is read once.** The
   database names read from paths now include Dameng (`dameng`, `dm8`, `dm7`),
   HighGo, KingbaseES, OceanBase and openGauss. Unnamed, ruoyi-vue-pro's copies for

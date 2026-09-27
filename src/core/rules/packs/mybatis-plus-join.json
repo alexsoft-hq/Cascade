@@ -11,7 +11,7 @@
       "grade": "SOUND_SET",
       "params": {
         "role": "mybatis-plus-mapper",
-        "supertypes": ["MPJBaseMapper"],
+        "supertypes": ["com.github.yulichang.base.MPJBaseMapper"],
         "entityArg": 0,
         "library": {
           "type": "com.github.yulichang.base.MPJBaseMapper",
@@ -39,6 +39,11 @@
           "source": "package com.example.mapper;\npublic interface UserMapper extends MPJBaseMapper<User> {}\n",
           "expect": [],
           "why": "nothing imports the library's type, so this name is some other type of the same package"
+        },
+        {
+          "source": "package com.example.mapper;\nimport com.github.yulichang.base.*;\ninterface MPJBaseMapper<T> { java.util.List<T> selectList(); }\ninterface UserMapper extends MPJBaseMapper<User> {}\n",
+          "expect": [],
+          "why": "a type of the file's own package comes before a package imported whole, so this is the project's own MPJBaseMapper"
         }
       ]
     }

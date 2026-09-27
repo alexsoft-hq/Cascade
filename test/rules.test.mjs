@@ -150,7 +150,7 @@ test('a rule relying on a library\'s declaration names it, says where it is writ
   has(/p\.exact a rule relying on a library's declaration is graded below EXACT/);
   has(/p\.unsaid gives SOUND_SET, which only a rule relying on a library's declaration does/);
   has(/p\.nowhere params\.library\.source must say where that declaration is written/);
-  has(/p\.other-name params\.supertypes must be the one simple name of params\.library\.type, LibMapper/);
+  has(/p\.other-name params\.supertypes must be params\.library\.type alone, com\.lib\.LibMapper/);
   assert.equal(problems.length, 4, problems.join(' | '));
 });
 
@@ -163,6 +163,19 @@ test('a mapper the source shows and a library\'s rule both name is one mapper, a
   assert.throws(() => deriveTypeRoles(both('A', 'B'), rules), /give p\.M two different mpMapper records/);
 });
 
+test('a supertype written in full is read as that type unless the file means another, as javac reads the name', () => {
+  const rules = builtinRegistry().ofKind('java.type-role');
+  const mapper = typeRecord('p.UserMapper', { implements: ['BaseMapper'], implementsArgs: [['User']], package: 'p', file: 'p/UserMapper.java' });
+  const wildcard = (pkg) => ({ kind: 'import', owner: 'p.UserMapper', simple: '*', fqn: pkg, file: 'p/UserMapper.java' });
+  const declared = (fqn) => typeRecord(fqn, { package: fqn.slice(0, fqn.lastIndexOf('.')), file: `${fqn.replace(/\./g, '/')}.java` });
+  const mappers = (records) => deriveTypeRoles(records, rules).map((r) => r.fqn);
+  assert.deepEqual(mappers([mapper]), ['p.UserMapper'], 'nothing in the records places the name');
+  assert.deepEqual(mappers([wildcard('com.baomidou.mybatisplus.core.mapper'), mapper]), ['p.UserMapper']);
+  assert.deepEqual(mappers([mapper, declared('p.BaseMapper')]), [], 'the project\'s own BaseMapper in the same package');
+  assert.deepEqual(mappers([wildcard('com.foo.common'), mapper, declared('com.foo.common.BaseMapper')]), [],
+    'the project\'s own BaseMapper in a package the file imports whole');
+});
+
 test('a type-role rule refuses a role it does not know, a supertype that is not a Java name, and a type argument its role does not take', () => {
   const problems = refusal([{ where: 't.json', pack: packOf([{
     id: 'p.bad', kind: 'java.type-role', description: 'Bad.', params: { role: 'mybatis-plus-mapper', supertypes: ['Base Mapper'], mapperArg: 0 },
@@ -172,7 +185,7 @@ test('a type-role rule refuses a role it does not know, a supertype that is not 
   }]) }]);
   const has = (re) => assert.ok(problems.some((m) => re.test(m)), `a problem matching ${re}: ${problems.join(' | ')}`);
   has(/p\.bad params has a key "mapperArg" that a mybatis-plus-mapper rule does not take/);
-  has(/p\.bad params\.supertypes has "Base Mapper", which is not a simple Java type name/);
+  has(/p\.bad params\.supertypes has "Base Mapper", which is not a Java type name/);
   has(/p\.bad expect\[0\] must be \{type, role\}/);
   has(/p\.unknown-role params\.role must be one of mybatis-plus-mapper, mybatis-plus-service, got "spring-bean"/);
 });
