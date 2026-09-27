@@ -117,6 +117,20 @@ export const CORPUS = Object.freeze([
   // mapper only calls.
   { id: 'websquare-wrm', url: 'https://github.com/inswave/WRM-Public', sha: '19e0c19cf1d2cc563046b72861ec8f90c6efbc30', ddl: null, note: 'WebSquare Rapid Model: eGovFrame backend under a WebSquare client of XML pages inside this repository, no DDL shipped' },
   { id: 'mes4u', url: 'https://github.com/sindohmes/mes4u', sha: 'ed57f3db9e1eca6bcad4a4afb20225f72f8663c9', ddl: null, note: 'Spring Boot + MyBatis over PostgreSQL, with part of its logic in PL/pgSQL functions its mappers call, and a React frontend inside this repository' },
+  // The first rule packs (RM65): what they were measured on. ruoyi-vue-pro's
+  // mappers reach MyBatis-Plus only through mybatis-plus-join, and it ships its
+  // schema for nine databases; eladmin reads SQL through JPA native queries and
+  // has MapStruct mappers named like MyBatis-Plus's.
+  {
+    id: 'ruoyi-vue-pro', url: 'https://github.com/YunaiV/ruoyi-vue-pro', sha: '1697112f1164b206aeb031493980f5cb3a6e2cd5', ddl: null,
+    front: { url: 'https://github.com/yudaocode/yudao-ui-admin-vue3', sha: '0af03a93b6b6300f878e28add69b1c7a9f09ec34', dir: '.' },
+    note: 'Spring MVC + MyBatis-Plus through mybatis-plus-join, 60 modules, the schema shipped for nine databases, with its Vue 3 frontend in a repository of its own',
+  },
+  {
+    id: 'eladmin', url: 'https://github.com/elunez/eladmin', sha: '55fbf705956949697dbd68bf9003776609d3d029', ddl: null,
+    front: { url: 'https://github.com/elunez/eladmin-web', sha: '6e20207bbaf9fac872623d2089803cfe143be73b', dir: '.' },
+    note: 'Spring MVC + JPA with native queries, and MapStruct mappers that extend a BaseMapper of its own; its Vue 2 frontend in a repository of its own',
+  },
 ]);
 
 /**

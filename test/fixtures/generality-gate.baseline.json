@@ -131,6 +131,33 @@
     "screen": "shipped"
    }
   },
+  "eladmin": {
+   "sha": "55fbf705956949697dbd68bf9003776609d3d029",
+   "frontSha": "6e20207bbaf9fac872623d2089803cfe143be73b",
+   "endpoints": 133,
+   "endpointsReachingAStatement": 123,
+   "statements": 111,
+   "statementsReached": 108,
+   "tables": 38,
+   "tablesReached": 26,
+   "columns": 311,
+   "columnsReached": 230,
+   "webCalls": 103,
+   "webCallsResolved": 90,
+   "screens": 9,
+   "screensReachingATable": 0,
+   "endpointColumnPairs": 1919,
+   "axes": {
+    "catalog": "shipped",
+    "statements": "not-shipped",
+    "jpa": "degraded",
+    "mybatisPlus": "not-shipped",
+    "column": "degraded",
+    "code": "shipped",
+    "web": "degraded",
+    "screen": "degraded"
+   }
+  },
   "jeecg-boot": {
    "sha": "74364054449efd5852e46d0c10325a1d38c1006a",
    "endpoints": 969,
@@ -417,6 +444,33 @@
     "code": "shipped",
     "web": "shipped",
     "screen": "degraded"
+   }
+  },
+  "ruoyi-vue-pro": {
+   "sha": "1697112f1164b206aeb031493980f5cb3a6e2cd5",
+   "frontSha": "0af03a93b6b6300f878e28add69b1c7a9f09ec34",
+   "endpoints": 3213,
+   "endpointsReachingAStatement": 2626,
+   "statements": 2855,
+   "statementsReached": 2525,
+   "tables": 564,
+   "tablesReached": 548,
+   "columns": 8381,
+   "columnsReached": 8010,
+   "webCalls": 2910,
+   "webCallsResolved": 2718,
+   "screens": 100,
+   "screensReachingATable": 0,
+   "endpointColumnPairs": 56280,
+   "axes": {
+    "catalog": "shipped",
+    "statements": "shipped",
+    "jpa": "not-shipped",
+    "mybatisPlus": "degraded",
+    "column": "shipped",
+    "code": "shipped",
+    "web": "degraded",
+    "screen": "shipped"
    }
   },
   "spring-petclinic": {
