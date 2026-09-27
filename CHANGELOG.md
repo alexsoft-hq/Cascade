@@ -71,6 +71,14 @@ Each dated section below is one round of work. The round protocol is in
   `analyze` (`src/cli/java_sql.mjs`), from the fact cache without writing to
   it; the same file now gives the same answer both ways. OpenAPI documents, run
   traces and Spring XML id generators are still read by `analyze` only.
+- **A schema shipped for the Chinese-market databases is read once.** The
+  database names read from paths now include Dameng (`dameng`, `dm8`, `dm7`),
+  HighGo, KingbaseES, OceanBase and openGauss. Unnamed, ruoyi-vue-pro's copies for
+  them read as portable, or as MySQL by their backticks, and eleven files were
+  applied as one schema: every table declared up to six times. Now its two MySQL
+  files are read and the others are listed as alternatives. A directory named
+  just `dm` stays unnamed: two letters are too few to be sure of. Across 24 local
+  repositories, ruoyi-vue-pro is the only one whose choice moved.
 - **A test fixture no longer votes for the schema's dialect.** With no dialect
   declared, the default DDL set takes the dialect most schema files use, and it
   counted the fixtures under `src/test` too, though they are never chosen. Where

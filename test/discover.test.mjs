@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { chooseDdlFiles } from '../src/core/lanes.mjs';
 import { discover, prefixOf, coveringPrefixes, minimalRoots, sourceRootOf, isTestPath, classifyDdlFile, ddlDialectFromPath, DiscoverError, SKIP_DIRS, scriptSourcesOf, scriptTargetOf, underWebRootDir, outsideVendorDirs, templatePrefixPath, templateRootsOf } from '../src/core/discover.mjs';
 
 // A synthetic tree in a tmp dir: { 'rel/path': 'contents' }. Directories named
@@ -541,6 +542,31 @@ test('discover: every .sql that declares OR amends a table is a classified candi
   // keep their old meaning (CREATE TABLE only), so nothing that read them moved.
   assert.equal(d.counts.ddlFiles, 3);
   assert.deepEqual(d.ddlPaths, ['db/postgres/schema.sql', 'svc-a/db/mysql/schema.sql', 'svc-b/db/mysql/schema.sql']);
+});
+
+test('a schema shipped for the Chinese-market databases too: only the MySQL copy is read, the others are named and left out', (t) => {
+  // ruoyi-vue-pro's layout. Before these databases had names, the Dameng,
+  // KingbaseES and openGauss copies read as portable and the OceanBase copy
+  // read as MySQL by its backticks, so every table was declared once per copy.
+  const mysql = 'CREATE TABLE `system_users` (`id` bigint NOT NULL) ENGINE=InnoDB;';
+  const plain = 'CREATE TABLE system_users (id bigint NOT NULL);';
+  const root = tree(t, {
+    '.git/HEAD': 'x',
+    'sql/mysql/ruoyi-vue-pro.sql': mysql,
+    'sql/oceanbase/ruoyi-vue-pro.sql': mysql,
+    'sql/dm/ruoyi-vue-pro-dm8.sql': plain,
+    'sql/kingbase/ruoyi-vue-pro.sql': plain,
+    'sql/opengauss/ruoyi-vue-pro.sql': plain,
+  });
+  const choice = chooseDdlFiles(discover(root, io(() => SHA('a'))).ddlCandidates);
+  assert.equal(choice.dialect, 'mysql');
+  assert.deepEqual(choice.chosen.map((c) => c.path), ['sql/mysql/ruoyi-vue-pro.sql']);
+  assert.deepEqual(choice.skipped.map((s) => [s.path, s.dialect]), [
+    ['sql/dm/ruoyi-vue-pro-dm8.sql', 'dameng'],
+    ['sql/kingbase/ruoyi-vue-pro.sql', 'kingbase'],
+    ['sql/oceanbase/ruoyi-vue-pro.sql', 'oceanbase'],
+    ['sql/opengauss/ruoyi-vue-pro.sql', 'opengauss'],
+  ]);
 });
 
 // ---------------------------------------------------------------------------

@@ -30,7 +30,16 @@
           },
           { "dialect": "cubrid", "names": ["cubrid"], "why": "One of four databases the Korean market ships and few others do; see tibero." },
           { "dialect": "altibase", "names": ["altibase"], "why": "One of four databases the Korean market ships and few others do; see tibero." },
-          { "dialect": "goldilocks", "names": ["goldilocks"], "why": "One of four databases the Korean market ships and few others do; see tibero." }
+          { "dialect": "goldilocks", "names": ["goldilocks"], "why": "One of four databases the Korean market ships and few others do; see tibero." },
+          {
+            "dialect": "dameng",
+            "names": ["dameng", "dm8", "dm7"],
+            "why": "One of the databases a schema is shipped for in the Chinese market, beside MySQL and Oracle. ruoyi-vue-pro ships its schema for all of them; unrecognised, each copy read as portable and was applied beside the MySQL one, declaring every table once per copy. The directory is often just dm, which is too short to be sure of; the file names carry dm8 or dm7."
+          },
+          { "dialect": "highgo", "names": ["highgo"], "why": "One of the databases a schema is shipped for in the Chinese market; see dameng." },
+          { "dialect": "kingbase", "names": ["kingbase", "kingbasees"], "why": "One of the databases a schema is shipped for in the Chinese market; see dameng." },
+          { "dialect": "oceanbase", "names": ["oceanbase"], "why": "One of the databases a schema is shipped for in the Chinese market; see dameng. OceanBase speaks MySQL, so its files are full of backticks and read as MySQL by their text; the name keeps them apart." },
+          { "dialect": "opengauss", "names": ["opengauss"], "why": "One of the databases a schema is shipped for in the Chinese market; see dameng." }
         ]
       },
       "examples": [
@@ -59,7 +68,12 @@
         { "path": "pgadmin-notes.sql", "expect": null, "why": "pg is part of a longer word here, not a word of its own" },
         { "path": "sql/mysqldump/schema.sql", "expect": null, "why": "mysqldump is one longer word" },
         { "path": "db/schema.sql", "expect": null, "why": "no word names a database: a portable file" },
-        { "path": "sql/dm/ruoyi-vue-pro-dm8.sql", "expect": null, "why": "Dameng is not a name this rule knows yet" }
+        { "path": "sql/dm/ruoyi-vue-pro-dm8.sql", "expect": "dameng", "why": "the file name carries dm8" },
+        { "path": "sql/dm/schema.sql", "expect": null, "why": "dm alone is too short to be sure it names Dameng" },
+        { "path": "sql/highgo/ruoyi-vue-pro.sql", "expect": "highgo" },
+        { "path": "sql/kingbase/ruoyi-vue-pro.sql", "expect": "kingbase" },
+        { "path": "sql/oceanbase/quartz.sql", "expect": "oceanbase", "why": "a MySQL-compatible file kept apart from the MySQL copy by its name" },
+        { "path": "sql/opengauss/ruoyi-vue-pro.sql", "expect": "opengauss" }
       ]
     }
   ]
