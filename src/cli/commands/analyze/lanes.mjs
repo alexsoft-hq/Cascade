@@ -26,6 +26,7 @@ import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane } from '../../lanes_run.mjs';
+import { jpaOptions, mybatisPlusOptions, whichJavaLanes, wrapperFragmentLineageOf } from '../../lane_options.mjs';
 import { sha256File } from '../../state.mjs';
 import { sayWebWorker } from './census.mjs';
 
@@ -297,12 +298,7 @@ export function nativeQueryLineage({ javaSrc, result, store, prevIndex, catalog,
  * profile to interpret.
  */
 export function whichLanesAssemble(profile, result, javaSrc) {
-  const runJava = javaSrc.length > 0;
-  const runJpa = runJava && ((profile.frameworkPacks ?? []).includes('jpa')
-    || result.javaFacts.some((r) => r && (r.kind === 'entity' || r.kind === 'repository')));
-  const runMp = runJava && ((profile.frameworkPacks ?? []).includes('mybatis-plus')
-    || result.javaFacts.some((r) => r && (r.kind === 'mpEntity' || r.kind === 'mpMapper' || r.kind === 'mpService')));
-  return { runJava, runJpa, runMp };
+  return whichJavaLanes(profile, result.javaFacts, javaSrc);
 }
 
 /**
@@ -316,45 +312,27 @@ export function whichLanesAssemble(profile, result, javaSrc) {
  * so the bridge can attach what came back to the statement the wrapper feeds.
  */
 export function wrapperFragmentLineage({ runMp, profile, sqlArgs, result, store, prevIndex, catalog, plan, py, runners, diagnostics }) {
-  const mpOpts = runMp ? {
-    namingStrategy: profile.mybatisPlus?.namingStrategy ?? null,
-    tablePrefix: profile.mybatisPlus?.tablePrefix ?? null,
-    logicDeleteValue: profile.mybatisPlus?.logicDeleteValue ?? null,
-    logicNotDeleteValue: profile.mybatisPlus?.logicNotDeleteValue ?? null,
-    schema: sqlArgs.defaultSchema,
-    identifierCase: sqlArgs.identifierCase,
-  } : null;
-  let fragmentLineage = [];
+  const mpOpts = runMp ? mybatisPlusOptions(profile, sqlArgs) : null;
   const fragStmts = runMp ? wrapperFragmentStatements(result.javaFacts, mpOpts) : [];
-  if (fragStmts.length > 0) {
-    if (!fs.existsSync(py)) {
-      diagnostics.push({
-        kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-        reason: `${fragStmts.length} MyBatis-Plus wrapper SQL fragment(s) were found but there is no venv python at ${py} to analyze them. See docs/setup/sql-lane.md. Those fragments stay unresolved on their statements`,
-      });
-    } else {
-      process.stderr.write(`MyBatis-Plus lane: ${fragStmts.length} wrapper SQL fragment(s) -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
-      const frag = runLineageForStatements({
-        store, index: prevIndex, statements: fragStmts,
-        catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
-        inputs: {
-          dialect: sqlArgs.dialect,
-          identifierCase: sqlArgs.identifierCase,
-          defaultSchema: sqlArgs.defaultSchema,
-        },
-        run: runners, workerVersion: workerVersions().lineage,
-        force: plan.mode === MODE_COLD,
-        diag: (d) => { diagnostics.push(d); },
-      });
-      // NOT merged into `lineage`: a fragment is not a statement of its own in
-      // the graph — its facts belong to the wrapper's statement, which is what
-      // the reader called. The shard entries ARE recorded, so the next run
-      // reuses the analysis instead of paying for it twice.
-      fragmentLineage = frag.lineageRecords;
-      Object.assign(result.index.statements, frag.statementEntries);
-    }
+  if (fragStmts.length === 0) return { mpOpts, fragmentLineage: [] };
+  if (!fs.existsSync(py)) {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+      reason: `${fragStmts.length} MyBatis-Plus wrapper SQL fragment(s) were found but there is no venv python at ${py} to analyze them. See docs/setup/sql-lane.md. Those fragments stay unresolved on their statements`,
+    });
+    return { mpOpts, fragmentLineage: [] };
   }
-  return { mpOpts, fragmentLineage };
+  process.stderr.write(`MyBatis-Plus lane: ${fragStmts.length} wrapper SQL fragment(s) -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
+  const frag = wrapperFragmentLineageOf({
+    javaFacts: result.javaFacts, mpOpts, store, index: prevIndex, catalog, sqlArgs, runners,
+    force: plan.mode === MODE_COLD, diagnostics,
+  });
+  // NOT merged into `lineage`: a fragment is not a statement of its own in the
+  // graph — its facts belong to the wrapper's statement, which is what the
+  // reader called. The shard entries ARE recorded, so the next run reuses the
+  // analysis instead of paying for it twice.
+  Object.assign(result.index.statements, frag.statementEntries);
+  return { mpOpts, fragmentLineage: frag.lineageRecords };
 }
 
 /**
@@ -479,12 +457,8 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
       // The table id generators the Spring XMLs declare (RM62).
       idGenerators: discovery?.idGenerators ?? [],
     } : null,
-    jpa: runJpa ? {
-      // The profile's strategy, else the one the project's configuration names (index.mjs).
-      namingStrategy: jpaNaming ? jpaNaming.strategy : profile.jpa?.namingStrategy ?? null,
-      schema: sqlArgs.defaultSchema,
-      identifierCase: sqlArgs.identifierCase,
-    } : null,
+    // The profile's strategy, else the one the project's configuration names (index.mjs).
+    jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
     // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
     // frontend call must be able to land on a route only a document declares.

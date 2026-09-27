@@ -56,6 +56,18 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Fixed
 
+- **An uncommitted edit's impact reaches the persistence layer the pack does.**
+  `cascade impact` answers from an overlay: the pack's facts with the edited
+  files re-read. The overlay assembled its graph without the JPA and
+  MyBatis-Plus bridges, so on a project whose SQL comes from Spring Data or
+  MyBatis-Plus generic CRUD an edit that changed nothing but a comment reported
+  no statement and no column. On jeepay, a MyBatis-Plus service touched 0
+  statements and 0 columns from the working tree and 7 and 3 from the pack. The
+  overlay now decides those lanes and their options the way `analyze` does, over
+  its own records, and reads MyBatis-Plus wrapper fragments back from the fact
+  cache without writing to it; the same file now gives the same answer both
+  ways. OpenAPI documents, run traces and Spring XML id generators are still
+  read by `analyze` only.
 - **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
   shipped in several dialects (ruoyi-vue-pro carries MySQL, PostgreSQL-family and
   others side by side) was read as MySQL, where a backslash escapes a quote; one

@@ -1592,8 +1592,6 @@
     "webWorkerStatsOf",
     "webWorkerStatsOf/1",
     "whichLanesAssemble",
-    "whichLanesAssemble/1",
-    "whichLanesAssemble/2",
     "wrapperFragmentLineage"
    ]
   },
@@ -2018,6 +2016,21 @@
     "visitDirectory/1"
    ]
   },
+  "src/cli/lane_options.mjs": {
+   "maxLines": 12,
+   "maxBranches": 6,
+   "longest": "wrapperFragmentLineageOf",
+   "branchiest": "whichJavaLanes",
+   "functions": [
+    "diag",
+    "has",
+    "has/1",
+    "jpaOptions",
+    "mybatisPlusOptions",
+    "whichJavaLanes",
+    "wrapperFragmentLineageOf"
+   ]
+  },
   "src/cli/lanes_run.mjs": {
    "maxLines": 34,
    "maxBranches": 11,
@@ -2081,6 +2094,9 @@
     "mapperAlternativesOf/3",
     "mybatis",
     "needPy",
+    "overlayJavaLanes",
+    "overlayJavaLanes/1",
+    "overlayJavaLanes/2",
     "overlayState",
     "readIndex",
     "refuse",
@@ -3235,7 +3251,7 @@
    ]
   },
   "src/core/overlay.mjs": {
-   "maxLines": 81,
+   "maxLines": 74,
    "maxBranches": 29,
    "longest": "overlayGraph",
    "branchiest": "classifyDirtyFiles",
@@ -3251,6 +3267,7 @@
     "isTemplateFileOf",
     "isTemplateFileOf/1",
     "keepStrongest",
+    "markProvisional",
     "nearWebRoot",
     "nearWebRoot/1",
     "nodesInFiles",

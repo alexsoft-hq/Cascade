@@ -28,7 +28,7 @@ import { buildChangeset, changedFiles } from '../core/changeset.mjs';
 import { createFactsStore, nodeFactsIo, validateIndex } from '../core/facts_store.mjs';
 import { INCREMENTAL_ENGINE_VERSION } from '../core/incremental.mjs';
 import { underAny } from '../core/invalidate.mjs';
-import { screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
+import { jpaNamingOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
 import { overlayGraph, classifyDirtyFiles } from '../core/overlay.mjs';
 import { runOverlayLanes, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
 import { overlaySession } from '../core/overlay_session.mjs';
@@ -39,6 +39,8 @@ import {
   ENGINE_ROOT, findJdk, gitText, listMapperXml, parseJsonl, realPath, splitZ, sqlPython, noSqlPython,
 } from './env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane, webPackagesRead } from './lanes_run.mjs';
+import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
+import { jpaOptions, mybatisPlusOptions, whichJavaLanes, wrapperFragmentLineageOf } from './lane_options.mjs';
 import { safeHash, sha256File } from './state.mjs';
 
 /**
@@ -262,7 +264,7 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
 }
 
 /** Re-parse exactly the dirty files and read the rest back out of the shards. */
-export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives }) {
+export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives, profile = null }) {
   const selection = idx.selection ?? {};
   const store = createFactsStore({ io: ephemeralIo(nodeFactsIo(fs)), projectId: idx.project, env: process.env });
   const webRootsAbs = (selection.webRoots ?? []).map(absOf);
@@ -286,7 +288,30 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
       catalogArgs: [`identifier-case=${sqlArgs.identifierCase}`],
     },
   });
-  return { lanes, webRootsAbs, templateRootsAbs };
+  const laneOptions = overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, catalogRecords: lanes.catalogRecords });
+  return { lanes, webRootsAbs, templateRootsAbs, laneOptions };
+}
+
+/**
+ * Which Java lanes' bridges an overlay runs, and with what: decided over the
+ * overlay's own assembled records, the way `cascade analyze` decided them for
+ * the base pack (src/cli/lane_options.mjs). Wrapper fragments are read back
+ * from the fact cache, or analyzed now through a store that writes nothing to
+ * disk: an uncommitted edit never becomes a cached fact.
+ */
+function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, catalogRecords }) {
+  const prof = profile ?? {};
+  const javaRootsAbs = (selection.javaRoots ?? []).map((r) => path.resolve(rootAbs, r));
+  return (javaFacts) => {
+    const { runJpa, runMp } = whichJavaLanes(prof, javaFacts, javaRootsAbs);
+    const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs))) : null;
+    if (!runMp) return { jpa, mybatisPlus: null };
+    const mpOpts = mybatisPlusOptions(prof, sqlArgs);
+    const fragments = wrapperFragmentLineageOf({
+      javaFacts, mpOpts, store, index: idx, catalog: catalogRecords, sqlArgs, runners: run, force: false, diagnostics: [],
+    });
+    return { jpa, mybatisPlus: { ...mpOpts, fragmentLineage: fragments.lineageRecords } };
+  };
 }
 
 /**
@@ -321,7 +346,7 @@ function webOptions(profile, webRootsAbs, templateRootsAbs) {
 
 /** Fold the re-parsed facts and the reused shards into one graph, and say what happened. */
 export function overlayState({
-  lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs,
+  lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, laneOptions = null,
 }) {
   const tBuild = Date.now();
   const built = overlayGraph({
@@ -345,6 +370,7 @@ export function overlayState({
     // on the overlaid files first — visible in `limits` as a changed skip count,
     // never silently.
     generatedSources: profile?.generatedSources ?? { annotations: [], pathGlobs: [] },
+    laneOptions,
   });
   const timingsMs = { ...lanes.timingsMs, build: Date.now() - tBuild };
   timingsMs.total = timingsMs.loadBase + timingsMs.java + timingsMs.web + timingsMs.sql + timingsMs.build;
@@ -449,13 +475,13 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
     if (!verdict.ok) return remember(session, verdict);
 
     const absOf = (rel) => path.resolve(rootAbs, rel);
-    const { lanes, webRootsAbs, templateRootsAbs } = runLanes({
-      idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox,
+    const { lanes, webRootsAbs, templateRootsAbs, laneOptions } = runLanes({
+      idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile,
       mapperAlternatives: mapperAlternativesOf(profile, packDir),
     });
     return remember(session, overlayState({
       lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile,
-      selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs,
+      selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, laneOptions,
     }));
   };
 }
