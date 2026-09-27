@@ -160,13 +160,19 @@ Each dated section below is one round of work. The round protocol is in
   others side by side) was read as MySQL, where a backslash escapes a quote; one
   literal ending in a backslash threw every quote after it out of step, the reader
   exited, and `analyze` wrote no pack. A file that cannot be tokenized as a whole
-  is now read one statement at a time, each ending at a line that ends in a
-  semicolon, with any comments after it: data statements are skipped unread, and
-  a statement that still cannot be read, or a table declaration caught inside a
-  skipped data statement, is named in a `token_error` diagnostic rather than
-  dropped silently. A file that tokenizes is read exactly as before. The catalog
-  worker is now `catalog-ddl/5`, so a catalog cached by an earlier version is
-  read again once.
+  is now read whole again with the backslash rule turned round (as MySQL reads a
+  file under `NO_BACKSLASH_ESCAPES`, or the reverse), which is how a schema
+  quoted for another database reads; only identifiers and keywords stay the
+  run's dialect's. Only a file neither reading can tokenize is read one
+  statement at a time, each ending at a line that ends in a semicolon with any
+  comments after it: data statements are skipped unread, and a statement that
+  still cannot be read, or a table declaration caught inside a skipped data
+  statement, is named in a `token_error` diagnostic rather than dropped
+  silently. Cut at line ends, a string that held a `CREATE TABLE` line became a
+  table; read whole, it stays a string. A file that tokenizes is read exactly as
+  before, and of the 240 `.sql` files in 24 local repositories none reads to
+  different tables. The catalog worker is now `catalog-ddl/6`, so a catalog
+  cached by an earlier version is read again once.
 
 ## [0.8.11] - 2026-09-15
 

@@ -68,13 +68,31 @@ CREATE TABLE `other_table` (
 
 # A file written for PostgreSQL, read as MySQL: the backslash that ends 'C:\' escapes
 # the closing quote in MySQL, every quote after it is out of step, and the tokenizer
-# reads B', ' as a bit string and gives up on the WHOLE file. The data statement and
-# the table on either side of it are how a schema file with a data dump looks.
+# reads B', ' as a bit string and gives up on the WHOLE file. Read with backslash
+# escapes off, as MySQL reads under NO_BACKSLASH_ESCAPES, it is whole again.
+POSTGRES_QUOTED_DDL = r"""
+CREATE TABLE `before_dump` (
+  `id` int(11) NOT NULL
+);
+INSERT INTO before_dump VALUES (1, 'C:\', 'B', 'x');
+INSERT INTO before_dump (id, path) VALUES (2, '
+hello; /* seed */ -- batch 1
+CREATE TABLE phantom (id int);
+--');
+CREATE TABLE `after_dump` (
+  `id` int(11) NOT NULL
+);
+"""
+
+# The same file edited by hand in MySQL's quoting too ('don\'t'): neither string rule
+# can read it whole, so it is read one statement at a time. The data statements and
+# the table on either side of them are how a schema file with a data dump looks.
 UNTOKENIZABLE_DUMP_DDL = r"""
 CREATE TABLE `before_dump` (
   `id` int(11) NOT NULL
 );
 INSERT INTO before_dump VALUES (1, 'C:\', 'B', 'x');
+INSERT INTO before_dump VALUES (2, 'don\'t', 'B', 'x');
 CREATE TABLE `after_dump` (
   `id` int(11) NOT NULL
 );
@@ -86,6 +104,7 @@ UNTOKENIZABLE_CREATE_DDL = r"""
 CREATE TABLE `good_one` (
   `id` int(11) NOT NULL
 );
+INSERT INTO good_one VALUES ('don\'t');
 CREATE TABLE `broken_one` (`path` varchar(10) DEFAULT 'C:\', `flag` varchar(1) DEFAULT 'B');
 CREATE TABLE `good_two` (
   `id` int(11) NOT NULL
@@ -253,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/5")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/6")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/5",
+            "catalog-ddl/6",
         )
 
 
@@ -396,6 +415,23 @@ class RobustnessTests(unittest.TestCase):
 
 class UntokenizableFileTests(unittest.TestCase):
     """One literal the tokenizer rejects no longer ends the whole analysis."""
+
+    def test_a_file_quoted_for_another_database_is_read_whole_with_the_backslash_rule_turned(self):
+        # Cut at line ends, the string holding "hello; ... CREATE TABLE phantom" became a
+        # table; read whole with backslash escapes off, it is the string it is.
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", POSTGRES_QUOTED_DDL)], diagnostics=diagnostics)
+        self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["after_dump", "before_dump"])
+        token = [d for d in diagnostics if d["code"] == "token_error"]
+        self.assertEqual(len(token), 1)
+        self.assertIn("pg.sql could not be tokenized as mysql", token[0]["message"])
+        self.assertIn("read whole with backslash escapes off", token[0]["message"])
+
+    def test_a_table_whose_default_is_quoted_for_another_database_is_read(self):
+        broken = "CREATE TABLE `t` (`path` varchar(10) DEFAULT 'C:\\', `flag` varchar(1) DEFAULT 'B');\n"
+        recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", broken)])
+        self.assertEqual([r["table"] for r in recs if r["kind"] == "table"], ["t"])
+        self.assertEqual(sorted(r["column"] for r in recs if r["kind"] == "column"), ["flag", "path"])
 
     def test_a_data_statement_the_tokenizer_rejects_leaves_every_table_readable(self):
         diagnostics = []

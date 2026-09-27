@@ -34,6 +34,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.dialects.dialect import Dialect
 from sqlglot.errors import ParseError, TokenError
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -59,7 +60,7 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        Oracle ``PACKAGE BODY``) follow the tables as ``routine`` records with
 #        their body text, so a statement that calls one can be read through it.
 #        A file that declares none parses to the records /3 wrote.
-CATALOG_VERSION = "catalog-ddl/5"
+CATALOG_VERSION = "catalog-ddl/6"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -233,11 +234,53 @@ class _Table(object):
 
 
 def _parse_statements(sql_text, diagnostics, source, dialect="mysql"):
-    """Every statement of one file: read whole, or one at a time when the whole cannot be tokenized."""
+    """Every statement of one file: read whole, then whole with the backslash rule turned round,
+    then one statement at a time when neither reading can tokenize it."""
     try:
         return _parse_whole(sql_text, diagnostics, source, dialect)
     except TokenError as e:
-        return _parse_each_statement(sql_text, diagnostics, source, dialect, e)
+        error = e
+    try:
+        statements = _parse_whole(sql_text, diagnostics, source, _escapes_turned(dialect))
+    except TokenError:
+        return _parse_each_statement(sql_text, diagnostics, source, dialect, error)
+    _diag(
+        diagnostics,
+        "warn",
+        "token_error",
+        None,
+        "%s could not be tokenized as %s (%s); read whole with backslash escapes %s, as a file written "
+        "for another database's string quoting is" % (source, dialect or "the default dialect",
+                                                     str(error).split("\n")[0], _escapes_turned_word(dialect)),
+    )
+    return statements
+
+
+def _backslash_escapes(dialect):
+    return "\\" in Dialect.get_or_raise(dialect).tokenizer_class.STRING_ESCAPES
+
+
+def _escapes_turned_word(dialect):
+    return "off" if _backslash_escapes(dialect) else "on"
+
+
+_ESCAPES_TURNED = {}
+
+
+def _escapes_turned(dialect):
+    """The run's dialect with backslash escapes the other way round: MySQL as it reads a file under
+    NO_BACKSLASH_ESCAPES, or a dialect without them as MySQL reads a string. A schema written for
+    PostgreSQL keeps 'C:\\' as a whole string; read as MySQL, that backslash swallows the quote and
+    throws every quote after it out of step. Only the string rule changes: identifiers, keywords and
+    types are still read as the run's dialect."""
+    key = dialect or ""
+    if key not in _ESCAPES_TURNED:
+        base = Dialect.get_or_raise(dialect).__class__
+        escapes = list(base.tokenizer_class.STRING_ESCAPES)
+        turned = [e for e in escapes if e != "\\"] if "\\" in escapes else escapes + ["\\"]
+        tokenizer = type("Tokenizer", (base.tokenizer_class,), {"STRING_ESCAPES": turned})
+        _ESCAPES_TURNED[key] = type("CascadeEscapesTurned" + base.__name__, (base,), {"Tokenizer": tokenizer})
+    return _ESCAPES_TURNED[key]
 
 
 def _parse_whole(sql_text, diagnostics, source, dialect):

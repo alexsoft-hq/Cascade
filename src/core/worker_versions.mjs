@@ -19,7 +19,7 @@ export const MYBATIS_WORKER_VERSION = 'mybatis-extract/2';
 /** lineage.py — `LINEAGE_VERSION`. */
 export const LINEAGE_WORKER_VERSION = 'lineage/3';
 /** catalog_ddl.py — `CATALOG_VERSION`. */
-export const CATALOG_WORKER_VERSION = 'catalog-ddl/5';
+export const CATALOG_WORKER_VERSION = 'catalog-ddl/6';
 /**
  * catalog_live.py — `CATALOG_VERSION` (SPEC §12, §15 M5).
  *
