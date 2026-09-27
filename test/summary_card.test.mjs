@@ -136,6 +136,22 @@ test('a name is text and never markup, and a name too long for its chip keeps it
   assert.ok(visible(svg).includes('<s>:a&b'), 'the limit is still there, as text');
 });
 
+test('two questions whose names start alike make two cards: a cut name keeps its whole self in a tooltip', () => {
+  const cardOf = (path) => summaryCardSvg({
+    tab: 'impact', args: { mode: 'conservative', depth: 8 }, meta: { digest: 'abc', builtAt: AT }, project: { id: 'p' }, engine: { version: 'x' },
+    calls: [{ name: 'flow', answer: {
+      answer: { entry: { kind: 'endpoint', httpMethod: 'GET', path, start: 'endpoint:x' }, walk: { byLinkGrade: {} } },
+      limits: [], trust: { trustLevel: 'UNCERTIFIED' }, truncated: { fields: [] },
+    } }],
+  }, { t: makeT(VIEWER_STRINGS, 'en') });
+  const prefix = `/admin-api/product/spu/${'page/'.repeat(12)}`;
+  const [a, b] = [cardOf(`${prefix}list`), cardOf(`${prefix}export-excel`)];
+  assert.equal(visible(a), visible(b), 'the line shows both cut the same way');
+  assert.notEqual(a, b);
+  assert.ok(a.includes(`<title>${escapeXml(`GET ${prefix}list`)}</title>`));
+  assert.doesNotMatch(cardOf('/short'), /<title>/, 'a name that fits carries no tooltip, so such a card keeps its bytes');
+});
+
 test('the card is the same file every time: the time it was exported is not in it', async (t) => {
   const { host } = await startViewer(t, ['delta']);
   const a = deltaCard(host).svg;

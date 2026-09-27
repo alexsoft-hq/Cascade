@@ -111,6 +111,8 @@ const fit = (name, max) => {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 };
 const chipWidth = (text) => Math.ceil(text.length * CHAR_W) + CHIP_PAD;
+/** The whole name as a tooltip, when the line shows it cut; two long names that start alike still make two cards. */
+const tipOf = (shown, full) => (shown === full ? '' : `<title>${escapeXml(full)}</title>`);
 const textSvg = (x, y, cls, text, fill) => `<text x="${x}" y="${y}" class="${cls}"${fill ? ` fill="${fill}"` : ''}>${escapeXml(text)}</text>`;
 
 /** The names that fit on one line, in the answer's order, and how many are left for "+N more". */
@@ -129,8 +131,7 @@ function namesThatFit(layer) {
 }
 
 function chipSvg(chip, y, p) {
-  const tip = chip.text === chip.full ? '' : `<title>${escapeXml(chip.full)}</title>`;
-  return `<g>${tip}<rect x="${chip.x}" y="${y}" width="${chip.w}" height="${CHIP_H}" rx="4" fill="${p.g0}" stroke="${p.hair}"/>`
+  return `<g>${tipOf(chip.text, chip.full)}<rect x="${chip.x}" y="${y}" width="${chip.w}" height="${CHIP_H}" rx="4" fill="${p.g0}" stroke="${p.hair}"/>`
     + textSvg(chip.x + CHIP_PAD / 2, y + 15, 'm', chip.text) + '</g>';
 }
 
@@ -183,8 +184,15 @@ function headerSvg(model, t, p) {
   return textSvg(PAD, PAD + 14, 't s c2', t(keys.kicker))
     + textSvg(PAD, PAD + 40, 't q', t(keys.question))
     + `<circle cx="${RAIL_X}" cy="${ENTRY_DOT_Y}" r="${DOT_R}" fill="${p.t1}"/>`
-    + textSvg(COUNT_X, PAD + 73, 'm e', fit(e.name, ENTRY_MAX_CHARS))
+    + entryNameSvg(e.name)
     + (e.sub ? textSvg(COUNT_X, PAD + 94, 't c2', e.sub) : '');
+}
+
+function entryNameSvg(name) {
+  const shown = fit(name, ENTRY_MAX_CHARS);
+  const text = textSvg(COUNT_X, PAD + 73, 'm e', shown);
+  const tip = tipOf(shown, String(name ?? ''));
+  return tip ? `<g>${tip}${text}</g>` : text;
 }
 
 function legendSvg(model, t, p, y) {
