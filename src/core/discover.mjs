@@ -24,6 +24,7 @@ import {
   findViewResolvers, findXmlViewResolvers, findIdGenerators, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
+import { builtinRegistry, RuleError } from './rules/registry.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
 // vendored `node_modules` cannot dominate the counts or the file cap.
@@ -509,46 +510,14 @@ const DDL_DIALECT_MARKERS = Object.freeze([
 ]);
 
 /**
- * DIALECT NAMES AS THEY APPEAR IN PATHS. A repository that ships its schema for
- * several databases says so where it is easiest to read: `dolphinscheduler_h2.sql`
- * next to `dolphinscheduler_mysql.sql`, or `db/mysql/schema.sql` next to
- * `db/hsqldb/schema.sql`.
- *
- * The PATH WINS over the content markers, and it has to: an H2 file written in
- * H2's MySQL compatibility mode is full of backticks, so its text says `mysql`
- * while its name says `h2` — and applying both would declare every table twice.
- * A name is the project stating which database a file is for; a marker is this
- * engine inferring it.
- *
- * Each entry is (canonical dialect, the spellings that name it in a path).
+ * DIALECT NAMES AS THEY APPEAR IN PATHS are rules, not code: the
+ * `sql.dialect-path` rules of the engine's packs (src/core/rules/packs/sql-dialects.json)
+ * say which words name which database, why each one is there, and carry the
+ * examples that hold them. The PATH WINS over the content markers above: a name
+ * is the project stating which database a file is for; a marker is this engine
+ * inferring it.
  */
-const DDL_DIALECT_PATH_NAMES = Object.freeze([
-  // MariaDB AHEAD OF MySQL, and a canonical name of its own (RM55). The two
-  // parse alike, so the engine reads a MariaDB file with the MySQL grammar —
-  // but a repository that ships BOTH ships the same tables twice, and folding
-  // the name into `mysql` would apply both copies and declare every table
-  // twice. eGovFrame's common components do exactly that.
-  ['mariadb', ['mariadb', 'maria']],
-  ['mysql', ['mysql']],
-  ['postgres', ['postgres', 'postgresql', 'pgsql', 'pg']],
-  ['oracle', ['oracle']],
-  ['hsqldb', ['hsqldb', 'hsql']],
-  ['h2', ['h2']],
-  ['sqlserver', ['sqlserver', 'mssql']],
-  ['db2', ['db2']],
-  ['sqlite', ['sqlite']],
-  // THE FOUR THE KOREAN MARKET SHIPS AND NOBODY ELSE DOES (RM55). Without them
-  // `script/ddl/tibero/com_DDL_tibero.sql` reads as "portable" — no name, no
-  // marker — and a portable file is kept whichever vendor wins, so
-  // egovframe-common-components applied all eight vendors' DDL at once and
-  // declared 182 tables eight times over (13,505 duplicate-declaration
-  // warnings, measured). A vendor directory is the project saying which
-  // database a file is for, and that is all these names read.
-  ['tibero', ['tibero']],
-  ['cubrid', ['cubrid']],
-  ['altibase', ['altibase']],
-  ['goldilocks', ['goldilocks']],
-]);
+const dialectRules = () => builtinRegistry().ofKind('sql.dialect-path');
 
 /**
  * The dialect a path NAMES, or null. Matched on whole tokens only, so `pg` in
@@ -573,17 +542,18 @@ export function ddlDialectFromPath(relPath) {
  * which word in a path is a vendor's name.
  *
  * @param {string} relPath
- * @returns {{dialect:string, token:string, at:number}|null}
+ * @param {{compiled:Function}[]} [rules]  the `sql.dialect-path` rules to read with; the engine's own by default
+ * @returns {{dialect:string, token:string, at:number, rule:string}|null}
  */
-export function ddlDialectTokenOf(relPath) {
-  const lower = String(relPath ?? '').toLowerCase();
-  for (const [canonical, spellings] of DDL_DIALECT_PATH_NAMES) {
-    for (const name of spellings) {
-      const m = new RegExp(`(^|[^a-z0-9])${name}([^a-z0-9]|$)`).exec(lower);
-      if (m) return { dialect: canonical, token: name, at: m.index + m[1].length };
-    }
+export function ddlDialectTokenOf(relPath, rules = dialectRules()) {
+  const hits = rules.map((r) => r.compiled(relPath)).filter(Boolean);
+  const dialects = new Set(hits.map((h) => h.dialect));
+  // Two rules that name two databases for one path are a conflict in the packs,
+  // said out loud: which one wins is never decided by the order packs load in.
+  if (dialects.size > 1) {
+    throw new RuleError([`${relPath}: the rules ${hits.map((h) => h.rule).join(' and ')} name different databases (${[...dialects].join(', ')})`]);
   }
-  return null;
+  return hits[0] ?? null;
 }
 
 /**

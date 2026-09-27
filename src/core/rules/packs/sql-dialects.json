@@ -1,0 +1,66 @@
+{
+  "pack": "sql-dialects",
+  "version": 1,
+  "description": "Which database a DDL file or a mapper file is written for, read from a word in its path.",
+  "rules": [
+    {
+      "id": "sql-dialects.path-names",
+      "kind": "sql.dialect-path",
+      "description": "A database's name written as a whole word of a file's path says which database the file is for. The path wins over what the file's text suggests, because a name is the project saying which database a file is for and a marker in the text is only an inference: an H2 file written in MySQL compatibility mode is full of backticks. The first entry whose name is a whole word of the path wins, so an entry listed earlier is preferred. The same words also group one mapper shipped once per database, so the grouping and the DDL choice never disagree about which word is a vendor's name.",
+      "why": "A repository that ships its schema for several databases applies every copy when no copy is recognised, and declares every table once per copy.",
+      "params": {
+        "dialects": [
+          {
+            "dialect": "mariadb",
+            "names": ["mariadb", "maria"],
+            "why": "Listed ahead of mysql, with a name of its own. The two parse alike, so a MariaDB file is read with the MySQL grammar, but a repository that ships both ships the same tables twice, and folding the name into mysql would apply both copies. eGovFrame's common components do exactly that."
+          },
+          { "dialect": "mysql", "names": ["mysql"] },
+          { "dialect": "postgres", "names": ["postgres", "postgresql", "pgsql", "pg"] },
+          { "dialect": "oracle", "names": ["oracle"] },
+          { "dialect": "hsqldb", "names": ["hsqldb", "hsql"] },
+          { "dialect": "h2", "names": ["h2"] },
+          { "dialect": "sqlserver", "names": ["sqlserver", "mssql"] },
+          { "dialect": "db2", "names": ["db2"] },
+          { "dialect": "sqlite", "names": ["sqlite"] },
+          {
+            "dialect": "tibero",
+            "names": ["tibero"],
+            "why": "One of four databases the Korean market ships and few others do. Without these names script/ddl/tibero/com_DDL_tibero.sql read as portable, and egovframe-common-components applied all eight vendors' DDL at once, declaring 182 tables eight times over."
+          },
+          { "dialect": "cubrid", "names": ["cubrid"], "why": "One of four databases the Korean market ships and few others do; see tibero." },
+          { "dialect": "altibase", "names": ["altibase"], "why": "One of four databases the Korean market ships and few others do; see tibero." },
+          { "dialect": "goldilocks", "names": ["goldilocks"], "why": "One of four databases the Korean market ships and few others do; see tibero." }
+        ]
+      },
+      "examples": [
+        { "path": "db/mariadb/schema.sql", "expect": "mariadb" },
+        { "path": "sql/maria/init.sql", "expect": "mariadb" },
+        { "path": "db/mysql/schema.sql", "expect": "mysql" },
+        { "path": "dolphinscheduler_mysql.sql", "expect": "mysql" },
+        { "path": "db/postgres/schema.sql", "expect": "postgres" },
+        { "path": "sql/postgresql/init.sql", "expect": "postgres" },
+        { "path": "db/pgsql/create.sql", "expect": "postgres" },
+        { "path": "sql/pg/schema.sql", "expect": "postgres" },
+        { "path": "db/oracle/schema.sql", "expect": "oracle" },
+        { "path": "db/hsqldb/schema.sql", "expect": "hsqldb" },
+        { "path": "sql/hsql/schema.sql", "expect": "hsqldb" },
+        { "path": "dolphinscheduler_h2.sql", "expect": "h2" },
+        { "path": "db/sqlserver/schema.sql", "expect": "sqlserver" },
+        { "path": "sql/mssql/init.sql", "expect": "sqlserver" },
+        { "path": "db/db2/schema.sql", "expect": "db2" },
+        { "path": "db/sqlite/schema.sql", "expect": "sqlite" },
+        { "path": "script/ddl/tibero/com_DDL_tibero.sql", "expect": "tibero" },
+        { "path": "script/ddl/cubrid/com_DDL_cubrid.sql", "expect": "cubrid" },
+        { "path": "script/ddl/altibase/com_DDL_altibase.sql", "expect": "altibase" },
+        { "path": "script/ddl/goldilocks/com_DDL_goldilocks.sql", "expect": "goldilocks" },
+        { "path": "egovframework/mapper/EgovProgrmManage_SQL_mysql.xml", "expect": "mysql", "why": "one mapper shipped once per database carries the vendor in its file name" },
+        { "path": "db/mariadb/mysql-compatible.sql", "expect": "mariadb", "why": "both words are in the path, and mariadb is listed first" },
+        { "path": "pgadmin-notes.sql", "expect": null, "why": "pg is part of a longer word here, not a word of its own" },
+        { "path": "sql/mysqldump/schema.sql", "expect": null, "why": "mysqldump is one longer word" },
+        { "path": "db/schema.sql", "expect": null, "why": "no word names a database: a portable file" },
+        { "path": "sql/dm/ruoyi-vue-pro-dm8.sql", "expect": null, "why": "Dameng is not a name this rule knows yet" }
+      ]
+    }
+  ]
+}

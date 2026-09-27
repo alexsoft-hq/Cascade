@@ -815,3 +815,22 @@ cut-list totals remain part of that report.
 
 The MCP tool `pack_diff` answers the same question from the project's pack
 history ([mcp.md](mcp.md#the-tools)).
+
+## `cascade rules`
+
+```
+cascade rules list | show <rule id> | test [<rule id> | <pack>]  [--json]
+```
+
+The rule packs the engine reads. Knowledge of frameworks, such as which word in
+a path names which database, is moving out of the engine's code into packs a
+person can read, and every rule carries the examples that hold it. See
+[rules.md](rules.md) for the format.
+
+- `list` — every pack and rule, with how many examples each carries.
+- `show <rule id>` — one rule whole: what it means, why it is there, its params
+  and its examples.
+- `test [<rule id> | <pack>]` — run the examples of every rule, or of one rule or
+  one pack. Exits 1 when an example does not hold, or when nothing is named by
+  the argument, so it can stand in a CI job.
+- `--json` — the same answer for a program to read.

@@ -46,11 +46,12 @@ import * as impact from '../src/cli/commands/impact.mjs';
 import * as view from '../src/cli/commands/view.mjs';
 import * as exportCmd from '../src/cli/commands/export.mjs';
 import * as diff from '../src/cli/commands/diff.mjs';
+import * as rules from '../src/cli/commands/rules.mjs';
 
 /** Command name -> the module that runs it. Keyed by the usage text's order. */
 const DISPATCH = Object.freeze({
   setup, doctor, init, agent, analyze, 'otel-methods': otelMethods, estimate,
-  verify, golden, catalog, pack, mcp, impact, view, export: exportCmd, diff,
+  verify, golden, catalog, pack, mcp, impact, view, export: exportCmd, diff, rules,
 });
 
 const argv = process.argv.slice(2);

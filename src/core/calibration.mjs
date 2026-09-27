@@ -200,13 +200,22 @@ export function calibrationMetrics(graph, packMeta = {}) {
 // 2. Fingerprints
 // ---------------------------------------------------------------------------
 
-/** Which repository-relative files count as "the engine's own source". */
+/**
+ * Which repository-relative files count as "the engine's own source": whatever
+ * changes what the engine concludes. The rule packs it carries (src/core/rules/) do
+ * that as much as code does, and so do the web worker and its declaration
+ * packs, which this print used to leave out: a changed pack was judged as no
+ * engine change at all. The gate allows an engine change less than an input
+ * change (5% against 25% by default), so leaving one out is a looser gate.
+ */
 export function isEngineSourcePath(rel) {
   if (typeof rel !== 'string' || rel.length === 0) return false;
   const p = rel.split('\\').join('/');
   if (p.startsWith('src/') && p.endsWith('.mjs')) return true;
+  if (p.startsWith('src/core/rules/packs/') && p.endsWith('.json')) return true;
   if (p.startsWith('bin/')) return true;
   if (p.startsWith('adapters/') && (p.endsWith('.java') || p.endsWith('.py'))) return true;
+  if (p.startsWith('adapters/web/') && (p.endsWith('.mjs') || p.endsWith('.json'))) return true;
   return false;
 }
 

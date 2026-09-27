@@ -141,10 +141,12 @@ test('enginePrint depends on content and path, never on order, and never on an a
 });
 
 test('isEngineSourcePath picks the engine\'s own sources and nothing else', () => {
-  for (const p of ['src/core/graph.mjs', 'bin/cascade.mjs', 'adapters/java/JavaFacts.java', 'adapters/sql/lineage.py']) {
+  for (const p of ['src/core/graph.mjs', 'bin/cascade.mjs', 'adapters/java/JavaFacts.java', 'adapters/sql/lineage.py',
+    'src/core/rules/packs/sql-dialects.json', 'adapters/web/webfacts.mjs', 'adapters/web/packs/vue-router.json']) {
     assert.equal(isEngineSourcePath(p), true, p);
   }
-  for (const p of ['test/graph.test.mjs', 'viewer/index.html', 'src/core/notes.md', 'adapters/sql/requirements.txt', 'README.md', '']) {
+  for (const p of ['test/graph.test.mjs', 'viewer/index.html', 'src/core/notes.md', 'adapters/sql/requirements.txt', 'README.md', '',
+    'src/core/rules/examples/mybatis-plus/Mapper.java', 'adapters/sql/fixtures/x.json']) {
     assert.equal(isEngineSourcePath(p), false, p);
   }
 });

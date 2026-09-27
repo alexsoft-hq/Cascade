@@ -12,6 +12,18 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **Rule packs, and `cascade rules`.** The engine's knowledge of frameworks is
+  moving out of its code into JSON rule packs a person can read, each rule with
+  the examples that hold it (`src/core/rules/packs/`, [docs/rules.md](docs/rules.md)).
+  The code keeps a small set of rule kinds that know how a question is read;
+  the packs say what the answers are. The shape is closed: an unknown key is
+  refused, every problem in a pack is named by file and rule in one report, a
+  grade never exceeds what its kind allows, and two rules that give one input
+  two answers stop the run instead of being settled by load order. The first
+  pack holds the database names read from paths, moved from a constant in the
+  code with identical answers on 5,862 real paths. `cascade rules list`, `show`
+  and `test` read the packs, and `test` runs every example.
+
 - **`cascade export --format card`: one answer at a glance.** The chain picture
   draws every row, which is what a reviewer needs and more than a first look can
   take in. The card writes what was asked about at the top and, under it, one
@@ -23,6 +35,15 @@ Each dated section below is one round of work. The round protocol is in
   time, so the same pack writes the same bytes. The README now opens with one,
   exported from litemall. The two pictures share their escaping, grade marks and
   frame in `src/viewer/svg_doc.mjs`; the chain picture's bytes are unchanged.
+
+### Changed
+
+- **The engine print covers the rule packs, and the web worker and its packs.**
+  The calibration gate allows an engine change less than an input change (5%
+  against 25% by default), but a changed web declaration pack, or the web worker
+  itself, was not part of the print and was judged as no engine change at all.
+  Both now are, as are the rule packs. The first analyze after upgrading sees
+  the engine as moved, as it does after any upgrade.
 
 ### Fixed
 

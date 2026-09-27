@@ -1864,6 +1864,25 @@
     "run"
    ]
   },
+  "src/cli/commands/rules.mjs": {
+   "maxLines": 14,
+   "maxBranches": 7,
+   "longest": "list",
+   "branchiest": "test",
+   "functions": [
+    "firstSentence",
+    "list",
+    "list/1",
+    "list/1/1",
+    "print",
+    "ruleSummary",
+    "run",
+    "run/1",
+    "show",
+    "test",
+    "test/1"
+   ]
+  },
   "src/cli/commands/setup.mjs": {
    "maxLines": 74,
    "maxBranches": 21,
@@ -2583,7 +2602,11 @@
     "covers/1",
     "ddlDialectFromPath",
     "ddlDialectTokenOf",
+    "ddlDialectTokenOf/1",
+    "ddlDialectTokenOf/2",
+    "ddlDialectTokenOf/3",
     "depthOf",
+    "dialectRules",
     "dirsUnder",
     "dirsUnder/1",
     "discover",
@@ -3632,6 +3655,79 @@
     "isGiven",
     "registrationTarget",
     "resolveProject"
+   ]
+  },
+  "src/core/rules/examples.mjs": {
+   "maxLines": 14,
+   "maxBranches": 4,
+   "longest": "testRules",
+   "branchiest": "testRules",
+   "functions": [
+    "testRules",
+    "wanted"
+   ]
+  },
+  "src/core/rules/kinds/index.mjs": {
+   "maxLines": 0,
+   "maxBranches": 0,
+   "longest": null,
+   "branchiest": null,
+   "functions": []
+  },
+  "src/core/rules/kinds/sql_dialect_path.mjs": {
+   "maxLines": 13,
+   "maxBranches": 11,
+   "longest": "entryErrors",
+   "branchiest": "entryErrors",
+   "functions": [
+    "compile",
+    "compile/1",
+    "compile/1/1",
+    "compile/2",
+    "entryErrors",
+    "entryErrors/1",
+    "isWord",
+    "runExample",
+    "unknownKeys",
+    "unknownKeys/1",
+    "validateExample",
+    "validateExample/1",
+    "validateExample/2",
+    "validateParams",
+    "validateParams/1",
+    "validateParams/2"
+   ]
+  },
+  "src/core/rules/registry.mjs": {
+   "maxLines": 17,
+   "maxBranches": 10,
+   "longest": "problemsOf",
+   "branchiest": "packErrors",
+   "functions": [
+    "buildRegistry",
+    "buildRegistry/1",
+    "buildRegistry/1/1",
+    "builtinRegistry",
+    "constructor",
+    "constructor/1",
+    "exampleErrors",
+    "exampleErrors/1",
+    "gradeErrors",
+    "isText",
+    "ofKind",
+    "ofKind/1",
+    "packErrors",
+    "packErrors/1",
+    "problemsOf",
+    "problemsOf/1",
+    "problemsOf/2",
+    "readPackDir",
+    "readPackDir/1",
+    "readPackDir/2",
+    "ruleErrors",
+    "ruleErrors/1",
+    "unknownKeys",
+    "unknownKeys/1"
    ]
   },
   "src/core/scratch.mjs": {

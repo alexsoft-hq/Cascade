@@ -15,11 +15,11 @@
 /** The commands the dispatch table answers to, in the order the usage lists them. */
 export const COMMANDS = Object.freeze([
   'setup', 'doctor', 'init', 'agent', 'analyze', 'otel-methods', 'estimate',
-  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export', 'diff',
+  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export', 'diff', 'rules',
 ]);
 
 /** The first line: what a reader sees before any detail. */
-export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export|diff> …\n';
+export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export|diff|rules> …\n';
 
 /**
  * The last word, after every command: where a pack is looked for. It belongs to
@@ -149,6 +149,10 @@ export const USAGE = Object.freeze({
     + '       and screens above them. The base comes from the project\'s pack history, or is analyzed now in a temporary\n'
     + '       git worktree with the profile and lane flags the current pack recorded. --base takes a pack.json, its directory or a .cascade directory;\n'
     + '       packs of different repositories are refused. The analysis conditions are compared first)\n',
+  rules:
+    '  cascade rules list | show <rule id> | test [<rule id> | <pack>]  [--json]\n'
+    + '      (the rule packs the engine reads: what each rule says, why it is there, and whether its examples\n'
+    + '       still hold. test exits 1 when one does not)\n',
 });
 
 /**

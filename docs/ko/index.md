@@ -87,6 +87,7 @@ node bin/cascade.mjs view --project <id>     # http://127.0.0.1:4319/
 |---|---|
 | [concepts.md](concepts.md) | 등급, 답이 달고 다니는 네 필드, 두 개의 속도, 부분 pack, 보정 |
 | [viewer.md](viewer.md) | 로컬 웹 뷰어. 탭, 딥 링크, 언어 토글, 무엇이 번역되고 무엇이 되지 않는가 |
+| [rules.md](rules.md) | 룰 팩. 엔진이 프레임워크에 대해 아는 것을 예제 달린 데이터로 |
 | [setup/agents.md](setup/agents.md) | MCP 클라이언트 설정 전체. Claude Code, Claude Desktop, Cursor, 일반 stdio 클라이언트 |
 | [setup/web-lane.md](setup/web-lane.md) | 프런트엔드 레인. 동봉 파서, 래퍼, 접두사, 화면, OpenAPI, 기록 |
 | [setup/runtime-evidence.md](setup/runtime-evidence.md) | 실행 트레이스를 증거로. 어느 구현이 실제로 돌았는지를 등급 옆에 놓되 등급 위에는 놓지 않습니다 |

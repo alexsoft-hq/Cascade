@@ -111,6 +111,7 @@ server into an AI client and reads the answers:
 | [cli.md](cli.md) | every command and every flag, checked against the binary by a test |
 | [mcp.md](mcp.md) | the tool catalog, the `project` argument, both transports, the error table |
 | [viewer.md](viewer.md) | the local web viewer: tabs, deep links, the language toggle |
+| [rules.md](rules.md) | the rule packs: what the engine knows about frameworks, as data with examples |
 | [measured.md](measured.md) | the generality gate's corpus table, the goldens, and what is **not** verified |
 | [setup/agents.md](setup/agents.md) | the MCP client configurations in full: Claude Code, Claude Desktop, Cursor, a generic stdio client |
 | [setup/sql-lane.md](setup/sql-lane.md) | Python and sqlglot, the dialects, and where the DDL comes from |
