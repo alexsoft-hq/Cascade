@@ -118,10 +118,12 @@ Each dated section below is one round of work. The round protocol is in
   literal ending in a backslash threw every quote after it out of step, the reader
   exited, and `analyze` wrote no pack. A file that cannot be tokenized as a whole
   is now read one statement at a time, each ending at a line that ends in a
-  semicolon, with or without a comment after it: data statements are skipped
-  unread, and a statement that still cannot be read is named in a `token_error`
-  diagnostic rather than dropped silently. A file that tokenizes is read exactly
-  as before.
+  semicolon, with any comments after it: data statements are skipped unread, and
+  a statement that still cannot be read, or a table declaration caught inside a
+  skipped data statement, is named in a `token_error` diagnostic rather than
+  dropped silently. A file that tokenizes is read exactly as before. The catalog
+  worker is now `catalog-ddl/5`, so a catalog cached by an earlier version is
+  read again once.
 
 ## [0.8.11] - 2026-09-15
 

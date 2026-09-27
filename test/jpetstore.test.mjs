@@ -36,6 +36,7 @@ import { callTool } from '../src/mcp/catalog.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
+import { CATALOG_WORKER_VERSION } from '../src/core/worker_versions.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
@@ -132,7 +133,7 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
   assert.match(analyze.stderr, /"columns":86/, analyze.stderr);
   // HSQLDB syntax parses without a single warning: lower-case `create table`,
   // no backticks, `decimal(10,2)`, and a named PK constraint per table.
-  assert.match(analyze.stderr, /"version":"catalog-ddl\/4","warnings":0/, analyze.stderr);
+  assert.ok(analyze.stderr.includes(`"version":"${CATALOG_WORKER_VERSION}","warnings":0`), analyze.stderr);
 
   // -----------------------------------------------------------------------
   // 2. the statements, hand-counted from the mapper XML.

@@ -253,10 +253,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/4")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/5")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/4",
+            "catalog-ddl/5",
         )
 
 
@@ -427,12 +427,23 @@ class UntokenizableFileTests(unittest.TestCase):
     def test_a_comment_after_the_semicolon_still_ends_the_statement(self):
         # Joined to the next statement, a CREATE TABLE after a data row was skipped
         # with it, and the diagnostic said nothing was lost.
-        for comment in ("-- loaded seed rows", "# seed", "/* seed */"):
+        for comment in ("-- loaded seed rows", "# seed", "/* seed */", "/* seed */ -- batch 1", "/* a */ /* b */ # c"):
             dump = UNTOKENIZABLE_DUMP_DDL.replace("'x');", "'x'); " + comment)
             diagnostics = []
             recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", dump)], diagnostics=diagnostics)
             self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["after_dump", "before_dump"], comment)
             self.assertIn("0 statement(s) unreadable", [d for d in diagnostics if d["code"] == "token_error"][0]["message"])
+
+    def test_a_table_inside_a_skipped_data_statement_is_named_never_dropped_silently(self):
+        # A data row whose end this reader cannot see (no semicolon at the end of
+        # its line) runs on into the table after it; both are skipped, and the
+        # diagnostic says which table went with the data.
+        dump = UNTOKENIZABLE_DUMP_DDL.replace("'x');", "'x')")
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", dump)], diagnostics=diagnostics)
+        self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["before_dump"])
+        self.assertIn("1 statement(s) unreadable: CREATE TABLE `after_dump` (inside a skipped data statement)",
+                      [d for d in diagnostics if d["code"] == "token_error"][0]["message"])
 
     def test_a_comment_above_a_statement_is_not_how_it_starts(self):
         dump = UNTOKENIZABLE_DUMP_DDL.replace("INSERT", "-- seed rows\n/* loaded */\nINSERT").replace(

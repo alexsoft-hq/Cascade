@@ -59,7 +59,7 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        Oracle ``PACKAGE BODY``) follow the tables as ``routine`` records with
 #        their body text, so a statement that calls one can be read through it.
 #        A file that declares none parses to the records /3 wrote.
-CATALOG_VERSION = "catalog-ddl/4"
+CATALOG_VERSION = "catalog-ddl/5"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -258,10 +258,14 @@ def _parse_whole(sql_text, diagnostics, source, dialect):
 
 # A data statement fills a table and never declares one, so the catalog has no use for it.
 _DATA_STATEMENT_RE = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|COPY)\b", re.IGNORECASE)
-# A line ends a statement when it ends in a semicolon, or in a semicolon and a comment after it.
-# A literal that holds "; --" at the end of a line is cut there too, and the piece after the cut
-# is then read, or named as unreadable, on its own.
-_STATEMENT_END_RE = re.compile(r";\s*(?:--.*|#.*|/\*.*\*/)?$")
+# A line ends a statement when it ends in a semicolon, with any comments after it: block
+# comments, then at most one line comment ("; /* seed */ -- batch 1"). A literal that holds
+# "; --" at the end of a line is cut there too, and the piece after the cut is then read, or
+# named as unreadable, on its own.
+_STATEMENT_END_RE = re.compile(r";\s*(?:/\*.*?\*/\s*)*(?:(?:--|#).*)?$")
+# A line inside a skipped data statement that would start a table declaration: the sign that a
+# statement boundary was missed and a table is about to be skipped with the data.
+_CREATE_TABLE_LINE_RE = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", re.IGNORECASE | re.MULTILINE)
 # The comment lines and blank lines a dump writes above a statement.
 _LEADING_COMMENTS_RE = re.compile(r"\A(?:\s*(?:(?:--|#)[^\n]*(?:\n|\Z)|/\*.*?\*/))*\s*", re.DOTALL)
 _CREATE_TABLE_NAME_RE = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", re.IGNORECASE)
@@ -309,6 +313,9 @@ def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
     statements, unreadable = [], []
     for chunk in _statements_by_line(sql_text):
         if _DATA_STATEMENT_RE.match(_code_of(chunk)):
+            # Skipped unread, but never silently with a table inside it.
+            unreadable.extend("CREATE TABLE %s (inside a skipped data statement)" % m.group(1)
+                              for m in _CREATE_TABLE_LINE_RE.finditer(chunk))
             continue
         try:
             statements.extend(sqlglot.parse(chunk, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE))
