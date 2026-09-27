@@ -216,6 +216,7 @@ export function isEngineSourcePath(rel) {
   if (p.startsWith('bin/')) return true;
   if (p.startsWith('adapters/') && (p.endsWith('.java') || p.endsWith('.py'))) return true;
   if (p.startsWith('adapters/web/') && (p.endsWith('.mjs') || p.endsWith('.json'))) return true;
+  if (p.startsWith('adapters/ts/') && p.endsWith('.mjs')) return true;
   return false;
 }
 
