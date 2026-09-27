@@ -47,7 +47,8 @@ function validateExample(example, params) {
   if (!example || typeof example !== 'object' || Array.isArray(example)) return ['an example must be an object'];
   const errors = unknownKeys(example, ['path', 'expect', 'why']).map((k) => `an example has an unknown key "${k}"`);
   if (typeof example.path !== 'string' || example.path === '') errors.push('an example needs a path');
-  const declared = new Set((params?.dialects ?? []).map((d) => d.dialect));
+  // The params may be the broken ones this report is about: read them without trusting their shape.
+  const declared = new Set(Array.isArray(params?.dialects) ? params.dialects.map((d) => d?.dialect) : []);
   if (example.expect !== null && !declared.has(example.expect)) {
     errors.push(`the example for ${JSON.stringify(example.path)} expects ${JSON.stringify(example.expect)}, which is neither null nor a dialect this rule declares`);
   }

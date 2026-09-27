@@ -105,6 +105,22 @@ test('two rules that give one type two different records are refused, never sett
     /the rules m\.first and m\.second give p\.M two different mpMapper records/);
 });
 
+test('two modules that declare one class name each get their roles, as the worker once gave them', () => {
+  // Counted as one type, the two records differed only by file and stopped the analysis.
+  const inModule = (m) => typeRecord('p.UserMapper', { implements: ['BaseMapper'], implementsArgs: [['User']], file: `${m}/src/main/java/p/UserMapper.java` });
+  const records = deriveTypeRoles([inModule('a'), inModule('b')], builtinRegistry().ofKind('java.type-role'));
+  assert.deepEqual(records.map((r) => [r.kind, r.fqn, r.entityTypeSimple, r.file]), [
+    ['mpMapper', 'p.UserMapper', 'User', 'a/src/main/java/p/UserMapper.java'],
+    ['mpMapper', 'p.UserMapper', 'User', 'b/src/main/java/p/UserMapper.java'],
+  ]);
+});
+
+test('rules that make one type a mapper and a service at once are refused, never settled by lookup order', () => {
+  const both = typeRecord('p.Odd', { implements: ['BaseMapper', 'IService'], implementsArgs: [['E'], ['E']] });
+  assert.throws(() => deriveTypeRoles([both], builtinRegistry().ofKind('java.type-role')),
+    /the rules mybatis-plus\.mapper and mybatis-plus\.service-interface give p\.Odd two roles, mybatis-plus-mapper and mybatis-plus-service/);
+});
+
 test('a type-role rule refuses a role it does not know, a supertype that is not a Java name, and a type argument its role does not take', () => {
   const problems = refusal([{ where: 't.json', pack: packOf([{
     id: 'p.bad', kind: 'java.type-role', description: 'Bad.', params: { role: 'mybatis-plus-mapper', supertypes: ['Base Mapper'], mapperArg: 0 },
@@ -117,6 +133,15 @@ test('a type-role rule refuses a role it does not know, a supertype that is not 
   has(/p\.bad params\.supertypes has "Base Mapper", which is not a simple Java type name/);
   has(/p\.bad expect\[0\] must be \{type, role\}/);
   has(/p\.unknown-role params\.role must be one of mybatis-plus-mapper, mybatis-plus-service, got "spring-bean"/);
+});
+
+test('params of the wrong shape are one more problem in the report, not a crash while reading the examples', () => {
+  const problems = refusal([{ where: 'bad.json', pack: packOf([
+    dialectRule({ id: 'p.string', params: { dialects: 'mysql' } }),
+    dialectRule({ id: 'p.holes', params: { dialects: [null, { dialect: 'mysql', names: ['mysql'] }] } }),
+  ]) }]);
+  assert.ok(problems.includes('bad.json: p.string params.dialects must be a non-empty list'), problems.join(' | '));
+  assert.ok(problems.some((m) => /^bad\.json: p\.holes /.test(m)), problems.join(' | '));
 });
 
 test('a pack with problems is refused with every problem, each named by its file and its rule', () => {

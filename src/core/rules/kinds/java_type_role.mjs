@@ -36,6 +36,9 @@ const ROLES = Object.freeze({
   }) }),
 });
 
+/** The role a record of each kind stands for, in the words a rule and its examples use. */
+const ROLE_OF_KIND = Object.freeze({ mpMapper: 'mybatis-plus-mapper', mpService: 'mybatis-plus-service' });
+
 const argAt = (args, i) => (Number.isInteger(i) && Array.isArray(args) && typeof args[i] === 'string' ? args[i] : null);
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
 
@@ -77,37 +80,45 @@ function compile(rule) {
   return (t) => supertypesOf(t).filter((sup) => wanted.has(sup.simple)).map((sup) => ({ ...ROLES[role].record(t, sup, rule.params), rule: rule.id }));
 }
 
-/** The key a derived record is known by: the same the worker's records were sorted and de-duplicated by. */
-const recordKey = (r) => (r.kind === 'mpMapper' ? `${r.kind}|${r.fqn}` : `${r.kind}|${r.fqn}|${r.base}`);
+/** The key a derived record is known by, within one type: the worker wrote one mapper record per type, and one service record per base. */
+const recordKey = (r) => (r.kind === 'mpMapper' ? r.kind : `${r.kind}|${r.base}`);
+const sameRecord = (a, b) => JSON.stringify({ ...a, rule: null }) === JSON.stringify({ ...b, rule: null });
 
 /**
  * The role records every `java.type-role` rule gives the type records among
- * `javaFacts`, one per key, in rule order. Two rules that write one key with
- * different contents are a conflict in the packs and are refused.
+ * `javaFacts`, in type order and, within a type, in rule order.
+ *
+ * Each type record is one input, read on its own. Two modules may declare a
+ * class of the same name, and each is given its roles as the worker once gave
+ * them; which of the two a bridge reads is the bridge's question. What is
+ * refused is two rules answering one type two ways: one mapper record with
+ * different contents, or the roles of a mapper and a service at once, which a
+ * reader would otherwise settle by the order it happens to look them up in.
  *
  * @param {object[]} javaFacts  the assembled worker records
  * @param {{id:string, compiled:Function}[]} rules
  * @returns {object[]}
  */
 export function deriveTypeRoles(javaFacts, rules) {
+  return javaFacts.filter((t) => t && t.kind === 'type').flatMap((t) => rolesOfType(t, rules));
+}
+
+function rolesOfType(t, rules) {
   const byKey = new Map();
-  for (const t of javaFacts) {
-    if (!t || t.kind !== 'type') continue;
-    for (const r of rules.flatMap((entry) => entry.compiled(t))) {
-      const k = recordKey(r);
-      const prev = byKey.get(k);
-      if (!prev) byKey.set(k, r);
-      else if (JSON.stringify({ ...prev, rule: null }) !== JSON.stringify({ ...r, rule: null })) {
-        throw new Error(`the rules ${prev.rule} and ${r.rule} give ${t.fqn} two different ${r.kind} records`);
-      }
-    }
+  for (const r of rules.flatMap((entry) => entry.compiled(t))) {
+    const prev = byKey.get(recordKey(r));
+    if (!prev) byKey.set(recordKey(r), r);
+    else if (!sameRecord(prev, r)) throw new Error(`the rules ${prev.rule} and ${r.rule} give ${t.fqn} two different ${r.kind} records`);
   }
-  return [...byKey.values()];
+  const records = [...byKey.values()];
+  const roles = [...new Set(records.map((r) => ROLE_OF_KIND[r.kind]))];
+  if (roles.length > 1) throw new Error(`the rules ${records.map((r) => r.rule).join(' and ')} give ${t.fqn} two roles, ${roles.join(' and ')}`);
+  return records;
 }
 
 /** What an example's type records give under one rule, in the example's own words. */
 const asExpect = (r) => ({
-  type: r.fqn, role: r.kind === 'mpMapper' ? 'mybatis-plus-mapper' : 'mybatis-plus-service',
+  type: r.fqn, role: ROLE_OF_KIND[r.kind],
   ...(r.entityTypeSimple ? { entity: r.entityTypeSimple } : {}), ...(r.mapperTypeSimple ? { mapper: r.mapperTypeSimple } : {}),
 });
 const canonical = (list) => JSON.stringify([...list].map((e) => JSON.stringify(e, Object.keys(e).sort())).sort());
