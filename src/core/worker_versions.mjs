@@ -14,6 +14,12 @@
 
 /** JavaFacts.java — `static final String VERSION`. */
 export const JAVA_WORKER_VERSION = 'javafacts/15';
+/**
+ * adapters/ts/tsfacts.mjs — `VERSION`. NOT part of `workerVersions()`: it is in
+ * every TypeScript shard's key, so a new worker makes each shard miss and be
+ * read again, and a project with no TypeScript backend is not sent cold by it.
+ */
+export const TS_WORKER_VERSION = 'tsfacts/1';
 /** mybatis_extract.py — `EXTRACTOR_VERSION`. */
 export const MYBATIS_WORKER_VERSION = 'mybatis-extract/2';
 /** lineage.py — `LINEAGE_VERSION`. */

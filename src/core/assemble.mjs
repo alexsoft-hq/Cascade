@@ -44,6 +44,17 @@
 import { Graph } from './graph.mjs';
 
 /**
+ * One lane's bridge: null when no options were given for it, else what it
+ * returns. Options given with no bridge to read them are the caller's mistake,
+ * and are said as one.
+ */
+function runBridge(bridges, fn, lane, graph, facts, opts) {
+  if (!opts) return null;
+  if (typeof bridges[fn] !== 'function') throw new AssembleError(`${lane} options were given but bridges.${fn} is missing`);
+  return bridges[fn](graph, facts, opts);
+}
+
+/**
  * Build one graph from already-parsed fact records.
  *
  * @param {Object} a
@@ -67,6 +78,9 @@ import { Graph } from './graph.mjs';
  *          logicDeleteValue?:string|null, logicNotDeleteValue?:string|null,
  *          schema?:string|null}|null} [a.mybatisPlus=null]
  *        options for the MyBatis-Plus bridge; null runs no MyBatis-Plus bridge.
+ * @param {object[]} [a.tsFacts=[]]  the TypeScript backend's tsfacts stream
+ * @param {{tsconfig?:object, prisma?:object|null, globalPrefix?:string|null, schemaName?:string|null, identifierCase?:string}|null} [a.ts=null]
+ *        options for the TypeScript backend bridge; null runs none.
  * @param {object[]} [a.openapiDocuments=[]]  documents as `readOpenApiDocument` returns them
  * @param {{}|null} [a.openapi=null]  options for the OpenAPI bridge; null runs none
  * @param {object[]} [a.webFacts=[]]  the whole-project webfacts stream
@@ -80,9 +94,9 @@ import { Graph } from './graph.mjs';
  */
 export function assembleGraph(a) {
   const {
-    bridges, catalogRecords = [], lineageRecords = [], javaFacts = [], webFacts = [],
+    bridges, catalogRecords = [], lineageRecords = [], javaFacts = [], webFacts = [], tsFacts = [],
     openapiDocuments = [], otelTraces = [],
-    identifierCase = 'exact', java = null, jpa = null, mybatisPlus = null, openapi = null, web = null,
+    identifierCase = 'exact', java = null, jpa = null, mybatisPlus = null, ts = null, openapi = null, web = null,
     runtime = null,
   } = a ?? {};
   if (!bridges || typeof bridges.buildGraphFromSql !== 'function') {
@@ -91,45 +105,24 @@ export function assembleGraph(a) {
   const graph = bridges.buildGraphFromSql(catalogRecords, lineageRecords, { identifierCase });
   if (!(graph instanceof Graph)) throw new AssembleError('bridges.buildGraphFromSql must return a Graph');
 
-  let javaStats = null;
-  if (java) {
-    if (typeof bridges.addJavaFacts !== 'function') throw new AssembleError('java options were given but bridges.addJavaFacts is missing');
-    javaStats = bridges.addJavaFacts(graph, javaFacts, java);
-  }
-  let jpaStats = null;
-  if (jpa) {
-    if (typeof bridges.addJpaFacts !== 'function') throw new AssembleError('jpa options were given but bridges.addJpaFacts is missing');
-    jpaStats = bridges.addJpaFacts(graph, javaFacts, jpa);
-  }
-  let mpStats = null;
-  if (mybatisPlus) {
-    if (typeof bridges.addMybatisPlusFacts !== 'function') throw new AssembleError('mybatisPlus options were given but bridges.addMybatisPlusFacts is missing');
-    mpStats = bridges.addMybatisPlusFacts(graph, javaFacts, mybatisPlus);
-  }
-  let openapiStats = null;
-  if (openapi) {
-    if (typeof bridges.addOpenApiRoutes !== 'function') throw new AssembleError('openapi options were given but bridges.addOpenApiRoutes is missing');
-    openapiStats = bridges.addOpenApiRoutes(graph, openapiDocuments, openapi);
-  }
-  let webStats = null;
-  if (web) {
-    if (typeof bridges.addWebFacts !== 'function') throw new AssembleError('web options were given but bridges.addWebFacts is missing');
-    // THE TWO HALVES OF A SERVER-RENDERED SCREEN meet here (RM48): the Java
-    // worker read which view name each handler returns, the web worker read the
-    // templates, and the web bridge is the only place that has both. Taken out
-    // of the Java stream rather than asked of the caller, so `analyze` and the
-    // working-tree overlay cannot pass different sets.
-    webStats = bridges.addWebFacts(graph, webFacts, {
-      ...web,
-      views: web.views ?? javaFacts.filter((r) => r && typeof r === 'object' && r.kind === 'view'),
-    });
-  }
-  let runtimeStats = null;
-  if (runtime) {
-    if (typeof bridges.addRuntimeFacts !== 'function') throw new AssembleError('runtime options were given but bridges.addRuntimeFacts is missing');
-    runtimeStats = bridges.addRuntimeFacts(graph, otelTraces, runtime);
-  }
-  return { graph, javaStats, jpaStats, mpStats, openapiStats, webStats, runtimeStats };
+  const javaStats = runBridge(bridges, 'addJavaFacts', 'java', graph, javaFacts, java);
+  const jpaStats = runBridge(bridges, 'addJpaFacts', 'jpa', graph, javaFacts, jpa);
+  const mpStats = runBridge(bridges, 'addMybatisPlusFacts', 'mybatisPlus', graph, javaFacts, mybatisPlus);
+  // The TypeScript backend: its routes have to exist before the web bridge
+  // below matches a frontend call to one.
+  const tsStats = runBridge(bridges, 'addTsFacts', 'ts', graph, tsFacts, ts);
+  const openapiStats = runBridge(bridges, 'addOpenApiRoutes', 'openapi', graph, openapiDocuments, openapi);
+  // THE TWO HALVES OF A SERVER-RENDERED SCREEN meet here (RM48): the Java
+  // worker read which view name each handler returns, the web worker read the
+  // templates, and the web bridge is the only place that has both. Taken out
+  // of the Java stream rather than asked of the caller, so `analyze` and the
+  // working-tree overlay cannot pass different sets.
+  const webStats = runBridge(bridges, 'addWebFacts', 'web', graph, webFacts, web && {
+    ...web,
+    views: web.views ?? javaFacts.filter((r) => r && typeof r === 'object' && r.kind === 'view'),
+  });
+  const runtimeStats = runBridge(bridges, 'addRuntimeFacts', 'runtime', graph, otelTraces, runtime);
+  return { graph, javaStats, jpaStats, mpStats, tsStats, openapiStats, webStats, runtimeStats };
 }
 
 export class AssembleError extends Error {

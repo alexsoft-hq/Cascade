@@ -24,7 +24,8 @@ import { runLanesWithShards } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
-import { LANE_BRIDGES, runJavaLane, runWebLane } from '../../lanes_run.mjs';
+import { LANE_BRIDGES, runJavaLane, runTsLane, runWebLane } from '../../lanes_run.mjs';
+import { tsBridgeOptions } from '../../ts_inputs.mjs';
 import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from '../../lane_options.mjs';
 import { annotationMappersOf, flattenAnnotationMappers, lineageOfStatements } from '../../java_sql.mjs';
 import { sha256File } from '../../state.mjs';
@@ -60,12 +61,23 @@ function mybatisArgv({ root, tmpDir, mappers, mapperAlternatives, sqlArgs }) {
   return [...base, '--files-from', listFile];
 }
 
+/** The TypeScript backend lane's runners: the files it would read, and those files read. */
+function tsRunners(root) {
+  return {
+    tsList: (roots) => runTsLane(root, roots, { list: true }).filter((r) => r.kind === 'sourceFile').map((r) => r.file),
+    ts: (targets) => {
+      process.stderr.write(`TypeScript lane: reading ${targets.length} file(s)…\n`);
+      return runTsLane(root, targets);
+    },
+  };
+}
+
 export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, mappers, webSrc, sqlArgs, runpy }) {
   const mapperAlternatives = sel.mapperAlternatives ?? [];
   const catFile = path.join(tmpDir, 'catalog.jsonl');
   const stmtFile = path.join(tmpDir, 'statements.jsonl');
   let jdk = null;
-  const runners = {
+  return {
     catalog: () => {
       if (snapshot) {
         // No worker: the snapshot IS catalog records. It was produced once,
@@ -102,7 +114,7 @@ export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, 
     web: (targets) => {
       process.stderr.write(`Web lane: reading ${targets.length} ${plan.mode === MODE_COLD ? 'frontend source root(s)' : 'changed frontend file(s)'}…\n`);
       try {
-        return runWebLane(root, targets, { sourceRoots: webSrc, templateRoots: sel.templateRoots });
+        return runWebLane(root, targets, { sourceRoots: webSrc, templateRoots: sel.templateRoots, excludeRoots: sel.tsSrc });
       } catch (e) {
         const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
         die(`the web lane failed: ${said || (e && e.message) || 'unknown error'}`);
@@ -114,15 +126,15 @@ export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, 
     // them honestly. Reading them walks no source file.
     webConfigs: (roots) => {
       try {
-        return runWebLane(root, roots, { configsOnly: true, sourceRoots: webSrc, templateRoots: sel.templateRoots });
+        return runWebLane(root, roots, { configsOnly: true, sourceRoots: webSrc, templateRoots: sel.templateRoots, excludeRoots: sel.tsSrc });
       } catch (e) {
         const said = String((e && e.stderr) || '').trim().split('\n').filter(Boolean).pop();
         die(`the web lane failed to read the frontend package configuration: ${said || (e && e.message) || 'unknown error'}`);
         return [];
       }
     },
+    ...tsRunners(root),
   };
-  return runners;
 }
 
 /**
@@ -138,7 +150,7 @@ export function runLanes(ctx, { root, tmpDir, plan, prevIndex, store, sel, selec
     store,
     selection: {
       ...selectionRel, javaRootsAbs: javaSrc, webRootsAbs: webSrc,
-      templateRootsAbs: sel.templateRoots,
+      templateRootsAbs: sel.templateRoots, tsRootsAbs: sel.tsSrc,
     },
     inputs: {
       mapperFiles: listMapperXml(mappers, sel.mapperAlternatives ?? []).map((p) => ({ rel: relOf(p), abs: p })),
@@ -390,7 +402,25 @@ export function webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root,
  * rule handed in is the SAME one the lineage worker matched with, so a bridge
  * cannot key a table differently from the worker that resolved it.
  */
-export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null }) {
+/**
+ * The TypeScript bridge's options for the one application this run reads
+ * (src/core/lanes.mjs keeps it to one): its tsconfig's module paths, its
+ * schema.prisma (src/cli/ts_inputs.mjs), and the global prefix the profile
+ * declares when the source only names one.
+ */
+export function tsOptionsOf({ root, sel, profile, manifestDir }, sqlArgs, diagnostics) {
+  const app = sel.tsSrc[0];
+  if (!app) return null;
+  const ts = profile.tsBackend ?? {};
+  const declaredSchema = ts.prismaSchema ? path.resolve(manifestDir ?? root, ts.prismaSchema) : null;
+  const opts = tsBridgeOptions({ rootAbs: path.resolve(root), appRootAbs: app, declaredSchema, sqlArgs });
+  if (declaredSchema && !opts.prisma) {
+    diagnostics.push({ kind: 'MISSING_INPUT', severity: 'warn', key: 'tsBackend.prismaSchema', reason: `tsBackend.prismaSchema names ${ts.prismaSchema}, which is not there, so no Prisma call is read` });
+  }
+  return { ...opts, globalPrefix: ts.globalPrefix ?? null };
+}
+
+export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, tsOpts = null }) {
   // The web bridge's own wall time, measured around the bridge and not around
   // the whole assembly: it is the number the lane line reports, so it has to
   // be the bridge's and nobody else's. Printed, never written into the pack —
@@ -411,7 +441,7 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
   const assembled = assembleGraph({
     bridges,
     catalogRecords: catalog, lineageRecords: lineage, javaFacts: result.javaFacts,
-    webFacts, openapiDocuments: openapiDocs, otelTraces,
+    webFacts, tsFacts: result.tsFacts ?? [], openapiDocuments: openapiDocs, otelTraces,
     identifierCase: sqlArgs.identifierCase,
     java: runJava ? {
       packagePrefixes: profile.packagePrefixes ?? [],
@@ -426,6 +456,8 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     // The profile's strategy, else the one the project's configuration names (index.mjs).
     jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
+    // The TypeScript backend (index.mjs reads its tsconfig and schema.prisma).
+    ts: tsOpts,
     // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
     // frontend call must be able to land on a route only a document declares.
     openapi: openapiDocs.length > 0 ? {} : null,

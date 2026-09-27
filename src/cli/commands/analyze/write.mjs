@@ -32,6 +32,31 @@ import { goldenAsk } from '../../serve.mjs';
 import { runningEnginePrint, sha256File, stateDirOf, writeReceipt } from '../../state.mjs';
 
 /**
+ * What a run recomputed and what it reused, per lane. The TypeScript lane's
+ * counts are there only when it ran, so a pack without one records what it
+ * always did.
+ */
+function incrementalRecord(st, baseCommit) {
+  return {
+    mode: st.mode,
+    base: baseCommit,
+    reparsedJava: st.reparsedJava,
+    reusedJava: st.reusedJava,
+    droppedJava: st.droppedJava,
+    reparsedWeb: st.reparsedWeb,
+    reusedWeb: st.reusedWeb,
+    droppedWeb: st.droppedWeb,
+    recomputedLineage: st.recomputedLineage,
+    reusedLineage: st.reusedLineage,
+    statementsReused: st.statementsReused,
+    catalogReused: st.catalogReused,
+    shardsRecovered: st.tamperedJava + st.tamperedWeb + st.tamperedLineage,
+    ...(st.reparsedTs !== undefined ? { reparsedTs: st.reparsedTs, reusedTs: st.reusedTs } : {}),
+    reason: st.reason,
+  };
+}
+
+/**
  * THE PACK, projected out of the graph with everything this run learned about
  * itself attached. `builtAt` is returned beside it because the gate, the
  * receipt and the registry all have to stamp the SAME moment.
@@ -97,22 +122,7 @@ export function buildPack(g, { projectId, lanes, base, ddl, ddls, snapshot, snap
     calibration: null,
     // What this run recomputed and what it reused (SPEC §11). A reader can
     // tell an incremental pack from a cold one, and see why a cold one was cold.
-    incremental: {
-      mode: st.mode,
-      base: baseCommit,
-      reparsedJava: st.reparsedJava,
-      reusedJava: st.reusedJava,
-      droppedJava: st.droppedJava,
-      reparsedWeb: st.reparsedWeb,
-      reusedWeb: st.reusedWeb,
-      droppedWeb: st.droppedWeb,
-      recomputedLineage: st.recomputedLineage,
-      reusedLineage: st.reusedLineage,
-      statementsReused: st.statementsReused,
-      catalogReused: st.catalogReused,
-      shardsRecovered: st.tamperedJava + st.tamperedWeb + st.tamperedLineage,
-      reason: st.reason,
-    },
+    incremental: incrementalRecord(st, baseCommit),
   });
     return { pack, builtAt };
 }
@@ -408,6 +418,9 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
   // selection is not: a replay of `--mappers src --mappers src` must select the same.
   const invocation = { ddl: list(flags.ddl) };
   for (const k of UNORDERED_FLAGS) invocation[k] = list(flags[k]).sort();
+  // The TypeScript lane's flags, only when given: a pack analyzed without them
+  // records the invocation it always did.
+  if ((flags.tsSrc ?? []).length > 0) invocation.tsSrc = list(flags.tsSrc).sort();
   const selection = portableSelection(selectionRel, root, { repoTop });
   return {
     workers: workerVersions(), profileDigest, enginePrint: enginePrintNow, engineVersion: engineIdentity().version,
@@ -415,6 +428,7 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
     invocation: {
       ...invocation,
       noDdl: !!flags.noDdl, noMappers: !!flags.noMappers, noJava: !!flags.noJava, noWeb: !!flags.noWeb, noOpenapi: !!flags.noOpenapi,
+      ...(flags.noTs ? { noTs: true } : {}),
       profile: profileFile && realPath(profileFile) !== defaultProfile ? portablePath(profileFile, root, { repoTop, from: cwd }) : null,
     },
     external: {

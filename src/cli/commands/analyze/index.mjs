@@ -17,10 +17,10 @@ import { webPackagesRead } from '../../lanes_run.mjs';
 import {
   sayDdlChoice, sayHarLane, sayIdentity, sayJavaLanes, sayLaneLine, sayMapperCensus,
   sayNoSchemaFetched, sayOpenApiLane, sayResult, sayRuntimeEvidence, sayScreenAxisAndTemplates,
-  sayVendoredWebRoots, sayWebBridge,
+  sayTsLane, sayVendoredWebRoots, sayWebBridge,
 } from './census.mjs';
 import {
-  annotationLineage, assembleAll, nativeQueryLineage, readOpenApiDocs, runLanes,
+  annotationLineage, assembleAll, nativeQueryLineage, readOpenApiDocs, runLanes, tsOptionsOf,
   webWorkerStatsOf, whichLanesAssemble, wrapperFragmentLineage,
 } from './lanes.mjs';
 import { withPackLock } from '../../pack_history.mjs';
@@ -155,6 +155,18 @@ function factsOf(ctx, prepared, tmpDir) {
  * them, in the order they ran. The axes are declared last, from the same
  * numbers the census printed.
  */
+/**
+ * The backend lanes' lines, said, and the record the pack keeps of them: the
+ * Java lanes' when Java ran, with the TypeScript lane's beside them when it
+ * ran, whose reasons for a route or a link not made join the run's diagnostics.
+ */
+function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf }, diagnostics) {
+  const laneStats = runJava ? sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) : null;
+  if (!tsStats) return laneStats;
+  for (const d of tsStats.diagnostics) diagnostics.push({ kind: d.kind, severity: 'warn', key: 'tsBackend', reason: d.reason });
+  return { ...laneStats, ts: sayTsLane(tsStats, tsOpts, { root, sel, relOf }) };
+}
+
 function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJpa, runMp, mpOpts, fragmentLineage }) {
   const {
     root, profile, discovery, sel, ddls, snapshot, mappers, javaSrc, webSrc,
@@ -162,17 +174,15 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
   } = prepared;
   const openapiDocs = readOpenApiDocs(ctx, { openapiFiles, root, diagnostics });
   const { webFacts, webWorkerStats } = webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root, relOf });
+  const tsOpts = tsOptionsOf({ root, sel, profile, manifestDir: resolved.dotCascade }, sqlArgs, diagnostics);
   const {
-    graph: g, javaStats: jstats, jpaStats, mpStats, openapiStats, webStats: webBridgeStats,
+    graph: g, javaStats: jstats, jpaStats, mpStats, tsStats, openapiStats, webStats: webBridgeStats,
     runtimeStats, otelTraces, webBridgeMs,
   } = assembleAll({
     result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs,
-    screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming,
+    screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming, tsOpts,
   });
-  let laneStats = null;
-  if (runJava) {
-    laneStats = sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp });
-  }
+  const laneStats = sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf }, diagnostics);
   // ---- the web BRIDGE's own line (RM28) ---------------------------------
   // What the frontend's calls turned into: how many reached a route this pack
   // serves, at which grade, how many did not and why, and the prefix each
@@ -201,12 +211,12 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
 
   const axes = declareAxes(
     {
-      ddl: ddls.length > 0 || !!snapshot, statements: mappers.length > 0, code: javaSrc.length > 0,
+      ddl: ddls.length > 0 || !!snapshot, statements: mappers.length > 0, code: javaSrc.length > 0 || !!tsStats,
       // The Java bridge's own stats, so a SHIPPED code axis can still declare
       // the one gap in it a reader can act on (RM35 §G: a wildcard import
       // naming a package of this project that no analyzed root holds).
       java: jstats,
-      jpa: jpaStats, mybatisPlus: mpStats, web: webStats, openapi: openapiStats, har: harStats,
+      jpa: jpaStats, mybatisPlus: mpStats, ts: tsStats, web: webStats, openapi: openapiStats, har: harStats,
     },
     { screenAxisRequested: screenGate.enabled, screenAxisReason: screenGate.reason },
   );

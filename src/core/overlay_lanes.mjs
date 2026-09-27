@@ -197,10 +197,22 @@ export function runOverlayLanes(a) {
  * `cascade analyze` as the cure — never into a quiet fallback to the pre-edit
  * answer, which would look like a fresh one.
  */
+/**
+ * Whether the overlay can re-read what a pack's fact index holds. The
+ * TypeScript backend lane is read by `analyze` only for now: an overlay without
+ * it would answer about every TypeScript file as if it had no code, so a pack
+ * that reads one is declined, and base-only still answers.
+ */
+export function assertOverlayable(index) {
+  if (Object.values(index.files ?? {}).some((e) => e?.lane === 'ts')) {
+    throw new OverlayStaleError('this pack reads a TypeScript backend, and the working-tree overlay does not re-read TypeScript yet', 'ts-not-overlaid');
+  }
+}
+
 export class OverlayStaleError extends Error {
-  constructor(message) {
+  constructor(message, code = 'overlay-stale') {
     super(message);
     this.name = 'OverlayStaleError';
-    this.code = 'overlay-stale';
+    this.code = code;
   }
 }

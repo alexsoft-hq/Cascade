@@ -50,6 +50,7 @@
 import { canonicalJson } from './canonical.mjs';
 import { STATUS_UNKNOWN } from './changeset.mjs';
 import { isWebSourceFile } from './discover.mjs';
+import { laneOfEntry } from './facts_store.mjs';
 
 /**
  * The files that configure a frontend PACKAGE rather than live inside it as
@@ -113,7 +114,7 @@ export const MODE_INCREMENTAL = 'incremental';
  * it if it is gone: an untracked file that was deleted leaves no git trace.
  */
 function reReadDirtyFiles(index, notes, cls) {
-  const { ddls, mapperDirs, webRoots, javaRoots, isTemplateFile, stillExists,
+  const { ddls, mapperDirs, webRoots, javaRoots, isWebInput, stillExists,
     reparse, drop, reparseWeb, dropWeb, flags } = cls;
   for (const f of index.base?.dirtyFiles ?? []) {
     if (ddls.includes(f)) flags.catalogChanged = true;
@@ -123,7 +124,7 @@ function reReadDirtyFiles(index, notes, cls) {
       if (stillExists(f)) { reparse.add(f); drop.delete(f); }
       else { drop.add(f); reparse.delete(f); }
     }
-    if ((isWebSourceFile(f) && underAny(f, webRoots)) || isTemplateFile(f)) {
+    if (isWebInput(f)) {
       if (stillExists(f)) { reparseWeb.add(f); dropWeb.delete(f); }
       else { dropWeb.add(f); reparseWeb.delete(f); }
     }
@@ -170,6 +171,25 @@ function coldReason(input, cold) {
   return null;
 }
 
+/**
+ * Which files are the web lane's inputs. A frontend source under a web root,
+ * unless it sits under a TypeScript backend root: that one is the TypeScript
+ * lane's, and the web worker leaves it out (`--exclude-root`), so the plan does
+ * too. And a TEMPLATE FILE (RM48): it goes through the same worker, its facts
+ * sit in the same kind of shard, and an edit to it invalidates that shard and
+ * nothing else. What makes it one is the root it sits under and the suffix
+ * that root's view resolver appends.
+ */
+function webInputOf(selection) {
+  const webRoots = selection.webRoots ?? [];
+  const tsRoots = selection.tsRoots ?? [];
+  const templateRoots = (selection.templateRoots ?? [])
+    .filter((t) => t && typeof t === 'object' && typeof t.root === 'string');
+  const isTemplateFile = (file) => templateRoots.some((t) => typeof t.suffix === 'string'
+    && file.endsWith(t.suffix) && underAny(file, [t.root]));
+  return (file) => (isWebSourceFile(file) && underAny(file, webRoots) && !underAny(file, tsRoots)) || isTemplateFile(file);
+}
+
 export function planIncremental(input) {
   const {
     requestedMode = 'auto',
@@ -204,14 +224,7 @@ export function planIncremental(input) {
   const ddls = selection.ddls ?? (selection.ddl ? [selection.ddl] : []);
 
   const webRoots = selection.webRoots ?? [];
-  // A TEMPLATE FILE IS A WEB-LANE INPUT (RM48): it goes through the same worker,
-  // its facts sit in the same kind of shard, and an edit to it invalidates that
-  // shard and nothing else. What makes it one is the root it sits under and the
-  // suffix that root's view resolver appends.
-  const templateRoots = (selection.templateRoots ?? [])
-    .filter((t) => t && typeof t === 'object' && typeof t.root === 'string');
-  const isTemplateFile = (file) => templateRoots.some((t) => typeof t.suffix === 'string'
-    && file.endsWith(t.suffix) && underAny(file, [t.root]));
+  const isWebInput = webInputOf(selection);
 
   const reparse = new Set();
   const drop = new Set();
@@ -225,7 +238,7 @@ export function planIncremental(input) {
     if (ddls.includes(file)) catalogChanged = true;
     if (file.endsWith('.xml') && underAny(file, mapperDirs)) sqlChanged = true;
     if (isWebConfigOf(file, webRoots)) webConfigChanged = true;
-    if ((isWebSourceFile(file) && underAny(file, webRoots)) || isTemplateFile(file)) {
+    if (isWebInput(file)) {
       if (status === 'D') dropWeb.add(file);
       else reparseWeb.add(file);
     }
@@ -239,7 +252,7 @@ export function planIncremental(input) {
 
   const flags = { sqlChanged, catalogChanged, webConfigChanged };
   reReadDirtyFiles(index, notes, {
-    ddls, mapperDirs, webRoots, javaRoots, isTemplateFile, stillExists,
+    ddls, mapperDirs, webRoots, javaRoots, isWebInput, stillExists,
     reparse, drop, reparseWeb, dropWeb, flags,
   });
   ({ sqlChanged, catalogChanged, webConfigChanged } = flags);
@@ -251,7 +264,7 @@ export function planIncremental(input) {
   for (const f of dropWeb) reparseWeb.delete(f);
 
   const prevFiles = Object.entries(index.files ?? {});
-  const reused = prevFiles.filter(([f, e]) => (e?.lane ?? 'java') !== 'web' && !reparse.has(f) && !drop.has(f)).length;
+  const reused = prevFiles.filter(([f, e]) => laneOfEntry(e) === 'java' && !reparse.has(f) && !drop.has(f)).length;
   const reusedWeb = prevFiles.filter(([f, e]) => e?.lane === 'web' && !reparseWeb.has(f) && !dropWeb.has(f)).length;
   const has = (f) => Object.prototype.hasOwnProperty.call(index.files ?? {}, f);
   const unknownDrops = [...drop].filter((f) => !has(f));
@@ -310,6 +323,7 @@ function normalizeSelection(sel) {
     ddls: sel.ddls ?? (sel.ddl ? [sel.ddl] : []),
     sqlArgs: [...(sel.sqlArgs ?? [])],
     packagePrefixes: [...(sel.packagePrefixes ?? [])].sort(),
+    tsRoots: [...(sel.tsRoots ?? [])].sort(),
   };
 }
 

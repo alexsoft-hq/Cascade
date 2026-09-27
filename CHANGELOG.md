@@ -62,6 +62,33 @@ Each dated section below is one round of work. The round protocol is in
   2,718 links from `mybatis-plus-join.mapper` and 3 from `mybatis-plus.mapper`.
   Packs of MyBatis-Plus projects change once, by that evidence alone.
 
+- **A TypeScript backend lane: NestJS routes, and each Prisma call as a
+  statement.** `--ts-src <dir>`, or `tsBackend.app` in the profile with the
+  `nestjs` framework pack, reads a NestJS application
+  ([docs/setup/ts-lane.md](docs/setup/ts-lane.md)). A controller serves only
+  when a module the application loads registers it, under the global prefix and
+  URI version the bootstrap sets (`exclude`, `@Version`, `VERSION_NEUTRAL`,
+  version lists and `RouterModule.register` read as Nest applies them). A
+  prefix, a version or a module list the source builds at run time makes no
+  route, and a diagnostic says which and why; `tsBackend.globalPrefix` declares
+  a prefix the bootstrap reads from configuration. Calls between methods are
+  `MAY_CALL` edges through `this`, injected fields, imported functions and
+  static methods. Every Prisma client call is a statement of its own, keyed by
+  its place in the method, so two calls on one model with different `select`s
+  never share their columns; its table and columns come from `schema.prisma`
+  (`@map`, `@@map`), and what it cannot follow (a relation, a key it does not
+  know, an argument in a variable) travels on the statement. What the lane knows
+  about the frameworks is in two rule packs, `nestjs.json` and `prisma.json`,
+  read through three new kinds (`ts.route-decorator`, `ts.type-role`,
+  `prisma.operation`), with examples `cascade rules test` runs. The facts are
+  cached per file like the web lane's. On ghostfolio (f6b25ee): 118 routes from
+  34 registered controllers, which is every route decorator it has, 149 Prisma
+  statements, and 104 of the 118 endpoints reach a table; of the 105 its Angular
+  frontend calls, 98 do. `cascade init` finds the application by its bootstrap
+  and writes it, with the database the schema's datasource names. The
+  working-tree overlay does not re-read TypeScript yet, and says so
+  (`ts-not-overlaid`); `--mode base-only` answers.
+
 - **`cascade export --format card`: one answer at a glance.** The chain picture
   draws every row, which is what a reviewer needs and more than a first look can
   take in. The card writes what was asked about at the top and, under it, one
@@ -91,6 +118,12 @@ Each dated section below is one round of work. The round protocol is in
   itself, was not part of the print and was judged as no engine change at all.
   Both now are, as are the rule packs. The first analyze after upgrading sees
   the engine as moved, as it does after any upgrade.
+
+- **A frontend root that holds a TypeScript backend leaves it to that lane.**
+  In a workspace with one `package.json` for both (an Nx monorepo), the web lane
+  used to read the backend's files as frontend. With a TypeScript lane the web
+  worker leaves its root out (`--exclude-root`), and so does the incremental
+  plan: an edit to a backend file re-reads it once, in its own lane.
 
 ### Fixed
 

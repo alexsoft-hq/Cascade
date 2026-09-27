@@ -364,12 +364,15 @@
     "collectFiles/1",
     "collectFiles/2",
     "collectFiles/3",
+    "collectFiles/4",
     "columnOf",
     "dispatch",
     "dispatch/1",
     "emit",
     "endLineOf",
     "envModeOf",
+    "excluded",
+    "excluded/1",
     "filesystemRouteOf",
     "filesystemRouteOf/1",
     "filesystemRouteOf/2",
@@ -1069,6 +1072,145 @@
     "uniqSort"
    ]
   },
+  "src/adapters/ts/nest_routes.mjs": {
+   "maxLines": 33,
+   "maxBranches": 16,
+   "longest": "registeredControllers",
+   "branchiest": "registeredControllers",
+   "functions": [
+    "callsIn",
+    "callsIn/1",
+    "configOf",
+    "configOf/1",
+    "excludesOf",
+    "excludesOf/1",
+    "excludesOf/2",
+    "isPackageModule",
+    "moduleClassOf",
+    "nestRoutes",
+    "nestRoutes/1",
+    "nestRoutes/2",
+    "nestRoutes/3",
+    "nestRoutes/4",
+    "nestRoutes/5",
+    "nestRoutes/6",
+    "pathOfTree",
+    "prefixOf",
+    "readModulePaths",
+    "registeredControllers",
+    "routesOfController",
+    "routesOfController/1",
+    "routesOfController/1/1",
+    "servedApp",
+    "servedApp/1",
+    "servedApp/2",
+    "servedApp/2/1",
+    "versionSegments",
+    "versionSegments/1",
+    "versioningOf"
+   ]
+  },
+  "src/adapters/ts/prisma.mjs": {
+   "maxLines": 23,
+   "maxBranches": 9,
+   "longest": "addPrismaStatements",
+   "branchiest": "addPrismaStatements",
+   "functions": [
+    "addPrismaStatements",
+    "bySite",
+    "clientCallOf",
+    "clientRoleOf",
+    "cmp",
+    "column",
+    "column/1",
+    "columnIdOf",
+    "ensureColumn",
+    "ensureTable",
+    "makeTableNodes",
+    "roleOfMeaning",
+    "roleOfMeaning/1",
+    "statementNode",
+    "statementNode/1",
+    "statementNode/2",
+    "tableIdOf",
+    "writeStatement",
+    "writeStatement/1"
+   ]
+  },
+  "src/adapters/ts/prisma_schema.mjs": {
+   "maxLines": 19,
+   "maxBranches": 7,
+   "longest": "readModel",
+   "branchiest": "readModel",
+   "functions": [
+    "mapName",
+    "modelOfDelegate",
+    "readBlocks",
+    "readModel",
+    "readPrismaSchema",
+    "readPrismaSchema/1",
+    "readPrismaSchema/2",
+    "readPrismaSchema/3",
+    "relationFields",
+    "relationFields/1",
+    "stripComment"
+   ]
+  },
+  "src/adapters/ts/project.mjs": {
+   "maxLines": 33,
+   "maxBranches": 16,
+   "longest": "readProject",
+   "branchiest": "readProject",
+   "functions": [
+    "addClassMember",
+    "at",
+    "classKey",
+    "classOf",
+    "emptyFile",
+    "exported",
+    "exportedFrom",
+    "fieldOf",
+    "firstKnown",
+    "indexRecords",
+    "lineage",
+    "makeModuleResolver",
+    "makeModuleResolver/1",
+    "meaning",
+    "meaning/1",
+    "methodOf",
+    "readProject",
+    "viaPaths"
+   ]
+  },
+  "src/adapters/ts/ts_calls.mjs": {
+   "maxLines": 21,
+   "maxBranches": 13,
+   "longest": "targetOf",
+   "branchiest": "targetOf",
+   "functions": [
+    "addCalls",
+    "addSymbols",
+    "callerOf",
+    "fieldClassOf",
+    "functionSymbolId",
+    "intoPackage",
+    "methodSymbolId",
+    "methodTarget",
+    "targetOf"
+   ]
+  },
+  "src/adapters/ts_bridge.mjs": {
+   "maxLines": 18,
+   "maxBranches": 8,
+   "longest": "addTsFacts",
+   "branchiest": "addTsFacts",
+   "functions": [
+    "addRoute",
+    "addTsFacts",
+    "one",
+    "rulesOf"
+   ]
+  },
   "src/adapters/web/calls.mjs": {
    "maxLines": 58,
    "maxBranches": 29,
@@ -1470,6 +1612,7 @@
     "sayLaneLine/2",
     "sayLaneLine/3",
     "sayLaneLine/4",
+    "sayLaneLine/5",
     "sayMapperCensus",
     "sayMpLane",
     "sayMpLane/1",
@@ -1487,6 +1630,8 @@
     "sayResult/1",
     "sayResult/2",
     "sayResult/3",
+    "sayResult/4",
+    "sayResult/5",
     "sayRuntimeEvidence",
     "sayScreenAxisAndTemplates",
     "sayScreenAxisAndTemplates/1",
@@ -1495,6 +1640,7 @@
     "saySilentWebRoots/2",
     "saySilentWebRoots/3",
     "saySilentWebRoots/3/1",
+    "sayTsLane",
     "sayVendoredWebRoots",
     "sayVendoredWebRoots/1",
     "sayVendoredWebRoots/2",
@@ -1512,7 +1658,7 @@
    ]
   },
   "src/cli/commands/analyze/index.mjs": {
-   "maxLines": 74,
+   "maxLines": 72,
    "maxBranches": 12,
    "longest": "graphOf",
    "branchiest": "graphOf",
@@ -1529,6 +1675,7 @@
     "prepare",
     "run",
     "runpy",
+    "sayBackendLanes",
     "underLock",
     "underLock/1",
     "withJpaNaming",
@@ -1536,7 +1683,7 @@
    ]
   },
   "src/cli/commands/analyze/inputs.mjs": {
-   "maxLines": 50,
+   "maxLines": 48,
    "maxBranches": 21,
    "longest": "laneInputs",
    "branchiest": "laneSelection",
@@ -1601,6 +1748,12 @@
     "runLanes",
     "runLanes/1",
     "runLanes/2",
+    "ts",
+    "tsList",
+    "tsList/1",
+    "tsList/2",
+    "tsOptionsOf",
+    "tsRunners",
     "web",
     "webConfigs",
     "webWorkerStatsOf",
@@ -1610,9 +1763,9 @@
    ]
   },
   "src/cli/commands/analyze/write.mjs": {
-   "maxLines": 80,
+   "maxLines": 76,
    "maxBranches": 16,
-   "longest": "buildPack",
+   "longest": "runGate",
    "branchiest": "runGate",
    "functions": [
     "afterPack",
@@ -1620,6 +1773,7 @@
     "buildPack",
     "buildPack/1",
     "goldenSummaryOf",
+    "incrementalRecord",
     "list",
     "list/1",
     "lockDirFor",
@@ -2088,11 +2242,15 @@
     "runJavaLane",
     "runJavaLane/1",
     "runJavaLane/2",
+    "runTsLane",
+    "runTsLane/1",
+    "runTsLane/2",
     "runWebLane",
     "runWebLane/1",
     "runWebLane/2",
     "runWebLane/3",
     "runWebLane/4",
+    "runWebLane/5",
     "walk",
     "webPackagesRead",
     "webPackagesRead/1",
@@ -2286,6 +2444,21 @@
     "writeReceipt/1"
    ]
   },
+  "src/cli/ts_inputs.mjs": {
+   "maxLines": 21,
+   "maxBranches": 18,
+   "longest": "readLenientJson",
+   "branchiest": "readTsconfigPaths",
+   "functions": [
+    "prismaSchemaFileOf",
+    "readLenientJson",
+    "readTsconfigPaths",
+    "readTsconfigPaths/1",
+    "toPosix",
+    "tsBridgeOptions",
+    "tsconfigFileOf"
+   ]
+  },
   "src/cli/tty.mjs": {
    "maxLines": 31,
    "maxBranches": 16,
@@ -2330,14 +2503,15 @@
    ]
   },
   "src/core/assemble.mjs": {
-   "maxLines": 53,
-   "maxBranches": 19,
+   "maxLines": 32,
+   "maxBranches": 8,
    "longest": "assembleGraph",
    "branchiest": "assembleGraph",
    "functions": [
     "assembleGraph",
     "assembleGraph/1",
-    "constructor"
+    "constructor",
+    "runBridge"
    ]
   },
   "src/core/calibration.mjs": {
@@ -2625,9 +2799,9 @@
    ]
   },
   "src/core/discover.mjs": {
-   "maxLines": 115,
+   "maxLines": 100,
    "maxBranches": 41,
-   "longest": "discover",
+   "longest": "makeWalker",
    "branchiest": "templateRootsOf",
    "functions": [
     "<file>/1",
@@ -2761,6 +2935,27 @@
     "webSquareRoots/2"
    ]
   },
+  "src/core/discover_nest.mjs": {
+   "maxLines": 19,
+   "maxBranches": 9,
+   "longest": "nestAppsOf",
+   "branchiest": "nestAppsOf",
+   "functions": [
+    "bootstrapPattern",
+    "escapeRegExp",
+    "nestAppsOf",
+    "nestAppsOf/1",
+    "nestAppsOf/1/1",
+    "nestAppsOf/2",
+    "nestAppsOf/3",
+    "nestAppsOf/4",
+    "noteNestPackage",
+    "noteTypeScriptBackendFile",
+    "prismaProvidersOf",
+    "prismaProvidersOf/1",
+    "under"
+   ]
+  },
   "src/core/doctor.mjs": {
    "maxLines": 55,
    "maxBranches": 24,
@@ -2830,6 +3025,9 @@
     "assembleJavaFacts/1",
     "assembleJavaFacts/2",
     "assembleJavaFacts/3",
+    "assembleTsFacts",
+    "assembleTsFacts/1",
+    "assembleTsFacts/2",
     "assembleWebFacts",
     "assembleWebFacts/1",
     "assembleWebFacts/2",
@@ -2847,6 +3045,7 @@
     "has",
     "javaRecordSortKey",
     "javaShardKey",
+    "laneOfEntry",
     "lineageShardKey",
     "mkdir",
     "nodeFactsIo",
@@ -2859,6 +3058,7 @@
     "serializeIndex",
     "spliceFacts",
     "splitJavaFactsByFile",
+    "splitTsFactsByFile",
     "splitWebFactsByFile",
     "sqlStmtsShardKey",
     "sqlStmtsShardKey/1",
@@ -2869,6 +3069,7 @@
     "summariseNavigation",
     "summariseRecord",
     "summariseTemplate",
+    "tsShardKey",
     "validateIndex",
     "webFactsSummary",
     "webRecordSortKey",
@@ -3007,6 +3208,8 @@
     "runSqlLanesWithShards/4",
     "stmtKeyOf",
     "tryRead",
+    "tsFactsWithShards",
+    "tsFactsWithShards/1",
     "webFactsWithShards",
     "webFactsWithShards/1",
     "webFactsWithShards/2",
@@ -3048,6 +3251,10 @@
     "declareServiceIdentity/1",
     "declareServiceIdentity/2",
     "declareServiceIdentity/3",
+    "declareTsBackend",
+    "declareTsBackend/1",
+    "declareTsBackend/2",
+    "declareTsBackend/3",
     "declareWebRoots",
     "declareWebRoots/1",
     "declareWebRoots/2",
@@ -3055,6 +3262,8 @@
     "declareWebRoots/4",
     "isPlainObject",
     "lanesOf",
+    "prismaDialect",
+    "prismaDialect/1",
     "rel",
     "singleVendorDialect",
     "singleVendorDialect/1",
@@ -3069,8 +3278,8 @@
    ]
   },
   "src/core/invalidate.mjs": {
-   "maxLines": 107,
-   "maxBranches": 41,
+   "maxLines": 100,
+   "maxBranches": 33,
    "longest": "planIncremental",
    "branchiest": "planIncremental",
    "functions": [
@@ -3092,9 +3301,11 @@
     "planIncremental/3",
     "planIncremental/4",
     "planIncremental/5",
-    "planIncremental/6",
     "reReadDirtyFiles",
-    "underAny"
+    "underAny",
+    "webInputOf",
+    "webInputOf/1",
+    "webInputOf/2"
    ]
   },
   "src/core/java_roles.mjs": {
@@ -3168,6 +3379,8 @@
     "chooseJavaLanes/5",
     "chooseJavaLanes/6",
     "chooseJavaLanes/7",
+    "chooseTsLanes",
+    "chooseTsLanes/1",
     "chooseVendorMappers",
     "chooseVendorMappers/1",
     "chooseWebLanes",
@@ -3216,6 +3429,7 @@
     "serviceNamesOf/4",
     "serviceNamesOf/5",
     "sqlLaneArgs",
+    "statementsRead",
     "webAxis",
     "webAxis/1",
     "webAxis/2"
@@ -3334,6 +3548,8 @@
    "longest": "runOverlayLanes",
    "branchiest": "runOverlayLanes",
    "functions": [
+    "assertOverlayable",
+    "assertOverlayable/1",
     "constructor",
     "ephemeralIo",
     "exists",

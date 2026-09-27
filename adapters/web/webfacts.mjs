@@ -952,7 +952,7 @@ function isSkippedFileName(name) {
  * @param {Set<string>} found  collects absolute file paths
  * @param {string[]} boundaries  absolute directories where OUTPUT_DIRS apply
  */
-function collectFiles(sourceRoot, found, boundaries = [], alsoAccept = () => false) {
+function collectFiles(sourceRoot, found, boundaries = [], alsoAccept = () => false, excluded = () => false) {
   let st;
   try { st = fs.statSync(sourceRoot); } catch { return; }
   if (st.isFile()) {
@@ -967,7 +967,7 @@ function collectFiles(sourceRoot, found, boundaries = [], alsoAccept = () => fal
     for (const e of entries.slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (ALWAYS_SKIP_DIRS.has(e.name)) continue;
+        if (ALWAYS_SKIP_DIRS.has(e.name) || excluded(abs)) continue;
         if (OUTPUT_DIRS.has(e.name) && atBoundary.has(path.resolve(dir))) continue;
         walk(abs);
         continue;
@@ -1353,6 +1353,7 @@ function filesystemRoutes(relFile, relToPackage, packs, dependencies) {
 function parseArgs(argv) {
   let root = null;
   let configsOnly = false;
+  const excludeRoots = [];
   const roots = [];
   const webRoots = [];
   const templateRoots = [];
@@ -1374,6 +1375,8 @@ function parseArgs(argv) {
       continue;
     }
     if (argv[i] === '--configs-only') { configsOnly = true; continue; }
+    // A directory another lane reads (a TypeScript backend inside the frontend's package): not this lane's.
+    if (argv[i] === '--exclude-root') { excludeRoots.push(path.resolve(argv[i + 1])); i += 1; continue; }
     // One target per line: an incremental run can name more files than a command line holds.
     if (argv[i] === '--files-from') { roots.push(...fs.readFileSync(argv[i + 1], 'utf8').split('\n').filter(Boolean)); i += 1; continue; }
     roots.push(argv[i]);
@@ -1384,7 +1387,7 @@ function parseArgs(argv) {
   }
   // Longest root first, so a template root nested inside another wins.
   templateRoots.sort((a, b) => b.root.length - a.root.length || (a.root < b.root ? -1 : 1));
-  return { root: path.resolve(root), roots, webRoots, templateRoots, configsOnly };
+  return { root: path.resolve(root), roots, webRoots, templateRoots, configsOnly, excludeRoots };
 }
 
 /**
@@ -1668,8 +1671,9 @@ function printTheStream({ root, roots, byFile, tallies, out, apiFilesSkipped, so
 }
 
 function main(argv) {
-  const { root, roots, webRoots, templateRoots, configsOnly } = parseArgs(argv);
+  const { root, roots, webRoots, templateRoots, configsOnly, excludeRoots } = parseArgs(argv);
   const { templateRootOf, templateOf } = makeTemplateFinder({ root, roots, webRoots, templateRoots });
+  const excluded = (abs) => excludeRoots.some((d) => abs === d || abs.startsWith(d + path.sep));
   const packs = loadPacks(path.join(HERE, 'packs'));
   const out = { envFiles: new Set() };
   const { pkgDirs, pkgOfRoot, depsOfPkg, packageOf } = packagesOf(roots);
@@ -1678,8 +1682,9 @@ function main(argv) {
   const isTemplateFile = (abs) => templateRootOf(abs) !== null;
   for (const r of roots) {
     const abs = path.resolve(r);
-    collectFiles(abs, found, [pkgOfRoot.get(abs)], isTemplateFile);
+    collectFiles(abs, found, [pkgOfRoot.get(abs)], isTemplateFile, excluded);
   }
+  for (const abs of [...found]) if (excluded(abs)) found.delete(abs);
 
   // A NEXACRO CLIENT (RM56): which roots are one, and the vendor runtime under
   // them that this lane does not read.

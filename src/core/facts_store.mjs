@@ -52,7 +52,10 @@ import { casDir } from './paths.mjs';
 export const FACTS_INDEX_SCHEMA = 'cascade:facts-index:1';
 
 /** The shard kinds this store knows. A shard file is always `<dir>/facts.jsonl`. */
-export const SHARD_KINDS = Object.freeze(['javafacts', 'webfacts', 'sqlstmts', 'lineage', 'catalog']);
+export const SHARD_KINDS = Object.freeze(['javafacts', 'webfacts', 'tsfacts', 'sqlstmts', 'lineage', 'catalog']);
+
+/** The lane an index entry's shard belongs to. An entry written before lanes were recorded is the Java lane's. */
+export const laneOfEntry = (entry) => entry?.lane ?? 'java';
 
 /** The file inside a shard directory that holds the records. */
 export const SHARD_FILE = 'facts.jsonl';
@@ -90,6 +93,13 @@ export function webShardKey({ path, contentSha256, workerVersion }) {
   requireString('contentSha256', contentSha256);
   requireString('workerVersion', workerVersion);
   return digest12({ kind: 'webfacts', path, content: contentSha256, worker: workerVersion });
+}
+
+export function tsShardKey({ path, contentSha256, workerVersion }) {
+  requireString('path', path);
+  requireString('contentSha256', contentSha256);
+  requireString('workerVersion', workerVersion);
+  return digest12({ kind: 'tsfacts', path, content: contentSha256, worker: workerVersion });
 }
 
 /**
@@ -403,6 +413,27 @@ export function assembleWebFacts(shards, configRecords = []) {
   const decorated = flat.map((r, i) => ({ r, k: webRecordSortKey(r) ?? '', i }));
   decorated.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : a.i - b.i));
   return decorated.map((d) => d.r);
+}
+
+/**
+ * A tsfacts stream split into per-file record lists. The worker read each file
+ * alone, so a file's records are the whole of its shard, in the worker's order.
+ * @param {object[]} records
+ * @returns {Map<string,object[]>}
+ */
+export function splitTsFactsByFile(records) {
+  const byFile = new Map();
+  for (const r of records) {
+    if (!r || typeof r !== 'object' || typeof r.file !== 'string' || r.kind === 'sourceFile') continue;
+    if (!byFile.has(r.file)) byFile.set(r.file, []);
+    byFile.get(r.file).push(r);
+  }
+  return byFile;
+}
+
+/** The whole project's tsfacts records again: files in path order, each file's records as the worker wrote them. */
+export function assembleTsFacts(shards) {
+  return [...shards.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).flatMap(([, list]) => list ?? []);
 }
 
 /**

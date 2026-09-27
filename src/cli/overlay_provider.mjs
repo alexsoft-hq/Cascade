@@ -30,7 +30,7 @@ import { INCREMENTAL_ENGINE_VERSION } from '../core/incremental.mjs';
 import { underAny } from '../core/invalidate.mjs';
 import { jpaNamingOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
 import { overlayGraph, classifyDirtyFiles } from '../core/overlay.mjs';
-import { runOverlayLanes, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
+import { assertOverlayable, runOverlayLanes, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
 import { overlaySession } from '../core/overlay_session.mjs';
 import { ownStateDirRel, isOwnStatePath } from '../core/paths.mjs';
 import { normalizeProfile } from '../core/profile.mjs';
@@ -416,6 +416,7 @@ export function indexOfPack(indexFile, pack, stale) {
   if (index.packDigest && pack.digest && index.packDigest !== pack.digest) {
     stale(`the fact index beside the pack belongs to build ${index.packDigest}, and the pack is build ${pack.digest}`);
   }
+  assertOverlayable(index);
   return index;
 }
 

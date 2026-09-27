@@ -1,0 +1,9 @@
+{
+  // The paths every app in this workspace shares.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@fixture/common/*": ["libs/common/src/*"],
+    },
+  },
+}

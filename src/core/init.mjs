@@ -51,6 +51,7 @@ export function lanesOf(discovery) {
   // A frontend with no package manifest is a lane too (RM47): the files are
   // there and the tree says the server serves them.
   if ((discovery.webPackages ?? []).length > 0 || (discovery.webVendoredRoots ?? []).length > 0) lanes.push('web');
+  if ((discovery.nestApps ?? []).length > 0) lanes.push('ts');
   return lanes;
 }
 
@@ -169,8 +170,47 @@ if (webPackages.length > 0 || vendoredRoots.length > 0) {
   }
   frameworkPacks.push(...routerPacks);
 }
+// A NestJS application is the TypeScript lane's (the `nestjs` pack): declared
+// whenever one is found, so that a tree holding two says which to read.
+if ((discovery.nestApps ?? []).length > 0) frameworkPacks.push('nestjs');
 
   return { frameworkPacks, routerPacks, vendoredRoots };
+}
+
+/**
+ * THE TYPESCRIPT BACKEND this project runs: the one NestJS application
+ * discovery found, written as tsBackend.app, with the schema.prisma its
+ * package.json names. A tsBackend.app already in the profile is the user's
+ * word and is kept whole. Two applications found write none: a pack reads one,
+ * and which one is the user's choice, which the analyze run then asks for.
+ */
+function declareTsBackend(discovery, { existing, root, manifestDir, diagnostics }) {
+  const apps = discovery.nestApps ?? [];
+  const declared = isPlainObject(existing?.tsBackend) ? existing.tsBackend : null;
+  if (typeof declared?.app === 'string') {
+    const rootOf = path.resolve(manifestDir, declared.app);
+    if (apps.length > 0 && !apps.some((a) => path.resolve(root, a.root) === rootOf)) {
+      diagnostics.push({ kind: 'TS_BACKEND_KEPT', severity: 'info', path: '.', reason: `the profile already names tsBackend.app ${declared.app}, so it is left alone. This tree bootstraps NestJS in ${apps.map((a) => a.root).join(', ')}` });
+    }
+    return { tsBackend: declared };
+  }
+  if (apps.length === 0) return {};
+  if (apps.length > 1) {
+    diagnostics.push({
+      kind: 'TS_APPS_FOUND', severity: 'warn', path: '.',
+      reason: `${apps.length} NestJS applications bootstrap in this tree (${apps.map((a) => a.bootstrap).join(', ')}), and a pack reads one, so none is written. Set tsBackend.app in the profile to the one to analyze, or analyze each as its own project with --ts-src`,
+    });
+    return {};
+  }
+  const rel = (p) => toPosix(path.relative(manifestDir, path.resolve(root, p)));
+  const [app] = apps;
+  return {
+    tsBackend: {
+      app: rel(app.root),
+      prismaSchema: declared?.prismaSchema ?? (app.prismaSchema ? rel(app.prismaSchema) : null),
+      globalPrefix: declared?.globalPrefix ?? null,
+    },
+  };
 }
 
 /**
@@ -206,9 +246,21 @@ function declareDialect(discovery, { existing }) {
     : { vendor: null, from: 'none', why: 'this tree ships one vendor\'s schema, so there is nothing to choose', at: null };
   // A dialect somebody already wrote down stands, as it does for a tree of several vendors.
   const written = vendors.size <= 1 && KNOWN_DIALECTS.has(existing?.sqlDialects?.main) ? existing.sqlDialects.main : null;
-  const main = chosen.vendor ?? written ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null)
+  const main = chosen.vendor ?? written ?? prismaDialect(discovery)
+    ?? (discovery.ddlDialectHint === 'mysql' ? 'mysql' : null)
     ?? singleVendorDialect(discovery, vendors);
   return { ...chosen, vendors, main };
+}
+
+/**
+ * THE DATABASE A PRISMA SCHEMA NAMES: its datasource `provider`, when every
+ * schema.prisma in the tree names the same one and it is a dialect a profile
+ * may write. A project on Prisma says which database it runs on in so many
+ * words, and its migrations are written in that database's SQL.
+ */
+function prismaDialect(discovery) {
+  const providers = [...new Set((discovery.prismaSchemas ?? []).map((s) => s.provider))];
+  return providers.length === 1 && KNOWN_DIALECTS.has(providers[0]) ? providers[0] : null;
 }
 
 /**
@@ -562,6 +614,7 @@ export function buildProfile(discovery, opts) {
   });
   const { serviceNames, gatewayRoutes } = declareServiceIdentity(discovery, { existing, diagnostics });
   const { mappers } = declareMappers(discovery, { existing, dialect, root, manifestDir, diagnostics });
+  const tsBackend = declareTsBackend(discovery, { existing, root, manifestDir, diagnostics });
 
 
   const profile = normalizeProfile({
@@ -576,6 +629,7 @@ export function buildProfile(discovery, opts) {
     ...(Object.keys(gatewayRoutes).length > 0 ? { gatewayRoutes } : {}),
     ...(openapiDocuments.length > 0 ? { openapi: { documents: openapiDocuments } } : {}),
     ...mappers,
+    ...tsBackend,
     catalog,
   });
   validateProfile(profile);

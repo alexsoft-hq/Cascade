@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleJavaFacts, createFactsStore, nodeFactsIo } from '../core/facts_store.mjs';
+import { assembleJavaFacts, createFactsStore, laneOfEntry, nodeFactsIo } from '../core/facts_store.mjs';
 import { readIndex } from './overlay_provider.mjs';
 
 export class CachedFactsError extends Error {}
@@ -18,7 +18,7 @@ export function cachedJavaFacts(packDir) {
   const idx = readIndex(path.join(packDir, 'facts-index.json'), refuse);
   const store = createFactsStore({ io: nodeFactsIo(fs), projectId: idx.project, env: process.env });
   const shards = Object.values(idx.files ?? {})
-    .filter((entry) => entry?.lane !== 'web')
+    .filter((entry) => laneOfEntry(entry) === 'java')
     .map((entry) => store.read('javafacts', entry.shardKey, entry).records);
   return assembleJavaFacts(shards);
 }

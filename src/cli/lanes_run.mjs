@@ -21,6 +21,7 @@ import { addRuntimeFacts } from '../adapters/runtime_bridge.mjs';
 import { addOpenApiRoutes } from '../adapters/openapi_bridge.mjs';
 import { addJpaFacts } from '../adapters/jpa_bridge.mjs';
 import { addMybatisPlusFacts } from '../adapters/mp_bridge.mjs';
+import { addTsFacts } from '../adapters/ts_bridge.mjs';
 import { routerDependencyOf } from '../core/discover.mjs';
 import { ENGINE_ROOT, manifestAt } from './env.mjs';
 
@@ -30,7 +31,7 @@ import { ENGINE_ROOT, manifestAt } from './env.mjs';
 // handed to the core assembler (src/core/assemble.mjs). `analyze` and the
 // working-tree overlay both take this object, which is also what stops the two
 // from assembling a graph by two different routes. A test wires fakes instead.
-export const LANE_BRIDGES = Object.freeze({ buildGraphFromSql, addJavaFacts, addJpaFacts, addMybatisPlusFacts, addOpenApiRoutes, addWebFacts, addRuntimeFacts });
+export const LANE_BRIDGES = Object.freeze({ buildGraphFromSql, addJavaFacts, addJpaFacts, addMybatisPlusFacts, addTsFacts, addOpenApiRoutes, addWebFacts, addRuntimeFacts });
 
 // Compile adapters/java/JavaFacts.java into a build cache (only when stale) and
 // run it over the given source roots. Returns parsed cascade:javafacts:1 records.
@@ -97,11 +98,23 @@ export function runWebLane(root, targets, opts = {}) {
   const templates = (opts.templateRoots ?? []).flatMap((t) => ['--template-root', JSON.stringify({
     root: t.root, engine: t.engine, suffix: t.suffix,
   })]);
-  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...templates];
+  const excluded = (opts.excludeRoots ?? []).flatMap((d) => ['--exclude-root', d]);
+  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...templates, ...excluded];
   const out = withTargetList(targets, (list) => execFileSync(process.execPath, [...args, ...list], { maxBuffer: 1 << 28 }));
   return out.toString('utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
+
+/**
+ * The TypeScript backend worker (adapters/ts/tsfacts.mjs) over the given files
+ * or roots, and, with `list`, only the files a run over those roots would read.
+ */
+export function runTsLane(root, targets, { list = false } = {}) {
+  const worker = path.join(ENGINE_ROOT, 'adapters', 'ts', 'tsfacts.mjs');
+  const args = [worker, ...(list ? ['--list'] : []), '--root', root];
+  const out = withTargetList(targets, (targetList) => execFileSync(process.execPath, [...args, ...targetList], { maxBuffer: 1 << 28 }));
+  return out.toString('utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
 
 /** The compiled worker for THIS source, compiling it first if nobody has yet. */
 export function javaWorkerBuildDir(jdk, src) {

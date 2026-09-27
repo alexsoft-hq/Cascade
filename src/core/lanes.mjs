@@ -416,6 +416,40 @@ templateRoots = templateRoots
  * trace. The same rule once more — the flag wins, then the profile — with no
  * framework pack in the way, because none of these is a framework.
  */
+/**
+ * THE TYPESCRIPT BACKEND (the `ts` lane): the flag wins, otherwise the `nestjs`
+ * framework pack lets the profile's `tsBackend.app` in, otherwise nothing runs.
+ * The app root is read from the PROFILE and not from this run's discovery, for
+ * the reason the web roots are: a root decides what is in the pack, and a pack
+ * must not change under an input nobody recorded.
+ *
+ * ONE APPLICATION PER PACK: an endpoint is keyed by its verb and path alone,
+ * so two applications' routes would fold into one. A second root named is
+ * said and left out, never read.
+ */
+function chooseTsLanes(ctx) {
+  const { flags, profile, root, cwd, manifestDir, packs, diagnostics } = ctx;
+  if (flags.noTs) return { tsSrc: [], tsSource: 'none' };
+  const fromFlags = [...new Set((flags.tsSrc ?? []).map((d) => path.resolve(cwd, d)))];
+  if (fromFlags.length > 1) {
+    diagnostics.push({
+      kind: 'TS_ONE_APP', severity: 'warn', key: 'tsBackend',
+      reason: `${fromFlags.length} TypeScript roots were named; a pack reads one application, so only ${fromFlags[0]} is read. Analyze each application as its own project`,
+    });
+  }
+  if (fromFlags.length > 0) return { tsSrc: fromFlags.slice(0, 1), tsSource: 'flag' };
+  if (!packs.includes('nestjs')) return { tsSrc: [], tsSource: 'none' };
+  const app = profile.tsBackend && nonEmpty(profile.tsBackend.app) ? profile.tsBackend.app : null;
+  if (app === null) {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'tsBackend',
+      reason: 'frameworkPacks declares nestjs, but the profile names no tsBackend.app, so there is no TypeScript backend to read. Pass --ts-src to name its root',
+    });
+    return { tsSrc: [], tsSource: 'none' };
+  }
+  return { tsSrc: [path.resolve(manifestDir ?? root, app)], tsSource: 'profile' };
+}
+
 function chooseEvidenceLanes(ctx) {
   const { flags, profile, discovery, root, cwd, manifestDir } = ctx;
 // ---- OpenAPI documents (the declaration layer, RM29) --------------------
@@ -526,6 +560,7 @@ export function selectLanes(input = {}) {
   const chosenWeb = chooseWebLanes(ctx);
   const { webSource, templateRoots, templateSource } = chosenWeb;
   const { openapi, openapiSource, har, harSource, otel, otelSource } = chooseEvidenceLanes(ctx);
+  const { tsSrc, tsSource } = chooseTsLanes(ctx);
 
   // Deterministic order: the pack digest must not depend on the order the flags
   // were typed in (projectPack sorts nodes and edges, but lane RESOLUTION can
@@ -543,6 +578,7 @@ export function selectLanes(input = {}) {
   const lanes = [];
   if (ddls.length > 0 || snapshot || mappers.length > 0) lanes.push('sql');
   if (javaSrc.length > 0) lanes.push('java');
+  if (tsSrc.length > 0) lanes.push('ts');
   if (openapi.length > 0) lanes.push('openapi');
   if (webSrc.length > 0 || templateRoots.length > 0) lanes.push('web');
   // The recordings come LAST: they attach to the screens the web lane built.
@@ -555,7 +591,7 @@ export function selectLanes(input = {}) {
   return {
     // `ddl` is the FIRST of `ddls`, kept because a single-file project is still
     // the common case and every caller that only ever wanted one file reads it.
-    ddl, ddls, snapshot, mappers, javaSrc, webSrc, templateRoots, openapi, har, otel,
+    ddl, ddls, snapshot, mappers, javaSrc, webSrc, templateRoots, openapi, har, otel, tsSrc,
     // How the DDL set was chosen, when discovery chose it: what was picked, what
     // was left out, and why. Null when the user said it themselves.
     ddlChoice,
@@ -568,7 +604,7 @@ export function selectLanes(input = {}) {
     sources: {
       ddl: ddlSource, mappers: mapperSource, javaSrc: javaSource, webSrc: webSource,
       openapi: openapiSource, har: harSource, otel: otelSource,
-      templateRoots: templateSource,
+      templateRoots: templateSource, tsSrc: tsSource,
     },
     excludedTestRoots,
     // The mapper XML files this run READS PAST: the other vendors' copies of a
@@ -577,6 +613,12 @@ export function selectLanes(input = {}) {
     lanes, diagnostics,
   };
 }
+
+/**
+ * Whether this run read any statement: mapper SQL, or a Prisma call the
+ * TypeScript lane read, whose schema.prisma names every column it sends.
+ */
+const statementsRead = (ran) => ran.statements === true || (ran.ts?.prisma?.statements ?? 0) > 0;
 
 /**
  * Declare what this pack ships, per axis (SPEC §10.4). Every axis is present in
@@ -595,7 +637,7 @@ export function selectLanes(input = {}) {
  *                DEGRADED when it ran without a declared naming strategy, because
  *                every table/column name the mapping did not spell out was then
  *                DERIVED and is graded HEURISTIC.
- * - `code`       endpoints / symbols / call chains (the Java lane)
+ * - `code`       endpoints / symbols / call chains (the Java lane, or the TypeScript backend lane)
  * - `web`        what the frontend does: the call sites it makes and the routes
  *                it declares. DEGRADED whenever the lane ran, because this
  *                engine version RECORDS those facts and attaches none of them to
@@ -610,13 +652,14 @@ export function selectLanes(input = {}) {
  *          jpa?:{entities:number, repositories:number, namingStrategyDeclared:boolean}|null,
  *          mybatisPlus?:{entities:number, statements:number, namingStrategyDeclared:boolean}|null,
  *          web?:{files:number, parseErrors:number, calls:number, callsWithUrl:number, routes:number}|null,
- *          openapi?:{paths:number, documents:object[]}|null}} ran
+ *          openapi?:{paths:number, documents:object[]}|null,
+ *          ts?:{prisma?:{statements:number}|null}|null}} ran
  * @param {{screenAxisRequested?:boolean, screenAxisReason?:string}} [opts]
  * @returns {Object} axis name -> {status, reason, notes?}
  */
 export function declareAxes(ran, opts = {}) {
   const hasCatalog = ran.ddl === true;
-  const hasStatements = ran.statements === true;
+  const hasStatements = statementsRead(ran);
   const hasCode = ran.code === true;
   const jpa = ran.jpa && typeof ran.jpa === 'object' ? ran.jpa : null;
   const jpaStatements = jpa ? (jpa.statements ?? 0) : 0;

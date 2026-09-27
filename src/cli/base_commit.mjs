@@ -153,10 +153,10 @@ function commitOf(projectRoot, rev, die) {
 export function replayFlags(invocation, { projectRoot, repoRoot, worktreeRoot }, outside) {
   const where = (p) => moveIntoWorktree(path.isAbsolute(p) ? p : path.join(projectRoot, p), { repoRoot, worktreeRoot }, outside);
   const argv = [];
-  for (const [key, flag] of [['ddl', '--ddl'], ['mappers', '--mappers'], ['javaSrc', '--java-src'], ['webSrc', '--web-src'], ['openapi', '--openapi'], ['har', '--har'], ['otel', '--otel']]) {
+  for (const [key, flag] of [['ddl', '--ddl'], ['mappers', '--mappers'], ['javaSrc', '--java-src'], ['webSrc', '--web-src'], ['tsSrc', '--ts-src'], ['openapi', '--openapi'], ['har', '--har'], ['otel', '--otel']]) {
     for (const p of invocation[key] ?? []) argv.push(flag, where(p));
   }
-  for (const [key, flag] of [['noDdl', '--no-ddl'], ['noMappers', '--no-mappers'], ['noJava', '--no-java'], ['noWeb', '--no-web'], ['noOpenapi', '--no-openapi']]) {
+  for (const [key, flag] of [['noDdl', '--no-ddl'], ['noMappers', '--no-mappers'], ['noJava', '--no-java'], ['noWeb', '--no-web'], ['noOpenapi', '--no-openapi'], ['noTs', '--no-ts']]) {
     if (invocation[key]) argv.push(flag);
   }
   return argv;

@@ -9,9 +9,11 @@
 // is the property that lets the census be read as evidence.
 
 import path from 'node:path';
+import { laneOfEntry } from '../../../core/facts_store.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { cacheDir } from '../../../core/paths.mjs';
 import { listOfFive } from '../../output.mjs';
+import { sha256File } from '../../state.mjs';
 
 /** A path the census prints, relative and spelled with `/` on every platform, the way a pack records it. */
 const relPosix = (from, to) => path.relative(from, to).split(path.sep).join('/');
@@ -49,6 +51,7 @@ export function sayLaneLine({ sel, snapshot, snapshotProvenance, ddls, mappers, 
     + `mappers ${mappers.length} dir(s) (${sel.sources.mappers}); `
     + `java-src ${javaSrc.length} root(s) (${sel.sources.javaSrc}${excluded}); `
     + `web ${webSrc.length > 0 ? `${webSrc.map((d) => relPosix(root, d) || '.').join(', ')} (${sel.sources.webSrc})` : 'none'}; `
+    + `${(sel.tsSrc ?? []).length > 0 ? `ts ${sel.tsSrc.map((d) => relPosix(root, d) || '.').join(', ')} (${sel.sources.tsSrc}); ` : ''}`
     + `openapi ${openapiFiles.length > 0 ? `${openapiFiles.map((f) => relPosix(root, f)).join(', ')} (${sel.sources.openapi})` : 'none'}; `
     + `har ${harFiles.length > 0 ? `${harFiles.map((f) => relPosix(root, f)).join(', ')} (${sel.sources.har})` : 'none'}; `
     + `otel ${otelFiles.length > 0 ? `${otelFiles.map((f) => relPosix(root, f)).join(', ')} (${sel.sources.otel})` : 'none'}\n`);
@@ -339,6 +342,32 @@ function clientScreensPhrase(pg) {
   return `${n('nexacro') > 0 ? ` and ${n('nexacro')} Nexacro form(s)` : ''}${n('websquare') > 0 ? ` and ${n('websquare')} WebSquare page(s)` : ''}`;
 }
 
+/**
+ * THE TYPESCRIPT LANE'S LINE, and the record the pack keeps of it: which
+ * application was read, with which tsconfig and schema.prisma (by hash, so a
+ * reader can tell which schema the tables were declared by), how many routes
+ * the registered controllers serve, how many calls and Prisma calls were
+ * linked, and every controller no module registers.
+ */
+export function sayTsLane(ts, opts, { root, sel, relOf }) {
+  const p = ts.prisma;
+  const unregistered = ts.unregisteredControllers;
+  const controllers = unregistered === null
+    ? `${ts.controllers} controller(s), none of them served because the application could not be read (see tsBackend below)`
+    : `${ts.controllers - unregistered.length} registered controller(s)${unregistered.length > 0 ? ` (${unregistered.length} not registered by any module)` : ''}`;
+  process.stderr.write(`TypeScript lane: ${ts.files} file(s), ${ts.routes} route(s) from ${controllers}, `
+    + `${ts.calls.resolved} call(s) linked, ${ts.calls.external} into packages, ${ts.calls.unresolved} on a receiver not typed here`
+    + `${p ? `; Prisma: ${p.statements} statement(s) from ${p.clientCalls} client call(s)${p.unknownModel + p.unknownOperation > 0 ? `, ${p.unknownModel} on a model and ${p.unknownOperation} with an operation this engine does not know` : ''}` : '; no schema.prisma'}\n`);
+  const schemaAbs = opts.prismaSchemaFile ? path.resolve(root, opts.prismaSchemaFile) : null;
+  return {
+    app: relOf(sel.tsSrc[0]) || '.',
+    tsconfig: opts.tsconfigFile,
+    prismaSchema: schemaAbs ? { path: opts.prismaSchemaFile, sha256: sha256File(schemaAbs), provider: opts.prisma.schema.provider } : null,
+    files: ts.files, symbols: ts.symbols, routes: ts.routes, controllers: ts.controllers,
+    unregisteredControllers: ts.unregisteredControllers, calls: ts.calls, prisma: p,
+  };
+}
+
 export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   let laneStats = jstats;
   sayJavaLane(jstats);
@@ -567,17 +596,21 @@ export function sayResult({ writeDir, writeIndexFile, pack, routesIndex, axes, l
   const webLine = webSrc.length === 0 ? '' : (st.mode === MODE_COLD
     ? `, read ${st.reparsedWeb} web file(s)`
     : `, reparsed ${st.reparsedWeb} web file(s) (${st.reusedWeb} reused, ${st.droppedWeb} dropped)`);
+  const tsLine = st.reparsedTs === undefined ? '' : (st.mode === MODE_COLD
+    ? `, read ${st.reparsedTs} TypeScript file(s)`
+    : `, reparsed ${st.reparsedTs} TypeScript file(s) (${st.reusedTs} reused)`);
   process.stderr.write(st.mode === MODE_COLD
-    ? `cold (${st.reason}): parsed ${st.reparsedJava} java file(s)${webLine}, ${st.recomputedLineage} lineage shard(s) over ${st.statements} statement(s), pack digest ${pack.digest}\n`
-    : `incremental: reparsed ${st.reparsedJava} java files (${st.reusedJava} reused, ${st.droppedJava} dropped)${webLine}, `
+    ? `cold (${st.reason}): parsed ${st.reparsedJava} java file(s)${webLine}${tsLine}, ${st.recomputedLineage} lineage shard(s) over ${st.statements} statement(s), pack digest ${pack.digest}\n`
+    : `incremental: reparsed ${st.reparsedJava} java files (${st.reusedJava} reused, ${st.droppedJava} dropped)${webLine}${tsLine}, `
       + `lineage recomputed ${st.recomputedLineage} statements (${st.reusedLineage} reused), `
       + `mapper statements ${mappers.length === 0 ? 'not run' : st.statementsReused ? 'reused' : 'recomputed'}, `
       + `catalog ${ddls.length === 0 ? 'not run' : st.catalogReused ? 'reused' : 'recomputed'}, `
       + `pack digest ${pack.digest}\n`);
   for (const n of plan.notes ?? []) process.stderr.write(`  note: ${n}\n`);
   const shardLanes = Object.values(result.index.files);
-  process.stderr.write(`facts index ${writeIndexFile}: ${shardLanes.filter((e) => e.lane !== 'web').length} java shard(s), `
+  process.stderr.write(`facts index ${writeIndexFile}: ${shardLanes.filter((e) => laneOfEntry(e) === 'java').length} java shard(s), `
     + `${shardLanes.filter((e) => e.lane === 'web').length} web shard(s), `
+    + `${shardLanes.some((e) => e.lane === 'ts') ? `${shardLanes.filter((e) => e.lane === 'ts').length} TypeScript shard(s), ` : ''}`
     + `${Object.keys(result.index.statements).length} lineage shard(s)${projectId ? ` in ${cacheDir(projectId, process.env)}/cas` : ' (IN MEMORY: not reusable, see above)'}\n`);
   if (base?.dirty) {
     process.stderr.write(`base ${base.commit.slice(0, 12)} + ${base.dirtyFiles.length} DIRTY analysis input(s): this pack describes the WORKING TREE, not that commit: `

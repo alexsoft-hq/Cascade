@@ -154,6 +154,13 @@ template roots 1 (profile): src/main/resources/templates freemarker .ftl
 
 See [the web lane](setup/web-lane.md#server-rendered-pages).
 
+A **NestJS application** is found by its bootstrap: a TypeScript file under a
+package that depends on `@nestjs/core` and calls `NestFactory.create`. The one
+it finds goes to `profile.tsBackend.app` with the `nestjs` framework pack, and
+the database its `schema.prisma` names (`provider = "postgresql"`) to
+`profile.sqlDialects.main`. Two applications write none, and say which it
+found: a pack reads one. See [the TypeScript lane](setup/ts-lane.md).
+
 - `--root <dir>` — the tree to discover (default: the current directory).
 - `--project <id>` — the id to register it under (default: derived from the
   directory name).
@@ -238,6 +245,7 @@ cascade analyze [--root <repo>] [--out <dir>] [--profile <f>]
                 [--mappers <dir>... | --no-mappers]
                 [--java-src <dir>... | --no-java]
                 [--web-src <dir>... | --no-web]
+                [--ts-src <dir> | --no-ts]
                 [--openapi <file>... | --no-openapi]
                 [--har <file>...]
 ```
@@ -304,6 +312,16 @@ both apply; otherwise it is cold **and says why**.
   are cached per file, so a second run re-reads only what changed.
   See [the web lane setup page](setup/web-lane.md).
 - `--no-web` — do not read the frontend even when the profile declares it.
+- `--ts-src <dir>` — the root of a NestJS application. The TypeScript lane reads
+  the routes the controllers its modules register serve (under the global
+  prefix and URI version the bootstrap sets), the calls between its methods,
+  and every Prisma call as a statement of its own, against the application's
+  `schema.prisma`. One application per pack: a second root is named and left
+  out. An unflagged run reads the profile's `tsBackend.app` when the profile
+  declares the `nestjs` framework pack, which `cascade init` writes when it
+  finds one application. A frontend root around it leaves its files to this
+  lane. See [the TypeScript lane setup page](setup/ts-lane.md).
+- `--no-ts` — do not read the TypeScript backend even when the profile declares it.
 - `--openapi <file>` — an OpenAPI 3 or Swagger 2 document, JSON or YAML; repeat
   for several. Every `(method, path)` it declares becomes an endpoint with the
   same id the Java lane would give it: a route the code also serves is

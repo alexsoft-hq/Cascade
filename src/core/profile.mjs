@@ -54,6 +54,11 @@ export const PROFILE_DEFAULTS = deepFreeze({
   screenAxis: { enabled: null, codeRegex: null, pathRule: null, nameSource: 'none' },
   moduleAttribution: { packageDepth: null, codeLength: null },
   frameworkPacks: [],
+  // The TypeScript backend this project runs (the `ts` lane): its root, the
+  // schema.prisma it reads when that is not at `prisma/schema.prisma` above the
+  // root, and the global prefix it is deployed under when the bootstrap reads
+  // that from configuration. All manifest-relative; null is "not declared".
+  tsBackend: { app: null, prismaSchema: null, globalPrefix: null },
   modelPacks: [],
   jpa: { namingStrategy: null },
   mybatisPlus: {
@@ -101,7 +106,7 @@ const CATALOG_SOURCES = Object.freeze(['jdbc', 'file', 'none']);
  * else a profile declares is reported as UNSUPPORTED_TECHNOLOGY and skipped —
  * never silently ignored (§7.3).
  */
-export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'next-pages', 'nexacro', 'websquare']);
+export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'next-pages', 'nexacro', 'websquare', 'nestjs']);
 
 /**
  * The physical naming strategies `jpa.namingStrategy` may name (SPEC §18.2).
@@ -250,7 +255,19 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   frameworkPacks: {
     status: 'consumed', where: 'src/core/lanes.mjs',
-    note: 'drives lane selection when analyze runs without lane flags: mybatis-xml → the SQL lane, spring-mvc → the Java lane, jpa → the JPA bridge over the Java lane\'s entity/repository facts, web → the frontend fact lane over the roots discovery found. vue-router and react-router name the router declaration packs the web worker reads (adapters/web/packs), and are declared for the record: the worker loads every pack in that directory whichever ones the profile names',
+    note: 'drives lane selection when analyze runs without lane flags: mybatis-xml → the SQL lane, spring-mvc → the Java lane, jpa → the JPA bridge over the Java lane\'s entity/repository facts, web → the frontend fact lane over the roots discovery found, nestjs → the TypeScript backend lane over tsBackend.app (with its Prisma calls when the application has a schema.prisma). vue-router and react-router name the router declaration packs the web worker reads (adapters/web/packs), and are declared for the record: the worker loads every pack in that directory whichever ones the profile names',
+  },
+  'tsBackend.app': {
+    status: 'consumed', where: 'src/core/lanes.mjs',
+    note: 'the root of the NestJS application the TypeScript lane reads when frameworkPacks declares nestjs, manifest-relative. One application per pack: an endpoint is keyed by its verb and path alone. `cascade init` writes the root of the one application it finds (a package depending on @nestjs/core whose source calls NestFactory.create); --ts-src still wins for one run',
+  },
+  'tsBackend.prismaSchema': {
+    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    note: 'the schema.prisma the application\'s Prisma calls are read against, manifest-relative. Null finds `prisma/schema.prisma` at or above the application root, which is where Prisma itself looks first; a declared file that is not there is a warning, and no Prisma call is read. The schema is read again on every run and recorded by hash on laneStats.ts',
+  },
+  'tsBackend.globalPrefix': {
+    status: 'consumed', where: 'src/adapters/ts/nest_routes.mjs',
+    note: 'the global prefix the application is deployed under, used INSTEAD of what the bootstrap passes to setGlobalPrefix. It is for a bootstrap that reads the prefix from configuration (`configService.get(\'app.apiPrefix\')`), where the source names a setting and not a value, and no route is made until it is declared. A declared prefix that differs from a literal the bootstrap sets is used and said',
   },
   'jpa.namingStrategy': {
     status: 'consumed', where: 'src/adapters/jpa_bridge.mjs',
@@ -626,6 +643,10 @@ function sayAboutRecordedKeys(profile, add) {
   // A web root with no web lane is a root nothing reads. Said out loud for the
   // same reason as the two above: the declaration is right and it changes
   // nothing, and only this line would tell you.
+  if (isObject(profile.tsBackend) && typeof profile.tsBackend.app === 'string' && !packsDeclared.includes('nestjs')) {
+    add('RECORDED_NOT_ACTED', 'info', 'tsBackend.app',
+      `tsBackend.app names ${profile.tsBackend.app} and frameworkPacks does not declare nestjs, so an unflagged run reads no TypeScript backend. Add "nestjs" to frameworkPacks, or pass --ts-src`);
+  }
   if (Array.isArray(profile.webRoots) && profile.webRoots.length > 0 && !packsDeclared.includes('web')) {
     add('RECORDED_NOT_ACTED', 'info', 'webRoots',
       `webRoots names ${profile.webRoots.length} frontend root(s) and frameworkPacks does not declare web, so an unflagged run reads none of them. Add "web" to frameworkPacks, or pass --web-src`);
@@ -935,6 +956,17 @@ if (isObject(obj.screenAxis)) {
     } catch (e) {
       throw new ProfileError(`profile.screenAxis.codeRegex is not a regular expression this engine can compile: ${e.message}`);
     }
+  }
+}
+
+if (isObject(obj.tsBackend)) {
+  for (const k of ['app', 'prismaSchema']) {
+    if (k in obj.tsBackend && obj.tsBackend[k] !== null && !(typeof obj.tsBackend[k] === 'string' && obj.tsBackend[k] !== '')) {
+      throw new ProfileError(`profile.tsBackend.${k} must be null or a non-empty path, relative to this profile's directory`);
+    }
+  }
+  if ('globalPrefix' in obj.tsBackend && obj.tsBackend.globalPrefix !== null && typeof obj.tsBackend.globalPrefix !== 'string') {
+    throw new ProfileError('profile.tsBackend.globalPrefix must be null or the prefix as setGlobalPrefix takes it ("" for none)');
   }
 }
 

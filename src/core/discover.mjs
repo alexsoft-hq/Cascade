@@ -25,6 +25,7 @@ import {
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
 import { builtinRegistry, RuleError } from './rules/registry.mjs';
+import { nestAppsOf, noteNestPackage, noteTypeScriptBackendFile, prismaProvidersOf } from './discover_nest.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
 // vendored `node_modules` cannot dominate the counts or the file cap.
@@ -637,6 +638,8 @@ export function classifyDdlFile(relPath, text) {
  *   webSourceRoots:string[],
  *   webPackages:{path:string, root:string, framework:string, router:(string|null), http:string[]}[],
  *   webVendoredRoots:{root:string, files:number, routerPacks:string[]}[],
+ *   nestApps:{root:string, bootstrap:string, package:string, prismaSchema:(string|null)}[],
+ *   prismaSchemas:{path:string, provider:(string|null)}[],
  *   openapiDocuments:{path:string, version:('3'|'2'|'unknown')}[],
  *   javaSourceRoots:string[],
  *   javaTestRoots:string[],
@@ -1041,6 +1044,7 @@ function classifyPackageManifest(d, f) {
       return true;
     }
     const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
+    noteNestPackage(d, { relFile: rel(absFile), deps, pkg });
     if (FRONTEND_DEPS.some((dep) => Object.prototype.hasOwnProperty.call(deps, dep))) {
       counts.frontendPackageJson += 1;
       if (stats) stats.frontendPackageJson += 1;
@@ -1083,6 +1087,7 @@ function classifyPackageManifest(d, f) {
  * is then still whatever else it is.
  */
 function classifyFile(d, f) {
+  noteTypeScriptBackendFile(d, f);
   if (classifyIndexPage(d, f)) return;
   if (classifyTemplateFile(d, f)) return;
   if (classifyNexacroFile(d, f)) return;
@@ -1364,6 +1369,12 @@ function discoveryCollections() {
   return {
     // One entry per frontend package.json, with what its dependencies declare.
     webPackages: [],
+    // A TYPESCRIPT BACKEND: every package.json depending on @nestjs/core, and
+    // every TypeScript source the walk passed, read after it for the bootstrap
+    // (src/core/discover_nest.mjs).
+    nestPackages: [],
+    tsFiles: [],
+    prismaSchemas: [],
     // A FRONTEND WITH NO PACKAGE MANIFEST (RM47). Every directory that holds a
     // frontend source file with no package.json above it inside its repository,
     // with how many such files it holds; plus every `index.html` beside one, so
@@ -1469,7 +1480,7 @@ function sortedDeclarations(d) {
  * a directory walk's order must not decide which document a run reads first,
  * which DDL file is applied first, or which of two repositories a reader sees.
  */
-function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots }) {
+function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots, nestApps, prismaSchemaProviders }) {
   const {
     counts, diagnostics, packageCounts, mapperDirs, mapperFiles, ibatisConfigs, webPackages,
     viewResolvers, xmlViewResolvers, idGenerators, openapiDocuments, ddlPaths, ddlCandidates,
@@ -1497,6 +1508,11 @@ function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos
     // the suffix the resolver appends. `cascade init` writes these to the
     // profile, where they become the user's to correct, exactly like `webRoots`.
     templateRoots,
+    // THE NESTJS APPLICATIONS (the TypeScript lane), each by the directory of
+    // the file that bootstraps it. `cascade init` writes the one it finds.
+    nestApps,
+    // Every schema.prisma, with the database its datasource names.
+    prismaSchemas: prismaSchemaProviders,
     // …and what the configuration actually said, so a reader can see whether a
     // root came from a declared prefix or from where the files sit.
     viewResolvers: [...viewResolvers, ...xmlViewResolvers]
@@ -1606,30 +1622,6 @@ export function discover(root, io = {}) {
   // repoRel -> per-repo tallies; the walk attributes each file to the deepest
   const repoStats = new Map();
   const collected = discoveryCollections();
-  const {
-    webPackages,
-    looseWebFiles,
-    looseWebPaths,
-    looseIndexPages,
-    templateDirs,
-    templateSample,
-    nexacroForms,
-    nexacroApps, websquarePages,
-    viewResolvers,
-    xmlViewResolvers, idGenerators,
-    openapiDocuments,
-    ddlPaths,
-    ddlCandidates,
-    connectionCandidates,
-    dbTypeDeclarations,
-    serviceNames,
-    gatewayRoutes,
-    externalConfigImports,
-    mapperDirs,
-    mapperFiles,
-    ibatisConfigs,
-    packageCounts,
-  } = collected;
 
   const rel = (abs) => {
     const r = path.relative(root, abs);
@@ -1648,37 +1640,7 @@ export function discover(root, io = {}) {
 
   // The discovery STATE the classifiers write into. One object rather than
   // twenty closures, so a classifier can be read — and tested — on its own.
-  const d = {
-    addRoot,
-    connectionCandidates,
-    counts,
-    dbTypeDeclarations,
-    ddlCandidates,
-    ddlDialectHint: null,
-    ddlPaths,
-    diagnostics,
-    externalConfigImports,
-    gatewayRoutes,
-    javaWithPackage: 0,
-    looseIndexPages,
-    looseWebFiles,
-    looseWebPaths,
-    mapperDirs,
-    mapperFiles,
-    ibatisConfigs,
-    openapiDocuments,
-    packageCounts,
-    read,
-    root,
-    serviceNames,
-    nexacroApps, websquarePages,
-    nexacroForms,
-    templateDirs,
-    templateSample,
-    viewResolvers,
-    webPackages,
-    xmlViewResolvers, idGenerators,
-  };
+  const d = { ...collected, addRoot, counts, ddlDialectHint: null, diagnostics, javaWithPackage: 0, read, root };
   const classify = (absFile, name, repoKey, dirEntries, inPackage) => {
     classifyFile(d, {
       absFile,
@@ -1697,11 +1659,13 @@ export function discover(root, io = {}) {
   const webVendoredRoots = [...looseWebRoots(d), ...nexacroRoots(d), ...webSquareRoots(d)]
     .sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
   const templateRoots = templateRootsFrom(d);
+  const nestApps = nestAppsOf(d);
+  const prismaSchemaProviders = prismaProvidersOf(d);
 
   const repos = [...repoStats.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   return discoveryAnswer(root, d, {
-    w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots,
+    w, maxFiles, javaRoots, javaTestRoots, repos, webVendoredRoots, templateRoots, nestApps, prismaSchemaProviders,
   });
 }
 

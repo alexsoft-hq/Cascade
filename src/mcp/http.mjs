@@ -257,6 +257,7 @@ const ERROR_STATUS = Object.freeze({
   ambiguous: 409,
   'pack-unreadable': 503,
   'overlay-stale': 409,
+  'ts-not-overlaid': 409, // the base-only answer is still there to ask for
   'db-connect-error': 503,
   'contract-violation': 500,
 });

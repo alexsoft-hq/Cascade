@@ -27,9 +27,10 @@
 import {
   javaShardKey, webShardKey, sqlStmtsShardKey, lineageShardKey, catalogShardKey, catalogDigestOf,
   splitJavaFactsByFile, assembleJavaFacts,
-  splitWebFactsByFile, assembleWebFacts,
-  emptyIndex, FactsStoreError,
+  splitWebFactsByFile, assembleWebFacts, tsShardKey, splitTsFactsByFile, assembleTsFacts,
+  emptyIndex, FactsStoreError, laneOfEntry,
 } from './facts_store.mjs';
+import { TS_WORKER_VERSION } from './worker_versions.mjs';
 import { withTypeRoles } from './java_roles.mjs';
 import { MODE_COLD } from './invalidate.mjs';
 
@@ -58,7 +59,7 @@ function javaFactsWithShards({ plan, index, store, selection, run, hash, abs, wo
   if (!cold && index) {
     for (const [file, entry] of Object.entries(index.files ?? {})) {
       // One index holds both lanes' shards; each lane reads its own.
-      if ((entry?.lane ?? 'java') !== 'java') continue;
+      if (laneOfEntry(entry) !== 'java') continue;
       if (dropped.has(file) || reparse.has(file)) continue;
       const hit = tryRead(store, 'javafacts', entry.shardKey, entry, diag, `javafacts ${file}`);
       if (hit) {
@@ -192,6 +193,45 @@ function webFactsWithShards({ plan, index, store, selection, run, hash, abs, wor
 }
 
 /**
+ * 6. THE TYPESCRIPT BACKEND FACTS, reused the web lane's way: a shard is read
+ * back when the key of the file's CURRENT bytes is the key the index recorded,
+ * and every other file the worker lists is read again. The worker reads each
+ * file alone, so a shard holds nothing about another file, and tsconfig and
+ * schema.prisma, which every file's meaning depends on, are read again by the
+ * bridge on every run rather than cached.
+ */
+function tsFactsWithShards({ index, store, selection, run, hash, abs, cold, diag, newIndex, stats }) {
+  const roots = selection.tsRootsAbs ?? [];
+  if (roots.length === 0) return [];
+  const listed = run.tsList(roots);
+  const keyOf = (file) => tsShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: TS_WORKER_VERSION });
+  const shards = new Map();
+  const reparse = [];
+  for (const file of listed) {
+    const entry = !cold && index ? index.files?.[file] : null;
+    const key = keyOf(file);
+    const hit = entry && entry.lane === 'ts' && entry.shardKey === key ? tryRead(store, 'tsfacts', key, entry, diag, `tsfacts ${file}`) : null;
+    if (hit) {
+      shards.set(file, hit.records);
+      newIndex.files[file] = { lane: 'ts', shardKey: key, sha256: hit.sha256, lines: hit.lines };
+    } else reparse.push(file);
+  }
+  stats.reusedTs = shards.size;
+  if (reparse.length > 0) {
+    const byFile = splitTsFactsByFile(run.ts(reparse.map((f) => abs(f))));
+    for (const file of reparse) {
+      const records = byFile.get(file) ?? [];
+      const key = keyOf(file);
+      const w = store.write('tsfacts', key, records);
+      shards.set(file, records);
+      newIndex.files[file] = { lane: 'ts', shardKey: key, sha256: w.sha256, lines: w.lines };
+    }
+  }
+  stats.reparsedTs = reparse.length;
+  return assembleTsFacts(shards);
+}
+
+/**
  * Run the lanes, reusing every shard the plan did not invalidate.
  *
  * @param {Object} a
@@ -253,6 +293,9 @@ export function runLanesWithShards(a) {
       ddls: selection.ddls ?? (selection.ddl ? [selection.ddl] : []),
       sqlArgs: selection.sqlArgs ?? [],
       packagePrefixes: selection.packagePrefixes ?? [],
+      // Only when there is one, so the index of a project without a TypeScript
+      // backend is the one it always was.
+      ...((selection.tsRoots ?? []).length > 0 ? { tsRoots: selection.tsRoots } : {}),
     },
     base,
   });
@@ -271,8 +314,9 @@ export function runLanesWithShards(a) {
   const laneArgs = { plan, index, store, selection, run, hash, abs, workers, cold, diag, newIndex, stats };
   const javaFacts = javaFactsWithShards(laneArgs);
   const webFacts = webFactsWithShards(laneArgs);
+  const tsFacts = tsFactsWithShards(laneArgs);
 
-  return { catalogRecords, lineageRecords, statementRecords, javaFacts, webFacts, index: newIndex, stats };
+  return { catalogRecords, lineageRecords, statementRecords, javaFacts, webFacts, tsFacts, index: newIndex, stats };
 }
 
 /**

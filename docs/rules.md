@@ -70,6 +70,9 @@ stop the run: which one wins is never decided by the order the packs load in.
 |---|---|---|---|
 | `java.type-role` | after the Java worker's records are assembled, before the lanes are chosen | the supertypes a type's own extends and implements clauses name, and their type arguments | which role a type plays (a MyBatis-Plus mapper or service) and which of its type arguments is the entity or the mapper. Only the roots of a chain are matched: a type that reaches one through a type of the project's own is found by the bridge that reads the role |
 | `sql.dialect-path` | while discovering the tree | a file's path | which database a DDL or mapper file is for, from a whole word of its path. The first entry of a rule whose word is in the path wins, so a rule lists first the entry it prefers |
+| `ts.route-decorator` | in the TypeScript lane's bridge | a class's decorators and its methods' decorators, as the TypeScript worker recorded them | which class is a controller and which method a route, with its path and versions; which class is a module, with the modules it imports and the controllers it lists; and the names the bootstrap calls (`NestFactory.create`, `setGlobalPrefix`, `enableVersioning`, `RouterModule.register`). Whether a controller is served is the bridge's question, read from the module graph |
+| `ts.type-role` | in the TypeScript lane's bridge | the package and the exported name a type is imported from | which role a type plays (a Prisma client). A project class that extends it plays it too |
+| `prisma.operation` | in the TypeScript lane's bridge | a Prisma call's operation and its argument, key by key | the statement it sends (select, insert, update, upsert, delete), the fields it reads and writes, whether it returns the whole row, and what it cannot follow: a relation, a key it does not know, an argument held in a variable |
 
 ### Supertypes written in full
 
@@ -115,8 +118,21 @@ project's source cannot show that relation, because it is in a jar. A
 - When a rule for the framework's own type and a library rule both give a type
   the same answer, the type has one role, as sure as the surer rule.
 
+### The TypeScript backend's kinds
+
+The NestJS and Prisma packs (`nestjs.json`, `prisma.json`) hold what the
+TypeScript lane knows about those frameworks: the decorator names, the bootstrap
+calls, the client types, and the role of each key a Prisma call takes (`where`
+filters, `select` projects, `data` writes, `include` reaches relations). A
+decorator a project renames, or an operation a newer Prisma adds, is an edit of
+a pack, with an example that holds it. The `nestjs-prisma` rule is a library's
+type like the one above: it names the declaration it relies on and where to
+check it, and its links are graded SOUND_SET. See
+[the TypeScript lane setup page](setup/ts-lane.md).
+
 A kind whose examples are source code runs them through the real worker: the
 `java.type-role` examples are Java, parsed by the same Java worker an analysis
-uses, so they need a JDK. Without one they are reported as not run, and
+uses, so they need a JDK. The TypeScript kinds' examples are read by the
+TypeScript worker in process, so they need nothing beyond Node. Without one they are reported as not run, and
 `cascade rules test` exits 2 rather than 0: an example nobody ran is not one
 that holds.

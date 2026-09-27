@@ -51,7 +51,7 @@ export const USAGE = Object.freeze({
   analyze:
     '  cascade analyze [--root <repo>] [--out <dir>] [--profile <f>] [--cold | --incremental] [--accept-baseline]\n'
     + '                  [--ddl <schema.sql|glob>... | --no-ddl] [--mappers <dir>... | --no-mappers] [--java-src <dir>... | --no-java]\n'
-    + '                  [--web-src <dir>... | --no-web] [--openapi <file>... | --no-openapi]\n'
+    + '                  [--web-src <dir>... | --no-web] [--ts-src <dir> | --no-ts] [--openapi <file>... | --no-openapi]\n'
     + '                  [--har <file>...] [--otel <file>...]\n'
     + '      (with no lane flag the inputs come from the project manifest + profile + discovery;\n'
     + '       --no-<lane> switches a lane off even then. An unflagged run reads MAIN java sources\n'
@@ -59,6 +59,9 @@ export const USAGE = Object.freeze({
     + '      (--web-src reads a frontend source root: the web lane traces each HTTP call to the client\n'
     + '       that sends it and attaches it to the route this pack serves, as a graded CALLS_HTTP edge.\n'
     + '       The `web` axis says what had to be guessed. See docs/setup/web-lane.md)\n'
+    + '      (--ts-src reads a NestJS application root: the routes its registered controllers serve, the\n'
+    + '       calls between its methods, and each Prisma call as a statement of its own. One application\n'
+    + '       per pack; a frontend root around it leaves it to this lane. See docs/setup/ts-lane.md)\n'
     + '      (--openapi reads an OpenAPI 3 / Swagger 2 document, JSON or YAML: every route it declares\n'
     + '       becomes an endpoint, one the code also serves is corroborated, and the routes the two\n'
     + '       disagree about are reported as drift. Repeatable. See docs/setup/web-lane.md)\n'

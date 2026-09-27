@@ -100,9 +100,12 @@ export function laneFlags({ optAll, flag, die }) {
     // ran. Same posture as --har, and for the same reason: no discovery, and
     // nothing it writes is ever walked.
     otel: optAll('otel'),
+    // A TypeScript backend's application root (a NestJS app), read by the ts lane.
+    tsSrc: optAll('ts-src'), noTs: flag('no-ts'),
   };
-  for (const [off, on, name] of [[flags.noDdl, flags.ddl.length, 'ddl'], [flags.noMappers, flags.mappers.length, 'mappers'], [flags.noJava, flags.javaSrc.length, 'java-src'], [flags.noWeb, flags.webSrc.length, 'web-src'], [flags.noOpenapi, flags.openapi.length, 'openapi']]) {
-    if (off && on) die(`--no-${name === 'java-src' ? 'java' : name === 'web-src' ? 'web' : name} and --${name} contradict each other. Pass one or the other`);
+  const offName = { 'java-src': 'java', 'web-src': 'web', 'ts-src': 'ts' };
+  for (const [off, on, name] of [[flags.noDdl, flags.ddl.length, 'ddl'], [flags.noMappers, flags.mappers.length, 'mappers'], [flags.noJava, flags.javaSrc.length, 'java-src'], [flags.noWeb, flags.webSrc.length, 'web-src'], [flags.noOpenapi, flags.openapi.length, 'openapi'], [flags.noTs, flags.tsSrc.length, 'ts-src']]) {
+    if (off && on) die(`--no-${offName[name] ?? name} and --${name} contradict each other. Pass one or the other`);
   }
     return flags;
 }
@@ -121,14 +124,12 @@ export function laneInputs({ die }, { sel, resolved, diagnostics }) {
   const mappers = sel.mappers.map(realPath);
   const javaSrc = sel.javaSrc.map(realPath);
   const webSrc = sel.webSrc.map(realPath);
-  for (const f of sel.openapi) if (!fs.existsSync(f)) die(`--openapi ${f} does not exist`);
+  for (const [flag, paths] of [['openapi', sel.openapi], ['har', sel.har], ['otel', sel.otel], ['ddl', ddls], ['web-src', webSrc], ['ts-src', sel.tsSrc]]) {
+    for (const p of paths) if (!fs.existsSync(p)) die(`--${flag} ${p} does not exist`);
+  }
   const openapiFiles = sel.openapi.map(realPath);
-  for (const f of sel.har) if (!fs.existsSync(f)) die(`--har ${f} does not exist`);
   const harFiles = sel.har.map(realPath);
-  for (const f of sel.otel) if (!fs.existsSync(f)) die(`--otel ${f} does not exist`);
   const otelFiles = sel.otel.map(realPath);
-  for (const f of ddls) if (!fs.existsSync(f)) die(`--ddl ${f} does not exist`);
-  for (const d of webSrc) if (!fs.existsSync(d)) die(`--web-src ${d} does not exist`);
   // §17.4: a structured, actionable error — not "0 tables" three screens later.
   if (snapshot && !fs.existsSync(snapshot)) {
     process.stderr.write(JSON.stringify({
@@ -261,6 +262,9 @@ export function selectionRecord({ rootAbs, javaSrc, mappers, webSrc, sel, ddls, 
     ddls: ddls.length > 0 ? ddls.map(relOf) : snapshot ? [relOf(snapshot)] : [],
     sqlArgs: [...sqlArgs.mybatisArgs, ...sqlArgs.lineageArgs],
     packagePrefixes: [...(profile.packagePrefixes ?? [])].sort(),
+    // The TypeScript backend's roots, only when there is one: a project without
+    // one records the selection it always did.
+    ...((sel.tsSrc ?? []).length > 0 ? { tsRoots: sel.tsSrc.map(relOf).sort() } : {}),
   };
     return selectionRel;
 }
@@ -335,6 +339,7 @@ export function dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untracke
     || (isWebSourceFile(f) && underAny(f, selectionRel.webRoots))
     // A template is an input of the web lane like any frontend source (RM48).
     || selectionRel.templateRoots.some((t) => f.endsWith(t.suffix) && underAny(f, [t.root]))
+    || (f.endsWith('.ts') && underAny(f, selectionRel.tsRoots ?? []))
     || selectionRel.ddls.includes(f);
   const dirtyFiles = [...new Set([
     ...splitZ(gitText(rootAbs, ['diff', '--name-only', '-z', 'HEAD', '--'])).map(toRootRel),
