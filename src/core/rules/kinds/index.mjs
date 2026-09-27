@@ -13,9 +13,15 @@
 // (all of them together, for examples that go through a worker once).
 
 import { javaTypeRole } from './java_type_role.mjs';
+import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
+import { tsRouteDecorator } from './ts_route_decorator.mjs';
+import { tsTypeRole } from './ts_type_role.mjs';
 
 export const KINDS = Object.freeze({
   [javaTypeRole.name]: javaTypeRole,
+  [prismaOperation.name]: prismaOperation,
   [sqlDialectPath.name]: sqlDialectPath,
+  [tsRouteDecorator.name]: tsRouteDecorator,
+  [tsTypeRole.name]: tsTypeRole,
 });

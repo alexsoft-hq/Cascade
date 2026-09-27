@@ -25,6 +25,7 @@ import { readEntityModel } from '../../adapters/mp_bridge.mjs';
 import { findJdk } from '../env.mjs';
 import { runJavaLane } from '../lanes_run.mjs';
 import { cachedJavaFacts, CachedFactsError } from '../cached_facts.mjs';
+import { factsOfFile, valueOfSource } from '../../../adapters/ts/tsfacts.mjs';
 
 const USAGE = 'usage: cascade rules list [--json]\n'
   + '       cascade rules show <rule id> [--json]\n'
@@ -104,9 +105,12 @@ function printResults(results, only) {
   print(results.length === 0 ? `no rule or pack ${JSON.stringify(only)}` : `${held} of ${results.length} rule(s) hold every example`);
 }
 
+/** The TypeScript worker's own readers, in process: a TypeScript example needs nothing but the engine. */
+const TS_READERS = Object.freeze({ tsFacts: factsOfFile, tsValue: valueOfSource });
+
 function test(registry, only, asJson) {
   const javaFacts = javaWorkerForExamples();
-  const results = testRules(registry, { only, env: javaFacts ? { javaFacts } : {} });
+  const results = testRules(registry, { only, env: { ...TS_READERS, ...(javaFacts ? { javaFacts } : {}) } });
   if (asJson) print(JSON.stringify(results, null, 2));
   else printResults(results, only);
   const failed = results.length === 0 || results.some((r) => r.failures.length > 0);

@@ -1,0 +1,58 @@
+{
+  "pack": "nestjs",
+  "version": 1,
+  "description": "NestJS HTTP controllers: which decorators make a class a controller, a method a route, and a route versioned.",
+  "rules": [
+    {
+      "id": "nestjs.routes",
+      "kind": "ts.route-decorator",
+      "description": "A class decorated @Controller(path) serves the routes its methods declare with @Get, @Post, @Put, @Patch, @Delete, @Options, @Head and @All, each under the controller's path, when a module decorated @Module lists it among its controllers. @Version on a method, or on the controller or in its options, names the route's version: one, a list of them, or VERSION_NEUTRAL for none.",
+      "why": "These are @nestjs/common's own decorators. The application is the one NestFactory.create makes and then listens on; its setGlobalPrefix puts a prefix before every route, and enableVersioning with VersioningType.URI puts the version (v1, the prefix Nest adds by default) after that prefix; a route with no version of its own takes the controller's, then the defaultVersion. A module RouterModule.register names a path serves its controllers under that path. The bridge reads those calls from the bootstrap and the controllers each module registers; the examples here read what one class declares.",
+      "params": {
+        "controller": "Controller",
+        "module": "Module",
+        "version": "Version",
+        "verbs": { "Get": "GET", "Post": "POST", "Put": "PUT", "Patch": "PATCH", "Delete": "DELETE", "Options": "OPTIONS", "Head": "HEAD", "All": "ANY" },
+        "app": {
+          "create": "NestFactory.create", "listen": "listen", "globalPrefix": "setGlobalPrefix", "versioning": "enableVersioning",
+          "uriType": "VersioningType.URI", "uriPrefix": "v", "neutral": "VERSION_NEUTRAL", "routerModule": "RouterModule.register"
+        }
+      },
+      "examples": [
+        {
+          "source": "import { Controller, Get, Delete } from '@nestjs/common';\n@Controller('access')\nexport class AccessController {\n  @Get() list() {}\n  @Delete(':id') remove() {}\n}\n",
+          "expect": [
+            { "class": "AccessController", "method": "list", "verb": "GET", "path": "/access" },
+            { "class": "AccessController", "method": "remove", "verb": "DELETE", "path": "/access/{id}" }
+          ],
+          "why": "a path variable is written {id}, as every other lane writes one, so a frontend call matches it"
+        },
+        {
+          "source": "import { Controller, Post, Version } from '@nestjs/common';\n@Controller({ path: 'users', version: '2' })\nexport class UsersController {\n  @Post('login') login() {}\n  @Version('3') @Post() create() {}\n}\n",
+          "expect": [
+            { "class": "UsersController", "method": "login", "verb": "POST", "path": "/users/login", "version": ["2"] },
+            { "class": "UsersController", "method": "create", "verb": "POST", "path": "/users", "version": ["3"] }
+          ]
+        },
+        {
+          "source": "import { Controller, Get, Version, VERSION_NEUTRAL } from '@nestjs/common';\n@Controller({ path: 'data', version: ['1', '2'] })\nexport class DataController {\n  @Get('quotes') quotes() {}\n  @Get('sitemap.xml') @Version(VERSION_NEUTRAL) sitemap() {}\n}\n",
+          "expect": [
+            { "class": "DataController", "method": "quotes", "verb": "GET", "path": "/data/quotes", "version": ["1", "2"] },
+            { "class": "DataController", "method": "sitemap", "verb": "GET", "path": "/data/sitemap.xml", "version": ["VERSION_NEUTRAL"] }
+          ],
+          "why": "a list of versions serves the route under each, and VERSION_NEUTRAL on the method serves it under none, whatever the controller says"
+        },
+        {
+          "source": "import { Controller, Get } from '@nestjs/common';\nconst BASE = 'x';\n@Controller(BASE)\nexport class DynamicController {\n  @Get('a') a() {}\n}\n",
+          "expect": [{ "class": "DynamicController", "method": "a", "verb": "GET", "path": "<unknown>" }],
+          "why": "a path held in a variable is not read here, and the bridge makes no route of it"
+        },
+        {
+          "source": "import { Injectable, Get } from '@nestjs/common';\n@Injectable()\nexport class NotAController {\n  @Get() looksLikeARoute() {}\n}\n",
+          "expect": [],
+          "why": "a method decorator serves nothing on a class that is not a controller"
+        }
+      ]
+    }
+  ]
+}

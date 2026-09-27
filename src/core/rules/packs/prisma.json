@@ -1,0 +1,120 @@
+{
+  "pack": "prisma",
+  "version": 1,
+  "description": "Prisma Client: which types are clients of the database, and what each client operation reads and writes.",
+  "rules": [
+    {
+      "id": "prisma.client",
+      "kind": "ts.type-role",
+      "description": "PrismaClient, as @prisma/client exports it, is a client of the database; so is a project class that extends it, as a NestJS PrismaService does.",
+      "why": "A call on a client's model delegate, prisma.user.findMany(...), is SQL the client sends to the table of that model.",
+      "params": { "role": "prisma-client", "module": "@prisma/client", "export": "PrismaClient" },
+      "examples": [
+        {
+          "source": "import { PrismaClient } from '@prisma/client';\nexport class PrismaService extends PrismaClient {}\n",
+          "expect": [{ "class": "PrismaService", "role": "prisma-client" }]
+        },
+        {
+          "source": "import { PrismaClient as Db } from '@prisma/client';\nexport class Store extends Db {}\n",
+          "expect": [{ "class": "Store", "role": "prisma-client" }],
+          "why": "the import is matched by what the package exports, not by the local name"
+        },
+        {
+          "source": "import { PrismaClient } from './my-own-client';\nexport class NotPrisma extends PrismaClient {}\n",
+          "expect": [],
+          "why": "a class of that name from another module is not Prisma's"
+        }
+      ]
+    },
+    {
+      "id": "prisma.nestjs-prisma-service",
+      "kind": "ts.type-role",
+      "description": "PrismaService, as the nestjs-prisma package exports it, is a client of the database: the package declares it as a class extending PrismaClient.",
+      "why": "nestjs-prisma-starter injects nestjs-prisma's PrismaService; the source never shows that it is a PrismaClient, because it is in a package.",
+      "grade": "SOUND_SET",
+      "params": {
+        "role": "prisma-client", "module": "nestjs-prisma", "export": "PrismaService",
+        "library": {
+          "declares": "export class PrismaService extends PrismaClient<Prisma.PrismaClientOptions, 'query' | 'info' | 'warn' | 'error'> implements OnModuleInit",
+          "source": "nestjs-prisma, lib/prisma.service.ts, re-exported by lib/index.ts, read on main (github.com/notiz-dev/nestjs-prisma); nestjs-prisma-starter pins 0.22.0-dev.0"
+        }
+      },
+      "examples": [
+        {
+          "source": "import { PrismaService } from 'nestjs-prisma';\nexport class Db extends PrismaService {}\n",
+          "expect": [{ "class": "Db", "role": "prisma-client" }]
+        }
+      ]
+    },
+    {
+      "id": "prisma.operations",
+      "kind": "prisma.operation",
+      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true, where and cursor filter by the fields they name (through AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations.",
+      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference). A find without select returns every scalar field of the model.",
+      "params": {
+        "arguments": {
+          "select": "project", "omit": "none", "include": "relations", "where": "filter", "cursor": "filter", "having": "filter",
+          "orderBy": "read", "distinct": "read", "by": "read",
+          "_count": "read", "_sum": "read", "_avg": "read", "_min": "read", "_max": "read",
+          "data": "write", "create": "write", "update": "write",
+          "skip": "none", "take": "none", "skipDuplicates": "none", "relationLoadStrategy": "none"
+        },
+        "operations": {
+          "findMany": { "statement": "select", "wholeRow": true },
+          "findUnique": { "statement": "select", "wholeRow": true },
+          "findUniqueOrThrow": { "statement": "select", "wholeRow": true },
+          "findFirst": { "statement": "select", "wholeRow": true },
+          "findFirstOrThrow": { "statement": "select", "wholeRow": true },
+          "count": { "statement": "select" },
+          "aggregate": { "statement": "select" },
+          "groupBy": { "statement": "select" },
+          "create": { "statement": "insert", "wholeRow": true },
+          "createMany": { "statement": "insert" },
+          "createManyAndReturn": { "statement": "insert", "wholeRow": true },
+          "update": { "statement": "update", "wholeRow": true },
+          "updateMany": { "statement": "update" },
+          "updateManyAndReturn": { "statement": "update", "wholeRow": true },
+          "upsert": { "statement": "upsert", "wholeRow": true },
+          "delete": { "statement": "delete", "wholeRow": true },
+          "deleteMany": { "statement": "delete" }
+        }
+      },
+      "examples": [
+        {
+          "operation": "findMany", "args": "{ where: { email: e }, select: { id: true, name: false } }", "fields": ["id", "email", "name"],
+          "expect": { "reads": ["email", "id"] },
+          "why": "a field selected false is not returned"
+        },
+        {
+          "operation": "findMany", "args": "{ where: { OR: [{ email: e }, { name: n }] } }", "fields": ["id", "email", "name"],
+          "expect": { "reads": ["email", "name"], "wholeRow": true },
+          "why": "no select: every scalar field is returned"
+        },
+        {
+          "operation": "update", "args": "{ where: { id }, data: { name: n, posts: { create: [] } } }", "fields": ["id", "name"], "relations": ["posts"],
+          "expect": { "reads": ["id"], "writes": ["name"], "wholeRow": true, "relations": ["posts"] },
+          "why": "a nested write reaches another table, and says so"
+        },
+        {
+          "operation": "upsert", "args": "{ where: { accountId_date: { accountId, date } }, create: { accountId, date, value }, update: { value } }", "fields": ["accountId", "date", "value"],
+          "expect": { "reads": ["accountId", "date"], "writes": ["accountId", "date", "value"], "wholeRow": true },
+          "why": "a compound unique key names the fields it joins with _"
+        },
+        {
+          "operation": "findMany", "args": "{ where, select: { id: true } }", "fields": ["id", "email"],
+          "expect": { "reads": ["id"], "runtimeOnly": ["filter"] },
+          "why": "a filter held in a variable has fields only the running program knows"
+        },
+        {
+          "operation": "groupBy", "args": "{ by: ['date'], _count: true, _min: { value: true } }", "fields": ["date", "value"],
+          "expect": { "reads": ["date", "value"] }
+        },
+        {
+          "operation": "findMany", "args": "{ ...query }", "fields": ["id"],
+          "expect": { "runtimeOnly": ["arguments"] },
+          "why": "a spread argument: which fields, and whether all of them are returned, is not known"
+        }
+      ]
+    }
+  ]
+}
