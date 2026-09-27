@@ -1,0 +1,46 @@
+{
+  "pack": "mybatis-plus-join",
+  "version": 1,
+  "description": "mybatis-plus-join: its base mapper, which is a MyBatis-Plus BaseMapper the project's source never names.",
+  "rules": [
+    {
+      "id": "mybatis-plus-join.mapper",
+      "kind": "java.type-role",
+      "description": "A type whose own extends or implements clause names mybatis-plus-join's MPJBaseMapper is a MyBatis-Plus mapper, and MPJBaseMapper's first type argument is its entity: the library declares MPJBaseMapper<T> as a BaseMapper<T>.",
+      "why": "ruoyi-vue-pro's mappers extend BaseMapperX, and BaseMapperX extends MPJBaseMapper, a type in a jar. The source never shows that MPJBaseMapper is a BaseMapper, so no mapper of ruoyi-vue-pro was one and no endpoint reached a generic CRUD statement. The relation is the library's, read from its source rather than the project's, so every link it gives is SOUND_SET.",
+      "grade": "SOUND_SET",
+      "params": {
+        "role": "mybatis-plus-mapper",
+        "supertypes": ["MPJBaseMapper"],
+        "entityArg": 0,
+        "library": {
+          "type": "com.github.yulichang.base.MPJBaseMapper",
+          "declares": "public interface MPJBaseMapper<T> extends BaseMapper<T>, JoinMapper<T>",
+          "source": "mybatis-plus-join-core, com/github/yulichang/base/MPJBaseMapper.java, the same at tag v1.5.9 and on master (github.com/yulichang/mybatis-plus-join)"
+        }
+      },
+      "examples": [
+        {
+          "source": "package com.example.framework;\nimport com.github.yulichang.base.MPJBaseMapper;\npublic interface BaseMapperX<T> extends MPJBaseMapper<T> {}\ninterface OrderMapper extends BaseMapperX<Order> {}\n",
+          "expect": [{ "type": "com.example.framework.BaseMapperX", "role": "mybatis-plus-mapper", "entity": "T" }],
+          "why": "ruoyi-vue-pro's shape: this rule names the root of the chain, and the bridge binds T to Order for OrderMapper"
+        },
+        {
+          "source": "package com.example.mapper;\nimport com.github.yulichang.base.*;\npublic interface UserMapper extends MPJBaseMapper<User> {}\n",
+          "expect": [{ "type": "com.example.mapper.UserMapper", "role": "mybatis-plus-mapper", "entity": "User" }],
+          "why": "imported with its whole package"
+        },
+        {
+          "source": "package com.example.mapper;\nimport com.example.legacy.MPJBaseMapper;\nimport com.github.yulichang.base.*;\npublic interface UserMapper extends MPJBaseMapper<User> {}\n",
+          "expect": [],
+          "why": "a type of the same name from another package, which a single-type import makes the one meant: the library's declaration says nothing about it"
+        },
+        {
+          "source": "package com.example.mapper;\npublic interface UserMapper extends MPJBaseMapper<User> {}\n",
+          "expect": [],
+          "why": "nothing imports the library's type, so this name is some other type of the same package"
+        }
+      ]
+    }
+  ]
+}

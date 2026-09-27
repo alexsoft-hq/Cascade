@@ -162,6 +162,18 @@ function indexMpFacts(javaFacts) {
 }
 
 /**
+ * How sure a role record is, and the library declarations it relies on. A role
+ * read off `BaseMapper` itself is EXACT; one read off a library's base of it
+ * (`MPJBaseMapper`) is as sure as the rule that says what that base extends
+ * (src/core/rules/kinds/java_type_role.mjs), and every statement it gives is
+ * capped there.
+ */
+function relationOf(record) {
+  const grade = record.grade ?? 'EXACT';
+  return { grade, claims: grade === 'EXACT' ? [] : [{ rule: record.rule, library: record.library ?? null }] };
+}
+
+/**
  * 1. WHO NAMES AN ENTITY, through the generic bases.
  *
  * A project rarely extends `ServiceImpl<M, T>` directly. jeecg-boot puts its own
@@ -174,7 +186,7 @@ function indexMpFacts(javaFacts) {
  * base class.
  */
 function makeRoleOf({ types, resolveType, mapperRecords, serviceRecords }) {
-  const roleMemo = new Map(); // fqn -> {role, entity:{concrete|param}} | null
+  const roleMemo = new Map(); // fqn -> {role, entity:{concrete|param}, grade, claims} | null
   const roleOf = (fqn, depth = 0) => {
     if (roleMemo.has(fqn)) return roleMemo.get(fqn);
     if (depth > 16) return null; // a fact set assembled from shards need not be acyclic
@@ -184,7 +196,7 @@ function makeRoleOf({ types, resolveType, mapperRecords, serviceRecords }) {
     let out = null;
     if (own) {
       const role = own.kind === 'mpMapper' ? 'mapper' : 'service';
-      out = { role, entity: bindEntity(fqn, own.entityTypeSimple, t, resolveType) };
+      out = { role, entity: bindEntity(fqn, own.entityTypeSimple, t, resolveType), ...relationOf(own) };
     } else if (t) {
       // Walk `extends`, then each `implements`, and take the first supertype
       // that is one. Deterministic: the clauses are read in source order.
@@ -201,7 +213,7 @@ function makeRoleOf({ types, resolveType, mapperRecords, serviceRecords }) {
           const arg = sup.args[entity.param];
           entity = arg ? bindEntity(fqn, arg, t, resolveType) : null;
         }
-        out = { role: base.role, entity };
+        out = { role: base.role, entity, grade: base.grade, claims: base.claims };
         break;
       }
     }
@@ -329,30 +341,6 @@ export function readEntityModel(javaFacts, opts = {}) {
   };
 }
 
-/**
- * Add MyBatis-Plus facts to a graph that already carries the SQL catalog and the
- * Java lane's symbols and calls.
- *
- * @param {import('../core/graph.mjs').Graph} g
- * @param {object[]} javaFacts  cascade:javafacts:6 records
- * @param {{namingStrategy?:(string|null), tablePrefix?:(string|null),
- *          logicDeleteValue?:(string|null), logicNotDeleteValue?:(string|null),
- *          schema?:(string|null), identifierCase?:(string|null),
- *          fragmentLineage?:(object[]|null)}} [opts]
- *        `identifierCase` is the SQL identity rule this run matched names with —
- *        the SAME one the lineage worker and the SQL bridge were given. Without
- *        it, jeecg-boot's `sys_user_depart`, whose DDL spells the key column
- *        `ID` while the entity derives `id`, comes out as TWO column nodes for
- *        one column, and a column answer about either is missing half its
- *        statements.
- *        `namingStrategy` null means the profile declares none — the bridge then
- *        assumes MyBatis-Plus's default and grades every derived name HEURISTIC.
- *        `fragmentLineage` is the lineage the SQL analyzer produced for the raw
- *        SQL fragments this lane wrote out with `wrapperFragmentStatements` —
- *        the records let a wrapper's `apply(...)` / `setSql(...)` contribute
- *        real table and column facts instead of only a warning.
- * @returns {object} stats
- */
 /**
  * 4. THE TABLE AND COLUMN NODES this lane needs, and the two helpers that keep
  * their spelling the CATALOG's. The SQL bridge keyed every table and column by
@@ -518,7 +506,9 @@ for (const c of calls) {
       const key = statementKey(owner, c.method);
       let w = wanted.get(key);
       if (!w) {
-        w = { key, ownerFqn: owner, method: c.method, verb, entity: r.entity.concrete, wrappers: [], callers: [], noWrapperCall: false };
+        // The statement is the OWNER's: as sure as the owner's role, whichever call reached it.
+        const { grade, claims } = roleOf(owner) ?? r;
+        w = { key, ownerFqn: owner, method: c.method, verb, entity: r.entity.concrete, grade, claims, wrappers: [], callers: [], noWrapperCall: false };
         wanted.set(key, w);
       }
       w.callers.push(c.from);
@@ -558,6 +548,30 @@ delete stats._structural;
 }
 
 
+/**
+ * Add MyBatis-Plus facts to a graph that already carries the SQL catalog and the
+ * Java lane's symbols and calls.
+ *
+ * @param {import('../core/graph.mjs').Graph} g
+ * @param {object[]} javaFacts  cascade:javafacts:6 records
+ * @param {{namingStrategy?:(string|null), tablePrefix?:(string|null),
+ *          logicDeleteValue?:(string|null), logicNotDeleteValue?:(string|null),
+ *          schema?:(string|null), identifierCase?:(string|null),
+ *          fragmentLineage?:(object[]|null)}} [opts]
+ *        `identifierCase` is the SQL identity rule this run matched names with —
+ *        the SAME one the lineage worker and the SQL bridge were given. Without
+ *        it, jeecg-boot's `sys_user_depart`, whose DDL spells the key column
+ *        `ID` while the entity derives `id`, comes out as TWO column nodes for
+ *        one column, and a column answer about either is missing half its
+ *        statements.
+ *        `namingStrategy` null means the profile declares none — the bridge then
+ *        assumes MyBatis-Plus's default and grades every derived name HEURISTIC.
+ *        `fragmentLineage` is the lineage the SQL analyzer produced for the raw
+ *        SQL fragments this lane wrote out with `wrapperFragmentStatements` —
+ *        the records let a wrapper's `apply(...)` / `setSql(...)` contribute
+ *        real table and column facts instead of only a warning.
+ * @returns {object} stats
+ */
 export function addMybatisPlusFacts(g, javaFacts, opts = {}) {
   if (!g || !g.nodes || !Array.isArray(g.edges)) throw new MpBridgeError('g must be a Graph');
 
@@ -1254,6 +1268,7 @@ function builtinStatementNode(a, b) {
       ...(logicDelete ? { logicDelete: true } : {}),
       callers: [...new Set(stmt.callers)].sort(cmp).slice(0, 20),
       callerCount: new Set(stmt.callers).size,
+      ...(stmt.claims?.length > 0 ? { relation: { grade: stmt.grade, claims: stmt.claims } } : {}),
     },
   };
   if (runtimeOnly) {
@@ -1272,12 +1287,13 @@ function builtinStatementNode(a, b) {
 /**
  * The EXECUTES edges: the entity's own table, and any table a FRAGMENT names of
  * its own (`exists("select 1 from sys_role where ...")`). That table is written
- * in the source, so the edge is EXACT, and leaving it out would hide a table
- * this statement really touches.
+ * in the source, so the edge is as sure as the statement itself (`cap`, EXACT
+ * unless its role relies on a library's declaration), and leaving it out would
+ * hide a table this statement really touches.
  */
-function writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTables, stmt, tableIdOf }) {
+function writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTables, stmt, tableIdOf, cap }) {
   g.addEdge({
-    from: sid, to: tableIdOf(entity, entity.table), type: 'EXECUTES', grade: entity.tableGrade,
+    from: sid, to: tableIdOf(entity, entity.table), type: 'EXECUTES', grade: weakest(entity.tableGrade, cap),
     evidence: { access, via: 'mybatis-plus', builtin: stmt.method, ...(logicDelete ? { logicDelete: true } : {}) },
   });
   const fragTables = new Map(); // node id -> {access:Set, ops:Set}
@@ -1291,7 +1307,7 @@ function writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTable
   for (const id of [...fragTables.keys()].sort(cmp)) {
     const m = fragTables.get(id);
     g.addEdge({
-      from: sid, to: id, type: 'EXECUTES', grade: 'EXACT',
+      from: sid, to: id, type: 'EXECUTES', grade: cap,
       evidence: {
         access: [...m.access].sort().join(','), via: 'mybatis-plus-fragment',
         builtin: stmt.method, fragmentOp: [...m.ops].sort().join(','),
@@ -1306,7 +1322,7 @@ function writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTable
  * roles. Dropping the second would make the evidence say the statement reads
  * that column only as a filter, which is not what the SQL does.
  */
-function writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureColumn, stats }) {
+function writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureColumn, stats, cap }) {
   const merged = new Map(); // "TYPE|columnId" -> {edgeType, cid, grade, roles, vias, flags}
   for (const [bucket, edgeType] of [[reads, 'READS'], [writes, 'WRITES']]) {
     for (const c of bucket) {
@@ -1331,7 +1347,7 @@ function writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureCol
   for (const key of [...merged.keys()].sort(cmp)) {
     const m = merged.get(key);
     g.addEdge({
-      from: sid, to: m.cid, type: m.edgeType, grade: m.grade,
+      from: sid, to: m.cid, type: m.edgeType, grade: weakest(m.grade, cap),
       evidence: {
         via: [...m.vias].sort().join(','), roles: [...m.roles].sort(),
         ...(m.fragmentOps.size > 0 ? { fragmentOp: [...m.fragmentOps].sort().join(',') } : {}),
@@ -1370,13 +1386,16 @@ function writeStatementNode(g, a, b) {
   const member = `${stmt.ownerFqn}#${stmt.method}`;
   const symId = nodeId('symbol', member);
   g.addNode({ id: symId, symbol: member, owner: stmt.ownerFqn, mpBuiltinMethod: true });
+  // Definitional, as far as the role is sure: a role read through a library's
+  // declaration caps this edge and every edge the statement writes below.
+  const cap = stmt.grade ?? 'EXACT';
   if (!g.outEdges(symId).some((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid)) {
-    g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+    g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: cap });
     stats.implementsStmt += 1;
   }
 
-  writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTables, stmt, tableIdOf });
-  writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureColumn, stats });
+  writeExecutesEdges(g, { sid, entity, access, logicDelete, fragmentTables, stmt, tableIdOf, cap });
+  writeColumnEdges(g, { sid, entity, reads, writes, columnIdOf, ensureColumn, stats, cap });
 }
 
 function emitBuiltinStatement(g, a) {

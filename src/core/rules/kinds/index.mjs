@@ -7,7 +7,8 @@
 //
 // Every kind answers the same things: its `name`, the `stage` of an analysis it
 // runs in, the strongest grade it may give (`gradeCap`, null for a
-// classification that draws no edge), `validateParams`, `validateExample`,
+// classification that draws no edge), `validateParams` (handed the whole rule
+// too, for a param whose rules depend on the rule's grade), `validateExample`,
 // `compile`, and either `runExample` (one example at a time) or `runExamples`
 // (all of them together, for examples that go through a worker once).
 

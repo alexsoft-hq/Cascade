@@ -44,6 +44,38 @@ Cascade 가 프레임워크에 대해 아는 것을 엔진 코드에서 꺼내 �
 | `java.type-role` | Java 워커의 레코드를 모은 뒤, 레인을 고르기 전 | 타입 자신의 extends·implements 절이 적은 상위 타입과 그 타입 인자 | 타입이 맡는 역할(MyBatis-Plus 매퍼·서비스)과, 몇 번째 타입 인자가 엔티티·매퍼인지. 사슬의 뿌리만 맞춥니다. 프로젝트 자체 타입을 거쳐 닿는 타입은 역할을 읽는 브리지가 찾습니다 |
 | `sql.dialect-path` | 트리를 발견할 때 | 파일 경로 | 경로의 온전한 단어로 DDL·매퍼 파일이 어느 DB용인지. 경로에 단어가 있는 첫 항목이 이기므로, 룰은 선호하는 항목을 먼저 적습니다 |
 
+### 라이브러리가 선언한 역할
+
+어떤 라이브러리는 프로젝트와 프레임워크 사이에 자기 기반 타입을 끼워 넣습니다.
+mybatis-plus-join은 `MPJBaseMapper<T>`를 `BaseMapper<T>`의 하위 타입으로 선언합니다.
+그래서 매퍼가 `MPJBaseMapper`를 상속하는 프로젝트에는 `BaseMapper`라는 글자가
+어디에도 없습니다. 이 관계는 jar 안에 있어서 프로젝트 소스만으로는 알 수 없습니다.
+이런 타입을 다루는 `java.type-role` 룰은 `params.library`에 그 타입을 적습니다.
+
+```json
+"grade": "SOUND_SET",
+"params": {
+  "role": "mybatis-plus-mapper", "supertypes": ["MPJBaseMapper"], "entityArg": 0,
+  "library": {
+    "type": "com.github.yulichang.base.MPJBaseMapper",
+    "declares": "public interface MPJBaseMapper<T> extends BaseMapper<T>, JoinMapper<T>",
+    "source": "mybatis-plus-join-core, com/github/yulichang/base/MPJBaseMapper.java"
+  }
+}
+```
+
+- `type`, `declares`, `source` 셋 다 필수입니다. 어떤 타입인지, 룰이 그 타입을
+  무엇으로 믿는지, 누구든 어디서 확인할 수 있는지를 적습니다.
+- 이런 룰은 등급을 EXACT보다 낮게 매기고, EXACT 미만 등급은 이런 룰만 쓸 수
+  있습니다. 이 룰에서 나온 역할이 만드는 연결(메서드에서 일반 CRUD 문장으로,
+  문장에서 테이블·컬럼으로)은 모두 그 등급을 넘지 않습니다. 문장의 근거에는
+  룰 이름과 라이브러리 타입이 남습니다.
+- 상위 타입 이름이 그 라이브러리 타입이라고 인정하는 건 파일이 실제로 그 타입을
+  가리킬 때뿐입니다. 그 이름을 직접 import했거나, 없으면 패키지째 import했거나,
+  같은 패키지에 있을 때입니다. 다른 패키지의 같은 이름 타입은 해당하지 않습니다.
+- 프레임워크 자체 타입을 읽는 룰과 라이브러리 룰이 한 타입에 같은 답을 내면 역할은
+  하나이고, 등급은 더 확실한 쪽을 따릅니다.
+
 예제가 소스 코드인 종류는 실제 워커로 예제를 돌립니다. `java.type-role` 예제는 Java 라서
 분석 때와 같은 Java 워커가 읽고, 그래서 JDK 가 필요합니다. JDK 가 없으면 예제는 "실행 안 됨"
 으로 보고되고, `cascade rules test` 는 0 이 아니라 2 로 끝납니다. 아무도 실행하지 않은

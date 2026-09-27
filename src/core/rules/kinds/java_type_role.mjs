@@ -18,9 +18,22 @@
 // The records it writes are the ones the bridge has always read (`mpMapper`,
 // `mpService`), so moving this knowledge out of the Java worker changed where it
 // lives and nothing it concludes.
+//
+// A library can put its own base type in between. mybatis-plus-join's
+// `MPJBaseMapper<T>` extends `BaseMapper<T>`, and a project whose mappers extend
+// `MPJBaseMapper` never writes `BaseMapper` anywhere; the bridge cannot follow
+// the chain into a jar. A rule for such a type names it in `params.library`: its
+// full name, the declaration the rule relies on, and where that is written. The
+// source shows only that the project extends the library's type, not what that
+// type extends, so such a rule is graded below EXACT and its records carry the
+// grade. And only a supertype the file really means as that type is read as it:
+// imported by name, or through its package.
+
+import { GRADE_RANK } from '../../graph.mjs';
 
 /** A supertype's simple name, as the worker records it; it goes into no pattern, but the shape is still closed. */
 const SIMPLE_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const QUALIFIED_NAME = /^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 /**
  * The roles this kind can give, and the record each one writes. A new role is
@@ -41,6 +54,9 @@ const ROLE_OF_KIND = Object.freeze({ mpMapper: 'mybatis-plus-mapper', mpService:
 
 const argAt = (args, i) => (Number.isInteger(i) && Array.isArray(args) && typeof args[i] === 'string' ? args[i] : null);
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
+const isText = (v) => typeof v === 'string' && v.trim() !== '';
+const simpleOf = (fqn) => fqn.slice(fqn.lastIndexOf('.') + 1);
+const packageOf = (fqn) => fqn.slice(0, fqn.lastIndexOf('.'));
 
 /** A type record's direct supertypes, in the order the worker reads them. */
 function supertypesOf(t) {
@@ -49,14 +65,36 @@ function supertypesOf(t) {
   return out;
 }
 
-function validateParams(params) {
+function validateParams(params, rule = {}) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return ['params must be an object'];
   const role = ROLES[params.role];
   if (!role) return [`params.role must be one of ${Object.keys(ROLES).join(', ')}, got ${JSON.stringify(params.role)}`];
-  const errors = unknownKeys(params, ['role', 'supertypes', ...role.args]).map((k) => `params has a key "${k}" that a ${params.role} rule does not take`);
-  if (!Array.isArray(params.supertypes) || params.supertypes.length === 0) errors.push('params.supertypes must be a non-empty list');
-  else for (const s of params.supertypes) if (typeof s !== 'string' || !SIMPLE_NAME.test(s)) errors.push(`params.supertypes has ${JSON.stringify(s)}, which is not a simple Java type name`);
+  const errors = unknownKeys(params, ['role', 'supertypes', 'library', ...role.args]).map((k) => `params has a key "${k}" that a ${params.role} rule does not take`);
   for (const a of role.args) if (params[a] !== undefined && !(Number.isInteger(params[a]) && params[a] >= 0)) errors.push(`params.${a} must be a type argument position from 0`);
+  return [...errors, ...supertypeErrors(params.supertypes), ...libraryErrors(params, rule.grade ?? 'EXACT')];
+}
+
+function supertypeErrors(supertypes) {
+  if (!Array.isArray(supertypes) || supertypes.length === 0) return ['params.supertypes must be a non-empty list'];
+  return supertypes.filter((s) => typeof s !== 'string' || !SIMPLE_NAME.test(s))
+    .map((s) => `params.supertypes has ${JSON.stringify(s)}, which is not a simple Java type name`);
+}
+
+/**
+ * A rule that relies on a library's own declaration names it and where it is
+ * written, and is graded as a claim about that library; a rule graded below
+ * EXACT for any other reason has nothing to say why.
+ */
+function libraryErrors(params, grade) {
+  const lib = params.library;
+  if (lib === undefined) return grade === 'EXACT' ? [] : [`gives ${grade}, which only a rule relying on a library's declaration does: name it in params.library`];
+  if (!lib || typeof lib !== 'object' || Array.isArray(lib)) return ['params.library must be an object'];
+  const errors = unknownKeys(lib, ['type', 'declares', 'source']).map((k) => `params.library has an unknown key "${k}"`);
+  if (typeof lib.type !== 'string' || !QUALIFIED_NAME.test(lib.type)) errors.push('params.library.type must be the full name of the library\'s type');
+  else if (params.supertypes?.length !== 1 || params.supertypes[0] !== simpleOf(lib.type)) errors.push(`params.supertypes must be the one simple name of params.library.type, ${simpleOf(lib.type)}`);
+  if (!isText(lib.declares)) errors.push('params.library.declares must say what the library\'s type is declared as');
+  if (!isText(lib.source)) errors.push('params.library.source must say where that declaration is written');
+  if (grade === 'EXACT') errors.push('a rule relying on a library\'s declaration is graded below EXACT: the source shows the project extends the library\'s type, not what that type extends');
   return errors;
 }
 
@@ -73,16 +111,50 @@ function validateExample(example) {
   return [...errors, ...expectErrors(example.expect)];
 }
 
-/** The rule, ready to read type records: a function from one type record to the records of the roles it plays. */
+/**
+ * The rule, ready to read type records: a function from one type record, and
+ * the imports of its file, to the records of the roles it plays.
+ */
 function compile(rule) {
-  const { role, supertypes } = rule.params;
+  const { role, supertypes, library } = rule.params;
   const wanted = new Set(supertypes);
-  return (t) => supertypesOf(t).filter((sup) => wanted.has(sup.simple)).map((sup) => ({ ...ROLES[role].record(t, sup, rule.params), rule: rule.id }));
+  const means = library ? (t, sup, imports) => meansType(t, sup.simple, library.type, imports) : () => true;
+  const claim = library ? { grade: rule.grade, library: library.type } : {};
+  return (t, imports = []) => supertypesOf(t)
+    .filter((sup) => wanted.has(sup.simple) && means(t, sup, imports))
+    .map((sup) => ({ ...ROLES[role].record(t, sup, rule.params), ...claim, rule: rule.id }));
+}
+
+/**
+ * Whether the file of `t` means `fqn` by the simple name it writes: as Java
+ * reads it, an import of that one name decides, else an import of its whole
+ * package, or the type sitting in that package itself.
+ */
+function meansType(t, simple, fqn, imports) {
+  const named = imports.find((i) => i.simple === simple);
+  if (named) return named.fqn === fqn;
+  return t.package === packageOf(fqn) || imports.some((i) => i.simple === '*' && i.fqn === packageOf(fqn));
+}
+
+/** Each file's import records, which is where Java reads a simple name's meaning. */
+function importsByFile(records) {
+  const byFile = new Map();
+  for (const r of records) {
+    if (!r || r.kind !== 'import') continue;
+    if (!byFile.has(r.file)) byFile.set(r.file, []);
+    byFile.get(r.file).push(r);
+  }
+  return byFile;
 }
 
 /** The key a derived record is known by, within one type: the worker wrote one mapper record per type, and one service record per base. */
 const recordKey = (r) => (r.kind === 'mpMapper' ? r.kind : `${r.kind}|${r.base}`);
-const sameRecord = (a, b) => JSON.stringify({ ...a, rule: null }) === JSON.stringify({ ...b, rule: null });
+/** What a record answers, apart from which rule gave it, how sure that rule is, and (for a mapper) which base it was read from. */
+const ASIDE = Object.freeze(['rule', 'grade', 'library']);
+const answerOf = (r) => JSON.stringify(Object.keys(r)
+  .filter((k) => !ASIDE.includes(k) && !(k === 'base' && r.kind === 'mpMapper'))
+  .sort().map((k) => [k, r[k]]));
+const rankOf = (r) => GRADE_RANK[r.grade ?? 'EXACT'];
 
 /**
  * The role records every `java.type-role` rule gives the type records among
@@ -100,15 +172,21 @@ const sameRecord = (a, b) => JSON.stringify({ ...a, rule: null }) === JSON.strin
  * @returns {object[]}
  */
 export function deriveTypeRoles(javaFacts, rules) {
-  return javaFacts.filter((t) => t && t.kind === 'type').flatMap((t) => rolesOfType(t, rules));
+  const imports = importsByFile(javaFacts);
+  return javaFacts.filter((t) => t && t.kind === 'type').flatMap((t) => rolesOfType(t, rules, imports.get(t.file) ?? []));
 }
 
-function rolesOfType(t, rules) {
+/**
+ * One type's role records. Two rules that give it the same answer give one
+ * record, as sure as the surer of them: a mapper that extends both `BaseMapper`
+ * and a library's base of it is a mapper the source shows.
+ */
+function rolesOfType(t, rules, imports) {
   const byKey = new Map();
-  for (const r of rules.flatMap((entry) => entry.compiled(t))) {
+  for (const r of rules.flatMap((entry) => entry.compiled(t, imports))) {
     const prev = byKey.get(recordKey(r));
-    if (!prev) byKey.set(recordKey(r), r);
-    else if (!sameRecord(prev, r)) throw new Error(`the rules ${prev.rule} and ${r.rule} give ${t.fqn} two different ${r.kind} records`);
+    if (!prev || (answerOf(prev) === answerOf(r) && rankOf(r) > rankOf(prev))) byKey.set(recordKey(r), r);
+    else if (answerOf(prev) !== answerOf(r)) throw new Error(`the rules ${prev.rule} and ${r.rule} give ${t.fqn} two different ${r.kind} records`);
   }
   const records = [...byKey.values()];
   const roles = [...new Set(records.map((r) => ROLE_OF_KIND[r.kind]))];
@@ -133,21 +211,24 @@ function runExamples(entries, env) {
   const files = entries.flatMap((entry) => entry.rule.examples.map((ex, i) => ({ name: `${entry.id}/example${i}.java`, text: ex.source })));
   const facts = env && typeof env.javaFacts === 'function' ? env.javaFacts(files) : null;
   if (facts === null) return { notRun: 'no Java worker: a JDK is needed to parse the examples (see docs/setup/java-lane.md)' };
-  const results = new Map();
-  for (const entry of entries) {
-    results.set(entry.id, entry.rule.examples.map((ex, i) => {
-      const types = facts.filter((r) => r.kind === 'type' && r.file === `${entry.id}/example${i}.java`);
-      const got = types.flatMap((t) => entry.compiled(t)).map(asExpect);
-      return { example: ex, passed: canonical(got) === canonical(ex.expect), got };
-    }));
-  }
-  return { results };
+  const imports = importsByFile(facts);
+  return { results: new Map(entries.map((entry) => [entry.id, exampleResults(entry, facts, imports)])) };
+}
+
+/** One rule's examples against the records the worker read from them. */
+function exampleResults(entry, facts, imports) {
+  return entry.rule.examples.map((ex, i) => {
+    const types = facts.filter((r) => r.kind === 'type' && r.file === `${entry.id}/example${i}.java`);
+    const got = types.flatMap((t) => entry.compiled(t, imports.get(t.file) ?? [])).map(asExpect);
+    return { example: ex, passed: canonical(got) === canonical(ex.expect), got };
+  });
 }
 
 export const javaTypeRole = Object.freeze({
   name: 'java.type-role',
   stage: 'java-facts',
-  // A role read from a supertype the source writes down.
+  // A role read from a supertype the source writes down; a rule relying on a
+  // library's declaration is graded below it (see libraryErrors).
   gradeCap: 'EXACT',
   validateParams,
   validateExample,

@@ -19,6 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Graph } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
+import { withTypeRoles } from '../src/core/java_roles.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
 import {
   addMybatisPlusFacts, mpPhysicalName, OP_KINDS, MAPPER_BUILTINS, SERVICE_BUILTINS,
@@ -427,6 +428,39 @@ test('a project base class between the code and ServiceImpl still names the enti
   assert.equal(g.nodes.get(sid).mpEvidence.entity, fq('ShopItem'));
   assert.deepEqual(edgesFrom(g, sid).filter((e) => e.type === 'WRITES').map((e) => e.to).sort(),
     ['column:shop_item.id', 'column:shop_item.name']);
+});
+
+test('a mapper that reaches BaseMapper through a library\'s declaration gives links as sure as that declaration', () => {
+  // ruoyi-vue-pro's shape: OrderMapper extends BaseMapperX<Order>, and
+  // BaseMapperX<T> extends mybatis-plus-join's MPJBaseMapper<T>, a type in a jar.
+  // The roles come from the rule packs, as they do in a run.
+  const facts = withTypeRoles([
+    type('Order'),
+    mpEntity('Order', { tableName: 't_order', fields: [field('id', { id: true, column: 'id' }), field('code', { column: 'code' })] }),
+    { kind: 'import', owner: fq('BaseMapperX'), simple: 'MPJBaseMapper', fqn: 'com.github.yulichang.base.MPJBaseMapper', file: 'BaseMapperX.java' },
+    type('BaseMapperX', { typeKind: 'interface', typeParams: ['T'], implements: ['MPJBaseMapper'], implementsArgs: [['T']] }),
+    type('OrderMapper', { typeKind: 'interface', implements: ['BaseMapperX'], implementsArgs: [['Order']] }),
+    type('Item'),
+    mpEntity('Item', { tableName: 't_item', fields: [field('id', { id: true, column: 'id' })] }),
+    type('ItemMapper', { typeKind: 'interface', implements: ['BaseMapper'], implementsArgs: [['Item']] }),
+    type('Caller'),
+    { kind: 'field', owner: fq('Caller'), name: 'orders', typeSimple: 'OrderMapper', file: 'Caller.java' },
+    { kind: 'field', owner: fq('Caller'), name: 'items', typeSimple: 'ItemMapper', file: 'Caller.java' },
+    call(`${fq('Caller')}#go`, 'orders', 'selectList', 'OrderMapper'),
+    call(`${fq('Caller')}#go`, 'items', 'selectList', 'ItemMapper'),
+  ]);
+  const { g } = build(facts);
+  const gradesOf = (member) => {
+    const sid = `statement:${fq(member)}`;
+    const implement = g.inEdges(sid).map((e) => g.edgeAt(e.idx)).filter((e) => e.type === 'IMPLEMENTS_STMT');
+    return [...new Set([...implement, ...edgesFrom(g, sid)].map((e) => `${e.type}:${e.grade}`))].sort();
+  };
+  assert.deepEqual(gradesOf('OrderMapper.selectList'), ['EXECUTES:SOUND_SET', 'IMPLEMENTS_STMT:SOUND_SET', 'READS:SOUND_SET']);
+  assert.deepEqual(g.nodes.get(`statement:${fq('OrderMapper.selectList')}`).mpEvidence.relation, {
+    grade: 'SOUND_SET', claims: [{ rule: 'mybatis-plus-join.mapper', library: 'com.github.yulichang.base.MPJBaseMapper' }],
+  }, 'the statement says which declaration it relies on');
+  assert.deepEqual(gradesOf('ItemMapper.selectList'), ['EXECUTES:EXACT', 'IMPLEMENTS_STMT:EXACT', 'READS:EXACT'], 'a mapper the source shows stays EXACT');
+  assert.equal(g.nodes.get(`statement:${fq('ItemMapper.selectList')}`).mpEvidence.relation, undefined);
 });
 
 test('two entities that map to ONE table are both named, at the weaker grade', () => {

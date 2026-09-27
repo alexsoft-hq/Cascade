@@ -74,7 +74,7 @@ function ruleErrors(rule, packName, kinds) {
   if (rule.why !== undefined && !isText(rule.why)) errors.push('"why" must be text when it is given');
   const kind = kinds[rule.kind];
   if (!kind) return [...errors, `"kind" must be one of ${Object.keys(kinds).join(', ')}, got ${JSON.stringify(rule.kind)}`];
-  return [...errors, ...kind.validateParams(rule.params), ...gradeErrors(rule, kind), ...exampleErrors(rule, kind)];
+  return [...errors, ...kind.validateParams(rule.params, rule), ...gradeErrors(rule, kind), ...exampleErrors(rule, kind)];
 }
 
 /** Every problem in a set of packs, each named by where it is. */

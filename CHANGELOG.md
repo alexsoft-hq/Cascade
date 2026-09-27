@@ -24,6 +24,21 @@ Each dated section below is one round of work. The round protocol is in
   code with identical answers on 5,862 real paths. `cascade rules list`, `show`
   and `test` read the packs, and `test` runs every example.
 
+- **A mapper that reaches MyBatis-Plus through mybatis-plus-join is a mapper.**
+  ruoyi-vue-pro's mappers extend `BaseMapperX`, which extends mybatis-plus-join's
+  `MPJBaseMapper`, a type in a jar; the source never shows that it is a
+  `BaseMapper`, so no mapper was one. A new pack, `mybatis-plus-join`, says so,
+  and a `java.type-role` rule can now rely on a library's declaration in
+  `params.library`: the type, what it is declared as, and where that is written.
+  Such a rule is graded below EXACT (this one SOUND_SET), every link its roles
+  give is capped there, and the statement's evidence names the rule. Only a
+  supertype its file imports from that library is read as it. On ruoyi-vue-pro,
+  endpoints reaching SQL rose from 78 to 2,626 of 3,213 and columns reached from
+  13 to 8,010, through 2,718 generic statements graded SOUND_SET; the median
+  endpoint reaches one table and the widest 23. Packs of the other MyBatis-Plus
+  corpus entries (jeepay, eladmin, jeecg-boot, dolphinscheduler) are byte for
+  byte unchanged.
+
 - **`cascade export --format card`: one answer at a glance.** The chain picture
   draws every row, which is what a reviewer needs and more than a first look can
   take in. The card writes what was asked about at the top and, under it, one

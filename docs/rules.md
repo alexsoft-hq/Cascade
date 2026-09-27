@@ -64,6 +64,38 @@ stop the run: which one wins is never decided by the order the packs load in.
 | `java.type-role` | after the Java worker's records are assembled, before the lanes are chosen | the supertypes a type's own extends and implements clauses name, and their type arguments | which role a type plays (a MyBatis-Plus mapper or service) and which of its type arguments is the entity or the mapper. Only the roots of a chain are matched: a type that reaches one through a type of the project's own is found by the bridge that reads the role |
 | `sql.dialect-path` | while discovering the tree | a file's path | which database a DDL or mapper file is for, from a whole word of its path. The first entry of a rule whose word is in the path wins, so a rule lists first the entry it prefers |
 
+### A role a library declares
+
+Some libraries put their own base type between a project and the framework's.
+mybatis-plus-join declares `MPJBaseMapper<T>` as a `BaseMapper<T>`, and a
+project whose mappers extend `MPJBaseMapper` never writes `BaseMapper`. The
+project's source cannot show that relation, because it is in a jar. A
+`java.type-role` rule for such a type names it in `params.library`:
+
+```json
+"grade": "SOUND_SET",
+"params": {
+  "role": "mybatis-plus-mapper", "supertypes": ["MPJBaseMapper"], "entityArg": 0,
+  "library": {
+    "type": "com.github.yulichang.base.MPJBaseMapper",
+    "declares": "public interface MPJBaseMapper<T> extends BaseMapper<T>, JoinMapper<T>",
+    "source": "mybatis-plus-join-core, com/github/yulichang/base/MPJBaseMapper.java"
+  }
+}
+```
+
+- `type`, `declares` and `source` are all required: which type, what the rule
+  relies on it being, and where anyone can check that.
+- Such a rule is graded below EXACT, and only such a rule may be. Every link a
+  role from it gives (the method to its generic statement, the statement to its
+  table and columns) is capped at that grade, and the statement's evidence names
+  the rule and the library type.
+- A supertype is read as the library's type only when its file means that
+  type: an import of that one name, else an import of its package, or the same
+  package. A type of the same name from elsewhere is not it.
+- When a rule for the framework's own type and a library rule both give a type
+  the same answer, the type has one role, as sure as the surer rule.
+
 A kind whose examples are source code runs them through the real worker: the
 `java.type-role` examples are Java, parsed by the same Java worker an analysis
 uses, so they need a JDK. Without one they are reported as not run, and

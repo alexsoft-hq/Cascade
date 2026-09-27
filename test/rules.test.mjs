@@ -121,6 +121,33 @@ test('rules that make one type a mapper and a service at once are refused, never
     /the rules mybatis-plus\.mapper and mybatis-plus\.service-interface give p\.Odd two roles, mybatis-plus-mapper and mybatis-plus-service/);
 });
 
+test('a rule relying on a library\'s declaration names it, says where it is written, and is graded below EXACT', () => {
+  const library = { type: 'com.lib.LibMapper', declares: 'interface LibMapper<T> extends BaseMapper<T>', source: 'lib-core, com/lib/LibMapper.java' };
+  const rule = (id, over) => ({ id, kind: 'java.type-role', description: 'A library mapper.', examples: [{ source: 'class A {}', expect: [] }],
+    params: { role: 'mybatis-plus-mapper', supertypes: ['LibMapper'], entityArg: 0, library }, grade: 'SOUND_SET', ...over });
+  const problems = refusal([{ where: 'lib.json', pack: packOf([
+    rule('p.exact', { grade: undefined }),
+    rule('p.unsaid', { params: { role: 'mybatis-plus-mapper', supertypes: ['LibMapper'], entityArg: 0 } }),
+    rule('p.nowhere', { params: { role: 'mybatis-plus-mapper', supertypes: ['LibMapper'], entityArg: 0, library: { ...library, source: ' ' } } }),
+    rule('p.other-name', { params: { role: 'mybatis-plus-mapper', supertypes: ['BaseMapper'], entityArg: 0, library } }),
+  ]) }]);
+  const has = (re) => assert.ok(problems.some((m) => re.test(m)), `a problem matching ${re}: ${problems.join(' | ')}`);
+  has(/p\.exact a rule relying on a library's declaration is graded below EXACT/);
+  has(/p\.unsaid gives SOUND_SET, which only a rule relying on a library's declaration does/);
+  has(/p\.nowhere params\.library\.source must say where that declaration is written/);
+  has(/p\.other-name params\.supertypes must be the one simple name of params\.library\.type, LibMapper/);
+  assert.equal(problems.length, 4, problems.join(' | '));
+});
+
+test('a mapper the source shows and a library\'s rule both name is one mapper, as sure as the source; two entities are refused', () => {
+  const rules = builtinRegistry().ofKind('java.type-role');
+  const lib = { kind: 'import', owner: 'p.M', simple: 'MPJBaseMapper', fqn: 'com.github.yulichang.base.MPJBaseMapper', file: 'p/M.java' };
+  const both = (a, b) => [lib, typeRecord('p.M', { implements: ['MPJBaseMapper', 'BaseMapper'], implementsArgs: [[a], [b]], package: 'p', file: 'p/M.java' })];
+  assert.deepEqual(deriveTypeRoles(both('E', 'E'), rules).map((r) => [r.kind, r.entityTypeSimple, r.grade ?? 'EXACT', r.rule]),
+    [['mpMapper', 'E', 'EXACT', 'mybatis-plus.mapper']]);
+  assert.throws(() => deriveTypeRoles(both('A', 'B'), rules), /give p\.M two different mpMapper records/);
+});
+
 test('a type-role rule refuses a role it does not know, a supertype that is not a Java name, and a type argument its role does not take', () => {
   const problems = refusal([{ where: 't.json', pack: packOf([{
     id: 'p.bad', kind: 'java.type-role', description: 'Bad.', params: { role: 'mybatis-plus-mapper', supertypes: ['Base Mapper'], mapperArg: 0 },
