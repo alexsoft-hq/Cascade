@@ -77,12 +77,17 @@ export function wrapperFragmentLineageOf({ javaFacts, mpOpts, ...lineage }) {
 
 /**
  * The statements written in Java annotations, MyBatis and JPA native alike, for
- * the overlay: the same ones `analyze` reads, with no progress printed. Without
- * the SQL lane's python there are none, as there were none in the pack.
+ * the overlay: the same ones `analyze` reads, with no progress printed.
+ *
+ * A native query is SQL as written, so its statement needs no python and its
+ * lineage is read from the fact cache like any other. A MyBatis annotation has
+ * to go through the flattener, which is python: `requirePython` declines the
+ * overlay when there is none, rather than answering without those statements
+ * as if the edit had removed them.
  */
-export function annotationStatementsOf({ javaFacts, statementRecords, runpy, pyOk, mybatisArgs }) {
-  if (!pyOk) return [];
+export function annotationStatementsOf({ javaFacts, statementRecords, runpy, requirePython, mybatisArgs }) {
   const mappers = annotationMappersOf(javaFacts, statementRecords);
+  if (mappers.files.length > 0) requirePython(`the ${mappers.statements} MyBatis statement annotation(s)`);
   const annotated = mappers.files.length > 0 ? flattenAnnotationMappers(mappers.files, { runpy, mybatisArgs }) : [];
   return [...annotated, ...nativeQueryStatements(javaFacts)];
 }

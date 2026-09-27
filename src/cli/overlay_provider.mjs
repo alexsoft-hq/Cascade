@@ -261,7 +261,7 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
     web: (targets) => runWebLane(rootAbs, targets, { sourceRoots, templateRoots: templateRootsAbs }),
     webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots, templateRoots: templateRootsAbs }),
   };
-  return { run, runpy, pyOk: pyRes.ok, mapperDirsAbs, ddlRels, ddlAbsList, skipped };
+  return { run, runpy, needPy, mapperDirsAbs, ddlRels, ddlAbsList, skipped };
 }
 
 /** Re-parse exactly the dirty files and read the rest back out of the shards. */
@@ -274,7 +274,7 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
   const templateRootsAbs = (selection.templateRoots ?? [])
     .filter((t) => t && typeof t === 'object' && typeof t.root === 'string')
     .map((t) => ({ root: absOf(t.root), engine: t.engine, suffix: t.suffix }));
-  const { run, runpy, pyOk, mapperDirsAbs, ddlRels, ddlAbsList, skipped } = laneRunners({
+  const { run, runpy, needPy, mapperDirsAbs, ddlRels, ddlAbsList, skipped } = laneRunners({
     rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives,
   });
   const lanes = runOverlayLanes({
@@ -290,7 +290,7 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
     },
   });
   const javaLanesOf = overlayJavaLanes({
-    profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, pyOk,
+    profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy,
     catalogRecords: lanes.catalogRecords, statementRecords: lanes.statementRecords,
   });
   return { lanes, webRootsAbs, templateRootsAbs, javaLanesOf };
@@ -304,7 +304,7 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
  * cache, or analyzed now through a store that writes nothing to disk: an
  * uncommitted edit never becomes a cached fact.
  */
-function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, pyOk, catalogRecords, statementRecords }) {
+function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy, catalogRecords, statementRecords }) {
   const prof = profile ?? {};
   const javaRootsAbs = (selection.javaRoots ?? []).map((r) => path.resolve(rootAbs, r));
   const lineageCtx = { store, index: idx, catalog: catalogRecords, sqlArgs, runners: run, force: false, diagnostics: [] };
@@ -312,7 +312,7 @@ function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, ru
     if (javaRootsAbs.length === 0) return { jpa: null, mybatisPlus: null, lineage: [] };
     const { runJpa, runMp } = whichJavaLanes(prof, javaFacts, javaRootsAbs);
     const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs))) : null;
-    const statements = annotationStatementsOf({ javaFacts, statementRecords, runpy, pyOk, mybatisArgs: sqlArgs.mybatisArgs });
+    const statements = annotationStatementsOf({ javaFacts, statementRecords, runpy, requirePython: needPy, mybatisArgs: sqlArgs.mybatisArgs });
     const lineage = lineageOfStatements({ statements, ...lineageCtx }).lineageRecords;
     if (!runMp) return { jpa, mybatisPlus: null, lineage };
     const mpOpts = mybatisPlusOptions(prof, sqlArgs);

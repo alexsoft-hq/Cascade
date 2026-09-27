@@ -86,8 +86,11 @@ Each dated section below is one round of work. The round protocol is in
   their options the way `analyze` does, over its own records, and reads the SQL
   in annotations and MyBatis-Plus wrapper fragments through the same code as
   `analyze` (`src/cli/java_sql.mjs`), from the fact cache without writing to
-  it; the same file now gives the same answer both ways. OpenAPI documents, run
-  traces and Spring XML id generators are still read by `analyze` only.
+  it; the same file now gives the same answer both ways. Without the SQL lane's
+  python, a native query's lineage is still read from the cache, and an overlay
+  that would have to re-read MyBatis annotations declines instead of answering
+  without them. OpenAPI documents, run traces and Spring XML id generators are
+  still read by `analyze` only.
 - **A type named like a MyBatis-Plus base, but another type, is not a mapper.**
   The MyBatis-Plus rules now write their base types in full
   (`com.baomidou.mybatisplus.core.mapper.BaseMapper`), and a supertype is read
