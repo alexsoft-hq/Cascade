@@ -86,7 +86,7 @@ test('POST /api/export writes the SVG when asked for it, and refuses a format it
   assert.equal(ok.json.answer.html, undefined);
   const bad = handleApi('POST', '/api/export', { tab: 'flow', arguments: { screen: '/rows' }, format: 'pdf' }, deps);
   assert.equal(bad.status, 400);
-  assert.match(bad.json.error.message, /format must be html or svg/);
+  assert.match(bad.json.error.message, /format must be one of html, svg, card/);
 });
 
 test('cascade export --format svg writes the picture beside the page it would have written', async (t) => {

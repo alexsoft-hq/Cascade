@@ -648,7 +648,7 @@ the server serves several. See [viewer.md](viewer.md).
 ```
 cascade export [--pack <dir> | --project <id> | --root <dir>] [--tab flow|impact]
                (--endpoint|--screen|--symbol|--table|--column|--statement) <name>
-               [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--out <file>]
+               [--mode strict|conservative|heuristic] [--depth 1-8] [--limit <n>] [--lang en|ko] [--format html|svg|card] [--out <file>]
 ```
 
 Write one Flow or Impact answer as one HTML file. The file is the viewer's own
@@ -666,10 +666,16 @@ The viewer's **Export** button writes the same file for the same question. See
   screen, as the tabs open).
 - `--limit <n>` — rows per lane before the list is cut (default 40). A cut list
   says so in the file.
-- `--format html|svg` — `html` (default) writes the page with the answer inside;
+- `--format html|svg|card` — `html` (default) writes the page with the answer inside;
   `svg` writes one picture of the same answer for a slide or a document, with
   every row, grade dash, cut and limit drawn in it. The viewer turns the same SVG
-  into a PNG with its **PNG** button.
+  into a PNG with its **PNG** button. `card` writes the answer at a glance, as a
+  `.card.svg`: what was asked about at the top, then one layer per lane with its
+  whole total, a few names in the answer's order, a badge per grade and a rail
+  dashed by its weakest row. A cut layer says its grades cover only the rows
+  shown, a walk that stopped early says so, and every limit is written out word
+  for word. The card carries no export time, so exporting it again from the same
+  pack writes the same bytes, which is what lets a README keep one.
 - `--lang en|ko` — the language of the page's own words. The engine's words
   (grades, limits, reasons) are never translated.
 - `--out <file>` — where to write; default `cascade-<project>-<tab>-<entry>.html`

@@ -1,4 +1,4 @@
-// export.mjs — `cascade export`: one Flow or Impact answer, written as one HTML file.
+// export.mjs — `cascade export`: one Flow or Impact answer, written as one HTML file or one picture.
 //
 // The file is the viewer's own page with the answer inside, so it opens in any
 // browser with no Cascade and no network, and it draws the grades, the limits
@@ -43,7 +43,7 @@ export function run(cli) {
     die(`${e.code ? `${e.code}: ` : ''}${e.message}`);
   }
   const file = path.resolve(opt('out', out.filename));
-  fs.writeFileSync(file, out.format === 'svg' ? out.svg : out.html, 'utf8');
+  fs.writeFileSync(file, out.format === 'html' ? out.html : out.svg, 'utf8');
   printSummary(file, out);
 }
 
@@ -55,5 +55,5 @@ function printSummary(file, out) {
   process.stdout.write(`wrote ${file} (${out.bytes} bytes): ${out.snapshot.tab} from ${out.snapshot.entry.kind} ${out.snapshot.entry.value}, `
     + `mode ${out.snapshot.args.mode}, depth ${out.snapshot.args.depth}, limit ${out.snapshot.args.limit}\n`);
   process.stdout.write(`trust ${flow.trust?.trustLevel ?? 'unknown'}, ${limits} limit(s), ${cut} cut list(s). The file carries all of them, `
-    + (out.format === 'svg' ? 'and is one picture a document can hold\n' : 'and opens in a browser with no server\n'));
+    + (out.format === 'html' ? 'and opens in a browser with no server\n' : 'and is one picture a document can hold\n'));
 }

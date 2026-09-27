@@ -23,6 +23,20 @@ people who work beside them. Apache-2.0.
 
 ## A picture first
 
+![One column and everything above it, drawn by Cascade from litemall:
+litemall_admin.username is used by 10 SQL statements, 11 service methods, 6 API
+endpoints including POST /admin/auth/login, 12 frontend functions and 4 screens,
+each layer with its grades, and the answer's three limits written out
+below](docs/assets/impact-card.svg)
+
+That card is Cascade's own answer, not a drawing:
+`cascade export --project litemall --tab impact --column litemall_admin.username --format card`
+wrote it, on [litemall](https://github.com/linlinjava/litemall) at `a1ef964a718b`.
+Change that one column and this is what sits above it, from the SQL up to the
+screens, with how sure each layer is. A solid line is seen in the code; a dashed
+one is a call that may happen but that no static read can confirm, which is as
+far as a parser honestly gets through Spring's dependency injection.
+
 ![A tour of the Cascade viewer: the overview dials on litemall, then a column
 fanning out to the SQL statements and HTTP endpoints it touches, the source of
 one statement, the whole-project graph, and the schema recovered from the joins

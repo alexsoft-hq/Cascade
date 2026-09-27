@@ -2162,12 +2162,12 @@
     "exportSnapshot",
     "exportSnapshot/1",
     "htmlFile",
+    "pictureFile",
     "projectMeta",
     "projectMeta/1",
     "readFont",
     "readLib",
     "readScript",
-    "svgFile",
     "viewerAssets",
     "viewerAssets/1",
     "viewerAssets/2"
@@ -4370,7 +4370,7 @@
    ]
   },
   "src/viewer/chain_svg.mjs": {
-   "maxLines": 24,
+   "maxLines": 23,
    "maxBranches": 16,
    "longest": "footerSvg",
    "branchiest": "rowOf",
@@ -4391,8 +4391,6 @@
     "chainSvg/5/1",
     "drawingPalette",
     "entryRow",
-    "esc",
-    "face",
     "footerSvg",
     "footerSvg/1",
     "headerLines",
@@ -4539,6 +4537,59 @@
     "scriptLine",
     "webLang",
     "wholeFileCut"
+   ]
+  },
+  "src/viewer/summary_card.mjs": {
+   "maxLines": 17,
+   "maxBranches": 6,
+   "longest": "summaryCardModel",
+   "branchiest": "summaryCardModel",
+   "functions": [
+    "badgesSvg",
+    "badgesSvg/1",
+    "badgesSvg/2",
+    "badgesSvg/3",
+    "basisOf",
+    "chipSvg",
+    "chipWidth",
+    "fit",
+    "footerSvg",
+    "gradeCounts",
+    "gradeCounts/1",
+    "headerSvg",
+    "labelSvg",
+    "layerSvg",
+    "legendSvg",
+    "legendSvg/1",
+    "namesSvg",
+    "namesSvg/1",
+    "namesThatFit",
+    "proseSvg",
+    "proseSvg/1",
+    "railSvg",
+    "summaryCardModel",
+    "summaryCardModel/1",
+    "summaryCardModel/2",
+    "summaryCardSvg",
+    "summaryCardSvg/1",
+    "summaryCardSvg/2",
+    "textSvg",
+    "weakestGrade",
+    "worthSvg"
+   ]
+  },
+  "src/viewer/svg_doc.mjs": {
+   "maxLines": 6,
+   "maxBranches": 1,
+   "longest": "baseStyle",
+   "branchiest": "escapeXml",
+   "functions": [
+    "baseStyle",
+    "dashAttr",
+    "escapeXml",
+    "fontFace",
+    "gradeBadgeSvg",
+    "svgDocument"
    ]
   },
   "viewer/js/00_state.js": {

@@ -28,8 +28,10 @@ export const SVG_LANES = Object.freeze({
   up: Object.freeze(['statements', 'services', 'endpoints', 'webFunctions', 'screens']),
 });
 
-/** The live page's dash per grade: the dash IS the grade. */
-export const GRADE_DASH = Object.freeze({ EXACT: null, SOUND_SET: '5 3', HEURISTIC: '1.5 3', RUNTIME_ONLY: '1 4', UNRESOLVED: '1 4' });
+import { GRADE_DASH, dashAttr, escapeXml as esc, gradeBadgeSvg, svgDocument } from './svg_doc.mjs';
+
+/** The live page's dash per grade, spelled once in svg_doc.mjs and read from here by the tests. */
+export { GRADE_DASH };
 
 const COL_W = 300;
 const COL_GAP = 70;
@@ -50,8 +52,6 @@ export function drawingPalette(html) {
   }
   return out;
 }
-
-const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
  * Text cut into lines at a separator where there is one: at most `first`
@@ -143,7 +143,7 @@ function layoutOf(model, top) {
 
 /** The SVG text of one row. */
 function rowSvg(r, b, p) {
-  const badge = r.grade ? `<g><rect x="${b.x + b.w - 92}" y="${b.y + 6}" width="84" height="16" fill="${p.g1}" stroke="${p.t1}" stroke-width="1"${GRADE_DASH[r.grade] ? ` stroke-dasharray="${GRADE_DASH[r.grade]}"` : ''}/><text x="${b.x + b.w - 50}" y="${b.y + 18}" text-anchor="middle" class="m s">${esc(r.grade)}</text></g>` : '';
+  const badge = r.grade ? gradeBadgeSvg({ x: b.x + b.w - 92, y: b.y + 6, width: 84, grade: r.grade, palette: p }) : '';
   const name = b.lines.map((l, i) => `<tspan x="${b.x + 10}" dy="${i === 0 ? 0 : LINE}">${esc(l)}</tspan>`).join('');
   const sub = r.sub ? `<text x="${b.x + 10}" y="${b.y + 20 + b.lines.length * LINE}" class="t s c2">${esc(r.sub)}</text>` : '';
   return `<g data-key="${esc(r.key)}"><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="${p.g1}" stroke="${p.hair}"/>`
@@ -162,8 +162,7 @@ function linkSvg(l, boxes, p) {
   const d = same
     ? `M${x1},${y1} C${x1 - 22},${y1} ${x2 - 22},${y2} ${x2},${y2}`
     : `M${x1},${y1} C${x1 + Math.max(26, (x2 - x1) / 2)},${y1} ${x2 - Math.max(26, (x2 - x1) / 2)},${y2} ${x2},${y2}`;
-  const dash = GRADE_DASH[l.grade];
-  return `<path d="${d}" fill="none" stroke="${p.edge}" stroke-width="1.3" data-grade="${esc(l.grade)}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`;
+  return `<path d="${d}" fill="none" stroke="${p.edge}" stroke-width="1.3" data-grade="${esc(l.grade)}"${dashAttr(l.grade)}/>`;
 }
 
 /** The band over the picture: the question and what the answer is worth. */
@@ -191,8 +190,7 @@ function footerSvg(flow, t, y, width, p, dropped) {
   parts.push(`<text x="${PAD}" y="${y}" class="t b">${esc(t('chain.legend.title'))}</text>`);
   legend.forEach(([g, key], i) => {
     const ly = y + 20 + i * 18;
-    const dash = GRADE_DASH[g] ? ` stroke-dasharray="${GRADE_DASH[g]}"` : '';
-    parts.push(`<line x1="${PAD}" y1="${ly - 4}" x2="${PAD + 40}" y2="${ly - 4}" stroke="${p.edge}" stroke-width="1.5"${dash}/>`
+    parts.push(`<line x1="${PAD}" y1="${ly - 4}" x2="${PAD + 40}" y2="${ly - 4}" stroke="${p.edge}" stroke-width="1.5"${dashAttr(g)}/>`
       + `<text x="${PAD + 52}" y="${ly}" class="m s">${esc(g)}</text><text x="${PAD + 150}" y="${ly}" class="t s">${esc(t(key))} (${byGrade[g] ?? 0})</text>`);
   });
   let ly = y + 20 + legend.length * 18 + 14;
@@ -229,18 +227,12 @@ export function chainSvg(snap, { t, palette = drawingPalette(''), fonts = {} }) 
   const { boxes, bottom, width } = layoutOf(model, lanesTop);
   const foot = footerSvg(flow, t, bottom + 10, width, palette, model.dropped.length);
   const height = foot.bottom;
-  const face = (name, buf) => (buf ? `@font-face{font-family:"${name}";src:url(data:font/woff2;base64,${Buffer.from(buf).toString('base64')}) format("woff2");}` : '');
-  const style = `${face('IBM Plex Sans', fonts.sans)}${face('IBM Plex Mono', fonts.mono)}`
-    + `.t{font-family:"IBM Plex Sans","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;font-size:13px;fill:${palette.t1}}`
-    + `.m{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:12px;fill:${palette.t1}}`
-    + `.s{font-size:11px}.b{font-weight:600}.c2{fill:${palette.t2}}`;
   const headSvg = [`<text x="${PAD}" y="${PAD + 12}" class="t b">${esc(t('snap.title'))}</text>`]
     .concat(head.map((line, i) => `<text x="${PAD}" y="${PAD + 34 + i * 18}" class="t${i === 2 ? '' : ' c2'}"${i === 2 ? ` fill="${palette.warn}"` : ''}>${esc(line)}</text>`));
   const laneSvg = model.lanes.map((lane, li) => laneHeadSvg(lane, PAD + li * (COL_W + COL_GAP), lanesTop, t, palette, direction)).join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-    + `<style>${style}</style><rect width="100%" height="100%" fill="${palette.g0}"/>`
-    + headSvg.join('') + laneSvg
+  const body = headSvg.join('') + laneSvg
     + model.links.map((l) => linkSvg(l, boxes, palette)).join('')
     + model.lanes.map((lane, li) => lane.rows.map((r, ri) => rowSvg(r, boxes[li][ri], palette)).join('')).join('')
-    + foot.svg + '</svg>';
+    + foot.svg;
+  return svgDocument({ width, height, palette, fonts, body });
 }

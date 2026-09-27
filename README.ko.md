@@ -23,6 +23,19 @@ AI 코딩 에이전트와 그 옆에서 일하는 사람을 위한, 코드에서
 
 ## 그림부터 봅니다
 
+![litemall 에서 Cascade 가 그린 컬럼 하나와 그 위의 모든 것. litemall_admin.username
+을 SQL statement 10개, 서비스 메서드 11개, POST /admin/auth/login 을 포함한 API
+엔드포인트 6개, 프론트엔드 함수 12개, 화면 4개가 쓰고, 층마다 등급이 붙어 있으며,
+아래에 이 답의 한계 세 가지가 원문 그대로 적혀 있습니다](docs/assets/impact-card-ko.svg)
+
+이 카드는 손으로 그린 그림이 아니라 Cascade 가 낸 답입니다.
+[litemall](https://github.com/linlinjava/litemall) `a1ef964a718b` 에서
+`cascade export --project litemall --tab impact --column litemall_admin.username --format card --lang ko`
+가 썼습니다. 이 컬럼 하나를 바꾸면 그 위로 SQL 부터 화면까지 무엇이 걸려 있는지,
+층마다 얼마나 확실한지가 한 장에 보입니다. 실선은 코드에서 확인한 연결입니다.
+점선은 일어날 수 있지만 정적으로는 확정할 수 없는 호출입니다. Spring 의 의존성
+주입을 파서가 정직하게 읽을 수 있는 곳이 딱 여기까지입니다.
+
 ![Cascade 뷰어 둘러보기. litemall 의 개요 다이얼, 이어서 컬럼 하나가 닿는 SQL
 statement 와 HTTP 엔드포인트로 뻗어 나가는 모습, statement 하나의 소스, 프로젝트
 전체 그래프, 그리고 mall 에서 SQL 의 조인으로 복원한 스키마](docs/assets/cascade-demo.gif)

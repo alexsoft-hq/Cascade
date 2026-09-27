@@ -10,6 +10,20 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Added
+
+- **`cascade export --format card`: one answer at a glance.** The chain picture
+  draws every row, which is what a reviewer needs and more than a first look can
+  take in. The card writes what was asked about at the top and, under it, one
+  layer per lane (SQL statements, service methods, API endpoints, frontend
+  functions, screens) with its whole total, a few names in the answer's order, a
+  badge per grade and a rail dashed by its weakest row. A cut layer says its
+  grades cover only the rows shown, a walk that stopped early says so in the
+  warning ink, and every limit is written out word for word. It carries no export
+  time, so the same pack writes the same bytes. The README now opens with one,
+  exported from litemall. The two pictures share their escaping, grade marks and
+  frame in `src/viewer/svg_doc.mjs`; the chain picture's bytes are unchanged.
+
 ### Fixed
 
 - **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
