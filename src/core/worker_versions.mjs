@@ -13,7 +13,7 @@
 // tells you to bump this one.
 
 /** JavaFacts.java — `static final String VERSION`. */
-export const JAVA_WORKER_VERSION = 'javafacts/14';
+export const JAVA_WORKER_VERSION = 'javafacts/15';
 /** mybatis_extract.py — `EXTRACTOR_VERSION`. */
 export const MYBATIS_WORKER_VERSION = 'mybatis-extract/2';
 /** lineage.py — `LINEAGE_VERSION`. */

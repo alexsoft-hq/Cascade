@@ -117,7 +117,9 @@ Each dated section below is one round of work. The round protocol is in
   (`com.baomidou.mybatisplus.core.mapper.BaseMapper`), and a supertype is read
   as one unless its file means another type by that name: an import of another
   `BaseMapper`, or a type of that name the project declares in the file's
-  package or in a package it imports whole. eladmin's 19 MapStruct mappers,
+  package or in a package it imports whole. A supertype the source writes in
+  full names that type whatever the file's package holds, so the Java worker
+  now records each supertype as written. eladmin's 19 MapStruct mappers,
   which extend eladmin's own `BaseMapper<D, E>`, were read as MyBatis-Plus
   mappers of their DTOs, and a dolphinscheduler benchmark's `IService` as
   MyBatis-Plus's. None of them had drawn an edge, so no pack moved; the 277
@@ -139,7 +141,7 @@ Each dated section below is one round of work. The round protocol is in
   file was read. A profile that declares its dialect, as `cascade init` writes
   for ruoyi-vue-pro, never took this path.
 - **A type argument the Java worker cannot name keeps its place.** The worker
-  (now `javafacts/14`) left out a type argument with no class name, so in
+  (now `javafacts/15`) left out a type argument with no class name, so in
   `Base<int[], User>` the `User` moved into the first place and a rule reading
   the second argument read nothing. Such an argument is now `null` in its
   position. A type-use annotation is also no longer part of a name:

@@ -96,7 +96,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/14";
+    static final String VERSION = "javafacts/15";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -419,13 +419,16 @@ public class JavaFacts {
             List<String> annotations = annotationNames(ct.getModifiers().getAnnotations());
             List<String> impls = new ArrayList<>();
             List<Object> implArgs = new ArrayList<>();
+            List<String> implWritten = new ArrayList<>();
             for (Tree t : ct.getImplementsClause()) {
                 String s = typeSimpleName(t);
                 if (s == null) continue;
                 impls.add(s);
                 implArgs.add(typeArgSimples(t));
+                implWritten.add(writtenName(t));
             }
             String ext = (ct.getExtendsClause() != null) ? typeSimpleName(ct.getExtendsClause()) : null;
+            String extWritten = (ct.getExtendsClause() != null) ? writtenName(ct.getExtendsClause()) : null;
             List<String> extArgs = (ct.getExtendsClause() != null)
                     ? typeArgSimples(ct.getExtendsClause()) : new ArrayList<String>();
 
@@ -451,8 +454,13 @@ public class JavaFacts {
             typeRec.put("annotations", annotations);
             typeRec.put("implements", impls);
             typeRec.put("implementsArgs", implArgs);
+            // Each supertype as the source writes it: `a.b.C` in full, else `C`. Only the
+            // name written in full says which type it is when the file's own package has
+            // a type of the same simple name.
+            typeRec.put("implementsWritten", implWritten);
             typeRec.put("extends", ext);
             typeRec.put("extendsArgs", extArgs);
+            typeRec.put("extendsWritten", extWritten);
             typeRec.put("typeParams", typeParams);
             typeRec.put("typeParamBounds", typeParamBounds);
             // The HTTP-CLIENT annotation this type carries, verbatim: @FeignClient
@@ -2733,6 +2741,14 @@ public class JavaFacts {
             for (Tree a : ((ParameterizedTypeTree) t).getTypeArguments()) out.add(typeSimpleName(a));
         }
         return out;
+    }
+
+    /** A type's name as the source writes it, without its type arguments or annotations: `a.b.C` in full, else `C`. */
+    static String writtenName(Tree t) {
+        if (t instanceof ParameterizedTypeTree) return writtenName(((ParameterizedTypeTree) t).getType());
+        if (t instanceof AnnotatedTypeTree) return writtenName(((AnnotatedTypeTree) t).getUnderlyingType());
+        if (t instanceof MemberSelectTree || t instanceof IdentifierTree) return t.toString();
+        return null;
     }
 
     /** Every member/identifier name in an expression that may be a single value or an array. */

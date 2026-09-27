@@ -68,8 +68,10 @@ const packageOf = (fqn) => fqn.slice(0, fqn.lastIndexOf('.'));
 
 /** A type record's direct supertypes, in the order the worker reads them. */
 export function supertypesOf(t) {
-  const out = (t.implements ?? []).map((simple, i) => ({ simple, args: (t.implementsArgs ?? [])[i] ?? [] }));
-  if (t.extends) out.push({ simple: t.extends, args: t.extendsArgs ?? [] });
+  const out = (t.implements ?? []).map((simple, i) => ({
+    simple, args: (t.implementsArgs ?? [])[i] ?? [], written: (t.implementsWritten ?? [])[i] ?? null,
+  }));
+  if (t.extends) out.push({ simple: t.extends, args: t.extendsArgs ?? [], written: t.extendsWritten ?? null });
   return out;
 }
 
@@ -132,7 +134,7 @@ function compile(rule) {
   const { wanted, reads } = readingOf(rule);
   const claim = library ? { grade: rule.grade, library: library.type } : {};
   return (t, names = NO_NAMES) => supertypesOf(t)
-    .filter((sup) => wanted.has(sup.simple) && reads(t, sup.simple, wanted.get(sup.simple), names))
+    .filter((sup) => wanted.has(sup.simple) && reads(t, sup, wanted.get(sup.simple), names))
     .map((sup) => ({ ...ROLES[role].record(t, sup, rule.params), ...claim, rule: rule.id }));
 }
 
@@ -151,15 +153,15 @@ export function readingOf(rule) {
 }
 
 /** A supertype written by its simple name alone is read by name; one written in full, unless the file means another type. */
-function readsAsType(t, simple, fqn, names) {
+function readsAsType(t, sup, fqn, names) {
   if (fqn === null) return true;
-  const meaning = meaningOf(t, simple, names);
+  const meaning = meaningOf(t, sup, names);
   return !meaning?.fqn || meaning.fqn === fqn;
 }
 
 /** A library's type only on evidence: the file imports it, by name or with its package, or sits in its package. */
-function readsAsLibraryType(t, simple, fqn, names) {
-  const meaning = meaningOf(t, simple, names);
+function readsAsLibraryType(t, sup, fqn, names) {
+  const meaning = meaningOf(t, sup, names);
   if (meaning?.fqn) return meaning.fqn === fqn;
   return t.package === packageOf(fqn) || (meaning?.packages ?? []).includes(packageOf(fqn));
 }

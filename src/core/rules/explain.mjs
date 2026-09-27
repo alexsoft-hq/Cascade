@@ -22,7 +22,7 @@ function ruleVerdict(entry, t, sup, names) {
 }
 
 function supertypeReading(t, sup, rules, names) {
-  const meaning = meaningOf(t, sup.simple, names);
+  const meaning = meaningOf(t, sup, names);
   const inProject = Boolean(meaning?.fqn && names.declared.has(meaning.fqn));
   const verdicts = rules.filter((e) => readingOf(e.rule).wanted.has(sup.simple)).map((e) => ruleVerdict(e, t, sup, names));
   return { supertype: sup.simple, args: sup.args, meaning: meaningSaid(meaning), inProject, rules: verdicts };

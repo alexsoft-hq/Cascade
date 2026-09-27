@@ -31,16 +31,27 @@ export function javaNames(records) {
 /** A context that knows no import and no type, for reading a type record on its own. */
 export const NO_NAMES = Object.freeze({ imports: () => NO_IMPORTS, declared: new Set() });
 
+/** A name written from its package down (`a.b.C`), as a package is spelled: in lower case. */
+const QUALIFIED_FROM_PACKAGE = /^[a-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+$/;
+
 /**
- * What `simple`, written in the file of type record `t`, means.
+ * What a type name, written in the file of type record `t`, means.
  *
- * `{fqn}` when the file decides it: an import of that one name, a type of the
- * same package the project declares, or the one type of that name a package it
- * imports whole declares in the project. `{packages}` when only on-demand
- * imports could bring it in from outside the project. null when nothing in the
- * records says.
+ * `{fqn}` when the source or the file decides it: the name written in full
+ * from its package, an import of that one name, a type of the same package the
+ * project declares, or the one type of that name a package it imports whole
+ * declares in the project. `{packages}` when only on-demand imports could bring
+ * it in from outside the project. null when nothing in the records says.
+ *
+ * @param {{simple:string, written?:(string|null)}} name  the simple name, and the name as the source writes it
  */
-export function meaningOf(t, simple, names) {
+export function meaningOf(t, { simple, written = null }, names) {
+  if (written && QUALIFIED_FROM_PACKAGE.test(written)) return { fqn: written, via: 'written' };
+  return meaningInFile(t, simple, names);
+}
+
+/** What a simple name means in the file of `t`, in the order javac reads it. */
+function meaningInFile(t, simple, names) {
   const imports = names.imports(t);
   const named = imports.find((i) => i.simple === simple);
   if (named) return { fqn: named.fqn, via: 'import' };
@@ -56,6 +67,9 @@ export function meaningOf(t, simple, names) {
 export function meaningSaid(meaning) {
   if (!meaning) return 'nothing in the file places the name';
   if (meaning.packages) return `only packages imported whole could bring it in (${meaning.packages.join(', ')})`;
-  const how = { import: 'an import of that name', package: 'a type of the file\'s own package', 'package-import': 'a type of the project in a package the file imports whole' }[meaning.via];
+  const how = {
+    written: 'the source writes it in full', import: 'an import of that name', package: 'a type of the file\'s own package',
+    'package-import': 'a type of the project in a package the file imports whole',
+  }[meaning.via];
   return `the file means ${meaning.fqn} (${how})`;
 }

@@ -37,6 +37,11 @@
           "source": "package com.example.mapper;\npublic interface UserMapper extends com.baomidou.mybatisplus.core.mapper.BaseMapper<User> {}\n",
           "expect": [{ "type": "com.example.mapper.UserMapper", "role": "mybatis-plus-mapper", "entity": "User" }],
           "why": "written in full in the source: nothing in the file says it is another type"
+        },
+        {
+          "source": "package com.example.mapper;\ninterface BaseMapper<T> {}\ninterface UserMapper extends com.baomidou.mybatisplus.core.mapper.BaseMapper<User> {}\n",
+          "expect": [{ "type": "com.example.mapper.UserMapper", "role": "mybatis-plus-mapper", "entity": "User" }],
+          "why": "a name written in full names that type, even beside a type of the same simple name in the file's own package"
         }
       ]
     },

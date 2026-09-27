@@ -3795,12 +3795,13 @@
    "functions": [
     "imports",
     "javaNames",
+    "meaningInFile",
+    "meaningInFile/1",
+    "meaningInFile/2",
+    "meaningInFile/3",
+    "meaningInFile/4",
+    "meaningInFile/5",
     "meaningOf",
-    "meaningOf/1",
-    "meaningOf/2",
-    "meaningOf/3",
-    "meaningOf/4",
-    "meaningOf/5",
     "meaningSaid"
    ]
   },
