@@ -55,6 +55,21 @@ function javaWorker() {
   };
 }
 
+test('the worker keeps each type argument in its place: one with no class name is null, and a type-use annotation is no part of a name', (t) => {
+  const run = javaWorker();
+  if (!run) { t.skip('no JDK found: see docs/setup/java-lane.md'); return; }
+  const facts = run([{ name: 'p/A.java', text: [
+    'package p;',
+    'interface Annotated extends BaseMapper<@NonNull User> {}',
+    'interface Primitive extends Base<int[], User> {}',
+    'class Impl extends ServiceImpl<@Valid UserMapper, User> {}',
+  ].join('\n') }]);
+  const typeOf = (fqn) => facts.find((r) => r.kind === 'type' && r.fqn === fqn);
+  assert.deepEqual(typeOf('p.Annotated').implementsArgs, [['User']], 'once left out, which left the mapper without an entity');
+  assert.deepEqual(typeOf('p.Primitive').implementsArgs, [[null, 'User']], 'once [User], which put User in the first place');
+  assert.deepEqual(withTypeRoles(facts).filter((r) => r.kind === 'mpService').map((r) => [r.mapperTypeSimple, r.entityTypeSimple]), [['UserMapper', 'User']]);
+});
+
 test('every rule the engine carries holds every one of its examples, the Java ones through the real worker', (t) => {
   const javaFacts = javaWorker();
   const results = testRules(builtinRegistry(), { env: javaFacts ? { javaFacts } : {} });

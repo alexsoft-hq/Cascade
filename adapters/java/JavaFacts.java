@@ -34,6 +34,7 @@
  * CLI: java JavaFacts --root <repoDir> <srcRoot> [<srcRoot> ...]
  */
 
+import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.ArrayTypeTree;
 import com.sun.source.tree.AssignmentTree;
@@ -94,7 +95,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/13";
+    static final String VERSION = "javafacts/14";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -2707,14 +2708,16 @@ public class JavaFacts {
         return null;
     }
 
-    /** Simple names of a parameterized type's arguments (`Map<K,V>` -> [K, V]). */
+    /**
+     * Simple names of a parameterized type's arguments (`Map<K,V>` -> [K, V]),
+     * one per argument in its position. An argument with no class name (`?`, a
+     * primitive) is null rather than left out: `ServiceImpl<?, User>` leaving
+     * out the `?` would put User where the mapper goes.
+     */
     static List<String> typeArgSimples(Tree t) {
         List<String> out = new ArrayList<>();
         if (t instanceof ParameterizedTypeTree) {
-            for (Tree a : ((ParameterizedTypeTree) t).getTypeArguments()) {
-                String s = typeSimpleName(a);
-                if (s != null) out.add(s);
-            }
+            for (Tree a : ((ParameterizedTypeTree) t).getTypeArguments()) out.add(typeSimpleName(a));
         }
         return out;
     }
@@ -2804,6 +2807,10 @@ public class JavaFacts {
         }
         if (t instanceof ArrayTypeTree) {
             return typeSimpleName(((ArrayTypeTree) t).getType());
+        }
+        if (t instanceof AnnotatedTypeTree) {
+            // `List<@NonNull User>`: a type-use annotation is not part of the name.
+            return typeSimpleName(((AnnotatedTypeTree) t).getUnderlyingType());
         }
         // PrimitiveTypeTree, WildcardTree, etc.: no class/interface simple name.
         return null;

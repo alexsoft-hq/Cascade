@@ -102,6 +102,16 @@ Each dated section below is one round of work. The round protocol is in
   schema files and five MySQL fixtures), the fixtures chose H2 and then not one
   file was read. A profile that declares its dialect, as `cascade init` writes
   for ruoyi-vue-pro, never took this path.
+- **A type argument the Java worker cannot name keeps its place.** The worker
+  (now `javafacts/14`) left out a type argument with no class name, so in
+  `Base<int[], User>` the `User` moved into the first place and a rule reading
+  the second argument read nothing. Such an argument is now `null` in its
+  position. A type-use annotation is also no longer part of a name:
+  `BaseMapper<@NonNull User>` names `User`, and a field declared
+  `Post.@Nullable VisibleEnum` (JSpecify's style, which Spring Framework 7
+  uses) is recorded, where it was dropped. Across 24 local repositories that
+  one halo field is the only record that moves. The first analyze after
+  upgrading re-reads every Java file once.
 - **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
   shipped in several dialects (ruoyi-vue-pro carries MySQL, PostgreSQL-family and
   others side by side) was read as MySQL, where a backslash escapes a quote; one
