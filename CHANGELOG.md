@@ -41,6 +41,15 @@ Each dated section below is one round of work. The round protocol is in
   corpus entries (jeepay, eladmin, jeecg-boot, dolphinscheduler) are byte for
   byte unchanged.
 
+- **`cascade rules explain <type>`: why a type has a role, or has none.** For
+  a Java type of the project it prints each supertype its declaration names,
+  what the file means by that name (an import, its own package, a package
+  imported whole), what each rule that names it concludes and why, and the role
+  the MyBatis-Plus bridge gives once it follows the whole chain. It reads the
+  pack's fact cache and runs the rules through the same functions an analysis
+  does. On eladmin it says why `AppMapper extends BaseMapper<AppDto, App>` is
+  no MyBatis-Plus mapper: the file imports eladmin's own `BaseMapper`.
+
 - **The viewer's Rules tab, and the rule named on each link it gave.** A
   read-only tab lists the rule packs this engine runs: each rule's description,
   why it is there, its params and examples, what a library rule relies on and

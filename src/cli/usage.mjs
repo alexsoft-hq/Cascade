@@ -150,9 +150,10 @@ export const USAGE = Object.freeze({
     + '       git worktree with the profile and lane flags the current pack recorded. --base takes a pack.json, its directory or a .cascade directory;\n'
     + '       packs of different repositories are refused. The analysis conditions are compared first)\n',
   rules:
-    '  cascade rules list | show <rule id> | test [<rule id> | <pack>]  [--json]\n'
+    '  cascade rules list | show <rule id> | test [<rule id> | <pack>] | explain <type>  [--json]\n'
     + '      (the rule packs the engine reads: what each rule says, why it is there, and whether its examples\n'
-    + '       still hold. test exits 1 when one does not, 2 when one could not be run)\n',
+    + '       still hold. test exits 1 when one does not, 2 when one could not be run. explain says why a Java\n'
+    + '       type of the project has a MyBatis-Plus role or has none, from the pack\'s fact cache)\n',
 });
 
 /**

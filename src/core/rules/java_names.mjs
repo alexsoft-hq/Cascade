@@ -43,11 +43,19 @@ export const NO_NAMES = Object.freeze({ imports: () => NO_IMPORTS, declared: new
 export function meaningOf(t, simple, names) {
   const imports = names.imports(t);
   const named = imports.find((i) => i.simple === simple);
-  if (named) return { fqn: named.fqn };
+  if (named) return { fqn: named.fqn, via: 'import' };
   const samePackage = t.package ? `${t.package}.${simple}` : simple;
-  if (names.declared.has(samePackage)) return { fqn: samePackage };
+  if (names.declared.has(samePackage)) return { fqn: samePackage, via: 'package' };
   const packages = imports.filter((i) => i.simple === '*').map((i) => i.fqn);
   const inProject = packages.map((p) => `${p}.${simple}`).filter((fqn) => names.declared.has(fqn));
-  if (inProject.length === 1) return { fqn: inProject[0] };
+  if (inProject.length === 1) return { fqn: inProject[0], via: 'package-import' };
   return packages.length > 0 ? { packages } : null;
+}
+
+/** How a meaning was read, in a reader's words. */
+export function meaningSaid(meaning) {
+  if (!meaning) return 'nothing in the file places the name';
+  if (meaning.packages) return `only packages imported whole could bring it in (${meaning.packages.join(', ')})`;
+  const how = { import: 'an import of that name', package: 'a type of the file\'s own package', 'package-import': 'a type of the project in a package the file imports whole' }[meaning.via];
+  return `the file means ${meaning.fqn} (${how})`;
 }

@@ -11,7 +11,8 @@ Cascade 가 프레임워크에 대해 아는 것을 엔진 코드에서 꺼내 �
 테스트합니다.
 
 `cascade rules list` 는 모든 팩과 룰을, `cascade rules show <id>` 는 룰 하나를 통째로,
-`cascade rules test` 는 모든 예제를 실행해 보여 줍니다.
+`cascade rules test` 는 모든 예제를 실행해 보여 줍니다. `cascade rules explain <타입>` 은
+프로젝트의 Java 타입이 왜 역할을 받았는지, 또는 왜 못 받았는지 설명합니다.
 뷰어(`cascade view`)의 **룰** 탭은 같은 팩을 읽기 전용으로 보여 줍니다. 룰마다 설명,
 왜 있는지, 인자와 예제, 그리고 이 프로젝트의 pack에서 그 룰이 만든 연결 수가 나옵니다.
 룰이 만든 연결은 근거에 그 룰 이름을 남기므로(`evidence.rule`, 이유 한 문장은

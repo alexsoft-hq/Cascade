@@ -7,6 +7,7 @@
 //   list          every pack and rule, with how many examples each carries
 //   show <id>     one rule whole: what it means, why it is there, its params and examples
 //   test [<id>]   run the examples of every rule, or of one rule or one pack
+//   explain <type>  why a Java type of this project has a role, or has none
 //
 // `--json` prints the same thing for a program to read. `test` exits 1 when an
 // example does not hold, and 2 when an example could not be run at all (a Java
@@ -17,12 +18,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { builtinRegistry } from '../../core/rules/registry.mjs';
 import { testRules } from '../../core/rules/examples.mjs';
+import { explainTypeRoles } from '../../core/rules/explain.mjs';
+import { withTypeRoles } from '../../core/java_roles.mjs';
+import { FactsStoreError } from '../../core/facts_store.mjs';
+import { readEntityModel } from '../../adapters/mp_bridge.mjs';
 import { findJdk } from '../env.mjs';
 import { runJavaLane } from '../lanes_run.mjs';
+import { cachedJavaFacts, CachedFactsError } from '../cached_facts.mjs';
 
 const USAGE = 'usage: cascade rules list [--json]\n'
   + '       cascade rules show <rule id> [--json]\n'
-  + '       cascade rules test [<rule id> | <pack>] [--json]';
+  + '       cascade rules test [<rule id> | <pack>] [--json]\n'
+  + '       cascade rules explain <type> [--root <dir> | --project <id>] [--json]';
 
 const firstSentence = (text) => String(text).split(/(?<=\.)\s/)[0];
 const print = (text) => process.stdout.write(`${text}\n`);
@@ -106,6 +113,62 @@ function test(registry, only, asJson) {
   process.exit(failed ? 1 : results.some((r) => r.notRun) ? 2 : 0);
 }
 
+/** The role the MyBatis-Plus bridge gives `fqn` once it follows the whole chain, or null when it gives none. */
+function chainRoleOf(javaFacts, fqn) {
+  const model = readEntityModel(withTypeRoles(javaFacts));
+  return model.empty ? null : model.roleOf(fqn);
+}
+
+function chainSaid(role) {
+  if (!role) return 'no role: nothing in the chain reaches a MyBatis-Plus base type a rule reads';
+  const entity = role.entity?.concrete ?? (role.entity ? `its own type parameter ${role.entity.param}` : 'no entity');
+  const relied = (role.claims ?? []).map((c) => `${c.rule} (${c.library})`).join(', ');
+  return `${role.role} of ${entity}, ${role.grade}${relied ? `, relying on ${relied}` : ''}`;
+}
+
+function verdictSaid(v) {
+  if (!v.gives) return `${v.rule}: no role, ${v.why}`;
+  const g = v.gives;
+  const detail = [g.entityTypeSimple && `entity ${g.entityTypeSimple}`, g.mapperTypeSimple && `mapper ${g.mapperTypeSimple}`, g.grade].filter(Boolean).join(', ');
+  return `${v.rule}: ${g.kind === 'mpMapper' ? 'mapper' : 'service'}${detail ? ` (${detail})` : ''}, ${v.why}`;
+}
+
+const noRuleSaid = (s) => `no rule names ${s.supertype}${s.inProject ? '; a type of the project, so the MyBatis-Plus bridge follows it to what it extends' : ''}`;
+
+/** One supertype as printed: how the file reads its name, then what each rule concludes. */
+function supertypeLines(s) {
+  const args = s.args.length > 0 ? `<${s.args.map((a) => a ?? '?').join(', ')}>` : '';
+  const verdicts = s.rules.length > 0 ? s.rules.map(verdictSaid) : [noRuleSaid(s)];
+  return [`  ${s.supertype}${args}: ${s.meaning}`, ...verdicts.map((v) => `    ${v}`)];
+}
+
+function printExplained(types) {
+  for (const t of types) {
+    print(`${t.fqn}  (${t.file})`);
+    for (const line of t.supertypes.flatMap(supertypeLines)) print(line);
+    print(`  as the MyBatis-Plus bridge reads the whole chain: ${chainSaid(t.chain)}`);
+  }
+}
+
+/** The project's Java records from its pack's fact cache, or the reason there are none and the cure. */
+function projectJavaFacts({ die, resolveOrDie }) {
+  try { return cachedJavaFacts(resolveOrDie().packDir); } catch (e) {
+    if (e instanceof CachedFactsError || e instanceof FactsStoreError) return die(e.message);
+    throw e;
+  }
+}
+
+function explain(ctx, name, asJson) {
+  const { die } = ctx;
+  if (!name) die(`explain needs a type, by its full or simple name\n${USAGE}`);
+  const javaFacts = projectJavaFacts(ctx);
+  const types = explainTypeRoles(javaFacts, builtinRegistry().ofKind('java.type-role'), name)
+    .map((t) => ({ ...t, chain: chainRoleOf(javaFacts, t.fqn) }));
+  if (types.length === 0) die(`no type named ${JSON.stringify(name)} in this pack`);
+  if (asJson) print(JSON.stringify(types, null, 2));
+  else printExplained(types);
+}
+
 export function run(ctx) {
   const { argv, flag, die } = ctx;
   const sub = argv[1];
@@ -114,5 +177,6 @@ export function run(ctx) {
   if (sub === 'list') return list(registry, flag('json'));
   if (sub === 'show') return show(registry, target, flag('json'), die);
   if (sub === 'test') return test(registry, target, flag('json'));
+  if (sub === 'explain') return explain(ctx, target, flag('json'));
   return die(USAGE);
 }

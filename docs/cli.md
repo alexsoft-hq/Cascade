@@ -819,7 +819,7 @@ history ([mcp.md](mcp.md#the-tools)).
 ## `cascade rules`
 
 ```
-cascade rules list | show <rule id> | test [<rule id> | <pack>]  [--json]
+cascade rules list | show <rule id> | test [<rule id> | <pack>] | explain <type>  [--json]
 ```
 
 The rule packs the engine reads. Knowledge of frameworks, such as which word in
@@ -834,4 +834,10 @@ person can read, and every rule carries the examples that hold it. See
   one pack. Exits 1 when an example does not hold, or when nothing is named by
   the argument, and 2 when an example could not be run (a Java example needs a
   JDK), so it can stand in a CI job.
+- `explain <type>` — why a Java type of the project (by its full or simple name)
+  has a MyBatis-Plus role, or has none: each supertype its declaration names,
+  what the file means by that name, what each rule that names it concludes and
+  why, and the role the MyBatis-Plus bridge gives once it follows the whole
+  chain. It reads the pack's fact cache (`--root` or `--project` picks the
+  pack), and a cache from another worker generation is refused with the cure.
 - `--json` — the same answer for a program to read.

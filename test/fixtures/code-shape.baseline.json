@@ -1415,6 +1415,18 @@
     "where"
    ]
   },
+  "src/cli/cached_facts.mjs": {
+   "maxLines": 9,
+   "maxBranches": 1,
+   "longest": "cachedJavaFacts",
+   "branchiest": "cachedJavaFacts",
+   "functions": [
+    "cachedJavaFacts",
+    "cachedJavaFacts/1",
+    "cachedJavaFacts/2",
+    "refuse"
+   ]
+  },
   "src/cli/commands/agent.mjs": {
    "maxLines": 46,
    "maxBranches": 8,
@@ -1870,23 +1882,35 @@
    "longest": "list",
    "branchiest": "show",
    "functions": [
+    "chainRoleOf",
+    "chainSaid",
+    "chainSaid/1",
+    "explain",
+    "explain/1",
     "firstSentence",
     "javaWorkerForExamples",
     "javaWorkerForExamples/1",
     "list",
     "list/1",
     "list/1/1",
+    "noRuleSaid",
     "print",
+    "printExplained",
     "printResults",
     "printResults/1",
+    "projectJavaFacts",
     "ruleSummary",
     "run",
     "run/1",
     "show",
     "statusOf",
+    "supertypeLines",
+    "supertypeLines/1",
+    "supertypeLines/2",
     "test",
     "test/1",
     "test/2",
+    "verdictSaid",
     "writeSources"
    ]
   },
@@ -3746,6 +3770,23 @@
     "wanted"
    ]
   },
+  "src/core/rules/explain.mjs": {
+   "maxLines": 8,
+   "maxBranches": 3,
+   "longest": "ruleVerdict",
+   "branchiest": "ruleVerdict",
+   "functions": [
+    "explainTypeRoles",
+    "explainTypeRoles/1",
+    "explainTypeRoles/2",
+    "explainTypeRoles/2/1",
+    "ruleVerdict",
+    "ruleVerdict/1",
+    "supertypeReading",
+    "supertypeReading/1",
+    "supertypeReading/2"
+   ]
+  },
   "src/core/rules/java_names.mjs": {
    "maxLines": 11,
    "maxBranches": 5,
@@ -3759,7 +3800,8 @@
     "meaningOf/2",
     "meaningOf/3",
     "meaningOf/4",
-    "meaningOf/5"
+    "meaningOf/5",
+    "meaningSaid"
    ]
   },
   "src/core/rules/kinds/index.mjs": {
@@ -3784,9 +3826,8 @@
     "canonical/1",
     "compile",
     "compile/1",
-    "compile/2",
-    "compile/2/1",
-    "compile/2/2",
+    "compile/1/1",
+    "compile/1/2",
     "deriveTypeRoles",
     "deriveTypeRoles/1",
     "deriveTypeRoles/2",
@@ -3802,6 +3843,8 @@
     "libraryErrors/1",
     "packageOf",
     "rankOf",
+    "readingOf",
+    "readingOf/1",
     "readsAsLibraryType",
     "readsAsType",
     "record",

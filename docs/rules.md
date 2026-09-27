@@ -11,7 +11,9 @@ rule entry, never a new branch in the engine; one that fits no kind is a new
 kind, reviewed and tested as code.
 
 `cascade rules list` names every pack and rule, `cascade rules show <id>` prints
-one whole, and `cascade rules test` runs every example ([cli.md](cli.md#cascade-rules)).
+one whole, `cascade rules test` runs every example, and `cascade rules explain
+<type>` says why a Java type of the project has a role or has none
+([cli.md](cli.md#cascade-rules)).
 The viewer's **Rules** tab (`cascade view`) shows the same packs, read-only:
 each rule's description, why it is there, its params and examples, and how many
 links of the project's pack it gave. A link a rule gave names that rule in its

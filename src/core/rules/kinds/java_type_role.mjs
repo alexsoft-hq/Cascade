@@ -67,7 +67,7 @@ const simpleOf = (fqn) => fqn.slice(fqn.lastIndexOf('.') + 1);
 const packageOf = (fqn) => fqn.slice(0, fqn.lastIndexOf('.'));
 
 /** A type record's direct supertypes, in the order the worker reads them. */
-function supertypesOf(t) {
+export function supertypesOf(t) {
   const out = (t.implements ?? []).map((simple, i) => ({ simple, args: (t.implementsArgs ?? [])[i] ?? [] }));
   if (t.extends) out.push({ simple: t.extends, args: t.extendsArgs ?? [] });
   return out;
@@ -128,13 +128,26 @@ function validateExample(example) {
  * the roles it plays.
  */
 function compile(rule) {
-  const { role, supertypes, library } = rule.params;
-  const wanted = new Map(supertypes.map((s) => [simpleOf(s), library ? library.type : (s.includes('.') ? s : null)]));
-  const reads = library ? readsAsLibraryType : readsAsType;
+  const { role, library } = rule.params;
+  const { wanted, reads } = readingOf(rule);
   const claim = library ? { grade: rule.grade, library: library.type } : {};
   return (t, names = NO_NAMES) => supertypesOf(t)
     .filter((sup) => wanted.has(sup.simple) && reads(t, sup.simple, wanted.get(sup.simple), names))
     .map((sup) => ({ ...ROLES[role].record(t, sup, rule.params), ...claim, rule: rule.id }));
+}
+
+/**
+ * How a rule reads a supertype: the simple names it wants, the type each one
+ * stands for (null when the rule wrote the simple name alone), and the test a
+ * file's reading of the name must pass. The explanation reads rules through
+ * this too (src/core/rules/explain.mjs), so it cannot say other than they do.
+ */
+export function readingOf(rule) {
+  const { supertypes, library } = rule.params;
+  return {
+    wanted: new Map(supertypes.map((s) => [simpleOf(s), library ? library.type : (s.includes('.') ? s : null)])),
+    reads: library ? readsAsLibraryType : readsAsType,
+  };
 }
 
 /** A supertype written by its simple name alone is read by name; one written in full, unless the file means another type. */
