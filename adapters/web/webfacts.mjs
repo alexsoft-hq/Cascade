@@ -1374,10 +1374,12 @@ function parseArgs(argv) {
       continue;
     }
     if (argv[i] === '--configs-only') { configsOnly = true; continue; }
+    // One target per line: an incremental run can name more files than a command line holds.
+    if (argv[i] === '--files-from') { roots.push(...fs.readFileSync(argv[i + 1], 'utf8').split('\n').filter(Boolean)); i += 1; continue; }
     roots.push(argv[i]);
   }
   if (root === null || roots.length === 0) {
-    process.stderr.write('usage: node adapters/web/webfacts.mjs [--configs-only] --root <abs root> [--web-root <abs source root>]... [--template-root <json>]... <abs source root or file>...\n');
+    process.stderr.write('usage: node adapters/web/webfacts.mjs [--configs-only] --root <abs root> [--web-root <abs source root>]... [--template-root <json>]... (<abs source root or file>... | --files-from <list>)\n');
     process.exit(2);
   }
   // Longest root first, so a template root nested inside another wins.

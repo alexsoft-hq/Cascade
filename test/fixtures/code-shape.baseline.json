@@ -2059,13 +2059,17 @@
     "javaWorkerBuildDir",
     "runJavaLane",
     "runJavaLane/1",
+    "runJavaLane/2",
     "runWebLane",
     "runWebLane/1",
     "runWebLane/2",
     "runWebLane/3",
+    "runWebLane/4",
     "walk",
     "webPackagesRead",
-    "webPackagesRead/1"
+    "webPackagesRead/1",
+    "withTargetList",
+    "withTargetList/1"
    ]
   },
   "src/cli/output.mjs": {

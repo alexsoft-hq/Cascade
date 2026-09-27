@@ -127,6 +127,13 @@ Each dated section below is one round of work. The round protocol is in
   uses) is recorded, where it was dropped. Across 24 local repositories that
   one halo field is the only record that moves. The first analyze after
   upgrading re-reads every Java file once.
+- **An incremental run with every file to re-read no longer dies before it
+  starts.** The Java and web workers were handed their targets on the command
+  line. When the fact cache is gone while the pack's fact index remains (a
+  wiped cache, a CI job that restores only `.cascade/`), every file counts as
+  changed, and ruoyi-vue-pro's 6,548 Java paths were more than a command line
+  holds (`E2BIG`). The targets now go over in a file, one per line, whatever
+  their number.
 - **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
   shipped in several dialects (ruoyi-vue-pro carries MySQL, PostgreSQL-family and
   others side by side) was read as MySQL, where a backslash escapes a quote; one

@@ -10,6 +10,7 @@
 // core assembler, because the CLI is the layer that knows both sides.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -46,8 +47,25 @@ export function runJavaLane(jdk, root, srcRoots, { quiet = false } = {}) {
   // `quiet` keeps the worker's own summary line off the terminal, for a caller
   // whose output is something else (the rule examples).
   const stdio = ['ignore', 'pipe', quiet ? 'ignore' : 'inherit'];
-  const out = execFileSync(jdk.java, ['-cp', build, 'JavaFacts', '--root', root, ...srcRoots], { maxBuffer: 1 << 28, stdio }).toString('utf8');
-  return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const out = withTargetList(srcRoots, (list) => execFileSync(jdk.java, ['-cp', build, 'JavaFacts', '--root', root, ...list], { maxBuffer: 1 << 28, stdio }));
+  return out.toString('utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/**
+ * A worker's targets handed over in a file, one per line, whatever their
+ * number: an incremental run whose cache is gone names every file of the
+ * project, and 6,548 paths of ruoyi-vue-pro are more than a command line holds
+ * (E2BIG). The file is removed after.
+ */
+function withTargetList(targets, run) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-targets-'));
+  try {
+    const list = path.join(dir, 'targets.txt');
+    fs.writeFileSync(list, targets.map((t) => `${t}\n`).join(''));
+    return run(['--files-from', list]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -79,9 +97,9 @@ export function runWebLane(root, targets, opts = {}) {
   const templates = (opts.templateRoots ?? []).flatMap((t) => ['--template-root', JSON.stringify({
     root: t.root, engine: t.engine, suffix: t.suffix,
   })]);
-  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...templates, ...targets];
-  const out = execFileSync(process.execPath, args, { maxBuffer: 1 << 28 }).toString('utf8');
-  return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const args = [worker, ...(opts.configsOnly ? ['--configs-only'] : []), '--root', root, ...declared, ...templates];
+  const out = withTargetList(targets, (list) => execFileSync(process.execPath, [...args, ...list], { maxBuffer: 1 << 28 }));
+  return out.toString('utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
 

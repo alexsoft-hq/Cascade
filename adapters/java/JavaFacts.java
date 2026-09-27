@@ -31,7 +31,7 @@
  * read that as nondeterminism. As a per-file record it rides in that file's
  * shard and the two runs agree.
  *
- * CLI: java JavaFacts --root <repoDir> <srcRoot> [<srcRoot> ...]
+ * CLI: java JavaFacts --root <repoDir> (<srcRoot or file> ... | --files-from <list, one per line>)
  */
 
 import com.sun.source.tree.AnnotatedTypeTree;
@@ -76,6 +76,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -159,12 +160,24 @@ public class JavaFacts {
         for (int i = 0; i < args.length; i++) {
             if ("--root".equals(args[i]) && i + 1 < args.length) {
                 root = args[++i];
+            } else if ("--files-from".equals(args[i]) && i + 1 < args.length) {
+                // One target per line. An incremental run can name every file of a
+                // large project, more than a command line holds.
+                try {
+                    for (String line : Files.readAllLines(Paths.get(args[++i]), StandardCharsets.UTF_8)) {
+                        if (!line.isEmpty()) roots.add(line);
+                    }
+                } catch (IOException e) {
+                    System.err.println("cannot read the target list " + args[i] + ": " + e.getMessage());
+                    System.exit(2);
+                    return;
+                }
             } else {
                 roots.add(args[i]);
             }
         }
         if (roots.isEmpty()) {
-            System.err.println("usage: java JavaFacts --root <repoDir> <srcRoot> [<srcRoot> ...]");
+            System.err.println("usage: java JavaFacts --root <repoDir> (<srcRoot or file> ... | --files-from <list>)");
             System.exit(2);
             return;
         }
