@@ -258,6 +258,12 @@ def _parse_whole(sql_text, diagnostics, source, dialect):
 
 # A data statement fills a table and never declares one, so the catalog has no use for it.
 _DATA_STATEMENT_RE = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|COPY)\b", re.IGNORECASE)
+# A line ends a statement when it ends in a semicolon, or in a semicolon and a comment after it.
+# A literal that holds "; --" at the end of a line is cut there too, and the piece after the cut
+# is then read, or named as unreadable, on its own.
+_STATEMENT_END_RE = re.compile(r";\s*(?:--.*|#.*|/\*.*\*/)?$")
+# The comment lines and blank lines a dump writes above a statement.
+_LEADING_COMMENTS_RE = re.compile(r"\A(?:\s*(?:(?:--|#)[^\n]*(?:\n|\Z)|/\*.*?\*/))*\s*", re.DOTALL)
 _CREATE_TABLE_NAME_RE = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", re.IGNORECASE)
 # How many unreadable statements a diagnostic names before it only counts the rest.
 _UNREADABLE_NAMED = 10
@@ -268,7 +274,7 @@ def _statements_by_line(sql_text):
     chunks, current = [], []
     for line in sql_text.splitlines(keepends=True):
         current.append(line)
-        if line.rstrip().endswith(";"):
+        if _STATEMENT_END_RE.search(line.rstrip()):
             chunks.append("".join(current))
             current = []
     rest = "".join(current)
@@ -277,12 +283,18 @@ def _statements_by_line(sql_text):
     return chunks
 
 
+def _code_of(chunk):
+    """A statement from its first word: the comments written above it are not how it starts."""
+    return _LEADING_COMMENTS_RE.sub("", chunk, count=1)
+
+
 def _statement_label(chunk):
     """What a diagnostic calls a statement it could not read: the table it declares, or how it starts."""
-    m = _CREATE_TABLE_NAME_RE.match(chunk)
+    code = _code_of(chunk)
+    m = _CREATE_TABLE_NAME_RE.match(code)
     if m:
         return "CREATE TABLE %s" % m.group(1)
-    return " ".join(chunk.split())[:40]
+    return " ".join(code.split())[:40]
 
 
 def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
@@ -296,7 +308,7 @@ def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
     """
     statements, unreadable = [], []
     for chunk in _statements_by_line(sql_text):
-        if _DATA_STATEMENT_RE.match(chunk):
+        if _DATA_STATEMENT_RE.match(_code_of(chunk)):
             continue
         try:
             statements.extend(sqlglot.parse(chunk, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE))

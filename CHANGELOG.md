@@ -73,9 +73,11 @@ Each dated section below is one round of work. The round protocol is in
   others side by side) was read as MySQL, where a backslash escapes a quote; one
   literal ending in a backslash threw every quote after it out of step, the reader
   exited, and `analyze` wrote no pack. A file that cannot be tokenized as a whole
-  is now read one statement at a time: data statements are skipped unread, and a
-  statement that still cannot be read is named in a `token_error` diagnostic
-  rather than dropped silently. A file that tokenizes is read exactly as before.
+  is now read one statement at a time, each ending at a line that ends in a
+  semicolon, with or without a comment after it: data statements are skipped
+  unread, and a statement that still cannot be read is named in a `token_error`
+  diagnostic rather than dropped silently. A file that tokenizes is read exactly
+  as before.
 
 ## [0.8.11] - 2026-09-15
 

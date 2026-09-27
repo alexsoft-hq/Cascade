@@ -424,6 +424,26 @@ class UntokenizableFileTests(unittest.TestCase):
         chunks = catalog_ddl._statements_by_line("CREATE TABLE a (\n id int\n);\nINSERT INTO a VALUES (1);\nSELECT 1")
         self.assertEqual(chunks, ["CREATE TABLE a (\n id int\n);\n", "INSERT INTO a VALUES (1);\n", "SELECT 1"])
 
+    def test_a_comment_after_the_semicolon_still_ends_the_statement(self):
+        # Joined to the next statement, a CREATE TABLE after a data row was skipped
+        # with it, and the diagnostic said nothing was lost.
+        for comment in ("-- loaded seed rows", "# seed", "/* seed */"):
+            dump = UNTOKENIZABLE_DUMP_DDL.replace("'x');", "'x'); " + comment)
+            diagnostics = []
+            recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", dump)], diagnostics=diagnostics)
+            self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["after_dump", "before_dump"], comment)
+            self.assertIn("0 statement(s) unreadable", [d for d in diagnostics if d["code"] == "token_error"][0]["message"])
+
+    def test_a_comment_above_a_statement_is_not_how_it_starts(self):
+        dump = UNTOKENIZABLE_DUMP_DDL.replace("INSERT", "-- seed rows\n/* loaded */\nINSERT").replace(
+            "CREATE TABLE `after_dump` (\n  `id` int(11) NOT NULL\n);",
+            "-- Table structure\nCREATE TABLE `after_dump` (`p` varchar(9) DEFAULT 'C:\\', `q` varchar(1) DEFAULT 'B');")
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", dump)], diagnostics=diagnostics)
+        self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["before_dump"])
+        # The data row is skipped, not reported; the table that cannot be read is named by its table.
+        self.assertIn("1 statement(s) unreadable: CREATE TABLE `after_dump`", [d for d in diagnostics if d["code"] == "token_error"][0]["message"])
+
 
 class MultipleTableTests(unittest.TestCase):
     def test_tables_sorted_by_name_in_output(self):
