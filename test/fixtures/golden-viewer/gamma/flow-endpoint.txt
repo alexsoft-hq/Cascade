@@ -110,6 +110,7 @@
       <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
       <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
       <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+      <button class="tab" data-t="tab.rules" data-tab="rules" onclick type="button">Rules</button>
       <button class="tab hidden" data-t="tab.compare" data-tab="compare" onclick type="button">…</button>
     </div>
   </header>
@@ -558,6 +559,7 @@
     <div id="tab-graph" class="hidden">…</div>
     <div id="tab-erd" class="hidden">…</div>
     <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-rules" class="hidden">…</div>
     <div id="tab-compare" class="hidden">…</div>
   </div>
   <div id="brscrim" class="brscrim" onclick></div>

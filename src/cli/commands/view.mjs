@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { toolList } from '../../mcp/catalog.mjs';
+import { builtinRegistry } from '../../core/rules/registry.mjs';
+import { rulesCatalog } from '../../core/rules/catalog.mjs';
 import { serveHttp } from '../../mcp/http.mjs';
 import { readSourceFor } from '../../viewer/source.mjs';
 import { exportSnapshot, projectMeta } from '../snapshot_export.mjs';
@@ -53,6 +55,9 @@ function viewerDeps(host) {
     toolList,
     callTool: (name, args) => host.callTool(name, args),
     meta: (project) => projectMeta(host, project),
+    // The Rules tab: the rule packs this engine runs, and where each left its
+    // mark in this project's pack.
+    rules: (project) => rulesCatalog(builtinRegistry(), contextOf(project).ctx.graph),
     // The Export button: one answer, written as a file that opens anywhere.
     exportSnapshot: (request) => exportSnapshot(host, request),
     // The two vendored MIT browser bundles the Graph tab's map renderers load
@@ -71,21 +76,25 @@ function viewerDeps(host) {
     // which is why no non-English text lives in the page or in src/.
     i18nDir: path.join(ENGINE_ROOT, 'viewer', 'i18n'),
     // Live source preview, read from the working tree on demand (real-time).
-    // A pack that records no repository path has no preview to give, and says
-    // so as a structured 404 rather than a blank panel.
-    source: (nodeId, project, opts) => {
-      const { projectId, ctx } = contextOf(project);
-      const repoRoot = ctx.packJson.meta?.base?.repoPath ?? null;
-      if (!repoRoot) {
-        const e = new Error(`source preview not available for ${projectId} (its pack records no repository path)`);
-        e.code = 'unknown-key';
-        throw e;
-      }
-      return readSourceFor(ctx.graph, repoRoot, nodeId, {
-        readFile: (f) => fs.readFileSync(f, 'utf8'),
-        ddlPath: ctx.packJson.meta?.ddl,
-        whole: !!(opts && opts.whole),
-      });
-    },
+    source: (nodeId, project, opts) => sourcePreview(contextOf(project), nodeId, opts),
   };
+}
+
+/**
+ * One node's source, read from the working tree the pack was built from. A pack
+ * that records no repository path has no preview to give, and says so as a
+ * structured 404 rather than a blank panel.
+ */
+function sourcePreview({ projectId, ctx }, nodeId, opts) {
+  const repoRoot = ctx.packJson.meta?.base?.repoPath ?? null;
+  if (!repoRoot) {
+    const e = new Error(`source preview not available for ${projectId} (its pack records no repository path)`);
+    e.code = 'unknown-key';
+    throw e;
+  }
+  return readSourceFor(ctx.graph, repoRoot, nodeId, {
+    readFile: (f) => fs.readFileSync(f, 'utf8'),
+    ddlPath: ctx.packJson.meta?.ddl,
+    whole: !!(opts && opts.whole),
+  });
 }

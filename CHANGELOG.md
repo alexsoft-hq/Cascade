@@ -41,6 +41,18 @@ Each dated section below is one round of work. The round protocol is in
   corpus entries (jeepay, eladmin, jeecg-boot, dolphinscheduler) are byte for
   byte unchanged.
 
+- **The viewer's Rules tab, and the rule named on each link it gave.** A
+  read-only tab lists the rule packs this engine runs: each rule's description,
+  why it is there, its params and examples, what a library rule relies on and
+  where that is written, and how many links of the project's pack it gave
+  (`GET /api/rules`, `src/core/rules/catalog.mjs`). The link from a mapper or
+  service method to its MyBatis-Plus generic statement now names, in its
+  evidence, the rule that gave the role, and when that rule relies on a
+  library's declaration, the library type and why the link is only SOUND_SET;
+  a walked path in Flow or Impact shows it. On ruoyi-vue-pro the tab counts
+  2,718 links from `mybatis-plus-join.mapper` and 3 from `mybatis-plus.mapper`.
+  Packs of MyBatis-Plus projects change once, by that evidence alone.
+
 - **`cascade export --format card`: one answer at a glance.** The chain picture
   draws every row, which is what a reviewer needs and more than a first look can
   take in. The card writes what was asked about at the top and, under it, one

@@ -281,6 +281,57 @@ function projectOf(body, query) {
   return null;
 }
 
+/** A route's answer, or the structured error its dependency threw. */
+function answered(run, code, message) {
+  try { return { status: 200, json: run() }; }
+  catch (e) { return dispatchErr(e, code, message); }
+}
+
+const queryParam = (query, name) => (query && (typeof query.get === 'function' ? query.get(name) : query[name])) || null;
+
+function sourceRoute({ deps, query, project }) {
+  const node = queryParam(query, 'node');
+  if (!node) return err(400, 'bad-request', 'node query param required');
+  if (typeof deps.source !== 'function') return err(404, 'not-found', 'source preview not available (no repo path in this pack)');
+  // `?whole=1` asks for the file around the snippet rather than the snippet
+  // alone. It is the same answer with more text in it: the line range the
+  // preview is about does not move.
+  const whole = ['1', 'true'].includes(queryParam(query, 'whole'));
+  return answered(() => deps.source(node, project, { whole }), 'source-error', 'source read failed');
+}
+
+function rulesRoute({ deps, project }) {
+  // The rules this engine carries, read-only, and how many edges of this
+  // project's pack each one gave (src/core/rules/catalog.mjs).
+  if (typeof deps.rules !== 'function') return err(404, 'not-found', 'this server carries no rule catalog');
+  return answered(() => deps.rules(project), 'rules-error', 'rules failed');
+}
+
+function callRoute({ body, deps, project }) {
+  if (!body || typeof body !== 'object') return err(400, 'bad-request', 'JSON body required');
+  const name = body.name;
+  const args = { ...(body.arguments || {}), ...(project ? { project } : {}) };
+  if (typeof name !== 'string' || !name) return err(400, 'bad-request', 'body.name (string) required');
+  // Same dispatcher as stdio: a tool/dispatch failure carries a .code. We
+  // surface it as a structured error the page renders — never a 200 with a
+  // silent empty answer.
+  return answered(() => deps.callTool(name, args), 'error', 'tool failed');
+}
+
+/** Each API route: the one method it answers (any other is a 405 that names it), and what it does. */
+const API_ROUTES = Object.freeze({
+  '/api/source': { method: 'GET', run: sourceRoute },
+  '/api/meta': { method: 'GET', run: ({ deps, project }) => answered(() => (deps.meta && deps.meta(project)) || {}, 'meta-error', 'meta failed') },
+  '/api/tools': { method: 'GET', run: ({ deps }) => ({ status: 200, json: deps.toolList() }) },
+  '/api/rules': { method: 'GET', run: rulesRoute },
+  // The registry listing, through the SAME dispatcher the AI calls over stdio
+  // (§13: one catalog, two transports) — so the page and the model cannot be
+  // told different things about which projects exist.
+  '/api/projects': { method: 'GET', run: ({ deps }) => answered(() => deps.callTool('projects', {}), 'error', 'projects failed') },
+  '/api/call': { method: 'POST', run: callRoute },
+  '/api/export': { method: 'POST', run: ({ method, body, deps, project }) => handleExport(method, body, deps, project) },
+});
+
 /**
  * Route one API request. Pure.
  * @param {string} method  HTTP method
@@ -289,62 +340,14 @@ function projectOf(body, query) {
  * @param {{toolList:()=>object, callTool:(name:string,args:object)=>object}} deps
  * @returns {{status:number, json:object}}
  */
-/** The one method each API route answers; any other is a 405 that names it. */
-const API_METHODS = Object.freeze({
-  '/api/source': 'GET', '/api/meta': 'GET', '/api/tools': 'GET', '/api/projects': 'GET',
-  '/api/call': 'POST', '/api/export': 'POST',
-});
-
 export function handleApi(method, pathname, body, deps, query) {
-  const wanted = API_METHODS[pathname];
-  if (wanted && method !== wanted) return err(405, 'method-not-allowed', `use ${wanted} for ${pathname}`);
+  const route = API_ROUTES[pathname];
+  if (!route) return err(404, 'not-found', `no route: ${method} ${pathname}`);
+  if (method !== route.method) return err(405, 'method-not-allowed', `use ${route.method} for ${pathname}`);
   // Which project the request is about, if it says: `?project=` on a GET,
   // `body.project` (or `body.arguments.project`) on a POST. A single-project
   // server ignores it; a multi-project one refuses to guess without it (409).
-  const project = projectOf(body, query);
-  if (pathname === '/api/source') {
-    const node = query && (typeof query.get === 'function' ? query.get('node') : query.node);
-    if (!node) return err(400, 'bad-request', 'node query param required');
-    if (typeof deps.source !== 'function') return err(404, 'not-found', 'source preview not available (no repo path in this pack)');
-    // `?whole=1` asks for the file around the snippet rather than the snippet
-    // alone. It is the same answer with more text in it: the line range the
-    // preview is about does not move.
-    const wholeArg = query && (typeof query.get === 'function' ? query.get('whole') : query.whole);
-    const whole = wholeArg === '1' || wholeArg === 'true';
-    try { return { status: 200, json: deps.source(node, project, { whole }) }; }
-    catch (e) { return dispatchErr(e, 'source-error', 'source read failed'); }
-  }
-  if (pathname === '/api/meta') {
-    try { return { status: 200, json: (deps.meta && deps.meta(project)) || {} }; }
-    catch (e) { return dispatchErr(e, 'meta-error', 'meta failed'); }
-  }
-  if (pathname === '/api/tools') {
-    return { status: 200, json: deps.toolList() };
-  }
-  if (pathname === '/api/projects') {
-    // The registry listing, through the SAME dispatcher the AI calls over stdio
-    // (§13: one catalog, two transports) — so the page and the model cannot be
-    // told different things about which projects exist.
-    try { return { status: 200, json: deps.callTool('projects', {}) }; }
-    catch (e) { return dispatchErr(e, 'error', 'projects failed'); }
-  }
-  if (pathname === '/api/export') return handleExport(method, body, deps, project);
-  if (pathname === '/api/call') {
-    if (!body || typeof body !== 'object') return err(400, 'bad-request', 'JSON body required');
-    const name = body.name;
-    const args = { ...(body.arguments || {}), ...(project ? { project } : {}) };
-    if (typeof name !== 'string' || !name) return err(400, 'bad-request', 'body.name (string) required');
-    try {
-      // Same dispatcher as stdio: a tool/dispatch failure carries a .code. We
-      // surface it as a structured error the page renders — never a 200 with a
-      // silent empty answer.
-      const result = deps.callTool(name, args);
-      return { status: 200, json: result };
-    } catch (e) {
-      return dispatchErr(e, 'error', 'tool failed');
-    }
-  }
-  return err(404, 'not-found', `no route: ${method} ${pathname}`);
+  return route.run({ method, body, deps, query, project: projectOf(body, query) });
 }
 
 /**

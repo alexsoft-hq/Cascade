@@ -174,7 +174,23 @@ function indexMpFacts(javaFacts) {
  */
 function relationOf(record) {
   const grade = record.grade ?? 'EXACT';
-  return { grade, claims: grade === 'EXACT' ? [] : [{ rule: record.rule, library: record.library ?? null }] };
+  return { grade, rule: record.rule ?? null, claims: grade === 'EXACT' ? [] : [{ rule: record.rule, library: record.library ?? null }] };
+}
+
+/**
+ * Why the method IS its generic statement, as the IMPLEMENTS_STMT edge's
+ * evidence: which rule gave the owner its role and, when that rule relies on a
+ * library's declaration, which type and how sure. None for a role no rule gave
+ * (a record written by hand, as the tests do).
+ */
+function roleEvidence(stmt) {
+  if (!stmt.rule) return null;
+  const libraries = (stmt.claims ?? []).map((c) => c.library).filter(Boolean);
+  const through = libraries.length === 0 ? '' : `, through ${libraries.join(', ')}, which the rule says is a MyBatis-Plus base type the source cannot show, so the link is ${stmt.grade}`;
+  return {
+    rule: stmt.rule, ...(libraries.length > 0 ? { library: libraries } : {}),
+    basis: `MyBatis-Plus generates this statement for ${stmt.ownerFqn}, a ${stmt.role} by the rule ${stmt.rule}${through}`,
+  };
 }
 
 /**
@@ -217,7 +233,7 @@ function makeRoleOf({ types, resolveType, mapperRecords, serviceRecords }) {
           const arg = sup.args[entity.param];
           entity = arg ? bindEntity(fqn, arg, t, resolveType) : null;
         }
-        out = { role: base.role, entity, grade: base.grade, claims: base.claims };
+        out = { role: base.role, entity, grade: base.grade, rule: base.rule, claims: base.claims };
         break;
       }
     }
@@ -511,8 +527,8 @@ for (const c of calls) {
       let w = wanted.get(key);
       if (!w) {
         // The statement is the OWNER's: as sure as the owner's role, whichever call reached it.
-        const { grade, claims } = roleOf(owner) ?? r;
-        w = { key, ownerFqn: owner, method: c.method, verb, entity: r.entity.concrete, grade, claims, wrappers: [], callers: [], noWrapperCall: false };
+        const { role, grade, rule, claims } = roleOf(owner) ?? r;
+        w = { key, ownerFqn: owner, method: c.method, verb, entity: r.entity.concrete, role, grade, rule, claims, wrappers: [], callers: [], noWrapperCall: false };
         wanted.set(key, w);
       }
       w.callers.push(c.from);
@@ -1394,7 +1410,8 @@ function writeStatementNode(g, a, b) {
   // declaration caps this edge and every edge the statement writes below.
   const cap = stmt.grade ?? 'EXACT';
   if (!g.outEdges(symId).some((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid)) {
-    g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: cap });
+    const evidence = roleEvidence(stmt);
+    g.addEdge({ from: symId, to: sid, type: 'IMPLEMENTS_STMT', grade: cap, ...(evidence ? { evidence } : {}) });
     stats.implementsStmt += 1;
   }
 

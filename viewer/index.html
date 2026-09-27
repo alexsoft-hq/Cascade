@@ -333,6 +333,11 @@
   .hint.hintfold .foldbody { max-width:80ch; }
   .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr; } }
+  /* The Rules tab: a rule's params and examples are JSON and code, shown as written. */
+  .rulesrc { font-family:var(--mono); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--g3); border:1px solid var(--hair); border-radius:4px; padding:6px 8px; margin:4px 0; }
+  .rulepack { margin-top:12px; }
+  .rulerow.sel { box-shadow:inset 2px 0 0 var(--t1); background:var(--g0); }
+  .ruleex li { margin-bottom:8px; }
   /* A sheet: square, one hairline frame, no shadow, no gradient. */
   .panel { background:var(--panel-bg); border:1px solid var(--hair); border-radius:var(--r-panel);
     box-shadow:var(--panel-shadow); padding:14px 16px; margin-bottom:14px; }
@@ -1191,6 +1196,7 @@
     <button type="button" class="tab" data-tab="graph" data-t="tab.graph">Graph</button>
     <button type="button" class="tab" data-tab="erd" data-t="tab.erd">ERD</button>
     <button type="button" class="tab" data-tab="tx" data-t="tab.tx">Transactions</button>
+    <button type="button" class="tab" data-tab="rules" data-t="tab.rules">Rules</button>
     <button type="button" class="tab hidden" data-tab="compare" data-t="tab.compare">Compare</button>
   </div>
 </header>
@@ -1448,6 +1454,9 @@
   <!-- COMPARE TAB (49_compare.js): shown only when this project has an earlier
        build kept to compare with. The report, its Print and Save buttons and its
        filter are drawn into #cmpview from the answer. -->
+  <div id="tab-rules" class="hidden">
+    <div id="rulesview"></div>
+  </div>
   <div id="tab-compare" class="hidden">
     <div class="searchbar">
       <span class="comment" data-t="compare.base.label">compare this project against</span>
@@ -1513,6 +1522,7 @@
 <script src="/viewer/js/48_snapshot.js"></script>
 <script src="/viewer/js/49_compare.js"></script>
 <script src="/viewer/js/50_summary.js"></script>
+<script src="/viewer/js/51_rules.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

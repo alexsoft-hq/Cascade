@@ -69,8 +69,9 @@ function setLang(lang){
 }
 
 // ---------- tabs / init ----------
-const TABNAMES=['overview','explore','flow','impact','coupling','graph','erd','tx','compare'];
+const TABNAMES=['overview','explore','flow','impact','coupling','graph','erd','tx','rules','compare'];
 const CHAINTABS={flow:FLOWV, impact:IMPACTV};
+const LAZY_TABS={ tx:{ box:'txview', load:()=>loadTx() }, rules:{ box:'rulesview', load:()=>loadRules() } };
 // Showing a tab and LOADING a tab are two different things: a project switch
 // empties every tab's cache and then asks the visible one to fill itself again,
 // which is exactly `loadTab` with nothing cached.
@@ -90,7 +91,9 @@ function loadTab(name){
     // that is where it was) rather than mounting a second one.
     else ovMapMount();
   }
-  if (name==='tx' && !document.getElementById('txview').hasChildNodes()) loadTx();
+  // A tab that draws one answer into one box asks for it once, when the box is empty.
+  const lazy=LAZY_TABS[name];
+  if (lazy && !byId(lazy.box).hasChildNodes()) lazy.load();
   if (name==='compare' && !byId('cmpview').hasChildNodes()) drawCompare();
   // Explore, Flow and Impact open SHOWING the pack: the rail draws what it
   // already holds, and asks the server for its list exactly once.
@@ -303,6 +306,7 @@ function applyChrome(){
   for(const n of document.querySelectorAll('[data-t-ph]')) n.placeholder=t(n.dataset.tPh);
   renderProjectChrome();
   renderCompareChrome();
+  renderRulesChrome();
   renderLangChrome();
   renderMastChrome();
   renderGraphChrome();

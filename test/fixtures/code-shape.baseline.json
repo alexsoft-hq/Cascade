@@ -869,6 +869,8 @@
     "readWrapper/1",
     "readWrapperColumns",
     "relationOf",
+    "roleEvidence",
+    "roleEvidence/1",
     "roleOf",
     "roleOf/1",
     "setSql",
@@ -1911,20 +1913,22 @@
    ]
   },
   "src/cli/commands/view.mjs": {
-   "maxLines": 45,
-   "maxBranches": 4,
+   "maxLines": 33,
+   "maxBranches": 3,
    "longest": "viewerDeps",
-   "branchiest": "viewerDeps",
+   "branchiest": "sourcePreview",
    "functions": [
     "callTool",
     "contextOf",
     "exportSnapshot",
     "meta",
     "readFile",
+    "rules",
     "run",
     "run/1",
     "run/1/1",
     "source",
+    "sourcePreview",
     "viewerDeps"
    ]
   },
@@ -3708,6 +3712,20 @@
     "resolveProject"
    ]
   },
+  "src/core/rules/catalog.mjs": {
+   "maxLines": 13,
+   "maxBranches": 3,
+   "longest": "rulesCatalog",
+   "branchiest": "appliedCounts",
+   "functions": [
+    "appliedCounts",
+    "ruleEntry",
+    "rulesCatalog",
+    "rulesCatalog/1",
+    "rulesCatalog/2",
+    "rulesCatalog/2/1"
+   ]
+  },
   "src/core/rules/examples.mjs": {
    "maxLines": 9,
    "maxBranches": 2,
@@ -4242,13 +4260,16 @@
    ]
   },
   "src/mcp/http.mjs": {
-   "maxLines": 51,
-   "maxBranches": 27,
-   "longest": "handleApi",
-   "branchiest": "handleApi",
+   "maxLines": 34,
+   "maxBranches": 15,
+   "longest": "serveHttp",
+   "branchiest": "serveHttp",
    "functions": [
+    "answered",
     "boundPort",
     "cacheFor",
+    "callRoute",
+    "callRoute/1",
     "classicSource",
     "collectBody",
     "collectBody/1",
@@ -4268,6 +4289,12 @@
     "handleViewerLib",
     "handleViewerLib/1",
     "projectOf",
+    "queryParam",
+    "rulesRoute",
+    "rulesRoute/1",
+    "run",
+    "run/1",
+    "run/2",
     "send",
     "sendStatic",
     "serveFromDir",
@@ -4277,6 +4304,8 @@
     "serveHttp/1/1",
     "serveHttp/1/1/1",
     "serveHttp/1/2",
+    "sourceRoute",
+    "sourceRoute/1",
     "statusForCode",
     "vendorErr"
    ]
@@ -4952,6 +4981,7 @@
     "activateTab/2",
     "applyChrome",
     "blank",
+    "load",
     "loadCatalog",
     "loadTab",
     "loadTab/1",
@@ -6037,6 +6067,32 @@
     "summaryDetail/3",
     "summaryDetail/4",
     "summaryRuleLine"
+   ]
+  },
+  "viewer/js/51_rules.js": {
+   "maxLines": 16,
+   "maxBranches": 5,
+   "longest": "ruleDetailPanel",
+   "branchiest": "ruleDetailPanel",
+   "functions": [
+    "allRules",
+    "allRules/1",
+    "appliedTag",
+    "drawRules",
+    "drawRules/1",
+    "exampleItem",
+    "fetchRules",
+    "gradeOf",
+    "gradeOf/1",
+    "libraryBlock",
+    "loadRules",
+    "onclick",
+    "renderRulesChrome",
+    "ruleDetailPanel",
+    "ruleRow",
+    "rulesListPanel",
+    "rulesListPanel/1",
+    "rulesListPanel/1/1"
    ]
   },
   "viewer/js/90_boot.js": {

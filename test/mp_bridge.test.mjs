@@ -463,6 +463,32 @@ test('a mapper that reaches BaseMapper through a library\'s declaration gives li
   assert.equal(g.nodes.get(`statement:${fq('ItemMapper.selectList')}`).mpEvidence.relation, undefined);
 });
 
+test('the link from a mapper method to its generic statement names the rule that made the mapper one', () => {
+  const facts = withTypeRoles([
+    type('Order'),
+    mpEntity('Order', { tableName: 't_order', fields: [field('id', { id: true, column: 'id' })] }),
+    { kind: 'import', owner: fq('BaseMapperX'), simple: 'MPJBaseMapper', fqn: 'com.github.yulichang.base.MPJBaseMapper', file: 'BaseMapperX.java' },
+    type('BaseMapperX', { typeKind: 'interface', typeParams: ['T'], implements: ['MPJBaseMapper'], implementsArgs: [['T']] }),
+    type('OrderMapper', { typeKind: 'interface', implements: ['BaseMapperX'], implementsArgs: [['Order']] }),
+    type('ItemMapper', { typeKind: 'interface', implements: ['BaseMapper'], implementsArgs: [['Order']] }),
+    type('Caller'),
+    { kind: 'field', owner: fq('Caller'), name: 'orders', typeSimple: 'OrderMapper', file: 'Caller.java' },
+    { kind: 'field', owner: fq('Caller'), name: 'items', typeSimple: 'ItemMapper', file: 'Caller.java' },
+    call(`${fq('Caller')}#go`, 'orders', 'selectById', 'OrderMapper'),
+    call(`${fq('Caller')}#go`, 'items', 'selectById', 'ItemMapper'),
+  ]);
+  const { g } = build(facts);
+  const evidenceOf = (member) => g.inEdges(`statement:${fq(member)}`).map((e) => g.edgeAt(e.idx)).find((e) => e.type === 'IMPLEMENTS_STMT').evidence;
+  const viaLibrary = evidenceOf('OrderMapper.selectById');
+  assert.equal(viaLibrary.rule, 'mybatis-plus-join.mapper');
+  assert.deepEqual(viaLibrary.library, ['com.github.yulichang.base.MPJBaseMapper']);
+  assert.match(viaLibrary.basis, /through com\.github\.yulichang\.base\.MPJBaseMapper, .* so the link is SOUND_SET$/);
+  const direct = evidenceOf('ItemMapper.selectById');
+  assert.equal(direct.rule, 'mybatis-plus.mapper');
+  assert.equal(direct.library, undefined);
+  assert.match(direct.basis, /^MyBatis-Plus generates this statement for com\.example\.ItemMapper, a mapper by the rule mybatis-plus\.mapper$/);
+});
+
 test('a service named by the framework\'s own base and by a library rule is as sure as the framework\'s', () => {
   // The library record comes first (its pack sorts first); the source shows the service anyway.
   const facts = [
