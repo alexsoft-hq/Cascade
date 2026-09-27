@@ -34,7 +34,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ParseError
+from sqlglot.errors import ParseError, TokenError
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from routines import extract_routines  # noqa: E402
@@ -233,6 +233,14 @@ class _Table(object):
 
 
 def _parse_statements(sql_text, diagnostics, source, dialect="mysql"):
+    """Every statement of one file: read whole, or one at a time when the whole cannot be tokenized."""
+    try:
+        return _parse_whole(sql_text, diagnostics, source, dialect)
+    except TokenError as e:
+        return _parse_each_statement(sql_text, diagnostics, source, dialect, e)
+
+
+def _parse_whole(sql_text, diagnostics, source, dialect):
     """sqlglot.parse with the same salvage path the single-file reader had."""
     try:
         return sqlglot.parse(sql_text, read=dialect)
@@ -246,6 +254,67 @@ def _parse_statements(sql_text, diagnostics, source, dialect="mysql"):
             % (source, str(e).replace("\n", " ")),
         )
         return sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+
+
+# A data statement fills a table and never declares one, so the catalog has no use for it.
+_DATA_STATEMENT_RE = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|COPY)\b", re.IGNORECASE)
+_CREATE_TABLE_NAME_RE = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", re.IGNORECASE)
+# How many unreadable statements a diagnostic names before it only counts the rest.
+_UNREADABLE_NAMED = 10
+
+
+def _statements_by_line(sql_text):
+    """The text cut where a line ends in a semicolon: how schema files and data dumps are written."""
+    chunks, current = [], []
+    for line in sql_text.splitlines(keepends=True):
+        current.append(line)
+        if line.rstrip().endswith(";"):
+            chunks.append("".join(current))
+            current = []
+    rest = "".join(current)
+    if rest.strip():
+        chunks.append(rest)
+    return chunks
+
+
+def _statement_label(chunk):
+    """What a diagnostic calls a statement it could not read: the table it declares, or how it starts."""
+    m = _CREATE_TABLE_NAME_RE.match(chunk)
+    if m:
+        return "CREATE TABLE %s" % m.group(1)
+    return " ".join(chunk.split())[:40]
+
+
+def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
+    """A file the tokenizer cannot read as a whole, read one statement at a time.
+
+    A quote the dialect reads differently (a backslash escapes in MySQL and not in
+    PostgreSQL) throws every statement after it out of step, and one bad literal in
+    a data dump used to end the whole analysis. Cut at line-end semicolons, the
+    miscount stays inside the statement it belongs to. Data statements are skipped
+    unread; a statement that still cannot be read is named, never dropped silently.
+    """
+    statements, unreadable = [], []
+    for chunk in _statements_by_line(sql_text):
+        if _DATA_STATEMENT_RE.match(chunk):
+            continue
+        try:
+            statements.extend(sqlglot.parse(chunk, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE))
+        except (ParseError, TokenError):
+            unreadable.append(_statement_label(chunk))
+    named = ", ".join(unreadable[:_UNREADABLE_NAMED])
+    more = len(unreadable) - _UNREADABLE_NAMED
+    _diag(
+        diagnostics,
+        "warn",
+        "token_error",
+        None,
+        "%s could not be tokenized as a whole (%s); read one statement at a time with data statements "
+        "skipped, %d statement(s) unreadable%s%s"
+        % (source, str(error).split("\n")[0], len(unreadable), (": " + named) if named else "",
+           (" and %d more" % more) if more > 0 else ""),
+    )
+    return statements
 
 
 def _apply_create(stmt, tables, schema, diagnostics, source, identifier_case="exact"):

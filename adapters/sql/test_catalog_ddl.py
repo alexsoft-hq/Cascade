@@ -66,6 +66,32 @@ CREATE TABLE `other_table` (
 );
 """
 
+# A file written for PostgreSQL, read as MySQL: the backslash that ends 'C:\' escapes
+# the closing quote in MySQL, every quote after it is out of step, and the tokenizer
+# reads B', ' as a bit string and gives up on the WHOLE file. The data statement and
+# the table on either side of it are how a schema file with a data dump looks.
+UNTOKENIZABLE_DUMP_DDL = r"""
+CREATE TABLE `before_dump` (
+  `id` int(11) NOT NULL
+);
+INSERT INTO before_dump VALUES (1, 'C:\', 'B', 'x');
+CREATE TABLE `after_dump` (
+  `id` int(11) NOT NULL
+);
+"""
+
+# The same miscount inside a CREATE TABLE: that one table cannot be read, and the
+# diagnostic names it rather than letting it vanish from the catalog.
+UNTOKENIZABLE_CREATE_DDL = r"""
+CREATE TABLE `good_one` (
+  `id` int(11) NOT NULL
+);
+CREATE TABLE `broken_one` (`path` varchar(10) DEFAULT 'C:\', `flag` varchar(1) DEFAULT 'B');
+CREATE TABLE `good_two` (
+  `id` int(11) NOT NULL
+);
+"""
+
 
 def _dumps(rec):
     return json.dumps(rec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -366,6 +392,37 @@ class RobustnessTests(unittest.TestCase):
 
         codes = {d["code"] for d in diagnostics}
         self.assertIn("parse_error", codes)
+
+
+class UntokenizableFileTests(unittest.TestCase):
+    """One literal the tokenizer rejects no longer ends the whole analysis."""
+
+    def test_a_data_statement_the_tokenizer_rejects_leaves_every_table_readable(self):
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", UNTOKENIZABLE_DUMP_DDL)], diagnostics=diagnostics)
+        self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["after_dump", "before_dump"])
+        token = [d for d in diagnostics if d["code"] == "token_error"]
+        self.assertEqual(len(token), 1)
+        self.assertIn("pg.sql could not be tokenized as a whole", token[0]["message"])
+        self.assertIn("0 statement(s) unreadable", token[0]["message"])
+
+    def test_a_create_table_that_still_cannot_be_read_is_named(self):
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("pg.sql", UNTOKENIZABLE_CREATE_DDL)], diagnostics=diagnostics)
+        self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["good_one", "good_two"])
+        token = [d for d in diagnostics if d["code"] == "token_error"]
+        self.assertEqual(len(token), 1)
+        self.assertIn("1 statement(s) unreadable: CREATE TABLE `broken_one`", token[0]["message"])
+
+    def test_a_file_that_tokenizes_is_read_exactly_as_before(self):
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("basic.sql", BASIC_DDL)], diagnostics=diagnostics)
+        self.assertEqual(recs, catalog_ddl.parse_ddl_catalog_files([("basic.sql", BASIC_DDL)]))
+        self.assertEqual([d for d in diagnostics if d["code"] == "token_error"], [])
+
+    def test_statements_are_cut_where_a_line_ends_in_a_semicolon(self):
+        chunks = catalog_ddl._statements_by_line("CREATE TABLE a (\n id int\n);\nINSERT INTO a VALUES (1);\nSELECT 1")
+        self.assertEqual(chunks, ["CREATE TABLE a (\n id int\n);\n", "INSERT INTO a VALUES (1);\n", "SELECT 1"])
 
 
 class MultipleTableTests(unittest.TestCase):

@@ -10,6 +10,17 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+### Fixed
+
+- **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
+  shipped in several dialects (ruoyi-vue-pro carries MySQL, PostgreSQL-family and
+  others side by side) was read as MySQL, where a backslash escapes a quote; one
+  literal ending in a backslash threw every quote after it out of step, the reader
+  exited, and `analyze` wrote no pack. A file that cannot be tokenized as a whole
+  is now read one statement at a time: data statements are skipped unread, and a
+  statement that still cannot be read is named in a `token_error` diagnostic
+  rather than dropped silently. A file that tokenizes is read exactly as before.
+
 ## [0.8.11] - 2026-09-15
 
 ### Added
