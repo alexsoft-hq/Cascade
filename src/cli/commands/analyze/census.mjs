@@ -573,12 +573,30 @@ export function sayOpenApiLane(openapiStats) {
     process.stderr.write(`OpenAPI lane: ${openapiStats.paths} declared route(s) over ${openapiStats.documents.length} document(s): `
       + `${openapiStats.matchedServed} also served by this code, ${openapiStats.onlyInDocument} declared and not served, `
       + `${openapiStats.onlyInCode} served and not declared\n`);
-    for (const id of openapiStats.drift.onlyInDocument.slice(0, 5)) {
+    const guessed = new Set(openapiStats.contractLinks?.endpoints ?? []);
+    for (const id of openapiStats.drift.onlyInDocument.filter((d) => !guessed.has(d)).slice(0, 5)) {
       process.stderr.write(`  [warn] OPENAPI_NOT_SERVED ${id.slice('endpoint:'.length)}: a document declares it and nothing in this pack handles it\n`);
     }
     for (const id of openapiStats.drift.onlyInCode.slice(0, 5)) {
       process.stderr.write(`  [warn] OPENAPI_NOT_DECLARED ${id.slice('endpoint:'.length)}: this code serves it and no document read here declares it\n`);
     }
+    if (openapiStats.contractLinks) sayContractLinks(openapiStats.contractLinks);
+  }
+}
+
+/**
+ * The routes a contract rule gave a handler, which the code's own mappings do
+ * not show, and the methods it named without linking them.
+ */
+function sayContractLinks(c) {
+  const rules = Object.entries(c.byRule).map(([id, r]) => `${id} ${r.links}`).join(', ');
+  process.stderr.write(`OpenAPI lane: ${c.endpoints.length} declared route(s) given a handler through an interface the build generates (${rules}), `
+    + 'graded HEURISTIC: the interface is not read, so the pairing rests on the generator\'s naming\n');
+  for (const u of c.unlinked.slice(0, 5)) {
+    const why = u.reason === 'ambiguous'
+      ? `the operationId ${u.operationId} names ${u.operations.length} routes (${u.operations.map((o) => `${o.endpoint.slice('endpoint:'.length)} in ${o.document}`).join('; ')}), and nothing says which one the interface was generated from`
+      : `the operation ${u.operationId} would be generated into ${(u.names ?? []).join(' or ')}, not ${u.interface}`;
+    process.stderr.write(`  [warn] CONTRACT_NOT_LINKED ${u.handler}: ${why}\n`);
   }
 }
 

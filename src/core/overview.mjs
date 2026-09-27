@@ -395,6 +395,7 @@ function buildGaps(o) {
   schemaGaps(o, say);
   routeGaps(o, say);
   laneGaps(o, say);
+  contractGaps(o, say);
   reachGaps(o, say);
   budgetGaps(o, say);
   restGaps(o, say);
@@ -642,6 +643,29 @@ function budgetGaps(o, say) {
       note: `${depthCapped} endpoint(s) still had calls to walk when we stopped at depth ${depth}. What lies past that is unknown, so each "reached" count here is a lower bound: the real number is this one or higher`,
     });
   }
+}
+
+/**
+ * A ROUTE WHOSE HANDLER ONLY A RULE GUESSED. A contract-first project's
+ * controllers implement interfaces its build generates from the document, and
+ * a rule paired the two by the generator's naming (src/adapters/contract_links.mjs).
+ * Said next to the census, because a heuristic walk counts those routes and a
+ * conservative one does not, and the difference is the rule, not the code. The
+ * drift census above still counts them as declared and not served: no mapping
+ * in the source serves them.
+ */
+function contractGaps(o, say) {
+  const c = o.laneStats?.openapi?.contractLinks ?? null;
+  if (!c) return;
+  const rules = Object.keys(c.byRule).join(', ');
+  const unlinked = c.unlinked.length > 0
+    ? ` ${c.unlinked.length} more method(s) implement such an interface and are named like an operationId, and were left unlinked: an operationId on two routes, or an interface the operation would not be generated into`
+    : '';
+  say({
+    kind: 'contract-links', count: c.endpoints.length,
+    note: `${c.endpoints.length} declared route(s) have a handler only because ${rules} paired them by a code generator's naming: the interface that would state it is generated at build time and never read here. `
+      + `Those links are HEURISTIC, so a walk at mode=${o.mode} ${GRADE_SETS[o.mode]?.has('HEURISTIC') ? 'follows them' : 'does not follow them: ask with mode=heuristic to walk into that code'}.${unlinked}`,
+  });
 }
 
 /**

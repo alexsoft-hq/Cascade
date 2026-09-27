@@ -22,6 +22,7 @@ import { explainTypeRoles } from '../../core/rules/explain.mjs';
 import { withTypeRoles } from '../../core/java_roles.mjs';
 import { FactsStoreError } from '../../core/facts_store.mjs';
 import { readEntityModel } from '../../adapters/mp_bridge.mjs';
+import { readOpenApiDocument } from '../../adapters/openapi_bridge.mjs';
 import { findJdk } from '../env.mjs';
 import { runJavaLane } from '../lanes_run.mjs';
 import { cachedJavaFacts, CachedFactsError } from '../cached_facts.mjs';
@@ -105,12 +106,15 @@ function printResults(results, only) {
   print(results.length === 0 ? `no rule or pack ${JSON.stringify(only)}` : `${held} of ${results.length} rule(s) hold every example`);
 }
 
-/** The TypeScript worker's own readers, in process: a TypeScript example needs nothing but the engine. */
-const TS_READERS = Object.freeze({ tsFacts: factsOfFile, tsValue: valueOfSource });
+/**
+ * The readers that run in process: a TypeScript example needs nothing but the
+ * engine, and neither does an OpenAPI document.
+ */
+const IN_PROCESS_READERS = Object.freeze({ tsFacts: factsOfFile, tsValue: valueOfSource, openApiDocument: readOpenApiDocument });
 
 function test(registry, only, asJson) {
   const javaFacts = javaWorkerForExamples();
-  const results = testRules(registry, { only, env: { ...TS_READERS, ...(javaFacts ? { javaFacts } : {}) } });
+  const results = testRules(registry, { only, env: { ...IN_PROCESS_READERS, ...(javaFacts ? { javaFacts } : {}) } });
   if (asJson) print(JSON.stringify(results, null, 2));
   else printResults(results, only);
   const failed = results.length === 0 || results.some((r) => r.failures.length > 0);

@@ -366,6 +366,7 @@ export const VIEWER_STRINGS = {
     'ov.gap.multi-handler-routes.label': 'routes two controllers both declare',
     'ov.gap.tables-not-reached.label': 'tables no endpoint reaches',
     'ov.gap.openapi-drift.label': 'routes the API document disagrees on',
+    'ov.gap.contract-links.label': 'handlers paired by a generator\'s naming',
     'ov.gap.screens-from-server.label': 'screens the server adds at run time',
     'ov.gap.screens-seen-at-run-time.label': 'screens known only from a recording',
     'ov.gap.runtime-evidence.label': 'what a trace saw actually run',

@@ -12,6 +12,7 @@
 // `compile`, and either `runExample` (one example at a time) or `runExamples`
 // (all of them together, for examples that go through a worker once).
 
+import { javaContractLink } from './java_contract_link.mjs';
 import { javaTypeRole } from './java_type_role.mjs';
 import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
@@ -19,6 +20,7 @@ import { tsRouteDecorator } from './ts_route_decorator.mjs';
 import { tsTypeRole } from './ts_type_role.mjs';
 
 export const KINDS = Object.freeze({
+  [javaContractLink.name]: javaContractLink,
   [javaTypeRole.name]: javaTypeRole,
   [prismaOperation.name]: prismaOperation,
   [sqlDialectPath.name]: sqlDialectPath,

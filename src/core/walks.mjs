@@ -136,6 +136,32 @@ export function startsOf(graph, endpointId) {
 }
 
 /**
+ * The handlers a walk at `mode` may start from, each with the grade of the
+ * HANDLES edge that names it: the route's link to its handler is a link of the
+ * path like any other, so a handler this mode's floor does not admit is no
+ * start, and one it admits caps what is reached from it.
+ *
+ * A route's handler used to be a start whatever its link's grade, which was
+ * harmless while every HANDLES edge was EXACT or SOUND_SET. A link a rule only
+ * guessed (a contract a generator writes, HEURISTIC) must not carry a
+ * conservative census onto the code below it.
+ *
+ * One entry per edge, as `handlersOf` lists them: a route that declares one
+ * method twice counts it twice, as it always has.
+ *
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {string} endpointId
+ * @param {'strict'|'conservative'|'heuristic'} mode
+ * @returns {{id:string, grade:string}[]} sorted by id, the stronger link first
+ */
+export function handlerStartsOf(graph, endpointId, mode) {
+  const allow = GRADE_SETS[mode];
+  return graph.outEdges(endpointId).filter((e) => e.type === 'HANDLES' && allow.has(e.grade))
+    .map((e) => ({ id: e.to, grade: e.grade }))
+    .sort((a, b) => cmp(a.id, b.id) || RANK[b.grade] - RANK[a.grade]);
+}
+
+/**
  * The ONE handler a single-picture view follows (`flow` draws one chain, not a
  * union of chains — two controllers declaring the same route string are two
  * DEPLOYABLES, and merging their code into one drawing would claim a request
@@ -202,6 +228,11 @@ export function multiHandlerRoutes(graph) {
  * `multiHandlerEndpoints`, how many routes needed more than one start — because
  * a caller must be able to disclose it without scanning the graph a second time.
  *
+ * The starts are the handlers this mode's floor admits through their HANDLES
+ * edge (handlerStartsOf), and a statement's grade is capped by that edge's, so
+ * a route whose handler only a rule guessed reaches its SQL in a heuristic
+ * census and in no other. `handlers` counts the admitted ones.
+ *
  * Each endpoint also carries its OWN `depthCut` — how many nodes were still
  * expanding at the depth cap across ITS starts — because a census counting
  * ENDPOINTS that hit the cap cannot be derived from a per-start total.
@@ -265,41 +296,54 @@ export function walkEndpoints(graph, opts = {}) {
 
   const walkCache = new Map(); // start node id -> {statements:[{id,grade}], cutDepth:number}
   const walk = { starts: 0, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints };
+  const how = { mode, depth, maxNodes: opts.maxNodes ?? null };
   for (const ep of endpoints) {
-    const handlers = handlersOf(graph, ep.id);
-    const starts = handlers.length ? handlers : [ep.id];
+    const handlers = handlerStartsOf(graph, ep.id, mode);
+    // A route whose every handler sits below this mode's floor starts at
+    // itself: the walk then steps nowhere, and says the floor is why.
+    const starts = handlers.length ? handlers : [{ id: ep.id, grade: 'EXACT' }];
     ep.handlers = handlers.length;
     if (handlers.length > 1) walk.multiHandlerEndpoints += 1;
     const reached = new Map(); // statement node id -> weakest path grade
     for (const start of starts) {
-      let cached = walkCache.get(start);
-      if (!cached) {
-        const w = chainWalk(graph, {
-          start, direction: 'down', mode, maxDepth: depth,
-          ...(opts.maxNodes != null ? { maxNodes: opts.maxNodes } : {}),
-        });
-        cached = {
-          statements: w.statements.map((s) => ({ id: `statement:${s.id}`, grade: s.grade })),
-          cutDepth: w.cut.depth,
-        };
-        walkCache.set(start, cached);
-        walk.starts += 1;
-        walk.depthCut += w.cut.depth;
-        if (w.cut.depth > 0) walk.depthCutStarts += 1;
-        if (w.cut.nodeCap) walk.nodeCapStarts += 1;
-        walk.byMode += w.cut.byMode;
-        walk.generated += w.cut.generated;
-      }
+      const cached = walkedFrom(graph, start.id, how, walkCache, walk);
       ep.depthCut += cached.cutDepth;
       for (const s of cached.statements) {
+        // The route's own link to its handler is the first link of the path.
+        const grade = weakest(s.grade, start.grade);
         const prev = reached.get(s.id);
-        if (prev === undefined || RANK[s.grade] > RANK[prev]) reached.set(s.id, s.grade);
+        if (prev === undefined || RANK[grade] > RANK[prev]) reached.set(s.id, grade);
       }
     }
     ep.statements = [...reached.entries()].map(([id, grade]) => ({ id, grade })).sort((a, b) => cmp(a.id, b.id));
   }
 
   return { endpoints, walk };
+}
+
+/**
+ * The statements one start reaches, walked once whatever how many routes start
+ * there, and its cuts added to the census the first time.
+ */
+function walkedFrom(graph, start, { mode, depth, maxNodes }, walkCache, walk) {
+  const known = walkCache.get(start);
+  if (known) return known;
+  const w = chainWalk(graph, {
+    start, direction: 'down', mode, maxDepth: depth,
+    ...(maxNodes != null ? { maxNodes } : {}),
+  });
+  const cached = {
+    statements: w.statements.map((s) => ({ id: `statement:${s.id}`, grade: s.grade })),
+    cutDepth: w.cut.depth,
+  };
+  walkCache.set(start, cached);
+  walk.starts += 1;
+  walk.depthCut += w.cut.depth;
+  if (w.cut.depth > 0) walk.depthCutStarts += 1;
+  if (w.cut.nodeCap) walk.nodeCapStarts += 1;
+  walk.byMode += w.cut.byMode;
+  walk.generated += w.cut.generated;
+  return cached;
 }
 
 /**

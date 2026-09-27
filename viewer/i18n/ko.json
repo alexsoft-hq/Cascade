@@ -169,6 +169,7 @@
   "ov.gap.multi-handler-routes.label": "컨트롤러 둘이 같이 선언한 경로",
   "ov.gap.tables-not-reached.label": "엔드포인트가 닿지 않는 테이블",
   "ov.gap.openapi-drift.label": "API 문서와 어긋나는 경로",
+  "ov.gap.contract-links.label": "생성기 이름 규칙으로 짝지은 핸들러",
   "ov.gap.screens-from-server.label": "서버가 실행 중에 붙이는 화면",
   "ov.gap.screens-seen-at-run-time.label": "녹화로만 알게 된 화면",
   "ov.gap.runtime-evidence.label": "트레이스가 실제로 돈 것을 본 자리",

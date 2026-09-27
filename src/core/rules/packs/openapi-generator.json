@@ -1,0 +1,101 @@
+{
+  "pack": "openapi-generator",
+  "version": 1,
+  "description": "openapi-generator's Spring server code: the interfaces it writes at build time from an OpenAPI document, which a project's controllers implement and its source tree never holds.",
+  "rules": [
+    {
+      "id": "openapi-generator.spring-interface",
+      "kind": "java.contract-link",
+      "description": "A concrete class whose own implements clause names an interface the project does not declare, whose name ends in Api and is the name openapi-generator gives an operation's group (from one of its tags, or from the first segment of its path), handles that operation's route in a document this run reads with the method whose name is the operation's operationId. The generated interface is not read, so the link rests on the generator's naming and is HEURISTIC. An operationId the interface's name fits on two different routes is said and not linked; a method named like an operationId whose operation gives the interface another name is said too. An operationId the generator rewrites into another method name (one with a hyphen, one that is a Java keyword) is not matched: that link is missing, not guessed.",
+      "why": "spring-petclinic-rest builds its API from src/main/resources/openapi.yml with openapi-generator (generator spring, interfaceOnly, useTags). Its controllers implement OwnersApi, PetsApi and the rest, which only the build writes, so the Java lane read controllers with no mapping and none of the 37 routes the document declares reached SQL.",
+      "grade": "HEURISTIC",
+      "params": {
+        "interfaceName": { "from": ["tag", "path"], "suffix": "Api" },
+        "generator": {
+          "name": "openapi-generator, generator spring with interfaceOnly",
+          "declares": "One Java interface per group of operations, named by the group and apiNameSuffix (Api unless configured). The group is each of the operation's tags when useTags is true (an operation with no tag is in the tag default), else the first segment of its path (useTags defaults to false). Each operation is a method of that interface named by its operationId and carrying the operation's @RequestMapping; with interfaceOnly the project writes the class that implements it.",
+          "source": "openapi-generator v7.25.0 (github.com/OpenAPITools/openapi-generator): modules/openapi-generator/src/main/resources/JavaSpring/api.mustache (public interface {{classname}}, a method {{operationId}} per operation); languages/SpringCodegen.java (addOperationToGroup, toApiName, useTags false by default); languages/AbstractJavaCodegen.java (sanitizeTag); DefaultCodegen.java (sanitizeName, apiNameSuffix Api); DefaultGenerator.java (an operation with no tag is in default); utils/StringUtils.java (camelize, underscore); docs/generators/spring.md (interfaceOnly, useTags)"
+        }
+      },
+      "examples": [
+        {
+          "source": "package com.example.rest;\nimport com.example.api.OwnersApi;\nimport com.example.api.OwnerV2Api;\n@RestController\npublic class OwnerController implements OwnersApi {\n  public ResponseEntity<List<OwnerDto>> listOwners(String lastName) { return null; }\n  private void audit() {}\n}\n@RestController\nclass OwnerPageController implements OwnerV2Api {\n  public ResponseEntity<OwnerPageDto> listOwnersPage(String lastName, Integer page) { return null; }\n}\n",
+          "documents": {
+            "src/main/resources/openapi.yml": "openapi: 3.0.1\nservers:\n  - url: http://localhost:9966/petclinic/api\npaths:\n  /owners:\n    get:\n      tags:\n        - owners\n      operationId: listOwners\n  /v2/owners:\n    get:\n      tags:\n        - owner-v2\n      operationId: listOwnersPage\n"
+          },
+          "expect": [
+            { "handler": "com.example.rest.OwnerController#listOwners", "endpoint": "GET /petclinic/api/owners" },
+            { "handler": "com.example.rest.OwnerPageController#listOwnersPage", "endpoint": "GET /petclinic/api/v2/owners" }
+          ],
+          "why": "spring-petclinic-rest's shape: the tag owner-v2 names the interface OwnerV2Api, and the server's path is part of the route"
+        },
+        {
+          "source": "package com.example.rest;\nimport com.example.api.*;\n@RestController\npublic class PetController implements PetsApi {\n  public ResponseEntity<PetDto> getPet(Long petId) { return null; }\n}\n",
+          "documents": {
+            "api/pets.yaml": "openapi: 3.0.0\npaths:\n  /pets/{petId}:\n    get:\n      operationId: getPet\n"
+          },
+          "expect": [{ "handler": "com.example.rest.PetController#getPet", "endpoint": "GET /pets/{petId}" }],
+          "why": "the generator's default names the interface from the path's first segment; an interface imported with its whole package is outside the tree all the same"
+        },
+        {
+          "source": "package com.example.rest;\n@RestController\npublic class OwnerController {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [],
+          "why": "a method named like an operationId, on a class that implements no generated interface"
+        },
+        {
+          "source": "package com.example.rest;\npublic interface OwnersApi {\n  @GetMapping(\"/owners\") Object listOwners();\n}\n@RestController\nclass OwnerController implements OwnersApi {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [],
+          "why": "the interface is in the tree, so its own mapping says which route the method handles, and the Java lane reads it"
+        },
+        {
+          "source": "package com.example.rest;\nimport com.example.api.OwnersApi;\n@RestController\npublic class OwnerController implements OwnersApi {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/v1.yaml": "openapi: 3.0.0\nservers:\n  - url: /v1\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n",
+            "api/v2.yaml": "openapi: 3.0.0\nservers:\n  - url: /v2\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [{ "handler": "com.example.rest.OwnerController#listOwners", "unlinked": "ambiguous" }],
+          "why": "two documents give the operationId to two routes, and nothing in the tree says which of them the build generated the interface from"
+        },
+        {
+          "source": "package com.example.rest;\nimport com.example.api.OwnersApi;\n@RestController\npublic class OwnerController implements OwnersApi {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n",
+            "docs/openapi-copy.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [{ "handler": "com.example.rest.OwnerController#listOwners", "endpoint": "GET /owners" }],
+          "why": "two documents that give the operationId to the same route name one route, whichever of them the build read"
+        },
+        {
+          "source": "package com.example.rest;\nimport com.example.external.BillingApi;\n@RestController\npublic class BillingController implements BillingApi {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [{ "handler": "com.example.rest.BillingController#listOwners", "unlinked": "interface-name" }],
+          "why": "the operation's tag names OwnersApi and its path OwnersApi too, so a BillingApi this document did not generate is said and not linked"
+        },
+        {
+          "source": "package com.example.rest;\nimport com.example.api.OwnersContract;\n@RestController\npublic class OwnerController implements OwnersContract {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [],
+          "why": "an interface whose name does not end in Api is not one this generator wrote"
+        },
+        {
+          "source": "package com.example.rest;\nimport com.example.api.OwnersApi;\n@RestController\npublic class OwnerController implements OwnersApi {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: list-owners\n"
+          },
+          "expect": [],
+          "why": "the generator turns list-owners into the method listOwners; this rule reads the operationId as the document writes it, so that link is missing rather than guessed"
+        }
+      ]
+    }
+  ]
+}

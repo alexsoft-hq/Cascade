@@ -143,6 +143,29 @@ function makeSymbolWriter({ g, stats, types, packagePrefixes, lineOfMember, gene
 }
 
 /**
+ * The same writer, for a bridge that runs after this one and draws an edge onto
+ * a Java method (src/adapters/contract_links.mjs): a symbol it writes has the
+ * attributes this lane would have given it, because it is this lane's writer.
+ * What it counts is not this lane's census, so it counts into a scratch record.
+ *
+ * @param {Graph} g
+ * @param {object[]} javaFacts  the same records the Java bridge was given
+ * @param {{packagePrefixes?:string[], generatedSources?:object}} [opts]  the Java bridge's own options
+ * @returns {(memberFqn:string)=>string}
+ */
+export function javaSymbolWriter(g, javaFacts, opts = {}) {
+  const facts = indexJavaFacts(javaFacts);
+  const typeIndex = buildTypeIndex(javaFacts);
+  const generatedSources = opts.generatedSources && typeof opts.generatedSources === 'object'
+    ? opts.generatedSources : { annotations: [], pathGlobs: [] };
+  return makeSymbolWriter({
+    g, stats: { externalSymbols: 0, generatedSymbols: 0 }, types: typeIndex.types,
+    packagePrefixes: Array.isArray(opts.packagePrefixes) ? opts.packagePrefixes.slice().sort() : [],
+    lineOfMember: facts.lineOfMember, generatedFqns: classifyGeneratedTypes(typeIndex.types, generatedSources).fqns,
+  }).ensureSymbol;
+}
+
+/**
  * THE CENSUSES THAT ARE TAKEN BEFORE ANY EDGE IS DRAWN, written onto the stats.
  *
  * A multi-module repo declares the same FQN more than once. jeecg-boot does it

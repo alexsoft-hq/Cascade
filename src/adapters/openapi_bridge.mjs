@@ -22,7 +22,10 @@
 // WHAT A DOCUMENT DOES NOT BUY. It is a DECLARATION: it says a route exists, not
 // what runs below it. So a document route gets NO handler edge and nothing under
 // it, and `declareAxes` degrades the `code` axis when the routes came only from
-// documents — a frontend call reaches an endpoint and stops there.
+// documents — a frontend call reaches an endpoint and stops there. The one
+// exception is a controller that implements an interface the build generates
+// from the document: a contract rule may pair the two by the generator's naming,
+// and that link is a HEURISTIC one (src/adapters/contract_links.mjs).
 //
 // EXACT, by declaration: the project wrote this file to say what it serves, so
 // the fact "this route is declared" is read, not inferred. It never upgrades a
@@ -30,6 +33,7 @@
 // lane gave it, and the document is recorded beside it in `declaredBy`.
 
 import { nodeId } from '../core/graph.mjs';
+import { addContractLinks } from './contract_links.mjs';
 
 /** The verbs a path item can carry. Anything else under a path is not an operation. */
 export const HTTP_VERBS = Object.freeze(['get', 'put', 'post', 'delete', 'options', 'head', 'patch']);
@@ -339,13 +343,33 @@ export function serverBasePath(url) {
   return s;
 }
 
+const nonEmptyText = (v) => (typeof v === 'string' && v !== '' ? v : null);
+
+/**
+ * One operation as the document writes it. `resource` is the path key before
+ * the base path is put in front, and `tags` are the operation's own: a code
+ * generator names the interface an operation goes into from one or the other
+ * (src/core/rules/kinds/java_contract_link.mjs), so both are kept as written.
+ */
+function operationEntry(verb, op, full, key) {
+  return {
+    method: verb.toUpperCase(),
+    path: full,
+    resource: key,
+    operationId: nonEmptyText(op.operationId),
+    summary: nonEmptyText(op.summary),
+    tags: Array.isArray(op.tags) ? op.tags.filter((t) => typeof t === 'string') : [],
+  };
+}
+
 /**
  * Read one OpenAPI / Swagger document.
  *
  * @param {string} text  the file's bytes as text
  * @param {{path?:string}} [opts]  the document's path, for the diagnostics
  * @returns {{path:string, version:('3'|'2'|'unknown'), basePath:string,
- *            paths:{method:string, path:string, operationId:(string|null), summary:(string|null)}[],
+ *            paths:{method:string, path:string, resource:string, operationId:(string|null),
+ *                   summary:(string|null), tags:string[]}[],
  *            unreadable:{line:number, construct:string, reason:string}[]}}
  */
 export function readOpenApiDocument(text, opts = {}) {
@@ -399,18 +423,10 @@ export function readOpenApiDocument(text, opts = {}) {
     if (verbs.length === 0) {
       // A path item with no operation still DECLARES the path; the method is
       // unknown, and `ANY` is how this engine spells a route with no verb.
-      out.paths.push({ method: ANY_METHOD, path: full, operationId: null, summary: null });
+      out.paths.push({ method: ANY_METHOD, path: full, resource: key, operationId: null, summary: null, tags: [] });
       continue;
     }
-    for (const v of verbs) {
-      const op = item[v];
-      out.paths.push({
-        method: v.toUpperCase(),
-        path: full,
-        operationId: typeof op.operationId === 'string' && op.operationId !== '' ? op.operationId : null,
-        summary: typeof op.summary === 'string' && op.summary !== '' ? op.summary : null,
-      });
-    }
+    for (const v of verbs) out.paths.push(operationEntry(v, item[v], full, key));
   }
   out.paths.sort((a, b) => cmp(a.path, b.path) || cmp(a.method, b.method));
   return out;
@@ -421,40 +437,19 @@ export function readOpenApiDocument(text, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Put the documents' routes on the graph, and measure the drift between what is
- * declared and what is served.
+ * Each document's routes, read once: which documents declare each route, what
+ * the node shows of it, and each document's own row of the census.
  *
- * A route the code ALREADY serves gets no new node and no new edge: the document
- * is recorded on the node it corroborates (`declaredBy`, plus `operationId` and
- * `summary` when the document carries them), and the node keeps whatever the
- * code lane gave it. A route no code here serves becomes a node with `declared:
- * true` and NO handler edge, because a declaration says a route exists and says
- * nothing about what runs below it.
- *
- * @param {import('../core/graph.mjs').Graph} g
- * @param {object[]} documents  as `readOpenApiDocument` returns them
- * @param {{}} [opts]
- * @returns {{documents:object[], paths:number, matchedServed:number,
- *            onlyInDocument:number, onlyInCode:number, unreadable:object[],
- *            drift:{onlyInDocument:string[], onlyInCode:string[]}}}
+ * The node shows ONE operationId and ONE summary. What a rule pairs an
+ * operation with is not read from here but from each document's own operations
+ * (src/core/rules/kinds/java_contract_link.mjs, operationsOf), where a second
+ * document's operationId on the same route is kept as its own.
  */
-export function addOpenApiRoutes(g, documents, _opts = {}) {
-  const docs = Array.isArray(documents) ? documents : [];
-  // What the CODE serves, read before anything is added: a node with a handler
-  // edge is a route this pack actually serves. An outbound node the web lane
-  // invented for a URL nothing answers is NOT served, and must not be counted as
-  // corroboration.
-  const served = new Set();
-  for (const [id, node] of g.nodes) {
-    if (node.kind !== 'endpoint' || node.outbound === true) continue;
-    served.add(id);
-  }
-
+function readDeclarations(docs, served) {
   const declaredBy = new Map();  // endpoint id -> Set(document path)
   const meta = new Map();        // endpoint id -> {operationId, summary, path, httpMethod}
   const perDoc = [];
   const unreadable = [];
-
   for (const doc of docs.slice().sort((a, b) => cmp(a.path ?? '', b.path ?? ''))) {
     const row = {
       path: doc.path ?? '', version: doc.version ?? 'unknown', basePath: doc.basePath ?? '',
@@ -480,6 +475,47 @@ export function addOpenApiRoutes(g, documents, _opts = {}) {
     }
     perDoc.push(row);
   }
+  return { declaredBy, meta, perDoc, unreadable };
+}
+
+/**
+ * Put the documents' routes on the graph, and measure the drift between what is
+ * declared and what is served.
+ *
+ * A route the code ALREADY serves gets no new node and no new edge: the document
+ * is recorded on the node it corroborates (`declaredBy`, plus `operationId` and
+ * `summary` when the document carries them), and the node keeps whatever the
+ * code lane gave it. A route no code here serves becomes a node with `declared:
+ * true` and no handler edge of the code's, because a declaration says a route
+ * exists and says nothing about what runs below it.
+ *
+ * The one thing that may put a handler under such a route is a contract rule:
+ * a controller implementing an interface the build generates from the document
+ * (src/adapters/contract_links.mjs). It needs the Java lane's records, so it runs
+ * only when `opts.java` and `opts.javaFacts` are given, and what it did is
+ * `contractLinks` on the result, there only when it linked or named something.
+ * The drift census is the code's own mappings against the documents, and a
+ * guessed link does not move it.
+ *
+ * @param {import('../core/graph.mjs').Graph} g
+ * @param {object[]} documents  as `readOpenApiDocument` returns them
+ * @param {{java?:(object|null), javaFacts?:object[], registry?:object}} [opts]
+ * @returns {{documents:object[], paths:number, matchedServed:number,
+ *            onlyInDocument:number, onlyInCode:number, unreadable:object[],
+ *            drift:{onlyInDocument:string[], onlyInCode:string[]}, contractLinks?:object}}
+ */
+export function addOpenApiRoutes(g, documents, opts = {}) {
+  const docs = Array.isArray(documents) ? documents : [];
+  // What the CODE serves, read before anything is added: a node with a handler
+  // edge is a route this pack actually serves. An outbound node the web lane
+  // invented for a URL nothing answers is NOT served, and must not be counted as
+  // corroboration.
+  const served = new Set();
+  for (const [id, node] of g.nodes) {
+    if (node.kind !== 'endpoint' || node.outbound === true) continue;
+    served.add(id);
+  }
+  const { declaredBy, meta, perDoc, unreadable } = readDeclarations(docs, served);
 
   const onlyInDocument = [];
   for (const id of [...declaredBy.keys()].sort()) {
@@ -513,6 +549,8 @@ export function addOpenApiRoutes(g, documents, _opts = {}) {
     ? [...served].filter((id) => !declaredBy.has(id)).sort()
     : [];
 
+  const contractLinks = opts.java && opts.javaFacts
+    ? addContractLinks(g, docs, { javaFacts: opts.javaFacts, java: opts.java, registry: opts.registry ?? null }) : null;
   return {
     documents: perDoc,
     paths: perDoc.reduce((n, d) => n + d.paths, 0),
@@ -521,6 +559,7 @@ export function addOpenApiRoutes(g, documents, _opts = {}) {
     onlyInCode: onlyInCode.length,
     unreadable,
     drift: { onlyInDocument, onlyInCode },
+    ...(contractLinks ? { contractLinks } : {}),
   };
 }
 

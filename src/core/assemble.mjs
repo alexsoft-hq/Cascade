@@ -47,11 +47,16 @@ import { Graph } from './graph.mjs';
  * One lane's bridge: null when no options were given for it, else what it
  * returns. Options given with no bridge to read them are the caller's mistake,
  * and are said as one.
+ *
+ * `also` is what this file adds to the caller's options: the OpenAPI bridge is
+ * handed the Java records and the Java lane's options, because a controller may
+ * handle a document's route through an interface only the build generates, and
+ * the rule that pairs the two reads both (src/adapters/contract_links.mjs).
  */
-function runBridge(bridges, fn, lane, graph, facts, opts) {
+function runBridge(bridges, fn, lane, graph, facts, opts, also = null) {
   if (!opts) return null;
   if (typeof bridges[fn] !== 'function') throw new AssembleError(`${lane} options were given but bridges.${fn} is missing`);
-  return bridges[fn](graph, facts, opts);
+  return bridges[fn](graph, facts, also ? { ...opts, ...also } : opts);
 }
 
 /**
@@ -111,7 +116,7 @@ export function assembleGraph(a) {
   // The TypeScript backend: its routes have to exist before the web bridge
   // below matches a frontend call to one.
   const tsStats = runBridge(bridges, 'addTsFacts', 'ts', graph, tsFacts, ts);
-  const openapiStats = runBridge(bridges, 'addOpenApiRoutes', 'openapi', graph, openapiDocuments, openapi);
+  const openapiStats = runBridge(bridges, 'addOpenApiRoutes', 'openapi', graph, openapiDocuments, openapi, { java, javaFacts });
   // THE TWO HALVES OF A SERVER-RENDERED SCREEN meet here (RM48): the Java
   // worker read which view name each handler returns, the web worker read the
   // templates, and the web bridge is the only place that has both. Taken out

@@ -22,7 +22,7 @@ import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
 import { buildMap, LAYERS as MAP_LAYERS, DEFAULT_LIMIT as MAP_LIMIT_DEFAULT } from '../core/map.mjs';
 import { buildOverview } from '../core/overview.mjs';
 import {
-  handlersOf, primaryHandlerOf, walkEndpoints, walkScreens, groupOfEndpoint, frontendCallsOf,
+  handlersOf, handlerStartsOf, walkEndpoints, walkScreens, groupOfEndpoint, frontendCallsOf,
   screensAffecting, observedCall,
 } from '../core/walks.mjs';
 import { resolveSchemaName } from '../core/name_resolve.mjs';
@@ -1608,7 +1608,74 @@ const UP_ENTRY_KINDS = Object.freeze(['column', 'table', 'statement', 'symbol'])
  * @returns {{start:string, entry:object, entryLimits:object[], handlerNote:(string|null),
  *            missing:(object|null)}} `missing` is the not-found response, when there is one
  */
-function flowEntry(graph, args, ctx, { entryKind, up }) {
+/**
+ * A route as the entry of a picture: which node the walk starts at, and what the
+ * card says about its handler.
+ *
+ * The walk starts at the code, not the route: the handler method the endpoint
+ * HANDLES. Only a route with no handler edge starts at itself.
+ *
+ * A route can name MORE THAN ONE handler — the same route string declared in
+ * two modules. ONE picture can follow only one of them, and merging the two
+ * would claim a request runs through both deployables, so the choice is the
+ * shared primary rule (core/walks.mjs, the same method `map` labels the
+ * route with) and the others are named in `limits` with the query that draws
+ * them. The whole-pack views (overview/map/coupling) walk the UNION instead;
+ * that difference is stated in the note, because the same route can then
+ * reach more tables in the census than in this one picture.
+ *
+ * AND THE ROUTE'S LINK TO ITS HANDLER IS A LINK. A handler this mode's floor
+ * does not admit is not walked into, and the note says why. One it admits
+ * through a link weaker than a candidate set (a rule's guess, HEURISTIC) is not
+ * started from either: the walk starts at the route, so the link is on every
+ * path and every row is graded by it. A fact or a candidate-set link is the
+ * route's own handler, as it always was.
+ */
+function flowEndpointEntry(graph, args, ctx, mode) {
+  const epId = nodeId('endpoint', String(args.endpoint));
+  const ep = graph.nodes.get(epId);
+  if (!ep) return { missing: notFound(ctx, 'endpoint', args.endpoint) };
+  const handlerIds = handlersOf(graph, epId);
+  const primary = handlerStartsOf(graph, epId, mode)[0] ?? null;
+  const handler = primary ? primary.id : null;
+  const start = primary && gradeRank(primary.grade) >= gradeRank('SOUND_SET') ? handler : epId;
+  const handlerNote = entryHandlerNote(graph, { epId, mode, handlerIds, handler, start });
+  const handlerNode = handler ? graph.nodes.get(handler) : null;
+  const entry = {
+    kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
+    // Read from the EDGE, not from the endpoint node's own `handler`: a node
+    // merged from two controllers carries whichever was ingested last, and the
+    // card must name the method this picture actually walked.
+    handler: handler ? strip(handler) : (ep.handler ?? null),
+    handlerShort: handler ? nodeLabel(handlerNode, handler) : null,
+    handlers: handlerIds.length,
+    owner: handlerNode?.owner ?? null,
+    file: ep.file ?? null, line: ep.line ?? null, start,
+  };
+  return { start, entry, handlerNote, missing: null };
+}
+
+/** The grades and rules of a route's HANDLES edges, as a note names them. */
+function linkGradesOf(graph, epId) {
+  const ruleOf = (e) => graph.edgeAt(e.idx)?.evidence?.rule ?? null;
+  return [...new Set(graph.outEdges(epId).filter((e) => e.type === 'HANDLES')
+    .map((e) => `${e.grade}${ruleOf(e) ? ` by ${ruleOf(e)}` : ''}`))].sort().join(', ');
+}
+
+/** What a route's picture says about where it started, when there is something to say. */
+function entryHandlerNote(graph, { epId, mode, handlerIds, handler, start }) {
+  if (handlerIds.length > 0 && handler === null) {
+    return `this route's handler is linked to it below the floor of mode=${mode} (${linkGradesOf(graph, epId)}), so this picture stops at the route. Ask with a mode that admits that grade to walk into it`;
+  }
+  if (start === epId && handler !== null) {
+    return `this route's handler is linked to it only by a rule's guess (${linkGradesOf(graph, epId)}), so this picture starts at the route and every row is graded by that link${handlerIds.length > 1 ? `; it walks all ${handlerIds.length} handlers the route names` : ''}`;
+  }
+  if (handlerIds.length < 2) return null;
+  const others = handlerIds.filter((id) => id !== handler);
+  return `this route is declared by ${handlerIds.length} controller methods, which means the same route string sits in more than one module. This picture follows ${nodeLabel(graph.nodes.get(handler), handler)}; for the others, ask flow with symbol=${others.map(strip).join(' / symbol=')}. The whole-pack views (overview, map, coupling) walk ALL of them, so their counts for this route can be bigger than this picture`;
+}
+
+function flowEntry(graph, args, ctx, { entryKind, up, mode }) {
 let entry;
 let start;
 // Set when a route names more than one handler: said in `limits` below, next
@@ -1618,39 +1685,9 @@ let handlerNote = null;
 // rule rather than matched literally (see schemaArg).
 let entryLimits = [];
 if (entryKind === 'endpoint') {
-  const epId = nodeId('endpoint', String(args.endpoint));
-  const ep = graph.nodes.get(epId);
-  if (!ep) return { missing: notFound(ctx, 'endpoint', args.endpoint) };
-  // The walk starts at the code, not the route: the handler method the
-  // endpoint HANDLES. Only a route with no handler edge starts at itself.
-  //
-  // A route can name MORE THAN ONE handler — the same route string declared in
-  // two modules. ONE picture can follow only one of them, and merging the two
-  // would claim a request runs through both deployables, so the choice is the
-  // shared primary rule (core/walks.mjs, the same method `map` labels the
-  // route with) and the others are named in `limits` with the query that draws
-  // them. The whole-pack views (overview/map/coupling) walk the UNION instead;
-  // that difference is stated in the note, because the same route can then
-  // reach more tables in the census than in this one picture.
-  const handlerIds = handlersOf(graph, epId);
-  start = primaryHandlerOf(graph, epId) ?? epId;
-  const handled = handlerIds.length > 0;
-  if (handlerIds.length > 1) {
-    const others = handlerIds.filter((id) => id !== start);
-    handlerNote = `this route is declared by ${handlerIds.length} controller methods, which means the same route string sits in more than one module. This picture follows ${nodeLabel(graph.nodes.get(start), start)}; for the others, ask flow with symbol=${others.map(strip).join(' / symbol=')}. The whole-pack views (overview, map, coupling) walk ALL of them, so their counts for this route can be bigger than this picture`;
-  }
-  const startNode = graph.nodes.get(start);
-  entry = {
-    kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
-    // Read from the EDGE, not from the endpoint node's own `handler`: a node
-    // merged from two controllers carries whichever was ingested last, and the
-    // card must name the method this picture actually walked.
-    handler: handled ? strip(start) : (ep.handler ?? null),
-    handlerShort: handled ? nodeLabel(startNode, start) : null,
-    handlers: handlerIds.length,
-    owner: startNode?.owner ?? null,
-    file: ep.file ?? null, line: ep.line ?? null, start,
-  };
+  const r = flowEndpointEntry(graph, args, ctx, mode);
+  if (r.missing) return r;
+  ({ start, entry, handlerNote } = r);
 } else if (entryKind === 'screen') {
   // THE OTHER END OF THE ROUND TRIP (SPEC §1.1). A screen is named by its
   // COMPOSED path, the same string the node is keyed by, so `screen=/things/list`
@@ -1868,7 +1905,7 @@ export function flow(graph, args, ctx) {
   // a caller wanting more raises the limit rather than sliding a window.
   if (args.offset != null) throw new ToolError('bad-input', 'offset is not accepted in chain mode. Raise limit instead');
 
-  const found = flowEntry(graph, args, ctx, { entryKind, up });
+  const found = flowEntry(graph, args, ctx, { entryKind, up, mode });
   if (found.missing) return found.missing;
   const { start, entry, entryLimits, handlerNote } = found;
 

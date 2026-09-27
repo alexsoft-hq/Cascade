@@ -28,7 +28,8 @@ function runKind(kind, entries, env) {
  * Run the examples of the rules asked about.
  *
  * @param {object} registry  from buildRegistry / builtinRegistry
- * @param {{only?:string, env?:{javaFacts?:Function}}} [opts]  a rule id or a pack name; the workers the examples may need
+ * @param {{only?:string, env?:{javaFacts?:Function, tsFacts?:Function, tsValue?:Function, openApiDocument?:Function}}} [opts]
+ *        a rule id or a pack name; the workers and readers the examples may need
  * @returns {{id:string, pack:string, kind:string, total:number, failures:{example:object, got:*}[], notRun:(string|null)}[]}
  */
 export function testRules(registry, { only, env } = {}) {
