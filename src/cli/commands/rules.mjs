@@ -9,10 +9,16 @@
 //   test [<id>]   run the examples of every rule, or of one rule or one pack
 //
 // `--json` prints the same thing for a program to read. `test` exits 1 when an
-// example does not hold, so it can stand in a CI job.
+// example does not hold, and 2 when an example could not be run at all (a Java
+// example needs a JDK): an example nobody ran is not one that holds.
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { builtinRegistry } from '../../core/rules/registry.mjs';
 import { testRules } from '../../core/rules/examples.mjs';
+import { findJdk } from '../env.mjs';
+import { runJavaLane } from '../lanes_run.mjs';
 
 const USAGE = 'usage: cascade rules list [--json]\n'
   + '       cascade rules show <rule id> [--json]\n'
@@ -50,18 +56,54 @@ function show(registry, id, asJson, die) {
   for (const ex of e.rule.examples) print(`  ${JSON.stringify(ex)}`);
 }
 
-function test(registry, only, asJson) {
-  const results = testRules(registry, { only });
-  const failed = results.filter((r) => r.failures.length > 0);
-  if (asJson) print(JSON.stringify(results, null, 2));
-  else {
-    for (const r of results) {
-      print(`${r.failures.length === 0 ? 'ok  ' : 'FAIL'}  ${r.id}  ${r.total - r.failures.length}/${r.total} example(s) hold`);
-      for (const f of r.failures) print(`        ${JSON.stringify(f.example)} gave ${JSON.stringify(f.got)}`);
+/**
+ * The Java worker, run over example sources written to a scratch tree that is
+ * removed after; null when there is no JDK, so the examples are reported not run.
+ */
+function javaWorkerForExamples() {
+  const jdk = findJdk();
+  if (!jdk) return null;
+  return (files) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-rule-examples-'));
+    try {
+      writeSources(dir, files);
+      return runJavaLane(jdk, dir, [dir], { quiet: true });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    print(results.length === 0 ? `no rule or pack ${JSON.stringify(only)}` : `${results.length - failed.length} of ${results.length} rule(s) hold every example`);
+  };
+}
+
+/** Each example source written under `dir` at its own relative name. */
+function writeSources(dir, files) {
+  for (const f of files) {
+    fs.mkdirSync(path.dirname(path.join(dir, f.name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f.name), f.text);
   }
-  process.exit(results.length === 0 || failed.length > 0 ? 1 : 0);
+}
+
+function statusOf(r) {
+  if (r.notRun) return 'SKIP';
+  return r.failures.length === 0 ? 'ok  ' : 'FAIL';
+}
+
+function printResults(results, only) {
+  for (const r of results) {
+    const counted = r.notRun ? `not run: ${r.notRun}` : `${r.total - r.failures.length}/${r.total} example(s) hold`;
+    print(`${statusOf(r)}  ${r.id}  ${counted}`);
+    for (const f of r.failures) print(`        ${JSON.stringify(f.example)} gave ${JSON.stringify(f.got)}`);
+  }
+  const held = results.filter((r) => !r.notRun && r.failures.length === 0).length;
+  print(results.length === 0 ? `no rule or pack ${JSON.stringify(only)}` : `${held} of ${results.length} rule(s) hold every example`);
+}
+
+function test(registry, only, asJson) {
+  const javaFacts = javaWorkerForExamples();
+  const results = testRules(registry, { only, env: javaFacts ? { javaFacts } : {} });
+  if (asJson) print(JSON.stringify(results, null, 2));
+  else printResults(results, only);
+  const failed = results.length === 0 || results.some((r) => r.failures.length > 0);
+  process.exit(failed ? 1 : results.some((r) => r.notRun) ? 2 : 0);
 }
 
 export function run(ctx) {

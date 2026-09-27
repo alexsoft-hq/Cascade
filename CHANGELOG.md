@@ -38,6 +38,15 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Changed
 
+- **Which types are MyBatis-Plus mappers and services is a rule pack, not the
+  Java worker's code.** The worker (now `javafacts/13`) records each type's
+  supertypes as before and no longer decides the role; the `java.type-role`
+  rules in `mybatis-plus.json` do, with Java examples run through the real
+  worker. The records are the ones the bridge always read: on eleven real
+  repositories the rules give exactly the records the worker gave, and the
+  packs of the MyBatis-Plus corpus entries are unchanged. The first analyze
+  after upgrading re-reads every Java file once, because the worker version is
+  part of every cached fact's key.
 - **The engine print covers the rule packs, and the web worker and its packs.**
   The calibration gate allows an engine change less than an input change (5%
   against 25% by default), but a changed web declaration pack, or the web worker

@@ -152,7 +152,7 @@ export const USAGE = Object.freeze({
   rules:
     '  cascade rules list | show <rule id> | test [<rule id> | <pack>]  [--json]\n'
     + '      (the rule packs the engine reads: what each rule says, why it is there, and whether its examples\n'
-    + '       still hold. test exits 1 when one does not)\n',
+    + '       still hold. test exits 1 when one does not, 2 when one could not be run)\n',
 });
 
 /**

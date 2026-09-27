@@ -40,10 +40,13 @@ export const LANE_BRIDGES = Object.freeze({ buildGraphFromSql, addJavaFacts, add
 // let two of them write the same .class files concurrently — the loser then ran
 // a half-written class. Content-addressing also means a checkout that moves the
 // worker back and forth never reuses the wrong generation.
-export function runJavaLane(jdk, root, srcRoots) {
+export function runJavaLane(jdk, root, srcRoots, { quiet = false } = {}) {
   const src = path.join(ENGINE_ROOT, 'adapters', 'java', 'JavaFacts.java');
   const build = javaWorkerBuildDir(jdk, src);
-  const out = execFileSync(jdk.java, ['-cp', build, 'JavaFacts', '--root', root, ...srcRoots], { maxBuffer: 1 << 28 }).toString('utf8');
+  // `quiet` keeps the worker's own summary line off the terminal, for a caller
+  // whose output is something else (the rule examples).
+  const stdio = ['ignore', 'pipe', quiet ? 'ignore' : 'inherit'];
+  const out = execFileSync(jdk.java, ['-cp', build, 'JavaFacts', '--root', root, ...srcRoots], { maxBuffer: 1 << 28, stdio }).toString('utf8');
   return out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 

@@ -61,4 +61,11 @@ stop the run: which one wins is never decided by the order the packs load in.
 
 | kind | runs | reads | concludes |
 |---|---|---|---|
+| `java.type-role` | after the Java worker's records are assembled, before the lanes are chosen | the supertypes a type's own extends and implements clauses name, and their type arguments | which role a type plays (a MyBatis-Plus mapper or service) and which of its type arguments is the entity or the mapper. Only the roots of a chain are matched: a type that reaches one through a type of the project's own is found by the bridge that reads the role |
 | `sql.dialect-path` | while discovering the tree | a file's path | which database a DDL or mapper file is for, from a whole word of its path. The first entry of a rule whose word is in the path wins, so a rule lists first the entry it prefers |
+
+A kind whose examples are source code runs them through the real worker: the
+`java.type-role` examples are Java, parsed by the same Java worker an analysis
+uses, so they need a JDK. Without one they are reported as not run, and
+`cascade rules test` exits 2 rather than 0: an example nobody ran is not one
+that holds.

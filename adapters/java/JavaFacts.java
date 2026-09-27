@@ -94,7 +94,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/12";
+    static final String VERSION = "javafacts/13";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -125,7 +125,7 @@ public class JavaFacts {
         // classes carry MP mapping annotations, which interfaces/classes name an
         // entity through BaseMapper/IService/ServiceImpl, and which condition
         // wrappers a method builds. What any of it MEANS is the bridge's call.
-        int mpEntities, mpMappers, mpServices, mpWrappers;
+        int mpEntities, mpWrappers;
         // MyBatis statements written as an ANNOTATION on a mapper method
         // rather than in a mapper XML (javafacts/7).
         int mapperAnnotationSql;
@@ -506,10 +506,11 @@ public class JavaFacts {
             if (isInterface) emitRepository(ct, fqn, typeAnns);
 
             // --- MyBatis-Plus evidence (javafacts/6) ---------------------------
-            // Same discipline: what the annotations and the generic bases SAY,
-            // resolved no further than this file.
+            // Same discipline: what the annotations SAY, resolved no further than
+            // this file. Which types are MP mappers and services is no longer
+            // decided here (javafacts/13): the rule pack src/core/rules/packs/
+            // mybatis-plus.json reads it from the `type` record's supertypes.
             emitMpEntity(ct, fqn, typeAnns, annotations, ext);
-            emitMpMapperOrService(ct, fqn, isInterface, ext, extArgs);
 
             // --- pass 1: instance fields (class/interface-typed) ---------------
             Map<String, String> fields = new LinkedHashMap<>();
@@ -971,62 +972,6 @@ public class JavaFacts {
             rec.put("file", rel);
             sink.mpEntities++;
             sink.add("2mpentity" + SEP + fqn, rec);
-        }
-
-        // ---- MyBatis-Plus: `mpMapper` / `mpService` records -----------------
-        // The three declarations that name an MP entity, verbatim:
-        //   interface XMapper extends BaseMapper<T>            -> mpMapper
-        //   interface IXService extends IService<T>            -> mpService (base IService)
-        //   class XServiceImpl extends ServiceImpl<M, T>       -> mpService (base ServiceImpl, mapper M)
-        // The SIMPLE names are recorded; resolving them to a type is the bridge's
-        // job, through the same resolver every other simple name goes through.
-        void emitMpMapperOrService(ClassTree ct, String fqn, boolean isInterface, String ext, List<String> extArgs) {
-            // javac puts an INTERFACE's `extends` list in the implements clause.
-            for (Tree t : ct.getImplementsClause()) {
-                String simple = typeSimpleName(t);
-                if (simple == null) continue;
-                List<String> args = typeArgSimples(t);
-                if (MP_MAPPER_BASE.equals(simple)) { addMpMapper(fqn, simple, args, ct); }
-                else if (MP_SERVICE_IFACE.equals(simple)) { addMpService(fqn, simple, null, args.isEmpty() ? null : args.get(0), ct); }
-            }
-            if (ext == null) return;
-            if (MP_MAPPER_BASE.equals(ext)) { addMpMapper(fqn, ext, extArgs, ct); return; }
-            if (MP_SERVICE_IFACE.equals(ext)) { addMpService(fqn, ext, null, extArgs.isEmpty() ? null : extArgs.get(0), ct); return; }
-            for (String impl : MP_SERVICE_IMPL_BASES) {
-                if (!impl.equals(ext)) continue;
-                // ServiceImpl<M, T>: the FIRST argument is the mapper, the SECOND
-                // the entity. A subclass that binds only one of them (an abstract
-                // base) records what it has and nulls the rest.
-                addMpService(fqn, ext,
-                        extArgs.size() > 0 ? extArgs.get(0) : null,
-                        extArgs.size() > 1 ? extArgs.get(1) : null, ct);
-                return;
-            }
-        }
-
-        void addMpMapper(String fqn, String base, List<String> args, ClassTree ct) {
-            Map<String, Object> rec = new LinkedHashMap<>();
-            rec.put("kind", "mpMapper");
-            rec.put("fqn", fqn);
-            rec.put("base", base);
-            rec.put("entityTypeSimple", args.isEmpty() ? null : args.get(0));
-            rec.put("line", lineOf(ct));
-            rec.put("file", rel);
-            sink.mpMappers++;
-            sink.add("2mpmapper" + SEP + fqn, rec);
-        }
-
-        void addMpService(String fqn, String base, String mapperSimple, String entitySimple, ClassTree ct) {
-            Map<String, Object> rec = new LinkedHashMap<>();
-            rec.put("kind", "mpService");
-            rec.put("fqn", fqn);
-            rec.put("base", base);
-            rec.put("mapperTypeSimple", mapperSimple);
-            rec.put("entityTypeSimple", entitySimple);
-            rec.put("line", lineOf(ct));
-            rec.put("file", rel);
-            sink.mpServices++;
-            sink.add("2mpservice" + SEP + fqn + SEP + base, rec);
         }
 
         // ---- MyBatis annotation SQL: `mapperAnnotationSql` (javafacts/7) ---
@@ -2578,11 +2523,12 @@ public class JavaFacts {
      */
     static final String[] MAPPER_SQL_ANNOTATIONS = {"Select", "Insert", "Update", "Delete"};
 
-    /** The generic mapper interface an MP mapper extends. */
-    static final String MP_MAPPER_BASE = "BaseMapper";
-    /** The generic service INTERFACE an MP service interface extends. */
-    static final String MP_SERVICE_IFACE = "IService";
-    /** The generic service CLASSES an MP service implementation extends. */
+    /**
+     * The generic service CLASS whose `protected M baseMapper` field a subclass
+     * inherits. Only the receiver of `baseMapper.selectList(…)` is read from it
+     * here; which types ARE services is a rule (src/core/rules/packs/
+     * mybatis-plus.json), and this name is knowledge the worker still holds.
+     */
     static final String[] MP_SERVICE_IMPL_BASES = { "ServiceImpl" };
 
     /** Member annotations that make a class MyBatis-Plus persistence evidence. */
@@ -2922,8 +2868,6 @@ public class JavaFacts {
         header.put("entities", sink.entities);
         header.put("repositories", sink.repositories);
         header.put("mpEntities", sink.mpEntities);
-        header.put("mpMappers", sink.mpMappers);
-        header.put("mpServices", sink.mpServices);
         header.put("mpWrappers", sink.mpWrappers);
         header.put("mapperAnnotationSql", sink.mapperAnnotationSql);
         header.put("httpCalls", sink.httpCalls);
@@ -2950,8 +2894,6 @@ public class JavaFacts {
         summary.put("entities", sink.entities);
         summary.put("repositories", sink.repositories);
         summary.put("mpEntities", sink.mpEntities);
-        summary.put("mpMappers", sink.mpMappers);
-        summary.put("mpServices", sink.mpServices);
         summary.put("mpWrappers", sink.mpWrappers);
         summary.put("mapperAnnotationSql", sink.mapperAnnotationSql);
         summary.put("httpCalls", sink.httpCalls);

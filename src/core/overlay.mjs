@@ -23,6 +23,7 @@
 
 import { FLOW_EDGE_TYPES } from './graph.mjs';
 import { spliceFacts, assembleJavaFacts, assembleWebFacts } from './facts_store.mjs';
+import { withTypeRoles } from './java_roles.mjs';
 import { underAny, isWebPackageConfigFile } from './invalidate.mjs';
 import { isWebSourceFile } from './discover.mjs';
 import { assembleGraph } from './assemble.mjs';
@@ -362,7 +363,7 @@ export function overlayGraph(a) {
   // written anywhere — an uncommitted edit must never become a cached fact
   // (SPEC §10.1: MUST NOT publish).
   const shards = spliceFacts(baseShards, { replaceForFiles: dirtyFacts, dropFiles });
-  const javaFacts = assembleJavaFacts(shards);
+  const javaFacts = withTypeRoles(assembleJavaFacts(shards));
   // The web lane goes through the same splice, with one difference: the package
   // configuration is not spliced at all, because it is not cached. Whatever the
   // caller just read is what the frontend's base URLs are built from.

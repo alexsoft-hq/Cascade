@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { JAVA_WORKER_VERSION } from '../src/core/worker_versions.mjs';
 import { javaRecordSortKey, splitJavaFactsByFile, assembleJavaFacts } from '../src/core/facts_store.mjs';
+import { withTypeRoles } from '../src/core/java_roles.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 
@@ -180,9 +181,16 @@ test('javafacts/6 records MyBatis-Plus evidence, and decides nothing', (t) => {
   assert.equal(byName.revision.version, true);
 
   // ---- mpMapper / mpService: the generic bases, with their arguments -----
-  assert.deepEqual(of('mpMapper').map((r) => [r.fqn, r.base, r.entityTypeSimple]).sort(),
+  // The worker no longer decides these (javafacts/13): it records each type's
+  // supertypes, and the java.type-role rules of src/core/rules/packs/
+  // mybatis-plus.json give the records the bridge reads. The records that reach
+  // the bridge are the ones the worker used to write.
+  assert.deepEqual([...of('mpMapper'), ...of('mpService')], [], 'the worker writes no role record of its own');
+  const roles = withTypeRoles(records);
+  const ofRoles = (kind) => roles.filter((r) => r.kind === kind);
+  assert.deepEqual(ofRoles('mpMapper').map((r) => [r.fqn, r.base, r.entityTypeSimple]).sort(),
     [['shop.ItemMapper', 'BaseMapper', 'Item'], ['shop.OrderMapper', 'BaseMapper', 'Order']]);
-  assert.deepEqual(of('mpService').map((r) => [r.fqn, r.base, r.mapperTypeSimple, r.entityTypeSimple]).sort(),
+  assert.deepEqual(ofRoles('mpService').map((r) => [r.fqn, r.base, r.mapperTypeSimple, r.entityTypeSimple]).sort(),
     [
       ['shop.IItemService', 'IService', null, 'Item'],
       ['shop.ItemServiceImpl', 'ServiceImpl', 'ItemMapper', 'Item'],

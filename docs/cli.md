@@ -832,5 +832,6 @@ person can read, and every rule carries the examples that hold it. See
   and its examples.
 - `test [<rule id> | <pack>]` — run the examples of every rule, or of one rule or
   one pack. Exits 1 when an example does not hold, or when nothing is named by
-  the argument, so it can stand in a CI job.
+  the argument, and 2 when an example could not be run (a Java example needs a
+  JDK), so it can stand in a CI job.
 - `--json` — the same answer for a program to read.

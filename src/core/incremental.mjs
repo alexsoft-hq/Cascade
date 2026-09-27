@@ -30,6 +30,7 @@ import {
   splitWebFactsByFile, assembleWebFacts,
   emptyIndex, FactsStoreError,
 } from './facts_store.mjs';
+import { withTypeRoles } from './java_roles.mjs';
 import { MODE_COLD } from './invalidate.mjs';
 
 /**
@@ -87,7 +88,7 @@ function javaFactsWithShards({ plan, index, store, selection, run, hash, abs, wo
     }
     stats.reparsedJava = byFile.size;
   }
-  return assembleJavaFacts(shardsByFile);
+  return withTypeRoles(assembleJavaFacts(shardsByFile));
 }
 
 /**

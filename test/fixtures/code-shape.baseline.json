@@ -1866,21 +1866,28 @@
   },
   "src/cli/commands/rules.mjs": {
    "maxLines": 14,
-   "maxBranches": 7,
+   "maxBranches": 5,
    "longest": "list",
-   "branchiest": "test",
+   "branchiest": "show",
    "functions": [
     "firstSentence",
+    "javaWorkerForExamples",
+    "javaWorkerForExamples/1",
     "list",
     "list/1",
     "list/1/1",
     "print",
+    "printResults",
+    "printResults/1",
     "ruleSummary",
     "run",
     "run/1",
     "show",
+    "statusOf",
     "test",
-    "test/1"
+    "test/1",
+    "test/2",
+    "writeSources"
    ]
   },
   "src/cli/commands/setup.mjs": {
@@ -3028,6 +3035,15 @@
     "underAny"
    ]
   },
+  "src/core/java_roles.mjs": {
+   "maxLines": 4,
+   "maxBranches": 1,
+   "longest": "withTypeRoles",
+   "branchiest": "withTypeRoles",
+   "functions": [
+    "withTypeRoles"
+   ]
+  },
   "src/core/jpql_lite.mjs": {
    "maxLines": 68,
    "maxBranches": 37,
@@ -3658,12 +3674,22 @@
    ]
   },
   "src/core/rules/examples.mjs": {
-   "maxLines": 14,
-   "maxBranches": 4,
-   "longest": "testRules",
-   "branchiest": "testRules",
+   "maxLines": 9,
+   "maxBranches": 2,
+   "longest": "runKind",
+   "branchiest": "wanted",
    "functions": [
+    "groupByKind",
+    "reportOf",
+    "reportOf/1",
+    "reportOf/2",
+    "runKind",
+    "runKind/1",
+    "runKind/2",
+    "runKind/2/1",
     "testRules",
+    "testRules/1",
+    "testRules/2",
     "wanted"
    ]
   },
@@ -3673,6 +3699,42 @@
    "longest": null,
    "branchiest": null,
    "functions": []
+  },
+  "src/core/rules/kinds/java_type_role.mjs": {
+   "maxLines": 15,
+   "maxBranches": 13,
+   "longest": "deriveTypeRoles",
+   "branchiest": "validateParams",
+   "functions": [
+    "argAt",
+    "asExpect",
+    "canonical",
+    "canonical/1",
+    "compile",
+    "compile/1",
+    "compile/1/1",
+    "compile/1/2",
+    "deriveTypeRoles",
+    "deriveTypeRoles/1",
+    "expectErrors",
+    "expectErrors/1",
+    "record",
+    "recordKey",
+    "runExamples",
+    "runExamples/1",
+    "runExamples/1/1",
+    "runExamples/2",
+    "runExamples/2/1",
+    "runExamples/2/2",
+    "supertypesOf",
+    "supertypesOf/1",
+    "unknownKeys",
+    "unknownKeys/1",
+    "validateExample",
+    "validateExample/1",
+    "validateParams",
+    "validateParams/1"
+   ]
   },
   "src/core/rules/kinds/sql_dialect_path.mjs": {
    "maxLines": 13,

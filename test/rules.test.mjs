@@ -8,13 +8,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildRegistry, builtinRegistry, RuleError } from '../src/core/rules/registry.mjs';
 import { testRules } from '../src/core/rules/examples.mjs';
 import { KINDS } from '../src/core/rules/kinds/index.mjs';
+import { deriveTypeRoles } from '../src/core/rules/kinds/java_type_role.mjs';
+import { withTypeRoles } from '../src/core/java_roles.mjs';
 import { ddlDialectTokenOf } from '../src/core/discover.mjs';
+import { findJdk } from '../src/cli/env.mjs';
+import { runJavaLane } from '../src/cli/lanes_run.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const cli = (...args) => spawnSync(process.execPath, [path.join(ENGINE_ROOT, 'bin', 'cascade.mjs'), 'rules', ...args], { encoding: 'utf8' });
@@ -33,10 +39,84 @@ const refusal = (sources, kinds) => {
   return [];
 };
 
-test('every rule the engine carries holds every one of its examples', () => {
-  const results = testRules(builtinRegistry());
+/** The real Java worker over example sources, or null without a JDK. */
+function javaWorker() {
+  const jdk = findJdk();
+  if (!jdk) return null;
+  return (files) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-rules-test-'));
+    try {
+      for (const f of files) {
+        fs.mkdirSync(path.dirname(path.join(dir, f.name)), { recursive: true });
+        fs.writeFileSync(path.join(dir, f.name), f.text);
+      }
+      return runJavaLane(jdk, dir, [dir], { quiet: true });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  };
+}
+
+test('every rule the engine carries holds every one of its examples, the Java ones through the real worker', (t) => {
+  const javaFacts = javaWorker();
+  const results = testRules(builtinRegistry(), { env: javaFacts ? { javaFacts } : {} });
   assert.ok(results.length > 0, 'the engine carries rules');
   for (const r of results) assert.deepEqual(r.failures, [], `${r.id}: ${JSON.stringify(r.failures)}`);
+  const notRun = results.filter((r) => r.notRun);
+  if (!javaFacts) {
+    assert.ok(notRun.every((r) => r.kind === 'java.type-role'), 'only a Java example ever waits for a JDK');
+    t.skip('no JDK found: the java.type-role examples were not run (see docs/setup/java-lane.md)');
+    return;
+  }
+  assert.deepEqual(notRun, [], 'with a JDK every example is run');
+});
+
+/** A worker `type` record, as the Java worker writes one. */
+const typeRecord = (fqn, over = {}) => ({ kind: 'type', fqn, typeKind: 'interface', implements: [], implementsArgs: [], extends: null, extendsArgs: [], typeParams: [], file: `${fqn.replace(/\./g, '/')}.java`, ...over });
+const mpRules = () => builtinRegistry().ofKind('java.type-role');
+
+test('the MyBatis-Plus rules give the records the Java worker used to, from the supertypes a type names', () => {
+  const facts = [
+    typeRecord('p.UserMapper', { implements: ['BaseMapper'], implementsArgs: [['User']] }),
+    typeRecord('p.OrderMapper', { implements: ['BaseMapperX'], implementsArgs: [['Order']] }),
+    typeRecord('p.UserServiceImpl', { typeKind: 'class', extends: 'ServiceImpl', extendsArgs: ['UserMapper', 'User'], implements: ['IService'], implementsArgs: [['User']] }),
+    typeRecord('p.Finder', { typeKind: 'class' }),
+  ];
+  assert.deepEqual(deriveTypeRoles(facts, mpRules()), [
+    { kind: 'mpMapper', fqn: 'p.UserMapper', base: 'BaseMapper', entityTypeSimple: 'User', file: 'p/UserMapper.java', rule: 'mybatis-plus.mapper' },
+    { kind: 'mpService', fqn: 'p.UserServiceImpl', base: 'IService', mapperTypeSimple: null, entityTypeSimple: 'User', file: 'p/UserServiceImpl.java', rule: 'mybatis-plus.service-interface' },
+    { kind: 'mpService', fqn: 'p.UserServiceImpl', base: 'ServiceImpl', mapperTypeSimple: 'UserMapper', entityTypeSimple: 'User', file: 'p/UserServiceImpl.java', rule: 'mybatis-plus.service-impl' },
+  ], 'implements before extends, one record per base, and OrderMapper left for the bridge to reach through BaseMapperX');
+});
+
+test('the role records join the worker\'s in the place the worker put its own', () => {
+  const facts = [typeRecord('p.A', { implements: ['BaseMapper'], implementsArgs: [['E']] }), { kind: 'import', owner: 'p.A', fqn: 'x.BaseMapper' }];
+  const joined = withTypeRoles(facts);
+  assert.equal(joined.length, 3);
+  assert.deepEqual(joined.map((r) => r.kind), [...joined].map((r) => r.kind), 'a stable, key-sorted stream');
+  assert.ok(joined.some((r) => r.kind === 'mpMapper' && r.fqn === 'p.A'));
+  assert.equal(withTypeRoles([typeRecord('p.B')]).length, 1, 'no role, nothing added');
+});
+
+test('two rules that give one type two different records are refused, never settled by rule order', () => {
+  const reg = buildRegistry([{ where: 'm.json', pack: { pack: 'm', version: 1, description: 'Two mapper rules.', rules: [
+    { id: 'm.first', kind: 'java.type-role', description: 'First.', params: { role: 'mybatis-plus-mapper', supertypes: ['BaseMapper'], entityArg: 0 }, examples: [{ source: 'class A {}', expect: [] }] },
+    { id: 'm.second', kind: 'java.type-role', description: 'Second.', params: { role: 'mybatis-plus-mapper', supertypes: ['BaseMapper'], entityArg: 1 }, examples: [{ source: 'class A {}', expect: [] }] },
+  ] } }]);
+  assert.throws(() => deriveTypeRoles([typeRecord('p.M', { implements: ['BaseMapper'], implementsArgs: [['A', 'B']] })], reg.ofKind('java.type-role')),
+    /the rules m\.first and m\.second give p\.M two different mpMapper records/);
+});
+
+test('a type-role rule refuses a role it does not know, a supertype that is not a Java name, and a type argument its role does not take', () => {
+  const problems = refusal([{ where: 't.json', pack: packOf([{
+    id: 'p.bad', kind: 'java.type-role', description: 'Bad.', params: { role: 'mybatis-plus-mapper', supertypes: ['Base Mapper'], mapperArg: 0 },
+    examples: [{ source: 'class A {}', expect: [{ type: 'A' }] }],
+  }, {
+    id: 'p.unknown-role', kind: 'java.type-role', description: 'Unknown.', params: { role: 'spring-bean', supertypes: ['X'] }, examples: [{ source: 'class A {}', expect: [] }],
+  }]) }]);
+  const has = (re) => assert.ok(problems.some((m) => re.test(m)), `a problem matching ${re}: ${problems.join(' | ')}`);
+  has(/p\.bad params has a key "mapperArg" that a mybatis-plus-mapper rule does not take/);
+  has(/p\.bad params\.supertypes has "Base Mapper", which is not a simple Java type name/);
+  has(/p\.bad expect\[0\] must be \{type, role\}/);
+  has(/p\.unknown-role params\.role must be one of mybatis-plus-mapper, mybatis-plus-service, got "spring-bean"/);
 });
 
 test('a pack with problems is refused with every problem, each named by its file and its rule', () => {
@@ -53,7 +133,7 @@ test('a pack with problems is refused with every problem, each named by its file
   has(/^bad\.json: names "id" must be "p\.<name>"/);
   has(/^bad\.json: p\.empty needs at least one example/);
   has(/^bad\.json: p\.graded gives a grade, but a sql\.dialect-path rule draws no edge to grade$/);
-  has(/^bad\.json: p\.unknown-kind "kind" must be one of sql\.dialect-path, got "java\.nothing"$/);
+  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.type-role, sql\.dialect-path, got "java\.nothing"$/);
 });
 
 test('a dialect rule refuses words that are not plain words, one word naming two databases, and an example it does not declare', () => {
@@ -105,7 +185,7 @@ test('the engine\'s dialect lookup names the rule it read the answer from', () =
 
 test('an example that no longer holds is reported with what the rule gave instead', () => {
   const reg = buildRegistry([{ where: 'w.json', pack: packOf([dialectRule({ examples: [{ path: 'db/mysql/a.sql', expect: null }] })]) }]);
-  assert.deepEqual(testRules(reg), [{ id: 'p.names', pack: 'p', kind: 'sql.dialect-path', total: 1, failures: [{ example: { path: 'db/mysql/a.sql', expect: null }, got: 'mysql' }] }]);
+  assert.deepEqual(testRules(reg), [{ id: 'p.names', pack: 'p', kind: 'sql.dialect-path', total: 1, failures: [{ example: { path: 'db/mysql/a.sql', expect: null }, got: 'mysql' }], notRun: null }]);
 });
 
 test('cascade rules lists, shows and tests the engine\'s packs, and says so in JSON too', () => {
@@ -119,6 +199,8 @@ test('cascade rules lists, shows and tests the engine\'s packs, and says so in J
   const run = cli('test');
   assert.equal(run.status, 0, run.stdout);
   assert.match(run.stdout, /^ok {4}sql-dialects\.path-names {2}(\d+)\/\1 example\(s\) hold$/m);
+  assert.match(run.stdout, /^(ok {2}|SKIP) {2}mybatis-plus\.mapper {2}/m);
+  assert.doesNotMatch(run.stdout + run.stderr, /"code":"summary"/, 'the worker\'s own summary line stays off the output');
   const none = cli('test', 'no-such-pack');
   assert.equal(none.status, 1, 'naming nothing is not a pass');
   const missing = cli('show', 'no.such-rule');
