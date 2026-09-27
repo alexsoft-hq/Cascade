@@ -132,6 +132,39 @@ test('prisma.operation refuses params.transaction missing method or clientParam'
   has(noClientParam, /p\.ops params\.transaction\.clientParam must be a whole number from 0/);
 });
 
+test('prisma.operation refuses a nested write it cannot read: rows, link and how its value is read are closed', () => {
+  const problems = refusal([{ where: 'r.json', pack: packOf([opRule({ nestedWrites: { create: { rows: 'insert', link: 'maybe' }, connect: 'x' } })]) }]);
+  has(problems, /p\.ops params\.nestedWrites\.create\.rows must be one of write, delete, none/);
+  has(problems, /p\.ops params\.nestedWrites\.create\.link must be one of set, clear/);
+  has(problems, /p\.ops params\.nestedWrites\.create must say how its value is read: value, arguments, or both/);
+  has(problems, /p\.ops params\.nestedWrites has "connect", which is not a nested write/);
+});
+
+test('prisma.operation refuses a relation count, relation filters or extensions it cannot read', () => {
+  const problems = refusal([{ where: 'r.json', pack: packOf([opRule({
+    relationCount: { key: '_count', arguments: { where: 'nope' } }, relationFilters: 'some',
+    extensions: { methods: ['$extends'], rewriting: ['query'], define: { module: '', export: 'Prisma' }, other: 1 },
+  })]) }]);
+  has(problems, /p\.ops params\.relationCount\.arguments\.where must be one of project/);
+  has(problems, /p\.ops params\.relationFilters must be an array of names/);
+  has(problems, /p\.ops params\.extensions has an unknown key "other"/);
+  has(problems, /p\.ops params\.extensions\.define\.module must name a package/);
+  has(problems, /p\.ops params\.extensions\.define\.export and \.method must be names/);
+});
+
+test('with the models handed in, a relation key is followed into the model it reaches; without them it is said as not followed, as before', () => {
+  const op = builtinRegistry().ofKind('prisma.operation')[0].compiled;
+  const user = { name: 'User', fields: [{ name: 'id', relation: false }, { name: 'posts', relation: true, type: 'Post', list: true }] };
+  const post = { name: 'Post', fields: [{ name: 'id', relation: false }, { name: 'title', relation: false }] };
+  const args = [valueOfSource('{ include: { posts: { select: { title: true } } } }')];
+  const followed = op.effectsOf('findMany', args, user, new Map([['User', user], ['Post', post]]));
+  assert.deepEqual(followed.follow.map((f) => [f.relation, f.target, f.how, [...f.fx.reads]]), [['posts', 'Post', 'project', ['title']]]);
+  assert.deepEqual([...followed.relations], []);
+  const alone = op.effectsOf('findMany', args, user);
+  assert.deepEqual([...alone.relations], ['posts']);
+  assert.deepEqual(alone.follow, []);
+});
+
 test('compiled.effectsOf reads a simple where and select', () => {
   const compiled = KINDS['prisma.operation'].compile({
     id: 'p.ops',

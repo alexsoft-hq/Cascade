@@ -57,6 +57,18 @@ function incrementalRecord(st, baseCommit) {
 }
 
 /**
+ * Where the catalog came from when neither a DDL nor a snapshot gave one:
+ * schema.prisma, by its path and hash, when the TypeScript lane put its tables
+ * in the graph.
+ */
+function prismaCatalogMeta(laneStats) {
+  const ts = laneStats?.ts;
+  return ts?.prismaSchema && (ts.prisma?.catalog?.tables ?? 0) > 0
+    ? { source: 'prisma', path: ts.prismaSchema.path, sha256: ts.prismaSchema.sha256 }
+    : { source: 'none' };
+}
+
+/**
  * THE PACK, projected out of the graph with everything this run learned about
  * itself attached. `builtAt` is returned beside it because the gate, the
  * receipt and the registry all have to stamp the SAME moment.
@@ -103,7 +115,7 @@ export function buildPack(g, { projectId, lanes, base, ddl, ddls, snapshot, snap
           // a catalog folded from three files must not be describable by one.
           paths: ddls.map((f) => ({ path: path.basename(f), sha256: sha256File(f) })),
         }
-        : { source: 'none' },
+        : prismaCatalogMeta(laneStats),
     axes,
     laneStats: (webStats || openapiStats || harStats || runtimeStats)
       ? {

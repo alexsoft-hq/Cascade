@@ -620,11 +620,35 @@ export function selectLanes(input = {}) {
  */
 const statementsRead = (ran) => ran.statements === true || (ran.ts?.prisma?.statements ?? 0) > 0;
 
+/** schema.prisma's catalog, as the TypeScript lane read it, when it put a table in the graph or corroborated one. */
+function prismaCatalogOf(ran) {
+  const c = ran.ts?.prisma?.catalog ?? null;
+  return c && (c.tables ?? 0) + (c.tablesCorroborated ?? 0) > 0 ? c : null;
+}
+
+/**
+ * THE CATALOG AXIS: shipped when the run read a DDL or a snapshot, or a
+ * schema.prisma, which declares every table and column a Prisma client can
+ * name. When both were read and they disagree, the axis still ships (the SQL
+ * catalog's names stand) and a note says where to find the list.
+ */
+function catalogAxis(ran) {
+  const prisma = prismaCatalogOf(ran);
+  if (ran.ddl !== true && !prisma) {
+    return { status: 'not-shipped', reason: 'no catalog was read here, because catalog.source is none, no snapshot was fetched, or --ddl was not given. A table or column is in this pack only where a statement named it' };
+  }
+  const notes = prisma && prisma.disagreements > 0
+    ? [`schema.prisma and the SQL catalog this run read disagree in ${prisma.disagreements} place(s) (${Object.entries(prisma.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ')}). `
+      + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog']
+    : [];
+  return { status: 'shipped', reason: null, ...(notes.length > 0 ? { notes } : {}) };
+}
+
 /**
  * Declare what this pack ships, per axis (SPEC §10.4). Every axis is present in
  * the result; none is silently omitted.
  *
- * - `catalog`    the DDL-derived table/column schema
+ * - `catalog`    the table/column schema a DDL, a snapshot or schema.prisma declares
  * - `statements` mapper SQL statements
  * - `column`     column-level read/write facts. SHIPPED needs both a catalog and
  *                statements; statements WITHOUT a catalog still yield some
@@ -653,12 +677,12 @@ const statementsRead = (ran) => ran.statements === true || (ran.ts?.prisma?.stat
  *          mybatisPlus?:{entities:number, statements:number, namingStrategyDeclared:boolean}|null,
  *          web?:{files:number, parseErrors:number, calls:number, callsWithUrl:number, routes:number}|null,
  *          openapi?:{paths:number, documents:object[]}|null,
- *          ts?:{prisma?:{statements:number}|null}|null}} ran
+ *          ts?:{prisma?:{statements:number, catalog?:{tables:number, tablesCorroborated:number, disagreements:number}}|null}|null}} ran
  * @param {{screenAxisRequested?:boolean, screenAxisReason?:string}} [opts]
  * @returns {Object} axis name -> {status, reason, notes?}
  */
 export function declareAxes(ran, opts = {}) {
-  const hasCatalog = ran.ddl === true;
+  const hasCatalog = ran.ddl === true || prismaCatalogOf(ran) !== null;
   const hasStatements = statementsRead(ran);
   const hasCode = ran.code === true;
   const jpa = ran.jpa && typeof ran.jpa === 'object' ? ran.jpa : null;
@@ -674,9 +698,7 @@ export function declareAxes(ran, opts = {}) {
   const hasColumnFacts = hasStatements || jpaStatements > 0 || mpStatements > 0;
 
   const axes = {
-    catalog: hasCatalog
-      ? { status: 'shipped', reason: null }
-      : { status: 'not-shipped', reason: 'no catalog was read here, because catalog.source is none, no snapshot was fetched, or --ddl was not given. A table or column is in this pack only where a statement named it' },
+    catalog: catalogAxis(ran),
     statements: hasStatements
       ? { status: 'shipped', reason: null }
       : { status: 'not-shipped', reason: 'we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty' },

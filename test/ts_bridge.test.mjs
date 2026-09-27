@@ -11,7 +11,7 @@ import { Graph, nodeId } from '../src/core/graph.mjs';
 import { addTsFacts } from '../src/adapters/ts_bridge.mjs';
 import { factsOfFile } from '../adapters/ts/tsfacts.mjs';
 import { readPrismaSchema } from '../src/adapters/ts/prisma_schema.mjs';
-import { tableKey, columnKey } from '../src/adapters/sql_bridge.mjs';
+import { tableKey, columnKey, buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 
 /** Every file's tsfacts records, concatenated: the bridge reads a whole project at once. */
 function recordsOf(files) {
@@ -399,7 +399,7 @@ test('with prisma: null, no statement is made and stats.prisma is null', () => {
   assert.ok(![...g.nodes.keys()].some((id) => id.startsWith('statement:')));
 });
 
-test('a table already in the graph is reused, not duplicated; tables and columns made fresh are stubs declaredBy prisma', () => {
+test('a table another catalog already declared is reused and corroborated, not duplicated; a column it lacks is declared by schema.prisma, not a stub', () => {
   const usersService = ['users.service.ts', [
     "import { Injectable } from '@nestjs/common';",
     "import { PrismaService } from './prisma.service';",
@@ -419,13 +419,32 @@ test('a table already in the graph is reused, not duplicated; tables and columns
   const tableCount = [...g.nodes.values()].filter((n) => n.id === tableId).length;
   assert.equal(tableCount, 1);
   const table = g.nodes.get(tableId);
-  assert.equal(table.owner, 'another-lane', 'the pre-existing table is reused as-is, not overwritten with a stub');
+  assert.equal(table.owner, 'another-lane', 'the pre-existing table is reused as-is, not overwritten');
   assert.ok(!table.stub, 'a table already present is not turned into a stub');
+  assert.equal(table.declaredBy, undefined, 'the other catalog declared it; schema.prisma only corroborates it');
+  assert.equal(table.prismaModel, 'User');
 
   const colId = nodeId('column', columnKey(null, 'User', 'id'));
   const col = g.nodes.get(colId);
-  assert.equal(col.stub, true);
+  assert.equal(col.stub, undefined, 'schema.prisma declares the column: it is a catalog column, not a stub');
   assert.equal(col.declaredBy, 'prisma');
+  assert.equal(col.pk, true);
+  assert.ok(g.nodes.has(nodeId('table', tableKey(null, 'Post'))), 'a model no call touches is a table too');
+});
+
+test('schema.prisma read against a SQL catalog it disagrees with says so in one diagnostic, with the counts and a few of them', () => {
+  const records = [
+    { kind: 'table', schema: null, table: 'User', comment: null },
+    { kind: 'column', schema: null, table: 'User', column: 'id', nullable: false, pk: true, comment: null },
+    { kind: 'column', schema: null, table: 'User', column: 'name', nullable: true, pk: false, comment: null },
+  ];
+  const g = buildGraphFromSql(records, []);
+  const { stats } = bridge([prismaServiceFile], { ...prismaOpts(), catalogRecords: records }, g);
+  const d = stats.diagnostics.find((x) => x.kind === 'PRISMA_CATALOG_DISAGREES');
+  assert.ok(d, JSON.stringify(stats.diagnostics));
+  assert.match(d.reason, /^schema\.prisma and the SQL catalog this run read disagree in \d+ place\(s\) \(\d+ column-not-in-catalog, 1 nullable-differs, 1 table-not-in-catalog\): /);
+  assert.match(d.reason, /nullable-differs User\.name \(schema\.prisma false, catalog true\)/);
+  assert.equal(stats.prisma.catalog.tablesCorroborated, 1);
 });
 
 // ---------------------------------------------------------------------------

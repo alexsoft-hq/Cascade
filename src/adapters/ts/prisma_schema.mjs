@@ -3,8 +3,11 @@
 // A model is a table: the name its `@@map` gives, else the model's own name. A
 // scalar field is a column: the name its `@map` gives, else the field's own name.
 // A field whose type is another model is a RELATION, not a column: the columns
-// that hold it are the ones its `@relation(fields: [...])` names. A field whose
-// type is an enum is a column like any scalar.
+// that hold it are the ones its `@relation(fields: [...], references: [...])`
+// names, on this model and on the other; a relation with none written is the
+// other side of one, found by its name (`@relation("x")`, or none on both). A
+// field whose type is an enum is a column like any scalar. `?` makes a column
+// nullable, and `@id` or `@@id([...])` puts it in the primary key.
 //
 // `@@unique([a, b], name: "x")` and `@@id([a, b])` also give the model a
 // COMPOUND: a client key name (the one Prisma Client's `where` takes) mapped to
@@ -22,7 +25,8 @@
 // the pack says which file it came from.
 
 const BLOCK_START = /^\s*(model|enum|type|view|datasource|generator)\s+(\w+)\s*\{\s*$/;
-const FIELD = /^\s*(\w+)\s+(\w+)(\[\])?(\?)?(.*)$/;
+// `Unsupported("circle")` is a type too, with its database type in the parentheses.
+const FIELD = /^\s*(\w+)\s+(\w+(?:\("[^"]*"\))?)(\[\])?(\?)?(.*)$/;
 
 const stripComment = (line) => {
   const i = line.indexOf('//');
@@ -35,10 +39,16 @@ function mapName(text, attr) {
   return m ? m[1] : null;
 }
 
-/** The field list of `@relation(fields: [a, b], ...)`, or []. */
-function relationFields(text) {
-  const m = /@relation\([^)]*fields\s*:\s*\[([^\]]*)\]/.exec(text);
+/** The field list `@relation(...)` gives under `key` (`fields`, `references`), or []. */
+function relationList(text, key) {
+  const m = new RegExp(`@relation\\([^)]*\\b${key}\\s*:\\s*\\[([^\\]]*)\\]`).exec(text);
   return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/** The relation's name: the first argument of `@relation("x", ...)`, or its `name:`; null when it has none. */
+function relationName(text) {
+  const m = /@relation\(\s*"([^"]*)"/.exec(text) ?? /@relation\([^)]*\bname\s*:\s*"([^"]*)"/.exec(text);
+  return m ? m[1] : null;
 }
 
 /** The field list of `[a, b]`, written bare or as `fields: [a, b]`. */
@@ -61,12 +71,13 @@ function compoundOf(line) {
   return { name: named ? named[1] : fields.join('_'), fields };
 }
 
-/** `@@map`, `@@schema`, and a compound key (`@@unique`, `@@id`), each read off one block-level attribute line. */
+/** `@@map`, `@@schema`, and a compound key (`@@unique`, `@@id`, the second also the primary key), each read off one block-level attribute line. */
 function readModelAttr(model, line) {
   model.table = mapName(line, '@@map') ?? model.table;
   model.schema = mapName(line, '@@schema') ?? model.schema;
   const compound = compoundOf(line);
   if (compound) model.compounds[compound.name] = compound.fields;
+  if (compound && /@@id\(/.test(line)) model.primaryKey = compound.fields;
 }
 
 function readBlocks(text) {
@@ -85,20 +96,32 @@ function readBlocks(text) {
   return blocks;
 }
 
+/**
+ * One field line: its name and type, whether it is a list or optional, the
+ * column it is (a scalar), or the relation it is, with the fields and
+ * references its `@relation` names. `nativeType` is a `@db.X` attribute's type.
+ */
+function readField(m, typeKinds) {
+  const [, name, type, list, optional, attrs] = m;
+  const relation = typeKinds.get(type) === 'model';
+  const native = /@db\.(\w+(?:\([^)]*\))?)/.exec(attrs);
+  return {
+    name, type, list: Boolean(list), optional: Boolean(optional),
+    relation, column: relation ? null : mapName(attrs, '@map') ?? name, id: /@id\b/.test(attrs),
+    relationFields: relation ? relationList(attrs, 'fields') : [], references: relation ? relationList(attrs, 'references') : [],
+    relationName: relation ? relationName(attrs) : null, nativeType: native ? native[1] : null,
+  };
+}
+
 function readModel(block, typeKinds) {
-  const model = { name: block.name, table: block.name, fields: [], compounds: {}, schema: null, block: block.kind };
+  const model = { name: block.name, table: block.name, fields: [], compounds: {}, schema: null, block: block.kind, primaryKey: [] };
   for (const line of block.lines) {
     if (/^\s*@@/.test(line)) { readModelAttr(model, line); continue; }
     const m = FIELD.exec(line);
-    if (!m) continue;
-    const [, name, type, list, optional, attrs] = m;
-    const relation = typeKinds.get(type) === 'model';
-    model.fields.push({
-      name, type, list: Boolean(list), optional: Boolean(optional),
-      relation, column: relation ? null : mapName(attrs, '@map') ?? name,
-      id: /@id\b/.test(attrs), relationFields: relation ? relationFields(attrs) : [],
-    });
+    if (m) model.fields.push(readField(m, typeKinds));
   }
+  const ids = model.fields.filter((f) => f.id).map((f) => f.name);
+  if (ids.length > 0) model.primaryKey = ids;
   return model;
 }
 

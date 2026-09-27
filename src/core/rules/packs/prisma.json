@@ -49,8 +49,8 @@
     {
       "id": "prisma.operations",
       "kind": "prisma.operation",
-      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true (a value that is neither true nor false MAY be returned, read at run time), where and cursor filter by the fields they name (through the combinators AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations. A key naming a compound unique or id (schema.prisma's @@unique/@@id) is read through the model's own compounds, never by splitting the key.",
-      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference). A find without select returns every scalar field of the model.",
+      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true (a value that is neither true nor false MAY be returned, read at run time), where and cursor filter by the fields they name (through the combinators AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations. A key naming a compound unique or id (schema.prisma's @@unique/@@id) is read through the model's own compounds, never by splitting the key. A relation is followed into its model: in include or select as a find of its own (true is its whole row), in a filter through some, every, none, is and isNot (or a to-one filter written straight), _count as the related rows it counts, and in data as the nested writes it names, each with what it does to the related rows and to the link. $extends on a client makes a client, and an extension with a query component, or one not read, may change what a call sends; an extension Prisma.defineExtension makes is read where the same method holds it.",
+      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference): a find without select returns every scalar field of the model, include returns every scalar field of the related model, and a nested write (create, connect, connectOrCreate, set, disconnect, update, updateMany, upsert, delete, deleteMany) acts on the related rows and on the link between the two. Client extensions (prisma.io/docs/orm/prisma-client/client-extensions): $extends returns a new client, and its query component intercepts the operations it names.",
       "params": {
         "arguments": {
           "select": "project", "omit": "none", "include": "relations", "where": "filter", "cursor": "filter", "having": "filter",
@@ -61,6 +61,25 @@
         },
         "combinators": ["AND", "OR", "NOT"],
         "transaction": { "method": "$transaction", "clientParam": 0 },
+        "relationFilters": ["some", "every", "none", "is", "isNot"],
+        "relationCount": { "key": "_count", "arguments": { "where": "filter" } },
+        "nestedWrites": {
+          "create": { "rows": "write", "link": "set", "value": "write" },
+          "createMany": { "rows": "write", "link": "set", "arguments": { "data": "write", "skipDuplicates": "none" } },
+          "connectOrCreate": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write" } },
+          "upsert": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write", "update": "write" } },
+          "update": { "rows": "write", "value": "write", "arguments": { "where": "filter", "data": "write" } },
+          "updateMany": { "rows": "write", "arguments": { "where": "filter", "data": "write" } },
+          "connect": { "rows": "none", "link": "set", "value": "filter" },
+          "set": { "rows": "none", "link": "set", "value": "filter" },
+          "disconnect": { "rows": "none", "link": "clear", "value": "filter" },
+          "delete": { "rows": "delete", "value": "filter" },
+          "deleteMany": { "rows": "delete", "value": "filter" }
+        },
+        "extensions": {
+          "methods": ["$extends"], "rewriting": ["query"],
+          "define": { "module": "@prisma/client", "export": "Prisma", "method": "defineExtension" }
+        },
         "operations": {
           "findMany": { "statement": "select", "wholeRow": true },
           "findUnique": { "statement": "select", "wholeRow": true },
@@ -132,6 +151,68 @@
           "operation": "findMany", "args": "{ select: { id: true, email: flag } }", "fields": ["id", "email"],
           "expect": { "reads": ["id"], "mayReads": ["email"], "runtimeOnly": ["select.email"] },
           "why": "a select value that is neither true nor false MAY be returned: the field is not dropped and not claimed EXACT, it goes to mayReads"
+        },
+        {
+          "operation": "findMany", "model": "User", "args": "{ include: { posts: true } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
+          "expect": { "wholeRow": true, "follow": [{ "relation": "posts", "target": "Post", "how": "project", "wholeRow": true }] },
+          "why": "include returns every column of the related model, and the relation is followed into it"
+        },
+        {
+          "operation": "findUnique", "model": "User", "args": "{ where: { id }, select: { email: true, posts: { where: { published: true }, select: { title: true } } } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
+          "expect": { "reads": ["email", "id"], "follow": [{ "relation": "posts", "target": "Post", "how": "project", "reads": ["published", "title"] }] },
+          "why": "a relation in a select is a find of its own on the related model: its where and its select are read there"
+        },
+        {
+          "operation": "findMany", "model": "User", "args": "{ select: { id: true, _count: { select: { posts: { where: { published: true } } } } } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
+          "expect": { "reads": ["id"], "follow": [{ "relation": "posts", "target": "Post", "how": "count", "reads": ["published"] }] },
+          "why": "_count counts the related rows a relation reaches, filtered by its own where"
+        },
+        {
+          "operation": "findMany", "model": "User", "args": "{ where: { posts: { some: { title: t } } } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
+          "expect": { "wholeRow": true, "follow": [{ "relation": "posts", "target": "Post", "how": "filter", "reads": ["title"] }] },
+          "why": "a relation filter reads the related model's fields it filters on"
+        },
+        {
+          "operation": "deleteMany", "model": "Post", "args": "{ where: { author: { email: e } } }",
+          "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" },
+          "models": { "User": { "fields": ["id", "email"], "relations": { "posts": "Post[]" } } },
+          "expect": { "follow": [{ "relation": "author", "target": "User", "how": "filter", "reads": ["email"] }] },
+          "why": "a to-one relation filter may be written straight, with no is"
+        },
+        {
+          "operation": "update", "model": "User", "args": "{ where: { id }, data: { posts: { create: [{ title: t }], deleteMany: { published: false } } } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
+          "expect": {
+            "reads": ["id"], "wholeRow": true,
+            "follow": [
+              { "relation": "posts", "target": "Post", "how": "write", "op": "create", "access": "write", "link": "set", "writes": ["title"] },
+              { "relation": "posts", "target": "Post", "how": "write", "op": "deleteMany", "access": "delete", "reads": ["published"] }
+            ]
+          },
+          "why": "each nested write is followed: a create writes the related row and sets the link, a deleteMany deletes the rows its filter reads"
+        },
+        {
+          "operation": "create", "model": "Post", "args": "{ data: { title: t, author: { connect: { id: userId } } } }",
+          "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" },
+          "models": { "User": { "fields": ["id", "email"], "relations": { "posts": "Post[]" } } },
+          "expect": { "writes": ["title"], "wholeRow": true, "follow": [{ "relation": "author", "target": "User", "how": "write", "op": "connect", "link": "set", "reads": ["id"] }] },
+          "why": "connect finds the related row by a unique field and sets the link: the related row is read, not written"
+        },
+        {
+          "operation": "findMany", "model": "User", "args": "{ include: { posts: withPosts } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
+          "expect": { "wholeRow": true, "runtimeOnly": ["include.posts"], "follow": [{ "relation": "posts", "target": "Post", "how": "project", "may": true, "wholeRow": true }] },
+          "why": "an include value only the running program knows MAY read the relation: followed, and marked may, never claimed for certain"
         }
       ]
     }

@@ -30,7 +30,8 @@ import { createRequire } from 'node:module';
 import { calleeOf, eachChild, isFunctionNode, keyName, toPosix } from '../web/lib/ast.mjs';
 
 const SCHEMA = 'cascade:tsfacts:1';
-export const VERSION = 'tsfacts/1';
+// 2: a method record carries what each of its own `return`s hands back (`returns`).
+export const VERSION = 'tsfacts/2';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -173,6 +174,40 @@ function decoratorsOf(node) {
 const lineOf = (n) => (n.loc ? n.loc.start.line : null);
 const endLineOf = (n) => (n.loc ? n.loc.end.line : null);
 
+/** What one `return` hands back: a call by its callee and line, a name or member chain as written, else only an expression. */
+function returnedValue(node) {
+  const n = unwrap(node);
+  if (!n) return { k: 'none' };
+  if (n.type === 'CallExpression' || n.type === 'OptionalCallExpression') {
+    const callee = chainOf(n.callee);
+    return callee ? { k: 'call', callee, line: lineOf(n) } : { k: 'expr' };
+  }
+  const chain = n.type === 'Identifier' || n.type === 'MemberExpression' || n.type === 'ThisExpression' ? chainOf(n) : null;
+  return chain ? { k: n.type === 'Identifier' ? 'id' : 'member', v: chain } : { k: 'expr' };
+}
+
+/**
+ * What a method hands back, one entry per `return` of its own (one in a
+ * function nested in it returns from that function, not from this one), and
+ * `{k: 'none'}` when its body may end without a return. Empty when it never
+ * returns a value, so a caller can tell "returns this, and only this" from a
+ * guess.
+ */
+function returnsOf(fn) {
+  const body = fn.body;
+  if (!body || body.type !== 'BlockStatement') return [];
+  const out = [];
+  const visit = (node) => {
+    if (isFunctionNode(node) || node.type === 'ClassDeclaration' || node.type === 'ClassExpression') return;
+    if (node.type === 'ReturnStatement') out.push(returnedValue(node.argument));
+    eachChild(node, visit);
+  };
+  eachChild(body, visit);
+  const last = body.body[body.body.length - 1];
+  if (out.length > 0 && !(last && (last.type === 'ReturnStatement' || last.type === 'ThrowStatement'))) out.push({ k: 'none' });
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // one file
 // ---------------------------------------------------------------------------
@@ -220,9 +255,10 @@ function classRecords(file, node, exported, emit) {
         emit({ kind: 'ctorParam', file, class: name, index, name: id.name, type: typeNameOf(id.typeAnnotation), decorators: decoratorsOf(p), line: lineOf(p) });
       });
     } else if (m.type === 'ClassMethod' && m.key && !m.computed) {
+      const returns = returnsOf(m);
       emit({
         kind: 'method', file, class: name, name: keyName(m), static: m.static === true, decorators: decoratorsOf(m),
-        params: paramsOf(m), line: lineOf(m), endLine: endLineOf(m),
+        params: paramsOf(m), ...(returns.length > 0 ? { returns } : {}), line: lineOf(m), endLine: endLineOf(m),
       });
     } else if (m.type === 'ClassProperty' && m.key && !m.computed) {
       emit({ kind: 'property', file, class: name, name: keyName(m), static: m.static === true, type: typeNameOf(m.typeAnnotation), decorators: decoratorsOf(m), line: lineOf(m) });

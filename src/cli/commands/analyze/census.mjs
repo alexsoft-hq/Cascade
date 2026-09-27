@@ -343,6 +343,20 @@ function clientScreensPhrase(pg) {
 }
 
 /**
+ * WHAT schema.prisma DECLARED: the tables and columns it put in the graph, or
+ * corroborated in the SQL catalog this run read, the joins its relations are,
+ * and how many calls followed a relation or went through a client `$extends` made.
+ */
+function sayPrismaCatalog(c, p) {
+  const own = c.tables > 0 ? `${c.tables} table(s) and ${c.columns} column(s) as the catalog` : '';
+  const corroborated = c.tablesCorroborated > 0
+    ? `${c.tablesCorroborated} table(s) and ${c.columnsCorroborated} column(s) of the SQL catalog corroborated, ${c.disagreements} disagreement(s)` : '';
+  const unresolved = c.relations.unresolved > 0 ? `, ${c.relations.unresolved} relation(s) it cannot follow` : '';
+  process.stderr.write(`TypeScript lane: schema.prisma: ${[own, corroborated].filter(Boolean).join('; ')}, ${c.joins} join(s) from its relations${unresolved}; `
+    + `${p.followingRelations} statement(s) follow a relation, ${p.throughExtension} through a client $extends made\n`);
+}
+
+/**
  * THE TYPESCRIPT LANE'S LINE, and the record the pack keeps of it: which
  * application was read, with which tsconfig and schema.prisma (by hash, so a
  * reader can tell which schema the tables were declared by), how many routes
@@ -359,6 +373,7 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
   process.stderr.write(`TypeScript lane: ${ts.files} file(s), ${ts.routes} route(s)${guessed} from ${controllers}, `
     + `${ts.calls.resolved} call(s) linked, ${ts.calls.external} into packages, ${ts.calls.unresolved} on a receiver not typed here`
     + `${p ? `; Prisma: ${p.statements} statement(s) from ${p.clientCalls} client call(s)${p.unknownModel + p.unknownOperation > 0 ? `, ${p.unknownModel} on a model and ${p.unknownOperation} with an operation this engine does not know` : ''}` : '; no schema.prisma'}\n`);
+  if (p?.catalog) sayPrismaCatalog(p.catalog, p);
   const schemaAbs = opts.prismaSchemaFile ? path.resolve(root, opts.prismaSchemaFile) : null;
   return {
     app: relOf(sel.tsSrc[0]) || '.',

@@ -112,6 +112,24 @@ test('a constructor parameter property gives its field name and type, and a clas
   assert.equal(props.find((p) => p.name === 'repo').type, 'UsersRepository');
 });
 
+test('a method says what each of its own returns hands back; a return in a nested function is not its own, and a body that may end without one says so', () => {
+  const src = `
+    class S {
+      client() { const e = 1; return this.prisma.$extends(e); }
+      maybe(c) { if (c) { return this.prisma; } }
+      nested() { return [1].map((x) => { return x; }); }
+      none() { this.x(); }
+      thrown(c) { if (c) return name; throw new Error(); }
+    }
+  `;
+  const byName = new Map(factsOfFile('src/s.ts', src).filter((r) => r.kind === 'method').map((r) => [r.name, r.returns]));
+  assert.deepEqual(byName.get('client'), [{ k: 'call', callee: 'this.prisma.$extends', line: 3 }]);
+  assert.deepEqual(byName.get('maybe'), [{ k: 'member', v: 'this.prisma' }, { k: 'none' }], 'the body may end without returning');
+  assert.deepEqual(byName.get('nested'), [{ k: 'expr' }], 'the arrow\'s return is its own, not the method\'s');
+  assert.equal(byName.get('none'), undefined, 'a method that returns nothing carries no returns');
+  assert.deepEqual(byName.get('thrown'), [{ k: 'id', v: 'name' }], 'a body that ends by throwing does not end without a return');
+});
+
 test('a static method carries its decorators, each with its call arguments as value summaries', () => {
   const src = `
     class UsersController {

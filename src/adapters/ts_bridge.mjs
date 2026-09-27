@@ -4,8 +4,9 @@
 // project is read at once (src/adapters/ts/project.mjs): which file an import
 // names, which class a field is typed with, which controllers the application
 // registers (src/adapters/ts/nest_routes.mjs), which calls reach which methods
-// (src/adapters/ts/ts_calls.mjs), and which Prisma calls send which SQL
-// (src/adapters/ts/prisma.mjs). What the frameworks mean by their names is in
+// (src/adapters/ts/ts_calls.mjs), which tables and columns schema.prisma
+// declares (src/adapters/ts/prisma_catalog.mjs), and which Prisma calls send
+// which SQL (src/adapters/ts/prisma.mjs). What the frameworks mean by their names is in
 // the rule packs nestjs.json and prisma.json, read through their kinds.
 //
 // An endpoint is keyed `endpoint:<VERB> <path>` like the Java lane's, so a
@@ -18,6 +19,7 @@ import { readProject } from './ts/project.mjs';
 import { nestRoutes } from './ts/nest_routes.mjs';
 import { addCalls, addSymbols, methodSymbolId } from './ts/ts_calls.mjs';
 import { addPrismaStatements } from './ts/prisma.mjs';
+import { addPrismaCatalog } from './ts/prisma_catalog.mjs';
 
 const HANDLES_BASIS = 'a controller the application registers declares this route in a decorator';
 
@@ -37,11 +39,36 @@ function addRoute(g, r) {
   });
 }
 
-/** What the Prisma reading could not follow, said: calls that look like a client's and whose receiver is not one it knows. */
+/** Where schema.prisma and the SQL catalog this run read disagree, said once with its counts and a few of them. */
+function catalogDiagnostic(catalog) {
+  if (!catalog || !(catalog.disagreements > 0)) return [];
+  const kinds = Object.entries(catalog.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ');
+  const said = (d) => `${d.what} ${d.column ?? d.table}${d.prisma === undefined ? '' : ` (schema.prisma ${d.prisma}, catalog ${d.catalog})`}`;
+  return [{
+    kind: 'PRISMA_CATALOG_DISAGREES',
+    reason: `schema.prisma and the SQL catalog this run read disagree in ${catalog.disagreements} place(s) (${kinds}): ${catalog.disagreementSamples.slice(0, 5).map(said).join(', ')}. `
+      + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the whole list is on meta.laneStats.ts.prisma.catalog',
+  }];
+}
+
+/** What the Prisma reading could not follow, said: calls that look like a client's and whose receiver is not one it knows, and a schema the SQL catalog disagrees with. */
 function prismaDiagnostics(stats) {
-  if (!stats || !(stats.unreadClientCalls > 0)) return [];
+  if (!stats) return [];
   const where = (stats.unreadSamples ?? []).map((c) => `${c.file}:${c.line} ${c.callee}`).join(', ');
-  return [{ kind: 'TS_PRISMA_CALL_UNREAD', reason: `${stats.unreadClientCalls} call(s) name a model and an operation of the schema on a receiver not known to be a Prisma client, so no statement is made for them: ${where}` }];
+  const unread = stats.unreadClientCalls > 0
+    ? [{ kind: 'TS_PRISMA_CALL_UNREAD', reason: `${stats.unreadClientCalls} call(s) name a model and an operation of the schema on a receiver not known to be a Prisma client, so no statement is made for them: ${where}` }]
+    : [];
+  return [...unread, ...catalogDiagnostic(stats.catalog)];
+}
+
+/** schema.prisma as the catalog, then every Prisma call as a statement against it; null with no schema, or no rule to read calls with. */
+function prismaOf(g, project, rules, opts) {
+  if (!opts.prisma || !rules.operations) return null;
+  const catalog = addPrismaCatalog(g, opts.prisma.schema, {
+    schemaName: opts.schemaName ?? null, identifierCase: opts.identifierCase ?? 'exact', catalogRecords: opts.catalogRecords ?? [],
+  });
+  const stats = addPrismaStatements(g, project, { schema: opts.prisma.schema, catalog, clientRules: rules.clients, operations: rules.operations });
+  return { ...stats, catalog: catalog.stats };
 }
 
 /** The routes, with what the profile declares for a bootstrap that reads its prefix and excludes from configuration. */
@@ -63,7 +90,8 @@ function rulesOf(opts) {
  * @param {import('../core/graph.mjs').Graph} g
  * @param {object[]} tsFacts  the tsfacts records of the application's files
  * @param {{tsconfig?:{baseUrl?:(string|null), paths?:object}, prisma?:({schema:{models:Map}}|null), globalPrefix?:(string|null), globalPrefixExclude?:(string[]|null),
- *          schemaName?:(string|null), identifierCase?:string, registry?:object}} [opts]
+ *          schemaName?:(string|null), identifierCase?:string, catalogRecords?:object[], registry?:object}} [opts]
+ *        `catalogRecords` are the SQL catalog's records this run read, if any, for schema.prisma to be read against
  * @returns {object} stats, with every reason a route or a link was not made in `diagnostics`
  */
 export function addTsFacts(g, tsFacts, opts = {}) {
@@ -73,12 +101,7 @@ export function addTsFacts(g, tsFacts, opts = {}) {
   const routed = routesOf(project, rules, opts);
   for (const r of routed.routes) addRoute(g, r);
   const calls = addCalls(g, project);
-  const prisma = opts.prisma && rules.operations
-    ? addPrismaStatements(g, project, {
-      schema: opts.prisma.schema, clientRules: rules.clients, operations: rules.operations,
-      schemaName: opts.schemaName ?? null, identifierCase: opts.identifierCase ?? 'exact',
-    })
-    : null;
+  const prisma = prismaOf(g, project, rules, opts);
   return {
     files: project.files.size, symbols, routes: routed.routes.length, heuristicRoutes: routed.routes.filter((r) => r.grade === 'HEURISTIC').length, controllers: routed.controllers,
     unregisteredControllers: routed.unregistered, calls, prisma, diagnostics: [...routed.diagnostics, ...prismaDiagnostics(prisma)],

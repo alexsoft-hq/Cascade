@@ -116,6 +116,19 @@ test('an unflagged analyze serves the routes the registered controllers declare,
   assert.deepEqual(ts.unregisteredControllers, ['apps/api/src/orphan/orphan.controller.ts#OrphanController']);
 });
 
+test('with no DDL, schema.prisma is the catalog: the axes say so, the pack names the schema as its source, and a relation is a join', (t) => {
+  const { run, pack } = initAndAnalyze(t);
+  assert.match(run.stderr, /^TypeScript lane: schema\.prisma: 2 table\(s\) and 7 column\(s\) as the catalog, 1 join\(s\) from its relations; /m);
+  assert.equal(pack.meta.axes.catalog.status, 'shipped');
+  assert.equal(pack.meta.axes.column.status, 'shipped');
+  assert.equal(pack.meta.catalog.source, 'prisma');
+  assert.equal(pack.meta.catalog.path, 'prisma/schema.prisma');
+  assert.equal(pack.meta.catalog.sha256, pack.meta.laneStats.ts.prismaSchema.sha256);
+  const joins = pack.edges.filter((e) => e.type === 'JOINS');
+  assert.deepEqual(joins.map((e) => [e.from, e.to, e.evidence.columns]), [['table:User', 'table:posts', ['id=authorId']]]);
+  assert.equal(pack.nodes.find((n) => n.id === 'column:User.display_name').nullable, true, 'name String? @map("display_name")');
+});
+
 test('two Prisma calls in one method are two statements, and neither reads the columns of the other', (t) => {
   const { pack } = initAndAnalyze(t);
   const touched = (sid, type) => pack.edges.filter((e) => e.from === sid && e.type === type).map((e) => e.to).sort();

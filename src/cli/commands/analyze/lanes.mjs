@@ -456,8 +456,9 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     // The profile's strategy, else the one the project's configuration names (index.mjs).
     jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
-    // The TypeScript backend (index.mjs reads its tsconfig and schema.prisma).
-    ts: tsOpts,
+    // The TypeScript backend (index.mjs reads its tsconfig and schema.prisma),
+    // with the SQL catalog this run read, for schema.prisma to be read against.
+    ts: tsOpts && { ...tsOpts, catalogRecords: catalog },
     // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
     // frontend call must be able to land on a route only a document declares.
     openapi: openapiDocs.length > 0 ? {} : null,

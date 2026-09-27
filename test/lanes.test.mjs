@@ -279,6 +279,26 @@ test('declareAxes: mappers WITHOUT a catalog degrade the column axis, they do no
   assert.equal(axes.code.status, 'not-shipped');
 });
 
+test('declareAxes: schema.prisma is a catalog, so a Prisma project with no DDL ships the catalog and the column axis', () => {
+  const catalog = { tables: 21, tablesCorroborated: 0, disagreements: 0, disagreementsByKind: {} };
+  const axes = declareAxes({ ddl: false, statements: false, code: true, ts: { prisma: { statements: 152, catalog } } });
+  assert.deepEqual(axes.catalog, { status: 'shipped', reason: null });
+  assert.equal(axes.column.status, 'shipped');
+  const noModels = declareAxes({ ddl: false, statements: false, code: true, ts: { prisma: { statements: 0, catalog: { ...catalog, tables: 0 } } } });
+  assert.equal(noModels.catalog.status, 'not-shipped', 'a schema with no model declares no table');
+  const without = declareAxes({ ddl: false, statements: true, code: false });
+  assert.equal(without.catalog.reason, declareAxes({ ddl: false, statements: false, code: false }).catalog.reason, 'a pack with no schema.prisma keeps the reason it had');
+});
+
+test('declareAxes: schema.prisma read against a DDL it disagrees with ships the catalog, with a note that says where the list is', () => {
+  const catalog = { tables: 1, tablesCorroborated: 2, disagreements: 3, disagreementsByKind: { 'nullable-differs': 2, 'table-not-in-schema': 1 } };
+  const axes = declareAxes({ ddl: true, statements: false, code: true, ts: { prisma: { statements: 4, catalog } } });
+  assert.equal(axes.catalog.status, 'shipped');
+  assert.equal(axes.catalog.notes.length, 1);
+  assert.match(axes.catalog.notes[0], /^schema\.prisma and the SQL catalog this run read disagree in 3 place\(s\) \(2 nullable-differs, 1 table-not-in-schema\)\. /);
+  assert.ok(axisLimits(axes).some((l) => l.scope === 'axis:catalog' && l.reason === axes.catalog.notes[0]), 'the note rides on every answer as a limit');
+});
+
 test('declareAxes: DDL alone ships the catalog and nothing that needs a statement', () => {
   const axes = declareAxes({ ddl: true, statements: false, code: false });
   assert.equal(axes.catalog.status, 'shipped');

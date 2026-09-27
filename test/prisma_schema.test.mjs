@@ -167,6 +167,52 @@ test('a model with no compound attribute has an empty compounds object, not unde
   assert.deepEqual(post.compounds, {});
 });
 
+test('a relation carries its name, its fields and its references, written in any order; the other side carries only its name', () => {
+  const { models } = readPrismaSchema([
+    'model Access {',
+    '  id      String @id',
+    '  userId  String',
+    '  user    User   @relation("give", fields: [userId], onDelete: Cascade, references: [id])',
+    '  other   User   @relation(references: [id], fields: [userId], name: "take")',
+    '}',
+    'model User {',
+    '  id    String   @id',
+    '  gives Access[] @relation("give")',
+    '  plain Access[]',
+    '}',
+  ].join('\n'));
+  const field = (m, f) => models.get(m).fields.find((x) => x.name === f);
+  assert.deepEqual([field('Access', 'user').relationName, field('Access', 'user').relationFields, field('Access', 'user').references], ['give', ['userId'], ['id']]);
+  assert.deepEqual([field('Access', 'other').relationName, field('Access', 'other').relationFields, field('Access', 'other').references], ['take', ['userId'], ['id']]);
+  assert.deepEqual([field('User', 'gives').relationName, field('User', 'gives').relationFields], ['give', []]);
+  assert.equal(field('User', 'plain').relationName, null);
+});
+
+test('the primary key is the @id field, or the fields @@id joins; a @db. attribute gives the native type, and Unsupported keeps its database type', () => {
+  const { models } = readPrismaSchema([
+    'model A {',
+    '  id   Int    @id @default(autoincrement())',
+    '  name String @db.VarChar(255)',
+    '  geo  Unsupported("circle")?',
+    '}',
+    'model B {',
+    '  x Int',
+    '  y Int',
+    '  @@id([x, y])',
+    '}',
+    'model C {',
+    '  k String @unique',
+    '}',
+  ].join('\n'));
+  assert.deepEqual(models.get('A').primaryKey, ['id']);
+  assert.deepEqual(models.get('B').primaryKey, ['x', 'y']);
+  assert.deepEqual(models.get('C').primaryKey, [], 'a unique key is not the primary key');
+  const name = models.get('A').fields.find((f) => f.name === 'name');
+  assert.equal(name.nativeType, 'VarChar(255)');
+  const geo = models.get('A').fields.find((f) => f.name === 'geo');
+  assert.deepEqual([geo.type, geo.optional, geo.column], ['Unsupported("circle")', true, 'geo']);
+});
+
 test('@@schema("x") gives the model its schema; a model with none has schema null', () => {
   const tenanted = readPrismaSchema(COMPOUND_SCHEMA).models.get('Tenanted');
   assert.equal(tenanted.schema, 'tenant_a');
