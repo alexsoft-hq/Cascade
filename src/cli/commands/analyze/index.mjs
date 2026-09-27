@@ -132,7 +132,7 @@ function factsOf(ctx, prepared, tmpDir) {
   const lanes = sel.lanes.slice();
 
   const annotationRecords = annotationLineage({
-    javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runpy, runners, tmpDir, diagnostics,
+    javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runpy, runners, diagnostics,
   });
   if (annotationRecords.length > 0) {
     lineage = [...lineage, ...annotationRecords];

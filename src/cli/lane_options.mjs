@@ -9,11 +9,6 @@
 // callers now take the lane decision and the options from here, so the two
 // graphs are built the same way.
 
-import { runLineageForStatements } from '../core/incremental.mjs';
-import { catalogDigestOf } from '../core/facts_store.mjs';
-import { workerVersions } from '../core/worker_versions.mjs';
-import { wrapperFragmentStatements } from '../adapters/mp_bridge.mjs';
-
 /**
  * Which of the Java lanes' bridges a run assembles, from the same two witnesses
  * everywhere: the profile names the pack, or the Java lane actually saw an
@@ -52,27 +47,4 @@ export function jpaOptions(profile, sqlArgs, jpaNaming) {
     schema: sqlArgs.defaultSchema,
     identifierCase: sqlArgs.identifierCase,
   };
-}
-
-/**
- * The SQL lineage of MyBatis-Plus wrapper fragments (`apply`, `last`, `inSql`…),
- * through the same analyzer and the same content-addressed shards as every
- * other statement. A fragment analyzed before is read back from `store`; one
- * that is new is analyzed by `runners.lineage`. The overlay hands in a store
- * that reads the cache and writes nothing to disk, so an uncommitted edit never
- * becomes a cached fact.
- *
- * @returns {{fragments:number, lineageRecords:object[], statementEntries:object}}
- */
-export function wrapperFragmentLineageOf({ javaFacts, mpOpts, store, index, catalog, sqlArgs, runners, force, diagnostics }) {
-  const fragments = wrapperFragmentStatements(javaFacts, mpOpts);
-  if (fragments.length === 0) return { fragments: 0, lineageRecords: [], statementEntries: {} };
-  const out = runLineageForStatements({
-    store, index, statements: fragments,
-    catalogDigest: catalogDigestOf(catalog), catalogRecords: catalog,
-    inputs: { dialect: sqlArgs.dialect, identifierCase: sqlArgs.identifierCase, defaultSchema: sqlArgs.defaultSchema },
-    run: runners, workerVersion: workerVersions().lineage, force,
-    diag: (d) => { diagnostics.push(d); },
-  });
-  return { fragments: fragments.length, lineageRecords: out.lineageRecords, statementEntries: out.statementEntries };
 }

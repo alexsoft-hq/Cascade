@@ -40,7 +40,8 @@ import {
 } from './env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane, webPackagesRead } from './lanes_run.mjs';
 import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
-import { jpaOptions, mybatisPlusOptions, whichJavaLanes, wrapperFragmentLineageOf } from './lane_options.mjs';
+import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
+import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
 
 /**
@@ -260,7 +261,7 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
     web: (targets) => runWebLane(rootAbs, targets, { sourceRoots, templateRoots: templateRootsAbs }),
     webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots, templateRoots: templateRootsAbs }),
   };
-  return { run, mapperDirsAbs, ddlRels, ddlAbsList, skipped };
+  return { run, runpy, pyOk: pyRes.ok, mapperDirsAbs, ddlRels, ddlAbsList, skipped };
 }
 
 /** Re-parse exactly the dirty files and read the rest back out of the shards. */
@@ -273,7 +274,7 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
   const templateRootsAbs = (selection.templateRoots ?? [])
     .filter((t) => t && typeof t === 'object' && typeof t.root === 'string')
     .map((t) => ({ root: absOf(t.root), engine: t.engine, suffix: t.suffix }));
-  const { run, mapperDirsAbs, ddlRels, ddlAbsList, skipped } = laneRunners({
+  const { run, runpy, pyOk, mapperDirsAbs, ddlRels, ddlAbsList, skipped } = laneRunners({
     rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives,
   });
   const lanes = runOverlayLanes({
@@ -288,29 +289,35 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
       catalogArgs: [`identifier-case=${sqlArgs.identifierCase}`],
     },
   });
-  const laneOptions = overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, catalogRecords: lanes.catalogRecords });
-  return { lanes, webRootsAbs, templateRootsAbs, laneOptions };
+  const javaLanesOf = overlayJavaLanes({
+    profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, pyOk,
+    catalogRecords: lanes.catalogRecords, statementRecords: lanes.statementRecords,
+  });
+  return { lanes, webRootsAbs, templateRootsAbs, javaLanesOf };
 }
 
 /**
- * Which Java lanes' bridges an overlay runs, and with what: decided over the
- * overlay's own assembled records, the way `cascade analyze` decided them for
- * the base pack (src/cli/lane_options.mjs). Wrapper fragments are read back
- * from the fact cache, or analyzed now through a store that writes nothing to
- * disk: an uncommitted edit never becomes a cached fact.
+ * What the Java lanes add to an overlay, given its own assembled records: which
+ * bridges run and with what, decided the way `cascade analyze` decided them for
+ * the base pack (src/cli/lane_options.mjs), and the lineage of the SQL written
+ * in Java source (src/cli/java_sql.mjs). That SQL is read back from the fact
+ * cache, or analyzed now through a store that writes nothing to disk: an
+ * uncommitted edit never becomes a cached fact.
  */
-function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, catalogRecords }) {
+function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, pyOk, catalogRecords, statementRecords }) {
   const prof = profile ?? {};
   const javaRootsAbs = (selection.javaRoots ?? []).map((r) => path.resolve(rootAbs, r));
+  const lineageCtx = { store, index: idx, catalog: catalogRecords, sqlArgs, runners: run, force: false, diagnostics: [] };
   return (javaFacts) => {
+    if (javaRootsAbs.length === 0) return { jpa: null, mybatisPlus: null, lineage: [] };
     const { runJpa, runMp } = whichJavaLanes(prof, javaFacts, javaRootsAbs);
     const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs))) : null;
-    if (!runMp) return { jpa, mybatisPlus: null };
+    const statements = annotationStatementsOf({ javaFacts, statementRecords, runpy, pyOk, mybatisArgs: sqlArgs.mybatisArgs });
+    const lineage = lineageOfStatements({ statements, ...lineageCtx }).lineageRecords;
+    if (!runMp) return { jpa, mybatisPlus: null, lineage };
     const mpOpts = mybatisPlusOptions(prof, sqlArgs);
-    const fragments = wrapperFragmentLineageOf({
-      javaFacts, mpOpts, store, index: idx, catalog: catalogRecords, sqlArgs, runners: run, force: false, diagnostics: [],
-    });
-    return { jpa, mybatisPlus: { ...mpOpts, fragmentLineage: fragments.lineageRecords } };
+    const fragments = wrapperFragmentLineageOf({ javaFacts, mpOpts, ...lineageCtx });
+    return { jpa, mybatisPlus: { ...mpOpts, fragmentLineage: fragments.lineageRecords }, lineage };
   };
 }
 
@@ -346,7 +353,7 @@ function webOptions(profile, webRootsAbs, templateRootsAbs) {
 
 /** Fold the re-parsed facts and the reused shards into one graph, and say what happened. */
 export function overlayState({
-  lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, laneOptions = null,
+  lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf = null,
 }) {
   const tBuild = Date.now();
   const built = overlayGraph({
@@ -370,7 +377,7 @@ export function overlayState({
     // on the overlaid files first — visible in `limits` as a changed skip count,
     // never silently.
     generatedSources: profile?.generatedSources ?? { annotations: [], pathGlobs: [] },
-    laneOptions,
+    javaLanesOf,
   });
   const timingsMs = { ...lanes.timingsMs, build: Date.now() - tBuild };
   timingsMs.total = timingsMs.loadBase + timingsMs.java + timingsMs.web + timingsMs.sql + timingsMs.build;
@@ -385,12 +392,6 @@ export function overlayState({
   };
 }
 
-/**
- * A provider `() => overlayState` for the tool context, plus the reason it could
- * not be built. The provider is called ONCE PER REQUEST (the working tree moves
- * between calls) and memoizes on the overlaySessionId: repeated calls with the
- * same dirty bytes cost one git diff and a few hashes.
- */
 /**
  * The mapper XML this project ships for the OTHER database vendors (RM56),
  * absolute. The profile writes them manifest-relative, and the manifest sits
@@ -418,6 +419,12 @@ export function indexOfPack(indexFile, pack, stale) {
   return index;
 }
 
+/**
+ * A provider `() => overlayState` for the tool context, plus the reason it could
+ * not be built. The provider is called ONCE PER REQUEST (the working tree moves
+ * between calls) and memoizes on the overlaySessionId: repeated calls with the
+ * same dirty bytes cost one git diff and a few hashes.
+ */
 export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
   const indexFile = path.join(packDir, 'facts-index.json');
   const stale = (msg) => { throw new OverlayStaleError(`${msg}. Run \`cascade analyze\` to rebuild the pack and its fact cache`); };
@@ -475,13 +482,13 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
     if (!verdict.ok) return remember(session, verdict);
 
     const absOf = (rel) => path.resolve(rootAbs, rel);
-    const { lanes, webRootsAbs, templateRootsAbs, laneOptions } = runLanes({
+    const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf } = runLanes({
       idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile,
       mapperAlternatives: mapperAlternativesOf(profile, packDir),
     });
     return remember(session, overlayState({
       lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile,
-      selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, laneOptions,
+      selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf,
     }));
   };
 }

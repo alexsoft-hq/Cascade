@@ -15,18 +15,18 @@ import path from 'node:path';
 import { nativeQueryStatements } from '../../../adapters/jpa_bridge.mjs';
 import { idGeneratorStatements } from '../../../adapters/java/idgnr.mjs';
 import { wrapperFragmentStatements } from '../../../adapters/mp_bridge.mjs';
-import { annotationMapperXml, restampToJavaSource } from '../../../adapters/mybatis_annotation.mjs';
 import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
 import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
 import { assembleGraph } from '../../../core/assemble.mjs';
-import { webFactsSummary, catalogDigestOf as catalogDigestForShards } from '../../../core/facts_store.mjs';
-import { runLanesWithShards, runLineageForStatements } from '../../../core/incremental.mjs';
+import { webFactsSummary } from '../../../core/facts_store.mjs';
+import { runLanesWithShards } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane } from '../../lanes_run.mjs';
-import { jpaOptions, mybatisPlusOptions, whichJavaLanes, wrapperFragmentLineageOf } from '../../lane_options.mjs';
+import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from '../../lane_options.mjs';
+import { annotationMappersOf, flattenAnnotationMappers, lineageOfStatements } from '../../java_sql.mjs';
 import { sha256File } from '../../state.mjs';
 import { sayWebWorker } from './census.mjs';
 
@@ -175,58 +175,34 @@ export function runLanes(ctx, { root, tmpDir, plan, prevIndex, store, sel, selec
  *
  * `@Select("select * from t_user")` is a MyBatis statement with no XML
  * anywhere. It goes through the SAME flattener as a mapper XML statement —
- * written out as a synthetic mapper file into this run's scratch directory and
- * read by `mybatis_extract.py` — because the annotation form accepts the same
+ * written out as a synthetic mapper file into a scratch directory and read by
+ * `mybatis_extract.py` (src/cli/java_sql.mjs) — because the annotation form accepts the same
  * `<script>` dynamic tags, and one reading of `<foreach>` is the only way both
  * spellings can stay in step. What comes back is re-stamped onto the Java file
  * and the annotation's line, so nothing in the pack points at the scratch file.
  *
  * @returns {Object[]} the lineage records those statements produced, if any
  */
-export function annotationLineage({ javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runpy, runners, tmpDir, diagnostics }) {
-  let annotationStmts = [];
-  if (javaSrc.length > 0) {
-    const existingKeys = result.statementRecords
-      ? result.statementRecords.filter((r) => r && r.kind === 'statement').map((r) => `${r.namespace}.${r.id}`)
-      : [];
-    const annotationXml = annotationMapperXml(result.javaFacts, existingKeys);
-    diagnostics.push(...annotationXml.diagnostics);
-    if (annotationXml.files.length > 0) {
-      if (!fs.existsSync(py)) {
-        diagnostics.push({
-          kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
-          reason: `${annotationXml.statements} MyBatis statement annotation(s) were found but there is no venv python at ${py} to read their SQL. See docs/setup/sql-lane.md. Those statements carry no table or column fact in this pack`,
-        });
-      } else {
-        const annDir = path.join(tmpDir, 'annotation-mappers');
-        fs.mkdirSync(annDir, { recursive: true });
-        for (const f of annotationXml.files) fs.writeFileSync(path.join(annDir, f.fileName), f.xml, 'utf8');
-        process.stderr.write(`MyBatis lane: ${annotationXml.statements} annotation statement(s) in ${annotationXml.files.length} mapper(s)`
-          + `${annotationXml.scripts > 0 ? `, ${annotationXml.scripts} with a <script> body` : ''} -> the mapper flattener…\n`);
-        annotationStmts = restampToJavaSource(
-          parseJsonl(runpy('mybatis_extract.py', ['--root', annDir, ...sqlArgs.mybatisArgs, annDir])),
-          annotationXml.files,
-        );
-      }
-    }
-  }
-  if (annotationStmts.length > 0) {
-    const ann = runLineageForStatements({
-      store, index: prevIndex, statements: annotationStmts,
-      catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
-      inputs: {
-        dialect: sqlArgs.dialect,
-        identifierCase: sqlArgs.identifierCase,
-        defaultSchema: sqlArgs.defaultSchema,
-      },
-      run: runners, workerVersion: workerVersions().lineage,
-      force: plan.mode === MODE_COLD,
-      diag: (d) => { diagnostics.push(d); },
+export function annotationLineage({ javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runpy, runners, diagnostics }) {
+  if (javaSrc.length === 0) return [];
+  const mappers = annotationMappersOf(result.javaFacts, result.statementRecords);
+  diagnostics.push(...mappers.diagnostics);
+  if (mappers.files.length === 0) return [];
+  if (!fs.existsSync(py)) {
+    diagnostics.push({
+      kind: 'MISSING_INPUT', severity: 'warn', key: 'frameworkPacks',
+      reason: `${mappers.statements} MyBatis statement annotation(s) were found but there is no venv python at ${py} to read their SQL. See docs/setup/sql-lane.md. Those statements carry no table or column fact in this pack`,
     });
-    Object.assign(result.index.statements, ann.statementEntries);
-    return ann.lineageRecords;
+    return [];
   }
-  return [];
+  process.stderr.write(`MyBatis lane: ${mappers.statements} annotation statement(s) in ${mappers.files.length} mapper(s)`
+    + `${mappers.scripts > 0 ? `, ${mappers.scripts} with a <script> body` : ''} -> the mapper flattener…\n`);
+  const statements = flattenAnnotationMappers(mappers.files, { runpy, mybatisArgs: sqlArgs.mybatisArgs });
+  const ann = lineageOfStatements({
+    statements, store, index: prevIndex, catalog, sqlArgs, runners, force: plan.mode === MODE_COLD, diagnostics,
+  });
+  Object.assign(result.index.statements, ann.statementEntries);
+  return ann.lineageRecords;
 }
 
 /**
@@ -270,17 +246,8 @@ export function nativeQueryLineage({ javaSrc, result, store, prevIndex, catalog,
     return [];
   }
   process.stderr.write(`${idgnrStmts.length > 0 ? 'Java' : 'JPA'} lane: ${what} -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
-  const nat = runLineageForStatements({
-    store, index: prevIndex, statements: nativeStmts,
-    catalogDigest: catalogDigestForShards(catalog), catalogRecords: catalog,
-    inputs: {
-      dialect: sqlArgs.dialect,
-      identifierCase: sqlArgs.identifierCase,
-      defaultSchema: sqlArgs.defaultSchema,
-    },
-    run: runners, workerVersion: workerVersions().lineage,
-    force: plan.mode === MODE_COLD,
-    diag: (d) => { diagnostics.push(d); },
+  const nat = lineageOfStatements({
+    statements: nativeStmts, store, index: prevIndex, catalog, sqlArgs, runners, force: plan.mode === MODE_COLD, diagnostics,
   });
   Object.assign(result.index.statements, nat.statementEntries);
   return nat.lineageRecords;
@@ -323,9 +290,8 @@ export function wrapperFragmentLineage({ runMp, profile, sqlArgs, result, store,
     return { mpOpts, fragmentLineage: [] };
   }
   process.stderr.write(`MyBatis-Plus lane: ${fragStmts.length} wrapper SQL fragment(s) -> SQL lineage (dialect ${sqlArgs.dialect || 'sqlglot default/ANSI'}, identifiers ${sqlArgs.identifierCase})…\n`);
-  const frag = wrapperFragmentLineageOf({
-    javaFacts: result.javaFacts, mpOpts, store, index: prevIndex, catalog, sqlArgs, runners,
-    force: plan.mode === MODE_COLD, diagnostics,
+  const frag = lineageOfStatements({
+    statements: fragStmts, store, index: prevIndex, catalog, sqlArgs, runners, force: plan.mode === MODE_COLD, diagnostics,
   });
   // NOT merged into `lineage`: a fragment is not a statement of its own in the
   // graph — its facts belong to the wrapper's statement, which is what the

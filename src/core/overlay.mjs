@@ -302,6 +302,22 @@ function nearWebRoot(file, webRoots) {
   return webRoots.some((r) => underAny(r, [dir]));
 }
 
+/** Every symbol, endpoint and statement the base graph never had: marked provisional, and listed by kind. */
+function markProvisional(graph, baseGraph) {
+  const provisional = { symbols: [], endpoints: [], statements: [], edges: 0 };
+  const provIds = new Set();
+  for (const [id, node] of graph.nodes) {
+    if (!PROVISIONAL_KINDS.has(node.kind) || baseGraph.nodes.has(id)) continue;
+    node.provisional = true;
+    provIds.add(id);
+    if (node.kind === 'symbol') provisional.symbols.push(id);
+    else if (node.kind === 'endpoint') provisional.endpoints.push(id);
+    else provisional.statements.push(id);
+  }
+  for (const k of ['symbols', 'endpoints', 'statements']) provisional[k].sort();
+  return { provisional, provIds };
+}
+
 /**
  * Build the overlay graph.
  *
@@ -339,33 +355,19 @@ function nearWebRoot(file, webRoots) {
  * @param {{gatewayRoutes?:object, packages?:object[]}|null} [a.web]
  *        options for the web bridge; null runs no web bridge. `gatewayRoutes`
  *        comes from the LIVE profile, exactly as `generatedSources` does.
- * @param {(javaFacts:object[]) => {jpa?:object|null, mybatisPlus?:object|null}} [a.laneOptions]
- *        which of the Java lanes' bridges to run, and with what, given the
- *        assembled Java records. INJECTED by the CLI, which decides it the way
- *        `cascade analyze` does (src/cli/lane_options.mjs): without it an edit
- *        to a Spring Data or MyBatis-Plus service reached no statement at all.
- *        What the overlay still does not re-read: OpenAPI documents, run
- *        traces and Spring XML id generators, which `analyze` reads.
+ * @param {(javaFacts:object[]) => {jpa?:object|null, mybatisPlus?:object|null, lineage?:object[]}} [a.javaLanesOf]
+ *        what the Java lanes add, given the assembled Java records: which of
+ *        their bridges run and with what, and the lineage of the SQL written in
+ *        Java annotations. INJECTED by the CLI, which decides it the way
+ *        `cascade analyze` does (src/cli/lane_options.mjs, src/cli/java_sql.mjs):
+ *        without it an edit to a Spring Data, MyBatis-Plus or annotated MyBatis
+ *        service reached no statement at all. What the overlay still does not
+ *        re-read: OpenAPI documents, run traces and Spring XML id generators,
+ *        which `analyze` reads.
  * @returns {{graph:import('./graph.mjs').Graph, javaStats:object, webStats:(object|null),
  *            provisional:{symbols:string[], endpoints:string[], statements:string[], edges:number},
  *            taggedEdges:number}}
  */
-/** Every symbol, endpoint and statement the base graph never had: marked provisional, and listed by kind. */
-function markProvisional(graph, baseGraph) {
-  const provisional = { symbols: [], endpoints: [], statements: [], edges: 0 };
-  const provIds = new Set();
-  for (const [id, node] of graph.nodes) {
-    if (!PROVISIONAL_KINDS.has(node.kind) || baseGraph.nodes.has(id)) continue;
-    node.provisional = true;
-    provIds.add(id);
-    if (node.kind === 'symbol') provisional.symbols.push(id);
-    else if (node.kind === 'endpoint') provisional.endpoints.push(id);
-    else provisional.statements.push(id);
-  }
-  for (const k of ['symbols', 'endpoints', 'statements']) provisional[k].sort();
-  return { provisional, provIds };
-}
-
 export function overlayGraph(a) {
   const {
     baseShards, dirtyFacts = new Map(), dropFiles = [],
@@ -373,7 +375,7 @@ export function overlayGraph(a) {
     catalogRecords = [], lineageRecords = [],
     baseGraph, overlaySessionId, dirtyFiles = [], packagePrefixes = [], generatedSources = null,
     gatewayRoutes = null,
-    identifierCase = 'exact', bridges = null, web = null, laneOptions = null,
+    identifierCase = 'exact', bridges = null, web = null, javaLanesOf = null,
   } = a ?? {};
   if (!(baseShards instanceof Map)) throw new OverlayError('baseShards must be a Map of file -> records');
   if (!baseGraph || typeof baseGraph.nodes?.has !== 'function') throw new OverlayError('baseGraph is required. Without it nothing can be called new');
@@ -392,9 +394,9 @@ export function overlayGraph(a) {
   // caller just read is what the frontend's base URLs are built from.
   const webShards = spliceFacts(webBaseShards, { replaceForFiles: webDirtyFacts, dropFiles: webDropFiles });
   const webFacts = assembleWebFacts(webShards, webConfigRecords);
-  const javaLanes = typeof laneOptions === 'function' ? laneOptions(javaFacts) : {};
+  const javaLanes = typeof javaLanesOf === 'function' ? javaLanesOf(javaFacts) : {};
   const { graph, javaStats, webStats } = assembleGraph({
-    bridges, catalogRecords, lineageRecords, javaFacts, webFacts, identifierCase,
+    bridges, catalogRecords, lineageRecords: [...lineageRecords, ...(javaLanes.lineage ?? [])], javaFacts, webFacts, identifierCase,
     java: {
       packagePrefixes,
       ...(generatedSources ? { generatedSources } : {}),

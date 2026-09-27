@@ -62,12 +62,15 @@ Each dated section below is one round of work. The round protocol is in
   MyBatis-Plus bridges, so on a project whose SQL comes from Spring Data or
   MyBatis-Plus generic CRUD an edit that changed nothing but a comment reported
   no statement and no column. On jeepay, a MyBatis-Plus service touched 0
-  statements and 0 columns from the working tree and 7 and 3 from the pack. The
-  overlay now decides those lanes and their options the way `analyze` does, over
-  its own records, and reads MyBatis-Plus wrapper fragments back from the fact
-  cache without writing to it; the same file now gives the same answer both
-  ways. OpenAPI documents, run traces and Spring XML id generators are still
-  read by `analyze` only.
+  statements and 0 columns from the working tree and 7 and 3 from the pack. It
+  also read none of the SQL written in Java annotations, MyBatis `@Select` and
+  JPA native queries alike: on eladmin, a service over native queries reached 14
+  of the 36 columns the pack reaches. The overlay now decides those lanes and
+  their options the way `analyze` does, over its own records, and reads the SQL
+  in annotations and MyBatis-Plus wrapper fragments through the same code as
+  `analyze` (`src/cli/java_sql.mjs`), from the fact cache without writing to
+  it; the same file now gives the same answer both ways. OpenAPI documents, run
+  traces and Spring XML id generators are still read by `analyze` only.
 - **One DDL file the SQL tokenizer rejects no longer ends the analysis.** A schema
   shipped in several dialects (ruoyi-vue-pro carries MySQL, PostgreSQL-family and
   others side by side) was read as MySQL, where a backslash escapes a quote; one

@@ -1565,8 +1565,6 @@
    "functions": [
     "addWebFacts",
     "annotationLineage",
-    "annotationLineage/1",
-    "annotationLineage/2",
     "assembleAll",
     "assembleAll/1",
     "catalog",
@@ -2016,19 +2014,33 @@
     "visitDirectory/1"
    ]
   },
+  "src/cli/java_sql.mjs": {
+   "maxLines": 11,
+   "maxBranches": 2,
+   "longest": "lineageOfStatements",
+   "branchiest": "annotationMappersOf",
+   "functions": [
+    "annotationMappersOf",
+    "annotationMappersOf/1",
+    "annotationMappersOf/2",
+    "annotationStatementsOf",
+    "diag",
+    "flattenAnnotationMappers",
+    "lineageOfStatements",
+    "wrapperFragmentLineageOf"
+   ]
+  },
   "src/cli/lane_options.mjs": {
-   "maxLines": 12,
+   "maxLines": 10,
    "maxBranches": 6,
-   "longest": "wrapperFragmentLineageOf",
+   "longest": "mybatisPlusOptions",
    "branchiest": "whichJavaLanes",
    "functions": [
-    "diag",
     "has",
     "has/1",
     "jpaOptions",
     "mybatisPlusOptions",
-    "whichJavaLanes",
-    "wrapperFragmentLineageOf"
+    "whichJavaLanes"
    ]
   },
   "src/cli/lanes_run.mjs": {
@@ -3718,9 +3730,9 @@
    "functions": []
   },
   "src/core/rules/kinds/java_type_role.mjs": {
-   "maxLines": 15,
+   "maxLines": 14,
    "maxBranches": 13,
-   "longest": "deriveTypeRoles",
+   "longest": "runExamples",
    "branchiest": "validateParams",
    "functions": [
     "argAt",
@@ -3733,16 +3745,22 @@
     "compile/1/2",
     "deriveTypeRoles",
     "deriveTypeRoles/1",
+    "deriveTypeRoles/2",
     "expectErrors",
     "expectErrors/1",
     "record",
     "recordKey",
+    "rolesOfType",
+    "rolesOfType/1",
+    "rolesOfType/2",
+    "rolesOfType/3",
     "runExamples",
     "runExamples/1",
     "runExamples/1/1",
     "runExamples/2",
     "runExamples/2/1",
     "runExamples/2/2",
+    "sameRecord",
     "supertypesOf",
     "supertypesOf/1",
     "unknownKeys",
@@ -4727,6 +4745,7 @@
     "basisOf",
     "chipSvg",
     "chipWidth",
+    "entryNameSvg",
     "fit",
     "footerSvg",
     "gradeCounts",
@@ -4749,6 +4768,7 @@
     "summaryCardSvg/1",
     "summaryCardSvg/2",
     "textSvg",
+    "tipOf",
     "weakestGrade",
     "worthSvg"
    ]

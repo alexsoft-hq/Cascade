@@ -52,6 +52,28 @@ const JPA = {
   },
 };
 
+// SQL written in a Java annotation, which `analyze` reads through the SQL
+// analyzer beside the mapper XML: a JPA native query, and a MyBatis @Select.
+const JPA_NATIVE = {
+  ddl: JPA.ddl,
+  edited: 'OwnerService.java',
+  sources: {
+    ...JPA.sources,
+    'OwnerRepository.java': 'package com.example;\nimport java.util.List;\nimport org.springframework.data.jpa.repository.*;\npublic interface OwnerRepository extends JpaRepository<Owner, Integer> {\n    @Query(value = "SELECT id, last_name FROM owners WHERE last_name = ?1", nativeQuery = true)\n    List<Owner> findByLastName(String lastName);\n}\n',
+  },
+};
+
+const MYBATIS_ANNOTATION = {
+  ddl: JPA.ddl,
+  edited: 'OwnerService.java',
+  sources: {
+    'Owner.java': 'package com.example;\npublic class Owner { private Integer id; private String lastName; }\n',
+    'OwnerMapper.java': 'package com.example;\nimport java.util.List;\nimport org.apache.ibatis.annotations.*;\n@Mapper\npublic interface OwnerMapper {\n    @Select("SELECT id, last_name FROM owners WHERE last_name = #{name}")\n    List<Owner> findByName(@Param("name") String name);\n}\n',
+    'OwnerService.java': 'package com.example;\nimport java.util.List;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.stereotype.Service;\n@Service\npublic class OwnerService {\n    @Autowired private OwnerMapper owners;\n    public List<Owner> byName(String n) { return owners.findByName(n); }\n}\n',
+    'OwnerController.java': JPA.sources['OwnerController.java'],
+  },
+};
+
 /** A real checkout of one small project, analyzed; returns how to run the CLI against it. */
 function analyzedProject(t, fixture) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-overlay-lanes-'));
@@ -112,4 +134,12 @@ test('an edit to a MyBatis-Plus service reaches the same statements and columns 
 
 test('an edit to a Spring Data service reaches the same statements and columns from the working tree as from the pack', { timeout: 900000 }, (t) => {
   sameReachFromTheWorkingTree(t, JPA);
+});
+
+test('an edit to a service over a JPA native query reaches the same statements and columns from the working tree as from the pack', { timeout: 900000 }, (t) => {
+  sameReachFromTheWorkingTree(t, JPA_NATIVE);
+});
+
+test('an edit to a service over a MyBatis @Select reaches the same statements and columns from the working tree as from the pack', { timeout: 900000 }, (t) => {
+  sameReachFromTheWorkingTree(t, MYBATIS_ANNOTATION);
 });
