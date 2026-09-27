@@ -463,6 +463,27 @@ test('a mapper that reaches BaseMapper through a library\'s declaration gives li
   assert.equal(g.nodes.get(`statement:${fq('ItemMapper.selectList')}`).mpEvidence.relation, undefined);
 });
 
+test('a service named by the framework\'s own base and by a library rule is as sure as the framework\'s', () => {
+  // The library record comes first (its pack sorts first); the source shows the service anyway.
+  const facts = [
+    type('Item'),
+    mpEntity('Item', { tableName: 't_item', fields: [field('id', { id: true, column: 'id' })] }),
+    type('ItemMapper', { typeKind: 'interface', implements: ['BaseMapper'], implementsArgs: [['Item']] }),
+    mpMapper('ItemMapper', 'Item'),
+    type('IItemService', { typeKind: 'interface', implements: ['LibService', 'IService'], implementsArgs: [['Item'], ['Item']] }),
+    { ...mpService('IItemService', 'LibService', null, 'Item'), grade: 'SOUND_SET', library: 'com.lib.LibService', rule: 'lib.service' },
+    mpService('IItemService', 'IService', null, 'Item'),
+    type('Caller'),
+    { kind: 'field', owner: fq('Caller'), name: 'svc', typeSimple: 'IItemService', file: 'Caller.java' },
+    call(`${fq('Caller')}#go`, 'svc', 'list', 'IItemService'),
+  ];
+  const { g } = build(facts);
+  const sid = `statement:${fq('IItemService.list')}`;
+  assert.ok(g.nodes.has(sid));
+  assert.deepEqual([...new Set(edgesFrom(g, sid).map((e) => e.grade))], ['EXACT']);
+  assert.equal(g.nodes.get(sid).mpEvidence.relation, undefined);
+});
+
 test('two entities that map to ONE table are both named, at the weaker grade', () => {
   const facts = [
     type('SysLog'), mpEntity('SysLog', { fields: [field('id', { id: true })] }),

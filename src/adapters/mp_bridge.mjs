@@ -114,6 +114,8 @@ const WRITE_OPS = new Set(Object.entries(OP_KINDS).filter(([, k]) => k === 'writ
 
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
 const weakest = (...gs) => gs.reduce((a, b) => (RANK[a] <= RANK[b] ? a : b), 'EXACT');
+/** How sure a role record is: EXACT unless a rule relying on a library's declaration gave it. */
+const rankOf = (r) => RANK[r.grade ?? 'EXACT'];
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** The physical name a strategy gives a logical one, plus the project's table prefix. */
@@ -152,7 +154,9 @@ function indexMpFacts(javaFacts) {
     switch (r.kind) {
       case 'mpEntity': entityRecords.set(r.fqn, r); break;
       case 'mpMapper': mapperRecords.set(r.fqn, r); break;
-      case 'mpService': if (!serviceRecords.has(r.fqn)) serviceRecords.set(r.fqn, r); break;
+      // A service can carry a record per base it names (IService and ServiceImpl
+      // both); the first is kept, unless a later one is surer.
+      case 'mpService': if (!serviceRecords.has(r.fqn) || rankOf(r) > rankOf(serviceRecords.get(r.fqn))) serviceRecords.set(r.fqn, r); break;
       case 'mpWrapper': wrapperRecords.push(r); break;
       case 'call': calls.push(r); break;
       default:
