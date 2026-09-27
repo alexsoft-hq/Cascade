@@ -46,6 +46,7 @@
 // filesystem work, the printing and the exit code.
 
 import { sha256, canonicalJson } from './canonical.mjs';
+import { digestedProfile } from './profile.mjs';
 import { measurePack, ratio } from './estimate.mjs';
 import { GRADE_RANK, NODE_KINDS } from './graph.mjs';
 
@@ -279,6 +280,9 @@ export function pinOf(input) {
     ddl: sel.ddl ?? null,
     mapperDirs: [...(sel.mapperDirs ?? [])].sort(),
     javaRoots: [...(sel.javaRoots ?? [])].sort(),
+    // The TypeScript backend's root, only when there is one: reading another
+    // application is another target, and a pack without one keeps its pin.
+    ...((sel.tsRoots ?? []).length > 0 ? { tsRoots: [...sel.tsRoots].sort() } : {}),
     sqlArgs: [...(sel.sqlArgs ?? [])],
     optOuts: [...(input.optOuts ?? [])].sort(),
     profileDigest: input.profileDigest ?? null,
@@ -297,9 +301,13 @@ export function pinOf(input) {
   };
 }
 
-/** sha256 of a normalized profile — one of the two halves of a target change. */
+/**
+ * sha256 of a normalized profile — one of the two halves of a target change. A
+ * block added to the profile later counts only once it is set
+ * (src/core/profile.mjs, BLOCKS_DIGESTED_WHEN_SET).
+ */
 export function profileDigestOf(profile) {
-  return sha256(canonicalJson(profile ?? null));
+  return sha256(canonicalJson(digestedProfile(profile)));
 }
 
 /** Whether two pins name the same analyzed target. */

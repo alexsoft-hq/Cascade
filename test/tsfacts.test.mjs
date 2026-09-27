@@ -219,8 +219,33 @@ test('valueOfSource marks an array\'s spread and an object\'s spread and compute
 
 test('valueOfSource reads a call by its callee and arguments, and an arrow function by what it returns when its body is an expression', () => {
   assert.deepEqual(valueOfSource('foo(1, "a")'), { k: 'call', callee: 'foo', args: [{ k: 'num', v: 1 }, { k: 'str', v: 'a' }] });
-  assert.deepEqual(valueOfSource('() => 5'), { k: 'fn', returns: { k: 'num', v: 5 } });
-  assert.deepEqual(valueOfSource('() => { return 5; }'), { k: 'fn' }, 'a block body is not read for what it returns');
+  assert.deepEqual(valueOfSource('() => 5'), { k: 'fn', params: [], line: 1, endLine: 1, returns: { k: 'num', v: 5 } });
+  assert.deepEqual(valueOfSource('() => { return 5; }'), { k: 'fn', params: [], line: 1, endLine: 1 }, 'a block body is not read for what it returns');
+  // A callback's parameters are named, so a call written inside it can be read
+  // against them (the client a Prisma $transaction hands its callback).
+  assert.deepEqual(valueOfSource('async (tx, { a }) => {\n  await tx.user.findMany();\n}'), { k: 'fn', params: ['tx', null], line: 1, endLine: 3 });
+});
+
+test('a call that may not run when its member does is marked: a branch, a loop, a catch block, a nested callback', () => {
+  const src = [
+    'async function boot(app) {',
+    '  app.a();',
+    '  if (x) app.b(); else app.c();',
+    '  x && app.d();',
+    '  for (const y of ys) app.e();',
+    '  try { app.f(); } catch { app.g(); }',
+    '  ys.forEach(() => app.h());',
+    '}',
+    'export const run = () => app.i();',
+  ].join('\n');
+  const calls = factsOfFile('src/boot.ts', src).filter((r) => r.kind === 'call');
+  const cond = Object.fromEntries(calls.map((c) => [c.callee, c.cond === true]));
+  assert.deepEqual(cond, {
+    'app.a': false, 'app.b': true, 'app.c': true, 'app.d': true, 'app.e': true,
+    'app.f': false, 'app.g': true, 'ys.forEach': false, 'app.h': true, 'app.i': false,
+  });
+  const fn = factsOfFile('src/boot.ts', src).find((r) => r.kind === 'function' && r.name === 'boot');
+  assert.deepEqual(fn.params, ['app'], 'a module function names its parameters, so a helper the bootstrap hands the application to can be followed');
 });
 
 // ---------------------------------------------------------------------------

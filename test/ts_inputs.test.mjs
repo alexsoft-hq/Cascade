@@ -60,7 +60,7 @@ test('readTsconfigPaths walks up from the app root to the analyzed root when the
   assert.deepEqual(result.paths, { '@up/*': ['up/*'] });
 });
 
-test('readTsconfigPaths follows "extends" (a relative specifier with no .json suffix), and the nearer file\'s own paths win over the base while a pattern only the base sets still merges in', (t) => {
+test('readTsconfigPaths follows "extends" (a relative specifier with no .json suffix), and a nearer file\'s paths replace the base\'s whole', (t) => {
   const root = tmpDir(t, 'cascade-ts-inputs-extends-');
   writeJson(path.join(root, 'tsconfig.base.json'), {
     compilerOptions: { baseUrl: 'basebase', paths: { '@x/*': ['base/x/*'], '@y/*': ['base/y/*'] } },
@@ -71,19 +71,35 @@ test('readTsconfigPaths follows "extends" (a relative specifier with no .json su
   });
   const result = readTsconfigPaths(root, root);
   assert.equal(result.baseUrl, 'nearbase', 'the nearest file\'s own baseUrl wins');
-  assert.deepEqual(result.paths, {
-    '@x/*': ['nearbase/near/x/*'], // the nearer file's own target, relative to its own baseUrl
-    '@y/*': ['basebase/base/y/*'], // only the base sets this one, so it still comes through, relative to the base's own baseUrl
-  });
+  // The compiler takes each compiler option from the nearest file that sets it,
+  // whole: a pattern only the base names is gone once the nearer file sets paths.
+  assert.deepEqual(result.paths, { '@x/*': ['nearbase/near/x/*'] });
 });
 
-test('readTsconfigPaths follows "extends" written with an explicit .json suffix', (t) => {
+test('readTsconfigPaths follows "extends" written with an explicit .json suffix, and resolves the nearer paths against the baseUrl the base sets', (t) => {
   const root = tmpDir(t, 'cascade-ts-inputs-extends-json-');
   writeJson(path.join(root, 'tsconfig.base.json'), { compilerOptions: { baseUrl: 'basebase' } });
   writeJson(path.join(root, 'tsconfig.json'), { extends: './tsconfig.base.json', compilerOptions: { paths: { '@z/*': ['z/*'] } } });
   const result = readTsconfigPaths(root, root);
-  assert.equal(result.baseUrl, 'basebase', 'the nearer file sets no baseUrl of its own, so the base\'s baseUrl is used');
-  assert.deepEqual(result.paths, { '@z/*': ['z/*'] }, 'the nearer file\'s own paths target is relative to its OWN directory, since that file sets no baseUrl of its own');
+  assert.equal(result.baseUrl, 'basebase', 'the nearer file sets no baseUrl of its own, so the base\'s is used');
+  assert.deepEqual(result.paths, { '@z/*': ['basebase/z/*'] }, 'a paths target is relative to the baseUrl in effect, wherever in the chain it was set');
+});
+
+test('an import through a tsconfig path reaches the file the inherited baseUrl names, not a same-named one beside the tsconfig', (t) => {
+  const root = tmpDir(t, 'cascade-ts-inputs-inherited-base-');
+  writeJson(path.join(root, 'tsconfig.base.json'), { compilerOptions: { baseUrl: 'src/runtime' } });
+  writeJson(path.join(root, 'src', 'tsconfig.json'), { extends: '../tsconfig.base.json', compilerOptions: { paths: { '@ctl': ['controllers'] } } });
+  const result = readTsconfigPaths(root, path.join(root, 'src'));
+  assert.deepEqual(result.paths, { '@ctl': ['src/runtime/controllers'] });
+});
+
+test('readTsconfigPaths resolves paths against the file that sets them when no file of the chain sets a baseUrl', (t) => {
+  const root = tmpDir(t, 'cascade-ts-inputs-no-base-');
+  writeJson(path.join(root, 'tsconfig.base.json'), { compilerOptions: { paths: { '@lib/*': ['libs/*'] } } });
+  writeJson(path.join(root, 'apps', 'api', 'tsconfig.json'), { extends: '../../tsconfig.base.json' });
+  const result = readTsconfigPaths(root, path.join(root, 'apps', 'api'));
+  assert.equal(result.baseUrl, null);
+  assert.deepEqual(result.paths, { '@lib/*': ['libs/*'] }, 'relative to tsconfig.base.json, which sets them, not to the app\'s own tsconfig');
 });
 
 test('readTsconfigPaths gives file null and no paths when nothing is found up to the analyzed root', (t) => {

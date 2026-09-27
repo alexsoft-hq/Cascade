@@ -108,3 +108,68 @@ test('modelOfDelegate maps a lowerCamel client delegate to its model, and gives 
   assert.equal(modelOfDelegate(models, ''), null);
   assert.equal(modelOfDelegate(models, null), null);
 });
+
+// ---------------------------------------------------------------------------
+// compounds and @@schema
+// ---------------------------------------------------------------------------
+
+const COMPOUND_SCHEMA = `
+model Account {
+  id        Int    @id @default(autoincrement())
+  a         Int
+  b         Int
+  c         Int
+  @@unique([a, b], name: "id_email")
+  @@index([c])
+}
+
+model Widget {
+  x Int
+  y Int
+  @@id([x, y])
+}
+
+model Order {
+  region String
+  code   String
+  ref    String
+  @@unique(fields: [region, code], name: "region_code_key", map: "orders_region_code_udx")
+}
+
+model Tenanted {
+  id Int @id
+  @@schema("tenant_a")
+}
+`;
+
+test('@@unique([a, b], name: "id_email") gives the model a compound: the client key "id_email" means fields a and b', () => {
+  const account = readPrismaSchema(COMPOUND_SCHEMA).models.get('Account');
+  assert.deepEqual(account.compounds, { id_email: ['a', 'b'] });
+});
+
+test('@@id([x, y]) with no name gives the default client key, the field names joined with _', () => {
+  const widget = readPrismaSchema(COMPOUND_SCHEMA).models.get('Widget');
+  assert.deepEqual(widget.compounds, { x_y: ['x', 'y'] });
+});
+
+test('@@unique(fields: [...], name: "x", map: "db_name") is read the same way; map is the database constraint name and never changes the client key', () => {
+  const order = readPrismaSchema(COMPOUND_SCHEMA).models.get('Order');
+  assert.deepEqual(order.compounds, { region_code_key: ['region', 'code'] });
+});
+
+test('@@index([...]) names no compound: it is not a unique or id key the client can filter by as one', () => {
+  const account = readPrismaSchema(COMPOUND_SCHEMA).models.get('Account');
+  assert.deepEqual(Object.keys(account.compounds), ['id_email'], '@@index gave no second compound entry');
+});
+
+test('a model with no compound attribute has an empty compounds object, not undefined', () => {
+  const post = readPrismaSchema(SCHEMA).models.get('Post');
+  assert.deepEqual(post.compounds, {});
+});
+
+test('@@schema("x") gives the model its schema; a model with none has schema null', () => {
+  const tenanted = readPrismaSchema(COMPOUND_SCHEMA).models.get('Tenanted');
+  assert.equal(tenanted.schema, 'tenant_a');
+  const account = readPrismaSchema(COMPOUND_SCHEMA).models.get('Account');
+  assert.equal(account.schema, null);
+});

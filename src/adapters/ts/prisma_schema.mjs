@@ -6,6 +6,16 @@
 // that hold it are the ones its `@relation(fields: [...])` names. A field whose
 // type is an enum is a column like any scalar.
 //
+// `@@unique([a, b], name: "x")` and `@@id([a, b])` also give the model a
+// COMPOUND: a client key name (the one Prisma Client's `where` takes) mapped to
+// the fields it joins. A name is what `name:` gives; with none, Prisma's own
+// default is the fields joined with `_`, so a call site never has to be read by
+// splitting a key on `_` again once this is read. `map:` is the database
+// constraint's own name and never changes the client name.
+//
+// `@@schema("x")` names the Postgres/CockroachDB schema a model lives in
+// (multi-schema Prisma), read into `model.schema`.
+//
 // This is Prisma's own mapping, written down in the schema, so a name read here
 // is the name Prisma sends. It says nothing about whether the database the
 // application connects to has that table: the schema is the declaration, and
@@ -31,6 +41,34 @@ function relationFields(text) {
   return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
+/** The field list of `[a, b]`, written bare or as `fields: [a, b]`. */
+function fieldListOf(body) {
+  const m = /fields\s*:\s*\[([^\]]*)\]/.exec(body) ?? /^\s*\[([^\]]*)\]/.exec(body);
+  return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/**
+ * The client key `@@unique(...)` or `@@id(...)` gives: `name:` if the block
+ * writes one, else the fields joined with `_`, Prisma's own default. `map:`,
+ * the database constraint's name, plays no part in this and is not read here.
+ */
+function compoundOf(line) {
+  const m = /@@(?:unique|id)\(([^)]*)\)/.exec(line);
+  if (!m) return null;
+  const fields = fieldListOf(m[1]);
+  if (fields.length === 0) return null;
+  const named = /name\s*:\s*"([^"]*)"/.exec(m[1]);
+  return { name: named ? named[1] : fields.join('_'), fields };
+}
+
+/** `@@map`, `@@schema`, and a compound key (`@@unique`, `@@id`), each read off one block-level attribute line. */
+function readModelAttr(model, line) {
+  model.table = mapName(line, '@@map') ?? model.table;
+  model.schema = mapName(line, '@@schema') ?? model.schema;
+  const compound = compoundOf(line);
+  if (compound) model.compounds[compound.name] = compound.fields;
+}
+
 function readBlocks(text) {
   const blocks = [];
   let cur = null;
@@ -48,12 +86,9 @@ function readBlocks(text) {
 }
 
 function readModel(block, typeKinds) {
-  const model = { name: block.name, table: block.name, fields: [], block: block.kind };
+  const model = { name: block.name, table: block.name, fields: [], compounds: {}, schema: null, block: block.kind };
   for (const line of block.lines) {
-    if (/^\s*@@/.test(line)) {
-      model.table = mapName(line, '@@map') ?? model.table;
-      continue;
-    }
+    if (/^\s*@@/.test(line)) { readModelAttr(model, line); continue; }
     const m = FIELD.exec(line);
     if (!m) continue;
     const [, name, type, list, optional, attrs] = m;
@@ -71,7 +106,7 @@ function readModel(block, typeKinds) {
  * The models of one schema text, by name, with the provider its datasource
  * names.
  *
- * @returns {{provider:(string|null), models:Map<string,{name:string, table:string, fields:object[]}>}}
+ * @returns {{provider:(string|null), models:Map<string,{name:string, table:string, schema:(string|null), compounds:object, fields:object[]}>}}
  */
 export function readPrismaSchema(text) {
   const blocks = readBlocks(String(text ?? ''));

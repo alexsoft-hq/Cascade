@@ -417,7 +417,7 @@ export function tsOptionsOf({ root, sel, profile, manifestDir }, sqlArgs, diagno
   if (declaredSchema && !opts.prisma) {
     diagnostics.push({ kind: 'MISSING_INPUT', severity: 'warn', key: 'tsBackend.prismaSchema', reason: `tsBackend.prismaSchema names ${ts.prismaSchema}, which is not there, so no Prisma call is read` });
   }
-  return { ...opts, globalPrefix: ts.globalPrefix ?? null };
+  return { ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null };
 }
 
 export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, tsOpts = null }) {

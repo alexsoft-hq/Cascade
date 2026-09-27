@@ -209,6 +209,7 @@ function declareTsBackend(discovery, { existing, root, manifestDir, diagnostics 
       app: rel(app.root),
       prismaSchema: declared?.prismaSchema ?? (app.prismaSchema ? rel(app.prismaSchema) : null),
       globalPrefix: declared?.globalPrefix ?? null,
+      globalPrefixExclude: declared?.globalPrefixExclude ?? null,
     },
   };
 }

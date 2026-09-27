@@ -270,6 +270,10 @@ test('a literal plain-path exclude serves that route with no prefix; a pattern o
   const exclude = result.diagnostics.find((d) => d.kind === 'TS_PREFIX_EXCLUDE_UNREAD');
   assert.ok(exclude, 'the pattern and the non-literal entry are said, not silently dropped');
   assert.match(exclude.reason, /excludes 2 route pattern\(s\)/);
+  // An exclude this engine cannot read may name /list, so its address is a guess;
+  // the one the literal names is sure.
+  const grade = Object.fromEntries(result.routes.map((r) => [r.path, r.grade ?? 'EXACT']));
+  assert.deepEqual(grade, { '/api/list': 'HEURISTIC', '/sitemap.xml': 'EXACT' });
 });
 
 test('a global prefix read from configuration makes no routes and says TS_PREFIX_UNREAD; a declared profile prefix is used instead', () => {
@@ -486,4 +490,202 @@ test('a controller path held in a variable gives TS_ROUTE_PATH_UNREAD and no rou
   const result = routesOf([main, appModule, dynamicController]);
   assert.deepEqual(result.routes, []);
   assert.ok(kindsOf(result.diagnostics).includes('TS_ROUTE_PATH_UNREAD'));
+});
+
+// ---------------------------------------------------------------------------
+// what the bootstrap says is read only when it is sure
+// ---------------------------------------------------------------------------
+
+/** A bootstrap with the given lines between create and listen, a module listing the controllers, and the files given. */
+function appWith(bootLines, controllers, files, { header = [] } = {}) {
+  const main = ['main.ts', [
+    "import { NestFactory } from '@nestjs/core';",
+    "import { RequestMethod } from '@nestjs/common';",
+    "import { AppModule } from './app.module';",
+    ...header,
+    'async function bootstrap() {',
+    '  const app = await NestFactory.create(AppModule);',
+    ...bootLines.map((l) => `  ${l}`),
+    '  await app.listen(3000);',
+    '}',
+    'bootstrap();',
+  ].join('\n')];
+  const appModule = ['app.module.ts', [
+    "import { Module } from '@nestjs/common';",
+    ...controllers.map(([cls, file]) => `import { ${cls} } from './${file}';`),
+    `@Module({ controllers: [${controllers.map(([cls]) => cls).join(', ')}] })`,
+    'export class AppModule {}',
+  ].join('\n')];
+  return [main, appModule, ...files];
+}
+
+const twoVerbController = ['health.controller.ts', [
+  "import { Controller, Get, Post } from '@nestjs/common';",
+  "@Controller('health')",
+  'export class HealthController {',
+  '  @Get() check() {}',
+  '  @Post() ping() {}',
+  '}',
+].join('\n')];
+
+test('an exclude written { path, method } frees that one method of the route from the prefix', () => {
+  const result = routesOf(appWith(["app.setGlobalPrefix('api', { exclude: [{ path: 'health', method: RequestMethod.GET }] });"], [['HealthController', 'health.controller']], [twoVerbController]));
+  assert.deepEqual(pathsOf(result.routes), ['GET /health', 'POST /api/health']);
+  assert.ok(result.routes.every((r) => r.grade === undefined), 'every entry was read, so every address is sure');
+});
+
+test('an exclude pattern is matched the way Nest matches one: a parameter, an optional wildcard, and no case', () => {
+  const docs = ['docs.controller.ts', [
+    "import { Controller, Get } from '@nestjs/common';",
+    "@Controller('docs')",
+    'export class DocsController {',
+    "  @Get(':page') page() {}",
+    "  @Get('a/b') deep() {}",
+    '}',
+  ].join('\n')];
+  const users = ['users.controller.ts', [
+    "import { Controller, Get } from '@nestjs/common';",
+    "@Controller('users')",
+    'export class UsersController {',
+    "  @Get(':id') one() {}",
+    "  @Get(':id/posts') posts() {}",
+    '}',
+  ].join('\n')];
+  const result = routesOf(appWith(["app.setGlobalPrefix('api', { exclude: ['DOCS{/*rest}', 'users/:id'] });"],
+    [['DocsController', 'docs.controller'], ['UsersController', 'users.controller']], [docs, users]));
+  assert.deepEqual(pathsOf(result.routes), ['GET /api/users/{id}/posts', 'GET /docs/a/b', 'GET /docs/{page}', 'GET /users/{id}']);
+});
+
+test('the profile\'s globalPrefixExclude stands for an exclude list the bootstrap builds at run time, and makes the addresses sure', () => {
+  const files = appWith(['app.setGlobalPrefix(\'api\', { exclude: [...LANGUAGE_ROUTES] });'], [['HealthController', 'health.controller']], [twoVerbController]);
+  const guessed = routesOf(files);
+  assert.ok(guessed.routes.every((r) => r.grade === 'HEURISTIC'), 'a spread list may name any route');
+  const declared = routesOf(files, { globalPrefixExclude: ['health'] });
+  assert.deepEqual(pathsOf(declared.routes), ['GET /health', 'POST /health']);
+  assert.ok(declared.routes.every((r) => r.grade === undefined));
+});
+
+test('a prefix set under a condition, or set twice to different values, is not known, and no route is made', () => {
+  for (const lines of [
+    ["if (process.env.X) app.setGlobalPrefix('a');"],
+    ["if (process.env.X) app.setGlobalPrefix('a'); else app.setGlobalPrefix('b');"],
+    ["app.setGlobalPrefix('a');", "app.setGlobalPrefix('b');"],
+  ]) {
+    const result = routesOf(appWith(lines, [['HealthController', 'health.controller']], [twoVerbController]));
+    assert.deepEqual(result.routes, [], lines.join(' '));
+    assert.ok(kindsOf(result.diagnostics).includes('TS_PREFIX_UNREAD'), lines.join(' '));
+  }
+  const twice = routesOf(appWith(["app.setGlobalPrefix('a');", "app.setGlobalPrefix('a');"], [['HealthController', 'health.controller']], [twoVerbController]));
+  assert.deepEqual(pathsOf(twice.routes), ['GET /a/health', 'POST /a/health'], 'the same value twice is one value');
+});
+
+test('a function of the project the application is handed to is read for its settings, under the name its parameter gives it', () => {
+  const configure = ['configure.ts', 'export function configure(server) {\n  server.setGlobalPrefix(\'api\');\n}\n'];
+  const result = routesOf(appWith(['configure(app);'], [['HealthController', 'health.controller']], [twoVerbController, configure],
+    { header: ["import { configure } from './configure';"] }));
+  assert.deepEqual(pathsOf(result.routes), ['GET /api/health', 'POST /api/health']);
+});
+
+test('the application handed to code this engine does not read leaves its settings unknown, not absent', () => {
+  const result = routesOf(appWith(['const setup = makeSetup();', 'setup(app);'], [['HealthController', 'health.controller']], [twoVerbController]));
+  assert.deepEqual(result.routes, []);
+  const said = result.diagnostics.find((d) => d.kind === 'TS_PREFIX_UNREAD');
+  assert.match(said.reason, /handed to setup, which this engine does not read/);
+  // A package's function is the package's: SwaggerModule.setup(path, app, doc) changes no address.
+  const swagger = routesOf(appWith(["SwaggerModule.setup('docs', app, document);"], [['HealthController', 'health.controller']], [twoVerbController],
+    { header: ["import { SwaggerModule } from '@nestjs/swagger';"] }));
+  assert.deepEqual(pathsOf(swagger.routes), ['GET /health', 'POST /health']);
+});
+
+// ---------------------------------------------------------------------------
+// what a class says is read the way Nest reads it
+// ---------------------------------------------------------------------------
+
+test('a spread in a controller\'s options or a module\'s leaves what it may set unknown, and nothing is made of it', () => {
+  const spreadController = ['spread.controller.ts', [
+    "import { Controller, Get } from '@nestjs/common';",
+    "const options = { path: 'private' };",
+    '@Controller({ ...options })',
+    'export class SpreadController {',
+    '  @Get() get() {}',
+    '}',
+  ].join('\n')];
+  const result = routesOf(appWith([], [['SpreadController', 'spread.controller']], [spreadController]));
+  assert.deepEqual(result.routes, []);
+  assert.ok(kindsOf(result.diagnostics).includes('TS_ROUTE_PATH_UNREAD'));
+
+  const main = appWith([], [], [])[0];
+  const spreadModule = ['app.module.ts', [
+    "import { Module } from '@nestjs/common';",
+    "import { HealthController } from './health.controller';",
+    'const options = { controllers: [] };',
+    '@Module({ controllers: [HealthController], ...options })',
+    'export class AppModule {}',
+  ].join('\n')];
+  const registered = routesOf([main, spreadModule, twoVerbController]);
+  assert.deepEqual(registered.routes, [], 'the spread may replace the controllers list');
+  assert.ok(kindsOf(registered.diagnostics).includes('TS_MODULE_UNREAD'));
+});
+
+test('a decorator imported under another name is read by the name its package gives it; one of the project\'s own is not the framework\'s', () => {
+  const aliased = ['aliased.controller.ts', [
+    "import { Controller as Ctl, Get as GET } from '@nestjs/common';",
+    "@Ctl('x')",
+    'export class AliasedController {',
+    '  @GET() get() {}',
+    '}',
+  ].join('\n')];
+  const namespaced = ['ns.controller.ts', [
+    "import * as common from '@nestjs/common';",
+    "@common.Controller('y')",
+    'export class NsController {',
+    '  @common.Get() get() {}',
+    '}',
+  ].join('\n')];
+  const own = ['own.controller.ts', [
+    "import { Controller } from './my-decorators';",
+    "import { Get } from '@nestjs/common';",
+    "@Controller('z')",
+    'export class OwnController {',
+    '  @Get() get() {}',
+    '}',
+  ].join('\n')];
+  const myDecorators = ['my-decorators.ts', 'export function Controller(path) { return () => undefined; }\n'];
+  const result = routesOf(appWith([], [['AliasedController', 'aliased.controller'], ['NsController', 'ns.controller'], ['OwnController', 'own.controller']],
+    [aliased, namespaced, own, myDecorators]));
+  assert.deepEqual(pathsOf(result.routes), ['GET /x', 'GET /y']);
+  const said = result.diagnostics.find((d) => d.kind === 'TS_ROUTES_WITHOUT_CONTROLLER');
+  assert.match(said.reason, /own\.controller\.ts#OwnController/);
+});
+
+test('a route method a controller inherits from a class of the project is served under the controller\'s path, handled by the method that declares it', () => {
+  const base = ['base.controller.ts', [
+    "import { Get } from '@nestjs/common';",
+    'export class BaseController {',
+    "  @Get('ping') ping() {}",
+    '}',
+  ].join('\n')];
+  const child = ['child.controller.ts', [
+    "import { Controller } from '@nestjs/common';",
+    "import { BaseController } from './base.controller';",
+    "@Controller('x')",
+    'export class ChildController extends BaseController {}',
+  ].join('\n')];
+  const result = routesOf(appWith([], [['ChildController', 'child.controller']], [base, child]));
+  assert.deepEqual(result.routes.map((r) => [`${r.verb} ${r.path}`, `${r.file}#${r.cls}.${r.method}`]), [['GET /x/ping', 'base.controller.ts#BaseController.ping']]);
+  assert.ok(!kindsOf(result.diagnostics).includes('TS_ROUTES_WITHOUT_CONTROLLER'), 'a base a controller extends is not a class whose routes go unserved');
+});
+
+test('a module with no options is an empty module, not one that could not be read', () => {
+  const empty = ['empty.module.ts', "import { Module } from '@nestjs/common';\n@Module()\nexport class EmptyModule {}\n"];
+  const appModule = ['app.module.ts', [
+    "import { Module } from '@nestjs/common';",
+    "import { EmptyModule } from './empty.module';",
+    "import { HealthController } from './health.controller';",
+    '@Module({ imports: [EmptyModule], controllers: [HealthController] })',
+    'export class AppModule {}',
+  ].join('\n')];
+  const result = routesOf([appWith([], [], [])[0], appModule, empty, twoVerbController]);
+  assert.deepEqual(pathsOf(result.routes), ['GET /health', 'POST /health']);
+  assert.ok(!kindsOf(result.diagnostics).includes('TS_MODULE_UNREAD'));
 });

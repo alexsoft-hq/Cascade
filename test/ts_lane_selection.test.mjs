@@ -12,7 +12,7 @@ import { buildProfile, lanesOf } from '../src/core/init.mjs';
 import { planIncremental } from '../src/core/invalidate.mjs';
 import { emptyIndex } from '../src/core/facts_store.mjs';
 import { CHANGESET_SCHEMA } from '../src/core/changeset.mjs';
-import { isEngineSourcePath } from '../src/core/calibration.mjs';
+import { isEngineSourcePath, pinOf, profileDigestOf } from '../src/core/calibration.mjs';
 
 // Where the TypeScript backend lane is CHOSEN: the flag, the profile, what
 // `cascade init` writes into the profile from what discovery finds, and the
@@ -79,7 +79,7 @@ test('--no-ts switches the lane off even when the profile declares it', () => {
 // ---------------------------------------------------------------------------
 
 test('tsBackend defaults to nothing declared, and a wrong shape is refused with the key', () => {
-  assert.deepEqual(normalizeProfile({}).tsBackend, { app: null, prismaSchema: null, globalPrefix: null });
+  assert.deepEqual(normalizeProfile({}).tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
   assert.throws(() => validateProfile({ tsBackend: { app: '' } }), (e) => e instanceof ProfileError && /tsBackend\.app/.test(e.message));
   assert.throws(() => validateProfile({ tsBackend: { prismaSchema: 3 } }), /tsBackend\.prismaSchema/);
   assert.throws(() => validateProfile({ tsBackend: { globalPrefix: false } }), /tsBackend\.globalPrefix/);
@@ -150,7 +150,7 @@ test('init writes the one application it finds, the nestjs pack, and the dialect
   const { profile } = buildProfile(initDiscovery({ nestApps: [APP], prismaSchemas: [{ path: 'prisma/schema.prisma', provider: 'postgresql' }] }),
     { root: '/p/app', manifestDir: '/p/app/.cascade' });
   assert.ok(profile.frameworkPacks.includes('nestjs'));
-  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null });
+  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
   assert.equal(profile.sqlDialects.main, 'postgresql');
 });
 
@@ -164,7 +164,7 @@ test('init writes no application when it finds two, and says which it found', ()
 });
 
 test('an application the profile already names is kept whole, prefix and all', () => {
-  const existing = { tsBackend: { app: '../server', prismaSchema: null, globalPrefix: 'api' } };
+  const existing = { tsBackend: { app: '../server', prismaSchema: null, globalPrefix: 'api', globalPrefixExclude: ['health'] } };
   const { profile, diagnostics } = buildProfile(initDiscovery({ nestApps: [APP] }), { root: '/p/app', manifestDir: '/p/app/.cascade', existing });
   assert.deepEqual(profile.tsBackend, existing.tsBackend);
   assert.ok(diagnostics.some((d) => d.kind === 'TS_BACKEND_KEPT'));
@@ -206,4 +206,22 @@ test('the incremental plan does not hand the web lane a TypeScript backend file 
 test('the TypeScript worker is part of the engine print, so a change to it is an engine change', () => {
   assert.equal(isEngineSourcePath('adapters/ts/tsfacts.mjs'), true);
   assert.equal(isEngineSourcePath('adapters/ts/README.md'), false);
+});
+
+test('a project that never sets tsBackend keeps the profile digest it had before the block existed; setting it moves the digest', () => {
+  const javaOnly = normalizeProfile({ frameworkPacks: ['spring-mvc'], sqlDialects: { main: 'mysql' } });
+  const { tsBackend, ...withoutBlock } = javaOnly;
+  assert.deepEqual(tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
+  assert.equal(profileDigestOf(javaOnly), profileDigestOf(withoutBlock), 'the block at its default is not part of the target');
+  assert.notEqual(profileDigestOf(normalizeProfile({ tsBackend: { app: '../api' } })), profileDigestOf(normalizeProfile({})));
+});
+
+test('the TypeScript application read is part of the pinned target, and a run without one keeps the pin it had', () => {
+  const base = { commit: 'a'.repeat(40), dirty: false, profileDigest: 'p', catalogDigest: null };
+  const sel = { ddl: null, mapperDirs: [], javaRoots: ['src/main/java'] };
+  assert.equal(pinOf({ ...base, selection: sel }).inputsDigest, pinOf({ ...base, selection: { ...sel, tsRoots: [] } }).inputsDigest);
+  const a = pinOf({ ...base, selection: { ...sel, tsRoots: ['apps/a/src'] } });
+  const b = pinOf({ ...base, selection: { ...sel, tsRoots: ['apps/b/src'] } });
+  assert.notEqual(a.inputsDigest, b.inputsDigest, 'reading another application is another target (a REPIN), not nondeterminism');
+  assert.notEqual(pinOf({ ...base, selection: sel, optOuts: ['--no-ts'] }).inputsDigest, pinOf({ ...base, selection: sel }).inputsDigest);
 });

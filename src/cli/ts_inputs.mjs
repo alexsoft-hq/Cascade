@@ -51,31 +51,39 @@ function tsconfigFileOf(rootAbs, appRootAbs) {
   return null;
 }
 
-/**
- * The `baseUrl` and `paths` a tsconfig means, following its `extends` chain:
- * the nearest file's own value wins, a `paths` target is relative to the
- * `baseUrl` of the file that sets it, or to that file when it sets none.
- * Root-relative, posix.
- */
-export function readTsconfigPaths(rootAbs, appRootAbs) {
-  const first = tsconfigFileOf(rootAbs, appRootAbs);
-  const out = { file: first ? toPosix(path.relative(rootAbs, first)) : null, baseUrl: null, paths: {} };
+/** Each tsconfig of the `extends` chain from `first`, nearest first, with the directory it sits in. */
+function tsconfigChain(first) {
+  const chain = [];
   const seen = new Set();
   for (let file = first; file && !seen.has(file) && seen.size < MAX_EXTENDS;) {
     seen.add(file);
     let cfg;
     try { cfg = readLenientJson(fs.readFileSync(file, 'utf8')); } catch { break; }
     const dir = path.dirname(file);
-    const co = cfg.compilerOptions ?? {};
-    const base = typeof co.baseUrl === 'string' ? path.resolve(dir, co.baseUrl) : null;
-    if (out.baseUrl === null && base) out.baseUrl = toPosix(path.relative(rootAbs, base)) || '.';
-    for (const [pattern, targets] of Object.entries(co.paths ?? {})) {
-      if (Object.hasOwn(out.paths, pattern) || !Array.isArray(targets)) continue;
-      out.paths[pattern] = targets.map((t) => toPosix(path.relative(rootAbs, path.resolve(base ?? dir, t))));
-    }
+    chain.push({ dir, co: cfg.compilerOptions ?? {} });
     file = typeof cfg.extends === 'string' && cfg.extends.startsWith('.') ? path.resolve(dir, cfg.extends.endsWith('.json') ? cfg.extends : `${cfg.extends}.json`) : null;
   }
-  return out;
+  return chain;
+}
+
+/**
+ * The `baseUrl` and `paths` a tsconfig means, as the compiler reads its
+ * `extends` chain: each option is the nearest file's that sets it, whole (a
+ * child's `paths` replaces its parent's, it is not merged into it), and a
+ * `paths` target is relative to that `baseUrl`, wherever in the chain it was
+ * set, or, with none, to the file that sets `paths`. Root-relative, posix.
+ */
+export function readTsconfigPaths(rootAbs, appRootAbs) {
+  const first = tsconfigFileOf(rootAbs, appRootAbs);
+  const chain = tsconfigChain(first);
+  const withBase = chain.find((c) => typeof c.co.baseUrl === 'string');
+  const base = withBase ? path.resolve(withBase.dir, withBase.co.baseUrl) : null;
+  const withPaths = chain.find((c) => c.co.paths && typeof c.co.paths === 'object');
+  const paths = {};
+  for (const [pattern, targets] of Object.entries(withPaths?.co.paths ?? {})) {
+    if (Array.isArray(targets)) paths[pattern] = targets.map((t) => toPosix(path.relative(rootAbs, path.resolve(base ?? withPaths.dir, t))));
+  }
+  return { file: first ? toPosix(path.relative(rootAbs, first)) : null, baseUrl: base ? toPosix(path.relative(rootAbs, base)) || '.' : null, paths };
 }
 
 /** The schema.prisma that belongs to the app: the profile's, else `prisma/schema.prisma` at or above the app root. */

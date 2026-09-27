@@ -136,12 +136,22 @@ export function valueOf(node, depth = 0) {
     case 'OptionalCallExpression':
       return { k: 'call', callee: chainOf(n.callee), args: n.arguments.map((a) => valueOf(a, depth + 1)) };
     case 'NewExpression': return { k: 'new', callee: chainOf(n.callee) };
-    // `forwardRef(() => UsersModule)` names the module in what the arrow returns.
     case 'ArrowFunctionExpression':
-      return n.body.type === 'BlockStatement' ? { k: 'fn' } : { k: 'fn', returns: valueOf(n.body, depth + 1) };
-    case 'FunctionExpression': return { k: 'fn' };
+    case 'FunctionExpression':
+      return fnSummary(n, depth);
     default: return { k: 'expr' };
   }
+}
+
+/**
+ * A function written as a value: the names its parameters go by (null for a
+ * destructured one) and the lines it spans, so a call written inside it can be
+ * told apart from one beside it; and, for an arrow with an expression body,
+ * what it returns (`forwardRef(() => UsersModule)` names the module there).
+ */
+function fnSummary(n, depth) {
+  const returns = n.type === 'ArrowFunctionExpression' && n.body.type !== 'BlockStatement' ? { returns: valueOf(n.body, depth + 1) } : {};
+  return { k: 'fn', params: paramsOf(n).map((p) => p.name), line: lineOf(n), endLine: endLineOf(n), ...returns };
 }
 
 /** A type annotation's name: `Foo` or `ns.Foo` for a type reference, null for anything else. */
@@ -220,44 +230,74 @@ function classRecords(file, node, exported, emit) {
   }
 }
 
+/** The parts of a statement or an expression that may not run when it does. */
+const MAY_NOT_RUN = Object.freeze({
+  IfStatement: ['consequent', 'alternate'],
+  ConditionalExpression: ['consequent', 'alternate'],
+  LogicalExpression: ['right'],
+  SwitchStatement: ['cases'],
+  ForStatement: ['test', 'update', 'body'],
+  ForInStatement: ['body'],
+  ForOfStatement: ['body'],
+  WhileStatement: ['test', 'body'],
+  DoWhileStatement: ['body'],
+  TryStatement: ['handler'],
+});
+
 /**
  * Every call in the file, each with the member or function it is written in,
  * and its place among that member's calls. The place is what an id is built on,
  * so a blank line or a comment added above it changes nothing. A decorator is
  * not a call its member makes: it runs once, when the class is defined, and
  * is recorded on the class, method or parameter it decorates.
+ *
+ * A call that may not run when its member does is marked `cond`: one in a
+ * branch, a loop or a catch block, or in a function nested in the member, which
+ * runs when, and if, whatever it is handed to calls it.
  */
 function walkCalls(file, ast, emit) {
   const counters = new Map();
   // The name each initializer is held in (`const app = await …` holds the call under the await).
   const holders = new Map();
-  const visit = (node, where) => {
+  // `root` is the function that IS the member, so it is not taken for one nested in it.
+  const visit = (node, where, root, cond) => {
     if (node.type === 'Decorator') return;
     if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) holders.set(unwrap(node.init), node.id.name);
-    let here = where;
     if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
       const cls = node.id ? node.id.name : 'default';
       for (const m of node.body.body) {
         const member = m.key && !m.computed ? keyName(m) : null;
         const w = member === null ? `${cls}.<computed>` : `${cls}.${m.kind === 'constructor' ? 'constructor' : member}`;
-        eachChild(m, (c) => visit(c, w));
+        const body = m.type === 'ClassProperty' && isFunctionNode(unwrap(m.value)) ? unwrap(m.value) : null;
+        eachChild(m, (c) => visit(c, w, body, false));
       }
       return;
     }
-    if (node.type === 'FunctionDeclaration' && node.id && where === null) here = node.id.name;
-    if (node.type === 'VariableDeclarator' && where === null && node.id.type === 'Identifier' && isFunctionNode(unwrap(node.init))) here = node.id.name;
+    let [here, top, mayNotRun] = [where, root, cond];
+    if (node.type === 'FunctionDeclaration' && node.id && where === null) [here, top] = [node.id.name, node];
+    if (node.type === 'VariableDeclarator' && where === null && node.id.type === 'Identifier' && isFunctionNode(unwrap(node.init))) [here, top] = [node.id.name, unwrap(node.init)];
+    if (isFunctionNode(node) && node !== top) mayNotRun = true;
     if (node.type === 'CallExpression' || node.type === 'OptionalCallExpression') {
       const callee = chainOf(node.callee);
       if (callee !== null) {
         const n = counters.get(here) ?? 0;
         counters.set(here, n + 1);
         const holder = holders.get(node);
-        emit({ kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), n, ...(holder ? { holder } : {}), line: lineOf(node) });
+        emit({
+          kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), n,
+          ...(holder ? { holder } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node),
+        });
       }
     }
-    eachChild(node, (c) => visit(c, here));
+    const branches = MAY_NOT_RUN[node.type] ?? [];
+    eachChild(node, (c, key) => visit(c, here, top, mayNotRun || branches.includes(key)));
   };
-  visit(ast.program, null);
+  visit(ast.program, null, null, false);
+}
+
+/** A module function, with the names its parameters go by (null for a destructured one). */
+function functionRecord(file, name, fn, exported, at) {
+  return { kind: 'function', file, name, exported, params: paramsOf(fn).map((p) => p.name), line: lineOf(at) };
 }
 
 function declarationRecords(file, ast, emit) {
@@ -271,10 +311,10 @@ function declarationRecords(file, ast, emit) {
     const decl = exported ? stmt.declaration : stmt;
     if (!decl) continue;
     if (decl.type === 'ClassDeclaration') classRecords(file, decl, exported, emit);
-    else if (decl.type === 'FunctionDeclaration' && decl.id) emit({ kind: 'function', file, name: decl.id.name, exported, line: lineOf(decl) });
+    else if (decl.type === 'FunctionDeclaration' && decl.id) emit(functionRecord(file, decl.id.name, decl, exported, decl));
     else if (decl.type === 'VariableDeclaration') {
       for (const d of decl.declarations) {
-        if (d.id.type === 'Identifier' && isFunctionNode(unwrap(d.init))) emit({ kind: 'function', file, name: d.id.name, exported, line: lineOf(d) });
+        if (d.id.type === 'Identifier' && isFunctionNode(unwrap(d.init))) emit(functionRecord(file, d.id.name, unwrap(d.init), exported, d));
       }
     }
   }

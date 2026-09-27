@@ -120,6 +120,18 @@ test('prisma.operation refuses an operation with a statement type it does not kn
   has(problems, /p\.ops params\.operations\.findMany\.statement must be one of select, insert, update, delete, upsert/);
 });
 
+test('prisma.operation refuses params.combinators that is not an array of names', () => {
+  const problems = refusal([{ where: 'r.json', pack: packOf([opRule({ combinators: 'AND' })]) }]);
+  has(problems, /p\.ops params\.combinators must be an array of names/);
+});
+
+test('prisma.operation refuses params.transaction missing method or clientParam', () => {
+  const noMethod = refusal([{ where: 'r.json', pack: packOf([opRule({ transaction: { clientParam: 0 } })]) }]);
+  has(noMethod, /p\.ops params\.transaction\.method must be a name as the source calls it/);
+  const noClientParam = refusal([{ where: 'r.json', pack: packOf([opRule({ transaction: { method: '$transaction' } })]) }]);
+  has(noClientParam, /p\.ops params\.transaction\.clientParam must be a whole number from 0/);
+});
+
 test('compiled.effectsOf reads a simple where and select', () => {
   const compiled = KINDS['prisma.operation'].compile({
     id: 'p.ops',
@@ -135,9 +147,95 @@ test('compiled.effectsOf reads a simple where and select', () => {
   assert.equal(fx.wholeRow, false, 'a select was given, so the whole row is not returned');
 });
 
+test('compiled.effectsOf reads a named compound key through the model\'s compounds, never by splitting it on _', () => {
+  const compiled = KINDS['prisma.operation'].compile({
+    id: 'p.ops',
+    params: { arguments: { where: 'filter', select: 'project' }, operations: { findUnique: { statement: 'select', wholeRow: true } } },
+  });
+  const model = {
+    fields: [{ name: 'id', relation: false }, { name: 'email', relation: false }, { name: 'a', relation: false }, { name: 'b', relation: false }],
+    compounds: { id_email: ['a', 'b'] },
+  };
+  const fx = compiled.effectsOf('findUnique', [valueOfSource('{ where: { id_email: { a: 1, b: 2 } }, select: { id: true } }')], model);
+  assert.deepEqual([...fx.reads].sort(), ['a', 'b', 'id'], 'id_email means a and b, the compound\'s own fields, not the id and email a split would guess');
+});
+
+test('a key shaped like fields joined by _ is not a compound unless the model declares one: it is an unknown key, never guessed by splitting', () => {
+  const compiled = KINDS['prisma.operation'].compile({
+    id: 'p.ops',
+    params: { arguments: { where: 'filter' }, operations: { findMany: { statement: 'select' } } },
+  });
+  const model = { fields: [{ name: 'a', relation: false }, { name: 'b', relation: false }], compounds: {} };
+  const fx = compiled.effectsOf('findMany', [valueOfSource('{ where: { a_b: { a: 1, b: 2 } } }')], model);
+  assert.deepEqual([...fx.reads], []);
+  assert.deepEqual([...fx.unknownKeys], ['a_b']);
+});
+
+test('a select value that is neither true nor false may read its field: mayReads, graded apart from reads, and the key is named in runtimeOnly', () => {
+  const compiled = KINDS['prisma.operation'].compile({
+    id: 'p.ops',
+    params: { arguments: { select: 'project' }, operations: { findMany: { statement: 'select', wholeRow: true } } },
+  });
+  const model = { fields: [{ name: 'id', relation: false }, { name: 'email', relation: false }] };
+  const fx = compiled.effectsOf('findMany', [valueOfSource('{ select: { id: true, email: flag } }')], model);
+  assert.deepEqual([...fx.reads], ['id']);
+  assert.deepEqual([...fx.mayReads], ['email']);
+  assert.equal(fx.wholeRow, false, 'a select was given (even a dynamic one), so the whole row is not claimed');
+  assert.ok([...fx.runtimeOnly].some((r) => r.includes('email')), `runtimeOnly should name the key: ${JSON.stringify([...fx.runtimeOnly])}`);
+});
+
+test('a computed top-level argument key ({ [key]: {...} }) is runtimeOnly like a spread, and claims no whole row', () => {
+  const compiled = KINDS['prisma.operation'].compile({
+    id: 'p.ops',
+    params: { arguments: { select: 'project' }, operations: { findMany: { statement: 'select', wholeRow: true } } },
+  });
+  const model = { fields: [{ name: 'id', relation: false }] };
+  const fx = compiled.effectsOf('findMany', [valueOfSource('{ [key]: { id: true } }')], model);
+  assert.deepEqual([...fx.reads], []);
+  assert.equal(fx.wholeRow, false, 'which argument this call sends is not known, so no column is claimed for certain');
+  assert.ok(fx.runtimeOnly.has('arguments'));
+});
+
+test('a filter combinator is read from params.combinators, not hardcoded: with none declared, OR is just an unknown key', () => {
+  const compiled = KINDS['prisma.operation'].compile({
+    id: 'p.ops',
+    params: { arguments: { where: 'filter' }, operations: { findMany: { statement: 'select' } } },
+  });
+  const model = { fields: [{ name: 'email', relation: false }, { name: 'name', relation: false }] };
+  const fx = compiled.effectsOf('findMany', [valueOfSource('{ where: { OR: [{ email: e }, { name: n }] } }')], model);
+  assert.deepEqual([...fx.reads], [], 'OR is not a combinator this rule declared, so it is not followed into the filter');
+  assert.deepEqual([...fx.unknownKeys], ['OR']);
+});
+
+test('with params.combinators declaring OR, a where reads through it the same way the shipped pack reads AND/OR/NOT', () => {
+  const compiled = KINDS['prisma.operation'].compile({
+    id: 'p.ops',
+    params: { arguments: { where: 'filter' }, operations: { findMany: { statement: 'select' } }, combinators: ['OR'] },
+  });
+  const model = { fields: [{ name: 'email', relation: false }, { name: 'name', relation: false }] };
+  const fx = compiled.effectsOf('findMany', [valueOfSource('{ where: { OR: [{ email: e }, { name: n }] } }')], model);
+  assert.deepEqual([...fx.reads].sort(), ['email', 'name']);
+});
+
+test('compile() carries params.transaction through so the bridge can read it, and null when the pack declares none', () => {
+  const withTx = KINDS['prisma.operation'].compile({
+    id: 'p.ops', params: { arguments: {}, operations: { findMany: { statement: 'select' } }, transaction: { method: '$transaction', clientParam: 0 } },
+  });
+  assert.deepEqual(withTx.transaction, { method: '$transaction', clientParam: 0 });
+  const withoutTx = KINDS['prisma.operation'].compile({ id: 'p.ops', params: { arguments: {}, operations: { findMany: { statement: 'select' } } } });
+  assert.equal(withoutTx.transaction, null);
+});
+
 test('the shipped prisma pack (prisma.client, prisma.nestjs-prisma-service, prisma.operations) holds its examples', () => {
   const results = testRules(builtinRegistry(), { only: 'prisma', env: { tsFacts: factsOfFile, tsValue: valueOfSource } });
   assert.ok(results.length >= 3, 'all three rules of the pack were selected');
   for (const r of results) assert.deepEqual(r.failures, [], `${r.id}: ${JSON.stringify(r.failures)}`);
   assert.deepEqual(results.filter((r) => r.notRun), []);
+});
+
+test('a key named like a property every object has (toString, constructor) is an unknown key, not a compound', () => {
+  const op = builtinRegistry().ofKind('prisma.operation')[0].compiled;
+  const fx = op.effectsOf('findMany', [valueOfSource('{ where: { toString: 1, constructor: 2 } }')], { fields: [{ name: 'id', relation: false }], compounds: {} });
+  assert.deepEqual([...fx.unknownKeys].sort(), ['constructor', 'toString']);
+  assert.deepEqual([...fx.reads], []);
 });

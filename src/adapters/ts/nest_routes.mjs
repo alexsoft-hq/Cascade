@@ -2,89 +2,64 @@
 //
 // A controller class is not a route by existing. It serves only when a module
 // the application loads lists it, starting from the module the bootstrap hands
-// `NestFactory.create`, through each module's `imports`. The application is the
-// one the bootstrap then `listen`s on (ghostfolio makes a first one only to read
-// its configuration and closes it). Its `setGlobalPrefix` goes before every
-// route, and `enableVersioning` of the URI type puts the version after that.
-// A module `RouterModule.register` names a path puts that path before the
+// `NestFactory.create`, through each module's `imports`. The bootstrap's
+// prefix, excludes and versioning are read in src/adapters/ts/nest_app.mjs;
+// a module `RouterModule.register` names a path puts that path before the
 // routes of the controllers the module declares.
 //
+// A class is read as Nest reads it: a decorator by the name its package gives
+// it (`import { Controller as Ctl }` is Controller, one of the project's own
+// named Controller is not), and the route methods it inherits from classes of
+// the project beside its own, as Nest's scan of the prototype chain finds them.
+//
 // WHAT IS NOT KNOWN MAKES NO ROUTE. A prefix, a version or a path the source
-// holds in a variable, a module list built by a condition: the route it would
-// give could be wrong, so none is made, and the reason is a diagnostic. A
-// route made anyway would be a confident answer about an address that may not
-// exist. The names these calls go by are the rule's (src/core/rules/packs/nestjs.json).
+// holds in a variable, a module list a spread may replace: the route it would
+// give could be wrong, so none is made, and the reason is a diagnostic. A route
+// whose address holds only if no unread exclude names it is made at the
+// address it has otherwise and graded HEURISTIC. The names these calls go by
+// are the rule's (src/core/rules/packs/nestjs.json).
 
-import { joinRoute, versionsOf } from '../../core/rules/kinds/ts_route_decorator.mjs';
+import { joinRoute } from '../../core/rules/kinds/ts_route_decorator.mjs';
+import { readApplication } from './nest_app.mjs';
+import { nestPathOf } from './route_pattern.mjs';
 
 const MAX_MODULES = 2000;
-// A route pattern (`cats/*`, `{/*wildcard}`, `:id`) is matched by the
-// framework's own path matcher; only a plain path is compared here.
-const PATTERN_CHARS = /[*:{}()?+]/;
 
-/** Calls of one member, by the callee as written. */
-function callsIn(project, file, where) {
-  return project.calls.filter((c) => c.file === file && c.in === where);
+/** The name a decorator has in its package; null for one of the project's own, or another package's; one this engine cannot trace keeps its written name. */
+function frameworkName(project, file, written, packages) {
+  const [head, ...rest] = written.split('.');
+  const ns = project.files.get(file)?.imports.find((i) => i.namespace === head);
+  if (ns) return packages.includes(ns.source) && rest.length > 0 ? rest.join('.') : null;
+  if (rest.length > 0) return written;
+  const m = project.meaning(file, head);
+  if (!m) return written;
+  return m.external && packages.includes(m.external) ? m.name : null;
+}
+
+function decoratorsIn(project, file, decorators, packages) {
+  return decorators.map((d) => ({ ...d, name: frameworkName(project, file, d.name, packages) })).filter((d) => d.name !== null);
 }
 
 /**
- * The application the bootstrap serves: the `create` call whose holder then
- * calls `listen`. With one `create` and no `listen` seen, that one.
+ * A class as the rule reads it: its decorators by their package names, and its
+ * methods with those it inherits from classes of the project, the nearest
+ * declaration of each name winning. Each method keeps the class that declares it.
  */
-function servedApp(project, app, diagnostics) {
-  const creates = project.calls.filter((c) => c.callee === app.create);
-  const served = creates.filter((c) => c.holder && callsIn(project, c.file, c.in).some((x) => x.callee === `${c.holder}.${app.listen}`));
-  const pick = served.length === 1 ? served[0] : creates.length === 1 ? creates[0] : null;
-  if (!pick) diagnostics.push({ kind: 'TS_APP_NOT_FOUND', reason: creates.length === 0 ? `no call of ${app.create} was found, so no controller is known to be served` : `${creates.length} calls of ${app.create} and ${served.length} of them listen: which application serves is not decided, so no route is made` });
-  return pick;
-}
-
-function configOf(project, boot, app, name) {
-  const calls = boot.holder ? callsIn(project, boot.file, boot.in).filter((c) => c.callee === `${boot.holder}.${name}`) : [];
-  return calls.length === 0 ? { absent: true } : { args: calls[calls.length - 1].args };
-}
-
-/** The routes a global prefix's `exclude` option names as plain paths; a pattern or a computed entry is said, not guessed. */
-function excludesOf(opts, prefix, notes) {
-  const exclude = opts && opts.k === 'obj' && opts.v.exclude && opts.v.exclude.k === 'arr' ? opts.v.exclude : null;
-  const literal = exclude ? exclude.v.filter((e) => e.k === 'str' && !PATTERN_CHARS.test(e.v)).map((e) => joinRoute(e.v)) : [];
-  const unread = exclude ? exclude.v.length - literal.length + (exclude.spread ? 1 : 0) : 0;
-  if (unread > 0) notes.push({ kind: 'TS_PREFIX_EXCLUDE_UNREAD', reason: `the global prefix "${prefix}" excludes ${unread} route pattern(s) not written as plain literal paths; a route one of them names is served without the prefix, and is shown here with it` });
-  return literal;
-}
-
-/**
- * The global prefix: the profile's `tsBackend.globalPrefix` when it declares
- * one (the deployed value, which a prefix read from configuration only names),
- * else the literal the bootstrap sets, `''` when it sets none, and null when it
- * sets something not written as a literal.
- */
-function prefixOf(project, boot, app, notes, declared) {
-  const cfg = configOf(project, boot, app, app.globalPrefix);
-  const [p, opts] = cfg.absent ? [] : cfg.args;
-  const written = cfg.absent ? '' : p && p.k === 'str' ? p.v : null;
-  const prefix = declared ?? written;
-  if (prefix === null) return null;
-  if (declared != null && written !== null && written !== declared) {
-    notes.push({ kind: 'TS_PREFIX_DECLARED', reason: `the profile's tsBackend.globalPrefix "${declared}" is used, and the bootstrap sets "${written}"` });
+function classView(project, cls, packages) {
+  const methods = new Map();
+  for (const c of project.lineage(cls)) {
+    for (const [name, m] of c.methods) if (!methods.has(name)) methods.set(name, { ...m, decorators: decoratorsIn(project, c.file, m.decorators, packages) });
   }
-  return { prefix, exclude: excludesOf(opts, prefix, notes) };
+  return { ...cls, decorators: decoratorsIn(project, cls.file, cls.decorators, packages), methods };
 }
 
-/** URI versioning: `{uri:false}` when there is none, `{uri, prefix, defaultVersion}` when it is literal, null when not. */
-function versioningOf(project, boot, app) {
-  const cfg = configOf(project, boot, app, app.versioning);
-  if (cfg.absent) return { uri: false };
-  const opts = cfg.args[0];
-  if (!opts || opts.k !== 'obj' || opts.spread) return null;
-  const type = opts.v.type;
-  if (!type || type.k !== 'member') return null;
-  if (type.v !== app.uriType) return { uri: false };
-  const defaultVersion = versionsOf(opts.v.defaultVersion, app.neutral);
-  if (defaultVersion?.unread) return null;
-  const prefix = opts.v.prefix === undefined ? app.uriPrefix : opts.v.prefix.k === 'str' ? opts.v.prefix.v : null;
-  if (prefix === null) return null;
-  return { uri: true, prefix, defaultVersion };
+function viewsOf(project, compiled) {
+  const views = new Map();
+  const viewOf = (cls) => {
+    if (!views.has(cls.key)) views.set(cls.key, classView(project, cls, compiled.packages));
+    return views.get(cls.key);
+  };
+  return viewOf;
 }
 
 /** A module list entry's module class: a name, `X.forRoot(...)`, or `forwardRef(() => X)`. */
@@ -133,13 +108,33 @@ function readModulePaths(project, file, list, parent, out) {
 
 const pathOfTree = (v) => (v === undefined ? '' : v.k === 'str' ? v.v : null);
 
+/** One module's imports: the modules to walk next, and the paths a `RouterModule.register` among them gives. False when that is not read. */
+function walkImports(project, compiled, mod, decl, ctx) {
+  const { queue, modulePaths, diagnostics } = ctx;
+  let read = true;
+  for (const v of decl.imports.v) {
+    if (v.k === 'call' && v.callee === compiled.app.routerModule) {
+      if (!readModulePaths(project, mod.file, v.args[0], '', modulePaths)) read = false;
+      continue;
+    }
+    const target = moduleClassOf(project, mod.file, v);
+    if (target) queue.push(target);
+    else if (!isPackageModule(project, mod.file, v)) {
+      const what = v.k === 'id' ? `the import ${v.v} is a value, not a module class` : `an import of kind ${v.k} is not a module class this engine can name`;
+      diagnostics.push({ kind: 'TS_MODULE_IMPORT_UNREAD', reason: `${mod.key}: ${what}, so the controllers the module it holds registers are not served here` });
+    }
+  }
+  if (decl.imports.spread) diagnostics.push({ kind: 'TS_MODULE_IMPORT_UNREAD', reason: `${mod.key}: its imports spread a list, so the modules in it are not known` });
+  return read;
+}
+
 /**
  * Every controller the modules reachable from `root` register, each with the
  * module that declares it, the module paths `RouterModule.register` gives, and
- * what could not be read on the way. `modulePathsRead` is false when a
- * `RouterModule.register` was not written as literals.
+ * what could not be read on the way. A module whose options this engine cannot
+ * read registers nothing here: a spread may replace the lists written beside it.
  */
-function registeredControllers(project, compiled, root, diagnostics) {
+function registeredControllers(project, compiled, viewOf, root, diagnostics) {
   const seen = new Set();
   const queue = [root];
   const controllers = new Map();
@@ -149,22 +144,14 @@ function registeredControllers(project, compiled, root, diagnostics) {
     const mod = queue.shift();
     if (seen.has(mod.key)) continue;
     seen.add(mod.key);
-    const decl = compiled.moduleOf(mod);
+    const decl = compiled.moduleOf(viewOf(mod));
     if (!decl) continue;
-    if (!decl.readable) diagnostics.push({ kind: 'TS_MODULE_UNREAD', reason: `${mod.key}: its module options are not an object literal, so what it imports and registers is not known` });
-    for (const v of decl.imports.v) {
-      if (v.k === 'call' && v.callee === compiled.app.routerModule) {
-        if (!readModulePaths(project, mod.file, v.args[0], '', modulePaths)) modulePathsRead = false;
-        continue;
-      }
-      const target = moduleClassOf(project, mod.file, v);
-      if (target) queue.push(target);
-      else if (!isPackageModule(project, mod.file, v)) {
-        const what = v.k === 'id' ? `the import ${v.v} is a value, not a module class` : `an import of kind ${v.k} is not a module class this engine can name`;
-        diagnostics.push({ kind: 'TS_MODULE_IMPORT_UNREAD', reason: `${mod.key}: ${what}, so the controllers the module it holds registers are not served here` });
-      }
+    if (!decl.readable) {
+      diagnostics.push({ kind: 'TS_MODULE_UNREAD', reason: `${mod.key}: its module options are not an object literal this engine can read whole, so what it imports and registers is not known and none of it is served here` });
+      continue;
     }
-    if (decl.imports.spread) diagnostics.push({ kind: 'TS_MODULE_IMPORT_UNREAD', reason: `${mod.key}: its imports spread a list, so the modules in it are not known` });
+    if (!walkImports(project, compiled, mod, decl, { queue, modulePaths, diagnostics })) modulePathsRead = false;
+    if (decl.controllers.spread) diagnostics.push({ kind: 'TS_MODULE_UNREAD', reason: `${mod.key}: its controllers spread a list, so the controllers in it are not served here` });
     for (const v of decl.controllers.v) {
       const cls = v.k === 'id' ? project.classOf(mod.file, v.v) : null;
       if (cls) controllers.set(cls.key, { cls, module: mod.key });
@@ -182,24 +169,46 @@ function versionSegments(versioning, routeVersion) {
   return [...new Set(v.versions.map((x) => (x === null ? '' : `${versioning.prefix}${x}`)))];
 }
 
+/** Where the global prefix goes for one route: none when an exclude names it, and whether that rests on no unread exclude naming it. */
+function prefixFor(prefix, verb, own) {
+  const nestPath = nestPathOf(own);
+  const excluded = prefix.matchers.some((m) => (m.verb === 'ANY' || m.verb === verb) && m.test.test(nestPath));
+  if (excluded || prefix.prefix === '') return { head: excluded ? '' : prefix.prefix, uncertain: false };
+  return { head: prefix.prefix, uncertain: prefix.unreadExcludes > 0 };
+}
+
 function routesOfController(compiled, entry, ctx) {
-  const { prefix, versioning, modulePaths, diagnostics } = ctx;
-  const { cls } = entry;
-  const ctl = compiled.controllerOf(cls);
+  const { prefix, versioning, modulePaths, diagnostics, viewOf } = ctx;
+  const view = viewOf(entry.cls);
+  const ctl = compiled.controllerOf(view);
   if (!ctl) return [];
-  return compiled.routesOf(cls, ctl).flatMap((r) => {
+  return compiled.routesOf(view, ctl).flatMap((r) => {
     const segments = versionSegments(versioning, r.version);
     if (r.path === null || segments === null) {
       const what = r.path === null ? 'its path' : 'its version';
-      diagnostics.push({ kind: r.path === null ? 'TS_ROUTE_PATH_UNREAD' : 'TS_ROUTE_VERSION_UNREAD', reason: `${cls.key}.${r.method}: ${what} is not written as a literal, so no route is made for it` });
+      diagnostics.push({ kind: r.path === null ? 'TS_ROUTE_PATH_UNREAD' : 'TS_ROUTE_VERSION_UNREAD', reason: `${entry.cls.key}.${r.method}: ${what} is not written as a literal, so no route is made for it` });
       return [];
     }
     const own = joinRoute(modulePaths.get(entry.module) ?? '', r.path);
-    const head = prefix.exclude.includes(own) ? '' : prefix.prefix;
+    const { head, uncertain } = prefixFor(prefix, r.verb, own);
     return segments.map((segment) => ({
-      verb: r.verb, path: joinRoute(head, segment, own), file: cls.file, cls: cls.name, method: r.method, line: r.line, rule: compiled.rule,
+      verb: r.verb, path: joinRoute(head, segment, own), file: r.file, cls: r.cls, method: r.method, line: r.line, rule: compiled.rule,
+      ...(uncertain ? { grade: 'HEURISTIC', uncertain: `the global prefix "${prefix.prefix}" excludes ${prefix.unreadExcludes} route pattern(s) this engine cannot read; if one names this route it is served without the prefix` } : {}),
     }));
   });
+}
+
+/**
+ * The classes whose methods declare routes and that no controller decorator
+ * marks, nor any controller extends: a decorator of the project's own that
+ * wraps Controller is not read, so their routes are not served here, and that
+ * is said.
+ */
+function unmarkedRouteClasses(project, compiled, viewOf, controllers) {
+  const inherited = new Set(controllers.flatMap((c) => project.lineage(c).map((x) => x.key)));
+  return [...project.files.values()].flatMap((f) => [...f.classes.values()])
+    .filter((c) => !inherited.has(c.key) && compiled.declaresRoutes(viewOf(c)))
+    .map((c) => ({ kind: 'TS_ROUTES_WITHOUT_CONTROLLER', reason: `${c.key}: its methods declare routes and no controller decorator the rule names marks it or a class extending it, so they are not served here` }));
 }
 
 /**
@@ -209,33 +218,26 @@ function routesOfController(compiled, entry, ctx) {
  *
  * @param {object} project  readProject's answer
  * @param {object} compiled  the ts.route-decorator rule, compiled
- * @param {{globalPrefix?:(string|null)}} [declared]  what the profile says the source cannot
+ * @param {{globalPrefix?:(string|null), globalPrefixExclude?:(string[]|null)}} [declared]  what the profile says the source cannot
  * @returns {{routes:object[], diagnostics:object[], controllers:number, unregistered:(string[]|null)}}
  */
 export function nestRoutes(project, compiled, declared = {}) {
   const diagnostics = [];
-  const app = compiled.app;
-  const boot = app ? servedApp(project, app, diagnostics) : null;
-  const root = boot ? moduleClassOf(project, boot.file, boot.args[0]) : null;
-  if (boot && !root) diagnostics.push({ kind: 'TS_ROOT_MODULE_UNREAD', reason: `${boot.file}:${boot.line}: the module handed to ${app.create} is not a class of this project` });
-  const prefix = boot ? prefixOf(project, boot, app, diagnostics, declared.globalPrefix ?? null) : null;
-  const versioning = boot ? versioningOf(project, boot, app) : null;
-  if (boot && prefix === null) diagnostics.push({ kind: 'TS_PREFIX_UNREAD', reason: `${boot.file}: the global prefix is not written as a literal, so no route's address is known. Declare the deployed one as tsBackend.globalPrefix in the profile` });
-  if (boot && versioning === null) diagnostics.push({ kind: 'TS_VERSIONING_UNREAD', reason: `${boot.file}: the versioning options are not written as literals, so no route's address is known` });
-  const allControllers = [...project.files.values()].flatMap((f) => [...f.classes.values()]).filter((c) => compiled.controllerOf(c));
-  if (!root || prefix === null || versioning === null) return { routes: [], diagnostics, controllers: allControllers.length, unregistered: null };
-  const registered = registeredControllers(project, compiled, root, diagnostics);
+  const viewOf = viewsOf(project, compiled);
+  const allControllers = [...project.files.values()].flatMap((f) => [...f.classes.values()]).filter((c) => compiled.controllerOf(viewOf(c)));
+  diagnostics.push(...unmarkedRouteClasses(project, compiled, viewOf, allControllers));
+  const application = compiled.app ? readApplication(project, compiled.app, declared, diagnostics) : null;
+  const root = application ? moduleClassOf(project, application.boot.file, application.boot.args[0]) : null;
+  if (application && !root) diagnostics.push({ kind: 'TS_ROOT_MODULE_UNREAD', reason: `${application.boot.file}:${application.boot.line}: the module handed to ${compiled.app.create} is not a class of this project` });
+  const unknown = { routes: [], diagnostics, controllers: allControllers.length, unregistered: null };
+  if (!root || application.prefix.unread || application.versioning.unread) return unknown;
+  const registered = registeredControllers(project, compiled, viewOf, root, diagnostics);
   const keys = new Set(registered.controllers.map((c) => c.cls.key));
   const unregistered = allControllers.filter((c) => !keys.has(c.key)).map((c) => c.key).sort();
   if (!registered.modulePathsRead) {
-    diagnostics.push({ kind: 'TS_ROUTER_MODULE_UNREAD', reason: `the module paths ${app.routerModule} gives are not all written as literals, so no route's address is known` });
-    return { routes: [], diagnostics, controllers: allControllers.length, unregistered };
+    diagnostics.push({ kind: 'TS_ROUTER_MODULE_UNREAD', reason: `the module paths ${compiled.app.routerModule} gives are not all written as literals, so no route's address is known` });
+    return { ...unknown, unregistered };
   }
-  const ctx = { prefix, versioning, modulePaths: registered.modulePaths, diagnostics };
-  return {
-    routes: registered.controllers.flatMap((entry) => routesOfController(compiled, entry, ctx)),
-    diagnostics,
-    controllers: allControllers.length,
-    unregistered,
-  };
+  const ctx = { prefix: application.prefix, versioning: application.versioning, modulePaths: registered.modulePaths, diagnostics, viewOf };
+  return { routes: registered.controllers.flatMap((entry) => routesOfController(compiled, entry, ctx)), diagnostics, controllers: allControllers.length, unregistered };
 }

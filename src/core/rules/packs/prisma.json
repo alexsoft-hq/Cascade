@@ -49,7 +49,7 @@
     {
       "id": "prisma.operations",
       "kind": "prisma.operation",
-      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true, where and cursor filter by the fields they name (through AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations.",
+      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true (a value that is neither true nor false MAY be returned, read at run time), where and cursor filter by the fields they name (through the combinators AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations. A key naming a compound unique or id (schema.prisma's @@unique/@@id) is read through the model's own compounds, never by splitting the key.",
       "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference). A find without select returns every scalar field of the model.",
       "params": {
         "arguments": {
@@ -59,6 +59,8 @@
           "data": "write", "create": "write", "update": "write",
           "skip": "none", "take": "none", "skipDuplicates": "none", "relationLoadStrategy": "none"
         },
+        "combinators": ["AND", "OR", "NOT"],
+        "transaction": { "method": "$transaction", "clientParam": 0 },
         "operations": {
           "findMany": { "statement": "select", "wholeRow": true },
           "findUnique": { "statement": "select", "wholeRow": true },
@@ -96,9 +98,16 @@
           "why": "a nested write reaches another table, and says so"
         },
         {
-          "operation": "upsert", "args": "{ where: { accountId_date: { accountId, date } }, create: { accountId, date, value }, update: { value } }", "fields": ["accountId", "date", "value"],
+          "operation": "upsert", "args": "{ where: { accountId_date: { accountId, date } }, create: { accountId, date, value }, update: { value } }",
+          "fields": ["accountId", "date", "value"], "compounds": { "accountId_date": ["accountId", "date"] },
           "expect": { "reads": ["accountId", "date"], "writes": ["accountId", "date", "value"], "wholeRow": true },
-          "why": "a compound unique key names the fields it joins with _"
+          "why": "a compound unique key reads through the model's own compounds, not by splitting the key on _"
+        },
+        {
+          "operation": "findUnique", "args": "{ where: { id_email: { a: 1, b: 2 } }, select: { id: true } }",
+          "fields": ["id", "email", "a", "b"], "compounds": { "id_email": ["a", "b"] },
+          "expect": { "reads": ["a", "b", "id"] },
+          "why": "a named compound (@@unique([a, b], name: \"id_email\")) means a and b, never the id and email a split on _ would guess"
         },
         {
           "operation": "findMany", "args": "{ where, select: { id: true } }", "fields": ["id", "email"],
@@ -113,6 +122,16 @@
           "operation": "findMany", "args": "{ ...query }", "fields": ["id"],
           "expect": { "runtimeOnly": ["arguments"] },
           "why": "a spread argument: which fields, and whether all of them are returned, is not known"
+        },
+        {
+          "operation": "findMany", "args": "{ [key]: { id: true } }", "fields": ["id"],
+          "expect": { "runtimeOnly": ["arguments"] },
+          "why": "a computed top-level key: which argument this call sends is not known, so it is not read as a select and the whole row is not claimed either"
+        },
+        {
+          "operation": "findMany", "args": "{ select: { id: true, email: flag } }", "fields": ["id", "email"],
+          "expect": { "reads": ["id"], "mayReads": ["email"], "runtimeOnly": ["select.email"] },
+          "why": "a select value that is neither true nor false MAY be returned: the field is not dropped and not claimed EXACT, it goes to mayReads"
         }
       ]
     }

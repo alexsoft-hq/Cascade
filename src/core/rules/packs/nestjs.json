@@ -13,9 +13,14 @@
         "module": "Module",
         "version": "Version",
         "verbs": { "Get": "GET", "Post": "POST", "Put": "PUT", "Patch": "PATCH", "Delete": "DELETE", "Options": "OPTIONS", "Head": "HEAD", "All": "ANY" },
+        "packages": ["@nestjs/common"],
         "app": {
           "create": "NestFactory.create", "listen": "listen", "globalPrefix": "setGlobalPrefix", "versioning": "enableVersioning",
-          "uriType": "VersioningType.URI", "uriPrefix": "v", "neutral": "VERSION_NEUTRAL", "routerModule": "RouterModule.register"
+          "uriType": "VersioningType.URI", "uriPrefix": "v", "neutral": "VERSION_NEUTRAL", "routerModule": "RouterModule.register",
+          "requestMethods": {
+            "RequestMethod.GET": "GET", "RequestMethod.POST": "POST", "RequestMethod.PUT": "PUT", "RequestMethod.PATCH": "PATCH",
+            "RequestMethod.DELETE": "DELETE", "RequestMethod.OPTIONS": "OPTIONS", "RequestMethod.HEAD": "HEAD", "RequestMethod.ALL": "ANY"
+          }
         }
       },
       "examples": [
@@ -46,6 +51,11 @@
           "source": "import { Controller, Get } from '@nestjs/common';\nconst BASE = 'x';\n@Controller(BASE)\nexport class DynamicController {\n  @Get('a') a() {}\n}\n",
           "expect": [{ "class": "DynamicController", "method": "a", "verb": "GET", "path": "<unknown>" }],
           "why": "a path held in a variable is not read here, and the bridge makes no route of it"
+        },
+        {
+          "source": "import { Controller, Get } from '@nestjs/common';\nconst base = { path: 'reports' };\n@Controller({ ...base, version: '2' })\nexport class SpreadController {\n  @Get('daily') daily() {}\n}\n",
+          "expect": [{ "class": "SpreadController", "method": "daily", "verb": "GET", "path": "<unknown>", "version": "<unknown>" }],
+          "why": "a spread may set the path and the version, so neither is read from the keys beside it, and the bridge makes no route of it"
         },
         {
           "source": "import { Injectable, Get } from '@nestjs/common';\n@Injectable()\nexport class NotAController {\n  @Get() looksLikeARoute() {}\n}\n",

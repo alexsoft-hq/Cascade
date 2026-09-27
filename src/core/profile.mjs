@@ -56,9 +56,10 @@ export const PROFILE_DEFAULTS = deepFreeze({
   frameworkPacks: [],
   // The TypeScript backend this project runs (the `ts` lane): its root, the
   // schema.prisma it reads when that is not at `prisma/schema.prisma` above the
-  // root, and the global prefix it is deployed under when the bootstrap reads
-  // that from configuration. All manifest-relative; null is "not declared".
-  tsBackend: { app: null, prismaSchema: null, globalPrefix: null },
+  // root, and the global prefix it is deployed under, with what that excludes,
+  // when the bootstrap reads them from configuration. Paths manifest-relative;
+  // null is "not declared".
+  tsBackend: { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null },
   modelPacks: [],
   jpa: { namingStrategy: null },
   mybatisPlus: {
@@ -89,6 +90,26 @@ export const PROFILE_DEFAULTS = deepFreeze({
     receiptTtlDays: 30,
   },
 });
+
+/**
+ * THE BLOCKS ADDED AFTER PROFILES WERE FIRST DIGESTED. The calibration gate
+ * pins the analyzed target by the digest of the normalized profile, and a new
+ * block's defaults would move that digest for every project that never set
+ * it: an upgrade would look like the project changed. At its default, such a
+ * block is left out of the digest (`digestedProfile`); set to anything else,
+ * it is in. A block added from now on goes here.
+ */
+export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend']);
+
+/** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default. */
+export function digestedProfile(profile) {
+  if (!profile || typeof profile !== 'object') return profile ?? null;
+  const out = { ...profile };
+  for (const k of BLOCKS_DIGESTED_WHEN_SET) {
+    if (Object.hasOwn(out, k) && JSON.stringify(out[k]) === JSON.stringify(PROFILE_DEFAULTS[k])) delete out[k];
+  }
+  return out;
+}
 
 /**
  * What `calibration.firstRun` may say (SPEC §14.3). `bootstrap` exempts the very
@@ -268,6 +289,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   'tsBackend.globalPrefix': {
     status: 'consumed', where: 'src/adapters/ts/nest_routes.mjs',
     note: 'the global prefix the application is deployed under, used INSTEAD of what the bootstrap passes to setGlobalPrefix. It is for a bootstrap that reads the prefix from configuration (`configService.get(\'app.apiPrefix\')`), where the source names a setting and not a value, and no route is made until it is declared. A declared prefix that differs from a literal the bootstrap sets is used and said',
+  },
+  'tsBackend.globalPrefixExclude': {
+    status: 'consumed', where: 'src/adapters/ts/nest_app.mjs',
+    note: 'the route patterns the global prefix excludes, in Nest\'s own pattern syntax (`health`, `users/:id`, `docs{/*rest}`), used INSTEAD of the bootstrap\'s `exclude` option. It is for an exclude list the bootstrap builds at run time (a template, a spread of a list): while one entry is unread, every route under the prefix is graded HEURISTIC, because an unread entry may name it',
   },
   'jpa.namingStrategy': {
     status: 'consumed', where: 'src/adapters/jpa_bridge.mjs',
@@ -967,6 +992,10 @@ if (isObject(obj.tsBackend)) {
   }
   if ('globalPrefix' in obj.tsBackend && obj.tsBackend.globalPrefix !== null && typeof obj.tsBackend.globalPrefix !== 'string') {
     throw new ProfileError('profile.tsBackend.globalPrefix must be null or the prefix as setGlobalPrefix takes it ("" for none)');
+  }
+  const ex = obj.tsBackend.globalPrefixExclude;
+  if (ex !== undefined && ex !== null && !(Array.isArray(ex) && ex.every((x) => typeof x === 'string' && x !== ''))) {
+    throw new ProfileError('profile.tsBackend.globalPrefixExclude must be null or a list of the route patterns the global prefix excludes');
   }
 }
 

@@ -31,7 +31,8 @@ export function joinRoute(...parts) {
 function pathOf(arg) {
   if (!arg || arg.k === 'none') return '';
   if (arg.k === 'str') return arg.v;
-  if (arg.k === 'obj') return arg.v.path ? pathOf(arg.v.path) : '';
+  // A spread in the options may set the path, so no key written beside it decides it.
+  if (arg.k === 'obj') return arg.spread || arg.computed ? null : arg.v.path ? pathOf(arg.v.path) : '';
   return null;
 }
 
@@ -53,8 +54,12 @@ export function versionsOf(arg, neutral) {
   return versions && versions.length > 0 && !versions.includes(undefined) ? { versions } : { unread: true };
 }
 
-/** The `version` of a controller's options object; a string argument is its path, not a version. */
-const optionsVersionOf = (arg, neutral) => (arg && arg.k === 'obj' && Object.hasOwn(arg.v, 'version') ? versionsOf(arg.v.version, neutral) : null);
+/** The `version` of a controller's options object; a string argument is its path, not a version. A spread may set one. */
+function optionsVersionOf(arg, neutral) {
+  if (!arg || arg.k !== 'obj') return null;
+  if (arg.spread || arg.computed) return { unread: true };
+  return Object.hasOwn(arg.v, 'version') ? versionsOf(arg.v.version, neutral) : null;
+}
 
 const APP_KEYS = Object.freeze(['create', 'listen', 'globalPrefix', 'versioning', 'uriType', 'uriPrefix', 'neutral', 'routerModule']);
 
@@ -62,15 +67,26 @@ const APP_KEYS = Object.freeze(['create', 'listen', 'globalPrefix', 'versioning'
 function appErrors(app) {
   if (app === undefined) return [];
   if (!app || typeof app !== 'object' || Array.isArray(app)) return ['params.app must be an object'];
-  const errors = unknownKeys(app, APP_KEYS).map((k) => `params.app has an unknown key "${k}"`);
+  const errors = unknownKeys(app, [...APP_KEYS, 'requestMethods']).map((k) => `params.app has an unknown key "${k}"`);
   for (const k of APP_KEYS) if (typeof app[k] !== 'string') errors.push(`params.app.${k} must be a name as the source writes it`);
+  const methods = app.requestMethods;
+  if (!methods || typeof methods !== 'object' || Array.isArray(methods)
+    || Object.entries(methods).some(([name, verb]) => typeof name !== 'string' || typeof verb !== 'string' || !VERB.test(verb))) {
+    errors.push('params.app.requestMethods must map a request method as the source writes it (RequestMethod.GET) to an HTTP verb (or ANY)');
+  }
   return errors;
+}
+
+/** The packages the decorators are imported from, so one of the project's own of the same name is not taken for them. */
+function packagesErrors(packages) {
+  return Array.isArray(packages) && packages.length > 0 && packages.every((p) => typeof p === 'string' && p !== '')
+    ? [] : ['params.packages must list the packages the decorators are imported from'];
 }
 
 function validateParams(params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return ['params must be an object'];
-  const errors = unknownKeys(params, ['controller', 'module', 'version', 'verbs', 'app']).map((k) => `params has an unknown key "${k}"`);
-  errors.push(...appErrors(params.app));
+  const errors = unknownKeys(params, ['controller', 'module', 'version', 'verbs', 'app', 'packages']).map((k) => `params has an unknown key "${k}"`);
+  errors.push(...appErrors(params.app), ...packagesErrors(params.packages));
   if (typeof params.controller !== 'string' || !NAME.test(params.controller)) errors.push('params.controller must be a decorator name');
   if (typeof params.module !== 'string' || !NAME.test(params.module)) errors.push('params.module must be a decorator name');
   if (params.version !== undefined && (typeof params.version !== 'string' || !NAME.test(params.version))) errors.push('params.version must be a decorator name');
@@ -105,16 +121,43 @@ function validateExample(example) {
  * global prefix, and `moduleOf(cls)` the imports and controllers a module class
  * declares, as written (null when it is not a module).
  */
+const listOf = (v) => (v && v.k === 'arr' ? v : v ? { k: 'arr', v: [v] } : { k: 'arr', v: [] });
+
+/**
+ * What a module decorator declares: its imports and controllers as written.
+ * `@Module()` with no options is an empty module; options it cannot read (a
+ * variable, a spread that may replace a list) register nothing it can name.
+ */
+function moduleReader(module) {
+  return (cls) => {
+    const d = cls.decorators.find((x) => x.name === module);
+    if (!d) return null;
+    const arg = d.args[0];
+    const opts = arg && arg.k === 'obj' ? arg : null;
+    const readable = !arg || (Boolean(opts) && !opts.spread && !opts.computed);
+    return { imports: listOf(opts?.v.imports), controllers: listOf(opts?.v.controllers), readable };
+  };
+}
+
+/** The routes a controller's methods declare, each under the controller's path, with the class that declares the method. */
+function routeReader(rule, decoratorVersion) {
+  const { verbs } = rule.params;
+  return (cls, ctl) => [...cls.methods.values()].flatMap((m) => m.decorators
+    .filter((d) => Object.hasOwn(verbs, d.name))
+    .map((d) => {
+      const own = pathOf(d.args[0]);
+      const full = ctl.path === null || own === null ? null : joinRoute(ctl.path, own);
+      return {
+        method: m.name, file: m.file, cls: m.class, verb: verbs[d.name], path: full,
+        version: decoratorVersion(m.decorators) ?? ctl.version, line: m.line, rule: rule.id,
+      };
+    }));
+}
+
 function compile(rule) {
   const { controller, module, version, verbs } = rule.params;
   const neutral = rule.params.app?.neutral ?? null;
-  const listOf = (v) => (v && v.k === 'arr' ? v : v ? { k: 'arr', v: [v] } : { k: 'arr', v: [] });
-  const moduleOf = (cls) => {
-    const d = cls.decorators.find((x) => x.name === module);
-    if (!d) return null;
-    const opts = d.args[0] && d.args[0].k === 'obj' ? d.args[0] : null;
-    return { imports: listOf(opts?.v.imports), controllers: listOf(opts?.v.controllers), readable: Boolean(opts) && !opts.spread };
-  };
+  const moduleOf = moduleReader(module);
   const decoratorVersion = (decorators) => {
     const d = decorators.find((x) => x.name === version);
     return d ? versionsOf(d.args[0], neutral) : null;
@@ -124,14 +167,11 @@ function compile(rule) {
     if (!d) return null;
     return { path: pathOf(d.args[0]), version: optionsVersionOf(d.args[0], neutral) ?? decoratorVersion(cls.decorators), rule: rule.id };
   };
-  const routesOf = (cls, ctl) => [...cls.methods.values()].flatMap((m) => m.decorators
-    .filter((d) => Object.hasOwn(verbs, d.name))
-    .map((d) => {
-      const own = pathOf(d.args[0]);
-      const full = ctl.path === null || own === null ? null : joinRoute(ctl.path, own);
-      return { method: m.name, verb: verbs[d.name], path: full, version: decoratorVersion(m.decorators) ?? ctl.version, line: m.line, rule: rule.id };
-    }));
-  return { controllerOf, routesOf, moduleOf, app: rule.params.app ?? null, rule: rule.id };
+  const routesOf = routeReader(rule, decoratorVersion);
+  // Whether any method carries a route decorator: a class that does and is no
+  // controller is one whose routes this rule cannot place.
+  const declaresRoutes = (cls) => [...cls.methods.values()].some((m) => m.decorators.some((d) => Object.hasOwn(verbs, d.name)));
+  return { controllerOf, routesOf, moduleOf, declaresRoutes, app: rule.params.app ?? null, packages: rule.params.packages, rule: rule.id };
 }
 
 /** A route's versions in an example's words: each as written, the neutral one by its name. */

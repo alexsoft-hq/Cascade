@@ -355,7 +355,8 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
   const controllers = unregistered === null
     ? `${ts.controllers} controller(s), none of them served because the application could not be read (see tsBackend below)`
     : `${ts.controllers - unregistered.length} registered controller(s)${unregistered.length > 0 ? ` (${unregistered.length} not registered by any module)` : ''}`;
-  process.stderr.write(`TypeScript lane: ${ts.files} file(s), ${ts.routes} route(s) from ${controllers}, `
+  const guessed = ts.heuristicRoutes > 0 ? ` (${ts.heuristicRoutes} at an address an unread exclude may change, graded HEURISTIC)` : '';
+  process.stderr.write(`TypeScript lane: ${ts.files} file(s), ${ts.routes} route(s)${guessed} from ${controllers}, `
     + `${ts.calls.resolved} call(s) linked, ${ts.calls.external} into packages, ${ts.calls.unresolved} on a receiver not typed here`
     + `${p ? `; Prisma: ${p.statements} statement(s) from ${p.clientCalls} client call(s)${p.unknownModel + p.unknownOperation > 0 ? `, ${p.unknownModel} on a model and ${p.unknownOperation} with an operation this engine does not know` : ''}` : '; no schema.prisma'}\n`);
   const schemaAbs = opts.prismaSchemaFile ? path.resolve(root, opts.prismaSchemaFile) : null;
@@ -363,7 +364,7 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
     app: relOf(sel.tsSrc[0]) || '.',
     tsconfig: opts.tsconfigFile,
     prismaSchema: schemaAbs ? { path: opts.prismaSchemaFile, sha256: sha256File(schemaAbs), provider: opts.prisma.schema.provider } : null,
-    files: ts.files, symbols: ts.symbols, routes: ts.routes, controllers: ts.controllers,
+    files: ts.files, symbols: ts.symbols, routes: ts.routes, heuristicRoutes: ts.heuristicRoutes, controllers: ts.controllers,
     unregisteredControllers: ts.unregisteredControllers, calls: ts.calls, prisma: p,
   };
 }

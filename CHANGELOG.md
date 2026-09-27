@@ -66,27 +66,39 @@ Each dated section below is one round of work. The round protocol is in
   statement.** `--ts-src <dir>`, or `tsBackend.app` in the profile with the
   `nestjs` framework pack, reads a NestJS application
   ([docs/setup/ts-lane.md](docs/setup/ts-lane.md)). A controller serves only
-  when a module the application loads registers it, under the global prefix and
-  URI version the bootstrap sets (`exclude`, `@Version`, `VERSION_NEUTRAL`,
-  version lists and `RouterModule.register` read as Nest applies them). A
-  prefix, a version or a module list the source builds at run time makes no
-  route, and a diagnostic says which and why; `tsBackend.globalPrefix` declares
-  a prefix the bootstrap reads from configuration. Calls between methods are
-  `MAY_CALL` edges through `this`, injected fields, imported functions and
-  static methods. Every Prisma client call is a statement of its own, keyed by
-  its place in the method, so two calls on one model with different `select`s
-  never share their columns; its table and columns come from `schema.prisma`
-  (`@map`, `@@map`), and what it cannot follow (a relation, a key it does not
-  know, an argument in a variable) travels on the statement. What the lane knows
-  about the frameworks is in two rule packs, `nestjs.json` and `prisma.json`,
-  read through three new kinds (`ts.route-decorator`, `ts.type-role`,
-  `prisma.operation`), with examples `cascade rules test` runs. The facts are
-  cached per file like the web lane's. On ghostfolio (f6b25ee): 118 routes from
-  34 registered controllers, which is every route decorator it has, 149 Prisma
-  statements, and 104 of the 118 endpoints reach a table; of the 105 its Angular
-  frontend calls, 98 do. `cascade init` finds the application by its bootstrap
-  and writes it, with the database the schema's datasource names. The
-  working-tree overlay does not re-read TypeScript yet, and says so
+  when a module the application loads registers it, under the global prefix,
+  its excludes and the URI version the bootstrap sets, read the way Nest applies
+  them: `exclude` entries as paths, `{ path, method }` and Nest 11 patterns,
+  `@Version` and `VERSION_NEUTRAL`, version lists, `RouterModule.register`,
+  decorators imported under another name, and route methods a controller
+  inherits. A setting is read only when it is sure: one set under a condition,
+  set twice to different values, or read from configuration makes no route,
+  and a diagnostic says which and why; `tsBackend.globalPrefix` declares the
+  deployed prefix. An exclude list the bootstrap builds at run time leaves the
+  routes under the prefix at their prefixed address graded HEURISTIC, since an
+  unread entry may name one, until `tsBackend.globalPrefixExclude` declares it.
+  Calls between methods are `MAY_CALL` edges through `this`, injected fields,
+  imported functions and static methods. Every Prisma client call is a
+  statement of its own, keyed by its place in the method, so two calls on one
+  model with different `select`s never share their columns, including the calls
+  an interactive `$transaction` callback makes through its client. Tables and
+  columns come from `schema.prisma` (`@map`, `@@map`, `@@schema`, named compound
+  keys); a `select` value that may be false reads its column at SOUND_SET; what
+  the rule cannot follow travels on the statement, and a call on a client this
+  lane cannot type is counted and named. What the lane knows about the
+  frameworks is in two rule packs, `nestjs.json` and `prisma.json`, read through
+  three new kinds (`ts.route-decorator`, `ts.type-role`, `prisma.operation`),
+  with examples `cascade rules test` runs. The facts are cached per file like
+  the web lane's. On ghostfolio (f6b25ee): 118 routes from 34 registered
+  controllers, which is every route decorator it has; 117 of them graded
+  HEURISTIC, because two of its exclude entries are built at run time, and all
+  118 EXACT once the list is declared; 151 Prisma statements, two of them in a
+  transaction callback, and one call on a client `$extends` made named as
+  unread. 104 of the 118 endpoints reach a table, and 98 of the 105 its Angular
+  frontend calls. `cascade init` finds the application by its bootstrap and
+  writes it, with the database the schema's datasource names. A project that
+  sets no `tsBackend` keeps the profile digest and the calibration pin it had.
+  The working-tree overlay does not re-read TypeScript yet, and says so
   (`ts-not-overlaid`); `--mode base-only` answers.
 
 - **`cascade export --format card`: one answer at a glance.** The chain picture

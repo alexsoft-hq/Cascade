@@ -427,3 +427,229 @@ test('a table already in the graph is reused, not duplicated; tables and columns
   assert.equal(col.stub, true);
   assert.equal(col.declaredBy, 'prisma');
 });
+
+// ---------------------------------------------------------------------------
+// compounds, dynamic projection, @@schema, interactive transactions
+// ---------------------------------------------------------------------------
+
+const COMPOUND_SCHEMA_TEXT = [
+  'model User {',
+  '  id    Int    @id',
+  '  email String',
+  '  a     Int',
+  '  b     Int',
+  '  @@unique([a, b], name: "id_email")',
+  '}',
+].join('\n');
+
+test('a named compound unique key in a where reads the fields it joins, never the id and email a split on _ would guess', () => {
+  const usersService = ['users.service.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class UsersService {',
+    '  constructor(private readonly prisma: PrismaService) {}',
+    '',
+    '  async byIdEmail() {',
+    '    return this.prisma.user.findUnique({ where: { id_email: { a: 1, b: 2 } }, select: { id: true } });',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { g } = bridge([prismaServiceFile, usersService], prismaOpts(COMPOUND_SCHEMA_TEXT));
+  const sid = 'statement:prisma:users.service.ts#UsersService.byIdEmail/0';
+  const reads = g.edges.filter((e) => e.from === sid && e.type === 'READS').map((e) => e.to).sort();
+  const idOf = (col) => nodeId('column', columnKey(null, 'User', col));
+  assert.deepEqual(reads, [idOf('a'), idOf('b'), idOf('id')].sort(), 'id_email means a and b, read through the model\'s compounds');
+});
+
+test('a select value that is not a literal true or false may read the field: a SOUND_SET READS edge, and columnsRuntimeOnly names the key', () => {
+  const usersService = ['users.service.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class UsersService {',
+    '  constructor(private readonly prisma: PrismaService) {}',
+    '',
+    '  async listMaybe(flag: boolean) {',
+    '    return this.prisma.user.findMany({ select: { id: true, name: flag } });',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { g } = bridge([prismaServiceFile, usersService], prismaOpts());
+  const sid = 'statement:prisma:users.service.ts#UsersService.listMaybe/0';
+  const node = g.nodes.get(sid);
+  assert.equal(node.columnsRuntimeOnly, true);
+  assert.match(node.columnsRuntimeOnlyReason, /name/);
+  const idOf = (col) => nodeId('column', columnKey(null, 'User', col));
+  const readEdges = g.edges.filter((e) => e.from === sid && e.type === 'READS');
+  const idEdge = readEdges.find((e) => e.to === idOf('id'));
+  const nameEdge = readEdges.find((e) => e.to === idOf('name'));
+  assert.ok(idEdge && nameEdge, 'both id (certain) and name (maybe) are read; name is not silently dropped');
+  assert.equal(idEdge.grade, 'EXACT');
+  assert.equal(nameEdge.grade, 'SOUND_SET', 'a dynamic projection is graded apart from the client\'s own grade');
+});
+
+test('a computed top-level argument key reads nothing for certain and does not claim the whole row', () => {
+  const usersService = ['users.service.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class UsersService {',
+    '  constructor(private readonly prisma: PrismaService) {}',
+    '',
+    '  async dynamic(key: string) {',
+    '    return this.prisma.user.findMany({ [key]: { id: true } });',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { g } = bridge([prismaServiceFile, usersService], prismaOpts());
+  const sid = 'statement:prisma:users.service.ts#UsersService.dynamic/0';
+  const node = g.nodes.get(sid);
+  assert.equal(node.columnsRuntimeOnly, true);
+  assert.match(node.columnsRuntimeOnlyReason, /arguments/);
+  const reads = g.edges.filter((e) => e.from === sid && e.type === 'READS');
+  assert.deepEqual(reads, [], 'no column is claimed EXACT when even the argument key this call sends is not known');
+});
+
+const TWO_SCHEMA_TEXT = [
+  'model AItem {',
+  '  id Int @id',
+  '  @@map("items")',
+  '  @@schema("tenant_a")',
+  '}',
+  '',
+  'model BItem {',
+  '  id Int @id',
+  '  @@map("items")',
+  '  @@schema("tenant_b")',
+  '}',
+].join('\n');
+
+test('two models mapped to the same table name under different @@schema blocks are two tables', () => {
+  const svc = ['svc.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class Svc {',
+    '  constructor(private readonly prisma: PrismaService) {}',
+    '',
+    '  async a() { return this.prisma.aItem.findMany(); }',
+    '  async b() { return this.prisma.bItem.findMany(); }',
+    '}',
+  ].join('\n')];
+  const { g } = bridge([prismaServiceFile, svc], prismaOpts(TWO_SCHEMA_TEXT));
+  const tableA = nodeId('table', tableKey('tenant_a', 'items'));
+  const tableB = nodeId('table', tableKey('tenant_b', 'items'));
+  assert.notEqual(tableA, tableB);
+  assert.ok(g.nodes.has(tableA), 'the tenant_a items table exists');
+  assert.ok(g.nodes.has(tableB), 'the tenant_b items table exists');
+  assert.equal(g.edges.find((e) => e.from === 'statement:prisma:svc.ts#Svc.a/0' && e.type === 'EXECUTES').to, tableA);
+  assert.equal(g.edges.find((e) => e.from === 'statement:prisma:svc.ts#Svc.b/0' && e.type === 'EXECUTES').to, tableB);
+});
+
+const MARKET_DATA_SCHEMA_TEXT = [
+  'model MarketData {',
+  '  dataSource String',
+  '  symbol     String',
+  '  date       DateTime',
+  '}',
+].join('\n');
+
+test("an interactive transaction's callback parameter is a client too: calls inside it become statements in the same method's sequence", () => {
+  const marketDataService = ['market-data.service.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class MarketDataService {',
+    '  constructor(private readonly prismaService: PrismaService) {}',
+    '',
+    '  async replaceForSymbol(symbol: string, dataSource: string) {',
+    '    await this.prismaService.marketData.count();',
+    '    await this.prismaService.$transaction(async (prisma) => {',
+    '      await prisma.marketData.deleteMany({ where: { dataSource, symbol } });',
+    '      await prisma.marketData.createMany({ data: [] });',
+    '    });',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { g, stats } = bridge([prismaServiceFile, marketDataService], prismaOpts(MARKET_DATA_SCHEMA_TEXT));
+  assert.equal(stats.prisma.statements, 3, 'the plain call before the transaction, and both calls inside it');
+  const base = 'statement:prisma:market-data.service.ts#MarketDataService.replaceForSymbol';
+  const s0 = g.nodes.get(`${base}/0`);
+  const s1 = g.nodes.get(`${base}/1`);
+  const s2 = g.nodes.get(`${base}/2`);
+  assert.ok(s0 && s1 && s2, 'one statement sequence across the plain call and the two calls the transaction callback makes');
+  assert.equal(s0.prismaEvidence.operation, 'count');
+  assert.equal(s0.prismaEvidence.transaction, undefined, 'a call outside any transaction carries no transaction evidence');
+  assert.equal(s1.prismaEvidence.operation, 'deleteMany');
+  assert.equal(s1.prismaEvidence.transaction, '$transaction');
+  assert.equal(s2.prismaEvidence.operation, 'createMany');
+  assert.equal(s2.prismaEvidence.transaction, '$transaction');
+  const reads = g.edges.filter((e) => e.from === `${base}/1` && e.type === 'READS').map((e) => e.to).sort();
+  const idOf = (col) => nodeId('column', columnKey(null, 'MarketData', col));
+  assert.deepEqual(reads, [idOf('dataSource'), idOf('symbol')].sort(), "deleteMany's where, read through the bound parameter exactly as this.field.delegate.operation would be");
+});
+
+test('a destructured transaction parameter binds nothing: a call written through it is not read', () => {
+  const svc = ['svc.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class Svc {',
+    '  constructor(private readonly prismaService: PrismaService) {}',
+    '',
+    '  async run() {',
+    '    await this.prismaService.$transaction(async ({ marketData }) => {',
+    '      await marketData.findMany();',
+    '    });',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { stats } = bridge([prismaServiceFile, svc], prismaOpts(MARKET_DATA_SCHEMA_TEXT));
+  assert.equal(stats.prisma.statements, 0);
+  assert.equal(stats.prisma.clientCalls, 0);
+});
+
+test('the array form of $transaction still resolves each call directly, unaffected by the interactive-transaction binding', () => {
+  const svc = ['svc.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class Svc {',
+    '  constructor(private readonly prisma: PrismaService) {}',
+    '',
+    '  async run(symbol: string) {',
+    '    await this.prisma.$transaction([',
+    '      this.prisma.marketData.deleteMany({ where: { symbol } }),',
+    '      this.prisma.marketData.createMany({ data: [] }),',
+    '    ]);',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { stats } = bridge([prismaServiceFile, svc], prismaOpts(MARKET_DATA_SCHEMA_TEXT));
+  assert.equal(stats.prisma.statements, 2);
+  assert.equal(stats.prisma.clientCalls, 2);
+});
+
+test('stats.unreadClientCalls counts a call shaped like a client\'s model.operation that this bridge could not type, and samples name it', () => {
+  const svc = ['svc.ts', [
+    "import { Injectable } from '@nestjs/common';",
+    "import { PrismaService } from './prisma.service';",
+    '@Injectable()',
+    'export class Svc {',
+    '  constructor(private readonly prisma: PrismaService) {}',
+    '',
+    '  async run() {',
+    '    const p = this.prisma;',
+    '    return p.marketData.findMany();',
+    '  }',
+    '}',
+  ].join('\n')];
+  const { stats } = bridge([prismaServiceFile, svc], prismaOpts(MARKET_DATA_SCHEMA_TEXT));
+  assert.equal(stats.prisma.statements, 0, 'nothing is drawn for a call this bridge could not type');
+  assert.equal(stats.prisma.unreadClientCalls, 1);
+  assert.equal(stats.prisma.unreadSamples.length, 1);
+  assert.equal(stats.prisma.unreadSamples[0].file, 'svc.ts');
+  assert.equal(stats.prisma.unreadSamples[0].callee, 'p.marketData.findMany');
+  assert.equal(typeof stats.prisma.unreadSamples[0].line, 'number');
+});

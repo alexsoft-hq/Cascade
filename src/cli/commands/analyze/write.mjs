@@ -185,6 +185,10 @@ export function goldenSummaryOf({ goldenDir, g, pack, profile }) {
   }
 }
 
+/** The lanes a run was told to leave out, each by its flag: leaving one out changes what was analyzed. */
+const OPT_OUT_FLAGS = Object.freeze([['noDdl', '--no-ddl'], ['noMappers', '--no-mappers'], ['noJava', '--no-java'], ['noTs', '--no-ts']]);
+const optOutsOf = (flags) => OPT_OUT_FLAGS.filter(([key]) => flags[key]).map(([, flag]) => flag);
+
 /**
  * THE CALIBRATION GATE (SPEC §14.2, §14.3, §15 M3).
  *
@@ -201,11 +205,7 @@ export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineag
   const metrics = calibrationMetrics(g, { laneStats, sqlStats });
   const profileDigest = profileDigestOf(profile);
   const catalogDigest = catalog.length > 0 ? catalogDigestOf(catalog) : null;
-  const optOuts = [
-    flags.noDdl ? '--no-ddl' : null,
-    flags.noMappers ? '--no-mappers' : null,
-    flags.noJava ? '--no-java' : null,
-  ].filter(Boolean);
+  const optOuts = optOutsOf(flags);
   const evidence = evidenceFiles.map(([kind, f]) => `${kind}:${sha256File(f)}`);
   const pin = pinOf({
     commit: base?.commit ?? null, dirty: base?.dirty === true,
