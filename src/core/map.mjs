@@ -36,7 +36,7 @@
 //
 // Pure: graph in, plain view model out — no contract, no paging, no DOM.
 
-import { walkEndpoints, walkScreens, groupOfPath, primaryHandlerOf } from './walks.mjs';
+import { walkEndpoints, walkScreens, groupOfPath, handlerStartsOf, primaryHandlerOf } from './walks.mjs';
 import { nodeLabel } from './chain.mjs';
 import { GRADE_SETS } from './graph.mjs';
 
@@ -214,7 +214,7 @@ if (withScreens) {
 /** 3. THE NODE SET: one node per group, screen, route, statement and table. */
 function mapNodes(graph, ctx) {
   const {
-    endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements,
+    endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements, mode,
   } = ctx;
 // ---- 3. the node set ----------------------------------------------------
 const tableFacts = tableCensus(graph);
@@ -227,7 +227,7 @@ for (const ep of endpoints) {
   const n = graph.nodes.get(ep.id) ?? {};
   nodes.push({
     id: ep.id, kind: 'endpoint', label: nodeLabel(n, ep.id), group: ep.group, degree: 0,
-    httpMethod: ep.httpMethod, path: ep.path, handlerShort: handlerShortOf(graph, ep.id, n),
+    httpMethod: ep.httpMethod, path: ep.path, handlerShort: handlerShortOf(graph, ep.id, n, mode),
     // How many controller methods declare this route. 1 almost always; 2+ when
     // two modules use the same route string, and then `handlerShort` names the
     // primary one and the map still walked ALL of them.
@@ -539,7 +539,7 @@ export function buildMap(graph, opts = {}) {
   const { touches, epToStmt, stmtToTable, stmtGrade, touchedTables } = mapReaches(graph, endpoints, withStatements);
   const { screenRows, screensReaching, screensTotal } = mapScreens(graph, { endpoints, mode, depth, withScreens });
   const { tableFacts, nodes } = mapNodes(graph, {
-    endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements,
+    endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements, mode,
   });
   const links = mapLinks(graph, {
     epToStmt, extraLinks, groupOf, screenRows, stmtToTable, touchedTables, touches,
@@ -572,17 +572,19 @@ function tableCensus(graph) {
 
 /**
  * The short name of the method a route runs. ONE label for a node that may run
- * two methods: the primary handler under the shared rule (core/walks.mjs), which
- * is the same method `flow` draws its picture from — so the map and the Flow tab
- * never name different methods for the same route. How many handlers there
- * really are travels with the node (`handlers`), and the count of such routes is
- * in `summary.walk.multiHandlerEndpoints`.
+ * two methods: the first handler this mode admits (core/walks.mjs
+ * handlerStartsOf), which is the method `flow` in the same mode draws its
+ * picture from, so the map and the Flow tab never name different methods for
+ * the same route. When the mode admits none, the primary handler under the
+ * shared rule, which the map then did not walk into. How many handlers there
+ * really are travels with the node (`handlers`), and the count of such routes
+ * is in `summary.walk.multiHandlerEndpoints`.
  *
  * The endpoint node's own `handler` fqn is the fallback when the code axis
  * recorded the name but no edge.
  */
-function handlerShortOf(graph, epId, node) {
-  const primary = primaryHandlerOf(graph, epId);
+function handlerShortOf(graph, epId, node, mode) {
+  const primary = handlerStartsOf(graph, epId, mode)[0]?.id ?? primaryHandlerOf(graph, epId);
   if (primary) return nodeLabel(graph.nodes.get(primary), primary);
   return node.handler ? nodeLabel({ kind: 'symbol' }, `symbol:${node.handler}`) : null;
 }

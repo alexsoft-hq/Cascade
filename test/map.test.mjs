@@ -718,3 +718,18 @@ test('map tool: layers:["screens"] is accepted, disclosed, and the screens nobod
   // …and an unknown layer is still bad-input, so the pair is a closed set.
   assert.throws(() => map(screenGraph(), { layers: ['screenz'] }, ctx(screenGraph())), (e) => e.code === 'bad-input');
 });
+
+test('a route with two handlers is labelled with the one its mode walks, the method Flow starts at', () => {
+  // A guessed handler with the lower id and a fact beside it: conservative
+  // does not walk the guess, so the map must not name it for the route while
+  // Flow in the same mode draws the other method.
+  const g = new Graph();
+  const ep = nodeId('endpoint', 'GET /a');
+  g.addNode({ id: ep, httpMethod: 'GET', path: '/a' });
+  for (const m of ['symbol:a.Guessed#run', 'symbol:b.Stated#run']) g.addNode({ id: m, owner: m.split('#')[0].slice('symbol:'.length) });
+  g.addEdge({ from: ep, to: 'symbol:a.Guessed#run', type: 'HANDLES', grade: 'HEURISTIC' });
+  g.addEdge({ from: ep, to: 'symbol:b.Stated#run', type: 'HANDLES', grade: 'EXACT' });
+  const label = (mode) => buildMap(g, { mode }).nodes.find((n) => n.id === ep).handlerShort;
+  assert.match(label('conservative'), /Stated/);
+  assert.match(label('heuristic'), /Guessed/, 'a mode that walks both names the first, as Flow does');
+});
