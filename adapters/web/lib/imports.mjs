@@ -29,6 +29,7 @@ import {
 import { navigationAssignmentOf } from './navigation.mjs';
 import { formActionAssignment, formMethodAssignment } from './forms.mjs';
 import { emitRouteRef, maybeRoute } from './routers.mjs';
+import { paramIndexOf } from './forwards.mjs';
 
 /**
  * Pass 1: hoist what the top level declares. A function at the top of a file
@@ -717,6 +718,9 @@ export function visitFunctionBody(ctx, node, env, entry) {
   const { injectionTargets, injectedClients } = ctx;
   const scope = new Scope(env.scope, false);
   for (const p of node.params || []) for (const n of patternNames(p)) scope.declare(n, null);
+  // A NAMED function's own parameters, so a call inside it can say which of
+  // them it hands on (R2-K); a callback's are not the function's.
+  if (entry) Object.assign(entry, { paramScope: scope, paramIndex: paramIndexOf(node) });
   // A CLIENT ARRIVES AS A PARAMETER, in a function the framework fills in.
   // The map is inherited downward, because `$http.get(url).then(function () {
   // $http.post(…) })` is the same client one scope deeper.

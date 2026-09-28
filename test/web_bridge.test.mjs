@@ -343,7 +343,7 @@ test('a class wrapper chain resolves to axios.create, and the chain and depth ar
   assert.deepEqual(e.evidence.prefix, { value: '/api', from: 'derived' });
   assert.equal(stats.wrappers.count, 2);
   assert.equal(stats.wrappers.maxDepth, 2);
-  assert.deepEqual(stats.wrappers.byKind, { function: 0, classMethod: 2 });
+  assert.deepEqual(stats.wrappers.byKind, { function: 0, classMethod: 2, objectMethod: 0 });
   // A wrapper is plumbing: it gets no node of its own and no edge.
   assert.equal(g.nodes.has(webSymbolId('src/utils/client.ts', 'Wrapped.get')), false);
 });
@@ -392,7 +392,7 @@ test('a FUNCTION wrapper that forwards what it was given is a wrapper; one that 
   // No verb anywhere, so the LIBRARY's own default is what this sends, said as such.
   assert.deepEqual(e.evidence.method, { value: 'GET', from: 'library-default' });
   assert.equal(e.grade, 'SOUND_SET');
-  assert.deepEqual(stats.wrappers.byKind, { function: 1, classMethod: 0 });
+  assert.deepEqual(stats.wrappers.byKind, { function: 1, classMethod: 0, objectMethod: 0 });
   // The wrapper's own call carried no URL of its own, so it is not counted as a
   // call site with a URL and produced no edge.
   assert.equal(stats.calls.withUrl, 1);
@@ -907,7 +907,7 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   const stats = addWebFacts(g, []);
   assert.deepEqual(edgesOf(g), []);
   assert.deepEqual(stats.calls, {
-    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, urlNotHandedOn: 0,
     stringMethod: 0, template: 0, formSubmits: 0, locationRequests: 0, formSubmitsWithoutAddress: 0,
     nexacro: 0, nexacroUnreadable: 0, websquare: 0, websquareUnreadable: 0, notAFunction: 0, passedAsValue: 0,
   });

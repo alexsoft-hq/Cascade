@@ -1,0 +1,8 @@
+{
+  "name": "web-object-wrappers-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "axios": "^1.7.0"
+  }
+}

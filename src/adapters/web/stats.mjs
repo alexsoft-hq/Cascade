@@ -123,6 +123,10 @@ function emptyScreenStats() {
 function emptyCallStats() {
   return {
     withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
+    // A call whose callee is a wrapper that does not hand the argument the URL
+    // is in on to the client (R2-K). It is counted in `untraced` too, because
+    // nothing here can say the URL it carries is the one that is sent.
+    urlNotHandedOn: 0,
     // A call that reached no client and whose callee TAKES A PATH APART rather
     // than asking for one (`pathname.startsWith('/x')`, `p.split('/')`).
     // Counted apart from `notUrlShaped` because the argument really is a path
@@ -160,7 +164,9 @@ function emptyCallStats() {
 }
 
 /**
- * A fresh statistics object, every counter at zero.
+ * A fresh statistics object, every counter at zero. A wrapper is counted by
+ * kind: a function, a class method, or a function written inside an object
+ * literal (`objectMethod`, R2-K).
  *
  * Every field is here from the start, because a field that exists only after
  * some step ran would read as "we did not look" where the truth is "there were
@@ -170,7 +176,7 @@ function emptyCallStats() {
 export function emptyWebStats() {
   return {
     instances: 0,
-    wrappers: { count: 0, maxDepth: 0, byKind: { function: 0, classMethod: 0 } },
+    wrappers: { count: 0, maxDepth: 0, byKind: { function: 0, classMethod: 0, objectMethod: 0 } },
     calls: emptyCallStats(),
     resolved: { SOUND_SET: 0, HEURISTIC: 0 },
     unresolved: {

@@ -123,7 +123,12 @@ export function summarizeArg(node) {
   return { kind: 'other' };
 }
 
-/** An object literal summarized by the config keys a request reads. */
+/**
+ * An object literal summarized by the config keys a request reads. `spread`
+ * says a `...x` is written in it: the keys that brings in are not stated here,
+ * so this record cannot say a key is absent, only that it is not written
+ * (RM67, R2-K).
+ */
 function summarizeObject(node) {
   const keys = {};
   for (const key of CONFIG_KEYS) {
@@ -134,7 +139,7 @@ function summarizeObject(node) {
     // present and not summarized any further.
     keys[key] = (key === 'data' || key === 'params') ? 'present' : summarizeArg(v);
   }
-  return { kind: 'object', keys };
+  return node.properties.some((p) => p.type === 'SpreadElement') ? { kind: 'object', keys, spread: true } : { kind: 'object', keys };
 }
 
 /**

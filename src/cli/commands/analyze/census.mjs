@@ -515,6 +515,16 @@ function sayNavigationsAndPages(webBridgeStats) {
   }
 }
 
+/**
+ * A call whose wrapper does not hand its URL on (R2-K) is graded as one this
+ * lane could not trace, and says so once rather than hiding in `untraced`.
+ */
+function sayUrlNotHandedOn(calls) {
+  const n = calls?.urlNotHandedOn ?? 0;
+  if (n === 0) return;
+  process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so each is graded HEURISTIC as a call this lane could not trace\n`);
+}
+
 export function sayWebBridge(webBridgeStats, webBridgeMs) {
   const w = webBridgeStats;
   const reasons = Object.entries(w.unresolved.byReason)
@@ -534,6 +544,7 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
   for (const u of w.unmatchedUrls.slice(0, 5)) {
     process.stderr.write(`  [warn] WEB_NO_ROUTE ${u.url} (${u.count} call site(s)): nothing in this pack serves it\n`);
   }
+  sayUrlNotHandedOn(w.calls);
   const s = webBridgeStats.screens;
   const pg = s.byKind ?? { router: 0, page: 0 };
   // …and the third kind of screen (RM56): a Nexacro form, which no route

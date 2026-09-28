@@ -157,7 +157,18 @@ function thisTarget(fieldValue, file, className, pathParts) {
   return null;
 }
 
-function makeCalleeTarget({ libraries, packageOf, resolver }) {
+/**
+ * A FUNCTION WRITTEN INSIDE AN OBJECT LITERAL, called the way its caller spells
+ * it (R2-K): `request.get(…)` where `request` holds `export default { get: … }`.
+ * The worker recorded whose each such function is, so the key is looked up by
+ * name and never guessed from any function spelled `get` in that file.
+ */
+function objectMember(members, root, key, flags) {
+  const fn = members.get(`${root.file}#${root.name}.${key}`) ?? null;
+  return fn === null ? null : { kind: 'member', key: `${root.file}#${fn.name}`, ...flags };
+}
+
+function makeCalleeTarget({ libraries, packageOf, resolver, members }) {
   const { rootValue, fieldValue } = resolver;
   return (file, call) => {
     const callee = call.callee ?? null;
@@ -195,6 +206,7 @@ function makeCalleeTarget({ libraries, packageOf, resolver }) {
     if (root.kind === 'function' && pathParts.length === 0) {
       return { kind: 'member', key: root.key, ...flags };
     }
+    if (root.kind === 'object' && pathParts.length === 1) return objectMember(members, root, pathParts[0], flags);
     return null;
   };
 }
@@ -256,18 +268,34 @@ function wrapperStep(ctx, key) {
       consider({ depth: 1, next: null, sink: { module: c.platformSink, instance: null, kind: 'platform' }, call: c });
     }
   }
-  // `get(config) { return this.request({ …config, method: 'GET' }) }` is the
-  // same hop written as a return, and a body with no call record left (an
-  // arrow that IS the call) is only visible this way.
-  const ret = m.rec.returns ?? null;
-  if (ret && ret.callee) {
-    const t = calleeTarget(m.file, { callee: ret.callee, binding: ret.binding ?? null });
-    if (t && t.kind === 'member' && t.key !== key) {
-      const w = wrappers.get(t.key);
-      if (w) consider({ depth: 1 + w.depth, next: t.key, sink: w.sink, call: null });
-    }
-  }
+  hopsWithoutACallRecord(ctx, key, m, consider);
   return best;
+}
+
+/** One hop to a wrapper written somewhere other than a call record, when it is one. */
+function hopToAWrapper(ctx, key, file, written, call, consider) {
+  const t = ctx.calleeTarget(file, { callee: written.callee, binding: written.binding ?? null });
+  if (!t || t.kind !== 'member' || t.key === key) return;
+  const w = ctx.wrappers.get(t.key);
+  if (w) consider({ depth: 1 + w.depth, next: t.key, sink: w.sink, call });
+}
+
+/**
+ * THE HOPS THE FUNCTION RECORD CARRIES rather than a call record. A forward
+ * (R2-K) is a call on a helper this file declares that hands on what the
+ * function was given, `get: (option) => request({ method: 'GET', ...option })`;
+ * it is the hop, so it is what the method and the URL are read from. A return
+ * is `get(config) { return this.request({ …config, method: 'GET' }) }` written
+ * as a return, and a body with no call record left (an arrow that IS the call)
+ * is only visible that way. Forwards first: where both name the same hop, the
+ * one that says what it hands on is kept.
+ */
+function hopsWithoutACallRecord(ctx, key, m, consider) {
+  for (const fwd of m.rec.forwards ?? []) {
+    if (fwd && fwd.callee) hopToAWrapper(ctx, key, m.file, fwd, fwd, consider);
+  }
+  const ret = m.rec.returns ?? null;
+  if (ret && ret.callee) hopToAWrapper(ctx, key, m.file, ret, null, consider);
 }
 
 /** Whether a sink instance really is being CALLED here, per its library's vocabulary. */
@@ -287,6 +315,15 @@ function makeSinkVerb(libraries) {
 }
 
 /**
+ * What kind of function a wrapper is: a method of an object literal (R2-K), a
+ * class method (`Class.method`), or a function.
+ */
+function wrapperKindOf(key, memberRec) {
+  if (typeof memberRec.get(key)?.rec?.member === 'string') return 'objectMethod';
+  return key.slice(key.lastIndexOf('#') + 1).includes('.') ? 'classMethod' : 'function';
+}
+
+/**
  * B4: the wrapper fixpoint.
  *
  * A WRAPPER is a function that hands a request on without knowing which one:
@@ -299,7 +336,7 @@ function makeSinkVerb(libraries) {
 export function traceWrappers({
   fileNames, files, libraries, pack, packageOf, resolver, stats,
 }) {
-  const calleeTarget = makeCalleeTarget({ libraries, packageOf, resolver });
+  const calleeTarget = makeCalleeTarget({ libraries, packageOf, resolver, members: memberIndex(files) });
   const sinkVerb = makeSinkVerb(libraries);
   /** The instance a platform sink belongs to: none. The URL is the URL. */
   const platformOf = (call) => {
@@ -323,8 +360,7 @@ export function traceWrappers({
   stats.wrappers.count = wrappers.size;
   for (const [key, w] of wrappers) {
     stats.wrappers.maxDepth = Math.max(stats.wrappers.maxDepth, w.depth);
-    const name = key.slice(key.lastIndexOf('#') + 1);
-    if (name.includes('.')) stats.wrappers.byKind.classMethod += 1; else stats.wrappers.byKind.function += 1;
+    stats.wrappers.byKind[wrapperKindOf(key, memberRec)] += 1;
   }
   return { wrappers, calleeTarget, sinkVerb, platformOf };
 }
@@ -628,15 +664,62 @@ function libraryVerbOf(libraries, c, sink, target) {
   return Object.prototype.hasOwnProperty.call(verbs, target.method) ? { value: verbs[target.method], from: 'library-verb' } : null;
 }
 
+/**
+ * The HTTP verbs a caller's options can name. The worker's `VERBS`, written
+ * again for the same reason the rule names above are: the bridge does not
+ * import from the worker.
+ */
+const HTTP_VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+
+/**
+ * WHAT THE CALLER'S OPTIONS SAY about a method the wrapper wrote BEFORE it
+ * spread them in (R2-K): `{ method: 'GET', ...option }` sends what `option`
+ * names under that key, and GET only when it names none. Read off what the
+ * caller handed at each position the spread takes, the last one winning as it
+ * does at run time. An object literal that writes the key names the method;
+ * one that does not keeps the wrapper's. Anything else (a name, an object
+ * with a spread of its own, a position past the three a call record reads) may
+ * carry the key, so the method is absent and the wrapper's default is said
+ * beside it rather than taken.
+ */
+function callerOverride(m, c) {
+  const unread = { value: null, from: 'absent', wrapperDefault: m.value };
+  if (m.overridable.other === true) return unread;
+  const args = Array.isArray(c.args) ? c.args : [];
+  let stated = null;
+  for (const i of m.overridable.by ?? []) {
+    // Fewer than three summaries is every argument the caller passed, so
+    // nothing is spread in from past them; three may be the first of more.
+    if (i >= args.length) {
+      if (args.length >= 3) return unread;
+      continue;
+    }
+    const a = args[i];
+    if (!a || a.kind !== 'object' || a.spread === true) return unread;
+    const v = (a.keys ?? {})[m.overridable.key];
+    if (v === undefined) continue;
+    if (!v || v.kind !== 'string' || !HTTP_VERBS.has(v.value.toUpperCase())) return unread;
+    stated = v.value.toUpperCase();
+  }
+  return stated !== null ? { value: stated, from: 'config' } : { value: m.value, from: 'wrapper-default' };
+}
+
+/**
+ * The method a WRAPPER sets on what it forwards, or null when it sets none: the
+ * one its own hop writes, as it is, unless the caller's options can replace it.
+ */
+function wrapperMethodOf(w, c) {
+  const m = w && w.call ? w.call.method : null;
+  if (!m || !m.value) return null;
+  return m.overridable ? callerOverride(m, c) : { value: m.value, from: 'wrapper-verb' };
+}
+
 /** The HTTP method this call sends, and what said so. */
 function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
   return (c, sink, target) => {
     if (sink.kind === 'wrapper' && target && target.kind === 'member') {
-      const w = wrappers.get(target.key);
-      const verbCall = w && w.call ? w.call : null;
-      if (verbCall && verbCall.method && verbCall.method.value) {
-        return { value: verbCall.method.value, from: 'wrapper-verb' };
-      }
+      const fromWrapper = wrapperMethodOf(wrappers.get(target.key), c);
+      if (fromWrapper !== null) return fromWrapper;
     }
     if (c.method && c.method.value) return { value: c.method.value, from: c.method.from ?? 'config' };
     const fromPack = libraryVerbOf(libraries, c, sink, target);
@@ -762,24 +845,43 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
       target,
     };
   }
-  if (target && target.kind === 'member' && wrappers.has(target.key)) {
-    const chain = [];
-    let cur = target.key;
-    for (let i = 0; i < FIXPOINT_LIMIT && cur; i += 1) {
-      chain.push(cur);
-      cur = wrappers.get(cur)?.next ?? null;
-    }
-    const w = wrappers.get(target.key);
+  const throughAWrapper = target !== null && target.kind === 'member' && wrappers.has(target.key);
+  if (throughAWrapper && handsOnTheUrl(wrappers.get(target.key).call, c)) {
     stats.calls.traced += 1;
-    return {
-      sink: {
-        kind: 'wrapper', module: w.sink.module, instance: w.sink.instance,
-        chain: chain.reverse(), depth: w.depth,
-      },
-      target,
-    };
+    return { sink: wrapperSink(wrappers, target.key), target };
   }
-  return untracedSink(c, { resolved, absolute, target, stats });
+  const found = untracedSink(c, { resolved, absolute, target, stats });
+  if (found !== null && throughAWrapper) stats.calls.urlNotHandedOn += 1;
+  return found;
+}
+
+/** The sink a call reaches through a wrapper chain: the deepest hop first, the one the caller named last. */
+function wrapperSink(wrappers, key) {
+  const chain = [];
+  let cur = key;
+  for (let i = 0; i < FIXPOINT_LIMIT && cur; i += 1) {
+    chain.push(cur);
+    cur = wrappers.get(cur)?.next ?? null;
+  }
+  const w = wrappers.get(key);
+  return { kind: 'wrapper', module: w.sink.module, instance: w.sink.instance, chain: chain.reverse(), depth: w.depth };
+}
+
+/**
+ * WHETHER A WRAPPER HANDS THE CALLER'S URL ON (R2-K). Only a hop the worker
+ * recorded as a forward says what it hands on, and there the argument the
+ * caller's URL was read from has to be among it: an object whose key held the
+ * URL, spread in or passed whole, or the URL itself passed whole. A wrapper
+ * that hands on something else sends a URL this call did not write, so the
+ * call is not traced through it. Any other hop is a call record, and there a
+ * wrapper is recognized as it always was.
+ */
+function handsOnTheUrl(call, c) {
+  if (!call || !Array.isArray(call.hands)) return true;
+  const at = c.url && c.url.at ? c.url.at : null;
+  if (at === null) return false;
+  const ways = typeof at.key === 'string' ? ['spread', 'argument'] : ['argument'];
+  return call.hands.some((h) => h.param === at.arg && ways.includes(h.as));
 }
 
 /**

@@ -18,6 +18,7 @@ import { formCall } from './forms.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
 import { isEngineCall, websquareSubmissionOf } from './websquare_calls.mjs';
 import { envSpellingOf, isEnvExpression } from './ast.mjs';
+import { handsOf, methodOverrideOf } from './forwards.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
 export const VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
@@ -387,6 +388,50 @@ function beforeARequest(ctx, node, env, { isNew, calleeNode, callee, line }) {
 }
 
 /**
+ * WHICH ARGUMENT the URL was read from, and under which key when that argument
+ * is an object (R2-K). A wrapper hands some of its arguments on and not others,
+ * and whether it handed on the one the URL is in is the bridge's question.
+ */
+function withPlace(url, summaries, urlSummary) {
+  for (let i = 0; i < summaries.length; i += 1) {
+    const s = summaries[i];
+    if (s === urlSummary) return { ...url, at: { arg: i } };
+    if (s.kind !== 'object') continue;
+    const key = Object.keys(s.keys).find((k) => s.keys[k] === urlSummary);
+    if (key !== undefined) return { ...url, at: { arg: i, key } };
+  }
+  return url;
+}
+
+/**
+ * The method with what may REPLACE it (R2-K), when the call wrote it into an
+ * object: `{ method: 'GET', ...option }` is a default the caller's own
+ * `method` wins over, and `lib/forwards.mjs` says which spreads can do that.
+ */
+function withOverride(method, node, env) {
+  if (!method || method.from !== 'config' || !method.value) return method;
+  const over = methodOverrideOf(node, env, method.value);
+  return over === null ? method : { ...method, overridable: over };
+}
+
+/**
+ * A CALL THAT HANDS ON WHAT ITS FUNCTION WAS GIVEN, to a name this file
+ * declares (R2-K). It gets no call record, because a call on a local function
+ * is ordinary; it goes on the enclosing function's record as one of its
+ * `forwards`, with what it hands on and the method it writes, and the bridge
+ * follows it as it follows a `return`.
+ */
+function noteForward(ctx, node, env, { isNew, callee, binding, summaries, line }) {
+  const rec = env.func ? env.func.record : null;
+  if (isNew || !rec || !callee || callee.path.length > 1 || !binding || binding.kind !== 'local') return;
+  const hands = handsOf(node, env);
+  if (hands.length === 0) return;
+  const method = withOverride(methodOf(callee, summaries, null), node, env);
+  if (!Array.isArray(rec.forwards)) rec.forwards = [];
+  rec.forwards.push({ line, callee, binding, method, hands });
+}
+
+/**
  * THE CALL RECORD, when this call is one this lane records at all.
  *
  * It is recorded when the callee goes through a name this file BINDS, or when
@@ -434,8 +479,8 @@ function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summari
   const urlSummary = positional !== null ? positional.url : urlArgumentOf(ctx, {
     callee, summaries, routeArg, platformSink, globalClient, env,
   });
-  if (urlSummary !== null) rec.url = buildUrl(ctx, urlSummary, env.scope);
-  rec.method = positional?.method ?? methodOf(callee, summaries, platformSink, globalClient);
+  if (urlSummary !== null) rec.url = withPlace(buildUrl(ctx, urlSummary, env.scope), summaries, urlSummary);
+  rec.method = withOverride(positional?.method ?? methodOf(callee, summaries, platformSink, globalClient), node, env);
   // The functions this call HANDS OVER, left off when there are none so a
   // frontend's ordinary call records do not each grow an empty list.
   const refs = fnRefsOf(ctx, node.arguments, env);
@@ -505,6 +550,7 @@ export function visitCall(ctx, node, env) {
 
   const rec = httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summaries, binding });
   if (rec !== null) emit(rec, line);
+  else noteForward(ctx, node, env, { isNew, callee, binding, summaries, line });
 
   for (const a of node.arguments) visit(a, env);
   if (calleeNode && calleeNode.type !== 'Identifier') {

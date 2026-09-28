@@ -99,7 +99,13 @@ function bucket(f, r) {
   switch (r.kind) {
     case 'import': f.imports.push(r); break;
     case 'export': f.exports.push(r); break;
-    case 'function': f.functions.set(r.name, r); break;
+    case 'function':
+      f.functions.set(r.name, r);
+      // An object literal whose functions the worker recorded is a value a
+      // name can hold (R2-K): `member` is `<owner>.<key>`, and the owner is a
+      // plain name or `default`.
+      if (typeof r.member === 'string' && r.member.indexOf('.') > 0) f.objects.add(r.member.slice(0, r.member.indexOf('.')));
+      break;
     case 'constant': f.constants.set(r.name, r); break;
     case 'binding': f.bindings.set(r.name, r); break;
     case 'class': f.classes.set(r.name, r); if (r.component === true) f.componentClass = true; break;
@@ -135,7 +141,7 @@ export function indexWebFacts(records) {
     if (!f) {
       f = {
         imports: [], exports: [], functions: new Map(), constants: new Map(),
-        bindings: new Map(), classes: new Map(), assigns: [], calls: [], routes: [],
+        bindings: new Map(), classes: new Map(), objects: new Set(), assigns: [], calls: [], routes: [],
         registrations: [], routeRefs: [], // a route or a list NAMED by name (RM67)
         // The calls that change the SCREEN rather than send a request (RM59).
         navigations: [],
@@ -294,7 +300,7 @@ function resolveLocal(ctx, file, name, depth) {
   if (depth > HOP_LIMIT) return null;
   const f = ctx.files.get(file);
   if (!f) return null;
-  if (f.bindings.has(name) || f.functions.has(name) || f.classes.has(name) || f.constants.has(name)) {
+  if (f.bindings.has(name) || f.functions.has(name) || f.classes.has(name) || f.constants.has(name) || f.objects.has(name)) {
     return { file, name, assumed: false, viaStar: false };
   }
   const imp = f.importOf.get(name);
@@ -310,7 +316,8 @@ function resolveLocal(ctx, file, name, depth) {
 
 /**
  * B4: WHAT A NAME IS — an HTTP client instance, an instance of a class the
- * project wrote, a function, or a module this analysis never read.
+ * project wrote, a function, an object literal with functions in it (R2-K),
+ * or a module this analysis never read.
  *
  * The memo is keyed by `file#name`, and a name being resolved already is a
  * cycle, so it answers null.
@@ -329,6 +336,7 @@ function valueOf(ctx, file, name, depth) {
       if (v && v.kind === 'sink-instance') out = { ...v, id: key };
       else out = v;
     } else if (f.functions.has(name)) out = { kind: 'function', key, file, name, assumed: false, viaStar: false };
+    else if (f.objects.has(name)) out = { kind: 'object', key, file, name, assumed: false, viaStar: false };
   }
   ctx.VALUE.set(key, out);
   return out;

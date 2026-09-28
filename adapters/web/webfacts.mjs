@@ -138,6 +138,17 @@
 // query's holes used to stay in the list, which then no longer lined up with
 // the text and could not be filled by anybody.
 //
+// webfacts/16 SAYS WHAT A FUNCTION HANDS ON (RM67, R2-K). A wrapper written as
+// an object's method, `export default { get: (option) => request({ method:
+// 'GET', ...option }) }`, calls a helper this file declares, and that call was
+// not recorded at all. A call on a name this file declares that passes on one
+// of the enclosing function's own parameters is now written on the function
+// record as one of its `forwards` (`lib/forwards.mjs`): what it calls, which
+// parameters it hands on and how, and the method it writes. A method written
+// into an object before a spread says what can replace it (`overridable`), an
+// object summary with a spread in it says so (`spread`), and a call's URL says
+// which argument, and which key of it, it was read from (`at`).
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -148,7 +159,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/15';
+const VERSION = 'webfacts/16';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
