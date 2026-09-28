@@ -63,6 +63,47 @@
           "why": "a method decorator serves nothing on a class that is not a controller"
         }
       ]
+    },
+    {
+      "id": "nestjs.providers",
+      "kind": "ts.provider-binding",
+      "description": "A module's providers bind a type to what Nest injects for it: a class listed alone binds itself, and { provide: T, useClass: C } binds T to C. A binding made by a factory, a value or another token (useFactory, useValue, useExisting) is not read. A constructor parameter decorated @Inject(token) is injected by that token, not by its type.",
+      "why": "A call through a field typed with an abstract class or an interface may run the method of any class of the project that extends or implements it. When every module the application loads is read, the classes those modules bind to the type are the only ones Nest can inject, so the set narrows to them. nestjs-boilerplate binds each abstract repository this way, one module per database.",
+      "params": {
+        "module": "Module", "list": "providers", "token": "provide", "useClass": "useClass",
+        "notRead": ["useFactory", "useValue", "useExisting"], "inject": "Inject"
+      },
+      "examples": [
+        {
+          "source": "import { Module } from '@nestjs/common';\nimport { UserRepository } from '../user.repository';\nimport { UsersRelationalRepository } from './repositories/user.repository';\n@Module({\n  providers: [{ provide: UserRepository, useClass: UsersRelationalRepository }],\n  exports: [UserRepository],\n})\nexport class RelationalUserPersistenceModule {}\n",
+          "expect": [{ "module": "RelationalUserPersistenceModule", "token": "UserRepository", "useClass": "UsersRelationalRepository" }]
+        },
+        {
+          "source": "import { Module } from '@nestjs/common';\nimport { UsersService } from './users.service';\n@Module({ providers: [UsersService] })\nexport class UsersModule {}\n",
+          "expect": [{ "module": "UsersModule", "token": "UsersService", "useClass": "UsersService" }],
+          "why": "a class listed alone is bound to itself"
+        },
+        {
+          "source": "import { Module } from '@nestjs/common';\nimport { CacheStore } from './cache.store';\n@Module({ providers: [{ provide: CacheStore, useFactory: () => new MemoryStore() }] })\nexport class CacheModule {}\n",
+          "expect": [{ "module": "CacheModule", "token": "CacheStore", "notRead": "useFactory" }],
+          "why": "what a factory returns is known when it runs, so the binding is not read and a call through CacheStore keeps its whole set"
+        },
+        {
+          "source": "import { Module } from '@nestjs/common';\n@Module({ providers: [{ provide: 'CONFIG', useValue: { ttl: 5 } }] })\nexport class ConfigHolderModule {}\n",
+          "expect": [],
+          "why": "a string token names no type a field is declared with"
+        },
+        {
+          "source": "import { Module } from '@nestjs/common';\nimport { shared } from './shared';\n@Module({ providers: [...shared, { ...base }] })\nexport class SpreadModule {}\n",
+          "expect": [{ "module": "SpreadModule", "unread": true }, { "module": "SpreadModule", "unread": true }],
+          "why": "a spread list, and an entry with a spread, may bind any type"
+        },
+        {
+          "source": "import { Injectable } from '@nestjs/common';\n@Injectable()\nexport class NotAModule {}\n",
+          "expect": [],
+          "why": "only a module's providers bind anything"
+        }
+      ]
     }
   ]
 }

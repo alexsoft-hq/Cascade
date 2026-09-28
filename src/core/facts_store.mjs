@@ -663,7 +663,9 @@ export function validateIndex(idx) {
   if (!idx.workers || typeof idx.workers !== 'object') throw new FactsStoreError('facts index field workers must be an object');
   if (!idx.files || typeof idx.files !== 'object') throw new FactsStoreError('facts index field files must be an object');
   if (!idx.statements || typeof idx.statements !== 'object') throw new FactsStoreError('facts index field statements must be an object');
-  for (const [f, e] of Object.entries(idx.files)) {
+  // The TypeScript lane's entries have a map of their own, so a file the web lane reads too keeps both shards.
+  if (idx.tsFiles !== undefined && (!idx.tsFiles || typeof idx.tsFiles !== 'object')) throw new FactsStoreError('facts index field tsFiles must be an object');
+  for (const [f, e] of [...Object.entries(idx.files), ...Object.entries(idx.tsFiles ?? {})]) {
     if (!e || typeof e.shardKey !== 'string' || typeof e.sha256 !== 'string' || typeof e.lines !== 'number') {
       throw new FactsStoreError(`facts index entry for ${f} is missing shardKey/sha256/lines`);
     }

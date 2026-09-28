@@ -19,7 +19,7 @@ export const JAVA_WORKER_VERSION = 'javafacts/17';
  * every TypeScript shard's key, so a new worker makes each shard miss and be
  * read again, and a project with no TypeScript backend is not sent cold by it.
  */
-export const TS_WORKER_VERSION = 'tsfacts/4';
+export const TS_WORKER_VERSION = 'tsfacts/5';
 /** mybatis_extract.py — `EXTRACTOR_VERSION`. */
 export const MYBATIS_WORKER_VERSION = 'mybatis-extract/2';
 /** lineage.py — `LINEAGE_VERSION`. */

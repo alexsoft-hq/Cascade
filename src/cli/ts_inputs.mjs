@@ -3,11 +3,14 @@
 // Neither is cached with the source's facts. Every file's imports mean what the
 // tsconfig says, and every Prisma call means what the schema says, so both are
 // read again on every run and handed to the bridge whole
-// (src/adapters/ts_bridge.mjs).
+// (src/adapters/ts_bridge.mjs). The same module paths tell the run which files
+// outside the application its imports reach (`tsReachResolver`).
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { isReadablePath } from '../../adapters/ts/tsfacts.mjs';
 import { readPrismaSchema } from '../adapters/ts/prisma_schema.mjs';
+import { makeModuleResolver } from '../adapters/ts/project.mjs';
 
 const toPosix = (p) => p.split(path.sep).join('/');
 const TSCONFIG_NAMES = Object.freeze(['tsconfig.app.json', 'tsconfig.build.json', 'tsconfig.json']);
@@ -111,5 +114,66 @@ export function tsBridgeOptions({ rootAbs, appRootAbs, declaredSchema = null, sq
     prismaSchemaFile: schemaFile ? toPosix(path.relative(rootAbs, schemaFile)) : null,
     schemaName: sqlArgs.defaultSchema ?? null,
     identifierCase: sqlArgs.identifierCase,
+    publishedOf: packagePublishing(rootAbs, appRootAbs),
   };
+}
+
+/** The nearest package.json at or above `dirAbs`, up to the analyzed root, or null. */
+function packageFileOf(rootAbs, dirAbs) {
+  for (let dir = dirAbs; dir.startsWith(rootAbs); dir = path.dirname(dir)) {
+    const f = path.join(dir, 'package.json');
+    if (fs.existsSync(f)) return f;
+    if (dir === rootAbs) break;
+  }
+  return null;
+}
+
+/**
+ * Whether code outside this tree may extend or implement a type a file
+ * declares: `(file) => reason`, null when it may not. A type of the package
+ * that holds the application, or of a package.json marked `"private": true`,
+ * is used by nothing but this tree; any other package may be published, and a
+ * class of whoever installs it is then one this engine never reads. Read on
+ * every run, like the tsconfig; a file with no package.json above it in the
+ * analyzed root is in no package to publish.
+ */
+export function packagePublishing(rootAbs, appRootAbs) {
+  const appPackage = packageFileOf(rootAbs, appRootAbs);
+  const memo = new Map();
+  const verdictOf = (file) => {
+    if (!file || file === appPackage) return null;
+    let pkg;
+    try { pkg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return `${toPosix(path.relative(rootAbs, file))} cannot be read, so whether its package is published is not known`; }
+    return pkg && pkg.private === true ? null
+      : `the package of ${toPosix(path.relative(rootAbs, file))}${pkg?.name ? ` (${pkg.name})` : ''} is not the application's and is not marked private, so it may be published and a class outside this tree may extend or implement the type`;
+  };
+  return (rel) => {
+    const file = packageFileOf(rootAbs, path.dirname(path.join(rootAbs, rel)));
+    if (!memo.has(file)) memo.set(file, verdictOf(file));
+    return memo.get(file);
+  };
+}
+
+const isFileAt = (abs) => {
+  try { return fs.statSync(abs).isFile(); } catch { return false; }
+};
+
+/**
+ * Where an import of the application leads while the run decides which files
+ * to read: the bridge's own resolution (src/adapters/ts/project.mjs) over the
+ * same tsconfig, so the file read for an import is the file the bridge takes it
+ * to mean. Under the application's root a file is one the worker listed; outside
+ * it, a source file inside the analyzed root that a walk would read
+ * (never node_modules, a test, or a path that leaves the root).
+ *
+ * @param {{rootAbs:string, appRootAbs:string, listed:string[]}} a  `listed` root-relative
+ * @returns {(fromFile:string, spec:string) => (string|null)} the root-relative file, or null for a package
+ */
+export function tsReachResolver({ rootAbs, appRootAbs, listed }) {
+  const tsconfig = readTsconfigPaths(rootAbs, appRootAbs);
+  const app = toPosix(path.relative(rootAbs, appRootAbs));
+  const inApp = (f) => app === '' || f === app || f.startsWith(`${app}/`);
+  const known = new Set(listed);
+  const isKnown = (f) => known.has(f) || (!inApp(f) && isReadablePath(f) && isFileAt(path.join(rootAbs, f)));
+  return makeModuleResolver(isKnown, { baseUrl: tsconfig.baseUrl, paths: tsconfig.paths });
 }

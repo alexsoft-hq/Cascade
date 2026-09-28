@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readLenientJson, readTsconfigPaths, prismaSchemaFileOf, tsBridgeOptions } from '../src/cli/ts_inputs.mjs';
+import { readLenientJson, readTsconfigPaths, prismaSchemaFileOf, tsBridgeOptions, packagePublishing } from '../src/cli/ts_inputs.mjs';
 
 function tmpDir(t, prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -179,4 +179,21 @@ test('tsBridgeOptions gives prisma null when the app has no schema.prisma anywhe
   assert.equal(opts.prisma, null);
   assert.equal(opts.prismaSchemaFile, null);
   assert.equal(opts.schemaName, null, 'sqlArgs.defaultSchema was not given');
+});
+
+// ---------------------------------------------------------------------------
+// packagePublishing
+// ---------------------------------------------------------------------------
+
+test('packagePublishing: the application\'s own package and a private one are used by this tree alone; any other package may be published', (t) => {
+  const root = tmpDir(t, 'cascade-publish-');
+  writeJson(path.join(root, 'package.json'), { name: 'shop' });
+  writeJson(path.join(root, 'libs', 'private', 'package.json'), { name: '@shop/private', private: true });
+  writeJson(path.join(root, 'libs', 'sdk', 'package.json'), { name: '@shop/sdk', main: 'index.js' });
+  fs.mkdirSync(path.join(root, 'apps', 'api', 'src'), { recursive: true });
+  const publishedOf = packagePublishing(root, path.join(root, 'apps', 'api', 'src'));
+  assert.equal(publishedOf('apps/api/src/users/user.repository.ts'), null, 'the package that holds the application');
+  assert.equal(publishedOf('libs/common/src/helper.ts'), null, 'a lib a path alias names, with no package.json of its own, is in the application\'s package');
+  assert.equal(publishedOf('libs/private/src/a.ts'), null);
+  assert.equal(publishedOf('libs/sdk/src/store.ts'), 'the package of libs/sdk/package.json (@shop/sdk) is not the application\'s and is not marked private, so it may be published and a class outside this tree may extend or implement the type');
 });

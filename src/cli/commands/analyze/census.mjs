@@ -342,6 +342,21 @@ function clientScreensPhrase(pg) {
   return `${n('nexacro') > 0 ? ` and ${n('nexacro')} Nexacro form(s)` : ''}${n('websquare') > 0 ? ` and ${n('websquare')} WebSquare page(s)` : ''}`;
 }
 
+/** The files a TypeScript application's imports reached outside its root, when there are any. */
+function tsReachedPhrase(ts) {
+  return ts.reached ? ` (${ts.reached.length} outside the application, reached through its imports)` : '';
+}
+
+/** Of the calls linked: those into files outside the application, and those through a type the project extends or implements. */
+function tsDispatchPhrase(calls) {
+  const parts = [
+    ...(calls.intoReached > 0 ? [`${calls.intoReached} into files outside the application`] : []),
+    ...(calls.dispatched > 0 ? [`${calls.dispatched} through a type classes of the project extend or implement, as ${calls.dispatchEdges} edge(s), `
+      + `${calls.narrowed ?? 0} settled by what the modules bind, ${calls.dispatchHeuristic ?? 0} graded HEURISTIC as a set that may be short`] : []),
+  ];
+  return parts.length > 0 ? ` (${parts.join('; ')})` : '';
+}
+
 /**
  * WHAT schema.prisma DECLARED: the tables and columns it put in the graph, or
  * corroborated in the SQL catalog this run read, the joins its relations are,
@@ -370,8 +385,8 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
     ? `${ts.controllers} controller(s), none of them served because the application could not be read (see tsBackend below)`
     : `${ts.controllers - unregistered.length} registered controller(s)${unregistered.length > 0 ? ` (${unregistered.length} not registered by any module)` : ''}`;
   const guessed = ts.heuristicRoutes > 0 ? ` (${ts.heuristicRoutes} at an address an unread exclude may change, graded HEURISTIC)` : '';
-  process.stderr.write(`TypeScript lane: ${ts.files} file(s), ${ts.routes} route(s)${guessed} from ${controllers}, `
-    + `${ts.calls.resolved} call(s) linked, ${ts.calls.external} into packages, ${ts.calls.unresolved} on a receiver not typed here`
+  process.stderr.write(`TypeScript lane: ${ts.files} file(s)${tsReachedPhrase(ts)}, ${ts.routes} route(s)${guessed} from ${controllers}, `
+    + `${ts.calls.resolved} call(s) linked${tsDispatchPhrase(ts.calls)}, ${ts.calls.external} into packages, ${ts.calls.unresolved} on a receiver not typed here`
     + `${p ? `; Prisma: ${p.statements} statement(s) from ${p.clientCalls} client call(s)${p.unknownModel + p.unknownOperation > 0 ? `, ${p.unknownModel} on a model and ${p.unknownOperation} with an operation this engine does not know` : ''}` : '; no schema.prisma'}`
     + `${typeormSaid(ts.typeorm)}\n`);
   if (p?.catalog) sayPrismaCatalog(p.catalog, p);
@@ -380,7 +395,7 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
     app: relOf(sel.tsSrc[0]) || '.',
     tsconfig: opts.tsconfigFile,
     prismaSchema: schemaAbs ? { path: opts.prismaSchemaFile, sha256: sha256File(schemaAbs), provider: opts.prisma.schema.provider } : null,
-    files: ts.files, symbols: ts.symbols, routes: ts.routes, heuristicRoutes: ts.heuristicRoutes, controllers: ts.controllers,
+    files: ts.files, ...(ts.reached ? { reached: ts.reached } : {}), symbols: ts.symbols, routes: ts.routes, heuristicRoutes: ts.heuristicRoutes, controllers: ts.controllers,
     unregisteredControllers: ts.unregisteredControllers, calls: ts.calls, prisma: p, ...(ts.typeorm ? { typeorm: ts.typeorm } : {}),
   };
 }
@@ -708,6 +723,15 @@ function sayContractLinks(c) {
   }
 }
 
+/** The TypeScript files this run read or reused, and how many of them its imports reached outside the application. */
+function tsRunPhrase(st) {
+  if (st.reparsedTs === undefined) return '';
+  const reached = st.reachedTs > 0 ? `${st.reachedTs} reached outside the application` : null;
+  return st.mode === MODE_COLD
+    ? `, read ${st.reparsedTs} TypeScript file(s)${reached ? ` (${reached})` : ''}`
+    : `, reparsed ${st.reparsedTs} TypeScript file(s) (${st.reusedTs} reused${reached ? `, ${reached}` : ''})`;
+}
+
 /**
  * WHAT THIS RUN PRODUCED, last, so it is the thing still on screen: the pack
  * and its digest, the routes index beside it, the axes it declares, and what it
@@ -723,9 +747,7 @@ export function sayResult({ writeDir, writeIndexFile, pack, routesIndex, axes, l
   const webLine = webSrc.length === 0 ? '' : (st.mode === MODE_COLD
     ? `, read ${st.reparsedWeb} web file(s)`
     : `, reparsed ${st.reparsedWeb} web file(s) (${st.reusedWeb} reused, ${st.droppedWeb} dropped)`);
-  const tsLine = st.reparsedTs === undefined ? '' : (st.mode === MODE_COLD
-    ? `, read ${st.reparsedTs} TypeScript file(s)`
-    : `, reparsed ${st.reparsedTs} TypeScript file(s) (${st.reusedTs} reused)`);
+  const tsLine = tsRunPhrase(st);
   process.stderr.write(st.mode === MODE_COLD
     ? `cold (${st.reason}): parsed ${st.reparsedJava} java file(s)${webLine}${tsLine}, ${st.recomputedLineage} lineage shard(s) over ${st.statements} statement(s), pack digest ${pack.digest}\n`
     : `incremental: reparsed ${st.reparsedJava} java files (${st.reusedJava} reused, ${st.droppedJava} dropped)${webLine}${tsLine}, `
@@ -735,9 +757,10 @@ export function sayResult({ writeDir, writeIndexFile, pack, routesIndex, axes, l
       + `pack digest ${pack.digest}\n`);
   for (const n of plan.notes ?? []) process.stderr.write(`  note: ${n}\n`);
   const shardLanes = Object.values(result.index.files);
+  const tsShards = Object.keys(result.index.tsFiles ?? {}).length;
   process.stderr.write(`facts index ${writeIndexFile}: ${shardLanes.filter((e) => laneOfEntry(e) === 'java').length} java shard(s), `
     + `${shardLanes.filter((e) => e.lane === 'web').length} web shard(s), `
-    + `${shardLanes.some((e) => e.lane === 'ts') ? `${shardLanes.filter((e) => e.lane === 'ts').length} TypeScript shard(s), ` : ''}`
+    + `${tsShards > 0 ? `${tsShards} TypeScript shard(s), ` : ''}`
     + `${Object.keys(result.index.statements).length} lineage shard(s)${projectId ? ` in ${cacheDir(projectId, process.env)}/cas` : ' (IN MEMORY: not reusable, see above)'}\n`);
   if (base?.dirty) {
     process.stderr.write(`base ${base.commit.slice(0, 12)} + ${base.dirtyFiles.length} DIRTY analysis input(s): this pack describes the WORKING TREE, not that commit: `

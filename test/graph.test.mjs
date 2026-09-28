@@ -50,6 +50,26 @@ test('addNode: adding the same id twice with different attrs merges into one nod
   assert.equal(n.owner, 'x');
 });
 
+test('addNode: a node two lanes make is one node that names both lanes; the later lane\'s fields are the ones it keeps', () => {
+  const g = new Graph();
+  const id = nodeId('symbol', 'libs/common/src/api.ts#fetchUser');
+  g.addNode({ id, symbol: 'libs/common/src/api.ts#fetchUser', line: 3, lane: 'ts' });
+  g.addNode({ id, symbol: 'libs/common/src/api.ts#fetchUser', line: 4, lane: 'web', exported: true });
+  g.addNode({ id, lane: 'web' });
+  const n = g.nodes.get(id);
+  assert.equal(g.nodes.size, 1);
+  assert.equal(n.lane, 'web');
+  assert.deepEqual(n.lanes, ['ts', 'web']);
+  assert.equal(n.line, 4);
+  const one = nodeId('symbol', 'a.ts#f');
+  g.addNode({ id: one, lane: 'web' });
+  g.addNode({ id: one, lane: 'web', line: 1 });
+  g.addNode({ id: nodeId('table', 'main.T') });
+  g.addNode({ id: nodeId('table', 'main.T'), lane: 'web' });
+  assert.equal(g.nodes.get(one).lanes, undefined, 'one lane twice is one lane');
+  assert.equal(g.nodes.get(nodeId('table', 'main.T')).lanes, undefined, 'a node no lane named first has nothing to keep');
+});
+
 test('addNode: throws GraphError when node.id is missing', () => {
   const g = new Graph();
   assert.throws(() => g.addNode({}), GraphError);

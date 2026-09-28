@@ -9,7 +9,9 @@
 // `paths` pattern of the tsconfig, else the `baseUrl`, trying the file itself,
 // `.ts`, and `index.ts`. A specifier none of them finds in the project is a
 // package, and a name imported from a package is external: known by the package
-// and the name, never guessed into a project class.
+// and the name, never guessed into a project class. The run that decides which
+// files to read resolves with the same function (src/cli/ts_inputs.mjs), so a
+// file it reads for an import is the file the import means here.
 
 import path from 'node:path';
 
@@ -20,8 +22,11 @@ const MAX_HOPS = 16;
 export const classKey = (file, name) => `${file}#${name}`;
 
 function emptyFile() {
-  return { imports: [], exports: [], classes: new Map(), functions: new Map() };
+  return { imports: [], exports: [], classes: new Map(), interfaces: new Map(), functions: new Map() };
 }
+
+/** Whether a file declares a class, an interface or a function by that name. */
+const declares = (f, name) => f.classes.has(name) || f.interfaces.has(name) || f.functions.has(name);
 
 function addClassMember(cls, r) {
   if (r.kind === 'method') cls.methods.set(r.name, r);
@@ -42,6 +47,7 @@ function indexRecords(records) {
       case 'import': f.imports.push(r); break;
       case 'export': f.exports.push(r); break;
       case 'class': f.classes.set(r.name, { ...r, key: classKey(r.file, r.name), methods: new Map(), fields: new Map() }); break;
+      case 'interface': f.interfaces.set(r.name, { ...r, key: classKey(r.file, r.name) }); break;
       case 'function': f.functions.set(r.name, r); break;
       case 'call': calls.push(r); break;
       case 'new': news.push(r); break;
@@ -57,16 +63,17 @@ function indexRecords(records) {
 }
 
 /**
- * How module specifiers resolve in this project.
+ * How module specifiers resolve in this project: `(fromFile, spec)` to the
+ * root-relative file it names, or null for a package.
  *
- * @param {Set<string>} known  the project's files, root-relative
+ * @param {(file:string)=>boolean} isKnown  whether a root-relative file is one of the project's
  * @param {{baseUrl?:(string|null), paths?:Object<string,string[]>}} tsconfig  root-relative
  */
-function makeModuleResolver(known, tsconfig) {
+export function makeModuleResolver(isKnown, tsconfig) {
   const firstKnown = (base) => {
     for (const ext of EXTENSION_TRIES) {
       const f = path.posix.normalize(base + ext);
-      if (known.has(f)) return f;
+      if (isKnown(f)) return f;
     }
     return null;
   };
@@ -97,7 +104,7 @@ function makeModuleResolver(known, tsconfig) {
 function exportedFrom(project, file, name, hops = 0) {
   const f = project.files.get(file);
   if (!f || hops > MAX_HOPS) return null;
-  if (f.classes.has(name) || f.functions.has(name)) return { file, name };
+  if (declares(f, name)) return { file, name };
   for (const e of f.exports) {
     if (e.all && e.source) {
       const target = project.resolveModule(file, e.source);
@@ -105,7 +112,7 @@ function exportedFrom(project, file, name, hops = 0) {
       if (hit) return hit;
     } else if (e.name === name) {
       const local = e.local ?? name;
-      if (!e.source) return f.classes.has(local) || f.functions.has(local) ? { file, name: local } : null;
+      if (!e.source) return declares(f, local) ? { file, name: local } : null;
       const target = project.resolveModule(file, e.source);
       return target ? exportedFrom(project, target, local, hops + 1) : { external: e.source, name: local };
     }
@@ -114,25 +121,29 @@ function exportedFrom(project, file, name, hops = 0) {
 }
 
 /**
- * THE PROJECT: its files, classes, calls and `new`s, and the three questions
- * every later step asks of it.
+ * THE PROJECT: its files, classes, calls and `new`s, and the questions every
+ * later step asks of it.
  *
  * - `meaning(file, name)`: what a name written in `file` refers to, as
- *   `{file, name}` for a class or function of the project, `{external: source,
- *   name}` for one imported from a package, or null.
+ *   `{file, name}` for a class, interface or function of the project,
+ *   `{external: source, name}` for one imported from a package, or null.
  * - `classOf(file, name)`: the project class that name refers to, or null.
+ * - `typeOf(file, name)`: the project class or interface it refers to, or null.
  * - `lineage(cls)`: the class and each class it extends in the project, nearest first.
+ *
+ * A file is the project's when a record says it was read, so a file of
+ * constants alone is not taken for a package.
  */
 export function readProject(records, tsconfig = {}) {
   const { files, calls, news } = indexRecords(records);
-  const resolveModule = makeModuleResolver(new Set(files.keys()), tsconfig);
+  const resolveModule = makeModuleResolver((f) => files.has(f), tsconfig);
 
   const exported = (file, name) => exportedFrom({ files, resolveModule }, file, name);
 
   const meaning = (file, name) => {
     const f = files.get(file);
     if (!f || typeof name !== 'string') return null;
-    if (f.classes.has(name) || f.functions.has(name)) return { file, name };
+    if (declares(f, name)) return { file, name };
     for (const imp of f.imports) {
       const named = imp.names.find((n) => n.local === name);
       const imported = named ? named.imported : imp.default === name ? 'default' : null;
@@ -154,7 +165,14 @@ export function readProject(records, tsconfig = {}) {
     return out;
   };
 
-  return { files, calls, news, meaning, classOf, lineage, resolveModule };
+  return { files, calls, news, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), lineage, resolveModule };
+}
+
+/** The class, else the interface, a meaning names in the project. */
+function typeIn(files, m) {
+  if (!m || m.external) return null;
+  const f = files.get(m.file);
+  return f ? f.classes.get(m.name) ?? f.interfaces.get(m.name) ?? null : null;
 }
 
 /** The method `name` of `cls` or of the nearest class it extends in the project, with the class that declares it. */

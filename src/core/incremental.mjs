@@ -193,41 +193,86 @@ function webFactsWithShards({ plan, index, store, selection, run, hash, abs, wor
 }
 
 /**
+ * One round of TypeScript files: each shard read back when the key of the
+ * file's CURRENT bytes is the key the index recorded, the rest read again by
+ * the worker in one invocation.
+ */
+function readTsBatch(batch, { index, store, run, hash, abs, cold, diag, newIndex, shards, counts }) {
+  const keyOf = (file) => tsShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: TS_WORKER_VERSION });
+  const reparse = [];
+  for (const file of batch) {
+    const entry = !cold && index ? index.tsFiles?.[file] : null;
+    const key = keyOf(file);
+    const hit = entry && entry.shardKey === key ? tryRead(store, 'tsfacts', key, entry, diag, `tsfacts ${file}`) : null;
+    if (hit) {
+      shards.set(file, hit.records);
+      newIndex.tsFiles[file] = { lane: 'ts', shardKey: key, sha256: hit.sha256, lines: hit.lines };
+      counts.reused += 1;
+    } else reparse.push(file);
+  }
+  if (reparse.length === 0) return;
+  const byFile = splitTsFactsByFile(run.ts(reparse.map((f) => abs(f))));
+  for (const file of reparse) {
+    const records = byFile.get(file) ?? [];
+    const key = keyOf(file);
+    const w = store.write('tsfacts', key, records);
+    shards.set(file, records);
+    newIndex.tsFiles[file] = { lane: 'ts', shardKey: key, sha256: w.sha256, lines: w.lines };
+  }
+  counts.reparsed += reparse.length;
+}
+
+/** The files the imports and re-exports of `batch` name that this run has not read yet, in path order. */
+function reachedFrom(batch, shards, resolve, seen) {
+  if (!resolve) return [];
+  const next = new Set();
+  for (const file of batch) {
+    for (const r of shards.get(file) ?? []) {
+      if ((r.kind !== 'import' && r.kind !== 'export') || typeof r.source !== 'string') continue;
+      const target = resolve(file, r.source);
+      if (target && !seen.has(target)) {
+        seen.add(target);
+        next.add(target);
+      }
+    }
+  }
+  return [...next].sort();
+}
+
+/**
  * 6. THE TYPESCRIPT BACKEND FACTS, reused the web lane's way: a shard is read
  * back when the key of the file's CURRENT bytes is the key the index recorded,
- * and every other file the worker lists is read again. The worker reads each
- * file alone, so a shard holds nothing about another file, and tsconfig and
- * schema.prisma, which every file's meaning depends on, are read again by the
- * bridge on every run rather than cached.
+ * and every other file is read again. The worker reads each file alone, so a
+ * shard holds nothing about another file, and tsconfig and schema.prisma,
+ * which every file's meaning depends on, are read again by the bridge on every
+ * run rather than cached.
+ *
+ * THE FILES are those the worker lists under the application's root, and
+ * every file their imports reach elsewhere in the analyzed root (a monorepo's
+ * shared library), round by round until none is new. `run.tsResolver` answers
+ * where an import leads with the bridge's own resolution, and never outside
+ * the analyzed root or into node_modules. Which files that is depends on other
+ * files' imports, so it is decided again on every run from this run's facts:
+ * a shard is still one file's records, and the index records what was read.
+ *
+ * The entries sit in the index's own `tsFiles` map: a shared file the web lane
+ * reads too keeps its web shard in `files`, and each lane reuses its own.
  */
 function tsFactsWithShards({ index, store, selection, run, hash, abs, cold, diag, newIndex, stats }) {
   const roots = selection.tsRootsAbs ?? [];
   if (roots.length === 0) return [];
   const listed = run.tsList(roots);
-  const keyOf = (file) => tsShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: TS_WORKER_VERSION });
+  const resolve = typeof run.tsResolver === 'function' ? run.tsResolver(listed) : null;
+  newIndex.tsFiles = {};
   const shards = new Map();
-  const reparse = [];
-  for (const file of listed) {
-    const entry = !cold && index ? index.files?.[file] : null;
-    const key = keyOf(file);
-    const hit = entry && entry.lane === 'ts' && entry.shardKey === key ? tryRead(store, 'tsfacts', key, entry, diag, `tsfacts ${file}`) : null;
-    if (hit) {
-      shards.set(file, hit.records);
-      newIndex.files[file] = { lane: 'ts', shardKey: key, sha256: hit.sha256, lines: hit.lines };
-    } else reparse.push(file);
+  const counts = { reused: 0, reparsed: 0 };
+  const seen = new Set(listed);
+  for (let batch = [...listed]; batch.length > 0; batch = reachedFrom(batch, shards, resolve, seen)) {
+    readTsBatch(batch, { index, store, run, hash, abs, cold, diag, newIndex, shards, counts });
   }
-  stats.reusedTs = shards.size;
-  if (reparse.length > 0) {
-    const byFile = splitTsFactsByFile(run.ts(reparse.map((f) => abs(f))));
-    for (const file of reparse) {
-      const records = byFile.get(file) ?? [];
-      const key = keyOf(file);
-      const w = store.write('tsfacts', key, records);
-      shards.set(file, records);
-      newIndex.files[file] = { lane: 'ts', shardKey: key, sha256: w.sha256, lines: w.lines };
-    }
-  }
-  stats.reparsedTs = reparse.length;
+  stats.reusedTs = counts.reused;
+  stats.reparsedTs = counts.reparsed;
+  if (seen.size > listed.length) stats.reachedTs = seen.size - listed.length;
   return assembleTsFacts(shards);
 }
 
@@ -245,7 +290,8 @@ function tsFactsWithShards({ index, store, selection, run, hash, abs, cold, diag
  * @param {Object} a.inputs    {mapperFiles:[{rel,abs}], ddlFiles:[{rel,abs}],
  *                              dialect, identifierCase, defaultSchema, mybatisArgs, lineageArgs, catalogArgs}
  * @param {Object} a.run       {java(targets), web(targets), webConfigs(roots),
- *                              mybatis(), lineage(statements, catalogRecords), catalog()}
+ *                              mybatis(), lineage(statements, catalogRecords), catalog(),
+ *                              tsList(roots), ts(files), tsResolver(listed)}
  * @param {(absPath:string)=>string} a.hash  sha256 hex of a file's bytes
  * @param {(abs:string)=>boolean} [a.exists]
  * @param {(relPath:string)=>string} a.abs   root-relative path -> absolute path

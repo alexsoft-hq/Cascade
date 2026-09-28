@@ -18,6 +18,7 @@ import { javaRouteFunction } from './java_route_function.mjs';
 import { javaTypeRole } from './java_type_role.mjs';
 import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
+import { tsProviderBinding } from './ts_provider_binding.mjs';
 import { tsRouteDecorator } from './ts_route_decorator.mjs';
 import { tsTypeRole } from './ts_type_role.mjs';
 import { typeormEntity } from './typeorm_entity.mjs';
@@ -32,6 +33,7 @@ export const KINDS = Object.freeze({
   [javaTypeRole.name]: javaTypeRole,
   [prismaOperation.name]: prismaOperation,
   [sqlDialectPath.name]: sqlDialectPath,
+  [tsProviderBinding.name]: tsProviderBinding,
   [tsRouteDecorator.name]: tsRouteDecorator,
   [tsTypeRole.name]: tsTypeRole,
   [typeormEntity.name]: typeormEntity,

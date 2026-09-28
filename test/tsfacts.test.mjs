@@ -394,3 +394,21 @@ test('sourceFiles skips a directory it cannot read, instead of throwing', (t) =>
     fs.chmodSync(locked, 0o755);
   }
 });
+
+test('every file read says so first, even one of constants alone, so the bridge never takes it for a package', () => {
+  assert.deepEqual(factsOfFile('src/consts.ts', "export const DATE_FORMAT = 'yyyy-MM-dd';"), [{ kind: 'file', file: 'src/consts.ts' }]);
+});
+
+test('an interface is recorded with the interfaces it extends, and an abstract method, which has no body, is no method', () => {
+  const records = factsOfFile('src/repo.ts', [
+    'export interface Store extends Base, ns.Other { get(k: string): string; }',
+    'interface Local {}',
+    'export abstract class Repo implements Store {',
+    '  abstract find(id: string): unknown;',
+    '  get(k: string) { return k; }',
+    '}',
+  ].join('\n'));
+  const itfs = records.filter((r) => r.kind === 'interface');
+  assert.deepEqual(itfs.map((r) => [r.name, r.exported, r.extends]), [['Store', true, ['Base', 'ns.Other']], ['Local', false, []]]);
+  assert.deepEqual(records.filter((r) => r.kind === 'method').map((r) => r.name), ['get']);
+});

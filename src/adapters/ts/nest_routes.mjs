@@ -36,7 +36,7 @@ function frameworkName(project, file, written, packages) {
   return m.external && packages.includes(m.external) ? m.name : null;
 }
 
-function decoratorsIn(project, file, decorators, packages) {
+export function decoratorsIn(project, file, decorators, packages) {
   return decorators.map((d) => ({ ...d, name: frameworkName(project, file, d.name, packages) })).filter((d) => d.name !== null);
 }
 
@@ -53,7 +53,7 @@ function classView(project, cls, packages) {
   return { ...cls, decorators: decoratorsIn(project, cls.file, cls.decorators, packages), methods };
 }
 
-function viewsOf(project, compiled) {
+export function viewsOf(project, compiled) {
   const views = new Map();
   const viewOf = (cls) => {
     if (!views.has(cls.key)) views.set(cls.key, classView(project, cls, compiled.packages));
@@ -63,7 +63,7 @@ function viewsOf(project, compiled) {
 }
 
 /** A module list entry's module class: a name, `X.forRoot(...)`, or `forwardRef(() => X)`. */
-function moduleClassOf(project, file, value) {
+export function moduleClassOf(project, file, value) {
   if (!value) return null;
   if (value.k === 'id') return project.classOf(file, value.v);
   if (value.k === 'call' && value.callee && value.callee.includes('.')) return project.classOf(file, value.callee.split('.')[0]);
@@ -76,7 +76,7 @@ function moduleClassOf(project, file, value) {
  * `JwtModule.register(...)`): the package's own code is not read, so neither
  * are the routes it may serve, and that is no failure to read this project.
  */
-function isPackageModule(project, file, value) {
+export function isPackageModule(project, file, value) {
   const name = value.k === 'id' ? value.v : value.k === 'call' && value.callee?.includes('.') ? value.callee.split('.')[0] : null;
   return name !== null && Boolean(project.meaning(file, name)?.external);
 }
@@ -221,7 +221,7 @@ function unmarkedRouteClasses(project, compiled, viewOf, controllers) {
  * @param {object} project  readProject's answer
  * @param {object} compiled  the ts.route-decorator rule, compiled
  * @param {{globalPrefix?:(string|null), globalPrefixExclude?:(string[]|null)}} [declared]  what the profile says the source cannot
- * @returns {{routes:object[], diagnostics:object[], controllers:number, unregistered:(string[]|null)}}
+ * @returns {{routes:object[], diagnostics:object[], controllers:number, unregistered:(string[]|null), root:(object|null)}}
  */
 export function nestRoutes(project, compiled, declared = {}) {
   const diagnostics = [];
@@ -231,7 +231,8 @@ export function nestRoutes(project, compiled, declared = {}) {
   const application = compiled.app ? readApplication(project, compiled.app, declared, diagnostics) : null;
   const root = application ? moduleClassOf(project, application.boot.file, application.boot.args[0]) : null;
   if (application && !root) diagnostics.push({ kind: 'TS_ROOT_MODULE_UNREAD', reason: `${application.boot.file}:${application.boot.line}: the module handed to ${compiled.app.create} is not a class of this project` });
-  const unknown = { routes: [], diagnostics, controllers: allControllers.length, unregistered: null };
+  // The root module is handed on: which classes the modules bind to a type is read from it too (nest_providers.mjs).
+  const unknown = { routes: [], diagnostics, controllers: allControllers.length, unregistered: null, root };
   if (!root || application.prefix.unread || application.versioning.unread) return unknown;
   const registered = registeredControllers(project, compiled, viewOf, root, diagnostics);
   const keys = new Set(registered.controllers.map((c) => c.cls.key));
@@ -241,5 +242,5 @@ export function nestRoutes(project, compiled, declared = {}) {
     return { ...unknown, unregistered };
   }
   const ctx = { prefix: application.prefix, versioning: application.versioning, modulePaths: registered.modulePaths, diagnostics, viewOf };
-  return { routes: registered.controllers.flatMap((entry) => routesOfController(compiled, entry, ctx)), diagnostics, controllers: allControllers.length, unregistered };
+  return { routes: registered.controllers.flatMap((entry) => routesOfController(compiled, entry, ctx)), diagnostics, controllers: allControllers.length, unregistered, root };
 }

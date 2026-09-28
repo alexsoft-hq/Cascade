@@ -272,3 +272,44 @@ test('a key named like a property every object has (toString, constructor) is an
   assert.deepEqual([...fx.unknownKeys].sort(), ['constructor', 'toString']);
   assert.deepEqual([...fx.reads], []);
 });
+
+// ---------------------------------------------------------------------------
+// ts.provider-binding
+// ---------------------------------------------------------------------------
+
+const providerRule = (paramsOver = {}, over = {}) => ({
+  id: 'p.providers', kind: 'ts.provider-binding', description: 'Providers.',
+  params: { module: 'Module', list: 'providers', token: 'provide', useClass: 'useClass', notRead: ['useFactory'], inject: 'Inject', ...paramsOver },
+  examples: [{ source: 'export class A {}', expect: [] }],
+  ...over,
+});
+
+test('ts.provider-binding refuses an unknown params key, a missing name and an empty notRead', () => {
+  const problems = refusal([{ where: 'r.json', pack: packOf([providerRule({ bogus: 1, useClass: undefined, notRead: [] })]) }]);
+  has(problems, /p\.providers params has an unknown key "bogus"/);
+  has(problems, /p\.providers params\.useClass must be a name as the source writes it/);
+  has(problems, /p\.providers params\.notRead must list the keys of a binding this kind does not read/);
+});
+
+test('ts.provider-binding refuses a grade: a binding draws no edge to grade', () => {
+  const problems = refusal([{ where: 'r.json', pack: packOf([providerRule({}, { grade: 'SOUND_SET' })]) }]);
+  has(problems, /gives a grade, but a ts\.provider-binding rule draws no edge to grade/);
+});
+
+test('ts.provider-binding refuses an example expect entry of another shape', () => {
+  const problems = refusal([{ where: 'r.json', pack: packOf([providerRule({}, {
+    examples: [{ source: 'export class A {}', expect: [{ module: 'M', token: 'T' }] }],
+  })]) }]);
+  has(problems, /expect\[0\] must be \{module, token, useClass\}, \{module, token, notRead\} or \{module, unread: true\}/);
+});
+
+test('the shipped nestjs.providers examples all hold, and a provider list held in a variable is read as unread, not as a class', () => {
+  const registry = builtinRegistry();
+  const results = testRules(registry, { only: 'nestjs.providers', env: { tsFacts: factsOfFile } });
+  assert.equal(results.length, 1, 'the rule is carried');
+  for (const r of results) assert.deepEqual(r.failures, [], `${r.id}: ${JSON.stringify(r.failures)}`);
+  assert.deepEqual(results.filter((r) => r.notRun), []);
+  const compiled = registry.ofKind('ts.provider-binding')[0].compiled;
+  const cls = factsOfFile('m.ts', "import { Module } from '@nestjs/common';\n@Module({ providers: list })\nexport class M {}").find((r) => r.kind === 'class');
+  assert.deepEqual(compiled.providersOf(cls), { readable: true, spread: true, entries: [] });
+});

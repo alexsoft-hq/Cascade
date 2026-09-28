@@ -28,7 +28,7 @@ import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
 import { LANE_BRIDGES, runJavaLane, runTsLane, runWebLane } from '../../lanes_run.mjs';
-import { tsBridgeOptions } from '../../ts_inputs.mjs';
+import { tsBridgeOptions, tsReachResolver } from '../../ts_inputs.mjs';
 import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from '../../lane_options.mjs';
 import { annotationMappersOf, flattenAnnotationMappers, lineageOfStatements } from '../../java_sql.mjs';
 import { sha256File } from '../../state.mjs';
@@ -64,10 +64,11 @@ function mybatisArgv({ root, tmpDir, mappers, mapperAlternatives, sqlArgs }) {
   return [...base, '--files-from', listFile];
 }
 
-/** The TypeScript backend lane's runners: the files it would read, and those files read. */
-function tsRunners(root) {
+/** The TypeScript backend lane's runners: the files it would read, those files read, and where an import of one leads. */
+function tsRunners(root, tsSrc = []) {
   return {
     tsList: (roots) => runTsLane(root, roots, { list: true }).filter((r) => r.kind === 'sourceFile').map((r) => r.file),
+    tsResolver: (listed) => (tsSrc.length > 0 ? tsReachResolver({ rootAbs: path.resolve(root), appRootAbs: tsSrc[0], listed }) : null),
     ts: (targets) => {
       process.stderr.write(`TypeScript lane: reading ${targets.length} file(s)…\n`);
       return runTsLane(root, targets);
@@ -136,7 +137,7 @@ export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, 
         return [];
       }
     },
-    ...tsRunners(root),
+    ...tsRunners(root, sel.tsSrc),
   };
 }
 
@@ -420,7 +421,12 @@ export function tsOptionsOf({ root, sel, profile, manifestDir }, sqlArgs, diagno
   if (declaredSchema && !opts.prisma) {
     diagnostics.push({ kind: 'MISSING_INPUT', severity: 'warn', key: 'tsBackend.prismaSchema', reason: `tsBackend.prismaSchema names ${ts.prismaSchema}, which is not there, so no Prisma call is read` });
   }
-  return { ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null, typeormNamingStrategy: typeormNamingDeclared(ts.typeormNamingStrategy) };
+  // The application's root, so its own files are told from those its imports reached elsewhere.
+  const appRoot = path.relative(path.resolve(root), app).split(path.sep).join('/');
+  return {
+    ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null,
+    typeormNamingStrategy: typeormNamingDeclared(ts.typeormNamingStrategy), appRoot,
+  };
 }
 
 /** A declared TypeORM naming strategy, checked against the strategies the typeorm rule pack names. */

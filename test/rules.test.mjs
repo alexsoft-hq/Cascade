@@ -215,7 +215,7 @@ test('a pack with problems is refused with every problem, each named by its file
   has(/^bad\.json: names "id" must be "p\.<name>"/);
   has(/^bad\.json: p\.empty needs at least one example/);
   has(/^bad\.json: p\.graded gives a grade, but a sql\.dialect-path rule draws no edge to grade$/);
-  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.route-function, java\.type-role, prisma\.operation, sql\.dialect-path, ts\.route-decorator, ts\.type-role, typeorm\.entity, typeorm\.operation, typeorm\.query-builder, typeorm\.receiver, got "java\.nothing"$/);
+  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.route-function, java\.type-role, prisma\.operation, sql\.dialect-path, ts\.provider-binding, ts\.route-decorator, ts\.type-role, typeorm\.entity, typeorm\.operation, typeorm\.query-builder, typeorm\.receiver, got "java\.nothing"$/);
 });
 
 test('a dialect rule refuses words that are not plain words, one word naming two databases, and an example it does not declare', () => {

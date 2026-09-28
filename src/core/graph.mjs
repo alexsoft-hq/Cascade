@@ -91,6 +91,21 @@ export function nodeId(kind, key) {
   return `${kind}:${key}`;
 }
 
+/**
+ * ONE SYMBOL, TWO LANES. A file of a monorepo's shared library can be read by
+ * the web lane, because the frontend bundles it, and by the TypeScript lane,
+ * because the backend imports it; both key a function by its file and name, so
+ * both describe one node, which is right: it is one function. The lane that
+ * adds it later writes its fields over the earlier one's, as for any node, and
+ * `lanes` keeps that both read it, so the node never claims to be one lane's
+ * alone. Null when the two agree, or one of them names no lane.
+ */
+function lanesOf(existing, node) {
+  if (typeof existing.lane !== 'string' || typeof node.lane !== 'string') return null;
+  const all = new Set([...(existing.lanes ?? [existing.lane]), node.lane]);
+  return all.size > 1 ? [...all].sort() : null;
+}
+
 export class Graph {
   constructor() {
     /** @type {Map<string, object>} */ this.nodes = new Map();
@@ -99,14 +114,22 @@ export class Graph {
     /** id -> [{from,type,grade,idx}] */ this._in = new Map();
   }
 
-  /** Add or merge a node. Idempotent by id. */
+  /**
+   * Add or merge a node. Idempotent by id. A node two lanes make keeps both
+   * in `lanes` (see `lanesOf`); every other field is the later one's.
+   */
   addNode(node) {
     if (!node || typeof node.id !== 'string') throw new GraphError('node.id (string) is required');
     const [kind] = node.id.split(':', 1);
     if (!NODE_KINDS.includes(kind)) throw new GraphError(`node id has unknown kind: ${node.id}`);
     const existing = this.nodes.get(node.id);
-    if (existing) Object.assign(existing, node);
-    else this.nodes.set(node.id, { ...node, kind });
+    if (!existing) {
+      this.nodes.set(node.id, { ...node, kind });
+      return this;
+    }
+    const lanes = lanesOf(existing, node);
+    Object.assign(existing, node);
+    if (lanes) existing.lanes = lanes;
     return this;
   }
 

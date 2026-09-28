@@ -341,14 +341,30 @@ export function dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untracke
     || selectionRel.templateRoots.some((t) => f.endsWith(t.suffix) && underAny(f, [t.root]))
     || (f.endsWith('.ts') && underAny(f, selectionRel.tsRoots ?? []))
     || selectionRel.ddls.includes(f);
-  const dirtyFiles = [...new Set([
+  const changed = [...new Set([
     ...splitZ(gitText(rootAbs, ['diff', '--name-only', '-z', 'HEAD', '--'])).map(toRootRel),
     ...untrackedRel,
-  ])].filter((f) => f !== null && isAnalysisInput(f)).sort();
+  ])].filter((f) => f !== null);
+  const dirtyFiles = changed.filter(isAnalysisInput).sort();
   const base = headCommit
     ? { repoPath: rootAbs, commit: headCommit, dirty: dirtyFiles.length > 0, dirtyFiles, ...repositoryIdentity(rootAbs, gitTop) }
     : null;
-    return { dirtyFiles, base };
+    return { dirtyFiles, base, changed };
+}
+
+/**
+ * A file the TypeScript lane read outside its root, because the application
+ * imports it, is an analysis input too; which files those are is known only
+ * once the lane has read the imports, so they are added to the base here,
+ * after the run, when one of them differs from HEAD.
+ */
+export function noteDirtyReached(base, changed, readFiles) {
+  if (!base || !changed || readFiles.length === 0) return;
+  const read = new Set(readFiles);
+  const more = changed.filter((f) => read.has(f) && !base.dirtyFiles.includes(f));
+  if (more.length === 0) return;
+  base.dirtyFiles = [...base.dirtyFiles, ...more].sort();
+  base.dirty = true;
 }
 
 /**
@@ -413,11 +429,11 @@ export function incrementalPlan(ctx, { root, out, profile, manifest, resolved, s
   const { gitTop, headCommit, toRootRel, relOf, absOf } = pathSpellings(rootAbs);
   const selectionRel = selectionRecord({ rootAbs, javaSrc, mappers, webSrc, sel, ddls, snapshot, sqlArgs, profile, relOf });
   const { prevIndex, changeset, untrackedRel, baseCommit } = changesetOf({ rootAbs, out, gitTop, headCommit, toRootRel });
-  const { base } = dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untrackedRel, selectionRel });
+  const { base, changed } = dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untrackedRel, selectionRel });
   const { projectId, plan, store } = planOf(ctx, {
     resolved, manifest, rootAbs, prevIndex, changeset, untrackedRel, selectionRel, absOf,
   });
-  return { selectionRel, prevIndex, base, baseCommit, projectId, plan, store, relOf, absOf };
+  return { selectionRel, prevIndex, base, changed, baseCommit, projectId, plan, store, relOf, absOf };
 }
 
 /**

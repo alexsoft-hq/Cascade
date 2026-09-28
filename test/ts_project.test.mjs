@@ -157,3 +157,24 @@ test('methodOf and fieldOf find a member declared on a superclass, in another fi
   assert.equal(field.field.name, 'svc');
   assert.equal(methodOf(project, mid, 'noSuchMethod'), null);
 });
+
+test('typeOf names a class or an interface of the project, through an import; classOf still names classes only', () => {
+  const project = readProject(recordsOf({
+    'src/a.ts': "import { Store } from './store';\nimport { Repo } from './repo';",
+    'src/store.ts': 'export interface Store { get(): string; }',
+    'src/repo.ts': 'export class Repo {}',
+  }), {});
+  assert.equal(project.typeOf('src/a.ts', 'Store').key, 'src/store.ts#Store');
+  assert.equal(project.typeOf('src/a.ts', 'Store').kind, 'interface');
+  assert.equal(project.typeOf('src/a.ts', 'Repo').kind, 'class');
+  assert.equal(project.classOf('src/a.ts', 'Store'), null);
+});
+
+test('a file of constants alone is a file of the project: a name imported from it is not a package\'s', () => {
+  const project = readProject(recordsOf({
+    'src/a.ts': "import { DATE_FORMAT } from './consts';",
+    'src/consts.ts': "export const DATE_FORMAT = 'yyyy';",
+  }), {});
+  assert.equal(project.meaning('src/a.ts', 'DATE_FORMAT'), null, 'the project\'s own file, where the name is no class or function');
+  assert.equal(project.files.has('src/consts.ts'), true);
+});

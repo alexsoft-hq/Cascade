@@ -6,13 +6,13 @@
 //   node adapters/ts/tsfacts.mjs --list --root <abs root> <abs dir>...
 //
 // One JSONL record per line (schema `cascade:tsfacts:1`): a header, then for
-// each file, in path order, its imports, exports, classes (with their
-// decorators and the type arguments of what they extend), constructor
-// parameters, properties, methods (with what they return), module functions,
-// every call (its receiver chain, its arguments, the name its value is held in,
-// the calls chained on its result, its place among the calls of the member it
-// is in, and which local its receiver and its holder are), and every `new`;
-// then a summary.
+// each file, in path order, a record that it was read, its imports, exports,
+// classes (with their decorators and the type arguments of what they extend),
+// interfaces (with those they extend), constructor parameters, properties,
+// methods (with what they return), module functions, every call (its receiver
+// chain, its arguments, the name its value is held in, the calls chained on
+// its result, its place among the calls of the member it is in, and which local
+// its receiver and its holder are), and every `new`; then a summary.
 // `--list` prints only the files a run over those roots would read. Nothing
 // here knows a framework: which call starts an application is a rule the
 // bridge reads (src/core/rules/packs/nestjs.json).
@@ -40,7 +40,9 @@ const SCHEMA = 'cascade:tsfacts:1';
 // 4: which local a call's receiver starts at and which it is held in (`rootAt`,
 //    `holderAt`, and whether that local is written again), and which local a
 //    name or a function parameter among its arguments is (`at`, `paramsAt`).
-export const VERSION = 'tsfacts/4';
+// 5: a record that each file was read (`file`), interfaces (`interface`), and
+//    which local a `new` makes its object through (`rootAt`).
+export const VERSION = 'tsfacts/5';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -61,6 +63,18 @@ const MAX_DEPTH = 8;
 
 function isSourceFile(name) {
   return name.endsWith('.ts') && !name.endsWith('.d.ts') && !TEST_FILE.test(name);
+}
+
+/**
+ * Whether a root-relative path is a file a run over a directory holding it
+ * would read: a source file with no directory on the way that a walk skips.
+ * Asked of a file an import reaches outside the application's root, so that
+ * file is read under the same rule as one found by walking.
+ */
+export function isReadablePath(rel) {
+  const parts = rel.split('/');
+  const dirs = parts.slice(0, -1);
+  return isSourceFile(parts[parts.length - 1]) && !dirs.some((d) => d === '' || d === '..' || SKIP_DIRS.has(d) || TEST_DIRS.has(d) || d.startsWith('.'));
 }
 
 function collect(target, out) {
@@ -444,12 +458,33 @@ function walkCalls(file, ast, emit, sc) {
     if (node.type === 'NewExpression') {
       const callee = chainOf(node.callee);
       const holder = holders.get(node);
-      if (callee !== null) emit({ kind: 'new', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), ...(holder ? { holder: holder.name } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node) });
+      // `rootAt`: a class held in a local (`const C = UsersService; new C()`) is not the class its name spells.
+      if (callee !== null) {
+        emit({
+          kind: 'new', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), ...localField(sc, rootIdentifier(node.callee), 'rootAt', 'rootReassigned'),
+          ...(holder ? { holder: holder.name } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node),
+        });
+      }
     }
     const branches = MAY_NOT_RUN[node.type] ?? [];
     eachChild(node, (c, key) => visit(c, here, top, mayNotRun || branches.includes(key)));
   };
   visit(ast.program, null, null, false);
+}
+
+/** The name an interface's `extends` entry is written with: `A`, or `ns.A`. */
+function heritageName(h) {
+  const e = h.expression;
+  if (e.type === 'Identifier') return e.name;
+  return e.type === 'TSQualifiedName' && e.left.type === 'Identifier' ? `${e.left.name}.${e.right.name}` : null;
+}
+
+/**
+ * An interface, with the interfaces it extends. It has no code: a call through
+ * a value of its type runs a method of a class that implements it.
+ */
+function interfaceRecord(file, node, exported) {
+  return { kind: 'interface', file, name: node.id.name, exported, extends: (node.extends ?? []).map(heritageName).filter(Boolean), line: lineOf(node) };
 }
 
 /** A module function, with the names its parameters go by (null for a destructured one). */
@@ -468,6 +503,7 @@ function declarationRecords(file, ast, emit) {
     const decl = exported ? stmt.declaration : stmt;
     if (!decl) continue;
     if (decl.type === 'ClassDeclaration') classRecords(file, decl, exported, emit);
+    else if (decl.type === 'TSInterfaceDeclaration') emit(interfaceRecord(file, decl, exported));
     else if (decl.type === 'FunctionDeclaration' && decl.id) emit(functionRecord(file, decl.id.name, decl, exported, decl));
     else if (decl.type === 'VariableDeclaration') {
       for (const d of decl.declarations) {
@@ -491,6 +527,9 @@ export function factsOfFile(file, code) {
     return [{ kind: 'parse_error', file, message: String(e.message).split('\n')[0] }];
   }
   const emit = (r) => out.push(r);
+  // That the file was read, whatever it holds: a file of constants and types
+  // alone is still a file of the project, not a package.
+  emit({ kind: 'file', file });
   declarationRecords(file, ast, emit);
   walkCalls(file, ast, emit, readScopes(ast));
   for (const e of ast.errors ?? []) out.push({ kind: 'parse_error', file, message: String(e.message).split('\n')[0], recovered: true });

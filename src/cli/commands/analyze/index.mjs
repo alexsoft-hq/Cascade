@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { addHarFacts, readHar } from '../../../adapters/har_bridge.mjs';
+import { symbolsSharedWithOtherLanes } from '../../../adapters/ts_bridge.mjs';
 import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf, jpaNamingOf } from '../../../core/lanes.mjs';
 import { ENGINE_ROOT, SCRATCH, listMapperXml, noSqlPython, sqlPython } from '../../env.mjs';
 import { webPackagesRead } from '../../lanes_run.mjs';
@@ -27,7 +28,7 @@ import { withPackLock } from '../../pack_history.mjs';
 import { codeSettingDiagnostics } from '../../../core/code_settings.mjs';
 import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
-import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection } from './inputs.mjs';
+import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
 
 /**
  * The profile's "jpa.namingStrategy is not declared" finding, replaced by what the
@@ -104,14 +105,14 @@ function prepare(ctx) {
   const runpy = (script, args) => execFileSync(py, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
   const sqlArgs = sqlLaneArgs(profile);
 
-  const { selectionRel, prevIndex, base, baseCommit, projectId, plan, store, relOf, absOf } = incrementalPlan(
+  const { selectionRel, prevIndex, base, changed, baseCommit, projectId, plan, store, relOf, absOf } = incrementalPlan(
     ctx, { root, out, profile, manifest, resolved, sel, ddls, snapshot, mappers, javaSrc, webSrc, sqlArgs },
   );
   return {
     resolved, out, root, profile, profileFile, manifest, diagnostics, flags, discovery, sel,
     ddls, ddl, snapshot, snapshotProvenance, snapshotSha256, mappers, javaSrc, webSrc,
     openapiFiles, harFiles, otelFiles, serviceNames, screenGate, py, runpy, sqlArgs,
-    selectionRel, prevIndex, base, baseCommit, projectId, plan, store, relOf, absOf, jpaNaming,
+    selectionRel, prevIndex, base, changed, baseCommit, projectId, plan, store, relOf, absOf, jpaNaming,
   };
 }
 
@@ -129,6 +130,7 @@ function factsOf(ctx, prepared, tmpDir) {
     root, tmpDir, plan, prevIndex, store, sel, selectionRel, ddls, snapshot, mappers, javaSrc, webSrc,
     sqlArgs, runpy, projectId, base, relOf, absOf, diagnostics,
   });
+  noteDirtyReached(base, prepared.changed, Object.keys(result.index.tsFiles ?? {}));
   const catalog = result.catalogRecords;
   let lineage = result.lineageRecords;
   const lanes = sel.lanes.slice();
@@ -166,7 +168,7 @@ function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, 
   const laneStats = runJava ? sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) : null;
   if (runJava) diagnostics.push(...unusedPrefixNotes(jstats), ...prefixNotOnCallsNotes(graph, jstats), ...codeSettingDiagnostics(javaFacts ?? [], profile));
   if (!tsStats) return laneStats;
-  for (const d of tsStats.diagnostics) diagnostics.push({ kind: d.kind, severity: 'warn', key: 'tsBackend', reason: d.reason });
+  for (const d of [...tsStats.diagnostics, ...symbolsSharedWithOtherLanes(graph)]) diagnostics.push({ kind: d.kind, severity: 'warn', key: 'tsBackend', reason: d.reason });
   return { ...laneStats, ts: sayTsLane(tsStats, tsOpts, { root, sel, relOf }) };
 }
 

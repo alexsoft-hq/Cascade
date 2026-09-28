@@ -21,7 +21,9 @@ import { fileURLToPath } from 'node:url';
 // - two Prisma calls in one method are two statements, and neither reads the
 //   other's columns;
 // - the web lane reads the frontend and NOT the API, although both sit under
-//   the package's root.
+//   the package's root;
+// - the shared lib the API imports through a tsconfig path is read by the
+//   TypeScript lane too, and each lane keeps its own shard of it.
 
 const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
@@ -92,7 +94,8 @@ test('an unflagged analyze serves the routes the registered controllers declare,
   const { run, pack } = initAndAnalyze(t);
   assert.match(run.stderr, /^lanes \[ts,web\]: .*web \. \(discovery\); ts apps\/api\/src \(profile\)/m);
   const lane = lineOf(run.stderr, /^TypeScript lane: \d+ file/);
-  assert.match(lane, /^TypeScript lane: 8 file\(s\), 4 route\(s\) from 2 registered controller\(s\) \(1 not registered by any module\), /);
+  assert.match(lane, /^TypeScript lane: 9 file\(s\) \(1 outside the application, reached through its imports\), 4 route\(s\) from 2 registered controller\(s\) \(1 not registered by any module\), /);
+  assert.match(lane, / 4 call\(s\) linked \(1 into files outside the application\), /);
   assert.match(lane, /; Prisma: 4 statement\(s\) from 4 client call\(s\)$/);
 
   const endpoints = pack.nodes.filter((n) => n.id.startsWith('endpoint:')).map((n) => n.id).sort();
@@ -114,6 +117,7 @@ test('an unflagged analyze serves the routes the registered controllers declare,
   assert.equal(ts.prismaSchema.provider, 'postgresql');
   assert.match(ts.prismaSchema.sha256, /^[0-9a-f]{64}$/);
   assert.deepEqual(ts.unregisteredControllers, ['apps/api/src/orphan/orphan.controller.ts#OrphanController']);
+  assert.deepEqual(ts.reached, ['libs/common/src/email.ts'], 'the file the API imports through @fixture/common, and no other file outside it');
 });
 
 test('with no DDL, schema.prisma is the catalog: the axes say so, the pack names the schema as its source, and a relation is a join', (t) => {
@@ -159,24 +163,61 @@ test('the web lane reads the frontend beside the API and not the API, and its ca
     'UsersController.create -> UsersService.create',
     'UsersController.list -> UsersService.list',
     'UsersController.one -> UsersService.one',
+    // into the shared lib, which a name imported through a tsconfig path used to count as a package
+    'UsersService.create -> normalizeEmail',
   ]);
+  const shared = pack.nodes.find((n) => n.id === 'symbol:libs/common/src/email.ts#normalizeEmail');
+  assert.equal(shared.lane, 'ts', 'the web lane makes no node of a function that sends no request, so this one is the TypeScript lane\'s alone');
+  assert.equal(shared.lanes, undefined);
 });
 
 test('a second run reuses every TypeScript shard, and an edited TypeScript file is the only one read again', (t) => {
   const { ws, pack } = initAndAnalyze(t);
   const again = cli(['analyze', '--root', ws.dir, '--project', 'tsfix'], ws);
   assert.equal(again.code, 0, again.stderr);
-  assert.match(again.stderr, /^incremental: .*reparsed 0 web file\(s\) \(2 reused, 0 dropped\), reparsed 0 TypeScript file\(s\) \(8 reused\)/m);
+  // The shared lib is read by both lanes, and each reuses its own shard of it.
+  assert.match(again.stderr, /^incremental: .*reparsed 0 web file\(s\) \(2 reused, 0 dropped\), reparsed 0 TypeScript file\(s\) \(9 reused, 1 reached outside the application\)/m);
   assert.equal(readJson(path.join(ws.dir, '.cascade', 'pack', 'pack.json')).digest, pack.digest);
 
   fs.appendFileSync(path.join(ws.dir, SERVICE), '\n// a comment changes no fact\n');
   const edited = cli(['analyze', '--root', ws.dir, '--project', 'tsfix'], ws);
   assert.equal(edited.code, 0, edited.stderr);
   // The file sits under the web root too; the web lane must not take it for a frontend file.
-  assert.match(edited.stderr, /^incremental: .*reparsed 0 web file\(s\) \(2 reused, 0 dropped\), reparsed 1 TypeScript file\(s\) \(7 reused\)/m);
+  assert.match(edited.stderr, /^incremental: .*reparsed 0 web file\(s\) \(2 reused, 0 dropped\), reparsed 1 TypeScript file\(s\) \(8 reused, 1 reached outside the application\)/m);
   assert.equal(readJson(path.join(ws.dir, '.cascade', 'pack', 'pack.json')).digest, pack.digest);
   const index = readJson(path.join(ws.dir, '.cascade', 'pack', 'facts-index.json'));
-  assert.equal(index.files[SERVICE].lane, 'ts');
+  assert.equal(index.tsFiles[SERVICE].lane, 'ts');
+  assert.equal(index.files[SERVICE], undefined, 'the API is no file of the web lane');
+  // One file, two lanes: the web lane's shard in `files`, the TypeScript lane's in `tsFiles`.
+  assert.equal(index.files['libs/common/src/email.ts'].lane, 'web');
+  assert.equal(index.tsFiles['libs/common/src/email.ts'].lane, 'ts');
+  assert.notEqual(index.files['libs/common/src/email.ts'].shardKey, index.tsFiles['libs/common/src/email.ts'].shardKey);
+});
+
+test('an edit to the shared lib alone is read again by both lanes, and an import it adds is followed', (t) => {
+  const { ws } = initAndAnalyze(t);
+  const lib = path.join(ws.dir, 'libs', 'common', 'src');
+  fs.writeFileSync(path.join(lib, 'trim.ts'), 'export function trimAll(s: string) {\n  return s.trim();\n}\n');
+  fs.writeFileSync(path.join(lib, 'email.ts'), "import { trimAll } from './trim';\nexport function normalizeEmail(email: string) {\n  return trimAll(email).toLowerCase();\n}\n");
+  const run = cli(['analyze', '--root', ws.dir, '--project', 'tsfix'], ws);
+  assert.equal(run.code, 0, run.stderr);
+  assert.match(run.stderr, /^incremental: .*reparsed 2 TypeScript file\(s\) \(8 reused, 2 reached outside the application\)/m);
+  const pack = readJson(path.join(ws.dir, '.cascade', 'pack', 'pack.json'));
+  const mayCall = pack.edges.filter((e) => e.type === 'MAY_CALL' && e.from.includes('libs/')).map((e) => `${e.from} -> ${e.to}`);
+  assert.deepEqual(mayCall, ['symbol:libs/common/src/email.ts#normalizeEmail -> symbol:libs/common/src/trim.ts#trimAll']);
+  assert.deepEqual(pack.meta.laneStats.ts.reached, ['libs/common/src/email.ts', 'libs/common/src/trim.ts']);
+});
+
+test('a shared lib the TypeScript lane read, edited, makes the pack the working tree\'s even with no web lane to read it', (t) => {
+  const ws = workspace(t);
+  assert.equal(cli(['init', '--root', ws.dir, '--project', 'tsfix'], ws).code, 0);
+  fs.appendFileSync(path.join(ws.dir, 'libs', 'common', 'src', 'email.ts'), '\n// edited, not committed\n');
+  const run = cli(['analyze', '--root', ws.dir, '--project', 'tsfix', '--no-web'], ws);
+  assert.equal(run.code, 0, run.stderr);
+  const pack = readJson(path.join(ws.dir, '.cascade', 'pack', 'pack.json'));
+  assert.deepEqual(pack.meta.lanes, ['ts']);
+  assert.equal(pack.meta.base.dirty, true, 'the lane read a file outside its root that differs from HEAD');
+  assert.deepEqual(pack.meta.base.dirtyFiles, ['libs/common/src/email.ts']);
 });
 
 test('the working-tree overlay declines a pack that reads TypeScript, and base-only still answers', (t) => {

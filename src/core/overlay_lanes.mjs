@@ -204,7 +204,8 @@ export function runOverlayLanes(a) {
  * that reads one is declined, and base-only still answers.
  */
 export function assertOverlayable(index) {
-  if (Object.values(index.files ?? {}).some((e) => e?.lane === 'ts')) {
+  // Its entries sit in `tsFiles`; an index written before they did kept them in `files`.
+  if (Object.keys(index.tsFiles ?? {}).length > 0 || Object.values(index.files ?? {}).some((e) => e?.lane === 'ts')) {
     throw new OverlayStaleError('this pack reads a TypeScript backend, and the working-tree overlay does not re-read TypeScript yet', 'ts-not-overlaid');
   }
 }
