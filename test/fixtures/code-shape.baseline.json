@@ -1645,7 +1645,7 @@
    "maxLines": 33,
    "maxBranches": 13,
    "longest": "readProject",
-   "branchiest": "indexRecords",
+   "branchiest": "makeModuleResolver",
    "functions": [
     "addClassMember",
     "addDeclaration",
@@ -1727,9 +1727,9 @@
    ]
   },
   "src/adapters/ts/typeorm.mjs": {
-   "maxLines": 20,
+   "maxLines": 18,
    "maxBranches": 8,
-   "longest": "typeormDiagnostics",
+   "longest": "addSite",
    "branchiest": "addSite",
    "functions": [
     "addBuilder",
@@ -1744,15 +1744,19 @@
     "addTypeormStatements/1",
     "addTypeormStatements/2",
     "addTypeormStatements/3",
+    "catalogDiagnostics",
+    "catalogDiagnostics/1",
+    "catalogDiagnostics/2",
+    "catalogDiagnostics/3",
     "countUntyped",
     "draw",
     "namingSaid",
     "newStats",
     "receiverDiagnostics",
+    "receiverDiagnostics/1",
     "sample",
     "typeormDiagnostics",
     "typeormDiagnostics/1",
-    "typeormDiagnostics/2",
     "where",
     "where/1"
    ]
@@ -1761,14 +1765,25 @@
    "maxLines": 18,
    "maxBranches": 9,
    "longest": "builderContext",
-   "branchiest": "builderContext",
+   "branchiest": "escapeOf",
    "functions": [
     "builderContext",
     "builderSteps",
     "builderSteps/1",
     "entityOf",
+    "escapeOf",
+    "escapeOf/1",
+    "escapeOf/1/1",
+    "escapeOf/1/2",
+    "escapeOf/1/2/1",
+    "escapeOf/2",
+    "escapeOf/2/1",
+    "escapeOf/3",
     "heldSteps",
     "heldSteps/1",
+    "holderOf",
+    "mentions",
+    "mentions/1",
     "ref",
     "relationOf",
     "relationOf/1",
@@ -1782,10 +1797,10 @@
    ]
   },
   "src/adapters/ts/typeorm_catalog.mjs": {
-   "maxLines": 25,
+   "maxLines": 23,
    "maxBranches": 8,
    "longest": "catalogNodes",
-   "branchiest": "catalogNodes",
+   "branchiest": "addRelationJoins",
    "functions": [
     "addJoin",
     "addRelationJoins",
@@ -1803,21 +1818,34 @@
     "catalogNodes",
     "catalogRecordsOf",
     "columnId",
+    "ddlTablesByName",
+    "defaultPlacer",
+    "defaultPlacer/1",
+    "defaultPlacer/2",
+    "defaultPlacer/3",
+    "defaultPlacer/4",
     "ensure",
     "ensureColumn",
     "ensureTable",
+    "missNoter",
+    "missNoter/1",
+    "missNoter/2",
+    "same",
     "sch",
     "schemaOf",
+    "stubColumn",
+    "stubTable",
     "tableId",
     "tid"
    ]
   },
   "src/adapters/ts/typeorm_draw.mjs": {
    "maxLines": 15,
-   "maxBranches": 14,
+   "maxBranches": 13,
    "longest": "drawOperation",
-   "branchiest": "drawBuilder",
+   "branchiest": "drawOperation",
    "functions": [
+    "builderGaps",
     "bySite",
     "cmp",
     "col",
@@ -5810,6 +5838,7 @@
     "entityClasses/1",
     "entityClasses/2",
     "entityDeclOf",
+    "held",
     "heldName",
     "inverseOf",
     "joinColumnsOf",
@@ -5862,6 +5891,7 @@
     "junctionColumns/1/1",
     "junctionOf",
     "junctionOf/1",
+    "junctionOwn",
     "prefixed",
     "referencedColumns",
     "referencedColumns/1",
@@ -5871,7 +5901,7 @@
     "relationNamed",
     "relationNamed/1",
     "relationOf",
-    "tableDoubts",
+    "tablePlace",
     "targetOf",
     "targetOf/1",
     "weakestOfEntity",
@@ -5914,7 +5944,7 @@
   },
   "src/core/rules/kinds/typeorm_operation.mjs": {
    "maxLines": 14,
-   "maxBranches": 14,
+   "maxBranches": 9,
    "longest": "compile",
    "branchiest": "finish",
    "functions": [
@@ -5927,6 +5957,7 @@
     "norm/1",
     "operationErrors",
     "operationErrors/1",
+    "rowOf",
     "runExamples",
     "runExamples/1",
     "runExamples/1/1",
@@ -5940,7 +5971,8 @@
     "validateParams/2",
     "validateParams/3",
     "validateParams/3/1",
-    "wholeRowOf"
+    "wholeRowOf",
+    "writeDeleteDate"
    ]
   },
   "src/core/rules/kinds/typeorm_operation_read.mjs": {
@@ -5989,6 +6021,9 @@
     "callSiteRef",
     "callSiteRef/1",
     "callsInValue",
+    "constValue",
+    "constValue/1",
+    "constValue/2",
     "declaredNaming",
     "declaredStrategy",
     "declaredStrategy/1",
@@ -5998,6 +6033,7 @@
     "factOf/3",
     "factOf/4",
     "handedTo",
+    "lit",
     "literalOf",
     "optionSites",
     "optionSites/1",
@@ -6021,6 +6057,21 @@
     "strategyOf",
     "strategyOf/1",
     "where"
+   ]
+  },
+  "src/core/rules/kinds/typeorm_path.mjs": {
+   "maxLines": 10,
+   "maxBranches": 9,
+   "longest": "pathOf",
+   "branchiest": "partsOf",
+   "functions": [
+    "partsOf",
+    "pathOf",
+    "pathOf/1",
+    "tablePathErrors",
+    "tablePathErrors/1",
+    "tablePathErrors/1/1",
+    "tablePathErrors/2"
    ]
   },
   "src/core/rules/kinds/typeorm_query_builder.mjs": {
@@ -6082,12 +6133,19 @@
    "branchiest": "validateExample",
    "functions": [
     "argText",
+    "bindBinding",
+    "bindBinding/1",
     "bindingsOf",
+    "bindingsOf/1",
+    "bindingsOf/2",
     "byKindErrors",
     "byKindErrors/1",
+    "callBinding",
+    "callOfValue",
     "classOfCall",
     "compile",
     "holderBinding",
+    "merged",
     "runExamples",
     "runExamples/1",
     "runExamples/1/1",
@@ -6103,7 +6161,8 @@
     "validateExample",
     "validateExample/1",
     "validateParams",
-    "validateParams/1"
+    "validateParams/1",
+    "valueRead"
    ]
   },
   "src/core/rules/kinds/typeorm_receiver_read.mjs": {
