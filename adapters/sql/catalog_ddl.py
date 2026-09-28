@@ -73,7 +73,15 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        read clause by clause; a primary key's columns are NOT NULL, as every
 #        database this reader parses for makes them. A file with no such ALTER and
 #        every key column written NOT NULL parses to the records /7 wrote.
-CATALOG_VERSION = "catalog-ddl/8"
+#   /9 - an ALTER is read by the rules of the DATABASE the files are for
+#        (``--database``), not of the grammar they are parsed with: H2 and HSQLDB
+#        no longer take MySQL's "the key is always PRIMARY", and a database with no
+#        rule of its own leaves an unnamed key's name unknown and says so. Read too:
+#        PostgreSQL ``RENAME c TO d`` without COLUMN, ``DROP c`` without COLUMN,
+#        Oracle's ``DROP (c)`` and the ``USING INDEX ... ENABLE`` an export writes
+#        after a key, H2's ``ALTER COLUMN c RENAME TO d``, MariaDB's ``MODIFY COLUMN
+#        IF EXISTS``, and the clauses sqlglot keeps as one piece of text.
+CATALOG_VERSION = "catalog-ddl/9"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -266,32 +274,50 @@ _RENAME_TABLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# WHAT A DATABASE DOES THAT AN ALTER LEAVES UNSAID, keyed by the dialect the run
-# parses with. A later statement is read against it: ``DROP CONSTRAINT x`` drops
-# the primary key only if x is the key's name, and the DDL often never wrote one.
-#   pkNameAlways    MySQL calls its primary key PRIMARY whatever the DDL wrote
-#                   (the manual: "The name of a PRIMARY KEY is always PRIMARY").
+# WHAT A DATABASE DOES THAT AN ALTER LEAVES UNSAID, keyed by the DATABASE the
+# profile names (``--database``), never by the grammar the file is parsed with: H2
+# and HSQLDB are parsed with sqlglot's standard grammar, CUBRID with MySQL's and
+# Tibero with Oracle's, and speaking another database's SQL does not show that a
+# database follows its other rules. A database with no row here has none of them:
+# its unnamed key's name is not known, and each rule a statement depends on is
+# said as not known there. A later statement is read against these:
+# ``DROP CONSTRAINT x`` drops the primary key only if x is the key's name, and the
+# DDL often never wrote one.
+#   pkNameAlways    the key is called this whatever the DDL wrote. MySQL: "The name
+#                   of a PRIMARY KEY is always PRIMARY"; MariaDB's ALTER TABLE page:
+#                   the name given "is silently ignored, and the name of the index
+#                   is always PRIMARY".
 #   pkNameUnnamed   PostgreSQL names a key declared without a name <table>_pkey.
 #                   That is the server's convention, not a word of the file, so a
 #                   drop matched through it says so; a name past pkNameMaxBytes is
 #                   cut by the server, and is then not known here.
-#   dropKeyColumnDropsKey  dropping one column of a key drops the whole key
+#   dropKeyColumnDropsKey  True: dropping one column of a key drops the whole key
 #                   (PostgreSQL drops "table constraints involving the column";
-#                   Oracle needs CASCADE CONSTRAINTS for it). MySQL takes the column
-#                   out of the key and keeps the rest.
+#                   Oracle needs CASCADE CONSTRAINTS for it). False: the column
+#                   leaves the key and the rest stays (MySQL; MariaDB: "the column
+#                   will be dropped from them").
 #   indexRenameRenamesKey  ``ALTER INDEX a RENAME TO b`` renames the key a is the
-#                   index of (PostgreSQL: a key and its index share one name).
-#   modifyRedefines ``MODIFY c ...`` restates the whole column (MySQL: what it does
-#                   not say, NOT NULL or a comment, is gone) or changes only what
-#                   it says (Oracle).
-# Oracle, H2 and HSQLDB number the names they give an unnamed key (SYS_C...,
-# CONSTRAINT_..., SYS_PK_...), so such a key's name is not known there.
-_DIALECT_RULES = {
-    "postgres": {"database": "PostgreSQL", "pkNameUnnamed": "{table}_pkey", "pkNameMaxBytes": 63,
-                 "dropKeyColumnDropsKey": True, "indexRenameRenamesKey": True},
-    "mysql": {"database": "MySQL", "pkNameAlways": "PRIMARY", "modifyRedefines": True},
-    "oracle": {"database": "Oracle", "dropKeyColumnDropsKey": True, "modifyRedefines": False},
-}
+#                   index of (PostgreSQL: "the constraint is renamed as well").
+#   modifyRedefines True: ``MODIFY c ...`` restates the whole column, so what it does
+#                   not say, NOT NULL or a comment, is gone (MySQL; MariaDB: "you
+#                   should specify all attributes for the new column"). False: it
+#                   changes only what it says (Oracle).
+# Oracle numbers the names it gives an unnamed key (SYS_C...), so such a key's
+# name is not known there either.
+_DATABASE_RULES = (
+    {"names": ("postgres", "postgresql"), "database": "PostgreSQL", "pkNameUnnamed": "{table}_pkey",
+     "pkNameMaxBytes": 63, "dropKeyColumnDropsKey": True, "indexRenameRenamesKey": True},
+    {"names": ("mysql",), "database": "MySQL", "pkNameAlways": "PRIMARY", "modifyRedefines": True,
+     "dropKeyColumnDropsKey": False},
+    {"names": ("mariadb",), "database": "MariaDB", "pkNameAlways": "PRIMARY", "modifyRedefines": True,
+     "dropKeyColumnDropsKey": False},
+    {"names": ("oracle", "oracle-11g", "oracle-19c"), "database": "Oracle", "dropKeyColumnDropsKey": True,
+     "modifyRedefines": False},
+)
+
+
+def _rules_of(database):
+    return next((row for row in _DATABASE_RULES if (database or "").lower() in row["names"]), {})
 
 
 class _Table(object):
@@ -314,20 +340,31 @@ class _Table(object):
 
 
 class _Fold(object):
-    """What folding the files carries from one statement to the next."""
+    """What folding the files carries from one statement to the next. ``dialect`` is
+    the grammar the files are parsed with, ``database`` the database they are for,
+    whose rules an ALTER is read by (the grammar's own name when none is given)."""
 
-    __slots__ = ("tables", "schema", "diagnostics", "identifier_case", "dialect", "source")
+    __slots__ = ("tables", "schema", "diagnostics", "identifier_case", "dialect", "database", "rules",
+                 "source", "tail")
 
-    def __init__(self, schema, diagnostics, identifier_case, dialect):
+    def __init__(self, schema, diagnostics, identifier_case, dialect, database=None):
         self.tables = {}    # folded table name -> _Table (the record keeps the name as written)
         self.schema = schema
         self.diagnostics = diagnostics
         self.identifier_case = identifier_case
         self.dialect = dialect
+        self.database = database if database is not None else dialect
+        self.rules = _rules_of(self.database)
         self.source = None
+        self.tail = ""      # what the grammar split off the ALTER being read, as written
 
     def rule(self, key):
-        return _DIALECT_RULES.get(self.dialect or "", {}).get(key)
+        return self.rules.get(key)
+
+    @property
+    def label(self):
+        """The database, as a sentence names it."""
+        return self.rules.get("database") or self.database or "the database these files are for"
 
     def same(self, a, b):
         return _fold(a, self.identifier_case) == _fold(b, self.identifier_case)
@@ -650,7 +687,9 @@ def _unreadable(table_name, text, ctx):
             % (ctx.source, table_name, _short(text), table_name))
 
 
-def _unknown_column(tbl, verb, name, ctx, outcome="ignored"):
+def _unknown_column(tbl, verb, name, ctx, outcome="ignored", if_exists=False):
+    if if_exists:
+        name, outcome = "%s IF EXISTS" % name, "nothing changes, as the database changes nothing"
     ctx.say("warn", "alter_unknown_column", tbl.name,
             "%s %s %s.%s, which is not there; %s" % (ctx.source, verb, tbl.name, name, outcome))
 
@@ -732,15 +771,21 @@ def _drop_constraint(tbl, name, ctx, what):
     _drop_primary_key(tbl)
 
 
-def _drop_column(tbl, name, ctx):
+def _drop_column(tbl, name, ctx, if_exists=False):
     key = _column_key(tbl, name, ctx)
     if key is None:
-        _unknown_column(tbl, "drops", name, ctx)
+        _unknown_column(tbl, "drops", name, ctx, if_exists=if_exists)
         return
     del tbl.columns[key]
     if key not in tbl.pk:
         return
-    if ctx.rule("dropKeyColumnDropsKey"):
+    drops_key = ctx.rule("dropKeyColumnDropsKey")
+    if drops_key is None and len(tbl.pk) > 1:
+        ctx.say("warn", "alter_primary_key_unknown", tbl.name,
+                "%s drops %s.%s, one column of the primary key (%s). Whether %s then drops the whole key or "
+                "keeps the rest is not known here; the rest is kept"
+                % (ctx.source, tbl.name, key, ", ".join(sorted(tbl.pk)), ctx.label))
+    if drops_key:
         _drop_primary_key(tbl)
     else:
         tbl.pk.discard(key)
@@ -799,7 +844,7 @@ def _drop(tbl, action, ctx):
     name = action.this.name if action.this is not None else None
     what = ("DROP %s %s" % (kind, name)) if kind else _clause_text(action, ctx)
     if kind == "COLUMN":
-        _drop_column(tbl, name, ctx)
+        _drop_column(tbl, name, ctx, bool(action.args.get("exists")))
     elif kind in ("CONSTRAINT", "INDEX", "KEY"):
         _drop_constraint(tbl, name, ctx, what)
     else:
@@ -808,7 +853,9 @@ def _drop(tbl, action, ctx):
 
 def _changed_only(old, col_def, rec):
     """Oracle's MODIFY: what the clause says changes, what it does not say stays."""
-    kept = dict(old)
+    kept = dict(old, column=rec["column"])
+    if rec.get("comment") is not None:
+        kept["comment"] = rec["comment"]
     if col_def.args.get("kind") is not None:
         kept["type"] = rec["type"]
     if any(isinstance(getattr(c, "kind", None), exp.NotNullColumnConstraint)
@@ -817,7 +864,35 @@ def _changed_only(old, col_def, rec):
     return kept
 
 
-def _restate_column(tbl, col_def, old_ident, ctx):
+def _unsaid(old, col_def, rec):
+    """What a MODIFY clause leaves out of what the catalog holds of the column."""
+    said = [c.kind for c in col_def.args.get("constraints") or [] if getattr(c, "kind", None) is not None]
+    unsaid = []
+    if col_def.args.get("kind") is None:
+        unsaid.append("type")
+    if not any(isinstance(k, exp.NotNullColumnConstraint) for k in said):
+        unsaid.append("nullability")
+    if old.get("comment") is not None and rec.get("comment") is None:
+        unsaid.append("comment")
+    return unsaid
+
+
+def _restated(tbl, old_key, col_def, rec, ctx):
+    """The column after MODIFY, by the database's rule: restated whole, or changed
+    only where the clause speaks. With no rule, what it leaves out is kept and said."""
+    redefines = ctx.rule("modifyRedefines")
+    if redefines:
+        return rec
+    kept = _changed_only(tbl.columns[old_key], col_def, rec)
+    unsaid = _unsaid(tbl.columns[old_key], col_def, rec) if redefines is None else []
+    if unsaid:
+        ctx.say("warn", "alter_modify_unsaid_unknown", tbl.name,
+                "%s modifies %s.%s and leaves out its %s. Whether %s keeps what MODIFY leaves out or drops it "
+                "is not known here; it is kept" % (ctx.source, tbl.name, old_key, " and ".join(unsaid), ctx.label))
+    return kept
+
+
+def _restate_column(tbl, col_def, old_ident, ctx, if_exists=False):
     """MODIFY / CHANGE: the column as the clause states it, in its place."""
     if _unnamed(col_def, tbl.name, ctx.source, ctx.diagnostics):
         return
@@ -825,27 +900,40 @@ def _restate_column(tbl, col_def, old_ident, ctx):
     old_name = old_ident.name if old_ident is not None else rec["column"]
     old_key = _column_key(tbl, old_name, ctx)
     if old_key is None:
-        _unknown_column(tbl, "modifies", old_name, ctx, "added as declared")
-        tbl.columns[rec["column"]] = rec
+        _unknown_column(tbl, "modifies", old_name, ctx, "added as declared", if_exists)
+        if not if_exists:
+            tbl.columns[rec["column"]] = rec
         return
-    if ctx.rule("modifyRedefines") is False:
-        rec = _changed_only(tbl.columns[old_key], col_def, rec)
-    _replace_column(tbl, old_key, rec)
+    _replace_column(tbl, old_key, _restated(tbl, old_key, col_def, rec, ctx))
     if _column_is_pk(col_def):
         _set_primary_key(tbl, [rec["column"]], _primary_key_name([col_def]), ctx)
     _key_columns_not_null(tbl)
 
 
+def _if_exists(node):
+    """MariaDB's ``MODIFY COLUMN IF EXISTS c`` as sqlglot reads it, IF(EXISTS, c): the
+    column c, touched only if it is there. Any other name comes back as it is."""
+    true = node.args.get("true") if isinstance(node, exp.If) else None
+    if (isinstance(true, exp.Column) and isinstance(node.this, exp.Column) and node.this.name.upper() == "EXISTS"
+            and node.args.get("false") is None):
+        return true.this, True
+    return node, False
+
+
 def _modify_column(tbl, action, ctx):
-    if not isinstance(action.this, exp.ColumnDef):
+    col_def = action.this
+    if not isinstance(col_def, exp.ColumnDef):
         _unreadable(tbl.name, _clause_text(action, ctx), ctx)
         return
-    _restate_column(tbl, action.this, action.args.get("rename_from"), ctx)
+    name, if_exists = _if_exists(col_def.this)
+    old, old_if_exists = _if_exists(action.args.get("rename_from"))
+    if if_exists:
+        col_def = col_def.copy()
+        col_def.set("this", name)
+    _restate_column(tbl, col_def, old, ctx, if_exists or old_if_exists)
 
 
-def _rename_column(tbl, action, ctx):
-    old = action.this.name if action.this is not None else None
-    new = action.args["to"].name if action.args.get("to") is not None else None
+def _rename_column_to(tbl, old, new, ctx):
     key = _column_key(tbl, old, ctx)
     if key is None or not new:
         _unknown_column(tbl, "renames", old, ctx)
@@ -853,14 +941,26 @@ def _rename_column(tbl, action, ctx):
     _replace_column(tbl, key, dict(tbl.columns[key], column=new))
 
 
+def _rename_column(tbl, action, ctx):
+    old = action.this.name if action.this is not None else None
+    new = action.args["to"].name if action.args.get("to") is not None else None
+    _rename_column_to(tbl, old, new, ctx)
+
+
 def _alter_column(tbl, action, ctx):
     """ALTER COLUMN c SET NOT NULL | DROP NOT NULL | [SET DATA] TYPE t | SET / DROP DEFAULT."""
     allow_null, dtype = action.args.get("allow_null"), action.args.get("dtype")
     default = action.args.get("default") is not None or (action.args.get("drop") and allow_null is None)
-    if allow_null is None and dtype is None and not default:
-        _unreadable(tbl.name, _clause_text(action, ctx), ctx)
-        return
     name = action.this.name if action.this is not None else None
+    if allow_null is None and dtype is None and not default:
+        # The grammar read none of it: ``SET STATISTICS 100`` or H2's ``SET NULL``
+        # went to the statement's options. Read the clause as it was written.
+        if ctx.tail:
+            tail, ctx.tail = ctx.tail, ""
+            _read_clause(tbl, "ALTER COLUMN %s %s" % (action.this.sql(dialect=ctx.dialect or None), tail), ctx)
+        else:
+            _unreadable(tbl.name, _clause_text(action, ctx), ctx)
+        return
     key = _column_key(tbl, name, ctx)
     if key is None:
         _unknown_column(tbl, "alters", name, ctx)
@@ -879,6 +979,13 @@ _NAME = r'(?:"[^"]*"|`[^`]*`|\[[^\]]*\]|[^\s,.()"`\[\]]+)'
 _QNAME = _NAME + r"(?:\s*\.\s*" + _NAME + r")*"
 _CLAUSE_FLAGS = re.IGNORECASE | re.DOTALL
 _NULL_ONLY_RE = re.compile(r"^(%s)\s+(NOT\s+)?NULL\s*$" % _NAME, _CLAUSE_FLAGS)
+# What an Oracle export writes after a constraint, and PostgreSQL may: how the key
+# is built and checked (``USING INDEX ... TABLESPACE users ENABLE``), never which
+# columns it holds. DISABLE is not among them: a disabled key is not enforced, and
+# is not read as one.
+_CONSTRAINT_STATE_RE = re.compile(
+    r"(?:\s+(?:USING\s+INDEX\b.*|ENABLE|VALIDATE|NOVALIDATE|RELY|NORELY|(?:NOT\s+)?DEFERRABLE|"
+    r"INITIALLY\s+(?:IMMEDIATE|DEFERRED)))+\s*$", _CLAUSE_FLAGS)
 
 
 def _unquote(name):
@@ -934,6 +1041,7 @@ def _restate_specs(tbl, m, text, ctx):
     """``MODIFY c ...`` / ``MODIFY (c1 ..., c2 ...)``: each column as the clause restates it.
     ``c NULL`` says only nullability; read as a column, NULL would be its type."""
     for spec in _top_level(m.group(1), ctx) or [m.group(1)]:
+        spec = _CONSTRAINT_STATE_RE.sub("", spec).strip()
         only = _NULL_ONLY_RE.match(spec)
         if only:
             _set_null_text(tbl, only, spec, ctx)
@@ -962,6 +1070,16 @@ def _set_null_text(tbl, m, text, ctx):
     _set_nullable(tbl, key, not m.group(2), ctx)
 
 
+def _drop_listed_text(tbl, m, text, ctx):
+    """Oracle's ``DROP (c1, c2)``: each column dropped."""
+    names = [re.match(_NAME, piece) for piece in _top_level(m.group(1), ctx) or []]
+    if not names or any(n is None for n in names):
+        _unreadable(tbl.name, text, ctx)
+        return
+    for n in names:
+        _drop_column(tbl, _unquote(n.group(0)), ctx)
+
+
 def _rename_constraint_text(tbl, m, text, ctx):
     if tbl.pk_name is not None and ctx.same(_unquote(m.group(1)), tbl.pk_name):
         tbl.pk_name, tbl.pk_name_said = _unquote(m.group(2)), None
@@ -979,28 +1097,42 @@ _CLAUSE_READERS = (
     (re.compile(r"^DROP\s+(?:CONSTRAINT|INDEX|KEY)\s+(?:IF\s+EXISTS\s+)?(%s)(?:\s+(?:CASCADE|RESTRICT))?\s*$" % _NAME,
                 _CLAUSE_FLAGS),
      lambda tbl, m, text, ctx: _drop_constraint(tbl, _unquote(m.group(1)), ctx, _short(text))),
+    (re.compile(r"^DROP\s*\((.*)\)(?:\s+CASCADE\s+CONSTRAINTS)?(?:\s+CHECKPOINT\s+\d+)?\s*$", _CLAUSE_FLAGS),
+     _drop_listed_text),
+    # COLUMN may be left out: PostgreSQL's grammar has it optional, and Oracle's DROP (c) above.
+    (re.compile(r"^DROP\s+(?:COLUMN\s+)?(IF\s+EXISTS\s+)?(%s)(?:\s+(?:CASCADE|RESTRICT)(?:\s+CONSTRAINTS)?)?\s*$"
+                % _NAME, _CLAUSE_FLAGS),
+     lambda tbl, m, text, ctx: _drop_column(tbl, _unquote(m.group(2)), ctx, bool(m.group(1)))),
     (re.compile(r"^ADD\s+(?:CONSTRAINT\s+(?:(?!PRIMARY\s+KEY)(%s)\s+)?)?PRIMARY\s+KEY\s*(?:USING\s+\w+\s*)?"
                 r"\((.*)\)(?:\s*USING\s+\w+)?\s*$" % _NAME, _CLAUSE_FLAGS),
      _add_key_text),
     (re.compile(r"^ALTER\s+(?:COLUMN\s+)?(%s)\s+SET\s+(NOT\s+)?NULL\s*$" % _NAME, _CLAUSE_FLAGS),
      _set_null_text),
+    (re.compile(r"^ALTER\s+(?:COLUMN\s+)?(%s)\s+RENAME\s+TO\s+(%s)\s*$" % (_NAME, _NAME), _CLAUSE_FLAGS),
+     lambda tbl, m, text, ctx: _rename_column_to(tbl, _unquote(m.group(1)), _unquote(m.group(2)), ctx)),
+    (re.compile(r"^ALTER\s+(?:COLUMN\s+)?%s\s+SET\s+(?:STATISTICS|STORAGE|COMPRESSION)\b" % _NAME, _CLAUSE_FLAGS),
+     lambda tbl, m, text, ctx: _not_held(tbl, _short(text), ctx)),
     (re.compile(r"^MODIFY\s*\((.*)\)\s*$", _CLAUSE_FLAGS), _restate_specs),
     (re.compile(r"^MODIFY\s+(?:COLUMN\s+)?(.+)$", _CLAUSE_FLAGS), _restate_specs),
     (re.compile(r"^RENAME\s+CONSTRAINT\s+(%s)\s+TO\s+(%s)\s*$" % (_NAME, _NAME), _CLAUSE_FLAGS),
      _rename_constraint_text),
     # Clauses that touch no column, type, nullability or key: ownership, triggers,
-    # row security, clustering, storage.
+    # row security, clustering, storage, and how MySQL runs the ALTER itself.
     (re.compile(r"^(?:OWNER\s+TO|ENABLE|DISABLE|CLUSTER\s+ON|SET\s+WITHOUT\s+CLUSTER|REPLICA\s+IDENTITY|"
-                r"SET\s+TABLESPACE|VALIDATE\s+CONSTRAINT|(?:NO\s+)?FORCE\s+ROW\s+LEVEL\s+SECURITY)\b", _CLAUSE_FLAGS),
+                r"SET\s+TABLESPACE|VALIDATE\s+CONSTRAINT|(?:NO\s+)?FORCE\s+ROW\s+LEVEL\s+SECURITY)\b"
+                r"|^(?:ALGORITHM|LOCK)\s*=", _CLAUSE_FLAGS),
      lambda tbl, m, text, ctx: _not_held(tbl, _short(text), ctx)),
 )
 
 
 def _read_clause(tbl, text, ctx):
-    """One clause sqlglot left as text, read by the first form it has; named when it has none."""
+    """One clause sqlglot left as text, read by the first form it has; named, as
+    written, when it has none. How a key is built and checked is not what it holds,
+    so that is set aside first."""
     text = text.strip()
+    bare = _CONSTRAINT_STATE_RE.sub("", text).strip()
     for pattern, apply in _CLAUSE_READERS:
-        m = pattern.match(text)
+        m = pattern.match(bare)
         if m:
             apply(tbl, m, text, ctx)
             return
@@ -1017,8 +1149,20 @@ _ACTIONS = {
     exp.AddConstraint: _add_constraint,
     exp.RenameColumn: _rename_column,
     exp.AlterSet: lambda tbl, action, ctx: _not_held(tbl, _ALTER_CLAUSE_NAMES["AlterSet"], ctx),
-    exp.Command: lambda tbl, action, ctx: _read_clause(tbl, _command_text(action), ctx),
+    exp.Command: lambda tbl, action, ctx: _read_clauses(tbl, _command_text(action), ctx),
 }
+
+
+def _read_clauses(tbl, text, ctx):
+    """What sqlglot left as text from a clause on: often the clause and every one
+    after it (``DROP c, DROP d``). Each is read as an ALTER TABLE of its own."""
+    pieces = _top_level(text, ctx) or [text]
+    if len(pieces) == 1:
+        _read_clause(tbl, text, ctx)
+        return
+    head = "TABLE %s" % exp.to_identifier(tbl.name, quoted=True).sql(dialect=ctx.dialect or None)
+    for piece in pieces:
+        _apply_clause(head, tbl.name, piece, ctx)
 
 
 def _altered_table(table_name, ctx):
@@ -1029,25 +1173,49 @@ def _altered_table(table_name, ctx):
     return tbl
 
 
+def _options_text(stmt, ctx):
+    """What the grammar put in the statement's options rather than in a clause, as
+    written: the rest of a clause it could not read (``SET STATISTICS 100``)."""
+    parts = []
+    for o in stmt.args.get("options") or []:
+        if isinstance(o, exp.ToTableProperty):
+            continue
+        inner = o.this if isinstance(o, exp.SetConfigProperty) else None
+        parts.append(_command_text(inner) if isinstance(inner, exp.Command) else _clause_text(o, ctx))
+    return " ".join(parts)
+
+
 def _apply_alter(stmt, ctx):
     """Apply one ALTER TABLE, clause by clause. Every clause not applied is named."""
     table_name = getattr(stmt.this, "name", None)
     if not table_name:
         ctx.say("warn", "alter_read_failed", None, "ALTER in %s has no readable table name; ignored" % ctx.source)
         return
+    # ``RENAME c TO d`` with COLUMN left out, as PostgreSQL allows: the grammar
+    # reads c as a new table name and puts d in the options.
+    to_column = next((o.this for o in stmt.args.get("options") or [] if isinstance(o, exp.ToTableProperty)), None)
+    outer, ctx.tail = ctx.tail, _options_text(stmt, ctx)
+    tbl = None
     for action in stmt.args.get("actions") or []:
-        if isinstance(action, exp.AlterRename):
+        if isinstance(action, exp.AlterRename) and to_column is None:
             _rename_table(ctx, table_name, action.this.name)
             table_name = action.this.name
             continue
         tbl = _altered_table(table_name, ctx)
         if tbl is None:
-            return
+            break
+        if isinstance(action, exp.AlterRename):
+            _rename_column_to(tbl, action.this.name, to_column.name, ctx)
+            continue
         apply = _ACTIONS.get(type(action))
         if apply is None:
             _unreadable(tbl.name, _clause_text(action, ctx), ctx)
         else:
             apply(tbl, action, ctx)
+    # What the grammar split off and no clause took back is read on its own.
+    tail, ctx.tail = ctx.tail, outer
+    if tail and tbl is not None:
+        _read_clause(tbl, tail, ctx)
 
 
 def _split_alter_table(body, ctx):
@@ -1080,14 +1248,22 @@ def _apply_alter_table_text(body, ctx):
         return
     head, table_name, clauses = split
     for clause in clauses:
-        parsed = _parse_quietly("ALTER %s %s" % (head, clause), ctx)
-        if isinstance(parsed, exp.Alter) and str(parsed.args.get("kind") or "").upper() == "TABLE":
-            _apply_alter(parsed, ctx)
-            continue
-        tbl = _altered_table(table_name, ctx)
-        if tbl is None:
+        if not _apply_clause(head, table_name, clause, ctx):
             return
-        _read_clause(tbl, clause, ctx)
+
+
+def _apply_clause(head, table_name, clause, ctx):
+    """One clause, read as an ALTER TABLE of its own: by sqlglot when it can, else as
+    text. False when no file declared the table."""
+    parsed = _parse_quietly("ALTER %s %s" % (head, clause), ctx)
+    if isinstance(parsed, exp.Alter) and str(parsed.args.get("kind") or "").upper() == "TABLE":
+        _apply_alter(parsed, ctx)
+        return True
+    tbl = _altered_table(table_name, ctx)
+    if tbl is None:
+        return False
+    _read_clause(tbl, clause, ctx)
+    return True
 
 
 _TYPE_RENAME_RE = re.compile(r"^TYPE\s+(%s)\s+RENAME\s+TO\s+(%s)\s*$" % (_QNAME, _NAME), _CLAUSE_FLAGS)
@@ -1120,16 +1296,26 @@ def _rename_type(body, ctx):
 
 
 def _rename_index(stmt, ctx):
-    """``ALTER INDEX a RENAME TO b``: where a key and its index share one name, the key's name follows."""
+    """``ALTER INDEX a RENAME TO b``: where a key and its index share one name, the
+    key's name follows. Where the database has no rule for it, the key's name is no
+    longer known, and that is said."""
     old = getattr(stmt.this, "name", None)
-    if not ctx.rule("indexRenameRenamesKey") or not old:
+    follows = ctx.rule("indexRenameRenamesKey")
+    if follows is False or not old:
         return
     for action in stmt.args.get("actions") or []:
         if not isinstance(action, exp.AlterRename):
             continue
         for tbl in ctx.tables.values():
-            if tbl.pk_name is not None and ctx.same(tbl.pk_name, old):
+            if tbl.pk_name is None or not ctx.same(tbl.pk_name, old):
+                continue
+            if follows:
                 tbl.pk_name, tbl.pk_name_said = action.this.name, None
+                continue
+            ctx.say("warn", "alter_primary_key_unknown", tbl.name,
+                    "%s renames index %s, which has the name of the primary key of %s. Whether %s renames the key "
+                    "with it is not known here, so the key's name no longer is" % (ctx.source, old, tbl.name, ctx.label))
+            tbl.pk_name, tbl.pk_name_said = None, None
 
 
 def _apply_statement(stmt, ctx):
@@ -1157,7 +1343,8 @@ def _apply_statement(stmt, ctx):
     return 0
 
 
-def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_case="exact", dialect="mysql"):
+def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_case="exact", dialect="mysql",
+                            database=None):
     """Fold several DDL files, IN THE ORDER GIVEN, into catalog records.
 
     ``files`` — a sequence of ``(source_label, sql_text)``. The label appears in
@@ -1168,10 +1355,14 @@ def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_cas
     check and the ALTER lookup use it; every record keeps the name as the first
     file wrote it.
 
+    ``dialect`` is the grammar the files are parsed with (``""`` is sqlglot's
+    standard one); ``database`` the database they are for, whose rules an ALTER is
+    read by, as the profile names it (``h2``, ``tibero``). None takes the grammar's.
+
     Returns the same record list shape as :func:`parse_ddl_catalog`: one header,
     then every table sorted by name with its columns in declaration order.
     """
-    ctx = _Fold(schema, diagnostics, identifier_case, dialect)
+    ctx = _Fold(schema, diagnostics, identifier_case, dialect, database)
     per_file = []
     routines = []
     for source, sql_text in files:
@@ -1256,7 +1447,11 @@ def main(argv=None):
     parser.add_argument("--schema", default=None,
                         help="schema name to stamp on records (default: null)")
     parser.add_argument("--dialect", default="mysql",
-                        help="the SQL dialect the files are written in (default: mysql)")
+                        help="the sqlglot grammar the files are parsed with (default: mysql); an empty "
+                             "value is sqlglot's standard grammar, as H2 and HSQLDB are read")
+    parser.add_argument("--database", default=None,
+                        help="the database the files are for, as the profile names it (h2, tibero); "
+                             "its rules decide what an ALTER leaves unsaid (default: the grammar's)")
     parser.add_argument("--identifier-case", default="exact", choices=list(_IDENTIFIER_CASES),
                         dest="identifier_case",
                         help="what makes two table names the SAME table when "
@@ -1274,7 +1469,8 @@ def main(argv=None):
 
     diagnostics = []
     records = parse_ddl_catalog_files(files, schema=args.schema, diagnostics=diagnostics,
-                                      identifier_case=args.identifier_case, dialect=args.dialect)
+                                      identifier_case=args.identifier_case, dialect=args.dialect,
+                                      database=args.database)
 
     # Stamp the source basenames only (determinism §2.1 — no absolute path).
     records[0]["source"] = "ddl:" + ",".join(name for name, _ in files)

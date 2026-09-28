@@ -28,7 +28,7 @@
 // `sqlIdentifierCase` and `catalog.*` have exactly ONE consumption point (I-5).
 
 import path from 'node:path';
-import { sqlDialectOf, sqlIdentifierCaseOf } from './profile.mjs';
+import { sqlDialectOf, sqlIdentifierCaseOf, DEFAULT_SQL_DIALECT } from './profile.mjs';
 import { ddlDialectTokenOf, SCREEN_PACKS } from './discover.mjs';
 
 /**
@@ -185,12 +185,17 @@ export const AXIS_STATUS = Object.freeze(['shipped', 'degraded', 'not-shipped'])
  * parser, which has no case rule), while the rule belongs to the database the
  * PROFILE named. One decision, made here, printed in the lineage summary.
  *
+ * `database` is that name too (`h2`, `tibero`, `mariadb`), for the same reason:
+ * the DDL reader reads an ALTER by the rules of the database the files are for,
+ * and a database parsed with another's grammar does not follow that one's rules.
+ *
  * @param {Object} profile  a normalized profile
- * @returns {{dialect:string, identifierCase:string, defaultSchema:(string|null),
+ * @returns {{dialect:string, database:string, identifierCase:string, defaultSchema:(string|null),
  *            schemaProperties:string[], lineageArgs:string[], mybatisArgs:string[]}}
  */
 export function sqlLaneArgs(profile) {
   const dialect = sqlDialectOf(profile);
+  const database = profile?.sqlDialects?.main ?? DEFAULT_SQL_DIALECT;
   const identifierCase = sqlIdentifierCaseOf(profile);
   const schema = (profile && profile.schema) || {};
   const defaultSchema = schema.default ?? null;
@@ -203,7 +208,7 @@ export function sqlLaneArgs(profile) {
   if (defaultSchema) mybatisArgs.push('--default-schema', defaultSchema);
   for (const p of schemaProperties) mybatisArgs.push('--schema-property', p);
 
-  return { dialect, identifierCase, defaultSchema, schemaProperties, lineageArgs, mybatisArgs };
+  return { dialect, database, identifierCase, defaultSchema, schemaProperties, lineageArgs, mybatisArgs };
 }
 
 /**

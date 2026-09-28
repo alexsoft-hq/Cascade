@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/8")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/9")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/8",
+            "catalog-ddl/9",
         )
 
 
@@ -985,6 +985,156 @@ class PrimaryKeyNullabilityTests(unittest.TestCase):
         cols, _ = _fold_files([("s.sql", "CREATE TABLE owners (id INTEGER PRIMARY KEY, name VARCHAR(30));")], "mysql")
         self.assertFalse(cols[("owners", "id")]["nullable"])
         self.assertTrue(cols[("owners", "name")]["nullable"])
+
+
+
+# ---------------------------------------------------------------------------
+# REVIEW 3 (catalog-ddl/9). The rules an ALTER is read by belong to the DATABASE
+# the profile names, not to the grammar it is parsed with: H2 and HSQLDB are read
+# with the standard grammar and CUBRID with MySQL's, and none of them inherits the
+# rules of the database whose grammar it borrows.
+# ---------------------------------------------------------------------------
+
+def _fold_db(files, dialect, database, identifier_case="fold-lower"):
+    diagnostics = []
+    recs = catalog_ddl.parse_ddl_catalog_files(files, diagnostics=diagnostics, identifier_case=identifier_case,
+                                               dialect=dialect, database=database)
+    cols = {(r["table"], r["column"]): r for r in recs if r["kind"] == "column"}
+    return cols, diagnostics
+
+
+class DatabaseRuleTests(unittest.TestCase):
+    PETS = ("CREATE TABLE pets (id INT NOT NULL, name VARCHAR(30), CONSTRAINT pk_pets PRIMARY KEY (id));\n"
+            "ALTER TABLE pets DROP CONSTRAINT pk_pets;")
+
+    def test_h2_catalog_is_not_read_with_mysql_primary_key_rule(self):
+        # The key is named in its CREATE: dropping that name drops it, whatever
+        # grammar the file is read with. MySQL's "always PRIMARY" is MySQL's.
+        for dialect in ("", "mysql"):
+            for database in ("h2", "hsqldb"):
+                cols, diagnostics = _fold_db([("schema.sql", self.PETS)], dialect, database, "fold-upper")
+                self.assertEqual(_pk(cols, "pets"), [], (dialect, database, diagnostics))
+
+    def test_an_empty_dialect_on_the_command_line_is_the_standard_grammar(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False) as fh:
+            fh.write(self.PETS)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(catalog_ddl.main(["--dialect", "", "--database", "h2",
+                                                   "--identifier-case", "fold-upper", fh.name]), 0)
+        finally:
+            os.unlink(fh.name)
+        recs = [json.loads(line) for line in out.getvalue().splitlines()]
+        self.assertEqual(recs[0]["dialect"], "")
+        self.assertEqual([r["column"] for r in recs if r["kind"] == "column" and r["pk"]], [])
+
+    def test_a_database_with_no_rule_of_its_own_keeps_the_key_name_unknown_and_says_so(self):
+        # CUBRID speaks MySQL, but that its key is always PRIMARY is not known.
+        base = "CREATE TABLE t (id INT NOT NULL, c INT, PRIMARY KEY (id), KEY idx_c (c));\n"
+        for drop in ("ALTER TABLE t DROP INDEX idx_c;", "ALTER TABLE t DROP INDEX `PRIMARY`;"):
+            cols, diagnostics = _fold_db([("s.sql", base + drop)], "mysql", "cubrid")
+            self.assertEqual(_pk(cols, "t"), ["id"], drop)
+            self.assertEqual(len(_codes(diagnostics, "alter_primary_key_unknown")), 1, (drop, diagnostics))
+
+    def test_mariadb_has_its_own_documented_rules(self):
+        # MariaDB's ALTER TABLE page: a primary key's name "is always PRIMARY", and
+        # MODIFY needs "all attributes for the new column".
+        base = "CREATE TABLE t (id INT NOT NULL, c INT NOT NULL, PRIMARY KEY (id), KEY idx_c (c));\n"
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t DROP INDEX idx_c;")], "mysql", "mariadb")
+        self.assertEqual(_pk(cols, "t"), ["id"])
+        self.assertEqual(_codes(diagnostics, "alter_primary_key_unknown"), [])
+        cols, _ = _fold_db([("s.sql", base + "ALTER TABLE t DROP INDEX `PRIMARY`;")], "mysql", "mariadb")
+        self.assertEqual(_pk(cols, "t"), [])
+        cols, _ = _fold_db([("s.sql", base + "ALTER TABLE t MODIFY c BIGINT;")], "mysql", "mariadb")
+        self.assertTrue(cols[("t", "c")]["nullable"])
+
+    def test_an_oracle_compatible_database_does_not_borrow_what_modify_keeps(self):
+        # Tibero is read with Oracle's grammar; that its MODIFY keeps what it does not say is not known.
+        base = "CREATE TABLE T (ID NUMBER NOT NULL, C VARCHAR2(10) NOT NULL, PRIMARY KEY (ID));\n"
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE T MODIFY (C VARCHAR2(20));")],
+                                     "oracle", "tibero", "fold-upper")
+        self.assertEqual(cols[("T", "C")]["type"], "VARCHAR(20)")
+        said = _codes(diagnostics, "alter_modify_unsaid_unknown")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("tibero", said[0])
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE T MODIFY (C VARCHAR2(20));")], "oracle", "oracle",
+                                     "fold-upper")
+        self.assertEqual(_codes(diagnostics, "alter_modify_unsaid_unknown"), [], "Oracle's own MODIFY is known")
+
+    def test_a_database_with_no_rule_says_what_dropping_a_key_column_does_is_not_known(self):
+        base = "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL, CONSTRAINT pk_t PRIMARY KEY (a, b));\n"
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t DROP COLUMN b;")], "", "h2")
+        self.assertEqual(len(_codes(diagnostics, "alter_primary_key_unknown")), 1, diagnostics)
+
+
+class Review3ClauseTests(unittest.TestCase):
+    def test_postgres_rename_without_column_keyword_renames_the_column(self):
+        cols, diagnostics = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY, c INT);\n"
+                                                   "ALTER TABLE t RENAME c TO d;")], "postgres")
+        self.assertEqual(sorted(cols), [("t", "d"), ("t", "id")])
+        cols, _ = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY);\nALTER TABLE t RENAME TO u;")],
+                              "postgres")
+        self.assertEqual(sorted(cols), [("u", "id")], "RENAME TO still renames the table")
+
+    def test_oracle_export_primary_key_with_using_index_enable_is_applied(self):
+        base = "CREATE TABLE U (ID NUMBER(10) NOT NULL, C VARCHAR2(10));\n"
+        for add in ("ALTER TABLE U ADD CONSTRAINT PK_U PRIMARY KEY (ID) USING INDEX TABLESPACE USERS;",
+                    "ALTER TABLE U ADD CONSTRAINT PK_U PRIMARY KEY (ID) ENABLE;",
+                    'ALTER TABLE "U" ADD CONSTRAINT "PK_U" PRIMARY KEY ("ID")\n  USING INDEX PCTFREE 10 INITRANS 2 '
+                    'MAXTRANS 255 COMPUTE STATISTICS\n  TABLESPACE "USERS"  ENABLE;'):
+            cols, diagnostics = _fold_files([("s.sql", base + add)], "oracle", "fold-upper")
+            self.assertEqual(_pk(cols, "U"), ["ID"], (add, diagnostics))
+            self.assertEqual(_codes(diagnostics, "alter_unreadable"), [], add)
+
+    def test_oracle_export_modify_not_null_enable_is_applied(self):
+        base = "CREATE TABLE T (ID NUMBER NOT NULL, D VARCHAR2(10), PRIMARY KEY (ID));\n"
+        for modify in ("ALTER TABLE T MODIFY D NOT NULL ENABLE;", 'ALTER TABLE "T" MODIFY ("D" NOT NULL ENABLE);'):
+            cols, diagnostics = _fold_files([("s.sql", base + modify)], "oracle", "fold-upper")
+            self.assertFalse(cols[("T", "D")]["nullable"], (modify, diagnostics))
+
+    def test_drop_without_column_keyword_is_applied(self):
+        cols, _ = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY, c INT, d INT);\n"
+                                         "ALTER TABLE t DROP c;\nALTER TABLE t DROP IF EXISTS zz;")], "postgres")
+        self.assertEqual(sorted(cols), [("t", "d"), ("t", "id")])
+        # sqlglot keeps "c, DROP d" as the text of one clause: each is read on its own.
+        cols, diagnostics = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY, c INT, d INT);\n"
+                                                   "ALTER TABLE t DROP c, DROP d;")], "postgres")
+        self.assertEqual(sorted(cols), [("t", "id")], diagnostics)
+        base = "CREATE TABLE T (ID NUMBER NOT NULL, C NUMBER, D NUMBER, E NUMBER, PRIMARY KEY (ID));\n"
+        cols, diagnostics = _fold_files([("s.sql", base + "ALTER TABLE T DROP (D);\n"
+                                                          "ALTER TABLE T DROP (C, E) CASCADE CONSTRAINTS;")],
+                                        "oracle", "fold-upper")
+        self.assertEqual(sorted(cols), [("T", "ID")], diagnostics)
+
+    def test_h2_alter_column_rename_to_renames_the_column(self):
+        cols, _ = _fold_db([("s.sql", "CREATE TABLE t (id INT NOT NULL, c INT, PRIMARY KEY (id));\n"
+                                      "ALTER TABLE t ALTER COLUMN c RENAME TO d;")], "", "h2", "fold-upper")
+        self.assertEqual(sorted(cols), [("t", "d"), ("t", "id")])
+
+    def test_mariadb_modify_column_if_exists_is_read(self):
+        base = "CREATE TABLE t (id INT NOT NULL, c INT NOT NULL COMMENT 'cc', PRIMARY KEY (id));\n"
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t MODIFY COLUMN IF EXISTS c BIGINT;")],
+                                     "mysql", "mariadb")
+        self.assertEqual(cols[("t", "c")]["type"], "BIGINT")
+        self.assertEqual(_codes(diagnostics, "column_unnamed"), [], "the name is c, not an expression")
+        cols, _ = _fold_db([("s.sql", base + "ALTER TABLE t CHANGE COLUMN IF EXISTS c d BIGINT;")], "mysql", "mariadb")
+        self.assertEqual(sorted(cols), [("t", "d"), ("t", "id")])
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t MODIFY COLUMN IF EXISTS zz BIGINT;")],
+                                     "mysql", "mariadb")
+        self.assertEqual(sorted(cols), [("t", "c"), ("t", "id")], "IF EXISTS adds nothing that is not there")
+        self.assertIn("IF EXISTS", " ".join(_codes(diagnostics, "alter_unknown_column")))
+
+    def test_a_column_option_the_grammar_splits_off_is_named_as_written(self):
+        cols, diagnostics = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY, c INT);\n"
+                                                   "ALTER TABLE t ALTER COLUMN c SET STATISTICS 100;")], "postgres")
+        said = _codes(diagnostics, "alter_clause_unsupported")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("SET STATISTICS 100", said[0])
+        self.assertNotIn("DEFAULT", said[0])
 
 
 if __name__ == "__main__":

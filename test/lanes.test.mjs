@@ -7,6 +7,7 @@ import {
   screenAxisOf, serviceNamesOf, jpaNamingOf,
 } from '../src/core/lanes.mjs';
 import { normalizeProfile } from '../src/core/profile.mjs';
+import { catalogLaneInputs } from '../src/cli/lane_options.mjs';
 
 const ROOT = path.resolve('/tmp/project');
 const DOT = path.join(ROOT, '.cascade');
@@ -51,6 +52,29 @@ test('sqlLaneArgs: the identity rule follows the dialect, and a declaration over
   const forced = sqlLaneArgs(normalizeProfile({ sqlDialects: { main: 'oracle' }, sqlIdentifierCase: 'exact' }));
   assert.equal(forced.identifierCase, 'exact');
   assert.deepEqual(forced.lineageArgs, ['--dialect', 'oracle', '--identifier-case', 'exact']);
+});
+
+test('the catalog reads a file with the dialect the lineage reads it with, and names the database it is for', () => {
+  const catalogArgs = (main) => {
+    const sqlArgs = sqlLaneArgs(normalizeProfile(main ? { sqlDialects: { main } } : {}));
+    const calls = [];
+    const inputs = catalogLaneInputs({ ddls: [{ rel: 's.sql', abs: '/x/s.sql' }], sqlArgs });
+    inputs.read((script, args) => { calls.push(args); return ''; });
+    return { args: calls[0], shardArgs: inputs.shardArgs, lineage: sqlArgs.lineageArgs };
+  };
+  // H2 and HSQLDB are read with sqlglot's standard grammar, the empty dialect:
+  // the catalog is told so, as the lineage is, rather than falling to MySQL.
+  const h2 = catalogArgs('h2');
+  assert.deepEqual(h2.args, ['--dialect', '', '--database', 'h2', '--identifier-case', 'fold-upper', '/x/s.sql']);
+  assert.equal(h2.lineage[h2.lineage.indexOf('--dialect') + 1], '');
+  assert.deepEqual(h2.shardArgs, ['identifier-case=fold-upper', 'dialect=', 'database=h2']);
+  // A database read with another's grammar names itself, so it borrows none of that database's rules.
+  assert.deepEqual(catalogArgs('mariadb').args, ['--database', 'mariadb', '--identifier-case', 'fold-lower', '/x/s.sql']);
+  assert.deepEqual(catalogArgs('tibero').args.slice(0, 4), ['--dialect', 'oracle', '--database', 'tibero']);
+  // MySQL, the reader's own default, is read from the arguments it always was.
+  assert.deepEqual(catalogArgs(null).args, ['--identifier-case', 'fold-lower', '/x/s.sql']);
+  assert.deepEqual(catalogArgs('mysql').shardArgs, ['identifier-case=fold-lower']);
+  assert.deepEqual(catalogArgs('postgres').shardArgs, ['identifier-case=fold-lower', 'dialect=postgres']);
 });
 
 test('sqlLaneArgs: schema.default + propertyNames reach both workers, dialect is mapped', () => {

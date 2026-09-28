@@ -380,7 +380,10 @@ test('the catalog inputs an overlay reads are the run\'s: the DDL in the recorde
   ddl.read(runpy);
   assert.deepEqual(calls, [['catalog_ddl.py', '--dialect', 'postgres', '--identifier-case', 'fold-lower', absOf('db/2.sql'), absOf('db/1.sql')]],
     'the dialect, and the files in the order the run applied them');
-  assert.deepEqual([ddl.files.map((f) => f.rel), ddl.shardArgs, ddl.fromSnapshot], [['db/2.sql', 'db/1.sql'], ['identifier-case=fold-lower'], false]);
+  // The dialect is in the key as it is in the arguments: a PostgreSQL reading of
+  // the files is not a MySQL reading of them, though both fold names to lower case.
+  assert.deepEqual([ddl.files.map((f) => f.rel), ddl.shardArgs, ddl.fromSnapshot],
+    [['db/2.sql', 'db/1.sql'], ['identifier-case=fold-lower', 'dialect=postgres'], false]);
   calls.length = 0;
   catalogInputsOf({}, selection, absOf, { dialect: 'mysql', identifierCase: 'exact' }).read(runpy);
   assert.deepEqual(calls[0].slice(0, 3), ['catalog_ddl.py', '--identifier-case', 'exact'], 'MySQL, the reader\'s own default, is not passed, as analyze never passed it');

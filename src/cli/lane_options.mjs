@@ -21,16 +21,16 @@ import { jsonl, parseJsonl } from './env.mjs';
  * DDL reader as if it were DDL, under a key analyze never wrote, so every
  * overlay of such a pack had no tables. Both callers now take this.
  *
- * The dialect is passed only when it is not MySQL, the reader's own default, so
- * a MySQL project's catalog is computed from the arguments it always was
- * (RM63). A snapshot is read as it is: it IS catalog records, fetched once by
+ * The dialect is passed whenever it is not MySQL, the reader's own default (the
+ * empty one included), so a MySQL project's catalog is computed from the
+ * arguments it always was (RM63). A snapshot is read as it is: it IS catalog records, fetched once by
  * `cascade catalog fetch`, and its shard is keyed by the LIVE worker's version
  * too, so a catalog_live.py change cannot be answered from a shard the previous
  * generation produced (SPEC §17.7; src/core/worker_versions.mjs says why this
  * rides in the key's args rather than in the index's worker map).
  *
  * @param {{ddls:{rel:string, abs:string}[], snapshot?:({rel:string, abs:string}|null),
- *          sqlArgs:{dialect:string, identifierCase:string}}} a
+ *          sqlArgs:{dialect:string, database?:string, identifierCase:string}}} a
  *        the DDL files in the order they are applied; the snapshot only when
  *        there is no DDL, which is when `selectLanes` picks one
  * @returns {{files:{rel:string, abs:string}[], shardArgs:string[], fromSnapshot:boolean,
@@ -49,17 +49,31 @@ function snapshotCatalog(snapshot) {
 }
 
 /**
- * The DDL files, read by the catalog worker with the SAME identity rule the
- * lineage worker matches statements with (§8.1): it decides whether `SUPPLIER`
- * and `supplier` in two files are one table.
+ * The DDL files, read by the catalog worker with the SAME dialect and the SAME
+ * identity rule the lineage worker reads statements with (§8.1): the identity rule
+ * decides whether `SUPPLIER` and `supplier` in two files are one table. The empty
+ * dialect (H2, HSQLDB: sqlglot's standard grammar) is passed as it is; left out,
+ * the reader took its own default, MySQL, and read the file with MySQL's grammar
+ * and rules. The database the profile names goes with it when it is not the
+ * grammar's own, because an ALTER is read by that database's rules. Both are in
+ * the shard key, since both change what the reader writes.
  */
 function ddlCatalog(ddls, sqlArgs) {
-  const dialectArgs = sqlArgs.dialect && sqlArgs.dialect !== 'mysql' ? ['--dialect', sqlArgs.dialect] : [];
-  const args = [...dialectArgs, '--identifier-case', sqlArgs.identifierCase, ...ddls.map((f) => f.abs)];
+  const { flags, key } = readerFlags(sqlArgs);
+  const args = [...flags, '--identifier-case', sqlArgs.identifierCase, ...ddls.map((f) => f.abs)];
   return {
-    files: ddls, shardArgs: [`identifier-case=${sqlArgs.identifierCase}`], fromSnapshot: false,
+    files: ddls, shardArgs: [`identifier-case=${sqlArgs.identifierCase}`, ...key], fromSnapshot: false,
     read: (runpy) => parseJsonl(runpy('catalog_ddl.py', args)),
   };
+}
+
+/** The reader's grammar and database flags, each only when it is not the default, and what each adds to the shard key. */
+function readerFlags({ dialect, database = dialect }) {
+  const flags = [];
+  const key = [];
+  if (dialect != null && dialect !== 'mysql') { flags.push('--dialect', dialect); key.push(`dialect=${dialect}`); }
+  if (database !== dialect) { flags.push('--database', database); key.push(`database=${database}`); }
+  return { flags, key };
 }
 
 /**
