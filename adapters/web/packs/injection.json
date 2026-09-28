@@ -1,0 +1,7 @@
+{
+  "pack": "injection",
+  "why": "A framework with dependency injection hands a class its collaborators; the class names each one by TYPE and never builds it. Two spellings say which type a field holds. A constructor parameter written with an access modifier (`constructor(private orders: OrderService)`) is TypeScript's own field declaration, so the language itself states the type and nothing here has to. A field set from the framework's injector function (`orders = inject(OrderService)`) states it through a call, and which call that is, and which of its arguments is the type, is the framework's vocabulary: that is what this pack declares. A field typed this way holds an instance of that type, or of a class a provider puts in its place; the bridge grades a call through it as a candidate for that reason.",
+  "injectors": [
+    { "framework": "angular", "module": "@angular/core", "name": "inject", "typeArg": 0 }
+  ]
+}

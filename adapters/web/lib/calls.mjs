@@ -220,6 +220,30 @@ function injectedClientOf({ isNew, callee, env }) {
   return injected;
 }
 
+/**
+ * A VERB THAT TAKES ITS METHOD AND ITS URL BY POSITION (RM67):
+ * `this.http.request('POST', url, options)`, on a field this class declares the
+ * TYPE of, where a library pack names that type as a client and the method as
+ * positional. The type and the import are this file's own facts, so the worker
+ * can read the arguments the library reads; which instance it is stays the
+ * bridge's question. A method argument that is not a verb written out is no
+ * method at all, and says so, rather than taking the library's default.
+ *
+ * @returns {{url:(object|null), method:{value:(string|null), from:string}}|null}
+ */
+function positionalRequestOf(ctx, { callee, binding, env, summaries }) {
+  if (!binding || binding.kind !== 'this' || !env.classInfo || !env.classInfo.typed || callee.path.length !== 2) return null;
+  const t = env.classInfo.typed.get(callee.path[0]);
+  const b = t ? t.binding : null;
+  if (!b || b.kind !== 'import') return null;
+  const lib = (ctx.libraries ?? []).find((l) => l.module === b.source && (l.instanceTypes ?? []).includes(b.imported));
+  const spec = lib && lib.positional ? (lib.positional[callee.path[1]] ?? null) : null;
+  if (spec === null) return null;
+  const m = summaries[spec.methodArg];
+  const verb = m && m.kind === 'string' && VERBS.has(m.value.toUpperCase()) ? m.value.toUpperCase() : null;
+  return { url: summaries[spec.urlArg] ?? null, method: { value: verb, from: 'positional' } };
+}
+
 /** Which argument holds the URL, once it is known what kind of call this is. */
 function urlArgumentOf(ctx, { callee, summaries, routeArg, platformSink, globalClient, env }) {
   let urlSummary = null;
@@ -381,11 +405,7 @@ function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summari
   const goesThroughABinding = binding !== null
     && (binding.kind === 'import' || (binding.kind === 'local' && top.bindings.has(binding.name)) || throughThis);
   const carriesUrl = summaries.some((s, i) => !routeArg[i] && argCarriesUrl(s));
-  // THE CLIENT THE FRAMEWORK HANDED IN. `$http` is a parameter, so nothing in
-  // this file binds it and every rule above sees a call on an unknown name.
-  // What makes it a client is the pack's own list plus where the function
-  // sits, and both were settled before the walk. The verb has to be one the
-  // pack names, so `$http.pending` is still nothing.
+  // THE CLIENT THE FRAMEWORK HANDED IN (`injectedClientOf` says what makes one).
   const injected = injectedClientOf({ isNew, callee, env });
   if (callee === null || !(goesThroughABinding || carriesUrl || platformSink !== null || injected !== null)) {
     return null;
@@ -402,11 +422,12 @@ function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summari
     ...(injected !== null ? { injected } : {}),
   };
   if (env.func) rec.__enclosingEntry = env.func;
-  const urlSummary = urlArgumentOf(ctx, {
+  const positional = positionalRequestOf(ctx, { callee, binding, env, summaries });
+  const urlSummary = positional !== null ? positional.url : urlArgumentOf(ctx, {
     callee, summaries, routeArg, platformSink, globalClient, env,
   });
   if (urlSummary !== null) rec.url = buildUrl(ctx, urlSummary, env.scope);
-  rec.method = methodOf(callee, summaries, platformSink, globalClient);
+  rec.method = positional?.method ?? methodOf(callee, summaries, platformSink, globalClient);
   // The functions this call HANDS OVER, left off when there are none so a
   // frontend's ordinary call records do not each grow an empty list.
   const refs = fnRefsOf(ctx, node.arguments, env);

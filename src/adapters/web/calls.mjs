@@ -46,6 +46,8 @@ export const WEB_CALL_BASIS = Object.freeze({
   platform: 'the call goes to a browser sink (fetch / XMLHttpRequest), which sends the request itself: the URL argument is the URL by contract, and no rule had to decide that this call is an HTTP call',
   library: 'the callee is an instance of an HTTP client library a declaration pack names (adapters/web/packs/http-clients.json), and the method called is one of that library\'s verbs, so the call sends a request and the URL it sends to is the argument the library reads',
   injected: 'the callee is a client the FRAMEWORK hands the function, named in a declaration pack (adapters/web/packs/http-clients.json) and found by parameter name inside a function the framework fills in. Nothing in the file binds it, so there was nothing to trace: the pack says that parameter is a client and the method called is one of its verbs',
+  // RM67. A client a class asks for by TYPE, and the framework fills in.
+  typed: 'the callee is a field its class declares with a TYPE a declaration pack names as an HTTP client (adapters/web/packs/http-clients.json, instanceTypes), imported from that client\'s own module; the field is a constructor parameter or is set from the framework\'s injector (adapters/web/packs/injection.json). The framework fills it with an instance of that type, and the method called is one of its verbs, so the call sends a request and the URL it sends to is the argument the client reads',
   wrapper: 'the callee was traced through the project\'s own wrapper(s) to a client library instance, by following what each name is BOUND to in its file and what each wrapper forwards. The chain is on the edge; every hop is a binding this lane read, not a name it recognized',
   untraced: 'the argument is URL-shaped but the callee could not be traced to any sink: the call may send this URL or may only build it, so the edge says a rule guessed and the grade is HEURISTIC',
   template: 'the page itself makes this request: a `<form action=…>` posts to it, or a link opens it. The markup names the path and the attribute names the method, so nothing had to be traced and nothing was assumed',
@@ -134,6 +136,27 @@ export function buildRouteIndex(g) {
  *   external  the callee comes from a package this analysis never read
  *   null      nothing here explains it
  */
+/**
+ * What `this.<field>…` names: a method of this class, or through a field, the
+ * client or the project class that field holds. A field whose TYPE the class
+ * states (RM67) says so on the answer (`typed`), because what it holds may be a
+ * class a provider puts in the type's place.
+ */
+function thisTarget(fieldValue, file, className, pathParts) {
+  if (pathParts.length === 1) {
+    return { kind: 'member', key: `${file}#${className}.${pathParts[0]}`, assumed: false, viaStar: false };
+  }
+  if (pathParts.length < 2) return null;
+  const v = fieldValue(file, className, pathParts[0], 0);
+  const flags = { assumed: v?.assumed === true, viaStar: v?.viaStar === true, ...(v?.typed ? { typed: v.typed } : {}) };
+  if (v && v.kind === 'sink-instance') return { kind: 'sink', instance: v, method: pathParts[1], ...flags };
+  if (v && v.kind === 'class-instance') {
+    const at = v.key.lastIndexOf('#');
+    return { kind: 'member', key: `${v.key.slice(0, at)}#${v.key.slice(at + 1)}.${pathParts[1]}`, ...flags };
+  }
+  return null;
+}
+
 function makeCalleeTarget({ libraries, packageOf, resolver }) {
   const { rootValue, fieldValue } = resolver;
   return (file, call) => {
@@ -142,32 +165,16 @@ function makeCalleeTarget({ libraries, packageOf, resolver }) {
     const pathParts = callee.path ?? [];
     const binding = call.binding ?? null;
     if (binding && binding.kind === 'this') {
-      const className = binding.class ?? null;
-      if (!className) return null;
-      if (pathParts.length === 1) {
-        return { kind: 'member', key: `${file}#${className}.${pathParts[0]}`, assumed: false, viaStar: false };
-      }
-      if (pathParts.length >= 2) {
-        const v = fieldValue(file, className, pathParts[0], 0);
-        if (v && v.kind === 'sink-instance') {
-          return { kind: 'sink', instance: v, method: pathParts[1], assumed: v.assumed === true, viaStar: v.viaStar === true };
-        }
-        if (v && v.kind === 'class-instance') {
-          const at = v.key.lastIndexOf('#');
-          return {
-            kind: 'member', key: `${v.key.slice(0, at)}#${v.key.slice(at + 1)}.${pathParts[1]}`,
-            assumed: v.assumed === true, viaStar: v.viaStar === true,
-          };
-        }
-      }
-      return null;
+      return binding.class ? thisTarget(fieldValue, file, binding.class, pathParts) : null;
     }
     const root = rootValue(file, callee, binding, 0);
     if (root === null) return null;
     const flags = { assumed: root.assumed === true, viaStar: root.viaStar === true };
     if (root.kind === 'external' || root.kind === 'namespace') {
       const module = root.kind === 'external' ? root.module : null;
-      const lib = module ? libraries.get(module) : null;
+      // A library known by its instance TYPE (RM67) is a client only through
+      // an instance: calling what its module exports sends nothing.
+      const lib = module && !libraries.get(module)?.instanceTypes ? libraries.get(module) : null;
       if (lib && pathParts.length <= 1) {
         return {
           kind: 'sink',
@@ -537,6 +544,23 @@ function countUrlCensus(stats, resolved, substituted) {
   }
 }
 
+/**
+ * THE METHOD THE LIBRARY'S OWN VERB TABLE STATES, for a verb whose name is not
+ * spelled like one (`jsonp`, `del`), or the answer that there is none: a verb
+ * that takes its method BY POSITION and was not handed one written out has no
+ * default to fall back on, because the library requires the argument (RM67).
+ *
+ * @returns {{value:(string|null), from:string}|null} null when neither applies
+ */
+function libraryVerbOf(libraries, c, sink, target) {
+  if (c.method && c.method.from === 'positional' && !c.method.value && sink.kind === 'library') {
+    return { value: null, from: 'absent' };
+  }
+  if (sink.kind !== 'library' || !target || typeof target.method !== 'string') return null;
+  const verbs = libraries.get(sink.module)?.verbs ?? {};
+  return Object.prototype.hasOwnProperty.call(verbs, target.method) ? { value: verbs[target.method], from: 'library-verb' } : null;
+}
+
 /** The HTTP method this call sends, and what said so. */
 function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
   return (c, sink, target) => {
@@ -548,6 +572,8 @@ function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
       }
     }
     if (c.method && c.method.value) return { value: c.method.value, from: c.method.from ?? 'config' };
+    const fromPack = libraryVerbOf(libraries, c, sink, target);
+    if (fromPack !== null) return fromPack;
     if (sink.kind === 'library' || sink.kind === 'wrapper') {
       const lib = libraries.get(sink.module);
       if (lib && lib.defaultMethod) return { value: lib.defaultMethod, from: 'library-default' };
@@ -634,6 +660,9 @@ function pageSinkOf(c, { isTemplate, resolved, absolute, stats }) {
   return flatSink('template', c.template.rule);
 }
 
+/** How a client instance's type was stated, when a field declares it (RM67); nothing otherwise. */
+const typedOf = (instance) => (instance && typeof instance.typed === 'string' ? { typed: instance.typed } : {});
+
 /** Which of the six kinds of sink ONE call reached, or null when it is not a call at all. */
 function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
   const {
@@ -661,7 +690,7 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
     return {
       sink: {
         kind: 'library', module: target.instance.module, instance: target.instance.id ?? null,
-        chain: [], depth: 0,
+        chain: [], depth: 0, ...typedOf(target.instance),
       },
       target,
     };
@@ -836,7 +865,7 @@ function noteCaller(site, nodesToAdd, files) {
   nodesToAdd.set(fromId, {
     id: fromId, symbol: `${file}#${enclosing}`, file, line: fnRec ? fnRec.line : (call.line ?? null),
     lane: 'web', exported: fnRec ? (fnRec.exported ?? null) : null,
-    ...(isComponentFile(file) ? { component: true } : {}),
+    ...(isComponentFile(file, files.get(file) ?? null) ? { component: true } : {}),
   });
   return fromId;
 }
@@ -851,14 +880,14 @@ function callEvidence(site, { written, full, via, absolute, prefixEvidence, decl
         : site.template && call.template ? call.template.rule : 'web-http-call',
     ...(call.nexacro ? { nexacro: call.nexacro } : {}),
     ...(call.websquare ? { websquare: call.websquare } : {}),
-    basis: WEB_CALL_BASIS[sink.kind],
+    basis: sink.typed ? WEB_CALL_BASIS.typed : WEB_CALL_BASIS[sink.kind],
     // WHICH FORM, AND WHERE THE METHOD CAME FROM (RM60). A page has a dozen
     // forms and a reader checking this edge needs to know which one was
     // submitted, and whether the method was assigned, read off the `<form>`
     // element, or never found at all.
     ...(call.formSubmit ? { form: call.formSubmit } : {}),
     ...(site.template && call.template ? { attribute: call.template.attr, wrote: call.template.written } : {}),
-    sink: { kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth },
+    sink: { kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth, ...typedOf(sink) },
     // `written` is the path as the code spells it, `template` the path this
     // pack was searched for. An absolute URL keeps its HOST here, because
     // the node id is a path and two hosts would otherwise be one node.
@@ -1090,6 +1119,34 @@ function importEvidence(specifier, found, assumed) {
   return evidence;
 }
 
+/**
+ * `this.orders.list()` THROUGH A FIELD WHOSE TYPE THE CLASS STATES (RM67): the
+ * method of the class that type names, when this lane read it. SOUND_SET and
+ * never EXACT, the TypeScript lane's grade for the same call, because a
+ * subclass may override the method and the provider bound to the type may be
+ * another class; an assumed alias on the way to the type lowers it to
+ * HEURISTIC. A field the class assigns itself (`this.x = new X()`) is not this
+ * rule's, and neither is a client: the HTTP pass already explained that one.
+ */
+function typedFieldTarget({ files, resolver }, file, className, parts) {
+  const v = resolver.fieldValue(file, className, parts[0], 0);
+  if (!v || v.kind !== 'class-instance' || typeof v.typed !== 'string') return null;
+  const at = v.key.lastIndexOf('#');
+  const typeFile = v.key.slice(0, at);
+  const name = `${v.key.slice(at + 1)}.${parts[1]}`;
+  if (!files.get(typeFile)?.functions.has(name)) return null;
+  const assumed = v.assumed === true;
+  return {
+    file: typeFile,
+    name,
+    grade: assumed ? 'HEURISTIC' : 'SOUND_SET',
+    evidence: {
+      rule: 'typed-field', field: parts[0], type: v.key.slice(at + 1), via: v.typed, origin: `${typeFile}#${name}`,
+      ...(v.viaStar === true ? { viaStar: true } : {}), ...(assumed ? { assumedAlias: true } : {}),
+    },
+  };
+}
+
 /** What one call NAMES, when it names a function this lane read. */
 function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats }) {
   const { resolveSpecifier, resolveExport } = resolver;
@@ -1109,7 +1166,9 @@ function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats }) {
     // `this.getList()` inside a class: the member is a function of THIS file,
     // recorded under `<Class>.<name>`.
     if (binding && binding.kind === 'this') {
-      if (parts.length !== 1 || typeof binding.class !== 'string') return null;
+      if (typeof binding.class !== 'string') return null;
+      if (parts.length === 2) return typedFieldTarget({ files, resolver }, file, binding.class, parts);
+      if (parts.length !== 1) return null;
       const name = `${binding.class}.${parts[0]}`;
       return f.functions.has(name) ? sameFile(name) : null;
     }
@@ -1303,7 +1362,7 @@ export function linkFrontendCalls({
     nodesToAdd.set(id, {
       id, symbol: `${m.file}#${m.name}`, file: m.file, line: fnRec ? fnRec.line : null,
       lane: 'web', exported: fnRec ? (fnRec.exported ?? null) : null,
-      ...(isComponentFile(m.file) ? { component: true } : {}),
+      ...(isComponentFile(m.file, files.get(m.file) ?? null) ? { component: true } : {}),
     });
   }
   for (const key of [...callCandidates.keys()].sort()) {

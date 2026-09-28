@@ -26,6 +26,7 @@ import {
 } from './shared.mjs';
 import { nodeId } from '../../core/graph.mjs';
 import { isComponentFile, registryNameOf, webScreenId } from './symbols.mjs';
+import { makeRouteLists, MAX_PATHS_PER_ROUTE } from './route_lists.mjs';
 
 /**
  * The route paths that mean "this router is filled in by the server".
@@ -137,15 +138,28 @@ export function readRouteRecords({ fileNames, files, matchedRoutePaths, stats })
 }
 
 /**
+ * A child path that starts with `/` is ABSOLUTE and replaces everything above
+ * it; a parent whose path is `''` contributes nothing; everything else is
+ * joined with one slash. Normalized once, at the end, by the caller.
+ */
+const composeOnto = (base, p) => (p.startsWith('/') ? p : p === '' ? base : `${base}/${p}`);
+
+/**
  * THE PATH IS COMPOSED, not read.
  *
  * The parent of a route declaration is a LINE in the same file (the worker
  * resolves nothing across files), or a NAME, and a named parent is as often in
  * another file (`app.js` declares `app`, `owner-list.js` declares `owners`
- * under it). Both are looked up here, which is the only place that has every
- * file's records at once.
+ * under it), or a route in another file that loads or names the list this one
+ * sits in (RM67, `lists`). All three are looked up here, which is the only
+ * place that has every file's records at once.
+ *
+ * A route loaded from TWO places is two screens, so the answer is a list of
+ * paths. An EMPTY list means the path is not known: a part of it is a constant
+ * this lane could not read, or its list is registered as somebody's children
+ * and nothing here loads it. A path that is not known is not guessed.
  */
-function makeComposedPath(routeRecords) {
+function makeComposedPaths(routeRecords, lists, stats) {
   const routeAt = new Map();
   for (const r of routeRecords) {
     const k = `${r.file}|${r.line}`;
@@ -158,36 +172,35 @@ function makeComposedPath(routeRecords) {
     if (typeof r.name !== 'string' || r.name === '') continue;
     if (!routeByName.has(r.name)) routeByName.set(r.name, r);
   }
-  const parentChain = (rec) => {
-    const chain = [];
-    const seen = new Set();
-    let cur = rec;
-    for (let i = 0; i < HOP_LIMIT && cur; i += 1) {
-      const k = `${cur.file}|${cur.line}`;
-      if (seen.has(k)) break;
-      seen.add(k);
-      chain.push(cur);
-      if (typeof cur.parentName === 'string' && cur.parentName !== '') {
-        cur = routeByName.get(cur.parentName) ?? null;
-        continue;
-      }
-      cur = cur.parent == null ? null : (routeAt.get(`${cur.file}|${cur.parent}`) ?? null);
+  const parentsOf = (rec) => {
+    if (typeof rec.parentName === 'string' && rec.parentName !== '') {
+      const p = routeByName.get(rec.parentName);
+      return p ? [p] : [];
     }
-    chain.reverse();
-    return chain;
+    if (rec.parent != null) {
+      const p = routeAt.get(`${rec.file}|${rec.parent}`);
+      return p ? [p] : [];
+    }
+    return lists.parentsOf(rec);
   };
-  // A child path that starts with `/` is ABSOLUTE and replaces everything above
-  // it; a parent whose path is `''` contributes nothing; everything else is
-  // joined with one slash.
+  const rawPaths = (rec, below) => {
+    const own = lists.pathOf(rec);
+    if (own === null) return [];
+    const ps = below.size >= HOP_LIMIT - 1 ? [] : parentsOf(rec).filter((p) => !below.has(p));
+    if (ps.length === 0) return lists.childOnly(rec) ? [] : [composeOnto('', own)];
+    below.add(rec);
+    const out = [];
+    for (const p of ps) for (const base of rawPaths(p, below)) out.push(composeOnto(base, own));
+    below.delete(rec);
+    return [...new Set(out)].slice(0, MAX_PATHS_PER_ROUTE);
+  };
   return (rec) => {
-    let out = '';
-    for (const part of parentChain(rec)) {
-      const p = String(part.path ?? '');
-      if (p.startsWith('/')) out = p;
-      else if (p === '') continue;
-      else out = `${out}/${p}`;
+    const out = [...new Set(rawPaths(rec, new Set()).map((p) => normalizeUrl(p)))].sort();
+    if (out.length === 0) {
+      stats.screens.lists.pathUnknown += 1;
+      if (lists.childOnly(rec)) stats.screens.lists.childListsWithoutParent += 1;
     }
-    return normalizeUrl(out);
+    return out;
   };
 }
 
@@ -366,71 +379,102 @@ function screenNodeOf(rec, full, componentFile, { nameSource, pathRule, codeRege
 }
 
 /**
+ * Whether a declaration MOUNTS a screen at all, before its path is composed.
+ * Each kind of declaration that does not is a rule about paths rather than a
+ * page, and the two a pack declares (RM67) are counted.
+ */
+function mountsAScreen(rec, stats) {
+  const hasComponent = typeof rec.componentSource === 'string' || typeof rec.componentLocal === 'string'
+    || rec.componentSelf === true || namesByRegistry(rec);
+  // A REDIRECT IS NOT A SCREEN. `{path:'/', redirect:'/home'}` mounts
+  // nothing and shows nothing; it is a rule about where to go next.
+  if (!hasComponent && (rec.children ?? 0) === 0 && rec.redirect != null) return false;
+  // AN ABSTRACT STATE IS NOT A SCREEN EITHER, and it is not nothing: it is
+  // the path its children hang off, so it composes and it does not mount.
+  if (rec.abstract === true) return false;
+  // Nor is a GROUP, for a router whose pack says a route with children and no
+  // component renders nothing of its own; nor a route for a NAMED outlet, which
+  // is drawn beside whatever the page is rather than being one.
+  if (rec.grouping === true) { stats.screens.lists.groupings += 1; return false; }
+  if (typeof rec.outlet === 'string' && rec.outlet !== '' && rec.outlet !== 'primary') {
+    stats.screens.lists.outlets += 1;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The FILE a route's component is: its own file, the registry's answer, or its
+ * specifier resolved. A specifier that resolves to nothing is counted by name.
+ */
+function componentFileOf(rec, { registry, resolver, stats, unresolvedSpecifiers }) {
+  let componentFile = null;
+  let componentSpec = null;
+  let registryHit = null;
+  // A FILE-TREE ROUTE (RM56): the page IS its own component, so there is
+  // nothing to resolve and nothing that can fail to resolve.
+  if (rec.componentSelf === true) componentFile = rec.file;
+  else if (namesByRegistry(rec)) {
+    // A NAME, NOT A PATH. Nothing imports anything here, so the file comes
+    // from the framework's registry and a name nobody registered is the
+    // same gap an unresolvable specifier is.
+    registryHit = registry.attachByRegistry(rec);
+    componentFile = registryHit.primary;
+    if (componentFile === null) stats.screens.componentUnresolved += 1;
+  } else if (typeof rec.componentSource === 'string' && rec.componentSource !== '') {
+    componentSpec = rec.componentSource;
+    const r = resolver.resolveSpecifier(rec.file, rec.componentSource);
+    if (r.file) componentFile = r.file;
+  } else if (typeof rec.componentLocal === 'string' && rec.componentLocal !== '') {
+    componentSpec = `(declared in ${rec.file} as ${rec.componentLocal})`;
+  }
+  if (componentSpec !== null && componentFile === null) {
+    stats.screens.componentUnresolved += 1;
+    unresolvedSpecifiers.set(componentSpec, (unresolvedSpecifiers.get(componentSpec) ?? 0) + 1);
+  }
+  return { componentFile, registryHit };
+}
+
+/**
  * B7b: the screens the router declares.
  *
  * @returns {{screenNodes:Map, registryTargets:Map, unresolvedSpecifiers:Map}}
  */
 export function buildRouterScreens({
-  routeRecords, screenEnabled, axis, registry, resolver, stats,
+  routeRecords, screenEnabled, axis, registry, resolver, stats, fileNames = [], files = new Map(),
 }) {
-  const composedPath = makeComposedPath(routeRecords);
   const unresolvedSpecifiers = new Map();
   const screenNodes = new Map(); // screen id -> node
   const registryTargets = new Map(); // screen id -> what attachByRegistry found
-  if (!screenEnabled) return { screenNodes, registryTargets, unresolvedSpecifiers, composedPath };
+  if (!screenEnabled) return { screenNodes, registryTargets, unresolvedSpecifiers };
+  const lists = makeRouteLists({ routeRecords, fileNames, files, resolver, stats: stats.screens.lists });
+  const composedPaths = makeComposedPaths(routeRecords, lists, stats);
+  const ctx = { registry, resolver, stats, unresolvedSpecifiers };
   for (const rec of routeRecords) {
-    const hasComponent = typeof rec.componentSource === 'string' || typeof rec.componentLocal === 'string'
-      || rec.componentSelf === true || namesByRegistry(rec);
-    // A REDIRECT IS NOT A SCREEN. `{path:'/', redirect:'/home'}` mounts
-    // nothing and shows nothing; it is a rule about where to go next.
-    if (!hasComponent && (rec.children ?? 0) === 0 && rec.redirect != null) continue;
-    // AN ABSTRACT STATE IS NOT A SCREEN EITHER, and it is not nothing: it is
-    // the path its children hang off, so it composes and it does not mount.
-    if (rec.abstract === true) continue;
-    const full = composedPath(rec);
-    const id = webScreenId(full);
-    const existing = screenNodes.get(id);
-    if (existing) {
-      // TWO DECLARATIONS, ONE PATH. The first in (file, line) order is the
-      // node; every declaration is listed, because which one a reader is
-      // looking at is a real question.
-      existing.declaredAt.push({ file: rec.file, line: rec.line });
-      stats.screens.duplicatePaths += 1;
-      continue;
+    if (!mountsAScreen(rec, stats)) continue;
+    for (const full of composedPaths(rec)) {
+      const id = webScreenId(full);
+      const existing = screenNodes.get(id);
+      if (existing) {
+        // TWO DECLARATIONS, ONE PATH. The first in (file, line) order is the
+        // node; every declaration is listed, because which one a reader is
+        // looking at is a real question.
+        existing.declaredAt.push({ file: rec.file, line: rec.line });
+        stats.screens.duplicatePaths += 1;
+        continue;
+      }
+      const { componentFile, registryHit } = componentFileOf(rec, ctx);
+      const node = screenNodeOf(rec, full, componentFile, axis);
+      if (rec.hidden === true) { node.hidden = true; stats.screens.hidden += 1; }
+      if (node.params) stats.screens.withParams += 1;
+      if (componentFile !== null) stats.screens.withComponent += 1;
+      screenNodes.set(id, node);
+      if (registryHit !== null) registryTargets.set(id, registryHit.targets);
     }
-    let componentFile = null;
-    let componentSpec = null;
-    let registryHit = null;
-    // A FILE-TREE ROUTE (RM56): the page IS its own component, so there is
-    // nothing to resolve and nothing that can fail to resolve.
-    if (rec.componentSelf === true) componentFile = rec.file;
-    else if (namesByRegistry(rec)) {
-      // A NAME, NOT A PATH. Nothing imports anything here, so the file comes
-      // from the framework's registry and a name nobody registered is the
-      // same gap an unresolvable specifier is.
-      registryHit = registry.attachByRegistry(rec);
-      componentFile = registryHit.primary;
-      if (componentFile === null) stats.screens.componentUnresolved += 1;
-    } else if (typeof rec.componentSource === 'string' && rec.componentSource !== '') {
-      componentSpec = rec.componentSource;
-      const r = resolver.resolveSpecifier(rec.file, rec.componentSource);
-      if (r.file) componentFile = r.file;
-    } else if (typeof rec.componentLocal === 'string' && rec.componentLocal !== '') {
-      componentSpec = `(declared in ${rec.file} as ${rec.componentLocal})`;
-    }
-    if (componentSpec !== null && componentFile === null) {
-      stats.screens.componentUnresolved += 1;
-      unresolvedSpecifiers.set(componentSpec, (unresolvedSpecifiers.get(componentSpec) ?? 0) + 1);
-    }
-    const node = screenNodeOf(rec, full, componentFile, axis);
-    if (rec.hidden === true) { node.hidden = true; stats.screens.hidden += 1; }
-    if (node.params) stats.screens.withParams += 1;
-    if (componentFile !== null) stats.screens.withComponent += 1;
-    screenNodes.set(id, node);
-    if (registryHit !== null) registryTargets.set(id, registryHit.targets);
   }
+  lists.finish();
   stats.screens.byKind.router = screenNodes.size;
-  return { screenNodes, registryTargets, unresolvedSpecifiers, composedPath };
+  return { screenNodes, registryTargets, unresolvedSpecifiers };
 }
 
 /** The component files one component imports, directly, in a fixed order. */
@@ -443,7 +487,7 @@ function makeComponentChildren({ files, resolver }) {
     const f = files.get(file);
     for (const imp of f ? f.imports : []) {
       const r = resolver.resolveSpecifier(file, imp.source);
-      if (!r.file || !isComponentFile(r.file) || r.file === file) continue;
+      if (!r.file || !isComponentFile(r.file, files.get(r.file) ?? null) || r.file === file) continue;
       out.push(r.file);
     }
     out = [...new Set(out)].sort();

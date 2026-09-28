@@ -1,0 +1,11 @@
+{
+  // The workspace's one list of aliases. No tsconfig.json sits beside the
+  // package.json, so a directory with one of its own is where these apply.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@shop/data/*": ["libs/data/src/*"],
+      "@shop/paths/*": ["libs/paths/src/*"],
+    },
+  },
+}

@@ -1,0 +1,28 @@
+{
+  "pack": "angular-routes",
+  "why": "Angular 2 and later (the `@angular/router` package, not the AngularJS 1.x chain the `angular-router` pack reads) declares its routes as a `Routes` array of plain objects: `{path, component}`, `{path, loadComponent: () => import('./x').then(m => m.X)}`, `{path, loadChildren: () => import('./x.routes')}`, `{path, children: [...]}`, `{path, redirectTo}`. The keys `path`, `component` and `children` are the same words vue-router and react-router use, so an object alone cannot say which router it belongs to. What says it is the file: a route file imports `Routes` or `Route` from `@angular/router`. So this pack reads a route object only in a file that imports one of `modules`, and there it is the pack that reads it; in every other file it reads nothing, which is what keeps a Vue or React project's routes exactly as they were.",
+  "routesFrom": "module",
+  "modules": ["@angular/router"],
+  "routeObject": {
+    "pathKey": "path",
+    "componentKeys": ["component", "loadComponent"],
+    "childrenKey": "children",
+    "lazyChildrenKey": "loadChildren",
+    "redirectKey": "redirectTo",
+    "titleKey": "title",
+    "outletKey": "outlet"
+  },
+  "pathRefs": true,
+  "pathRefsWhy": "A route path is often written as a constant the application keeps in one place (`path: appPaths.orders.path`), because the same string is also the link every menu writes. The constant is still a literal somebody wrote, so the path is read through it: in the same file by the worker, across an import by the bridge. A path that leads to anything but a literal is not guessed, and the route is counted as one whose path could not be read.",
+  "topLevelObjects": true,
+  "topLevelObjectsWhy": "`const ordersRoute: Route = {path: 'orders', component: OrdersPage}` is one route, bound to a name and placed into a list somewhere else (`[ordersRoute, ...]`). In a file that imports this pack's module such an object is read as a route; anywhere else a module-level object with a `path` key is somebody's configuration.",
+  "listRefs": true,
+  "listRefsWhy": "A list of routes names the routes and the lists it holds (`[ordersRoute, ...errorRoutes]`), and a route names the list of its children (`children: ORDER_ROUTES`, `loadChildren: () => import('./orders.routes')`). Those names are recorded as they are written and followed across files by the bridge, so a child's path is composed onto the path of the route that loads it.",
+  "groupsMountNothing": true,
+  "groupsMountNothingWhy": "A route with children and no component of its own renders nothing: its children render in the outlet above it. It is the path its children hang off, so it composes, and it is not a screen.",
+  "childRegistrars": ["forChild"],
+  "childRegistrarsWhy": "`RouterModule.forChild(routes)` registers a list as the CHILDREN of a route that loads its module. When this lane cannot find that route, the list's paths are not known, and they are counted rather than read as top-level paths they are not.",
+  "registrars": ["provideRouter", "forRoot", "forChild"],
+  "componentClasses": [{ "module": "@angular/core", "decorator": "Component" }],
+  "componentClassesWhy": "An Angular component is a `.ts` file, so its extension does not say it is one the way `.vue` or `.tsx` does. A class decorated with `@Component` imported from the framework's own module is a component, and a screen that mounts one renders the components its file imports, as candidates, exactly as a Vue screen does."
+}

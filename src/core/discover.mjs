@@ -120,6 +120,9 @@ const ROUTER_DEPS = Object.freeze([
   ['vue-router', ['vue-router']],
   ['react-router', ['react-router', 'react-router-dom']],
   ['angular-router', ['angular-ui-router', '@uirouter/angularjs', 'angular-route']],
+  // Angular 2 and later (RM67). AFTER the AngularJS row, so a hybrid package
+  // that ships both routers keeps the answer it had.
+  ['angular-routes', ['@angular/router']],
   // LAST, and only when nothing above answered (RM56). Next.js routes by the
   // FILE TREE, so a package that also ships a router library declares its
   // screens in that library and the file tree is a fallback nobody uses. A

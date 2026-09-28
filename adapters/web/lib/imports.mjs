@@ -26,7 +26,7 @@
 import { calleeOf, eachChild, isFunctionNode, keyName, patternNames, propOf, Scope, summarizeArg } from './ast.mjs';
 import { navigationAssignmentOf } from './navigation.mjs';
 import { formActionAssignment, formMethodAssignment } from './forms.mjs';
-import { maybeRoute } from './routers.mjs';
+import { emitRouteRef, maybeRoute } from './routers.mjs';
 
 /**
  * Pass 1: hoist what the top level declares. A function at the top of a file
@@ -124,15 +124,51 @@ function stringMembers(node) {
   return null;
 }
 
+/** How deep an object of objects is read for its text, and how much text is kept. */
+const NESTED_DEPTH = 6;
+const NESTED_LEAVES = 2000;
+
+/**
+ * THE TEXT AN OBJECT OF OBJECTS KEEPS BELOW ITS FIRST LEVEL (RM67), by dotted
+ * path: `{orders: {path: 'orders', list: {path: 'list'}}}` keeps `orders.path`
+ * and `orders.list.path`. An application that writes its route paths once, in
+ * one object, and names them everywhere else is read through this; the first
+ * level is `members`, as it always was.
+ *
+ * @returns {Map<string,string>}
+ */
+function nestedStrings(node) {
+  const out = new Map();
+  const walk = (obj, prefix, depth) => {
+    for (const p of obj.properties) {
+      if (out.size >= NESTED_LEAVES) return;
+      if (p.type !== 'ObjectProperty') continue;
+      const key = keyName(p);
+      if (key === null || key.includes('.')) continue;
+      const at = prefix === null ? key : `${prefix}.${key}`;
+      if (p.value.type === 'StringLiteral' && prefix !== null) out.set(at, p.value.value);
+      else if (p.value.type === 'ObjectExpression' && depth < NESTED_DEPTH) walk(p.value, at, depth + 1);
+    }
+  };
+  if (node && node.type === 'ObjectExpression') walk(node, null, 1);
+  return out;
+}
+
 /** A top-level constant: a string, or an object/enum of strings. */
-export function recordConstant(ctx, name, node, exported, line) {
+export function recordConstant(ctx, name, written, exported, line) {
   const { top, emit, relFile } = ctx;
+  // `{…} as const` and `{…} satisfies T` hold the object they are written around.
+  const node = withoutTypeScript(written);
   const m = stringMembers(node);
-  if (m && m.members.size > 0) {
+  const nested = nestedStrings(node);
+  if (m && (m.members.size > 0 || nested.size > 0)) {
     const members = {};
     for (const [k, v] of m.members) members[k] = v;
-    top.constants.set(name, { members: m.members, value: null });
-    emit({ kind: 'constant', file: relFile, line, name, exported, members, omitted: m.omitted }, line);
+    top.constants.set(name, { members: m.members, value: null, ...(nested.size > 0 ? { nested } : {}) });
+    emit({
+      kind: 'constant', file: relFile, line, name, exported, members, omitted: m.omitted,
+      ...(nested.size > 0 ? { nested: Object.fromEntries(nested) } : {}),
+    }, line);
     return true;
   }
   if (node && node.type === 'StringLiteral') {
@@ -152,6 +188,10 @@ export function recordConstant(ctx, name, node, exported, line) {
  */
 export function initOf(ctx, init, env) {
   if (!init) return null;
+  // `inject(OrderService)`: the value is an instance of the TYPE the call
+  // names, not whatever the injector function returns (RM67).
+  const injected = injectorTypeOf(ctx, init, env);
+  if (injected !== null) return injected;
   let shape = null;
   let target = null;
   if (init.type === 'CallExpression' || init.type === 'OptionalCallExpression') { shape = 'call'; target = init.callee; }
@@ -171,6 +211,69 @@ export function initOf(ctx, init, env) {
       const b = propOf(first, 'baseURL');
       if (b) out.baseURL = summarizeArg(b);
     }
+  }
+  return out;
+}
+
+/** The `typed` init a TYPE name makes: what the field holds is an instance of it. */
+function typedInit(ctx, typeNode, env, via, extra = {}) {
+  const t = typeNode ? calleeOf(typeNode) : null;
+  if (!t || t.root === null || t.root === 'this') return null;
+  return { shape: 'typed', callee: t, binding: bindingOf(ctx, t.root, env.scope, env.classInfo), via, ...extra };
+}
+
+/**
+ * THE FRAMEWORK'S INJECTOR, called for a type (RM67): `inject(OrderService)`
+ * where `inject` is imported from the module an injection pack names
+ * (adapters/web/packs/injection.json). Null for any other call, so a function
+ * that merely happens to be called `inject` is nothing here.
+ */
+export function injectorTypeOf(ctx, init, env) {
+  const injectors = ctx.injectors ?? [];
+  if (injectors.length === 0 || !init || init.type !== 'CallExpression' || !init.callee) return null;
+  const c = calleeOf(init.callee);
+  if (!c || c.path.length > 0) return null;
+  const b = bindingOf(ctx, c.root, env.scope, env.classInfo);
+  if (!b || b.kind !== 'import') return null;
+  const inj = injectors.find((i) => i.module === b.source && i.name === b.imported);
+  if (!inj) return null;
+  const arg = (init.arguments ?? [])[inj.typeArg ?? 0];
+  if (!arg || (arg.type !== 'Identifier' && arg.type !== 'MemberExpression')) return null;
+  return typedInit(ctx, arg, env, 'injector', { injector: inj.name });
+}
+
+/**
+ * THE FIELDS A CLASS STATES THE TYPE OF (RM67), field name to its `typed`
+ * init. Two spellings, and only two:
+ *   a constructor parameter with an access modifier   `constructor(private
+ *       orders: OrderService)` is TypeScript's own field declaration. One with a
+ *       decorator is left out: `@Inject(TOKEN)` hands in whatever the token
+ *       names, which is not the type written beside it
+ *   a field set from the framework's injector         `orders = inject(OrderService)`
+ * A field typed this way holds that type or a class a provider puts in its
+ * place, and the bridge grades what goes through it accordingly.
+ *
+ * @returns {Map<string,{init:object, line:number}>}
+ */
+function typedFields(ctx, node, env) {
+  const out = new Map();
+  for (const m of node.body.body) {
+    if (m.type === 'ClassMethod' && m.kind === 'constructor') {
+      for (const p of m.params ?? []) {
+        if (!p || p.type !== 'TSParameterProperty' || (p.decorators ?? []).length > 0) continue;
+        const id = p.parameter && p.parameter.type === 'AssignmentPattern' ? p.parameter.left : p.parameter;
+        if (!id || id.type !== 'Identifier' || (id.decorators ?? []).length > 0) continue;
+        const ann = id.typeAnnotation && id.typeAnnotation.typeAnnotation;
+        if (!ann || ann.type !== 'TSTypeReference' || !ann.typeName || ann.typeName.type !== 'Identifier') continue;
+        const init = typedInit(ctx, ann.typeName, env, 'constructor-parameter');
+        if (init !== null) out.set(id.name, { init, line: ctx.lineOf(p) });
+      }
+      continue;
+    }
+    if (m.type !== 'ClassProperty' || !m.value) continue;
+    const name = memberNameOf(m);
+    const init = name === null ? null : injectorTypeOf(ctx, m.value, env);
+    if (init !== null) out.set(name, { init, line: ctx.lineOf(m) });
   }
   return out;
 }
@@ -321,6 +424,7 @@ export function visitExportDefault(ctx, node, env) {
   }
   if (d.type === 'ObjectExpression') {
     emit({ kind: 'export', file: relFile, line, name: 'default', of: 'object' }, line);
+    visitNamedRouteValue(ctx, d, env, 'default');
     // A Vue options component IS this object, and its methods are what the
     // screen calls. Every function-valued member of it, at any depth, is a
     // member of the default export.
@@ -332,7 +436,40 @@ export function visitExportDefault(ctx, node, env) {
     return;
   }
   emit({ kind: 'export', file: relFile, line, name: 'default', of: 'expression' }, line);
-  ctx.visit(d, env);
+  if (!visitNamedRouteValue(ctx, d, env, 'default')) ctx.visit(d, env);
+}
+
+/** An expression with the TypeScript written around it taken off: `[…] as Routes` is `[…]`. */
+function withoutTypeScript(n) {
+  let cur = n;
+  for (let i = 0; i < 8 && cur; i += 1) {
+    if (cur.type !== 'TSAsExpression' && cur.type !== 'TSSatisfiesExpression' && cur.type !== 'TSTypeAssertion'
+      && cur.type !== 'TSNonNullExpression' && cur.type !== 'ParenthesizedExpression') return cur;
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+/**
+ * A LIST OR A ROUTE BOUND TO A MODULE-LEVEL NAME, in a file whose router names
+ * routes by name (RM67). `const orderRoutes: Routes = […]` is walked knowing
+ * its name, so every route in it says which list it is in and every name in it
+ * is recorded as a reference; `const ordersRoute: Route = {…}` is read as one
+ * route under its own name. A route in another file finds either by that name.
+ *
+ * @returns {boolean} whether the value was walked here (a list), so the caller
+ *          does not walk it again
+ */
+function visitNamedRouteValue(ctx, init, env, name) {
+  if (ctx.listRefsOn !== true || !env.scope.isModule || env.func !== null) return false;
+  const value = withoutTypeScript(init);
+  if (!value) return false;
+  if (value.type === 'ArrayExpression') {
+    visitArray(ctx, value, { ...env, routeList: name });
+    return true;
+  }
+  if (value.type === 'ObjectExpression') maybeRoute(ctx, value, { ...env, routeList: name, routeTopLevel: true }, null);
+  return false;
 }
 
 /** `const x = require('y')` names the local the import lands in. */
@@ -363,6 +500,7 @@ export function visitVariableDeclaration(ctx, node, env, exportedAs) {
       // also an object, and only what is left becomes a binding.
       const asConstant = recordConstant(ctx, simple, decl.init, exportedAs === 'named', line);
       if (!asConstant) recordBinding(ctx, simple, decl.init, exportedAs === 'named', line);
+      if (visitNamedRouteValue(ctx, decl.init, env, simple)) continue;
     }
     if (decl.init && isFunctionNode(decl.init) && simple !== null) {
       const entry = env.func === null
@@ -415,15 +553,14 @@ function thisAssignedFields(classNode, out) {
   walk(classNode);
 }
 
-/** A class: its record, its members, and the client a field may hold. */
-export function visitClass(ctx, node, env, exportedAs) {
-  const { emit, relFile, lineOf } = ctx;
-  const className = node.id ? node.id.name : 'default';
-  const line = lineOf(node);
-  // WHAT THE CLASS DECLARES, collected BEFORE any body is walked: a method
-  // that forwards to `this.request(…)` is written above the method it calls
-  // as often as below it, and a walk that learned the member list on the way
-  // through would follow one and not the other.
+/**
+ * WHAT A CLASS DECLARES, collected BEFORE any body is walked: a method that
+ * forwards to `this.request(…)` is written above the method it calls as often
+ * as below it, and a walk that learned the member list on the way through would
+ * follow one and not the other. A field whose TYPE the class states (RM67) is a
+ * field too, wherever it was declared.
+ */
+function classShape(ctx, node, env) {
   const methods = [];
   const fields = [];
   for (const m of node.body.body) {
@@ -435,17 +572,53 @@ export function visitClass(ctx, node, env, exportedAs) {
     }
   }
   thisAssignedFields(node, fields);
+  const typed = typedFields(ctx, node, env);
+  for (const name of typed.keys()) fields.push(name);
+  return { methods, fields, typed };
+}
+
+/**
+ * Whether a class is a COMPONENT by the decorator it carries (RM67): one a pack
+ * names (`componentClasses`), imported from that pack's module. A file whose
+ * extension does not say it is a component says it this way.
+ */
+function isComponentClass(ctx, node, env) {
+  const decl = ctx.componentDecorators ?? [];
+  if (decl.length === 0) return false;
+  for (const d of node.decorators ?? []) {
+    const e = d.expression && d.expression.type === 'CallExpression' ? d.expression.callee : d.expression;
+    const c = e ? calleeOf(e) : null;
+    if (!c || c.path.length > 0) continue;
+    const b = bindingOf(ctx, c.root, env.scope, null);
+    if (b && b.kind === 'import' && decl.some((x) => x.module === b.source && x.decorator === b.imported)) return true;
+  }
+  return false;
+}
+
+/** A class: its record, its members, and the client a field may hold. */
+export function visitClass(ctx, node, env, exportedAs) {
+  const { emit, relFile, lineOf } = ctx;
+  const className = node.id ? node.id.name : 'default';
+  const line = lineOf(node);
+  const { methods, fields, typed } = classShape(ctx, node, env);
   const uniq = (xs) => [...new Set(xs)];
   const top = env.func === null;
   const classInfo = {
     name: className,
     members: new Set([...methods, ...fields]),
+    typed: new Map([...typed].map(([k, v]) => [k, v.init])),
   };
   if (top) {
     emit({
       kind: 'class', file: relFile, line, name: className, exported: exportedAs ?? null,
       methods: uniq(methods), fields: uniq(fields),
+      ...(isComponentClass(ctx, node, env) ? { component: true } : {}),
     }, line);
+  }
+  // A TYPED FIELD IS AN ASSIGNMENT the class never writes (RM67): the
+  // framework fills it, and the record says with what type.
+  for (const [field, t] of typed) {
+    emit({ kind: 'assign', file: relFile, line: t.line, class: className, field, init: t.init }, t.line);
   }
   const inner = { ...env, classInfo };
   for (const m of node.body.body) {
@@ -542,17 +715,24 @@ export function visitObject(ctx, node, env, defaultMember, owner = null) {
   }
 }
 
-/** An array literal: the routes and the functions written inside it. */
+/**
+ * An array literal: the routes and the functions written inside it. A NAMED
+ * route list (RM67) also records every route it holds by name, and hands its
+ * name to nothing nested in it: the arrays inside a route are that route's.
+ */
 export function visitArray(ctx, node, env, defaultMember) {
+  const list = typeof env.routeList === 'string' ? env.routeList : null;
+  const inner = list === null ? env : { ...env, routeList: null };
   for (const el of node.elements) {
     if (!el) continue;
     if (el.type === 'ObjectExpression') {
       maybeRoute(ctx, el, env, null);
-      visitObject(ctx, el, env, defaultMember === true);
+      visitObject(ctx, el, inner, defaultMember === true);
       continue;
     }
-    if (el.type === 'ArrayExpression') { visitArray(ctx, el, env, defaultMember); continue; }
-    ctx.visit(el, env);
+    if (list !== null && emitRouteRef(ctx, el, { list, parent: null })) continue;
+    if (el.type === 'ArrayExpression') { visitArray(ctx, el, inner, defaultMember); continue; }
+    ctx.visit(el, inner);
   }
 }
 

@@ -224,7 +224,7 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
   });
   const registry = makeNameRegistry({ fileNames, files });
   const { screenNodes, registryTargets, unresolvedSpecifiers } = buildRouterScreens({
-    routeRecords, screenEnabled: axis.screenEnabled, axis, registry, resolver, stats,
+    routeRecords, screenEnabled: axis.screenEnabled, axis, registry, resolver, stats, fileNames, files,
   });
   countTemplates({
     templatesByFile: templates.templatesByFile,

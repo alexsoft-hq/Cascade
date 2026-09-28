@@ -108,6 +108,22 @@
 // (recorded as a candidate the bridge resolves), and `<router-link to>` in a
 // single-file component's markup.
 //
+// webfacts/14 READS A MODERN ANGULAR APPLICATION (RM67). A router pack can now
+// be a MODULE pack (`routesFrom: "module"`): it reads a route object only in a
+// file that imports its module, and there it is the pack that reads it, so a
+// file that imports none is read exactly as before. Its route records carry
+// what that router writes across files: the list a route sits in (`list`), a
+// path read through a constant (`pathFrom`, or `pathRef` for the bridge), the
+// list it loads lazily (`childrenFrom`), the export a lazy component names
+// (`componentExport`), and `routeRef` records for every route and list named
+// by name. A class records the fields whose TYPE it states (a constructor
+// parameter property, a field set from a declared injector) as `assign`
+// records with a `typed` init, and a verb that takes its method and URL by
+// position is read by position on a field typed with a client the pack names.
+// A `constant` keeps the text below its first level (`nested`), and a
+// directory with a tsconfig of its own inside a package gets its aliases as
+// config records with a `scope`.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -118,7 +134,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/13';
+const VERSION = 'webfacts/14';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -144,14 +160,15 @@ import {
   isWebSquarePage, MAX_PAGE_BYTES, submissionSinks, websquarePageOf, websquareScriptBlocks, websquareSubmissions,
 } from './lib/websquare.mjs';
 import { emptyCounts, orderRecords, tally } from './lib/emit.mjs';
+import { scopedAliasRecords } from './lib/tsconfig.mjs';
 import {
   bindingOf, declareFunction, hoist, isRequireCall, recordConstant, recordImport, visitArray,
   visitAssignment, visitClass, visitExportDefault, visitExportNamed, visitFunctionBody, visitObject,
   visitVariableDeclaration,
 } from './lib/imports.mjs';
 import {
-  anyPackSeesARoute, chainRoutes, collectModuleLocals, injectionScan,
-  registrarRoutes, registrarScan, registrationScan, visitJsx,
+  anyPackSeesARoute, chainRoutes, collectModuleLocals, injectionScan, moduleDestructures,
+  registrarRoutes, registrarScan, registrationScan, routePacksOf, visitJsx,
 } from './lib/routers.mjs';
 import {
   customElementTags, MAX_TEMPLATE_BYTES, templateFormElements, templateRecordsOf,
@@ -248,7 +265,7 @@ function loadPacks(dir) {
     const ro = p.routeObject || {};
     const keys = new Set([
       ro.pathKey, ro.childrenKey, ro.nameKey, ro.metaKey, ro.redirectKey, ro.hiddenKey, ro.indexKey,
-      ...(ro.componentKeys || []),
+      ro.lazyChildrenKey, ...(ro.componentKeys || []),
     ].filter(Boolean));
     p.__keys = keys;
   }
@@ -259,8 +276,10 @@ function loadPacks(dir) {
     // A pack whose routes come from a CHAIN is never matched by an object
     // literal on its own. `{url: '/x', template: '<y>'}` is a route where a
     // `$stateProvider` chain names it and an ordinary options object anywhere
-    // else, and this is the difference.
-    p.__routesFrom = p.routesFrom === 'chain' ? 'chain' : 'object';
+    // else, and this is the difference. A pack whose routes come from a MODULE
+    // reads an object only in a file that imports that module (RM67).
+    p.__routesFrom = p.routesFrom === 'chain' ? 'chain'
+      : p.routesFrom === 'module' && Array.isArray(p.modules) ? 'module' : 'object';
     p.__chains = [p.chain, p.chainAlt].filter((c) => c && Array.isArray(c.receivers) && typeof c.method === 'string');
   }
   return packs;
@@ -414,6 +433,12 @@ function walkState(packs) {
     declarationCalls: new Set(),
     injectionTargets: new Set(),
     injectedClients: new Map((packs.flatMap((p) => p.injected ?? [])).map((c) => [c.name, c])),
+    // THE FRAMEWORK'S INJECTOR FUNCTIONS and the client libraries (RM67): a
+    // field set from `inject(T)` holds a T, and a T a library pack names as an
+    // instance type is a client whose positional verbs this file can read.
+    injectors: packs.flatMap((p) => p.injectors ?? []),
+    componentDecorators: packs.flatMap((p) => p.componentClasses ?? []),
+    libraries: packs.flatMap((p) => p.libraries ?? []),
     globalClients,
     // THE NAVIGATION SINKS (RM59): the calls that change the screen instead of
     // sending a request. Flattened from the packs once and shared by every file.
@@ -530,12 +555,37 @@ function runTheWalk(ctx, program, st, packs, moduleScope) {
   if (routerModule !== null) ctx.emit(routerModule, 1);
 }
 
+/**
+ * WHICH ROUTER PACKS THIS PROGRAM CAN HOLD ROUTES OF (RM67), from the modules
+ * it imports: a module pack reads a file that imports its module and no other.
+ * Also what the rest of the walk needs to know about that: whether any of them
+ * names routes by name, and the names this file destructures out of others.
+ */
+function routeReading(program, packs) {
+  const importedModules = new Set();
+  for (const stmt of program.body ?? []) {
+    if (stmt.type === 'ImportDeclaration' && stmt.source) importedModules.add(stmt.source.value);
+  }
+  const routePacks = routePacksOf(packs, importedModules);
+  // What an argument that IS a route object looks like: every pack a file can
+  // hold routes of, plus the chain packs, whose objects are routes wherever
+  // their registrar names them.
+  const seeingPacks = packs.filter((p) => routePacks.includes(p) || p.__routesFrom === 'chain');
+  return {
+    routePacks,
+    seeingPacks,
+    listRefsOn: routePacks.some((p) => p.listRefs === true),
+    destructures: moduleDestructures(program),
+  };
+}
+
 /** One parsed program (a whole file, or one script block of a Vue file). */
 function analyzeProgram(program, st) {
   const { block, top, emit, relFile, packs } = st;
   const off = block.lineOffset;
   const lineOf = (n) => (n && n.loc ? n.loc.start.line + off : 1 + off);
   const moduleScope = new Scope(null, true);
+  const routes = routeReading(program, packs);
 
   // THE WALK'S CONTEXT. Everything a rule in `lib/routers.mjs` is allowed to
   // look at, in one object, so a reader can tell at a signature what a rule can
@@ -550,6 +600,7 @@ function analyzeProgram(program, st) {
     lineOf,
     attachTemplate: attachTemplateWith(st),
     ...walkState(packs),
+    ...routes,
     moduleScope,
     // Code outside any named function is the module's own body; inside a
     // `<script setup>` block it is the component's setup, which is a different
@@ -571,7 +622,9 @@ function analyzeProgram(program, st) {
     eachChild,
     keyName,
     summarizeArg,
-    anyPackSeesARoute,
+    // An object only a pack this file cannot hold routes of would see is no
+    // route here, so it is asked of the packs that can (RM67).
+    anyPackSeesARoute: (_packs, node) => anyPackSeesARoute(routes.seeingPacks, node),
     visit: (node, env) => dispatch(ctx, node, env),
   };
   runTheWalk(ctx, program, st, packs, moduleScope);
@@ -1607,7 +1660,7 @@ function packagesOf(roots) {
  * A config file the walk also picked up (a source root that IS the package
  * directory) is taken out of the file set, so it is not read twice.
  */
-function readTheConfigs(pkgDirs, root, out, found) {
+function readTheConfigs(pkgDirs, root, out, found, packageOf) {
   const configRecords = [];
   const configParsed = [];
   for (const dir of [...pkgDirs].sort()) {
@@ -1616,6 +1669,10 @@ function readTheConfigs(pkgDirs, root, out, found) {
     configParsed.push(...res.parsedFiles);
   }
   for (const p of configParsed) found.delete(path.resolve(root, p.rel));
+  // A DIRECTORY WITH A tsconfig OF ITS OWN inside a package (RM67): a workspace
+  // of several applications under one package.json declares its aliases there.
+  const rel = (abs) => toPosix(path.relative(root, abs));
+  configRecords.push(...scopedAliasRecords({ found, packageOf, rel, parseJsonc }));
   return { configRecords, configParsed };
 }
 
@@ -1704,7 +1761,7 @@ function main(argv) {
     return { records: res.records, apiHandler: res.apiFiles > 0 };
   };
 
-  const configs = readTheConfigs(pkgDirs, root, out, found);
+  const configs = readTheConfigs(pkgDirs, root, out, found, packageOf);
   const byFile = new Map();
   const push = (rel, rec, line, order) => {
     if (!byFile.has(rel)) byFile.set(rel, []);

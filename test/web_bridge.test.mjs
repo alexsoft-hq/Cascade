@@ -94,7 +94,14 @@ test('the http-client pack is a DECLARATION: platform sinks and libraries, not r
   assert.equal(jq.verbs.getJSON, 'GET');
   assert.equal(jq.defaultMethod, 'GET');
   const modules = p.libraries.map((l) => l.module).sort();
-  assert.deepEqual(modules, ['axios', 'ky', 'superagent']);
+  assert.deepEqual(modules, ['@angular/common/http', 'axios', 'ky', 'superagent']);
+  // A client known by the TYPE a field is declared with (RM67): the module is
+  // not a client itself, and `request` takes its method and URL by position.
+  const ng = p.libraries.find((l) => l.module === '@angular/common/http');
+  assert.deepEqual(ng.instanceTypes, ['HttpClient']);
+  assert.equal(ng.instanceFactories, undefined);
+  assert.deepEqual(ng.positional.request, { methodArg: 0, urlArg: 1 });
+  assert.equal(ng.verbs.jsonp, 'GET');
   const axios = p.libraries.find((l) => l.module === 'axios');
   assert.deepEqual(axios.instanceFactories, ['create']);
   assert.equal(axios.verbs.get, 'GET');

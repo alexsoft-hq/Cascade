@@ -522,10 +522,25 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
   for (const u of (s.unresolvedNames ?? []).slice(0, 5)) {
     process.stderr.write(`  [warn] SCREEN_COMPONENT_UNREGISTERED ${u.name} (${u.count} time(s)): nothing in the files this lane read registers that name, so no edge was drawn for it\n`);
   }
+  sayRouteListGaps(s.lists);
   if (s.serverDriven.detected) {
     process.stderr.write(`  [warn] SCREENS_FROM_SERVER a call fetches the menu (${s.serverDriven.menuEndpoints.join(', ')}) and ${s.declared} route(s) are declared in the source: `
       + `${s.declared < s.serverDriven.ceiling ? 'most screens arrive when the app runs' : `screens beyond the ${s.declared} declared arrive when the app runs`}, `
       + 'so the screens here are the ones the source states, not the ones the product has\n');
+  }
+}
+
+/**
+ * The routes whose path could not be composed (RM67): a constant this lane
+ * could not read, or a list nothing here loads. Each one is a screen that is
+ * not in the pack, so each is named rather than dropped.
+ */
+function sayRouteListGaps(lists) {
+  if (!lists || (lists.pathUnknown ?? 0) === 0) return;
+  process.stderr.write(`  [warn] SCREEN_PATH_UNKNOWN ${lists.pathUnknown} route declaration(s) have a path this lane could not compose, so they are not screens here `
+    + `(${lists.pathRefsUnresolved} path constant(s) not read, ${lists.childListsWithoutParent} child list(s) nothing loads)\n`);
+  for (const u of (lists.unresolved ?? []).slice(0, 5)) {
+    process.stderr.write(`  [warn] SCREEN_ROUTE_NAME_UNREAD ${u.name} (${u.count} time(s)): not followed to text or to a list this lane read\n`);
   }
 }
 

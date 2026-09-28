@@ -52,6 +52,16 @@
       "verbs": { "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE", "del": "DELETE", "patch": "PATCH", "head": "HEAD" },
       "generic": [],
       "defaultMethod": "GET"
+    },
+    {
+      "module": "@angular/common/http",
+      "framework": "angular",
+      "why": "Angular's HttpClient is never built by the file that uses it: a class asks for it by TYPE, as a constructor parameter or through the framework's injector, and the framework hands it an instance. So an instance is known by the type its field is declared with, and that type has to be imported from this module under one of `instanceTypes` (adapters/web/packs/injection.json says which calls declare a type). The module itself is not a client: `HttpParams` and `HttpHeaders` come from it too, and calling one of them sends nothing. `request(method, url, options)` takes its method and its URL by position, which is what `positional` says.",
+      "instanceTypes": ["HttpClient"],
+      "verbs": { "get": "GET", "post": "POST", "put": "PUT", "patch": "PATCH", "delete": "DELETE", "head": "HEAD", "options": "OPTIONS", "jsonp": "GET" },
+      "generic": ["request"],
+      "positional": { "request": { "methodArg": 0, "urlArg": 1 } },
+      "defaultMethod": "GET"
     }
   ]
 }

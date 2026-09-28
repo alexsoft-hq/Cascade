@@ -90,7 +90,10 @@ export function readPackages({ opts, configs }) {
     // discovery names the package.json, and the package is the directory it sits in.
     if (p && typeof p.path === 'string') packageDirs.add(configDirOf(normalizePosix(p.path)));
   }
-  for (const c of configs) packageDirs.add(configDirOf(c.file));
+  // A SCOPED alias record (RM67) comes from a directory INSIDE a package, and
+  // that directory is not a package: it names no dependencies and holds no
+  // .env, so it must not become one.
+  for (const c of configs) if (typeof c.scope !== 'string') packageDirs.add(configDirOf(c.file));
   if (packageDirs.size === 0) packageDirs.add('');
   const sortedPackages = [...packageDirs].sort((a, b) => b.length - a.length || cmp(a, b));
   const packageOf = (file) => {
@@ -102,26 +105,31 @@ export function readPackages({ opts, configs }) {
   const pkgConfig = new Map();
   const configFor = (dir) => {
     let c = pkgConfig.get(dir);
-    if (!c) { c = { env: new Map(), proxies: [], aliases: [], axiosBaseUrl: null }; pkgConfig.set(dir, c); }
+    if (!c) { c = { env: new Map(), proxies: [], aliases: [], scopedAliases: [], axiosBaseUrl: null }; pkgConfig.set(dir, c); }
     return c;
   };
   for (const d of packageDirs) configFor(d);
   for (const c of configs.slice().sort((a, b) => cmp(sortKey(a), sortKey(b)))) {
     const dir = configDirOf(c.file);
-    const cfg = configFor(packageDirs.has(dir) ? dir : packageOf(c.file));
-    if (c.what === 'env') {
-      if (!cfg.env.has(c.name)) cfg.env.set(c.name, []);
-      cfg.env.get(c.name).push({ value: c.value, mode: c.mode ?? null, file: c.file });
-    } else if (c.what === 'proxy') cfg.proxies.push(c);
-    else if (c.what === 'alias') cfg.aliases.push(c);
-    else if (c.what === 'axios-defaults' && c.key === 'baseURL') cfg.axiosBaseUrl = c.value ?? null;
+    fileConfigRecord(configFor(packageDirs.has(dir) ? dir : packageOf(c.file)), c);
   }
   for (const cfg of pkgConfig.values()) {
     // The longest context first: `/api/v2` must win over `/api`.
     cfg.proxies.sort((a, b) => b.context.length - a.context.length || cmp(a.context, b.context));
     cfg.aliases.sort((a, b) => b.from.length - a.from.length || cmp(a.from, b.from));
+    cfg.scopedAliases.sort((a, b) => cmp(a.scope, b.scope) || b.from.length - a.from.length || cmp(a.from, b.from));
   }
   return { packageDirs, packageOf, configFor };
+}
+
+/** One config record filed under what it declares. */
+function fileConfigRecord(cfg, c) {
+  if (c.what === 'env') {
+    if (!cfg.env.has(c.name)) cfg.env.set(c.name, []);
+    cfg.env.get(c.name).push({ value: c.value, mode: c.mode ?? null, file: c.file });
+  } else if (c.what === 'proxy') cfg.proxies.push(c);
+  else if (c.what === 'alias') (typeof c.scope === 'string' ? cfg.scopedAliases : cfg.aliases).push(c);
+  else if (c.what === 'axios-defaults' && c.key === 'baseURL') cfg.axiosBaseUrl = c.value ?? null;
 }
 
 /**

@@ -134,7 +134,7 @@ const CATALOG_SOURCES = Object.freeze(['jdbc', 'file', 'none']);
  * else a profile declares is reported as UNSUPPORTED_TECHNOLOGY and skipped —
  * never silently ignored (§7.3).
  */
-export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'next-pages', 'nexacro', 'websquare', 'nestjs']);
+export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc', 'jpa', 'mybatis-plus', 'web', 'vue-router', 'react-router', 'angular-router', 'angular-routes', 'next-pages', 'nexacro', 'websquare', 'nestjs']);
 
 /**
  * The physical naming strategies `jpa.namingStrategy` may name (SPEC §18.2).
@@ -263,7 +263,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   'screenAxis.enabled': {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
-    note: 'the GATE on the screen axis, in three states. true builds screens whatever the run reads; false builds none; null (or the key absent, which is the default) decides it from what the run READS - a router pack named in frameworkPacks, or a frontend package this run really reads depending on vue-router or react-router. The third state exists for a frontend checked out BESIDE the backend, which no discovery over the analyzed tree can see. `cascade init` writes true when it finds a router package in the tree and leaves it null otherwise',
+    note: 'the GATE on the screen axis, in three states. true builds screens whatever the run reads; false builds none; null (or the key absent, which is the default) decides it from what the run READS - a router pack named in frameworkPacks, or a frontend package this run really reads depending on a router (vue-router, react-router, an AngularJS router or @angular/router). The third state exists for a frontend checked out BESIDE the backend, which no discovery over the analyzed tree can see. `cascade init` writes true when it finds a router package in the tree and leaves it null otherwise',
   },
   'screenAxis.codeRegex': {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
@@ -287,7 +287,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   frameworkPacks: {
     status: 'consumed', where: 'src/core/lanes.mjs',
-    note: 'drives lane selection when analyze runs without lane flags: mybatis-xml → the SQL lane, spring-mvc → the Java lane, jpa → the JPA bridge over the Java lane\'s entity/repository facts, web → the frontend fact lane over the roots discovery found, nestjs → the TypeScript backend lane over tsBackend.app (with its Prisma calls when the application has a schema.prisma). vue-router and react-router name the router declaration packs the web worker reads (adapters/web/packs), and are declared for the record: the worker loads every pack in that directory whichever ones the profile names',
+    note: 'drives lane selection when analyze runs without lane flags: mybatis-xml → the SQL lane, spring-mvc → the Java lane, jpa → the JPA bridge over the Java lane\'s entity/repository facts, web → the frontend fact lane over the roots discovery found, nestjs → the TypeScript backend lane over tsBackend.app (with its Prisma calls when the application has a schema.prisma). vue-router, react-router, angular-router (AngularJS) and angular-routes (@angular/router) name the router declaration packs the web worker reads (adapters/web/packs), and are declared for the record: the worker loads every pack in that directory whichever ones the profile names',
   },
   'tsBackend.app': {
     status: 'consumed', where: 'src/core/lanes.mjs',

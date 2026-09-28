@@ -35,9 +35,12 @@ const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue'];
  */
 const COMPONENT_EXTENSIONS = Object.freeze(['.vue', '.tsx', '.jsx']);
 
-/** Whether a root-relative file is a component by its extension. */
-export function isComponentFile(file) {
-  return COMPONENT_EXTENSIONS.some((e) => String(file).endsWith(e));
+/**
+ * Whether a root-relative file is a component: by its extension, or (RM67) by
+ * a class in it the worker found decorated as one, when its facts are handed in.
+ */
+export function isComponentFile(file, facts = null) {
+  return COMPONENT_EXTENSIONS.some((e) => String(file).endsWith(e)) || (facts !== null && facts.componentClass === true);
 }
 
 /** symbol node id for a web function "file#enclosing" (position-independent). */
@@ -82,6 +85,7 @@ function sortOneFile(f) {
   f.navigations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.navigationCandidates.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.routes.sort((a, b) => cmp(sortKey(a), sortKey(b)));
+  f.routeRefs.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   f.registrations.sort((a, b) => cmp(sortKey(a), sortKey(b)));
   // The LAST import of a local name is the one in scope, and imports are now
   // in line order, so a later one legitimately shadows an earlier one.
@@ -98,13 +102,14 @@ function bucket(f, r) {
     case 'function': f.functions.set(r.name, r); break;
     case 'constant': f.constants.set(r.name, r); break;
     case 'binding': f.bindings.set(r.name, r); break;
-    case 'class': f.classes.set(r.name, r); break;
+    case 'class': f.classes.set(r.name, r); if (r.component === true) f.componentClass = true; break;
     case 'assign': f.assigns.push(r); break;
     case 'call': f.calls.push(r); break;
     case 'navigation': f.navigations.push(r); break;
     case 'navigationCandidate': f.navigationCandidates.push(r); break;
     case 'routerModule': f.routerModule = r; break;
     case 'route': f.routes.push(r); break;
+    case 'routeRef': f.routeRefs.push(r); break;
     case 'registration': f.registrations.push(r); break;
     case 'template': f.template = r; break;
     default: break;
@@ -131,7 +136,7 @@ export function indexWebFacts(records) {
       f = {
         imports: [], exports: [], functions: new Map(), constants: new Map(),
         bindings: new Map(), classes: new Map(), assigns: [], calls: [], routes: [],
-        registrations: [],
+        registrations: [], routeRefs: [], // a route or a list NAMED by name (RM67)
         // The calls that change the SCREEN rather than send a request (RM59).
         navigations: [],
         // `router.push(…)` on an imported name, and whether THIS file is the
@@ -195,6 +200,21 @@ export function memberIndex(files) {
  *            libraries:Map, VALUE:Map, FIELD:Map}} ResolveCtx
  */
 
+/**
+ * THE ALIASES OF THE NEAREST SCOPE a file sits in (RM67): a directory inside the
+ * package with a tsconfig of its own, whose aliases the compiler resolves that
+ * file by. Only the nearest one: a nested configuration replaces the `paths` of
+ * the one above it, it does not add to them.
+ */
+function scopedAliasesOf(cfg, file) {
+  let best = null;
+  for (const a of cfg.scopedAliases ?? []) {
+    const inside = a.scope === '' || file.startsWith(`${a.scope}/`);
+    if (inside && (best === null || a.scope.length > best.length)) best = a.scope;
+  }
+  return best === null ? [] : cfg.scopedAliases.filter((a) => a.scope === best);
+}
+
 /** Which FILE a specifier names, or which package it leaves this project for. */
 function resolveSpecifier(ctx, fromFile, spec) {
   if (typeof spec !== 'string' || spec === '') return { unresolved: 'empty-specifier' };
@@ -204,7 +224,10 @@ function resolveSpecifier(ctx, fromFile, spec) {
     target = joinPosix(dirOf(fromFile), spec);
   } else {
     const pkgDir = ctx.packageOf(fromFile);
-    for (const a of ctx.configFor(pkgDir).aliases) {
+    const cfg = ctx.configFor(pkgDir);
+    // The aliases of the nearest directory with a tsconfig of its own come
+    // first (RM67), then the package's.
+    for (const a of [...scopedAliasesOf(cfg, fromFile), ...cfg.aliases]) {
       const from = a.from.endsWith('/') ? a.from.slice(0, -1) : a.from;
       if (spec !== from && !spec.startsWith(`${from}/`)) continue;
       const rest = spec.slice(from.length);
@@ -358,9 +381,33 @@ function externalInit(ctx, root, init, last, carry) {
   return carry({ kind: 'external', module });
 }
 
+/**
+ * A FIELD WHOSE TYPE THE CLASS STATES holds an instance of that type (RM67): a
+ * client when a library pack names the type among its `instanceTypes` and the
+ * import names that very module, a project class's instance when the type is a
+ * class this lane read, and nothing it can follow otherwise. `typed` says how
+ * the type was stated, because a provider may put another class in its place
+ * and whatever goes through the field is graded for that.
+ */
+function typedValue(ctx, file, init, depth) {
+  const b = init.binding ?? null;
+  const typed = typeof init.via === 'string' ? init.via : 'typed';
+  if (b && b.kind === 'import') {
+    for (const lib of ctx.libraries.values()) {
+      if (lib.module !== b.source || !(lib.instanceTypes ?? []).includes(b.imported)) continue;
+      return { kind: 'sink-instance', module: lib.module, baseURL: null, typed, assumed: false, viaStar: false };
+    }
+  }
+  if ((init.callee.path ?? []).length > 0) return null;
+  const root = rootValue(ctx, file, init.callee, b, depth);
+  if (root === null || root.kind !== 'class') return null;
+  return { kind: 'class-instance', key: root.key, typed, assumed: root.assumed === true, viaStar: root.viaStar === true };
+}
+
 /** What an `init` record (a const, a class field, a return) evaluates to. */
 function initValue(ctx, file, init, depth) {
   if (!init || !init.callee || depth > HOP_LIMIT) return null;
+  if (init.shape === 'typed') return typedValue(ctx, file, init, depth + 1);
   const root = rootValue(ctx, file, init.callee, init.binding, depth);
   if (root === null) return null;
   const pathParts = init.callee.path ?? [];
@@ -387,9 +434,9 @@ function initValue(ctx, file, init, depth) {
     const v = initValue(ctx, root.file, fn.returns, depth + 1);
     return v && (v.kind === 'class-instance' || v.kind === 'sink-instance') ? carry(v) : null;
   }
-  // `const a = b` / `const a = b.c`: a is whatever b already was.
+  // `const a = b` / `const a = b.c`: a is whatever b already was, and a
+  // member of anything is nothing this can follow.
   if (pathParts.length === 0) return carry(root);
-  if (root.kind === 'class-instance') return null;
   return null;
 }
 

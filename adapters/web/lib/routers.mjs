@@ -33,18 +33,34 @@ import { HOP_GUARD } from './calls.mjs';
 import { navigationElementOf } from './navigation.mjs';
 import { customElementTags, soleElementTag } from './templates.mjs';
 
+/**
+ * Whether a path value is a NAME rather than text: `appPaths.orders.path`, or
+ * `ordersPath`. Only a plain chain of names counts; `a[b]` is a value, not a
+ * spelling.
+ */
+function isPathRefNode(n) {
+  if (!n) return false;
+  if (n.type === 'Identifier') return true;
+  if (n.type !== 'MemberExpression' || n.computed) return false;
+  return n.property && n.property.type === 'Identifier' && isPathRefNode(n.object);
+}
+
 /** Whether one pack would read this object literal as a route declaration. */
 export function packSeesARoute(p, node) {
   const ro = p.routeObject || {};
   if (!ro.pathKey) return false;
   const pathValue = propOf(node, ro.pathKey);
-  if (pathValue === null || pathValue.type !== 'StringLiteral') return false;
+  if (pathValue === null) return false;
+  // A pack that reads a path THROUGH a constant (RM67) takes a name where the
+  // others take only text.
+  if (pathValue.type !== 'StringLiteral' && !(p.pathRefs === true && isPathRefNode(pathValue))) return false;
   const hasComponent = (ro.componentKeys || []).some((k) => propOf(node, k) !== null);
   const hasChildren = ro.childrenKey ? propOf(node, ro.childrenKey) !== null : false;
+  const hasLazyChildren = ro.lazyChildrenKey ? propOf(node, ro.lazyChildrenKey) !== null : false;
   const hasRedirect = ro.redirectKey ? propOf(node, ro.redirectKey) !== null : false;
   const indexValue = ro.indexKey ? propOf(node, ro.indexKey) : null;
   const hasIndex = indexValue !== null && indexValue.type === 'BooleanLiteral' && indexValue.value === true;
-  return hasComponent || hasChildren || hasRedirect || hasIndex;
+  return hasComponent || hasChildren || hasLazyChildren || hasRedirect || hasIndex;
 }
 
 /** Whether ANY pack would. */
@@ -53,15 +69,60 @@ export function anyPackSeesARoute(packs, node) {
     && node.type === 'ObjectExpression' && packs.some((p) => packSeesARoute(p, node));
 }
 
+/**
+ * THE PACKS A FILE CAN HOLD ROUTES OF (RM67): every object pack, and a module
+ * pack only when the file imports its module. `{path: 'x', component: X}` is
+ * spelled the same by three routers, and the import is what says whose it is;
+ * a file that imports none of a module pack's modules is read exactly as it was
+ * before that pack existed.
+ */
+export function routePacksOf(packs, importedModules) {
+  return packs.filter((p) => p.__routesFrom === 'object'
+    || (p.__routesFrom === 'module' && p.modules.some((m) => importedModules.has(m))));
+}
+
+/** The member a `.then(m => m.X)` callback hands back, or null. */
+function thenMemberOf(cb) {
+  if (!cb || !isFunctionNode(cb) || !cb.params || cb.params.length !== 1 || cb.params[0].type !== 'Identifier') return null;
+  let body = cb.body;
+  if (body && body.type === 'BlockStatement') {
+    const ret = body.body.find((s) => s.type === 'ReturnStatement');
+    body = ret ? ret.argument : null;
+  }
+  if (!body || body.type !== 'MemberExpression' || body.computed || !body.property || body.property.type !== 'Identifier') return null;
+  return body.object && body.object.type === 'Identifier' && body.object.name === cb.params[0].name ? body.property.name : null;
+}
+
+/**
+ * A DYNAMIC IMPORT, and which export of it is meant: `import('./x')` is the
+ * module's default, `import('./x').then(m => m.X)` its `X`. Null for anything
+ * else.
+ */
+function dynamicImportOf(node) {
+  let n = node;
+  if (n && n.type === 'ArrowFunctionExpression' && n.body) n = n.body;
+  if (!n || (n.type !== 'CallExpression' && n.type !== 'OptionalCallExpression') || !n.callee) return null;
+  if (n.callee.type === 'Import') {
+    const a = n.arguments[0];
+    return a && a.type === 'StringLiteral' ? { source: a.value, exported: null } : null;
+  }
+  const c = n.callee;
+  if (c.type !== 'MemberExpression' || c.computed || !c.property || c.property.name !== 'then') return null;
+  const inner = dynamicImportOf(c.object);
+  if (inner === null || inner.exported !== null) return null;
+  const member = thenMemberOf(n.arguments[0]);
+  return member === null ? null : { source: inner.source, exported: member };
+}
+
 /** Where a route's component comes from: a dynamic import, or an imported name. */
 export function componentSourceOf(ctx, node) {
   const { top } = ctx;
   let n = node;
-  if (n.type === 'ArrowFunctionExpression' && n.body) n = n.body;
-  if ((n.type === 'CallExpression' || n.type === 'OptionalCallExpression') && n.callee && n.callee.type === 'Import') {
-    const a = n.arguments[0];
-    if (a && a.type === 'StringLiteral') return { source: a.value, local: null };
+  const lazy = dynamicImportOf(n);
+  if (lazy !== null) {
+    return lazy.exported === null ? { source: lazy.source, local: null } : { source: lazy.source, local: null, exported: lazy.exported };
   }
+  if (n.type === 'ArrowFunctionExpression' && n.body) n = n.body;
   if (n.type === 'ObjectExpression') {
     // `components: { default: X }`: take the first member that resolves.
     for (const p of n.properties) {
@@ -86,69 +147,219 @@ export function componentSourceOf(ctx, node) {
 }
 
 /**
- * Emit a route record for `node` when one of the packs recognizes it. The
- * pack is chosen by the keys the object itself carries: each pack's
- * DISTINCTIVE keys (the ones no other pack names) decide, and the file's own
- * registrar calls break a tie. Nothing here is hard-coded to a framework.
+ * WHICH PACK READS THIS OBJECT, or null. The pack is chosen by the keys the
+ * object itself carries: each pack's DISTINCTIVE keys (the ones no other pack
+ * names) decide, and the file's own registrar calls break a tie. A MODULE pack
+ * the file imports outranks both (RM67), because the import is the file saying
+ * which router it declares for; in a file that imports none, no module pack is
+ * a candidate at all, so the choice there is the one it always was.
  */
-export function maybeRoute(ctx, node, env, parentLine) {
-  const { packs, st, lineOf, relFile, emit, routeHandled } = ctx;
-  if (routeHandled.has(node)) return;
+function claimingPack(ctx, node, env) {
+  const { st, routePacks } = ctx;
   const matches = [];
-  for (const p of packs) {
-    // A chain pack's route objects are read where its registrar names them
-    // (`chainRoutes` below) and nowhere else.
-    if (p.__routesFrom === 'chain') continue;
+  for (const p of routePacks) {
+    // A module-level object is a route only for a pack that says so.
+    if (env.routeTopLevel === true && p.topLevelObjects !== true) continue;
     if (!packSeesARoute(p, node)) continue;
     let score = 0;
     for (const k of p.__distinctive) if (propOf(node, k) !== null) score += 1;
     if (st.registrarPacks && st.registrarPacks.has(p.pack)) score += 0.5;
-    matches.push({ pack: p, score });
+    matches.push({ pack: p, score, gated: p.__routesFrom === 'module' ? 1 : 0 });
   }
-  if (matches.length === 0) return;
-  matches.sort((a, b) => b.score - a.score || (a.pack.pack < b.pack.pack ? -1 : 1));
-  const pack = matches[0].pack;
-  const ro = pack.routeObject || {};
-  const line = lineOf(node);
-  routeHandled.add(node);
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => b.gated - a.gated || b.score - a.score || (a.pack.pack < b.pack.pack ? -1 : 1));
+  return matches[0].pack;
+}
 
-  const rec = { kind: 'route', file: relFile, line, pack: pack.pack };
-  const pathValue = propOf(node, ro.pathKey);
-  rec.path = pathValue.value;
-  const nameValue = ro.nameKey ? propOf(node, ro.nameKey) : null;
-  if (nameValue && nameValue.type === 'StringLiteral') rec.name = nameValue.value;
+/**
+ * THE PATH A ROUTE DECLARES, onto the record. Text is the path. A NAME is read
+ * through a constant (RM67): one this file declares is put in here, with where
+ * it came from; one another module exports is left for the bridge, with the
+ * specifier on it; one that leads nowhere says so.
+ */
+function readRoutePath(ctx, pathValue, rec) {
+  if (pathValue.type === 'StringLiteral') { rec.path = pathValue.value; return; }
+  const ref = pathRefOf(ctx, pathValue);
+  if (typeof ref.value === 'string') {
+    rec.path = ref.value;
+    rec.pathFrom = { name: ref.name, from: 'same-file' };
+    return;
+  }
+  rec.path = null;
+  rec.pathRef = { name: ref.name, ...(ref.source ? { source: ref.source, imported: ref.imported } : { unresolved: ref.kind }) };
+}
+
+/** The component a route mounts, onto the record: the first component key it carries. */
+function readRouteComponent(ctx, ro, node, rec) {
   for (const k of ro.componentKeys || []) {
     const c = propOf(node, k);
     if (!c) continue;
     const src = componentSourceOf(ctx, c);
     if (src.source) rec.componentSource = src.source;
     if (src.local) rec.componentLocal = src.local;
-    break;
+    if (src.exported) rec.componentExport = src.exported;
+    return;
   }
-  const redirect = ro.redirectKey ? propOf(node, ro.redirectKey) : null;
-  if (redirect && redirect.type === 'StringLiteral') rec.redirect = redirect.value;
+}
+
+/** A route's title: under its meta object for a pack that has one, on the route itself otherwise. */
+function readRouteTitle(ro, node, rec) {
   const meta = ro.metaKey ? propOf(node, ro.metaKey) : null;
   if (meta && meta.type === 'ObjectExpression' && ro.titleKey) {
     const title = propOf(meta, ro.titleKey);
     if (title && title.type === 'StringLiteral') rec.metaTitle = title.value;
+    return;
   }
-  const hidden = ro.hiddenKey ? propOf(node, ro.hiddenKey) : null;
-  if (hidden && hidden.type === 'BooleanLiteral') rec.hidden = hidden.value;
-  rec.parent = parentLine;
+  const own = !ro.metaKey && ro.titleKey ? propOf(node, ro.titleKey) : null;
+  if (own && own.type === 'StringLiteral') rec.metaTitle = own.value;
+}
 
+/**
+ * A route's children: the ones written inline, the lists it names by name, and
+ * the list it loads lazily from another module (RM67). The count is of the
+ * inline ones, as it always was; the named and the lazy ones are records of
+ * their own and a field on the route, because only the bridge can find them.
+ */
+function readRouteChildren(ctx, pack, node, env, line, rec) {
+  const { routeHandled } = ctx;
+  const ro = pack.routeObject || {};
   const children = ro.childrenKey ? propOf(node, ro.childrenKey) : null;
   let childCount = 0;
+  let named = 0;
+  const inner = { ...env, routeList: null, routeTopLevel: false };
   if (children && children.type === 'ArrayExpression') {
     for (const el of children.elements) {
       if (el && el.type === 'ObjectExpression') {
         const before = routeHandled.size;
-        maybeRoute(ctx, el, env, line);
+        maybeRoute(ctx, el, inner, line);
         if (routeHandled.size > before) childCount += 1;
+      } else if (pack.listRefs === true && emitRouteRef(ctx, el, { list: null, parent: line })) named += 1;
+    }
+  } else if (children && pack.listRefs === true && emitRouteRef(ctx, children, { list: null, parent: line })) named += 1;
+  const lazy = ro.lazyChildrenKey ? dynamicImportOf(propOf(node, ro.lazyChildrenKey)) : null;
+  if (lazy !== null) rec.childrenFrom = { source: lazy.source, export: lazy.exported ?? 'default' };
+  return { childCount, named, lazy: lazy !== null };
+}
+
+/**
+ * Emit a route record for `node` when one of the packs recognizes it (see
+ * `claimingPack`). Nothing here is hard-coded to a framework.
+ */
+export function maybeRoute(ctx, node, env, parentLine) {
+  const { lineOf, relFile, emit, routeHandled } = ctx;
+  if (routeHandled.has(node)) return;
+  const pack = claimingPack(ctx, node, env);
+  if (pack === null) return;
+  const ro = pack.routeObject || {};
+  const line = lineOf(node);
+  routeHandled.add(node);
+
+  const rec = { kind: 'route', file: relFile, line, pack: pack.pack };
+  readRoutePath(ctx, propOf(node, ro.pathKey), rec);
+  const nameValue = ro.nameKey ? propOf(node, ro.nameKey) : null;
+  if (nameValue && nameValue.type === 'StringLiteral') rec.name = nameValue.value;
+  readRouteComponent(ctx, ro, node, rec);
+  const redirect = ro.redirectKey ? propOf(node, ro.redirectKey) : null;
+  if (redirect && redirect.type === 'StringLiteral') rec.redirect = redirect.value;
+  readRouteTitle(ro, node, rec);
+  const hidden = ro.hiddenKey ? propOf(node, ro.hiddenKey) : null;
+  if (hidden && hidden.type === 'BooleanLiteral') rec.hidden = hidden.value;
+  const outlet = ro.outletKey ? propOf(node, ro.outletKey) : null;
+  if (outlet && outlet.type === 'StringLiteral') rec.outlet = outlet.value;
+  rec.parent = parentLine;
+  // THE LIST THIS ROUTE IS IN, by the name the module binds it to, so that a
+  // route in another file that names the list can find it (RM67).
+  if (parentLine === null && pack.listRefs === true && typeof env.routeList === 'string') rec.list = env.routeList;
+
+  const kids = readRouteChildren(ctx, pack, node, env, line, rec);
+  rec.children = kids.childCount;
+  // A ROUTE THAT MOUNTS NOTHING, for a pack that says such a route is not a
+  // screen: it is the path its children hang off, and that is all it is.
+  const mounts = typeof rec.componentSource === 'string' || typeof rec.componentLocal === 'string';
+  if (pack.groupsMountNothing === true && !mounts && (kids.childCount > 0 || kids.named > 0 || kids.lazy)) rec.grouping = true;
+  emit(rec, line);
+}
+
+/**
+ * ONE ROUTE NAMED BY NAME in a list, or a list named where a route's children
+ * go (RM67): `[ordersRoute, ...errorRoutes]`, `children: ORDER_ROUTES`. What the
+ * name holds is another module's business as often as this one's, so the name
+ * is recorded as written and the bridge resolves it.
+ *
+ * @returns {boolean} whether a record was emitted
+ */
+export function emitRouteRef(ctx, el, { list, parent, registrar = null }) {
+  const { lineOf, relFile, emit } = ctx;
+  if (!el) return false;
+  const spread = el.type === 'SpreadElement';
+  const id = spread ? el.argument : el;
+  if (!id || id.type !== 'Identifier') return false;
+  const line = lineOf(el);
+  const rec = { kind: 'routeRef', file: relFile, line, name: id.name, list, parent };
+  if (spread) rec.spread = true;
+  if (registrar !== null) rec.registrar = registrar;
+  emit(rec, line);
+  return true;
+}
+
+/**
+ * THE MODULE-LEVEL NAMES THIS FILE DESTRUCTURES out of something else, local
+ * name to where it came from: `const { create, detail } = appPaths.orders`
+ * makes `create` mean `appPaths.orders.create`. Read once per file, because a
+ * route path written on such a name is as common as one written in full.
+ *
+ * @returns {Map<string,{init:object, key:string}>}
+ */
+export function moduleDestructures(program) {
+  const out = new Map();
+  for (const stmt of program.body ?? []) {
+    const d = stmt.type === 'ExportNamedDeclaration' ? stmt.declaration : stmt;
+    if (!d || d.type !== 'VariableDeclaration' || d.kind !== 'const') continue;
+    for (const decl of d.declarations) {
+      if (!decl.id || decl.id.type !== 'ObjectPattern' || !isPathRefNode(decl.init)) continue;
+      for (const p of decl.id.properties) {
+        if (p.type !== 'ObjectProperty' || p.computed || !p.key || p.key.type !== 'Identifier') continue;
+        if (p.value && p.value.type === 'Identifier') out.set(p.value.name, { init: decl.init, key: p.key.name });
       }
     }
   }
-  rec.children = childCount;
-  emit(rec, line);
+  return out;
+}
+
+/** A name chain as the parts it is spelled with, through one destructuring. */
+function spelledPath(ctx, node) {
+  const c = calleeOf(node);
+  if (!c || c.root === null) return null;
+  const via = (ctx.destructures ?? new Map()).get(c.root);
+  if (!via) return [c.root, ...c.path];
+  const base = calleeOf(via.init);
+  return base && base.root !== null ? [base.root, ...base.path, via.key, ...c.path] : null;
+}
+
+/**
+ * What a route path written as a NAME holds (RM67): the text a constant of this
+ * file keeps under that path, or the import it comes from, or why neither.
+ *
+ * @returns {{name:string, value?:string, source?:string, imported?:string, kind?:string}}
+ */
+function pathRefOf(ctx, node) {
+  const { top } = ctx;
+  const parts = spelledPath(ctx, node);
+  if (parts === null) return { name: '(unreadable)', kind: 'expression' };
+  const [root, ...rest] = parts;
+  const name = parts.join('.');
+  if (top.imports.has(root)) {
+    const imp = top.imports.get(root);
+    return { name, source: imp.source, imported: imp.imported };
+  }
+  const c = top.constants.get(root);
+  if (c) {
+    const value = rest.length === 0 ? c.value
+      : rest.length === 1 ? (c.members ? c.members.get(rest[0]) : undefined)
+        : (c.nested ? c.nested.get(rest.join('.')) : undefined);
+    if (typeof value === 'string') return { name, value };
+  }
+  return { name, kind: 'expression' };
 }
 
 /** One JSX attribute of an element, by name. */
@@ -238,6 +449,32 @@ export function registrarScan(ctx, n) {
   eachChild(n, (child) => registrarScan(ctx, child));
 }
 
+/**
+ * THE LIST A CHILD REGISTRAR TAKES (RM67): `RouterModule.forChild(routes)`
+ * registers `routes` as the children of whichever route loads this module. It
+ * is marked, so that when the bridge cannot find that route it says the paths
+ * are unknown instead of reading them as top-level paths they are not. A list
+ * written inline gets a name of its own, so the mark has something to name.
+ */
+function childRegistrarList(ctx, p, c, n, env) {
+  const { lineOf, relFile, emit } = ctx;
+  if (!(p.childRegistrars ?? []).includes(c.name) || !ctx.routePacks.includes(p)) return;
+  const first = n.arguments && n.arguments[0];
+  if (!first) return;
+  if (first.type === 'Identifier') {
+    emitRouteRef(ctx, first, { list: null, parent: null, registrar: c.name });
+    return;
+  }
+  if (first.type !== 'ArrayExpression') return;
+  const line = lineOf(n);
+  const list = `(${c.name}:${line})`;
+  emit({ kind: 'routeRef', file: relFile, line, name: list, list: null, parent: null, registrar: c.name }, line);
+  for (const el of first.elements) {
+    if (el && el.type === 'ObjectExpression') maybeRoute(ctx, el, { ...env, routeList: list }, null);
+    else emitRouteRef(ctx, el, { list, parent: null });
+  }
+}
+
 /** A registrar call's own routes array: `createRouter({routes: [...]})`. */
 export function registrarRoutes(ctx, n, env) {
   const { packs } = ctx;
@@ -247,6 +484,7 @@ export function registrarRoutes(ctx, n, env) {
     if (c) {
       for (const p of packs) {
         if (!(p.registrars || []).includes(c.name)) continue;
+        childRegistrarList(ctx, p, c, n, env);
         const first = n.arguments && n.arguments[0];
         const list = first && first.type === 'ObjectExpression' && p.routesKey ? propOf(first, p.routesKey) : null;
         if (list && list.type === 'ArrayExpression') {

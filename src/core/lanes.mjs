@@ -865,10 +865,7 @@ function screenAxis(web, har, opts = {}) {
       why.push(`${t.unresolvedViews} handler return(s) name a view this engine could not read (a variable, a call it cannot follow, a name built at run time), so those pages have no name to look up`);
     }
   }
-  const unresolvedShare = (s.declared ?? 0) > 0 ? (s.componentUnresolved ?? 0) / s.declared : 0;
-  if (unresolvedShare > SCREEN_UNRESOLVED_SHARE) {
-    why.push(`${s.componentUnresolved} of ${s.declared} route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here`);
-  }
+  why.push(...routeReadingGaps(s));
   if (s.nameSource && s.nameSource.refused) why.push(s.nameSource.refused);
   const renders = s.renders
     ? (s.renders.EXACT ?? 0) + (s.renders.SOUND_SET ?? 0) + (s.renders.HEURISTIC ?? 0) : 0;
@@ -889,6 +886,26 @@ function screenAxis(web, har, opts = {}) {
         : ` and ${pages} page(s) a controller renders, `)
       + `and part of that is not the whole picture: ${why.join('; ')}.${observed}`,
   };
+}
+
+/**
+ * WHAT READING THE ROUTES LEFT OUT, past the share that makes the axis
+ * degraded: routes whose component resolved to no file this run read, and
+ * (RM67) routes whose path could not be composed at all, because a part of it
+ * is a constant this lane could not read or its list is registered as the
+ * children of a route nothing here loads it from.
+ */
+function routeReadingGaps(s) {
+  const out = [];
+  const declared = s.declared ?? 0;
+  if (declared > 0 && (s.componentUnresolved ?? 0) / declared > SCREEN_UNRESOLVED_SHARE) {
+    out.push(`${s.componentUnresolved} of ${declared} route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here`);
+  }
+  const unknown = s.lists && Number.isInteger(s.lists.pathUnknown) ? s.lists.pathUnknown : 0;
+  if (declared > 0 && unknown / declared > SCREEN_UNRESOLVED_SHARE) {
+    out.push(`${unknown} of ${declared} route declaration(s) have a path this lane could not compose (a constant it could not read, or a list registered as the children of a route nothing here loads), so those screens are not here`);
+  }
+  return out;
 }
 
 /** The screens a client with no router is made of, one phrase per kind that has any. */

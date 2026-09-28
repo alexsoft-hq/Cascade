@@ -13,6 +13,7 @@
 // the steps fill it in as they go.
 
 import { SERVER_MENU_ROUTE_CEILING } from './screens.mjs';
+import { emptyRouteListStats } from './route_lists.mjs';
 
 /**
  * WHAT WENT INTO A URL, and what is still missing from one (RM58).
@@ -103,6 +104,9 @@ function emptyScreenStats() {
     // two different routes and a reader comparing them is asking a real
     // question.
     byKind: { router: 0, page: 0, nexacro: 0, websquare: 0 },
+    // Routes named across files (RM67): what was loaded or named from another
+    // module, and what could not be followed, by name.
+    lists: emptyRouteListStats(),
   };
 }
 
