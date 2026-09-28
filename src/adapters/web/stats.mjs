@@ -133,14 +133,13 @@ function emptyCallStats() {
   return {
     withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0,
     // A call whose callee is a wrapper that does not hand the argument the URL
-    // is in on to the client (R2-K). It is counted in `untraced` too, because
-    // nothing here can say the URL it carries is the one that is sent.
+    // is in on to the client (R2-K). The request it makes does not ask for that
+    // URL, so it draws no edge (review 3).
     urlNotHandedOn: 0,
-    // A traced call whose URL went through a wrapper hop whose syntax does not
-    // settle whether it hands the URL on (a variable assigned again, `this`, a
-    // call on the options): taken as reaching the sink, graded HEURISTIC, and
-    // counted by why (review 2, item 2). A rest, a copy or a part of the
-    // options is settled, and is not counted here.
+    // A traced call through a wrapper step the code does not settle for its
+    // URL, method or base URL (a variable assigned again, a key the step
+    // writes, `this`, a call on the options): taken as reaching the sink,
+    // graded HEURISTIC, and counted by why (review 2 item 2, review 3).
     urlThroughUnreadHop: 0,
     unreadHopBy: {},
     // A call that reached no client and whose callee TAKES A PATH APART rather

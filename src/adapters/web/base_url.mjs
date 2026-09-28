@@ -84,14 +84,18 @@ export function portOf(host) {
  * THIS MACHINE, BUT ANOTHER SERVICE: an address on this machine whose written
  * port no application of this pack listens on (`ports`, src/core/server_ports.mjs).
  * Null when the host is not this machine, writes no port, names one of this
- * pack's, or the pack's ports are not known: then nothing is decided by port.
+ * pack's, or the pack's ports are not known or rest on a default: then
+ * nothing is decided by port.
  *
  * @param {string} host
  * @param {{known:boolean, ports:number[], files:string[]}|null} ports
  * @returns {{host:string, called:number, served:number[], reason:string}|null}
  */
 export function otherPortOf(host, ports) {
-  if (!ports || ports.known !== true || !isLocalHost(host)) return null;
+  // A port that rests on Spring Boot's default is itself a guess: whatever
+  // starts the application may set another, so no call is another service's
+  // on the strength of it (review 3, design 4).
+  if (!ports || ports.known !== true || ports.defaulted === true || !isLocalHost(host)) return null;
   const called = portOf(host);
   if (called === null || ports.ports.includes(called)) return null;
   const where = (ports.files ?? []).length > 0
@@ -351,6 +355,18 @@ export function buildModesOf(cfg, outcomes) {
   const modes = [...new Set(outcomes.map((o) => o.mode))].sort();
   const all = modesOf(cfg, buildToolOf(cfg.dependencies));
   return all.every((m) => modes.includes(m)) ? null : modes;
+}
+
+/**
+ * THE BUILDS NO FILE SETS the value in, when every value read came from a
+ * build's own file (review 3, R4): there the client is made with nothing at
+ * that key, and sends the path as written. Empty when a literal or a default
+ * holds in every build, or when every build sets it.
+ */
+export function unsetModesOf(cfg, outcomes) {
+  if (outcomes.length === 0 || outcomes.some((o) => o.mode === null)) return [];
+  const set = new Set(outcomes.map((o) => o.mode));
+  return modesOf(cfg, buildToolOf(cfg.dependencies)).filter((m) => !set.has(m));
 }
 
 /**

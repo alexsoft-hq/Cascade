@@ -170,6 +170,19 @@
 // reads (`partial`), and `open` says why (`{why, name}`): a variable assigned
 // again, a parameter the body writes over, `this`.
 //
+// webfacts/19 SAYS WHAT A HOP WRITES (review 3). A hand now says which keys the
+// function writes on the object it passes on (`written`: `cfg.url = …`, `delete
+// cfg.url`, `Object.assign(cfg, …)`) and whether it also hands that object to
+// another call (`handed`), from a read of the function's writes
+// (`lib/writes.mjs`). A call's `sets` say what it writes into the object it
+// sends under a method key or a client's base URL key, in order with the
+// spreads beside it (`lib/sets.mjs`); they replace `method.overridable`, and a
+// forward carries them instead of a method. `reads` says apart what lands under
+// one key of an object argument (`under`). A method key written with something
+// that is not a verb says so (`{value: null, from: 'config'}`). A class record
+// names the class it extends (`extends`), and `@Injectable({ useClass })`
+// prints a provider for the class it decorates.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -180,7 +193,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/18';
+const VERSION = 'webfacts/19';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

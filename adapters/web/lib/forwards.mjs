@@ -1,14 +1,11 @@
-// forwards.mjs — what a function HANDS ON of what it was given.
+// forwards.mjs — a named function's own parameter list.
 //
-// WHAT THIS MODULE OWNS. A named function's own parameter list, and one
-// question about one call written inside it, answered from that call's syntax
-// (RM67, R2-K):
-//   the override  whether a method the call writes into its object can be
-//                 replaced by what the caller handed in. `{ method: 'GET',
-//                 ...option }` sets a default the caller's own `method`
-//                 replaces; `{ ...option, method: 'GET' }` sets the method
-// What the call HANDS ON of those parameters is `origins.mjs`'s question,
-// because a parameter is handed on through a rest or a copy as often as whole.
+// WHAT THIS MODULE OWNS. The two views of a function's parameters every call
+// inside it is read against (RM67, R2-K): the plain ones by position, and every
+// name a parameter binds, patterns included, by the position it belongs to.
+// What a call HANDS ON of those parameters is `origins.mjs`'s question, what
+// it writes into the object it sends is `sets.mjs`'s, and what it reads apart
+// from its hands is `reads.mjs`'s.
 //
 // A wrapper written as an object's method (`export default { get: (option) =>
 // request({ method: 'GET', ...option }) }`) calls a helper this file declares,
@@ -19,13 +16,9 @@
 // a return.
 //
 // WHAT IT MUST NEVER KNOW ABOUT: which name is a client, which function is a
-// wrapper, the other files. It says what this call passes on; whether that
-// reaches a request is the bridge's question.
+// wrapper, the other files.
 
-import { keyName, patternNames } from './ast.mjs';
-
-/** The keys a method is written under in a config object, in the order the call reader tries them. */
-const METHOD_KEYS = ['method', 'type'];
+import { patternNames } from './ast.mjs';
 
 /**
  * A function node's own parameters by name, with their position. Only a plain
@@ -55,53 +48,4 @@ export function paramOwnerOf(node) {
     for (const n of patternNames(p)) if (!out.has(n)) out.set(n, i);
   });
   return out;
-}
-
-/**
- * The position of `name` among the enclosing NAMED function's own parameters,
- * or -1. A callback inside it that declares the same name has its own, and the
- * scope the name is found in is what tells the two apart.
- */
-function paramAt(env, name) {
-  const fn = env.func;
-  if (!fn || !fn.paramIndex || !fn.paramIndex.has(name)) return -1;
-  return env.scope.find(name) === fn.paramScope ? fn.paramIndex.get(name) : -1;
-}
-
-/** Where an object literal writes `verb` under one of the method keys, or null. */
-function verbKeyAt(objectNode, verb) {
-  for (const key of METHOD_KEYS) {
-    const index = objectNode.properties.findIndex((p) => p.type === 'ObjectProperty' && keyName(p) === key
-      && p.value && p.value.type === 'StringLiteral' && p.value.value.toUpperCase() === verb);
-    if (index >= 0) return { key, index };
-  }
-  return null;
-}
-
-/**
- * THE OVERRIDE: whether what the caller handed in can replace the method this
- * call writes. A spread written AFTER the key brings the caller's keys in over
- * it, and the later one wins. Each such spread is one of the enclosing
- * function's parameters (`by`, its position) or something else (`other`),
- * whose keys nothing in this file states.
- *
- * @param {string} verb  the method the call reader took from this call's object
- * @returns {{key:string, by:number[], other?:true}|null} null when nothing can replace it
- */
-export function methodOverrideOf(node, env, verb) {
-  for (const a of (node.arguments ?? []).slice(0, 3)) {
-    if (!a || a.type !== 'ObjectExpression') continue;
-    const at = verbKeyAt(a, verb);
-    if (at === null) continue;
-    const later = a.properties.slice(at.index + 1).filter((p) => p.type === 'SpreadElement');
-    if (later.length === 0) return null;
-    const by = [];
-    let other = false;
-    for (const s of later) {
-      const param = s.argument && s.argument.type === 'Identifier' ? paramAt(env, s.argument.name) : -1;
-      if (param >= 0) by.push(param); else other = true;
-    }
-    return { key: at.key, by, ...(other ? { other: true } : {}) };
-  }
-  return null;
 }

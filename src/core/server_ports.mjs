@@ -19,8 +19,9 @@
 //   - an application that takes its configuration from outside the tree (a
 //     config server, Nacos, Consul, ZooKeeper): its port is in that server
 //   - no Spring application read at all
-// One unknown application makes the whole pack's ports unknown, because a call
-// on "another" port may be that application's.
+// An unknown application leaves the others' ports as read, and the pack's
+// ports not KNOWN: a call on a port none of them states may be that
+// application's (review 3, design 4).
 //
 // Pure: records in, one answer out. Discovery reads the files
 // (src/core/discover.mjs); `cascade analyze` hands the answer to the web bridge.
@@ -63,20 +64,8 @@ const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 /** `spring.config.import[0]` and `spring.config.import.0` are the same key as `spring.config.import`. */
 const normalizeIndex = (key) => String(key).replace(/\[\d+\]$/, '').replace(/\.\d+$/, '');
 
-/**
- * A Java source that loads configuration itself (`@PropertySource`), as one more
- * record for its application: what that file sets is not read either.
- * @param {string} filePath  the Java file, root-relative
- * @param {string} text
- * @returns {object|null}
- */
-export function serverPortsOfJava(filePath, text) {
-  if (!/@PropertySource\b/.test(String(text))) return null;
-  const f = String(filePath).split('\\').join('/');
-  const at = f.lastIndexOf('/src/main/java/');
-  const app = at >= 0 ? `${f.slice(0, at)}/src/main/resources` : path.posix.dirname(f);
-  return { file: filePath, app, ports: [], unreadable: [], external: '@PropertySource' };
-}
+// What a Java source says about its application's port: src/core/server_ports_java.mjs.
+export { portRecordsOfJava, serverPortsOfJava } from './server_ports_java.mjs';
 
 /** The application a configuration file belongs to: the path up to its `resources` directory. */
 function applicationOf(filePath) {
@@ -135,6 +124,8 @@ function portsOfApplication(app, files) {
 
 /**
  * THE PORTS THIS PACK LISTENS ON: known only when every application's are.
+ * The ports read are listed either way, those of the applications whose port
+ * is known; `defaulted` says one of them rests on Spring Boot's default.
  *
  * @param {object[]} records  serverPortsOfFile results, one per configuration file
  * @returns {{known:boolean, ports:number[], files:string[], why:(string|null),
@@ -151,16 +142,14 @@ export function serverPortsOf(records) {
   if (applications.length === 0) {
     return { known: false, ports: [], files: [], why: 'no Spring application configuration was read', applications };
   }
+  const known = applications.filter((a) => a.ports !== null);
   const unknown = applications.filter((a) => a.ports === null);
-  if (unknown.length > 0) {
-    return { known: false, ports: [], files: [], why: unknown.map((a) => `${a.app}: ${a.why}`).join('; '), applications };
-  }
   return {
-    known: true,
-    ports: [...new Set(applications.flatMap((a) => a.ports))].sort((a, b) => a - b),
-    files: [...new Set(applications.flatMap((a) => a.files))].sort(cmp),
-    defaulted: applications.some((a) => a.defaulted),
-    why: null,
+    known: unknown.length === 0,
+    ports: [...new Set(known.flatMap((a) => a.ports))].sort((a, b) => a - b),
+    files: [...new Set(known.flatMap((a) => a.files))].sort(cmp),
+    defaulted: known.some((a) => a.defaulted),
+    why: unknown.length === 0 ? null : unknown.map((a) => `${a.app}: ${a.why}`).join('; '),
     applications,
   };
 }

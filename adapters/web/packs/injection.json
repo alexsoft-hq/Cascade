@@ -10,6 +10,13 @@
       "why": "A provider puts something behind a token: `{ provide: Base, useClass: Replacement }` in a component's, a module's or the application's `providers`. A field typed `Base` then holds whatever the injector that serves it was given, so a call through it is a candidate for every class any provider in the tree puts there. `useClass` names a class, `useExisting` another token whose own providers apply, and `useFactory` and `useValue` build a value this lane does not read, which leaves the candidate set possibly short.",
       "tokenKey": "provide",
       "uses": { "useClass": "class", "useExisting": "existing", "useFactory": "unread", "useValue": "unread" }
+    },
+    {
+      "framework": "angular",
+      "why": "`@Injectable` takes the same four keys for the class it decorates: `@Injectable({ providedIn: 'root', useClass: Mock }) class Base` makes the root injector hand a Mock to whoever asks for Base. The token is the decorated class, not a key of the object.",
+      "decorator": "Injectable",
+      "module": "@angular/core",
+      "uses": { "useClass": "class", "useExisting": "existing", "useFactory": "unread", "useValue": "unread" }
     }
   ]
 }

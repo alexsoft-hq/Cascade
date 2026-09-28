@@ -34,7 +34,7 @@ import {
 } from './shared.mjs';
 import { sortKey } from './symbols.mjs';
 import {
-  awayOf, buildModesOf, guessOf, readBase, readsOf,
+  awayOf, buildModesOf, guessOf, readBase, readsOf, unsetModesOf,
 } from './base_url.mjs';
 
 // Where it has always been exported from, so every importer still finds it.
@@ -238,9 +238,12 @@ function baseUrlValue(ctx, summary, pkg, assumed = false) {
   // through it.
   // The builds the chosen value holds in, when not every one (review 2, item 4).
   const modes = buildModesOf(ctx.configFor(pkg), mine);
+  // The builds that set it nowhere send no base URL at all (review 3, R4).
+  const unset = unsetModesOf(ctx.configFor(pkg), read.outcomes);
   return {
     state: 'known', value, values: paths, ambiguous, absolute: mine.every((o) => o.host !== null),
     ...(guess ? { guess } : {}), ...(away ? { away } : {}), ...(modes ? { modes } : {}), ...reads,
+    ...(unset.length > 0 ? { unset: { value: '', modes: unset } } : {}),
   };
 }
 
@@ -293,7 +296,7 @@ function derivedPrefix(ctx, base, pkg) {
   // from the source, so it is derived; the guess it rests on goes with it.
   const guess = {
     ...(base.guess ? { guess: base.guess } : base.away ? { away: base.away } : {}),
-    ...(base.modes ? { modes: base.modes } : {}),
+    ...(base.modes ? { modes: base.modes } : {}), ...(base.unset ? { unset: base.unset } : {}),
   };
   if (base.absolute) return { value: base.value, from: 'derived', candidates: [], ...guess };
   const p = throughProxy(ctx, base.value, pkg);

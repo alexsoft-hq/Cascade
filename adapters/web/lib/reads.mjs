@@ -18,7 +18,7 @@
 // WHAT IT MUST NEVER KNOW ABOUT: clients, wrappers, other files. It reads names
 // in one function's scope and nothing else.
 
-import { eachChild } from './ast.mjs';
+import { bare, eachChild, keyName } from './ast.mjs';
 import { insideFunction, originOf } from './origins.mjs';
 
 /** How far a local's initializer is followed back to a parameter. */
@@ -31,20 +31,49 @@ const READS_DEPTH = 4;
  * minus}`), since a part read somewhere carries only its own key; and `open`,
  * why something in the arguments may carry a parameter along a path the
  * syntax does not settle (`reassigned`, `this`, `arguments`, `unbound`,
- * `deep`), with the name when there is one.
- * @returns {{params:number[], partial?:object[], open?:{why:string, name?:string}}|null}
+ * `deep`), with the name when there is one. What is read as the value of one
+ * key of an object argument (`{ params: qs(option) }`) can only land under
+ * that key, so it is said apart, under `under[key]`, in the same three words.
+ * @returns {{params:number[], partial?:object[], open?:object, under?:object}|null}
  *          null outside a named function with parameters
  */
 export function readsOf(node, env, used = new Set()) {
   const fn = env.func;
   if (!fn || !fn.paramScope || !fn.paramOwner || fn.paramOwner.size === 0) return null;
-  const state = {
-    env, used, params: new Set(), partial: new Map(), open: null, seen: new Set(),
+  const buckets = new Map();
+  const readInto = (key, n) => {
+    if (!buckets.has(key)) buckets.set(key, { env, used, params: new Set(), partial: new Map(), open: null, seen: new Set() });
+    visit(buckets.get(key), n, env.scope, 0);
   };
-  for (const a of node.arguments ?? []) visit(state, a, env.scope, 0);
-  const out = { params: [...state.params].sort((a, b) => a - b) };
-  if (state.partial.size > 0) out.partial = [...state.partial.keys()].sort().map((k) => state.partial.get(k));
-  if (state.open !== null) out.open = state.open;
+  (node.arguments ?? []).forEach((a, i) => {
+    const n = bare(a);
+    if (i >= 3 || !n || n.type !== 'ObjectExpression' || used.has(a)) { readInto('', a); return; }
+    for (const p of n.properties) {
+      const key = p.type === 'ObjectProperty' ? keyName(p) : null;
+      if (!used.has(p)) readInto(key ?? '', key !== null ? p.value : p);
+    }
+  });
+  return resultOf(buckets);
+}
+
+/** What one bucket read, in the record's words. */
+function summaryOf(b) {
+  if (!b) return { params: [] };
+  const out = { params: [...b.params].sort((x, y) => x - y) };
+  if (b.partial.size > 0) out.partial = [...b.partial.keys()].sort().map((k) => b.partial.get(k));
+  if (b.open !== null) out.open = b.open;
+  return out;
+}
+
+/** The reads of the arguments themselves, and those under each key that read anything. */
+function resultOf(buckets) {
+  const out = summaryOf(buckets.get(''));
+  const under = {};
+  for (const k of [...buckets.keys()].sort()) {
+    const b = buckets.get(k);
+    if (k !== '' && (b.params.size > 0 || b.partial.size > 0 || b.open !== null)) under[k] = summaryOf(b);
+  }
+  if (Object.keys(under).length > 0) out.under = under;
   return out;
 }
 

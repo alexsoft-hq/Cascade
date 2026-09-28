@@ -18,18 +18,9 @@
 //
 // WHAT IT MUST NEVER KNOW ABOUT: clients, wrappers, other files.
 
-import { eachChild, keyName, patternNames } from './ast.mjs';
+import { bare, eachChild, keyName, patternNames } from './ast.mjs';
 import { paramIndexOf, paramOwnerOf } from './forwards.mjs';
-
-/** The TypeScript written around an expression, which changes nothing it holds. */
-const TS_WRAPPERS = new Set(['TSAsExpression', 'TSSatisfiesExpression', 'TSTypeAssertion', 'TSNonNullExpression', 'ParenthesizedExpression']);
-
-/** An expression with the TypeScript around it taken off: `option as any` is `option`. */
-export function bare(n) {
-  let cur = n;
-  for (let i = 0; i < 8 && cur && TS_WRAPPERS.has(cur.type); i += 1) cur = cur.expression;
-  return cur;
-}
+import { writesIn, writtenOf } from './writes.mjs';
 
 /** The keys an object pattern names, the names it binds to one key each, and its rest. */
 function patternShape(pattern) {
@@ -77,8 +68,8 @@ function reassignedIn(node, owner) {
  * WHAT A NAMED FUNCTION'S PARAMETERS ARE, for the calls inside it: each plain
  * one's position, the position every name a parameter binds belongs to, what
  * a pattern in the signature binds (`({ url, ...rest }) =>` makes `url` key
- * `url` of parameter 0 and `rest` parameter 0 without `url`), and which of them
- * the body assigns again.
+ * `url` of parameter 0 and `rest` parameter 0 without `url`), which of them
+ * the body assigns again, and what it writes through its names (lib/writes.mjs).
  */
 export function paramFactsOf(node, scope) {
   const paramOwner = paramOwnerOf(node);
@@ -89,6 +80,7 @@ export function paramFactsOf(node, scope) {
   });
   return {
     paramScope: scope, paramIndex: paramIndexOf(node), paramOwner, paramParts, reassigned: reassignedIn(node, paramOwner),
+    writes: writesIn(node),
   };
 }
 
@@ -194,24 +186,56 @@ function valueOrigin(node, env) {
   return memberOrigin(n, env);
 }
 
+/** A name and every name up its origin (`cfg` from `option`): the names whose writes change what it holds. */
+function originNames(env, name) {
+  const out = [];
+  let scope = env.scope;
+  for (let cur = name, i = 0; cur && i < 8; i += 1) {
+    out.push(cur);
+    const where = scope.find(cur);
+    const o = where && where.origins ? where.origins.get(cur) : null;
+    cur = o ? o.from : null;
+    scope = where ?? scope;
+  }
+  return out;
+}
+
+/** The name a value is read through: `cfg`, or `option` in `option.url`. */
+function sourceName(node) {
+  const n = bare(node);
+  if (n && n.type === 'Identifier') return n.name;
+  const obj = n && (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression') ? bare(n.object) : null;
+  return obj && obj.type === 'Identifier' ? obj.name : null;
+}
+
 /** What one object argument hands on: each spread (without the keys written over it), and each key's value. */
-function handsInObject(objectNode, arg, env, used, out) {
+function handsInObject(objectNode, arg, env, push) {
   objectNode.properties.forEach((p, i) => {
-    let h = null;
     if (p.type === 'SpreadElement') {
       const o = bare(p.argument) && bare(p.argument).type === 'Identifier' ? originOf(env, bare(p.argument).name) : null;
       const over = keysAfter(objectNode, i);
-      if (o !== null && o.key === undefined && over !== null) {
-        const minus = [...new Set([...(o.minus ?? []), ...over])].sort();
-        h = handFrom({ param: o.param, ...(minus.length > 0 ? { minus } : {}) }, arg, 'spread');
-      }
+      if (o === null || o.key !== undefined || over === null) return;
+      const minus = [...new Set([...(o.minus ?? []), ...over])].sort();
+      push(handFrom({ param: o.param, ...(minus.length > 0 ? { minus } : {}) }, arg, 'spread'), p.argument, p);
     } else if (p.type === 'ObjectProperty' && keyName(p) !== null) {
-      h = handFrom(valueOrigin(p.value, env), arg, 'key', keyName(p));
+      push(handFrom(valueOrigin(p.value, env), arg, 'key', keyName(p)), p.value, p);
     }
-    if (h === null) return;
-    out.push(h);
-    used.add(p);
   });
+}
+
+/**
+ * What has been done to the object a hand passes on (lib/writes.mjs): the keys
+ * written under it (`written`), whether it was handed to another call
+ * (`handed`), and, for a whole object passed on, the keys a write that always
+ * runs set to a string, added to `sets` as what the call sends under them.
+ */
+function withWrites(h, env, source, node, sets) {
+  const w = writtenOf(env.func, originNames(env, sourceName(source)), node);
+  if (w.written.length > 0) h.written = w.written;
+  if (w.handed) h.handed = true;
+  if (h.as !== 'argument' && h.as !== 'spread') return h;
+  for (const [key, value] of w.sets) if (!(h.minus ?? []).includes(key)) sets.push({ key, arg: h.arg, value, from: 'written' });
+  return h;
 }
 
 /**
@@ -220,22 +244,26 @@ function handsInObject(objectNode, arg, env, used, out) {
  * copy of it), `spread` (spread into an object argument), `key` (the value of
  * one of that object's keys, `key`) or `member` (the value at key `key`). A
  * hand made from a part says which key of the parameter it is (`part`); one
- * made from a rest or a copy says which keys it no longer carries (`minus`).
- * Only the first three arguments are read, the same three a call record
- * summarizes. What it took is added to `used`, so what the call reads apart
- * from its hands can be told from them.
+ * made from a rest or a copy says which keys it no longer carries (`minus`),
+ * and one whose object the function writes says which keys (`written`) or
+ * that it was handed elsewhere (`handed`). Only the first three arguments are
+ * read, the same three a call record summarizes. What it took is added to
+ * `used`, so what the call reads apart from its hands can be told from them;
+ * a string a write put in the object passed on is added to `sets`.
  * @returns {object[]} empty when the call hands on nothing the function was given
  */
-export function handsOf(node, env, used = new Set()) {
+export function handsOf(node, env, used = new Set(), sets = []) {
   const out = [];
+  const push = (h, source, taken) => {
+    if (h === null) return;
+    out.push(withWrites(h, env, source, node, sets));
+    used.add(taken);
+  };
   (node.arguments ?? []).slice(0, 3).forEach((a, arg) => {
     const n = bare(a);
     if (!n) return;
-    if (n.type === 'ObjectExpression') { handsInObject(n, arg, env, used, out); return; }
-    const h = handFrom(valueOrigin(n, env), arg, 'argument');
-    if (h === null) return;
-    out.push(h);
-    used.add(a);
+    if (n.type === 'ObjectExpression') handsInObject(n, arg, env, push);
+    else push(handFrom(valueOrigin(n, env), arg, 'argument'), n, a);
   });
   return out;
 }

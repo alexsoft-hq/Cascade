@@ -83,15 +83,16 @@ test('an object\'s method that hands its options to a helper the file declares s
     line: 15,
     callee: { shape: 'ident', root: 'request', path: [], name: 'request' },
     binding: { kind: 'local', name: 'request' },
-    // Written BEFORE the caller's options, so the caller's own `method` wins.
-    method: { value: 'GET', from: 'config', overridable: { key: 'method', by: [0] } },
     hands: [{ param: 0, arg: 0, as: 'spread' }],
     // What the call reads of its parameters apart from its hands (review 2,
     // item 2): nothing, since the spread is the whole of it.
     reads: { params: [] },
+    // Written BEFORE the caller's options (parameter 0), so the caller's own
+    // `method` wins (lib/sets.mjs).
+    sets: [{ key: 'method', arg: 0, value: 'GET', from: 'config', by: [0] }],
   }]);
   // Written AFTER them, so nothing the caller hands in replaces it.
-  assert.deepEqual(fnRec(INDEX, 'put').forwards[0].method, { value: 'PUT', from: 'config' });
+  assert.deepEqual(fnRec(INDEX, 'put').forwards[0].sets, [{ key: 'method', arg: 0, value: 'PUT', from: 'config' }]);
   // `query` spreads its SECOND parameter.
   assert.deepEqual(fnRec(INDEX, 'query').forwards[0].hands, [{ param: 1, arg: 0, as: 'spread' }]);
   // `ping` calls the helper with a local of its own: it hands on nothing it was given.
@@ -157,11 +158,12 @@ test('options that could carry a method leave it unread, and the edge says a rul
   assert.equal(e.grade, 'HEURISTIC');
 });
 
-test('a method that does not hand the URL\'s argument on does not trace it', () => {
-  const { g } = run();
-  const e = onlyFrom(g, API, 'listThroughQuery');
-  assert.equal(e.evidence.sink.kind, 'untraced');
-  assert.equal(e.grade, 'HEURISTIC');
+test('a method that does not hand the URL\'s argument on draws no edge for it', () => {
+  // The request `query` makes does not carry the URL the caller wrote, so no
+  // edge may say it asks for /things/list, not even a guessed one (review 3).
+  const { g, stats } = run();
+  assert.deepEqual(edgesFrom(g, API, 'listThroughQuery'), []);
+  assert.equal(stats.calls.urlNotHandedOn, 1);
 });
 
 test('an object held in a named const is the same, called from another file and from its own', () => {

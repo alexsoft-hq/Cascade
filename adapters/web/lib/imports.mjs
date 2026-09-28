@@ -645,6 +645,12 @@ function classShape(ctx, node, env) {
   return { methods, fields, typed };
 }
 
+/** The class a class extends, as a name the bridge resolves (review 3, N1): a method it does not declare is its parent's. */
+function extendsOf(ctx, node, env) {
+  const parent = node.superClass ? providerName(ctx, node.superClass, env) : null;
+  return parent === null ? {} : { extends: parent };
+}
+
 /**
  * Whether a class is a COMPONENT by the decorator it carries (RM67): one a pack
  * names (`componentClasses`), imported from that pack's module. A file whose
@@ -680,7 +686,7 @@ export function visitClass(ctx, node, env, exportedAs) {
     emit({
       kind: 'class', file: relFile, line, name: className, exported: exportedAs ?? null,
       methods: uniq(methods), fields: uniq(fields),
-      ...(isComponentClass(ctx, node, env) ? { component: true } : {}),
+      ...(isComponentClass(ctx, node, env) ? { component: true } : {}), ...extendsOf(ctx, node, env),
     }, line);
   }
   providersInDecorators(ctx, node, env);
@@ -804,18 +810,43 @@ function providerName(ctx, node, env) {
  */
 function noteProvider(ctx, node, env) {
   for (const form of ctx.providerForms ?? []) {
+    if (form.decorator) continue;
     const token = providerName(ctx, propOf(node, form.tokenKey ?? 'provide'), env);
-    if (token === null) continue;
-    for (const [key, use] of Object.entries(form.uses ?? {})) {
-      const value = propOf(node, key);
-      if (value === null) continue;
-      const target = use === 'unread' ? null : providerName(ctx, value, env);
-      const line = ctx.lineOf(node);
-      ctx.emit({
-        kind: 'provider', file: ctx.relFile, line, token, use: target === null ? 'unread' : use, via: key,
-        ...(target ? { target } : {}),
-      }, line);
-      return;
+    if (token !== null && emitProvider(ctx, node, token, form, env)) return;
+  }
+}
+
+/** The one `use` key an object writes, emitted as a provider of `token`; whether there was one. */
+function emitProvider(ctx, node, token, form, env) {
+  for (const [key, use] of Object.entries(form.uses ?? {})) {
+    const value = propOf(node, key);
+    if (value === null) continue;
+    const target = use === 'unread' ? null : providerName(ctx, value, env);
+    const line = ctx.lineOf(node);
+    ctx.emit({
+      kind: 'provider', file: ctx.relFile, line, token, use: target === null ? 'unread' : use, via: key,
+      ...(target ? { target } : {}),
+    }, line);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A CLASS THAT IS ITS OWN TOKEN (review 3, R5): `@Injectable({ providedIn:
+ * 'root', useClass: Mock }) class Base` puts a Mock behind Base. The decorator
+ * and its module are the injection pack's; the token is the class it decorates.
+ */
+function decoratorProviders(ctx, node, env) {
+  if (!node.id || node.id.type !== 'Identifier') return;
+  for (const form of (ctx.providerForms ?? []).filter((f) => f.decorator)) {
+    for (const d of node.decorators ?? []) {
+      const e = d.expression;
+      const c = e && e.type === 'CallExpression' ? calleeOf(e.callee) : null;
+      const b = c && c.path.length === 0 ? bindingOf(ctx, c.root, env.scope, env.classInfo) : null;
+      if (!b || b.kind !== 'import' || b.source !== form.module || b.imported !== form.decorator) continue;
+      const opts = e.arguments[0];
+      if (opts && opts.type === 'ObjectExpression') emitProvider(ctx, opts, providerName(ctx, node.id, env), form, env);
     }
   }
 }
@@ -828,6 +859,7 @@ function noteProvider(ctx, node, env) {
  */
 function providersInDecorators(ctx, node, env) {
   if ((ctx.providerForms ?? []).length === 0) return;
+  decoratorProviders(ctx, node, env);
   const walk = (n) => {
     if (!n) return;
     if (n.type === 'ObjectExpression') noteProvider(ctx, n, env);

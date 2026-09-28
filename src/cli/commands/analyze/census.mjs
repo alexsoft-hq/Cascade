@@ -540,23 +540,27 @@ const UNREAD_HOP_WORDS = Object.freeze({
   deep: 'more locals than are followed',
   computed: 'an expression on the options',
   unrecorded: 'a step whose arguments were not read',
+  written: 'a key the step writes',
+  handed: 'an object also handed to another call',
+  branches: 'calls that lead to different clients',
+  'request-base': 'a base URL of the request\'s own that is not a path',
 });
 
 /**
- * A call whose wrapper does not hand its URL on (R2-K) is graded as one this
- * lane could not trace, and says so once rather than hiding in `untraced`.
+ * A call whose wrapper does not hand its URL on (R2-K) draws no edge (review
+ * 3), and says so once rather than disappearing.
  */
 function sayUrlNotHandedOn(calls) {
   const n = calls?.urlNotHandedOn ?? 0;
   if (n > 0) {
-    process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so each is graded HEURISTIC as a call this lane could not trace\n`);
+    process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so the request each makes does not ask for that URL and no edge says it does\n`);
   }
   // Said apart: taken as reaching the client, through a step the code does not settle.
   const unread = calls?.urlThroughUnreadHop ?? 0;
   if (unread > 0) {
     const by = Object.entries(calls.unreadHopBy ?? {}).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
       .map(([why, k]) => `${UNREAD_HOP_WORDS[why] ?? why} ${k}`).join(', ');
-    process.stderr.write(`  [info] WEB_URL_THROUGH_UNREAD_HOP ${unread} traced call(s) reach the client through a wrapper step the code does not settle (${by}): each may or may not carry the URL its caller gave, so each is graded HEURISTIC and its edge names the step and why\n`);
+    process.stderr.write(`  [info] WEB_URL_THROUGH_UNREAD_HOP ${unread} traced call(s) reach the client through a wrapper step the code does not settle (${by}): each may or may not carry the URL, the method or the base URL its caller gave, so each is graded HEURISTIC and its edge names the step, the key and why\n`);
   }
 }
 
@@ -566,12 +570,15 @@ function sayUrlNotHandedOn(calls) {
  */
 function sayServerPorts(p) {
   if (!p) return;
-  process.stderr.write(p.known
-    ? `Web lane: this pack listens on port(s) ${p.ports.join(', ')} (${[
-      p.files.length > 0 ? `server.port in ${p.files.join(', ')}` : null,
-      p.defaulted ? 'Spring Boot\'s default where no file that applies without a profile sets it' : null,
-    ].filter(Boolean).join('; ')})\n`
-    : `Web lane: the ports this pack listens on are not known (${p.why}), so no call is placed by its port\n`);
+  const read = `port(s) ${p.ports.join(', ')} (${[
+    p.files.length > 0 ? `server.port in ${p.files.join(', ')}` : null,
+    p.defaulted ? 'Spring Boot\'s default where no file that applies without a profile sets it, which whatever starts the application may override, so no call is placed by its port' : null,
+  ].filter(Boolean).join('; ')})`;
+  if (p.known) process.stderr.write(`Web lane: this pack listens on ${read}\n`);
+  else {
+    process.stderr.write(`Web lane: the ports this pack listens on are not known (${p.why}), so no call is placed by its port${
+      p.ports.length > 0 ? `; the other applications listen on ${read}` : ''}\n`);
+  }
   if (p.otherPortCalls > 0) {
     process.stderr.write(`  [warn] WEB_OTHER_PORT ${p.otherPortCalls} call site(s) go to this machine on a port this pack does not listen on, so another service answers them: they stay outbound\n`);
   }

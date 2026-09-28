@@ -25,6 +25,7 @@ import {
 import { routeMatches } from '../http_routes.mjs';
 import { isComponentFile, memberIndex, webEndpointId, webSymbolId } from './symbols.mjs';
 import { TEMPLATE_PREFIX } from './prefix.mjs';
+import { UNSETTLED_BECAUSE, walkChain } from './chain.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
 import {
   declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost, otherPortOf,
@@ -261,11 +262,8 @@ function wrapperStep(ctx, key) {
   const { memberRec, callsIn, wrappers, calleeTarget, sinkVerb } = ctx;
   const m = memberRec.get(key);
   if (!m) return null;
-  let best = null;
-  const consider = (cand) => {
-    if (!cand) return;
-    if (best === null || cand.depth < best.depth || (cand.depth === best.depth && cmp(cand.next ?? '', best.next ?? '') < 0)) best = cand;
-  };
+  const cands = [];
+  const consider = (cand) => { if (cand) cands.push(cand); };
   for (const c of callsIn.get(key) ?? []) {
     if (hasOwnUrl(c)) continue;
     // A PLATFORM SINK IS A HOP whatever its callee resolves to: a GLOBAL
@@ -273,14 +271,15 @@ function wrapperStep(ctx, key) {
     // that it was never reached (a function handing its request to `fetch` was
     // never a wrapper). The call record already says what it is.
     if (c.platformSink) {
-      consider({ depth: 1, next: null, sink: { module: c.platformSink, instance: null, kind: 'platform' }, call: c });
+      const verb = c.method && c.method.from === 'callee-name' ? c.method.value : null;
+      consider({ depth: 1, next: null, sink: { module: c.platformSink, instance: null, kind: 'platform' }, call: c, verb });
     }
     const t = calleeTarget(m.file, c);
     if (!t) continue;
     if (t.kind === 'sink') {
       const v = sinkVerb(t);
       if (!v) continue;
-      consider({ depth: 1, next: null, sink: { module: t.instance.module, instance: t.instance.id ?? null, kind: 'library' }, call: c });
+      consider({ depth: 1, next: null, sink: { module: t.instance.module, instance: t.instance.id ?? null, kind: 'library' }, call: c, verb: v.verb ?? null });
     } else if (t.kind === 'member' && t.key !== key) {
       const w = wrappers.get(t.key);
       if (!w) continue;
@@ -288,7 +287,29 @@ function wrapperStep(ctx, key) {
     }
   }
   hopsWithoutACallRecord(ctx, key, m, consider);
-  return best;
+  return withBranches(cands);
+}
+
+/**
+ * THE STEP A FUNCTION IS, from every call in it that leads to a client: the
+ * shortest (ties broken by the name of the next step, so two runs pick the
+ * same), and beside it every other call that leads on the same way (`hops`,
+ * each with the verb its client call names), because either may be the one
+ * that runs (review 3, R1). A return that repeats a call already read is the
+ * same call. Calls that lead on to a different client are counted (`forks`).
+ */
+function withBranches(cands) {
+  if (cands.length === 0) return null;
+  const best = cands.reduce((a, b) => (b.depth < a.depth || (b.depth === a.depth && cmp(b.next ?? '', a.next ?? '') < 0) ? b : a));
+  const same = (c) => (c.next ?? null) === (best.next ?? null) && c.sink.module === best.sink.module && (c.sink.instance ?? null) === (best.sink.instance ?? null);
+  const hops = [{ call: best.call ?? null, verb: best.verb ?? null }];
+  let forks = 0;
+  for (const c of cands) {
+    if (c === best || (c.call === null && cands.some((o) => o.call !== null && (o.next ?? null) === (c.next ?? null)))) continue;
+    if (!same(c)) forks += 1;
+    else if (!hops.some((h) => h.call === c.call)) hops.push({ call: c.call ?? null, verb: c.verb ?? null });
+  }
+  return { ...best, hops, forks };
 }
 
 /** One hop to a wrapper written somewhere other than a call record, when it is one. */
@@ -376,6 +397,8 @@ export function traceWrappers({
     }
     if (!changed) break;
   }
+  // Which calls lead on is read once more against the settled map.
+  for (const key of [...wrappers.keys()]) wrappers.set(key, wrapperStep(ctx, key) ?? wrappers.get(key));
   stats.wrappers.count = wrappers.size;
   for (const [key, w] of wrappers) {
     stats.wrappers.maxDepth = Math.max(stats.wrappers.maxDepth, w.depth);
@@ -688,82 +711,52 @@ function libraryVerbOf(libraries, c, sink, target) {
   return Object.prototype.hasOwnProperty.call(verbs, target.method) ? { value: verbs[target.method], from: 'library-verb' } : null;
 }
 
-/**
- * The HTTP verbs a caller's options can name. The worker's `VERBS`, written
- * again for the same reason the rule names above are: the bridge does not
- * import from the worker.
- */
-const HTTP_VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
-
-/**
- * WHAT THE CALLER'S OPTIONS SAY about a method the wrapper wrote BEFORE it
- * spread them in (R2-K): `{ method: 'GET', ...option }` sends what `option`
- * names under that key, and GET only when it names none. Read off what the
- * caller handed at each position the spread takes, the last one winning as it
- * does at run time. An object literal that writes the key names the method;
- * one that does not keeps the wrapper's. Anything else (a name, an object
- * with a spread of its own, a position past the three a call record reads) may
- * carry the key, so the method is absent and the wrapper's default is said
- * beside it rather than taken.
- */
-function callerOverride(m, c) {
-  const unread = { value: null, from: 'absent', wrapperDefault: m.value };
-  if (m.overridable.other === true) return unread;
-  const args = Array.isArray(c.args) ? c.args : [];
-  let stated = null;
-  for (const i of m.overridable.by ?? []) {
-    // Fewer than three summaries is every argument the caller passed, so
-    // nothing is spread in from past them; three may be the first of more.
-    if (i >= args.length) {
-      if (args.length >= 3) return unread;
-      continue;
-    }
-    const a = args[i];
-    if (!a || a.kind !== 'object' || a.spread === true) return unread;
-    const v = (a.keys ?? {})[m.overridable.key];
-    if (v === undefined) continue;
-    if (!v || v.kind !== 'string' || !HTTP_VERBS.has(v.value.toUpperCase())) return unread;
-    stated = v.value.toUpperCase();
-  }
-  return stated !== null ? { value: stated, from: 'config' } : { value: m.value, from: 'wrapper-default' };
-}
-
-/** Every hop of the wrapper chain a call goes through, the caller's side first; a return hop is null. */
-function hopsOf(wrappers, key) {
-  const hops = [];
+/** Every step of the wrapper chain a call goes through, the caller's side first, with the calls each may make. */
+function stepsOf(wrappers, key) {
+  const steps = [];
   for (let cur = key, i = 0; cur && i < FIXPOINT_LIMIT; i += 1) {
     const w = wrappers.get(cur);
     if (!w) break;
-    hops.push(w.call ?? null);
+    steps.push({ key: cur, hops: w.hops ?? [{ call: w.call ?? null, verb: w.verb ?? null }], forks: w.forks ?? 0, last: !w.next });
     cur = w.next ?? null;
   }
-  return hops;
+  return steps;
 }
 
 /**
- * THE METHOD THE REQUEST THAT LEAVES CARRIES (review 2, item 1), walked hop by
- * hop from the caller to the sink. A hop that writes a method after what it was
- * handed sets it, whatever came before; one that writes it before is a default,
- * which a method already on the way in replaces, and which the caller's own
- * options replace when no hop has written one yet. A hop that writes none
- * passes on what it was handed. Null when no hop writes a method.
+ * THE KEYS A CLIENT READS ITS REQUEST FROM, as the HTTP client pack names them
+ * (packs/http-clients.json): its method keys, its base URL key, and the
+ * argument it takes options from when the URL comes on its own.
  */
-function chainMethodOf(wrappers, key, c) {
-  let state = null;
-  hopsOf(wrappers, key).forEach((hop, i) => {
-    const m = hop ? hop.method : null;
-    if (!m || !m.value) return;
-    if (!m.overridable) { state = { value: m.value, from: 'wrapper-verb' }; return; }
-    if (state === null) state = callerOverride(i === 0 ? m : { ...m, overridable: { ...m.overridable, by: callerPositions(c) } }, c);
-    else if (state.value === null) state = { value: null, from: 'absent', wrapperDefault: m.value };
-  });
-  return state;
+function makeClientKeys({ libraries, pack }) {
+  return (sink) => {
+    if (sink.kind === 'platform') {
+      const p = (pack.platform ?? []).find((x) => x.name === sink.module) ?? {};
+      return { method: p.config?.methodKeys ?? [p.methodKey ?? 'method'], base: null, optionsArg: p.optionsArg ?? null };
+    }
+    const lib = libraries.get(sink.module) ?? {};
+    return { method: [lib.configMethodKey ?? 'method'], base: lib.configBaseUrlKey ?? null, optionsArg: null };
+  };
 }
 
-/** Where the caller's options are, for a default written further down the chain: the URL's argument, else all three. */
-function callerPositions(c) {
-  const at = c.url && c.url.at ? c.url.at : null;
-  return at !== null ? [at.arg] : [0, 1, 2];
+/**
+ * THE CALLER'S REQUEST WALKED DOWN THE CHAIN (src/adapters/web/chain.mjs),
+ * counted when a step does not settle it. A call whose URL position the
+ * worker did not record is taken as reaching the client, with the method the
+ * last step that writes one writes, or else its own.
+ */
+function walkThrough(wrappers, key, c, clientKeys, stats) {
+  if (!c.url || !c.url.at) {
+    const written = stepsOf(wrappers, key).map((st) => st.hops[0].call?.method).filter((m) => m && m.value && m.from !== 'callee-name');
+    const own = c.method && c.method.value ? { value: c.method.value, from: c.method.from ?? 'config' } : null;
+    return { reached: true, why: null, methods: [written.length > 0 ? { value: written[written.length - 1].value, from: 'wrapper-verb' } : own] };
+  }
+  const via = walkChain(stepsOf(wrappers, key), c, clientKeys(wrappers.get(key).sink));
+  if (via.reached && via.why) {
+    stats.calls.urlThroughUnreadHop += 1;
+    stats.calls.unreadHopBy[via.why.why] = (stats.calls.unreadHopBy[via.why.why] ?? 0) + 1;
+  }
+  return via;
 }
 
 /**
@@ -776,7 +769,6 @@ export const UNTRACED_BECAUSE = Object.freeze({
   external: 'the function called comes from a package the HTTP client pack does not name',
   'not-a-wrapper': 'the function called is this project\'s own and hands the request to no client this lane knows',
   'not-a-verb': 'a client is called through a method that is not one of its verbs',
-  'url-not-handed-on': 'the function called is a wrapper that does not hand the argument the URL is in on to the client',
 });
 
 /** What the callee of an untraced call turned out to be, as an UNTRACED_BECAUSE key. */
@@ -796,31 +788,52 @@ function countUntraced(stats, c, why) {
   u.callees[key] = (u.callees[key] ?? 0) + 1;
 }
 
-/** The HTTP method this call sends, and what said so. */
-function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
+/** The method a client sends when nothing names one. */
+function defaultMethodOf(sink, { libraries, pack, injectedClients }) {
+  if (sink.kind === 'library' || sink.kind === 'wrapper') {
+    const lib = libraries.get(sink.module);
+    if (lib && lib.defaultMethod) return { value: lib.defaultMethod, from: 'library-default' };
+  }
+  // A wrapper that ends at `fetch` sends what `fetch` sends by default.
+  if (sink.kind === 'platform' || sink.kind === 'wrapper') {
+    const p = (pack.platform ?? []).find((x) => x.name === sink.module);
+    if (p && p.defaultMethod) return { value: p.defaultMethod, from: 'library-default' };
+  }
+  if (sink.kind === 'injected') {
+    const cl = injectedClients.get(sink.module);
+    if (cl && cl.defaultMethod) return { value: cl.defaultMethod, from: 'library-default' };
+  }
+  return { value: null, from: 'absent' };
+}
+
+/**
+ * EVERY HTTP METHOD this call may send, and what said so. Through a wrapper
+ * chain it is what the walk found arrives (src/adapters/web/chain.mjs), one
+ * per way through, the client's default where none does; a call on a client
+ * says its own. A method written as something other than a verb (`{ method:
+ * verb }`) is one this file does not state.
+ */
+function makeMethodsFor(deps) {
+  const { libraries } = deps;
   return (c, sink, target) => {
-    if (sink.kind === 'wrapper' && target && target.kind === 'member') {
-      const fromWrapper = chainMethodOf(wrappers, target.key, c);
-      if (fromWrapper !== null) return fromWrapper;
+    if (sink.kind === 'wrapper' && Array.isArray(sink.methods)) {
+      const out = [];
+      for (const m of sink.methods) {
+        const x = m === null ? defaultMethodOf(sink, deps) : evidenceOfMethod(m);
+        if (!out.some((y) => y.value === x.value)) out.push(x);
+      }
+      return out;
     }
-    if (c.method && c.method.value) return { value: c.method.value, from: c.method.from ?? 'config' };
-    const fromPack = libraryVerbOf(libraries, c, sink, target);
-    if (fromPack !== null) return fromPack;
-    if (sink.kind === 'library' || sink.kind === 'wrapper') {
-      const lib = libraries.get(sink.module);
-      if (lib && lib.defaultMethod) return { value: lib.defaultMethod, from: 'library-default' };
-    }
-    // A wrapper that ends at `fetch` sends what `fetch` sends by default.
-    if (sink.kind === 'platform' || sink.kind === 'wrapper') {
-      const p = (pack.platform ?? []).find((x) => x.name === sink.module);
-      if (p && p.defaultMethod) return { value: p.defaultMethod, from: 'library-default' };
-    }
-    if (sink.kind === 'injected') {
-      const cl = injectedClients.get(sink.module);
-      if (cl && cl.defaultMethod) return { value: cl.defaultMethod, from: 'library-default' };
-    }
-    return { value: null, from: 'absent' };
+    if (c.method && c.method.value) return [{ value: c.method.value, from: c.method.from ?? 'config' }];
+    if (c.method && c.method.from === 'config') return [{ value: null, from: 'absent', written: 'variable' }];
+    return [libraryVerbOf(libraries, c, sink, target) ?? defaultMethodOf(sink, deps)];
   };
+}
+
+/** A method the walk carried, in the words an edge says it with. */
+function evidenceOfMethod(m) {
+  const { places, ...said } = m;
+  return said;
 }
 
 /**
@@ -928,25 +941,22 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
       target,
     };
   }
-  const throughAWrapper = target !== null && target.kind === 'member' && wrappers.has(target.key);
-  const via = throughAWrapper ? urlReachesTheSink(wrappers, target.key, c, stats) : null;
-  if (via !== null && via.reached) {
+  if (target !== null && target.kind === 'member' && wrappers.has(target.key)) {
+    const via = walkThrough(wrappers, target.key, c, deps.clientKeys, stats);
+    // A URL the chain drops is not what the request it makes asks for: no edge.
+    if (!via.reached) { stats.calls.urlNotHandedOn += 1; return null; }
     stats.calls.traced += 1;
-    return { sink: wrapperSink(wrappers, target.key, via.unsettled), target };
+    return { sink: wrapperSink(wrappers, target.key, via), target };
   }
-  const found = untracedSink(c, {
-    resolved, absolute, target, stats, throughAWrapper,
-  });
-  if (found !== null && throughAWrapper) stats.calls.urlNotHandedOn += 1;
-  return found;
+  return untracedSink(c, { resolved, absolute, target, stats });
 }
 
 /**
  * The sink a call reaches through a wrapper chain: the deepest hop first, the
- * one the caller named last; and the hop that does not settle whether the URL
- * reaches it, when one does not.
+ * one the caller named last; what the walk found arrives (the methods, a base
+ * URL the request carries); and the step that does not settle it, with why.
  */
-function wrapperSink(wrappers, key, unsettled = null) {
+function wrapperSink(wrappers, key, via) {
   const chain = [];
   let cur = key;
   for (let i = 0; i < FIXPOINT_LIMIT && cur; i += 1) {
@@ -956,102 +966,9 @@ function wrapperSink(wrappers, key, unsettled = null) {
   const w = wrappers.get(key);
   return {
     kind: 'wrapper', module: w.sink.module, instance: w.sink.instance, chain: chain.reverse(), depth: w.depth,
-    ...(unsettled ? { unsettled } : {}),
+    methods: via.methods, ...(via.base ? { base: via.base } : {}),
+    ...(via.why ? { unsettled: { ...via.why, reason: UNSETTLED_BECAUSE[via.why.why] } } : {}),
   };
-}
-
-/**
- * Where the URL goes at ONE hop, from where it is in the function's parameters
- * (`place`: a parameter, and the key it sits under when it is in an object).
- * Null when no hand the hop's syntax spells carries it.
- */
-function handOn(place, hands) {
-  for (const h of hands) {
-    const next = h.param === place.param ? handOnOne(place, h) : null;
-    if (next !== null) return next;
-  }
-  return null;
-}
-
-/**
- * Where ONE hand puts the URL. Passed whole or spread in, it keeps its key;
- * passed as one key of an object, it gains that key; `options.url` passed as a
- * value loses it. A rest or a copy carries every key but the ones it names
- * (`minus`); a part carries its own key (`part`) and nothing else. When the
- * URL is the parameter itself, only the parameter carries it.
- */
-function handOnOne(place, h) {
-  if (place.key === null) {
-    if (h.minus || h.part !== undefined) return null;
-    if (h.as === 'argument') return { param: h.arg, key: null };
-    return h.as === 'key' ? { param: h.arg, key: h.key } : null;
-  }
-  if ((h.minus ?? []).includes(place.key)) return null;
-  if (h.as === 'member') return h.key === place.key ? { param: h.arg, key: null } : null;
-  if (h.as === 'key') return h.part === place.key ? { param: h.arg, key: h.key } : null;
-  return h.as === 'argument' || h.as === 'spread' ? { param: h.arg, key: place.key } : null;
-}
-
-/**
- * WHY A HOP THE CODE DOES NOT SETTLE MAY STILL CARRY THE URL, by what the
- * worker saw in the arguments the hop passes (lib/reads.mjs). The edge of a
- * call through such a hop names the hop and one of these, and is graded
- * HEURISTIC: it may reach the client with the caller's URL, and nothing
- * written says it does.
- */
-export const UNSETTLED_BECAUSE = Object.freeze({
-  reassigned: 'a step of the wrapper chain passes the request through a variable it assigns again (a let, a var, a parameter written over), so what reaches the client is not what the code first put in it',
-  this: 'a step of the wrapper chain passes the request through `this`, which may or may not hold the URL the caller gave',
-  arguments: 'a step of the wrapper chain passes `arguments`, which may or may not hold the URL the caller gave',
-  unbound: 'a step of the wrapper chain passes a name with no value written beside it (a callback\'s parameter, a function), which may or may not hold the URL',
-  deep: 'a step of the wrapper chain reaches the argument the URL is in through more locals than this lane follows',
-  computed: 'a step of the wrapper chain passes the argument the URL is in through an expression this lane does not evaluate (a call on it, a nested object)',
-  unrecorded: 'a step of the wrapper chain is a return or a call whose arguments this lane did not read',
-});
-
-/** Whether what a hop reads apart from its hands could carry the URL at `place`. */
-function readsCarry(reads, place) {
-  if ((reads.params ?? []).includes(place.param)) return true;
-  return (reads.partial ?? []).some((r) => r.param === place.param
-    && (r.key !== undefined ? r.key === place.key : place.key !== null && !r.minus.includes(place.key)));
-}
-
-/** Why a hop whose hands do not carry the URL may still carry it, or null when it dropped it. */
-function unsettledWhy(hop, place) {
-  if (!hop || (!hop.reads && !Array.isArray(hop.hands))) return { why: 'unrecorded' };
-  const reads = hop.reads ?? null;
-  if (reads === null) return null;
-  if (reads.open) return { why: reads.open.why ?? 'unbound', ...(reads.open.name ? { name: reads.open.name } : {}) };
-  return readsCarry(reads, place) ? { why: 'computed' } : null;
-}
-
-/**
- * WHETHER THE CALLER'S URL REACHES THE SINK (R2-K, review 2 item 2), walked hop
- * by hop down the wrapper chain: every hop must hand on the part of its
- * parameters the URL is in. A hop whose syntax settles it moves the URL along
- * or drops it, and a dropped URL is not traced through the chain. A hop whose
- * syntax does not settle it (lib/reads.mjs) is followed no further: the call
- * is taken as reaching the sink, and `unsettled` names the hop and why, which
- * grades its edge HEURISTIC.
- * @returns {{reached:boolean, unsettled:(object|null)}}
- */
-function urlReachesTheSink(wrappers, key, c, stats) {
-  const hops = hopsOf(wrappers, key);
-  const at = c.url && c.url.at ? c.url.at : null;
-  if (at === null) return { reached: !(hops[0] && Array.isArray(hops[0].hands) && !hops[0].reads), unsettled: null };
-  let place = { param: at.arg, key: typeof at.key === 'string' ? at.key : null };
-  for (let i = 0, cur = key; i < hops.length; i += 1, cur = wrappers.get(cur)?.next ?? null) {
-    const hop = hops[i];
-    const next = hop && Array.isArray(hop.hands) ? handOn(place, hop.hands) : null;
-    if (next !== null) { place = next; continue; }
-    const why = unsettledWhy(hop, place);
-    if (why === null) return { reached: false, unsettled: null };
-    stats.calls.urlThroughUnreadHop += 1;
-    stats.calls.unreadHopBy[why.why] = (stats.calls.unreadHopBy[why.why] ?? 0) + 1;
-    const line = hop && Number.isInteger(hop.line) ? { line: hop.line } : {};
-    return { reached: true, unsettled: { hop: cur, ...line, ...why, reason: UNSETTLED_BECAUSE[why.why] } };
-  }
-  return { reached: true, unsettled: null };
 }
 
 /**
@@ -1071,12 +988,12 @@ function urlReachesTheSink(wrappers, key, c, stats) {
  * @returns {{sink:object, target:(object|null)}|null} null when this is no call
  */
 function untracedSink(c, {
-  resolved, absolute, target, stats, throughAWrapper = false,
+  resolved, absolute, target, stats,
 }) {
   if (isStringMethod(c.callee)) { stats.calls.stringMethod += 1; return null; }
   if (!urlShaped(absolute, resolved)) { stats.calls.notUrlShaped += 1; return null; }
   stats.calls.untraced += 1;
-  countUntraced(stats, c, throughAWrapper ? 'url-not-handed-on' : untracedReasonOf(target));
+  countUntraced(stats, c, untracedReasonOf(target));
   return {
     sink: { kind: 'untraced', module: target && target.kind === 'external' ? target.module : null, instance: null, chain: [], depth: 0 },
     target,
@@ -1144,7 +1061,8 @@ export function classifyCallSites({
   fileNames, files, packageOf, templatesByFile, contextVarsFor, renderedTemplates,
   instanceOf, callsPerInstance, stats, deps,
 }) {
-  const methodFor = makeMethodFor(deps);
+  deps = { ...deps, clientKeys: makeClientKeys(deps) };
+  const methodsFor = makeMethodsFor(deps);
   const constantOf = makeConstantOf({ files, resolver: deps.resolver });
   const fill = makeHoleFiller({ constantOf, configFor: deps.configFor, ports: deps.ports ?? null });
   const sites = [];
@@ -1173,7 +1091,7 @@ export function classifyCallSites({
         instanceOf.set(instanceId, { id: instanceId, module: sink.module, baseURL: null, package: pkg });
       }
       sites.push({
-        file, pkg, call: c, sink, target, instanceId, method: methodFor(c, sink, target),
+        file, pkg, call: c, target, instanceId, ...methodsAndBase(c, sink, methodsFor(c, sink, target), deps.clientKeys),
         assumed: (target && target.assumed === true) || u.assumed,
         template: isTemplate, resolved, absolute,
         ...(substituted.length > 0 ? { substituted } : {}),
@@ -1186,6 +1104,25 @@ export function classifyCallSites({
     }
   }
   return sites;
+}
+
+/**
+ * WHAT A SITE SENDS BESIDES ITS URL: its method, every other one a wrapper
+ * chain may send (`methods`), and a base URL the request carries of its own
+ * (review 3, R3): one a wrapper step or the caller wrote (the walk found it),
+ * or one a call on a client writes into its options. One that is not a path
+ * this lane can read leaves the call's base unsettled, and the edge says so.
+ */
+function methodsAndBase(c, sink, methods, clientKeys) {
+  const out = { sink, method: methods[0], ...(methods.length > 1 ? { methods } : {}) };
+  if (sink.kind === 'wrapper') return sink.base ? { ...out, requestBase: sink.base } : out;
+  const key = sink.kind === 'library' ? clientKeys(sink).base : null;
+  const at = c.url && c.url.at ? c.url.at : null;
+  const a = key && at ? (c.args ?? [])[typeof at.key === 'string' ? at.arg : at.arg + 1] : null;
+  const v = a && a.kind === 'object' && a.keys ? a.keys[key] : undefined;
+  if (v === undefined) return out;
+  if (v && v.kind === 'string' && v.value.startsWith('/')) return { ...out, requestBase: v.value };
+  return { ...out, sink: { ...sink, unsettled: { hop: null, why: 'request-base', key, reason: UNSETTLED_BECAUSE['request-base'] } } };
 }
 
 /**
@@ -1299,6 +1236,11 @@ function callEvidence(site, {
   return evidence;
 }
 
+/** A base URL the request carries of its own, which a client puts in place of its instance's. */
+function requestPrefix(site) {
+  return typeof site.requestBase === 'string' ? { value: normalizeUrl(site.requestBase), from: 'request' } : null;
+}
+
 /**
  * ONE URL CANDIDATE of one call site, placed.
  *
@@ -1398,14 +1340,40 @@ function leavesThePack(absolute, cfg) {
 /**
  * NO BUILD SENDS IT (review 2, item 4): the builds the client's base URL holds
  * in and the builds the front of the path holds in share none, so the two are
- * never one request. Counted as unresolved (`noBuild`), and no edge is placed.
+ * never one request.
  */
-function noBuildSendsIt(site, prefix, stats) {
+function noBuildSendsIt(site, prefix) {
   if (!Array.isArray(site.buildModes) || !Array.isArray(prefix.modes)) return false;
-  if (site.buildModes.some((m) => prefix.modes.includes(m))) return false;
-  stats.unresolved.total += 1;
-  stats.unresolved.byReason.noBuild += 1;
-  return true;
+  return !site.buildModes.some((m) => prefix.modes.includes(m));
+}
+
+/**
+ * THE BASE URL EACH BUILD PUTS IN FRONT (review 3, R4): the client's, and, when
+ * some builds set it nowhere, the empty one those builds send the path with.
+ * Each is a candidate for the builds it holds in, never one for every build.
+ */
+function prefixesByBuild(prefix) {
+  if (!prefix.unset || prefix.unset.value === prefix.value) return [prefix];
+  return [prefix, { value: prefix.unset.value, from: prefix.from, candidates: [], modes: prefix.unset.modes, front: '' }];
+}
+
+/** One site's candidates placed behind ONE base URL, every method it may send; whether they left the pack. */
+function placeSite(site, prefix, seen, shared) {
+  const { stats, ports, configFor } = shared;
+  const absolute = site.absolute ?? site.call.url.absolute ?? null;
+  const away = awayOfSite(prefix, absolute, ports);
+  const outsidePack = away !== null || leavesThePack(absolute, configFor(site.pkg));
+  if (away !== null && stats.ports) stats.ports.otherPortCalls += 1;
+  const ctx = { ...shared, prefix, absolute, outsidePack, away };
+  for (const [cand, one] of site.resolved.flatMap((x) => (site.methods ?? [site.method]).map((m) => [x, { ...site, method: m }]))) {
+    const got = placeCandidate(cand, one, ctx);
+    if (got.allHoles) { seen.allHoles = true; continue; }
+    if (got.missed) { seen.missed = true; continue; }
+    if (got.routes > 1) seen.multi = true;
+    if (seen.match === null || (seen.match === 'template' && got.how === 'exact')) seen.match = got.how;
+    if (seen.grade === null || GRADE_RANK[got.grade] < GRADE_RANK[seen.grade]) seen.grade = got.grade;
+  }
+  return outsidePack;
 }
 
 /**
@@ -1440,6 +1408,9 @@ export function placeHttpEdges({
   // server for its own menu?".
   const httpFunctionIds = new Set();
   const matchedRoutePaths = new Set();
+  const shared = {
+    g, files, nodesToAdd, edges, stats, matchUrl, gatewayRoutes, gatewayKeys, unmatched, httpFunctionIds, matchedRoutePaths, ports, configFor,
+  };
 
   for (const site of sites) {
     const { call } = site;
@@ -1453,26 +1424,17 @@ export function placeHttpEdges({
     // `@{/…}` and `<c:url>` all mean "where this deployment is mounted", which
     // is not part of any route the pack serves, so the prefix is the empty
     // string and nothing had to be guessed to know that.
-    const prefix = site.template ? TEMPLATE_PREFIX : prefixOf(site.instanceId);
-    if (noBuildSendsIt(site, prefix, stats)) continue;
-    const absolute = site.absolute ?? call.url.absolute ?? null;
-    const away = awayOfSite(prefix, absolute, ports);
-    const outsidePack = away !== null || leavesThePack(absolute, configFor(site.pkg));
-    if (away !== null && stats.ports) stats.ports.otherPortCalls += 1;
-    const ctx = {
-      g, files, nodesToAdd, edges, stats, matchUrl, gatewayRoutes, gatewayKeys,
-      prefix, absolute, outsidePack, away, unmatched, httpFunctionIds, matchedRoutePaths,
-    };
-    const seen = { grade: null, match: null, multi: false, missed: false, allHoles: false };
-    for (const cand of site.resolved) {
-      const got = placeCandidate(cand, site, ctx);
-      if (got.allHoles) { seen.allHoles = true; continue; }
-      if (got.missed) { seen.missed = true; continue; }
-      if (got.routes > 1) seen.multi = true;
-      if (seen.match === null || (seen.match === 'template' && got.how === 'exact')) seen.match = got.how;
-      if (seen.grade === null || GRADE_RANK[got.grade] < GRADE_RANK[seen.grade]) seen.grade = got.grade;
+    const prefixes = prefixesByBuild(site.template ? TEMPLATE_PREFIX : requestPrefix(site) ?? prefixOf(site.instanceId))
+      .filter((p) => !noBuildSendsIt(site, p));
+    if (prefixes.length === 0) {
+      stats.unresolved.total += 1;
+      stats.unresolved.byReason.noBuild += 1;
+      continue;
     }
-    countSite(site, seen, { stats, unmatched, prefix, outsidePack });
+    const seen = { grade: null, match: null, multi: false, missed: false, allHoles: false };
+    let outsidePack = false;
+    for (const prefix of prefixes) outsidePack = placeSite(site, prefix, seen, shared) || outsidePack;
+    countSite(site, seen, { stats, unmatched, prefix: prefixes[0], outsidePack });
   }
   return { httpFunctionIds, matchedRoutePaths, unmatched };
 }
@@ -1562,15 +1524,15 @@ function typedFieldTarget({ files, resolver, providersOf }, file, className, par
   const v = resolver.fieldValue(file, className, parts[0], 0);
   if (!v || v.kind !== 'class-instance' || typeof v.typed !== 'string') return null;
   const behind = providersOf(v.key);
-  const found = behind.classes.map((key) => {
-    const at = key.lastIndexOf('#');
-    return { file: key.slice(0, at), type: key.slice(at + 1), name: `${key.slice(at + 1)}.${parts[1]}` };
-  }).filter((t) => files.get(t.file)?.functions.has(t.name));
+  const declared = behind.classes.map((key) => declaringClass(files, resolver, key, parts[1]));
+  const found = [];
+  for (const t of declared) if (t !== null && !found.some((x) => x.file === t.file && x.type === t.type)) found.push({ ...t, name: `${t.type}.${parts[1]}` });
   if (found.length === 0) return null;
   const assumed = v.assumed === true;
-  // A candidate set a provider this lane does not read may add to is not one
-  // guaranteed to hold the truth (review 2, item 6).
-  const grade = assumed || behind.unread.length > 0 ? 'HEURISTIC' : 'SOUND_SET';
+  // A candidate set a provider this lane does not read may add to, or with a
+  // class whose method this lane did not find, is not one guaranteed to hold
+  // the truth (review 2, item 6; review 3, N1).
+  const grade = assumed || behind.unread.length > 0 || declared.includes(null) ? 'HEURISTIC' : 'SOUND_SET';
   const providers = behind.providers.length > 0 || behind.unread.length > 0
     ? { providers: { candidates: found.map((t) => `${t.file}#${t.name}`), ...(behind.unread.length > 0 ? { unread: behind.unread } : {}) } }
     : {};
@@ -1584,6 +1546,25 @@ function typedFieldTarget({ files, resolver, providersOf }, file, className, par
     },
   }));
   return rest.length > 0 ? { ...first, also: rest } : first;
+}
+
+/**
+ * THE CLASS WHOSE METHOD AN INSTANCE RUNS (review 3, N1): the class itself when
+ * it declares the method, else the nearest class up what it extends that
+ * does. Null when none this lane read does.
+ */
+function declaringClass(files, resolver, key, method) {
+  for (let cur = key, i = 0; cur && i < 8; i += 1) {
+    const at = cur.lastIndexOf('#');
+    const file = cur.slice(0, at);
+    const type = cur.slice(at + 1);
+    const f = files.get(file);
+    if (f && f.functions.has(`${type}.${method}`)) return { file, type };
+    const ext = f ? f.classes.get(type)?.extends : null;
+    const up = ext ? resolver.rootValue(file, ext.callee, ext.binding ?? null, 0) : null;
+    cur = up && up.kind === 'class' ? up.key : null;
+  }
+  return null;
 }
 
 /**

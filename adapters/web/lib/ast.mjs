@@ -40,6 +40,16 @@ export function eachChild(node, fn) {
 
 export const toPosix = (p) => p.split(path.sep).join('/');
 
+/** The TypeScript written around an expression, which changes nothing it holds. */
+const TS_WRAPPERS = new Set(['TSAsExpression', 'TSSatisfiesExpression', 'TSTypeAssertion', 'TSNonNullExpression', 'ParenthesizedExpression']);
+
+/** An expression with the TypeScript around it taken off: `option as any` is `option`. */
+export function bare(n) {
+  let cur = n;
+  for (let i = 0; i < 8 && cur && TS_WRAPPERS.has(cur.type); i += 1) cur = cur.expression;
+  return cur;
+}
+
 /** A property key as written: `a`, `'a'`, `"a"`, `1`. Computed keys give null. */
 export function keyName(prop) {
   if (!prop || !prop.key) return null;

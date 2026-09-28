@@ -18,9 +18,9 @@ import { formCall } from './forms.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
 import { isEngineCall, websquareSubmissionOf } from './websquare_calls.mjs';
 import { envSpellingOf, isEnvExpression } from './ast.mjs';
-import { methodOverrideOf } from './forwards.mjs';
 import { handsOf } from './origins.mjs';
 import { readsOf } from './reads.mjs';
+import { setKeysOf, setsOf } from './sets.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
 export const VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
@@ -336,7 +336,9 @@ function methodOf(callee, summaries, platformSink, globalClient = null) {
     return { value: callee.name.toUpperCase(), from: 'callee-name' };
   }
   const v = fromObject();
-  return v ? { value: v, from: 'config' } : null;
+  if (v) return { value: v, from: 'config' };
+  // `{ method: verb }`: a method is written, and which one is not stated here.
+  return summaries.some((s) => s.kind === 'object' && s.keys.method !== undefined) ? { value: null, from: 'config' } : null;
 }
 
 /**
@@ -405,51 +407,57 @@ function withPlace(url, summaries, urlSummary) {
   return url;
 }
 
+/** The keys a call's sets are recorded for (lib/sets.mjs), read off the pack once per file. */
+function setKeys(ctx) {
+  if (!ctx.setKeys) ctx.setKeys = setKeysOf(ctx.libraries);
+  return ctx.setKeys;
+}
+
 /**
- * The method with what may REPLACE it (R2-K), when the call wrote it into an
- * object: `{ method: 'GET', ...option }` is a default the caller's own
- * `method` wins over, and `lib/forwards.mjs` says which spreads can do that.
+ * WHAT A CALL PASSES ON AND WHAT IT WRITES, once, for a call record and a
+ * forward alike: the hands and the reads apart from them (lib/origins.mjs,
+ * lib/reads.mjs), and the sets (lib/sets.mjs), each left off when empty.
  */
-function withOverride(method, node, env) {
-  // `fetch(u, { method: 'GET', ...o })` reads its method out of the options
-  // object too (`positional`), and is replaced the same way.
-  if (!method || (method.from !== 'config' && method.from !== 'positional') || !method.value) return method;
-  const over = methodOverrideOf(node, env, method.value);
-  return over === null ? method : { ...method, overridable: over };
+function passedOn(ctx, node, env) {
+  const used = new Set();
+  const written = [];
+  const hands = handsOf(node, env, used, written);
+  const reads = readsOf(node, env, used);
+  const sets = setsOf(node, env, setKeys(ctx), written);
+  return {
+    hands, ...(reads ? { reads } : {}), ...(sets.length > 0 ? { sets } : {}),
+  };
 }
 
 /**
  * A CALL THAT HANDS ON WHAT ITS FUNCTION WAS GIVEN, to a name this file
  * declares (R2-K). It gets no call record, because a call on a local function
  * is ordinary; it goes on the enclosing function's record as one of its
- * `forwards`, with what it hands on and the method it writes, and the bridge
+ * `forwards`, with what it hands on and what it writes, and the bridge
  * follows it as it follows a `return`.
  */
-function noteForward(ctx, node, env, { isNew, callee, binding, summaries, line }) {
+function noteForward(ctx, node, env, { isNew, callee, binding, line }) {
   const rec = env.func ? env.func.record : null;
   if (isNew || !rec || !callee || callee.path.length > 1 || !binding || binding.kind !== 'local') return;
-  const used = new Set();
-  const hands = handsOf(node, env, used);
-  if (hands.length === 0) return;
-  const method = withOverride(methodOf(callee, summaries, null), node, env);
+  const passed = passedOn(ctx, node, env);
+  if (passed.hands.length === 0) return;
   if (!Array.isArray(rec.forwards)) rec.forwards = [];
-  const reads = readsOf(node, env, used);
-  rec.forwards.push({ line, callee, binding, method, hands, ...(reads ? { reads } : {}) });
+  rec.forwards.push({ line, callee, binding, ...passed });
 }
 
 /**
  * WHAT A CALL PASSES ON of its named function's parameters, on its own record
  * (review 2, item 2): the bridge walks a wrapper chain hop by hop, and a URL
- * reaches the sink only when every hop hands on the parameter it is in. Left
- * off outside a named function, where there are no parameters to pass.
+ * reaches the sink only when every hop hands on the parameter it is in; the
+ * method and the base URL are walked the same way (review 3). Left off outside
+ * a named function, where there are no parameters to pass.
  */
-function withHands(rec, node, env) {
+function withHands(ctx, rec, node, env) {
   if (!env.func) return rec;
-  const used = new Set();
-  const hands = handsOf(node, env, used);
-  const reads = readsOf(node, env, used);
+  const { hands, reads, sets } = passedOn(ctx, node, env);
   if (hands.length > 0) rec.hands = hands;
   if (reads) rec.reads = reads;
+  if (sets) rec.sets = sets;
   return rec;
 }
 
@@ -502,12 +510,12 @@ function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summari
     callee, summaries, routeArg, platformSink, globalClient, env,
   });
   if (urlSummary !== null) rec.url = withPlace(buildUrl(ctx, urlSummary, env.scope), summaries, urlSummary);
-  rec.method = withOverride(positional?.method ?? methodOf(callee, summaries, platformSink, globalClient), node, env);
+  rec.method = positional?.method ?? methodOf(callee, summaries, platformSink, globalClient);
   // The functions this call HANDS OVER, left off when there are none so a
   // frontend's ordinary call records do not each grow an empty list.
   const refs = fnRefsOf(ctx, node.arguments, env);
   if (refs.length > 0) rec.fnRefs = refs;
-  return withHands(rec, node, env);
+  return withHands(ctx, rec, node, env);
 }
 
 /**
@@ -572,7 +580,7 @@ export function visitCall(ctx, node, env) {
 
   const rec = httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summaries, binding });
   if (rec !== null) emit(rec, line);
-  else noteForward(ctx, node, env, { isNew, callee, binding, summaries, line });
+  else noteForward(ctx, node, env, { isNew, callee, binding, line });
 
   for (const a of node.arguments) visit(a, env);
   if (calleeNode && calleeNode.type !== 'Identifier') {

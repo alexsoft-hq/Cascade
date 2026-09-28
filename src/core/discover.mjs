@@ -24,7 +24,7 @@ import {
   findViewResolvers, findXmlViewResolvers, findIdGenerators, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
-import { serverPortsOfFile, serverPortsOfJava } from './server_ports.mjs';
+import { portRecordsOfJava, serverPortsOfFile, serverPortsOfJava } from './server_ports.mjs';
 import { builtinRegistry, RuleError } from './rules/registry.mjs';
 import { nestAppsOf, noteNestPackage, noteTypeScriptBackendFile, prismaProvidersOf } from './discover_nest.mjs';
 
@@ -801,7 +801,7 @@ function classifyJavaFile(d, f) {
     if (MYBATIS_PLUS_RE.test(text)) counts.mybatisPlusFiles += 1;
     // …and configuration the code loads itself, which leaves the port unread.
     const loaded = isTestPath(rel(absFile)) ? null : serverPortsOfJava(rel(absFile), text);
-    if (loaded !== null) d.serverPorts.push(loaded);
+    if (loaded !== null) d.serverPorts.push(...portRecordsOfJava(loaded, d.readQuietly, serverPortsOfFile));
     return true;
   }
 
@@ -1652,7 +1652,9 @@ export function discover(root, io = {}) {
 
   // The discovery STATE the classifiers write into. One object rather than
   // twenty closures, so a classifier can be read — and tested — on its own.
-  const d = { ...collected, addRoot, counts, ddlDialectHint: null, diagnostics, javaWithPackage: 0, read, root };
+  // A file a Java source names may not be there, which is an answer, not an error.
+  const readQuietly = (relPath) => { try { return io.readFile(path.join(root, relPath)); } catch { return null; } };
+  const d = { ...collected, addRoot, counts, ddlDialectHint: null, diagnostics, javaWithPackage: 0, read, readQuietly, root };
   const classify = (absFile, name, repoKey, dirEntries, inPackage) => {
     classifyFile(d, {
       absFile,

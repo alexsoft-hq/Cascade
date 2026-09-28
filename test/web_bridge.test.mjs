@@ -463,9 +463,12 @@ test('prefix DERIVED: a dev-proxy rule with a rewrite strips the base URL', () =
 
 test('prefix DERIVED: a proxy rule with NO rewrite keeps the base URL', () => {
   const g = graphWithRoutes();
+  // Set for every build: a build that set none would send the path bare
+  // (web_review3.test.mjs, base_url_set_in_one_build_is_not_sound_for_every_build).
   addWebFacts(g, withPrefixFacts(
     { kind: 'member', root: 'process', path: ['env', 'BASE'] },
     [cfg('.env.development', { what: 'env', name: 'BASE', value: '/api', mode: 'development' }),
+      cfg('.env.production', { what: 'env', name: 'BASE', value: '/api', mode: 'production' }),
       cfg('vue.config.js', { what: 'proxy', context: '/api', target: 'http://localhost:8080', rewrite: null })],
   ));
   const e = only(g);
@@ -937,6 +940,9 @@ test('facts stamped ../ resolve an alias and a base URL exactly like in-root one
     cfg('../front/vite.config.ts', { what: 'alias', from: '@', to: './src' }),
     cfg('../front/.env.development', {
       what: 'env', name: 'BASE', value: '/api', mode: 'development',
+    }),
+    cfg('../front/.env.production', {
+      what: 'env', name: 'BASE', value: '/api', mode: 'production',
     }),
     cfg('../front/vite.config.ts', {
       what: 'proxy', context: '/api', target: 'http://localhost:8080', rewrite: null,

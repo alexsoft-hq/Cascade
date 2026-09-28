@@ -169,9 +169,10 @@ test('a hand says which keys a rest no longer carries and which key a part is', 
     { param: 0, arg: 0, as: 'key', key: 'url', part: 'url' },
   ]);
   assert.deepEqual(callIn('byKey').hands, [{ param: 0, arg: 0, as: 'key', key: 'url', part: 'url' }]);
-  // What a call reads apart from its hands: the parts inside `headers: {…}`.
+  // What a call reads apart from its hands: the parts inside `headers: {…}`,
+  // which can only land under `headers`.
   assert.deepEqual(callIn('request').reads, {
-    params: [], partial: [{ param: 0, key: 'headers' }, { param: 0, key: 'headersType' }],
+    params: [], under: { headers: { params: [], partial: [{ param: 0, key: 'headers' }, { param: 0, key: 'headersType' }] } },
   });
   assert.deepEqual(callIn('reassigned').reads, { params: [], open: { why: 'reassigned', name: 'conf' } });
 });
@@ -190,10 +191,12 @@ const envRun = (name) => {
 test('base_url_does_not_join_disjoint_build_modes', () => {
   // The base URL is set only for development, the front of the path only for
   // production: no build sends /api/foo/things, so no edge may say one does.
+  // The production build sets no base URL at all, so it asks for /foo/things,
+  // and that is the one request this call makes (review 3, R4).
   const { edges, stats } = envRun('cross-modes');
   assert.equal(edges.some((e) => e.to === webEndpointId('GET', '/api/foo/things')), false, JSON.stringify(edges));
-  assert.equal(edges.some((e) => e.grade === 'SOUND_SET'), false, JSON.stringify(edges));
-  assert.equal(stats.unresolved.byReason.noBuild, 1);
+  assert.deepEqual(edges.map((e) => [e.to, e.grade]), [[webEndpointId('GET', '/foo/things'), 'SOUND_SET']]);
+  assert.equal(stats.unresolved.byReason.noBuild, 0);
 });
 
 test('empty_env_or_uses_fallback', () => {
