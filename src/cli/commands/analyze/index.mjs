@@ -30,6 +30,7 @@ import { codeSettingDiagnostics } from '../../../core/code_settings.mjs';
 import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
 import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
+import { overlayInputsRecord } from '../../overlay_inputs.mjs';
 
 /**
  * The profile's "jpa.namingStrategy is not declared" finding, replaced by what the
@@ -277,6 +278,8 @@ function certify(ctx, prepared, facts) {
   } = prepared;
   const { g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats } = facts;
   const st = result.stats;
+  // What the working-tree overlay checks is still what this run read, beside the fact index (src/cli/overlay_inputs.mjs).
+  result.index.overlayInputs = overlayInputsRecord({ rootAbs: selectionRel.root, webRoots: selectionRel.webRoots, manifestDir: resolved.dotCascade ?? null });
   const { pack, builtAt } = buildPack(g, {
     projectId, lanes, base, ddl, ddls, snapshot, snapshotProvenance, snapshotSha256, sqlArgs, axes,
     laneStats, webStats, openapiStats, harStats, runtimeStats, diagnostics, profileFile, st, baseCommit,

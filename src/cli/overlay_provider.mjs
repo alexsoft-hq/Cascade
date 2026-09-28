@@ -47,7 +47,9 @@ import { safeHash, sha256File } from './state.mjs';
 import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
 import { javaLaneOptions, webLaneOptions } from '../core/assemble.mjs';
 import { isTestPath } from '../core/discover.mjs';
+import { serverPortsOfJava } from '../core/server_ports.mjs';
 import { looksLikeSpringConfigFile } from '../core/springconfig.mjs';
+import { baseInputsNow, manifestDirOf, sqlArgsOf } from './overlay_inputs.mjs';
 
 /**
  * The OpenAPI documents the base pack read, as they are on disk now (RM67).
@@ -407,9 +409,9 @@ export function baseWebInputsOf(pack, rootAbs) {
 /**
  * The web bridge's options for an overlay, or null when this run reads no
  * frontend: the list `analyze` builds (src/core/assemble.mjs webLaneOptions),
- * from the LIVE profile for the same reason `generatedSources` is (a gateway
- * route declared since the pack was built takes effect here first), with the
- * packages and ports the base pack recorded. The screen axis gate is resolved
+ * from the profile the pack was built with (one changed since declines the
+ * overlay, src/cli/overlay_inputs.mjs), with the packages and ports the base
+ * pack recorded. The screen axis gate is resolved
  * the SAME way the certified run resolved it, including the third state:
  * `screenAxisOf` reads the frontend packages this overlay reads, so an
  * out-of-root frontend keeps its screens here too. An overlay whose gate was off
@@ -437,7 +439,7 @@ function webOptions(profile, webRootsAbs, templateRootsAbs, inputs) {
  * @param {{webConfig?:string[]}} dirty  their lanes (src/core/overlay.mjs classifyDirtyFiles)
  * @param {{recorded:boolean, serverPorts:(object|null)}} inputs  baseWebInputsOf's answer
  */
-export function webInputLimits(pack, entries, dirty, inputs) {
+export function webInputLimits(pack, entries, dirty, inputs, rootAbs = null) {
   if (!pack?.meta?.laneStats?.web) return [];
   const limit = (reason) => ({ scope: 'overlay', reason });
   const out = [];
@@ -450,12 +452,30 @@ export function webInputLimits(pack, entries, dirty, inputs) {
   if (manifests.length > 0) {
     out.push(limit(`${manifests.join(', ')} changed since the pack was built. The overlay takes which directories are frontend packages from the base pack and does not decide it again, so a package that file adds or removes is not seen in this answer`));
   }
-  const springConfigs = entries.filter((e) => looksLikeSpringConfigFile(e.path) && !isTestPath(e.path)).map((e) => e.path);
-  if (inputs.serverPorts && springConfigs.length > 0) {
+  const portFiles = inputs.serverPorts ? portInputsEdited(entries, dirty, inputs.serverPorts, rootAbs) : [];
+  if (portFiles.length > 0) {
     const read = inputs.serverPorts.known ? `port ${inputs.serverPorts.ports.join(', ')}` : 'no port it could state';
-    out.push(limit(`${springConfigs.join(', ')} changed since the pack was built. The overlay places a frontend call on this machine by the ports the base pack read (${read}) and does not read them again, so a port that file now sets is not seen in this answer`));
+    out.push(limit(`${portFiles.join(', ')} changed since the pack was built. The overlay places a frontend call on this machine by the ports the base pack read (${read}) and does not read them again, so a port those files now set, or leave unknown, is not seen in this answer`));
   }
   return out;
+}
+
+/**
+ * The edited files the ports were read from, or could now be: a Spring
+ * configuration, a file the base pack read a port from, a source the base pack
+ * named as the reason a port is unknown, and a Java source that now loads
+ * configuration (`@PropertySource`) or sets the port in code, as analyze reads
+ * one (src/core/server_ports_java.mjs), comments left out.
+ */
+function portInputsEdited(entries, dirty, serverPorts, rootAbs) {
+  const read = new Set(serverPorts.files ?? []);
+  const java = new Set(dirty?.java ?? []);
+  const setsPortNow = (rel) => {
+    if (!rootAbs || !java.has(rel)) return false;
+    try { return serverPortsOfJava(rel, fs.readFileSync(path.resolve(rootAbs, rel), 'utf8')) !== null; } catch { return false; }
+  };
+  return entries.map((e) => e.path).filter((f) => (looksLikeSpringConfigFile(f) && !isTestPath(f))
+    || read.has(f) || (serverPorts.why ?? '').includes(f) || setsPortNow(f));
 }
 
 /**
@@ -515,10 +535,10 @@ export function overlayState({
     catalogRecords: lanes.catalogRecords, lineageRecords: lanes.lineageRecords,
     baseGraph, overlaySessionId: session.overlaySessionId,
     dirtyFiles,
-    // The list `analyze` builds (src/core/assemble.mjs), from the LIVE profile:
-    // the overlay describes the bytes on disk now, so a gateway prefix, a path
-    // prefix or a generated-source declaration edited since the pack was built
-    // takes effect here first. The id generators are not re-read (limits).
+    // The list `analyze` builds (src/core/assemble.mjs), from the profile the
+    // pack was built with: a gateway prefix, a path prefix or a generated-source
+    // declaration edited since declines the overlay rather than reading as the
+    // edit's doing (src/cli/overlay_inputs.mjs). The id generators are not re-read (limits).
     java: javaLaneOptions(profile, { packagePrefixes: selection.packagePrefixes ?? [] }),
     openapiDocuments,
     // Same identity rule as the run that built the base pack — the overlay
@@ -535,7 +555,7 @@ export function overlayState({
     dirtyFiles, parsedFiles: lanes.parsedFiles, droppedFiles: lanes.dropFiles,
     parsedWebFiles: lanes.parsedWebFiles, droppedWebFiles: lanes.webDropFiles,
     webConfigFiles: dirty.webConfig, ...tsReport(ts),
-    unmatched: unclaimedByTs(dirty.other, ts), provisional: built.provisional, taggedEdges: built.taggedEdges,
+    unmatched: unclaimedByTs(dirty.other, ts), provisional: built.provisional, removed: built.removed, taggedEdges: built.taggedEdges,
     reusedShards: lanes.reusedShards, javaStats: built.javaStats, webStats: built.webStats, tsStats: built.tsStats,
     timingsMs, limits,
   };
@@ -560,15 +580,17 @@ function unclaimedByTs(other, ts) {
 
 /**
  * The mapper XML this project ships for the OTHER database vendors (RM56),
- * absolute. The profile writes them manifest-relative, and the manifest sits
- * beside the pack, so this is the one place the overlay resolves them.
+ * absolute. The profile writes them relative to the project's `.cascade`, and
+ * the run resolved them there (src/core/lanes.mjs); the overlay resolves them
+ * against the directory the run recorded, not the pack's own, or it read the
+ * copies the run left on the shelf.
  */
-function mapperAlternativesOf(profile, packDir) {
+function mapperAlternativesOf(profile, manifestDir) {
   const alt = (profile && profile.mappers && profile.mappers.alternatives) || {};
   return [...new Set(Object.values(alt)
     .flatMap((files) => (Array.isArray(files) ? files : []))
     .filter((f) => typeof f === 'string' && f !== '')
-    .map((f) => path.resolve(packDir, f)))].sort();
+    .map((f) => path.resolve(manifestDir, f)))].sort();
 }
 
 /**
@@ -606,90 +628,108 @@ function declinedState(reason, { headCommit, baseCommit }) {
  * @returns {object} the overlay state; one with `session: null` is a decline
  *          nothing can be remembered by
  */
-export function layOverlay({ packDir, pack, baseGraph, profile, idx, session, entries, baseCommit, headCommit, stale, jdkBox = { jdk: null } }) {
+export function layOverlay({ packDir, pack, baseGraph, profile, idx, session, entries, baseCommit, headCommit, stale, jdkBox = { jdk: null }, inputsNow = null }) {
   const dirtyFiles = entries.map((e) => e.path);
   const verdict = refuse({ session, dirtyFiles, entries, idx, profile, baseCommit, headCommit });
   if (verdict.declined) return declinedState(verdict.declined, { headCommit, baseCommit });
   if (!verdict.ok) return verdict;
+  const now = inputsNow ?? inputsNowOf({ idx, pack, profile });
+  const moved = inputsVerdict(now, { session, dirtyFiles, baseCommit, headCommit });
+  if (moved) return moved;
   const rootAbs = idx.root;
   const absOf = (rel) => path.resolve(rootAbs, rel);
-  const profileDir = profileDirOf(packDir, pack);
+  // `mappers.alternatives`, `tsBackend.prismaSchema` and `tsBackend.app` are
+  // relative to the directory the run resolved them against.
+  const profileDir = manifestDirOf(idx, packDir, pack);
   const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf, ts } = runLanes({
     idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile, pack,
-    mapperAlternatives: mapperAlternativesOf(profile, packDir), profileDir, changed: dirtyFiles,
+    mapperAlternatives: mapperAlternativesOf(profile, profileDir), profileDir, changed: dirtyFiles,
   });
   const webInputs = baseWebInputsOf(pack, rootAbs);
+  const limits = [...now.limits, ...unreadInputLimits(pack), ...webInputLimits(pack, entries, verdict.dirty, webInputs, rootAbs), ...tsInputLimits(idx, profile, profileDir)];
   return overlayState({
-    lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs),
-    limits: [...unreadInputLimits(pack), ...webInputLimits(pack, entries, verdict.dirty, webInputs), ...tsInputLimits(idx, profile, profileDir)], webInputs,
+    lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs), limits, webInputs,
     selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf, ts,
   });
 }
 
 /**
- * The directory of the profile the overlay is served with: the file the pack
- * recorded, else the one beside the pack (src/cli/serve.mjs servedProfile).
- * `tsBackend.prismaSchema` is relative to it, as `analyze` read it.
+ * The base pack's inputs as they are now (src/cli/overlay_inputs.mjs). The
+ * catalog is checked with the SQL arguments the run used; when the profile's
+ * are others, `refuse` declines on them and the catalog is not asked.
  */
-function profileDirOf(packDir, pack) {
-  const file = [pack?.meta?.profile, path.join(packDir, '..', 'profile.json')].find((f) => typeof f === 'string' && fs.existsSync(f));
-  return file ? path.dirname(file) : null;
+export function inputsNowOf({ idx, pack, profile }) {
+  const selection = idx.selection ?? {};
+  const sqlArgs = sqlArgsOf(profile);
+  const sameSql = JSON.stringify([...sqlArgs.mybatisArgs, ...sqlArgs.lineageArgs]) === JSON.stringify(selection.sqlArgs ?? []);
+  const catalogIn = sameSql
+    ? catalogInputsOf(pack, selection, (rel) => path.resolve(idx.root, rel), sqlArgs)
+    : { files: [], shardArgs: [], fromSnapshot: false };
+  return baseInputsNow({ idx, pack, profile, rootAbs: idx.root, catalogIn });
+}
+
+/**
+ * An overlay the base inputs rule out, or null: a frontend repository that
+ * moved on is behind, as a moved HEAD is; a profile or a catalog input that
+ * changed declines, naming it.
+ */
+function inputsVerdict(now, { session, dirtyFiles, baseCommit, headCommit }) {
+  if (now.stale) {
+    return {
+      applied: false, state: 'stale-commit', session, dirtyFiles, reason: now.stale,
+      limits: [{ scope: 'overlay', reason: `${now.stale}. The answer below is the BASE pack's, not the working tree's. Run \`cascade analyze\` to certify the new commit` }],
+    };
+  }
+  return now.declined ? declinedState(now.declined, { headCommit, baseCommit }) : null;
 }
 
 /**
  * A provider `() => overlayState` for the tool context, plus the reason it could
  * not be built. The provider is called ONCE PER REQUEST (the working tree moves
  * between calls) and memoizes on the overlaySessionId: repeated calls with the
- * same dirty bytes cost one git diff and a few hashes.
+ * same dirty bytes over the same base inputs cost one git diff and a few hashes.
  */
 export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
   const indexFile = path.join(packDir, 'facts-index.json');
   const stale = (msg) => { throw new OverlayStaleError(`${msg}. Run \`cascade analyze\` to rebuild the pack and its fact cache`); };
-
   let index = null;
-  const load = () => {
-    if (index) return index;
-    index = indexOfPack(indexFile, pack, stale);
-    return index;
-  };
-
-  let cache = null; // single-entry LRU: {id, state}
-  const jdkBox = { jdk: null };
-  const remember = (session, state) => { cache = { id: session.overlaySessionId, state }; return state; };
-
+  const memo = { id: null, state: null, jdkBox: { jdk: null } }; // single-entry LRU
   return () => {
-    const idx = load();
-    const rootAbs = idx.root;
-    if (!(pack.meta?.base?.commit ?? idx.base?.commit ?? null)) stale('the pack records no base commit, so there is nothing to diff the working tree against');
-    if (!fs.existsSync(rootAbs)) stale(`the analyzed root ${rootAbs} is gone`);
-
-    const diff = dirtyEntries({ idx, pack, packDir, rootAbs, stale });
-    const { headCommit, baseCommit, entries } = diff;
-    if (diff.declineReason) return declinedState(diff.declineReason, { headCommit, baseCommit });
-
-    const session = overlaySession({
-      baseDigest: pack.digest,
-      baseCommit,
-      headCommit,
-      dirtyFiles: entries.map((e) => ({
-        path: e.path,
-        sha256: e.status === 'D' ? null : safeHash(path.resolve(rootAbs, e.path)),
-      })),
-    });
-    if (cache && cache.id === session.overlaySessionId) return cache.state;
-
-    // A clean tree needs no overlay at all: the pack already describes this
-    // commit, so the answer is the certified base and the verdict is `current`
-    // (§10.3) rather than a provisional one computed over nothing.
-    if (entries.length === 0 && session.state === 'fresh') {
-      return remember(session, {
-        applied: false, state: 'clean', session, dirtyFiles: [],
-        reason: `the working tree matches ${baseCommit.slice(0, 12)}, the commit this pack was built from, so there is nothing to overlay`,
-        limits: [],
-      });
-    }
-
-    const state = layOverlay({ packDir, pack, baseGraph, profile, idx, session, entries, baseCommit, headCommit, stale, jdkBox });
-    return state.session ? remember(session, state) : state;
+    index = index ?? indexOfPack(indexFile, pack, stale);
+    return overlayOnce({ packDir, pack, baseGraph, profile, idx: index, stale, memo });
   };
+}
+
+/** One request: the diff, the base inputs, the session they make, and the overlay over them (or the memo of it). */
+function overlayOnce({ packDir, pack, baseGraph, profile, idx, stale, memo }) {
+  const rootAbs = idx.root;
+  if (!(pack.meta?.base?.commit ?? idx.base?.commit ?? null)) stale('the pack records no base commit, so there is nothing to diff the working tree against');
+  if (!fs.existsSync(rootAbs)) stale(`the analyzed root ${rootAbs} is gone`);
+
+  const diff = dirtyEntries({ idx, pack, packDir, rootAbs, stale });
+  const { headCommit, baseCommit, entries } = diff;
+  if (diff.declineReason) return declinedState(diff.declineReason, { headCommit, baseCommit });
+
+  const inputsNow = inputsNowOf({ idx, pack, profile });
+  const session = overlaySession({
+    baseDigest: pack.digest, baseCommit, headCommit, inputs: inputsNow.fingerprint,
+    dirtyFiles: entries.map((e) => ({ path: e.path, sha256: e.status === 'D' ? null : safeHash(path.resolve(rootAbs, e.path)) })),
+  });
+  if (memo.id === session.overlaySessionId) return memo.state;
+  const remember = (state) => {
+    if (state.session) Object.assign(memo, { id: session.overlaySessionId, state });
+    return state;
+  };
+  // A clean tree needs no overlay at all: the pack already describes this
+  // commit, so the answer is the certified base and the verdict is `current`
+  // (§10.3) rather than a provisional one computed over nothing. Unless an
+  // input no diff reports moved: then the pack does not describe it either.
+  if (entries.length === 0 && session.state === 'fresh') {
+    return remember(inputsVerdict(inputsNow, { session, dirtyFiles: [], baseCommit, headCommit }) ?? {
+      applied: false, state: 'clean', session, dirtyFiles: [],
+      reason: `the working tree matches ${baseCommit.slice(0, 12)}, the commit this pack was built from, so there is nothing to overlay`,
+      limits: [],
+    });
+  }
+  return remember(layOverlay({ packDir, pack, baseGraph, profile, idx, session, entries, baseCommit, headCommit, stale, jdkBox: memo.jdkBox, inputsNow }));
 }

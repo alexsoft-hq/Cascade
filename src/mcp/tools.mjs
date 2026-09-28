@@ -601,6 +601,10 @@ function overlayReport(ov, applied) {
       tables: ov.provisional?.tables ?? [],
       columns: ov.provisional?.columns ?? [],
     },
+    // The other half: the routes the edited files gave the base pack that the
+    // overlay no longer has (a route an edited document moved, one a deleted
+    // controller served). They have no node left to be matched by.
+    removedIds: { endpoints: ov.removed?.endpoints ?? [] },
     timingsMs: ov.timingsMs ?? null,
   };
 }

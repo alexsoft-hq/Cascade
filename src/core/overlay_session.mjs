@@ -5,8 +5,10 @@
 // MUST-carry fields of the result:
 //
 //   overlaySessionId   what this answer was computed over — the base pack, the
-//                      commit it was built at, and the exact content of every
-//                      dirty file. Two calls agree iff nothing moved.
+//                      commit it was built at, the exact content of every
+//                      dirty file, and the base inputs no diff reports (the
+//                      profile, the catalog, a frontend repository's commit).
+//                      Two calls agree iff nothing moved.
 //   docVersions        path -> sha256 of the unsaved document, so a reader can
 //                      tell WHICH version of the file the answer describes.
 //
@@ -19,7 +21,7 @@
 // PURE and side-effect free: it reads no file and asks git nothing. The caller
 // supplies the commits and the hashes.
 
-import { sha256 } from './canonical.mjs';
+import { canonicalJson, sha256 } from './canonical.mjs';
 
 export const OVERLAY_SESSION_SCHEMA = 'cascade:overlay-session:1';
 
@@ -50,31 +52,28 @@ export const STATE_STALE_COMMIT = 'stale-commit';
  *        second edit with the first edit's answer. The caller is the one that
  *        has to go and look for them (bin/cascade.mjs), because a file outside
  *        the root is in no diff the root can produce.
+ * @param {object|null} [input.inputs]  the base pack's inputs as they are now,
+ *        which a diff of the root does not report (src/cli/overlay_inputs.mjs).
+ *        Folded in so an overlay built over the old ones is not the same
+ *        session; none leaves the id what it always was.
  * @returns {{schema:string, overlaySessionId:string, baseCommitDigest:string,
  *            baseCommit:string, headCommit:(string|null),
  *            docVersions:Object<string,(string|null)>, files:string[], state:string}}
  */
-export function overlaySession({ baseDigest, baseCommit, headCommit = null, dirtyFiles = [] }) {
+export function overlaySession({ baseDigest, baseCommit, headCommit = null, dirtyFiles = [], inputs = null }) {
   requireString('baseDigest', baseDigest);
   requireString('baseCommit', baseCommit);
   if (!Array.isArray(dirtyFiles)) throw new OverlaySessionError('dirtyFiles must be an array');
 
-  const docVersions = {};
-  for (const f of dirtyFiles) {
-    if (!f || typeof f.path !== 'string' || f.path.length === 0) {
-      throw new OverlaySessionError('every dirty file needs a non-empty path');
-    }
-    if (f.sha256 != null && typeof f.sha256 !== 'string') {
-      throw new OverlaySessionError(`dirty file ${f.path}: sha256 must be a string or null (deleted)`);
-    }
-    // Last entry wins deliberately: git can report the same path twice (a
-    // rename decomposed into D+A), and the WORKING TREE holds one version.
-    docVersions[f.path] = f.sha256 ?? null;
-  }
+  const docVersions = docVersionsOf(dirtyFiles);
   const files = Object.keys(docVersions).sort();
   // Newline-joined, path and version separated by ":" — the parts are a sorted
   // list of (path, hex-or-"absent"), neither of which can contain a newline.
-  const material = [baseDigest, baseCommit, ...files.map((p) => `${p}:${docVersions[p] ?? 'absent'}`)].join('\n');
+  // The inputs go last, as one canonical line no path can spell.
+  const material = [
+    baseDigest, baseCommit, ...files.map((p) => `${p}:${docVersions[p] ?? 'absent'}`),
+    ...(inputs == null ? [] : [`inputs ${canonicalJson(inputs)}`]),
+  ].join('\n');
 
   return {
     schema: OVERLAY_SESSION_SCHEMA,
@@ -89,6 +88,23 @@ export function overlaySession({ baseDigest, baseCommit, headCommit = null, dirt
     // as unchanged (SPEC §11.1 rule 2, applied to the overlay).
     state: headCommit === baseCommit ? STATE_FRESH : STATE_STALE_COMMIT,
   };
+}
+
+/** path -> sha256 (null for a deleted file) of every dirty file. */
+function docVersionsOf(dirtyFiles) {
+  const docVersions = {};
+  for (const f of dirtyFiles) {
+    if (!f || typeof f.path !== 'string' || f.path.length === 0) {
+      throw new OverlaySessionError('every dirty file needs a non-empty path');
+    }
+    if (f.sha256 != null && typeof f.sha256 !== 'string') {
+      throw new OverlaySessionError(`dirty file ${f.path}: sha256 must be a string or null (deleted)`);
+    }
+    // Last entry wins deliberately: git can report the same path twice (a
+    // rename decomposed into D+A), and the WORKING TREE holds one version.
+    docVersions[f.path] = f.sha256 ?? null;
+  }
+  return docVersions;
 }
 
 /** The short form used in console lines and the viewer. */

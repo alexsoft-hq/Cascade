@@ -37,6 +37,17 @@ const GRADE_RANK = { UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3,
 const SCREEN_EDGE_TYPES = Object.freeze(['CALLS', 'RENDERS']);
 
 /**
+ * The files a node comes from: the one its lane read it in, and for a route an
+ * OpenAPI document declares, each document that declares it (`declaredBy`).
+ * An edit to a document is an edit to the routes it declares, as an edit to a
+ * controller is an edit to its routes.
+ */
+function filesOfNode(node) {
+  const declared = Array.isArray(node.declaredBy) ? node.declaredBy.filter((d) => typeof d === 'string') : [];
+  return typeof node.file === 'string' ? [node.file, ...declared] : declared;
+}
+
+/**
  * Node ids whose originating file is one of `files`. Matching is root-relative
  * with a basename/suffix fallback, because lane file paths (java: source-root
  * relative; sql: mapper path) and a git diff's paths can differ in prefix.
@@ -50,13 +61,12 @@ export function nodesInFiles(graph, files) {
   const matched = new Map(files.map((f) => [f, []]));
   const byId = new Set();
   for (const node of graph.nodes.values()) {
-    if (!node.file) continue;
-    const nf = normalize(node.file);
+    const nfs = filesOfNode(node).map(normalize);
+    if (nfs.length === 0) continue;
     for (let i = 0; i < wanted.length; i++) {
-      if (pathMatch(nf, wanted[i])) {
-        matched.get(files[i]).push(node.id);
-        byId.add(node.id);
-      }
+      if (!nfs.some((nf) => pathMatch(nf, wanted[i]))) continue;
+      matched.get(files[i]).push(node.id);
+      byId.add(node.id);
     }
   }
   return { matched, byId };
@@ -416,9 +426,10 @@ function overlayJavaOptions(a) {
  * @param {{gatewayRoutes?:object, packages?:object[], serverPorts?:object|null}|null} [a.web]
  *        options for the web bridge, built by the one function `analyze`
  *        builds them with (webLaneOptions in src/core/assemble.mjs); null runs
- *        no web bridge. `gatewayRoutes` comes from the LIVE profile, exactly as
- *        `generatedSources` does; the packages and the ports are the ones the
- *        base pack recorded, because discovery's walk is not repeated.
+ *        no web bridge. `gatewayRoutes` comes from the profile the base pack
+ *        was built with (a changed profile declines the overlay); the packages
+ *        and the ports are the ones the base pack recorded, because
+ *        discovery's walk is not repeated.
  * @param {(javaFacts:object[]) => {jpa?:object|null, mybatisPlus?:object|null, lineage?:object[]}} [a.javaLanesOf]
  *        what the Java lanes add, given the assembled Java records: which of
  *        their bridges run and with what, and the lineage of the SQL written in
@@ -450,7 +461,7 @@ function overlayJavaOptions(a) {
  *        src/cli/ts_inputs.mjs); null runs no TypeScript bridge
  * @returns {{graph:import('./graph.mjs').Graph, javaStats:object, webStats:(object|null), tsStats:(object|null),
  *            provisional:{symbols:string[], endpoints:string[], statements:string[], tables:string[], columns:string[], edges:number},
- *            taggedEdges:number}}
+ *            taggedEdges:number, removed:{endpoints:string[]}}}
  */
 export function overlayGraph(a) {
   const { baseShards, baseGraph, overlaySessionId, dirtyFiles = [] } = a ?? {};
@@ -461,7 +472,19 @@ export function overlayGraph(a) {
   // ---- provisional: ids the base graph never had -------------------------
   const { provisional, provIds } = markProvisional(graph, baseGraph);
   const taggedEdges = tagOverlayEdges(graph, { dirtyFiles, overlaySessionId, provIds, provisional });
-  return { graph, javaStats, webStats, tsStats, provisional, taggedEdges };
+  return { graph, javaStats, webStats, tsStats, provisional, taggedEdges, removed: removedFrom(baseGraph, graph, dirtyFiles) };
+}
+
+/**
+ * THE OTHER HALF OF "PROVISIONAL": the routes the edited files gave the base
+ * graph that the overlay graph no longer has. A route an edited document moved
+ * elsewhere, or one a deleted controller served, is touched by the edit as much
+ * as the route that replaced it, and it has no node left to be matched by.
+ */
+function removedFrom(baseGraph, graph, dirtyFiles) {
+  const { byId } = nodesInFiles(baseGraph, dirtyFiles);
+  const endpoints = [...byId].filter((id) => baseGraph.nodes.get(id)?.kind === 'endpoint' && !graph.nodes.has(id)).sort();
+  return { endpoints };
 }
 
 /**
@@ -516,8 +539,8 @@ function tagOverlayEdges(graph, { dirtyFiles, overlaySessionId, provIds, provisi
   const touchesDirty = (id) => {
     let v = inDirty.get(id);
     if (v === undefined) {
-      const file = graph.nodes.get(id)?.file;
-      v = typeof file === 'string' && dirty.some((d) => pathMatch(normalize(file), d));
+      const node = graph.nodes.get(id);
+      v = node !== undefined && filesOfNode(node).some((file) => dirty.some((d) => pathMatch(normalize(file), d)));
       inDirty.set(id, v);
     }
     return v;
