@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/7")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/8")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/7",
+            "catalog-ddl/8",
         )
 
 
@@ -524,9 +524,6 @@ class MultipleTableTests(unittest.TestCase):
         self.assertEqual(header["columns"], 3)  # a_id + z_id + z_name
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 # ---------------------------------------------------------------------------
 # SEVERAL FILES (RM20 §3). A schema split across files — one per service, or a
@@ -727,3 +724,268 @@ class UnnamedColumnTests(unittest.TestCase):
         names, diagnostics = self._read("postgres")
         self.assertEqual(sorted(names), ["id", "role"])
         self.assertEqual([d for d in diagnostics if d["code"] == "column_unnamed"], [])
+
+
+# ---------------------------------------------------------------------------
+# THE STATE A MIGRATION LEAVES (catalog-ddl/8). Migrations are read in order, so
+# the catalog ends in the state the last statement leaves: a column set NOT NULL
+# later is NOT NULL, a primary key dropped and added again is the new key.
+# ---------------------------------------------------------------------------
+
+def _fold_files(files, dialect, identifier_case="fold-lower"):
+    diagnostics = []
+    recs = catalog_ddl.parse_ddl_catalog_files(files, diagnostics=diagnostics,
+                                               identifier_case=identifier_case, dialect=dialect)
+    cols = {(r["table"], r["column"]): r for r in recs if r["kind"] == "column"}
+    return cols, diagnostics
+
+
+def _pk(cols, table):
+    return sorted(c for (t, c), r in cols.items() if t == table and r["pk"])
+
+
+def _codes(diagnostics, code):
+    return [d["message"] for d in diagnostics if d["code"] == code]
+
+
+class PostgresMigrationStateTests(unittest.TestCase):
+    """Prisma's migrations for PostgreSQL, the shape ghostfolio ships."""
+
+    INIT = '''
+    CREATE TABLE "Access" (
+        "id" TEXT NOT NULL,
+        "userId" TEXT NOT NULL,
+        "granteeUserId" TEXT NOT NULL,
+        PRIMARY KEY ("id","userId")
+    );
+    CREATE TABLE "MarketData" ("id" TEXT NOT NULL, "symbol" TEXT NOT NULL);
+    '''
+    EXPIRES = '''
+    ALTER TABLE "Access" ADD COLUMN "expiresAt" TIMESTAMP(3);
+    UPDATE "Access" SET "expiresAt" = '2050-12-31 12:00:00' WHERE "expiresAt" IS NULL;
+    ALTER TABLE "Access" ALTER COLUMN "expiresAt" SET NOT NULL;
+    '''
+
+    def test_a_column_set_not_null_after_its_creation_is_not_null(self):
+        cols, _ = _fold_files([("1_init", self.INIT), ("2_expires", self.EXPIRES)], "postgres")
+        self.assertFalse(cols[("Access", "expiresAt")]["nullable"])
+
+    def test_the_files_are_read_in_migration_order(self):
+        relax = 'ALTER TABLE "Access" ALTER COLUMN "expiresAt" DROP NOT NULL;'
+        files = [("1_init", self.INIT), ("2_expires", self.EXPIRES), ("3_relax", relax)]
+        cols, _ = _fold_files(files, "postgres")
+        self.assertTrue(cols[("Access", "expiresAt")]["nullable"], "the last statement leaves it nullable")
+        cols, _ = _fold_files(files[:2], "postgres")
+        self.assertFalse(cols[("Access", "expiresAt")]["nullable"])
+
+    def test_drop_not_null_makes_a_column_nullable(self):
+        cols, _ = _fold_files([("1_init", self.INIT),
+                               ("2", 'ALTER TABLE "Access" ALTER COLUMN "granteeUserId" DROP NOT NULL;')], "postgres")
+        self.assertTrue(cols[("Access", "granteeUserId")]["nullable"])
+
+    def test_a_primary_key_dropped_and_added_again_on_other_columns(self):
+        # One statement with two kinds of clause, which sqlglot reads only as text.
+        change = ('ALTER TABLE "Access" DROP CONSTRAINT "Access_pkey",\n'
+                  'ADD CONSTRAINT "Access_pkey" PRIMARY KEY ("id");')
+        cols, diagnostics = _fold_files([("1_init", self.INIT), ("2_ids", change)], "postgres")
+        self.assertEqual(_pk(cols, "Access"), ["id"])
+        # The key was declared without a name: that it is Access_pkey is PostgreSQL's convention, and said.
+        said = _codes(diagnostics, "alter_primary_key_by_convention")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("Access_pkey", said[0])
+        self.assertIn("PostgreSQL names such a key <table>_pkey by convention", said[0])
+        self.assertEqual(_codes(diagnostics, "alter_unreadable"), [])
+
+    def test_add_constraint_primary_key_on_a_table_without_one(self):
+        cols, _ = _fold_files([("1_init", self.INIT),
+                               ("2", 'ALTER TABLE "MarketData" ADD CONSTRAINT "MarketData_pkey" PRIMARY KEY ("id");')],
+                              "postgres")
+        self.assertEqual(_pk(cols, "MarketData"), ["id"])
+
+    def test_add_primary_key_makes_its_columns_not_null(self):
+        base = 'CREATE TABLE t (a INT, b INT);'
+        cols, _ = _fold_files([("1", base), ("2", "ALTER TABLE t ADD PRIMARY KEY (a, b);")], "postgres")
+        self.assertEqual(_pk(cols, "t"), ["a", "b"])
+        self.assertFalse(cols[("t", "a")]["nullable"])
+        self.assertFalse(cols[("t", "b")]["nullable"])
+
+    def test_a_key_named_in_its_create_is_dropped_by_that_name_only(self):
+        base = 'CREATE TABLE "T" ("a" INT NOT NULL, "b" INT, CONSTRAINT "pk_t" PRIMARY KEY ("a"));'
+        cols, diagnostics = _fold_files([("1", base), ("2", 'ALTER TABLE "T" DROP CONSTRAINT "T_pkey";')], "postgres")
+        self.assertEqual(_pk(cols, "T"), ["a"], "T_pkey is not this key's name")
+        self.assertTrue(_codes(diagnostics, "alter_clause_unsupported"))
+        cols, diagnostics = _fold_files([("1", base), ("2", 'ALTER TABLE "T" DROP CONSTRAINT "pk_t";')], "postgres")
+        self.assertEqual(_pk(cols, "T"), [])
+        self.assertEqual(_codes(diagnostics, "alter_primary_key_by_convention"), [], "the name was written, not assumed")
+
+    def test_a_renamed_key_is_dropped_by_its_new_name(self):
+        base = 'CREATE TABLE "T" ("a" INT NOT NULL PRIMARY KEY);'
+        for rename in ('ALTER TABLE "T" RENAME CONSTRAINT "T_pkey" TO "T_key";',
+                       'ALTER INDEX "T_pkey" RENAME TO "T_key";'):
+            cols, _ = _fold_files([("1", base), ("2", rename), ("3", 'ALTER TABLE "T" DROP CONSTRAINT "T_key";')],
+                                  "postgres")
+            self.assertEqual(_pk(cols, "T"), [], rename)
+
+    def test_a_renamed_table_keeps_the_key_name_it_was_created_with(self):
+        base = 'CREATE TABLE "Old" ("a" INT NOT NULL PRIMARY KEY);'
+        steps = ('ALTER TABLE "Old" RENAME TO "New";', 'ALTER TABLE "New" DROP CONSTRAINT "Old_pkey";')
+        cols, _ = _fold_files([("1", base), ("2", steps[0]), ("3", steps[1])], "postgres")
+        self.assertEqual(_pk(cols, "New"), [])
+
+    def test_a_key_name_past_the_server_limit_is_not_known_and_the_key_is_kept(self):
+        long_name = "t" * 60
+        base = 'CREATE TABLE %s (a INT NOT NULL PRIMARY KEY);' % long_name
+        drop = "ALTER TABLE %s DROP CONSTRAINT %s_pkey;" % (long_name, long_name)
+        cols, diagnostics = _fold_files([("1", base), ("2", drop)], "postgres")
+        self.assertEqual(_pk(cols, long_name), ["a"])
+        self.assertEqual(len(_codes(diagnostics, "alter_primary_key_unknown")), 1)
+
+    def test_several_clauses_of_different_kinds_are_each_applied(self):
+        base = 'CREATE TABLE "User" ("id" TEXT NOT NULL, "provider" "Provider");'
+        change = ('ALTER TABLE "User" ALTER COLUMN "provider" SET NOT NULL,\n'
+                  'ALTER COLUMN "provider" SET DEFAULT E\'ANONYMOUS\';')
+        cols, diagnostics = _fold_files([("1", base), ("2", change)], "postgres")
+        self.assertFalse(cols[("User", "provider")]["nullable"])
+        self.assertIn("SET DEFAULT", _codes(diagnostics, "alter_clause_unsupported")[0])
+
+    def test_a_type_change_and_the_type_renamed_back(self):
+        # PostgreSQL drops an enum value by building a new type and swapping names.
+        base = ('CREATE TYPE "DataSource" AS ENUM (\'A\', \'B\');\n'
+                'CREATE TABLE "M" ("ds" "DataSource" NOT NULL, "cur" "Currency");')
+        swap = '''
+        CREATE TYPE "DataSource_new" AS ENUM ('A');
+        ALTER TYPE "DataSource" RENAME TO "DataSource_old";
+        ALTER TABLE "M" ALTER COLUMN "ds" TYPE "DataSource_new" USING ("ds"::text::"DataSource_new");
+        ALTER TYPE "DataSource_new" RENAME TO "DataSource";
+        DROP TYPE "DataSource_old";
+        ALTER TABLE "M" ALTER COLUMN "cur" TYPE TEXT;
+        '''
+        cols, _ = _fold_files([("1", base), ("2", swap)], "postgres")
+        self.assertEqual(cols[("M", "ds")]["type"], '"DataSource"')
+        self.assertEqual(cols[("M", "cur")]["type"], "TEXT")
+        self.assertFalse(cols[("M", "ds")]["nullable"], "a type change leaves nullability as it was")
+
+    def test_dropping_one_column_of_a_key_drops_the_whole_key(self):
+        base = "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL, c INT, PRIMARY KEY (a, b));"
+        cols, _ = _fold_files([("1", base), ("2", "ALTER TABLE t DROP COLUMN b;")], "postgres")
+        self.assertEqual(_pk(cols, "t"), [], "PostgreSQL drops the constraints involving the column")
+        cols, _ = _fold_files([("1", base), ("2", "ALTER TABLE t DROP COLUMN b;")], "mysql")
+        self.assertEqual(_pk(cols, "t"), ["a"], "MySQL takes the column out of the key")
+
+    def test_a_clause_that_cannot_be_read_is_named_and_the_key_is_kept(self):
+        base = 'CREATE TABLE t (a INT NOT NULL, b INT NOT NULL);'
+        change = "ALTER TABLE t ADD CONSTRAINT t_pkey PRIMARY KEY USING INDEX t_b_idx;"
+        cols, diagnostics = _fold_files([("1", base), ("2", change)], "postgres")
+        self.assertEqual(_pk(cols, "t"), [])
+        said = _codes(diagnostics, "alter_unreadable")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("PRIMARY KEY USING INDEX t_b_idx", said[0])
+
+    def test_rename_column_renames_it_in_place(self):
+        base = 'CREATE TABLE t (a INT NOT NULL PRIMARY KEY, b INT, c INT);'
+        cols, _ = _fold_files([("1", base), ("2", "ALTER TABLE t RENAME COLUMN a TO z;")], "postgres")
+        self.assertEqual(sorted(c for (t, c) in cols), ["b", "c", "z"])
+        self.assertEqual(_pk(cols, "t"), ["z"])
+
+
+class MysqlMigrationStateTests(unittest.TestCase):
+    BASE = """
+    CREATE TABLE `t_order` (
+      `id` bigint(20) NOT NULL,
+      `line` int(11) NOT NULL,
+      `note` varchar(20) DEFAULT NULL,
+      PRIMARY KEY (`id`),
+      KEY `idx_note` (`note`)
+    );
+    """
+
+    def _fold(self, *migrations):
+        files = [("base.sql", self.BASE)] + [("V%d.sql" % i, m) for i, m in enumerate(migrations, 1)]
+        return _fold_files(files, "mysql")
+
+    def test_drop_primary_key_and_add_it_on_other_columns(self):
+        cols, diagnostics = self._fold("ALTER TABLE `t_order` DROP PRIMARY KEY, ADD PRIMARY KEY (`id`, `line`);")
+        self.assertEqual(_pk(cols, "t_order"), ["id", "line"])
+        self.assertEqual(_codes(diagnostics, "alter_unreadable"), [])
+
+    def test_drop_primary_key_alone(self):
+        cols, _ = self._fold("ALTER TABLE `t_order` DROP PRIMARY KEY;")
+        self.assertEqual(_pk(cols, "t_order"), [])
+        self.assertFalse(cols[("t_order", "id")]["nullable"], "a dropped key leaves its column NOT NULL")
+
+    def test_the_primary_key_is_always_called_primary(self):
+        cols, _ = self._fold("ALTER TABLE `t_order` DROP INDEX `idx_note`;")
+        self.assertEqual(_pk(cols, "t_order"), ["id"])
+        cols, _ = self._fold("ALTER TABLE `t_order` DROP INDEX `PRIMARY`;")
+        self.assertEqual(_pk(cols, "t_order"), [])
+
+    def test_add_primary_key_using_an_index_type(self):
+        cols, _ = self._fold("ALTER TABLE `t_order` DROP PRIMARY KEY;",
+                             "ALTER TABLE `t_order` ADD PRIMARY KEY USING BTREE (`line`);")
+        self.assertEqual(_pk(cols, "t_order"), ["line"])
+
+    def test_modify_restates_nullability(self):
+        cols, _ = self._fold("ALTER TABLE `t_order` MODIFY COLUMN `note` varchar(40) NOT NULL;")
+        self.assertFalse(cols[("t_order", "note")]["nullable"])
+        cols, _ = self._fold("ALTER TABLE `t_order` MODIFY COLUMN `line` int(11) NULL;")
+        self.assertTrue(cols[("t_order", "line")]["nullable"], "MODIFY restates the whole column")
+
+    def test_a_key_column_modified_without_not_null_stays_not_null(self):
+        # MySQL declares a key column NOT NULL "implicitly (and silently)".
+        cols, _ = self._fold("ALTER TABLE `t_order` MODIFY `id` bigint(20) COMMENT 'order id';")
+        self.assertFalse(cols[("t_order", "id")]["nullable"])
+        self.assertTrue(cols[("t_order", "id")]["pk"])
+
+    def test_change_with_primary_key_makes_the_new_key(self):
+        cols, _ = self._fold("ALTER TABLE `t_order` DROP PRIMARY KEY;",
+                             "ALTER TABLE `t_order` CHANGE `line` `line_no` int(11) NOT NULL PRIMARY KEY;")
+        self.assertEqual(_pk(cols, "t_order"), ["line_no"])
+
+    def test_an_h2_set_null_read_as_mysql_is_applied(self):
+        # HSQLDB and H2 files are read with the MySQL grammar, which keeps this clause as text.
+        cols, _ = self._fold("ALTER TABLE t_order ALTER COLUMN line SET NULL;")
+        self.assertTrue(cols[("t_order", "line")]["nullable"])
+
+
+class OracleMigrationStateTests(unittest.TestCase):
+    BASE = ("CREATE TABLE T_USER (ID NUMBER(19) NOT NULL, NAME VARCHAR2(30), "
+            "CODE VARCHAR2(8) NOT NULL, PRIMARY KEY (ID));")
+
+    def _fold(self, migration):
+        return _fold_files([("base.sql", self.BASE), ("up.sql", migration)], "oracle", "fold-upper")
+
+    def test_modify_changes_only_what_it_says(self):
+        cols, diagnostics = self._fold("ALTER TABLE T_USER MODIFY (NAME NOT NULL);")
+        self.assertFalse(cols[("T_USER", "NAME")]["nullable"])
+        self.assertEqual(cols[("T_USER", "NAME")]["type"], "VARCHAR(30)", "the type is not restated")
+        cols, _ = self._fold("ALTER TABLE T_USER MODIFY (CODE VARCHAR2(16), NAME NULL);")
+        self.assertEqual(cols[("T_USER", "CODE")]["type"], "VARCHAR(16)")
+        self.assertFalse(cols[("T_USER", "CODE")]["nullable"], "Oracle keeps what MODIFY does not say")
+        self.assertTrue(cols[("T_USER", "NAME")]["nullable"])
+        self.assertEqual(_codes(diagnostics, "alter_unreadable"), [])
+
+    def test_drop_primary_key(self):
+        cols, _ = self._fold("ALTER TABLE T_USER DROP PRIMARY KEY;")
+        self.assertEqual(_pk(cols, "T_USER"), [])
+
+    def test_an_unnamed_key_is_not_known_by_name(self):
+        # Oracle names an unnamed key SYS_C<n>: a drop by name cannot be told apart from another constraint's.
+        cols, diagnostics = self._fold("ALTER TABLE T_USER DROP CONSTRAINT SYS_C0012345;")
+        self.assertEqual(_pk(cols, "T_USER"), ["ID"])
+        self.assertEqual(len(_codes(diagnostics, "alter_primary_key_unknown")), 1)
+
+    def test_add_a_list_of_columns(self):
+        cols, _ = self._fold("ALTER TABLE T_USER ADD (STATE NUMBER(1) NOT NULL, NOTE VARCHAR2(100));")
+        self.assertFalse(cols[("T_USER", "STATE")]["nullable"])
+        self.assertIn(("T_USER", "NOTE"), cols)
+
+
+class PrimaryKeyNullabilityTests(unittest.TestCase):
+    def test_a_key_column_written_without_not_null_holds_no_null(self):
+        cols, _ = _fold_files([("s.sql", "CREATE TABLE owners (id INTEGER PRIMARY KEY, name VARCHAR(30));")], "mysql")
+        self.assertFalse(cols[("owners", "id")]["nullable"])
+        self.assertTrue(cols[("owners", "name")]["nullable"])
+
+
+if __name__ == "__main__":
+    unittest.main()
