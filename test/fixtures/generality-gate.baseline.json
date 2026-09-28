@@ -160,7 +160,7 @@
   },
   "jeecg-boot": {
    "sha": "74364054449efd5852e46d0c10325a1d38c1006a",
-   "endpoints": 969,
+   "endpoints": 970,
    "endpointsReachingAStatement": 744,
    "statements": 839,
    "statementsReached": 748,
@@ -171,7 +171,7 @@
    "webCalls": 936,
    "webCallsResolved": 584,
    "screens": 181,
-   "screensReachingATable": 25,
+   "screensReachingATable": 11,
    "endpointColumnPairs": 15997,
    "axes": {
     "catalog": "shipped",
