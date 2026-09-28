@@ -18,7 +18,7 @@ import { wrapperFragmentStatements } from '../../../adapters/mp_bridge.mjs';
 import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
 import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
-import { assembleGraph, javaLaneOptions, openapiLaneOptions } from '../../../core/assemble.mjs';
+import { assembleGraph, javaLaneOptions, openapiLaneOptions, webLaneOptions } from '../../../core/assemble.mjs';
 import { ProfileError } from '../../../core/profile.mjs';
 import { serverPortsOf } from '../../../core/server_ports.mjs';
 import { builtinRegistry } from '../../../core/rules/registry.mjs';
@@ -471,20 +471,17 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
     // frontend call must be able to land on a route only a document declares.
     openapi: openapiLaneOptions(openapiDocs),
-    web: webWorkerStats ? {
-      // `gatewayRoutes` reaches the web bridge here and the Java bridge above:
-      // one declaration, applied to a frontend call and to an imperative
-      // service-to-service call, which are the same rewrite either way.
-      gatewayRoutes: profile.gatewayRoutes ?? {},
+    // The list the working-tree overlay builds too (src/core/assemble.mjs), with
+    // what discovery walked: the frontend packages, paths relative to the root
+    // the web facts are keyed by, and the ports this pack's applications listen
+    // on (src/core/server_ports.mjs). With no discovery the ports are unknown,
+    // and nothing is decided by port. The web bridge records both in its stats,
+    // which is where the overlay reads them back.
+    web: webWorkerStats ? webLaneOptions(profile, {
       packages: discovery?.webPackages ?? [],
-      // The ports this pack's applications listen on (src/core/server_ports.mjs);
-      // with no discovery they are unknown, and nothing is decided by port.
       serverPorts: discovery ? serverPortsOf(discovery.serverPorts ?? []) : null,
-      // I-5: the `screenAxis` block and `moduleAttribution.codeLength` are
-      // read here and nowhere else. `enabled` is the gate on the whole axis.
-      screenAxis: { ...(profile.screenAxis ?? {}), enabled: screenGate.enabled },
-      codeLength: profile.moduleAttribution?.codeLength ?? null,
-    } : null,
+      screenAxisEnabled: screenGate.enabled,
+    }) : null,
     // The runtime evidence lane runs LAST: it annotates the dispatch edges,
     // the statements and the routes every lane above it wrote.
     runtime: otelFiles.length > 0 ? {} : null,

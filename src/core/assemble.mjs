@@ -106,6 +106,36 @@ export function openapiLaneOptions(documents) {
 }
 
 /**
+ * THE WEB BRIDGE'S OPTIONS, for `analyze` and the working-tree overlay alike.
+ * The two callers wrote this list apart and drifted: the overlay handed the
+ * bridge no packages and no ports, so a frontend package with no config file of
+ * its own was filed under another directory, and a call to this machine on
+ * another service's port landed on this pack's route. What the caller read to
+ * fill it (discovery's walk, or the record the base pack kept of it) is the
+ * caller's; the list itself is built here once.
+ *
+ * @param {object|null} profile  the normalized profile
+ * @param {{packages?:{path:string}[], serverPorts?:object|null, screenAxisEnabled?:boolean}} [inputs]
+ *        packages: the frontend packages the run read, each `path` a package.json
+ *        relative to the root the web facts' `file` keys are relative to.
+ *        serverPorts: src/core/server_ports.mjs's answer, or null when unknown.
+ *        screenAxisEnabled: the screen axis gate (src/core/lanes.mjs screenAxisOf).
+ */
+export function webLaneOptions(profile, { packages = [], serverPorts = null, screenAxisEnabled = false } = {}) {
+  const p = profile ?? {};
+  return {
+    // One declaration for the web bridge and the Java one (javaLaneOptions).
+    gatewayRoutes: p.gatewayRoutes ?? {},
+    packages,
+    serverPorts,
+    // I-5: the `screenAxis` block and `moduleAttribution.codeLength` are read
+    // here and nowhere else. `enabled` is the gate on the whole axis.
+    screenAxis: { ...(p.screenAxis ?? {}), enabled: screenAxisEnabled },
+    codeLength: p.moduleAttribution?.codeLength ?? null,
+  };
+}
+
+/**
  * Build one graph from already-parsed fact records.
  *
  * @param {Object} a

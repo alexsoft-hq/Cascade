@@ -309,6 +309,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
   const nodesToAdd = new Map();
   const edges = [];
   const ports = readPorts(opts, stats);
+  recordPackages(opts, stats);
   const calls = placeTheCalls(g, read, {
     gatewayRoutes, ports, stats, nodesToAdd, edges,
   });
@@ -341,6 +342,17 @@ function readPorts(opts, stats) {
     defaulted: ports.defaulted === true, why: ports.why ?? null, otherPortCalls: 0,
   };
   return ports;
+}
+
+/**
+ * The frontend packages this run was handed, as their package.json paths,
+ * recorded beside the ports for the same reader: the working-tree overlay hands
+ * this bridge both back from the pack (src/cli/overlay_provider.mjs) instead of
+ * walking the tree again. Absent when the caller handed no list at all.
+ */
+function recordPackages(opts, stats) {
+  if (!Array.isArray(opts.packages)) return;
+  stats.packages = [...new Set(opts.packages.filter((p) => p && typeof p.path === 'string').map((p) => p.path))].sort();
 }
 
 /**

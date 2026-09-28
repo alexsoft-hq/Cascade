@@ -363,9 +363,12 @@ function overlayJavaOptions(a) {
  * @param {Map<string,object[]>} [a.webDirtyFacts]  file -> records freshly read from the working tree
  * @param {Iterable<string>} [a.webDropFiles]       frontend files deleted in the working tree
  * @param {object[]} [a.webConfigRecords]           the package configuration, re-read every time
- * @param {{gatewayRoutes?:object, packages?:object[]}|null} [a.web]
- *        options for the web bridge; null runs no web bridge. `gatewayRoutes`
- *        comes from the LIVE profile, exactly as `generatedSources` does.
+ * @param {{gatewayRoutes?:object, packages?:object[], serverPorts?:object|null}|null} [a.web]
+ *        options for the web bridge, built by the one function `analyze`
+ *        builds them with (webLaneOptions in src/core/assemble.mjs); null runs
+ *        no web bridge. `gatewayRoutes` comes from the LIVE profile, exactly as
+ *        `generatedSources` does; the packages and the ports are the ones the
+ *        base pack recorded, because discovery's walk is not repeated.
  * @param {(javaFacts:object[]) => {jpa?:object|null, mybatisPlus?:object|null, lineage?:object[]}} [a.javaLanesOf]
  *        what the Java lanes add, given the assembled Java records: which of
  *        their bridges run and with what, and the lineage of the SQL written in
@@ -374,8 +377,11 @@ function overlayJavaOptions(a) {
  *        without it an edit to a Spring Data, MyBatis-Plus or annotated MyBatis
  *        service reached no statement at all. What the overlay still does not
  *        re-read: run traces and recordings (they add only RUNTIME_ONLY marks,
- *        which no walk follows) and the Spring XML id generators, which the
- *        caller says as a limit (src/cli/overlay_provider.mjs).
+ *        which no walk follows), the Spring XML id generators, and the
+ *        frontend packages and server ports discovery found, which come from
+ *        the base pack's record instead. The caller says the id generators, and
+ *        an edit those records no longer describe, as limits
+ *        (src/cli/overlay_provider.mjs).
  * @param {object} [a.java]  the Java bridge's options, built by the one
  *        function `analyze` builds them with (javaLaneOptions in
  *        src/core/assemble.mjs). Without it they are built from the loose keys

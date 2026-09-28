@@ -44,7 +44,9 @@ import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.m
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
 import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
-import { javaLaneOptions } from '../core/assemble.mjs';
+import { javaLaneOptions, webLaneOptions } from '../core/assemble.mjs';
+import { isTestPath } from '../core/discover.mjs';
+import { looksLikeSpringConfigFile } from '../core/springconfig.mjs';
 
 /**
  * The OpenAPI documents the base pack read, as they are on disk now (RM67).
@@ -338,33 +340,84 @@ function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, ru
 }
 
 /**
- * The web bridge's options for an overlay, or null when this run reads no
- * frontend.
+ * WHAT THE BASE PACK'S WEB BRIDGE WAS HANDED FROM DISCOVERY, read back from the
+ * record it kept (src/adapters/web_bridge.mjs): the frontend packages and the
+ * ports this pack's applications listen on. Discovery walks the whole tree, and
+ * an overlay that must answer in a second does not walk it again, so it hands
+ * the bridge what the certified run handed it. Without them a frontend package
+ * with no config file of its own was filed under another directory, and a call
+ * to this machine on another service's port landed on this pack's route.
  *
- * They come from the LIVE profile for the same reason `generatedSources` does:
- * the overlay describes the bytes on disk, and a gateway route declared since
- * the pack was built takes effect here first. The SAME options the certified run
- * used, screen axis included: an overlay whose gate was off would report
- * `touched.screens: []` on a file the base pack does put on a screen, and the
- * difference would read as "your edit changed which screens exist".
+ * The package paths are relative to the analyzed root, as discovery wrote them,
+ * which is the root the web facts' `file` keys are relative to here as well. A
+ * package.json gone from the tree is not a package, as `analyze` would not list
+ * it. `recorded` is false for a pack built before the list was kept.
  */
-function webOptions(profile, webRootsAbs, templateRootsAbs) {
-  if (webRootsAbs.length === 0 && templateRootsAbs.length === 0) return null;
-  return {
-    gatewayRoutes: profile?.gatewayRoutes ?? {},
-    packages: [],
-    // The gate is resolved the SAME way the certified run resolved it,
-    // including the third state: `screenAxisOf` reads the frontend packages
-    // this overlay reads, so an out-of-root frontend keeps its screens here too.
-    screenAxis: {
-      ...(profile?.screenAxis ?? {}),
-      enabled: screenAxisOf(profile, {
-        webPackages: webPackagesRead(webRootsAbs),
-        templateRoots: templateRootsAbs,
-      }).enabled,
-    },
-    codeLength: profile?.moduleAttribution?.codeLength ?? null,
+export function baseWebInputsOf(pack, rootAbs) {
+  const web = pack?.meta?.laneStats?.web ?? null;
+  const recorded = Array.isArray(web?.packages);
+  const packages = (recorded ? web.packages : [])
+    .filter((rel) => typeof rel === 'string' && fs.existsSync(path.resolve(rootAbs, rel)))
+    .map((rel) => ({ path: rel }));
+  const p = web?.ports && typeof web.ports === 'object' ? web.ports : null;
+  const serverPorts = p && {
+    known: p.known === true, ports: p.ports ?? [], files: p.files ?? [], defaulted: p.defaulted === true, why: p.why ?? null,
   };
+  return { packages, serverPorts, recorded };
+}
+
+/**
+ * The web bridge's options for an overlay, or null when this run reads no
+ * frontend: the list `analyze` builds (src/core/assemble.mjs webLaneOptions),
+ * from the LIVE profile for the same reason `generatedSources` is (a gateway
+ * route declared since the pack was built takes effect here first), with the
+ * packages and ports the base pack recorded. The screen axis gate is resolved
+ * the SAME way the certified run resolved it, including the third state:
+ * `screenAxisOf` reads the frontend packages this overlay reads, so an
+ * out-of-root frontend keeps its screens here too. An overlay whose gate was off
+ * would report `touched.screens: []` on a file the base pack does put on a
+ * screen, and that would read as "your edit changed which screens exist".
+ */
+function webOptions(profile, webRootsAbs, templateRootsAbs, inputs) {
+  if (webRootsAbs.length === 0 && templateRootsAbs.length === 0) return null;
+  return webLaneOptions(profile, {
+    packages: inputs?.packages ?? [],
+    serverPorts: inputs?.serverPorts ?? null,
+    screenAxisEnabled: screenAxisOf(profile, { webPackages: webPackagesRead(webRootsAbs), templateRoots: templateRootsAbs }).enabled,
+  });
+}
+
+/**
+ * WHERE THE BASE PACK'S WEB INPUTS NO LONGER DESCRIBE THE TREE, as limits. The
+ * overlay does not decide again which directories are frontend packages, or
+ * which ports the applications listen on, so an edit to the files those come
+ * from is not seen, and the answer says so. A pack that kept no package list is
+ * said once as well.
+ *
+ * @param {object} pack
+ * @param {{path:string, status:string}[]} entries  the dirty files
+ * @param {{webConfig?:string[]}} dirty  their lanes (src/core/overlay.mjs classifyDirtyFiles)
+ * @param {{recorded:boolean, serverPorts:(object|null)}} inputs  baseWebInputsOf's answer
+ */
+export function webInputLimits(pack, entries, dirty, inputs) {
+  if (!pack?.meta?.laneStats?.web) return [];
+  const limit = (reason) => ({ scope: 'overlay', reason });
+  const out = [];
+  if (!inputs.recorded) {
+    out.push(limit('this pack does not record which frontend packages its run read (it was built before that record was kept), so the overlay files each frontend file under the directory of its own .env, proxy or alias file. '
+      + 'A frontend package with none of those may read its base URL and name its clients differently here than in the pack. Run `cascade analyze`'));
+  }
+  const webConfig = new Set(dirty?.webConfig ?? []);
+  const manifests = entries.filter((e) => e.status !== 'D' && webConfig.has(e.path) && path.posix.basename(e.path) === 'package.json').map((e) => e.path);
+  if (manifests.length > 0) {
+    out.push(limit(`${manifests.join(', ')} changed since the pack was built. The overlay takes which directories are frontend packages from the base pack and does not decide it again, so a package that file adds or removes is not seen in this answer`));
+  }
+  const springConfigs = entries.filter((e) => looksLikeSpringConfigFile(e.path) && !isTestPath(e.path)).map((e) => e.path);
+  if (inputs.serverPorts && springConfigs.length > 0) {
+    const read = inputs.serverPorts.known ? `port ${inputs.serverPorts.ports.join(', ')}` : 'no port it could state';
+    out.push(limit(`${springConfigs.join(', ')} changed since the pack was built. The overlay places a frontend call on this machine by the ports the base pack read (${read}) and does not read them again, so a port that file now sets is not seen in this answer`));
+  }
+  return out;
 }
 
 /**
@@ -389,7 +442,7 @@ export function unreadInputLimits(pack) {
 /** Fold the re-parsed facts and the reused shards into one graph, and say what happened. */
 export function overlayState({
   lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf = null,
-  openapiDocuments = null, limits = [],
+  openapiDocuments = null, limits = [], webInputs = null,
 }) {
   const tBuild = Date.now();
   const built = overlayGraph({
@@ -397,7 +450,7 @@ export function overlayState({
     baseShards: lanes.baseShards, dirtyFacts: lanes.dirtyFacts, dropFiles: lanes.dropFiles,
     webBaseShards: lanes.webBaseShards, webDirtyFacts: lanes.webDirtyFacts,
     webDropFiles: lanes.webDropFiles, webConfigRecords: lanes.webConfigRecords,
-    web: webOptions(profile, webRootsAbs, templateRootsAbs),
+    web: webOptions(profile, webRootsAbs, templateRootsAbs, webInputs),
     catalogRecords: lanes.catalogRecords, lineageRecords: lanes.lineageRecords,
     baseGraph, overlaySessionId: session.overlaySessionId,
     dirtyFiles,
@@ -453,6 +506,45 @@ export function indexOfPack(indexFile, pack, stale) {
   return index;
 }
 
+/** An overlay not laid, with the reason as its limit: it has no session to be remembered by. */
+function declinedState(reason, { headCommit, baseCommit }) {
+  return {
+    applied: false, state: 'declined', session: null, dirtyFiles: [], reason,
+    limits: [{ scope: 'overlay', reason: `${reason}. Run \`cascade analyze\`` }], baseCommit, headCommit,
+  };
+}
+
+/**
+ * THE OVERLAY OVER ONE DIRTY SET: the reasons not to lay it, the dirty files
+ * re-read, and the graph folded, with what the base pack read that the overlay
+ * takes from the pack's record rather than from the tree (the OpenAPI documents'
+ * paths, the frontend packages, the server ports) and what it cannot take at
+ * all, said as limits. `makeOverlayProvider` hands it what the diff says is
+ * dirty. Handed NO dirty file it must build the pack's own graph, and
+ * test/overlay_equivalence.test.mjs holds it to that.
+ *
+ * @returns {object} the overlay state; one with `session: null` is a decline
+ *          nothing can be remembered by
+ */
+export function layOverlay({ packDir, pack, baseGraph, profile, idx, session, entries, baseCommit, headCommit, stale, jdkBox = { jdk: null } }) {
+  const dirtyFiles = entries.map((e) => e.path);
+  const verdict = refuse({ session, dirtyFiles, entries, idx, profile, baseCommit, headCommit });
+  if (verdict.declined) return declinedState(verdict.declined, { headCommit, baseCommit });
+  if (!verdict.ok) return verdict;
+  const rootAbs = idx.root;
+  const absOf = (rel) => path.resolve(rootAbs, rel);
+  const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf } = runLanes({
+    idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile,
+    mapperAlternatives: mapperAlternativesOf(profile, packDir),
+  });
+  const webInputs = baseWebInputsOf(pack, rootAbs);
+  return overlayState({
+    lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs),
+    limits: [...unreadInputLimits(pack), ...webInputLimits(pack, entries, verdict.dirty, webInputs)], webInputs,
+    selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf,
+  });
+}
+
 /**
  * A provider `() => overlayState` for the tool context, plus the reason it could
  * not be built. The provider is called ONCE PER REQUEST (the working tree moves
@@ -473,10 +565,6 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
   let cache = null; // single-entry LRU: {id, state}
   const jdkBox = { jdk: null };
   const remember = (session, state) => { cache = { id: session.overlaySessionId, state }; return state; };
-  const declined = (reason, { headCommit, baseCommit }) => ({
-    applied: false, state: 'declined', session: null, dirtyFiles: [], reason,
-    limits: [{ scope: 'overlay', reason: `${reason}. Run \`cascade analyze\`` }], baseCommit, headCommit,
-  });
 
   return () => {
     const idx = load();
@@ -486,7 +574,7 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
 
     const diff = dirtyEntries({ idx, pack, packDir, rootAbs, stale });
     const { headCommit, baseCommit, entries } = diff;
-    if (diff.declineReason) return declined(diff.declineReason, { headCommit, baseCommit });
+    if (diff.declineReason) return declinedState(diff.declineReason, { headCommit, baseCommit });
 
     const session = overlaySession({
       baseDigest: pack.digest,
@@ -497,7 +585,6 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
         sha256: e.status === 'D' ? null : safeHash(path.resolve(rootAbs, e.path)),
       })),
     });
-    const dirtyFiles = entries.map((e) => e.path);
     if (cache && cache.id === session.overlaySessionId) return cache.state;
 
     // A clean tree needs no overlay at all: the pack already describes this
@@ -511,18 +598,7 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
       });
     }
 
-    const verdict = refuse({ session, dirtyFiles, entries, idx, profile, baseCommit, headCommit });
-    if (verdict.declined) return declined(verdict.declined, { headCommit, baseCommit });
-    if (!verdict.ok) return remember(session, verdict);
-
-    const absOf = (rel) => path.resolve(rootAbs, rel);
-    const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf } = runLanes({
-      idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile,
-      mapperAlternatives: mapperAlternativesOf(profile, packDir),
-    });
-    return remember(session, overlayState({
-      lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs), limits: unreadInputLimits(pack),
-      selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf,
-    }));
+    const state = layOverlay({ packDir, pack, baseGraph, profile, idx, session, entries, baseCommit, headCommit, stale, jdkBox });
+    return state.session ? remember(session, state) : state;
   };
 }
