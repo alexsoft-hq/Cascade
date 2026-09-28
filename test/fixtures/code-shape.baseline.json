@@ -156,10 +156,6 @@
    "longest": "methodOverrideOf",
    "branchiest": "methodOverrideOf",
    "functions": [
-    "handsInObject",
-    "handsOf",
-    "handsOf/1",
-    "memberOfParam",
     "methodOverrideOf",
     "methodOverrideOf/1",
     "paramAt",
@@ -279,16 +275,50 @@
     "servicePathOf"
    ]
   },
-  "adapters/web/lib/reads.mjs": {
-   "maxLines": 32,
-   "maxBranches": 27,
-   "longest": "readsOf",
-   "branchiest": "readsOf",
+  "adapters/web/lib/origins.mjs": {
+   "maxLines": 18,
+   "maxBranches": 18,
+   "longest": "handsInObject",
+   "branchiest": "originOf",
    "functions": [
+    "bare",
+    "compose",
+    "handFrom",
+    "handsInObject",
+    "handsInObject/1",
+    "handsOf",
+    "handsOf/1",
     "insideFunction",
+    "keysAfter",
+    "keysAfter/1",
+    "memberOrigin",
+    "note",
+    "noteOrigins",
+    "originOf",
+    "originsOfPattern",
+    "paramFactsOf",
+    "paramFactsOf/1",
+    "paramFactsOf/1/1",
+    "patternShape",
+    "reassignedIn",
+    "set",
+    "spreadCopyOf",
+    "spreadCopyOf/1",
+    "valueOrigin",
+    "walk"
+   ]
+  },
+  "adapters/web/lib/reads.mjs": {
+   "maxLines": 20,
+   "maxBranches": 15,
+   "longest": "readName",
+   "branchiest": "readName",
+   "functions": [
+    "notePartial",
     "readName",
     "readsOf",
     "readsOf/1",
+    "readsOf/2",
     "visit",
     "visit/1"
    ]
@@ -1927,6 +1957,7 @@
     "fullUrlOf/1",
     "functionsReachingHttp",
     "handOn",
+    "handOnOne",
     "hasOwnUrl",
     "hopToAWrapper",
     "hopsOf",
@@ -1975,9 +2006,12 @@
     "platformOf",
     "platformOf/1",
     "readCallUrl",
+    "readsCarry",
+    "readsCarry/1",
     "remember",
     "routeServesMethod",
     "sameFile",
+    "sinkEvidence",
     "sinkOf",
     "symbolsPerFile",
     "thisTarget",
@@ -1988,6 +2022,7 @@
     "typedFieldTarget/3",
     "typedFieldTarget/4",
     "typedOf",
+    "unsettledWhy",
     "untracedReasonOf",
     "untracedSink",
     "urlReachesTheSink",
@@ -2191,7 +2226,7 @@
   "src/adapters/web/stats.mjs": {
    "maxLines": 49,
    "maxBranches": 0,
-   "longest": "emptyWebStats",
+   "longest": "emptyCallStats",
    "branchiest": null,
    "functions": [
     "emptyCallStats",
@@ -2422,6 +2457,8 @@
     "saySilentWebRoots/3/1",
     "sayTsLane",
     "sayUrlNotHandedOn",
+    "sayUrlNotHandedOn/1",
+    "sayUrlNotHandedOn/2",
     "sayVendoredWebRoots",
     "sayVendoredWebRoots/1",
     "sayVendoredWebRoots/2",
@@ -4063,6 +4100,8 @@
     "outEdges",
     "push",
     "reach",
+    "sqlEdgesOf",
+    "sqlEdgesOf/1",
     "weaker"
    ]
   },
