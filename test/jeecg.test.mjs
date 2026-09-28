@@ -192,8 +192,16 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
     const h = handlersOf(graph, n.id).length;
     perRoute.set(h, (perRoute.get(h) ?? 0) + 1);
   }
-  assert.deepEqual([...perRoute.entries()].sort(), [[1, 969]],
-    '969 routes this pack serves, every one of them with exactly one handler');
+  // One served route has no handler, and says so: the cloud gateway's
+  // functional route (JeecgGatewayApplication.java:55)
+  //   route(GET("/"), request -> ok().contentType(MediaType.TEXT_HTML).bodyValue(indexHtml))
+  // answers with a static page from a lambda that calls no method of this
+  // repository, so there is no method to link and the node carries
+  // `handlerUnread` instead of a guessed one.
+  assert.deepEqual([...perRoute.entries()].sort(), [[0, 1], [1, 969]],
+    '970 routes this pack serves: 969 with exactly one handler, one served by an inline lambda');
+  assert.equal(graph.nodes.get('endpoint:GET /')?.handlerUnread, true,
+    'the route with no handler is the gateway index page, and it says its handler was not read');
   assert.equal(outboundJava, 9, '9 endpoint nodes exist only as the target of a declarative client call');
   assert.ok(outboundWeb > 0, 'and the frontend names routes this pack does not serve either');
   assert.equal(stats.handles, 969);
@@ -375,7 +383,8 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   //      edges above (§1) — the /openapi/* controllers and /sys/log/exportXls,
   //      which are precisely the five classes that use JeecgController's field.
   const o = buildOverview(graph, { laneStats: stats, lanes: pack.meta.lanes });
-  assert.equal(o.reach.endpoints, 969);
+  // 969 annotated routes plus the gateway's functional `GET /` (§3).
+  assert.equal(o.reach.endpoints, 970);
   // 9 routes a @FeignClient method calls, plus the ones the FRONTEND calls and
   // this pack does not serve (RM28). Both are `outbound`, and the gap note
   // below splits them, because they are not the same thing to fix: a Feign call
@@ -682,8 +691,9 @@ test('jeecgboot/JeecgBoot: the MyBatis-Plus lane maps what nobody wrote down', {
   assert.equal(o.mybatisPlus.statementsWithRuntimeOnlyColumns, 82);
   assert.equal(o.mybatisPlus.logicDeleteStatements, 9);
   assert.equal(o.code.mpBuiltinStatements, 542);
-  // 969 routes, of which 744 now reach a statement (RM14: 234, RM15: 717).
-  assert.equal(o.reach.endpoints, 969);
+  // 970 routes, of which 744 now reach a statement (RM14: 234, RM15: 717). The
+  // 970th is the gateway's functional `GET /`, which serves a static page.
+  assert.equal(o.reach.endpoints, 970);
   assert.equal(o.reach.endpoints - o.reach.endpointsWithoutStatement, 744);
   // ONE more table, and it was read from the source before it was read from the
   // pack: SysDictMapper.java:51 carries
