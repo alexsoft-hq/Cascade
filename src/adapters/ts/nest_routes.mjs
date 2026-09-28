@@ -26,7 +26,7 @@ import { nestPathOf } from './route_pattern.mjs';
 const MAX_MODULES = 2000;
 
 /** The name a decorator has in its package; null for one of the project's own, or another package's; one this engine cannot trace keeps its written name. */
-function frameworkName(project, file, written, packages) {
+export function frameworkName(project, file, written, packages) {
   const [head, ...rest] = written.split('.');
   const ns = project.files.get(file)?.imports.find((i) => i.namespace === head);
   if (ns) return packages.includes(ns.source) && rest.length > 0 ? rest.join('.') : null;
@@ -234,7 +234,8 @@ export function nestRoutes(project, compiled, declared = {}) {
   const root = application ? moduleClassOf(project, application.boot.file, application.boot.args[0]) : null;
   if (application && !root) diagnostics.push({ kind: 'TS_ROOT_MODULE_UNREAD', reason: `${application.boot.file}:${application.boot.line}: the module handed to ${compiled.app.create} is not a class of this project` });
   // The root module is handed on: which classes the modules bind to a type is read from it too (nest_providers.mjs).
-  const unknown = { routes: [], diagnostics, controllers: allControllers.length, unregistered: null, root };
+  // What the bindings are read from: the root module, or that the application hands NestFactory.create one it cannot name.
+  const unknown = { routes: [], diagnostics, controllers: allControllers.length, unregistered: null, root, rootUnread: Boolean(application && !root) };
   if (!root || application.prefix.unread || application.versioning.unread) return unknown;
   const registered = registeredControllers(project, compiled, viewOf, root, diagnostics);
   const keys = new Set(registered.controllers.map((c) => c.cls.key));
@@ -244,5 +245,5 @@ export function nestRoutes(project, compiled, declared = {}) {
     return { ...unknown, unregistered };
   }
   const ctx = { prefix: application.prefix, versioning: application.versioning, modulePaths: registered.modulePaths, diagnostics, viewOf };
-  return { routes: registered.controllers.flatMap((entry) => routesOfController(compiled, entry, ctx)), diagnostics, controllers: allControllers.length, unregistered, root };
+  return { routes: registered.controllers.flatMap((entry) => routesOfController(compiled, entry, ctx)), diagnostics, controllers: allControllers.length, unregistered, root, rootUnread: false };
 }

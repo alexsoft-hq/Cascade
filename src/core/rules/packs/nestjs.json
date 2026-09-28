@@ -67,11 +67,13 @@
     {
       "id": "nestjs.providers",
       "kind": "ts.provider-binding",
-      "description": "A module's providers bind a type to what Nest injects for it: a class listed alone binds itself, and { provide: T, useClass: C } binds T to C. A binding made by a factory, a value or another token (useFactory, useValue, useExisting) is not read. A constructor parameter decorated @Inject(token) is injected by that token, not by its type.",
+      "description": "A module's providers bind a type to what Nest injects for it: a class listed alone binds itself, and { provide: T, useClass: C } binds T to C. A binding made by a factory, a value or another token (useFactory, useValue, useExisting) is not read. A constructor parameter decorated @Inject(token) is filled by that token, not by its type; @Optional, @Self, @SkipSelf and @Host change nothing about what fills it; any other parameter decorator, a project's own that wraps @Inject among them, is one this engine does not know, and what it fills the parameter with is not settled. A package's module handed a type may bind it, except under the keys of its options Nest's async modules read and bind nothing with: imports, inject, useClass, useExisting and useFactory.",
       "why": "A call through a field typed with an abstract class or an interface may run the method of any class of the project that extends or implements it. When every module the application loads is read, the classes those modules bind to the type are the only ones Nest can inject, so the set narrows to them. nestjs-boilerplate binds each abstract repository this way, one module per database.",
       "params": {
         "module": "Module", "list": "providers", "token": "provide", "useClass": "useClass",
-        "notRead": ["useFactory", "useValue", "useExisting"], "inject": "Inject"
+        "notRead": ["useFactory", "useValue", "useExisting"],
+        "injectByToken": ["Inject"], "harmless": ["Optional", "Self", "SkipSelf", "Host"],
+        "consumed": ["imports", "inject", "useClass", "useExisting", "useFactory"]
       },
       "examples": [
         {

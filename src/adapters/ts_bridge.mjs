@@ -134,9 +134,9 @@ function reachedOf(project, appRoot) {
  * receiver's type may be and what the application's modules bind to it, and
  * which files the application's imports reached outside its root.
  */
-function callsOf(g, project, rules, root, opts) {
+function callsOf(g, project, rules, routed, opts) {
   const subtypesOf = subtypeIndex(project);
-  const bindings = providerBindings(project, rules, root, subtypesOf);
+  const bindings = providerBindings(project, rules, { root: routed.root, rootUnread: routed.rootUnread ?? false }, subtypesOf);
   const reached = reachedOf(project, opts.appRoot);
   const calls = addCalls(g, project, { subtypesOf, bindings, outside: reached.outside, published: opts.publishedOf ?? (() => null) });
   return { calls, reached: reached.stats, diagnostics: [...(bindings ? bindings.diagnostics() : []), ...dispatchDiagnostics(g, calls)] };
@@ -174,7 +174,7 @@ export function addTsFacts(g, tsFacts, opts = {}) {
   const symbols = addSymbols(g, project);
   const routed = routesOf(project, rules, opts);
   for (const r of routed.routes) addRoute(g, r);
-  const linked = callsOf(g, project, rules, routed.root, opts);
+  const linked = callsOf(g, project, rules, routed, opts);
   const [prisma, typeorm] = [prismaOf(g, project, rules, opts), typeormOf(g, project, rules, opts)];
   return {
     files: project.files.size, ...linked.reached, symbols, routes: routed.routes.length, heuristicRoutes: routed.routes.filter((r) => r.grade === 'HEURISTIC').length,

@@ -27,13 +27,13 @@ import { methodsRunBy, typeTargets } from './dispatch.mjs';
 export const methodSymbolId = (file, cls, method) => nodeId('symbol', `${file}#${cls}.${method}`);
 export const functionSymbolId = (file, name) => nodeId('symbol', `${file}#${name}`);
 
-/** Every method and module function of the project as a symbol node. */
+/** Every method, property holding a function, and module function of the project as a symbol node. */
 export function addSymbols(g, project) {
   let count = 0;
   for (const [file, f] of project.files) {
     for (const cls of f.classes.values()) {
-      for (const m of cls.methods.values()) {
-        g.addNode({ id: methodSymbolId(file, cls.name, m.name), symbol: `${file}#${cls.name}.${m.name}`, owner: cls.key, file, line: m.line ?? null, lane: 'ts' });
+      for (const m of [...cls.methods.values(), ...cls.fnProps.values()]) {
+        g.addNode({ id: methodSymbolId(file, cls.name, m.name), symbol: `${file}#${cls.name}.${m.name}`, owner: cls.key, file, line: m.line ?? null, lane: 'ts', ...(m.kind === 'property' ? { property: true } : {}) });
         count += 1;
       }
     }
@@ -76,25 +76,42 @@ const bindingSaid = (bound, all) => (bound.classes
   : { incomplete: bound.reason });
 
 /**
+ * Whether a call through a type no class of the project changes stays as it
+ * always was: the modules bind the type to itself, or nothing binds it to
+ * anything else and no decorator of the parameter says otherwise.
+ */
+const staysPlain = (bound, type) => !bound
+  || (bound.classes ? bound.classes.length === 1 && bound.classes[0].key === type.key : !bound.rebound && !bound.decorator);
+
+/**
  * A call through a value of `type`: the type's own method as it always was
- * when no class of the project changes the answer, else every method the
- * value may run, each edge carrying the set. `narrowed` is what the modules'
- * bindings make of the set, when one is asked. The set is SOUND_SET when it is
- * complete: `this` is always an instance of a class of the tree unless the
- * type's package may be published, and a field holds what the bindings settle.
- * Otherwise it is HEURISTIC, and the edge says why it may be short.
+ * when no class of the project changes the answer and no module binds the
+ * type to another object, else every method the value may run, each edge
+ * carrying the set. `narrowed` is what the modules' bindings make of the set,
+ * when one is asked. The set is SOUND_SET when it is complete: `this` is
+ * always an instance of a class of the tree unless the type's package may be
+ * published or a class this engine cannot read may extend it, and a field
+ * holds what the bindings settle. Otherwise it is HEURISTIC, and the edge says
+ * why it may be short.
  */
 function throughType(ctx, type, name, rules, narrowed = null) {
   const t = typeTargets(ctx.project, ctx.subtypesOf, type, name);
-  if (t.plain) return { to: [idOf(t.own)], rule: rules[0] };
   const bound = narrowed ? narrowed() : null;
-  const set = bound?.classes ? methodsRunBy(ctx.project, bound.classes, name) : t.all;
+  if (t.plain && staysPlain(bound, type)) return { to: [idOf(t.own)], rule: rules[0] };
+  // A set the modules do not settle keeps every class they were read to bind, beside the hierarchy.
+  const set = bound?.classes ? methodsRunBy(ctx.project, bound.classes, name) : withPartial(ctx.project, t.all, bound?.partial ?? [], name);
   if (set.length === 0) return null;
   const said = bound ? bindingSaid(bound, t.all.length) : {};
-  const published = ctx.published(type.file);
-  const incomplete = said.incomplete ?? published;
+  const incomplete = said.incomplete ?? t.open ?? ctx.published(type.file);
   const dispatch = { type: type.key, candidates: set.length, ...said, ...(incomplete ? { incomplete } : {}) };
   return { to: set.map(idOf), rule: rules[1], dispatch, grade: incomplete ? 'HEURISTIC' : 'SOUND_SET', narrowed: Boolean(bound?.classes) };
+}
+
+/** The hierarchy's methods, with those of each class the modules were read to bind, once per declaring class. */
+function withPartial(project, all, partial, name) {
+  const byClass = new Map(all.map((hit) => [hit.cls.key, hit]));
+  for (const hit of methodsRunBy(project, partial, name)) byClass.set(hit.cls.key, hit);
+  return [...byClass.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([, hit]) => hit);
 }
 
 /** `this.dep.m()`: through the type of the field `dep`, which the modules may say more about. */

@@ -279,7 +279,7 @@ test('a key named like a property every object has (toString, constructor) is an
 
 const providerRule = (paramsOver = {}, over = {}) => ({
   id: 'p.providers', kind: 'ts.provider-binding', description: 'Providers.',
-  params: { module: 'Module', list: 'providers', token: 'provide', useClass: 'useClass', notRead: ['useFactory'], inject: 'Inject', ...paramsOver },
+  params: { module: 'Module', list: 'providers', token: 'provide', useClass: 'useClass', notRead: ['useFactory'], injectByToken: ['Inject'], harmless: ['Optional'], ...paramsOver },
   examples: [{ source: 'export class A {}', expect: [] }],
   ...over,
 });
@@ -313,3 +313,23 @@ test('the shipped nestjs.providers examples all hold, and a provider list held i
   const cls = factsOfFile('m.ts', "import { Module } from '@nestjs/common';\n@Module({ providers: list })\nexport class M {}").find((r) => r.kind === 'class');
   assert.deepEqual(compiled.providersOf(cls), { readable: true, spread: true, entries: [] });
 });
+
+// ---------------------------------------------------------------------------
+// ts.test-support
+// ---------------------------------------------------------------------------
+
+test('ts.test-support refuses a directory that is not a whole name and an ending that is not a .ts one, and a grade', () => {
+  const rule = (params, over = {}) => ({
+    id: 'p.tests', kind: 'ts.test-support', description: 'Tests.', params, examples: [{ path: 'a/b.spec.ts', expect: true }], ...over,
+  });
+  has(refusal([{ where: 'r.json', pack: packOf([rule({ dirs: ['a/b'], suffixes: ['.spec.ts'] })]) }]), /p\.tests params\.dirs must list directory names/);
+  has(refusal([{ where: 'r.json', pack: packOf([rule({ dirs: ['test'], suffixes: ['.spec.js'] })]) }]), /p\.tests params\.suffixes must list file name endings, each ending in \.ts/);
+  has(refusal([{ where: 'r.json', pack: packOf([rule({ dirs: ['test'], suffixes: ['.spec.ts'] }, { grade: 'EXACT' })]) }]), /draws no edge to grade/);
+});
+
+test('the shipped typescript.test-support examples all hold', () => {
+  const results = testRules(builtinRegistry(), { only: 'typescript.test-support' });
+  assert.equal(results.length, 1);
+  assert.deepEqual(results[0].failures, []);
+});
+

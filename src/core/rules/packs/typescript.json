@@ -1,0 +1,26 @@
+{
+  "pack": "typescript",
+  "version": 1,
+  "description": "TypeScript source as the TypeScript lane reads it: which files are a test's, not the application's.",
+  "rules": [
+    {
+      "id": "typescript.test-support",
+      "kind": "ts.test-support",
+      "description": "A file in a directory with one of these names, or whose name ends in one of these endings, is test support: a spec, a mock, a stub or a helper only a test runs. The TypeScript lane leaves it out, whether it is under the application's root or in a shared library an import reaches.",
+      "why": "A shared library's barrel may re-export its mocks, and ghostfolio keeps a *.service.mock.ts beside several services; read as the application's, a mock class is one more class a call through an abstract type may reach. The Java lane leaves src/test out the same way.",
+      "params": {
+        "dirs": ["__mocks__", "__tests__", "__fixtures__", "test", "tests", "testing", "e2e"],
+        "suffixes": [".spec.ts", ".test.ts", ".e2e-spec.ts", ".mock.ts", ".mocks.ts", ".stub.ts", ".stories.ts"]
+      },
+      "examples": [
+        { "path": "libs/common/src/lib/helper.ts", "expect": false },
+        { "path": "apps/api/src/app/redis-cache/redis-cache.service.mock.ts", "expect": true, "why": "a mock beside the service it stands in for" },
+        { "path": "libs/common/src/__mocks__/repo.ts", "expect": true },
+        { "path": "libs/data/testing/helpers.ts", "expect": true, "why": "an Nx library's testing entry point" },
+        { "path": "libs/data/contesting/helpers.ts", "expect": false, "why": "a directory is matched by its whole name" },
+        { "path": "src/users/users.service.spec.ts", "expect": true },
+        { "path": "src/mock-data.ts", "expect": false, "why": "an ending, not a word anywhere in the name" }
+      ]
+    }
+  ]
+}

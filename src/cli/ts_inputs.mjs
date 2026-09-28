@@ -163,17 +163,36 @@ export function packagePublishing(rootAbs, appRootAbs) {
   };
 }
 
-const isFileAt = (abs) => {
-  try { return fs.statSync(abs).isFile(); } catch { return false; }
-};
+/**
+ * Whether a root-relative path is a file whose bytes are inside the analyzed
+ * root: a link that leads out of it (`libs/linked -> ../../elsewhere`) is not,
+ * whatever its path says.
+ */
+function fileInsideRoot(rootAbs) {
+  let realRoot;
+  try { realRoot = fs.realpathSync(rootAbs); } catch { realRoot = rootAbs; }
+  return (rel) => {
+    try {
+      const real = fs.realpathSync(path.join(rootAbs, rel));
+      return (real === realRoot || real.startsWith(`${realRoot}${path.sep}`)) && fs.statSync(real).isFile();
+    } catch { return false; }
+  };
+}
+
+/** Which root-relative files are test support, as the typescript rule pack says (typescript.test-support). */
+function testSupport() {
+  const rules = builtinRegistry().ofKind('ts.test-support');
+  return (rel) => rules.some((r) => r.compiled.isTestSupport(rel));
+}
 
 /**
  * Where an import of the application leads while the run decides which files
  * to read: the bridge's own resolution (src/adapters/ts/project.mjs) over the
  * same tsconfig, so the file read for an import is the file the bridge takes it
  * to mean. Under the application's root a file is one the worker listed; outside
- * it, a source file inside the analyzed root that a walk would read
- * (never node_modules, a test, or a path that leaves the root).
+ * it, a source file whose bytes are inside the analyzed root, that a walk would
+ * read and that is not test support (never node_modules, a spec or a mock, or a
+ * path or a link that leaves the root).
  *
  * @param {{rootAbs:string, appRootAbs:string, listed:string[]}} a  `listed` root-relative
  * @returns {(fromFile:string, spec:string) => (string|null)} the root-relative file, or null for a package
@@ -183,24 +202,28 @@ export function tsReachResolver({ rootAbs, appRootAbs, listed }) {
   const app = toPosix(path.relative(rootAbs, appRootAbs));
   const inApp = (f) => app === '' || f === app || f.startsWith(`${app}/`);
   const known = new Set(listed);
-  const isKnown = (f) => known.has(f) || (!inApp(f) && isReadablePath(f) && isFileAt(path.join(rootAbs, f)));
+  const [inside, isTest] = [fileInsideRoot(rootAbs), testSupport()];
+  const isKnown = (f) => known.has(f) || (!inApp(f) && isReadablePath(f) && !isTest(f) && inside(f));
   return makeModuleResolver(isKnown, { baseUrl: tsconfig.baseUrl, paths: tsconfig.paths });
 }
 
 /**
  * THE TYPESCRIPT LANE'S WORKER INVOCATIONS, for `cascade analyze` and the
  * working-tree overlay alike (src/core/incremental.mjs runTsLaneWithShards is
- * handed them): the files a run over the application's root reads, the
- * resolution its imports are followed by, and those files read. `onRead` sees
- * each batch before the worker is handed it.
+ * handed them): the files a run over the application's root reads (none that
+ * is test support or whose bytes are outside the root), the resolution its
+ * imports are followed by, and those files read. `onRead` sees each batch
+ * before the worker is handed it.
  *
  * @param {string} rootAbs  the analyzed root
  * @param {(string|null)} appRootAbs  the application's root, null with none
  * @param {{onRead?:(targets:string[])=>void}} [opts]
  */
 export function tsLaneRunners(rootAbs, appRootAbs, { onRead = () => {} } = {}) {
+  // The application's own files are read under the same two rules as a shared library's.
+  const [inside, isTest] = [fileInsideRoot(rootAbs), testSupport()];
   return {
-    tsList: (roots) => runTsLane(rootAbs, roots, { list: true }).filter((r) => r.kind === 'sourceFile').map((r) => r.file),
+    tsList: (roots) => runTsLane(rootAbs, roots, { list: true }).filter((r) => r.kind === 'sourceFile' && !isTest(r.file) && inside(r.file)).map((r) => r.file),
     tsResolver: (listed) => (appRootAbs ? tsReachResolver({ rootAbs, appRootAbs, listed }) : null),
     ts: (targets) => {
       onRead(targets);

@@ -20,7 +20,8 @@ import { Graph } from '../src/core/graph.mjs';
 import { MODE_COLD, MODE_INCREMENTAL } from '../src/core/invalidate.mjs';
 import { addTsFacts, symbolsSharedWithOtherLanes } from '../src/adapters/ts_bridge.mjs';
 import { factsOfFile } from '../adapters/ts/tsfacts.mjs';
-import { tsReachResolver } from '../src/cli/ts_inputs.mjs';
+import { tsLaneRunners, tsReachResolver } from '../src/cli/ts_inputs.mjs';
+import { builtinRegistry } from '../src/core/rules/registry.mjs';
 
 const WORKERS = { java: 'javafacts/2', mybatis: 'mybatis-extract/1', lineage: 'lineage/1', catalog: 'catalog-ddl/1', web: 'webfacts/2' };
 
@@ -165,6 +166,48 @@ test('tsReachResolver follows a tsconfig path to a shared library, never into no
   assert.equal(resolve(from, '@out/y'), null, 'nothing outside the analyzed root');
   assert.equal(resolve(from, './test/helper'), null, 'under the application\'s root only a listed file is known');
   assert.equal(resolve(from, 'lodash'), null);
+});
+
+test('ts_reach_does_not_follow_symlink_out_of_root: a link inside the root to a directory outside it leads nowhere this lane reads', (t) => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reach-link-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, 'repo');
+  const put = (abs, text = '') => { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, text); };
+  put(path.join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@link/*': ['libs/linked/*'], '@in/*': ['libs/inside/*'] } } }));
+  put(path.join(root, 'apps/api/src/main.ts'));
+  put(path.join(base, 'outside/lib/x.ts'));
+  put(path.join(root, 'libs/real/y.ts'));
+  fs.symlinkSync(path.join(base, 'outside/lib'), path.join(root, 'libs/linked'));
+  fs.symlinkSync(path.join(root, 'libs/real'), path.join(root, 'libs/inside'));
+  const resolve = tsReachResolver({ rootAbs: root, appRootAbs: path.join(root, 'apps/api/src'), listed: ['apps/api/src/main.ts'] });
+  assert.equal(resolve('apps/api/src/main.ts', '@link/x'), null, 'the file the link reaches is outside the analyzed root');
+  assert.equal(resolve('apps/api/src/main.ts', '@in/y'), 'libs/inside/y.ts', 'a link that stays inside the root is followed');
+});
+
+test('test support a shared library holds is not read: which paths are test support is the typescript pack\'s', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reach-mocks-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const put = (rel, text = '') => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
+  put('tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@lib/*': ['libs/common/src/*'] } } }));
+  put('apps/api/src/main.ts', 'export function main() {}');
+  put('apps/api/src/users.service.mock.ts', 'export class UsersServiceMock {}');
+  put('apps/api/src/__mocks__/repo.ts', 'export class RepoMock {}');
+  put('libs/common/src/repo.ts');
+  put('libs/common/src/repo.mock.ts');
+  put('libs/common/src/__mocks__/repo.ts');
+  put('libs/common/src/testing/helpers.ts');
+  const app = path.join(root, 'apps/api/src');
+  const resolve = tsReachResolver({ rootAbs: root, appRootAbs: app, listed: ['apps/api/src/main.ts'] });
+  const from = 'apps/api/src/main.ts';
+  assert.equal(resolve(from, '@lib/repo'), 'libs/common/src/repo.ts');
+  assert.equal(resolve(from, '@lib/repo.mock'), null);
+  assert.equal(resolve(from, '@lib/__mocks__/repo'), null);
+  assert.equal(resolve(from, '@lib/testing/helpers'), null);
+  assert.deepEqual(tsLaneRunners(root, app).tsList([app]), ['apps/api/src/main.ts'], 'the application\'s own test support is left out as well');
+  const rule = builtinRegistry().ofKind('ts.test-support')[0];
+  assert.equal(rule.id, 'typescript.test-support');
+  assert.equal(rule.compiled.isTestSupport('libs/common/src/testing/helpers.ts'), true);
+  assert.equal(rule.compiled.isTestSupport('libs/common/src/contesting/helpers.ts'), false, 'a whole directory name, not a part of one');
 });
 
 // ---------------------------------------------------------------------------

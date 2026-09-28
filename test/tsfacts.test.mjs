@@ -412,3 +412,23 @@ test('an interface is recorded with the interfaces it extends, and an abstract m
   assert.deepEqual(itfs.map((r) => [r.name, r.exported, r.extends]), [['Store', true, ['Base', 'ns.Other']], ['Local', false, []]]);
   assert.deepEqual(records.filter((r) => r.kind === 'method').map((r) => r.name), ['get']);
 });
+
+test('a property holding a function, the class a mixin function returns, a class extending a call, and a constant naming one value or another', () => {
+  const records = factsOfFile('src/m.ts', [
+    'export function Loud(B) { return class extends B { step() { return this.x(); } }; }',
+    'export class Mixed extends Loud(Base) { run = () => this.step(); size = 3; }',
+    'const chosen = isDocument() ? DocumentModule : RelationalModule;',
+    'const made = build();',
+  ].join('\n'));
+  const mixin = records.find((r) => r.kind === 'class' && r.name === 'Loud()');
+  assert.deepEqual([mixin.mixinOf, mixin.mixinParam, mixin.extends], ['Loud', 0, null], 'it extends what the function is handed, not a name of the file');
+  assert.equal(records.find((r) => r.kind === 'method' && r.class === 'Loud()').name, 'step');
+  assert.equal(records.find((r) => r.kind === 'call' && r.callee === 'this.x').in, 'Loud().step', 'a call in the mixin\'s class is its method\'s');
+  const mixed = records.find((r) => r.kind === 'class' && r.name === 'Mixed');
+  assert.deepEqual(mixed.extendsCall, { callee: 'Loud', args: [{ k: 'id', v: 'Base' }] });
+  const props = records.filter((r) => r.kind === 'property');
+  assert.deepEqual(props.map((r) => [r.name, r.fn ?? false]), [['run', true], ['size', false]]);
+  const aliases = records.filter((r) => r.kind === 'alias');
+  assert.deepEqual(aliases.map((r) => [r.name, r.values.map((v) => v.v)]), [['chosen', ['DocumentModule', 'RelationalModule']]], 'a call is no alias');
+});
+

@@ -15,19 +15,29 @@
 // this kind carries no grade.
 
 const NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const KEYS = Object.freeze(['module', 'list', 'token', 'useClass', 'notRead', 'inject']);
+const KEYS = Object.freeze(['module', 'list', 'token', 'useClass', 'notRead', 'injectByToken', 'harmless', 'consumed']);
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
 const isName = (v) => typeof v === 'string' && NAME.test(v);
+
+/** Whether a param is a list of names; `least` of them at the least, and nothing at all when it may be left out. */
+const namesListed = (v, least = 0, optional = false) => (optional && v === undefined) || (Array.isArray(v) && v.length >= least && v.every(isName));
+
+const LISTS = Object.freeze([
+  ['notRead', 1, false, 'params.notRead must list the keys of a binding this kind does not read (useFactory, useValue, ...)'],
+  // A parameter decorator either fills the parameter by the token it names, or changes nothing about what
+  // fills it; any other is not known, and the bridge settles nothing by it.
+  ['injectByToken', 1, false, 'params.injectByToken must list the parameter decorators that fill a parameter by the token they name (Inject)'],
+  ['harmless', 0, false, 'params.harmless must list the parameter decorators that leave what fills a parameter as it is'],
+  ['consumed', 0, true, 'params.consumed must list the keys of a package module\'s options whose names the package reads and binds to nothing else'],
+]);
 
 function validateParams(params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return ['params must be an object'];
   const errors = unknownKeys(params, KEYS).map((k) => `params has an unknown key "${k}"`);
-  for (const k of ['module', 'list', 'token', 'useClass', 'inject']) {
+  for (const k of ['module', 'list', 'token', 'useClass']) {
     if (!isName(params[k])) errors.push(`params.${k} must be a name as the source writes it`);
   }
-  if (!Array.isArray(params.notRead) || params.notRead.length === 0 || !params.notRead.every(isName)) {
-    errors.push('params.notRead must list the keys of a binding this kind does not read (useFactory, useValue, ...)');
-  }
+  for (const [k, least, optional, said] of LISTS) if (!namesListed(params[k], least, optional)) errors.push(said);
   return errors;
 }
 
@@ -72,14 +82,19 @@ function entryOf(params, v) {
  * whether its options are read whole, whether its list spreads another, and
  * each entry as `entryOf` reads it.
  */
-function compile(rule) {
-  const { params } = rule;
+/** How a providers list is read out of a module's options object: whether it spreads another, and each entry. */
+function listReader(params) {
   // A list held in a variable, or one that spreads another, may bind anything.
-  const listIn = (opts) => {
+  return (opts) => {
     const list = opts?.v[params.list];
     const items = list && list.k === 'arr' ? list.v : [];
     return { spread: Boolean(list && (list.k !== 'arr' || list.spread)), entries: items.map((v) => entryOf(params, v)) };
   };
+}
+
+function compile(rule) {
+  const { params } = rule;
+  const listIn = listReader(params);
   const providersOf = (cls) => {
     const d = cls.decorators.find((x) => x.name === params.module);
     if (!d) return null;
@@ -90,7 +105,9 @@ function compile(rule) {
   // The same list in an object a static method returns: a dynamic module (`X.forRoot()`).
   const providersIn = (value) => (value && value.k === 'obj'
     ? { readable: !value.spread && !value.computed, ...listIn(value) } : { readable: false, spread: false, entries: [] });
-  return { providersOf, providersIn, inject: params.inject, rule: rule.id };
+  // What a constructor parameter's decorator does to what fills it, by the name its package gives it.
+  const parameterDecorator = (name) => (params.injectByToken.includes(name) ? 'token' : params.harmless.includes(name) ? 'harmless' : 'unknown');
+  return { providersOf, providersIn, parameterDecorator, consumed: params.consumed ?? [], rule: rule.id };
 }
 
 /** What one example's modules bind, in the example's own words. */

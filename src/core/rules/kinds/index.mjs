@@ -20,6 +20,7 @@ import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
 import { tsProviderBinding } from './ts_provider_binding.mjs';
 import { tsRouteDecorator } from './ts_route_decorator.mjs';
+import { tsTestSupport } from './ts_test_support.mjs';
 import { tsTypeRole } from './ts_type_role.mjs';
 import { typeormEntity } from './typeorm_entity.mjs';
 import { typeormOperation } from './typeorm_operation.mjs';
@@ -35,6 +36,7 @@ export const KINDS = Object.freeze({
   [sqlDialectPath.name]: sqlDialectPath,
   [tsProviderBinding.name]: tsProviderBinding,
   [tsRouteDecorator.name]: tsRouteDecorator,
+  [tsTestSupport.name]: tsTestSupport,
   [tsTypeRole.name]: tsTypeRole,
   [typeormEntity.name]: typeormEntity,
   [typeormOperation.name]: typeormOperation,

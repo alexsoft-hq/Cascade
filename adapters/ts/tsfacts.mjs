@@ -43,7 +43,10 @@ const SCHEMA = 'cascade:tsfacts:1';
 // 5: a record that each file was read (`file`), interfaces (`interface`), and
 //    which local a `new` makes its object through (`rootAt`).
 // 6: which local the result of a chain of calls is held in (`chainHolderAt`).
-export const VERSION = 'tsfacts/6';
+// 7: a property that holds a function (`fn`), the class a mixin function
+//    returns (`mixinOf`, `mixinParam`), a class that extends a call
+//    (`extendsCall`), and a module constant that names another value (`alias`).
+export const VERSION = 'tsfacts/7';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -300,12 +303,26 @@ function paramsOf(fn) {
   });
 }
 
-function classRecords(file, node, exported, emit) {
-  const name = node.id ? node.id.name : 'default';
+/**
+ * What a class extends when it is a call (`extends Loud(Base)`, a mixin
+ * applied): the function and what it is handed, which only the bridge can
+ * follow into the class the function returns.
+ */
+function extendsCallOf(superClass) {
+  const n = unwrap(superClass);
+  return n && n.type === 'CallExpression' ? { extendsCall: { callee: chainOf(n.callee), args: n.arguments.map((a) => valueOf(a)) } } : {};
+}
+
+/** A class, and its members. `mixin` names the class a mixin function returns: `{name: 'Loud()', of: 'Loud', param}`. */
+function classRecords(file, node, exported, emit, mixin = null) {
+  const name = mixin ? mixin.name : node.id ? node.id.name : 'default';
   emit({
     kind: 'class', file, name, exported, decorators: decoratorsOf(node),
-    extends: node.superClass ? chainOf(node.superClass) : null,
+    // A mixin's class extends what its function is handed, not a name of the file.
+    extends: node.superClass && !(mixin && mixin.param !== null) ? chainOf(node.superClass) : null,
     ...(node.superClass && node.superTypeParameters ? { extendsArgs: typeArgsOf(node.superTypeParameters) } : {}),
+    ...(node.superClass ? extendsCallOf(node.superClass) : {}),
+    ...(mixin ? { mixinOf: mixin.of, ...(mixin.param !== null ? { mixinParam: mixin.param } : {}) } : {}),
     implements: (node.implements ?? []).map((i) => chainOf(i.expression)).filter(Boolean),
     line: lineOf(node), endLine: endLineOf(node),
   });
@@ -326,7 +343,9 @@ function memberRecords(file, name, m, emit) {
       params: paramsOf(m), ...(returns.length > 0 ? { returns } : {}), line: lineOf(m), endLine: endLineOf(m),
     });
   } else if (m.type === 'ClassProperty' && m.key && !m.computed) {
-    emit({ kind: 'property', file, class: name, name: keyName(m), static: m.static === true, type: typeNameOf(m.typeAnnotation), ...typeArgsField(m.typeAnnotation), decorators: decoratorsOf(m), line: lineOf(m) });
+    // A property holding a function is set on each object, over any method of that name.
+    const fn = isFunctionNode(unwrap(m.value)) ? { fn: true } : {};
+    emit({ kind: 'property', file, class: name, name: keyName(m), static: m.static === true, type: typeNameOf(m.typeAnnotation), ...typeArgsField(m.typeAnnotation), ...fn, decorators: decoratorsOf(m), line: lineOf(m) });
   }
 }
 
@@ -424,7 +443,7 @@ function callRecord(file, node, { here, callee, n, cond, holder, chain }, sc) {
  * name the whole expression is held in as `chainHolder`. A `new` is a record of
  * its own and takes no place among the calls.
  */
-function walkCalls(file, ast, emit, sc) {
+function walkCalls(file, ast, emit, sc, mixins = new Map()) {
   const counters = new Map();
   // The name each initializer is held in (`const app = await …` holds the call under the await).
   const holders = new Map();
@@ -435,7 +454,8 @@ function walkCalls(file, ast, emit, sc) {
     if (node.type === 'Decorator') return;
     if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) holders.set(unwrap(node.init), node.id);
     if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
-      const cls = node.id ? node.id.name : 'default';
+      // A mixin's class goes by the name its function gives it, as its records do.
+      const cls = mixins.get(node) ?? (node.id ? node.id.name : 'default');
       for (const m of node.body.body) {
         const member = m.key && !m.computed ? keyName(m) : null;
         const w = member === null ? `${cls}.<computed>` : `${cls}.${m.kind === 'constructor' ? 'constructor' : member}`;
@@ -495,7 +515,57 @@ function functionRecord(file, name, fn, exported, at) {
   return { kind: 'function', file, name, exported, params: paramsOf(fn).map((p) => p.name), line: lineOf(at) };
 }
 
-function declarationRecords(file, ast, emit) {
+/**
+ * The one class expression a module function returns, a mixin: `function
+ * Loud(B) { return class extends B {...} }` or `const Loud = (B) => class
+ * extends B {...}`, with the parameter it extends. None when it returns two.
+ */
+function mixinClassOf(fn) {
+  const body = fn.body;
+  const found = [];
+  if (body && body.type !== 'BlockStatement') {
+    if (unwrap(body)?.type === 'ClassExpression') found.push(unwrap(body));
+  } else if (body) {
+    const visit = (node) => {
+      if (isFunctionNode(node) || node.type === 'ClassDeclaration' || node.type === 'ClassExpression') return;
+      if (node.type === 'ReturnStatement' && unwrap(node.argument)?.type === 'ClassExpression') found.push(unwrap(node.argument));
+      eachChild(node, visit);
+    };
+    eachChild(body, visit);
+  }
+  if (found.length !== 1) return null;
+  const params = paramsOf(fn).map((p) => p.name);
+  const sup = unwrap(found[0].superClass);
+  return { node: found[0], param: sup && sup.type === 'Identifier' && params.includes(sup.name) ? params.indexOf(sup.name) : null };
+}
+
+/** A module function, and the class it returns when it is a mixin, named `<function>()`; the mixin's node into `mixins`. */
+function functionRecords(file, name, fn, exported, at, emit, mixins) {
+  emit(functionRecord(file, name, fn, exported, at));
+  const mixin = mixinClassOf(fn);
+  if (!mixin) return;
+  mixins.set(mixin.node, `${name}()`);
+  classRecords(file, mixin.node, false, emit, { name: `${name}()`, of: name, param: mixin.param });
+}
+
+/**
+ * A module constant that names another value, one or another (`const m =
+ * isDocument ? DocumentModule : RelationalModule`): what it may hold, as the
+ * worker reads a value. A module list that names the constant lists those.
+ */
+function aliasRecord(file, d, exported) {
+  const leaves = [];
+  const gather = (n, depth) => {
+    const x = unwrap(n);
+    if (x && x.type === 'ConditionalExpression' && depth < 4) { gather(x.consequent, depth + 1); gather(x.alternate, depth + 1); } else leaves.push(valueOf(x));
+  };
+  const top = unwrap(d.init);
+  if (!top || (top.type !== 'Identifier' && top.type !== 'ConditionalExpression')) return null;
+  gather(top, 0);
+  return { kind: 'alias', file, name: d.id.name, exported, values: leaves, line: lineOf(d) };
+}
+
+function declarationRecords(file, ast, emit, mixins = new Map()) {
   for (const stmt of ast.program.body) {
     if (stmt.type === 'ImportDeclaration') { emit(importRecord(file, stmt)); continue; }
     if (stmt.type === 'ExportAllDeclaration' || (stmt.type === 'ExportNamedDeclaration' && !stmt.declaration)) {
@@ -507,10 +577,15 @@ function declarationRecords(file, ast, emit) {
     if (!decl) continue;
     if (decl.type === 'ClassDeclaration') classRecords(file, decl, exported, emit);
     else if (decl.type === 'TSInterfaceDeclaration') emit(interfaceRecord(file, decl, exported));
-    else if (decl.type === 'FunctionDeclaration' && decl.id) emit(functionRecord(file, decl.id.name, decl, exported, decl));
+    else if (decl.type === 'FunctionDeclaration' && decl.id) functionRecords(file, decl.id.name, decl, exported, decl, emit, mixins);
     else if (decl.type === 'VariableDeclaration') {
       for (const d of decl.declarations) {
-        if (d.id.type === 'Identifier' && isFunctionNode(unwrap(d.init))) emit(functionRecord(file, d.id.name, unwrap(d.init), exported, d));
+        if (d.id.type !== 'Identifier') continue;
+        if (isFunctionNode(unwrap(d.init))) functionRecords(file, d.id.name, unwrap(d.init), exported, d, emit, mixins);
+        else if (decl.kind === 'const') {
+          const alias = aliasRecord(file, d, exported);
+          if (alias) emit(alias);
+        }
       }
     }
   }
@@ -533,8 +608,9 @@ export function factsOfFile(file, code) {
   // That the file was read, whatever it holds: a file of constants and types
   // alone is still a file of the project, not a package.
   emit({ kind: 'file', file });
-  declarationRecords(file, ast, emit);
-  walkCalls(file, ast, emit, readScopes(ast));
+  const mixins = new Map();
+  declarationRecords(file, ast, emit, mixins);
+  walkCalls(file, ast, emit, readScopes(ast), mixins);
   for (const e of ast.errors ?? []) out.push({ kind: 'parse_error', file, message: String(e.message).split('\n')[0], recovered: true });
   return out;
 }

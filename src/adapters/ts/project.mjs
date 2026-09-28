@@ -22,15 +22,25 @@ const MAX_HOPS = 16;
 export const classKey = (file, name) => `${file}#${name}`;
 
 function emptyFile() {
-  return { imports: [], exports: [], classes: new Map(), interfaces: new Map(), functions: new Map() };
+  return { imports: [], exports: [], classes: new Map(), interfaces: new Map(), functions: new Map(), aliases: new Map() };
 }
 
-/** Whether a file declares a class, an interface or a function by that name. */
-const declares = (f, name) => f.classes.has(name) || f.interfaces.has(name) || f.functions.has(name);
+/** Whether a file declares a class, an interface, a function or a constant naming another value by that name. */
+const declares = (f, name) => f.classes.has(name) || f.interfaces.has(name) || f.functions.has(name) || f.aliases.has(name);
 
 function addClassMember(cls, r) {
   if (r.kind === 'method') cls.methods.set(r.name, r);
   else if (r.kind === 'ctorParam' || r.kind === 'property') cls.fields.set(r.name, r);
+  // A property holding a function runs as a method does, and over any method of its name.
+  if (r.kind === 'property' && r.fn && !r.static) cls.fnProps.set(r.name, r);
+}
+
+/** A class, an interface, a module function or a constant naming another value, into its file; any other record is not one. */
+function addDeclaration(f, r) {
+  if (r.kind === 'class') f.classes.set(r.name, { ...r, key: classKey(r.file, r.name), methods: new Map(), fields: new Map(), fnProps: new Map() });
+  else if (r.kind === 'interface') f.interfaces.set(r.name, { ...r, key: classKey(r.file, r.name) });
+  else if (r.kind === 'function') f.functions.set(r.name, r);
+  else if (r.kind === 'alias') f.aliases.set(r.name, r);
 }
 
 /** The records of every file, bucketed: the one pass over the stream everything else reads. */
@@ -46,13 +56,10 @@ function indexRecords(records) {
     switch (r.kind) {
       case 'import': f.imports.push(r); break;
       case 'export': f.exports.push(r); break;
-      case 'class': f.classes.set(r.name, { ...r, key: classKey(r.file, r.name), methods: new Map(), fields: new Map() }); break;
-      case 'interface': f.interfaces.set(r.name, { ...r, key: classKey(r.file, r.name) }); break;
-      case 'function': f.functions.set(r.name, r); break;
       case 'call': calls.push(r); break;
       case 'new': news.push(r); break;
       case 'method': case 'ctorParam': case 'property': pendingMembers.push(r); break;
-      default: break;
+      default: addDeclaration(f, r); break;
     }
   }
   for (const r of pendingMembers) {
@@ -158,14 +165,61 @@ export function readProject(records, tsconfig = {}) {
     const m = meaning(file, name);
     return m && !m.external ? files.get(m.file)?.classes.get(m.name) ?? null : null;
   };
-
-  const lineage = (cls) => {
-    const out = [];
-    for (let cur = cls; cur && out.length <= MAX_HOPS && !out.includes(cur); cur = cur.extends ? classOf(cur.file, cur.extends) : null) out.push(cur);
-    return out;
+  const { mixinOf, aliasOf } = namesOf(files, meaning);
+  const step = { classOf, mixinOf };
+  return {
+    files, calls, news, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), resolveModule, aliasOf,
+    lineage: (cls) => lineageOf(step, cls).classes,
+    // Where a class's chain of what it extends stops at a call this engine cannot follow, or null.
+    openEnd: (cls) => lineageOf(step, cls).open,
   };
+}
 
-  return { files, calls, news, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), lineage, resolveModule };
+/**
+ * Two more things a name may mean: the class a mixin function of the project
+ * returns (`Loud()` of `function Loud(B)`), and a constant of a file that
+ * names another value. Each null when it is not one.
+ */
+function namesOf(files, meaning) {
+  const found = (file, name) => {
+    const m = name ? meaning(file, name) : null;
+    return m && !m.external ? { m, f: files.get(m.file) } : null;
+  };
+  return {
+    mixinOf: (file, callee) => {
+      const hit = found(file, callee);
+      return hit?.f?.functions.has(hit.m.name) ? hit.f.classes.get(`${hit.m.name}()`) ?? null : null;
+    },
+    aliasOf: (file, name) => { const hit = found(file, name); return hit?.f?.aliases.get(hit.m.name) ?? null; },
+  };
+}
+
+/**
+ * What `cur` extends: a class it names, the class a mixin it calls returns
+ * (`extends Loud(Base)`, handing Base on to it), or what a mixin's class was
+ * handed. `open` when it is a call this engine cannot follow.
+ */
+function parentOf({ classOf, mixinOf }, cur, handed) {
+  if (cur.extends) return { cls: classOf(cur.file, cur.extends) };
+  const call = cur.extendsCall ?? (cur.mixinParam !== undefined && handed ? handed.args[cur.mixinParam] : null);
+  const file = cur.extendsCall ? cur.file : handed?.file;
+  if (!call) return { cls: null };
+  if (call.k === 'id') return { cls: classOf(file, call.v) };
+  const mixin = call.callee ? mixinOf(file, call.callee) : null;
+  return mixin ? { cls: mixin, handed: { file, args: call.args ?? [] } } : { cls: null, open: { cls: cur, callee: call.callee ?? 'an expression', args: call.args ?? [], file } };
+}
+
+/** The class and each class it extends in the project, nearest first, through mixins; where the chain stops at a call not followed. */
+function lineageOf(step, cls) {
+  const classes = [];
+  let open = null;
+  for (let cur = cls, handed = null; cur && classes.length <= MAX_HOPS && !classes.includes(cur);) {
+    classes.push(cur);
+    const next = parentOf(step, cur, handed);
+    open = next.open ?? null;
+    [cur, handed] = [next.cls, next.handed ?? null];
+  }
+  return { classes, open };
 }
 
 /** The class, else the interface, a meaning names in the project. */
@@ -173,6 +227,16 @@ function typeIn(files, m) {
   if (!m || m.external) return null;
   const f = files.get(m.file);
   return f ? f.classes.get(m.name) ?? f.interfaces.get(m.name) ?? null : null;
+}
+
+/**
+ * What `this.name()` runs on an object of `cls`: a property of the chain that
+ * holds a function (the most derived one: each is set on the object, over any
+ * method), else the nearest method; with the class that declares it.
+ */
+export function runsOn(project, cls, name) {
+  for (const c of project.lineage(cls)) if (c.fnProps?.has(name)) return { cls: c, method: c.fnProps.get(name) };
+  return methodOf(project, cls, name);
 }
 
 /** The method `name` of `cls` or of the nearest class it extends in the project, with the class that declares it. */
