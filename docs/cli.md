@@ -672,7 +672,12 @@ in the answer: the table id generators a Spring XML declares, when the pack
 bound any, an edited `package.json` near a frontend, and an edited Spring
 configuration when the pack read ports: the overlay keeps the packages and
 ports as the pack read them. A pack that reads a TypeScript backend is
-declined (`ts-not-overlaid`); `--mode base-only` still answers.
+overlaid too: the edited files are read again, the imports followed as they
+are now, and the tsconfig, `schema.prisma` and `package.json` files read again
+(see [the TypeScript lane](setup/ts-lane.md)). The overlay line counts the
+TypeScript files it read again beside the Java and frontend ones, and the
+timings add `ts`. Only a fact index an older engine wrote declines with
+`ts-not-overlaid`; `--mode base-only` still answers.
 
 ## `cascade view`
 

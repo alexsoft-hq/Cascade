@@ -506,8 +506,8 @@ node bin/cascade.mjs impact --project mall --verbose
 ```
 
 ```
-overlay 4ed662d103d9 (fresh): re-parsed 1 java + 0 frontend file(s), dropped 0, provisional 2 node(s) / 2 edge(s)
-timings ms: load-base 27 + java 133 + web 39 + sql 31 + graph 81 = 311
+overlay 4ed662d103d9 (fresh): re-parsed 1 java + 0 frontend + 0 TypeScript file(s), dropped 0, provisional 2 node(s) / 2 edge(s)
+timings ms: load-base 27 + java 133 + web 39 + sql 31 + ts 0 + graph 81 = 311
   reused 645 cached java shard(s); dirty documents: mall-admin/src/main/java/com/macro/mall/controller/PmsProductController.java@0478df64
 changed files: 1  (matched 1, unmatched 0)
 touched: 10 symbols, 0 statements, 11 endpoints
@@ -533,8 +533,9 @@ machinery in fields:
     "baseCommit": "0504e86b…", "headCommit": "0504e86b…",
     "docVersions": { "mall-admin/…/PmsProductController.java": "0478df64…" },
     "provisionalIds": { "symbols": ["symbol:com.macro.mall.controller.PmsProductController#priceCheck"],
-                        "endpoints": ["endpoint:GET /product/priceCheck/{id}"], "statements": [] },
-    "timingsMs": { "loadBase": 25, "java": 132, "web": 40, "sql": 26, "build": 78, "total": 301 } },
+                        "endpoints": ["endpoint:GET /product/priceCheck/{id}"], "statements": [],
+                        "tables": [], "columns": [] },
+    "timingsMs": { "loadBase": 25, "java": 132, "web": 40, "sql": 26, "ts": 0, "build": 78, "total": 301 } },
   "basis": { "freshness": { "verdict": "provisional-overlay", "overlaySessionId": "4ed662d103d9…" } } }
 ```
 

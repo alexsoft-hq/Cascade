@@ -101,8 +101,8 @@ Each dated section below is one round of work. The round protocol is in
   `cascade init` finds the application by its bootstrap and
   writes it, with the database the schema's datasource names. A project that
   sets no `tsBackend` keeps the profile digest and the calibration pin it had.
-  The working-tree overlay does not re-read TypeScript yet, and says so
-  (`ts-not-overlaid`); `--mode base-only` answers.
+  The working-tree overlay reads this lane too; see the entry on uncommitted
+  edits to a NestJS backend below.
 
 - **`cascade export --format card`: one answer at a glance.** The chain picture
   draws every row, which is what a reviewer needs and more than a first look can
@@ -242,13 +242,23 @@ Each dated section below is one round of work. The round protocol is in
   HEURISTIC, when the caller's options could carry one the lane cannot see. The
   caller's URL reaches the client only if every hop hands on the parameter it is
   in; a hop that drops it is not a path for that call (`WEB_URL_NOT_HANDED_ON`).
+  A hop that destructures or copies its options is followed through the
+  `const`, rest or spread it writes (`adapters/web/lib/origins.mjs`); one the
+  code does not settle (a local assigned again, `this`) is still taken as
+  reaching the client, but graded HEURISTIC, and its edge names the step and why
+  (`evidence.sink.unsettled`, `WEB_URL_THROUGH_UNREAD_HOP`).
   On ruoyi-vue-pro, with its prefixes and a
   gateway route declared, traced call sites rise from 2 to 2,749 and untraced
   ones fall from 2,908 to 163; SOUND_SET edges go from 1 to 2,729, and every
   call that matched a route before lands on the same path. Screens reaching an
   endpoint go from 0 to 88 of 100, and reaching a table from 0 to 61, at
-  `conservative`. On jeecg-boot the same rule traces 3 call sites through
-  `downloadFile`, checked against the source.
+  `conservative`, and every step its wrapper takes but one is settled (the one
+  left passes a `let url` it rewrites). On jeecg-boot the same rule traces 3
+  call sites through `downloadFile`, checked against the source; its
+  `VAxios.request` copies the options into a `let` that a hook and a form-data
+  step assign again, so 799 of its calls pass a step the code does not settle.
+  They are HEURISTIC now, and jeecg-boot's screens reaching a table at
+  `conservative` go from 25 of 181 to 11 (27 at `heuristic`, unchanged).
 
 - **A call on this machine goes to the service its port names.** Discovery now
   reads each Spring application's `server.port`, every profile included, plus
@@ -340,6 +350,23 @@ Each dated section below is one round of work. The round protocol is in
   and 303 of the 331 calls it counted as calls into a package now reach a
   function.
 
+- **An uncommitted edit to a NestJS backend has its impact too.** `cascade
+  impact` and the MCP `changed_impact` tool declined every pack with a
+  TypeScript lane (`ts-not-overlaid`), so a NestJS project on Prisma or TypeORM
+  had no edit-time answer at all. The working-tree overlay now walks that lane
+  the way `analyze` does, over a fact cache it never writes: an edited file is
+  read again, the imports are followed as they are now (a file an edit starts to
+  import is read, one no import reaches any more is dropped), the tsconfig,
+  `schema.prisma` and `package.json` files are read again, and the bridge runs
+  over the whole stream with the options `analyze` builds. A table or column
+  only the overlay has is `provisional` too. A TypeScript shard that no longer
+  applies to a file git calls unchanged declines the overlay (`overlay-stale`),
+  and only a fact index an older engine wrote still declines with
+  `ts-not-overlaid`. The answer says `parsedTsFiles`, `droppedTsFiles` and
+  `tsConfigFiles`, and the timings gain `ts`. Over no edit the overlay equals
+  `analyze` digest for digest on ghostfolio, nestjs-realworld-example-app,
+  nestjs-boilerplate and nestjs-prisma-starter.
+
 - **The `rules` MCP tool, and an overview that says what bounds its numbers.**
   `rules` lists every kind, pack and rule with what each gave in this pack
   (links by type and grade, nodes by kind), the ones that gave something first,
@@ -400,6 +427,27 @@ Each dated section below is one round of work. The round protocol is in
   `mode=heuristic` now agrees with the census on all 118 routes, where it agreed
   on 93, and at `conservative` neither walks into them.
 
+- **Every census counts what a statement reaches the way `flow` draws it.** A
+  walk that reached a statement counted every table and column the statement
+  touched, whatever the grade of the edge to it; `flow` drew only the ones the
+  mode admits, so polls-app's conservative census counted 5 tables where `flow`
+  drew 4. Now one rule (`sqlEdgesOf`) gives both: the statement's `EXECUTES`,
+  `READS` and `WRITES` edges the mode's floor admits, in the overview, the map,
+  the summary, coupling, browse, the screen census's columns, transactions and
+  `flow`'s own statement rows. A table or column whose name a rule only assumed
+  is therefore not counted at `conservative`, and the pinned corpus shows it:
+  ruoyi-vue-pro's columns reached go from 8,010 to 15, jeecg-boot's tables from
+  73 to 67 and columns from 836 to 467, egovframe-msa-edu's tables from 20 to 0,
+  eladmin's, jeepay's, dolphinscheduler's, mes4u's, ngrinder's and
+  spring-petclinic-microservices' columns down too
+  ([docs/measured.md](docs/measured.md#rm67-a-table-is-graded-by-the-sql-edge-that-reaches-it)).
+  Nothing was lost: `mode=heuristic` counts them all again, and declaring the
+  naming strategy the project runs with (`jpa.namingStrategy`,
+  `mybatisPlus.namingStrategy`, which the analysis names as assumed) makes
+  those names EXACT and restores the conservative counts. egovframe-msa-edu's
+  screens reaching a table fall from 33 to 0 for the same reason, and come back
+  the same way.
+
 - **The catalog axis follows one rule for every source.** A DDL, a snapshot,
   `schema.prisma` and TypeORM entities ship the catalog when every table and
   column name is written in the source or follows a rule the run knows applies,
@@ -418,7 +466,7 @@ Each dated section below is one round of work. The round protocol is in
 - **Every cached fact of the Java, web and TypeScript workers is read again
   once.** The workers are now `javafacts/19` (a method that returns a
   `RouterFunction`, the locals it assigns, and the calls each file makes with
-  their receivers), `webfacts/17`
+  their receivers), `webfacts/18`
   (build-decided base URLs, Angular routes, typed fields and providers, and
   what each call in a function hands on and reads) and `tsfacts/6` (what a method returns,
   type arguments, where each local is declared, interfaces), and the catalog
@@ -535,6 +583,21 @@ Each dated section below is one round of work. The round protocol is in
   passed as a file nothing claimed. The overlay now takes the same files, shard key
   and reader as `analyze` (the DDL with its dialect, or the snapshot as it is),
   and an edit to any catalog file the run read declines it.
+- **A JPA table is graded by its own name, not by a column's.** A table an
+  eager fetch or a cascade reached took the grade of the foreign key's derived
+  name, a derived query's own table took the grade of the first column it
+  touched, and an inverse `@OneToMany(mappedBy = ...)` was graded as if it named
+  a column of its own. So under an assumed naming strategy a table that
+  `@Table` names outright read HEURISTIC, and a walk that grades a table by the
+  SQL edge reaching it (above) would stop short of it at `conservative`. Now a
+  reached table is graded by the fetch or the cascade and by the
+  table's name, a derived key name's doubt stays on the key's own `READS` or
+  `WRITES` edge, and a `mappedBy` collection maps nothing of its own, so it is
+  EXACT. Every edge that moved was graded up to what its source states:
+  petclinic-rest (10 `EXECUTES`, 2 `JOINS` and 27 `READS` to EXACT), polls-app
+  (16 `EXECUTES` and 5 `READS` to EXACT), eladmin (16 `EXECUTES` to EXACT), the
+  cascades there from HEURISTIC to SOUND_SET, and no node or edge appeared or
+  went.
 - **A frontend function that hands its request to the global `fetch` is a
   wrapper.** The check for a platform client came after the line that skips a
   callee with no declaration, and the global `fetch` has none, so no function

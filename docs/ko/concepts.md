@@ -53,6 +53,15 @@ Spring 함수형 라우트는 `SOUND_SET` 입니다. 그래서 라우트에서 �
 않습니다. 대신 모드가 걷지 않은 다른 연결과 함께 `walk.cut.byMode` 에 셉니다.
 `map` 은 라우트에 그 모드가 실제로 걷는 핸들러 이름을 붙입니다.
 
+**문장이 닿는 곳은 어디서나 같은 규칙으로 셉니다.** 문장의 테이블과 컬럼은 그 문장의
+`EXECUTES`, `READS`, `WRITES` 엣지 가운데 모드 하한이 받아들이는 것입니다
+(`src/core/graph.mjs` 의 `sqlEdgesOf`). `flow` 가 그렇게 그리고, 모든 집계도 그렇게
+셉니다. overview, map, summary, coupling, browse, 화면 집계의 컬럼, transactions 가
+모두 같습니다. 그래서 규칙이 가정하기만 한 이름의 테이블이나 컬럼(`@Table` 이 없고
+네이밍 전략도 선언하지 않은 엔티티)은 `conservative` 에서 닿지 않습니다.
+`mode=heuristic` 에서는 닿고, 전략을 선언하면 EXACT 가 됩니다. 라우트에서 출발하는
+걷기의 기본 깊이는 모두 8 하나입니다(`DEFAULT_WALK_DEPTH`).
+
 질의 모드가 하한을 고릅니다. `strict` 는 확인된 엣지만 쓰고, `conservative` 는
 후보 호출을 더하고, `heuristic` 은 추측 규칙까지 허용합니다. `conservative` 에서
 아무것도 나오지 않다가 `heuristic` 에서 무언가 나오는 질문은, 그 코드에 대해
@@ -165,8 +174,15 @@ GREEN 이나 BOOTSTRAP 이 아니면 `UNCERTIFIED`, 승인된 골든 사례가 �
 읽은 패키지와 포트를 그대로 쓰기 때문입니다. Spring XML 이 선언한
 테이블 id 생성기는 트리 전체를 훑어서 찾는 것이라 다시 읽지 않습니다. 베이스
 pack 이 그 생성기에 호출을 묶어 둔 적이 있으면, 답의 `limits` 에 그 호출이 여기서는
-생성기 문장에 닿지 않는다고 적습니다. TypeScript 백엔드를 읽은 pack 은
-`ts-not-overlaid` 로 거절하고, `base-only` 는 그대로 답합니다. 실행 트레이스와
+생성기 문장에 닿지 않는다고 적습니다. TypeScript 백엔드도 `analyze` 와 같은 방식으로
+다시 훑습니다. 오버레이는 팩트 캐시에 아무것도 쓰지 않습니다. 바이트가 그대로라 샤드
+키가 맞는 파일은 샤드에서 가져오고, 고친 파일은 다시 읽고, 어떤 파일을 읽을지는
+지금의 import 를 따라 정합니다. 레인이 기대는 tsconfig, `schema.prisma`,
+`package.json` 도 매 실행처럼 다시 읽습니다. 편집으로만 생긴 테이블이나 컬럼(이름을
+바꾼 엔티티 컬럼, `schema.prisma` 에 새로 넣은 필드)은 새 statement 처럼
+`provisional` 표식을 받습니다. git 이 바뀌지 않았다고 보는 파일인데 TypeScript 샤드가
+더는 맞지 않으면 오버레이를 거절합니다(`overlay-stale`). pack 이 읽은 것과 다른
+애플리케이션을 프로필이 가리키면 `limits` 에 적습니다. 실행 트레이스와
 브라우저 기록도 다시 읽지 않지만 따로 알리지는 않습니다. 이 둘은 `RUNTIME_ONLY`
 표식만 더하고, 그 표식은 어떤 걷기도 따라가지 않기 때문입니다.
 

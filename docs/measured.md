@@ -54,6 +54,12 @@ suite.
 | [spring-projects/spring-petclinic](https://github.com/spring-projects/spring-petclinic) | `818c4136` | 15 / 17 | 7 / 7 | 24 / 24 | 12 / 13 | 3 / 8 | 196 |
 | [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices) | `3858f9c6` | 13 / 15 | 7 / 7 | 24 / 24 | 14 / 14 | 8 / 9 | 99 |
 
+The table and column counts above were taken before RM67, when a census still
+counted a table or a column reached only through a guessed edge. Four of them
+are lower now (jeecg-boot, dolphinscheduler, jeepay, spring-petclinic-microservices);
+[the RM67 section](#rm67-a-table-is-graded-by-the-sql-edge-that-reaches-it) has
+the numbers and the declaration that restores each.
+
 Six more repositories joined this corpus in RM55 and are measured in [their own
 section](#the-korean-market-held-out-first), which keeps the measurement taken
 BEFORE any rule was written for them beside the one after.
@@ -785,6 +791,56 @@ rows were recorded:
 The seventeen rows already in the corpus did not move by one number, and the
 sixteen pack digests of the registered projects are identical.
 
+## RM67: a table is graded by the SQL edge that reaches it
+
+Until RM67 a walk that reached a statement counted every table and column the
+statement touched, whatever the grade of the edge to it, while `flow` drew only
+the ones the mode admits. Now every census counts a statement's tables and
+columns the way `flow` draws them: through the `EXECUTES`, `READS` and `WRITES`
+edges the mode's floor admits. A name a rule only assumed (an entity with no
+`@Table`, a MyBatis-Plus field with no `@TableField`, under no declared naming
+strategy) is graded HEURISTIC, so the default `conservative` census no longer
+counts it. The pinned corpus moved in these counts and no others:
+
+| Repository | Tables reached | Columns reached |
+|---|---|---|
+| dolphinscheduler | 42 (unchanged) | 457 -> 444 |
+| egovframe-msa-edu | 20 -> 0 | 191 -> 0 |
+| eladmin | 26 (unchanged) | 230 -> 123 |
+| jeecg-boot | 73 -> 67 | 836 -> 467 |
+| jeepay | 22 (unchanged) | 302 -> 48 |
+| mes4u | 41 (unchanged) | 483 -> 415 |
+| ngrinder | 7 (unchanged) | 92 -> 78 |
+| spring-petclinic-microservices | 7 (unchanged) | 24 -> 20 |
+| ruoyi-vue-pro | 548 (unchanged) | 8010 -> 15 |
+
+Nothing was lost. A `mode=heuristic` census counts them all again (jeecg-boot:
+73 tables, 836 columns), and declaring the naming strategy the project runs with
+makes those names EXACT: `jpa.namingStrategy` for JPA entities,
+`mybatisPlus.namingStrategy` for MyBatis-Plus. The analysis names the one it
+assumed (`PROFILE_DEFAULT_ASSUMED`). egovframe-msa-edu is the plain case: every
+one of its 20 reached tables is an `@Entity` with no `@Table`, and the project
+configures no strategy anywhere.
+
+Three more counts moved in this round. The baseline keeps the first two where
+they were, so a run with the corpus reports them until the declaration is made;
+it takes the third, which no declaration restores:
+
+- **egovframe-msa-edu, screens reaching a table, 33 -> 0.** The same cause: its
+  tables are all named by the assumed strategy. Declaring `jpa.namingStrategy`
+  restores them.
+- **ruoyi-vue-pro, frontend calls resolved, 2718 -> 2252.** Its calls are now
+  traced to their axios client and carry that client's real `/admin-api` prefix,
+  which the backend's routes lack until `pathPrefixes` is declared. The analysis
+  names the code that sets it (`SETTING_IN_CODE`,
+  `YudaoWebAutoConfiguration.java:53`). Before, the calls matched routes through
+  a prefix chosen by counting matches, a guess.
+- **jeecg-boot, screens reaching a table, 25 -> 11.** Its axios wrapper copies the
+  request's options into a `let` that a hook and a form-data step assign again
+  (`VAxios.request`), so whether the URL survives that step is not settled by
+  the code, and those calls are HEURISTIC, each edge naming the step
+  (`evidence.sink.unsettled`). `mode=heuristic` still reaches 27.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.
@@ -899,8 +955,12 @@ These are not "probably fine".
   shapes the generator knows to write. The largest **human** project measured is
   jeecg-boot, at 969 endpoints and 2092 columns.
 - **Every framework outside Spring MVC, MyBatis, MyBatis-Plus and JPA or Spring
-  Data.** No other web framework, no other ORM, no other language. `cascade
-  init` reports what it has no lane for; it does not analyse it.
+  Data in the generality gate.** NestJS with Prisma or TypeORM is read by the
+  TypeScript lane, measured on four repositories (ghostfolio,
+  nestjs-prisma-starter, nestjs-realworld-example-app, nestjs-boilerplate), none
+  of them in the gate's corpus. No other web framework, no other ORM, no other
+  language. `cascade init` reports what it has no lane for; it does not analyse
+  it.
 - **Any dialect but MySQL and the ANSI parser, in the analysis path.** mall is
   parsed as `mysql`. jpetstore has been analysed both ways, as `mysql` and as
   `hsqldb`, and the two produce the same pack digest, so the ANSI path is

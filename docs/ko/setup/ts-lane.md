@@ -576,9 +576,48 @@ column 축은 이유와 함께 degraded입니다. 엔티티 옆에 DDL이 있어
 `package.json`도 함께 다시 읽습니다. 그래서 캐시된 파일에 다른 파일에 대한 결론이
 들어가지 않습니다.
 
-커밋하지 않은 변경에 대한 `cascade impact`(작업 트리 오버레이)는 아직 TypeScript를
-다시 읽지 못합니다. 이 레인이 들어간 pack에서는 `ts-not-overlaid`로 거절하고,
-`--mode base-only`는 pack 기준으로 계속 답합니다.
+## 커밋하지 않은 편집(작업 트리 오버레이)
+
+커밋하지 않은 변경에 대한 `cascade impact`와 MCP `changed_impact` 도구는, 이 레인이
+들어간 pack에도 Java pack과 똑같이 작업 트리 오버레이를 얹습니다. 오버레이는
+`analyze`와 같은 방식으로 이 레인을 훑되, 팩트 캐시에는 아무것도 쓰지 않습니다.
+
+- 바이트가 그대로라 샤드 키가 맞는 파일은 샤드에서 읽습니다. 고친 파일은 워커가
+  다시 읽습니다(`parsedTsFiles`).
+- 어떤 파일을 읽을지 다시 정합니다. 애플리케이션 루트 아래 파일과, 그 파일들의
+  import가 지금 닿는 모든 파일입니다. 편집으로 새로 import하게 된 파일은 처음 읽고,
+  이제 어떤 import도 닿지 않는 파일은 뺍니다(`droppedTsFiles`). 다음 `analyze`도
+  그렇게 뺄 것이기 때문입니다.
+- tsconfig 사슬, `schema.prisma`, `package.json`은 매 실행처럼 통째로 다시 읽습니다.
+  바뀐 파일은 `tsConfigFiles`에 적습니다.
+- 브리지는 `analyze`가 만드는 옵션 그대로(`src/cli/ts_inputs.mjs`) 전체 흐름 위에서
+  돕니다. 그래서 파일을 넘나드는 판단을 다시 합니다. 모듈이 추상 타입에 어느 클래스를
+  묶는지, 어느 필드가 Prisma 클라이언트인지, TypeORM 호출이 어느 repository를
+  거치는지, DataSource 옵션이 정한 naming strategy, prefix, schema가 무엇인지입니다.
+- 인증된 실행이 본 적 없는 statement, 테이블, 컬럼은 `provisional`이고, 그것에 닿는
+  엣지도 모두 그렇습니다. 메서드에 새로 넣은 Prisma 호출, 엔티티가 이름을 바꾼 컬럼,
+  `schema.prisma`에 새로 넣은 필드가 그런 경우입니다.
+
+아무것도 고치지 않은 트리에 얹으면 오버레이는 분석한 그래프를 digest까지 똑같이
+만들고, 고친 트리에 얹으면 `analyze`가 그 트리로 만들 그래프를 만듭니다
+(`test/overlay_equivalence.test.mjs`, `test/overlay_ts.test.mjs`). 이 레인과 웹
+레인이 함께 읽은 함수는 여전히 노드 하나이고, `lanes`에 두 레인이 모두 적힙니다.
+
+거절하는 경우와 알리는 것은 이렇습니다.
+
+- git이 바뀌지 않았다고 보는 파일인데 샤드가 더는 맞지 않으면 `overlay-stale`로
+  오버레이를 거절합니다. pack을 만든 뒤 TypeScript 워커가 바뀌었거나, 샤드가 캐시에서
+  사라졌거나, git이 보지 않는 곳에서 파일이 바뀐 경우입니다. `cascade analyze`를
+  돌리면 됩니다.
+- 오버레이는 pack이 읽은 애플리케이션을 읽습니다. facts 인덱스에 적힌 그대로입니다.
+  그 뒤 프로필이 다른 애플리케이션을 가리키게 됐으면 `limits`에 적고, 다음
+  `analyze`가 그 애플리케이션을 읽습니다.
+- Prisma·TypeORM 문장 번호는 메서드 안 호출 순서로 붙습니다. 그래서 앞쪽에 호출을
+  하나 넣으면 뒤 번호가 밀립니다. `provisional`은 pack에 없던 id에만 붙습니다. 번호가
+  밀린 문장의 엣지는, 고친 파일에서 나온 다른 엣지처럼 오버레이의 세션 id를 답니다.
+- 예전 엔진이 쓴 facts 인덱스, 즉 TypeScript 샤드를 다른 레인 것과 섞어 둔 인덱스는
+  `ts-not-overlaid`로 거절합니다. `cascade analyze`를 한 번 돌려 인덱스를 새로 쓰면
+  됩니다.
 
 ## 이 버전에 없는 것
 

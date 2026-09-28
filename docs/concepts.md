@@ -52,6 +52,16 @@ Walking up, a route whose link is below the mode's floor is not an endpoint row
 of that mode; it is counted in `walk.cut.byMode` with the other links the mode
 did not walk. The `map` names a route after the handler its mode walks.
 
+**What a statement reaches is counted the same way everywhere.** A statement's
+tables and columns are its `EXECUTES`, `READS` and `WRITES` edges that the
+mode's floor admits (`sqlEdgesOf` in `src/core/graph.mjs`). `flow` draws them
+that way, and every census counts them that way: the overview, the map, the
+summary, coupling, browse, the screen census's columns and transactions. So a table or a
+column whose name a rule only assumed (an entity with no `@Table` under no
+declared naming strategy) is not reached at `conservative`; `mode=heuristic`
+reaches it, and declaring the strategy makes it EXACT. Every walk from a route
+has one default depth, 8 (`DEFAULT_WALK_DEPTH`).
+
 Query modes pick a floor: `strict` uses confirmed edges only, `conservative`
 adds candidate calls, `heuristic` also admits guessed rules. A question that
 returns nothing under `conservative` and something under `heuristic` has told
@@ -164,8 +174,16 @@ configuration when ports were read, is named in `limits`: the overlay keeps the
 packages and ports the base pack read. The table id generators a Spring XML
 declares come from a walk of the whole tree; when the base pack bound any, the
 answer carries a `limits` sentence saying those calls reach no generator here. A
-pack that reads a TypeScript backend is declined with `ts-not-overlaid`, and
-`base-only` still answers. Run traces and recordings are not read again and not
+TypeScript backend is walked again the way `analyze` walks it, over a fact
+cache the overlay never writes: a file whose bytes still key its shard comes
+from the shard, an edited one is read again, and which files are read follows
+the imports as they are now. The tsconfig, `schema.prisma` and `package.json`
+files the lane rests on are read again, as every run reads them. A table or
+column only an edit declares (a renamed entity column, a new `schema.prisma`
+field) is `provisional` like a new statement. A TypeScript shard that no longer
+applies to a file git calls unchanged declines the overlay (`overlay-stale`),
+and a profile that names another application than the one the pack read is
+said in `limits`. Run traces and recordings are not read again and not
 said: they only add `RUNTIME_ONLY` marks, which no walk follows.
 
 The second speed also covers *reruns*: a run after a small edit reuses the

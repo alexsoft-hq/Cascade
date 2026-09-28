@@ -720,8 +720,9 @@ as SQL.
 | `@ManyToOne`/`@OneToOne` + `@JoinColumn(name=…)` | that foreign-key column, plus a `JOINS` edge | weakest of the two entity mappings |
 | `@OneToMany(@JoinColumn)` | the foreign key on the **target** table, plus a `JOINS` edge | as above |
 | `@ManyToMany` + `@JoinTable` | the join table and its two columns, plus two `JOINS` edges | as above |
+| an inverse `@OneToMany`/`@ManyToMany(mappedBy = …)` | no column and no join table of its own: the owning side maps them | **EXACT** |
 | `@MappedSuperclass` | its attributes are inherited by every subclass entity | as above |
-| a derived query (`findByLastNameStartingWith`) | `select` reading the predicate and ordering columns | as above |
+| a derived query (`findByLastNameStartingWith`) | `select` reading the predicate and ordering columns | the statement's table by the table's name, each column by its own |
 | `@Query` JPQL | the columns its aliases and paths name; `SET` targets are writes | as above |
 | `@Query(nativeQuery = true)` | the SQL goes through the **SQL lane's own analyzer** (`lineage.py`), like a MyBatis statement — its JPA bind markers (`?1`, `:name`) are normalized to `?` first, exactly as MyBatis's `#{}` are | EXACT (a real SQL parse) |
 | a called-but-undeclared `CrudRepository` method (`save`, `findById`, …) | the rows that method touches | as above |
@@ -755,9 +756,11 @@ So every statement whose result is an entity carries that closure:
 Every followed edge carries `evidence.path`, the attribute path from the entity
 the query returns (`Owner.pets.visits`), so a table nobody expected can be traced
 back to the field that brought it. The rule itself is EXACT — the annotation and
-the specification decide it, nothing was resolved — and the edge is graded the
-weakest link of that and the names the mapping left to the naming strategy, as
-every other edge in this lane is.
+the specification decide it, nothing was resolved. A table the fetch or a
+cascade reaches is graded by that rule (a cascade is SOUND_SET) and by the
+table's own name. A foreign key whose name the naming strategy derived keeps
+that doubt on the key column's own `READS` or `WRITES` edge, and does not make
+the table it leads to a guess.
 
 Three things it deliberately does not do:
 
@@ -822,7 +825,11 @@ that map verbatim.
 When neither the profile nor the configuration declares it, the engine
 **assumes** Spring Boot's default and grades every name it derived that way
 `HEURISTIC`, which means `endpoint_impact` at the default `conservative` mode
-returns **nothing** for such a column, and says why in `limits`.
+returns **nothing** for such a column, and says why in `limits`. A table named
+that way is HEURISTIC too, and a walk grades a table by the SQL edge that
+reaches it, so a project whose entities carry no `@Table` reaches none of those
+tables at `conservative` until the strategy is declared: egovframe-msa-edu
+reached 20 tables there and now reaches none.
 
 That is not a bug to work around; it is the engine refusing to present a guess as
 a fact. Declare the rule in the profile (it wins over the configuration) and the
@@ -1039,7 +1046,11 @@ fixture behind this path is the synthetic project in
   `map-underscore-to-camel-case: true`), `SysUser` → `sys_user`.
 - `"identity"` — the project that turned it off; the logical name is the physical one.
 - `null` (the default) — undeclared, assume `underscore`, grade HEURISTIC, and
-  the `mybatisPlus` axis is **degraded** rather than shipped.
+  the `mybatisPlus` axis is **degraded** rather than shipped. A column named by
+  that assumption is then not reached at `conservative`, since a walk counts
+  only the `READS` and `WRITES` edges the mode admits: ruoyi-vue-pro reaches 15
+  columns there, where it counted 8,010, until this is declared, and a
+  `mode=heuristic` census counts them all.
 
 **Invariant I-1, in this lane:** if the derived table name happens to exist in
 the DB catalog, that is recorded as `mpCatalogMatch: true` and **nothing else**.

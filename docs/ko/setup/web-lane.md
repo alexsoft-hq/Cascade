@@ -504,7 +504,7 @@ the file tree: 62 page(s) declared by where they sit, 9 file(s) under the router
 | `binding` | 초기화가 호출이나 `new` 또는 다른 이름인 최상위 `const`, 그리고 거기서 만들어진 `baseURL` |
 | `class` | 클래스와 그것이 선언하는 메서드와 필드. 클라이언트를 클래스로 쓰는 것은 함수로 쓰는 것만큼 흔합니다. 라우터 팩이 이름 댄 데코레이터(Angular 의 `@Component`)가 붙어 있으면 `component: true` 입니다 |
 | `assign` | 클래스 본문 어디서든 나오는 `this.<field> = …`. `binding` 과 같은 `init` 모양을 갖습니다. 클래스가 요청을 보낼 클라이언트를 넣어 두는 자리입니다. 클래스가 **타입**을 밝힌 필드(생성자 매개변수 프로퍼티, 선언된 인젝터로 채우는 필드)도 `typed` init 을 가진 `assign` 입니다 |
-| `call` | import 나 지역 바인딩을 거치거나, URL 처럼 생긴 인자를 들고 있거나, `fetch` 또는 `XMLHttpRequest.open` 인 호출 지점. URL 을 몇 번째 인자의 어느 키에서 읽었는지도 적습니다(`url.at`). 이름 있는 함수 안의 호출이면 무엇을 넘기는지(`hands`)와 인자가 어느 매개변수를 쓰는지(`reads`)도 적습니다 |
+| `call` | import 나 지역 바인딩을 거치거나, URL 처럼 생긴 인자를 들고 있거나, `fetch` 또는 `XMLHttpRequest.open` 인 호출 지점. URL 을 몇 번째 인자의 어느 키에서 읽었는지도 적습니다(`url.at`). 이름 있는 함수 안의 호출이면 무엇을 넘기는지(`hands`. 매개변수 전체보다 덜 넘기면 `minus` 나 `part`)와 그 밖에 무엇을 읽는지(`reads`. 거기 쓴 이름이 정해지지 않으면 `open` 과 그 이유)도 적습니다 |
 | `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`. 어디에 적었든 읽고, 클래스 데코레이터의 인자에 적은 것도 포함합니다 |
 | `route` | 라우트 선언. **쓰인 그대로의** 경로, 컴포넌트, 부모, 자식 수. 모듈 팩의 라우트는 다른 파일과 잇는 정보도 들고 있습니다. 자기가 들어 있는 목록(`list`), 상수로 쓴 경로(`pathRef`), 지연 로딩하는 목록(`childrenFrom`), 지연 컴포넌트가 가리키는 export(`componentExport`), 그리고 `grouping` / `outlet` 입니다 |
 | `routeRef` | 목록 안이나 `children` 에 **이름**으로 적힌 라우트와 목록, 그리고 자식 등록자(`forChild`)가 등록한 목록 |
@@ -994,17 +994,27 @@ request.get({ url: '/system/user/page', params })
 
 **forward 를 거칠 때 URL 은 어디서 오는가.** URL 은 호출자의 것이고, call 레코드가
 말하는 자리에서 읽습니다(`url.at`: 몇 번째 인자인지, 객체라면 어느 키인지). 이
-URL 은 클라이언트까지 가는 홉이 모두 URL 이 든 매개변수를 넘겨야 클라이언트에
-닿습니다. 객체를 spread 로 넣거나 통째로 넘기거나, URL 자체를 통째로 넘기는
-경우입니다. 워커는 이름 있는 함수 안의 호출마다 무엇을 넘기는지(`hands`)와, 인자가
-함수의 어느 매개변수를 쓰는지(`reads`. 직접 쓰거나, 매개변수로 선언한 `const` 를
-거쳐 쓰는 경우)를 적습니다. URL 의 매개변수를 어디서도 쓰지 않는 홉은 그걸 버린
-것이고, 이 호출이 쓰지 않은 URL 을 보내게 됩니다. 그래서 그 사슬로는 추적하지
-않습니다. 추적 안 된 호출로 등급을 매기고 `laneStats.web.calls.urlNotHandedOn` 으로
-세며, 하나라도 있으면 실행이 `WEB_URL_NOT_HANDED_ON` 을 출력합니다. 워커가 따라가지
-않는 것(`let`, rest, `this`, `arguments`)을 거쳐서만 매개변수를 쓰는 홉은, 래퍼가
-늘 그랬듯 클라이언트까지 닿는다고 보고 `calls.urlThroughUnreadHop`
-(`WEB_URL_THROUGH_UNREAD_HOP`)으로 셉니다.
+URL 은 클라이언트까지 가는 홉이 모두 URL 이 든 매개변수 부분을 넘겨야 클라이언트에
+닿습니다. 그런데 래퍼는 받은 옵션을 그대로 넘기는 일이 드뭅니다. ruoyi-vue-pro 의
+래퍼는 `const { headersType, headers, ...otherOption } = option; service({ ...otherOption })`
+처럼 씁니다. 그래서 워커는 문법이 정해 주는 범위에서 매개변수를 따라갑니다. `const`
+별칭, rest, spread 복사, 시그니처 안의 패턴입니다(`adapters/web/lib/origins.mjs`).
+이름 있는 함수 안의 호출마다 무엇을 넘기는지(`hands`. 넘기면서 빠진 키는 `minus`,
+매개변수의 키 하나만 넘기면 `part`. 키의 값으로 적은 `options.url` 도 넘기는 것으로
+봅니다)와, 그 밖에 무엇을 읽는지(`reads`)를 적습니다.
+
+- 넘기는 것에 URL 부분이 들어 있는 홉은 URL 을 다음으로 옮깁니다. 호출자의 `url` 을
+  이름으로 빼지 않은 rest 나 복사본은 URL 을 그대로 담아 갑니다.
+- `url` 을 이름으로 빼놓고 다른 방법으로도 넘기지 않는 홉은 URL 을 버린 것이고, 이
+  호출이 쓰지 않은 URL 을 보내게 됩니다. 그래서 그 사슬로는 추적하지 않습니다. 추적 안
+  된 호출로 등급을 매기고 `laneStats.web.calls.urlNotHandedOn` 으로 세며, 하나라도
+  있으면 실행이 `WEB_URL_NOT_HANDED_ON` 을 출력합니다.
+- 코드만으로 정해지지 않는 홉(다시 대입되는 지역 변수, 본문이 덮어쓰는 매개변수,
+  `this`, `arguments`, 옵션에 대고 부른 호출, 인자를 읽지 못한 return)은, 래퍼가 늘
+  그랬듯 클라이언트까지 닿는다고 봅니다. 다만 엣지는 HEURISTIC 이고, 어느 단계에서
+  왜 정해지지 않았는지를 적습니다(`evidence.sink.unsettled`). 이런 호출은
+  `calls.urlThroughUnreadHop` 에 세고, 이유별로 `calls.unreadHopBy` 에 나누며, 실행이
+  `WEB_URL_THROUGH_UNREAD_HOP` 을 출력합니다.
 
 ### 접두사, 그리고 그것을 선언하는 법
 
@@ -1400,7 +1410,7 @@ Web lane: 1 client instance(s), 0 wrapper(s) (deepest 0), 121 exact and 0 templa
 `pack.meta.laneStats.web` 으로도 들어가므로, 출력된 것과 기록된 것이 어긋날 수
 없습니다. 그 아래에는 이 pack 이 듣는 포트, 또는 모르는 이유가 나오고(*이 머신,
 다른 포트* 참조), 래퍼가 호출의 URL 을 넘기지 않은 경우가 있으면
-`WEB_URL_NOT_HANDED_ON` 이, URL 이 레인이 따라가지 않는 것을 거쳐 홉을 지났으면
+`WEB_URL_NOT_HANDED_ON` 이, URL 이 코드만으로 정해지지 않는 래퍼 단계를 지났으면
 `WEB_URL_THROUGH_UNREAD_HOP` 이 나옵니다.
 
 ### web 축이 말하는 것

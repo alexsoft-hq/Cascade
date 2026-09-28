@@ -622,9 +622,52 @@ tsconfig `paths`, `schema.prisma` and the `package.json` files that say whether
 a type's package may be published, so a cached file never holds a conclusion
 about another.
 
-`cascade impact` on uncommitted changes (the working-tree overlay) does not
-re-read TypeScript yet: on a pack with this lane it declines with
-`ts-not-overlaid`, and `--mode base-only` still answers from the pack.
+## Uncommitted edits (the working-tree overlay)
+
+`cascade impact` on uncommitted changes, and the MCP `changed_impact` tool, lay
+the working-tree overlay over a pack with this lane as they do over a Java one.
+The overlay walks the lane the way `analyze` does, over the fact cache, and
+writes nothing to it:
+
+- A file whose bytes still key its shard is read from the shard. An edited file
+  is read again by the worker (`parsedTsFiles`).
+- Which files are read is decided again: the files under the application's
+  root, and every file their imports reach now. A file an edit starts to import
+  is read for the first time; one no import reaches any more is left out
+  (`droppedTsFiles`), as the next `analyze` would leave it out.
+- The tsconfig chain, `schema.prisma` and the `package.json` files are read
+  again whole, as every run reads them. The ones that changed are listed in
+  `tsConfigFiles`.
+- The bridge runs over the whole stream with the options `analyze` builds
+  (`src/cli/ts_inputs.mjs`), so what crosses files is decided again: which class
+  a module binds to an abstract type, which field is a Prisma client, which
+  repository a TypeORM call goes through, and the naming strategy, prefix and
+  schema the DataSource options set.
+- A statement, table or column no certified run has seen is `provisional`, and
+  so is every edge that touches one: a Prisma call added to a method, a column
+  an entity renames, a field `schema.prisma` adds.
+
+Over no edit the overlay builds the analyzed graph, digest for digest, and over
+an edit it builds the graph `analyze` builds from the edited tree
+(`test/overlay_equivalence.test.mjs`, `test/overlay_ts.test.mjs`). A function
+both this lane and the web lane read stays one node whose `lanes` names both.
+
+What it declines, and what it says:
+
+- A shard that no longer applies to a file git calls unchanged declines the
+  overlay with `overlay-stale`: the TypeScript worker changed since the pack was
+  built, the shard is gone from the cache, or the file changed where git does
+  not look. Run `cascade analyze`.
+- The overlay reads the application the pack read, as its fact index records
+  it. A profile that names another since is said in `limits`; the next
+  `analyze` reads it.
+- A Prisma or TypeORM statement is numbered by its place among its method's
+  calls, so a call added before others renumbers them. Only an id the pack never
+  had is `provisional`; the edges of a renumbered statement carry the overlay's
+  session id, like every edge out of an edited file.
+- A fact index an older engine wrote, with the TypeScript shards among the other
+  lanes', declines with `ts-not-overlaid`. Run `cascade analyze` once to write
+  it again.
 
 ## Not in this version
 

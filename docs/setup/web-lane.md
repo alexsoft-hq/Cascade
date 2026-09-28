@@ -525,7 +525,7 @@ nothing across files; that is the bridge's job):
 | `binding` | a top-level `const` whose initializer is a call, a `new`, or another name, plus the `baseURL` when one is built there |
 | `class` | a class, with the methods and fields it declares (a client written as a class is as common as one written as a function). `component: true` when a decorator a router pack names marks it (Angular's `@Component`) |
 | `assign` | `this.<field> = …` anywhere in a class body, with the same `init` shape a `binding` carries — this is where a class puts the client it sends through. A field whose TYPE the class states (a constructor parameter property, a field set from a declared injector) is an `assign` too, with a `typed` init |
-| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`) and which of the function's parameters its arguments read (`reads`) |
+| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`, with `minus` or `part` when it hands on less than a whole parameter) and what it reads apart from that (`reads`, with `open` and why when a name there is not settled) |
 | `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`, wherever it is written, a class decorator's argument included |
 | `route` | a route declaration, with its path AS WRITTEN, its component, its parent and its child count. A route of a module pack also carries what joins it to other files: the list it sits in (`list`), a path written as a constant (`pathRef`), the list it loads lazily (`childrenFrom`), the export a lazy component names (`componentExport`), and `grouping` / `outlet` |
 | `routeRef` | a route or a list named by NAME inside a list or under `children`, and a list a child registrar (`forChild`) registers |
@@ -1026,17 +1026,30 @@ already on the way in, or the caller's own `method` key, replaces:
 **Where the URL comes from, through a forward.** The URL is the caller's, read
 where the call record says it was (`url.at`: the argument, and the key when the
 argument is an object). It reaches the client only if every hop down to it
-hands on the parameter the URL is in: an object spread in or passed whole, or
-the URL itself passed whole. The worker records, on each call inside a named
-function, what it hands on (`hands`) and which of the function's parameters its
-arguments mention (`reads`, directly or through a `const` declared from one). A
-hop that reads the URL's parameter nowhere has dropped it and would send a URL
-this call did not write, so the call is not traced through it. It is graded as
-untraced, counted in `laneStats.web.calls.urlNotHandedOn`, and the run prints
-`WEB_URL_NOT_HANDED_ON` when there are any. A hop that reads the parameter only
-through something the worker does not follow (a `let`, a rest, `this`,
-`arguments`) is taken as reaching the client, as a wrapper always was, and
-counted in `calls.urlThroughUnreadHop` (`WEB_URL_THROUGH_UNREAD_HOP`).
+hands on the part of its parameters the URL is in. A wrapper rarely hands its
+options on as they came in: ruoyi-vue-pro's writes
+`const { headersType, headers, ...otherOption } = option; service({ ...otherOption })`.
+So the worker follows a parameter through what the syntax settles: a `const`
+alias, a rest, a spread copy, a pattern in the signature
+(`adapters/web/lib/origins.mjs`). On each call inside a named function it
+records what the call hands on (`hands`, with the keys a hand no longer carries,
+`minus`, or the one key of the parameter it is, `part`; `options.url` written
+as a key's value is a hand too) and what it reads apart from that (`reads`).
+
+- A hop whose hands carry the URL's part moves it along. A rest or a copy that
+  does not name the caller's `url` carries it.
+- A hop that names it and hands it on no other way has dropped it, and would
+  send a URL this call did not write. The call is not traced through that
+  chain: it is graded as untraced, counted in
+  `laneStats.web.calls.urlNotHandedOn`, and the run prints
+  `WEB_URL_NOT_HANDED_ON` when there are any.
+- A hop the code does not settle (a local assigned again, a parameter the body
+  writes over, `this`, `arguments`, a call on the options, a return whose
+  arguments were not read) is taken as reaching the client, as a wrapper always
+  was, but the edge is graded HEURISTIC and names the step and why
+  (`evidence.sink.unsettled`). Such calls are counted in
+  `calls.urlThroughUnreadHop`, by why in `calls.unreadHopBy`, and the run
+  prints `WEB_URL_THROUGH_UNREAD_HOP`.
 
 ### The prefix, and how to declare it
 
@@ -1438,7 +1451,7 @@ into `pack.meta.laneStats.web`, so what was printed and what was recorded cannot
 disagree. Below them come the ports this pack listens on, or why they are not
 known (see *This machine, another port*), `WEB_URL_NOT_HANDED_ON` when a
 wrapper did not hand a call's URL on, and `WEB_URL_THROUGH_UNREAD_HOP` when a
-URL passed a hop through something the lane does not follow.
+URL passed a wrapper step the code does not settle.
 
 ### What the web axis says
 
