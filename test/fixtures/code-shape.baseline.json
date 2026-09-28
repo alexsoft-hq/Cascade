@@ -3261,6 +3261,7 @@
     "jpaOptions",
     "mybatisPlusOptions",
     "read",
+    "readerFlags",
     "snapshotCatalog",
     "whichJavaLanes"
    ]
