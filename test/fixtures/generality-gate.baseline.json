@@ -92,7 +92,7 @@
    "webCalls": 173,
    "webCallsResolved": 137,
    "screens": 56,
-   "screensReachingATable": 33,
+   "screensReachingATable": 0,
    "endpointColumnPairs": 394,
    "axes": {
     "catalog": "shipped",
@@ -457,8 +457,8 @@
    "tablesReached": 548,
    "columns": 8381,
    "columnsReached": 15,
-   "webCalls": 2910,
-   "webCallsResolved": 2718,
+   "webCalls": 2912,
+   "webCallsResolved": 2252,
    "screens": 100,
    "screensReachingATable": 0,
    "endpointColumnPairs": 56280,
@@ -469,7 +469,7 @@
     "mybatisPlus": "degraded",
     "column": "shipped",
     "code": "shipped",
-    "web": "degraded",
+    "web": "shipped",
     "screen": "shipped"
    }
   },
