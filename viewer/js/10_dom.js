@@ -100,7 +100,14 @@ function badge(g){
     kids.push(box);
   }
   kids.push(g);
-  return el('span',{className:'grade g-'+g}, kids);
+  return el('span',{className:'grade g-'+g, title:gradeSay(g)}, kids);
+}
+// WHAT A GRADE MEANS, in the one wording the legend, the badges and the
+// left-out panel share (RM67). A grade the catalogue has no sentence for says
+// nothing rather than a key.
+function gradeSay(g){
+  const key='grade.say.'+g;
+  return Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : '';
 }
 
 
@@ -212,7 +219,7 @@ function honesty(resp, scope) {
   const lim=resp.limits||[];
   if(lim.length){
     const [head, body]=foldParts(k+'.limits', [lim.length+' limits'],
-      ()=> lim.map((l,i)=> railLimit(k+'.lim.'+i, l)), 'railchip');
+      ()=> limitRows(k+'.lim.', lim), 'railchip');
     chips.append(head); bodies.push(body);
   }
   // A truncation is a count, so it stays outside every fold: one chip per field
@@ -259,6 +266,74 @@ function railLimit(key, l){
   return el('div',{className:'raillim'},[
     fold(key, [scope, lead].filter(Boolean), ()=> [el('div',{className:'comment'},[reason])], null, true) ]);
 }
+// ---- A FLOOD OF ONE DIAGNOSTIC IS ONE ROW (RM67) ----------------------------
+// A cache directory that moved leaves one SHARD_UNUSABLE per file (866 on one
+// run), and the page listed them one by one. They are now one row per KIND,
+// and inside it one line per thing they SAY: two rows that differ only in a
+// file, a key or a count say the same thing. Nothing here decides a cause the
+// rows do not state; the reason text is the engine's.
+const DIAG_EXAMPLES=5;
+/** A reason with its names taken out: files, keys, counts, quoted names. */
+function diagCause(reason){
+  return String(reason||'')
+    .replace(/\([^()]*\)/g,'(…)')
+    .replace(/"[^"]*"|`[^`]*`/g,'…')
+    .replace(/\S*[\\/]\S*/g,'…')
+    .replace(/[\w.-]*\d[\w.-]*/g,'…')
+    .replace(/…(?:[\s,]*…)+/g,'…');
+}
+/**
+ * Diagnostics grouped by kind, and inside a kind by what they say, biggest first.
+ * @param {{kind:string, reason:string}[]} list
+ * @returns {{kind:string, count:number, causes:{cause:string, count:number, items:object[]}[]}[]}
+ */
+function diagGroups(list){
+  const byKind=new Map();
+  for(const d of list||[]){
+    const k=String((d&&d.kind)||'?'), c=diagCause(d&&d.reason);
+    if(!byKind.has(k)) byKind.set(k, new Map());
+    const causes=byKind.get(k);
+    if(!causes.has(c)) causes.set(c, []);
+    causes.get(c).push(d);
+  }
+  return [...byKind].map(([kind, causes])=>({ kind,
+    count:[...causes.values()].reduce((n, x)=> n+x.length, 0),
+    causes:[...causes].map(([cause, items])=>({ cause, count:items.length, items })).sort((a, b)=> b.count-a.count) }));
+}
+/** What one kind's rows say, each with its count, the first few in full, and what to do. */
+function diagGroupBody(key, g){
+  const todoKey='diag.todo.'+g.kind;
+  return [ ...g.causes.map((c, i)=> el('div',{className:'diagcause'},[
+      el('div',{className:'comment'},[ el('span',{className:'ovnum',textContent:String(c.count)}), '  ', c.count===1 ? c.items[0].reason : c.cause ]),
+      c.count>1 ? fold(key+'.'+i, [t('diag.examples',{n:Math.min(DIAG_EXAMPLES, c.count)})], ()=> [
+        ...c.items.slice(0, DIAG_EXAMPLES).map((d)=> el('div',{className:'comment'},[d.reason])),
+        c.count>DIAG_EXAMPLES ? el('div',{className:'count',textContent:t('diag.examples.more',{n:c.count-DIAG_EXAMPLES})}) : null ], null, true) : null ])),
+    Object.hasOwn(VIEWER_STRINGS.en, todoKey) ? el('div',{className:'comment diagtodo'},[t(todoKey)]) : null ];
+}
+/** One kind's limits as one folded row: the kind, how many, and how many different things they say. */
+function diagGroupRow(key, g){
+  const lead=[ el('span',{className:'scope',textContent:'diagnostic:'+g.kind+'  '}), t('diag.group.lead',{n:g.count}),
+    g.causes.length>1 ? '  '+t('diag.group.causes',{k:g.causes.length}) : '' ];
+  return el('div',{className:'raillim diaggrp'},[ fold(key, lead, ()=> diagGroupBody(key, g), null, true) ]);
+}
+/**
+ * Every limit as a row, with the diagnostics among them grouped: the rail and
+ * the masthead's limits list both draw through this, so they agree.
+ */
+function limitRows(prefix, lim){
+  const out=[], byKind=new Map();
+  (lim||[]).forEach((l, i)=>{
+    const m=/^diagnostic:(.+)$/.exec(String((l&&l.scope)||''));
+    if(!m){ out.push(railLimit(prefix+i, l)); return; }
+    if(!byKind.has(m[1])){ byKind.set(m[1], { first:i, items:[] }); out.push(m[1]); }
+    byKind.get(m[1]).items.push({ kind:m[1], reason:l.reason });
+  });
+  return out.map((x)=>{
+    if(typeof x!=='string') return x;
+    const g=byKind.get(x);
+    return g.items.length===1 ? railLimit(prefix+g.first, lim[g.first]) : diagGroupRow(prefix+'diag.'+x, diagGroups(g.items)[0]);
+  });
+}
 // The engine's own word for "there is nothing here", as a sentence. Kept apart
 // from the <li> below it so a ruled TABLE can print the same reason in a cell.
 function emptyText(reasonMap, field) {
@@ -304,6 +379,19 @@ function pathLabel(text){
   const s=String(text), cut=s.lastIndexOf('/', s.lastIndexOf('/')-1);
   if(cut<=s.indexOf('/')) return [el('span',{className:'ptail',textContent:s})];
   return [ el('span',{className:'phead',textContent:s.slice(0,cut)}), el('span',{className:'ptail',textContent:s.slice(cut)}) ];
+}
+/**
+ * A NAME CUT FROM THE MIDDLE, the way a route is (RM67): `pms_product_attribute_`
+ * gives way and `value` stays, so two tables that start alike still read apart
+ * in a narrow list. The cut is at the last separator; the whole name is the
+ * row's title and its text.
+ */
+function nameSplit(text){
+  const s=String(text);
+  let cut=-1;
+  for(const c of ['.','#','_','/']) cut=Math.max(cut, s.lastIndexOf(c, s.length-2));
+  if(cut<=0) return [el('span',{className:'ptail',textContent:s})];
+  return [ el('span',{className:'phead',textContent:s.slice(0,cut+1)}), el('span',{className:'ptail',textContent:s.slice(cut+1)}) ];
 }
 const byId=(id)=>document.getElementById(id);
 const vwrap=(v)=>byId(v.wrapId), vside=(v)=>byId(v.sideId), vsvg=(v)=>vwrap(v).querySelector('svg.flowsvg');

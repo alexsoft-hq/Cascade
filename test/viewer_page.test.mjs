@@ -382,39 +382,28 @@ function styleBlock(html) {
 /** The declarations of the LAST rule whose selector list is exactly `sel`. */
 function cssRule(css, sel) {
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-    .filter((m) => m[1].trim().split(/\s*,\s*/).includes(sel));
+    .filter((m) => m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim().split(/\s*,\s*/).includes(sel));
   assert.ok(rules.length > 0, `no CSS rule for ${sel}`);
   return rules.map((m) => m[2].trim());
 }
 
-test('the lane strip carries NO fixed pixel width: the four lanes share the pane', async (t) => {
+test('a lane is as wide as its names need, within a floor and a cap, and the PANE scrolls, never the page (RM67)', async (t) => {
   const { html } = await startViewer(t);
   const css = styleBlock(html);
-
-  // A lane is a flex child with a floor, never a fixed 252px column: beside the
-  // 320px evidence rail four fixed lanes overflowed the box at 1400px and the
-  // table lane — the one that answers the question — scrolled off the right.
+  // Lanes that flexed down to 180px cut every name to eight characters. A lane
+  // now takes the width laneWidth gives it and does not shrink below it...
   const fcol = cssRule(css, '.fcol').join(' ');
-  assert.equal(/(?:^|;|\s)width\s*:\s*\d+px/.test(fcol), false,
-    `.fcol still carries a fixed pixel width: ${fcol}`);
-  assert.match(fcol, /flex\s*:/, '.fcol must flex');
-  assert.match(fcol, /min-width\s*:\s*180px/, '.fcol must keep a 180px floor');
-
-  // ...and the strip around them must not demand its content's width, or the
-  // flex floor above would simply move the overflow up one level.
-  for (const decl of cssRule(css, '.flowwrap')) {
-    assert.equal(/min-width\s*:\s*max-content/.test(decl), false,
-      `.flowwrap still asks for max-content: ${decl}`);
-  }
-
-  // The only pixel width a lane may carry is the CAP on a wide screen, and it
-  // is a max-width inside a min-width media query — never a fixed size.
-  const capped = css.match(/@media\s*\(min-width:\s*1600px\)\s*\{[^}]*\.fcol\s*\{([^}]*)\}/);
-  assert.ok(capped, 'no wide-screen cap for .fcol');
-  assert.match(capped[1], /max-width\s*:\s*300px/);
+  assert.match(fcol, /flex\s*:\s*0 0 auto/, '.fcol keeps the width it was given');
+  // ...and when the lanes are wider than the pane, the pane scrolls: its grid
+  // column may shrink to nothing and the box itself is the scroller.
+  assert.match(cssRule(css, '.flowcanvas').join(' '), /overflow\s*:\s*auto/);
+  assert.match(css, /grid-template-columns:var\(--railw,320px\) minmax\(0,1fr\)/, 'the picture column may shrink, so the page does not scroll');
+  assert.match(cssRule(css, '.flowpane').join(' '), /min-width\s*:\s*0/);
+  // The heading of a lane stays in view while its rows scroll under it.
+  assert.match(cssRule(css, '.fcolhd').join(' '), /position\s*:\s*sticky/);
 });
 
-test('a rendered lane sets no width of its own — the stylesheet decides', async (t) => {
+test('a rendered lane carries the width its longest name needs, between 200 and 360px', async (t) => {
   const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=impact' });
   await ev(ctx, `(async () => {
     const r = await api('flow', { column: 'alpha_order.total', direction: 'up', depth: 8 });
@@ -424,10 +413,10 @@ test('a rendered lane sets no width of its own — the stylesheet decides', asyn
   await settle(ctx, 8);
   const cols = byId.get('impactwrap').querySelectorAll('.fcol');
   assert.equal(cols.length, 4, 'the target and its three lanes');
-  for (const c of cols) {
-    assert.equal(c.style.getPropertyValue('width'), '', 'a lane must not be sized inline');
-    assert.equal(c.getAttribute('width'), null);
-  }
+  // The width is what the names ask for, by the one rule the saved SVG reads too.
+  const want = JSON.parse(ev(ctx, "JSON.stringify(IMPACTV.model.lanes.map((l) => laneWidth(l.rows.map((r) => IMPACTV.labels.get(r.id).text)).width))"));
+  assert.deepEqual(cols.map((c) => parseFloat(c.style.getPropertyValue('width'))), want);
+  for (const w of want) assert.ok(w >= 200 && w <= 360, `a lane is ${w}px wide`);
 });
 
 // ---------------------------------------------------------------------------
@@ -742,23 +731,18 @@ test('the "This pack" card is gone, and every field it printed is still on the O
   assert.match(byId.get('ovfold').textContent, /mode=conservative, depth 8/);
 });
 
-test('a lane row shows its second line for the row being read, and reserves it for the rest', async (t) => {
+test('a lane row is its name, then one line with the hop and the grade, always shown (RM67)', async (t) => {
   const { html } = await startViewer(t);
   const css = styleBlock(html);
-  // HIDDEN, not removed: the bezier connectors are measured from the DOM, so a
-  // row that changed height under the pointer would move the lines it is on.
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .map((m) => ({ sel: m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim(), decl: m[2].trim() }));
-  const hide = rules.find((r) => r.sel === '.frow .fsub');
-  assert.ok(hide, 'no rule hides a lane row second line');
-  assert.match(hide.decl, /visibility\s*:\s*hidden/);
-  assert.equal(/display\s*:\s*none/.test(hide.decl), false, 'display:none would re-flow the strip on hover');
-  const show = rules.find((r) => r.sel.includes('.frow.sel .fsub'));
-  assert.ok(show, 'nothing brings the second line back');
-  assert.match(show.decl, /visibility\s*:\s*visible/);
-  for (const state of [':hover', ':focus', '.sel']) {
-    assert.ok(show.sel.includes(`.frow${state} .fsub`), `the second line is not shown for ${state}`);
-  }
+  // The line under the name is never hidden: a row that changed height or
+  // content under the pointer would move the lines drawn to it.
+  const meta = rules.filter((r) => r.sel.split(/\s*,\s*/).some((x) => /\.fmeta\b/.test(x)));
+  assert.ok(meta.length > 0, 'no rule for the meta line');
+  for (const r of meta) assert.equal(/visibility\s*:\s*hidden|display\s*:\s*none/.test(r.decl), false, `${r.sel} hides the meta line`);
+  // A name may take two lines, and each line is cut on its own.
+  assert.match(rules.find((r) => r.sel === '.fname .fline').decl, /display\s*:\s*block/);
 });
 
 // ---------------------------------------------------------------------------
@@ -2897,7 +2881,8 @@ test('a statement or a method row reads SHORT, with the full id one hover away',
   await settle(ctx, 30);
   assert.equal(rowsOf(byId, 'exlist').length, 3, 'filtering on the prefix still finds them');
 
-  // A METHOD reads owner#name, the same rule the chain lanes use.
+  // A METHOD reads Class.method, the same rule the chain lanes use (RM67:
+  // src/viewer/chainlayout.mjs labelParts, where the saved SVG asks too).
   q.value = ''; fire(q, 'input');
   await settle(ctx, 30);
   ev(ctx, "railSetKind('explore','symbol')");
@@ -2908,11 +2893,11 @@ test('a statement or a method row reads SHORT, with the full id one hover away',
   const syms = rowsOf(byId, 'exlist');
   assert.ok(syms.length > 0, 'the method list answered');
   assert.deepEqual(syms.map((r) => r.querySelector('.brid').textContent).sort(),
-    ['GController#get', 'GController#save']);
+    ['GController.get', 'GController.save']);
   assert.deepEqual(syms.map((r) => r.title).sort(),
     ['com.g.GController#get', 'com.g.GController#save']);
   // The page names one thing ONE way: this is `shortId`, not a second rule.
-  assert.equal(ev(ctx, "shortId('symbol:com.g.GController#get')"), 'GController#get');
+  assert.equal(ev(ctx, "shortId('symbol:com.g.GController#get')"), 'GController.get');
   assert.equal(ev(ctx, "shortId('statement:com.g.GMapper.selectOrder')"), 'GMapper.selectOrder');
 });
 
@@ -3138,7 +3123,7 @@ test('a project whose requests end elsewhere says both numbers under the dial', 
   assert.match(after[4], /^0 \/ \d+\s+0 here, 8 in connected projects$/, after[4]);
   assert.match(after[0], /\d+ here, 1 in connected projects$/, after[0]);
   // A lane with nothing on the other side keeps the plain wording.
-  assert.match(after[2], /sit behind no route$/, after[2]);
+  assert.match(after[2], /reached by no API$/, after[2]);
 
   // ...and with no crossing at all the block is absent and nothing changes.
   ev(ctx, 'delete OV.resp.answer.reach.viaFederation; renderOverview();');
@@ -3305,7 +3290,8 @@ test('down from a screen the chain draws six lanes, entry first', async (t) => {
   const rows = byId.get('flowwrap').querySelectorAll('.frow');
   assert.ok(rows.length >= 9, `the six lanes really hold rows: ${rows.length}`);
   const names = byId.get('flowwrap').querySelectorAll('.fname').map((x) => x.textContent);
-  assert.ok(names.includes('rows.vue#getList'), names.join(', '));
+  // A frontend function reads module.function; its file is one hover away.
+  assert.ok(names.includes('rows.getList'), names.join(', '));
   assert.ok(names.includes('GET /rows'), names.join(', '));
   assert.ok(names.includes('delta_rows'), names.join(', '));
 
@@ -3325,7 +3311,7 @@ test('up from a column the chain closes with the frontend function and the scree
   assert.deepEqual(cols, ['target', 'mapper statement', 'service layer', 'endpoint', 'frontend function', 'screen']);
   const names = byId.get('impactwrap').querySelectorAll('.fname').map((x) => x.textContent);
   assert.ok(names.includes('/rows'), names.join(', '));
-  assert.ok(names.includes('rows.js#listRows'), names.join(', '));
+  assert.ok(names.includes('rows.listRows'), names.join(', '));
 
   // The by-hop view ENDS on the screens, not on the routes, because that is the
   // last lane this answer has.
@@ -3501,15 +3487,15 @@ test('a Flow row a trace ran through carries the seen tag, and its unobserved si
   const seen = (n) => rows.find((r) => r.name === n).tags.includes('seen');
 
   // The service the trace saw, and the statement under it, say so.
-  assert.equal(seen('PmsBrandServiceImpl#listBrand'), true, 'the implementation the trace ran');
+  assert.equal(seen('PmsBrandServiceImpl.listBrand'), true, 'the implementation the trace ran');
   assert.equal(seen('PmsBrandMapper.selectByExample'), true, 'the statement it ran');
   // Its sibling at the same hop and the same grade is drawn exactly as before.
-  assert.equal(seen('PmsBrandServiceOther#listBrand'), false, 'an unobserved candidate is not marked');
+  assert.equal(seen('PmsBrandServiceOther.listBrand'), false, 'an unobserved candidate is not marked');
   assert.equal(seen('PmsBrandMapper.countByExample'), false);
 
   // AND IT IS NOT A GRADE. Both candidates still wear SOUND_SET, and the
   // candidate band that names them is still one band holding both.
-  for (const n of ['PmsBrandServiceImpl#listBrand', 'PmsBrandServiceOther#listBrand']) {
+  for (const n of ['PmsBrandServiceImpl.listBrand', 'PmsBrandServiceOther.listBrand']) {
     assert.equal(rows.find((r) => r.name === n).grade, 'SOUND_SET', `${n} lost or gained a grade`);
   }
   const bands = byId.get('flowwrap').querySelectorAll('.fdiv').map((d) => d.textContent);
@@ -3518,7 +3504,7 @@ test('a Flow row a trace ran through carries the seen tag, and its unobserved si
 
   // The tooltip carries the CAPTURE'S OWN coverage note, so "not marked" cannot
   // be read as "dead". It is the engine's sentence, relayed and not rewritten.
-  const tip = rows.find((r) => r.name === 'PmsBrandServiceImpl#listBrand').tips.find((x) => x.includes('seen') || x.includes('recording'));
+  const tip = rows.find((r) => r.name === 'PmsBrandServiceImpl.listBrand').tips.find((x) => x.includes('seen') || x.includes('recording'));
   assert.match(tip, /a recording of this system running saw this really happen/);
   assert.match(tip, /coverage is only what was exercised/);
   assert.equal(tip.includes(TRACE_NOTE), true, "the engine's note, verbatim");
@@ -3760,12 +3746,12 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
 
   const rows = laneRows(byId);
   // The badge is a tag on the row, and it carries the project's name.
-  const far = rows.find((r) => r.name === 'Ctl#get');
+  const far = rows.find((r) => r.name === 'Ctl.get');
   assert.ok(far, `the far handler is missing: ${rows.map((r) => r.name).join(', ')}`);
   assert.ok(far.tags.includes('served'), `no project badge: ${far.tags.join(' | ')}`);
   assert.match(far.tips.find((x) => /another registered project/.test(x)) || '', /over an HTTP call/);
   // This project's own row wears none.
-  assert.equal(rows.find((r) => r.name === 'Client#fetch').tags.includes('served'), false);
+  assert.equal(rows.find((r) => r.name === 'Client.fetch').tags.includes('served'), false);
 
   // TWO `types` rows, one per project, each answering to its own key. Before
   // the key was scoped, the second row overwrote the first in `v.rows` and a
@@ -3780,20 +3766,23 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
   // reader is looking for; with the chip in front of it the name had no width
   // left at all (the chip kept its content width, `.fname` grew from a basis of
   // 0), and a table row read "customers-service SOUND_SET" with the table's own
-  // name gone.
-  const order = (name) => byId.get('flowwrap').querySelectorAll('.frow')
-    .filter((r) => (r.querySelector('.fname') || {}).textContent === name)
-    .map((r) => r.querySelector('.frowtop').children.map((c) => c.className.split(' ')[0]));
-  assert.deepEqual(order('Ctl#get'), [['kglyph', 'fhopn', 'fname', 'tag', 'grade']],
+  // name gone. Since RM67 the hop and the grade are on the line UNDER the name
+  // (.fmeta), so the name line holds the glyph, the name and the chip.
+  const kids = (r, sel) => r.querySelector(sel).children.map((c) => c.className.split(' ')[0]);
+  const named = (name) => byId.get('flowwrap').querySelectorAll('.frow')
+    .filter((r) => (r.querySelector('.fname') || {}).textContent === name);
+  assert.deepEqual(named('Ctl.get').map((r) => kids(r, '.frowtop')), [['kglyph', 'fname', 'tag']],
     'the name is drawn before the project chip');
-  const tableRows = order('types');
+  assert.deepEqual(kids(named('Ctl.get')[0], '.fmeta').slice(0, 2), ['fhopn', 'grade'], 'the hop and the grade are under the name');
+  const tableRows = named('types');
   assert.equal(tableRows.length, 2);
-  assert.deepEqual(tableRows[1], ['kglyph', 'fname', 'tag', 'grade'], 'and on a table row too');
-  assert.deepEqual(tableRows[0], ['kglyph', 'fname', 'grade'], "this project's own row wears no chip");
+  const served = tableRows.find((r) => r.querySelector('.fproj')), own = tableRows.find((r) => !r.querySelector('.fproj'));
+  assert.deepEqual(kids(served, '.frowtop'), ['kglyph', 'fname', 'tag'], 'and on a table row too');
+  assert.deepEqual(kids(own, '.frowtop'), ['kglyph', 'fname'], "this project's own row wears no chip");
   // The chip carries the whole project id in its tooltip, because the chip
   // itself is the thing that gets cut.
   const chip = byId.get('flowwrap').querySelectorAll('.frow')
-    .find((r) => (r.querySelector('.fname') || {}).textContent === 'Ctl#get')
+    .find((r) => (r.querySelector('.fname') || {}).textContent === 'Ctl.get')
     .querySelector('.fproj');
   assert.equal(chip.textContent, 'served');
   assert.match(chip.title, /^served {2}this row is in another registered project/);

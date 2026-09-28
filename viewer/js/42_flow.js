@@ -31,9 +31,10 @@ const CHAIN_LANES = {
     ['screens','chain.lane.screens',(v,x)=>flowScreenRow(v,x),true] ] },
 };
 // The depth each tab's control OPENS on (the `selected` option in the markup),
-// and the depth a screen entry needs: the same 8 `flow` defaults a screen to.
-const CHAIN_DEPTH_DEFAULT = { down:6, up:8 };
-const CHAIN_SCREEN_DEPTH = 8;
+// and the depth a screen entry needs: since RM67 one default for every walk from
+// a route, the engine's (WALK_DEPTH_DEFAULT), in both directions.
+const CHAIN_DEPTH_DEFAULT = { down:WALK_DEPTH_DEFAULT, up:WALK_DEPTH_DEFAULT };
+const CHAIN_SCREEN_DEPTH = WALK_DEPTH_DEFAULT;
 /** The lanes THIS answer has, in the order the page draws them left to right. */
 function chainLanes(v, a){
   return CHAIN_LANES[v.direction].lanes.filter(([field]) => Array.isArray(a[field]));
@@ -47,14 +48,30 @@ function chainEndField(v, a){
   const lanes = chainLanes(v, a);
   return lanes.length ? lanes[lanes.length - 1][0] : CHAIN_LANES[v.direction].end;
 }
-// The same naming rule the engine uses (core/chain.mjs nodeLabel), for the path
-// list — where the server sends ids, not labels.
+// ONE NAME PER THING on this page (RM67): the short form the lanes, the rail,
+// the card's path list and the graph's tips all read, from the naming rule the
+// saved SVG reads too (src/viewer/chainlayout.mjs labelParts). A method is
+// `Class.method`, a MyBatis statement `Mapper.id`, an ORM call site
+// `Service.method #n`, a web function `module.function`.
 function shortId(id){
-  const i=String(id).indexOf(':'), kind=String(id).slice(0,i), key=String(id).slice(i+1);
-  if(kind==='symbol'){ const h=key.lastIndexOf('#'); const dot=key.lastIndexOf('.',h); return h>=0?key.slice(dot+1):key; }
-  if(kind==='statement'||kind==='column'){ const p=key.split('.'); return p.slice(-2).join('.'); }
-  return key;
+  return labelParts(id).at(0);
 }
+/** The node id of a chain's start, the one the naming rule reads. */
+const entryNodeId=(e)=> e.kind==='endpoint' ? 'endpoint:'+e.id : (e.start || (e.kind+':'+e.id));
+/**
+ * THE NAME OF A ROW: what tells it apart in this picture (the labels the lane
+ * model made, chainLabels), on at most two lines of the lane it sits in, the
+ * middle given up before the tail. The whole id is the tooltip.
+ */
+function laneName(v, nodeId, title){
+  const lab=v.labels && v.labels.get(nodeId);
+  const text=lab ? lab.text : shortId(nodeId);
+  const id=String(nodeId);
+  return el('span',{className:'fname', title:title||id.slice(id.indexOf(':')+1)},
+    fitLines(text, v.perLine||CHAIN_FIT_PERLINE).map((l)=> el('span',{className:'fline',textContent:l})));
+}
+// A name drawn outside a sized lane (the by-hop view) gets the widest lane's line.
+const CHAIN_FIT_PERLINE=laneWidth(['x'.repeat(200)]).perLine;
 // Close the typeahead for good: cancel the pending keystroke query AND bump the
 // sequence, so an answer already in flight cannot re-open the box over the
 // picture the user just asked for.
@@ -139,11 +156,16 @@ async function drawChain(v, keepLimit){
     // rows off the top of the list the rail already holds.
     wrap.classList.remove('layersmode');
     side.replaceChildren(); v.resp=null; v.args=null;
+    laneReset(v); v.lastRaw=null;
     refreshExportButtons();
     railIdle(v.name);
     return;
   }
   if(!keepLimit) v.limit=40;
+  // A new target forgets the old picture's folds and find; a new mode or depth
+  // for the same target keeps what the reader typed in the find box.
+  if(v.lastRaw!==raw) laneReset(v);
+  v.lastRaw=raw; v.open.clear();
   wrap.replaceChildren(el('div',{className:'empty',textContent: t(v.direction==='up' ? 'load.impact' : 'load.flow')}));
   const mine=++v.seq;
   let args;
@@ -186,61 +208,17 @@ function renderChain(v, r){
   refreshShowAll();
   v.rows.clear(); v.linkSpecs=[]; v.paths=[];
   const tf={}; for(const f of (r.truncated&&r.truncated.fields)||[]) tf[f.field]=f;
-  if(v.view==='layers') renderChainLayers(v, r, tf); else renderChainLanes(v, r, tf);
+  // The names, the links and the groups are read off the answer ONCE, before a
+  // row is drawn, so both drawings name every node the same way (laneModel).
+  v.model=laneModel(v, r.answer); v.labels=v.model.labels; v.perLine=null;
+  if(v.view==='layers') renderChainLayers(v, r, tf); else laneRender(v, r, tf);
   flowApplySel(v);
   renderChainSide(v);
-}
-function renderChainLanes(v, r, tf){
-  const a=r.answer, wrap=vwrap(v), spec=CHAIN_LANES[v.direction];
-  wrap.classList.remove('layersmode');
-  const svg=svgEl('svg',{class:'flowsvg'});
-  const cols=[flowColumn(v, spec.entryTitle, null, [a.entry], null, a, (e)=>flowEntryRow(v,e))];
-  for(const [field,title,mk,grouped] of chainLanes(v, a))
-    cols.push(flowColumn(v, title, field, a[field]||[], tf[field], a, (x)=>mk(v,x), grouped));
-  wrap.replaceChildren(svg, ...cols);
-  drawChainLinks(v);
 }
 // Re-apply the current selection after any re-render (expanding a layer
 // rebuilds the rows; the open card must not silently lose its highlight).
 function flowApplySel(v){
   for(const [k,row] of v.rows) for(const e of row.els) e.classList.toggle('sel', k===v.sel);
-}
-// One lane. `grouped` rows are bucketed per hop, and inside a hop the confirmed
-// rows come first, then a dashed divider that NAMES the candidate band — so a
-// candidate is never read as a confirmed call.
-function flowColumn(v, title, field, items, tf, a, mkRow, grouped){
-  const box=el('div',{className:'fcol'},[
-    el('div',{className:'fcolhead'},[ el('span',{className:'fcoltitle',textContent:t(title)}),
-      el('span',{className:'count',textContent: tf? (tf.shown+' / '+tf.total) : String(items.length)}) ])
-  ]);
-  if(tf && tf.nextOffset!=null){
-    const capped=v.limit>=200;
-    box.append(el('div',{className:'fcolsub'},[
-      el('button',{className:'moreb',textContent: capped?'Cap reached':'More', disabled:capped, title:t('chain.cap.more.title'),
-        onclick:()=>{ v.limit = v.limit<140?140:200; drawChain(v, true); }}),
-      el('span',{className:'count',textContent:'order: '+tf.order})
-    ]));
-    if(capped) box.append(el('div',{className:'count',style:'margin-bottom:8px',textContent:t('chain.cap')}));
-  }
-  if(!items.length){ box.append(flowEmptyNote(v, a, field)); return box; }
-  if(!grouped){ for(const it of items) box.append(mkRow(it)); return box; }
-  const hops=[]; for(const it of items) if(!hops.includes(it.hops)) hops.push(it.hops);
-  for(const h of hops){
-    box.append(el('div',{className:'fhop',textContent:t('chain.hop',{n:h})}));
-    const inHop=items.filter(i=>i.hops===h);
-    for(const g of ['EXACT','SOUND_SET','HEURISTIC']){
-      const rows=inHop.filter(i=>i.grade===g);
-      if(!rows.length) continue;
-      // a statement is not "called" — it is reached through a candidate call
-      if(g==='SOUND_SET') box.append(el('div',{className:'fdiv',
-        textContent:t(field==='statements'?'chain.band.candidate.stmt':'chain.band.candidate',{n:rows.length})}));
-      if(g==='HEURISTIC') box.append(el('div',{className:'fdiv fheur',textContent:t('chain.band.heuristic',{n:rows.length})}));
-      for(const it of rows) box.append(mkRow(it));
-    }
-    // any other grade (RUNTIME_ONLY / UNRESOLVED) is still shown, never dropped
-    for(const it of inHop.filter(i=>!['EXACT','SOUND_SET','HEURISTIC'].includes(i.grade))) box.append(mkRow(it));
-  }
-  return box;
 }
 function flowEmptyNote(v, a, field){
   const cut=(a.walk&&a.walk.cut)||{};
@@ -332,7 +310,10 @@ function flowMakeRow(v, key, kind, grade, kids, data){
   // same affordances from the keyboard: focus lights the chain, Enter/Space opens the card
   e.addEventListener('focus',()=>flowHover(v,key));
   e.addEventListener('blur',()=>flowClearHover(v));
-  e.addEventListener('keydown',(ev)=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); flowSelect(v,key); } });
+  // …and the arrows walk the picture: up and down a lane, across to the row
+  // this one links to (laneKeyNav).
+  e.addEventListener('keydown',(ev)=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); flowSelect(v,key); } else laneKeyNav(v, key, ev); });
+  if(v.found && v.found.has(key)) e.classList.add('found');
   // In layers mode one node can be drawn twice (inside its hop AND in the
   // end-of-chain list). Both copies answer to the same key, so hover and
   // select light them together instead of the last one winning.
@@ -342,11 +323,10 @@ function flowMakeRow(v, key, kind, grade, kids, data){
   return e;
 }
 function flowEntryRow(v, entry){
-  const title = entry.kind==='endpoint' ? (entry.httpMethod+' '+entry.path) : (entry.short||entry.id);
-  // A lane is 180px wide and a shortened name is what fits in it; the FULL one
-  // is what a reader hovers for, so the row carries both.
-  const full = entry.kind==='endpoint' ? title : (entry.id||title);
-  const sub = entry.kind==='endpoint' ? (entry.handlerShort||'')
+  // The name is the one rule every row reads (laneName); the FULL id is what a
+  // reader hovers for, so the row carries both.
+  const full = entry.kind==='endpoint' ? (entry.httpMethod+' '+entry.path) : (entry.id||entry.short);
+  const sub = entry.kind==='endpoint' ? (entry.handler ? shortId('symbol:'+entry.handler) : (entry.handlerShort||''))
     : entry.kind==='statement' ? (entry.statementType||'sql')
     : (entry.comment||entry.owner||'');
   // Build the row's data EXPLICITLY. Spreading the entry would put the route
@@ -358,12 +338,11 @@ function flowEntryRow(v, entry){
   // A ROUTE'S OWN ADDRESS HAS A GRADE (RM67): its HANDLES edge, which no walk
   // down from the handler crosses. A guessed address is said on the row itself.
   return flowMakeRow(v, entry.start,'entry',entry.grade||null,[
-    el('div',{className:'frowtop'},[
-      kindGlyph(entry.kind, 12),
+    el('div',{className:'frowtop'},[ kindGlyph(entry.kind, 12), laneName(v, entryNodeId(entry), [full, sub].filter(Boolean).join('\n')) ]),
+    el('div',{className:'fmeta'},[
       v.direction==='up'? el('span',{className:'tag',textContent:entry.kind}) : null,
-      el('span',{className:'fname',title:full,textContent:title}),
-      (entry.grade && entry.grade!=='EXACT') ? badge(entry.grade) : null]),
-    el('div',{className:'fsub'},[el('span',{className:'comment',title:sub,textContent:sub})])
+      (entry.grade && entry.grade!=='EXACT') ? badge(entry.grade) : null,
+      sub ? el('span',{className:'comment',title:sub,textContent:sub}) : null ])
   ],{ hops:0, kind:entry.kind, route:entry.path??null, httpMethod:entry.httpMethod??null,
       handler:entry.handler??null, handlerShort:entry.handlerShort??null, short:entry.short??null,
       owner:entry.owner??null, transactional:entry.transactional===true,
@@ -373,23 +352,30 @@ function flowEntryRow(v, entry){
       tables:entry.tables??null,   // a statement TARGET carries its tables, like a statement row
       file:entry.file??null, line:entry.line??null, start:entry.start });
 }
+// A ROW IS A NAME AND ONE LINE UNDER IT (RM67). The name has the whole width
+// of its lane and may take two lines; the hop, the grade and the few tags that
+// matter sit on the line under it, always shown, so a row never changes height
+// under the pointer and the lines drawn to it stay where they are. What used to
+// be a hidden second line (the owner, the file, what a row came through) is the
+// name's tooltip and the card's.
 function flowServiceRow(v, s){
-  v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'symbol:'+s.id), grade:s.grade, observed:linkObserved(s)});
   return flowMakeRow(v, fkey(s,'symbol:'+s.id),'service',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('symbol',12), el('span',{className:'fhopn kh-service',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), projTag(s), badge(s.grade)]),
-    el('div',{className:'fsub'},[
+    el('div',{className:'frowtop'},[kindGlyph('symbol',12), laneName(v, 'symbol:'+s.id, [s.id, s.file].filter(Boolean).join('\n')), projTag(s)]),
+    el('div',{className:'fmeta'},[ hopChip('service', s.hops), badge(s.grade),
       s.handler? el('span',{className:'tag',title:t('chain.tag.handler.title'),textContent:'handler'}) : null,
       s.external? el('span',{className:'tag warn',title:t('chain.tag.ext.title'),textContent:'ext'}) : null,
       s.transactional? el('span',{className:'tag',title:'@Transactional boundary',textContent:'@Tx'}) : null,
       // A trace saw THIS implementation run. Beside the grade, never inside it:
       // the candidate band above is untouched and an unmarked sibling stands
       // where it stood.
-      s.observed? seenTag(v.resp) : null,
-      el('span',{className:'comment',title:s.owner||'',textContent:s.owner||''}) ])
+      s.observed? seenTag(v.resp) : null ])
   ],s);
 }
+/** The hop a row sits at, in its kind's own colour on the signal theme. */
+function hopChip(kind, hops){
+  return el('span',{className:'fhopn kh-'+kind, title:t('chain.hop',{n:hops}), textContent:String(hops)});
+}
 function flowStatementRow(v, s){
-  v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'statement:'+s.id), grade:s.grade, observed:linkObserved(s)});
   // NAMED `stype`, NOT `t`. `t` is the catalogue lookup every row in this file
   // calls, and a local of that name shadows it for the whole function: the
   // `columnsRuntimeOnly` tag below asks the catalogue for its words, and with
@@ -404,29 +390,29 @@ function flowStatementRow(v, s){
   const verbCls = {select:'tag read', insert:'tag write', update:'tag write', delete:'tag write'};
   const acc = (s.tables||[]).map(x=>x&&x.access).filter(Boolean);
   const cls = verbCls[stype] || (acc.length===0 ? 'tag' : (acc.some(a=>a!=='read') ? 'tag write' : 'tag read'));
+  // An ORM call site names the model it reaches, which is what a reader asks of
+  // it (`UserService.deleteUser #0` is a place; `Access` is what it deletes).
+  const tbls=(s.tables||[]).map(x=>x&&x.table).filter(Boolean);
+  const via=s.symbol ? 'via '+shortId('symbol:'+s.symbol) : '';
   return flowMakeRow(v, fkey(s,'statement:'+s.id),'statement',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('statement',12), el('span',{className:'fhopn kh-statement',textContent:String(s.hops)}), el('span',{className:'fname',title:s.id,textContent:s.short}), projTag(s), badge(s.grade)]),
-    el('div',{className:'fsub'},[ el('span',{className:cls,textContent:s.statementType||'sql'}),
-      el('span',{className:'count',textContent:(s.tables||[]).length+' tbl'}),
+    el('div',{className:'frowtop'},[kindGlyph('statement',12), laneName(v, 'statement:'+s.id, [s.id, via, tbls.join(', ')].filter(Boolean).join('\n')), projTag(s)]),
+    el('div',{className:'fmeta'},[ hopChip('statement', s.hops), badge(s.grade), el('span',{className:cls,textContent:s.statementType||'sql'}),
       // Never hide a lower bound behind a tidy row.
       s.columnsRuntimeOnly? el('span',{className:'tag',title:t('chain.tag.runtime.title'),textContent:t('chain.tag.runtime')}) : null,
       // A trace saw this statement RUN. Same mark, same words and the same
       // coverage note as every other row that carries one.
-      s.observed? seenTag(v.resp) : null ]),
-    // the mapper method is folded into this row — name it, or the hop vanishes
-    s.symbol? el('div',{className:'fsub'},[el('span',{className:'comment',title:s.symbol,textContent:'via '+shortId('symbol:'+s.symbol)})]) : null
+      s.observed? seenTag(v.resp) : null,
+      el('span',{className:'count',title:tbls.join(', '),textContent: tbls.length<=2 ? tbls.join(', ') : tbls.length+' tbl'}) ])
   ],s);
 }
 function flowTableRow(v, x){
-  v.linkSpecs.push({from:fkey(x,'statement:'+x.via), to:fkey(x,'table:'+x.table), grade:x.grade});
+  const via='via '+shortId('statement:'+x.via);
   return flowMakeRow(v, fkey(x,'table:'+x.table),'table',x.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('table',12), el('span',{className:'fname',title:x.table,textContent:x.table}), projTag(x), badge(x.grade)]),
-    el('div',{className:'fsub'},[el('span',{className:'count',title:'via '+x.via,
-      textContent:t('chain.hop',{n:x.hops})+'\u00a0\u00a0via '+x.viaShort})]),
-    el('div',{className:'fsub'},[
+    el('div',{className:'frowtop'},[kindGlyph('table',12), laneName(v, 'table:'+x.table, [x.table, x.comment, via, x.access].filter(Boolean).join('\n')), projTag(x)]),
+    el('div',{className:'fmeta'},[ hopChip('table', x.hops), badge(x.grade),
       x.writes? el('span',{className:'tag write',title:'distinct columns written',textContent:'W '+x.writes}) : null,
       x.reads? el('span',{className:'tag read',title:'distinct columns read',textContent:'R '+x.reads}) : null,
-      el('span',{className:'count',textContent:x.access}) ])
+      el('span',{className:'comment',title:x.comment||x.access||'',textContent:x.comment||x.access||''}) ])
   ],x);
 }
 // A ROUTE, from either side. Walking UP it is DERIVED from its handler's
@@ -436,41 +422,33 @@ function flowTableRow(v, x){
 // row, two ways of arriving at it, and the row says which by where it hangs.
 function flowEndpointRow(v, e){
   const from = (e.link && e.link.from) || (e.handler ? 'symbol:'+e.handler : null);
-  const via = (e.link && e.link.fromShort) || e.handlerShort || (e.handler ? shortId('symbol:'+e.handler) : '');
-  v.linkSpecs.push({from:flinkKey(e,from), to:fkey(e,'endpoint:'+e.id), grade:e.grade, observed:linkObserved(e)});
+  const via = from ? 'via '+shortId(keyNodeId(from)) : '';
   return flowMakeRow(v, fkey(e,'endpoint:'+e.id),'endpoint',e.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), el('span',{className:'fname psplit',title:e.id}, pathLabel(e.id)), projTag(e), badge(e.grade)]),
-    el('div',{className:'fsub'},[el('span',{className:'count',title: from ? ('via '+from.slice(from.indexOf(':')+1)) : '',
-      textContent:t('chain.hop',{n:e.hops})+'\u00a0\u00a0'+via})]),
+    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), laneName(v, 'endpoint:'+e.id, [e.id, via].filter(Boolean).join('\n')), projTag(e)]),
     // Two things a route on a pack with a frontend owes the reader: how much of
     // the browser calls it, and whether a recording ever saw that call happen.
     // The recording is a MARKER beside the grade and never a grade: no walk
     // follows a RUNTIME_ONLY edge, so nothing here was drawn from one.
-    (e.frontendCalls || e.observed) ? el('div',{className:'fsub'},[
-      e.frontendCalls? el('span',{className:'count',title:t('chain.tag.frontend.title'),
-        textContent:t('chain.tag.frontend',{n:e.frontendCalls})}) : null,
+    el('div',{className:'fmeta'},[ hopChip('endpoint', e.hops), badge(e.grade),
       e.observed? seenTag(v.resp) : null,
-    ]) : null
+      e.frontendCalls? el('span',{className:'count',title:t('chain.tag.frontend.title'),
+        textContent:t('chain.tag.frontend',{n:e.frontendCalls})}) : el('span',{className:'comment',textContent:via}) ])
   // On an endpoint row the server's `path` is the ROUTE and the walked edges are
   // `walkedPath`; the card draws a path list from `path`, like every other row.
   ],{...e, route:e.path??null, path:e.walkedPath||null});
 }
 // A FRONTEND FUNCTION. Its id is `file#function`, a path and a name glued
-// together and far too long for a 180px lane, so the row shows the short form
-// the ENGINE made and puts the file's own name under it. The tag says which of
-// the two kinds it is: declared in the file the route mounts as its screen, or
-// in a module that file imports.
+// together; the row is named by the module or the class it is declared in and
+// the file is in the tooltip. The tag says which of the two kinds it is:
+// declared in the file the route mounts as its screen, or in a module that
+// file imports.
 function flowWebFnRow(v, w){
-  v.linkSpecs.push({from:flinkKey(w,(w.link&&w.link.from)||null), to:fkey(w,'symbol:'+w.id), grade:w.grade, observed:linkObserved(w)});
-  const file=String(w.file||'');
-  const base=file.slice(file.lastIndexOf('/')+1);
   return flowMakeRow(v, fkey(w,'symbol:'+w.id),'webfn',w.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('webfn',12), el('span',{className:'fhopn kh-webfn',textContent:String(w.hops)}),
-      el('span',{className:'fname',title:w.id,textContent:w.short}), projTag(w), badge(w.grade)]),
-    el('div',{className:'fsub'},[
+    el('div',{className:'frowtop'},[kindGlyph('webfn',12), laneName(v, 'symbol:'+w.id, [w.id, w.file].filter(Boolean).join('\n')), projTag(w)]),
+    el('div',{className:'fmeta'},[ hopChip('webfn', w.hops), badge(w.grade),
       el('span',{className:'tag',title:t(w.component?'chain.tag.component.title':'chain.tag.api.title'),
         textContent:t(w.component?'chain.tag.component':'chain.tag.api')}),
-      el('span',{className:'comment',title:file,textContent:base}) ])
+      w.observed? seenTag(v.resp) : null ])
   ],w);
 }
 // A SCREEN: the far end of the round trip. It is a route the BROWSER shows, so
@@ -478,11 +456,9 @@ function flowWebFnRow(v, w){
 // own declaration said: the group its first segment puts it in, and the title
 // its `meta` gave it.
 function flowScreenRow(v, s){
-  v.linkSpecs.push({from:flinkKey(s,(s.link&&s.link.from)||null), to:fkey(s,'screen:'+s.id), grade:s.grade, observed:linkObserved(s)});
   return flowMakeRow(v, fkey(s,'screen:'+s.id),'screen',s.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('screen',12), el('span',{className:'fhopn kh-screen',textContent:String(s.hops)}),
-      el('span',{className:'fname',title:s.id,textContent:s.short||s.id}), projTag(s), badge(s.grade)]),
-    el('div',{className:'fsub'},[
+    el('div',{className:'frowtop'},[kindGlyph('screen',12), laneName(v, 'screen:'+s.id, [s.id, s.title, s.component].filter(Boolean).join('\n')), projTag(s)]),
+    el('div',{className:'fmeta'},[ hopChip('screen', s.hops), badge(s.grade),
       s.group? el('span',{className:'tag',textContent:s.group}) : null,
       s.observed? seenTag(v.resp) : null,
       el('span',{className:'comment',title:s.title||'',textContent:s.title||''}) ])
@@ -497,7 +473,9 @@ function flowScreenRow(v, s){
 function renderChainLayers(v, r, tf){
   const a=r.answer, wrap=vwrap(v), spec=CHAIN_LANES[v.direction];
   const lanes=chainLanes(v, a);
-  wrap.classList.add('layersmode');
+  wrap.classList.add('layersmode'); wrap.classList.remove('lanesmode');
+  // The strip names lanes; the by-hop view has none to name.
+  const strip=byId(v.name+'strip'); if(strip) strip.classList.add('hidden');
   const layers=a.layers||[];
   const box=el('div',{});
   const maxNodes=layers.reduce((m,l)=>Math.max(m,l.nodes),0);
@@ -656,8 +634,13 @@ function drawChainLinks(v){
       cx1=x1-22; cx2=x2-22;
     } else {
       x1=ar.right-wr.left; x2=br.left-wr.left;
-      const dx=Math.max(26,(x2-x1)*0.5);
-      cx1=x1+dx; cx2=x2-dx;
+      // A LINK THAT SKIPS A LANE (RM67) runs level behind the lanes it passes,
+      // which are opaque, and turns only in the last gutter: drawn corner to
+      // corner it cut diagonally through every row between, which is the knot
+      // the lanes used to be.
+      const gutter=CHAIN_FIT.gap;
+      const dx = (x2-x1) > gutter*2.5 ? Math.max(26, x2-x1-gutter) : Math.max(26,(x2-x1)*0.5);
+      cx1=x1+dx; cx2=x2-Math.min(dx, Math.max(26, gutter*0.6));
     }
     const cy1=y1, cy2=y2;
     const d='M'+x1+','+y1+' C'+cx1+','+cy1+' '+cx2+','+cy2+' '+x2+','+y2;
@@ -665,8 +648,9 @@ function drawChainLinks(v){
     // WEIGHT and nothing else, so the eye finds the hops a capture really ran
     // through without any line changing what it claims.
     const p=svgEl('path',{class:'flink'+(l.observed?' obs':''), d, stroke:gradeColor(l.grade)});
-    if(l.grade==='SOUND_SET') p.setAttribute('stroke-dasharray','5 3');
-    else if(l.grade==='HEURISTIC') p.setAttribute('stroke-dasharray','1.5 3');
+    // The dash is the grade of THIS link (RM67), from the one dash table the
+    // badges and the legend draw with: HEURISTIC is dash-dot here as there.
+    if(gradeDash(l.grade)) p.setAttribute('stroke-dasharray', gradeDash(l.grade));
     // The connector needs a name of its own, because an <mpath> can only point
     // at one by id. Scoped to the view, so Flow and Impact never collide.
     const id='fp-'+v.name+'-'+v.paths.length;
@@ -822,7 +806,10 @@ function flowHover(v, key){
     // stop, so the eye follows one call instead of the whole picture.
     if(l.dots){ l.dots.classList.toggle('hot',on); l.dots.classList.toggle('off',!on); } }
 }
+// A SELECTED CHAIN STAYS LIT (RM67): when the pointer leaves, the picture goes
+// back to the chain the reader picked, not to nothing.
 function flowClearHover(v){
+  if(v.sel && v.rows.has(v.sel)){ flowHover(v, v.sel); return; }
   for(const [,row] of v.rows) for(const e of row.els) e.classList.remove('hot','dim');
   for(const l of v.paths){ l.el.classList.remove('hot','dim');
     if(l.dots) l.dots.classList.remove('hot','off'); }
@@ -830,8 +817,12 @@ function flowClearHover(v){
 }
 function flowSelect(v, key){
   v.sel = (v.sel===key) ? null : key;
+  // A chain that runs through a folded group is unfolded, so the path a
+  // reader picked is drawn whole, and the picture keeps its scroll.
+  if(v.sel && v.view==='lanes' && laneChainFolded(v, v.sel)){ laneRerender(v); return; }
   flowApplySel(v);
   renderChainSide(v);
+  flowClearHover(v);
 }
 function flowLineSample(g){
   const s=svgEl('svg',{width:38,height:9,'aria-hidden':'true'});
@@ -850,10 +841,13 @@ function renderChainSide(v){
   kids.push(el('div',{className:'panel'},[
     el('h2',{textContent:t('chain.legend.title')}),
     // The grade name and its badge are the ENGINE's; only the sentence beside
-    // each one belongs to the page and is translated.
-    el('ul',{className:'list'}, [['EXACT','chain.legend.exact'],['SOUND_SET','chain.legend.sound'],['HEURISTIC','chain.legend.heuristic']].map(([g,key])=>
-      el('li',{},[ el('span',{style:'display:flex;align-items:center;gap:7px'},[flowLineSample(g), badge(g), el('span',{className:'comment',textContent:t(key)})]),
+    // each one belongs to the page and is translated, in the one wording every
+    // place that explains a grade uses (grade.say.*).
+    el('ul',{className:'list'}, LANE_BANDS.map((g)=>
+      el('li',{},[ el('span',{style:'display:flex;align-items:center;gap:7px'},[flowLineSample(g), badge(g), el('span',{className:'comment',textContent:gradeSay(g)})]),
         el('span',{className:'count',textContent:t('chain.legend.links',{n:counts[g]||0})}) ]))),
+    // A line and a badge answer two different questions (RM67).
+    el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.legend.path')}),
     // `other` is only mentioned when there IS one — a reached node this view
     // has no lane for (an injected type, an outbound call, a screen).
     el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.walk.note',{walked:w.walked||0, depth:w.depth, mode:w.mode})
@@ -893,7 +887,9 @@ function chainLeftOut(v, r){
   const w=r.answer.walk||{}, cut=w.cut||{};
   if(!(cut.byMode>0)) return null;
   const by=cut.byModeGrades||{};
-  const split=GRADES.filter((g)=> by[g]>0).map((g)=> ovNum(by[g])+' '+g).join(', ');
+  // Each grade left out, with how many and what it MEANS, in the legend's words.
+  const split=GRADES.filter((g)=> by[g]>0).map((g)=> el('li',{},[ badge(g), ' ', el('span',{className:'ovnum',textContent:ovNum(by[g])}),
+    '  ', el('span',{className:'comment',textContent:gradeSay(g)}) ]));
   const wider=chainWiderMode(w.mode, by);
   const diags=(OV.resp && OV.resp.answer.diagnostics) || [];
   // Since the walk reads a route's link to its handler as the path's first
@@ -903,11 +899,17 @@ function chainLeftOut(v, r){
   return el('div',{className:'panel leftout'},[
     el('h2',{textContent:t('chain.left.title')}),
     stopped ? el('div',{className:'comment',style:'margin-bottom:4px'},[ t('chain.left.route',{grade:entry.grade, mode:w.mode}) ]) : null,
-    el('div',{className:'comment'},[ t('chain.left.say',{n:ovNum(cut.byMode), mode:w.mode}), split ? ' ('+split+')' : '' ]),
+    el('div',{className:'comment'},[ t('chain.left.say',{n:ovNum(cut.byMode), mode:w.mode}) ]),
+    split.length ? el('ul',{className:'list leftgrades'}, split) : null,
     wider ? el('button',{className:'mini',style:'margin-top:6px',textContent:t('chain.empty.switch',{mode:wider}),
       onclick:()=>{ byId(v.modeId).value=wider; drawChain(v); }}) : el('div',{className:'comment',textContent:t('chain.left.nomode')}),
+    // The analysis's diagnostics, one row per kind (diagGroups): a flood of one
+    // kind is a count and what it says, not a page of copies.
     diags.length ? el('div',{className:'leftfix'},[ el('div',{className:'raillbl',textContent:t('chain.left.fix')}),
-      ...diags.map((d)=> el('div',{className:'honesty'},[ el('span',{className:'ovdiag',textContent:d.kind}), ' ', d.reason ])) ]) : null,
+      ...diagGroups(diags).map((g)=> g.count===1
+        ? el('div',{className:'honesty'},[ el('span',{className:'ovdiag',textContent:g.kind}), ' ', g.causes[0].items[0].reason ])
+        : el('div',{className:'honesty'},[ el('span',{className:'ovdiag',textContent:g.kind}), ' ',
+          fold('chain.left.diag.'+g.kind, [t('diag.group.lead',{n:g.count})], ()=> diagGroupBody('chain.left.diag.'+g.kind, g), null, true) ])) ]) : null,
   ]);
 }
 function flowCard(v, key, row){

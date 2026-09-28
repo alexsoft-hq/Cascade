@@ -1922,7 +1922,7 @@ function flowNotes(limits, notes, { w, up, depth, mode, handlerNote, codeAxis, c
  * and a CODE lane on a pack with no code axis is "not-shipped": "none" would
  * read as "no endpoint reaches this column" when the Java lane was never run.
  */
-function flowLanes(answer, { w, up, direction, federated, limit, codeAxis }) {
+function flowLanes(answer, { w, up, direction, federated, limit, offset = 0, codeAxis }) {
   const empty = {};
   const trunc = [];
   const laneList = [...(w.laneNames ?? FLOW_LANES[direction])];
@@ -1935,13 +1935,16 @@ function flowLanes(answer, { w, up, direction, federated, limit, codeAxis }) {
     // Sorted by the SAME rule the walk sorts by, with the project as the last
     // tiebreak so two projects' rows with one name keep a fixed order.
     const all = (federated[field] ?? []).length > 0 ? sortFlowLane(field, [...w[field], ...federated[field]]) : w[field];
-    const shown = all.slice(0, limit);
+    const shown = all.slice(offset, offset + limit);
     answer[field] = shown;
-    if (shown.length === 0) {
+    // A page past the end of a lane that HAS rows walked off the list, the way a
+    // list page does: "not-in-this-axis", never "none", which would say nothing
+    // reaches it.
+    if (all.length === 0) {
       empty[field] = w.emptyReason[field]
         ?? ((field === 'services' || field === 'endpoints') && !codeAxis ? 'not-shipped' : 'none');
-    }
-    trunc.push({ field, shown: shown.length, total: all.length, order: FLOW_ORDER[field], nextOffset: shown.length < all.length ? shown.length : null });
+    } else if (shown.length === 0) empty[field] = 'not-in-this-axis';
+    trunc.push(truncField(field, shown.length, all.length, offset, FLOW_ORDER[field]));
   }
   return { empty, trunc };
 }
@@ -1962,9 +1965,12 @@ export function flow(graph, args, ctx) {
   // The node cap is the real guard on a wide picture.
   const depth = clamp(args.depth, 1, 8, DEFAULT_WALK_DEPTH);
   const limit = clamp(args.limit, 1, 200, 40);
-  // Paging a walk would page a picture: the lists are one connected drawing, so
-  // a caller wanting more raises the limit rather than sliding a window.
-  if (args.offset != null) throw new ToolError('bad-input', 'offset is not accepted in chain mode. Raise limit instead');
+  // PAGING A LANE (RM67). The lanes are one connected drawing, so a page is cut
+  // from EVERY lane at the same offset, in the walk's own order, and a caller
+  // that wants more of one lane keeps that lane's rows and drops the rest. The
+  // walk, `layers` and `walk` are the whole walk on every page. Before this a
+  // lane past 200 rows could not be read at all.
+  const offset = clamp(args.offset, 0, Number.MAX_SAFE_INTEGER, 0);
 
   const found = flowEntry(graph, args, ctx, { entryKind, up, mode });
   if (found.missing) return found.missing;
@@ -1997,7 +2003,7 @@ export function flow(graph, args, ctx) {
     // why it carries no truncated entry.
     layers: w.layers,
   };
-  const { empty, trunc } = flowLanes(answer, { w, up, direction, federated, limit, codeAxis });
+  const { empty, trunc } = flowLanes(answer, { w, up, direction, federated, limit, offset, codeAxis });
   if (answer.layers.length === 0) empty.layers = 'none'; // a walk that reached nothing has no layers
   if (Object.keys(empty).length) answer.empty = empty;
   answer.federation = fed.block();

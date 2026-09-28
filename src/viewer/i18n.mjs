@@ -271,10 +271,22 @@ export const VIEWER_STRINGS = {
     'hint.rules.lead': 'What the engine knows about frameworks, and what each rule gave in this project.',
     'hint.rules.more': 'A rule is framework knowledge written as data: which decorator makes a route, which base type makes a mapper, what a Prisma call reads. A link a rule gave names it in its evidence, so the path on Flow and Impact says which rule made each step. Pick a rule to see the links it gave and open any of them. The list starts with what applies here.',
     // ---- shared toolbar vocabulary -------------------------------------
-    'mode.title': 'how sure a call has to be before we follow it',
-    'mode.conservative': 'conservative: also follow likely calls',
-    'mode.strict': 'strict: only calls we can prove',
-    'mode.heuristic': 'heuristic: also follow guessed rules',
+    // A MODE IS NAMED BY WHAT IT ADMITS (RM67). "Likely calls" was wrong for
+    // the middle one: a candidate set is sure to contain the real target, which
+    // is a guarantee, not a likelihood. The grade each mode adds is the
+    // engine's token and the page prints it after these words (option[data-grade]).
+    'mode.title': 'which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell.',
+    'mode.conservative': 'conservative: proven links + candidate sets',
+    'mode.strict': 'strict: proven links only',
+    'mode.heuristic': 'heuristic: proven links + candidate sets + guesses',
+    // THE SAME WORDS FOR A GRADE WHEREVER ONE IS EXPLAINED (RM67): the chain
+    // legend, the badge tooltips, "What this walk left out" and the map legend.
+    // docs/concepts.md holds the definitions these say in one line.
+    'grade.say.EXACT': 'proven: the source or a framework contract states it',
+    'grade.say.SOUND_SET': 'a candidate set sure to hold the real target',
+    'grade.say.HEURISTIC': 'a guess from a convention or an incomplete reading; check it',
+    'grade.say.RUNTIME_ONLY': 'decided at run time; no mode follows it',
+    'grade.say.UNRESOLVED': 'the analysis could not tell; no mode follows it',
     'view.title': 'chain draws the whole path left to right. by hop groups the same rows one step at a time.',
     'view.lanes': 'chain',
     'view.layers': 'by hop',
@@ -485,7 +497,7 @@ export const VIEWER_STRINGS = {
     'kpi.screens': 'screens that reach a table',
     'kpi.rest.endpoints': '{n} reach no SQL',
     'kpi.rest.statements': '{n} nothing calls',
-    'kpi.rest.tables': '{n} sit behind no route',
+    'kpi.rest.tables': '{n} reached by no API',
     'kpi.rest.columns': '{n} nothing reaches',
     'kpi.rest.screens': '{n} reach none',
     // A project whose requests are ANSWERED SOMEWHERE ELSE (RM47). The dial
@@ -548,16 +560,13 @@ export const VIEWER_STRINGS = {
     'edits.frontendcalls.title': 'how many frontend functions call this route',
     // ---- Flow tab -------------------------------------------------------
     'hint.flow.lead': 'Pick one API and follow it from the route down to the tables it ends at.',
-    'hint.flow.more': 'Read it left to right: the endpoint, the service methods it may run through, the mapper statements those reach, and the tables at the end. A solid line is a call we can prove; a dashed line is one we think happens but could not confirm. Hover a row to light its chain, and click it for the path, the source and the SQL.',
+    'hint.flow.more': 'Read it left to right: the endpoint, the service methods it may run through, the mapper statements those reach, and the tables at the end. A solid line is proven, a dashed line is a candidate set that holds the real target, and a dash-dot line is a guess to check. Hover a row to light its chain, and click it for the path, the source and the SQL.',
     'flow.depth.title': 'how many calls deep to follow',
     'load.flow': 'following the chain…',
     // ---- Flow / Impact side panels (both tabs draw with one function) ----
     // The grade NAMES beside these lines are the engine's and are printed as
     // they arrived; only the sentence explaining each one is the page's.
     'chain.legend.title': 'how to read the lines',
-    'chain.legend.exact': 'we can see it in the code',
-    'chain.legend.sound': 'this call may happen, we could not confirm it',
-    'chain.legend.heuristic': 'a naming rule guessed this one',
     'chain.legend.links': '{n} connections',
     'chain.walk.note': 'followed {walked} nodes, depth {depth}, mode {mode}',
     'chain.walk.other': ', plus {n} we reached that this picture has no place for',
@@ -598,21 +607,41 @@ export const VIEWER_STRINGS = {
     'card.basis': '{project}, pack {digest}, built {built}, mode {mode}, depth {depth}, Cascade {version}',
     'card.worth': 'trust {trust}, {limits} limit(s), {cut} cut list(s)',
     'chain.hop': 'hop {n}',
-    'chain.band.candidate': 'may be called ({n})',
-    'chain.band.candidate.stmt': 'reached through a call we could not confirm ({n})',
-    'chain.band.heuristic': 'matched by a naming rule ({n})',
+    'chain.band.candidate': 'candidate set ({n}): the real target is among these',
+    'chain.band.candidate.stmt': 'reached through a candidate call ({n})',
+    'chain.band.heuristic': 'guessed ({n}): check these',
     // ---- Flow / Impact: what a column says when it has nothing to show ----
     'chain.empty.notinaxis': 'What you picked is already on this side of the chain, so there is nothing to list here.',
     'chain.empty.nomode': 'Nothing here. {n} connection(s) are decided at run time, or we could not tell what they point to, so no mode reaches them.',
-    'chain.empty.bymode': 'Nothing here at mode={mode}. We left out {n} connection(s) this mode does not trust. ',
+    'chain.empty.bymode': 'Nothing here at mode={mode}. We left out {n} connection(s) of a grade this mode does not admit. ',
     'chain.empty.switch': 'Switch to {mode}',
     'chain.left.title': 'What this walk left out',
     'chain.left.route': 'This route\'s own link to its handler is graded {grade}, so mode {mode} stops at the route.',
-    'chain.left.say': 'Mode {mode} did not walk {n} link(s) it does not trust',
+    'chain.left.say': 'Mode {mode} did not follow {n} link(s) of a grade it does not admit',
     'chain.left.nomode': 'No mode walks these: they are decided at run time, or we could not tell what they point to.',
     'chain.left.fix': 'What the analysis could not read, and what to declare',
-    'chain.cap': 'This column is full. Try a narrower entry, or a smaller depth.',
-    'chain.cap.more.title': 'show more rows in each column',
+    // ---- one row per kind of diagnostic, however many there are (RM67) ----
+    'diag.group.lead': '{n} times',
+    'diag.group.causes': '{k} different reasons',
+    'diag.examples': 'the first {n}, in full',
+    'diag.examples.more': 'and {n} more like these',
+    'diag.todo.SHARD_UNUSABLE': 'Nothing is lost: each of these was read again from its source, and the next run reuses what this run wrote. If it shows up on every run, check that the cache directory stays the same between runs.',
+    'rail.resize.title': 'drag to make this list wider or narrower. Double-click to put it back.',
+    // ---- Flow / Impact lanes: counts, folds, the strip and the find box (RM67) ----
+    'chain.nums': '{shown} drawn, {fetched} fetched, {total} in all',
+    'chain.nums.title': 'how many rows the walk found in this lane',
+    'chain.more.fetch': 'fetch {n} more',
+    'chain.more.fetch.title': 'ask for the next rows of this lane, in the walk\'s own order ({order})',
+    'chain.fold.more': '{n} more',
+    'chain.fold.more.title': '{n} rows are folded here to keep this lane short. Click to show them all.',
+    'chain.fold.more.what': 'click to show',
+    'chain.fold.group.title': '{n} rows of {owner} at this hop and grade are folded into one. Click to open them.',
+    'chain.fold.group.what': '{n} rows',
+    'chain.strip.jump': 'bring this lane into view',
+    'chain.find.ph': 'find in this picture',
+    'chain.find.title': 'find a row by name or id. A folded row that matches is opened, and Enter goes to the next one.',
+    'chain.find.count': '{n} found',
+    'chain.legend.path': 'A line shows the grade of that one link. The badge on a row is the weakest link on its way from the start, so a row can be weaker than the line into it. A line into a table carries the table\'s badge: the answer does not grade that last step alone.',
     'chain.cut': '{n} more row(s) here did not fit. ',
     'chain.cut.raise': 'Show more',
     'chain.folded': '{n} node(s) at this hop have no row of their own: a mapper method is shown inside its statement.',
@@ -652,7 +681,7 @@ export const VIEWER_STRINGS = {
     'chain.nosource': 'no source: we never saw this type in the code',
     // ---- Impact tab -----------------------------------------------------
     'hint.impact.lead': 'Pick a column, table or method and see which APIs would be affected if you changed it.',
-    'hint.impact.more': 'Read it left to right: the thing you are changing, the SQL statements that touch it, the service methods above them, and the endpoints that can reach it. Each row carries the weakest link on its path, so one unconfirmed call makes the whole row unconfirmed.',
+    'hint.impact.more': 'Read it left to right: the thing you are changing, the SQL statements that touch it, the service methods above them, and the endpoints that can reach it. Each row carries the weakest link on its path, so one call through a candidate set makes the whole row a candidate.',
     'impact.depth.title': 'how many calls back to follow',
     'load.impact': 'following the chain back to the endpoints…',
     // ---- the browse rail, on Explore, Flow and Impact --------------------
@@ -776,7 +805,7 @@ export const VIEWER_STRINGS = {
     'coupling.all.title': 'off: show only the groups that appear in a pair',
     'load.coupling': 'following every endpoint…',
     'err.coupling': 'error (sharing {axis}, mode={mode}, depth {depth}): {message}',
-    'cp.empty.bymode': 'No coupling shows at mode={mode}. We left out {n} connection(s) this mode does not trust.',
+    'cp.empty.bymode': 'No coupling shows at mode={mode}. We left out {n} connection(s) of a grade this mode does not admit.',
     'cp.empty.switch': 'Try mode={mode}',
     'cp.empty.none': 'No group writes anything another group reads, {depth} calls deep.',
     'cp.diag.title': '{group} writes and reads its own {unit}. One group on its own is not coupling, so it is counted apart.',
@@ -797,7 +826,7 @@ export const VIEWER_STRINGS = {
     'graph.focus.ph.around': 'a table, a column like pms_product.price, a statement, an endpoint, or a method as owner#name…',
     'graph.rend.title': '2D draws on a canvas. 3D draws the same graph in WebGL.',
     'graph.fit.title': 'Fit the whole map in view. Nothing refits itself once you have zoomed or panned.',
-    'graph.mode.title': 'how sure a call has to be before the map follows it',
+    'graph.mode.title': 'which links the map follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses, to check.',
     'graph.mode.strict': 'strict',
     'graph.mode.conservative': 'conservative',
     'graph.mode.heuristic': 'heuristic',
@@ -900,7 +929,7 @@ export const VIEWER_STRINGS = {
     // everything in. The dashed swatch keeps its name and puts the sentence
     // that explains it one hover away.
     'mapleg.dashed': 'dashed = {grade}',
-    'mapleg.dashed.title': '{grade}: a call we could not confirm. Drawn dashed on the 2D canvas only.',
+    'mapleg.dashed.title': '{grade}: a candidate set sure to hold the real target. Drawn dashed on the 2D canvas only.',
     'mapleg.grade.title': '{grade}: the dash pattern shows it',
     'map.lead.title': 'the whole project',
     'map.lead.brief': 'Every API group, the endpoints under it, and the tables those endpoints reach.',

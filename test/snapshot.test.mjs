@@ -44,13 +44,13 @@ async function bootFile(html) {
 
 test('a question is built the way the page asks it: entry, mode, depth, limit, and up for Impact', () => {
   assert.deepEqual(snapshotQuery('flow', { kind: 'endpoint', value: 'GET /rows' }).args,
-    { endpoint: 'GET /rows', mode: 'conservative', depth: 6, limit: 40 });
+    { endpoint: 'GET /rows', mode: 'conservative', depth: 8, limit: 40 });
   assert.deepEqual(snapshotQuery('impact', { kind: 'column', value: 'delta_rows.status', mode: 'strict', depth: 3, limit: 10 }).args,
     { direction: 'up', column: 'delta_rows.status', mode: 'strict', depth: 3, limit: 10 });
-  // A screen opens deeper, and the page raises the control from its route default
-  // to the screen's, so the file asks what the page would have asked.
+  // A screen opens on the same one default depth every walk from a route has
+  // (core/graph.mjs DEFAULT_WALK_DEPTH), and a depth somebody chose is kept.
   assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows' }).args.depth, 8);
-  assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows', depth: 6 }).args.depth, 8);
+  assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows', depth: 6 }).args.depth, 6);
   assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows', depth: 3 }).args.depth, 3);
   // The page's own arguments come back to the same question.
   const q = snapshotQuery('impact', { kind: 'table', value: 'delta_rows' });
@@ -205,7 +205,7 @@ test('cascade export writes the same file the Export button gets, from a pack on
   const out = path.join(work, 'x.html');
   const run = cli(['--endpoint', 'GET /rows', '--out', out]);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /wrote .*x\.html \(\d+ bytes\): flow from endpoint GET \/rows, mode conservative, depth 6, limit 40/);
+  assert.match(run.stdout, /wrote .*x\.html \(\d+ bytes\): flow from endpoint GET \/rows, mode conservative, depth 8, limit 40/);
   assert.match(run.stdout, /trust \w+, \d+ limit\(s\), 0 cut list\(s\)/);
   const fromCli = carried(fs.readFileSync(out, 'utf8'));
   // The button's file for the same question carries the same answers; only the

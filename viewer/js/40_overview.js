@@ -488,9 +488,13 @@ function ovGapItems(a){
       head:[ t(st==='not-shipped' ? 'ov.axis.notshipped' : 'ov.axis.degraded', {axis:t(nameKey)}) ],
       body:()=> [el('div',{className:'ovgapnote',textContent:ovAxisReason(a, axis)})] });
   }
-  (a.diagnostics||[]).forEach((d, i)=> items.push({ cls:'unresolved', key:'ov.diag.'+d.kind+'.'+i, title:d.severity+'  '+(d.key||''),
-    head:[ el('span',{className:'ovdiag',textContent:d.kind}) ],
-    body:()=> [el('div',{className:'ovgapnote',textContent:d.reason})] }));
+  // One chip per KIND of diagnostic, with its count (RM67): 866 of one kind
+  // were 866 chips. Its body says what they say, grouped, with the first few.
+  for(const g of diagGroups(a.diagnostics||[])){
+    items.push({ cls:'unresolved', key:'ov.diag.'+g.kind, title:g.kind+'  '+g.count,
+      head:[ el('span',{className:'ovdiag',textContent:g.kind}), count(g.count) ],
+      body:()=> diagGroupBody('ov.diag.'+g.kind, g) });
+  }
   return items;
 }
 function ovGapsPanel(a){

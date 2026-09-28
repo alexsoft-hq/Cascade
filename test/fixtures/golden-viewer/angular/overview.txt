@@ -158,7 +158,7 @@
           </div>
           <div class="kpiden">
             <b>2 / 2</b>
-            0 sit behind no route
+            0 reached by no API
           </div>
         </div>
         <div class="kpi" aria-label="columns reached: 67%, 4 / 6" style="color: #F472B6">
@@ -263,7 +263,7 @@
                   <span class="swatch" style="background: #FBBF24"></span>
                   table join
                 </span>
-                <span title="SOUND_SET: a call we could not confirm. Drawn dashed on the 2D canvas only.">
+                <span title="SOUND_SET: a candidate set sure to hold the real target. Drawn dashed on the 2D canvas only.">
                   <span class="swatch" style="background: repeating-linear-gradient(90deg,#F87171,#F87171 4px,transparent 4px,transparent 7px)"></span>
                   dashed = SOUND_SET
                 </span>
@@ -559,7 +559,7 @@
                 <tr title="MAY_CALL / SOUND_SET">
                   <td>MAY_CALL</td>
                   <td>
-                    <span class="grade g-SOUND_SET">
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                       SOUND_SET
                     </span>
                   </td>
@@ -568,7 +568,7 @@
                 <tr title="HANDLES / EXACT">
                   <td>HANDLES</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -577,7 +577,7 @@
                 <tr title="RENDERS / EXACT">
                   <td>RENDERS</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -586,7 +586,7 @@
                 <tr title="CALLS_HTTP / UNRESOLVED">
                   <td>CALLS_HTTP</td>
                   <td>
-                    <span class="grade g-UNRESOLVED">
+                    <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
                       UNRESOLVED
                     </span>
                   </td>
@@ -595,7 +595,7 @@
                 <tr title="DECLARES / EXACT">
                   <td>DECLARES</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -604,7 +604,7 @@
                 <tr title="EXECUTES / EXACT">
                   <td>EXECUTES</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -613,7 +613,7 @@
                 <tr title="IMPLEMENTS_STMT / EXACT">
                   <td>IMPLEMENTS_STMT</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -622,7 +622,7 @@
                 <tr title="READS / EXACT">
                   <td>READS</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -631,7 +631,7 @@
                 <tr title="RENDERS / HEURISTIC">
                   <td>RENDERS</td>
                   <td>
-                    <span class="grade g-HEURISTIC">
+                    <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                       <svg class="gbox">
                         <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                       </svg>
@@ -643,7 +643,7 @@
                 <tr title="WRITES / EXACT">
                   <td>WRITES</td>
                   <td>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </td>
@@ -652,7 +652,7 @@
                 <tr title="CALLS_HTTP / SOUND_SET">
                   <td>CALLS_HTTP</td>
                   <td>
-                    <span class="grade g-SOUND_SET">
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                       SOUND_SET
                     </span>
                   </td>
@@ -785,22 +785,22 @@
               <h2>What this answer is based on</h2>
               <span class="legend">
                 how sure each line is:
-                <span class="grade g-EXACT">
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                   EXACT
                 </span>
-                <span class="grade g-SOUND_SET">
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                   SOUND_SET
                 </span>
-                <span class="grade g-HEURISTIC">
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                   <svg class="gbox">
                     <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                   </svg>
                   HEURISTIC
                 </span>
-                <span class="grade g-RUNTIME_ONLY">
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
                   RUNTIME_ONLY
                 </span>
-                <span class="grade g-UNRESOLVED">
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
                   UNRESOLVED
                 </span>
               </span>

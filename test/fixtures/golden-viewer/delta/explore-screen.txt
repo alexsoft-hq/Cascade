@@ -185,7 +185,10 @@
           <div id="exlist" class="brlist" role="listbox" tabindex="-1">
             <button class="brrow cur" aria-selected="false" onclick role="option" title="delta_rows">
               <div class="brline">
-                <span class="brid">delta_rows</span>
+                <span class="brid psplit">
+                  <span class="phead">delta_</span>
+                  <span class="ptail">rows</span>
+                </span>
                 <span class="brstats">
                   <span class="brstat" title="how many SQL statements touch this">
                     <i class="brlbl">sql</i>
@@ -206,6 +209,7 @@
           </div>
           <div id="exmore" class="brfoot"></div>
           <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
+          <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
         </div>
         <div id="view">
           <div class="panel">
@@ -240,7 +244,7 @@
                   <a class="id clickable" onclick title="src/views/rows.vue#getList">rows.vue#getList</a>
                   <span style="display: flex; align-items: center; gap: 6px; flex: none">
                     <span class="tag" title="this function calls something else that makes the HTTP call">leads to</span>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </span>
@@ -249,7 +253,7 @@
                   <a class="id clickable" onclick title="src/api/rows.js#listRows">rows.js#listRows</a>
                   <span style="display: flex; align-items: center; gap: 6px; flex: none">
                     <span class="tag" title="this function makes the HTTP call itself">sends</span>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </span>
@@ -258,7 +262,7 @@
                   <a class="id clickable" onclick title="src/api/rows.js#saveRow">rows.js#saveRow</a>
                   <span style="display: flex; align-items: center; gap: 6px; flex: none">
                     <span class="tag" title="this function makes the HTTP call itself">sends</span>
-                    <span class="grade g-EXACT">
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                       EXACT
                     </span>
                   </span>
@@ -275,7 +279,7 @@
                   <a class="id clickable" onclick title="follow this call down to the tables">GET /rows</a>
                   <span style="display: flex; align-items: center; gap: 6px; flex: none">
                     <span class="tag" title="a recording of this system running saw this really happen. It stands beside the grade and never changes it, and nothing here was walked from it.">seen</span>
-                    <span class="grade g-SOUND_SET">
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                       SOUND_SET
                     </span>
                   </span>
@@ -283,7 +287,7 @@
                 <li>
                   <a class="id clickable" onclick title="follow this call down to the tables">POST /rows/save</a>
                   <span style="display: flex; align-items: center; gap: 6px; flex: none">
-                    <span class="grade g-SOUND_SET">
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                       SOUND_SET
                     </span>
                   </span>
@@ -301,7 +305,7 @@
                 <a class="id clickable" onclick title="the SQL and the columns that touch this table">delta_rows</a>
                 <span style="display: flex; align-items: center; gap: 6px; flex: none">
                   <span class="count">read+write</span>
-                  <span class="grade g-SOUND_SET">
+                  <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                     SOUND_SET
                   </span>
                 </span>
@@ -313,22 +317,22 @@
               <h2>What this answer is based on</h2>
               <span class="legend">
                 how sure each line is:
-                <span class="grade g-EXACT">
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                   EXACT
                 </span>
-                <span class="grade g-SOUND_SET">
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                   SOUND_SET
                 </span>
-                <span class="grade g-HEURISTIC">
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                   <svg class="gbox">
                     <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                   </svg>
                   HEURISTIC
                 </span>
-                <span class="grade g-RUNTIME_ONLY">
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
                   RUNTIME_ONLY
                 </span>
-                <span class="grade g-UNRESOLVED">
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
                   UNRESOLVED
                 </span>
               </span>

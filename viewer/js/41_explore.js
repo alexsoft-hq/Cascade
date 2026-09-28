@@ -406,6 +406,7 @@ function showAll(tab, quiet){
       const v = tab === 'flow' ? FLOWV : IMPACTV;
       v.seq++; v.resp = null; v.sel = null; v.pick = null; v.limit = 40;
       v.rows.clear(); v.linkSpecs = []; v.paths = []; v.layerOpen.clear();
+      laneReset(v);
       const w = vwrap(v); w.classList.remove('layersmode'); w.replaceChildren();
       vside(v).replaceChildren();
       closeSug(v);
@@ -1060,10 +1061,12 @@ function railRowNodes(tab, kind, row, kids, child){
   }, [
     el('div', { className:'brline' }, [
       // A column UNDER its own table does not repeat the table's name.
+      // Every name gives way in the MIDDLE (RM67): a route keeps its last
+      // segments, a table or a method its last word.
       kind === 'endpoint'
         ? el('span', { className:'brid psplit' }, pathLabel(railLabel(kind, row)))
-        : el('span', { className:'brid',
-          textContent: (child && kind === 'column') ? id.slice(String(row.table || '').length + 1) : railLabel(kind, row) }),
+        : el('span', { className:'brid psplit' },
+          nameSplit((child && kind === 'column') ? id.slice(String(row.table || '').length + 1) : railLabel(kind, row))),
       el('span', { className:'brstats' }, railStats(kind, row)),
     ]),
     railSub(kind, row),
@@ -1328,9 +1331,36 @@ function railPaneApply(tab){
 // ---- wiring -----------------------------------------------------------------
 // Called from the wiring block at the foot of this script, not here: `byId` is
 // declared below and a top-level call would run before it exists.
+// ---- the list's width, the reader's to choose (RM67) --------------------------
+// 320px cut long table and route names however they were shortened. The rail's
+// right edge is a drag handle, as the source pane's left edge is; the width is
+// one CSS variable every tab's grid reads, remembered in this browser, and a
+// double click puts it back.
+const LS_RAILW='cascade.viewer.railw';
+const RAIL_W={ min:260, max:640, def:320 };
+function railWidthSet(w){
+  const px=Math.max(RAIL_W.min, Math.min(RAIL_W.max, Math.round(Number(w)||RAIL_W.def)));
+  document.documentElement.style.setProperty('--railw', px+'px');
+  return px;
+}
+function railGrip(tab){
+  const box=byId(RAILDEF[tab].railId);
+  if(!box || box.querySelector('.railgrab')) return;
+  const grab=el('button',{className:'railgrab', title:t('rail.resize.title')});
+  grab.setAttribute('data-t-title','rail.resize.title');
+  let from=null;
+  grab.addEventListener('mousedown',(e)=>{ from={ x:e.clientX||0, w:box.getBoundingClientRect().width }; grab.classList.add('on'); if(e.preventDefault) e.preventDefault(); });
+  document.addEventListener('mousemove',(e)=>{ if(from) railWidthSet(from.w+(e.clientX||0)-from.x); });
+  document.addEventListener('mouseup',()=>{ if(!from) return; from=null; grab.classList.remove('on');
+    lsSet(LS_RAILW, String(railWidthSet(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--railw'))))); });
+  grab.addEventListener('dblclick',()=>{ lsSet(LS_RAILW, String(railWidthSet(RAIL_W.def))); });
+  box.append(grab);
+}
 function railWire(){
+  railWidthSet(lsGet(LS_RAILW));
   for (const tab of RAILTABS) {
     const D = RAILDEF[tab];
+    railGrip(tab);
     byId(D.sortId).onchange = (e) => { RAIL[tab].sort = e.target.value; railLoad(tab, false); };
     byId(D.drawerId).onclick = () => railOpenDrawer(tab);
     byId(D.closeId).onclick = () => railCloseDrawer(tab);

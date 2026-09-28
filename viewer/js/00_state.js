@@ -11,6 +11,10 @@ const GRADES = ['EXACT','SOUND_SET','HEURISTIC','RUNTIME_ONLY','UNRESOLVED'];
 // The grades each mode walks, MIRRORING src/core/graph.mjs GRADE_SETS: the page
 // says what a mode does with a grade, and may not invent a floor of its own.
 const MODE_ADMITS = { strict:['EXACT'], conservative:['EXACT','SOUND_SET'], heuristic:['EXACT','SOUND_SET','HEURISTIC'] };
+// The ONE default depth of every walk from a route, MIRRORING src/core/graph.mjs
+// DEFAULT_WALK_DEPTH (the page cannot import it); test/viewer_lanes.test.mjs holds
+// the two, and the depth controls' `selected` option, equal.
+const WALK_DEPTH_DEFAULT = 8;
 const KINDS = ['column','table','statement','symbol','endpoint','domain'];
 // ---------- the drawing vocabulary: a line for certainty, a glyph for kind ----
 // ---------- the token accessor: ONE place the page reads a colour ------------
@@ -43,7 +47,9 @@ const themeGlows=()=> cssVar('--glow')!=='none';
 //   UNRESOLVED the outline only, muted, with a slash through the chip.
 // The grade's NAME is printed beside every one of them, so nothing here rests
 // on the stroke alone — and the page says the same thing in greyscale.
-const GRADE_DASH = { EXACT:null, SOUND_SET:'6 3', HEURISTIC:'6 3 1.5 3', RUNTIME_ONLY:'1.5 3', UNRESOLVED:'1.5 3' };
+// The table itself is GRADE_DASH in src/viewer/chainlayout.mjs, loaded before
+// this file: the saved SVGs draw from the same one (RM67), so a guess is never
+// dash-dot on the page and dotted in the file.
 const gradeDash=(g)=> GRADE_DASH[g] || null;
 // The theme's LINE colour for every grade but the one the engine could not
 // resolve, which is muted: a relation nothing established must not be drawn as
@@ -311,8 +317,18 @@ function makeChainView(o){
     seq:0, sugSeq:0, sugTimer:null, sugItems:[], sugRows:[], sugCur:-1, sugMoved:false, sugLast:null,
     pick:null,                    // {kind,value} the typeahead resolved, if any
     rows:new Map(),               // node id -> {els:[…], kind, grade, data}
-    linkSpecs:[], paths:[],       // wanted links, then the ones actually drawn
+    linkSpecs:[], paths:[], ...laneViewState(),   // wanted links, then the ones drawn; the lanes' own state
   };
+}
+/**
+ * THE LANES' OWN STATE (RM67, 53_chain_lanes.js): the answer read into rows,
+ * links and names; which folded items the reader opened; what the find box
+ * holds and found; which drawn item stands for each row; the drawn keys per
+ * lane, for the arrow keys.
+ */
+function laneViewState(){
+  return { model:null, labels:null, perLine:null, open:new Set(), find:'', found:new Set(),
+    proxy:new Map(), colKeys:[], findEl:null, lastRaw:null };
 }
 const FLOWV = makeChainView({name:'flow', direction:'down', wrapId:'flowwrap', sideId:'flowside',
   entryId:'fentry', sugId:'fsug', modeId:'fmode', depthId:'fdepth', segId:'fview'});

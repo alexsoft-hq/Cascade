@@ -708,8 +708,8 @@ The viewer's **Export** button writes the same file for the same question. See
   `--statement`, `--symbol` start an Impact one. Give exactly one.
 - `--mode strict|conservative|heuristic` — which edge grades the walk may use
   (default `conservative`).
-- `--depth 1-8` — how many calls deep (default 6 for Flow, 8 for Impact and for a
-  screen, as the tabs open).
+- `--depth 1-8` — how many calls deep (default 8, the one depth every walk from a
+  route defaults to, as both tabs open).
 - `--limit <n>` — rows per lane before the list is cut (default 40). A cut list
   says so in the file.
 - `--format html|svg|card` — `html` (default) writes the page with the answer inside;

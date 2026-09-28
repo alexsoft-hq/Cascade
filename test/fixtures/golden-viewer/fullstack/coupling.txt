@@ -122,10 +122,10 @@
           <button class="on" data-axis="column" data-t="coupling.axis.column" onclick>columns</button>
           <button data-axis="table" data-t="coupling.axis.table" onclick>tables</button>
         </span>
-        <select id="cpmode" data-t-title="mode.title" onchange title="how sure a call has to be before we follow it" value="conservative">
-          <option data-t="mode.conservative" selected value="conservative">conservative: also follow likely calls</option>
-          <option data-t="mode.strict" value="strict">strict: only calls we can prove</option>
-          <option data-t="mode.heuristic" value="heuristic">heuristic: also follow guessed rules</option>
+        <select id="cpmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+          <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
+          <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
+          <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
         </select>
         <select id="cpdepth" data-t-title="coupling.depth.title" onchange title="how many calls deep we follow each endpoint" value="8">
           <option>
@@ -294,22 +294,22 @@
               <h2>What this answer is based on</h2>
               <span class="legend">
                 how sure each line is:
-                <span class="grade g-EXACT">
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                   EXACT
                 </span>
-                <span class="grade g-SOUND_SET">
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                   SOUND_SET
                 </span>
-                <span class="grade g-HEURISTIC">
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                   <svg class="gbox">
                     <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                   </svg>
                   HEURISTIC
                 </span>
-                <span class="grade g-RUNTIME_ONLY">
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
                   RUNTIME_ONLY
                 </span>
-                <span class="grade g-UNRESOLVED">
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
                   UNRESOLVED
                 </span>
               </span>

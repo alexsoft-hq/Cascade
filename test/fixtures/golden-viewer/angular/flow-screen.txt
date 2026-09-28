@@ -122,10 +122,10 @@
           <div id="fsug" class="sug hidden"></div>
         </div>
         <button id="fdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <select id="fmode" data-t-title="mode.title" onchange title="how sure a call has to be before we follow it" value="conservative">
-          <option data-t="mode.conservative" selected value="conservative">conservative: also follow likely calls</option>
-          <option data-t="mode.strict" value="strict">strict: only calls we can prove</option>
-          <option data-t="mode.heuristic" value="heuristic">heuristic: also follow guessed rules</option>
+        <select id="fmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+          <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
+          <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
+          <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
         </select>
         <details id="fopts" class="tbmenu">
           <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
@@ -148,13 +148,13 @@
                 <option>
                   5
                 </option>
-                <option selected>
+                <option>
                   6
                 </option>
                 <option>
                   7
                 </option>
-                <option>
+                <option selected>
                   8
                 </option>
               </select>
@@ -214,300 +214,358 @@
           </div>
           <div id="fmore" class="brfoot"></div>
           <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
+          <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
         </div>
-        <div id="flowcanvas" class="flowcanvas">
-          <div id="flowwrap" class="flowwrap">
-            <svg class="flowsvg" height="undefined" width="undefined">
-              <path id="fp-flow-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
-              <g class="fdots">
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="0s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-0"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-3.333333333333333s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-0"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-6.666666666666666s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-0"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-              <path id="fp-flow-1" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
-              <g class="fdots">
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-3.7s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-1"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-7.033333333333333s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-1"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-10.366666666666667s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-1"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-              <path id="fp-flow-2" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="5 3"></path>
-              <g class="fdots">
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-7.4s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-2"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-10.733333333333333s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-2"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-14.066666666666666s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-2"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-              <path id="fp-flow-3" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="5 3"></path>
-              <g class="fdots">
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-1.0999999999999988s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-3"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-4.433333333333332s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-3"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-7.766666666666665s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-3"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-              <path id="fp-flow-4" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="5 3"></path>
-              <g class="fdots">
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-0.288s" dur="0.6s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-4"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-              <path id="fp-flow-5" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="5 3"></path>
-              <g class="fdots">
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-8.5s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-5"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-11.833333333333334s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-5"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#7C89AD" r="2.2">
-                  <animatemotion begin="-15.166666666666666s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-5"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-              <path id="fp-flow-6" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="5 3"></path>
-              <g class="fdots">
-                <circle fill="#60A5FA" r="2.2">
-                  <animatemotion begin="-2.1999999999999975s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-6"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#60A5FA" r="2.2">
-                  <animatemotion begin="-5.53333333333333s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-6"></mpath>
-                  </animatemotion>
-                </circle>
-                <circle fill="#60A5FA" r="2.2">
-                  <animatemotion begin="-8.866666666666664s" dur="10s" repeatCount="indefinite">
-                    <mpath href="#fp-flow-6"></mpath>
-                  </animatemotion>
-                </circle>
-              </g>
-            </svg>
-            <div class="fcol">
-              <div class="fcolhead">
-                <span class="fcoltitle">entry</span>
+        <div class="flowpane">
+          <div id="flowstrip" class="fstrip">
+            <div class="fstripinfo">
+              <span class="fstripstart" title="screen:/things">
+                <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                  <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                  <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+                </svg>
+                <span class="fstripname">/things</span>
+              </span>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>frontend function</span>
+                <span class="count">2</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>endpoint</span>
                 <span class="count">1</span>
-              </div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
-                    <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
-                  </svg>
-                  <span class="fname" title="/things">/things</span>
-                </div>
-                <div class="fsub">
-                  <span class="comment"></span>
-                </div>
-              </div>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>service layer</span>
+                <span class="count">2</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>mapper statement</span>
+                <span class="count">1</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>table</span>
+                <span class="count">1</span>
+              </button>
             </div>
-            <div class="fcol">
-              <div class="fcolhead">
-                <span class="fcoltitle">frontend function</span>
-                <span class="count">2 / 2</span>
+            <input class="fstripfind" data-t-ph="chain.find.ph" data-t-title="chain.find.title" placeholder="find in this picture" title="find a row by name or id. A folded row that matches is opened, and Enter goes to the next one." type="search"></input>
+            <span class="count fstripfound"></span>
+          </div>
+          <div id="flowcanvas" class="flowcanvas">
+            <div id="flowwrap" class="flowwrap lanesmode">
+              <svg class="flowsvg" height="undefined" width="undefined">
+                <path id="fp-flow-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="0s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-0"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-3.333333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-0"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-6.666666666666666s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-0"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-flow-1" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-3.7s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-1"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-7.033333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-1"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-10.366666666666667s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-1"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-flow-2" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-7.4s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-2"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-10.733333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-2"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-14.066666666666666s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-2"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-flow-3" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-1.0999999999999988s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-3"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-4.433333333333332s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-3"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-7.766666666666665s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-3"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-flow-4" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-0.288s" dur="0.6s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-4"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-flow-5" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-8.5s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-5"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-11.833333333333334s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-5"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-15.166666666666666s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-5"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-flow-6" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#60A5FA" r="2.2">
+                    <animatemotion begin="-2.1999999999999975s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-6"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#60A5FA" r="2.2">
+                    <animatemotion begin="-5.53333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-6"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#60A5FA" r="2.2">
+                    <animatemotion begin="-8.866666666666664s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-flow-6"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+              </svg>
+              <div class="fcol" data-field="entry" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">entry</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                      <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+                    </svg>
+                    <span class="fname" title="/things">
+                      <span class="fline">/things</span>
+                    </span>
+                  </div>
+                  <div class="fmeta"></div>
+                </div>
               </div>
-              <div class="fhop">hop 1</div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
-                  </svg>
-                  <span class="fhopn kh-webfn">1</span>
-                  <span class="fname" title="front/static/scripts/thing-badge/thing-badge.js#(module)">thing-badge.js#(module)</span>
-                  <span class="grade g-EXACT">
-                    EXACT
-                  </span>
+              <div class="fcol" data-field="webFunctions" style="width: 257px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">frontend function</span>
+                    <span class="count" title="how many rows the walk found in this lane">2</span>
+                  </div>
                 </div>
-                <div class="fsub">
-                  <span class="tag" title="this function is in a module the component imports, not in the component itself">api</span>
-                  <span class="comment" title="front/static/scripts/thing-badge/thing-badge.js">thing-badge.js</span>
+                <div class="fhop">hop 1</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="front/static/scripts/thing-badge/thing-badge.js#(module)
+front/static/scripts/thing-badge/thing-badge.js">
+                      <span class="fline">thing-badge (module)</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-webfn" title="hop 1">1</span>
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                      EXACT
+                    </span>
+                    <span class="tag" title="this function is in a module the component imports, not in the component itself">api</span>
+                  </div>
                 </div>
-              </div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
-                  </svg>
-                  <span class="fhopn kh-webfn">1</span>
-                  <span class="fname" title="front/static/scripts/thing-list/thing-list.controller.js#(module)">thing-list.controller.js#(module)</span>
-                  <span class="grade g-EXACT">
-                    EXACT
-                  </span>
-                </div>
-                <div class="fsub">
-                  <span class="tag" title="this function is in a module the component imports, not in the component itself">api</span>
-                  <span class="comment" title="front/static/scripts/thing-list/thing-list.controller.js">thing-list.controller.js</span>
-                </div>
-              </div>
-            </div>
-            <div class="fcol">
-              <div class="fcolhead">
-                <span class="fcoltitle">endpoint</span>
-                <span class="count">1 / 1</span>
-              </div>
-              <div class="fhop">hop 2</div>
-              <div class="fdiv">may be called (1)</div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
-                  </svg>
-                  <span class="fname psplit" title="GET /api/shop/badges">
-                    <span class="phead">GET /api</span>
-                    <span class="ptail">/shop/badges</span>
-                  </span>
-                  <span class="grade g-SOUND_SET">
-                    SOUND_SET
-                  </span>
-                </div>
-                <div class="fsub">
-                  <span class="count" title="via front/static/scripts/thing-badge/thing-badge.js#(module)">hop 2 thing-badge.js#(module)</span>
-                </div>
-                <div class="fsub">
-                  <span class="count" title="how many frontend functions call this route">web 1</span>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="front/static/scripts/thing-list/thing-list.controller.js#(module)
+front/static/scripts/thing-list/thing-list.controller.js">
+                      <span class="fline">thing-list.controller (module)</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-webfn" title="hop 1">1</span>
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                      EXACT
+                    </span>
+                    <span class="tag" title="this function is in a module the component imports, not in the component itself">api</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="fcol">
-              <div class="fcolhead">
-                <span class="fcoltitle">service layer</span>
-                <span class="count">2 / 2</span>
-              </div>
-              <div class="fhop">hop 3</div>
-              <div class="fdiv">may be called (1)</div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
-                  </svg>
-                  <span class="fhopn kh-service">3</span>
-                  <span class="fname" title="com.example.web.ShopController#badges">ShopController#badges</span>
-                  <span class="grade g-SOUND_SET">
-                    SOUND_SET
-                  </span>
+              <div class="fcol" data-field="endpoints" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">endpoint</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
                 </div>
-                <div class="fsub">
-                  <span class="comment" title="com.example.web.ShopController">com.example.web.ShopController</span>
-                </div>
-              </div>
-              <div class="fhop">hop 4</div>
-              <div class="fdiv">may be called (1)</div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
-                  </svg>
-                  <span class="fhopn kh-service">4</span>
-                  <span class="fname" title="com.example.service.ThingService#tagsOf">ThingService#tagsOf</span>
-                  <span class="grade g-SOUND_SET">
-                    SOUND_SET
-                  </span>
-                </div>
-                <div class="fsub">
-                  <span class="comment" title="com.example.service.ThingService">com.example.service.ThingService</span>
+                <div class="fhop">hop 2</div>
+                <div class="fdiv">candidate set (1): the real target is among these</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                    </svg>
+                    <span class="fname" title="GET /api/shop/badges
+via thing-badge (module)">
+                      <span class="fline">GET /api/shop/badges</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-endpoint" title="hop 2">2</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="count" title="how many frontend functions call this route">web 1</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="fcol">
-              <div class="fcolhead">
-                <span class="fcoltitle">mapper statement</span>
-                <span class="count">1 / 1</span>
+              <div class="fcol" data-field="services" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">service layer</span>
+                    <span class="count" title="how many rows the walk found in this lane">2</span>
+                  </div>
+                </div>
+                <div class="fhop">hop 3</div>
+                <div class="fdiv">candidate set (1): the real target is among these</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="com.example.web.ShopController#badges
+src/main/java/com/example/web/ShopController.java">
+                      <span class="fline">ShopController.badges</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-service" title="hop 3">3</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                  </div>
+                </div>
+                <div class="fhop">hop 4</div>
+                <div class="fdiv">candidate set (1): the real target is among these</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="com.example.service.ThingService#tagsOf
+src/main/java/com/example/service/ThingService.java">
+                      <span class="fline">ThingService.tagsOf</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-service" title="hop 4">4</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div class="fhop">hop 6</div>
-              <div class="fdiv">reached through a call we could not confirm (1)</div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <path d="M6,2.1L9.9,6L6,9.9L2.1,6Z" fill="#FB923C"></path>
-                  </svg>
-                  <span class="fhopn kh-statement">6</span>
-                  <span class="fname" title="com.example.domain.ThingTagRepository.findByThingId">ThingTagRepository.findByThingId</span>
-                  <span class="grade g-SOUND_SET">
-                    SOUND_SET
-                  </span>
+              <div class="fcol" data-field="statements" style="width: 272px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">mapper statement</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
                 </div>
-                <div class="fsub">
-                  <span class="tag read">derived</span>
-                  <span class="count">1 tbl</span>
-                </div>
-                <div class="fsub">
-                  <span class="comment" title="com.example.domain.ThingTagRepository#findByThingId">via ThingTagRepository#findByThingId</span>
+                <div class="fhop">hop 6</div>
+                <div class="fdiv">reached through a candidate call (1)</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M6,2.1L9.9,6L6,9.9L2.1,6Z" fill="#FB923C"></path>
+                    </svg>
+                    <span class="fname" title="com.example.domain.ThingTagRepository.findByThingId
+via ThingTagRepository.findByThingId
+thing_tag">
+                      <span class="fline">ThingTagRepository.findByThingId</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-statement" title="hop 6">6</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="tag read">derived</span>
+                    <span class="count" title="thing_tag">thing_tag</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="fcol">
-              <div class="fcolhead">
-                <span class="fcoltitle">table</span>
-                <span class="count">1 / 1</span>
-              </div>
-              <div class="frow" role="button" tabIndex="0">
-                <div class="frowtop">
-                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                    <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
-                  </svg>
-                  <span class="fname" title="thing_tag">thing_tag</span>
-                  <span class="grade g-SOUND_SET">
-                    SOUND_SET
-                  </span>
+              <div class="fcol" data-field="tables" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">table</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
                 </div>
-                <div class="fsub">
-                  <span class="count" title="via com.example.domain.ThingTagRepository.findByThingId">hop 7 via ThingTagRepository.findByThingId</span>
-                </div>
-                <div class="fsub">
-                  <span class="tag read" title="distinct columns read">R 1</span>
-                  <span class="count">read</span>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
+                    </svg>
+                    <span class="fname" title="thing_tag
+a label on a thing
+via ThingTagRepository.findByThingId
+read">
+                      <span class="fline">thing_tag</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-table" title="hop 7">7</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="tag read" title="distinct columns read">R 1</span>
+                    <span class="comment" title="a label on a thing">a label on a thing</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -517,9 +575,17 @@
           <div class="panel leftout">
             <h2>What this walk left out</h2>
             <div class="comment">
-              Mode conservative did not walk 2 link(s) it does not trust
-              (2 UNRESOLVED)
+              Mode conservative did not follow 2 link(s) of a grade it does not admit
             </div>
+            <ul class="list leftgrades">
+              <li>
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                  UNRESOLVED
+                </span>
+                <span class="ovnum">2</span>
+                <span class="comment">the analysis could not tell; no mode follows it</span>
+              </li>
+            </ul>
             <div class="comment">No mode walks these: they are decided at run time, or we could not tell what they point to.</div>
           </div>
           <div class="panel">
@@ -530,10 +596,10 @@
                   <svg aria-hidden="true" height="9" width="38">
                     <line stroke="#7C89AD" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
                   </svg>
-                  <span class="grade g-EXACT">
+                  <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                     EXACT
                   </span>
-                  <span class="comment">we can see it in the code</span>
+                  <span class="comment">proven: the source or a framework contract states it</span>
                 </span>
                 <span class="count">5 connections</span>
               </li>
@@ -542,10 +608,10 @@
                   <svg aria-hidden="true" height="9" width="38">
                     <line stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
                   </svg>
-                  <span class="grade g-SOUND_SET">
+                  <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                     SOUND_SET
                   </span>
-                  <span class="comment">this call may happen, we could not confirm it</span>
+                  <span class="comment">a candidate set sure to hold the real target</span>
                 </span>
                 <span class="count">3 connections</span>
               </li>
@@ -554,17 +620,18 @@
                   <svg aria-hidden="true" height="9" width="38">
                     <line stroke="#7C89AD" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
                   </svg>
-                  <span class="grade g-HEURISTIC">
+                  <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                     <svg class="gbox">
                       <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                     </svg>
                     HEURISTIC
                   </span>
-                  <span class="comment">a naming rule guessed this one</span>
+                  <span class="comment">a guess from a convention or an incomplete reading; check it</span>
                 </span>
                 <span class="count">0 connections</span>
               </li>
             </ul>
+            <div class="comment" style="margin-top: 8px">A line shows the grade of that one link. The badge on a row is the weakest link on its way from the start, so a row can be weaker than the line into it. A line into a table carries the table's badge: the answer does not grade that last step alone.</div>
             <div class="comment" style="margin-top: 8px">followed 9 nodes, depth 8, mode conservative</div>
             <div class="honesty">2 link(s) are RUNTIME_ONLY/UNRESOLVED, which no mode walks, so an empty band here is what we could not resolve rather than the mode</div>
           </div>
@@ -573,22 +640,22 @@
               <h2>What this answer is based on</h2>
               <span class="legend">
                 how sure each line is:
-                <span class="grade g-EXACT">
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                   EXACT
                 </span>
-                <span class="grade g-SOUND_SET">
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                   SOUND_SET
                 </span>
-                <span class="grade g-HEURISTIC">
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                   <svg class="gbox">
                     <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                   </svg>
                   HEURISTIC
                 </span>
-                <span class="grade g-RUNTIME_ONLY">
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
                   RUNTIME_ONLY
                 </span>
-                <span class="grade g-UNRESOLVED">
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
                   UNRESOLVED
                 </span>
               </span>

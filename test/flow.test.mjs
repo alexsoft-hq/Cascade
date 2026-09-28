@@ -239,6 +239,34 @@ test('flow chain: limit=1 keeps the FIRST row of each lane in the declared order
   assert.deepEqual(svc, { field: 'services', shown: 1, total: 3, order: 'hops asc, grade desc, id asc', nextOffset: 1 });
 });
 
+test('flow chain: offset pages EVERY lane at one place in the walk\'s order, and the pages add up to the whole lane (RM67)', () => {
+  const g = flowGraph();
+  const full = call(g, { endpoint: 'GET /p/{id}' });
+  // Page by page, one row at a time: the services lane comes back whole, in
+  // order, and each page says where the next one starts.
+  const got = [];
+  let offset = 0;
+  for (let guard = 0; offset != null && guard < 10; guard += 1) {
+    const r = call(g, { endpoint: 'GET /p/{id}', limit: 1, offset });
+    assertContract(r);
+    got.push(...r.answer.services.map((s) => s.id));
+    const f = r.truncated.fields.find((x) => x.field === 'services');
+    assert.equal(f.total, 3);
+    assert.equal(f.shown, r.answer.services.length);
+    offset = f.nextOffset;
+  }
+  assert.deepEqual(got, full.answer.services.map((s) => s.id));
+  // A page past the end of a lane that HAS rows walked off the list, as a list
+  // page does: "none" there would tell a reader nothing reaches it.
+  const past = call(g, { endpoint: 'GET /p/{id}', limit: 1, offset: 5 });
+  assert.deepEqual(past.answer.services, []);
+  assert.equal(past.answer.empty.services, 'not-in-this-axis');
+  assert.equal(past.truncated.fields.find((x) => x.field === 'services').nextOffset, null);
+  // The walk and its census are the whole walk on every page.
+  assert.deepEqual(past.answer.walk, full.answer.walk);
+  assert.deepEqual(past.answer.layers, full.answer.layers);
+});
+
 test('flow list: paging past the end is "not-in-this-axis", not "none" — there ARE endpoints, you just walked off the list', () => {
   const g = flowGraph();
   const r = call(g, { offset: 99 });
@@ -314,14 +342,15 @@ test('flow: an unknown endpoint / symbol throws unknown-endpoint / unknown-symbo
   assert.throws(() => flow(g, { symbol: 'com.x.Nope#nope' }, ctx(g)), (e) => e instanceof ToolError && e.code === 'unknown-symbol');
 });
 
-test('flow: depth outside 1..8, a bad mode, an over-limit and offset in chain mode are all bad-input', () => {
+test('flow: depth outside 1..8, a bad mode, an over-limit and a negative offset are all bad-input', () => {
   const g = flowGraph();
   const bad = (args) => assert.throws(() => flow(g, args, ctx(g)), (e) => e instanceof ToolError && e.code === 'bad-input');
   bad({ endpoint: 'GET /p/{id}', depth: 9 });
   bad({ endpoint: 'GET /p/{id}', depth: 0 });
   bad({ endpoint: 'GET /p/{id}', limit: 201 });
   bad({ endpoint: 'GET /p/{id}', mode: 'lax' });
-  bad({ endpoint: 'GET /p/{id}', offset: 1 }); // a walk is one picture — raise limit instead
+  bad({ endpoint: 'GET /p/{id}', offset: -1 }); // a page starts at 0 or later (RM67: chain mode pages)
+  bad({ endpoint: 'GET /p/{id}', offset: 1.5 });
   bad({ limit: 501 });                        // list mode caps at 500
   // An Object.prototype key is a BAD MODE, not a mode: reading the mode table
   // as a plain object would hand 'constructor' to the engine as a 500.
@@ -614,7 +643,7 @@ test('flow: the direction and the entry must agree — every bad combination is 
   bad({ column: 'p.name' }, /direction=up target/);      // a column is not a downstream entry
   bad({ table: 'p' }, /direction=up target/);
   bad({ statement: 'com.x.PMapper.selectByPrimaryKey' }, /direction=up target/);
-  bad({ direction: 'up', column: 'p.name', offset: 1 }); // a walk is one picture
+  bad({ direction: 'up', column: 'p.name', offset: -1 }); // a page starts at 0 or later (RM67)
   bad({ direction: 'up', column: 'p.name', depth: 9 });
   bad({ direction: 'up', column: 'p.name', mode: 'lax' });
   // an unknown target is not-found, not bad-input

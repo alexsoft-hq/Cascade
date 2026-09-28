@@ -22,6 +22,7 @@
 // over the assets, the tool dispatcher and the time.
 
 import { classicSource } from '../mcp/http.mjs';
+import { DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
 
 /** The schema id a snapshot carries, so a page can tell one from anything else. */
 export const SNAPSHOT_SCHEMA = 'cascade:snapshot:1';
@@ -33,8 +34,10 @@ export const SNAPSHOT_SCHEMA = 'cascade:snapshot:1';
  * what the page would have asked).
  */
 export const SNAPSHOT_TABS = Object.freeze({
-  flow: Object.freeze({ direction: 'down', kinds: Object.freeze(['endpoint', 'screen', 'symbol']), depth: 6, screenDepth: 8 }),
-  impact: Object.freeze({ direction: 'up', kinds: Object.freeze(['table', 'column', 'statement', 'symbol']), depth: 8, screenDepth: 8 }),
+  // One default depth for every walk from a route (core/graph.mjs), so the
+  // file asks what the tab would have asked.
+  flow: Object.freeze({ direction: 'down', kinds: Object.freeze(['endpoint', 'screen', 'symbol']), depth: DEFAULT_WALK_DEPTH, screenDepth: DEFAULT_WALK_DEPTH }),
+  impact: Object.freeze({ direction: 'up', kinds: Object.freeze(['table', 'column', 'statement', 'symbol']), depth: DEFAULT_WALK_DEPTH, screenDepth: DEFAULT_WALK_DEPTH }),
 });
 
 /** The modes both tabs offer, and the one they open on. */

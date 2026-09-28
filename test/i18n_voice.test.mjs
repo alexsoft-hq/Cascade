@@ -92,6 +92,39 @@ test('every Korean sentence ends in 합니다체, never the flat 해라체', () 
   assert.deepEqual(offenders, [], `these Korean sentences are still in the flat register:\n${offenders.join('\n')}`);
 });
 
+// A KOREAN PARTICLE IS PART OF THE WORD BEFORE IT (RM67). "SQL까지", "API를",
+// "118개 중": the strings used to read "SQL 까지", "SQL 이 이름을 댄", which is
+// how a machine joins two tokens and never how a person writes. The check runs
+// on the string AFTER its placeholders are filled, because "{mode} 로" is the
+// same mistake once the mode is in it. A particle counts only where it ENDS the
+// word: "API 가이드" is a word that starts with 가, and is fine.
+const KO_PARTICLES = ['까지', '이', '가', '을', '를', '은', '는', '에', '의', '로', '으로', '와', '과', '도', '만', '부터'];
+const KO_PARTICLE_GAP = new RegExp(`[A-Za-z0-9)\\]}>\`'"*]\\s+(?:${KO_PARTICLES.join('|')})(?=[\\s.,:;!?)\\]]|$)`, 'g');
+// A key whose Latin word really is followed by a separate Korean word that
+// happens to be spelled like a particle. None today; name the key and say why.
+const KO_PARTICLE_EXCEPTIONS = new Set([]);
+/** The particle gaps in one Korean string, with its placeholders filled by a Latin word. */
+const particleGaps = (s) => [...String(s).replace(/\{\w+\}/g, 'abc').matchAll(KO_PARTICLE_GAP)].map((m) => m[0]);
+
+test('the particle check itself: a gap before a particle is caught, a word that merely starts like one is not', () => {
+  assert.deepEqual(particleGaps('SQL 까지 닿는 엔드포인트'), ['L 까지']);
+  assert.deepEqual(particleGaps('{mode} 로 바꾸기'), ['c 로']);
+  assert.equal(particleGaps('(EXACT) 는 확정').length, 1);
+  assert.deepEqual(particleGaps('API 가이드를 봅니다'), [], 'a word that starts with 가 is not the particle 가');
+  assert.deepEqual(particleGaps('SQL까지, API를, 118개 중'), []);
+  assert.deepEqual(particleGaps('엔드포인트 이 경로'), [], 'after Hangul the spacing is a word boundary, not this rule');
+});
+
+test('no Korean string puts a space between a Latin word, a number or a closing bracket and its particle', () => {
+  const offenders = [];
+  for (const [k, v] of Object.entries(KO)) {
+    if (KO_PARTICLE_EXCEPTIONS.has(k)) continue;
+    const gaps = particleGaps(v);
+    if (gaps.length) offenders.push(`${k}: ${gaps.join(' | ')}  in  ${v}`);
+  }
+  assert.deepEqual(offenders, [], `write the particle onto the word before it:\n${offenders.join('\n')}`);
+});
+
 test('the Korean catalogue really is written out, not left as English', () => {
   // The register test above passes trivially on a string with no Korean verb in
   // it, so this one holds the other end: nearly every value carries Hangul.

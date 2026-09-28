@@ -172,7 +172,9 @@ test('Flow says when this mode stopped at the route itself, and how to go furthe
     walk: { mode: 'conservative', cut: { byMode: 1, byModeGrades: { HEURISTIC: 1 } } } } };
   const panel = ev(ctx, `chainLeftOut(FLOWV, ${JSON.stringify(answer)}).textContent`);
   assert.match(panel, /This route's own link to its handler is graded HEURISTIC, so mode conservative stops at the route\./);
-  assert.match(panel, /1 link\(s\) it does not trust \(1 HEURISTIC\)/);
+  // Each grade left out is named, counted and said in the legend's words (RM67).
+  assert.match(panel, /did not follow 1 link\(s\) of a grade it does not admit/);
+  assert.match(panel, /HEURISTIC\s*1\s*a guess from a convention or an incomplete reading; check it/);
   assert.match(panel, /Switch to heuristic/);
   answer.answer.walk.mode = 'heuristic';
   answer.answer.walk.cut = { byMode: 1, byModeGrades: { UNRESOLVED: 1 } };

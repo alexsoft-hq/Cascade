@@ -182,7 +182,7 @@ function resetProjectState(){
   }
   for(const v of [FLOWV, IMPACTV]){
     v.seq++; v.resp=null; v.args=null; v.sel=null; v.pick=null; v.limit=40;
-    v.rows.clear(); v.linkSpecs=[]; v.paths=[]; v.layerOpen.clear();
+    v.rows.clear(); v.linkSpecs=[]; v.paths=[]; v.layerOpen.clear(); laneReset(v);
     const w=vwrap(v); w.classList.remove('layersmode'); w.replaceChildren();
     vside(v).replaceChildren();
     closeSug(v);

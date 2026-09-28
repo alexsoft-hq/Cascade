@@ -5,8 +5,10 @@
 // visual language: the same dash for the same grade, the same faces, the same
 // ground. So those are spelled here, once, and neither picture spells its own.
 
-/** The live page's dash per grade: the dash IS the grade. */
-export const GRADE_DASH = Object.freeze({ EXACT: null, SOUND_SET: '5 3', HEURISTIC: '1.5 3', RUNTIME_ONLY: '1 4', UNRESOLVED: '1 4' });
+import { GRADE_DASH } from './chainlayout.mjs';
+
+/** The live page's dash per grade, from the one table the page draws with too: the dash IS the grade. */
+export { GRADE_DASH };
 
 /** Text made safe to sit inside SVG markup or inside an attribute. */
 export const escapeXml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

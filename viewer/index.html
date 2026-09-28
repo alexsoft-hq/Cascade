@@ -676,10 +676,10 @@
      left, and the lane-strip test pins that it carries no fixed width. At 1400px
      the evidence rail drops UNDER the picture rather than squeezing it; at
      1100px the browse rail becomes a drawer and leaves the grid entirely. */
-  .flowgrid { display:grid; grid-template-columns:320px minmax(0,1fr) 320px; gap:18px;
+  .flowgrid { display:grid; grid-template-columns:var(--railw,320px) minmax(0,1fr) 320px; gap:18px;
     align-items:start; grid-template-areas:"brail canvas side"; }
   .flowgrid > .browserail { grid-area:brail; }
-  .flowgrid > .flowcanvas { grid-area:canvas; }
+  .flowgrid > .flowpane { grid-area:canvas; min-width:0; }
   .flowgrid > .flowside { grid-area:side; }
   /* 1660px, not 1400: MEASURED in a real Chrome at 1440x900, three columns
      leave the picture 699px and its four 180px lanes need 896px, so the table
@@ -687,29 +687,46 @@
      evidence rail therefore drops under the picture until the picture can hold
      all four lanes without a horizontal scroll. */
   @media (max-width:1660px){
-    .flowgrid { grid-template-columns:320px minmax(0,1fr);
+    .flowgrid { grid-template-columns:var(--railw,320px) minmax(0,1fr);
       grid-template-areas:"brail canvas" "brail side"; }
   }
   @media (max-width:1100px){
     .flowgrid { grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas" "side"; }
   }
   .flowcanvas { border:1px solid var(--frame); background:var(--g1); overflow:auto; max-height:78vh; }
-  /* The four lanes SHARE the pane: fixed 252px lanes overflowed the box beside
-     the 320px rail and the table lane — the one that answers the question — was
-     scrolled off the right. They flex down to 180px, ellipsize (the full id is
-     in `title`), and only cap once the pane is wide enough that a wider lane
-     would be white space. The connectors are measured from the DOM, so they
-     follow whatever width the lanes end up with. */
-  .flowwrap { position:relative; display:flex; gap:54px; min-width:0; padding:14px; }
+  /* THE LANES TAKE THE WIDTH THEIR NAMES NEED (RM67). Lanes that flexed down to
+     180px cut every name to eight characters, and a drawing that names nothing
+     answers nothing. A lane is now as wide as its longest name, between 200 and
+     360px (laneWidth in src/viewer/chainlayout.mjs, which the saved SVG reads
+     too), and a longer name takes a second line. When the lanes are wider than
+     the pane, the PANE scrolls, never the page: the grid gives it minmax(0,1fr)
+     and the strip above it names every lane with its count and brings it into
+     view. The connectors are measured from the DOM, so they follow. */
+  .flowwrap { position:relative; display:flex; gap:46px; min-width:0; padding:14px; }
+  .flowwrap.lanesmode { width:max-content; min-width:100%; box-sizing:border-box; }
+  .flowpane { min-width:0; }
+  .flowpane > .fstrip + .flowcanvas { border-top:0; }
+  /* The strip over the picture: outside the scrolling box, so it never scrolls
+     away. The start of the chain, each lane and its count, and the find box. */
+  .fstrip { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:7px 10px;
+    border:1px solid var(--frame); border-bottom:1px solid var(--hair); background:var(--g1); min-width:0; }
+  .fstripinfo { display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1 1 auto; min-width:0; }
+  .fstripstart { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%;
+    font:500 12.5px var(--mono); color:var(--t1); margin-right:4px; }
+  .fstripname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  button.fstripchip { padding:2px 8px; font-size:12px; white-space:nowrap; }
+  input.fstripfind { width:190px; max-width:100%; font-size:12px; padding:4px 8px; }
+  .fstripfound { white-space:nowrap; }
   /* The card the tab shows BEFORE anything is picked is the only child of the
      strip, so it takes the pane rather than sitting in one lane's width. */
   .flowwrap > .panel { flex:1; min-width:0; margin:0; }
   .flowsvg { position:absolute; inset:0; pointer-events:none; z-index:0; overflow:visible; }
-  .fcol { flex:1 1 0; min-width:180px; position:relative; z-index:1; }
-  /* Under 1200px the gutters, not the lanes, are what has to give: four 180px
-     lanes plus three 54px gutters is wider than the pane a stacked rail leaves. */
-  @media (max-width:1200px){ .flowwrap{ gap:30px; } }
-  @media (min-width:1600px){ .fcol{ max-width:300px; } }
+  /* A lane's width is set on the lane itself, from its names; it does not shrink.
+     It is OPAQUE: a line that skips a lane runs behind it, not through its rows. */
+  .fcol { flex:0 0 auto; position:relative; z-index:1; background:var(--g1); }
+  @media (max-width:1200px){ .flowwrap{ gap:34px; } }
+  /* The heading and its counts stay in view while the lane scrolls under them. */
+  .fcolhd { position:sticky; top:0; z-index:3; background:var(--g1); padding-top:2px; }
   .fcolhead { display:flex; justify-content:space-between; align-items:baseline; gap:8px;
     border-bottom:1px solid var(--frame); padding-bottom:5px; margin-bottom:8px; }
   .fcoltitle { font-size:12px; font-weight:600; color:var(--t1); text-transform:none; letter-spacing:0; }
@@ -724,7 +741,8 @@
   .frow.sel { box-shadow:inset 2px 0 0 var(--t1); background:var(--g0); }
   .frow.hot { background:var(--g0); }
   .frow.dim { opacity:.22; }
-  .frowtop { display:flex; align-items:center; gap:6px; min-width:0; }
+  .frowtop { display:flex; align-items:flex-start; gap:6px; min-width:0; }
+  .frowtop .kglyph, .frowtop .fchev { margin-top:2px; }
   .frowtop > * { min-width:0; }
   .frowtop .grade, .fhopn, .frowtop .kglyph { flex:none; }
   /* THE NAME IS THE ROW. It takes what is left over, and it has a FLOOR: with
@@ -732,8 +750,23 @@
      (the project chip on a federated row) took the whole line and the name
      collapsed to nothing. It grows and shrinks from its own content instead,
      and never below a few characters. */
-  .fname { font-family:var(--mono); font-size:12px; flex:1 1 auto; min-width:6ch; overflow:hidden;
+  .fname { font-family:var(--mono); font-size:12px; line-height:15px; flex:1 1 auto; min-width:6ch; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
+  /* A name is at most two lines, broken where the name breaks (fitLines). */
+  .fname .fline { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* THE LINE UNDER THE NAME: the hop, the grade and the few tags that matter,
+     always shown. A row never changes height under the pointer, so the lines
+     drawn to it stay where they are. */
+  .fmeta { display:flex; align-items:center; gap:5px; margin-top:4px; padding-left:18px; min-width:0; }
+  .fmeta > * { min-width:0; }
+  .fmeta .tag, .fmeta .grade, .fmeta .fhopn { flex:none; }
+  .fmeta .comment, .fmeta .count { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* A folded group, and the lane's "more": a row that opens in place. */
+  .frow.ffold { background:var(--g0); }
+  .frow.ffold .fname { font-family:var(--sans); }
+  .fchev { flex:none; width:12px; font-size:13px; line-height:13px; color:var(--t2); text-align:center; }
+  /* What the find box found. */
+  .frow.found { box-shadow:inset 0 0 0 1.5px var(--t2); }
   /* A report has no pointer to hover a cut name with, so in a snapshot a name wraps instead. */
   body.snapshot .fname { white-space:normal; overflow-wrap:anywhere; text-overflow:clip; }
   /* ...and the chip that says which project a federated row came from is what
@@ -749,25 +782,20 @@
   [data-theme="signal"] .fhopn.kh-statement { color:var(--k-statement); border-color:var(--k-statement); }
   [data-theme="signal"] .fhopn.kh-webfn { color:var(--k-webfn); border-color:var(--k-webfn); }
   [data-theme="signal"] .fhopn.kh-screen { color:var(--k-screen); border-color:var(--k-screen); }
+  [data-theme="signal"] .fhopn.kh-table { color:var(--k-table); border-color:var(--k-table); }
+  [data-theme="signal"] .fhopn.kh-endpoint { color:var(--k-endpoint); border-color:var(--k-endpoint); }
   .fsub { display:flex; align-items:center; gap:5px; margin-top:3px; min-width:0; }
-  /* A lane row's SECOND LINE — the candidate band it came through, the mapper
-     method it went via, the read/write tags — is READ level: it belongs to the
-     row the reader is pointing at, has focused, or has selected. It is HIDDEN,
-     not removed: the row keeps its height, so the bezier connectors measured
-     from the DOM still land on the rows they were drawn between, and pointing
-     at a row cannot make the picture under the pointer jump. */
-  .frow .fsub { visibility:hidden; }
-  .frow:hover .fsub, .frow:focus .fsub, .frow:focus-within .fsub,
-  .frow.sel .fsub { visibility:visible; }
   .fsub > * { min-width:0; }
   .fsub .tag, .fsub .grade { flex:none; }
   .fsub .comment, .fsub .count { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .fhop { font-size:12px; color:var(--t3); margin:12px 0 5px; border-top:1px solid var(--frame);
     padding-top:5px; }
   /* A candidate band inside a hop: the divider carries the band's own stroke. */
-  .fdiv { font-size:12px; margin:9px 0 5px; padding-top:5px; border-top:1.5px dashed var(--t3);
-    color:var(--t2); }
-  .fdiv.fheur { border-top-style:dotted; }
+  /* Drawn, not bordered: CSS has no dash-dot border, and a band must carry the
+     same stroke as the lines in it (GRADE_DASH: 6 3, and 6 3 1.5 3). */
+  .fdiv { font-size:12px; margin:9px 0 5px; padding-top:6px; color:var(--t2);
+    background:repeating-linear-gradient(90deg,var(--t3) 0 6px,transparent 6px 9px) top left/100% 1.5px no-repeat; }
+  .fdiv.fheur { background:repeating-linear-gradient(90deg,var(--t3) 0 6px,transparent 6px 9px,var(--t3) 9px 10.5px,transparent 10.5px 13.5px) top left/100% 1.5px no-repeat; }
   /* A connector says how sure the hop is (the colour and the dash) and whether
      the reader is looking at it (`hot` / `dim`). `obs` says one more thing and
      only with WEIGHT: a capture of the running system saw this hop run. The
@@ -886,8 +914,8 @@
      Its HEIGHT is measured in JS from its own top offset, the same rule RM25
      put on the Graph pane, so the list ends where the window does and scrolls
      inside itself instead of pushing the page down. */
-  .exgrid { display:grid; grid-template-columns:320px minmax(0,1fr); gap:18px; align-items:start; }
-  .browserail { display:flex; flex-direction:column; min-width:0; min-height:420px;
+  .exgrid { display:grid; grid-template-columns:var(--railw,320px) minmax(0,1fr); gap:18px; align-items:start; }
+  .browserail { display:flex; flex-direction:column; min-width:0; min-height:420px; position:relative;
     border:1px solid var(--frame); background:var(--g1); border-radius:var(--r-panel); }
   .brtop { padding:10px 12px 9px; border-bottom:1px solid var(--hair);
     display:flex; flex-direction:column; gap:8px; }
@@ -1007,6 +1035,7 @@
     .browserail.open { transform:none; }
     .brtoggle, .brclose { display:inline-flex; }
     .brscrim.on { display:block; }
+    .railgrab { display:none; }
   }
   /* A PICKABLE ROW LOOKS PICKABLE BEFORE IT IS TOUCHED. Both the rail's rows
      and the chain lanes' rows answer a click, and neither said so: the pointer
@@ -1038,6 +1067,10 @@
   .srcgrab { position:absolute; left:0; top:0; bottom:0; width:6px; padding:0;
     border:0; border-radius:0; background:none; cursor:col-resize; z-index:2; }
   .srcgrab:hover, .srcgrab.on { background:var(--frame); }
+  /* The list's right edge is its width control (RM67): the same grip, mirrored. */
+  .railgrab { position:absolute; right:-4px; top:0; bottom:0; width:7px; padding:0; border:0;
+    border-radius:0; background:none; cursor:col-resize; z-index:3; }
+  .railgrab:hover, .railgrab.on { background:var(--frame); }
   .srcgrab::after { content:""; position:absolute; left:2px; top:50%; margin-top:-17px;
     width:2px; height:34px; background:var(--t1); border-radius:1px; opacity:0; }
   .srcgrab:hover::after, .srcgrab.on::after { opacity:.8; }
@@ -1345,10 +1378,10 @@
         <div id="fsug" class="sug hidden"></div>
       </div>
       <button id="fdraw" class="primary" data-t="btn.draw">Draw</button>
-      <select id="fmode" data-t-title="mode.title" title="how sure a call has to be before we follow it">
-        <option value="conservative" selected data-t="mode.conservative">conservative: also follow likely calls</option>
-        <option value="strict" data-t="mode.strict">strict: only calls we can prove</option>
-        <option value="heuristic" data-t="mode.heuristic">heuristic: also follow guessed rules</option>
+      <select id="fmode" data-t-title="mode.title" title="which links the walk follows">
+        <option value="conservative" selected data-t="mode.conservative" data-grade="SOUND_SET">conservative: proven links + candidate sets (SOUND_SET)</option>
+        <option value="strict" data-t="mode.strict" data-grade="EXACT">strict: proven links only (EXACT)</option>
+        <option value="heuristic" data-t="mode.heuristic" data-grade="HEURISTIC">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
       </select>
       <!-- WHAT A READER NEEDS FIRST is the target and the Draw button, then how
            sure a call has to be. How deep, which drawing and whether the dots
@@ -1357,7 +1390,7 @@
       <details class="tbmenu" id="fopts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
         <div class="tbmenubody">
           <label class="tbfield"><span data-t="tb.depth">depth</span>
-            <select id="fdepth" data-t-title="flow.depth.title" title="how many calls deep to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select></label>
+            <select id="fdepth" data-t-title="flow.depth.title" title="how many calls deep to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
           <span class="seg" id="fview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
           <button id="fflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
         </div>
@@ -1386,7 +1419,7 @@
         <div class="brfoot" id="fmore"></div>
         <div class="brkeys" data-t="rail.keys">&#x2191;&#x2193; move, Enter picks, / filters</div>
       </div>
-      <div id="flowcanvas" class="flowcanvas"><div id="flowwrap" class="flowwrap"></div></div>
+      <div class="flowpane"><div id="flowstrip" class="fstrip hidden"></div><div id="flowcanvas" class="flowcanvas"><div id="flowwrap" class="flowwrap"></div></div></div>
       <div id="flowside" class="flowside"></div>
     </div>
   </div>
@@ -1400,10 +1433,10 @@
         <div id="isug" class="sug hidden"></div>
       </div>
       <button id="idraw" class="primary" data-t="btn.draw">Draw</button>
-      <select id="imode" data-t-title="mode.title" title="how sure a call has to be before we follow it">
-        <option value="conservative" selected data-t="mode.conservative">conservative: also follow likely calls</option>
-        <option value="strict" data-t="mode.strict">strict: only calls we can prove</option>
-        <option value="heuristic" data-t="mode.heuristic">heuristic: also follow guessed rules</option>
+      <select id="imode" data-t-title="mode.title" title="which links the walk follows">
+        <option value="conservative" selected data-t="mode.conservative" data-grade="SOUND_SET">conservative: proven links + candidate sets (SOUND_SET)</option>
+        <option value="strict" data-t="mode.strict" data-grade="EXACT">strict: proven links only (EXACT)</option>
+        <option value="heuristic" data-t="mode.heuristic" data-grade="HEURISTIC">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
       </select>
       <!-- WHAT A READER NEEDS FIRST is the target and the Draw button, then how
            sure a call has to be. How deep, which drawing and whether the dots
@@ -1439,7 +1472,7 @@
         <div class="brfoot" id="imore"></div>
         <div class="brkeys" data-t="rail.keys">&#x2191;&#x2193; move, Enter picks, / filters</div>
       </div>
-      <div id="impactcanvas" class="flowcanvas"><div id="impactwrap" class="flowwrap"></div></div>
+      <div class="flowpane"><div id="impactstrip" class="fstrip hidden"></div><div id="impactcanvas" class="flowcanvas"><div id="impactwrap" class="flowwrap"></div></div></div>
       <div id="impactside" class="flowside"></div>
     </div>
   </div>
@@ -1448,10 +1481,10 @@
   <div id="tab-coupling" class="hidden">
     <div class="searchbar">
       <span class="seg" id="cpaxis" data-t-title="coupling.axis.title" title="what the two groups share"><button class="on" data-axis="column" data-t="coupling.axis.column">columns</button><button data-axis="table" data-t="coupling.axis.table">tables</button></span>
-      <select id="cpmode" data-t-title="mode.title" title="how sure a call has to be before we follow it">
-        <option value="conservative" selected data-t="mode.conservative">conservative: also follow likely calls</option>
-        <option value="strict" data-t="mode.strict">strict: only calls we can prove</option>
-        <option value="heuristic" data-t="mode.heuristic">heuristic: also follow guessed rules</option>
+      <select id="cpmode" data-t-title="mode.title" title="which links the walk follows">
+        <option value="conservative" selected data-t="mode.conservative" data-grade="SOUND_SET">conservative: proven links + candidate sets (SOUND_SET)</option>
+        <option value="strict" data-t="mode.strict" data-grade="EXACT">strict: proven links only (EXACT)</option>
+        <option value="heuristic" data-t="mode.heuristic" data-grade="HEURISTIC">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
       </select>
       <select id="cpdepth" data-t-title="coupling.depth.title" title="how many calls deep we follow each endpoint"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select>
       <label class="cpchk" data-t-title="coupling.all.title" title="off: show only the groups that appear in a pair"><input type="checkbox" id="cpall"> <span data-t="coupling.all">show all groups</span></label>
@@ -1483,7 +1516,7 @@
       <span class="seg" id="gfold" data-t-title="graph.fold.title" title="folded: one node per API group, with its endpoints counted inside it. endpoints: every endpoint drawn around its own group"><button class="on" data-fold="folded" data-t="graph.fold.folded">folded</button><button data-fold="endpoints" data-t="graph.fold.endpoints">endpoints</button></span>
       <button id="gflow" aria-pressed="true" title="the dots run the way the call goes: group → endpoint → table. Click to stop them.">Flow on</button>
       <span class="grendnote hidden" id="gflownote"></span>
-      <select id="gmode" data-t-title="graph.mode.title" title="how sure a call has to be before the map follows it">
+      <select id="gmode" data-t-title="graph.mode.title" title="which links the map follows">
         <option value="strict" data-t="graph.mode.strict">strict</option>
         <option value="conservative" selected data-t="graph.mode.conservative">conservative</option>
         <option value="heuristic" data-t="graph.mode.heuristic">heuristic</option>
@@ -1607,12 +1640,15 @@
      they share one global scope exactly as the single inline script they were
      cut out of did, and the numbers are the load order that makes that safe.
 
-     The first two are the engine's own modules — src/viewer/i18n.mjs and
-     src/viewer/graphlayout.mjs — served by the local server minus their
-     `export ` keywords. The page cannot import, and it used to carry a copy of
-     each with a test to notice when the two drifted; now there is one file. -->
+     The first three are the engine's own modules — src/viewer/i18n.mjs,
+     src/viewer/graphlayout.mjs and src/viewer/chainlayout.mjs — served by the
+     local server minus their `export ` keywords. The page cannot import, and it
+     used to carry a copy of each with a test to notice when the two drifted;
+     now there is one file. chainlayout names, orders and folds the Flow and
+     Impact lanes, and the saved SVG asks it too. -->
 <script src="/viewer/lib/i18n.js"></script>
 <script src="/viewer/lib/graphlayout.js"></script>
+<script src="/viewer/lib/chainlayout.js"></script>
 <script src="/viewer/js/00_state.js"></script>
 <script src="/viewer/js/10_dom.js"></script>
 <script src="/viewer/js/20_api.js"></script>
@@ -1630,6 +1666,7 @@
 <script src="/viewer/js/50_summary.js"></script>
 <script src="/viewer/js/51_rules.js"></script>
 <script src="/viewer/js/52_rules_draw.js"></script>
+<script src="/viewer/js/53_chain_lanes.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

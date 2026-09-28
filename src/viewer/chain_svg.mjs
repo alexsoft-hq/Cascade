@@ -9,13 +9,18 @@
 // itself.
 //
 // WHAT MAY NOT GO MISSING, because a picture is read without the page around it:
-//   the grade      on every row as a badge, and on every connector as its dash
-//                  (the live page's own dashes: solid EXACT, 5 3 SOUND_SET,
-//                  1.5 3 HEURISTIC);
+//   the grade      on every row as a badge (the weakest link on its way from the
+//                  start), and on every connector as its dash (that one link's
+//                  grade), with the page's own dashes (GRADE_DASH);
 //   the cut        a lane that shows fewer rows than it has says how many more;
 //   the question   tab, entry, mode, depth, limit, pack, time, engine;
 //   the worth      the trust level and every limit, word for word.
 // test/chain_svg.test.mjs holds each of those against the answer.
+//
+// ONE NAME AND ONE ORDER PER NODE (RM67). The names, the order inside each lane
+// and the lane widths come from chainlayout.mjs, the file the live lanes read,
+// so the saved picture names every node the way the page does. It folds
+// nothing: a picture in a document has no pointer to open a fold with.
 //
 // A SECOND DRAWING OF ONE ANSWER is the risk this module carries, so it reads
 // nothing but the answer and draws nothing the answer does not say: no layout
@@ -29,17 +34,15 @@ export const SVG_LANES = Object.freeze({
 });
 
 import { GRADE_DASH, dashAttr, escapeXml as esc, gradeBadgeSvg, svgDocument } from './svg_doc.mjs';
+import { CHAIN_FIT, chainLabels, fitLines, laneWidth, orderLanes } from './chainlayout.mjs';
 
-/** The live page's dash per grade, spelled once in svg_doc.mjs and read from here by the tests. */
+/** The live page's dash per grade, spelled once in chainlayout.mjs and read from here by the tests. */
 export { GRADE_DASH };
 
-const COL_W = 300;
-const COL_GAP = 70;
 const PAD = 24;
 const LINE = 15;
-/** A name's first line stops short of the grade badge; the lines under it have the row. */
-const NAME_FIRST = 24;
-const NAME_REST = 38;
+/** The three grades a mode can walk each have a band inside a hop; anything else is one more. */
+const BANDS = ['EXACT', 'SOUND_SET', 'HEURISTIC'];
 
 /** The light theme's colours, read out of the viewer's own stylesheet when it is handed over. */
 export function drawingPalette(html) {
@@ -76,81 +79,142 @@ export function wrapText(text, n, first = n) {
   return out;
 }
 
-/** One lane row: the key links arrive at and leave from, what it says, and the link into it. */
-function rowOf(field, x) {
-  const sub = (s) => (s == null || s === '' ? null : String(s));
-  switch (field) {
-    case 'tables':
-      return { key: `table:${x.table}`, name: x.table, sub: sub([x.access, x.comment].filter(Boolean).join('  ')), grade: x.grade, from: x.via ? `statement:${x.via}` : null, hops: x.hops };
-    case 'endpoints':
-      return { key: `endpoint:${x.id}`, name: x.id, sub: sub(x.handlerShort), grade: x.grade, from: x.link?.from ?? (x.handler ? `symbol:${x.handler}` : null), hops: x.hops };
-    case 'statements':
-      return { key: `statement:${x.id}`, name: x.short ?? x.id, sub: sub(x.statementType), grade: x.grade, from: x.link?.from ?? null, hops: x.hops };
-    case 'screens':
-      return { key: `screen:${x.id}`, name: x.short ?? x.id, sub: sub(x.title), grade: x.grade, from: x.link?.from ?? null, hops: x.hops };
-    default:
-      return { key: `symbol:${x.id}`, name: x.short ?? x.id, sub: sub(x.file ? String(x.file).split('/').pop() : x.owner), grade: x.grade, from: x.link?.from ?? null, hops: x.hops };
-  }
-}
-
-/** The entry row: hop 0, no grade, keyed by where the walk started. */
-function entryRow(entry) {
-  const name = entry.kind === 'endpoint' ? `${entry.httpMethod} ${entry.path}` : (entry.short ?? entry.id);
-  const sub = entry.kind === 'endpoint' ? entry.handlerShort : (entry.comment ?? entry.statementType ?? entry.owner ?? entry.kind);
-  return { key: entry.start, name, sub: sub ?? null, grade: null, from: null, hops: 0 };
+/** The node a lane row stands for, the id the naming rule reads. */
+function nodeIdOf(field, x) {
+  if (field === 'tables') return `table:${x.table}`;
+  if (field === 'statements') return `statement:${x.id}`;
+  if (field === 'endpoints') return `endpoint:${x.id}`;
+  if (field === 'screens') return `screen:${x.id}`;
+  return `symbol:${x.id}`;
 }
 
 /**
- * THE PICTURE'S MODEL: the lanes this answer has, their rows, and every link
- * whose two ends are both on the picture.
+ * THE GRADE OF THE LINK INTO A ROW, the way the live lanes read it: the step's
+ * own grade where the answer names the step, else the last walked edge, else
+ * the row's (a table row names no step of its own).
  */
-export function chainModel(response, direction) {
+function linkGradeOf(x) {
+  if (x.link?.grade) return x.link.grade;
+  const wp = Array.isArray(x.walkedPath) && x.walkedPath.length ? x.walkedPath[x.walkedPath.length - 1] : null;
+  return wp?.grade ?? x.grade;
+}
+
+/**
+ * One lane row: the key links arrive at and leave from, its node, the engine's
+ * own short name (the summary card prints that one), what it says, and the link
+ * into it. The name the lanes draw is `label`, set by chainModel.
+ */
+function rowOf(field, x) {
+  const sub = (s) => (s == null || s === '' ? null : String(s));
+  const base = { id: nodeIdOf(field, x), grade: x.grade, hops: x.hops, linkGrade: linkGradeOf(x) };
+  switch (field) {
+    case 'tables':
+      return { ...base, key: `table:${x.table}`, name: x.table, sub: sub([x.access, x.comment].filter(Boolean).join('  ')), from: x.via ? `statement:${x.via}` : null };
+    case 'endpoints':
+      return { ...base, key: `endpoint:${x.id}`, name: x.id, sub: sub(x.handlerShort), from: x.link?.from ?? (x.handler ? `symbol:${x.handler}` : null) };
+    case 'statements':
+      return { ...base, key: `statement:${x.id}`, name: x.short ?? x.id, sub: sub(x.statementType), from: x.link?.from ?? null };
+    case 'screens':
+      return { ...base, key: `screen:${x.id}`, name: x.short ?? x.id, sub: sub(x.title), from: x.link?.from ?? null };
+    default:
+      return { ...base, key: `symbol:${x.id}`, name: x.short ?? x.id, sub: sub(x.file ? String(x.file).split('/').pop() : x.owner), from: x.link?.from ?? null };
+  }
+}
+
+/** The entry row: hop 0, keyed by where the walk started, named by what it is (a route by its route). */
+function entryRow(entry) {
+  const route = `${entry.httpMethod} ${entry.path}`;
+  const id = entry.kind === 'endpoint' ? `endpoint:${entry.id ?? route}` : (entry.start ?? `${entry.kind}:${entry.id}`);
+  const name = entry.kind === 'endpoint' ? route : (entry.short ?? entry.id);
+  const sub = entry.kind === 'endpoint' ? entry.handlerShort : (entry.comment ?? entry.statementType ?? entry.owner ?? entry.kind);
+  return { key: entry.start, id, name, sub: sub ?? null, grade: entry.grade ?? null, from: null, hops: 0, group: 'entry' };
+}
+
+/** The lanes of one answer, the entry first: each row with the hop-and-grade group the page bands it in. */
+function lanesOf(response, direction) {
   const a = response.answer;
   const cutBy = new Map((response.truncated?.fields ?? []).map((f) => [f.field, f]));
   const lanes = [{ field: 'entry', rows: [entryRow(a.entry)], shown: 1, total: 1 }];
   for (const field of SVG_LANES[direction]) {
     if (!Array.isArray(a[field])) continue;
     const t = cutBy.get(field);
-    lanes.push({ field, rows: a[field].map((x) => rowOf(field, x)), shown: a[field].length, total: t ? t.total : a[field].length });
+    const grouped = field !== (direction === 'up' ? 'endpoints' : 'tables');
+    const rows = a[field].map((x) => ({ ...rowOf(field, x), group: grouped ? `${x.hops}|${BANDS.includes(x.grade) ? x.grade : 'other'}` : field }));
+    lanes.push({ field, rows, shown: a[field].length, total: t ? t.total : a[field].length });
   }
+  return lanes;
+}
+
+/**
+ * THE PICTURE'S MODEL: the lanes this answer has, their rows in the answer's
+ * order with one label per node (the page's), and every link whose two ends
+ * are both on the picture, graded by that one link.
+ */
+export function chainModel(response, direction) {
+  const lanes = lanesOf(response, direction);
+  const names = chainLabels(lanes.flatMap((l) => l.rows.map((r) => r.id)));
+  for (const l of lanes) for (const r of l.rows) r.label = names.get(r.id).text;
   const at = new Map();
   lanes.forEach((lane, li) => lane.rows.forEach((r, ri) => { if (!at.has(r.key)) at.set(r.key, [li, ri]); }));
   const links = [];
   const dropped = [];
   lanes.forEach((lane, li) => lane.rows.forEach((r, ri) => {
     if (!r.from) return;
-    if (at.has(r.from)) links.push({ from: at.get(r.from), to: [li, ri], grade: r.grade });
+    if (at.has(r.from)) links.push({ from: at.get(r.from), to: [li, ri], grade: r.linkGrade ?? r.grade, fromKey: r.from, toKey: r.key });
     else dropped.push({ to: r.key, from: r.from });
   }));
   return { lanes, links, dropped };
 }
 
-/** Where each row sits: lanes are columns, a row is as tall as its wrapped name. */
-function layoutOf(model, top) {
-  const boxes = model.lanes.map((lane, li) => {
-    let y = top + 34;
-    return lane.rows.map((r) => {
-      const lines = wrapText(r.name, NAME_REST, NAME_FIRST);
-      const h = 10 + lines.length * LINE + (r.sub ? LINE : 0) + 8;
-      const box = { x: PAD + li * (COL_W + COL_GAP), y, w: COL_W, h, lines };
-      y += h + 6;
-      return box;
-    });
+/** One lane's rows placed: as wide as its names need, a row as tall as its name's lines. */
+function laneBoxes(rows, x, top) {
+  const fit = laneWidth(rows.map((r) => r.label));
+  let y = top + 34;
+  const boxes = rows.map((r) => {
+    const lines = fitLines(r.label, fit.perLine, CHAIN_FIT.lines);
+    const h = 8 + lines.length * LINE + 22;
+    const box = { x, y, w: fit.width, h, lines };
+    y += h + 6;
+    return box;
   });
-  const bottom = Math.max(top + 60, ...boxes.flat().map((b) => b.y + b.h)) + 30;
-  return { boxes, bottom, width: PAD * 2 + model.lanes.length * COL_W + (model.lanes.length - 1) * COL_GAP };
+  return { width: fit.width, boxes };
 }
 
-/** The SVG text of one row. */
+/**
+ * Where each row sits: the lanes in the page's order, the rows inside each lane
+ * ordered to cut crossings the page's way (orderLanes), each lane sized to its
+ * names. `order[li][k]` is the answer index of the k-th drawn row.
+ */
+function layoutOf(model, top) {
+  const keyed = model.lanes.map((l) => l.rows.map((r, i) => ({ key: r.key, group: r.group, i })));
+  const order = orderLanes(keyed, model.links.map((l) => ({ from: l.fromKey, to: l.toKey }))).map((rows) => rows.map((r) => r.i));
+  const lanes = [];
+  let x = PAD;
+  model.lanes.forEach((lane, li) => {
+    const placed = laneBoxes(order[li].map((i) => lane.rows[i]), x, top);
+    const boxes = [];
+    order[li].forEach((i, k) => { boxes[i] = placed.boxes[k]; });
+    lanes.push({ x, width: placed.width, boxes });
+    x += placed.width + CHAIN_FIT.gap + 24;
+  });
+  const bottom = Math.max(top + 60, ...lanes.flatMap((l) => l.boxes.map((b) => b.y + b.h))) + 30;
+  return { lanes, boxes: lanes.map((l) => l.boxes), bottom, width: x - CHAIN_FIT.gap - 24 + PAD };
+}
+
+/** The SVG text of one row: its name on one or two lines, then its hop, its badge and what it says. */
 function rowSvg(r, b, p) {
-  const badge = r.grade ? gradeBadgeSvg({ x: b.x + b.w - 92, y: b.y + 6, width: 84, grade: r.grade, palette: p }) : '';
   const name = b.lines.map((l, i) => `<tspan x="${b.x + 10}" dy="${i === 0 ? 0 : LINE}">${esc(l)}</tspan>`).join('');
-  const sub = r.sub ? `<text x="${b.x + 10}" y="${b.y + 20 + b.lines.length * LINE}" class="t s c2">${esc(r.sub)}</text>` : '';
-  return `<g data-key="${esc(r.key)}"><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="${p.g1}" stroke="${p.hair}"/>`
-    + `<text x="${b.x + 10}" y="${b.y + 18}" class="m">${name}</text>${sub}${badge}</g>`;
+  const my = b.y + 12 + b.lines.length * LINE;
+  const hop = r.hops > 0 ? `<text x="${b.x + 10}" y="${my + 12}" class="m s c2">${r.hops}</text>` : '';
+  const badge = r.grade ? gradeBadgeSvg({ x: b.x + 26, y: my, width: 84, grade: r.grade, palette: p }) : '';
+  const subX = r.grade ? b.x + 118 : b.x + 26;
+  const room = Math.max(4, Math.floor((b.x + b.w - 6 - subX) / 6.2));
+  const sub = r.sub ? `<text x="${subX}" y="${my + 12}" class="t s c2">${esc(fitLines(r.sub, room, 1)[0])}</text>` : '';
+  return `<g data-key="${esc(r.key)}"><title>${esc(String(r.id).slice(String(r.id).indexOf(':') + 1))}</title><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="${p.g1}" stroke="${p.hair}"/>`
+    + `<text x="${b.x + 10}" y="${b.y + 18}" class="m">${name}</text>${hop}${badge}${sub}</g>`;
 }
 
-/** One connector, right edge to left edge, dashed by its grade. */
+/** One connector, right edge to left edge, dashed by the grade of that one link. */
 function linkSvg(l, boxes, p) {
   const a = boxes[l.from[0]][l.from[1]];
   const b = boxes[l.to[0]][l.to[1]];
@@ -159,9 +223,12 @@ function linkSvg(l, boxes, p) {
   const x2 = b.x;
   const y1 = a.y + a.h / 2;
   const y2 = b.y + b.h / 2;
+  // A link that skips a lane runs level behind it and turns in the last gutter, as on the page.
+  const gutter = CHAIN_FIT.gap + 24;
+  const dx = (x2 - x1) > gutter * 2.5 ? Math.max(26, x2 - x1 - gutter) : Math.max(26, (x2 - x1) / 2);
   const d = same
     ? `M${x1},${y1} C${x1 - 22},${y1} ${x2 - 22},${y2} ${x2},${y2}`
-    : `M${x1},${y1} C${x1 + Math.max(26, (x2 - x1) / 2)},${y1} ${x2 - Math.max(26, (x2 - x1) / 2)},${y2} ${x2},${y2}`;
+    : `M${x1},${y1} C${x1 + dx},${y1} ${x2 - Math.min(dx, Math.max(26, gutter * 0.6))},${y2} ${x2},${y2}`;
   return `<path d="${d}" fill="none" stroke="${p.edge}" stroke-width="1.3" data-grade="${esc(l.grade)}"${dashAttr(l.grade)}/>`;
 }
 
@@ -178,6 +245,20 @@ function headerLines(snap, t) {
   ];
 }
 
+/** How to read a line, in the words every place that explains a grade uses (grade.say.*). */
+function legendSvg(flow, t, y, p) {
+  const byGrade = flow.answer.walk?.byLinkGrade ?? {};
+  const parts = [`<text x="${PAD}" y="${y}" class="t b">${esc(t('chain.legend.title'))}</text>`];
+  BANDS.forEach((g, i) => {
+    const ly = y + 20 + i * 18;
+    parts.push(`<line x1="${PAD}" y1="${ly - 4}" x2="${PAD + 40}" y2="${ly - 4}" stroke="${p.edge}" stroke-width="1.5"${dashAttr(g)}/>`
+      + `<text x="${PAD + 52}" y="${ly}" class="m s">${esc(g)}</text><text x="${PAD + 150}" y="${ly}" class="t s">${esc(t(`grade.say.${g}`))} (${byGrade[g] ?? 0})</text>`);
+  });
+  const ly = y + 20 + BANDS.length * 18;
+  parts.push(`<text x="${PAD}" y="${ly}" class="t s c2">${esc(t('chain.legend.path'))}</text>`);
+  return { svg: parts.join(''), bottom: ly + 14 };
+}
+
 /** Under the picture: how to read a line, the census, and every limit word for word. */
 function footerSvg(flow, t, y, width, p, dropped) {
   const parts = [];
@@ -185,15 +266,9 @@ function footerSvg(flow, t, y, width, p, dropped) {
     parts.push(`<text x="${PAD}" y="${y - 14}" class="t s" fill="${p.warn}">${esc(t('chain.svg.dropped', { n: dropped }))}</text>`);
     y += 10;
   }
-  const byGrade = flow.answer.walk?.byLinkGrade ?? {};
-  const legend = [['EXACT', 'chain.legend.exact'], ['SOUND_SET', 'chain.legend.sound'], ['HEURISTIC', 'chain.legend.heuristic']];
-  parts.push(`<text x="${PAD}" y="${y}" class="t b">${esc(t('chain.legend.title'))}</text>`);
-  legend.forEach(([g, key], i) => {
-    const ly = y + 20 + i * 18;
-    parts.push(`<line x1="${PAD}" y1="${ly - 4}" x2="${PAD + 40}" y2="${ly - 4}" stroke="${p.edge}" stroke-width="1.5"${dashAttr(g)}/>`
-      + `<text x="${PAD + 52}" y="${ly}" class="m s">${esc(g)}</text><text x="${PAD + 150}" y="${ly}" class="t s">${esc(t(key))} (${byGrade[g] ?? 0})</text>`);
-  });
-  let ly = y + 20 + legend.length * 18 + 14;
+  const legend = legendSvg(flow, t, y, p);
+  parts.push(legend.svg);
+  let ly = legend.bottom + 14;
   for (const lim of flow.limits ?? []) {
     for (const line of wrapText(`${lim.scope}: ${lim.reason}`, Math.max(60, Math.floor((width - PAD * 2) / 6.4)))) {
       parts.push(`<text x="${PAD}" y="${ly}" class="t s c2">${esc(line)}</text>`);
@@ -204,11 +279,11 @@ function footerSvg(flow, t, y, width, p, dropped) {
 }
 
 /** A lane's heading, with its count and, when it was cut, how many rows are not here. */
-function laneHeadSvg(lane, x, y, t, p, direction) {
+function laneHeadSvg(lane, at, y, t, p, direction) {
   const entryKey = direction === 'up' ? 'chain.lane.target' : 'chain.lane.entry';
   const title = t(lane.field === 'entry' ? entryKey : `chain.lane.${lane.field}`);
-  const cut = lane.shown < lane.total ? `<text x="${x}" y="${y + 16}" class="t s" fill="${p.warn}">${esc(t('chain.cut', { n: lane.total - lane.shown }).trim())}</text>` : '';
-  return `<text x="${x}" y="${y}" class="t b">${esc(title)}</text><text x="${x + COL_W}" y="${y}" text-anchor="end" class="m s c2">${lane.shown} / ${lane.total}</text>${cut}`;
+  const cut = lane.shown < lane.total ? `<text x="${at.x}" y="${y + 16}" class="t s" fill="${p.warn}">${esc(t('chain.cut', { n: lane.total - lane.shown }).trim())}</text>` : '';
+  return `<text x="${at.x}" y="${y}" class="t b">${esc(title)}</text><text x="${at.x + at.width}" y="${y}" text-anchor="end" class="m s c2">${lane.shown} / ${lane.total}</text>${cut}`;
 }
 
 /**
@@ -224,15 +299,17 @@ export function chainSvg(snap, { t, palette = drawingPalette(''), fonts = {} }) 
   const model = chainModel(flow, direction);
   const head = headerLines(snap, t);
   const lanesTop = PAD + 26 + head.length * 18 + 18;
-  const { boxes, bottom, width } = layoutOf(model, lanesTop);
+  const { lanes, boxes, bottom, width: drawn } = layoutOf(model, lanesTop);
+  const width = Math.max(drawn, 720);
   const foot = footerSvg(flow, t, bottom + 10, width, palette, model.dropped.length);
-  const height = foot.bottom;
   const headSvg = [`<text x="${PAD}" y="${PAD + 12}" class="t b">${esc(t('snap.title'))}</text>`]
     .concat(head.map((line, i) => `<text x="${PAD}" y="${PAD + 34 + i * 18}" class="t${i === 2 ? '' : ' c2'}"${i === 2 ? ` fill="${palette.warn}"` : ''}>${esc(line)}</text>`));
-  const laneSvg = model.lanes.map((lane, li) => laneHeadSvg(lane, PAD + li * (COL_W + COL_GAP), lanesTop, t, palette, direction)).join('');
+  const laneSvg = model.lanes.map((lane, li) => laneHeadSvg(lane, lanes[li], lanesTop, t, palette, direction)).join('');
+  // Each lane is a ground over the links, so a link that skips it runs behind it.
+  const grounds = lanes.map((l) => `<rect x="${l.x - 4}" y="${lanesTop + 26}" width="${l.width + 8}" height="${bottom - lanesTop - 50}" fill="${palette.g0}"/>`).join('');
   const body = headSvg.join('') + laneSvg
-    + model.links.map((l) => linkSvg(l, boxes, palette)).join('')
+    + model.links.map((l) => linkSvg(l, boxes, palette)).join('') + grounds
     + model.lanes.map((lane, li) => lane.rows.map((r, ri) => rowSvg(r, boxes[li][ri], palette)).join('')).join('')
     + foot.svg;
-  return svgDocument({ width, height, palette, fonts, body });
+  return svgDocument({ width, height: foot.bottom, palette, fonts, body });
 }

@@ -142,7 +142,7 @@
         </span>
         <button id="gflow" aria-pressed="false" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
         <span id="gflownote" class="grendnote" title="a map this size turns to speckle with a dot on every line, so it stays still until you point at something. A node you light up flows on its own, and Flow on runs every line.">still at rest</span>
-        <select id="gmode" data-t-title="graph.mode.title" onchange title="how sure a call has to be before the map follows it" value="conservative">
+        <select id="gmode" data-t-title="graph.mode.title" onchange title="which links the map follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses, to check." value="conservative">
           <option data-t="graph.mode.strict" value="strict">strict</option>
           <option data-t="graph.mode.conservative" selected value="conservative">conservative</option>
           <option data-t="graph.mode.heuristic" value="heuristic">heuristic</option>
@@ -283,7 +283,7 @@
                 <span class="swatch" style="background: #FBBF24"></span>
                 table join
               </span>
-              <span title="SOUND_SET: a call we could not confirm. Drawn dashed on the 2D canvas only.">
+              <span title="SOUND_SET: a candidate set sure to hold the real target. Drawn dashed on the 2D canvas only.">
                 <span class="swatch" style="background: repeating-linear-gradient(90deg,#F87171,#F87171 4px,transparent 4px,transparent 7px)"></span>
                 dashed = SOUND_SET
               </span>
@@ -358,22 +358,22 @@
               <h2>What this answer is based on</h2>
               <span class="legend">
                 how sure each line is:
-                <span class="grade g-EXACT">
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
                   EXACT
                 </span>
-                <span class="grade g-SOUND_SET">
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
                   SOUND_SET
                 </span>
-                <span class="grade g-HEURISTIC">
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
                   <svg class="gbox">
                     <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
                   </svg>
                   HEURISTIC
                 </span>
-                <span class="grade g-RUNTIME_ONLY">
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
                   RUNTIME_ONLY
                 </span>
-                <span class="grade g-UNRESOLVED">
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
                   UNRESOLVED
                 </span>
               </span>

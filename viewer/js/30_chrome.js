@@ -286,7 +286,7 @@ function renderMastChrome(){
   const cell=byId('mlimitcell'), body=byId('mfolds');
   if(!lim.length){ cell.replaceChildren(); body.replaceChildren(); return; }
   const [head, list]=foldParts('rail.overview.limits', [t('mast.limits',{n:lim.length})],
-    ()=> lim.map((l,i)=> railLimit('rail.overview.lim.'+i, l)), 'mchip');
+    ()=> limitRows('rail.overview.lim.', lim), 'mchip');
   // The rail below is built from the same key, so the two chips agree about
   // what is open — whichever one the reader used. The rail is re-drawn from the
   // answer already in memory: nothing is asked for again.
@@ -300,6 +300,9 @@ function renderMastChrome(){
 // language, and re-rendering them would be a translation of evidence.
 function applyChrome(){
   for(const n of document.querySelectorAll('[data-t]')) n.textContent=t(n.dataset.t);
+  // A mode is named in the reader's words, then by the grade it adds, which is
+  // the engine's token and is never translated (RM67).
+  for(const n of document.querySelectorAll('option[data-grade]')) n.textContent=t(n.dataset.t)+' ('+n.dataset.grade+')';
   for(const n of document.querySelectorAll('[data-t-rich]')) n.replaceChildren(...richNodes(t(n.dataset.tRich)));
   for(const n of document.querySelectorAll('[data-t-fold]')) renderFoldHint(n);
   for(const n of document.querySelectorAll('[data-t-title]')) n.title=t(n.dataset.tTitle);

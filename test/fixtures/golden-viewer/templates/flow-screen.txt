@@ -122,10 +122,10 @@
           <div id="fsug" class="sug hidden"></div>
         </div>
         <button id="fdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <select id="fmode" data-t-title="mode.title" onchange title="how sure a call has to be before we follow it" value="conservative">
-          <option data-t="mode.conservative" selected value="conservative">conservative: also follow likely calls</option>
-          <option data-t="mode.strict" value="strict">strict: only calls we can prove</option>
-          <option data-t="mode.heuristic" value="heuristic">heuristic: also follow guessed rules</option>
+        <select id="fmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+          <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
+          <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
+          <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
         </select>
         <details id="fopts" class="tbmenu">
           <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
@@ -148,13 +148,13 @@
                 <option>
                   5
                 </option>
-                <option selected>
+                <option>
                   6
                 </option>
                 <option>
                   7
                 </option>
-                <option>
+                <option selected>
                   8
                 </option>
               </select>
@@ -214,10 +214,14 @@
           </div>
           <div id="fmore" class="brfoot"></div>
           <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
+          <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
         </div>
-        <div id="flowcanvas" class="flowcanvas">
-          <div id="flowwrap" class="flowwrap">
-            <div class="panel">error: undefined: undefined</div>
+        <div class="flowpane">
+          <div id="flowstrip" class="fstrip hidden">…</div>
+          <div id="flowcanvas" class="flowcanvas">
+            <div id="flowwrap" class="flowwrap">
+              <div class="panel">error: undefined: undefined</div>
+            </div>
           </div>
         </div>
         <div id="flowside" class="flowside"></div>

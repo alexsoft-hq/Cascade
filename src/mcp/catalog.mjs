@@ -14,6 +14,7 @@ import { summary } from './tools_summary.mjs';
 import { rules } from './tools_rules.mjs';
 import { assertContract } from './contract.mjs';
 import { axisLimits, axisKnownGaps } from '../core/lanes.mjs';
+import { DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
 
 export const CATALOG_SCHEMA = 'cascade:mcp-catalog:1';
 
@@ -216,7 +217,7 @@ export const TOOLS = Object.freeze({
       + 'EXACT. mode=strict often returns NOTHING, because controller to service is a call we '
       + 'cannot prove and it sits below the strict floor; the limits and walk.note then say '
       + 'so, and an empty band there is the mode rather than an absence. depth (1..8, default '
-      + '6) bounds the walk, and what lies past the cap is unknown, not absent. `layers` is '
+      + `${DEFAULT_WALK_DEPTH}) bounds the walk,` + ' and what lies past the cap is unknown, not absent. `layers` is '
       + 'the SAME walk folded per hop: one entry per hop 1..depth-reached with how many nodes '
       + '/ services / statements / tables sit there and their link grades. It is a census, '
       + 'never cut by limit, and its grade counts sum to walk.byLinkGrade. Layers cover '
@@ -227,7 +228,7 @@ export const TOOLS = Object.freeze({
       + 'question, and every endpoint carries the weakest grade on its path. Walking up, pass '
       + 'exactly one of column/table/statement/symbol, because an endpoint has nothing '
       + 'upstream. The lanes are then target, mapper statements, service layer and endpoints '
-      + '(no tables lane: the target IS that side), depth defaults to 8, the handler method '
+      + `(no tables lane: the target IS that side), depth defaults to ${DEFAULT_WALK_DEPTH} as well, the handler method `
       + 'is a service row flagged `handler`, and the endpoints are DERIVED from its HANDLES '
       + 'edges rather than walked, so a route above a handler that sat at the depth cap is in '
       + 'no layer and is counted in walk.beyond.endpoints. A statement or symbol target '
@@ -239,14 +240,16 @@ export const TOOLS = Object.freeze({
       + 'no list mode upstream. direction=down also starts at a SCREEN (screen=<its composed '
       + 'router path>), which is the other end of the round trip: the lanes are then its own '
       + 'component functions, the api functions they call, the routes those call, and the '
-      + 'services, statements and tables below them, with depth defaulting to 8 because a screen '
-      + 'is further out than a handler. On a pack with a frontend the UP direction gains the same '
+      + 'services, statements and tables below them, with the same default depth. '
+      + 'On a pack with a frontend the UP direction gains the same '
       + 'two lanes at the far end (webFunctions, then screens), and `walk.laneNames` says which '
       + 'lanes this answer has. A row marked observed:true was confirmed by a browser recording '
       + '(--har), which is a marker beside the grade and never a step of the walk. Without '
       + 'endpoint/screen/symbol it lists the walkable endpoints (query=<substring> over "METHOD '
       + 'path handler"), or the walkable screens with kind=screen (query over path, label, title '
-      + 'and component). Lists are cut by limit, and chain mode does not page. ON A SERVER THAT '
+      + 'and component). Lists are cut by limit. Chain mode pages too: offset cuts EVERY lane at the '
+      + 'same place in the walk\'s own order, so a caller that wants more of one lane asks again with '
+      + 'that lane\'s truncated nextOffset and keeps that lane\'s rows. ON A SERVER THAT '
       + 'SERVES SEVERAL PROJECTS the chain CROSSES HTTP. A call to a route this pack does not '
       + 'serve normally stops the walk; when another registered project serves that route, the '
       + 'same walk continues there and its rows join these lanes carrying `project`, `federated` '
@@ -270,10 +273,10 @@ export const TOOLS = Object.freeze({
         table: { type: 'string', description: 'direction=up target: a table' },
         statement: { type: 'string', description: 'direction=up target: a mapper statement id' },
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
-        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'max hops walked (default 6 down, 8 up)' },
+        depth: { type: 'integer', minimum: 1, maximum: 8, description: `max hops walked (default ${DEFAULT_WALK_DEPTH}, both directions)` },
         limit: { type: 'integer', description: 'per-list cut: 1..200 (default 40) in chain mode, 1..500 (default 100) listing endpoints' },
         query: { type: 'string', description: 'list mode only: substring over "METHOD path handler"' },
-        offset: { type: 'integer', description: 'list mode only' },
+        offset: { type: 'integer', minimum: 0, description: 'list mode: skip this many entries. Chain mode: cut every lane from here, in the walk\'s order, to fetch the next page of one lane' },
         federate: { type: 'boolean', description: 'default true: follow HTTP calls into the other projects this server serves' },
         federationHops: { type: 'integer', minimum: 0, maximum: 8, description: 'how many crossings one answer may chain (default 3)' },
       },
@@ -328,7 +331,7 @@ export const TOOLS = Object.freeze({
       + 'the shared items, cut by limit), `cells` (every pair without its items, so the whole '
       + 'matrix and never cut) and a `summary`. We attribute a statement to EVERY group whose '
       + 'endpoints can reach it, using the SAME forward walk `flow` draws, at this view\'s '
-      + 'own default depth 8 (the Flow tab defaults to 6). Every HANDLES target of a route is '
+      + 'own default depth, the one every walk from a route has (the Flow tab opens on it too). Every HANDLES target of a route is '
       + 'walked, and mode and depth apply. So a statement behind a shared service counts for '
       + 'all of them: `sharedStatements` lists the ones reached by 3 or more groups (a capped '
       + 'disclosure rather than a page), each pair\'s `viaShared` counts the items that ON AT '
