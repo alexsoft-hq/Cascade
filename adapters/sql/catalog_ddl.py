@@ -60,7 +60,7 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        Oracle ``PACKAGE BODY``) follow the tables as ``routine`` records with
 #        their body text, so a statement that calls one can be read through it.
 #        A file that declares none parses to the records /3 wrote.
-CATALOG_VERSION = "catalog-ddl/6"
+CATALOG_VERSION = "catalog-ddl/7"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -126,6 +126,19 @@ def _type_text(kind):
         stripped.set("expressions", [])
         return stripped.sql()
     return kind.sql()
+
+
+def _unnamed(col_def, table_name, source, diagnostics):
+    """A column definition the dialect reads with no name: said, and never a
+    column named ''. MySQL reads a name in double quotes as a string, so a
+    PostgreSQL migration read as MySQL gives one."""
+    if col_def.name:
+        return False
+    _diag(diagnostics, "warn", "column_unnamed", table_name,
+          "a column of %s in %s has no name as this dialect reads it, so it is left out: %s. "
+          "A name in double quotes is a string in MySQL; check sqlDialects.main"
+          % (table_name, source, col_def.sql().replace("\n", " ")[:80]))
+    return True
 
 
 def _column_record(col_def, schema, table_name):
@@ -417,6 +430,8 @@ def _apply_create(stmt, tables, schema, diagnostics, source, identifier_case="ex
     for col_def in col_defs:
         if not isinstance(col_def, exp.ColumnDef):
             continue  # PRIMARY KEY / INDEX / etc. are not columns
+        if _unnamed(col_def, table_name, source, diagnostics):
+            continue
         try:
             rec = _column_record(col_def, schema, table_name)
         except Exception as e:  # noqa: BLE001
@@ -484,6 +499,8 @@ def _apply_alter(stmt, tables, schema, diagnostics, source, identifier_case="exa
                   % (source, table_name))
             return
         if isinstance(action, exp.ColumnDef):          # ADD COLUMN
+            if _unnamed(action, tbl.name, source, diagnostics):
+                continue
             rec = _column_record(action, schema, tbl.name)
             if rec["column"] in tbl.columns:
                 # Re-adding an existing column is the same disagreement as a
@@ -510,6 +527,8 @@ def _apply_alter(stmt, tables, schema, diagnostics, source, identifier_case="exa
                 _diag(diagnostics, "warn", "alter_clause_unsupported", tbl.name,
                       "%s: MODIFY COLUMN on %s carries no column definition; ignored"
                       % (source, tbl.name))
+                continue
+            if _unnamed(col_def, tbl.name, source, diagnostics):
                 continue
             rec = _column_record(col_def, schema, tbl.name)
             old_ident = action.args.get("rename_from")

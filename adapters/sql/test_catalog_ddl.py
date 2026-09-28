@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/6")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/7")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/6",
+            "catalog-ddl/7",
         )
 
 
@@ -702,3 +702,28 @@ class IdentifierCaseTests(unittest.TestCase):
             identifier_case="fold-lower")
         self.assertEqual([r["column"] for r in recs if r["kind"] == "column"],
                          ["suppid", "name", "city"])
+
+
+class UnnamedColumnTests(unittest.TestCase):
+    """A PostgreSQL migration read as MySQL: a name in double quotes is a
+    string there, so a column comes out with no name. It is said, and never a
+    column named ''."""
+
+    DDL = 'CREATE TABLE "User" (\n  "id" TEXT NOT NULL,\n  "role" "Role" NOT NULL\n);\n'
+
+    def _read(self, dialect):
+        diagnostics = []
+        recs = catalog_ddl.parse_ddl_catalog_files([("migration.sql", self.DDL)], diagnostics=diagnostics, dialect=dialect)
+        return [r["column"] for r in recs if r.get("kind") == "column"], diagnostics
+
+    def test_a_column_with_no_name_is_left_out_and_said(self):
+        names, diagnostics = self._read("mysql")
+        self.assertNotIn("", names)
+        said = [d for d in diagnostics if d["code"] == "column_unnamed"]
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("sqlDialects.main", said[0]["message"])
+
+    def test_read_in_its_own_dialect_every_column_has_its_name(self):
+        names, diagnostics = self._read("postgres")
+        self.assertEqual(sorted(names), ["id", "role"])
+        self.assertEqual([d for d in diagnostics if d["code"] == "column_unnamed"], [])
