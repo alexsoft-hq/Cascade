@@ -29,7 +29,7 @@ import {
 } from '../src/mcp/federation_routes.mjs';
 import { block, limits, saysAnything, siblingBasis } from '../src/mcp/federation_report.mjs';
 import { crossDown, crossUp } from '../src/mcp/federation_cross.mjs';
-import { Graph, nodeId } from '../src/core/graph.mjs';
+import { Graph, nodeId, DEFAULT_WALK_DEPTH } from '../src/core/graph.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
@@ -67,7 +67,7 @@ test('chain steps: the direction is spelled out ONCE, and everything below reads
   const g = tinyGraph();
   const down = readWalkOptions(g, { start: START });
   assert.equal(down.up, false);
-  assert.equal(down.maxDepth, 6);
+  assert.equal(down.maxDepth, DEFAULT_WALK_DEPTH);
   assert.equal(down.follow.has('HANDLES'), true, 'walking down, a route is a step of the chain');
   const up = readWalkOptions(g, { start: START, direction: 'up' });
   assert.equal(up.up, true);

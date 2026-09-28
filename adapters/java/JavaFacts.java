@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/18";
+    static final String VERSION = "javafacts/19";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -413,42 +413,59 @@ public class JavaFacts {
 
         /**
          * EVERY METHOD NAME THIS FILE INVOKES, with the line of its first call
-         * (javafacts/16). One record per file, one entry per name, in name order.
+         * (javafacts/16), and what each call's receiver is declared as
+         * (javafacts/19). One record per file, one entry per name, in name order.
          *
          * What a call is FOR is not decided here. A rule pack names the calls
          * that mean something (src/core/rules/packs/spring-mvc.json names
          * setPathPrefixes and addPathPrefix, which set path prefixes in code),
-         * and the engine reads them from this record. The receiver is not
-         * asked about on purpose: those calls are made on a local
-         * (`mapping.setPathPrefixes(...)`), on a parameter
-         * (`configurer.addPathPrefix(...)`) or on a chain, which is exactly
-         * what the call scan skips.
+         * and the engine reads them from this record. A name alone does not say
+         * which method runs (`storage.addPathPrefix` is not Spring's), so each
+         * name carries its receivers, `[receiver, first line]` per distinct one:
+         * the type written where the receiver is declared (a local, a parameter,
+         * a field of the enclosing class, a `new X()` or a cast), as written;
+         * `this:<class>` for a call on the enclosing named class itself; and `?`
+         * where this file does not state it (a chain, a lambda parameter with no
+         * written type, an anonymous class's own call, a name declared twice).
+         * EVIDENCE ONLY: which of those types a rule means is src/core's.
          * The whole unit is walked, so a call in a field initializer, a lambda
          * or an anonymous class counts too. The line is the line of the NAME,
          * so a call at the end of a chain points at itself.
          */
         void emitInvocations(CompilationUnitTree unit) {
-            final java.util.TreeMap<String, Integer> first = new java.util.TreeMap<>();
-            unit.accept(new TreeScanner<Void, Void>() {
-                @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
-                    Tree sel = inv.getMethodSelect();
-                    String name = null;
-                    if (sel instanceof MemberSelectTree) name = ((MemberSelectTree) sel).getIdentifier().toString();
-                    else if (sel instanceof IdentifierTree) name = ((IdentifierTree) sel).getName().toString();
-                    // `this(...)` and `super(...)` call a constructor, not a method.
-                    if (name != null && !"this".equals(name) && !"super".equals(name)) {
-                        int line = nameLineOf(sel);
-                        Integer prev = first.get(name);
-                        if (prev == null || (line > 0 && (prev == 0 || line < prev))) first.put(name, line);
-                    }
-                    return super.visitMethodInvocation(inv, p);
+            final java.util.TreeMap<String, java.util.TreeMap<String, Integer>> seen = new java.util.TreeMap<>();
+            new InvocationScanner(pkg) {
+                @Override void found(String name, String receiver, Tree sel) {
+                    int line = nameLineOf(sel);
+                    java.util.TreeMap<String, Integer> byReceiver = seen.computeIfAbsent(name, k -> new java.util.TreeMap<>());
+                    Integer prev = byReceiver.get(receiver);
+                    if (prev == null || (line > 0 && (prev == 0 || line < prev))) byReceiver.put(receiver, line);
                 }
-            }, null);
-            if (first.isEmpty()) return;
+            }.scan(unit, null);
+            if (seen.isEmpty()) return;
+            List<Object> names = new ArrayList<>();
+            List<Object> lines = new ArrayList<>();
+            List<Object> receivers = new ArrayList<>();
+            for (Map.Entry<String, java.util.TreeMap<String, Integer>> e : seen.entrySet()) {
+                names.add(e.getKey());
+                int first = 0;
+                List<Object> list = new ArrayList<>();
+                for (Map.Entry<String, Integer> r : e.getValue().entrySet()) {
+                    int l = r.getValue();
+                    if (first == 0 || (l > 0 && l < first)) first = l;
+                    List<Object> pair = new ArrayList<>();
+                    pair.add(r.getKey());
+                    pair.add(l);
+                    list.add(pair);
+                }
+                lines.add(first);
+                receivers.add(list);
+            }
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("kind", "invocations");
-            r.put("names", new ArrayList<Object>(first.keySet()));
-            r.put("lines", new ArrayList<Object>(first.values()));
+            r.put("names", names);
+            r.put("lines", lines);
+            r.put("receivers", receivers);
             r.put("file", rel);
             sink.add("9invocations" + SEP + rel, r);
         }
@@ -2239,6 +2256,142 @@ public class JavaFacts {
         "Service", "Repository", "Component", "Controller", "RestController", "Named"));
 
     /** Strip parentheses and casts: they change nothing about which object this is. */
+    /**
+     * The receiver of every method call in one file, read from what the file
+     * writes and nothing else (emitInvocations says what it records). Names
+     * are scoped: a lambda's and a method's own names over the enclosing
+     * classes' fields, innermost first. A name one scope declares twice with
+     * two types is `?`, not either of them.
+     */
+    abstract static class InvocationScanner extends TreeScanner<Void, Void> {
+        static final String UNKNOWN = "?";
+        final String pkg;
+        final java.util.ArrayDeque<Map<String, String>> scopes = new java.util.ArrayDeque<>();
+        /** The enclosing classes, innermost first: a named one's fqn, or null for an anonymous one. */
+        final java.util.ArrayDeque<String> classes = new java.util.ArrayDeque<>();
+
+        InvocationScanner(String pkg) { this.pkg = pkg; }
+
+        abstract void found(String name, String receiver, Tree sel);
+
+        @Override public Void visitClass(ClassTree ct, Void p) {
+            String simple = ct.getSimpleName().toString();
+            String outer = classes.isEmpty() ? null : classes.peek();
+            String fqn = simple.isEmpty() ? null
+                    : (classes.isEmpty() ? (pkg.isEmpty() ? simple : pkg + "." + simple)
+                    : (outer == null ? null : outer + "." + simple));
+            Map<String, String> fields = new FieldScope();
+            for (Tree member : ct.getMembers()) {
+                if (member instanceof VariableTree) declare(fields, (VariableTree) member);
+            }
+            classes.push(fqn == null ? "" : fqn);
+            scopes.push(fields);
+            try { return super.visitClass(ct, p); } finally { scopes.pop(); classes.pop(); }
+        }
+
+        @Override public Void visitMethod(MethodTree m, Void p) {
+            Map<String, String> own = new LinkedHashMap<>();
+            for (VariableTree v : m.getParameters()) declare(own, v);
+            if (m.getBody() != null) collectLocals(m.getBody(), own);
+            scopes.push(own);
+            try { return super.visitMethod(m, p); } finally { scopes.pop(); }
+        }
+
+        @Override public Void visitLambdaExpression(com.sun.source.tree.LambdaExpressionTree le, Void p) {
+            Map<String, String> own = new LinkedHashMap<>();
+            for (VariableTree v : le.getParameters()) declare(own, v);
+            collectLocals(le.getBody(), own);
+            scopes.push(own);
+            try { return super.visitLambdaExpression(le, p); } finally { scopes.pop(); }
+        }
+
+        @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
+            Tree sel = inv.getMethodSelect();
+            String name = null;
+            String receiver = UNKNOWN;
+            if (sel instanceof MemberSelectTree) {
+                MemberSelectTree ms = (MemberSelectTree) sel;
+                name = ms.getIdentifier().toString();
+                receiver = receiverOf(ms.getExpression());
+            } else if (sel instanceof IdentifierTree) {
+                name = ((IdentifierTree) sel).getName().toString();
+                receiver = self();
+            }
+            // `this(...)` and `super(...)` call a constructor, not a method.
+            if (name != null && !"this".equals(name) && !"super".equals(name)) found(name, receiver, sel);
+            return super.visitMethodInvocation(inv, p);
+        }
+
+        /** The enclosing named class, as `this:<fqn>`; `?` inside an anonymous class. */
+        String self() {
+            String c = classes.isEmpty() ? "" : classes.peek();
+            return c.isEmpty() ? UNKNOWN : "this:" + c;
+        }
+
+        /** What a receiver expression is declared as, as far as this file writes it. */
+        String receiverOf(ExpressionTree expr) {
+            ExpressionTree e = expr;
+            if (e instanceof com.sun.source.tree.ParenthesizedTree) e = ((com.sun.source.tree.ParenthesizedTree) e).getExpression();
+            if (e instanceof com.sun.source.tree.TypeCastTree) return written(((com.sun.source.tree.TypeCastTree) e).getType());
+            if (e instanceof NewClassTree) {
+                NewClassTree nc = (NewClassTree) e;
+                return nc.getClassBody() != null ? UNKNOWN : written(nc.getIdentifier());
+            }
+            if (e instanceof IdentifierTree) {
+                String n = ((IdentifierTree) e).getName().toString();
+                if ("this".equals(n) || "super".equals(n)) return self();
+                for (Map<String, String> scope : scopes) {
+                    String t = scope.get(n);
+                    if (t != null) return t;
+                }
+                return UNKNOWN;
+            }
+            if (e instanceof MemberSelectTree) {
+                MemberSelectTree ms = (MemberSelectTree) e;
+                ExpressionTree base = ms.getExpression();
+                if (base instanceof IdentifierTree && "this".equals(((IdentifierTree) base).getName().toString())) {
+                    Map<String, String> fields = classFields();
+                    String t = fields == null ? null : fields.get(ms.getIdentifier().toString());
+                    return t != null ? t : UNKNOWN;
+                }
+            }
+            return UNKNOWN;
+        }
+
+        /** A class's own fields: the one kind of scope `this.x` reads. */
+        static final class FieldScope extends LinkedHashMap<String, String> {}
+
+        /** The innermost enclosing class's fields. */
+        Map<String, String> classFields() {
+            for (Map<String, String> scope : scopes) if (scope instanceof FieldScope) return scope;
+            return null;
+        }
+
+        static String written(Tree type) {
+            if (type == null || type instanceof ArrayTypeTree) return UNKNOWN;
+            String w = typeWrittenName(type);
+            return (w == null || "var".equals(w)) ? UNKNOWN : w;
+        }
+
+        /** Record one declaration: its written type, or `?` when it has none or a second one disagrees. */
+        static void declare(Map<String, String> scope, VariableTree v) {
+            String name = v.getName().toString();
+            String t = written(v.getType());
+            String prev = scope.get(name);
+            scope.put(name, (prev == null || prev.equals(t)) ? t : UNKNOWN);
+        }
+
+        /** Every local a body declares, outside the classes and lambdas inside it (those are scopes of their own). */
+        static void collectLocals(Tree body, final Map<String, String> into) {
+            if (body == null) return;
+            body.accept(new TreeScanner<Void, Void>() {
+                @Override public Void visitVariable(VariableTree v, Void p) { declare(into, v); return super.visitVariable(v, p); }
+                @Override public Void visitClass(ClassTree ct, Void p) { return null; }
+                @Override public Void visitLambdaExpression(com.sun.source.tree.LambdaExpressionTree le, Void p) { return null; }
+            }, null);
+        }
+    }
+
     static ExpressionTree unwrap(ExpressionTree e) {
         ExpressionTree cur = e;
         for (int i = 0; i < 8 && cur != null; i++) {

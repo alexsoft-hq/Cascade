@@ -20,7 +20,7 @@
 
 // edge-type list — every impact walk shares them, not just this one (an ignored
 // type is not "skipped by mode": nothing was withheld from you).
-import { GRADE_SETS, FLOW_EDGE_TYPES } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from './graph.mjs';
 
 // Grade rank for weakest-link math (mirrors the policy lattice).
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
@@ -63,7 +63,7 @@ export function readWalkOptions(graph, opts = {}) {
   }
   const up = direction === 'up';
   const mode = opts.mode ?? 'conservative';
-  const maxDepth = opts.maxDepth ?? 6;
+  const maxDepth = opts.maxDepth ?? DEFAULT_WALK_DEPTH;
   const maxNodes = opts.maxNodes ?? 4000;
   // Walking UP, an endpoint is a ROUTE, not code: the walk stops at the handler
   // method and the endpoints lane is read from that method's HANDLES in-edges
@@ -611,27 +611,30 @@ export function buildTables(graph, w, h, reachedStatements) {
   const agg = new Map(); // table node id -> accumulator
   if (!up) {
     for (const st of reachedStatements) {
-      const outs = graph.outEdges(st.id);
+      // The statement's own SQL edges are links of the path like every other:
+      // one below the mode's floor draws nothing, and one above it caps the row.
+      const outs = sqlEdgesAdmitted(graph, w, h, st);
       const touched = [];
       for (const e of outs) {
         if (e.type !== 'EXECUTES') continue;
+        const grade = weaker(st.grade, e.grade);
         let a = agg.get(e.to);
         if (!a) {
-          a = { id: e.to, hops: st.hops + 1, grade: st.grade, via: st, statements: 0, access: new Set(), reads: new Set(), writes: new Set(), http: st.http };
+          a = { id: e.to, hops: st.hops + 1, grade, via: { ...st, grade }, statements: 0, access: new Set(), reads: new Set(), writes: new Set(), http: st.http };
           agg.set(e.to, a);
         }
         a.statements += 1;
         a.access.add(graph.edgeAt(e.idx)?.evidence?.access ?? 'read');
         if (st.hops + 1 < a.hops) a.hops = st.hops + 1;
-        if (RANK[st.grade] > RANK[a.grade]) a.grade = st.grade;
+        if (RANK[grade] > RANK[a.grade]) a.grade = grade;
         // A table this walk reached WITHOUT crossing a hop is not "across the
         // hop", even if another statement reached it across one: the weakest
         // claim wins, and the weakest claim here is the shortest way in.
         if (st.http < a.http) a.http = st.http;
         // The statement to point the link at: strongest grade, then fewest hops,
         // then id — one deterministic representative, not "whichever came first".
-        if (RANK[st.grade] > RANK[a.via.grade]
-          || (RANK[st.grade] === RANK[a.via.grade] && (st.hops < a.via.hops || (st.hops === a.via.hops && st.id < a.via.id)))) a.via = st;
+        if (RANK[grade] > RANK[a.via.grade]
+          || (RANK[grade] === RANK[a.via.grade] && (st.hops < a.via.hops || (st.hops === a.via.hops && st.id < a.via.id)))) a.via = { ...st, grade };
         touched.push(a);
       }
       if (!touched.length) continue;
@@ -669,6 +672,25 @@ export function buildTables(graph, w, h, reachedStatements) {
   return { agg, tables };
 }
 
+
+/**
+ * A reached statement's EXECUTES, READS and WRITES edges this mode's floor
+ * admits. The ones it does not admit are counted, once: the BFS already counted
+ * them off a statement it expanded, so only a statement at the depth cap, which
+ * the BFS never expanded, is counted here.
+ */
+function sqlEdgesAdmitted(graph, w, h, st) {
+  const out = [];
+  const counted = st.hops < w.maxDepth;
+  for (const e of graph.outEdges(st.id)) {
+    if (e.type !== 'EXECUTES' && e.type !== 'READS' && e.type !== 'WRITES') continue;
+    if (w.allow.has(e.grade)) { out.push(e); continue; }
+    if (counted) continue;
+    h.cut.byMode += 1;
+    h.cut.byModeGrades[e.grade] = (h.cut.byModeGrades[e.grade] ?? 0) + 1;
+  }
+  return out;
+}
 
 /**
  * ENDPOINTS — derived from the reached handler methods' HANDLES in-edges the way

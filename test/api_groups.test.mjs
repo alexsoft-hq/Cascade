@@ -69,25 +69,57 @@ function prefixedGraph() {
   return g;
 }
 
-test('the TypeScript bridge writes a route\'s group below the global prefix, the version and the module path', () => {
+test('the TypeScript bridge writes a route\'s group below the global prefix and the version, and a module path is part of it', () => {
   const g = prefixedGraph();
   const group = (id) => g.nodes.get(`endpoint:${id}`)?.apiGroup;
   assert.equal(group('GET /api/v1/users'), 'users');
   assert.equal(group('GET /api/v1/users/{id}'), 'users');
-  // RouterModule gave AdminModule's controllers `admin`: that is where the
-  // application mounts the module, and the group is the controller's own path.
-  assert.equal(group('GET /api/v1/admin/queue/jobs'), 'queue');
+  // RouterModule gave AdminModule's controllers `admin`: a path the application
+  // chose for a part of itself, not where it is deployed, so it is the group.
+  assert.equal(group('GET /api/v1/admin/queue/jobs'), 'admin');
   assert.equal(group('GET /api/v1/sitemap.xml'), 'sitemap.xml');
   assert.equal(group('GET /api/v1'), ROOT_GROUP, 'a route with no path of its own is the root group');
+});
+
+test('router_module_path_is_part_of_api_group: two modules mounted at admin and public are two groups, though their controllers share a path', () => {
+  const files = prefixedApp().filter(([name]) => !['app.module.ts', 'admin.module.ts'].includes(name));
+  const module = (file, cls, ctl, ctlFile) => [`${file}.ts`, [
+    "import { Module } from '@nestjs/common';",
+    `import { ${ctl} } from './${ctlFile}';`,
+    `@Module({ controllers: [${ctl}] })`,
+    `export class ${cls} {}`,
+  ].join('\n')];
+  const controller = (file, cls) => [`${file}.ts`, [
+    "import { Controller, Get } from '@nestjs/common';",
+    "@Controller('users')",
+    `export class ${cls} { @Get() list() {} }`,
+  ].join('\n')];
+  const appModule = ['app.module.ts', [
+    "import { Module } from '@nestjs/common';",
+    "import { RouterModule } from '@nestjs/core';",
+    "import { AdminModule } from './admin.module';",
+    "import { PublicModule } from './public.module';",
+    '@Module({',
+    "  imports: [AdminModule, PublicModule, RouterModule.register([{ path: 'admin', module: AdminModule }, { path: 'public', module: PublicModule }])],",
+    '})',
+    'export class AppModule {}',
+  ].join('\n')];
+  const g = new Graph();
+  addTsFacts(g, recordsOf([...files, appModule,
+    module('admin.module', 'AdminModule', 'AdminUsersController', 'admin-users.controller'),
+    module('public.module', 'PublicModule', 'PublicUsersController', 'public-users.controller'),
+    controller('admin-users.controller', 'AdminUsersController'), controller('public-users.controller', 'PublicUsersController')]));
+  assert.equal(g.nodes.get('endpoint:GET /api/v1/admin/users')?.apiGroup, 'admin');
+  assert.equal(g.nodes.get('endpoint:GET /api/v1/public/users')?.apiGroup, 'public');
 });
 
 test('every view that groups routes reads the lane\'s group, and the first path segment where no lane wrote one', () => {
   const g = prefixedGraph();
   const groups = new Set(walkEndpoints(g).endpoints.map((ep) => ep.group));
-  assert.deepEqual([...groups].sort(), [ROOT_GROUP, 'queue', 'sitemap.xml', 'users']);
+  assert.deepEqual([...groups].sort(), [ROOT_GROUP, 'admin', 'sitemap.xml', 'users']);
   assert.ok(!groups.has('api'), 'no route falls into the deployment prefix');
   // coupling counts its groups off the same walk
-  assert.deepEqual(buildCoupling(g, {}).groups.map((x) => x.group).sort(), [ROOT_GROUP, 'queue', 'sitemap.xml', 'users']);
+  assert.deepEqual(buildCoupling(g, {}).groups.map((x) => x.group).sort(), [ROOT_GROUP, 'admin', 'sitemap.xml', 'users']);
   // a route another lane made, with no lane group, keeps the old rule
   assert.equal(groupOfEndpoint({ path: '/product/list/{id}' }), 'product');
   assert.equal(laneGroupOf({ path: '/api/v1/x' }), null);

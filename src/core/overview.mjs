@@ -21,7 +21,7 @@
 // come back WHOLE and sorted; the tool caps them and declares the cut.
 
 import { walkEndpoints, walkScreens, multiHandlerRoutes, handlersOf } from './walks.mjs';
-import { GRADE_SETS, FLOW_EDGE_TYPES } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from './graph.mjs';
 
 // The lattice order, strongest first — the order grades are reported in, so the
 // census reads the way the policy lattice does rather than by whichever grade
@@ -843,9 +843,12 @@ function codeBlock(o) {
     symbols: o.symbols, external: o.external, transactional: o.transactional,
     mapperMethods: o.mapperMethods.size, statementsWithoutMapper: o.statementsWithoutMapper,
     // The methods the walks pass through between a route's handler and its
-    // SQL, each once: the Flow tab's services lane, over every route. A
-    // controller method, a frontend function and a mapper method are not one.
-    // A reach, not a census: a method no route's walk gets to is not here.
+    // SQL, each once, over every route: the Flow tab's services lane, and a
+    // method that sends its SQL from its own body (a service calling the ORM),
+    // which Flow folds into the statement it sends. A controller method, a
+    // frontend function and a mapper or repository method that only declares
+    // a statement are not one. A reach, not a census: a method no route's walk
+    // gets to is not here.
     services: o.servicesReached,
     // What the MyBatis-Plus lane added to the CODE axis: entities mapped,
     // built-in statements generated, and how many of those name their columns
@@ -863,7 +866,7 @@ function codeBlock(o) {
 export function buildOverview(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new OverviewError(`unknown mode: ${JSON.stringify(mode)}`);
-  const depth = opts.depth ?? 8;
+  const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
   if (!Number.isInteger(depth) || depth < 1) throw new OverviewError(`depth must be a positive integer, got ${depth}`);
   const lanes = Array.isArray(opts.lanes) ? opts.lanes : null;
   const laneStats = opts.laneStats && typeof opts.laneStats === 'object' ? opts.laneStats : null;

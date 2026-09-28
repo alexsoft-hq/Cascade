@@ -15,8 +15,9 @@ import { codeSettingsIn } from './rules/kinds/java_code_setting.mjs';
 /** How many call sites one diagnostic names before it counts the rest. */
 const SITES_SHOWN = 3;
 
-/** `file:line calls On.method`, the way a reader goes and looks. */
-const siteOf = (f) => `${f.file ?? '(unknown file)'}${f.line ? `:${f.line}` : ''} calls ${f.on}.${f.method}`;
+/** `file:line calls On.method`, the way a reader goes and looks; a receiver nobody proved is said as one. */
+const siteOf = (f) => `${f.file ?? '(unknown file)'}${f.line ? `:${f.line}` : ''} calls `
+  + (f.proof === 'import' ? `${f.method} on a receiver whose type is not read, in a file that imports ${f.on}` : `${f.on}.${f.method}`);
 
 /**
  * One diagnostic per rule whose calls the Java facts show while the profile
@@ -34,13 +35,22 @@ export function codeSettingDiagnostics(javaFacts, profile, rules = builtinRegist
     if (!byRule.has(f.rule)) byRule.set(f.rule, []);
     byRule.get(f.rule).push(f);
   }
-  return [...byRule.values()].map((found) => {
-    const { rule, setting, effect } = found[0];
-    const more = found.length > SITES_SHOWN ? ` and ${found.length - SITES_SHOWN} more` : '';
-    return {
-      kind: 'SETTING_IN_CODE', severity: 'warn', key: setting,
-      reason: `${found.slice(0, SITES_SHOWN).map(siteOf).join('; ')}${more}: ${effect}. `
-        + `This engine does not read a setting made in code, so declare it as \`${setting}\` in the profile (rule ${rule})`,
-    };
-  });
+  return [...byRule.values()].map(settingDiagnostic);
+}
+
+/**
+ * One rule's calls, said: the ones whose receiver proves them first, since they
+ * are what a reader acts on. With none proved it is a lower note, and says so.
+ */
+function settingDiagnostic(all) {
+  const found = [...all.filter((f) => f.proof !== 'import'), ...all.filter((f) => f.proof === 'import')];
+  const { rule, setting, effect } = found[0];
+  const proven = found[0].proof !== 'import';
+  const more = found.length > SITES_SHOWN ? ` and ${found.length - SITES_SHOWN} more` : '';
+  return {
+    kind: 'SETTING_IN_CODE', severity: proven ? 'warn' : 'info', key: setting,
+    reason: `${found.slice(0, SITES_SHOWN).map(siteOf).join('; ')}${more}: `
+      + `${proven ? '' : 'none of these receivers is proven to be the type the rule names; if one is, '}${effect}. `
+      + `This engine does not read a setting made in code, so declare it as \`${setting}\` in the profile (rule ${rule})`,
+  };
 }

@@ -5,6 +5,7 @@
 // that a group nobody declared is where code sits and not a business boundary,
 // and when one box still holds most of the routes.
 
+import { DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
 import { buildSummary, SUMMARY_LIMIT } from '../core/summary.mjs';
 import { NO_STATE_TRUST_LEVEL } from '../core/trust.mjs';
 import { makeResponse } from './contract.mjs';
@@ -42,7 +43,7 @@ function familyLimit(rule) {
 function readArgs(args) {
   const mode = args.mode ?? 'conservative';
   if (!MODES.includes(mode)) throw new ToolError('bad-input', `mode must be ${MODES.join(', ')}`);
-  const depth = args.depth ?? 8;
+  const depth = args.depth ?? DEFAULT_WALK_DEPTH;
   if (!Number.isInteger(depth) || depth < 1 || depth > 12) throw new ToolError('bad-input', 'depth must be a whole number from 1 to 12');
   const limit = args.limit ?? SUMMARY_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_MAX) throw new ToolError('bad-input', `limit must be a whole number from 1 to ${LIMIT_MAX}`);

@@ -11,13 +11,18 @@
 // records them (`invocations`). The rule packs say WHICH names set WHICH profile
 // key (src/core/rules/packs/).
 //
-// A NAME IS NOT A RECEIVER. The worker records the names a file calls, not what
-// it calls them on, so `addPathPrefix("/backup")` on a class's own method reads
-// the same as the Spring one. A rule therefore names, in full, the types that
-// declare each method (`types`), and a call is read as the setting only in a
-// file that can name one of them without spelling it out: it imports that type,
-// or its package whole, or sits in that package. A call written on a type spelled
-// in full in the code is missed, never guessed.
+// A NAME IS NOT A RECEIVER. `addPathPrefix("/backup")` on a class's own method
+// is not Spring's. A rule names, in full, the types that declare each method
+// (`types`), and the worker records what each call's receiver is declared as
+// (javafacts/19): a call is the setting (`proof: 'receiver'`) when that declared
+// type is one of them, written in full or by a simple name the file imports
+// (the type or its package) or shares a package with, or when the call is on a
+// class whose own extends or implements clause names one of them that way. A
+// receiver the file does not state (a chain, an untyped lambda parameter) proves
+// nothing either way: in a file that can name one of the types it is said as a
+// lower note (`proof: 'import'`), and elsewhere it is not said. A receiver
+// declared as another type, or as a subclass of the rule's type that the source
+// does not show in this file, is missed, never guessed.
 //
 // It draws no edge and grades nothing. What it finds becomes a diagnostic when
 // the profile leaves the key undeclared (src/core/code_settings.mjs); a
@@ -72,8 +77,9 @@ function validateExample(example) {
   if (!isText(example.source)) errors.push('an example needs a Java "source"');
   if (!Array.isArray(example.expect)) return [...errors, 'an example needs "expect", the calls its source makes that the rule names (empty for none)'];
   example.expect.forEach((e, i) => {
-    if (!isObj(e) || typeof e.method !== 'string' || !Number.isInteger(e.line) || unknownKeys(e, ['method', 'line']).length > 0) {
-      errors.push(`expect[${i}] must be {method, line}`);
+    if (!isObj(e) || typeof e.method !== 'string' || !Number.isInteger(e.line) || !PROOFS.includes(e.proof)
+      || unknownKeys(e, ['method', 'line', 'proof']).length > 0) {
+      errors.push(`expect[${i}] must be {method, line, proof} with proof one of ${PROOFS.join(', ')}`);
     }
   });
   return errors;
@@ -86,6 +92,10 @@ function compile(rule) {
 }
 
 const NOTHING_VISIBLE = Object.freeze({ types: new Set(), packages: new Set() });
+/** How a call was read as the setting: its receiver's declared type says so, or only its file's imports allow it. */
+const PROOFS = Object.freeze(['receiver', 'import']);
+/** What the worker writes for a receiver the file does not state. */
+const UNSTATED = '?';
 const packageOf = (fqn) => fqn.slice(0, fqn.lastIndexOf('.'));
 
 /**
@@ -109,16 +119,52 @@ function visibleByFile(javaFacts) {
 /** Whether a file can name one of the types that declare the method. */
 const receiverShown = (call, visible) => call.types.some((t) => visible.types.has(t) || visible.packages.has(packageOf(t)));
 
-/** What one `invocations` record holds that one compiled rule names, on a type its file can name. */
-function foundIn(record, compiled, visible) {
+/** A type as a file writes it, read as one of the call's types: in full, or by the simple name the file can name it by. */
+const namesType = (written, call, visible) => (written.includes('.') ? call.types.includes(written) : written === call.on && receiverShown(call, visible));
+
+/** Whether a class's own extends or implements clause names one of the call's types. */
+function classIsType(fqn, call, visible, typesByFqn) {
+  const t = typesByFqn.get(fqn);
+  if (!t) return false;
+  const written = [t.extendsWritten ?? t.extends, ...(t.implementsWritten ?? t.implements ?? [])];
+  return written.some((w) => typeof w === 'string' && namesType(w, call, visible));
+}
+
+/** What one receiver proves: 'receiver', 'import', or null for a call that is not the setting. */
+function proofOf(receiver, call, visible, typesByFqn) {
+  if (receiver === UNSTATED) return receiverShown(call, visible) ? 'import' : null;
+  if (receiver.startsWith('this:')) return classIsType(receiver.slice('this:'.length), call, visible, typesByFqn) ? 'receiver' : null;
+  return namesType(receiver, call, visible) ? 'receiver' : null;
+}
+
+/** A name's receivers, `[receiver, line]` each; a record from before javafacts/19 states none. */
+const receiversAt = (record, i) => (Array.isArray(record.receivers?.[i]) ? record.receivers[i] : [[UNSTATED, record.lines?.[i]]]);
+
+/** Whether one site beats the best so far: a proved receiver over an import, then the earlier line. */
+const beats = (site, best) => !best || (site.proof === 'receiver' && best.proof !== 'receiver')
+  || (site.proof === best.proof && (site.line ?? 0) < (best.line ?? 0));
+
+/** The best-proved site of one name: the first call whose receiver proves it, else the first its imports allow. */
+function siteOf(record, i, call, visible, typesByFqn) {
+  let best = null;
+  for (const [receiver, line] of receiversAt(record, i)) {
+    const proof = typeof receiver === 'string' ? proofOf(receiver, call, visible, typesByFqn) : null;
+    const site = proof ? { proof, line: Number.isInteger(line) ? line : null } : null;
+    if (site && beats(site, best)) best = site;
+  }
+  return best;
+}
+
+/** What one `invocations` record holds that one compiled rule names, as proved as its receivers allow. */
+function foundIn(record, compiled, visible, typesByFqn) {
   const names = Array.isArray(record.names) ? record.names : [];
-  const lines = Array.isArray(record.lines) ? record.lines : [];
   return names.flatMap((method, i) => {
     const call = compiled.calls.get(method);
-    if (!call || !receiverShown(call, visible)) return [];
+    const site = call ? siteOf(record, i, call, visible, typesByFqn) : null;
+    if (!site) return [];
     return [{
       rule: compiled.rule, setting: compiled.setting, effect: compiled.effect,
-      method, on: call.on, file: record.file ?? null, line: Number.isInteger(lines[i]) ? lines[i] : null,
+      method, on: call.on, file: record.file ?? null, line: site.line, proof: site.proof,
     }];
   });
 }
@@ -127,24 +173,25 @@ const byPlace = (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0)
   || String(a.file).localeCompare(String(b.file)) || (a.line ?? 0) - (b.line ?? 0) || a.method.localeCompare(b.method);
 
 /**
- * Every call the rules name, in the Java worker's records, made in a file that
- * can name a type that declares it: which rule, which setting, the method and
- * that type, and where. A call of the same name in a file that cannot name any
- * of them is some other method, and is not here.
+ * Every call the rules name, in the Java worker's records, with how it was
+ * proved: its receiver's declared type (`receiver`), or only its file's imports
+ * where the receiver is not stated (`import`). A call whose receiver is declared
+ * as another type is some other method, and is not here.
  *
  * @param {object[]} javaFacts  the assembled worker records
  * @param {{compiled:object}[]} rules  the `java.code-setting` rules
- * @returns {{rule:string, setting:string, effect:string, method:string, on:string, file:(string|null), line:(number|null)}[]}
+ * @returns {{rule:string, setting:string, effect:string, method:string, on:string, file:(string|null), line:(number|null), proof:string}[]}
  */
 export function codeSettingsIn(javaFacts, rules) {
   const facts = Array.isArray(javaFacts) ? javaFacts : [];
   const records = facts.filter((r) => r && r.kind === 'invocations');
   const visible = visibleByFile(facts);
+  const typesByFqn = new Map(facts.filter((r) => r && r.kind === 'type' && typeof r.fqn === 'string').map((r) => [r.fqn, r]));
   const seen = (r) => visible.get(r.file) ?? NOTHING_VISIBLE;
-  return rules.flatMap((entry) => records.flatMap((r) => foundIn(r, entry.compiled, seen(r)))).sort(byPlace);
+  return rules.flatMap((entry) => records.flatMap((r) => foundIn(r, entry.compiled, seen(r), typesByFqn))).sort(byPlace);
 }
 
-const canonical = (list) => JSON.stringify(list.map((e) => `${e.method}:${e.line}`).sort());
+const canonical = (list) => JSON.stringify(list.map((e) => `${e.method}:${e.line}:${e.proof}`).sort());
 
 /**
  * Every example run through the real Java worker once, as `java.type-role`
@@ -157,7 +204,7 @@ function runExamples(entries, env) {
   return {
     results: new Map(entries.map((entry) => [entry.id, entry.rule.examples.map((ex, i) => {
       const own = facts.filter((r) => r.file === `${entry.id}/example${i}.java`);
-      const got = codeSettingsIn(own, [entry]).map((f) => ({ method: f.method, line: f.line }));
+      const got = codeSettingsIn(own, [entry]).map((f) => ({ method: f.method, line: f.line, proof: f.proof }));
       return { example: ex, passed: canonical(got) === canonical(ex.expect), got };
     })])),
   };

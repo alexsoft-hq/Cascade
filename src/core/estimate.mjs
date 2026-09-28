@@ -20,6 +20,7 @@
 // Pure: graph/discovery/profile in, plain object out. `bin/cascade.mjs` does the
 // filesystem work and the printing.
 
+import { DEFAULT_WALK_DEPTH } from './graph.mjs';
 import { walkEndpoints } from './walks.mjs';
 import { screenAxisOf } from './lanes.mjs';
 import { SCREEN_PACKS } from './discover.mjs';
@@ -498,7 +499,7 @@ export function measurePack(graph, opts = {}) {
   for (const node of graph.nodes.values()) if (node.kind === 'endpoint') endpoints += 1;
   if (endpoints > 0) {
     const { endpoints: rows } = walkEndpoints(graph, {
-      mode: opts.mode ?? 'conservative', depth: opts.depth ?? 8,
+      mode: opts.mode ?? 'conservative', depth: opts.depth ?? DEFAULT_WALK_DEPTH,
     });
     endpointsReaching = rows.filter((r) => r.statements.length > 0).length;
   }

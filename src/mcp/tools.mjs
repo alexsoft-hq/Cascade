@@ -15,7 +15,7 @@
 // when the code axis (Java lane) lands, the same tools gain candidate grades and
 // the response contract already carries them.
 
-import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS } from '../core/graph.mjs';
+import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
 import { changeImpact } from '../core/overlay.mjs';
 import { chainWalk, nodeLabel } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
@@ -883,7 +883,7 @@ export function erd(graph, args, ctx) {
 // of its own, so the crossing uses the DEFAULT walk `map` and `flow` use, and
 // the answer says so in `limits` rather than leaving the reader to guess.
 const ERD_FEDERATION_MODE = 'conservative';
-const ERD_FEDERATION_DEPTH = 8;
+const ERD_FEDERATION_DEPTH = DEFAULT_WALK_DEPTH;
 
 /**
  * ONE CLUSTER PER CONNECTED PROJECT: the tables a request from this project
@@ -1073,7 +1073,7 @@ export function coupling(graph, args, ctx) {
   if (axis !== 'column' && axis !== 'table') throw new ToolError('bad-input', 'axis must be column | table');
   const mode = reachMode(args.mode || 'conservative');
   if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
-  const depth = clamp(args.depth, 1, 8, 8);
+  const depth = clamp(args.depth, 1, 8, DEFAULT_WALK_DEPTH);
   const limit = clamp(args.limit, 1, 500, 50);
   const offset = clamp(args.offset, 0, Number.MAX_SAFE_INTEGER, 0);
 
@@ -1198,7 +1198,7 @@ export function coupling(graph, args, ctx) {
 function mapArgs(args) {
   const mode = reachMode(args.mode || 'conservative');
   if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
-  const depth = clamp(args.depth, 1, 8, 8);
+  const depth = clamp(args.depth, 1, 8, DEFAULT_WALK_DEPTH);
   const limit = clamp(args.limit, 1, MAP_LIMIT_MAX, MAP_LIMIT_DEFAULT);
   // The node cap is in the wrong unit for §13's promise. MEASURED on a 400-table
   // / 3 800-endpoint pack: 4 227 nodes (well under the 6 000 default) carry
@@ -1505,7 +1505,7 @@ export function overview(graph, args, ctx) {
   args = args || {};
   const mode = reachMode(args.mode || 'conservative');
   if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
-  const depth = clamp(args.depth, 1, 8, 8);
+  const depth = clamp(args.depth, 1, 8, DEFAULT_WALK_DEPTH);
 
   // The pack's own metadata: the server holds it, this tool only relays it. A
   // server that supplied none says so in `limits` rather than inventing a name.
@@ -1957,14 +1957,10 @@ export function flow(graph, args, ctx) {
 
   const mode = reachMode(args.mode || 'conservative');
   if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
-  // Measured on mall: the deepest a column sits below its nearest endpoint is 8
-  // hops, so the reverse walk defaults to the full 8 and the node cap is the
-  // real guard. Walking down, 6 already reaches the tables on every endpoint.
-  // A SCREEN IS FURTHER OUT than a handler: its own function, the api function
-  // it calls, the route, the handler, the service, the mapper, the statement is
-  // seven hops before a table is even in sight. So a screen entry defaults to
-  // the full 8, the way the reverse walk does.
-  const depth = clamp(args.depth, 1, 8, (up || entryKind === 'screen') ? 8 : 6);
+  // One default for every walk from a route, the census's (graph.mjs): Flow
+  // walking 6 showed a route no statement that the census, walking 8, counted.
+  // The node cap is the real guard on a wide picture.
+  const depth = clamp(args.depth, 1, 8, DEFAULT_WALK_DEPTH);
   const limit = clamp(args.limit, 1, 200, 40);
   // Paging a walk would page a picture: the lists are one connected drawing, so
   // a caller wanting more raises the limit rather than sliding a window.
@@ -2366,7 +2362,7 @@ export function search(graph, args, ctx) {
 
 const BROWSE_CENSUS = new WeakMap();
 const BROWSE_CENSUS_MODE = 'conservative';
-const BROWSE_CENSUS_DEPTH = 8;
+const BROWSE_CENSUS_DEPTH = DEFAULT_WALK_DEPTH;
 const EMPTY_SET = Object.freeze(new Set());
 
 /**

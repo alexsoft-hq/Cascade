@@ -6,7 +6,7 @@
     {
       "id": "spring-mvc.path-prefixes",
       "kind": "java.code-setting",
-      "description": "RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix (in Spring MVC and in WebFlux) serve the controllers a predicate picks under a path prefix. The predicate is a lambda over the controller class and the prefix is often read from a property. This engine reads neither (a prefix written as a constant is readable in principle, and is not read either), so a call to one of them means the routes this pack records may lack their prefix, and the profile's pathPrefixes key is where a project says what they are. A call counts only in a file that imports the type that declares the method, or its package whole: the worker records the names a file calls and not what it calls them on, so a method of the same name on another class is not this setting. A declared key is taken as the project's word; the call is only said when the key is empty.",
+      "description": "RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix (in Spring MVC and in WebFlux) serve the controllers a predicate picks under a path prefix. The predicate is a lambda over the controller class and the prefix is often read from a property. This engine reads neither (a prefix written as a constant is readable in principle, and is not read either), so a call to one of them means the routes this pack records may lack their prefix, and the profile's pathPrefixes key is where a project says what they are. A call is this setting when its receiver is declared as the type that declares the method (written in full, or by a name its file imports), or when it is made on a class that extends that type; a receiver declared as another type is another method. A receiver the file does not state (a chain, an untyped lambda parameter) proves nothing, and in a file that imports the type it is said as a lower note, not as the setting. A declared key is taken as the project's word; the call is only said when the key is empty.",
       "why": "ruoyi-vue-pro serves every admin controller under /admin-api and every app controller under /app-api, from setPathPrefixes in YudaoWebAutoConfiguration with both values defaulted in WebProperties. Every route was recorded without its prefix, and nothing said why.",
       "params": {
         "setting": "pathPrefixes",
@@ -27,17 +27,17 @@
       "examples": [
         {
           "source": "package p;\nimport org.springframework.boot.autoconfigure.web.servlet.WebMvcRegistrations;\nimport org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;\npublic class WebConfig {\n    public WebMvcRegistrations registrations() {\n        return new WebMvcRegistrations() {\n            @Override public RequestMappingHandlerMapping getRequestMappingHandlerMapping() {\n                RequestMappingHandlerMapping mapping = new RequestMappingHandlerMapping();\n                mapping.setPathPrefixes(prefixes());\n                return mapping;\n            }\n        };\n    }\n}\n",
-          "expect": [{ "method": "setPathPrefixes", "line": 9 }],
+          "expect": [{ "method": "setPathPrefixes", "line": 9, "proof": "receiver" }],
           "why": "the shape ruoyi-vue-pro writes: a mapping built inside a WebMvcRegistrations and told its prefixes, on a local"
         },
         {
           "source": "package p;\nimport org.springframework.web.bind.annotation.RestController;\nimport org.springframework.web.method.HandlerTypePredicate;\nimport org.springframework.web.servlet.config.annotation.PathMatchConfigurer;\nimport org.springframework.web.servlet.config.annotation.WebMvcConfigurer;\npublic class ApiConfig implements WebMvcConfigurer {\n    @Override public void configurePathMatch(PathMatchConfigurer configurer) {\n        configurer\n            .setUseTrailingSlashMatch(false)\n            .addPathPrefix(\"/api\", HandlerTypePredicate.forAnnotation(RestController.class));\n    }\n}\n",
-          "expect": [{ "method": "addPathPrefix", "line": 10 }],
-          "why": "at the end of a chain on a parameter, and the line is the one the name is written on"
+          "expect": [{ "method": "addPathPrefix", "line": 10, "proof": "import" }],
+          "why": "at the end of a chain on a parameter, and the line is the one the name is written on; the chain's type is what setUseTrailingSlashMatch returns, which is not read, so the file's import is all that allows it"
         },
         {
           "source": "package p;\nimport org.springframework.web.reactive.config.PathMatchConfigurer;\nimport org.springframework.web.reactive.config.WebFluxConfigurer;\npublic class FluxConfig implements WebFluxConfigurer {\n    @Override public void configurePathMatching(PathMatchConfigurer configurer) {\n        configurer.addPathPrefix(\"/v1\", c -> c.getPackageName().startsWith(\"com.acme.v1\"));\n        configurer.addPathPrefix(\"/v2\", c -> c.getPackageName().startsWith(\"com.acme.v2\"));\n    }\n}\n",
-          "expect": [{ "method": "addPathPrefix", "line": 6 }],
+          "expect": [{ "method": "addPathPrefix", "line": 6, "proof": "receiver" }],
           "why": "WebFlux has the same method; a file that calls it twice is said once, at its first call"
         },
         {
@@ -52,9 +52,12 @@
         },
         {
           "source": "package p;\nimport org.springframework.web.servlet.config.annotation.*;\npublic class ApiConfig implements WebMvcConfigurer {\n    @Override public void configurePathMatch(PathMatchConfigurer c) {\n        c.addPathPrefix(\"/api\", t -> true);\n    }\n}\n",
-          "expect": [{ "method": "addPathPrefix", "line": 5 }],
+          "expect": [{ "method": "addPathPrefix", "line": 5, "proof": "receiver" }],
           "why": "a package imported whole names PathMatchConfigurer as well as an import of the one type does"
-        }
+        },
+        { "source": "package p;\npublic class FullyQualified {\n    void config(org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping mapping) {\n        mapping.setPathPrefixes(null);\n    }\n}\n", "expect": [{"method": "setPathPrefixes", "line": 4, "proof": "receiver" }], "why": "a receiver declared with the type written in full needs no import"},
+        { "source": "package p;\nimport org.springframework.web.servlet.config.annotation.PathMatchConfigurer;\npublic class UnrelatedSetting {\n    void config(PathMatchConfigurer ignored, Storage storage) {\n        storage.addPathPrefix(\"/backup\");\n    }\n}\n", "expect": [], "why": "the file imports PathMatchConfigurer, and the call is on a Storage: an import says what a file can name, not what a receiver is"},
+        { "source": "package p;\nimport org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;\npublic class PrefixedMapping extends RequestMappingHandlerMapping {\n    public PrefixedMapping() {\n        setPathPrefixes(null);\n    }\n}\n", "expect": [{"method": "setPathPrefixes", "line": 5, "proof": "receiver" }], "why": "a mapping of the project's own calls the method on itself, and its extends clause names the type"}
       ]
     }
   ]

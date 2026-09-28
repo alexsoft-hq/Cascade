@@ -23,7 +23,7 @@
 // Pure: graph in, plain result out — no contract, no paging, no DOM.
 
 import { chainWalk, frontendCallsOf } from './chain.mjs';
-import { GRADE_SETS, FLOW_EDGE_TYPES } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from './graph.mjs';
 
 // Re-exported from here because this is the module a reader looks in for the
 // endpoint helpers; it LIVES in chain.mjs because the chain walk needs it and
@@ -268,7 +268,7 @@ export function multiHandlerRoutes(graph) {
 export function walkEndpoints(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new WalkError(`unknown mode: ${JSON.stringify(mode)}`);
-  const depth = opts.depth ?? 8;
+  const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
   if (!Number.isInteger(depth) || depth < 1) throw new WalkError(`depth must be a positive integer, got ${depth}`);
 
   let endpoints = [];
@@ -310,10 +310,7 @@ export function walkEndpoints(graph, opts = {}) {
   const walk = { starts: 0, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints };
   const how = { mode, depth, maxNodes: opts.maxNodes ?? null, services: new Set() };
   for (const ep of endpoints) {
-    const handlers = handlerStartsOf(graph, ep.id, mode);
-    // A route whose every handler sits below this mode's floor starts at
-    // itself: the walk then steps nowhere, and says the floor is why.
-    const starts = handlers.length ? handlers : [{ id: ep.id, grade: 'EXACT' }];
+    const { handlers, starts } = censusStartsOf(graph, ep.id, mode, walk);
     ep.handlers = handlers.length;
     if (handlers.length > 1) walk.multiHandlerEndpoints += 1;
     const reached = new Map(); // statement node id -> weakest path grade
@@ -334,11 +331,46 @@ export function walkEndpoints(graph, opts = {}) {
 }
 
 /**
+ * Where the census walks one route from: the handlers this mode admits, or the
+ * route itself when it admits none (the walk then steps nowhere, and its floor
+ * count says why). A handler below the floor beside one it admits is a link the
+ * census did not follow, and is counted here as one; with none admitted, the
+ * walk from the route counts them itself.
+ */
+function censusStartsOf(graph, endpointId, mode, walk) {
+  const handlers = handlerStartsOf(graph, endpointId, mode);
+  if (handlers.length === 0) return { handlers, starts: [{ id: endpointId, grade: 'EXACT' }] };
+  const allow = GRADE_SETS[mode];
+  for (const e of graph.outEdges(endpointId)) {
+    if (e.type !== 'HANDLES' || allow.has(e.grade)) continue;
+    walk.byMode += 1;
+    walk.byModeGrades[e.grade] = (walk.byModeGrades[e.grade] ?? 0) + 1;
+  }
+  return { handlers, starts: handlers };
+}
+
+/**
+ * The code methods one walk passed between a route's handler and its SQL: the
+ * Flow tab's services lane, and the methods that send a statement from a call
+ * in their own body (a NestJS service calling Prisma, a DAO calling
+ * sqlSession), which Flow folds into the statement they send. A method that
+ * only declares a statement (a MyBatis mapper method, a repository method) is
+ * the statement's, not a service; the binding edge says which by naming the
+ * line it is sent from. A route's own handler is never one, nor a library
+ * method the lane only saw referenced.
+ */
+function servicesOf(graph, w) {
+  const senders = w.statements.map((s) => s.path?.[s.path.length - 1])
+    .filter((e) => e && e.type === 'IMPLEMENTS_STMT' && e.evidence?.line != null)
+    .map((e) => e.from).filter((id) => graph.nodes.get(id)?.file);
+  const rows = w.services.filter((s) => !s.external).map((s) => `symbol:${s.id}`);
+  return [...new Set([...rows, ...senders])].filter((id) => !graph.inEdges(id).some((e) => e.type === 'HANDLES'));
+}
+
+/**
  * The statements one start reaches, walked once whatever how many routes start
  * there, and its cuts added to the census the first time. Its `services` are
- * the methods the Flow tab draws between a route's handler and its SQL: a
- * route's own handler is never one of them, and neither is a library method
- * the lane only saw referenced.
+ * servicesOf's.
  */
 function walkedFrom(graph, start, { mode, depth, maxNodes, services }, walkCache, walk) {
   const known = walkCache.get(start);
@@ -349,8 +381,7 @@ function walkedFrom(graph, start, { mode, depth, maxNodes, services }, walkCache
   });
   const cached = {
     statements: w.statements.map((s) => ({ id: `statement:${s.id}`, grade: s.grade })),
-    services: w.services.filter((s) => !s.external).map((s) => `symbol:${s.id}`)
-      .filter((id) => !graph.inEdges(id).some((e) => e.type === 'HANDLES')),
+    services: servicesOf(graph, w),
     cutDepth: w.cut.depth,
   };
   walkCache.set(start, cached);
@@ -399,7 +430,7 @@ function walkedFrom(graph, start, { mode, depth, maxNodes, services }, walkCache
 export function walkScreens(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new WalkError(`unknown mode: ${JSON.stringify(mode)}`);
-  const depth = opts.depth ?? 8;
+  const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
   if (!Number.isInteger(depth) || depth < 1) throw new WalkError(`depth must be a positive integer, got ${depth}`);
 
   const ids = [];

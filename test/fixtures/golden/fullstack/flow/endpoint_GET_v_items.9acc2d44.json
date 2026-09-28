@@ -24,7 +24,7 @@
       "walk": {
         "mode": "conservative",
         "direction": "down",
-        "depth": 6,
+        "depth": 8,
         "walked": 0,
         "other": 0,
         "byLinkGrade": {

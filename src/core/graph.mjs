@@ -72,6 +72,13 @@ const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND
 /** The same rank, for anything that has to count "this grade or stronger" (src/core/calibration.mjs). */
 export const GRADE_RANK = RANK;
 
+/**
+ * How deep every walk from a route goes when nobody says: the census, the map,
+ * coupling and a Flow picture alike. Two defaults (Flow walked 6, the census 8)
+ * showed one route a statement in the census and none in Flow.
+ */
+export const DEFAULT_WALK_DEPTH = 8;
+
 // Query grade sets (SPEC §3.3).
 export const GRADE_SETS = Object.freeze({
   strict: new Set(['EXACT']),

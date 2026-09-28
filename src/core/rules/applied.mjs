@@ -10,13 +10,16 @@
 // attribute called `evidence`, or ending in `Evidence`, whose `rule` is a
 // string. A lane that marks its nodes that way is counted with no change here.
 
-/** The rule ids a node's evidence blocks name, in attribute order. */
+/**
+ * The rule ids a node's evidence blocks name, in attribute order, each once: two
+ * blocks that name one rule are one node that rule marked, not two.
+ */
 function nodeRules(n) {
-  const out = [];
+  const out = new Set();
   for (const [k, v] of Object.entries(n)) {
-    if ((k === 'evidence' || k.endsWith('Evidence')) && v && typeof v.rule === 'string') out.push(v.rule);
+    if ((k === 'evidence' || k.endsWith('Evidence')) && v && typeof v.rule === 'string') out.add(v.rule);
   }
-  return out;
+  return [...out];
 }
 
 /**

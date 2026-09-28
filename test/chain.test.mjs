@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nodeId, buildGraph, Graph, FLOW_EDGE_TYPES } from '../src/core/graph.mjs';
+import { nodeId, buildGraph, Graph, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
 import { chainWalk, nodeLabel, weakestOf, ChainError } from '../src/core/chain.mjs';
@@ -110,7 +110,7 @@ test('chainWalk: hops per column — services at 1-2, statements at 4, tables at
   // columns the reached statements actually read/write — a table's DECLARES
   // edges are schema, not execution, so q.id (nobody touches it) is not walked.
   assert.equal(w.walked, 13);
-  assert.equal(w.depth, 6);
+  assert.equal(w.depth, DEFAULT_WALK_DEPTH, 'the one default every walk from a route shares');
   assert.equal(w.mode, 'conservative');
 });
 
@@ -208,7 +208,7 @@ test('chainWalk: JOINS and DECLARES are schema, not execution — never walked, 
   assert.equal(w.cut.byMode, 0);   // an out-of-scope type is NOT "skipped by the mode"
   // opting back in proves the edges are really there — and what they would cost
   const wide = chainWalk(flowGraph(), { start: HANDLER, edgeTypes: [...FLOW_EDGE_TYPES, 'JOINS', 'DECLARES'] });
-  assert.equal(wide.walked, 15);  // + table z and column z.k, which this call never touches
+  assert.equal(wide.walked, 16);  // + table z, its column z.k and q's own q.id, which this call never touches
   assert.ok(wide.walked > w.walked, 'following schema edges reaches nodes the request does not run through');
   assert.equal(wide.tables.some((t) => t.table === 'z'), false, 'and still no statement executes z');
 });

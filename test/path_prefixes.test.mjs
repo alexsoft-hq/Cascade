@@ -12,6 +12,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { findJdk } from '../src/cli/env.mjs';
+import { runJavaLane } from '../src/cli/lanes_run.mjs';
 import { Graph } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { assembleJavaFacts } from '../src/core/facts_store.mjs';
@@ -233,7 +238,11 @@ test('a project that declares no prefix gets the graph and the stats it always g
 // a prefix set in code, said when the profile is silent
 // ---------------------------------------------------------------------------
 
-const invocations = (file, pairs) => ({ kind: 'invocations', names: pairs.map((p) => p[0]), lines: pairs.map((p) => p[1]), file });
+/** An invocations record as the worker writes it: each name's first line, and its receivers as `[declared type, line]` (the type given, or `?`). */
+const invocations = (file, pairs, receiver = '?') => ({
+  kind: 'invocations', names: pairs.map((p) => p[0]), lines: pairs.map((p) => p[1]),
+  receivers: pairs.map((p) => [[p[2] ?? receiver, p[1]]]), file,
+});
 /** The import record the Java worker writes for a file's top-level type (`simple` "*" for a whole package). */
 const importOf = (file, fqn, simple = fqn.slice(fqn.lastIndexOf('.') + 1)) => ({ kind: 'import', owner: `x.${file}`, simple, fqn, file });
 const MVC_MAPPING = 'org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping';
@@ -242,7 +251,7 @@ const CONFIG_FILE = 'yudao-framework/src/main/java/cn/y/framework/web/config/Yud
 
 test('a call to setPathPrefixes with pathPrefixes undeclared is said, with the file, the line and the key', () => {
   const facts = [
-    invocations(CONFIG_FILE, [['buildPathPrefixes', 60], ['setPathPrefixes', 53]]),
+    invocations(CONFIG_FILE, [['buildPathPrefixes', 60], ['setPathPrefixes', 53, 'RequestMappingHandlerMapping']]),
     importOf(CONFIG_FILE, MVC_MAPPING),
     invocations('cn/y/Other.java', [['append', 3]]),
   ];
@@ -263,7 +272,7 @@ test('a declared pathPrefixes is the project\'s word, and a project with no such
 });
 
 test('many call sites are said in one line, the first three by place', () => {
-  const facts = ['d', 'c', 'b', 'a'].flatMap((x, i) => [invocations(`${x}/Config.java`, [['addPathPrefix', 10 + i]]), importOf(`${x}/Config.java`, MVC_CONFIGURER)]);
+  const facts = ['d', 'c', 'b', 'a'].flatMap((x, i) => [invocations(`${x}/Config.java`, [['addPathPrefix', 10 + i]], 'PathMatchConfigurer'), importOf(`${x}/Config.java`, MVC_CONFIGURER)]);
   const found = codeSettingsIn(facts, builtinRegistry().ofKind('java.code-setting'));
   assert.deepEqual(found.map((f) => f.file), ['a/Config.java', 'b/Config.java', 'c/Config.java', 'd/Config.java']);
   const [said] = codeSettingDiagnostics(facts, normalizeProfile({}));
@@ -284,6 +293,60 @@ test('code_setting_does_not_assert_receiver_from_bare_method_name: a call is the
   assert.deepEqual(codeSettingsIn(byPackage, rules).map((f) => f.method), ['addPathPrefix'], 'a package imported whole names the type too');
   const flux = [invocations('p/Flux.java', [['addPathPrefix', 5]]), importOf('p/Flux.java', 'org.springframework.web.reactive.config.PathMatchConfigurer')];
   assert.deepEqual(codeSettingsIn(flux, rules).map((f) => f.method), ['addPathPrefix'], 'WebFlux declares the same method on its own type');
+});
+
+/** The worker's records for a few Java files, read once; null without a JDK. */
+const workerFactsCache = new Map();
+function workerFacts(sources) {
+  const key = JSON.stringify(sources);
+  if (workerFactsCache.has(key)) return workerFactsCache.get(key);
+  const jdk = findJdk();
+  if (!jdk) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-setting-'));
+  fs.mkdirSync(path.join(dir, 'p'));
+  for (const [name, body] of Object.entries(sources)) fs.writeFileSync(path.join(dir, 'p', name), body);
+  try { workerFactsCache.set(key, runJavaLane(jdk, dir, [dir], { quiet: true })); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  return workerFactsCache.get(key);
+}
+
+/** Astra's second review, and the shapes around it. */
+const RECEIVER_SOURCES = {
+  'FullyQualified.java': 'package p; class FullyQualified { void config(org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping mapping){ mapping.setPathPrefixes(null); } }',
+  'UnrelatedSetting.java': 'package p; import org.springframework.web.servlet.config.annotation.PathMatchConfigurer; class UnrelatedSetting { void config(PathMatchConfigurer ignored, Storage storage){storage.addPathPrefix("/backup");} }',
+  'Imported.java': 'package p; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class Imported { void config(RequestMappingHandlerMapping mapping){ mapping.setPathPrefixes(null); } }',
+  'Created.java': 'package p; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class Created { Object m(){ return new RequestMappingHandlerMapping() { { setPathPrefixes(null); } }; } void n(){ new RequestMappingHandlerMapping().setPathPrefixes(null); } }',
+  'OwnMapping.java': 'package p; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class OwnMapping extends RequestMappingHandlerMapping { OwnMapping(){ setPathPrefixes(null); } }',
+  'Chained.java': 'package p; import org.springframework.web.servlet.config.annotation.*; class Chained implements WebMvcConfigurer { public void configurePathMatch(PathMatchConfigurer c){ c.setUseTrailingSlashMatch(false).addPathPrefix("/api", t -> true); } }',
+  'Shadow.java': 'package p; import org.springframework.web.servlet.config.annotation.PathMatchConfigurer; class Shadow { PathMatchConfigurer configurer; void save(Storage configurer){ configurer.addPathPrefix("/backup"); } }',
+};
+
+test('javafacts/19: each name a file calls carries the type its receiver is declared with, where the file writes one', (t) => {
+  const f = workerFacts(RECEIVER_SOURCES);
+  if (!f) { t.skip('no JDK found: see docs/setup/java-lane.md'); return; }
+  const rec = (file) => f.find((r) => r.kind === 'invocations' && r.file?.endsWith(file));
+  const receiversOf = (file, name) => { const r = rec(file); return r.receivers[r.names.indexOf(name)]; };
+  assert.deepEqual(receiversOf('FullyQualified.java', 'setPathPrefixes'), [['org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping', 1]]);
+  assert.deepEqual(receiversOf('UnrelatedSetting.java', 'addPathPrefix'), [['Storage', 1]]);
+  assert.deepEqual(receiversOf('OwnMapping.java', 'setPathPrefixes'), [['this:p.OwnMapping', 1]]);
+  assert.deepEqual(receiversOf('Created.java', 'setPathPrefixes'), [['?', 1], ['RequestMappingHandlerMapping', 1]], 'new X() states its type; an anonymous class\'s own call does not name one');
+  assert.deepEqual(receiversOf('Chained.java', 'addPathPrefix'), [['?', 1]], 'a chain\'s type is the return of the call before it, which is not read');
+  assert.deepEqual(receiversOf('Shadow.java', 'addPathPrefix'), [['Storage', 1]], 'a parameter hides the field of the same name');
+});
+
+test('code_setting_fully_qualified_receiver_is_diagnosed and code_setting_import_does_not_prove_unrelated_receiver: the receiver\'s declared type decides', (t) => {
+  const f = workerFacts(RECEIVER_SOURCES);
+  if (!f) { t.skip('no JDK found: see docs/setup/java-lane.md'); return; }
+  const found = codeSettingsIn(f, builtinRegistry().ofKind('java.code-setting'));
+  const by = Object.fromEntries(['FullyQualified', 'UnrelatedSetting', 'Imported', 'Created', 'OwnMapping', 'Chained', 'Shadow']
+    .map((n) => [n, found.filter((x) => x.file.endsWith(`${n}.java`)).map((x) => x.proof)]));
+  assert.deepEqual(by, {
+    FullyQualified: ['receiver'], UnrelatedSetting: [], Imported: ['receiver'], Created: ['receiver'],
+    OwnMapping: ['receiver'], Chained: ['import'], Shadow: [],
+  });
+  const [said] = codeSettingDiagnostics(f.filter((r) => r.file?.endsWith('Chained.java')), normalizeProfile({}));
+  assert.equal(said.severity, 'info', 'a receiver nobody proved is a lower note');
+  assert.match(said.reason, /calls addPathPrefix on a receiver whose type is not read, in a file that imports PathMatchConfigurer/);
+  assert.match(said.reason, /none of these receivers is proven to be the type the rule names/);
 });
 
 test('a code-setting call names the types that declare it, in full, or the rule is refused', () => {

@@ -682,8 +682,9 @@ function ovHubEndpoints(r,a){
 // method the lanes read, controller methods, getters, frontend functions and
 // library types included, which made mall's "services" 11,168. It now prints
 // `code.services`, the methods the routes' walks pass through between a
-// controller method and the SQL: what the Flow tab draws as its services lane,
-// the same for a Spring service and a NestJS one.
+// controller method and the SQL, a service that sends its SQL itself included
+// (a NestJS service calling Prisma, which Flow folds into its statement): the
+// same for a Spring service and a NestJS one.
 const CRAIL = [
   ['screen',    'crail.screens'],
   ['group',     'crail.groups'],

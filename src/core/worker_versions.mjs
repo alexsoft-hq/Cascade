@@ -13,7 +13,7 @@
 // tells you to bump this one.
 
 /** JavaFacts.java — `static final String VERSION`. */
-export const JAVA_WORKER_VERSION = 'javafacts/18';
+export const JAVA_WORKER_VERSION = 'javafacts/19';
 /**
  * adapters/ts/tsfacts.mjs — `VERSION`. NOT part of `workerVersions()`: it is in
  * every TypeScript shard's key, so a new worker makes each shard miss and be

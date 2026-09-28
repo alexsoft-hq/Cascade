@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nodeId, buildGraph, FLOW_EDGE_TYPES } from '../src/core/graph.mjs';
+import { nodeId, buildGraph, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from '../src/core/graph.mjs';
 import { buildGraphFromSql } from '../src/adapters/sql_bridge.mjs';
 import { addJavaFacts } from '../src/adapters/java_bridge.mjs';
 import { flow, endpoint_impact, ToolError } from '../src/mcp/tools.mjs';
@@ -144,7 +144,7 @@ test('flow chain from an endpoint: entry starts at the handler, four lanes come 
   assert.equal(a.entry.handlerShort, 'PController#get');
   assert.equal(a.entry.start, nodeId('symbol', 'com.x.PController#get')); // the walk begins at the code
   assert.equal(a.walk.mode, 'conservative');
-  assert.equal(a.walk.depth, 6);
+  assert.equal(a.walk.depth, DEFAULT_WALK_DEPTH);
   assert.equal(a.walk.walked, 13);
   assert.deepEqual(a.services.map((s) => s.short), ['Ext#send', 'PService#load', 'PServiceImpl#load']);
   assert.deepEqual(a.statements.map((s) => s.short), ['PMapper.selectByPrimaryKey', 'PMapper.updateByPrimaryKey']);
@@ -710,7 +710,7 @@ test('flow: direction=down is the default and is untouched by all of this', () =
   const implicit = call(g, { endpoint: 'GET /p/{id}' });
   assert.deepEqual(explicit.answer, implicit.answer);
   assert.equal(implicit.answer.walk.direction, 'down');
-  assert.equal(implicit.answer.walk.depth, 6);
+  assert.equal(implicit.answer.walk.depth, DEFAULT_WALK_DEPTH);
   assert.deepEqual(implicit.answer.tables.map((t) => t.table), ['p', 'q']);
   assert.equal(implicit.answer.endpoints, undefined);
 });

@@ -25,7 +25,7 @@
 // Pure: graph in, plain view model out — no contract, no paging, no DOM.
 
 import { walkEndpoints, groupOfPath, ROOT_GROUP } from './walks.mjs';
-import { GRADE_SETS } from './graph.mjs';
+import { GRADE_SETS, DEFAULT_WALK_DEPTH } from './graph.mjs';
 
 // The endpoint walk and the group rule live in core/walks.mjs — the `map` view
 // runs the SAME walk over the same endpoints, so keeping it here would let two
@@ -157,7 +157,7 @@ export function buildCoupling(graph, opts = {}) {
   // otherwise never reach chainWalk, and a bad mode would answer "empty" instead
   // of failing.
   if (!GRADE_SETS[mode]) throw new CouplingError(`unknown mode: ${JSON.stringify(mode)}`);
-  const depth = opts.depth ?? 8;
+  const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
   if (!Number.isInteger(depth) || depth < 1) throw new CouplingError(`depth must be a positive integer, got ${depth}`);
 
   // 1./2. Every endpoint's forward walk (core/walks.mjs, the same walk the `map`

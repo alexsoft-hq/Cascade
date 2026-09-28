@@ -185,7 +185,7 @@ export const VIEWER_STRINGS = {
     'crail.groups.title': 'an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.',
     'crail.endpoints': 'endpoints',
     'crail.services': 'services',
-    'crail.services.title': 'the methods the routes\' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.',
+    'crail.services.title': 'the methods the routes\' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.',
     'crail.sql': 'SQL',
     'crail.tables': 'tables',
     'crail.columns': 'columns',

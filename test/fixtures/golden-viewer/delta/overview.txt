@@ -49,7 +49,7 @@
         <b>2</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.">
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
         services
         <b>2</b>
       </span>
