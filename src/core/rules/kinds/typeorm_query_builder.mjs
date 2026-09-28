@@ -17,6 +17,10 @@
 // builder run twice with two selections returns both. A step this kind cannot
 // read (a condition built with Brackets, a value not written out, a method the
 // pack does not name) is said in `notRead`.
+//
+// update, insert, softDelete and restore also set the main entity's date and
+// version columns of their own accord (`auto` on its view): an insert those
+// into's column list names, when it has one.
 
 import { isPlainObject, namesErrors, unknownKeysAt } from './ts_names.mjs';
 import { columnsInText, columnsOfProperty } from './typeorm_builder_read.mjs';
@@ -52,6 +56,7 @@ function newState(start) {
   return {
     aliases, main: start.view ?? null, statement: 'select', selection: start.view ? [{ view: start.view, whole: true, may: false }] : [],
     reads: [], mayReads: [], writes: [], mayWrites: [], follows: [], tables: [], notRead: [], wholeRow: [], ran: false,
+    autoWrites: [], autoReads: [], insertColumns: null,
   };
 }
 
@@ -122,6 +127,28 @@ function aliasPass(st, steps, methods, ctx) {
     const role = methods[s.name];
     if (role === 'join' || role === 'join-select' || role === 'join-map') registerJoin(st, s, ctx, role);
     else if (ALIAS_ROLES.has(role) && s.args[0]) registerTarget(st, s, ctx);
+    // into(target, columns): an insert lists those columns alone (InsertQueryBuilder.getInsertedColumns).
+    if (role === 'into' && s.args[1]) st.insertColumns = columnListOf(s.args[1]);
+  }
+}
+
+const columnListOf = (v) => (v.k === 'arr' && !v.spread && v.v.every((x) => x.k === 'str') ? v.v.map((x) => x.v) : 'unknown');
+
+/** Whether an insert lists a column: into's list when it has one, else whether the column is left out of inserts. */
+function insertedBy(st, c) {
+  if (st.insertColumns === null) return c.insertable;
+  return st.insertColumns === 'unknown' ? 'may' : st.insertColumns.includes(c.property);
+}
+
+/** What the statement a step makes sets on its own: each auto column of the main entity it sets, and a version it adds one to, read. */
+function autoStep(st, send, may) {
+  for (const c of st.main?.auto ?? []) {
+    const how = Object.hasOwn(c.sets, send) ? c.sets[send] : null;
+    const listed = send === 'insert' ? insertedBy(st, c) : true;
+    if (!how || listed === false) continue;
+    const hit = { view: st.main, column: c.column, may: may || listed === 'may', why: `the ${c.role} column, which TypeORM sets itself in the ${send} it sends` };
+    st.autoWrites.push(hit);
+    if (how === 'increment') st.autoReads.push(hit);
   }
 }
 
@@ -140,6 +167,14 @@ function selectStep(st, s, role, words) {
   else st.selection = may ? [...mayBe(st.selection, true), ...mayBe(named, true)] : mayBe(named, false);
 }
 
+/** A step that makes the builder an update, a delete, an insert, a soft delete or a restore, and what that statement writes. */
+function statementStep(st, s, role, may) {
+  st.statement = STATEMENT_OF[role];
+  if ((role === 'soft-delete' || role === 'restore') && st.main?.deleteDate) record(st, [{ view: st.main, column: st.main.deleteDate }], may, true);
+  if (role === 'update' && s.args[1]) readObject(st, s.args[1], may, true, 'update');
+  autoStep(st, role, may);
+}
+
 /** One step, read by the part its method plays. */
 function readStep(st, s, role, ctx) {
   const may = Boolean(s.cond);
@@ -153,11 +188,8 @@ function readStep(st, s, role, ctx) {
     else st.notRead.push(s.name);
   } else if (role === 'ids') record(st, (st.main?.pk ?? []).map((column) => ({ view: st.main, column })), may);
   else if (role === 'join' || role === 'join-select' || role === 'join-map') joinStep(st, s, role, words);
-  else if (STATEMENT_OF[role]) {
-    st.statement = STATEMENT_OF[role];
-    if ((role === 'soft-delete' || role === 'restore') && st.main?.deleteDate) record(st, [{ view: st.main, column: st.main.deleteDate }], may, true);
-    if (role === 'update' && s.args[1]) readObject(st, s.args[1], may, true, 'update');
-  } else if (role === 'values') readValues(st, s.args[0], may);
+  else if (STATEMENT_OF[role]) statementStep(st, s, role, may);
+  else if (role === 'values') readValues(st, s.args[0], may);
   else if (role === 'rows') returnRows(st, may);
   else if (role === 'count') st.ran = true;
 }
@@ -210,7 +242,7 @@ function compile(rule) {
     }
     return {
       statement: st.statement, main: st.main, reads: st.reads, mayReads: st.mayReads, writes: st.writes, mayWrites: st.mayWrites, wholeRow: wholeRowOf(st),
-      follows: st.follows, tables: st.tables, notRead: [...new Set(st.notRead)], terminal: st.ran, rule: rule.id,
+      follows: st.follows, tables: st.tables, notRead: [...new Set(st.notRead)], terminal: st.ran, rule: rule.id, autoWrites: st.autoWrites, autoReads: st.autoReads,
     };
   };
   const roleOf = (name) => (Object.hasOwn(methods, name) ? methods[name] : null);
@@ -221,6 +253,7 @@ function compile(rule) {
 function exampleViews(entities) {
   const views = Object.fromEntries(Object.entries(entities).map(([name, e]) => [name, {
     name, columns: e.fields.map((f) => ({ property: f, column: f })), pk: e.fields.includes('id') ? ['id'] : [], deleteDate: null, relationTargets: e.relations ?? {},
+    auto: Object.entries(e.auto ?? {}).map(([p, sets]) => ({ property: p, column: p, role: 'auto', sets, insertable: true })),
   }]));
   return {
     views,
@@ -238,8 +271,10 @@ function runOne(entry, ex, i, env) {
   const { views, ctx } = exampleViews(ex.entities);
   const fx = entry.compiled.effectsOf({ view: views[ex.entity], alias: strArg(call?.args[0]) }, (call?.chain ?? []).map((s) => ({ ...s, cond: false })), ctx);
   const cols = (list) => [...new Set(list.map((h) => `${h.view.name}.${h.column}`))].sort();
+  const sure = (list, may) => list.filter((h) => h.may === may);
   const got = {
-    statement: fx.statement, reads: cols(fx.reads), mayReads: cols(fx.mayReads), writes: cols(fx.writes), mayWrites: cols(fx.mayWrites),
+    statement: fx.statement, reads: cols([...fx.reads, ...sure(fx.autoReads, false)]), mayReads: cols([...fx.mayReads, ...sure(fx.autoReads, true)]),
+    writes: cols([...fx.writes, ...sure(fx.autoWrites, false)]), mayWrites: cols([...fx.mayWrites, ...sure(fx.autoWrites, true)]),
     wholeRow: [...new Set(fx.wholeRow.map((w) => w.view.name))].sort(), follows: fx.follows.map((f) => f.property).sort(), notRead: [...fx.notRead].sort(),
   };
   const want = { reads: [], mayReads: [], writes: [], mayWrites: [], wholeRow: [], follows: [], notRead: [], ...ex.expect };

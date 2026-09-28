@@ -10,6 +10,9 @@
 
 export const ARG_ROLES = Object.freeze(['find-options', 'find-options-or-id', 'where', 'ids', 'criteria', 'values', 'entity', 'property', 'property-write', 'conflict', 'none']);
 export const OPTION_ROLES = Object.freeze(['project', 'filter', 'read', 'relations', 'eager', 'not-read', 'none']);
+/** The statements TypeORM builds a write with, each by its own query builder, and how one sets a column of its own accord. */
+export const SENDS = Object.freeze(['insert', 'update', 'soft-delete', 'restore']);
+export const AUTO_HOW = Object.freeze(['set', 'increment']);
 
 const LITERAL = new Set(['str', 'num', 'bool', 'null', 'undefined']);
 const RUNTIME = new Set(['id', 'member', 'call', 'expr', 'tpl', 'new', 'fn']);
@@ -19,6 +22,7 @@ export function emptyEffects(op, rule) {
     statement: op.statement, rule, reads: new Set(), writes: new Set(), mayReads: new Set(), mayWrites: new Set(),
     wholeRow: false, eager: false, follows: new Set(), relations: new Set(), writeRelations: new Set(), mayWriteRelations: new Set(),
     unknownKeys: new Set(), runtimeOnly: new Set(), hasSelect: false, optionsUnknown: false, noEager: false, eagerMay: false,
+    autoWrites: new Set(), mayAutoWrites: new Set(), autoReads: new Set(), mayAutoReads: new Set(), autoWhy: new Map(),
   };
 }
 

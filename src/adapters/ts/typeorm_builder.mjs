@@ -86,12 +86,16 @@ export function builderSteps(project, site, roleOf) {
 }
 
 /** Entity views, one per entity, as the builder rule reads them, and how an entity argument or a relation is found. */
+/** One entity as the builder rule reads it: its columns, key, delete date column and the columns TypeORM sets itself. */
+const builderView = (e) => ({
+  name: e.name, entity: e, columns: e.columns, pk: e.columns.filter((c) => c.pk).map((c) => c.column), deleteDate: e.columns.find((c) => c.deleteDate)?.column ?? null,
+  auto: e.columns.filter((c) => c.auto && !c.join).map((c) => ({ property: c.property, column: c.column, role: c.role, sets: c.auto, insertable: c.insertable })),
+});
+
 export function builderContext(project, model, site, entityOfRef) {
   const views = new Map();
   const viewOf = (e) => {
-    if (!views.has(e.key)) {
-      views.set(e.key, { name: e.name, entity: e, columns: e.columns, pk: e.columns.filter((c) => c.pk).map((c) => c.column), deleteDate: e.columns.find((c) => c.deleteDate)?.column ?? null });
-    }
+    if (!views.has(e.key)) views.set(e.key, builderView(e));
     return views.get(e.key);
   };
   const ref = (v) => (v && v.k === 'id' ? { file: site.call.file, name: v.v } : v && v.k === 'str' ? { entityName: v.v } : null);

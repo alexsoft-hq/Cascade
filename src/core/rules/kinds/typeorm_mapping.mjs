@@ -91,6 +91,19 @@ function joinTableOf(d) {
   };
 }
 
+/**
+ * What TypeORM sets in a column of its own accord, by the column's kind
+ * (`autoColumns` in the pack), and whether an insert lists it: the insert
+ * option (`insert: false`) leaves it out, and one not written out may.
+ */
+function kindOf(role, opts, cfg) {
+  const sets = Object.hasOwn(cfg.autoColumns ?? {}, role) ? cfg.autoColumns[role] : null;
+  if (!sets) return { deleteDate: role === 'delete-date' };
+  const v = opts.v[cfg.insertKey];
+  const insertable = opts.unread || (v && v.k !== 'bool') ? 'may' : !(v && v.v === false);
+  return { deleteDate: role === 'delete-date', role, auto: sets, insertable };
+}
+
 /** One property's reading: a column, a relation, something not read, or nothing of TypeORM's. */
 function propertyOf(field, decorators, cfg) {
   const col = decorators.find((d) => Object.hasOwn(cfg.columns, d.name));
@@ -101,7 +114,7 @@ function propertyOf(field, decorators, cfg) {
     const nameUnread = opts.unread || (opts.v.name && !strOf(opts.v.name));
     // `select: false` keeps a column out of every select that does not name it (TypeORM's ColumnMetadata.isSelect).
     const hidden = opts.v.select && opts.v.select.k === 'bool' && opts.v.select.v === false;
-    return { column: { property: field.name, given: strOf(opts.v.name), nameUnread: Boolean(nameUnread), pk: Boolean(primary), deleteDate: cfg.columns[col.name] === 'delete-date', select: !hidden, line: field.line } };
+    return { column: { property: field.name, given: strOf(opts.v.name), nameUnread: Boolean(nameUnread), pk: Boolean(primary), select: !hidden, line: field.line, ...kindOf(cfg.columns[col.name], opts, cfg) } };
   }
   const rel = decorators.find((d) => Object.hasOwn(cfg.relations, d.name));
   if (!rel) return null;

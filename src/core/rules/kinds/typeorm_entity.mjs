@@ -18,10 +18,22 @@ import { optionsErrors, readNaming, declaredNaming } from './typeorm_options.mjs
 import { tablePathErrors } from './typeorm_path.mjs';
 import { entityClasses } from './typeorm_mapping.mjs';
 import { buildModel, weakestOfEntity } from './typeorm_model.mjs';
+import { SENDS, AUTO_HOW } from './typeorm_operation_read.mjs';
 import { exampleProject } from './ts_example_project.mjs';
 
-const PARAM_KEYS = Object.freeze(['packages', 'entity', 'notRead', 'columns', 'relations', 'joinColumn', 'joinTable', 'eagerKey', 'options', 'tablePath', 'strategies', 'defaultStrategy', 'snakeCase', 'joinTableNameLimit']);
-const COLUMN_ROLES = Object.freeze(['column', 'primary', 'delete-date']);
+const PARAM_KEYS = Object.freeze(['packages', 'entity', 'notRead', 'columns', 'autoColumns', 'insertKey', 'relations', 'joinColumn', 'joinTable', 'eagerKey', 'options', 'tablePath', 'strategies', 'defaultStrategy', 'snakeCase', 'joinTableNameLimit']);
+const COLUMN_ROLES = Object.freeze(['column', 'primary', 'delete-date', 'create-date', 'update-date', 'version']);
+
+/** `{kind: {statement: how}}`: which statement sets a column of a kind of its own accord, and how. */
+function autoColumnsErrors(map) {
+  if (!isPlainObject(map)) return ['params.autoColumns must map a column kind to the statements that set it'];
+  return Object.entries(map).flatMap(([kind, sets]) => {
+    const where = `params.autoColumns.${kind}`;
+    if (!COLUMN_ROLES.includes(kind)) return [`${where} is not a column kind of ${COLUMN_ROLES.join(', ')}`];
+    if (!isPlainObject(sets) || Object.keys(sets).length === 0) return [`${where} must map a statement to how it sets the column`];
+    return Object.entries(sets).filter(([s, how]) => !SENDS.includes(s) || !AUTO_HOW.includes(how)).map(([s]) => `${where}.${s} must be a statement of ${SENDS.join(', ')} set to one of ${AUTO_HOW.join(', ')}`);
+  });
+}
 const RELATION_KINDS = Object.freeze(['many-to-one', 'one-to-one', 'one-to-many', 'many-to-many']);
 
 function mapErrors(map, where, allowed) {
@@ -34,7 +46,8 @@ function validateParams(params) {
   const errors = unknownKeysAt(params, PARAM_KEYS, 'params');
   errors.push(...namesErrors(params.packages, 'params.packages'), ...namesErrors(params.entity, 'params.entity'), ...namesErrors(params.notRead, 'params.notRead', { allowEmpty: true }));
   errors.push(...mapErrors(params.columns, 'params.columns', COLUMN_ROLES), ...mapErrors(params.relations, 'params.relations', RELATION_KINDS));
-  for (const k of ['joinColumn', 'joinTable', 'eagerKey']) if (typeof params[k] !== 'string' || params[k] === '') errors.push(`params.${k} must be a name as the source writes it`);
+  errors.push(...autoColumnsErrors(params.autoColumns));
+  for (const k of ['joinColumn', 'joinTable', 'eagerKey', 'insertKey']) if (typeof params[k] !== 'string' || params[k] === '') errors.push(`params.${k} must be a name as the source writes it`);
   return [...errors, ...optionsErrors(params.options), ...tablePathErrors(params.tablePath), ...namingErrors(params)];
 }
 

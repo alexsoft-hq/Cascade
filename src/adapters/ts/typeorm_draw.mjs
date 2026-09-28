@@ -25,10 +25,23 @@ export function entityOfRef(project, model, ref) {
   return hits.length === 1 ? hits[0] : null;
 }
 
-/** An entity as the operation rule reads one: its column properties, relations, key and delete date column, by property. */
+/** An entity as the operation rule reads one: its column properties, relations, key, delete date column and the columns TypeORM sets itself, by property. */
 export function operationView(e) {
   const own = e.columns.filter((c) => !c.join);
-  return { fields: own.map((c) => c.property), relations: e.relations.map((r) => r.property), pk: own.filter((c) => c.pk).map((c) => c.property), deleteDate: own.find((c) => c.deleteDate)?.property ?? null };
+  return {
+    fields: own.map((c) => c.property), relations: e.relations.map((r) => r.property), pk: own.filter((c) => c.pk).map((c) => c.property), deleteDate: own.find((c) => c.deleteDate)?.property ?? null,
+    auto: own.filter((c) => c.auto).map((c) => ({ property: c.property, role: c.role, sets: c.auto, insertable: c.insertable })),
+  };
+}
+
+const AUTO_RULE = 'typeorm-auto-column';
+
+/** The columns TypeORM set on its own in what an operation sent, each edge saying so. */
+function drawAutoColumns(se, e, fx) {
+  const at = (p) => ({ rule: AUTO_RULE, basis: fx.autoWhy.get(p) });
+  for (const [set, type, grade] of [[fx.autoWrites, 'WRITES', 'EXACT'], [fx.mayAutoWrites, 'WRITES', 'SOUND_SET'], [fx.autoReads, 'READS', 'EXACT'], [fx.mayAutoReads, 'READS', 'SOUND_SET']]) {
+    for (const p of set) se.column(e, propertyColumn(e, p), type, grade, at(p));
+  }
 }
 
 const propertyColumn = (e, prop) => e.columns.find((c) => c.property === prop && !c.join) ?? null;
@@ -60,13 +73,16 @@ export function drawOperation(se, e, fx, op) {
   for (const p of fx.mayReads) se.column(e, propertyColumn(e, p), 'READS', may);
   for (const p of fx.mayWrites) se.column(e, propertyColumn(e, p), 'WRITES', may);
   const joinColumns = (r) => e.relations.find((x) => x.property === r)?.joinColumns ?? [];
-  for (const r of fx.writeRelations) for (const jc of joinColumns(r)) se.column(e, jc, 'WRITES', 'EXACT');
-  for (const r of fx.mayWriteRelations) for (const jc of joinColumns(r)) se.column(e, jc, 'WRITES', may);
+  for (const [set, grade] of [[fx.writeRelations, 'EXACT'], [fx.mayWriteRelations, may]]) for (const r of set) for (const jc of joinColumns(r)) se.column(e, jc, 'WRITES', grade);
+  drawAutoColumns(se, e, fx);
   if (fx.wholeRow) readWholeRow(se, e, fx.wholeRow === 'exact' ? 'EXACT' : may);
   drawRelations(se, e, fx);
   for (const r of [...fx.relations].sort()) se.unresolved.push({ reason: 'relation-not-followed', detail: `${e.name}.${r} reaches another table this statement does not name` });
   for (const k of [...fx.unknownKeys].sort()) se.unresolved.push({ reason: 'argument-not-read', detail: `${op}(${k})` });
 }
+
+/** The column a builder's hit names, on the entity of its view. */
+const col = (h) => h.view.entity.columns.find((c) => c.column === h.column);
 
 /** What a query builder reads and writes, drawn: every table its aliases name, and the columns of each. */
 export function drawBuilder(se, fx, main) {
@@ -76,13 +92,20 @@ export function drawBuilder(se, fx, main) {
   if (main) se.table(main, ACCESS[fx.statement], run);
   for (const f of fx.follows) followRelation(se, f.view.entity, f.view.entity.relations.find((r) => r.property === f.property), { grade: f.may ? may : run, whole: false, rule: 'typeorm-join' });
   for (const t of fx.tables) se.table(t.view.entity, 'read', t.may ? may : run, { rule: 'typeorm-join' });
-  const col = (h) => h.view.entity.columns.find((c) => c.column === h.column);
   for (const h of fx.reads) se.column(h.view.entity, col(h), 'READS', run);
   for (const h of fx.mayReads) se.column(h.view.entity, col(h), 'READS', may);
   for (const h of fx.writes) se.column(h.view.entity, col(h), 'WRITES', run);
   for (const h of fx.mayWrites) se.column(h.view.entity, col(h), 'WRITES', may);
   for (const w of fx.wholeRow) readWholeRow(se, w.view.entity, w.grade === 'exact' ? run : may);
+  drawBuilderAuto(se, fx, run);
   builderGaps(se, fx);
+}
+
+/** The columns TypeORM set on its own in the statement a builder made, at the builder's grade or SOUND_SET when it may not. */
+function drawBuilderAuto(se, fx, run) {
+  for (const [list, type] of [[fx.autoWrites ?? [], 'WRITES'], [fx.autoReads ?? [], 'READS']]) {
+    for (const h of list) se.column(h.view.entity, col(h), type, h.may ? 'SOUND_SET' : run, { rule: AUTO_RULE, basis: h.why });
+  }
 }
 
 /** What a builder's statement could not read, said on it. */

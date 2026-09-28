@@ -13,9 +13,15 @@
 // is said (`runtimeOnly`), and where the operation returns or writes the row
 // whole or in part, every column MAY be read or written: a candidate set that
 // holds the truth, graded SOUND_SET where it is drawn.
+//
+// TypeORM also writes columns no call names: the statement an operation sends
+// (`sends`, the insert, update, soft delete or restore its query builder
+// builds) sets the entity's date and version columns of its own accord. A
+// column every statement the operation may send sets is written; one only
+// some set (save inserts or updates, as the row it finds decides) MAY be.
 
 import { isPlainObject, namesErrors, unknownKeysAt } from './ts_names.mjs';
-import { ARG_ROLES, OPTION_ROLES, emptyEffects, readArgument } from './typeorm_operation_read.mjs';
+import { ARG_ROLES, OPTION_ROLES, SENDS, emptyEffects, readArgument } from './typeorm_operation_read.mjs';
 
 const STATEMENTS = Object.freeze(['select', 'insert', 'update', 'delete', 'upsert']);
 const NAME = /^[$_A-Za-z][$_A-Za-z0-9]*$/;
@@ -24,12 +30,16 @@ const VALUE_KINDS = Object.freeze(['arr', 'obj', 'str', 'num', 'bool']);
 function operationErrors(name, op) {
   const where = `params.operations.${name}`;
   if (!NAME.test(name) || !isPlainObject(op)) return [`params.operations has ${JSON.stringify(name)}, which is not an operation`];
-  const errors = unknownKeysAt(op, ['statement', 'args', 'wholeRow', 'eager', 'eagerJoined', 'writesEntity', 'deleteDate'], where);
+  const errors = unknownKeysAt(op, ['statement', 'args', 'wholeRow', 'eager', 'eagerJoined', 'writesEntity', 'deleteDate', 'sends'], where);
   if (!STATEMENTS.includes(op.statement)) errors.push(`${where}.statement must be one of ${STATEMENTS.join(', ')}`);
   if (!Array.isArray(op.args) || !op.args.every((a) => ARG_ROLES.includes(a))) errors.push(`${where}.args must list parts from ${ARG_ROLES.join(', ')}`);
   for (const k of ['wholeRow', 'eager', 'eagerJoined', 'writesEntity', 'deleteDate']) if (op[k] !== undefined && typeof op[k] !== 'boolean') errors.push(`${where}.${k} must be true or false`);
-  return errors;
+  return [...errors, ...sendsErrors(op.sends, where)];
 }
+
+/** The statements an operation sends, each one TypeORM builds a write with. */
+const sendsErrors = (sends, where) => (sends === undefined || (Array.isArray(sends) && sends.length > 0 && sends.every((s) => SENDS.includes(s)))
+  ? [] : [`${where}.sends must list statements from ${SENDS.join(', ')}`]);
 
 function validateParams(params) {
   if (!isPlainObject(params)) return ['params must be an object'];
@@ -48,7 +58,7 @@ const EXPECT_KEYS = Object.freeze(['statement', 'reads', 'writes', 'mayReads', '
 
 function validateExample(example) {
   if (!isPlainObject(example)) return ['an example must be an object'];
-  const errors = unknownKeysAt(example, ['operation', 'args', 'fields', 'relations', 'pk', 'deleteDate', 'expect', 'why'], 'an example');
+  const errors = unknownKeysAt(example, ['operation', 'args', 'fields', 'relations', 'pk', 'deleteDate', 'auto', 'expect', 'why'], 'an example');
   if (typeof example.operation !== 'string') errors.push('an example needs the "operation" it calls');
   if (!Array.isArray(example.args) || !example.args.every((a) => typeof a === 'string')) errors.push('an example needs "args", each argument as TypeScript source');
   if (!Array.isArray(example.fields)) errors.push('an example needs "fields", the entity\'s column properties');
@@ -65,7 +75,33 @@ function finish(fx, op, entity) {
   // count, exists and the aggregates go through setFindOptions in TypeORM 0.3, which joins the eager relations without selecting them; 0.2 does not.
   if (op.eagerJoined && !fx.noEager) fx.eagerJoined = true;
   if (op.deleteDate) writeDeleteDate(fx, entity);
+  autoWrites(fx, op, entity);
   return fx;
+}
+
+/**
+ * How one statement sets a column of its own accord: null when it does not,
+ * or when it is an insert and the column is left out of inserts (`insert:
+ * false`, ColumnMetadata.isInsert); `sure` false when that option is not
+ * written out.
+ */
+function setIn(c, send) {
+  const how = Object.hasOwn(c.sets, send) ? c.sets[send] : null;
+  if (!how || (send === 'insert' && c.insertable === false)) return null;
+  return { send, how, sure: !(send === 'insert' && c.insertable === 'may') };
+}
+
+/** The columns the statements an operation sends set on their own; a version set to itself plus one is read as well. */
+function autoWrites(fx, op, entity) {
+  const sends = op.sends ?? [];
+  for (const c of entity.auto ?? []) {
+    const written = sends.map((s) => setIn(c, s)).filter(Boolean);
+    if (written.length === 0) continue;
+    (written.length === sends.length && written.every((w) => w.sure) ? fx.autoWrites : fx.mayAutoWrites).add(c.property);
+    const plusOne = written.filter((w) => w.how === 'increment');
+    if (plusOne.length > 0) (plusOne.length === sends.length ? fx.autoReads : fx.mayAutoReads).add(c.property);
+    fx.autoWhy.set(c.property, `the ${c.role} column, which TypeORM sets itself in the ${written.map((w) => w.send).join(' and the ')} it sends`);
+  }
 }
 
 /** The row an operation that returns one returns: whole with no select; with one, what it names and the primary key too (SelectQueryBuilder.buildEscapedEntityColumnSelects). */
@@ -103,11 +139,15 @@ function compile(rule) {
 }
 
 const sorted = (set) => [...set].sort();
+/** An example's auto columns, `{property: {statement: how}}`. */
+const exampleAuto = (auto) => Object.entries(auto ?? {}).map(([property, sets]) => ({ property, role: 'auto', sets, insertable: true }));
+const both = (a, b) => new Set([...a, ...b]);
 const wholeRowOf = (w) => (w === 'exact' ? true : w === 'may' ? 'may' : false);
 
 function shapeOf(fx) {
   return {
-    statement: fx.statement, reads: sorted(fx.reads), writes: sorted(fx.writes), mayReads: sorted(fx.mayReads), mayWrites: sorted(fx.mayWrites),
+    statement: fx.statement, reads: sorted(both(fx.reads, fx.autoReads)), writes: sorted(both(fx.writes, fx.autoWrites)),
+    mayReads: sorted(both(fx.mayReads, fx.mayAutoReads)), mayWrites: sorted(both(fx.mayWrites, fx.mayAutoWrites)),
     wholeRow: wholeRowOf(fx.wholeRow), follows: sorted(fx.follows), relations: sorted(fx.relations), runtimeOnly: sorted(fx.runtimeOnly), notRead: sorted(fx.unknownKeys),
     eagerJoined: Boolean(fx.eagerJoined),
   };
@@ -116,7 +156,7 @@ function shapeOf(fx) {
 function runExamples(entries, env) {
   if (!env || typeof env.tsValue !== 'function') return { notRun: 'no TypeScript reader was handed in' };
   const results = new Map(entries.map((entry) => [entry.id, entry.rule.examples.map((ex) => {
-    const entity = { fields: ex.fields, relations: ex.relations ?? [], pk: ex.pk ?? (ex.fields.includes('id') ? ['id'] : []), deleteDate: ex.deleteDate ?? null };
+    const entity = { fields: ex.fields, relations: ex.relations ?? [], pk: ex.pk ?? (ex.fields.includes('id') ? ['id'] : []), deleteDate: ex.deleteDate ?? null, auto: exampleAuto(ex.auto) };
     const fx = entry.compiled.effectsOf(ex.operation, ex.args.map((a) => env.tsValue(a)), entity);
     const got = fx && shapeOf(fx);
     const want = { reads: [], writes: [], mayReads: [], mayWrites: [], wholeRow: false, follows: [], relations: [], runtimeOnly: [], notRead: [], eagerJoined: false, ...ex.expect };

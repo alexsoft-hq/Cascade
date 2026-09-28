@@ -39,7 +39,7 @@ function entityOf(raw, decision, naming) {
   const columns = raw.columns.map((c) => {
     const n = naming.column(s, c.property, c.given);
     const g = gradeOf(n, decision, c.nameUnread ? ['the column options are not written out, and may name another column'] : []);
-    return { property: c.property, column: n.name, grade: g.grade, why: g.why, pk: c.pk, deleteDate: c.deleteDate, select: c.select, line: c.line };
+    return { property: c.property, column: n.name, grade: g.grade, why: g.why, pk: c.pk, deleteDate: c.deleteDate, select: c.select, line: c.line, ...(c.auto ? { role: c.role, auto: c.auto, insertable: c.insertable } : {}) };
   });
   return {
     key: raw.cls.key, name: raw.cls.name, file: raw.cls.file, line: raw.cls.line, schema: place.qualifier, own: { schema: raw.decl.schema, database: raw.decl.database },
