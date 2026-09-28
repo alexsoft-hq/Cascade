@@ -25,7 +25,10 @@
 // the other table, it joins or subselects that table, which is followed as any
 // filter is (prisma-engines, query-builders/sql-query-builder/src/filter/
 // visitor.rs, visit_one_relation_is_null_filter). A nested write the rule
-// marked idle on one-to-one relations gives nothing when this one is one.
+// marked idle gives what the first entry that applies to this relation leaves:
+// nothing (`drops: all`), or the lookup of the rows alone (`drops: writes`: the
+// related table read, the join, and the related rows' key, as Prisma selects
+// them before it finds nothing to change).
 //
 // ONE EDGE PER TABLE AND ACCESS, as the SQL lane gives one per table and access
 // a statement has (adapters/sql/lineage.py): a call that reads a table and
@@ -87,6 +90,12 @@ function linkEdges(c, rel, f, grade, evidence) {
   }
 }
 
+/** Which relations an `idle` entry applies on. */
+const IDLE_ON = Object.freeze({ any: () => true, 'one-to-one': (rel) => rel.oneToOne === true, 'many-to-many': (rel) => Boolean(rel.joinTable) });
+
+/** What the first `idle` entry that applies to this relation drops (`all`, `writes`), or null when none does. */
+const idleDrops = (f, rel) => (f.idle ?? []).find((e) => IDLE_ON[e.on]?.(rel))?.drops ?? null;
+
 /** A null check on a relation whose link sits in the model's own table: those columns are read, and nothing of the other table. True when it was one. */
 function localNullCheck(c, rel, f, grade, evidence) {
   if (!f.nullCheck || !rel.inline) return false;
@@ -104,17 +113,20 @@ function followAll(c, a, parent, fx, grade, unresolved) {
       unresolved.push({ reason: 'relation-not-followed', detail: `${name} reaches another table this statement does not name: ${rel ? rel.why : 'schema.prisma does not declare it'}` });
       continue;
     }
-    if (!(f.idleOn === 'one-to-one' && rel.oneToOne)) followOne(c, a, { name, rel, f }, f.may ? weakest(grade, 'SOUND_SET') : grade, unresolved);
+    const drops = idleDrops(f, rel);
+    if (drops !== 'all') followOne(c, a, { name, rel, f, lookupOnly: drops === 'writes' }, f.may ? weakest(grade, 'SOUND_SET') : grade, unresolved);
   }
 }
 
 /** One relation the call follows, into the model it reaches: its table, the join, the link, what the call reads there, and on from there. */
-function followOne(c, a, { name, rel, f }, g, unresolved) {
+function followOne(c, a, { name, rel, f, lookupOnly }, g, unresolved) {
   const evidence = { via: 'prisma', operation: a.operation, relation: name };
   if (localNullCheck(c, rel, f, g, evidence)) return;
-  c.table(rel.targetTable, f.access, g, evidence);
+  c.table(rel.targetTable, lookupOnly ? 'read' : f.access, g, evidence);
   for (const cid of rel.joinReads) c.column('READS', cid, g, evidence);
-  linkEdges(c, rel, f, g, evidence);
+  // A lookup changes no link: it reads the implicit table, as a write that names none does.
+  linkEdges(c, rel, lookupOnly ? { link: null } : f, g, evidence);
+  if (lookupOnly) for (const cid of rel.targetKey) c.column('READS', cid, g, evidence);
   modelColumns(c, a.catalog, rel.target, f.fx, g, evidence);
   followAll(c, a, rel.target, f.fx, g, unresolved);
 }

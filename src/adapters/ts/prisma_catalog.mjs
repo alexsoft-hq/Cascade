@@ -192,10 +192,16 @@ function addJoins(g, relations, ids) {
  * the columns that hold the link, with the table they sit in, for a write that
  * sets or clears it; whether the link sits in this model's own table
  * (`inline`, as Prisma's engine calls a relation inlined on the model that
- * encloses it), and whether it is one-to-one.
+ * encloses it), whether it is one-to-one, and the related model's key
+ * (`targetKey`), which Prisma selects when it looks the related rows up.
  */
 function relationEntry(key, r, ids) {
   if (r.kind === 'unresolved') return { ok: false, why: r.why };
+  return { ...relationJoin(key, r, ids), targetKey: (r.target.primaryKey ?? []).map((f) => ids.columns.get(`${r.target.name}.${f}`)).filter(Boolean) };
+}
+
+/** The join of a relation entry: its tables, the columns it reads, the link, and which side holds it. */
+function relationJoin(key, r, ids) {
   const model = key.slice(0, key.indexOf('.'));
   const targetTable = ids.tables.get(r.target.name);
   if (r.kind === 'implicit') {

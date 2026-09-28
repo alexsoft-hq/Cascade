@@ -50,7 +50,7 @@
       "id": "prisma.operations",
       "kind": "prisma.operation",
       "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true (a value that is neither true nor false MAY be returned, read at run time), where and cursor filter by the fields they name (through the combinators AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations. A key naming a compound unique or id (schema.prisma's @@unique/@@id) is read through the model's own compounds, never by splitting the key. A relation is followed into its model: in include or select as a find of its own (true is its whole row), in a filter through some, every, none, is and isNot (or a to-one filter written straight), _count as the related rows it counts, and in data as the nested writes it names, each with what it does to the related rows and to the link. A relation filtered on null (the relation written null, or is or isNot given null) only checks the link. A nested write handed a literal that makes it do nothing (create: [], connect: [], disconnect: false on a one-to-one, delete: false, deleteMany: [], ...) is not followed, and set replaces the link, so set: [] clears it. $extends on a client makes a client, and an extension with a query component, or one not read, may change what a call sends; an extension Prisma.defineExtension makes is read where the same method holds it; a field its result component computes reads the fields its needs names.",
-      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference): a find without select returns every scalar field of the model, include returns every scalar field of the related model, and a nested write (create, connect, connectOrCreate, set, disconnect, update, updateMany, upsert, delete, deleteMany) acts on the related rows and on the link between the two. Client extensions (prisma.io/docs/orm/prisma-client/client-extensions): $extends returns a new client, and its query component intercepts the operations it names; a result component's field is computed on the client from the fields its needs sets to true, which Prisma selects in its place (prisma 6.19.0, packages/client/src/runtime/core/extensions/resultUtils.ts, computeEngineSideSelection). What a literal does, read in prisma-engines 6.19.0: a relation filtered on null is a one-relation-is-null filter (query-engine/core/src/query_graph_builder/extractors/filters/relation.rs), which tests the link's own columns when they are in the filtered model's table (query-builders/sql-query-builder/src/filter/visitor.rs); among the nested writes (query-engine/core/src/query_graph_builder/write/nested/), connect with no finder returns before building a query, create, connectOrCreate, update, updateMany, upsert and deleteMany loop over the list they are handed, disconnect false returns on a one-to-one (on a one-to-many's to-one side the engine disconnects whatever the boolean), delete false deletes nothing, disconnect and delete with an empty list find no row (their filter is an empty OR), and set disconnects every linked row, then connects the rows it lists.",
+      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference): a find without select returns every scalar field of the model, include returns every scalar field of the related model, and a nested write (create, connect, connectOrCreate, set, disconnect, update, updateMany, upsert, delete, deleteMany) acts on the related rows and on the link between the two. Client extensions (prisma.io/docs/orm/prisma-client/client-extensions): $extends returns a new client, and its query component intercepts the operations it names; a result component's field is computed on the client from the fields its needs sets to true, which Prisma selects in its place (prisma 6.19.0, packages/client/src/runtime/core/extensions/resultUtils.ts, computeEngineSideSelection). What a literal does, read in prisma-engines 6.19.0: a relation filtered on null is a one-relation-is-null filter (query-engine/core/src/query_graph_builder/extractors/filters/relation.rs), which tests the link's own columns when they are in the filtered model's table (query-builders/sql-query-builder/src/filter/visitor.rs); among the nested writes (query-engine/core/src/query_graph_builder/write/nested/), connect with no finder returns before building a query, create, connectOrCreate, update, updateMany, upsert and deleteMany loop over the list they are handed, disconnect false returns on a one-to-one (on a one-to-many's to-one side the engine disconnects whatever the boolean), delete false deletes nothing, delete with an empty list, and disconnect with one on a one-to-many, still look the related rows up (their filter is an empty OR, so they find none) and change nothing, disconnect with an empty list on a many-to-many returns before building a query, createMany writes the rows its data lists, and set disconnects every linked row, then connects the rows it lists. Measured on Prisma 6.19.0 over SQLite: delete [] and a one-to-many disconnect [] send SELECT Post.id, Post.authorId ... WHERE (1=0 AND ...) and nothing else on Post; deleteMany [], create [] and createMany with data [] send nothing on Post. A result extension's needs read where a spread may add or replace its fields are not known.",
       "params": {
         "arguments": {
           "select": "project", "omit": "none", "include": "relations", "where": "filter", "cursor": "filter", "having": "filter",
@@ -65,17 +65,19 @@
         "relationNullFilters": ["is", "isNot"],
         "relationCount": { "key": "_count", "arguments": { "where": "filter" } },
         "nestedWrites": {
-          "create": { "rows": "write", "link": "set", "value": "write", "idle": { "[]": "any" } },
-          "createMany": { "rows": "write", "link": "set", "arguments": { "data": "write", "skipDuplicates": "none" } },
-          "connectOrCreate": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write" }, "idle": { "[]": "any" } },
-          "upsert": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write", "update": "write" }, "idle": { "[]": "any" } },
-          "update": { "rows": "write", "value": "write", "arguments": { "where": "filter", "data": "write" }, "idle": { "[]": "any" } },
-          "updateMany": { "rows": "write", "arguments": { "where": "filter", "data": "write" }, "idle": { "[]": "any" } },
-          "connect": { "rows": "none", "link": "set", "value": "filter", "idle": { "[]": "any" } },
+          "create": { "rows": "write", "link": "set", "value": "write", "idle": [{ "value": "[]" }] },
+          "createMany": { "rows": "write", "link": "set", "arguments": { "data": "write", "skipDuplicates": "none" }, "idle": [{ "argument": "data", "value": "[]" }] },
+          "connectOrCreate": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write" }, "idle": [{ "value": "[]" }] },
+          "upsert": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write", "update": "write" }, "idle": [{ "value": "[]" }] },
+          "update": { "rows": "write", "value": "write", "arguments": { "where": "filter", "data": "write" }, "idle": [{ "value": "[]" }] },
+          "updateMany": { "rows": "write", "arguments": { "where": "filter", "data": "write" }, "idle": [{ "value": "[]" }] },
+          "connect": { "rows": "none", "link": "set", "value": "filter", "idle": [{ "value": "[]" }] },
           "set": { "rows": "none", "link": "replace", "value": "filter" },
-          "disconnect": { "rows": "none", "link": "clear", "value": "filter", "idle": { "false": "one-to-one", "[]": "any" } },
-          "delete": { "rows": "delete", "value": "filter", "idle": { "false": "any", "[]": "any" } },
-          "deleteMany": { "rows": "delete", "value": "filter", "idle": { "[]": "any" } }
+          "disconnect": { "rows": "none", "link": "clear", "value": "filter", "idle": [
+            { "value": "false", "on": "one-to-one" }, { "value": "[]", "on": "many-to-many" }, { "value": "[]", "drops": "writes" }
+          ] },
+          "delete": { "rows": "delete", "value": "filter", "idle": [{ "value": "false" }, { "value": "[]", "drops": "writes" }] },
+          "deleteMany": { "rows": "delete", "value": "filter", "idle": [{ "value": "[]" }] }
         },
         "extensions": {
           "methods": ["$extends"], "rewriting": ["query"],
@@ -231,9 +233,19 @@
           "fields": ["id", "email"], "relations": { "posts": "Post[]", "profile": "Profile" },
           "models": { "Post": { "fields": ["id", "authorId"] }, "Profile": { "fields": ["id", "userId"] } },
           "expect": { "reads": ["id"], "wholeRow": true, "follow": [
-            { "relation": "profile", "target": "Profile", "how": "write", "op": "disconnect", "link": "clear", "idleOn": "one-to-one" }
+            { "relation": "profile", "target": "Profile", "how": "write", "op": "disconnect", "link": "clear", "idle": [{ "on": "one-to-one", "drops": "all" }] }
           ] },
           "why": "an empty list creates, connects and deletes nothing; disconnect false does nothing on a one-to-one, which the schema says this relation is or is not"
+        },
+        {
+          "operation": "update", "model": "User", "args": "{ where: { id }, data: { posts: { delete: [], disconnect: [], createMany: { data: [] } } } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]" },
+          "models": { "Post": { "fields": ["id", "authorId"] } },
+          "expect": { "reads": ["id"], "wholeRow": true, "follow": [
+            { "relation": "posts", "target": "Post", "how": "write", "op": "delete", "access": "delete", "idle": [{ "on": "any", "drops": "writes" }] },
+            { "relation": "posts", "target": "Post", "how": "write", "op": "disconnect", "link": "clear", "idle": [{ "on": "many-to-many", "drops": "all" }, { "on": "any", "drops": "writes" }] }
+          ] },
+          "why": "measured on Prisma 6.19.0: delete [] and a one-to-many disconnect [] still select the children (Post.id, Post.authorId) and write nothing; a many-to-many disconnect [] and createMany with data [] send nothing"
         },
         {
           "operation": "update", "model": "User", "args": "{ where: { id }, data: { tags: { set: [] } } }",

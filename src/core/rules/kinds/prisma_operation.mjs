@@ -30,9 +30,12 @@ const STATEMENTS = Object.freeze(['select', 'insert', 'update', 'delete', 'upser
 const ROWS = Object.freeze(['write', 'delete', 'none']);
 // `replace` clears what is linked, then sets what the value lists (`set`).
 const LINKS = Object.freeze(['set', 'clear', 'replace']);
-// The literal values a nested write's `idle` map may name, and the relations it may say they are idle on.
+// An `idle` entry: the literal value that makes a nested write do less (the whole
+// value, or one `argument` of it), the relations it does so on, and what it drops:
+// every edge, or only the writes (the rows are still looked up).
 const IDLE_LITERALS = Object.freeze(['false', '[]']);
-const IDLE_ON = Object.freeze(['any', 'one-to-one']);
+const IDLE_ON = Object.freeze(['any', 'one-to-one', 'many-to-many']);
+const IDLE_DROPS = Object.freeze(['all', 'writes']);
 const NAME = /^[$_A-Za-z][$_A-Za-z0-9]*$/;
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
 const isObject = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
@@ -71,12 +74,22 @@ function relationCountErrors(c) {
   return [...errors, ...rolesErrors(c.arguments, 'params.relationCount.arguments')];
 }
 
-/** A nested write's `idle` map: a literal value, and the relations on which that value makes it do nothing. */
+/** One `idle` entry: `{value, argument?, on?, drops?}`. */
+function idleEntryErrors(at, e) {
+  if (!isObject(e)) return [`${at} must be an object`];
+  const errors = unknownKeys(e, ['value', 'argument', 'on', 'drops']).map((k) => `${at} has an unknown key "${k}"`);
+  if (!IDLE_LITERALS.includes(e.value)) errors.push(`${at}.value must be one of ${IDLE_LITERALS.join(', ')}`);
+  if (e.argument !== undefined && !NAME.test(e.argument)) errors.push(`${at}.argument must be a name`);
+  if (e.on !== undefined && !IDLE_ON.includes(e.on)) errors.push(`${at}.on must be one of ${IDLE_ON.join(', ')}`);
+  if (e.drops !== undefined && !IDLE_DROPS.includes(e.drops)) errors.push(`${at}.drops must be one of ${IDLE_DROPS.join(', ')}`);
+  return errors;
+}
+
+/** A nested write's `idle` list: the literal values that make it do nothing, or write nothing, and on which relations; the first that applies wins. */
 function idleErrors(at, idle) {
   if (idle === undefined) return [];
-  if (!isObject(idle)) return [`${at}.idle must be an object`];
-  return Object.entries(idle).filter(([lit, on]) => !IDLE_LITERALS.includes(lit) || !IDLE_ON.includes(on))
-    .map(([lit]) => `${at}.idle.${lit} must map one of ${IDLE_LITERALS.join(', ')} to one of ${IDLE_ON.join(', ')}`);
+  if (!Array.isArray(idle)) return [`${at}.idle must be a list`];
+  return idle.flatMap((e, i) => idleEntryErrors(`${at}.idle[${i}]`, e));
 }
 
 /** One nested write: what it does to the related rows, whether it sets or clears the link, how its value is read, and which literal values leave it idle. */
@@ -193,7 +206,7 @@ function shapeOf(x) {
     reads: sorted(x.reads), writes: sorted(x.writes), wholeRow: x.wholeRow === true, relations: sorted(x.relations), mayReads: sorted(x.mayReads),
     follow: (x.follow ?? []).map((f) => ({
       relation: f.relation, target: f.target, how: f.how, access: f.access ?? 'read', op: f.op ?? null, link: f.link ?? null, may: f.may === true,
-      nullCheck: f.nullCheck === true, idleOn: f.idleOn ?? null, ...shapeOf(f.fx ?? f),
+      nullCheck: f.nullCheck === true, idle: f.idle ?? null, ...shapeOf(f.fx ?? f),
     })),
   };
 }
@@ -210,7 +223,7 @@ function exampleModel(name, spec) {
 function runOneExample(entry, ex, env) {
   const model = exampleModel(ex.model ?? 'Model', ex);
   const models = ex.models ? new Map([[model.name, model], ...Object.entries(ex.models).map(([n, spec]) => [n, exampleModel(n, spec)])]) : null;
-  const computed = ex.computed ? new Map([[model.name, ex.computed]]) : null;
+  const computed = ex.computed ? new Map([[model.name, { open: false, fields: ex.computed }]]) : null;
   const fx = entry.compiled.effectsOf(ex.operation, [env.tsValue(ex.args)], model, models, computed);
   const got = fx && { ...shapeOf(fx), runtimeOnly: sorted(fx.runtimeOnly) };
   const want = { ...shapeOf(ex.expect), runtimeOnly: sorted(ex.expect.runtimeOnly) };

@@ -22,11 +22,15 @@
 // A relation filtered on null (`author: null`, or a key the pack names in
 // `relationNullFilters` given null, `{ is: null }`) only asks whether the link
 // is there: the entry says so (`nullCheck`), and the bridge decides which side
-// that reads. A nested write whose value is a literal the pack says leaves it
-// idle (`create: []`, `disconnect: false` on a one-to-one) is not followed at
-// all, or marked with the relations it is idle on (`idleOn`); a `replace` link
-// (`set`) handed `[]` only clears. A computed field of the client's extension
-// (`computed`, by model) in a projection reads the fields it needs.
+// that reads. A nested write whose value (or one argument of it) is a literal
+// the pack's `idle` list names (`create: []`, `createMany: { data: [] }`,
+// `disconnect: false` on a one-to-one, `delete: []`, which still looks the
+// rows up) is not followed when it does nothing on every relation, else is
+// marked with the entries that apply (`idle`), for the bridge to decide on the
+// relation it is; a `replace` link (`set`) handed `[]` only clears. A computed
+// field of the client's extension (`computed`, by model) in a projection reads
+// the fields it needs; where a spread may add or replace the model's computed
+// fields (`open`), what a field it may compute needs is not known, and said.
 //
 // What it does not follow, it says: a relation whose model it was not handed
 // (`relations`), a key it does not know (`unknownKeys`, with the relation path
@@ -104,10 +108,10 @@ function neededBy(map, name, seen) {
  * key itself reads nothing more.
  */
 function applyComputed(key, v, fx, argKey) {
-  const map = fx.cfg.computed?.get(fx.model.name);
-  if (!map || !Object.hasOwn(map, key)) return false;
+  const set = fx.cfg.computed?.get(fx.model.name);
+  if (!set || (!set.open && !Object.hasOwn(set.fields, key)) || (v.k === 'bool' && !v.v)) return false;
   const own = fx.idx.scalars.has(key) || fx.idx.relations.has(key);
-  const needs = neededBy(map, key, new Set());
+  const needs = set.open ? null : neededBy(set.fields, key, new Set());
   if (needs === null) { fx.runtimeOnly.add(at(fx, argKey, key)); return !own; }
   applyProjectField(argKey, key, v, needs.flatMap((n) => fieldsOfKey(n, fx.idx)), fx);
   return !own;
@@ -220,18 +224,24 @@ function literalOf(x) {
   return x.k === 'arr' && x.v.length === 0 && !x.spread ? '[]' : null;
 }
 
+/** Whether an `idle` entry's literal is what a nested write is handed: the whole value, or, with `argument`, that argument of an object written whole. */
+function idleMatches(e, x) {
+  if (!e.argument) return literalOf(x) === e.value;
+  return x.k === 'obj' && !x.spread && !x.computed && Object.hasOwn(x.v, e.argument) && literalOf(x.v[e.argument]) === e.value;
+}
+
 /**
- * How one nested write is followed: `null` when its literal value leaves it
- * idle on every relation, else its entry's fields, marked with the relations
- * it is idle on (`idleOn`) when only some. A `replace` link handed `[]` lists
+ * How one nested write is followed: `null` when the first `idle` entry its
+ * value matches leaves it doing nothing on every relation, else its entry's
+ * fields, with the entries that match (`idle`, each `{on, drops}`) for the
+ * bridge to apply on the relation it is. A `replace` link handed `[]` lists
  * nothing to set, so it only clears.
  */
 function nestedEntry(op, spec, x) {
-  const lit = literalOf(x);
-  const idle = lit && spec.idle ? spec.idle[lit] : undefined;
-  if (idle === 'any') return null;
-  const link = spec.link === 'replace' && lit === '[]' ? 'clear' : spec.link;
-  return { op, access: spec.rows === 'none' ? 'read' : spec.rows, ...(link ? { link } : {}), ...(idle ? { idleOn: idle } : {}) };
+  const idle = (spec.idle ?? []).filter((e) => idleMatches(e, x)).map((e) => ({ on: e.on ?? 'any', drops: e.drops ?? 'all' }));
+  if (idle.length > 0 && idle[0].on === 'any' && idle[0].drops === 'all') return null;
+  const link = spec.link === 'replace' && literalOf(x) === '[]' ? 'clear' : spec.link;
+  return { op, access: spec.rows === 'none' ? 'read' : spec.rows, ...(link ? { link } : {}), ...(idle.length > 0 ? { idle } : {}) };
 }
 
 /** A relation in a write: each nested operation (`create`, `connect`, `update`, ...) as the pack describes it; a value held in a variable MAY write it, in a way only the running program knows. */

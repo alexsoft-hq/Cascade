@@ -335,12 +335,52 @@ test('nested_disconnect_false_emits_no_relation_edges', () => {
 test('nested_create_empty_emits_no_relation_writes', () => {
   const { edgesOf, sid } = run([
     '    await this.prisma.user.update({ where: { id }, data: { email: t, posts: { create: [] } }, select: { id: true } });',
-    '    await this.prisma.user.update({ where: { id }, data: { email: t, posts: { connect: [], deleteMany: [], delete: [] }, tags: { disconnect: [] } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { email: t, posts: { connect: [], deleteMany: [] }, tags: { disconnect: [] } }, select: { id: true } });',
     '    await this.prisma.team.update({ where: { id }, data: { badge: { delete: false } }, select: { id: true } });',
   ]);
   assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email']);
-  assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email']);
+  assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email'], 'a many-to-many disconnect of nothing returns before any query');
   assert.deepEqual(edgesOf(sid(2)), ['EXECUTES EXACT Team [write]', 'READS EXACT Team.id']);
+});
+
+// Measured on Prisma 6.19.0 over SQLite (.oss-work/rm67/y2/runtime-result.jsonl):
+// `posts: { delete: [] }` and `posts: { disconnect: [] }` on a one-to-many send
+// `SELECT Post.id, Post.authorId FROM Post WHERE (1=0 AND Post.authorId IN (?))`
+// and nothing else on Post; `deleteMany: []`, `create: []` and
+// `createMany: { data: [] }` send nothing on Post.
+test('nested_empty_delete_and_one_to_many_disconnect_preserve_child_reads', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { delete: [] } }, select: { id: true } });',
+    '    await this.prisma.team.update({ where: { id }, data: { members: { disconnect: [] } }, select: { id: true } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), [
+    'EXECUTES EXACT Post [read] via User.posts', 'EXECUTES EXACT User [write]',
+    'READS EXACT Post.authorId via User.posts', 'READS EXACT Post.id via User.posts', 'READS EXACT User.id',
+  ], 'the children are still looked up, and nothing of Post is written or deleted');
+  assert.deepEqual(edgesOf(sid(1)), [
+    'EXECUTES EXACT Member [read] via Team.members', 'EXECUTES EXACT Team [write]',
+    'READS EXACT Member.id via Team.members', 'READS EXACT Member.teamId via Team.members', 'READS EXACT Team.id',
+  ]);
+});
+
+test('an empty delete on a many-to-many still looks the rows up through the implicit table, and deletes nothing', () => {
+  // Measured (.oss-work/rm67/y2/measured-y2.jsonl): SELECT _TagToUser.B, _TagToUser.A ...; SELECT Tag.id ... WHERE (1=0 AND ...).
+  const { edgesOf, sid } = run(['    await this.prisma.user.update({ where: { id }, data: { tags: { delete: [] } }, select: { id: true } });']);
+  assert.deepEqual(edgesOf(sid(0)), [
+    'EXECUTES EXACT Tag [read] via User.tags', 'EXECUTES EXACT User [write]', 'EXECUTES EXACT _TagToUser [read] via User.tags',
+    'READS EXACT Tag.id via User.tags', 'READS EXACT User.id', 'READS EXACT _TagToUser.A via User.tags', 'READS EXACT _TagToUser.B via User.tags',
+  ]);
+});
+
+test('nested_createMany_empty_data_emits_no_post_write_existing_defect', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { createMany: { data: [] } } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { createMany: { data: [], skipDuplicates: true } } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { createMany: { data: rows } } }, select: { id: true } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id']);
+  assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id']);
+  assert.ok(edgesOf(sid(2)).includes('EXECUTES EXACT Post [write] via User.posts'), 'data held in a variable may hold rows');
 });
 
 test('set: [] clears the relation, which is a write; a set that lists rows clears and then sets', () => {
@@ -395,4 +435,34 @@ test('a computed field that needs another computed field reads what that one nee
   ]);
   assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [read]', 'READS EXACT User.email', 'READS EXACT User.id']);
   assert.match(g.nodes.get(sid(1)).columnsRuntimeOnlyReason, /select\.loose/);
+});
+
+test('result_extension_nested_spread_cannot_claim_overridden_needs_exact', () => {
+  const { edgesOf, sid, g } = run([
+    '    const x = this.prisma.$extends({ result: { user: { label: { needs: { email: true }, compute(u) { return u.email; } }, ...ext } } });',
+    '    await x.user.findMany({ select: { label: true } });',
+  ]);
+  assert.ok(!edgesOf(sid(0)).includes('READS EXACT User.email'), 'the spread may replace label with one that needs only id (measured: Prisma then selects User.id alone)');
+  assert.match(g.nodes.get(sid(0)).columnsRuntimeOnlyReason, /select\.label/);
+});
+
+test('a field a spread in the result component may compute, a real one included, is said: what it needs is not known', () => {
+  const { edgesOf, sid, g } = run([
+    '    const x = this.prisma.$extends({ result: { ...base, user: { label: { needs: { email: true }, compute: () => 1 } } } });',
+    '    await x.user.findMany({ select: { label: true } });',
+    '    const y = this.prisma.$extends({ result: { user: { ...ext } } });',
+    '    await y.user.findMany({ select: { id: true } });',
+  ]);
+  assert.ok(!edgesOf(sid(0)).includes('READS EXACT User.email'), 'a spread beside the model key may replace it');
+  assert.match(g.nodes.get(sid(0)).columnsRuntimeOnlyReason, /select\.label/);
+  assert.ok(edgesOf(sid(1)).includes('READS EXACT User.id'), 'a real field is selected all the same');
+  assert.match(g.nodes.get(sid(1)).columnsRuntimeOnlyReason, /select\.id/, 'the spread may compute id from other fields, which Prisma then selects too');
+});
+
+test('a computed field named like a real one reads the real one and what it needs, as Prisma selects both', () => {
+  const { edgesOf, sid } = run([
+    '    const x = this.prisma.$extends({ result: { user: { id: { needs: { email: true }, compute: (u) => u.email.length } } } });',
+    '    await x.user.findMany({ select: { id: true } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [read]', 'READS EXACT User.email', 'READS EXACT User.id'], 'measured: SELECT User.id, User.email');
 });

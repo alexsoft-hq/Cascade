@@ -81,17 +81,21 @@ function writeStatement(g, a) {
 }
 
 /**
- * The fields a client's extension computes, by model name: the ones it names
- * for every model, and over them the ones it names under that model's
- * delegate. Null when it computes none.
+ * The fields a client's extension computes, by model name, each `{open,
+ * fields}`: the ones it names for every model, and over them the ones it names
+ * under that model's delegate; open where either set is, or the component is.
+ * Null when it computes none.
  */
 function computedByModel(computed, models) {
   if (!computed) return null;
   const out = new Map();
-  for (const m of models.values()) out.set(m.name, { ...computed.all });
-  for (const [key, fields] of Object.entries(computed.byModel)) {
+  const all = computed.all ?? { open: false, fields: {} };
+  for (const m of models.values()) out.set(m.name, { open: computed.open || all.open, fields: { ...all.fields } });
+  for (const [key, set] of Object.entries(computed.byModel)) {
     const m = modelOfDelegate(models, key);
-    if (m) Object.assign(out.get(m.name), fields);
+    if (!m) continue;
+    const into = out.get(m.name);
+    out.set(m.name, { open: into.open || set.open, fields: { ...into.fields, ...set.fields } });
   }
   return out;
 }

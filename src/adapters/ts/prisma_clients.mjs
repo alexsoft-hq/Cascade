@@ -92,19 +92,26 @@ function needsOf(field, key) {
 
 /**
  * The fields an extension's result component (the rule's `extensions.computed`)
- * computes: `{all, byModel}`, the ones it names for every model and the ones
- * it names under each model key, each field with what it needs. A model key or
- * a field this cannot read is left out, so selecting it stays a key not read.
+ * computes: `{open, all, byModel}`, the set it names for every model and the
+ * set under each model key, each `{open, fields}`, every field with what it
+ * needs. A set is OPEN where a spread or a computed key may add fields to it or
+ * replace the ones written (the worker keeps no order, so a spread before a
+ * field and one after it read the same): what a field of an open set needs is
+ * not known. A spread in the component itself opens every model's set, and a
+ * model key whose value is not written out opens that model's.
  */
 function computedFields(arg, cfg) {
   const comp = cfg ? arg.v[cfg.component] : null;
-  if (!comp || comp.k !== 'obj') return null;
-  const out = { all: {}, byModel: {} };
+  if (!comp) return null;
+  if (comp.k !== 'obj') return { open: true, all: null, byModel: {} };
+  const open = Boolean(comp.spread || comp.computed);
+  const out = { open, all: null, byModel: {} };
   for (const [key, fields] of Object.entries(comp.v)) {
-    if (fields.k !== 'obj') continue;
-    const read = Object.fromEntries(Object.entries(fields.v).map(([name, f]) => [name, needsOf(f, cfg.needs)]));
-    if (key === cfg.allModels) out.all = read;
-    else out.byModel[key] = read;
+    const set = fields.k === 'obj'
+      ? { open: open || Boolean(fields.spread || fields.computed), fields: Object.fromEntries(Object.entries(fields.v).map(([name, f]) => [name, needsOf(f, cfg.needs)])) }
+      : { open: true, fields: {} };
+    if (key === cfg.allModels) out.all = set;
+    else out.byModel[key] = set;
   }
   return out;
 }
