@@ -65,6 +65,10 @@
         "reason": "the mybatisPlus axis of this pack is not-shipped: the MyBatis-Plus bridge did not run, because there is no Java lane or the profile declares no mybatis-plus pack. Generic CRUD, condition wrappers and @TableLogic deletes are absent, not empty"
       },
       {
+        "scope": "axis:web",
+        "reason": "1 of 13 frontend call site(s) were traced to no client, so each of their edges is HEURISTIC at best; most often because the function called comes from a package the HTTP client pack does not name (1 call(s), e.g. helper.post)"
+      },
+      {
         "scope": "axis:screen",
         "reason": "the screen axis of this pack is degraded: we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
       },

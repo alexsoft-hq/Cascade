@@ -31,6 +31,15 @@ function emptyUrlStats() {
 }
 
 /**
+ * WHY a call with a URL was traced to no client, by what its callee turned out
+ * to be, and the callees seen most (src/adapters/web/calls.mjs UNTRACED_BECAUSE).
+ * The web axis puts the main one in its note (src/core/lanes.mjs).
+ */
+function emptyUntracedStats() {
+  return { byReason: {}, callees: {} };
+}
+
+/**
  * WHERE A SCREEN LEADS, and where it could not be followed (RM59).
  *
  * A call on a router changes the screen and sends nothing, so it is none of the
@@ -189,7 +198,7 @@ export function emptyWebStats() {
         parameter: 0, expression: 0, importedConstant: 0, noMatch: 0, outsidePack: 0, allHoles: 0,
       },
     },
-    navigation: emptyNavigationStats(),
+    navigation: emptyNavigationStats(), untraced: emptyUntracedStats(),
     matches: { exact: 0, template: 0, multi: 0 }, url: emptyUrlStats(),
     outboundEndpoints: 0,
     prefix: {},

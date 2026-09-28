@@ -492,8 +492,10 @@ test('serviceOfUri: lb:// names a service, http:// names a host, a placeholder n
 });
 
 test('springConfigEntries reads only the keys this module is about', () => {
-  const text = 'spring:\n  application:\n    name: x\n  datasource:\n    url: jdbc:mysql://h/db\nserver:\n  port: 8080\n';
-  assert.deepEqual(springConfigEntries({ path: YML, text }).map((e) => e.key), ['spring.application.name']);
+  const text = 'spring:\n  application:\n    name: x\n  datasource:\n    url: jdbc:mysql://h/db\nserver:\n  port: 8080\n  servlet:\n    context-path: /x\n';
+  // `server.port` is one of them since the web lane places a call on this
+  // machine by its port (src/core/server_ports.mjs); the rest of `server.*` is not.
+  assert.deepEqual(springConfigEntries({ path: YML, text }).map((e) => e.key), ['spring.application.name', 'server.port']);
 });
 
 // ---------------------------------------------------------------------------

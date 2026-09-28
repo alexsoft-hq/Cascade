@@ -525,6 +525,23 @@ function sayUrlNotHandedOn(calls) {
   process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so each is graded HEURISTIC as a call this lane could not trace\n`);
 }
 
+/**
+ * Which ports this pack listens on, and from which file, or why that is not
+ * known; and the calls that went to this machine on another port.
+ */
+function sayServerPorts(p) {
+  if (!p) return;
+  process.stderr.write(p.known
+    ? `Web lane: this pack listens on port(s) ${p.ports.join(', ')} (${[
+      p.files.length > 0 ? `server.port in ${p.files.join(', ')}` : null,
+      p.defaulted ? 'Spring Boot\'s default where no file that applies without a profile sets it' : null,
+    ].filter(Boolean).join('; ')})\n`
+    : `Web lane: the ports this pack listens on are not known (${p.why}), so no call is placed by its port\n`);
+  if (p.otherPortCalls > 0) {
+    process.stderr.write(`  [warn] WEB_OTHER_PORT ${p.otherPortCalls} call site(s) go to this machine on a port this pack does not listen on, so another service answers them: they stay outbound\n`);
+  }
+}
+
 export function sayWebBridge(webBridgeStats, webBridgeMs) {
   const w = webBridgeStats;
   const reasons = Object.entries(w.unresolved.byReason)
@@ -545,6 +562,7 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
     process.stderr.write(`  [warn] WEB_NO_ROUTE ${u.url} (${u.count} call site(s)): nothing in this pack serves it\n`);
   }
   sayUrlNotHandedOn(w.calls);
+  sayServerPorts(w.ports);
   const s = webBridgeStats.screens;
   const pg = s.byKind ?? { router: 0, page: 0 };
   // …and the third kind of screen (RM56): a Nexacro form, which no route

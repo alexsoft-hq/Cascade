@@ -20,6 +20,7 @@ import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
 import { assembleGraph, javaLaneOptions, openapiLaneOptions } from '../../../core/assemble.mjs';
 import { ProfileError } from '../../../core/profile.mjs';
+import { serverPortsOf } from '../../../core/server_ports.mjs';
 import { builtinRegistry } from '../../../core/rules/registry.mjs';
 import { webFactsSummary } from '../../../core/facts_store.mjs';
 import { runLanesWithShards } from '../../../core/incremental.mjs';
@@ -470,6 +471,9 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
       // service-to-service call, which are the same rewrite either way.
       gatewayRoutes: profile.gatewayRoutes ?? {},
       packages: discovery?.webPackages ?? [],
+      // The ports this pack's applications listen on (src/core/server_ports.mjs);
+      // with no discovery they are unknown, and nothing is decided by port.
+      serverPorts: discovery ? serverPortsOf(discovery.serverPorts ?? []) : null,
       // I-5: the `screenAxis` block and `moduleAttribution.codeLength` are
       // read here and nowhere else. `enabled` is the gate on the whole axis.
       screenAxis: { ...(profile.screenAxis ?? {}), enabled: screenGate.enabled },

@@ -46,8 +46,13 @@ const SERVICE_NAME_KEY = 'spring.application.name';
  */
 const ROUTES_KEY_RE = /^spring\.cloud\.gateway(?:\.server\.webflux|\.server\.webmvc|\.mvc)?\.routes\.(\d+)\.(.+)$/;
 
-/** The key path prefixes this reader is interested in at all. */
-const INTEREST_RE = /^spring\.(?:application|config|cloud\.gateway|thymeleaf|freemarker|velocity|mvc\.view|jpa|profiles)(?:\.|$)/;
+/**
+ * The key path prefixes this reader is interested in at all. `server.port` and
+ * the config-client keys are read for one question (src/core/server_ports.mjs):
+ * which port the application listens on, and whether that is decided outside
+ * this tree.
+ */
+const INTEREST_RE = /^(?:spring\.(?:application|config|cloud\.gateway|cloud\.config|cloud\.nacos\.config|cloud\.consul\.config|cloud\.zookeeper\.config|thymeleaf|freemarker|velocity|mvc\.view|jpa|profiles)(?:\.|$)|server\.port$)/;
 
 /**
  * THE VIEW RESOLVERS, and what each one calls its prefix and its suffix.
@@ -623,7 +628,7 @@ export function findJpaNamingStrategies(files, diagnostics = null) {
  * anywhere in it makes all of it conditional: undecided rather than wrong.
  * @returns {(doc:number) => boolean}
  */
-function conditionalDocuments(filePath, entries) {
+export function conditionalDocuments(filePath, entries) {
   if (PROFILE_FILE_RE.test(path.posix.basename(filePath.split('\\').join('/')))) return () => true;
   const activated = new Set(entries.filter((e) => ACTIVATION_KEY_RE.test(relaxedKey(e.key))).map((e) => e.doc));
   return (doc) => activated.has(doc);

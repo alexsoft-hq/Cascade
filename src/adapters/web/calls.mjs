@@ -27,7 +27,7 @@ import { isComponentFile, memberIndex, webEndpointId, webSymbolId } from './symb
 import { TEMPLATE_PREFIX } from './prefix.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
 import {
-  declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost,
+  declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost, otherPortOf,
 } from './base_url.mjs';
 
 /**
@@ -268,6 +268,13 @@ function wrapperStep(ctx, key) {
   };
   for (const c of callsIn.get(key) ?? []) {
     if (hasOwnUrl(c)) continue;
+    // A PLATFORM SINK IS A HOP whatever its callee resolves to: a GLOBAL
+    // `fetch` binds nothing, so the callee resolves to nothing, and asked after
+    // that it was never reached (a function handing its request to `fetch` was
+    // never a wrapper). The call record already says what it is.
+    if (c.platformSink) {
+      consider({ depth: 1, next: null, sink: { module: c.platformSink, instance: null, kind: 'platform' }, call: c });
+    }
     const t = calleeTarget(m.file, c);
     if (!t) continue;
     if (t.kind === 'sink') {
@@ -278,9 +285,6 @@ function wrapperStep(ctx, key) {
       const w = wrappers.get(t.key);
       if (!w) continue;
       consider({ depth: 1 + w.depth, next: t.key, sink: w.sink, call: c });
-    }
-    if (c.platformSink) {
-      consider({ depth: 1, next: null, sink: { module: c.platformSink, instance: null, kind: 'platform' }, call: c });
     }
   }
   hopsWithoutACallRecord(ctx, key, m, consider);
@@ -482,13 +486,14 @@ function makeConstantOf({ files, resolver }) {
  *
  * @returns {(file:string, pkg:string, hole:object, leading:boolean) => object}
  */
-function makeHoleFiller({ constantOf, configFor }) {
+function makeHoleFiller({ constantOf, configFor, ports }) {
   const NONE = { value: null, assumed: false };
   const fromBuild = (pkg, expr, hole, assumed) => {
-    const got = expr === null ? null : fillFromExpression(configFor(pkg), expr);
+    const got = expr === null ? null : fillFromExpression(configFor(pkg), expr, ports);
     if (got === null) return { ...NONE, hole };
     return {
       value: got.text, assumed, from: got.from, env: envNamesOf(expr), guess: got.guess, reads: got.reads,
+      ...(got.away ? { away: got.away } : {}),
     };
   };
   return (file, pkg, h, leading) => {
@@ -552,6 +557,7 @@ function noteFill(acc, h, got) {
   if (got.from !== 'import') {
     acc.leadingBase = true;
     if (acc.guess === null && got.guess) acc.guess = got.guess;
+    if (got.away) acc.away = got.away;
   }
   if (acc.substituted.some((s) => s.name === h.name && s.value === got.value)) return;
   acc.substituted.push({
@@ -589,7 +595,9 @@ function fillCandidate(cand, parts, holes, fillAt, acc) {
 function withImportedConstants(file, pkg, call, from, fill) {
   const resolved = Array.isArray(from) ? from : null;
   const url = call.url ?? {};
-  const acc = { substituted: [], assumed: false, guess: null, leadingBase: false };
+  const acc = {
+    substituted: [], assumed: false, guess: null, leadingBase: false, away: null,
+  };
   if (resolved === null || resolved.length === 0) return { resolved, ...acc };
   const one = resolved.length === 1;
   const out = resolved.map((cand) => {
@@ -729,6 +737,36 @@ function wrapperMethodOf(w, c) {
   return m.overridable ? callerOverride(m, c) : { value: m.value, from: 'wrapper-verb' };
 }
 
+/**
+ * WHY A CALL WAS TRACED TO NO CLIENT, by what its callee turned out to be. The
+ * words are the web axis's (src/core/lanes.mjs), so a reader sees the same
+ * reason in the stats and in the note.
+ */
+export const UNTRACED_BECAUSE = Object.freeze({
+  unbound: 'the function called is bound to nothing this lane follows (an object of functions, a parameter, a global)',
+  external: 'the function called comes from a package the HTTP client pack does not name',
+  'not-a-wrapper': 'the function called is this project\'s own and hands the request to no client this lane knows',
+  'not-a-verb': 'a client is called through a method that is not one of its verbs',
+  'url-not-handed-on': 'the function called is a wrapper that does not hand the argument the URL is in on to the client',
+});
+
+/** What the callee of an untraced call turned out to be, as an UNTRACED_BECAUSE key. */
+function untracedReasonOf(target) {
+  if (target === null) return 'unbound';
+  if (target.kind === 'external') return 'external';
+  if (target.kind === 'member') return 'not-a-wrapper';
+  return target.kind === 'sink' ? 'not-a-verb' : 'unbound';
+}
+
+/** One untraced call, counted by why and by the callee as written. */
+function countUntraced(stats, c, why) {
+  const u = stats.untraced;
+  u.byReason[why] = (u.byReason[why] ?? 0) + 1;
+  const callee = c.callee && typeof c.callee.root === 'string' ? [c.callee.root, ...(c.callee.path ?? [])].join('.') : '(expression)';
+  const key = `${why} ${callee}`;
+  u.callees[key] = (u.callees[key] ?? 0) + 1;
+}
+
 /** The HTTP method this call sends, and what said so. */
 function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
   return (c, sink, target) => {
@@ -865,7 +903,9 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
     stats.calls.traced += 1;
     return { sink: wrapperSink(wrappers, target.key), target };
   }
-  const found = untracedSink(c, { resolved, absolute, target, stats });
+  const found = untracedSink(c, {
+    resolved, absolute, target, stats, throughAWrapper,
+  });
   if (found !== null && throughAWrapper) stats.calls.urlNotHandedOn += 1;
   return found;
 }
@@ -915,10 +955,13 @@ function handsOnTheUrl(call, c) {
  *
  * @returns {{sink:object, target:(object|null)}|null} null when this is no call
  */
-function untracedSink(c, { resolved, absolute, target, stats }) {
+function untracedSink(c, {
+  resolved, absolute, target, stats, throughAWrapper = false,
+}) {
   if (isStringMethod(c.callee)) { stats.calls.stringMethod += 1; return null; }
   if (!urlShaped(absolute, resolved)) { stats.calls.notUrlShaped += 1; return null; }
   stats.calls.untraced += 1;
+  countUntraced(stats, c, throughAWrapper ? 'url-not-handed-on' : untracedReasonOf(target));
   return {
     sink: { kind: 'untraced', module: target && target.kind === 'external' ? target.module : null, instance: null, chain: [], depth: 0 },
     target,
@@ -961,7 +1004,8 @@ function readCallUrl(file, pkg, c, { ctxVars, constantOf, fill }) {
   // call to another deployable: whether it is this pack's is what the guess
   // on the site says, the same way it is for a client's base URL.
   const absolute = host.absolute && imported.leadingBase
-    ? { ...host.absolute, base: true } : (host.absolute ?? c.url.absolute ?? null);
+    ? { ...host.absolute, base: true, ...(imported.away ? { away: imported.away } : {}) }
+    : (host.absolute ?? c.url.absolute ?? null);
   return {
     resolved: withContextPath(c, ctxVars, host.resolved),
     absolute,
@@ -986,7 +1030,7 @@ export function classifyCallSites({
 }) {
   const methodFor = makeMethodFor(deps);
   const constantOf = makeConstantOf({ files, resolver: deps.resolver });
-  const fill = makeHoleFiller({ constantOf, configFor: deps.configFor });
+  const fill = makeHoleFiller({ constantOf, configFor: deps.configFor, ports: deps.ports ?? null });
   const sites = [];
   for (const file of fileNames) {
     const f = files.get(file);
@@ -1082,7 +1126,9 @@ function noteCaller(site, nodesToAdd, files) {
 }
 
 /** Everything an edge from this call site says about itself. */
-function callEvidence(site, { written, full, via, absolute, prefixEvidence, declaredService, found }) {
+function callEvidence(site, {
+  written, full, via, absolute, prefixEvidence, declaredService, found, away = null,
+}) {
   const { call, sink } = site;
   const evidence = {
     rule: call.nexacro ? 'nexacro-transaction'
@@ -1122,6 +1168,8 @@ function callEvidence(site, { written, full, via, absolute, prefixEvidence, decl
     ...(declaredService ? { service: declaredService, serviceLiteral: true } : {}),
     match: found.how,
     target: found.routes.length > 0 ? 'in-pack' : 'outside-pack',
+    // WHY IT LEFT: this machine, but a port another service listens on.
+    ...(away ? { away } : {}),
   };
   if (site.assumed) evidence.alias = 'assumed';
   return evidence;
@@ -1160,7 +1208,7 @@ function placeCandidate(cand, site, ctx) {
   const fromId = noteCaller(site, nodesToAdd, files);
   httpFunctionIds.add(fromId);
   const evidence = callEvidence(site, {
-    written, full, via: cand.via ?? null, absolute, prefixEvidence, declaredService, found,
+    written, full, via: cand.via ?? null, absolute, prefixEvidence, declaredService, found, away: ctx.away,
   });
 
   if (found.routes.length === 0) {
@@ -1224,6 +1272,19 @@ function leavesThePack(absolute, cfg) {
 }
 
 /**
+ * THIS MACHINE, ANOTHER SERVICE: where the call goes to this machine on a port
+ * no application of this pack listens on (base_url.mjs otherPortOf), through
+ * its client's base URL, the base URL at its front, or its own address. Null
+ * when it does not, or when the pack's ports are not known.
+ */
+function awayOfSite(prefix, absolute, ports) {
+  if (prefix.away) return prefix.away;
+  if (absolute === null) return null;
+  if (absolute.base === true) return absolute.away ?? null;
+  return otherPortOf(absolute.host, ports);
+}
+
+/**
  * The SECOND pass: one CALLS_HTTP edge per (call candidate, route it matched),
  * and an outbound endpoint node for a URL nothing here answers.
  *
@@ -1231,7 +1292,7 @@ function leavesThePack(absolute, cfg) {
  */
 export function placeHttpEdges({
   sites, g, files, nodesToAdd, edges, stats, prefixOf, matchUrl, configFor,
-  gatewayRoutes, gatewayKeys,
+  gatewayRoutes, gatewayKeys, ports = null,
 }) {
   // The URL never resolved: no edge at all, counted by the reason the worker gave.
   const REASON = { parameter: 'parameter', expression: 'expression', 'imported-constant': 'importedConstant' };
@@ -1257,10 +1318,12 @@ export function placeHttpEdges({
     // string and nothing had to be guessed to know that.
     const prefix = site.template ? TEMPLATE_PREFIX : prefixOf(site.instanceId);
     const absolute = site.absolute ?? call.url.absolute ?? null;
-    const outsidePack = leavesThePack(absolute, configFor(site.pkg));
+    const away = awayOfSite(prefix, absolute, ports);
+    const outsidePack = away !== null || leavesThePack(absolute, configFor(site.pkg));
+    if (away !== null && stats.ports) stats.ports.otherPortCalls += 1;
     const ctx = {
       g, files, nodesToAdd, edges, stats, matchUrl, gatewayRoutes, gatewayKeys,
-      prefix, absolute, outsidePack, unmatched, httpFunctionIds, matchedRoutePaths,
+      prefix, absolute, outsidePack, away, unmatched, httpFunctionIds, matchedRoutePaths,
     };
     const seen = { grade: null, match: null, multi: false, missed: false, allHoles: false };
     for (const cand of site.resolved) {

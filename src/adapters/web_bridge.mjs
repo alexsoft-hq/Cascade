@@ -64,7 +64,7 @@ import {
 import { makeBaseReader, WEB_BASE_GUESS } from './web/base_url.mjs';
 import {
   buildRouteIndex, classifyCallSites, linkFrontendCalls, placeHttpEdges, routeMatches,
-  traceWrappers, STRING_METHODS, WEB_CALL_BASIS,
+  traceWrappers, STRING_METHODS, UNTRACED_BECAUSE, WEB_CALL_BASIS,
 } from './web/calls.mjs';
 import {
   buildRouterScreens, makeNameRegistry, placeRendersEdges, readRouteRecords, readScreenAxis,
@@ -150,7 +150,9 @@ function readTheFrontend(records, opts, stats) {
  * TWO PASSES, because the `auto` prefix has to count matches over the calls of
  * one instance before any of them can be graded.
  */
-function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
+function placeTheCalls(g, read, {
+  gatewayRoutes, ports, stats, nodesToAdd, edges,
+}) {
   const { exactPaths, templatePaths, matchUrl } = buildRouteIndex(g);
   const callsPerInstance = new Map();
   const { prefixOf, gatewayKeys } = makePrefixes({
@@ -162,6 +164,7 @@ function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
     templatePaths,
     routeMatches,
     readBaseName: makeBaseReader({ files: read.files, resolver: read.resolver }),
+    ports,
   });
   const sites = classifyCallSites({
     fileNames: read.fileNames,
@@ -187,6 +190,7 @@ function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
       // What an environment read at the front of a URL holds is the package's
       // `.env` files' answer (src/adapters/web/base_url.mjs).
       configFor: read.configFor,
+      ports,
     },
   });
   const placed = placeHttpEdges({
@@ -201,6 +205,7 @@ function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
     configFor: read.configFor,
     gatewayRoutes,
     gatewayKeys,
+    ports,
   });
   return { ...placed, sites, prefixOf, matchUrl };
 }
@@ -285,7 +290,11 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
  * @param {object[]} webFacts  the whole cascade:webfacts:1 record stream
  * @param {{gatewayRoutes?:object, packages?:object[],
  *          screenAxis?:{enabled?:boolean, codeRegex?:string|null, pathRule?:string|null,
- *                       nameSource?:string}, codeLength?:number|null}} [opts]
+ *                       nameSource?:string}, codeLength?:number|null,
+ *          serverPorts?:{known:boolean, ports:number[], files:string[], why:(string|null)}|null}} [opts]
+ *        serverPorts are the ports this pack's applications listen on
+ *        (src/core/server_ports.mjs); a call on this machine on another port
+ *        is another service's, and unknown ports decide nothing.
  *        screenAxis is the profile's own block, read HERE and nowhere else
  *        (I-5); `enabled` is the gate, and with it false no screen is built.
  *        codeLength is `moduleAttribution.codeLength`, the number of leading
@@ -299,7 +308,10 @@ export function addWebFacts(g, webFacts, opts = {}) {
   const read = readTheFrontend(records, opts, stats);
   const nodesToAdd = new Map();
   const edges = [];
-  const calls = placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges });
+  const ports = readPorts(opts, stats);
+  const calls = placeTheCalls(g, read, {
+    gatewayRoutes, ports, stats, nodesToAdd, edges,
+  });
   placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls });
 
   // ---- write the graph, in a fixed order -----------------------------------
@@ -312,7 +324,39 @@ export function addWebFacts(g, webFacts, opts = {}) {
   stats.instances = [...read.instanceOf.values()].filter((i) => !i.id.endsWith('#(package)')).length;
   for (const site of calls.sites) if (site.assumed) stats.assumedAliases += 1;
   stats.unmatchedUrls = topCounts(calls.unmatched, 15, 'url');
+  summariseUntraced(stats.untraced);
   return stats;
+}
+
+/**
+ * The ports this pack's applications listen on (src/core/server_ports.mjs), or
+ * null; what this run knew about them is said in the stats beside what it did
+ * with them.
+ */
+function readPorts(opts, stats) {
+  const ports = opts.serverPorts && typeof opts.serverPorts === 'object' ? opts.serverPorts : null;
+  if (!ports) return null;
+  stats.ports = {
+    known: ports.known === true, ports: ports.ports ?? [], files: ports.files ?? [],
+    defaulted: ports.defaulted === true, why: ports.why ?? null, otherPortCalls: 0,
+  };
+  return ports;
+}
+
+/**
+ * The untraced calls, read down to what a reader acts on: the callees they went
+ * through, most common first, and the MAIN reason in words (the web axis puts
+ * it in its note, src/core/lanes.mjs, which may not import this lane).
+ */
+function summariseUntraced(u) {
+  u.callees = topCounts(new Map(Object.entries(u.callees)), 5, 'callee')
+    .map(({ callee, count }) => ({ reason: callee.slice(0, callee.indexOf(' ')), callee: callee.slice(callee.indexOf(' ') + 1), count }));
+  const [main] = Object.entries(u.byReason).sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]));
+  if (!main) return;
+  const example = u.callees.find((x) => x.reason === main[0]);
+  u.main = {
+    reason: main[0], count: main[1], because: UNTRACED_BECAUSE[main[0]], ...(example ? { callee: example.callee } : {}),
+  };
 }
 
 export class WebBridgeError extends Error {

@@ -1037,6 +1037,7 @@ function webAxis(web) {
         + 'so no frontend call is an edge in this graph',
     };
   }
+  const notes = untracedNotes(web, calls, untraced);
   if (inPack === 0) {
     const byReason = Object.entries((web.unresolved ?? {}).byReason ?? {})
       .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
@@ -1045,13 +1046,15 @@ function webAxis(web) {
       reason: `the web lane read ${calls} HTTP call site(s) and not one of them reached a route this pack serves`
         + `${byReason ? `, most often because ${byReason[0]} (${byReason[1]} call(s))` : ''}. `
         + 'Either this frontend talks to another deployable, or the prefix its calls go through is not stated anywhere we read: declare it as gatewayRoutes',
+      ...notes,
     };
   }
   // WHAT MAKES THIS AXIS DEGRADED is a guess that reshapes every edge of a
-  // package: a prefix nothing in the source states, or an alias this engine
-  // assumed. A call the lane could not TRACE is not one of those — it still
-  // becomes an edge, graded HEURISTIC, saying so on itself — so it is named as
-  // context when the axis is already degraded and never demotes it on its own.
+  // package (a prefix nothing in the source states, an alias this engine
+  // assumed, a base URL resting on a default or a deployment's host), or a
+  // lane that could not say which client sends most of the calls it read. A
+  // few untraced calls are said in a note instead: each is still an edge,
+  // graded HEURISTIC and saying so on itself.
   const why = [];
   if (autoPrefixes.length > 0) {
     const dirs = [...new Set(autoPrefixes)].sort();
@@ -1059,12 +1062,34 @@ function webAxis(web) {
   }
   if (assumedAliases > 0) why.push(`alias @ assumed as src, on ${assumedAliases} call(s)`);
   why.push(...baseUrlGuesses(web));
-  if (why.length === 0) return { status: 'shipped', reason: null };
-  if (untraced > 0) why.push(`${untraced} call(s) untraced`);
+  if (mostlyUntraced(calls, untraced)) {
+    why.push(`${untraced} of ${calls} call site(s) were traced to no client, at least as many as were traced, `
+      + 'and the axis is degraded whenever untraced calls are at least as many as traced ones');
+  } else if (why.length > 0 && untraced > 0) why.push(`${untraced} call(s) untraced`);
+  if (why.length === 0) return { status: 'shipped', reason: null, ...notes };
   return {
     status: 'degraded',
-    reason: `${inPack} frontend call(s) reached a route this pack serves, and part of that rested on a guess: ${why.join('; ')}. `
+    reason: `${inPack} frontend call(s) reached a route this pack serves, and part of that rested on a guess or on calls traced to no client: ${why.join('; ')}. `
       + 'Every edge that rests on one is graded HEURISTIC, so a conservative answer leaves it out',
+    ...notes,
+  };
+}
+
+/** The rule: untraced calls at least as many as traced ones degrade the web axis. */
+const mostlyUntraced = (calls, untraced) => untraced > 0 && untraced >= calls - untraced;
+
+/**
+ * THE UNTRACED CALLS, as a note that rides on every answer as a limit: how many,
+ * and the main reason with a callee it happened on (the web bridge's
+ * `untraced.main`). Nothing when every call was traced.
+ */
+function untracedNotes(web, calls, untraced) {
+  if (untraced <= 0) return {};
+  const main = web.untraced && web.untraced.main ? web.untraced.main : null;
+  const because = main
+    ? `; most often because ${main.because} (${main.count} call(s)${main.callee ? `, e.g. ${main.callee}` : ''})` : '';
+  return {
+    notes: [`${untraced} of ${calls} frontend call site(s) were traced to no client, so each of their edges is HEURISTIC at best${because}`],
   };
 }
 

@@ -72,6 +72,52 @@ export function isLocalHost(host) {
   return (buildEnvPack().localHosts ?? []).includes(hostnameOf(host));
 }
 
+/** The port an address WRITES, or null: `localhost:8081` -> 8081, `localhost` -> null. */
+export function portOf(host) {
+  const h = String(host ?? '');
+  const tail = h.startsWith('[') ? h.slice(h.indexOf(']') + 1) : h;
+  const m = /:(\d{1,5})$/.exec(tail);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * THIS MACHINE, BUT ANOTHER SERVICE: an address on this machine whose written
+ * port no application of this pack listens on (`ports`, src/core/server_ports.mjs).
+ * Null when the host is not this machine, writes no port, names one of this
+ * pack's, or the pack's ports are not known: then nothing is decided by port.
+ *
+ * @param {string} host
+ * @param {{known:boolean, ports:number[], files:string[]}|null} ports
+ * @returns {{host:string, called:number, served:number[], reason:string}|null}
+ */
+export function otherPortOf(host, ports) {
+  if (!ports || ports.known !== true || !isLocalHost(host)) return null;
+  const called = portOf(host);
+  if (called === null || ports.ports.includes(called)) return null;
+  const where = (ports.files ?? []).length > 0
+    ? `server.port in ${ports.files.join(', ')}` : 'Spring Boot\'s default, as no file sets server.port';
+  return {
+    host, called, served: ports.ports,
+    reason: `${host} is this machine on port ${called}, and this pack listens on ${ports.ports.join(', ')} (${where}), so another service answers it`,
+  };
+}
+
+/**
+ * The other service EVERY build of a value goes to, or null. One build that
+ * reaches this pack (a relative address, this machine on one of its ports or on
+ * none written) keeps the value here; a build on another host says nothing
+ * about this machine at all.
+ */
+export function awayOf(outcomes, ports) {
+  let away = null;
+  for (const o of outcomes) {
+    const other = o.where === 'local' ? otherPortOf(o.host, ports) : null;
+    if (other === null && o.where !== 'remote') return null;
+    if (away === null) away = other;
+  }
+  return away;
+}
+
 /**
  * One address read as a PATH, plus where it points: `local` (this machine),
  * `remote` (anywhere else) or `relative` (the page's own origin).
@@ -325,17 +371,19 @@ export function readsOf(outcomes) {
  *        condition over those (adapters/web/lib/ast.mjs isEnvExpression)
  * @returns {{text:string, from:string, guess:(string|null), reads:object[]}|null}
  */
-export function fillFromExpression(cfg, summary) {
+export function fillFromExpression(cfg, summary, ports = null) {
   const got = outcomesOf(cfg, summary, null);
   const outcomes = got.outcomes;
   if (!got.complete || outcomes.length === 0 || new Set(outcomes.map((o) => o.path)).size !== 1) return null;
   const shown = outcomes.find((o) => o.where === 'local') ?? outcomes[0];
   const absolute = outcomes.every((o) => o.host !== null);
+  const away = awayOf(outcomes, ports);
   return {
     text: absolute ? shown.raw.replace(/\/+$/, '') : shown.path,
     from: outcomes.some((o) => o.from === 'fallback') ? 'fallback' : 'env-file',
-    guess: guessOf(outcomes),
+    guess: away === null ? guessOf(outcomes) : null,
     reads: readsOf(outcomes),
+    ...(away ? { away } : {}),
   };
 }
 

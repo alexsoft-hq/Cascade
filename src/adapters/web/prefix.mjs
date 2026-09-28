@@ -33,7 +33,9 @@ import {
   cmp, configDirOf, normalizePosix, normalizeTail, normalizeUrl,
 } from './shared.mjs';
 import { sortKey } from './symbols.mjs';
-import { guessOf, readBase, readsOf } from './base_url.mjs';
+import {
+  awayOf, guessOf, readBase, readsOf,
+} from './base_url.mjs';
 
 // Where it has always been exported from, so every importer still finds it.
 export { normalizeTail };
@@ -225,15 +227,18 @@ function baseUrlValue(ctx, summary, pkg, assumed = false) {
   }
   const { value, ambiguous } = settlePaths(ctx, pkg, paths, read.outcomes);
   const mine = read.outcomes.filter((o) => o.path === value);
+  // Every build on this machine but on a port this pack does not listen on is
+  // ANOTHER service's base URL: its calls leave the pack, with both ports said.
+  const away = awayOf(mine, ctx.ports);
   // Read through an alias this engine assumed, the value is only as good as
   // that guess, whatever it holds.
-  const guess = guessOf(mine) ?? (assumed ? 'assumed-alias' : null);
+  const guess = away ? null : (guessOf(mine) ?? (assumed ? 'assumed-alias' : null));
   // ABSOLUTE only when every build that gives this path spells a host: a dev
   // proxy never sees an absolute address, and one relative build still goes
   // through it.
   return {
     state: 'known', value, values: paths, ambiguous, absolute: mine.every((o) => o.host !== null),
-    ...(guess ? { guess } : {}), ...reads,
+    ...(guess ? { guess } : {}), ...(away ? { away } : {}), ...reads,
   };
 }
 
@@ -284,7 +289,7 @@ function derivedPrefix(ctx, base, pkg) {
   if (base.state !== 'known' || base.ambiguous) return null;
   // A value that rests on a default or on a deployment's host is still READ
   // from the source, so it is derived; the guess it rests on goes with it.
-  const guess = base.guess ? { guess: base.guess } : {};
+  const guess = base.guess ? { guess: base.guess } : base.away ? { away: base.away } : {};
   if (base.absolute) return { value: base.value, from: 'derived', candidates: [], ...guess };
   const p = throughProxy(ctx, base.value, pkg);
   return p.ok ? { value: p.value, from: 'derived', candidates: [], ...guess } : null;

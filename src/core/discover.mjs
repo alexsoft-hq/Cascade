@@ -24,6 +24,7 @@ import {
   findViewResolvers, findXmlViewResolvers, findIdGenerators, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
+import { serverPortsOfFile } from './server_ports.mjs';
 import { builtinRegistry, RuleError } from './rules/registry.mjs';
 import { nestAppsOf, noteNestPackage, noteTypeScriptBackendFile, prismaProvidersOf } from './discover_nest.mjs';
 
@@ -959,7 +960,7 @@ function classifySpringConfig(d, f) {
   const { absFile, rel } = f;
   const {
     connectionCandidates, dbTypeDeclarations, diagnostics, externalConfigImports,
-    gatewayRoutes, read, serviceNames, viewResolvers,
+    gatewayRoutes, read, serviceNames, viewResolvers, serverPorts,
   } = d;
   // The RELATIVE PATH, not the bare name: a `.properties` under `static/` or
   // `locale*/` is a presentation resource, and reading it produced diagnostics
@@ -981,6 +982,8 @@ function classifySpringConfig(d, f) {
       gatewayRoutes.push(...findGatewayRoutes(one, diagnostics));
       externalConfigImports.push(...findExternalConfigImports(one));
       viewResolvers.push(...findViewResolvers(one, diagnostics));
+      // …and which port the application listens on (src/core/server_ports.mjs).
+      serverPorts.push(serverPortsOfFile(one[0]));
     }
     if (looksLikeConnectionFile(relFile)) {
       connectionCandidates.push(...findConnectionCandidates(one, diagnostics));
@@ -1415,6 +1418,8 @@ function discoveryCollections() {
     serviceNames: [],
     gatewayRoutes: [],
     externalConfigImports: [],
+    // What each Spring configuration file says about its application's port.
+    serverPorts: [],
     // The two lane inputs `cascade analyze` needs when it is run with no flags:
     // which directories hold MyBatis mapper XML, and which directories are Java
     // source roots (measured from each file's own `package` declaration, never
@@ -1473,6 +1478,7 @@ function sortedDeclarations(d) {
       .sort((a, b) => (a.front < b.front ? -1 : a.front > b.front ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     externalConfigImports: d.externalConfigImports.slice()
       .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)),
+    serverPorts: d.serverPorts.slice().sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
   };
 }
 
