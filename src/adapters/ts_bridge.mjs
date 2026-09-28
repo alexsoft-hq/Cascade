@@ -60,14 +60,14 @@ function catalogDiagnostic(catalog) {
   return [{
     kind: 'PRISMA_CATALOG_DISAGREES',
     reason: `schema.prisma and the SQL catalog this run read disagree in ${catalog.disagreements} place(s) (${kinds}): ${catalog.disagreementSamples.slice(0, 5).map(said).join(', ')}. `
-      + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the whole list is on meta.laneStats.ts.prisma.catalog',
+      + 'Neither is known to be the newer: a column they declare differently keeps both declarations on its node (declarationsDiffer), a table or column is the SQL catalog\'s node where it declares one, and a column only schema.prisma declares is added as its own; the whole list is on meta.laneStats.ts.prisma.catalog',
   }];
 }
 
 /** What the Prisma reading could not follow, said: calls that look like a client's and whose receiver is not one it knows, and a schema the SQL catalog disagrees with. */
 function prismaDiagnostics(stats) {
   if (!stats) return [];
-  const where = (stats.unreadSamples ?? []).map((c) => `${c.file}:${c.line} ${c.callee}`).join(', ');
+  const where = (stats.unreadSamples ?? []).map((c) => `${c.file}:${c.line} ${c.callee}${c.why ? ` (${c.why})` : ''}`).join(', ');
   const unread = stats.unreadClientCalls > 0
     ? [{ kind: 'TS_PRISMA_CALL_UNREAD', reason: `${stats.unreadClientCalls} call(s) name a model and an operation of the schema on a receiver not known to be a Prisma client, so no statement is made for them: ${where}` }]
     : [];

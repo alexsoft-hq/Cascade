@@ -195,6 +195,61 @@ test('an awaited call held in a const gives that name as the call\'s holder', ()
   assert.deepEqual(call.args, [{ k: 'id', v: 'AppModule' }]);
 });
 
+test('a call says where the file declares the local its receiver starts at, and the local it is held in; a name declared again in a block is another local', () => {
+  const lines = [
+    'export class C {',
+    '  m(p) {',
+    '    const x = make();',
+    '    {',
+    '      const x = { a: 1 };',
+    '      x.a.run();',
+    '    }',
+    '    x.b.run(x, p);',
+    '    let y = make();',
+    '    y = other();',
+    '    y.c.run();',
+    '    list.map((p) => p.d.run());',
+    '    glob.e.run();',
+    '  }',
+    '}',
+  ];
+  const at = (line, text, skip = 0) => `${line}:${lines[line - 1].indexOf(text) + skip}`;
+  const calls = factsOfFile('src/b.ts', lines.join('\n')).filter((r) => r.kind === 'call');
+  const on = (line, callee) => calls.find((c) => c.line === line && c.callee === callee);
+  assert.equal(on(3, 'make').holderAt, at(3, 'x'));
+  assert.equal(on(6, 'x.a.run').rootAt, at(5, 'x'), 'the inner x, not the outer one');
+  assert.equal(on(8, 'x.b.run').rootAt, at(3, 'x'));
+  assert.deepEqual(on(8, 'x.b.run').args, [{ k: 'id', v: 'x', at: at(3, 'x') }, { k: 'id', v: 'p', at: at(2, 'p') }], 'an argument that names a local says which');
+  assert.deepEqual([on(9, 'make').holderAt, on(9, 'make').holderReassigned], [at(9, 'y'), true], 'y is written again on line 10');
+  assert.deepEqual([on(11, 'y.c.run').rootAt, on(11, 'y.c.run').rootReassigned], [at(9, 'y'), true]);
+  assert.deepEqual(on(12, 'list.map').args[0].paramsAt, [at(12, '(p)', 1)]);
+  assert.equal(on(12, 'p.d.run').rootAt, at(12, '(p)', 1), 'the arrow\'s own p, not the method\'s');
+  assert.equal(on(12, 'list.map').rootAt, undefined, 'a name this file does not declare has no place');
+  assert.equal(on(13, 'glob.e.run').rootAt, undefined);
+});
+
+test('what counts as writing a local again: an assignment, a destructuring assignment, ++, a for-of target and a second var', () => {
+  const src = [
+    'function f() {',
+    '  let a = make(); a += 1;',
+    '  let b = make(); [b] = [2];',
+    '  let c = make(); c++;',
+    '  let d = make(); for (d of []) {}',
+    '  var e = make(); var e = 2;',
+    '  const g = make(); g.h = 1;',
+    '}',
+  ].join('\n');
+  const held = Object.fromEntries(factsOfFile('src/w.ts', src).filter((r) => r.kind === 'call' && r.holder).map((c) => [c.holder, c.holderReassigned === true]));
+  assert.deepEqual(held, { a: true, b: true, c: true, d: true, e: true, g: false }, 'writing a member of g is not writing g');
+});
+
+test('a name declared at module level or imported has no place in a call record: only a local does', () => {
+  const src = "import { db } from './db';\nconst top = make();\nexport function f() { db.user.run(); top.x.run(); }\n";
+  const calls = factsOfFile('src/m.ts', src).filter((r) => r.kind === 'call');
+  assert.equal(calls.find((c) => c.callee === 'make').holderAt, undefined);
+  assert.deepEqual(calls.filter((c) => c.callee !== 'make').map((c) => c.rootAt), [undefined, undefined]);
+});
+
 test('a call written inside a decorator produces no call record: the decorator runs once when the class is defined, not when a member runs', () => {
   const src = `
     class UsersController {

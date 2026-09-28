@@ -9,10 +9,12 @@
 // `a_b` with no name) is read through the model's `compounds`, never by
 // splitting the key on `_`, and a relation is followed into the model it
 // reaches. The rule pack says WHICH argument plays which part, WHAT each
-// operation is, WHICH names are filter combinators and relation filters, what
-// `_count` and each nested write do, how an interactive transaction's client
-// parameter is found, and which calls make a client of a client (`$extends`)
-// (src/core/rules/packs/prisma.json).
+// operation is, WHICH names are filter combinators and relation filters (and
+// which of them, given null, only check the link), what `_count` and each
+// nested write do (and which literal values leave a nested write idle), how an
+// interactive transaction's client parameter is found, which calls make a
+// client of a client (`$extends`), and where an extension declares the fields
+// it computes (src/core/rules/packs/prisma.json).
 //
 // What it does not follow, it says: a relation into a model it was not handed
 // (`relations`), an argument that is not an object literal, spreads one, or has
@@ -26,7 +28,11 @@ import { readCall } from './prisma_args.mjs';
 const ROLES = Object.freeze(['project', 'relations', 'filter', 'read', 'write', 'none']);
 const STATEMENTS = Object.freeze(['select', 'insert', 'update', 'delete', 'upsert']);
 const ROWS = Object.freeze(['write', 'delete', 'none']);
-const LINKS = Object.freeze(['set', 'clear']);
+// `replace` clears what is linked, then sets what the value lists (`set`).
+const LINKS = Object.freeze(['set', 'clear', 'replace']);
+// The literal values a nested write's `idle` map may name, and the relations it may say they are idle on.
+const IDLE_LITERALS = Object.freeze(['false', '[]']);
+const IDLE_ON = Object.freeze(['any', 'one-to-one']);
 const NAME = /^[$_A-Za-z][$_A-Za-z0-9]*$/;
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
 const isObject = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
@@ -65,11 +71,19 @@ function relationCountErrors(c) {
   return [...errors, ...rolesErrors(c.arguments, 'params.relationCount.arguments')];
 }
 
-/** One nested write: what it does to the related rows, whether it sets or clears the link, and how its value is read. */
+/** A nested write's `idle` map: a literal value, and the relations on which that value makes it do nothing. */
+function idleErrors(at, idle) {
+  if (idle === undefined) return [];
+  if (!isObject(idle)) return [`${at}.idle must be an object`];
+  return Object.entries(idle).filter(([lit, on]) => !IDLE_LITERALS.includes(lit) || !IDLE_ON.includes(on))
+    .map(([lit]) => `${at}.idle.${lit} must map one of ${IDLE_LITERALS.join(', ')} to one of ${IDLE_ON.join(', ')}`);
+}
+
+/** One nested write: what it does to the related rows, whether it sets or clears the link, how its value is read, and which literal values leave it idle. */
 function nestedWriteErrors(name, w) {
   const at = `params.nestedWrites.${name}`;
   if (!NAME.test(name) || !isObject(w)) return [`params.nestedWrites has ${JSON.stringify(name)}, which is not a nested write`];
-  const errors = unknownKeys(w, ['rows', 'link', 'value', 'arguments']).map((k) => `${at} has an unknown key "${k}"`);
+  const errors = [...unknownKeys(w, ['rows', 'link', 'value', 'arguments', 'idle']).map((k) => `${at} has an unknown key "${k}"`), ...idleErrors(at, w.idle)];
   if (!ROWS.includes(w.rows)) errors.push(`${at}.rows must be one of ${ROWS.join(', ')}`);
   if (w.link !== undefined && !LINKS.includes(w.link)) errors.push(`${at}.link must be one of ${LINKS.join(', ')}`);
   if (w.value !== undefined && !ROLES.includes(w.value)) errors.push(`${at}.value must be one of ${ROLES.join(', ')}`);
@@ -87,23 +101,33 @@ function defineErrors(d) {
   return errors;
 }
 
-/** params.extensions: the client methods that make a client of a client, the extension components that may change what a call sends, and the define call. */
+/** params.extensions.computed: the component that declares computed fields, the key of what each needs, and the key that means every model. */
+function computedErrors(c) {
+  if (c === undefined) return [];
+  if (!isObject(c)) return ['params.extensions.computed must be an object'];
+  const errors = unknownKeys(c, ['component', 'needs', 'allModels']).map((k) => `params.extensions.computed has an unknown key "${k}"`);
+  if (!['component', 'needs', 'allModels'].every((k) => NAME.test(c[k] ?? ''))) errors.push('params.extensions.computed.component, .needs and .allModels must be names');
+  return errors;
+}
+
+/** params.extensions: the client methods that make a client of a client, the extension components that may change what a call sends, the define call, and computed fields. */
 function extensionsErrors(x) {
   if (x === undefined) return [];
   if (!isObject(x)) return ['params.extensions must be an object'];
-  const errors = unknownKeys(x, ['methods', 'rewriting', 'define']).map((k) => `params.extensions has an unknown key "${k}"`);
-  return [...errors, ...namesOrErrors(x.methods ?? null, 'params.extensions.methods'), ...namesOrErrors(x.rewriting ?? null, 'params.extensions.rewriting'), ...defineErrors(x.define)];
+  const errors = unknownKeys(x, ['methods', 'rewriting', 'define', 'computed']).map((k) => `params.extensions has an unknown key "${k}"`);
+  return [...errors, ...namesOrErrors(x.methods ?? null, 'params.extensions.methods'), ...namesOrErrors(x.rewriting ?? null, 'params.extensions.rewriting'), ...defineErrors(x.define), ...computedErrors(x.computed)];
 }
 
 function relationParamErrors(params) {
   const nested = params.nestedWrites === undefined ? [] : isObject(params.nestedWrites)
     ? Object.entries(params.nestedWrites).flatMap(([name, w]) => nestedWriteErrors(name, w)) : ['params.nestedWrites must be an object'];
-  return [...namesOrErrors(params.relationFilters, 'params.relationFilters'), ...relationCountErrors(params.relationCount), ...nested, ...extensionsErrors(params.extensions)];
+  const filters = [...namesOrErrors(params.relationFilters, 'params.relationFilters'), ...namesOrErrors(params.relationNullFilters, 'params.relationNullFilters')];
+  return [...filters, ...relationCountErrors(params.relationCount), ...nested, ...extensionsErrors(params.extensions)];
 }
 
 function validateParams(params) {
   if (!isObject(params)) return ['params must be an object'];
-  const known = ['arguments', 'operations', 'combinators', 'transaction', 'relationFilters', 'relationCount', 'nestedWrites', 'extensions'];
+  const known = ['arguments', 'operations', 'combinators', 'transaction', 'relationFilters', 'relationNullFilters', 'relationCount', 'nestedWrites', 'extensions'];
   const errors = unknownKeys(params, known).map((k) => `params has an unknown key "${k}"`);
   errors.push(...rolesErrors(params.arguments ?? {}, 'params.arguments'), ...namesOrErrors(params.combinators, 'params.combinators'));
   errors.push(...transactionErrors(params.transaction), ...relationParamErrors(params));
@@ -113,42 +137,50 @@ function validateParams(params) {
 
 function validateExample(example) {
   if (!isObject(example)) return ['an example must be an object'];
-  const errors = unknownKeys(example, ['operation', 'model', 'args', 'fields', 'relations', 'compounds', 'models', 'expect', 'why']).map((k) => `an example has an unknown key "${k}"`);
+  const errors = unknownKeys(example, ['operation', 'model', 'args', 'fields', 'relations', 'compounds', 'models', 'computed', 'expect', 'why']).map((k) => `an example has an unknown key "${k}"`);
   if (typeof example.operation !== 'string') errors.push('an example needs the "operation" it calls');
   if (typeof example.args !== 'string') errors.push('an example needs "args", the argument as TypeScript source');
   if (!Array.isArray(example.fields)) errors.push('an example needs "fields", the model\'s scalar fields');
-  if (example.models !== undefined && !isObject(example.models)) errors.push('an example\'s "models" must map a model name to its fields and relations');
   if (!isObject(example.expect)) errors.push('an example needs "expect": {reads, writes, wholeRow, relations, runtimeOnly, mayReads, follow}');
+  return [...errors, ...exampleMapErrors(example)];
+}
+
+/** An example's optional maps: the other models it names, and the fields its model's client computes. */
+function exampleMapErrors(example) {
+  const errors = [];
+  if (example.models !== undefined && !isObject(example.models)) errors.push('an example\'s "models" must map a model name to its fields and relations');
+  if (example.computed !== undefined && !isObject(example.computed)) errors.push('an example\'s "computed" must map a computed field of its model to the fields it needs');
   return errors;
 }
 
-/**
- * The rule, ready to read one call: `effectsOf(operation, args, model, models)`
- * gives the statement kind, the fields read, maybe read, and written, whether
- * the whole row is returned, the relations it follows (`follow`, when the
- * schema's `models` are handed in) and what could not be followed; null for an
- * operation the rule does not name.
- */
 /** How the rule reads an argument, with every param it leaves out read as the empty one. */
 function readingOf(p) {
   return {
-    roles: p.arguments ?? {}, combinators: p.combinators ?? [], relationFilters: p.relationFilters ?? [],
+    roles: p.arguments ?? {}, combinators: p.combinators ?? [], relationFilters: p.relationFilters ?? [], relationNullFilters: p.relationNullFilters ?? [],
     relationCount: p.relationCount ? { key: p.relationCount.key, arguments: p.relationCount.arguments ?? {} } : null, nestedWrites: p.nestedWrites ?? {},
   };
 }
 
-/** Which calls make a client of a client, or null when the rule names none. */
+/** Which calls make a client of a client, and where an extension declares computed fields; null when the rule names none. */
 function extensionsOf(p) {
   const x = p.extensions;
-  return x ? { methods: x.methods ?? [], rewriting: x.rewriting ?? [], define: x.define ?? null } : null;
+  return x ? { methods: x.methods ?? [], rewriting: x.rewriting ?? [], define: x.define ?? null, computed: x.computed ?? null } : null;
 }
 
+/**
+ * The rule, ready to read one call: `effectsOf(operation, args, model, models,
+ * computed)` gives the statement kind, the fields read, maybe read, and
+ * written, whether the whole row is returned, the relations it follows
+ * (`follow`, when the schema's `models` are handed in) and what could not be
+ * followed; null for an operation the rule does not name. `computed` is the
+ * client's computed fields by model name, each with the fields it needs.
+ */
 function compile(rule) {
   const p = rule.params;
   const base = readingOf(p);
-  const effectsOf = (operation, args, model, models = null) => {
+  const effectsOf = (operation, args, model, models = null, computed = null) => {
     const op = Object.hasOwn(p.operations, operation) ? p.operations[operation] : null;
-    return op ? readCall(op, args, model, { ...base, models }, rule.id) : null;
+    return op ? readCall(op, args, model, { ...base, models, computed }, rule.id) : null;
   };
   return { effectsOf, operations: Object.keys(p.operations), transaction: p.transaction ?? null, extensions: extensionsOf(p) };
 }
@@ -160,7 +192,8 @@ function shapeOf(x) {
   return {
     reads: sorted(x.reads), writes: sorted(x.writes), wholeRow: x.wholeRow === true, relations: sorted(x.relations), mayReads: sorted(x.mayReads),
     follow: (x.follow ?? []).map((f) => ({
-      relation: f.relation, target: f.target, how: f.how, access: f.access ?? 'read', op: f.op ?? null, link: f.link ?? null, may: f.may === true, ...shapeOf(f.fx ?? f),
+      relation: f.relation, target: f.target, how: f.how, access: f.access ?? 'read', op: f.op ?? null, link: f.link ?? null, may: f.may === true,
+      nullCheck: f.nullCheck === true, idleOn: f.idleOn ?? null, ...shapeOf(f.fx ?? f),
     })),
   };
 }
@@ -177,7 +210,8 @@ function exampleModel(name, spec) {
 function runOneExample(entry, ex, env) {
   const model = exampleModel(ex.model ?? 'Model', ex);
   const models = ex.models ? new Map([[model.name, model], ...Object.entries(ex.models).map(([n, spec]) => [n, exampleModel(n, spec)])]) : null;
-  const fx = entry.compiled.effectsOf(ex.operation, [env.tsValue(ex.args)], model, models);
+  const computed = ex.computed ? new Map([[model.name, ex.computed]]) : null;
+  const fx = entry.compiled.effectsOf(ex.operation, [env.tsValue(ex.args)], model, models, computed);
   const got = fx && { ...shapeOf(fx), runtimeOnly: sorted(fx.runtimeOnly) };
   const want = { ...shapeOf(ex.expect), runtimeOnly: sorted(ex.expect.runtimeOnly) };
   return { example: ex, passed: JSON.stringify(got) === JSON.stringify(want), got };

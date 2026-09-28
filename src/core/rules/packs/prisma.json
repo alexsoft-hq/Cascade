@@ -49,8 +49,8 @@
     {
       "id": "prisma.operations",
       "kind": "prisma.operation",
-      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true (a value that is neither true nor false MAY be returned, read at run time), where and cursor filter by the fields they name (through the combinators AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations. A key naming a compound unique or id (schema.prisma's @@unique/@@id) is read through the model's own compounds, never by splitting the key. A relation is followed into its model: in include or select as a find of its own (true is its whole row), in a filter through some, every, none, is and isNot (or a to-one filter written straight), _count as the related rows it counts, and in data as the nested writes it names, each with what it does to the related rows and to the link. $extends on a client makes a client, and an extension with a query component, or one not read, may change what a call sends; an extension Prisma.defineExtension makes is read where the same method holds it.",
-      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference): a find without select returns every scalar field of the model, include returns every scalar field of the related model, and a nested write (create, connect, connectOrCreate, set, disconnect, update, updateMany, upsert, delete, deleteMany) acts on the related rows and on the link between the two. Client extensions (prisma.io/docs/orm/prisma-client/client-extensions): $extends returns a new client, and its query component intercepts the operations it names.",
+      "description": "What each Prisma Client model operation is, and what part each argument plays: select returns the fields set to true (a value that is neither true nor false MAY be returned, read at run time), where and cursor filter by the fields they name (through the combinators AND, OR and NOT), orderBy, distinct, by and the aggregates read theirs, data, create and update write theirs, and include reaches relations. A key naming a compound unique or id (schema.prisma's @@unique/@@id) is read through the model's own compounds, never by splitting the key. A relation is followed into its model: in include or select as a find of its own (true is its whole row), in a filter through some, every, none, is and isNot (or a to-one filter written straight), _count as the related rows it counts, and in data as the nested writes it names, each with what it does to the related rows and to the link. A relation filtered on null (the relation written null, or is or isNot given null) only checks the link. A nested write handed a literal that makes it do nothing (create: [], connect: [], disconnect: false on a one-to-one, delete: false, deleteMany: [], ...) is not followed, and set replaces the link, so set: [] clears it. $extends on a client makes a client, and an extension with a query component, or one not read, may change what a call sends; an extension Prisma.defineExtension makes is read where the same method holds it; a field its result component computes reads the fields its needs names.",
+      "why": "Prisma Client's model API (prisma.io/docs/orm/reference/prisma-client-reference): a find without select returns every scalar field of the model, include returns every scalar field of the related model, and a nested write (create, connect, connectOrCreate, set, disconnect, update, updateMany, upsert, delete, deleteMany) acts on the related rows and on the link between the two. Client extensions (prisma.io/docs/orm/prisma-client/client-extensions): $extends returns a new client, and its query component intercepts the operations it names; a result component's field is computed on the client from the fields its needs sets to true, which Prisma selects in its place (prisma 6.19.0, packages/client/src/runtime/core/extensions/resultUtils.ts, computeEngineSideSelection). What a literal does, read in prisma-engines 6.19.0: a relation filtered on null is a one-relation-is-null filter (query-engine/core/src/query_graph_builder/extractors/filters/relation.rs), which tests the link's own columns when they are in the filtered model's table (query-builders/sql-query-builder/src/filter/visitor.rs); among the nested writes (query-engine/core/src/query_graph_builder/write/nested/), connect with no finder returns before building a query, create, connectOrCreate, update, updateMany, upsert and deleteMany loop over the list they are handed, disconnect false returns on a one-to-one (on a one-to-many's to-one side the engine disconnects whatever the boolean), delete false deletes nothing, disconnect and delete with an empty list find no row (their filter is an empty OR), and set disconnects every linked row, then connects the rows it lists.",
       "params": {
         "arguments": {
           "select": "project", "omit": "none", "include": "relations", "where": "filter", "cursor": "filter", "having": "filter",
@@ -62,23 +62,25 @@
         "combinators": ["AND", "OR", "NOT"],
         "transaction": { "method": "$transaction", "clientParam": 0 },
         "relationFilters": ["some", "every", "none", "is", "isNot"],
+        "relationNullFilters": ["is", "isNot"],
         "relationCount": { "key": "_count", "arguments": { "where": "filter" } },
         "nestedWrites": {
-          "create": { "rows": "write", "link": "set", "value": "write" },
+          "create": { "rows": "write", "link": "set", "value": "write", "idle": { "[]": "any" } },
           "createMany": { "rows": "write", "link": "set", "arguments": { "data": "write", "skipDuplicates": "none" } },
-          "connectOrCreate": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write" } },
-          "upsert": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write", "update": "write" } },
-          "update": { "rows": "write", "value": "write", "arguments": { "where": "filter", "data": "write" } },
-          "updateMany": { "rows": "write", "arguments": { "where": "filter", "data": "write" } },
-          "connect": { "rows": "none", "link": "set", "value": "filter" },
-          "set": { "rows": "none", "link": "set", "value": "filter" },
-          "disconnect": { "rows": "none", "link": "clear", "value": "filter" },
-          "delete": { "rows": "delete", "value": "filter" },
-          "deleteMany": { "rows": "delete", "value": "filter" }
+          "connectOrCreate": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write" }, "idle": { "[]": "any" } },
+          "upsert": { "rows": "write", "link": "set", "arguments": { "where": "filter", "create": "write", "update": "write" }, "idle": { "[]": "any" } },
+          "update": { "rows": "write", "value": "write", "arguments": { "where": "filter", "data": "write" }, "idle": { "[]": "any" } },
+          "updateMany": { "rows": "write", "arguments": { "where": "filter", "data": "write" }, "idle": { "[]": "any" } },
+          "connect": { "rows": "none", "link": "set", "value": "filter", "idle": { "[]": "any" } },
+          "set": { "rows": "none", "link": "replace", "value": "filter" },
+          "disconnect": { "rows": "none", "link": "clear", "value": "filter", "idle": { "false": "one-to-one", "[]": "any" } },
+          "delete": { "rows": "delete", "value": "filter", "idle": { "false": "any", "[]": "any" } },
+          "deleteMany": { "rows": "delete", "value": "filter", "idle": { "[]": "any" } }
         },
         "extensions": {
           "methods": ["$extends"], "rewriting": ["query"],
-          "define": { "module": "@prisma/client", "export": "Prisma", "method": "defineExtension" }
+          "define": { "module": "@prisma/client", "export": "Prisma", "method": "defineExtension" },
+          "computed": { "component": "result", "needs": "needs", "allModels": "$allModels" }
         },
         "operations": {
           "findMany": { "statement": "select", "wholeRow": true },
@@ -112,7 +114,7 @@
           "why": "no select: every scalar field is returned"
         },
         {
-          "operation": "update", "args": "{ where: { id }, data: { name: n, posts: { create: [] } } }", "fields": ["id", "name"], "relations": ["posts"],
+          "operation": "update", "args": "{ where: { id }, data: { name: n, posts: { create: [{ title: t }] } } }", "fields": ["id", "name"], "relations": ["posts"],
           "expect": { "reads": ["id"], "writes": ["name"], "wholeRow": true, "relations": ["posts"] },
           "why": "a nested write reaches another table, and says so"
         },
@@ -213,6 +215,38 @@
           "models": { "Post": { "fields": ["id", "title", "published", "authorId"], "relations": { "author": "User" } } },
           "expect": { "wholeRow": true, "runtimeOnly": ["include.posts"], "follow": [{ "relation": "posts", "target": "Post", "how": "project", "may": true, "wholeRow": true }] },
           "why": "an include value only the running program knows MAY read the relation: followed, and marked may, never claimed for certain"
+        },
+        {
+          "operation": "findMany", "model": "Post", "args": "{ where: { author: null, reviewer: { isNot: null } }, select: { id: true } }",
+          "fields": ["id", "authorId", "reviewerId"], "relations": { "author": "User", "reviewer": "User" },
+          "models": { "User": { "fields": ["id", "email"] } },
+          "expect": { "reads": ["id"], "follow": [
+            { "relation": "author", "target": "User", "how": "filter", "nullCheck": true },
+            { "relation": "reviewer", "target": "User", "how": "filter", "nullCheck": true }
+          ] },
+          "why": "a relation filtered on null only checks the link: which table that reads, the relation's own side or the other, is the schema's to say"
+        },
+        {
+          "operation": "update", "model": "User", "args": "{ where: { id }, data: { posts: { create: [], connect: [], deleteMany: [] }, profile: { disconnect: false } } }",
+          "fields": ["id", "email"], "relations": { "posts": "Post[]", "profile": "Profile" },
+          "models": { "Post": { "fields": ["id", "authorId"] }, "Profile": { "fields": ["id", "userId"] } },
+          "expect": { "reads": ["id"], "wholeRow": true, "follow": [
+            { "relation": "profile", "target": "Profile", "how": "write", "op": "disconnect", "link": "clear", "idleOn": "one-to-one" }
+          ] },
+          "why": "an empty list creates, connects and deletes nothing; disconnect false does nothing on a one-to-one, which the schema says this relation is or is not"
+        },
+        {
+          "operation": "update", "model": "User", "args": "{ where: { id }, data: { tags: { set: [] } } }",
+          "fields": ["id", "email"], "relations": { "tags": "Tag[]" },
+          "models": { "Tag": { "fields": ["id", "name"] } },
+          "expect": { "reads": ["id"], "wholeRow": true, "follow": [{ "relation": "tags", "target": "Tag", "how": "write", "op": "set", "link": "clear" }] },
+          "why": "set replaces the link; handed an empty list, it only clears it, which is still a write"
+        },
+        {
+          "operation": "findMany", "model": "User", "args": "{ select: { id: true, fullName: true } }",
+          "fields": ["id", "firstName", "lastName"], "computed": { "fullName": ["firstName", "lastName"] },
+          "expect": { "reads": ["firstName", "id", "lastName"] },
+          "why": "a field the client's result extension computes reads what it needs, and is no column of its own"
         }
       ]
     }

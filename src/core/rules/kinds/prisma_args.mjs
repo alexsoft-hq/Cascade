@@ -19,6 +19,15 @@
 // `data: { account }`) is followed as one that MAY happen (`may`), and the key
 // is named in `runtimeOnly`.
 //
+// A relation filtered on null (`author: null`, or a key the pack names in
+// `relationNullFilters` given null, `{ is: null }`) only asks whether the link
+// is there: the entry says so (`nullCheck`), and the bridge decides which side
+// that reads. A nested write whose value is a literal the pack says leaves it
+// idle (`create: []`, `disconnect: false` on a one-to-one) is not followed at
+// all, or marked with the relations it is idle on (`idleOn`); a `replace` link
+// (`set`) handed `[]` only clears. A computed field of the client's extension
+// (`computed`, by model) in a projection reads the fields it needs.
+//
 // What it does not follow, it says: a relation whose model it was not handed
 // (`relations`), a key it does not know (`unknownKeys`, with the relation path
 // it was found under), and an argument held in a variable, spread, or written
@@ -75,10 +84,40 @@ function applyProjectField(argKey, key, v, fields, fx) {
   fx.runtimeOnly.add(at(fx, argKey, key));
 }
 
+/** The model fields a computed field needs, through the computed fields it needs in turn (Prisma resolves them the same way); null when one of them is not written down. */
+function neededBy(map, name, seen) {
+  if (seen.has(name) || !Object.hasOwn(map, name)) return [name];
+  seen.add(name);
+  if (map[name] === null) return null;
+  const out = [];
+  for (const n of map[name]) {
+    const r = neededBy(map, n, seen);
+    if (r === null) return null;
+    out.push(...r);
+  }
+  return out;
+}
+
+/**
+ * A computed field of the client in a projection: it reads what it needs, as a
+ * field set to that value would. True when it is no field of the model, so the
+ * key itself reads nothing more.
+ */
+function applyComputed(key, v, fx, argKey) {
+  const map = fx.cfg.computed?.get(fx.model.name);
+  if (!map || !Object.hasOwn(map, key)) return false;
+  const own = fx.idx.scalars.has(key) || fx.idx.relations.has(key);
+  const needs = neededBy(map, key, new Set());
+  if (needs === null) { fx.runtimeOnly.add(at(fx, argKey, key)); return !own; }
+  applyProjectField(argKey, key, v, needs.flatMap((n) => fieldsOfKey(n, fx.idx)), fx);
+  return !own;
+}
+
 /** One key of an argument object, read by the role its argument plays. */
 function applyKeyRole(role, key, v, fx, argKey) {
   if (role === 'filter' && fx.cfg.combinators.includes(key)) { readArgument('filter', v, fx, argKey); return; }
   if (fx.cfg.relationCount && key === fx.cfg.relationCount.key && (role === 'project' || role === 'relations')) { readRelationCount(v, fx, argKey); return; }
+  if (role === 'project' && applyComputed(key, v, fx, argKey)) return;
   if (fx.idx.relations.has(key)) { followRelation(role, key, v, fx, argKey); return; }
   const fields = fieldsOfKey(key, fx.idx);
   if (fields.length === 0) { fx.unknownKeys.add(`${fx.prefix}${key}`); return; }
@@ -121,15 +160,21 @@ function readProjected(key, v, target, fx, argKey) {
   child.wholeRow = !v.spread && !v.computed && !Object.keys(v.v).some((k) => fx.cfg.roles[k] === 'project');
 }
 
-/** A relation in a filter: through `some`/`every`/`none`/`is`/`isNot`, or a to-one filter written straight; `null` filters on the link alone. */
+/** The keys of a relation filter written whole that only check the link for null (`{ is: null }`, `{ isNot: null }`). */
+const nullChecks = (v, fx) => (v.spread || v.computed ? [] : Object.keys(v.v).filter((k) => v.v[k].k === 'null' && fx.cfg.relationNullFilters.includes(k)));
+
+/** A relation in a filter: through `some`/`every`/`none`/`is`/`isNot`, or a to-one filter written straight; `null` checks the link alone. */
 function readRelationFilter(key, v, target, fx, argKey) {
-  if (v.k === 'null') { follow(fx, key, target, 'filter'); return; }
+  if (v.k === 'null') { follow(fx, key, target, 'filter', { nullCheck: true }); return; }
   if (v.k !== 'obj') { fx.runtimeOnly.add(at(fx, argKey, key)); follow(fx, key, target, 'filter', { may: true }); return; }
-  const child = follow(fx, key, target, 'filter');
   const keys = Object.keys(v.v);
-  if (keys.length === 0 || !keys.every((k) => fx.cfg.relationFilters.includes(k))) { readArgument('filter', v, child, argKey); return; }
+  if (keys.length === 0 || !keys.every((k) => fx.cfg.relationFilters.includes(k))) { readArgument('filter', v, follow(fx, key, target, 'filter'), argKey); return; }
   if (v.spread || v.computed) fx.runtimeOnly.add(at(fx, argKey, key));
-  for (const k of keys) readArgument('filter', v.v[k], child, argKey);
+  const nulls = nullChecks(v, fx);
+  if (nulls.length > 0) follow(fx, key, target, 'filter', { nullCheck: true });
+  if (nulls.length === keys.length) return;
+  const child = follow(fx, key, target, 'filter');
+  for (const k of keys.filter((x) => !nulls.includes(x))) readArgument('filter', v.v[k], child, argKey);
 }
 
 /** A relation in an ordering: its fields are read, and ordering by its count reads the join alone. */
@@ -169,6 +214,26 @@ function readNestedWrite(spec, x, child, argKey, label) {
   child.runtimeOnly.add(label);
 }
 
+/** A value written as `false` or as an empty array, the literals a nested write's `idle` map can name; null for anything else. */
+function literalOf(x) {
+  if (x.k === 'bool' && x.v === false) return 'false';
+  return x.k === 'arr' && x.v.length === 0 && !x.spread ? '[]' : null;
+}
+
+/**
+ * How one nested write is followed: `null` when its literal value leaves it
+ * idle on every relation, else its entry's fields, marked with the relations
+ * it is idle on (`idleOn`) when only some. A `replace` link handed `[]` lists
+ * nothing to set, so it only clears.
+ */
+function nestedEntry(op, spec, x) {
+  const lit = literalOf(x);
+  const idle = lit && spec.idle ? spec.idle[lit] : undefined;
+  if (idle === 'any') return null;
+  const link = spec.link === 'replace' && lit === '[]' ? 'clear' : spec.link;
+  return { op, access: spec.rows === 'none' ? 'read' : spec.rows, ...(link ? { link } : {}), ...(idle ? { idleOn: idle } : {}) };
+}
+
 /** A relation in a write: each nested operation (`create`, `connect`, `update`, ...) as the pack describes it; a value held in a variable MAY write it, in a way only the running program knows. */
 function readNestedWrites(key, v, target, fx, argKey) {
   if (v.k !== 'obj') { fx.runtimeOnly.add(at(fx, argKey, key)); follow(fx, key, target, 'write', { access: 'write', link: 'set', may: true }); return; }
@@ -176,8 +241,8 @@ function readNestedWrites(key, v, target, fx, argKey) {
   for (const [op, x] of Object.entries(v.v)) {
     const spec = fx.cfg.nestedWrites[op];
     if (!spec) { fx.unknownKeys.add(`${fx.prefix}${key}.${op}`); continue; }
-    const child = follow(fx, key, target, 'write', { op, access: spec.rows === 'none' ? 'read' : spec.rows, ...(spec.link ? { link: spec.link } : {}) });
-    readNestedWrite(spec, x, child, argKey, at(fx, argKey, `${key}.${op}`));
+    const entry = nestedEntry(op, spec, x);
+    if (entry) readNestedWrite(spec, x, follow(fx, key, target, 'write', entry), argKey, at(fx, argKey, `${key}.${op}`));
   }
 }
 

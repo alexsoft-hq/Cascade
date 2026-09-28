@@ -23,12 +23,15 @@ const fieldOf = (model, name) => model.fields.find((f) => f.name === name) ?? nu
 
 const unresolved = (target, why) => ({ kind: 'unresolved', target, why });
 
+/** Whether a relation is one-to-one: neither side a list; null when its other side is not the one field it must be. */
+const oneToOne = (f, partners) => (partners.length === 1 ? !f.list && !partners[0].list : null);
+
 /** A relation this side holds: the link is in its own `fields`, pointing at the other model's `references`. */
 function heldHere(model, f, target) {
   if (f.references.length !== f.relationFields.length) {
     return unresolved(target, `its @relation names ${f.relationFields.length} field(s) and ${f.references.length} reference(s)`);
   }
-  return { kind: 'fk', target, holder: 'self', own: f.relationFields, other: f.references };
+  return { kind: 'fk', target, holder: 'self', own: f.relationFields, other: f.references, oneToOne: oneToOne(f, partnersOf(model, f, target)) };
 }
 
 /** The fields of `target` that are the other side of `model.f`: same relation name, pointing back at `model`. */
@@ -53,7 +56,7 @@ function heldThere(model, f, target) {
   if (holders.length === 1) {
     const p = holders[0];
     if (p.references.length !== p.relationFields.length) return unresolved(target, `${target.name}.${p.name} names ${p.relationFields.length} field(s) and ${p.references.length} reference(s)`);
-    return { kind: 'fk', target, holder: 'target', own: p.references, other: p.relationFields };
+    return { kind: 'fk', target, holder: 'target', own: p.references, other: p.relationFields, oneToOne: oneToOne(f, [p]) };
   }
   if (holders.length === 0 && partners.length === 1 && f.list && partners[0].list) return implicitTable(model, f, target);
   return unresolved(target, partners.length === 0
@@ -63,9 +66,9 @@ function heldThere(model, f, target) {
 
 /**
  * Every relation field of the schema, keyed `Model.field`: an `fk` relation
- * (`own` the fields on this model's side of the join, `other` the target's, and
- * `holder` the side whose fields hold the link), an `implicit` many-to-many, or
- * `unresolved` with the reason.
+ * (`own` the fields on this model's side of the join, `other` the target's,
+ * `holder` the side whose fields hold the link, and whether it is `oneToOne`),
+ * an `implicit` many-to-many, or `unresolved` with the reason.
  *
  * @param {Map<string, object>} models  readPrismaSchema's models
  * @returns {Map<string, object>}

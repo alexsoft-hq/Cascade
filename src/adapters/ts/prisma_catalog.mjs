@@ -18,6 +18,12 @@
 // node it corroborates (`prismaModel`, `prismaField`); what does not is a
 // disagreement, counted on the lane's stats and said: a table or column only
 // one of them declares, a primary key or a nullability they state differently.
+// Neither is known to be the newer (a migration may lag the schema, or the
+// schema the database), so a column whose key or nullability they state
+// differently carries both on its node, each under the source that stated it
+// (`declarationsDiffer: {pk: {catalog, prisma}, nullable: {catalog, prisma}}`):
+// the node's own `pk` is the SQL catalog's, as the node is, and it is not the
+// only declaration there is.
 // A column only the schema declares is added as the schema's, since the client
 // sends it; one only the SQL catalog declares is only said, since no Prisma call
 // can name it. Types are not compared: Prisma's `String` and the database's
@@ -69,16 +75,21 @@ function disagree(st, d) {
   if (st.disagreementSamples.length < SAMPLES) st.disagreementSamples.push(d);
 }
 
+/** A declaration the two state differently: said on the stats, and kept on the column with both values, each under its source. */
+function differs(node, ctx, what, prisma, catalog) {
+  disagree(ctx.st, { what: `${what}-differs`, column: keyOf(node.id), prisma, catalog });
+  node.declarationsDiffer = { ...(node.declarationsDiffer ?? {}), [what]: { catalog, prisma } };
+}
+
 /** A column the schema declares and the SQL catalog also does: the node is the catalog's, and the key and nullability are compared. */
 function corroborateColumn(g, cid, f, pk, ctx) {
   const node = g.nodes.get(cid);
   node.prismaField = f.name;
   ctx.st.columnsCorroborated += 1;
-  const key = keyOf(cid);
-  if (pk !== null && (node.pk === true) !== pk) disagree(ctx.st, { what: 'pk-differs', column: key, prisma: pk, catalog: node.pk === true });
-  const sqlNullable = ctx.sql.nullable.get(foldedKey(key, ctx.sql.identifierCase));
+  if (pk !== null && (node.pk === true) !== pk) differs(node, ctx, 'pk', pk, node.pk === true);
+  const sqlNullable = ctx.sql.nullable.get(foldedKey(keyOf(cid), ctx.sql.identifierCase));
   const nullable = f.list ? null : f.optional;
-  if (nullable !== null && sqlNullable !== undefined && sqlNullable !== nullable) disagree(ctx.st, { what: 'nullable-differs', column: key, prisma: nullable, catalog: sqlNullable });
+  if (nullable !== null && sqlNullable !== undefined && sqlNullable !== nullable) differs(node, ctx, 'nullable', nullable, sqlNullable);
 }
 
 /**
@@ -179,7 +190,9 @@ function addJoins(g, relations, ids) {
  * What a statement following one relation reaches: the target's table, the
  * columns the join reads on both sides (and the implicit table's A and B), and
  * the columns that hold the link, with the table they sit in, for a write that
- * sets or clears it.
+ * sets or clears it; whether the link sits in this model's own table
+ * (`inline`, as Prisma's engine calls a relation inlined on the model that
+ * encloses it), and whether it is one-to-one.
  */
 function relationEntry(key, r, ids) {
   if (r.kind === 'unresolved') return { ok: false, why: r.why };
@@ -191,13 +204,13 @@ function relationEntry(key, r, ids) {
     const b = ids.columns.get(`${r.table}.B`);
     const joinTable = ids.tables.get(r.table);
     const reads = [ids.columns.get(`${self.name}.${self.primaryKey[0]}`), ids.columns.get(`${other.name}.${other.primaryKey[0]}`), a, b];
-    return { ok: true, target: r.target, targetTable, joinTable, joinReads: reads, link: { table: joinTable, columns: [a, b] } };
+    return { ok: true, target: r.target, targetTable, joinTable, joinReads: reads, link: { table: joinTable, columns: [a, b] }, inline: false, oneToOne: false };
   }
   const own = r.own.map((f) => ids.columns.get(`${model}.${f}`));
   const other = r.other.map((f) => ids.columns.get(`${r.target.name}.${f}`));
   if ([...own, ...other].some((x) => !x)) return { ok: false, why: 'its fields or references name a field that is not a column' };
   const link = r.holder === 'self' ? { table: ids.tables.get(model), columns: own } : { table: targetTable, columns: other };
-  return { ok: true, target: r.target, targetTable, joinTable: null, joinReads: [...own, ...other], link };
+  return { ok: true, target: r.target, targetTable, joinTable: null, joinReads: [...own, ...other], link, inline: r.holder === 'self', oneToOne: r.oneToOne === true };
 }
 
 function newStats(schema, sql) {

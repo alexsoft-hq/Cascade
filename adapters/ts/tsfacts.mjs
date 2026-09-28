@@ -10,8 +10,9 @@
 // decorators and the type arguments of what they extend), constructor
 // parameters, properties, methods (with what they return), module functions,
 // every call (its receiver chain, its arguments, the name its value is held in,
-// the calls chained on its result, and its place among the calls of the member
-// it is in), and every `new`; then a summary.
+// the calls chained on its result, its place among the calls of the member it
+// is in, and which local its receiver and its holder are), and every `new`;
+// then a summary.
 // `--list` prints only the files a run over those roots would read. Nothing
 // here knows a framework: which call starts an application is a rule the
 // bridge reads (src/core/rules/packs/nestjs.json).
@@ -30,12 +31,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { calleeOf, eachChild, isFunctionNode, keyName, toPosix } from '../web/lib/ast.mjs';
+import { readScopes } from './tsscope.mjs';
 
 const SCHEMA = 'cascade:tsfacts:1';
 // 2: a method record carries what each of its own `return`s hands back (`returns`).
 // 3: type arguments (`typeArgs`, `extendsArgs`), an object literal a method
 //    returns, every `new`, and the calls chained on a call's result (`chain`).
-export const VERSION = 'tsfacts/3';
+// 4: which local a call's receiver starts at and which it is held in (`rootAt`,
+//    `holderAt`, and whether that local is written again), and which local a
+//    name or a function parameter among its arguments is (`at`, `paramsAt`).
+export const VERSION = 'tsfacts/4';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -96,7 +101,7 @@ export function chainOf(node) {
   return c && c.root !== null ? [c.root, ...c.path].join('.') : null;
 }
 
-function objectSummary(node, depth) {
+function objectSummary(node, depth, sc) {
   const v = {};
   let spread = false;
   let computed = false;
@@ -104,7 +109,7 @@ function objectSummary(node, depth) {
     if (p.type === 'SpreadElement') { spread = true; continue; }
     const key = keyName(p);
     if (key === null) { computed = true; continue; }
-    v[key] = p.type === 'ObjectMethod' ? { k: 'fn' } : valueOf(p.value, depth + 1);
+    v[key] = p.type === 'ObjectMethod' ? { k: 'fn' } : valueOf(p.value, depth + 1, sc);
   }
   return { k: 'obj', v, ...(spread ? { spread: true } : {}), ...(computed ? { computed: true } : {}) };
 }
@@ -113,9 +118,11 @@ function objectSummary(node, depth) {
  * What a value written in the source is, as far as the file alone can say:
  * a literal, a name, a member chain, an array or object of such (with any
  * spread or computed key marked, since the keys it adds are not known), a call,
- * a function, or just an expression.
+ * a function, or just an expression. With `sc` (the file's locals, as a call's
+ * arguments are read), a name that is a local says where it is declared (`at`),
+ * and whether it is written again, and a function where its parameters are.
  */
-export function valueOf(node, depth = 0) {
+export function valueOf(node, depth = 0, sc = null) {
   const n = unwrap(node);
   if (!n) return { k: 'none' };
   if (depth > MAX_DEPTH) return { k: 'expr' };
@@ -126,24 +133,24 @@ export function valueOf(node, depth = 0) {
     case 'NullLiteral': return { k: 'null' };
     case 'TemplateLiteral':
       return n.expressions.length === 0 ? { k: 'str', v: n.quasis.map((q) => q.value.cooked ?? '').join('') } : { k: 'tpl' };
-    case 'Identifier': return n.name === 'undefined' ? { k: 'undefined' } : { k: 'id', v: n.name };
+    case 'Identifier': return n.name === 'undefined' ? { k: 'undefined' } : { k: 'id', v: n.name, ...localField(sc, n, 'at', 'reassigned') };
     case 'MemberExpression':
     case 'OptionalMemberExpression': {
       const chain = chainOf(n);
       return chain ? { k: 'member', v: chain } : { k: 'expr' };
     }
     case 'ArrayExpression': {
-      const v = n.elements.filter((e) => e && e.type !== 'SpreadElement').map((e) => valueOf(e, depth + 1));
+      const v = n.elements.filter((e) => e && e.type !== 'SpreadElement').map((e) => valueOf(e, depth + 1, sc));
       return { k: 'arr', v, ...(n.elements.some((e) => e && e.type === 'SpreadElement') ? { spread: true } : {}) };
     }
-    case 'ObjectExpression': return objectSummary(n, depth);
+    case 'ObjectExpression': return objectSummary(n, depth, sc);
     case 'CallExpression':
     case 'OptionalCallExpression':
-      return { k: 'call', callee: chainOf(n.callee), args: n.arguments.map((a) => valueOf(a, depth + 1)) };
+      return { k: 'call', callee: chainOf(n.callee), args: n.arguments.map((a) => valueOf(a, depth + 1, sc)) };
     case 'NewExpression': return { k: 'new', callee: chainOf(n.callee) };
     case 'ArrowFunctionExpression':
     case 'FunctionExpression':
-      return fnSummary(n, depth);
+      return fnSummary(n, depth, sc);
     default: return { k: 'expr' };
   }
 }
@@ -153,10 +160,19 @@ export function valueOf(node, depth = 0) {
  * destructured one) and the lines it spans, so a call written inside it can be
  * told apart from one beside it; and, for an arrow with an expression body,
  * what it returns (`forwardRef(() => UsersModule)` names the module there).
+ * With `sc`, where each named parameter is declared (`paramsAt`), so a call
+ * inside can be told to be on that parameter and not on a name that shadows it.
  */
-function fnSummary(n, depth) {
-  const returns = n.type === 'ArrowFunctionExpression' && n.body.type !== 'BlockStatement' ? { returns: valueOf(n.body, depth + 1) } : {};
-  return { k: 'fn', params: paramsOf(n).map((p) => p.name), line: lineOf(n), endLine: endLineOf(n), ...returns };
+function fnSummary(n, depth, sc) {
+  const returns = n.type === 'ArrowFunctionExpression' && n.body.type !== 'BlockStatement' ? { returns: valueOf(n.body, depth + 1, sc) } : {};
+  const at = sc ? n.params.map((p) => { const id = paramId(p); return id ? sc.local(id)?.at ?? null : null; }) : [];
+  return { k: 'fn', params: paramsOf(n).map((p) => p.name), ...(at.some(Boolean) ? { paramsAt: at } : {}), line: lineOf(n), endLine: endLineOf(n), ...returns };
+}
+
+/** `{[name]: place}` (and `{[flag]: true}` when it is written again) for an identifier that is a local, else nothing. */
+function localField(sc, id, name, flag) {
+  const b = sc && id ? sc.local(id) : null;
+  return b ? { [name]: b.at, ...(b.reassigned ? { [flag]: true } : {}) } : {};
 }
 
 /** A type annotation's name: `Foo` or `ns.Foo` for a type reference, null for anything else. */
@@ -254,6 +270,13 @@ function exportRecords(file, node) {
   }));
 }
 
+/** A parameter's own identifier node, or null for a destructured one. */
+function paramId(p) {
+  const inner = p.type === 'TSParameterProperty' ? p.parameter : p;
+  const id = inner.type === 'AssignmentPattern' ? inner.left : inner;
+  return id.type === 'Identifier' ? id : null;
+}
+
 function paramsOf(fn) {
   return fn.params.map((p) => {
     const inner = p.type === 'TSParameterProperty' ? p.parameter : p;
@@ -321,14 +344,14 @@ function memberName(n) {
  * before it (`where`, or `manager.find`), its arguments and its line. Null
  * when the chain does not start at a call whose receiver is a name.
  */
-function chainFrom(outer) {
+function chainFrom(outer, sc) {
   const steps = [];
   for (let cur = outer; ;) {
     let obj = unwrap(cur.callee);
     if (!isMember(obj)) return null;
     const path = [];
     for (; isMember(obj); obj = unwrap(obj.object)) path.unshift(memberName(obj));
-    steps.unshift({ name: path.join('.'), args: cur.arguments.map((a) => valueOf(a)), line: lineOf(cur) });
+    steps.unshift({ name: path.join('.'), args: cur.arguments.map((a) => valueOf(a, 0, sc)), line: lineOf(cur) });
     if (!isCall(obj)) return null;
     if (chainOf(obj.callee) !== null) return { base: obj, steps };
     cur = obj;
@@ -336,19 +359,34 @@ function chainFrom(outer) {
 }
 
 /** The outermost call of a chain is met first: it names every step, and a call inside it names fewer. */
-function noteChain(node, chains, holders) {
-  const hit = chainFrom(node);
+function noteChain(node, chains, holders, sc) {
+  const hit = chainFrom(node, sc);
   if (!hit || chains.has(hit.base)) return;
   const holder = holders.get(node);
-  chains.set(hit.base, { steps: hit.steps, ...(holder ? { holder } : {}) });
+  chains.set(hit.base, { steps: hit.steps, ...(holder ? { holder: holder.name } : {}) });
 }
 
-function callRecord(file, node, { here, callee, n, cond, holder, chain }) {
+/** The identifier a callee's member chain starts at (`x` of `x.user.findMany`), or null when it starts at anything else. */
+function rootIdentifier(callee) {
+  let cur = unwrap(callee);
+  while (isMember(cur)) cur = cur.object;
+  return cur && cur.type === 'Identifier' ? cur : null;
+}
+
+/**
+ * One call. `rootAt` is where the local its receiver starts at is declared,
+ * and `holderAt` where the local it is held in is, each with a flag when that
+ * local is written again anywhere it is in scope: the same name in two blocks is
+ * two locals, and a name assigned again may hold anything at the call.
+ */
+function callRecord(file, node, { here, callee, n, cond, holder, chain }, sc) {
   return {
-    kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), n,
-    ...(holder ? { holder } : {}), ...(cond ? { cond: true } : {}),
+    kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), n,
+    ...(holder ? { holder: holder.name } : {}), ...(cond ? { cond: true } : {}),
     ...(chain ? { chain: chain.steps, ...(chain.holder ? { chainHolder: chain.holder } : {}) } : {}),
     line: lineOf(node),
+    ...localField(sc, rootIdentifier(node.callee), 'rootAt', 'rootReassigned'),
+    ...localField(sc, holder, 'holderAt', 'holderReassigned'),
   };
 }
 
@@ -369,7 +407,7 @@ function callRecord(file, node, { here, callee, n, cond, holder, chain }) {
  * name the whole expression is held in as `chainHolder`. A `new` is a record of
  * its own and takes no place among the calls.
  */
-function walkCalls(file, ast, emit) {
+function walkCalls(file, ast, emit, sc) {
   const counters = new Map();
   // The name each initializer is held in (`const app = await …` holds the call under the await).
   const holders = new Map();
@@ -378,7 +416,7 @@ function walkCalls(file, ast, emit) {
   // `root` is the function that IS the member, so it is not taken for one nested in it.
   const visit = (node, where, root, cond) => {
     if (node.type === 'Decorator') return;
-    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) holders.set(unwrap(node.init), node.id.name);
+    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) holders.set(unwrap(node.init), node.id);
     if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
       const cls = node.id ? node.id.name : 'default';
       for (const m of node.body.body) {
@@ -398,15 +436,15 @@ function walkCalls(file, ast, emit) {
       if (callee !== null) {
         const n = counters.get(here) ?? 0;
         counters.set(here, n + 1);
-        emit(callRecord(file, node, { here, callee, n, cond: mayNotRun, holder: holders.get(node), chain: chains.get(node) }));
+        emit(callRecord(file, node, { here, callee, n, cond: mayNotRun, holder: holders.get(node), chain: chains.get(node) }, sc));
       } else {
-        noteChain(node, chains, holders);
+        noteChain(node, chains, holders, sc);
       }
     }
     if (node.type === 'NewExpression') {
       const callee = chainOf(node.callee);
       const holder = holders.get(node);
-      if (callee !== null) emit({ kind: 'new', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), ...(holder ? { holder } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node) });
+      if (callee !== null) emit({ kind: 'new', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), ...(holder ? { holder: holder.name } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node) });
     }
     const branches = MAY_NOT_RUN[node.type] ?? [];
     eachChild(node, (c, key) => visit(c, here, top, mayNotRun || branches.includes(key)));
@@ -454,7 +492,7 @@ export function factsOfFile(file, code) {
   }
   const emit = (r) => out.push(r);
   declarationRecords(file, ast, emit);
-  walkCalls(file, ast, emit);
+  walkCalls(file, ast, emit, readScopes(ast));
   for (const e of ast.errors ?? []) out.push({ kind: 'parse_error', file, message: String(e.message).split('\n')[0], recovered: true });
   return out;
 }

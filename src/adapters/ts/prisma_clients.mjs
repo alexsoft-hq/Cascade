@@ -9,14 +9,25 @@
 // database. A local that holds one, `const x = this.prisma.$extends({...})`, or
 // one a method of the class hands back, `const x = this.client()` where every
 // return of `client()` is `this.<field>.$extends(...)` or the field itself, is
-// a client for the calls made through it from that line on, in that member.
+// a client for the calls made through it from that line on.
 // How sure such a call is depends on the extension: one written as an object
 // (there, or handed to the define call, `Prisma.defineExtension`, whose result
 // a local of the same member holds) with no component the rule names as
 // rewriting (`query`, which intercepts an operation and may change what it
 // sends, or send something else) leaves the call as sure as its client; one
 // this engine cannot read, or one with such a component, makes it HEURISTIC,
-// since what the call sends is then the extension's to decide.
+// since what the call sends is then the extension's to decide. The fields its
+// result component computes (the rule's `extensions.computed`) are read here
+// too, each with the fields it needs, for the operation rule to read a select
+// of one as those fields.
+//
+// A LOCAL IS A DECLARATION, NOT A NAME. The worker says which local a call's
+// receiver is (`rootAt`, where the file declares it): the same name declared
+// again in an inner block, or a parameter of an inner function that shadows
+// the transaction's, is another local, and a call on it is not a client call.
+// A local written again anywhere it is in scope (`x = other`) may hold anything
+// by the time of a call, so it holds a client nowhere; its calls stay unread,
+// with that reason.
 
 import { callerOf } from './ts_calls.mjs';
 import { fieldOf, methodOf } from './project.mjs';
@@ -59,7 +70,43 @@ function extendedClient(role, method, arg, ext) {
   const components = read ? Object.keys(arg.v).sort() : [];
   const rewriting = components.filter((c) => ext.rewriting.includes(c));
   const sure = read && rewriting.length === 0;
-  return { role, grade: sure ? role.grade : weakest(role.grade, 'HEURISTIC'), extension: { method, read, components, ...(rewriting.length > 0 ? { rewriting } : {}) } };
+  return {
+    role, grade: sure ? role.grade : weakest(role.grade, 'HEURISTIC'), extension: { method, read, components, ...(rewriting.length > 0 ? { rewriting } : {}) },
+    computed: read ? computedFields(arg, ext.computed) : null,
+  };
+}
+
+/**
+ * What one computed field needs, as its extension writes it: the fields its
+ * `needs` object sets to true, none when it writes no `needs`, and null when
+ * the source does not say (a `needs` that is not an object literal of true and
+ * false).
+ */
+function needsOf(field, key) {
+  if (field.k !== 'obj' || field.spread || field.computed) return null;
+  const needs = field.v[key];
+  if (!needs) return [];
+  if (needs.k !== 'obj' || needs.spread || needs.computed || Object.values(needs.v).some((v) => v.k !== 'bool')) return null;
+  return Object.entries(needs.v).filter(([, v]) => v.v === true).map(([name]) => name).sort();
+}
+
+/**
+ * The fields an extension's result component (the rule's `extensions.computed`)
+ * computes: `{all, byModel}`, the ones it names for every model and the ones
+ * it names under each model key, each field with what it needs. A model key or
+ * a field this cannot read is left out, so selecting it stays a key not read.
+ */
+function computedFields(arg, cfg) {
+  const comp = cfg ? arg.v[cfg.component] : null;
+  if (!comp || comp.k !== 'obj') return null;
+  const out = { all: {}, byModel: {} };
+  for (const [key, fields] of Object.entries(comp.v)) {
+    if (fields.k !== 'obj') continue;
+    const read = Object.fromEntries(Object.entries(fields.v).map(([name, f]) => [name, needsOf(f, cfg.needs)]));
+    if (key === cfg.allModels) out.all = read;
+    else out.byModel[key] = read;
+  }
+  return out;
 }
 
 /** Whether a call is the pack's define call (`Prisma.defineExtension`), by the package and export its receiver is imported as. */
@@ -72,20 +119,22 @@ function isDefineCall(project, define, call) {
 
 /**
  * The extension an `$extends` argument is. An object written there is itself.
- * A name the same member holds, once, from the define call is the object that
- * call is handed, or, for a function `(client) => client.$extends({...})`, the
- * object that inner `$extends` is handed: what the extension does is read
- * there. Anything else is the argument as it stands, which is not read.
+ * A local of the same member that holds the define call's result, and is not
+ * written again, is the object that call is handed, or, for a function
+ * `(client) => client.$extends({...})`, the object `$extends` is handed on that
+ * function's own parameter: what the extension does is read there. Anything
+ * else is the argument as it stands, which is not read.
  */
 function extensionArg(project, ctx, call) {
   const arg = call.args[0];
   const define = ctx.ext.define;
-  if (!arg || arg.k !== 'id' || !define) return arg;
-  const held = ctx.callsIn(call.file, call.in).filter((c) => c.holder === arg.v);
+  if (!arg || arg.k !== 'id' || !define || !arg.at || arg.reassigned) return arg;
+  const held = ctx.callsIn(call.file, call.in).filter((c) => c.holderAt === arg.at);
   if (held.length !== 1 || held[0].line > call.line || !isDefineCall(project, define, held[0])) return arg;
   const x = held[0].args[0];
-  if (!x || x.k !== 'fn' || !x.params[0]) return x;
-  const inner = ctx.callsIn(call.file, call.in).filter((c) => c.line >= x.line && c.line <= x.endLine && ctx.ext.methods.some((m) => c.callee === `${x.params[0]}.${m}`));
+  const param = x && x.k === 'fn' ? x.paramsAt?.[0] : null;
+  if (!param) return x;
+  const inner = ctx.callsIn(call.file, call.in).filter((c) => c.rootAt === param && !c.rootReassigned && ctx.ext.methods.some((m) => c.callee === `${x.params[0]}.${m}`));
   return inner.length === 1 ? inner[0].args[0] : arg;
 }
 
@@ -117,7 +166,9 @@ function methodClient(project, ctx, cls, name) {
   const made = returns.map((r) => returnedClient(project, ctx, hit.cls, `${hit.cls.name}.${name}`, r));
   if (made.some((m) => !m)) return null;
   const weakestMade = made.reduce((a, b) => (RANK[b.grade] < RANK[a.grade] ? b : a));
-  return { ...weakestMade, returnedBy: `${hit.cls.name}.${name}` };
+  // A field only some of the returned clients compute is not known to be computed.
+  const computed = made.every((m) => JSON.stringify(m.computed ?? null) === JSON.stringify(made[0].computed ?? null)) ? made[0].computed ?? null : null;
+  return { ...weakestMade, computed, returnedBy: `${hit.cls.name}.${name}` };
 }
 
 /** The client a call expression makes, in class `cls`, or null. */
@@ -127,46 +178,39 @@ function clientMadeBy(project, ctx, call, cls) {
   return extendsCall(project, ctx, call, cls);
 }
 
-/**
- * Every local a member holds a client in, keyed `file|member|name`, each with
- * the line it is held from. A name held more than once in a member is a client
- * only where every value it holds is one: one that holds something else as
- * well is not read, and its calls stay unread.
- */
-function holderBindings(project, ctx) {
-  const byKey = new Map();
-  for (const call of project.calls) {
-    if (!call.holder) continue;
-    const caller = callerOf(project, call);
-    const made = caller?.cls ? clientMadeBy(project, ctx, call, caller.cls) : null;
-    const key = `${call.file}|${call.in}|${call.holder}`;
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(made ? { ...made, line: call.line } : null);
-  }
-  const out = new Map();
-  for (const [key, list] of byKey) if (list.every(Boolean)) out.set(key, list.sort((a, b) => a.line - b.line));
-  return out;
+/** The local a call's result is held in, as a client, keyed `file|place`: from the line it is held on, what made it. */
+function holderBinding(project, ctx, call, caller) {
+  if (!call.holder || !call.holderAt || !caller?.cls) return null;
+  const made = clientMadeBy(project, ctx, call, caller.cls);
+  if (!made) return null;
+  const { role, grade, extension, computed, returnedBy } = made;
+  const answer = { role, grade, extension, computed: computed ?? null, ...(returnedBy ? { returnedBy } : {}), heldIn: call.holder, transaction: null };
+  return { key: `${call.file}|${call.holderAt}`, line: call.line, answer };
 }
 
-/** A call `this.<field>.$transaction(fn, ...)`, `fn` the first function-valued argument, whose parameter at `clientParam` names a client too. */
+/** A call `this.<field>.$transaction(fn, ...)`, `fn` the first function-valued argument, whose parameter at `clientParam` is a client inside it. */
 function transactionBinding(project, rules, call, caller, txConfig) {
   const parts = call.callee.split('.');
-  if (parts.length !== 3 || parts[0] !== 'this' || parts[2] !== txConfig.method) return null;
+  if (!txConfig || !caller || parts.length !== 3 || parts[0] !== 'this' || parts[2] !== txConfig.method) return null;
   const role = clientFieldRole(project, rules, caller.cls, parts[1]);
   const fn = call.args.find((a) => a.k === 'fn');
-  const param = fn ? fn.params[txConfig.clientParam] : null;
-  if (!role || !fn || !param) return null;
-  return { role, param, method: txConfig.method, file: call.file, member: call.in, from: fn.line, to: fn.endLine };
+  const at = fn?.paramsAt?.[txConfig.clientParam] ?? null;
+  if (!role || !at) return null;
+  return { key: `${call.file}|${at}`, line: fn.line, answer: { ...plainClient(role), computed: null, transaction: txConfig.method } };
 }
 
-/** Every interactive-transaction callback whose client parameter is bound, across the project. */
-function transactionBindings(project, rules, txConfig) {
-  if (!txConfig) return [];
-  const out = [];
+/**
+ * Every local that is a client, keyed `file|place` (where the file declares
+ * it): a local holding a client that `$extends` or a method of the class made,
+ * and a transaction callback's client parameter.
+ */
+function localBindings(project, ctx, txConfig) {
+  const out = new Map();
+  const holders = ctx.ext.methods.length > 0;
   for (const call of project.calls) {
     const caller = callerOf(project, call);
-    const b = caller ? transactionBinding(project, rules, call, caller, txConfig) : null;
-    if (b) out.push(b);
+    const b = (holders ? holderBinding(project, ctx, call, caller) : null) ?? transactionBinding(project, ctx.rules, call, caller, txConfig);
+    if (b && !out.has(b.key)) out.set(b.key, b);
   }
   return out;
 }
@@ -184,30 +228,29 @@ function callsByMember(project) {
 
 /**
  * How this project's calls are read as client calls. The answer for one call
- * is `{role, grade, delegate, operation, transaction, extension}`, or null:
- * `this.<field>.<delegate>.<operation>(...)` on a client field;
- * `<param>.<delegate>.<operation>(...)` inside a transaction callback; and
- * `<local>.<delegate>.<operation>(...)` through a client `$extends` made.
+ * is `{role, grade, delegate, operation, transaction, extension, computed}`,
+ * or null: `this.<field>.<delegate>.<operation>(...)` on a client field;
+ * `<param>.<delegate>.<operation>(...)` on a transaction callback's own client
+ * parameter; and `<local>.<delegate>.<operation>(...)` on a local holding a
+ * client `$extends` made. `whyNot(call)` says why a call on a local that held
+ * a client is not read: the local is written again.
  *
  * @param {object} project  readProject's answer
  * @param {{clientRules:object[], transaction:(object|null), extensions:(object|null)}} rules
  */
 export function clientReader(project, { clientRules, transaction, extensions }) {
   const ctx = { rules: clientRules, ext: extensions ?? { methods: [], rewriting: [] }, callsIn: callsByMember(project) };
-  const bindings = transactionBindings(project, clientRules, transaction);
-  const holders = ctx.ext.methods.length > 0 ? holderBindings(project, ctx) : new Map();
-  return (call, caller) => {
+  const locals = localBindings(project, ctx, transaction);
+  const localOf = (call) => (call.rootAt ? locals.get(`${call.file}|${call.rootAt}`) ?? null : null);
+  const read = (call, caller) => {
     const parts = call.callee.split('.');
     if (parts.length === 4 && parts[0] === 'this') {
       const role = clientFieldRole(project, clientRules, caller.cls, parts[1]);
-      return role ? { ...plainClient(role), delegate: parts[2], operation: parts[3], transaction: null } : null;
+      return role ? { ...plainClient(role), computed: null, delegate: parts[2], operation: parts[3], transaction: null } : null;
     }
-    if (parts.length !== 3) return null;
-    const b = bindings.find((x) => x.file === call.file && x.member === call.in && x.param === parts[0] && call.line >= x.from && call.line <= x.to);
-    if (b) return { ...plainClient(b.role), delegate: parts[1], operation: parts[2], transaction: b.method };
-    const held = (holders.get(`${call.file}|${call.in}|${parts[0]}`) ?? []).filter((h) => h.line <= call.line).pop();
-    if (!held) return null;
-    const { role, grade, extension, returnedBy } = held;
-    return { role, grade, extension, ...(returnedBy ? { returnedBy } : {}), heldIn: parts[0], delegate: parts[1], operation: parts[2], transaction: null };
+    const b = parts.length === 3 && !call.rootReassigned ? localOf(call) : null;
+    return b && b.line <= call.line ? { ...b.answer, delegate: parts[1], operation: parts[2] } : null;
   };
+  read.whyNot = (call) => (call.rootReassigned && localOf(call) ? `${call.callee.split('.')[0]} held a Prisma client and is assigned again, so what it holds at this call is not known` : null);
+  return read;
 }

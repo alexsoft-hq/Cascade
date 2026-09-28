@@ -22,7 +22,12 @@
 // makes them. A call shaped like a client's model.operation that this bridge
 // could not type (a local variable holding the client, say) draws nothing, but
 // is counted: `stats.unreadClientCalls` and a few samples, for a diagnostic to
-// name.
+// name, each with why when the reader knows (a local that held a client and is
+// assigned again).
+//
+// A client an extension with a result component made computes fields no table
+// has: selecting one reads the fields it `needs` (prisma_clients.mjs reads
+// them), and is never a column of its own.
 
 import { nodeId } from '../../core/graph.mjs';
 import { modelOfDelegate } from './prisma_schema.mjs';
@@ -75,12 +80,28 @@ function writeStatement(g, a) {
   });
 }
 
+/**
+ * The fields a client's extension computes, by model name: the ones it names
+ * for every model, and over them the ones it names under that model's
+ * delegate. Null when it computes none.
+ */
+function computedByModel(computed, models) {
+  if (!computed) return null;
+  const out = new Map();
+  for (const m of models.values()) out.set(m.name, { ...computed.all });
+  for (const [key, fields] of Object.entries(computed.byModel)) {
+    const m = modelOfDelegate(models, key);
+    if (m) Object.assign(out.get(m.name), fields);
+  }
+  return out;
+}
+
 /** One client call's statement, or nothing when its model or operation is not one the rule knows. */
 function addOneStatement(g, a) {
   const { call, cc, caller, k, opts, stats } = a;
   const model = modelOfDelegate(opts.schema.models, cc.delegate);
   if (!model) { stats.unknownModel += 1; return; }
-  const fx = opts.operations.effectsOf(cc.operation, call.args, model, opts.schema.models);
+  const fx = opts.operations.effectsOf(cc.operation, call.args, model, opts.schema.models, computedByModel(cc.computed, opts.schema.models));
   if (!fx) { stats.unknownOperation += 1; return; }
   const sid = nodeId('statement', `prisma:${call.file}#${call.in}/${k}`);
   writeStatement(g, { sid, call, cc, model, fx, caller, catalog: opts.catalog });
@@ -90,13 +111,16 @@ function addOneStatement(g, a) {
   if (cc.extension) stats.throughExtension += 1;
 }
 
+/** One unread call as a sample: where it is, and why when the reader knows. */
+const unreadSample = (call, why) => ({ file: call.file, line: call.line, callee: call.callee, ...(why ? { why } : {}) });
+
 /**
  * A call shaped like `<...>.<delegate>.<operation>(...)`, at least three parts,
  * naming a real model and an operation the rule knows, that this bridge never
  * read as a client call: nothing was drawn for it, and this is the only place
  * that says so.
  */
-function addUnreadStats(project, opts, read, stats) {
+function addUnreadStats(project, opts, read, stats, whyNot) {
   const known = new Set(opts.operations.operations);
   const samples = [];
   for (const call of project.calls) {
@@ -106,7 +130,7 @@ function addUnreadStats(project, opts, read, stats) {
     const [delegate, operation] = parts.slice(-2);
     if (!modelOfDelegate(opts.schema.models, delegate) || !known.has(operation)) continue;
     stats.unreadClientCalls += 1;
-    samples.push({ file: call.file, line: call.line, callee: call.callee });
+    samples.push(unreadSample(call, whyNot(call)));
   }
   stats.unreadSamples = samples.sort((a, b) => cmp(a.file, b.file) || a.line - b.line).slice(0, 5);
 }
@@ -138,6 +162,6 @@ export function addPrismaStatements(g, project, opts) {
     ordinal.set(caller.id, k + 1);
     addOneStatement(g, { call, cc, caller, k, opts, stats });
   }
-  addUnreadStats(project, opts, read, stats);
+  addUnreadStats(project, opts, read, stats, clientOf.whyNot);
   return stats;
 }

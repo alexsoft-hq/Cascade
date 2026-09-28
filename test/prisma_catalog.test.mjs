@@ -179,3 +179,13 @@ test('a primary key the two state differently is a disagreement too', () => {
   const { stats } = addPrismaCatalog(g, schemaOf('model User {\n  id Int\n  email String? @id\n  legacy String?\n  scopes String[]\n}\nmodel Audit {\n  id Int @id\n}'), { identifierCase: 'fold-lower', catalogRecords: DDL_RECORDS });
   assert.deepEqual(stats.disagreementSamples.filter((d) => d.what === 'pk-differs').map((d) => [d.column, d.prisma, d.catalog]), [['user.id', false, true], ['user.email', true, false]]);
 });
+
+test('where the two state a column\'s key or nullability differently, the column keeps both declarations, each with its source: neither is known to be the newer', () => {
+  const g = buildGraphFromSql(DDL_RECORDS, [], { identifierCase: 'fold-lower' });
+  addPrismaCatalog(g, schemaOf('model User {\n  id Int\n  email String @id\n  legacy String?\n  scopes String[]\n}\nmodel Audit {\n  id Int @id\n}'), { identifierCase: 'fold-lower', catalogRecords: DDL_RECORDS });
+  const id = g.nodes.get('column:user.id');
+  assert.deepEqual(id.declarationsDiffer, { pk: { catalog: true, prisma: false } });
+  const email = g.nodes.get('column:user.email');
+  assert.deepEqual(email.declarationsDiffer, { pk: { catalog: false, prisma: true }, nullable: { catalog: true, prisma: false } });
+  assert.equal(g.nodes.get('column:user.legacy').declarationsDiffer, undefined, 'a column the two agree on carries nothing');
+});

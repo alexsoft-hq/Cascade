@@ -655,7 +655,7 @@ function catalogSources(prisma, typeorm) {
 function catalogNotes(prisma) {
   if (!prisma || !(prisma.disagreements > 0)) return [];
   return [`schema.prisma and the SQL catalog this run read disagree in ${prisma.disagreements} place(s) (${Object.entries(prisma.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ')}). `
-    + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog'];
+    + 'Neither is known to be the newer: a column they declare differently keeps both declarations on its node (declarationsDiffer), a table or column is the SQL catalog\'s node where it declares one, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog'];
 }
 
 /**

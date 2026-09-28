@@ -40,6 +40,24 @@ const SCHEMA = readPrismaSchema([
   '  user   User @relation(fields: [userId], references: [id])',
   '  owner  User @relation("orphan", fields: [userId], references: [id])',
   '}',
+  // Optional relations, for the null checks and the writes a literal leaves idle:
+  // Member holds a one-to-many link to Team, Badge a one-to-one link to Team.
+  'model Team {',
+  '  id      Int      @id',
+  '  name    String',
+  '  members Member[]',
+  '  badge   Badge?',
+  '}',
+  'model Member {',
+  '  id     Int   @id',
+  '  teamId Int?',
+  '  team   Team? @relation(fields: [teamId], references: [id])',
+  '}',
+  'model Badge {',
+  '  id     Int   @id',
+  '  teamId Int?  @unique',
+  '  team   Team? @relation(fields: [teamId], references: [id])',
+  '}',
 ].join('\n'));
 
 const PRISMA_SERVICE = ['prisma.service.ts', [
@@ -196,12 +214,185 @@ test('a client a method of the class hands back is a client, and an extension Pr
   assert.equal(g.edges.find((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid()).grade, 'EXACT');
 });
 
-test('a local that holds a client in one place and something else in another is not read: its calls stay unread and are counted', () => {
-  const { stats } = run([
+test('a name declared again in an inner block is another binding: the outer one still holds the client, the inner one does not', () => {
+  const { g, sid, stats } = run([
     '    let x = this.prisma.$extends({});',
     '    if (flag) { const x = make(); x.user.findMany(); }',
     '    return x.user.findMany();',
   ]);
-  assert.equal(stats.prisma.statements, 0);
-  assert.equal(stats.prisma.unreadClientCalls, 2);
+  assert.equal(stats.prisma.statements, 1);
+  assert.equal(g.nodes.get(sid()).line, 8, 'the statement is the outer call, on the return line');
+  assert.equal(stats.prisma.unreadClientCalls, 1, 'the inner call is counted as unread');
+});
+
+test('extended_client_literal_shadow_is_not_a_database_call', () => {
+  const { g, sid, stats } = run([
+    '    const x = this.prisma.$extends({});',
+    '    {',
+    '      const x = { user: { findMany() { return []; } } };',
+    '      x.user.findMany();',
+    '    }',
+    '    return x.user.findMany({ select: { email: true } });',
+  ]);
+  assert.equal(stats.prisma.statements, 1, 'only the call through the client is a statement');
+  assert.equal(g.nodes.get(sid()).line, 11);
+  assert.equal(g.nodes.get(sid(1)), undefined);
+  assert.deepEqual(stats.prisma.unreadSamples.map((s) => s.line), [9], 'the call on the object literal is said, not drawn');
+});
+
+test('extended_client_reassignment_invalidates_binding', () => {
+  const before = run([
+    '    let x = this.prisma.$extends({});',
+    '    x = make();',
+    '    return x.user.findMany();',
+  ]);
+  assert.equal(before.stats.prisma.statements, 0, 'a name written again may hold anything by the time of the call');
+  assert.equal(before.stats.prisma.unreadClientCalls, 1);
+  assert.match(before.stats.prisma.unreadSamples[0].why, /assigned again/);
+  const after = run([
+    '    let x = this.prisma.$extends({});',
+    '    await x.user.findMany();',
+    '    const reset = () => { x = make(); };',
+    '    reset();',
+  ]);
+  assert.equal(after.stats.prisma.statements, 0, 'written anywhere the name is in scope, even after the call and in a closure');
+});
+
+test('a transaction callback parameter shadowed by an inner function\'s parameter is not the client there', () => {
+  const { g, stats } = run([
+    '    await this.prisma.$transaction(async (tx) => {',
+    '      await tx.user.findMany({ select: { email: true } });',
+    '      [1].forEach((tx) => tx.user.findMany());',
+    '    });',
+  ]);
+  assert.equal(stats.prisma.statements, 1);
+  assert.equal(g.nodes.get('statement:prisma:svc.ts#Svc.run/0').line, 7);
+  assert.equal(stats.prisma.unreadClientCalls, 1);
+});
+
+test('an extension argument whose name an inner block declares again is not the defined extension: HEURISTIC', () => {
+  const { g, sid } = run([
+    '    const e = Prisma.defineExtension({ result: {} });',
+    '    {',
+    '      const e = ext;',
+    '      const x = this.prisma.$extends(e);',
+    '      return x.user.findMany();',
+    '    }',
+  ]);
+  assert.equal(g.edges.find((e) => e.type === 'IMPLEMENTS_STMT' && e.to === sid()).grade, 'HEURISTIC');
+  assert.equal(g.nodes.get(sid()).prismaEvidence.extension.read, false);
+});
+
+// ---------------------------------------------------------------------------
+// a relation filtered on null
+// ---------------------------------------------------------------------------
+
+test('inline_relation_null_reads_only_local_foreign_key', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.member.findMany({ where: { team: null }, select: { id: true } });',
+    '    await this.prisma.member.findMany({ where: { team: { is: null } }, select: { id: true } });',
+    '    await this.prisma.member.findMany({ where: { team: { isNot: null } }, select: { id: true } });',
+    '    await this.prisma.badge.findMany({ where: { team: null }, select: { id: true } });',
+  ]);
+  for (const n of [0, 1, 2]) {
+    assert.deepEqual(edgesOf(sid(n)), ['EXECUTES EXACT Member [read]', 'READS EXACT Member.id', 'READS EXACT Member.teamId via Member.team'], `statement ${n}`);
+  }
+  assert.deepEqual(edgesOf(sid(3)), ['EXECUTES EXACT Badge [read]', 'READS EXACT Badge.id', 'READS EXACT Badge.teamId via Badge.team'], 'a one-to-one held on this side is the same');
+});
+
+test('a relation filtered on null whose key sits on the other side reads the other table, which Prisma joins or subselects', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.team.findMany({ where: { badge: null }, select: { id: true } });',
+    '    await this.prisma.team.findMany({ where: { badge: { isNot: null } }, select: { id: true } });',
+  ]);
+  for (const n of [0, 1]) {
+    assert.deepEqual(edgesOf(sid(n)), [
+      'EXECUTES EXACT Badge [read] via Team.badge', 'EXECUTES EXACT Team [read]', 'READS EXACT Badge.teamId via Team.badge', 'READS EXACT Team.id',
+    ], `statement ${n}`);
+  }
+});
+
+test('a null check beside a filter on the related row still follows the relation for the filter', () => {
+  const { edgesOf, sid } = run(['    return this.prisma.member.findMany({ where: { team: { isNot: null, is: { name: t } } }, select: { id: true } });']);
+  const edges = edgesOf(sid());
+  assert.ok(edges.includes('EXECUTES EXACT Team [read] via Member.team'));
+  assert.ok(edges.includes('READS EXACT Team.name via Member.team'));
+});
+
+// ---------------------------------------------------------------------------
+// a nested write a literal leaves idle
+// ---------------------------------------------------------------------------
+
+test('nested_disconnect_false_emits_no_relation_edges', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.badge.update({ where: { id }, data: { team: { disconnect: false } }, select: { id: true } });',
+    '    await this.prisma.member.update({ where: { id }, data: { team: { disconnect: false } }, select: { id: true } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT Badge [write]', 'READS EXACT Badge.id'], 'on a one-to-one, Prisma returns before building any query');
+  assert.ok(edgesOf(sid(1)).includes('WRITES EXACT Member.teamId via Member.team'), 'on the to-one side of a one-to-many, Prisma\'s engine disconnects whatever the boolean says');
+});
+
+test('nested_create_empty_emits_no_relation_writes', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.user.update({ where: { id }, data: { email: t, posts: { create: [] } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { email: t, posts: { connect: [], deleteMany: [], delete: [] }, tags: { disconnect: [] } }, select: { id: true } });',
+    '    await this.prisma.team.update({ where: { id }, data: { badge: { delete: false } }, select: { id: true } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email']);
+  assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email']);
+  assert.deepEqual(edgesOf(sid(2)), ['EXECUTES EXACT Team [write]', 'READS EXACT Team.id']);
+});
+
+test('set: [] clears the relation, which is a write; a set that lists rows clears and then sets', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.user.update({ where: { id }, data: { tags: { set: [] } }, select: { id: true } });',
+    '    await this.prisma.team.update({ where: { id }, data: { members: { set: [] } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { tags: { set: [{ id: 1 }] } }, select: { id: true } });',
+  ]);
+  const clearM2m = edgesOf(sid(0));
+  assert.ok(clearM2m.includes('EXECUTES EXACT _TagToUser [delete] via User.tags'));
+  assert.ok(!clearM2m.some((e) => e.startsWith('WRITES') && e.includes('_TagToUser')), 'rows are deleted, no column written');
+  assert.ok(!clearM2m.includes('EXECUTES EXACT _TagToUser [write] via User.tags'));
+  const clearFk = edgesOf(sid(1));
+  assert.ok(clearFk.includes('WRITES EXACT Member.teamId via Team.members'), 'the link is set to NULL on the rows that held it');
+  const replace = edgesOf(sid(2));
+  assert.ok(replace.includes('EXECUTES EXACT _TagToUser [delete] via User.tags') && replace.includes('EXECUTES EXACT _TagToUser [write] via User.tags'));
+  assert.ok(replace.includes('WRITES EXACT _TagToUser.A via User.tags'));
+});
+
+// ---------------------------------------------------------------------------
+// one table read and written by one call
+// ---------------------------------------------------------------------------
+
+test('one call that reads a table and writes it keeps both, each at its own grade', () => {
+  const { edgesOf, sid } = run(['    return this.prisma.user.update({ where: { id }, data: { posts: flag }, include: { posts: true } });']);
+  const edges = edgesOf(sid());
+  assert.ok(edges.includes('EXECUTES EXACT Post [read] via User.posts'), 'include reads Post for certain');
+  assert.ok(edges.includes('EXECUTES SOUND_SET Post [write] via User.posts'), 'the nested write held in a variable may write it: who writes Post must still find this call');
+});
+
+// ---------------------------------------------------------------------------
+// result extensions
+// ---------------------------------------------------------------------------
+
+test('result_extension_select_reads_needs', () => {
+  const { edgesOf, sid, g } = run([
+    '    const x = this.prisma.$extends({ result: { user: { label: { needs: { email: true, id: false }, compute(u) { return u.email; } } } } });',
+    '    await x.user.findMany({ select: { label: true } });',
+    '    await x.post.findMany({ select: { title: true, author: { select: { label: true } } } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [read]', 'READS EXACT User.email'], 'a computed field reads what it needs, and is no column of its own');
+  assert.equal(g.nodes.get(sid(0)).unresolved, undefined);
+  assert.ok(!g.nodes.has('column:User.label'));
+  assert.ok(edgesOf(sid(1)).includes('READS EXACT User.email via Post.author'), 'a relation\'s select computes it too');
+});
+
+test('a computed field that needs another computed field reads what that one needs; needs the source does not spell out are said', () => {
+  const { edgesOf, sid, g } = run([
+    '    const x = this.prisma.$extends({ result: { $allModels: { tag: { needs: { id: true }, compute: () => 1 } }, user: { label: { needs: { email: true }, compute: () => 1 }, badge: { needs: { label: true }, compute: () => 1 }, loose: { needs: ext, compute: () => 1 } } } });',
+    '    await x.user.findMany({ select: { badge: true, tag: true } });',
+    '    await x.user.findMany({ select: { loose: true } });',
+  ]);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [read]', 'READS EXACT User.email', 'READS EXACT User.id']);
+  assert.match(g.nodes.get(sid(1)).columnsRuntimeOnlyReason, /select\.loose/);
 });
