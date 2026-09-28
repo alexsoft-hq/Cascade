@@ -604,6 +604,24 @@
     "namespaceOf"
    ]
   },
+  "src/adapters/java/path_prefixes.mjs": {
+   "maxLines": 13,
+   "maxBranches": 9,
+   "longest": "compileEntry",
+   "branchiest": "compileEntry",
+   "functions": [
+    "apiGroupAfter",
+    "apiGroupAfter/1",
+    "compileEntry",
+    "makePathPrefixes",
+    "makePathPrefixes/1",
+    "makePathPrefixes/2",
+    "makePathPrefixes/2/1",
+    "prefixEvidence",
+    "prefixedPath",
+    "test"
+   ]
+  },
   "src/adapters/java/persistence.mjs": {
    "maxLines": 30,
    "maxBranches": 10,
@@ -628,14 +646,16 @@
    ]
   },
   "src/adapters/java/routes.mjs": {
-   "maxLines": 58,
+   "maxLines": 46,
    "maxBranches": 17,
-   "longest": "classifyRoutes",
+   "longest": "placeOneImperativeEdge",
    "branchiest": "placeImperativeCalls",
    "functions": [
     "classifyRoutes",
-    "classifyRoutes/1",
-    "classifyRoutes/1/1",
+    "contractRoutes",
+    "contractRoutes/1",
+    "contractRoutes/1/1",
+    "declaredPrefixAttrs",
     "imperativeTarget",
     "imperativeTarget/1",
     "imperativeTarget/2",
@@ -650,6 +670,7 @@
     "placeImperativeCalls",
     "placeImperativeCalls/1",
     "placeOneImperativeEdge",
+    "servedRoute",
     "servedRouteIndex",
     "servedRouteIndex/1",
     "servedRouteIndex/2",
@@ -726,7 +747,7 @@
    ]
   },
   "src/adapters/java_bridge.mjs": {
-   "maxLines": 65,
+   "maxLines": 63,
    "maxBranches": 9,
    "longest": "addJavaFacts",
    "branchiest": "addJavaFacts",
@@ -1833,6 +1854,8 @@
     "sayOpenApiLane",
     "sayOpenApiLane/1",
     "sayPageScriptRequests",
+    "sayPathPrefixes",
+    "sayPathPrefixes/1",
     "sayPrismaCatalog",
     "sayResult",
     "sayResult/1",
@@ -1968,6 +1991,25 @@
     "webWorkerStatsOf/1",
     "whichLanesAssemble",
     "wrapperFragmentLineage"
+   ]
+  },
+  "src/cli/commands/analyze/prefix_notes.mjs": {
+   "maxLines": 18,
+   "maxBranches": 12,
+   "longest": "prefixNotOnCallsNotes",
+   "branchiest": "prefixNotOnCallsNotes",
+   "functions": [
+    "prefixNotOnCallsNotes",
+    "prefixNotOnCallsNotes/1",
+    "prefixNotOnCallsNotes/2",
+    "prefixNotOnCallsNotes/3",
+    "prefixNotOnCallsNotes/4",
+    "prefixNotOnCallsNotes/5",
+    "prefixNotOnCallsNotes/6",
+    "prefixNotOnCallsNotes/6/1",
+    "prefixNotOnCallsNotes/7",
+    "unusedPrefixNotes",
+    "unusedPrefixNotes/1"
    ]
   },
   "src/cli/commands/analyze/write.mjs": {
@@ -2881,6 +2923,17 @@
     "relativeToSourceRoot"
    ]
   },
+  "src/core/code_settings.mjs": {
+   "maxLines": 17,
+   "maxBranches": 4,
+   "longest": "codeSettingDiagnostics",
+   "branchiest": "codeSettingDiagnostics",
+   "functions": [
+    "codeSettingDiagnostics",
+    "codeSettingDiagnostics/1",
+    "siteOf"
+   ]
+  },
   "src/core/coupling.mjs": {
    "maxLines": 80,
    "maxBranches": 22,
@@ -3232,7 +3285,7 @@
   },
   "src/core/facts_store.mjs": {
    "maxLines": 59,
-   "maxBranches": 22,
+   "maxBranches": 20,
    "longest": "createFactsStore",
    "branchiest": "javaRecordSortKey",
    "functions": [
@@ -3264,6 +3317,7 @@
     "lineageShardKey",
     "mkdir",
     "nodeFactsIo",
+    "orEmpty",
     "padLine",
     "read",
     "read/1",
@@ -3993,6 +4047,21 @@
     "typeOrder/1"
    ]
   },
+  "src/core/package_pattern.mjs": {
+   "maxLines": 20,
+   "maxBranches": 9,
+   "longest": "packagePatternMatcher",
+   "branchiest": "packagePatternMatcher",
+   "functions": [
+    "packagePatternError",
+    "packagePatternError/1",
+    "packagePatternMatcher",
+    "packagePatternMatcher/1",
+    "packagePatternMatcher/1/1",
+    "packagePatternMatcher/1/2",
+    "segmentRe"
+   ]
+  },
   "src/core/paths.mjs": {
    "maxLines": 24,
    "maxBranches": 7,
@@ -4051,6 +4120,8 @@
     "leafKeyPaths",
     "loadProfile",
     "normalizeProfile",
+    "pathPrefixEntryError",
+    "pathPrefixEntryError/1",
     "profileDiagnostics",
     "readKeyPath",
     "sameValue",
@@ -4065,6 +4136,8 @@
     "sqlDialectOf",
     "sqlIdentifierCaseOf",
     "trustGapsFor",
+    "validatePathPrefixes",
+    "validatePathPrefixes/1",
     "validateProfile",
     "validateProfileBlocks",
     "validateProfileBlocks/1",
@@ -4248,6 +4321,44 @@
    "longest": null,
    "branchiest": null,
    "functions": []
+  },
+  "src/core/rules/kinds/java_code_setting.mjs": {
+   "maxLines": 14,
+   "maxBranches": 10,
+   "longest": "callErrors",
+   "branchiest": "callErrors",
+   "functions": [
+    "byPlace",
+    "callErrors",
+    "callErrors/1",
+    "callErrors/1/1",
+    "canonical",
+    "canonical/1",
+    "codeSettingsIn",
+    "codeSettingsIn/1",
+    "codeSettingsIn/2",
+    "codeSettingsIn/2/1",
+    "compile",
+    "compile/1",
+    "foundIn",
+    "foundIn/1",
+    "isObj",
+    "isText",
+    "runExamples",
+    "runExamples/1",
+    "runExamples/1/1",
+    "runExamples/2",
+    "runExamples/2/1",
+    "runExamples/2/1/1",
+    "runExamples/2/1/2",
+    "unknownKeys",
+    "unknownKeys/1",
+    "validateExample",
+    "validateExample/1",
+    "validateExample/2",
+    "validateParams",
+    "validateParams/1"
+   ]
   },
   "src/core/rules/kinds/java_contract_link.mjs": {
    "maxLines": 21,
