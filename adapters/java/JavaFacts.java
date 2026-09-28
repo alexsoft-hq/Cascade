@@ -20,7 +20,7 @@
  *
  * Record kinds: header, parse_error, import, type, entity, repository, field,
  * endpoint, method, transactional, call, httpCall, mpEntity, mpMapper, mpService, mpWrapper,
- * invocations. EVERY record but the header carries a
+ * invocations, routeFunction. EVERY record but the header carries a
  * `file`, because the incremental core shards the stream by file: a record
  * without one would be silently dropped from the cache (src/core/facts_store.mjs
  * mirrors the sort keys and a test proves the mirror byte-for-byte).
@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/16";
+    static final String VERSION = "javafacts/17";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -141,6 +141,10 @@ public class JavaFacts {
         // (javafacts/9). Counted, never resolved: which template file the name
         // means depends on the view resolver's prefix and suffix.
         int views;
+        // The methods declared to return a RouterFunction, each recorded as a
+        // tree of what it is written with (javafacts/17). Counted, never read
+        // here: which of their calls is a route is the rule pack's.
+        int routeFunctions;
 
         void add(String key, Map<String, Object> obj) {
             records.add(new Rec(key, toJson(obj)));
@@ -769,6 +773,7 @@ public class JavaFacts {
                     // read, what it touches, and whether an XML statement for the
                     // same method overrides it, are all decided downstream.
                     emitMapperAnnotationSql(fqn, mname, m);
+                    emitRouteFunction(fqn, mname, m, viewConstants);
 
                     if (m.getBody() != null) {
                         scanCalls(fqn, mname, fields, ext, viewConstants, m);
@@ -1243,6 +1248,214 @@ public class JavaFacts {
             }, null);
         }
 
+
+        // ---- functional routes: `routeFunction` records (javafacts/17) -----
+        //
+        // Spring's functional endpoints declare a route with CALLS, not with an
+        // annotation: `route().GET("/owners/{id}", handler::show).build()`. The
+        // one thing that marks such code in a single file is the type the method
+        // is declared to return, a RouterFunction. So the body of every method
+        // declared to return one is recorded as a tree of what it is written
+        // with: calls, strings, method references, lambdas, names.
+        //
+        // IT DECIDES NOTHING. Which call names a verb, which argument is the
+        // path and which the handler, and how a nest prefixes what is under it,
+        // are the rule pack's (src/core/rules/packs/spring-functional.json, read
+        // by src/core/rules/kinds/java_route_function.mjs). A tree past its
+        // budget, or a string past its length, is marked cut rather than
+        // recorded in part, so a reader can say what it did not see.
+        void emitRouteFunction(String fqn, String mname, MethodTree m, Map<String, String> classConstants) {
+            if (m.getBody() == null) return;
+            String ret = typeSimpleName(m.getReturnType());
+            if (ret == null) return;
+            // …or one that returns something HOLDING one, `Supplier<RouterFunction<…>>`:
+            // a helper that hands a nest its routes. The outer type is recorded, so
+            // nothing downstream takes such a method for a router function itself.
+            String wrapper = null;
+            if (!ROUTE_FUNCTION_TYPES.contains(ret)) {
+                String inner = null;
+                for (String a : typeArgSimples(m.getReturnType())) {
+                    if (a != null && ROUTE_FUNCTION_TYPES.contains(a)) { inner = a; break; }
+                }
+                if (inner == null) return;
+                wrapper = ret;
+                ret = inner;
+            }
+            // The class's `static final String` fields initialised with a literal:
+            // a path is as often `GET(UNSUBSCRIBE_PATTERN, ...)` as a literal, and
+            // the value is on the line that declares it, in this file.
+            Map<String, Object> constants = new java.util.TreeMap<>();
+            for (Map.Entry<String, String> c : classConstants.entrySet()) {
+                if (c.getValue().length() <= ROUTE_STRING_LIMIT) constants.put(c.getKey(), c.getValue());
+            }
+            List<Object> params = new ArrayList<>();
+            for (VariableTree p : m.getParameters()) {
+                Map<String, Object> pr = new LinkedHashMap<>();
+                pr.put("name", p.getName().toString());
+                pr.put("type", typeSimpleName(p.getType()));
+                params.add(pr);
+            }
+            RouteTree rt = new RouteTree();
+            List<Object> body = rt.block(m.getBody().getStatements());
+            Map<String, Object> rec = new LinkedHashMap<>();
+            rec.put("kind", "routeFunction");
+            rec.put("owner", fqn);
+            rec.put("method", mname);
+            rec.put("paramCount", m.getParameters().size());
+            rec.put("returnType", ret);
+            rec.put("returnWrapper", wrapper);
+            rec.put("annotations", annotationNames(m.getModifiers().getAnnotations()));
+            rec.put("params", params);
+            rec.put("constants", constants);
+            rec.put("body", body);
+            rec.put("cut", rt.cut);
+            rec.put("line", lineOf(m));
+            rec.put("file", rel);
+            sink.routeFunctions++;
+            sink.add("5routefn" + SEP + fqn + SEP + mname + SEP + m.getParameters().size() + SEP + pad(lineOf(m)), rec);
+        }
+
+        /** One method body as a tree, within one budget of nodes. */
+        final class RouteTree {
+            int nodes = 0;
+            boolean cut = false;
+
+            List<Object> block(List<? extends com.sun.source.tree.StatementTree> stmts) {
+                List<Object> out = new ArrayList<>();
+                for (com.sun.source.tree.StatementTree s : stmts) out.add(stmt(s));
+                return out;
+            }
+
+            Map<String, Object> stmt(com.sun.source.tree.StatementTree s) {
+                Map<String, Object> o = new LinkedHashMap<>();
+                if (s instanceof ReturnTree) {
+                    ExpressionTree e = ((ReturnTree) s).getExpression();
+                    o.put("s", "return");
+                    o.put("e", (e == null) ? null : expr(e));
+                } else if (s instanceof VariableTree) {
+                    VariableTree v = (VariableTree) s;
+                    o.put("s", "var");
+                    o.put("n", v.getName().toString());
+                    // null for `var`: the declared type is then the initializer's
+                    o.put("t", typeSimpleName(v.getType()));
+                    o.put("e", (v.getInitializer() == null) ? null : expr(v.getInitializer()));
+                } else if (s instanceof com.sun.source.tree.ExpressionStatementTree) {
+                    o.put("s", "expr");
+                    o.put("e", expr(((com.sun.source.tree.ExpressionStatementTree) s).getExpression()));
+                } else {
+                    // an if, a loop, a try: what is built in it is not read
+                    o.put("s", "other");
+                    o.put("t", s.getKind().name());
+                }
+                o.put("l", lineOf(s));
+                return o;
+            }
+
+            List<Object> exprs(List<? extends ExpressionTree> es) {
+                List<Object> out = new ArrayList<>();
+                for (ExpressionTree a : es) out.add(expr(a));
+                return out;
+            }
+
+            Map<String, Object> expr(ExpressionTree e0) {
+                ExpressionTree e = unwrap(e0);
+                Map<String, Object> o = new LinkedHashMap<>();
+                if (++nodes > ROUTE_TREE_BUDGET) {
+                    cut = true;
+                    o.put("k", "cut");
+                    return o;
+                }
+                if (e instanceof MethodInvocationTree) return call((MethodInvocationTree) e, o);
+                if (e instanceof LiteralTree) return literal((LiteralTree) e, o);
+                if (e instanceof BinaryTree && e.getKind() == Tree.Kind.PLUS) return plus(e, o);
+                if (e instanceof IdentifierTree) {
+                    String n = ((IdentifierTree) e).getName().toString();
+                    if ("this".equals(n) || "super".equals(n)) o.put("k", n);
+                    else { o.put("k", "id"); o.put("v", n); }
+                    return o;
+                }
+                if (e instanceof MemberSelectTree) {
+                    o.put("k", "sel");
+                    o.put("v", writtenText(e));
+                    return o;
+                }
+                if (e instanceof MemberReferenceTree) {
+                    MemberReferenceTree mr = (MemberReferenceTree) e;
+                    o.put("k", "ref");
+                    o.put("r", expr(mr.getQualifierExpression()));
+                    o.put("n", mr.getName().toString());
+                    return o;
+                }
+                if (e instanceof com.sun.source.tree.LambdaExpressionTree) return lambda((com.sun.source.tree.LambdaExpressionTree) e, o);
+                if (e instanceof NewClassTree) {
+                    NewClassTree nc = (NewClassTree) e;
+                    o.put("k", "new");
+                    o.put("t", typeSimpleName(nc.getIdentifier()));
+                    o.put("a", exprs(nc.getArguments()));
+                    return o;
+                }
+                o.put("k", "other");
+                o.put("t", (e == null) ? null : e.getKind().name());
+                return o;
+            }
+
+            Map<String, Object> call(MethodInvocationTree inv, Map<String, Object> o) {
+                Tree sel = inv.getMethodSelect();
+                o.put("k", "call");
+                if (sel instanceof MemberSelectTree) {
+                    o.put("n", ((MemberSelectTree) sel).getIdentifier().toString());
+                    o.put("r", expr(((MemberSelectTree) sel).getExpression()));
+                } else {
+                    o.put("n", (sel instanceof IdentifierTree) ? ((IdentifierTree) sel).getName().toString() : null);
+                    o.put("r", null);
+                }
+                o.put("a", exprs(inv.getArguments()));
+                // The line the call's NAME is on: a chained call starts where its
+                // receiver starts, so `route()\n  .GET(...)\n  .POST(...)` would
+                // otherwise put every route on the first line.
+                o.put("l", nameLineOf(sel));
+                return o;
+            }
+
+            Map<String, Object> literal(LiteralTree lt, Map<String, Object> o) {
+                Object v = lt.getValue();
+                if (!(v instanceof String)) { o.put("k", "lit"); return o; }
+                o.put("k", "str");
+                String s = (String) v;
+                if (s.length() > ROUTE_STRING_LIMIT) { o.put("v", null); o.put("cut", true); }
+                else o.put("v", s);
+                return o;
+            }
+
+            /** `"/a" + "/b"` is one string; `"/apis/" + gv` keeps its parts. */
+            Map<String, Object> plus(ExpressionTree e, Map<String, Object> o) {
+                String folded = annotationSqlText(e);
+                if (folded != null && folded.length() <= ROUTE_STRING_LIMIT) {
+                    o.put("k", "str");
+                    o.put("v", folded);
+                    return o;
+                }
+                List<ExpressionTree> parts = new ArrayList<>();
+                flattenPlus(e, parts);
+                o.put("k", "plus");
+                o.put("a", exprs(parts));
+                return o;
+            }
+
+            Map<String, Object> lambda(com.sun.source.tree.LambdaExpressionTree le, Map<String, Object> o) {
+                List<String> ps = new ArrayList<>();
+                for (VariableTree p : le.getParameters()) ps.add(p.getName().toString());
+                o.put("k", "lambda");
+                o.put("p", ps);
+                Tree body = le.getBody();
+                if (body instanceof com.sun.source.tree.BlockTree) {
+                    o.put("b", block(((com.sun.source.tree.BlockTree) body).getStatements()));
+                } else {
+                    o.put("e", expr((ExpressionTree) body));
+                }
+                return o;
+            }
+        }
 
         // ---- imperative HTTP calls: `httpCall` records (javafacts/8) --------
         //
@@ -2146,6 +2359,19 @@ public class JavaFacts {
     /** How many steps of one fluent chain are read before the walk gives up. */
     static final int FLUENT_CHAIN_LIMIT = 32;
 
+    /**
+     * The return types that mark a method as one that BUILDS ROUTES
+     * (javafacts/17), by simple name: Spring's functional endpoints, WebFlux's
+     * and WebMvc's alike, are a `RouterFunction`. Mirrored in
+     * src/core/rules/kinds/java_route_function.mjs, where a rule may only read a
+     * type the worker records; a test holds the two lists equal.
+     */
+    static final java.util.Set<String> ROUTE_FUNCTION_TYPES = new java.util.HashSet<>(Arrays.asList("RouterFunction"));
+    /** How many nodes one method's tree may hold; past it the rest is recorded as cut. */
+    static final int ROUTE_TREE_BUDGET = 6000;
+    /** How long a string in that tree may be; a longer one (a description) is recorded as cut. */
+    static final int ROUTE_STRING_LIMIT = 300;
+
     /** A fluent verb method and the HTTP method it names. */
     static final String[][] FLUENT_VERBS = {
         {"get", "GET"}, {"post", "POST"}, {"put", "PUT"}, {"delete", "DELETE"},
@@ -2961,6 +3187,7 @@ public class JavaFacts {
         header.put("mapperAnnotationSql", sink.mapperAnnotationSql);
         header.put("httpCalls", sink.httpCalls);
         header.put("views", sink.views);
+        header.put("routeFunctions", sink.routeFunctions);
         header.put("parseErrors", sink.parseErrors);
         out.println(toJson(header));
         for (Rec r : sink.records) out.println(r.json);
@@ -2987,6 +3214,7 @@ public class JavaFacts {
         summary.put("mapperAnnotationSql", sink.mapperAnnotationSql);
         summary.put("httpCalls", sink.httpCalls);
         summary.put("views", sink.views);
+        summary.put("routeFunctions", sink.routeFunctions);
         summary.put("parseErrors", sink.parseErrors);
         err.println(toJson(summary));
         err.flush();

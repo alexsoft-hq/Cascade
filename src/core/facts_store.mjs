@@ -256,8 +256,24 @@ export function javaRecordSortKey(rec) {
     case 'httpCall': return `8httpcall${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${orEmpty(rec.httpMethod)}${SEP}${orEmpty(rec.path)}`;
     // One per file (javafacts/16): the method names the file invokes.
     case 'invocations': return `9invocations${SEP}${rec.file}`;
-    default: return null; // header, summary, and anything a newer worker adds
+    default: return newerRecordSortKey(rec); // header, summary, and anything a newer worker adds
   }
+}
+
+/**
+ * The keys of the record kinds the worker added after the switch above was
+ * full, one function each, in the worker's own spelling.
+ */
+const NEWER_SORT_KEYS = Object.freeze({
+  // javafacts/16: one method that builds functional routes. Two overloads of one
+  // name and arity differ by the line they are declared on.
+  routeFunction: (rec) => `5routefn${SEP}${rec.owner}${SEP}${rec.method}${SEP}${rec.paramCount}${SEP}${padLine(rec.line)}`,
+});
+
+/** A newer kind's key, or null for a record that is not shard content (header, summary, a kind nobody keys). */
+function newerRecordSortKey(rec) {
+  const keyOf = Object.hasOwn(NEWER_SORT_KEYS, rec.kind) ? NEWER_SORT_KEYS[rec.kind] : null;
+  return keyOf ? keyOf(rec) : null;
 }
 
 /**

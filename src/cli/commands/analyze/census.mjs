@@ -384,10 +384,30 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
   };
 }
 
+/**
+ * SPRING'S FUNCTIONAL ENDPOINTS (RM67): the routes a method that returns a
+ * RouterFunction builds. Said only where the tree has such a method, and with
+ * what was not read beside what was, because a route the lane could not place
+ * is a route a frontend call will not land on.
+ */
+export function sayFunctionalRoutes(fr) {
+  if (!fr || fr.functions === 0) return;
+  process.stderr.write(`Java lane: ${fr.functions} method(s) build functional routes, ${fr.routes} route(s) read: `
+    + `${fr.served} HANDLES edge(s) (${fr.handles.EXACT} exact, ${fr.handles.SOUND_SET} candidate), `
+    + `${fr.mountedByOperationId} route(s) placed where an OpenAPI document declares their operation id, `
+    + `${fr.servedWithoutHandler} served with a handler this lane could not name; not placed: ${fr.unmounted} mounted by code elsewhere, `
+    + `${fr.pathUnread} with a path not read; ${fr.staticResources} static resource route(s)\n`);
+  for (const s of fr.samples.slice(0, 5)) process.stderr.write(`  [warn] JAVA_ROUTE_NOT_READ ${s.function}:${s.line ?? '?'} ${s.code}: ${s.text}\n`);
+  for (const d of fr.disagreements.slice(0, 5)) {
+    process.stderr.write(`  [warn] OPERATION_ID_DISAGREES ${d.endpoint}: the code names the operation ${d.operationId}, a document has ${d.document} at ${d.documentAt}\n`);
+  }
+}
+
 export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   let laneStats = jstats;
   sayJavaLane(jstats);
   sayPathPrefixes(jstats.pathPrefixes);
+  sayFunctionalRoutes(jstats.functionalRoutes);
   sayIdGenerators(jstats.idGenerators);
   if (runJpa) {
     laneStats = { ...jstats, jpa: jpaStats };

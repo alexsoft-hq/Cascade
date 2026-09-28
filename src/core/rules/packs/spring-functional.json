@@ -1,0 +1,117 @@
+{
+  "pack": "spring-functional",
+  "version": 1,
+  "description": "Spring's functional endpoints, WebFlux and WebMvc alike: the routes a method that returns a RouterFunction builds with RouterFunctions and RequestPredicates, and with springdoc's SpringdocRouteBuilder.",
+  "rules": [
+    {
+      "id": "spring-functional.router-functions",
+      "kind": "java.route-function",
+      "description": "A method declared to return a RouterFunction builds routes with calls. RouterFunctions.route() starts a builder; GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS on it add a route with a path pattern, an optional request predicate and a handler; route(predicate, handler) and andRoute add one whose path and verb the predicate names (RequestPredicates.GET(\"/x\"), path(\"/x\"), method(HttpMethod.GET), joined with and; accept, contentType and the like narrow a route and name no path). nest(predicate, routes), andNest and the builder's path(pattern, routes) put the routes inside them under the predicate's path, whether they are given as a router function, a Supplier of one (a helper returning Supplier<RouterFunction> is read where it is called) or a consumer of a fresh builder; and, andOther and add join another router function's routes; build, filter, before, after, onError and withAttribute leave them as they are. SpringdocRouteBuilder takes the same calls with an operation consumer last, whose operationId names the operation. A method annotated @Bean is registered by Spring, so its routes are served at the paths they compose; a route-building method of the same class that one calls with no argument is read there, under that caller's prefix; any other one is mounted by code elsewhere, and its paths are relative to a prefix this rule does not know. The handler is a method reference or a lambda that calls one method.",
+      "why": "halo builds its custom API this way and with no mapping annotation: 75 methods return a RouterFunction, and before this rule not one of the 400 routes its OpenAPI documents declare had a handler; with it 167 do. The Spring PetClinic microservices gateway and the JeecgBoot cloud gateway serve their index page this way. The names are Spring Framework's own (org.springframework.web.reactive.function.server and org.springframework.web.servlet.function: RouterFunctions, RequestPredicates, RouterFunctions.Builder) and springdoc-openapi's (org.springdoc.webflux.core.fn.SpringdocRouteBuilder, org.springdoc.webmvc.core.fn.SpringdocRouteBuilder).",
+      "params": {
+        "returnTypes": ["RouterFunction"],
+        "wrappers": ["Supplier"],
+        "mountAnnotations": ["Bean"],
+        "calls": [
+          { "names": ["route"], "on": ["RouterFunctions", "SpringdocRouteBuilder"], "does": "start", "forms": [""] },
+          { "names": ["route"], "on": ["RouterFunctions"], "does": "route", "forms": ["predicate handler"] },
+          { "names": ["nest"], "on": ["RouterFunctions"], "does": "nest", "forms": ["predicate routes"] },
+          { "names": ["resources"], "on": ["RouterFunctions"], "does": "resources", "forms": "*" },
+          { "names": ["andRoute", "route"], "does": "route", "forms": ["predicate handler", "predicate handler operation"] },
+          { "names": ["andNest", "nest"], "does": "nest", "forms": ["predicate routes", "predicate routes operation"] },
+          { "names": ["path"], "does": "nest", "forms": ["path routes", "path routes operation"] },
+          { "names": ["and", "andOther", "add"], "does": "combine", "forms": ["routes"] },
+          { "names": ["build", "filter", "before", "after", "onError", "withAttribute", "withAttributes"], "does": "keep", "forms": "*" },
+          { "names": ["resources"], "does": "resources", "forms": "*" },
+          { "names": ["GET"], "verb": "GET", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
+          { "names": ["HEAD"], "verb": "HEAD", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
+          { "names": ["POST"], "verb": "POST", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
+          { "names": ["PUT"], "verb": "PUT", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
+          { "names": ["PATCH"], "verb": "PATCH", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
+          { "names": ["DELETE"], "verb": "DELETE", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
+          { "names": ["OPTIONS"], "verb": "OPTIONS", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] }
+        ],
+        "predicates": [
+          { "names": ["GET"], "on": ["RequestPredicates"], "verb": "GET", "forms": ["path"] },
+          { "names": ["HEAD"], "on": ["RequestPredicates"], "verb": "HEAD", "forms": ["path"] },
+          { "names": ["POST"], "on": ["RequestPredicates"], "verb": "POST", "forms": ["path"] },
+          { "names": ["PUT"], "on": ["RequestPredicates"], "verb": "PUT", "forms": ["path"] },
+          { "names": ["PATCH"], "on": ["RequestPredicates"], "verb": "PATCH", "forms": ["path"] },
+          { "names": ["DELETE"], "on": ["RequestPredicates"], "verb": "DELETE", "forms": ["path"] },
+          { "names": ["OPTIONS"], "on": ["RequestPredicates"], "verb": "OPTIONS", "forms": ["path"] },
+          { "names": ["path"], "on": ["RequestPredicates"], "forms": ["path"] },
+          { "names": ["method"], "on": ["RequestPredicates"], "forms": ["method"] },
+          { "names": ["accept", "contentType", "headers", "queryParam", "param", "pathExtension", "attribute", "all"], "on": ["RequestPredicates"], "forms": "*" },
+          { "names": ["and"], "does": "and", "forms": ["predicate"] }
+        ],
+        "methods": {
+          "HttpMethod.GET": "GET", "HttpMethod.HEAD": "HEAD", "HttpMethod.POST": "POST", "HttpMethod.PUT": "PUT",
+          "HttpMethod.PATCH": "PATCH", "HttpMethod.DELETE": "DELETE", "HttpMethod.OPTIONS": "OPTIONS"
+        },
+        "operationId": ["operationId"]
+      },
+      "examples": [
+        {
+          "source": "package com.example;\nimport static org.springframework.web.reactive.function.server.RequestPredicates.*;\nimport static org.springframework.web.reactive.function.server.RouterFunctions.*;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.http.MediaType;\nimport org.springframework.web.reactive.function.server.RouterFunction;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class OwnerRoutes {\n  @Bean\n  RouterFunction<ServerResponse> ownerRoutes(OwnerHandler handler) {\n    return route(GET(\"/owners/{id}\").and(accept(MediaType.APPLICATION_JSON)), handler::show)\n        .andRoute(POST(\"/owners\"), handler::create)\n        .andNest(path(\"/owners/{id}/pets\"), route(GET(\"\"), handler::pets));\n  }\n}\n",
+          "expect": [
+            { "function": "OwnerRoutes#ownerRoutes", "mount": "bean", "verb": "GET", "path": "/owners/{id}", "handler": "handler::show" },
+            { "function": "OwnerRoutes#ownerRoutes", "mount": "bean", "verb": "POST", "path": "/owners", "handler": "handler::create" },
+            { "function": "OwnerRoutes#ownerRoutes", "mount": "bean", "verb": "GET", "path": "/owners/{id}/pets", "handler": "handler::pets" }
+          ],
+          "why": "a predicate names the verb and the path, accept narrows the route and names neither, and a nest puts what is inside it under its path"
+        },
+        {
+          "source": "package com.example;\nimport static org.springframework.web.servlet.function.RequestPredicates.accept;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.http.MediaType;\nimport org.springframework.web.servlet.function.RouterFunction;\nimport org.springframework.web.servlet.function.RouterFunctions;\nimport org.springframework.web.servlet.function.ServerResponse;\npublic class ApiConfig {\n  private final UserService users;\n  ApiConfig(UserService users) { this.users = users; }\n  @Bean\n  public RouterFunction<ServerResponse> api() {\n    return RouterFunctions.route()\n        .path(\"/api\", b -> b\n            .GET(\"/users\", this::listUsers)\n            .POST(\"/users\", accept(MediaType.APPLICATION_JSON), request -> users.create(request)))\n        .filter((request, next) -> next.handle(request))\n        .build();\n  }\n  ServerResponse listUsers(org.springframework.web.servlet.function.ServerRequest r) { return null; }\n}\n",
+          "expect": [
+            { "function": "ApiConfig#api", "mount": "bean", "verb": "GET", "path": "/api/users", "handler": "this::listUsers" },
+            { "function": "ApiConfig#api", "mount": "bean", "verb": "POST", "path": "/api/users", "handler": "users.create()" }
+          ],
+          "why": "WebMvc's builder reads the same; a builder consumer is a fresh builder, a lambda that calls one method names that method, and a filter leaves the routes as they are"
+        },
+        {
+          "source": "package com.example;\nimport org.springdoc.webflux.core.fn.SpringdocRouteBuilder;\nimport org.springframework.web.reactive.function.server.RouterFunction;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class PostEndpoint implements CustomEndpoint {\n  @Override\n  public RouterFunction<ServerResponse> endpoint() {\n    final var tag = \"PostV1alpha1Console\";\n    return SpringdocRouteBuilder.route()\n        .GET(\"posts\", this::listPost, builder -> {\n          builder.operationId(\"ListPosts\").description(\"List posts.\").tag(tag);\n          PostQuery.buildParameters(builder);\n        })\n        .PUT(\"posts/{name}/publish\", this::publishPost, builder -> builder.operationId(\"PublishPost\").tag(tag))\n        .build();\n  }\n}\n",
+          "expect": [
+            { "function": "PostEndpoint#endpoint", "mount": "unmounted", "verb": "GET", "path": "/posts", "handler": "this::listPost", "operationId": "ListPosts" },
+            { "function": "PostEndpoint#endpoint", "mount": "unmounted", "verb": "PUT", "path": "/posts/{name}/publish", "handler": "this::publishPost", "operationId": "PublishPost" }
+          ],
+          "why": "springdoc's operation consumer names the operation; a method that is no bean is mounted by the code that calls it, so its paths are relative to a prefix composed elsewhere"
+        },
+        {
+          "source": "package com.example;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.web.reactive.function.server.RequestPredicates;\nimport org.springframework.web.reactive.function.server.RouterFunction;\nimport org.springframework.web.reactive.function.server.RouterFunctions;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class PetRoutes {\n  static final String BASE = \"/pets\";\n  @Bean\n  RouterFunction<ServerResponse> pets() {\n    return RouterFunctions.nest(RequestPredicates.path(BASE), petRoutes());\n  }\n  private RouterFunction<ServerResponse> petRoutes() {\n    return RouterFunctions.route(RequestPredicates.method(HttpMethod.DELETE).and(RequestPredicates.path(\"/{id}\")), this::remove);\n  }\n}\n",
+          "expect": [
+            { "function": "PetRoutes#pets", "mount": "bean", "verb": "DELETE", "path": "/pets/{id}", "handler": "this::remove" }
+          ],
+          "why": "a constant of the class is a path its file states; a route-building helper the bean calls is read under the bean's prefix, and is not a set of routes of its own"
+        },
+        {
+          "source": "package com.example;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.web.reactive.function.server.RouterFunction;\nimport org.springframework.web.reactive.function.server.RouterFunctions;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class Misc {\n  @Bean\n  RouterFunction<ServerResponse> misc(String base) {\n    return RouterFunctions.route()\n        .GET(base, this::a)\n        .GET(\"/b\", request -> ServerResponse.ok().bodyValue(\"b\"))\n        .build();\n  }\n  @Bean\n  RouterFunction<ServerResponse> built(ApplicationContext context) {\n    var builder = new CustomEndpointsBuilder();\n    context.getBeansOfType(CustomEndpoint.class).values().forEach(builder::add);\n    return builder.build();\n  }\n}\n",
+          "expect": [
+            { "function": "Misc#misc", "mount": "bean", "verb": "GET", "path": "<unknown>", "handler": "this::a" },
+            { "function": "Misc#misc", "unread": "path-not-literal" },
+            { "function": "Misc#misc", "mount": "bean", "verb": "GET", "path": "/b", "handler": "<unknown>" },
+            { "function": "Misc#misc", "unread": "handler-not-one-call" },
+            { "function": "Misc#built", "unread": "statement-not-read" },
+            { "function": "Misc#built", "unread": "call-not-named" }
+          ],
+          "why": "a path in a variable and a lambda that builds a response itself are said, not guessed; a router function a helper class builds from beans it collects at run time is not read"
+        },
+        {
+          "source": "package com.example;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.core.io.ClassPathResource;\nimport org.springframework.web.reactive.function.server.RouterFunctions;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class Gateway {\n  @Bean\n  RouterFunction<?> routerFunction() {\n    RouterFunction router = RouterFunctions.resources(\"/**\", new ClassPathResource(\"static/\"))\n        .andRoute(RequestPredicates.GET(\"/\"), request -> ServerResponse.ok().bodyValue(indexHtml));\n    return router;\n  }\n  public java.util.List<RouterFunction<ServerResponse>> collected() {\n    return java.util.List.of(RouterFunctions.route().GET(\"/list\", this::a).build());\n  }\n  public Object notRoutes() {\n    return RouterFunctions.route().GET(\"/never\", this::a).build();\n  }\n}\n",
+          "expect": [
+            { "function": "Gateway#routerFunction", "unread": "resources" },
+            { "function": "Gateway#routerFunction", "mount": "bean", "verb": "GET", "path": "/", "handler": "<unknown>" },
+            { "function": "Gateway#routerFunction", "unread": "handler-not-one-call" }
+          ],
+          "why": "static resources serve files, not a handler; a local holds the value it was given; a method not declared to return a RouterFunction is not read, whatever it calls, and neither is a List of them, whose members a registry picks at run time"
+        },
+        {
+          "source": "package com.example;\nimport java.util.function.Supplier;\nimport org.springdoc.webflux.core.fn.SpringdocRouteBuilder;\nimport org.springframework.web.reactive.function.server.RequestPredicates;\nimport org.springframework.web.reactive.function.server.RouterFunction;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class NotificationEndpoint implements CustomEndpoint {\n  public RouterFunction<ServerResponse> endpoint() {\n    return SpringdocRouteBuilder.route()\n        .nest(RequestPredicates.path(\"/userspaces/{username}\"), userspaceScopedApis())\n        .build();\n  }\n  Supplier<RouterFunction<ServerResponse>> userspaceScopedApis() {\n    return () -> SpringdocRouteBuilder.route()\n        .GET(\"/notifications\", this::listNotification, builder -> builder.operationId(\"ListUserNotifications\"))\n        .build();\n  }\n}\n",
+          "expect": [
+            { "function": "NotificationEndpoint#endpoint", "mount": "unmounted", "verb": "GET", "path": "/userspaces/{username}/notifications", "handler": "this::listNotification", "operationId": "ListUserNotifications" }
+          ],
+          "why": "a helper that returns a Supplier of routes hands the nest its routes, and is read there, under the nest's path"
+        }
+      ]
+    }
+  ]
+}

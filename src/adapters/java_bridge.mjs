@@ -64,6 +64,7 @@ import {
   classifyRoutes, placeDeclarativeCalls, placeEndpointNodes, placeHandlesEdges,
   placeImperativeCalls, ROUTE_RULE_BASIS,
 } from './java/routes.mjs';
+import { withFunctionalRoutes } from './java/functional_routes.mjs';
 import {
   makeBeanNames, makeEmitter, makeGeneratedFields, makeInheritance, makeInheritorsFor,
   makeWildcardPlacer, placeCallEdges, placeModelAttributeCalls, reportTypesOutsideRoots,
@@ -204,7 +205,12 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
  * @param {object[]} javaFacts  parsed cascade:javafacts:1 records (header optional)
  * @param {{packagePrefixes?:string[],
  *          generatedSources?:{annotations?:string[], pathGlobs?:string[]},
- *          gatewayRoutes?:object, pathPrefixes?:object[]}} [opts]
+ *          gatewayRoutes?:object, pathPrefixes?:object[], openapiDocuments?:object[]}} [opts]
+ *        openapiDocuments: the OpenAPI documents this run reads, as
+ *        `readOpenApiDocument` gives them. A functional route whose prefix is
+ *        composed by code elsewhere is placed where a document declares the
+ *        operation id it names (./java/functional_routes.mjs); without them
+ *        such a route is counted and not placed.
  *        packagePrefixes: the profile's declared top-level packages — a symbol
  *        outside every one of them is marked `external:true`, and a call to one
  *        is counted as `externalCalls` rather than reported as "unresolved" (a
@@ -261,7 +267,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
   };
 
   // ---- the routes this pack serves, and the ones it calls -----------------
-  const { routes, clientCalls } = classifyRoutes(ctx);
+  const { routes, clientCalls } = withFunctionalRoutes(ctx, classifyRoutes(ctx), javaFacts, opts); // …and Spring's functional endpoints
   const byRoute = placeEndpointNodes(ctx, routes);
   placeHandlesEdges(ctx, routes);
   placeDeclarativeCalls(ctx, clientCalls, byRoute);

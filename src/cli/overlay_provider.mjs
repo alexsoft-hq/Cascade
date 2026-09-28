@@ -43,6 +43,20 @@ import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
 import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
+import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
+
+/**
+ * The OpenAPI documents the base pack read, as they are on disk now (RM67).
+ * The Java bridge places a functional route whose prefix is composed elsewhere
+ * where a document declares its operation id, so an overlay without them would
+ * drop routes the base pack has. A document gone from the tree is not read, as
+ * `analyze` would not read it.
+ */
+export function openApiDocumentsOf(pack, rootAbs) {
+  const docs = pack?.meta?.laneStats?.openapi?.documents ?? [];
+  return docs.map((d) => d.path).filter((rel) => typeof rel === 'string' && fs.existsSync(path.resolve(rootAbs, rel)))
+    .map((rel) => readOpenApiDocument(fs.readFileSync(path.resolve(rootAbs, rel), 'utf8'), { path: rel }));
+}
 
 /**
  * The fact index beside the pack, or a refusal saying why it cannot be used:
@@ -354,6 +368,7 @@ function webOptions(profile, webRootsAbs, templateRootsAbs) {
 /** Fold the re-parsed facts and the reused shards into one graph, and say what happened. */
 export function overlayState({
   lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf = null,
+  openapiDocuments = null,
 }) {
   const tBuild = Date.now();
   const built = overlayGraph({
@@ -370,6 +385,7 @@ export function overlayState({
     // effect here first.
     gatewayRoutes: profile?.gatewayRoutes ?? {},
     pathPrefixes: profile?.pathPrefixes ?? [],
+    openapiDocuments,
     // Same identity rule as the run that built the base pack — the overlay
     // declines above when the SQL arguments (which carry it) have moved.
     identifierCase: sqlArgs.identifierCase,
@@ -490,7 +506,7 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
       mapperAlternatives: mapperAlternativesOf(profile, packDir),
     });
     return remember(session, overlayState({
-      lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile,
+      lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs),
       selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf,
     }));
   };

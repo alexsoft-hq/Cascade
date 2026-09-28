@@ -14,6 +14,7 @@
 
 import { javaCodeSetting } from './java_code_setting.mjs';
 import { javaContractLink } from './java_contract_link.mjs';
+import { javaRouteFunction } from './java_route_function.mjs';
 import { javaTypeRole } from './java_type_role.mjs';
 import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
@@ -23,6 +24,7 @@ import { tsTypeRole } from './ts_type_role.mjs';
 export const KINDS = Object.freeze({
   [javaCodeSetting.name]: javaCodeSetting,
   [javaContractLink.name]: javaContractLink,
+  [javaRouteFunction.name]: javaRouteFunction,
   [javaTypeRole.name]: javaTypeRole,
   [prismaOperation.name]: prismaOperation,
   [sqlDialectPath.name]: sqlDialectPath,

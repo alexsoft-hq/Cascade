@@ -365,8 +365,12 @@ function markProvisional(graph, baseGraph) {
  *        `cascade analyze` does (src/cli/lane_options.mjs, src/cli/java_sql.mjs):
  *        without it an edit to a Spring Data, MyBatis-Plus or annotated MyBatis
  *        service reached no statement at all. What the overlay still does not
- *        re-read: OpenAPI documents, run traces and Spring XML id generators,
- *        which `analyze` reads.
+ *        re-read: OpenAPI documents as routes, run traces and Spring XML id
+ *        generators, which `analyze` reads.
+ * @param {object[]|null} [a.openapiDocuments]  the OpenAPI documents the base
+ *        pack read, as they are on disk now. Only the Java bridge reads them:
+ *        a functional route whose prefix is composed elsewhere is placed where
+ *        a document declares its operation id, as `analyze` places it (RM67).
  * @returns {{graph:import('./graph.mjs').Graph, javaStats:object, webStats:(object|null),
  *            provisional:{symbols:string[], endpoints:string[], statements:string[], edges:number},
  *            taggedEdges:number}}
@@ -377,7 +381,7 @@ export function overlayGraph(a) {
     webBaseShards = new Map(), webDirtyFacts = new Map(), webDropFiles = [], webConfigRecords = [],
     catalogRecords = [], lineageRecords = [],
     baseGraph, overlaySessionId, dirtyFiles = [], packagePrefixes = [], generatedSources = null,
-    gatewayRoutes = null, pathPrefixes = [],
+    gatewayRoutes = null, pathPrefixes = [], openapiDocuments = null,
     identifierCase = 'exact', bridges = null, web = null, javaLanesOf = null,
   } = a ?? {};
   if (!(baseShards instanceof Map)) throw new OverlayError('baseShards must be a Map of file -> records');
@@ -401,7 +405,7 @@ export function overlayGraph(a) {
   const { graph, javaStats, webStats } = assembleGraph({
     bridges, catalogRecords, lineageRecords: [...lineageRecords, ...(javaLanes.lineage ?? [])], javaFacts, webFacts, identifierCase,
     java: {
-      packagePrefixes, pathPrefixes,
+      packagePrefixes, pathPrefixes, ...(openapiDocuments ? { openapiDocuments } : {}),
       ...(generatedSources ? { generatedSources } : {}),
       ...(gatewayRoutes ? { gatewayRoutes } : {}),
     },

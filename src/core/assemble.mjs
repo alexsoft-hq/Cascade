@@ -21,6 +21,11 @@
 //   6. addWebFacts(graph, webFacts, {...})                    the web bridge
 //   7. addRuntimeFacts(graph, traces, {...})                  the runtime evidence lane
 //
+// The code lane is handed the OpenAPI documents too, and reads one thing in
+// them: where a document declares the operation a functional route names, when
+// the code that mounts that route is not in its file (RM67). It adds no route a
+// document alone declares; that stays the OpenAPI bridge's, run after it.
+//
 // The web bridge runs after the routes because a frontend call becomes an edge
 // onto an endpoint node, and the endpoints are what the Java bridge and the
 // OpenAPI bridge put in the graph. Running it earlier would leave every
@@ -57,6 +62,15 @@ function runBridge(bridges, fn, lane, graph, facts, opts, also = null) {
   if (!opts) return null;
   if (typeof bridges[fn] !== 'function') throw new AssembleError(`${lane} options were given but bridges.${fn} is missing`);
   return bridges[fn](graph, facts, also ? { ...opts, ...also } : opts);
+}
+
+/**
+ * The code lane's options, with the documents when the OpenAPI lane runs too;
+ * null runs no code lane. A caller that runs no OpenAPI bridge may still hand
+ * the code lane documents in its own options (the working-tree overlay does).
+ */
+function javaOptions(java, openapi, openapiDocuments) {
+  return java && (openapi ? { ...java, openapiDocuments } : java);
 }
 
 /**
@@ -110,7 +124,7 @@ export function assembleGraph(a) {
   const graph = bridges.buildGraphFromSql(catalogRecords, lineageRecords, { identifierCase });
   if (!(graph instanceof Graph)) throw new AssembleError('bridges.buildGraphFromSql must return a Graph');
 
-  const javaStats = runBridge(bridges, 'addJavaFacts', 'java', graph, javaFacts, java);
+  const javaStats = runBridge(bridges, 'addJavaFacts', 'java', graph, javaFacts, javaOptions(java, openapi, openapiDocuments));
   const jpaStats = runBridge(bridges, 'addJpaFacts', 'jpa', graph, javaFacts, jpa);
   const mpStats = runBridge(bridges, 'addMybatisPlusFacts', 'mybatisPlus', graph, javaFacts, mybatisPlus);
   // The TypeScript backend: its routes have to exist before the web bridge

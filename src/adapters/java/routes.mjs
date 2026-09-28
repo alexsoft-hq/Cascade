@@ -167,6 +167,17 @@ function contractRoutes(ctx, e, routes) {
   }
 }
 
+/** The operation a functional route's builder names (springdoc's operationId), kept per handler, the first one read. */
+function noteOperationId(rec, r) {
+  if (r.operationId && !rec.operationIdOf.has(r.handler)) rec.operationIdOf.set(r.handler, r.operationId);
+}
+
+/** The node's operationId: the primary handler's, when its route named one. */
+function operationIdAttrs(rec, primary) {
+  const operationId = rec.operationIdOf.get(primary);
+  return operationId ? { operationId } : {};
+}
+
 /**
  * ONE NODE PER ROUTE, whatever how many controllers declare it, with the
  * attributes of the PRIMARY handler — the lowest handler symbol id, which is
@@ -181,8 +192,9 @@ export function placeEndpointNodes(ctx, routes) {
   const byRoute = new Map(); // endpoint id -> {httpMethod, path, lineOf:Map<handler,line>, prefixOf:Map<handler,entry>, contractOnly}
   for (const r of routes) {
     let rec = byRoute.get(r.epId);
-    if (!rec) { rec = { httpMethod: r.httpMethod, path: r.path, lineOf: new Map(), prefixOf: new Map(), contractOnly: true }; byRoute.set(r.epId, rec); }
+    if (!rec) { rec = { httpMethod: r.httpMethod, path: r.path, lineOf: new Map(), prefixOf: new Map(), contractOnly: true, operationIdOf: new Map() }; byRoute.set(r.epId, rec); }
     if (r.contractOnly !== true) rec.contractOnly = false;
+    noteOperationId(rec, r);
     const prev = rec.lineOf.get(r.handler);
     // Two mappings on ONE method (`@GetMapping({"", "/"})` under a class-level
     // @RequestMapping) can be two facts for the same handler and route: keep the
@@ -198,6 +210,7 @@ export function placeEndpointNodes(ctx, routes) {
       id: epId, path: rec.path, httpMethod: rec.httpMethod,
       handler: primary, file: fileOf(ownerOf(primary)), line: rec.lineOf.get(primary) ?? null,
       ...(handlers.length > 1 ? { handlers } : {}),
+      ...operationIdAttrs(rec, primary),
       // Only ever written as TRUE, like every other flag on a node: the census
       // can then say "N routes are declared by an interface nobody implements
       // here" without a field on every endpoint in the pack.
