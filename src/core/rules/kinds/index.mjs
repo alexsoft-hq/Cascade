@@ -20,6 +20,10 @@ import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
 import { tsRouteDecorator } from './ts_route_decorator.mjs';
 import { tsTypeRole } from './ts_type_role.mjs';
+import { typeormEntity } from './typeorm_entity.mjs';
+import { typeormOperation } from './typeorm_operation.mjs';
+import { typeormQueryBuilder } from './typeorm_query_builder.mjs';
+import { typeormReceiver } from './typeorm_receiver.mjs';
 
 export const KINDS = Object.freeze({
   [javaCodeSetting.name]: javaCodeSetting,
@@ -30,4 +34,8 @@ export const KINDS = Object.freeze({
   [sqlDialectPath.name]: sqlDialectPath,
   [tsRouteDecorator.name]: tsRouteDecorator,
   [tsTypeRole.name]: tsTypeRole,
+  [typeormEntity.name]: typeormEntity,
+  [typeormOperation.name]: typeormOperation,
+  [typeormQueryBuilder.name]: typeormQueryBuilder,
+  [typeormReceiver.name]: typeormReceiver,
 });

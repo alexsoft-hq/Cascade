@@ -5,9 +5,11 @@
 // names, which class a field is typed with, which controllers the application
 // registers (src/adapters/ts/nest_routes.mjs), which calls reach which methods
 // (src/adapters/ts/ts_calls.mjs), which tables and columns schema.prisma
-// declares (src/adapters/ts/prisma_catalog.mjs), and which Prisma calls send
-// which SQL (src/adapters/ts/prisma.mjs). What the frameworks mean by their names is in
-// the rule packs nestjs.json and prisma.json, read through their kinds.
+// declares (src/adapters/ts/prisma_catalog.mjs) and the TypeORM entities map,
+// and which Prisma and TypeORM calls send which SQL (src/adapters/ts/prisma.mjs,
+// src/adapters/ts/typeorm.mjs). What the frameworks mean by their names is in
+// the rule packs nestjs.json, prisma.json and typeorm.json, read through their
+// kinds.
 //
 // An endpoint is keyed `endpoint:<VERB> <path>` like the Java lane's, so a
 // frontend call the web lane reads meets it with no change there. An endpoint
@@ -20,6 +22,7 @@ import { nestRoutes } from './ts/nest_routes.mjs';
 import { addCalls, addSymbols, methodSymbolId } from './ts/ts_calls.mjs';
 import { addPrismaStatements } from './ts/prisma.mjs';
 import { addPrismaCatalog } from './ts/prisma_catalog.mjs';
+import { addTypeormStatements, typeormDiagnostics } from './ts/typeorm.mjs';
 
 const HANDLES_BASIS = 'a controller the application registers declares this route in a decorator';
 
@@ -81,7 +84,16 @@ function routesOf(project, rules, opts) {
 function rulesOf(opts) {
   const registry = opts.registry ?? builtinRegistry();
   const one = (kind) => registry.ofKind(kind)[0]?.compiled ?? null;
-  return { routes: one('ts.route-decorator'), operations: one('prisma.operation'), clients: registry.ofKind('ts.type-role') };
+  const typeorm = { entity: one('typeorm.entity'), receiver: one('typeorm.receiver'), operation: one('typeorm.operation'), builder: one('typeorm.query-builder') };
+  return { routes: one('ts.route-decorator'), operations: one('prisma.operation'), clients: registry.ofKind('ts.type-role'), typeorm: Object.values(typeorm).every(Boolean) ? typeorm : null };
+}
+
+/** TypeORM's entities as a catalog, then every TypeORM call as a statement; null when the project has neither, or no rule to read them with. */
+function typeormOf(g, project, rules, opts) {
+  if (!rules.typeorm) return null;
+  return addTypeormStatements(g, project, {
+    ...rules.typeorm, schemaName: opts.schemaName ?? null, identifierCase: opts.identifierCase ?? 'exact', namingStrategy: opts.typeormNamingStrategy ?? null,
+  });
 }
 
 /**
@@ -90,8 +102,9 @@ function rulesOf(opts) {
  * @param {import('../core/graph.mjs').Graph} g
  * @param {object[]} tsFacts  the tsfacts records of the application's files
  * @param {{tsconfig?:{baseUrl?:(string|null), paths?:object}, prisma?:({schema:{models:Map}}|null), globalPrefix?:(string|null), globalPrefixExclude?:(string[]|null),
- *          schemaName?:(string|null), identifierCase?:string, catalogRecords?:object[], registry?:object}} [opts]
- *        `catalogRecords` are the SQL catalog's records this run read, if any, for schema.prisma to be read against
+ *          schemaName?:(string|null), identifierCase?:string, catalogRecords?:object[], typeormNamingStrategy?:(string|null), registry?:object}} [opts]
+ *        `catalogRecords` are the SQL catalog's records this run read, if any, for schema.prisma to be read against;
+ *        `typeormNamingStrategy` is the profile's declaration, which the TypeORM options are then not read for
  * @returns {object} stats, with every reason a route or a link was not made in `diagnostics`
  */
 export function addTsFacts(g, tsFacts, opts = {}) {
@@ -101,9 +114,10 @@ export function addTsFacts(g, tsFacts, opts = {}) {
   const routed = routesOf(project, rules, opts);
   for (const r of routed.routes) addRoute(g, r);
   const calls = addCalls(g, project);
-  const prisma = prismaOf(g, project, rules, opts);
+  const [prisma, typeorm] = [prismaOf(g, project, rules, opts), typeormOf(g, project, rules, opts)];
   return {
     files: project.files.size, symbols, routes: routed.routes.length, heuristicRoutes: routed.routes.filter((r) => r.grade === 'HEURISTIC').length, controllers: routed.controllers,
-    unregisteredControllers: routed.unregistered, calls, prisma, diagnostics: [...routed.diagnostics, ...prismaDiagnostics(prisma)],
+    unregisteredControllers: routed.unregistered, calls, prisma, ...(typeorm ? { typeorm } : {}),
+    diagnostics: [...routed.diagnostics, ...prismaDiagnostics(prisma), ...typeormDiagnostics(typeorm)],
   };
 }

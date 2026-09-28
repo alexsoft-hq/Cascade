@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selectLanes } from '../src/core/lanes.mjs';
-import { normalizeProfile, validateProfile, profileDiagnostics, ProfileError } from '../src/core/profile.mjs';
+import { normalizeProfile, validateProfile, profileDiagnostics, ProfileError, digestedProfile } from '../src/core/profile.mjs';
+import { sha256, canonicalJson } from '../src/core/canonical.mjs';
 import { discover } from '../src/core/discover.mjs';
 import { buildProfile, lanesOf } from '../src/core/init.mjs';
 import { planIncremental } from '../src/core/invalidate.mjs';
@@ -79,7 +80,7 @@ test('--no-ts switches the lane off even when the profile declares it', () => {
 // ---------------------------------------------------------------------------
 
 test('tsBackend defaults to nothing declared, and a wrong shape is refused with the key', () => {
-  assert.deepEqual(normalizeProfile({}).tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
+  assert.deepEqual(normalizeProfile({}).tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeormNamingStrategy: null });
   assert.throws(() => validateProfile({ tsBackend: { app: '' } }), (e) => e instanceof ProfileError && /tsBackend\.app/.test(e.message));
   assert.throws(() => validateProfile({ tsBackend: { prismaSchema: 3 } }), /tsBackend\.prismaSchema/);
   assert.throws(() => validateProfile({ tsBackend: { globalPrefix: false } }), /tsBackend\.globalPrefix/);
@@ -150,7 +151,7 @@ test('init writes the one application it finds, the nestjs pack, and the dialect
   const { profile } = buildProfile(initDiscovery({ nestApps: [APP], prismaSchemas: [{ path: 'prisma/schema.prisma', provider: 'postgresql' }] }),
     { root: '/p/app', manifestDir: '/p/app/.cascade' });
   assert.ok(profile.frameworkPacks.includes('nestjs'));
-  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
+  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeormNamingStrategy: null });
   assert.equal(profile.sqlDialects.main, 'postgresql');
 });
 
@@ -166,7 +167,7 @@ test('init writes no application when it finds two, and says which it found', ()
 test('an application the profile already names is kept whole, prefix and all', () => {
   const existing = { tsBackend: { app: '../server', prismaSchema: null, globalPrefix: 'api', globalPrefixExclude: ['health'] } };
   const { profile, diagnostics } = buildProfile(initDiscovery({ nestApps: [APP] }), { root: '/p/app', manifestDir: '/p/app/.cascade', existing });
-  assert.deepEqual(profile.tsBackend, existing.tsBackend);
+  assert.deepEqual(profile.tsBackend, { ...existing.tsBackend, typeormNamingStrategy: null }, 'kept, with a key it did not set at its default');
   assert.ok(diagnostics.some((d) => d.kind === 'TS_BACKEND_KEPT'));
 });
 
@@ -211,9 +212,18 @@ test('the TypeScript worker is part of the engine print, so a change to it is an
 test('a project that never sets tsBackend keeps the profile digest it had before the block existed; setting it moves the digest', () => {
   const javaOnly = normalizeProfile({ frameworkPacks: ['spring-mvc'], sqlDialects: { main: 'mysql' } });
   const { tsBackend, ...withoutBlock } = javaOnly;
-  assert.deepEqual(tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
+  assert.deepEqual(tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeormNamingStrategy: null });
   assert.equal(profileDigestOf(javaOnly), profileDigestOf(withoutBlock), 'the block at its default is not part of the target');
   assert.notEqual(profileDigestOf(normalizeProfile({ tsBackend: { app: '../api' } })), profileDigestOf(normalizeProfile({})));
+});
+
+test('a project that set tsBackend before typeormNamingStrategy existed keeps its profile digest; declaring the strategy moves it', () => {
+  const nest = normalizeProfile({ frameworkPacks: ['nestjs'], tsBackend: { app: 'src', globalPrefix: 'api' } });
+  const { typeormNamingStrategy, ...before } = nest.tsBackend;
+  assert.equal(typeormNamingStrategy, null);
+  assert.equal(profileDigestOf(nest), sha256(canonicalJson(digestedProfile({ ...nest, tsBackend: before }))), 'the digest the block had before the key');
+  const declared = normalizeProfile({ frameworkPacks: ['nestjs'], tsBackend: { app: 'src', globalPrefix: 'api', typeormNamingStrategy: 'default' } });
+  assert.notEqual(profileDigestOf(declared), profileDigestOf(nest), 'a declared strategy is part of the target');
 });
 
 test('the TypeScript application read is part of the pinned target, and a run without one keeps the pin it had', () => {

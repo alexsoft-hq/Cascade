@@ -626,29 +626,75 @@ function prismaCatalogOf(ran) {
   return c && (c.tables ?? 0) + (c.tablesCorroborated ?? 0) > 0 ? c : null;
 }
 
+/** The TypeORM entities' catalog, as the TypeScript lane read it, when they map a table. */
+function typeormCatalogOf(ran) {
+  const t = ran.ts?.typeorm ?? null;
+  return t && (t.tables ?? 0) > 0 ? t : null;
+}
+
+/** Why TypeORM names are HEURISTIC: an assumed naming strategy, or TypeORM versions that spell a name differently. */
+const typeormNamingWhy = (t) => (t.naming && !t.naming.known
+  ? `the ${t.naming.strategy} naming strategy was assumed, because ${t.naming.reason}`
+  : 'the installed TypeORM version decides how they are spelled');
+
+const typeormAssumedReason = (t) => `${t.heuristicNames} TypeORM table or column name(s) the decorators do not write were derived by a rule this run could not confirm, and are graded HEURISTIC: ${typeormNamingWhy(t)}. A name the decorators write is EXACT`;
+
+/** The notes that name where a catalog's tables and columns came from, when a mapping declared them, and where two sources disagree. */
+function catalogNotes(prisma, typeorm) {
+  const notes = [];
+  if (prisma) notes.push('tables and columns declared by schema.prisma');
+  if (typeorm) notes.push(`${typeorm.tables} table(s) and ${typeorm.columns} column(s) declared by TypeORM entities, not read from the database`);
+  if (prisma && prisma.disagreements > 0) {
+    notes.push(`schema.prisma and the SQL catalog this run read disagree in ${prisma.disagreements} place(s) (${Object.entries(prisma.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ')}). `
+      + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog');
+  }
+  return notes;
+}
+
 /**
- * THE CATALOG AXIS: shipped when the run read a DDL or a snapshot, or a
- * schema.prisma, which declares every table and column a Prisma client can
- * name. When both were read and they disagree, the axis still ships (the SQL
- * catalog's names stand) and a note says where to find the list.
+ * THE CATALOG AXIS, one rule for every source: a DDL, a snapshot, schema.prisma
+ * or the TypeORM entities. It ships when every table and column name they give
+ * is written in the source or follows a rule this run knows applies, with a
+ * note naming a mapping that declared them; it is degraded, with the reason,
+ * when a name had to be derived by a rule the run assumed. Where schema.prisma
+ * and the SQL catalog disagree, a note says where to find the list.
  */
 function catalogAxis(ran) {
   const prisma = prismaCatalogOf(ran);
-  if (ran.ddl !== true && !prisma) {
+  const typeorm = typeormCatalogOf(ran);
+  if (ran.ddl !== true && !prisma && !typeorm) {
     return { status: 'not-shipped', reason: 'no catalog was read here, because catalog.source is none, no snapshot was fetched, or --ddl was not given. A table or column is in this pack only where a statement named it' };
   }
-  const notes = prisma && prisma.disagreements > 0
-    ? [`schema.prisma and the SQL catalog this run read disagree in ${prisma.disagreements} place(s) (${Object.entries(prisma.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ')}). `
-      + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog']
-    : [];
-  return { status: 'shipped', reason: null, ...(notes.length > 0 ? { notes } : {}) };
+  const notes = catalogNotes(prisma, typeorm);
+  const noted = notes.length > 0 ? { notes } : {};
+  if (typeorm && typeorm.heuristicNames > 0) return { status: 'degraded', reason: typeormAssumedReason(typeorm), ...noted };
+  return { status: 'shipped', reason: null, ...noted };
+}
+
+/**
+ * THE COLUMN AXIS, by the same rule. A column fact can come from mapper SQL
+ * that names the column, a mapping that says which column an attribute is
+ * (JPA, MyBatis-Plus, TypeORM), or a Prisma call over its schema. A pack with a
+ * column name derived under an ASSUMED rule is degraded even with a catalog:
+ * that name was guessed by a rule, not read from the source.
+ */
+function columnAxis({ hasCatalog, hasStatements, hasColumnFacts, jpaNamingDeclared, mpNamingDeclared, typeorm }) {
+  const tStatements = typeorm?.statements ?? 0;
+  const facts = hasColumnFacts || tStatements > 0;
+  const catalog = hasCatalog || (typeorm?.tables ?? 0) > 0;
+  if (facts && catalog && (typeorm?.heuristicNames ?? 0) > 0) return { status: 'degraded', reason: typeormAssumedReason(typeorm) };
+  if (facts && catalog && (hasStatements || jpaNamingDeclared || mpNamingDeclared || tStatements > 0)) return { status: 'shipped', reason: null };
+  if (facts && catalog) return { status: 'degraded', reason: 'where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT' };
+  if (facts) return { status: 'degraded', reason: 'the lanes ran without a DB catalog, so we attribute a column only where the statement or the mapping names it unambiguously. A column reference we could not place is recorded as unresolved rather than dropped' };
+  if (catalog) return { status: 'not-shipped', reason: 'the catalog declares columns but no statement was analyzed, so nothing reads or writes them in this pack' };
+  return { status: 'not-shipped', reason: 'neither a catalog nor a statement was analyzed' };
 }
 
 /**
  * Declare what this pack ships, per axis (SPEC §10.4). Every axis is present in
  * the result; none is silently omitted.
  *
- * - `catalog`    the table/column schema a DDL, a snapshot or schema.prisma declares
+ * - `catalog`    the table/column schema a DDL, a snapshot, schema.prisma or TypeORM entities declare
  * - `statements` mapper SQL statements
  * - `column`     column-level read/write facts. SHIPPED needs both a catalog and
  *                statements; statements WITHOUT a catalog still yield some
@@ -677,7 +723,8 @@ function catalogAxis(ran) {
  *          mybatisPlus?:{entities:number, statements:number, namingStrategyDeclared:boolean}|null,
  *          web?:{files:number, parseErrors:number, calls:number, callsWithUrl:number, routes:number}|null,
  *          openapi?:{paths:number, documents:object[]}|null,
- *          ts?:{prisma?:{statements:number, catalog?:{tables:number, tablesCorroborated:number, disagreements:number}}|null}|null}} ran
+ *          ts?:{prisma?:{statements:number, catalog?:{tables:number, tablesCorroborated:number, disagreements:number}}|null,
+ *               typeorm?:{statements:number, tables:number, columns:number, heuristicNames:number, naming:object}|null}|null}} ran
  * @param {{screenAxisRequested?:boolean, screenAxisReason?:string}} [opts]
  * @returns {Object} axis name -> {status, reason, notes?}
  */
@@ -699,7 +746,7 @@ export function declareAxes(ran, opts = {}) {
 
   const axes = {
     catalog: catalogAxis(ran),
-    statements: hasStatements
+    statements: hasStatements || (ran.ts?.typeorm?.statements ?? 0) > 0
       ? { status: 'shipped', reason: null }
       : { status: 'not-shipped', reason: 'we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty' },
     jpa: !jpa || (jpa.entities ?? 0) === 0
@@ -736,20 +783,7 @@ export function declareAxes(ran, opts = {}) {
             + 'Where the mapping did not spell a table or column out with @TableName/@TableField, we DERIVED the name with MyBatis-Plus\'s default '
             + '(camelCase to under_score) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT',
         },
-    // A column fact can come from EITHER lane: mapper SQL that names the column,
-    // or a JPA mapping that says which column an attribute is. A pack whose only
-    // statements are JPA ones derived under an ASSUMED naming strategy is
-    // degraded even with a catalog — those column names were guessed by a rule,
-    // not read from the source.
-    column: hasColumnFacts && hasCatalog && (hasStatements || jpaNamingDeclared || mpNamingDeclared)
-      ? { status: 'shipped', reason: null }
-      : hasColumnFacts && hasCatalog
-        ? { status: 'degraded', reason: 'where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT' }
-        : hasColumnFacts
-          ? { status: 'degraded', reason: 'the lanes ran without a DB catalog, so we attribute a column only where the statement or the mapping names it unambiguously. A column reference we could not place is recorded as unresolved rather than dropped' }
-          : hasCatalog
-            ? { status: 'not-shipped', reason: 'the catalog declares columns but no statement was analyzed, so nothing reads or writes them in this pack' }
-            : { status: 'not-shipped', reason: 'neither a catalog nor a statement was analyzed' },
+    column: columnAxis({ hasCatalog, hasStatements, hasColumnFacts, jpaNamingDeclared, mpNamingDeclared, typeorm: ran.ts?.typeorm ?? null }),
     // THE CODE AXIS WITH NO CODE LANE. A pack whose routes came only from an
     // OpenAPI document has endpoints and nothing under them: the document says
     // the route exists, and this engine read no source that serves it. That is

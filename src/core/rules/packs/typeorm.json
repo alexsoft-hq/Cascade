@@ -1,0 +1,314 @@
+{
+  "pack": "typeorm",
+  "version": 1,
+  "description": "TypeORM: which classes are entities and which tables and columns they map, which objects are repositories and entity managers, and what each repository call and query builder reads and writes.",
+  "rules": [
+    {
+      "id": "typeorm.entities",
+      "kind": "typeorm.entity",
+      "description": "A class decorated @Entity maps a table: the name @Entity('name') or @Entity({ name }) gives, else the one the naming strategy derives from the class name. Each property a column decorator marks is a column: the name its options give, else the one the strategy derives from the property. A @ManyToOne, or a @OneToOne with @JoinColumn, adds the join column that holds it; a @ManyToMany with @JoinTable adds the join table and its two columns. Columns a class inherits from a class it extends are its own, as TypeORM reads them. The strategy is the one the DataSource options name in namingStrategy, DefaultNamingStrategy when every options object the source writes names none, and an assumed DefaultNamingStrategy, graded HEURISTIC, when an options object is not written out in the source.",
+      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
+      "params": {
+        "packages": ["typeorm"],
+        "entity": ["Entity"],
+        "notRead": ["ChildEntity", "ViewEntity", "TableInheritance", "Tree"],
+        "columns": {
+          "Column": "column", "PrimaryColumn": "primary", "PrimaryGeneratedColumn": "primary", "ObjectIdColumn": "primary",
+          "CreateDateColumn": "column", "UpdateDateColumn": "column", "VersionColumn": "column", "DeleteDateColumn": "delete-date"
+        },
+        "relations": { "ManyToOne": "many-to-one", "OneToOne": "one-to-one", "OneToMany": "one-to-many", "ManyToMany": "many-to-many" },
+        "joinColumn": "JoinColumn",
+        "joinTable": "JoinTable",
+        "eagerKey": "eager",
+        "options": {
+          "calls": [
+            { "module": "@nestjs/typeorm", "export": "TypeOrmModule", "member": "forRoot" },
+            { "module": "@nestjs/typeorm", "export": "TypeOrmModule", "member": "forRootAsync" },
+            { "module": "typeorm", "export": "createConnection" }
+          ],
+          "constructors": [{ "module": "typeorm", "export": "DataSource" }, { "module": "typeorm", "export": "Connection" }],
+          "namingKey": "namingStrategy",
+          "prefixKey": "entityPrefix",
+          "factoryKey": "useFactory",
+          "classKeys": ["useClass", "useExisting"],
+          "classMethod": "createTypeOrmOptions",
+          "handsOptionsTo": "dataSourceFactory"
+        },
+        "strategies": [
+          { "name": "default", "module": "typeorm", "export": "DefaultNamingStrategy", "table": "snake", "column": "none", "joinColumn": "camel", "joinTable": "snake", "joinTableColumn": "camel" },
+          { "name": "snake", "module": "typeorm-naming-strategies", "export": "SnakeNamingStrategy", "table": "snake", "column": "snake", "joinColumn": "snake", "joinTable": "snake", "joinTableColumn": "snake" }
+        ],
+        "defaultStrategy": "default",
+        "snakeCase": [
+          { "versions": "0.2.0 to 0.2.34", "steps": [["(?:([a-z])([A-Z]))|(?:((?!^)[A-Z])([a-z]))", "$1_$3$2$4"]] },
+          { "versions": "0.2.35 to 0.2.37", "steps": [["([A-Z])([A-Z])([a-z])", "$1_$2$3"], ["([a-z])([A-Z])", "$1_$2"]] },
+          { "versions": "0.2.38 on", "steps": [["([A-Z])([A-Z])([a-z])", "$1_$2$3"], ["([a-z0-9])([A-Z])", "$1_$2"]] }
+        ],
+        "joinTableNameLimit": 29
+      },
+      "examples": [
+        {
+          "source": "import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, ManyToMany, JoinTable } from 'typeorm';\nimport { Module } from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\n@Module({ imports: [TypeOrmModule.forRoot({ type: 'mysql' })] })\nexport class AppModule {}\n@Entity('user')\nexport class UserEntity {\n  @PrimaryGeneratedColumn() id: number;\n  @Column() email: string;\n  @Column({ name: 'pass_hash' }) password: string;\n  @ManyToMany(() => ArticleEntity) @JoinTable() favorites: ArticleEntity[];\n}\n@Entity()\nexport class ArticleEntity {\n  @PrimaryGeneratedColumn() id: number;\n  @Column('varchar', { name: 'headline' }) title: string;\n  @ManyToOne(() => UserEntity) author: UserEntity;\n}\n",
+          "expect": [
+            { "table": "user", "entity": "UserEntity", "grade": "EXACT", "columns": ["email", "id", "pass_hash"] },
+            { "table": "article_entity", "entity": "ArticleEntity", "grade": "EXACT", "columns": ["authorId", "headline", "id"] },
+            { "table": "user_favorites_article_entity", "entity": null, "grade": "EXACT", "columns": ["articleEntityId", "userId"] }
+          ],
+          "why": "the options name no naming strategy, so DefaultNamingStrategy is the one TypeORM uses: a table from the class name in snake case, a column by its property, a join column by the relation and the referenced property in camel case"
+        },
+        {
+          "source": "import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';\nimport { Module } from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\n@Module({ imports: [TypeOrmModule.forRoot()] })\nexport class AppModule {}\n@Entity()\nexport class Comment {\n  @PrimaryGeneratedColumn() id: number;\n  @Column() createdAt: Date;\n}\n",
+          "expect": [{ "table": "comment", "entity": "Comment", "grade": "HEURISTIC", "columns": ["createdAt", "id"] }],
+          "why": "forRoot() with no options reads them from ormconfig or the environment at run time, so which strategy runs is not in the source: the names are derived by the default and graded HEURISTIC"
+        },
+        {
+          "source": "import { Entity, Column, PrimaryGeneratedColumn, DataSource } from 'typeorm';\nimport { SnakeNamingStrategy } from 'typeorm-naming-strategies';\nexport const ds = new DataSource({ type: 'postgres', namingStrategy: new SnakeNamingStrategy() });\n@Entity({ name: 'accounts', schema: 'billing' })\nexport class Account {\n  @PrimaryGeneratedColumn('uuid') id: string;\n  @Column() createdAt: Date;\n  @Column({ name: 'OwnerRef' }) ownerId: string;\n}\n",
+          "expect": [{ "table": "billing.accounts", "entity": "Account", "grade": "EXACT", "columns": ["OwnerRef", "created_at", "id"] }],
+          "why": "SnakeNamingStrategy, named in the options, turns an unnamed property into snake case; a name the options give is kept as written"
+        },
+        {
+          "source": "import { Entity, Column, PrimaryGeneratedColumn, DataSource } from 'typeorm';\nexport const ds = new DataSource({ type: 'postgres' });\n@Entity()\nexport class OAuth2Client {\n  @PrimaryGeneratedColumn() id: number;\n}\n",
+          "expect": [{ "table": "o_auth2_client", "entity": "OAuth2Client", "grade": "HEURISTIC", "columns": ["id"] }],
+          "why": "TypeORM 0.2.35 to 0.2.37 spell this class o_auth2client, and every other version o_auth2_client: the installed version decides, so the name is HEURISTIC"
+        },
+        {
+          "source": "import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';\nimport { Module } from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\n@Module({ imports: [TypeOrmModule.forRoot({ type: 'mysql' })] })\nexport class AppModule {}\nexport abstract class Base {\n  @PrimaryGeneratedColumn() id: number;\n  @CreateDateColumn() createdAt: Date;\n}\n@Entity('tag')\nexport class Tag extends Base {\n  @Column() label: string;\n}\n",
+          "expect": [{ "table": "tag", "entity": "Tag", "grade": "EXACT", "columns": ["createdAt", "id", "label"] }],
+          "why": "the columns of a class it extends are the entity's own; the abstract class maps no table"
+        }
+      ]
+    },
+    {
+      "id": "typeorm.receivers",
+      "kind": "typeorm.receiver",
+      "description": "Which objects a TypeORM call is made on: a Repository of an entity (a field @InjectRepository(Entity) injects, a field typed Repository<Entity>, a project class that extends Repository<Entity>, getRepository(Entity) on a data source or an entity manager, or the getRepository function of TypeORM 0.2), an EntityManager (a field typed EntityManager, the manager of a data source or a repository, the client a transaction callback is handed) and a DataSource (a field typed DataSource or Connection).",
+      "why": "@nestjs/typeorm injects the repository of the entity @InjectRepository names; Repository, EntityManager and DataSource are typeorm's own classes, and a call on each sends SQL through the metadata of the entity it names.",
+      "params": {
+        "types": {
+          "repository": [{ "module": "typeorm", "export": "Repository" }, { "module": "typeorm", "export": "TreeRepository" }],
+          "manager": [{ "module": "typeorm", "export": "EntityManager" }],
+          "data-source": [{ "module": "typeorm", "export": "DataSource" }, { "module": "typeorm", "export": "Connection" }]
+        },
+        "inject": {
+          "repository": [{ "module": "@nestjs/typeorm", "export": "InjectRepository" }],
+          "manager": [{ "module": "@nestjs/typeorm", "export": "InjectEntityManager" }],
+          "data-source": [{ "module": "@nestjs/typeorm", "export": "InjectDataSource" }, { "module": "@nestjs/typeorm", "export": "InjectConnection" }]
+        },
+        "entityRepository": [{ "module": "typeorm", "export": "EntityRepository" }],
+        "functions": {
+          "repository": [{ "module": "typeorm", "export": "getRepository" }],
+          "manager": [{ "module": "typeorm", "export": "getManager" }],
+          "data-source": [{ "module": "typeorm", "export": "getConnection" }]
+        },
+        "members": { "getRepository": "repository", "manager": "manager" },
+        "transaction": "transaction"
+      },
+      "examples": [
+        {
+          "source": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { User } from './user.entity';\n@Injectable()\nexport class UsersService {\n  constructor(@InjectRepository(User) private readonly users: Repository<User>) {}\n  byEmail(email: string) { return this.users.findOneBy({ email }); }\n}\n",
+          "expect": [{ "call": "this.users.findOneBy", "receiver": "repository", "entity": "User" }]
+        },
+        {
+          "source": "import { DataSource, EntityManager } from 'typeorm';\nexport class Orders {\n  constructor(private ds: DataSource, private em: EntityManager) {}\n  a() { return this.ds.getRepository(Order).find(); }\n  b() { return this.em.find(Order, { where: { id: 1 } }); }\n  c() { return this.ds.transaction(async (m) => { await m.save(Order, { id: 1 }); }); }\n}\nclass Order {}\n",
+          "expect": [
+            { "call": "this.ds.getRepository(Order).find", "receiver": "repository", "entity": "Order" },
+            { "call": "this.em.find", "receiver": "manager", "entity": "Order" },
+            { "call": "m.save", "receiver": "manager", "entity": "Order" }
+          ],
+          "why": "a manager names its entity in the call's first argument; a transaction hands its callback a manager"
+        },
+        {
+          "source": "import { Repository, EntityRepository, getRepository } from 'typeorm';\n@EntityRepository(Tag)\nexport class TagRepository extends Repository<Tag> {\n  popular() { return this.find({ order: { uses: 'DESC' } }); }\n}\nexport function all() { return getRepository(Tag).count(); }\nclass Tag {}\n",
+          "expect": [
+            { "call": "this.find", "receiver": "repository", "entity": "Tag" },
+            { "call": "getRepository(Tag).count", "receiver": "repository", "entity": "Tag" }
+          ],
+          "why": "a class that extends Repository<Tag> is a repository of Tag, and so is what TypeORM 0.2's getRepository(Tag) returns"
+        },
+        {
+          "source": "import { Repository } from './my-repository';\nexport class NotTypeorm {\n  constructor(private repo: Repository<User>) {}\n  a() { return this.repo.find(); }\n}\nclass User {}\n",
+          "expect": [],
+          "why": "a Repository of the project's own is not TypeORM's"
+        }
+      ]
+    },
+    {
+      "id": "typeorm.operations",
+      "kind": "typeorm.operation",
+      "description": "What each Repository and EntityManager operation sends, and what part each argument plays. A find reads what its options name: where filters by the properties it names (an array of wheres is an OR), select returns the ones it names, order reads them, relations reaches the relations it names; with no select every column of the entity is returned, with the relations marked eager. An argument that is not written out MAY read any column of the entity. An update or insert writes the properties its values name; save and an insert of an object not written out MAY write any column. softDelete and restore write the entity's @DeleteDateColumn. An EntityManager takes the entity as its first argument.",
+      "why": "TypeORM's Repository and EntityManager API (src/repository/Repository.ts, src/entity-manager/EntityManager.ts, read at 0.2.34 and 0.3.28). In 0.2, find, findOne and count take either find options or the conditions themselves, and FindOptionsUtils.isFindOneOptions tells them apart by the keys an options object has and the kind of value each holds: legacyFindOptions is that test. findOne(id) finds by the primary key.",
+      "params": {
+        "operations": {
+          "find": { "statement": "select", "args": ["find-options"], "wholeRow": true, "eager": true },
+          "findBy": { "statement": "select", "args": ["where"], "wholeRow": true, "eager": true },
+          "findAndCount": { "statement": "select", "args": ["find-options"], "wholeRow": true, "eager": true },
+          "findAndCountBy": { "statement": "select", "args": ["where"], "wholeRow": true, "eager": true },
+          "findOne": { "statement": "select", "args": ["find-options-or-id", "find-options"], "wholeRow": true, "eager": true },
+          "findOneOrFail": { "statement": "select", "args": ["find-options-or-id", "find-options"], "wholeRow": true, "eager": true },
+          "findOneBy": { "statement": "select", "args": ["where"], "wholeRow": true, "eager": true },
+          "findOneByOrFail": { "statement": "select", "args": ["where"], "wholeRow": true, "eager": true },
+          "findByIds": { "statement": "select", "args": ["ids", "find-options"], "wholeRow": true, "eager": true },
+          "findOneById": { "statement": "select", "args": ["ids"], "wholeRow": true, "eager": true },
+          "count": { "statement": "select", "args": ["find-options"] },
+          "countBy": { "statement": "select", "args": ["where"] },
+          "exist": { "statement": "select", "args": ["find-options"] },
+          "exists": { "statement": "select", "args": ["find-options"] },
+          "existsBy": { "statement": "select", "args": ["where"] },
+          "sum": { "statement": "select", "args": ["property", "where"] },
+          "average": { "statement": "select", "args": ["property", "where"] },
+          "minimum": { "statement": "select", "args": ["property", "where"] },
+          "maximum": { "statement": "select", "args": ["property", "where"] },
+          "preload": { "statement": "select", "args": ["entity"], "wholeRow": true },
+          "save": { "statement": "upsert", "args": ["entity", "none"], "wholeRow": true, "writesEntity": true },
+          "insert": { "statement": "insert", "args": ["values"] },
+          "update": { "statement": "update", "args": ["criteria", "values"] },
+          "upsert": { "statement": "upsert", "args": ["values", "conflict"] },
+          "delete": { "statement": "delete", "args": ["criteria"] },
+          "remove": { "statement": "delete", "args": ["entity", "none"] },
+          "softDelete": { "statement": "update", "args": ["criteria"], "deleteDate": true },
+          "restore": { "statement": "update", "args": ["criteria"], "deleteDate": true },
+          "softRemove": { "statement": "update", "args": ["entity", "none"], "deleteDate": true },
+          "recover": { "statement": "update", "args": ["entity", "none"], "deleteDate": true },
+          "increment": { "statement": "update", "args": ["where", "property-write", "none"] },
+          "decrement": { "statement": "update", "args": ["where", "property-write", "none"] },
+          "clear": { "statement": "delete", "args": [] }
+        },
+        "noSql": ["create", "merge", "hasId", "getId", "extend", "createQueryBuilder", "getRepository", "getTreeRepository", "transaction", "release"],
+        "raw": ["query", "sql"],
+        "findOptions": {
+          "select": "project", "where": "filter", "order": "read", "relations": "relations", "join": "not-read",
+          "loadEagerRelations": "eager", "loadRelationIds": "not-read", "relationLoadStrategy": "none",
+          "withDeleted": "none", "skip": "none", "take": "none", "cache": "none", "lock": "none", "comment": "none", "transaction": "none"
+        },
+        "legacyFindOptions": {
+          "select": ["arr"], "where": ["obj", "str"], "relations": ["arr"], "join": ["obj"], "order": ["obj"],
+          "cache": ["obj", "bool", "num"], "lock": ["obj"], "loadRelationIds": ["obj", "bool"], "loadEagerRelations": ["bool"],
+          "withDeleted": ["bool"], "transaction": ["bool"], "skip": ["num", "str"], "take": ["num", "str"]
+        }
+      },
+      "examples": [
+        {
+          "operation": "findOne", "args": ["{ where: { email }, select: { id: true, email: true } }"], "fields": ["id", "email", "bio"],
+          "expect": { "statement": "select", "reads": ["email", "id"] },
+          "why": "a select returns what it names, and the where reads what it filters by"
+        },
+        {
+          "operation": "findOne", "args": ["{ email }"], "fields": ["id", "email", "bio"],
+          "expect": { "statement": "select", "reads": ["email"], "wholeRow": true },
+          "why": "TypeORM 0.2 reads an object with no find-option key as the conditions themselves"
+        },
+        {
+          "operation": "findOne", "args": ["id"], "fields": ["id", "email"],
+          "expect": { "statement": "select", "wholeRow": "may", "runtimeOnly": ["arguments"] },
+          "why": "a name may hold an id or find options with a select: every column MAY be returned, and none is claimed"
+        },
+        {
+          "operation": "find", "args": ["{ followerId: userId }"], "fields": ["id", "followerId", "followingId"],
+          "expect": { "statement": "select", "reads": ["followerId"], "wholeRow": true },
+          "why": "find takes the conditions themselves in TypeORM 0.2 too"
+        },
+        {
+          "operation": "find", "args": ["{ where: [{ email }, { bio: Like('%x%') }], order: { id: 'DESC' }, relations: ['articles'] }"], "fields": ["id", "email", "bio"], "relations": ["articles"],
+          "expect": { "statement": "select", "reads": ["bio", "email", "id"], "wholeRow": true, "follows": ["articles"] },
+          "why": "an array of wheres is an OR, an operator reads its column, and a relation the options name is loaded with the rows"
+        },
+        {
+          "operation": "update", "args": ["{ id: 1, hash }", "{ hash: next }"], "fields": ["id", "hash"],
+          "expect": { "statement": "update", "reads": ["hash", "id"], "writes": ["hash"] }
+        },
+        {
+          "operation": "delete", "args": ["id"], "fields": ["id", "email"],
+          "expect": { "statement": "delete", "runtimeOnly": ["criteria"] },
+          "why": "the criteria may be an id or conditions: which columns filter is only known when it runs"
+        },
+        {
+          "operation": "save", "args": ["user"], "fields": ["id", "email"],
+          "expect": { "statement": "upsert", "wholeRow": "may", "mayWrites": ["email", "id"], "runtimeOnly": ["entity"] },
+          "why": "save loads the row by its id and writes what changed: every column MAY be read and written"
+        },
+        {
+          "operation": "softDelete", "args": ["{ id }"], "fields": ["id", "deletedAt"], "deleteDate": "deletedAt",
+          "expect": { "statement": "update", "reads": ["id"], "writes": ["deletedAt"] }
+        },
+        {
+          "operation": "increment", "args": ["{ id }", "'favoriteCount'", "1"], "fields": ["id", "favoriteCount"],
+          "expect": { "statement": "update", "reads": ["favoriteCount", "id"], "writes": ["favoriteCount"] }
+        },
+        {
+          "operation": "findOne", "args": ["id", "{ relations: ['articles'] }"], "fields": ["id", "email"], "relations": ["articles"],
+          "expect": { "statement": "select", "wholeRow": "may", "follows": ["articles"], "runtimeOnly": ["arguments"] },
+          "why": "TypeORM 0.2's findOne(id, options): the options that follow an id are read too"
+        },
+        {
+          "operation": "count", "args": ["{ where: { email } }", "extra"], "fields": ["id", "email"],
+          "expect": { "statement": "select", "reads": ["email"], "notRead": ["argument 2"] },
+          "why": "an argument the pack names no part for is said, never dropped"
+        },
+        {
+          "operation": "findOneBy", "args": ["{ role: { id: 1 }, name: 'x' }"], "fields": ["id", "name"], "relations": ["role"],
+          "expect": { "statement": "select", "reads": ["name"], "wholeRow": true, "relations": ["role"] },
+          "why": "a where on a relation reaches another table, and says so"
+        }
+      ]
+    },
+    {
+      "id": "typeorm.query-builder",
+      "kind": "typeorm.query-builder",
+      "description": "What a query builder reads and writes, step by step. createQueryBuilder('alias') names the entity by an alias; a condition written as text names columns as alias.property, read against the entity each alias stands for; select narrows what is returned, a join adds the table of the relation it names, update, delete and insert make it that statement, set and values write what they name, and getMany, getOne and the raw getters return every column of the entity unless select narrowed it. A step whose text names something this rule cannot place is said, not guessed. A step written under a condition MAY run: what it reads is graded SOUND_SET.",
+      "why": "TypeORM's SelectQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder and InsertQueryBuilder (src/query-builder/). A property path alias.property in a condition is replaced with the column the metadata maps, and a bare name is passed to the database as written.",
+      "params": {
+        "start": "createQueryBuilder",
+        "methods": {
+          "select": "select", "addSelect": "add-select",
+          "where": "condition", "andWhere": "condition", "orWhere": "condition", "having": "condition", "andHaving": "condition", "orHaving": "condition",
+          "whereInIds": "ids", "andWhereInIds": "ids", "orWhereInIds": "ids",
+          "orderBy": "order", "addOrderBy": "order", "groupBy": "order", "addGroupBy": "order",
+          "leftJoin": "join", "innerJoin": "join",
+          "leftJoinAndSelect": "join-select", "innerJoinAndSelect": "join-select",
+          "leftJoinAndMapOne": "join-map", "leftJoinAndMapMany": "join-map", "innerJoinAndMapOne": "join-map", "innerJoinAndMapMany": "join-map",
+          "from": "from", "into": "into",
+          "update": "update", "delete": "delete", "insert": "insert", "softDelete": "soft-delete", "restore": "restore",
+          "set": "values", "values": "values",
+          "skip": "none", "take": "none", "limit": "none", "offset": "none", "setParameter": "none", "setParameters": "none",
+          "cache": "none", "withDeleted": "none", "setLock": "none", "useTransaction": "none", "printSql": "none",
+          "orIgnore": "none", "orUpdate": "none", "returning": "none", "distinct": "none", "comment": "none",
+          "getOne": "rows", "getOneOrFail": "rows", "getMany": "rows", "getManyAndCount": "rows", "getRawOne": "rows",
+          "getRawMany": "rows", "getRawAndEntities": "rows", "stream": "rows", "execute": "rows",
+          "getCount": "count", "getExists": "count"
+        },
+        "sqlWords": ["and", "or", "not", "in", "is", "null", "like", "ilike", "between", "true", "false", "exists", "any", "all", "some", "as", "asc", "desc", "case", "when", "then", "else", "end", "distinct", "escape", "similar", "to", "current_timestamp", "current_date"]
+      },
+      "examples": [
+        {
+          "chain": "this.repo.createQueryBuilder('user').where('user.username = :username', { username }).orWhere('user.email = :email', { email }).getOne()",
+          "entities": { "User": { "fields": ["id", "username", "email"] } }, "entity": "User",
+          "expect": { "statement": "select", "reads": ["User.email", "User.username"], "wholeRow": ["User"] }
+        },
+        {
+          "chain": "this.repo.createQueryBuilder('article').leftJoinAndSelect('article.author', 'author').where('article.authorId IN (:ids)', { ids }).orderBy('article.created', 'DESC').getMany()",
+          "entities": { "Article": { "fields": ["id", "created", "authorId"], "relations": { "author": "User" } }, "User": { "fields": ["id", "username"] } }, "entity": "Article",
+          "expect": { "statement": "select", "reads": ["Article.authorId", "Article.created"], "wholeRow": ["Article", "User"], "follows": ["author"] },
+          "why": "a join that selects returns the joined entity whole, and a column the metadata maps is read whether the text names it by property or by column"
+        },
+        {
+          "chain": "this.repo.createQueryBuilder('u').select(['u.id', 'u.email']).where('lower(u.email) = :e').getRawMany()",
+          "entities": { "User": { "fields": ["id", "email", "bio"] } }, "entity": "User",
+          "expect": { "statement": "select", "reads": ["User.email", "User.id"] },
+          "why": "a select narrows what is returned; a function around a column still reads it"
+        },
+        {
+          "chain": "this.repo.createQueryBuilder().update().set({ bio: b }).where('id = :id', { id }).execute()",
+          "entities": { "User": { "fields": ["id", "email", "bio"] } }, "entity": "User",
+          "expect": { "statement": "update", "reads": ["User.id"], "writes": ["User.bio"] },
+          "why": "a bare name in an update's condition is the column of the one table it updates"
+        },
+        {
+          "chain": "this.repo.createQueryBuilder('u').where('u.nickname = :n').andWhere(new Brackets((qb) => qb.where('x'))).getCount()",
+          "entities": { "User": { "fields": ["id", "email"] } }, "entity": "User",
+          "expect": { "statement": "select", "notRead": ["u.nickname", "andWhere"] },
+          "why": "a property the entity does not map, and a condition built at run time, are said rather than guessed"
+        }
+      ]
+    }
+  ]
+}

@@ -84,7 +84,7 @@ test('init finds the NestJS application and the database its schema.prisma names
   assert.match(init.stderr, /lanes \[web,ts\]/);
   const profile = readJson(path.join(ws.dir, '.cascade', 'profile.json'));
   assert.deepEqual(profile.frameworkPacks, ['web', 'nestjs']);
-  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null });
+  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeormNamingStrategy: null });
   assert.equal(profile.sqlDialects.main, 'postgresql', 'the datasource provider, which every migration of this project is written in');
 });
 

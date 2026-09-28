@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import { IDENTIFIER_CASES, identifierCaseForDialect } from './identifier_case.mjs';
 import { packagePatternError } from './package_pattern.mjs';
+import { builtinRegistry } from './rules/registry.mjs';
 
 /**
  * The template engines a `templateRoots` entry may name (RM48). `plain-html` is
@@ -64,9 +65,10 @@ export const PROFILE_DEFAULTS = deepFreeze({
   // The TypeScript backend this project runs (the `ts` lane): its root, the
   // schema.prisma it reads when that is not at `prisma/schema.prisma` above the
   // root, and the global prefix it is deployed under, with what that excludes,
-  // when the bootstrap reads them from configuration. Paths manifest-relative;
-  // null is "not declared".
-  tsBackend: { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null },
+  // when the bootstrap reads them from configuration, and the naming strategy
+  // its TypeORM DataSource runs with, when the options are not written out.
+  // Paths manifest-relative; null is "not declared".
+  tsBackend: { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeormNamingStrategy: null },
   modelPacks: [],
   jpa: { namingStrategy: null },
   mybatisPlus: {
@@ -108,12 +110,26 @@ export const PROFILE_DEFAULTS = deepFreeze({
  */
 export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixes']);
 
-/** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default. */
+/**
+ * THE KEYS ADDED TO A BLOCK AFTER IT WAS FIRST DIGESTED, the same promise one
+ * level down: a project that set the block before the key existed (every
+ * NestJS project `cascade init` wrote `tsBackend.app` for) keeps the digest it
+ * had while the key is at its default. A key added to a digested block from
+ * now on goes here.
+ */
+export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeormNamingStrategy']);
+
+/** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default, and without a key of KEYS_DIGESTED_WHEN_SET still at its own. */
 export function digestedProfile(profile) {
   if (!profile || typeof profile !== 'object') return profile ?? null;
   const out = { ...profile };
   for (const k of BLOCKS_DIGESTED_WHEN_SET) {
     if (Object.hasOwn(out, k) && JSON.stringify(out[k]) === JSON.stringify(PROFILE_DEFAULTS[k])) delete out[k];
+  }
+  for (const [block, key] of KEYS_DIGESTED_WHEN_SET.map((k) => k.split('.'))) {
+    if (!isObject(out[block]) || !Object.hasOwn(out[block], key) || out[block][key] !== PROFILE_DEFAULTS[block][key]) continue;
+    const { [key]: _atDefault, ...rest } = out[block];
+    out[block] = rest;
   }
   return out;
 }
@@ -304,6 +320,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   'tsBackend.globalPrefixExclude': {
     status: 'consumed', where: 'src/adapters/ts/nest_app.mjs',
     note: 'the route patterns the global prefix excludes, in Nest\'s own pattern syntax (`health`, `users/:id`, `docs{/*rest}`), used INSTEAD of the bootstrap\'s `exclude` option. It is for an exclude list the bootstrap builds at run time (a template, a spread of a list): while one entry is unread, every route under the prefix is graded HEURISTIC, because an unread entry may name it',
+  },
+  'tsBackend.typeormNamingStrategy': {
+    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    note: 'the naming strategy the application\'s TypeORM DataSource runs with, by the name the typeorm rule pack gives it (`default` for DefaultNamingStrategy, `snake` for typeorm-naming-strategies\' SnakeNamingStrategy), used INSTEAD of what the DataSource options in the source name. It is for options the source does not write out (`TypeOrmModule.forRoot()` reads ormconfig or the environment, a factory this engine does not read): undeclared, the names TypeORM derives are graded HEURISTIC; declared, EXACT. An entityPrefix is still read from the options where they are written. A declared strategy that differs from the one the options name is used and said',
   },
   'jpa.namingStrategy': {
     status: 'consumed', where: 'src/adapters/jpa_bridge.mjs',
@@ -1102,7 +1122,18 @@ export function validateProfile(obj) {
   validateProfileValues(obj);
   validateProfileBlocks(obj);
   validatePathPrefixes(obj);
+  validateTypeormNaming(obj);
   return obj;
+}
+
+/** `tsBackend.typeormNamingStrategy`: null, or a strategy the typeorm rule pack names (read from the pack, so a strategy added there is one a profile may name). */
+function validateTypeormNaming(obj) {
+  const v = isObject(obj.tsBackend) ? obj.tsBackend.typeormNamingStrategy : undefined;
+  if (v === undefined || v === null) return;
+  const known = builtinRegistry().ofKind('typeorm.entity').flatMap((e) => e.rule.params.strategies.map((s) => s.name));
+  if (!known.includes(v)) {
+    throw new ProfileError(`profile.tsBackend.typeormNamingStrategy must be null or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(v)}`);
+  }
 }
 
 

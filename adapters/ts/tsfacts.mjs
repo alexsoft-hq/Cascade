@@ -7,9 +7,11 @@
 //
 // One JSONL record per line (schema `cascade:tsfacts:1`): a header, then for
 // each file, in path order, its imports, exports, classes (with their
-// decorators), constructor parameters, properties, methods, module functions,
-// and every call (its receiver chain, its arguments, the name its value is held
-// in, and its place among the calls of the member it is in); then a summary.
+// decorators and the type arguments of what they extend), constructor
+// parameters, properties, methods (with what they return), module functions,
+// every call (its receiver chain, its arguments, the name its value is held in,
+// the calls chained on its result, and its place among the calls of the member
+// it is in), and every `new`; then a summary.
 // `--list` prints only the files a run over those roots would read. Nothing
 // here knows a framework: which call starts an application is a rule the
 // bridge reads (src/core/rules/packs/nestjs.json).
@@ -31,7 +33,9 @@ import { calleeOf, eachChild, isFunctionNode, keyName, toPosix } from '../web/li
 
 const SCHEMA = 'cascade:tsfacts:1';
 // 2: a method record carries what each of its own `return`s hands back (`returns`).
-export const VERSION = 'tsfacts/2';
+// 3: type arguments (`typeArgs`, `extendsArgs`), an object literal a method
+//    returns, every `new`, and the calls chained on a call's result (`chain`).
+export const VERSION = 'tsfacts/3';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -163,6 +167,23 @@ export function typeNameOf(annotation) {
   return name(t.typeName);
 }
 
+/**
+ * The type arguments a type reference writes, each by its name as typeNameOf
+ * reads one (null for one that is not a plain reference): `Repository<User>`
+ * gives ['User']. An empty list when it writes none.
+ */
+export function typeArgsOf(annotation) {
+  const t = annotation && annotation.type === 'TSTypeAnnotation' ? annotation.typeAnnotation : annotation;
+  const inst = t && t.type === 'TSTypeReference' ? (t.typeParameters ?? t.typeArguments) : t && t.type === 'TSTypeParameterInstantiation' ? t : null;
+  return inst ? inst.params.map((p) => typeNameOf(p)) : [];
+}
+
+/** `{typeArgs}` when a type annotation writes any, else nothing: a record without them stays as it was. */
+const typeArgsField = (annotation) => {
+  const args = typeArgsOf(annotation);
+  return args.length > 0 ? { typeArgs: args } : {};
+};
+
 function decoratorsOf(node) {
   return (node.decorators ?? []).map((d) => {
     const e = d.expression;
@@ -174,10 +195,12 @@ function decoratorsOf(node) {
 const lineOf = (n) => (n.loc ? n.loc.start.line : null);
 const endLineOf = (n) => (n.loc ? n.loc.end.line : null);
 
-/** What one `return` hands back: a call by its callee and line, a name or member chain as written, else only an expression. */
+/** What one `return` hands back: a call by its callee and line, a name or member chain as written, an object literal whole, else only an expression. */
 function returnedValue(node) {
   const n = unwrap(node);
   if (!n) return { k: 'none' };
+  // An options factory (`createTypeOrmOptions() { return {...} }`) is read by its keys.
+  if (n.type === 'ObjectExpression') return valueOf(n);
   if (n.type === 'CallExpression' || n.type === 'OptionalCallExpression') {
     const callee = chainOf(n.callee);
     return callee ? { k: 'call', callee, line: lineOf(n) } : { k: 'expr' };
@@ -235,7 +258,7 @@ function paramsOf(fn) {
   return fn.params.map((p) => {
     const inner = p.type === 'TSParameterProperty' ? p.parameter : p;
     const id = inner.type === 'AssignmentPattern' ? inner.left : inner;
-    return { name: id.type === 'Identifier' ? id.name : null, type: typeNameOf(id.typeAnnotation), decorators: decoratorsOf(p) };
+    return { name: id.type === 'Identifier' ? id.name : null, type: typeNameOf(id.typeAnnotation), ...typeArgsField(id.typeAnnotation), decorators: decoratorsOf(p) };
   });
 }
 
@@ -244,25 +267,28 @@ function classRecords(file, node, exported, emit) {
   emit({
     kind: 'class', file, name, exported, decorators: decoratorsOf(node),
     extends: node.superClass ? chainOf(node.superClass) : null,
+    ...(node.superClass && node.superTypeParameters ? { extendsArgs: typeArgsOf(node.superTypeParameters) } : {}),
     implements: (node.implements ?? []).map((i) => chainOf(i.expression)).filter(Boolean),
     line: lineOf(node), endLine: endLineOf(node),
   });
-  for (const m of node.body.body) {
-    if (m.type === 'ClassMethod' && m.kind === 'constructor') {
-      m.params.forEach((p, index) => {
-        if (p.type !== 'TSParameterProperty') return;
-        const id = p.parameter.type === 'AssignmentPattern' ? p.parameter.left : p.parameter;
-        emit({ kind: 'ctorParam', file, class: name, index, name: id.name, type: typeNameOf(id.typeAnnotation), decorators: decoratorsOf(p), line: lineOf(p) });
-      });
-    } else if (m.type === 'ClassMethod' && m.key && !m.computed) {
-      const returns = returnsOf(m);
-      emit({
-        kind: 'method', file, class: name, name: keyName(m), static: m.static === true, decorators: decoratorsOf(m),
-        params: paramsOf(m), ...(returns.length > 0 ? { returns } : {}), line: lineOf(m), endLine: endLineOf(m),
-      });
-    } else if (m.type === 'ClassProperty' && m.key && !m.computed) {
-      emit({ kind: 'property', file, class: name, name: keyName(m), static: m.static === true, type: typeNameOf(m.typeAnnotation), decorators: decoratorsOf(m), line: lineOf(m) });
-    }
+  for (const m of node.body.body) memberRecords(file, name, m, emit);
+}
+
+function memberRecords(file, name, m, emit) {
+  if (m.type === 'ClassMethod' && m.kind === 'constructor') {
+    m.params.forEach((p, index) => {
+      if (p.type !== 'TSParameterProperty') return;
+      const id = p.parameter.type === 'AssignmentPattern' ? p.parameter.left : p.parameter;
+      emit({ kind: 'ctorParam', file, class: name, index, name: id.name, type: typeNameOf(id.typeAnnotation), ...typeArgsField(id.typeAnnotation), decorators: decoratorsOf(p), line: lineOf(p) });
+    });
+  } else if (m.type === 'ClassMethod' && m.key && !m.computed) {
+    const returns = returnsOf(m);
+    emit({
+      kind: 'method', file, class: name, name: keyName(m), static: m.static === true, decorators: decoratorsOf(m),
+      params: paramsOf(m), ...(returns.length > 0 ? { returns } : {}), line: lineOf(m), endLine: endLineOf(m),
+    });
+  } else if (m.type === 'ClassProperty' && m.key && !m.computed) {
+    emit({ kind: 'property', file, class: name, name: keyName(m), static: m.static === true, type: typeNameOf(m.typeAnnotation), ...typeArgsField(m.typeAnnotation), decorators: decoratorsOf(m), line: lineOf(m) });
   }
 }
 
@@ -280,6 +306,52 @@ const MAY_NOT_RUN = Object.freeze({
   TryStatement: ['handler'],
 });
 
+const isMember = (n) => n && (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression');
+const isCall = (n) => n && (n.type === 'CallExpression' || n.type === 'OptionalCallExpression');
+
+/** A member's name as written: `x.y` is y, `x['y']` is y, anything else is `*`. */
+function memberName(n) {
+  if (!n.computed && n.property.type === 'Identifier') return n.property.name;
+  return n.property.type === 'StringLiteral' ? n.property.value : '*';
+}
+
+/**
+ * The calls chained on a first call's result, when `outer` is the last of
+ * them: `{base, steps}`, each step the member path written after the call
+ * before it (`where`, or `manager.find`), its arguments and its line. Null
+ * when the chain does not start at a call whose receiver is a name.
+ */
+function chainFrom(outer) {
+  const steps = [];
+  for (let cur = outer; ;) {
+    let obj = unwrap(cur.callee);
+    if (!isMember(obj)) return null;
+    const path = [];
+    for (; isMember(obj); obj = unwrap(obj.object)) path.unshift(memberName(obj));
+    steps.unshift({ name: path.join('.'), args: cur.arguments.map((a) => valueOf(a)), line: lineOf(cur) });
+    if (!isCall(obj)) return null;
+    if (chainOf(obj.callee) !== null) return { base: obj, steps };
+    cur = obj;
+  }
+}
+
+/** The outermost call of a chain is met first: it names every step, and a call inside it names fewer. */
+function noteChain(node, chains, holders) {
+  const hit = chainFrom(node);
+  if (!hit || chains.has(hit.base)) return;
+  const holder = holders.get(node);
+  chains.set(hit.base, { steps: hit.steps, ...(holder ? { holder } : {}) });
+}
+
+function callRecord(file, node, { here, callee, n, cond, holder, chain }) {
+  return {
+    kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), n,
+    ...(holder ? { holder } : {}), ...(cond ? { cond: true } : {}),
+    ...(chain ? { chain: chain.steps, ...(chain.holder ? { chainHolder: chain.holder } : {}) } : {}),
+    line: lineOf(node),
+  };
+}
+
 /**
  * Every call in the file, each with the member or function it is written in,
  * and its place among that member's calls. The place is what an id is built on,
@@ -290,11 +362,19 @@ const MAY_NOT_RUN = Object.freeze({
  * A call that may not run when its member does is marked `cond`: one in a
  * branch, a loop or a catch block, or in a function nested in the member, which
  * runs when, and if, whatever it is handed to calls it.
+ *
+ * A call made on another call's result, `repo.createQueryBuilder('u').where(…)
+ * .getMany()`, has no receiver chain of its own: it is recorded as a step of
+ * the `chain` of the first call, the one whose receiver is a name, with the
+ * name the whole expression is held in as `chainHolder`. A `new` is a record of
+ * its own and takes no place among the calls.
  */
 function walkCalls(file, ast, emit) {
   const counters = new Map();
   // The name each initializer is held in (`const app = await …` holds the call under the await).
   const holders = new Map();
+  // The first call of a chain -> the calls made on its result, read from the outermost call down.
+  const chains = new Map();
   // `root` is the function that IS the member, so it is not taken for one nested in it.
   const visit = (node, where, root, cond) => {
     if (node.type === 'Decorator') return;
@@ -318,12 +398,15 @@ function walkCalls(file, ast, emit) {
       if (callee !== null) {
         const n = counters.get(here) ?? 0;
         counters.set(here, n + 1);
-        const holder = holders.get(node);
-        emit({
-          kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), n,
-          ...(holder ? { holder } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node),
-        });
+        emit(callRecord(file, node, { here, callee, n, cond: mayNotRun, holder: holders.get(node), chain: chains.get(node) }));
+      } else {
+        noteChain(node, chains, holders);
       }
+    }
+    if (node.type === 'NewExpression') {
+      const callee = chainOf(node.callee);
+      const holder = holders.get(node);
+      if (callee !== null) emit({ kind: 'new', file, in: here, callee, args: node.arguments.map((a) => valueOf(a)), ...(holder ? { holder } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node) });
     }
     const branches = MAY_NOT_RUN[node.type] ?? [];
     eachChild(node, (c, key) => visit(c, here, top, mayNotRun || branches.includes(key)));

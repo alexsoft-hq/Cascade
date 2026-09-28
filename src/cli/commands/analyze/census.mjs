@@ -372,7 +372,8 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
   const guessed = ts.heuristicRoutes > 0 ? ` (${ts.heuristicRoutes} at an address an unread exclude may change, graded HEURISTIC)` : '';
   process.stderr.write(`TypeScript lane: ${ts.files} file(s), ${ts.routes} route(s)${guessed} from ${controllers}, `
     + `${ts.calls.resolved} call(s) linked, ${ts.calls.external} into packages, ${ts.calls.unresolved} on a receiver not typed here`
-    + `${p ? `; Prisma: ${p.statements} statement(s) from ${p.clientCalls} client call(s)${p.unknownModel + p.unknownOperation > 0 ? `, ${p.unknownModel} on a model and ${p.unknownOperation} with an operation this engine does not know` : ''}` : '; no schema.prisma'}\n`);
+    + `${p ? `; Prisma: ${p.statements} statement(s) from ${p.clientCalls} client call(s)${p.unknownModel + p.unknownOperation > 0 ? `, ${p.unknownModel} on a model and ${p.unknownOperation} with an operation this engine does not know` : ''}` : '; no schema.prisma'}`
+    + `${typeormSaid(ts.typeorm)}\n`);
   if (p?.catalog) sayPrismaCatalog(p.catalog, p);
   const schemaAbs = opts.prismaSchemaFile ? path.resolve(root, opts.prismaSchemaFile) : null;
   return {
@@ -380,7 +381,7 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
     tsconfig: opts.tsconfigFile,
     prismaSchema: schemaAbs ? { path: opts.prismaSchemaFile, sha256: sha256File(schemaAbs), provider: opts.prisma.schema.provider } : null,
     files: ts.files, symbols: ts.symbols, routes: ts.routes, heuristicRoutes: ts.heuristicRoutes, controllers: ts.controllers,
-    unregisteredControllers: ts.unregisteredControllers, calls: ts.calls, prisma: p,
+    unregisteredControllers: ts.unregisteredControllers, calls: ts.calls, prisma: p, ...(ts.typeorm ? { typeorm: ts.typeorm } : {}),
   };
 }
 
@@ -401,6 +402,16 @@ export function sayFunctionalRoutes(fr) {
   for (const d of fr.disagreements.slice(0, 5)) {
     process.stderr.write(`  [warn] OPERATION_ID_DISAGREES ${d.endpoint}: the code names the operation ${d.operationId}, a document has ${d.document} at ${d.documentAt}\n`);
   }
+}
+
+/** The TypeORM part of the lane line: said only when the application has an entity or a TypeORM call. */
+function typeormSaid(t) {
+  if (!t) return '';
+  const how = { profile: 'declared in the profile', options: 'read from the options', assumed: 'assumed' };
+  const naming = t.naming ? `, ${t.naming.strategy} naming ${how[t.naming.from]}${t.heuristicNames > 0 ? ` (${t.heuristicNames} name(s) HEURISTIC)` : ''}` : '';
+  const unread = t.raw + t.unknownOperation + t.unreadEntity;
+  return `; TypeORM: ${t.statements} statement(s) from ${t.sites} call(s) (${t.builders} query builder(s))${unread > 0 ? `, ${unread} not read` : ''}, `
+    + `${t.entities} entity(ies) mapping ${t.tables} table(s) and ${t.columns} column(s)${naming}`;
 }
 
 export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {

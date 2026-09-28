@@ -33,6 +33,7 @@ function indexRecords(records) {
   const files = new Map();
   const at = (f) => { if (!files.has(f)) files.set(f, emptyFile()); return files.get(f); };
   const calls = [];
+  const news = [];
   const pendingMembers = [];
   for (const r of records) {
     if (!r || typeof r.file !== 'string') continue;
@@ -43,6 +44,7 @@ function indexRecords(records) {
       case 'class': f.classes.set(r.name, { ...r, key: classKey(r.file, r.name), methods: new Map(), fields: new Map() }); break;
       case 'function': f.functions.set(r.name, r); break;
       case 'call': calls.push(r); break;
+      case 'new': news.push(r); break;
       case 'method': case 'ctorParam': case 'property': pendingMembers.push(r); break;
       default: break;
     }
@@ -51,7 +53,7 @@ function indexRecords(records) {
     const cls = files.get(r.file)?.classes.get(r.class);
     if (cls) addClassMember(cls, r);
   }
-  return { files, calls };
+  return { files, calls, news };
 }
 
 /**
@@ -112,8 +114,8 @@ function exportedFrom(project, file, name, hops = 0) {
 }
 
 /**
- * THE PROJECT: its files, classes and calls, and the three questions every
- * later step asks of it.
+ * THE PROJECT: its files, classes, calls and `new`s, and the three questions
+ * every later step asks of it.
  *
  * - `meaning(file, name)`: what a name written in `file` refers to, as
  *   `{file, name}` for a class or function of the project, `{external: source,
@@ -122,7 +124,7 @@ function exportedFrom(project, file, name, hops = 0) {
  * - `lineage(cls)`: the class and each class it extends in the project, nearest first.
  */
 export function readProject(records, tsconfig = {}) {
-  const { files, calls } = indexRecords(records);
+  const { files, calls, news } = indexRecords(records);
   const resolveModule = makeModuleResolver(new Set(files.keys()), tsconfig);
 
   const exported = (file, name) => exportedFrom({ files, resolveModule }, file, name);
@@ -152,7 +154,7 @@ export function readProject(records, tsconfig = {}) {
     return out;
   };
 
-  return { files, calls, meaning, classOf, lineage, resolveModule };
+  return { files, calls, news, meaning, classOf, lineage, resolveModule };
 }
 
 /** The method `name` of `cls` or of the nearest class it extends in the project, with the class that declares it. */
