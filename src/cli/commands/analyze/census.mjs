@@ -673,9 +673,15 @@ export function sayOpenApiLane(openapiStats) {
  * not show, and the methods it named without linking them.
  */
 function sayContractLinks(c) {
-  const rules = Object.entries(c.byRule).map(([id, r]) => `${id} ${r.links}`).join(', ');
-  process.stderr.write(`OpenAPI lane: ${c.endpoints.length} declared route(s) given a handler through an interface the build generates (${rules}), `
-    + 'graded HEURISTIC: the interface is not read, so the pairing rests on the generator\'s naming\n');
+  const rules = Object.entries(c.byRule).filter(([, r]) => r.links > 0).map(([id, r]) => `${id} ${r.links}`).join(', ');
+  if (c.endpoints.length > 0) {
+    process.stderr.write(`OpenAPI lane: ${c.endpoints.length} declared route(s) given a handler through an interface named for the operation and not in the source tree (${rules}), `
+      + 'graded HEURISTIC: neither that interface nor any generator configuration is read, so the pairing rests on the generator\'s naming\n');
+  }
+  const handled = (c.alreadyHandled ?? []).length;
+  if (handled > 0) {
+    process.stderr.write(`OpenAPI lane: ${handled} method(s) a contract rule pairs with a route already handle that route in the code's own mappings, so no link was added for them\n`);
+  }
   for (const u of c.unlinked.slice(0, 5)) {
     const why = u.reason === 'ambiguous'
       ? `the operationId ${u.operationId} names ${u.operations.length} routes (${u.operations.map((o) => `${o.endpoint.slice('endpoint:'.length)} in ${o.document}`).join('; ')}), and nothing says which one the interface was generated from`

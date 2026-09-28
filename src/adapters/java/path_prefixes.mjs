@@ -8,8 +8,9 @@
 // is told to: `RequestMappingHandlerMapping.setPathPrefixes(prefix -> predicate)`,
 // or `PathMatchConfigurer.addPathPrefix(prefix, predicate)` in a
 // WebMvcConfigurer. The predicate is a lambda over the controller class and the
-// prefix is usually a property, so no reading of the source can say either.
-// The profile's `pathPrefixes` says what they are, and this module applies them
+// prefix is usually a property; this engine reads neither from the source (a
+// constant prefix is readable in principle, and is not read either). The
+// profile's `pathPrefixes` says what they are, and this module applies them
 // as Spring does: to the class that serves the route, and the FIRST entry whose
 // test the class passes wins.
 //

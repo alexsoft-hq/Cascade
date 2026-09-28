@@ -38,8 +38,8 @@ export const PROFILE_DEFAULTS = deepFreeze({
   sqlIdentifierCase: null,
   gatewayRoutes: {},
   // The path prefixes configuration code puts before a controller's routes
-  // (Spring's setPathPrefixes / addPathPrefix), which no reading of the source
-  // can say: each entry is `{prefix, packages, annotation, from}`, and the
+  // (Spring's setPathPrefixes / addPathPrefix), which this engine does not read
+  // from the source: each entry is `{prefix, packages, annotation, from}`, and the
   // first one a controller class passes is the one it is served under. Empty is
   // the honest default: a project that sets none has none to declare.
   pathPrefixes: [],
@@ -262,7 +262,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   pathPrefixes: {
     status: 'consumed', where: 'src/adapters/java/routes.mjs',
-    note: 'the path prefixes configuration code puts before a controller\'s routes: Spring\'s RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix, whose prefix is usually a property and whose predicate is a lambda, so no reading of the source can say either. Each entry is {prefix, packages, annotation, from}: `packages` is an Ant pattern over the controller class\'s package with "." between segments (`**.controller.admin.**`, as AntPathMatcher(".") reads it), `annotation` the simple name of an annotation the class itself carries (`RestController`), and `from` a note of where the value was read. Either test may be left out; an entry with neither applies to every controller. The Java lane serves a route behind the FIRST entry its class passes, as Spring does, before the route is keyed, and the endpoint says so (`pathPrefix`, with the first segment after it as `apiGroup`). A client\'s route (@FeignClient) is the address it calls and takes no prefix. When the Java facts show one of those calls and this list is empty, `cascade analyze` says so (SETTING_IN_CODE, from the spring-mvc rule pack)',
+    note: 'the path prefixes configuration code puts before a controller\'s routes: Spring\'s RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix, whose prefix is usually a property and whose predicate is a lambda. This engine reads neither from the source (a prefix written as a constant is readable in principle, and is not read either), so the profile says what they are. Each entry is {prefix, packages, annotation, from}: `packages` is an Ant pattern over the controller class\'s package with "." between segments (`**.controller.admin.**`, as AntPathMatcher(".") reads it), `annotation` the simple name of an annotation the class itself carries (`RestController`), and `from` a note of where the value was read. Either test may be left out; an entry with neither applies to every controller. The Java lane serves a route behind the FIRST entry its class passes, as Spring does, before the route is keyed, and the endpoint says so (`pathPrefix`, with the first segment after it as `apiGroup`). A client\'s route (@FeignClient) is the address it calls and takes no prefix. When the Java facts show one of those calls, in a file that imports the type that declares it, and this list is empty, `cascade analyze` says so (SETTING_IN_CODE, from the spring-mvc rule pack)',
   },
   serviceNames: {
     status: 'consumed', where: 'src/mcp/federation.mjs',

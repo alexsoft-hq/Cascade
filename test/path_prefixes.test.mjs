@@ -26,7 +26,7 @@ import { profileDigestOf } from '../src/core/calibration.mjs';
 import { buildProfile } from '../src/core/init.mjs';
 import { codeSettingDiagnostics } from '../src/core/code_settings.mjs';
 import { codeSettingsIn } from '../src/core/rules/kinds/java_code_setting.mjs';
-import { builtinRegistry } from '../src/core/rules/registry.mjs';
+import { builtinRegistry, buildRegistry, RuleError } from '../src/core/rules/registry.mjs';
 import { prefixNotOnCallsNotes, unusedPrefixNotes } from '../src/cli/commands/analyze/prefix_notes.mjs';
 
 // ---------------------------------------------------------------------------
@@ -234,11 +234,16 @@ test('a project that declares no prefix gets the graph and the stats it always g
 // ---------------------------------------------------------------------------
 
 const invocations = (file, pairs) => ({ kind: 'invocations', names: pairs.map((p) => p[0]), lines: pairs.map((p) => p[1]), file });
+/** The import record the Java worker writes for a file's top-level type (`simple` "*" for a whole package). */
+const importOf = (file, fqn, simple = fqn.slice(fqn.lastIndexOf('.') + 1)) => ({ kind: 'import', owner: `x.${file}`, simple, fqn, file });
+const MVC_MAPPING = 'org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping';
+const MVC_CONFIGURER = 'org.springframework.web.servlet.config.annotation.PathMatchConfigurer';
 const CONFIG_FILE = 'yudao-framework/src/main/java/cn/y/framework/web/config/YudaoWebAutoConfiguration.java';
 
 test('a call to setPathPrefixes with pathPrefixes undeclared is said, with the file, the line and the key', () => {
   const facts = [
     invocations(CONFIG_FILE, [['buildPathPrefixes', 60], ['setPathPrefixes', 53]]),
+    importOf(CONFIG_FILE, MVC_MAPPING),
     invocations('cn/y/Other.java', [['append', 3]]),
   ];
   const said = codeSettingDiagnostics(facts, normalizeProfile({}));
@@ -251,18 +256,48 @@ test('a call to setPathPrefixes with pathPrefixes undeclared is said, with the f
 });
 
 test('a declared pathPrefixes is the project\'s word, and a project with no such call hears nothing', () => {
-  const facts = [invocations(CONFIG_FILE, [['setPathPrefixes', 53]])];
+  const facts = [invocations(CONFIG_FILE, [['setPathPrefixes', 53]]), importOf(CONFIG_FILE, MVC_MAPPING)];
   assert.deepEqual(codeSettingDiagnostics(facts, normalizeProfile({ pathPrefixes: RUOYI_PREFIXES })), []);
   assert.deepEqual(codeSettingDiagnostics([invocations('a/B.java', [['addPrefix', 4]])], normalizeProfile({})), []);
   assert.deepEqual(codeSettingDiagnostics([], normalizeProfile({})), []);
 });
 
 test('many call sites are said in one line, the first three by place', () => {
-  const facts = ['d', 'c', 'b', 'a'].map((x, i) => invocations(`${x}/Config.java`, [['addPathPrefix', 10 + i]]));
+  const facts = ['d', 'c', 'b', 'a'].flatMap((x, i) => [invocations(`${x}/Config.java`, [['addPathPrefix', 10 + i]]), importOf(`${x}/Config.java`, MVC_CONFIGURER)]);
   const found = codeSettingsIn(facts, builtinRegistry().ofKind('java.code-setting'));
   assert.deepEqual(found.map((f) => f.file), ['a/Config.java', 'b/Config.java', 'c/Config.java', 'd/Config.java']);
   const [said] = codeSettingDiagnostics(facts, normalizeProfile({}));
   assert.match(said.reason, /a\/Config\.java:13 calls PathMatchConfigurer\.addPathPrefix; b\/Config\.java:12 .*; c\/Config\.java:11 .* and 1 more:/);
+});
+
+test('code_setting_does_not_assert_receiver_from_bare_method_name: a call is the setting only where its file can name the type that declares it', () => {
+  const rules = builtinRegistry().ofKind('java.code-setting');
+  // class Storage { void addPathPrefix(String d){} void save(){ addPathPrefix("/backup"); } }
+  const storage = [invocations('p/Storage.java', [['addPathPrefix', 1]]), { kind: 'type', fqn: 'p.Storage', package: 'p', file: 'p/Storage.java' }];
+  assert.deepEqual(codeSettingsIn(storage, rules), [], 'a method of its own with the name is not PathMatchConfigurer.addPathPrefix');
+  assert.deepEqual(codeSettingDiagnostics(storage, normalizeProfile({})), [], 'and nothing asks for pathPrefixes because of it');
+  const other = [invocations('p/Other.java', [['addPathPrefix', 4]]), importOf('p/Other.java', 'com.acme.paths.PathMatchConfigurer')];
+  assert.deepEqual(codeSettingsIn(other, rules), [], 'a type of that simple name from another package is not the one the rule names');
+  const byImport = [invocations('p/Web.java', [['addPathPrefix', 7]]), importOf('p/Web.java', MVC_CONFIGURER)];
+  assert.deepEqual(codeSettingsIn(byImport, rules).map((f) => [f.on, f.line]), [['PathMatchConfigurer', 7]]);
+  const byPackage = [invocations('p/Web.java', [['addPathPrefix', 7]]), importOf('p/Web.java', 'org.springframework.web.servlet.config.annotation', '*')];
+  assert.deepEqual(codeSettingsIn(byPackage, rules).map((f) => f.method), ['addPathPrefix'], 'a package imported whole names the type too');
+  const flux = [invocations('p/Flux.java', [['addPathPrefix', 5]]), importOf('p/Flux.java', 'org.springframework.web.reactive.config.PathMatchConfigurer')];
+  assert.deepEqual(codeSettingsIn(flux, rules).map((f) => f.method), ['addPathPrefix'], 'WebFlux declares the same method on its own type');
+});
+
+test('a code-setting call names the types that declare it, in full, or the rule is refused', () => {
+  const entry = builtinRegistry().rules.get('spring-mvc.path-prefixes').rule;
+  const refused = (calls) => {
+    try { buildRegistry([{ where: 'c.json', pack: { pack: 'spring-mvc', version: 1, description: 'x', rules: [{ ...entry, params: { ...entry.params, calls } }] } }]); } catch (e) { if (e instanceof RuleError) return e.problems; throw e; }
+    return [];
+  };
+  assert.deepEqual(refused(entry.params.calls), []);
+  const [first] = entry.params.calls;
+  assert.ok(refused([{ on: first.on, method: first.method }]).some((p) => /params\.calls\[0\]\.types/.test(p)), 'no types, no rule');
+  assert.ok(refused([{ ...first, types: ['org.x.SomethingElse'] }]).some((p) => /params\.calls\[0\]\.types/.test(p)), 'a type whose simple name is not `on`');
+  assert.ok(refused([{ ...first, types: [first.on] }]).some((p) => /params\.calls\[0\]\.types/.test(p)), 'a simple name is not a full one');
+  assert.ok(entry.examples.some((ex) => /class Storage/.test(ex.source) && ex.expect.length === 0), 'the pack holds the example that must not be read as the setting');
 });
 
 // ---------------------------------------------------------------------------
@@ -280,15 +315,20 @@ test('a declared entry no controller class passed is said, with what it tests', 
   assert.deepEqual(unusedPrefixNotes({}), [], 'nothing declared, nothing said');
 });
 
-/** The admin route served behind /admin-api, and one frontend call that missed it. */
-function graphWithAMissedCall(template) {
+/**
+ * The admin route served behind /admin-api, and one frontend call that missed
+ * it, sent with `method` (null: the web lane could not read one, and keys the
+ * call ANY).
+ */
+function graphWithAMissedCall(template, method = 'GET') {
   const g = new Graph();
   const stats = addJavaFacts(g, ruoyiFacts(), { pathPrefixes: RUOYI_PREFIXES });
   const fn = 'symbol:front/src/api/system/user/index.ts#getUserPage';
+  const keyed = method ?? 'ANY';
   g.addNode({ id: fn, lane: 'web' });
-  g.addNode({ id: `endpoint:GET ${template}`, path: template, httpMethod: 'GET', outbound: true, source: 'web' });
-  g.addEdge({ from: fn, to: `endpoint:GET ${template}`, type: 'CALLS_HTTP', grade: 'UNRESOLVED', evidence: {
-    rule: 'web-http-call', sink: { kind: 'untraced' }, url: { written: '/system/user/page', template }, target: 'outside-pack',
+  g.addNode({ id: `endpoint:${keyed} ${template}`, path: template, httpMethod: keyed, outbound: true, source: 'web' });
+  g.addEdge({ from: fn, to: `endpoint:${keyed} ${template}`, type: 'CALLS_HTTP', grade: 'UNRESOLVED', evidence: {
+    rule: 'web-http-call', sink: { kind: 'untraced' }, url: { written: '/system/user/page', template }, method: { value: method }, target: 'outside-pack',
   } });
   return { g, stats };
 }
@@ -307,6 +347,16 @@ test('a frontend call that misses only for want of the declared prefix names the
   assert.deepEqual(prefixNotOnCallsNotes(settled.g, settled.stats), [], 'a call that already carries the prefix and still misses is not this');
   const g0 = new Graph();
   assert.deepEqual(prefixNotOnCallsNotes(g0, addJavaFacts(g0, ruoyiFacts())), [], 'no declaration, no note');
+});
+
+test('prefix_hint_requires_same_http_method: a call is counted only when the prefixed route serves its method', () => {
+  const post = graphWithAMissedCall('/system/user/page', 'POST');
+  assert.deepEqual(prefixNotOnCallsNotes(post.g, post.stats), [], 'POST /system/user/page, and only GET /admin-api/system/user/page is served: the prefix would not link it');
+  const unknown = graphWithAMissedCall('/system/user/page', null);
+  assert.equal(prefixNotOnCallsNotes(unknown.g, unknown.stats).length, 1, 'a call whose method was not read matches any, as the web lane matches it');
+  const any = graphWithAMissedCall('/system/any', 'POST');
+  any.g.addNode({ id: 'endpoint:ANY /admin-api/system/any', path: '/admin-api/system/any', httpMethod: 'ANY' });
+  assert.equal(prefixNotOnCallsNotes(any.g, any.stats).length, 1, 'a route declared for any method serves a POST');
 });
 
 test('the working-tree overlay puts the declared prefixes where the certified run put them', () => {

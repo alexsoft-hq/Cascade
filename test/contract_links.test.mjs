@@ -24,6 +24,11 @@ import { readOpenApiDocument, addOpenApiRoutes } from '../src/adapters/openapi_b
 import { walkEndpoints } from '../src/core/walks.mjs';
 import { flow, overview } from '../src/mcp/tools.mjs';
 import { loadPack } from '../src/core/pack.mjs';
+import { assembleGraph } from '../src/core/assemble.mjs';
+import { assembleJavaFacts } from '../src/core/facts_store.mjs';
+import { overlayGraph } from '../src/core/overlay.mjs';
+import { LANE_BRIDGES } from '../src/cli/lanes_run.mjs';
+import { overlayState, unreadInputLimits } from '../src/cli/overlay_provider.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
@@ -133,15 +138,56 @@ test('an operationId on two routes of two documents is said, and not settled by 
 });
 
 test('a method named like an operationId, on an interface that operation would not be generated into, is said and not linked', () => {
-  const facts = [imported('p.web.Billing', 'ext.BillingApi'), type('p.web.Billing', { implements: ['BillingApi'], declaredMethods: ['listOwners/0'] })];
+  const facts = [imported('p.web.Billing', 'ext.BillingApi'), type('p.web.Billing', { annotations: ['RestController'], implements: ['BillingApi'], declaredMethods: ['listOwners/0'] })];
   const { links, unlinked } = deriveContractLinks(facts, operationsOf([doc(OWNERS_DOC)]), rules());
   assert.deepEqual(links, []);
   assert.deepEqual(unlinked.map((u) => [u.reason, u.interface, u.names]), [['interface-name', 'ext.BillingApi', ['OwnersApi']]]);
   const both = [imported('p.web.Both', 'p.api.OwnersApi'), imported('p.web.Both', 'p.api.PetsApi'),
-    type('p.web.Both', { implements: ['OwnersApi', 'PetsApi'], declaredMethods: ['listOwners/0'] })];
+    type('p.web.Both', { annotations: ['RestController'], implements: ['OwnersApi', 'PetsApi'], declaredMethods: ['listOwners/0'] })];
   const r = deriveContractLinks(both, operationsOf([doc(OWNERS_DOC)]), rules());
   assert.equal(r.links.length, 1);
   assert.deepEqual(r.unlinked, [], 'a method one interface links is not also said to miss the other');
+});
+
+test('a class that implements a generated interface handles its routes only when it carries an annotation of a served class: a client does not', () => {
+  const ops = operationsOf([doc(OWNERS_DOC)]);
+  const client = (annotations) => [imported('p.client.OwnerClient', 'p.api.OwnersApi'),
+    type('p.client.OwnerClient', { annotations, implements: ['OwnersApi'], implementsArgs: [[]], declaredMethods: ['listOwners/1'] })];
+  assert.deepEqual(deriveContractLinks(client([]), ops, rules()), { links: [], unlinked: [] }, 'class OwnerClient implements OwnersApi is a client of the API, not its server');
+  assert.deepEqual(deriveContractLinks(client(['FeignClient']), ops, rules()), { links: [], unlinked: [] });
+  assert.deepEqual(deriveContractLinks(client(['Controller']), ops, rules()).links.map((l) => l.handler), ['p.client.OwnerClient#listOwners'], 'a @Controller is served');
+  const entry = builtinRegistry().rules.get(RULE).rule;
+  assert.deepEqual(entry.params.serverClass.annotations, ['RestController', 'Controller'], 'which annotations mark a served class is the pack\'s data');
+  assert.ok(entry.examples.some((ex) => /class OwnerClient implements OwnersApi/.test(ex.source) && ex.expect.length === 0), 'and the pack holds a client that is not linked');
+});
+
+test('a contract rule that does not say which classes are served is refused', () => {
+  const entry = builtinRegistry().rules.get(RULE).rule;
+  const refused = (params) => {
+    try { buildRegistry([{ where: 'c.json', pack: { pack: 'openapi-generator', version: 1, description: 'x', rules: [{ ...entry, params }] } }]); } catch (e) { if (e instanceof RuleError) return e.problems; throw e; }
+    return [];
+  };
+  const { serverClass, ...rest } = entry.params;
+  assert.ok(refused(rest).some((p) => /params\.serverClass must say/.test(p)), `serverClass was ${JSON.stringify(serverClass)}`);
+  assert.ok(refused({ ...rest, serverClass: { annotations: [] } }).some((p) => /params\.serverClass\.annotations/.test(p)));
+  assert.ok(refused({ ...rest, serverClass: { annotations: ['org.x.RestController'] } }).some((p) => /params\.serverClass\.annotations/.test(p)));
+});
+
+test('existing_exact_handles_does_not_become_contract_gap: a route the code already maps to that method is not counted as a contract link, and the overview does not call it a guess', () => {
+  const g = new Graph();
+  g.addNode({ id: 'endpoint:GET /owners', path: '/owners', httpMethod: 'GET' });
+  g.addNode({ id: 'symbol:p.web.OwnerController#listOwners', symbol: 'p.web.OwnerController#listOwners', owner: 'p.web.OwnerController', file: 'C.java' });
+  g.addEdge({ from: 'endpoint:GET /owners', to: 'symbol:p.web.OwnerController#listOwners', type: 'HANDLES', grade: 'EXACT' });
+  const stats = addOpenApiRoutes(g, [doc('openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n')], { java: {}, javaFacts: ownerFacts() });
+  assert.deepEqual(g.edges.filter((e) => e.type === 'HANDLES').map((e) => e.grade), ['EXACT'], 'one handler, the one the code maps');
+  assert.deepEqual(stats.contractLinks, {
+    links: 0, endpoints: [], byRule: { [RULE]: { links: 0, unlinked: 0, alreadyHandled: 1 } }, unlinked: [],
+    alreadyHandled: [{ endpoint: 'endpoint:GET /owners', handler: 'p.web.OwnerController#listOwners', rule: RULE }],
+  });
+  const ctx = { ...walkCtx(g), pack: { digest: 'd', laneStats: { openapi: stats } } };
+  for (const mode of ['conservative', 'heuristic']) {
+    assert.equal(overview(g, { mode }, ctx).answer.gaps.find((x) => x.kind === 'contract-links'), undefined, `mode=${mode}`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -159,13 +205,15 @@ test('the bridge draws a HEURISTIC HANDLES edge naming the rule, the operationId
   assert.deepEqual(edge.evidence.documents, ['src/main/resources/openapi.yml']);
   assert.equal(edge.evidence.interface, 'p.api.OwnersApi');
   assert.match(edge.evidence.basis, /generator's naming/);
+  assert.match(edge.evidence.basis, /not in the source tree/);
+  assert.doesNotMatch(edge.evidence.basis, /the build generates/, 'no generator configuration was read, so the evidence does not say one runs');
   const sym = g.nodes.get('symbol:p.web.OwnerController#listOwners');
   assert.equal(sym.file, 'src/main/java/p/web/OwnerController.java', 'written by the Java lane\'s own symbol writer');
   const node = g.nodes.get('endpoint:GET /petclinic/api/owners');
   assert.equal(node.source, 'openapi', 'the route stays the document\'s');
   assert.deepEqual(stats.contractLinks, {
     links: 2, endpoints: ['endpoint:DELETE /petclinic/api/owners/{ownerId}', 'endpoint:GET /petclinic/api/owners'],
-    byRule: { [RULE]: { links: 2, unlinked: 0 } }, unlinked: [],
+    byRule: { [RULE]: { links: 2, unlinked: 0, alreadyHandled: 0 } }, unlinked: [], alreadyHandled: [],
   });
   assert.equal(stats.onlyInDocument, 2, 'the drift census is the code\'s own mappings, and a guess does not move it');
 });
@@ -178,6 +226,46 @@ test('a project with no contract written this way gets the census it got before,
   assert.deepEqual(after, before);
   assert.equal('contractLinks' in after, false);
   assert.deepEqual(g.edges, plain.edges);
+});
+
+// ---------------------------------------------------------------------------
+// in the working-tree overlay
+// ---------------------------------------------------------------------------
+
+const handlesTo = (g, to) => g.edges.filter((e) => e.type === 'HANDLES' && e.to === to).map((e) => [e.from, e.grade, e.evidence?.rule ?? null]);
+
+test('contract_handles_survives_java_overlay: an edited controller keeps the link and the document\'s routes the certified run drew', () => {
+  const file = 'src/main/java/p/web/OwnerController.java';
+  const baseShards = new Map([[file, ownerFacts()]]);
+  const documents = [doc(OWNERS_DOC)];
+  const base = assembleGraph({ bridges: LANE_BRIDGES, javaFacts: assembleJavaFacts(baseShards), openapiDocuments: documents, java: {}, openapi: {} }).graph;
+  const want = [['endpoint:GET /petclinic/api/owners', 'HEURISTIC', RULE]];
+  assert.deepEqual(handlesTo(base, 'symbol:p.web.OwnerController#listOwners'), want, 'the certified run links it');
+  const edited = ownerFacts().map((r) => (r.kind === 'type' ? { ...r, declaredMethodLines: [21, 31, 41] } : r));
+  const r = overlayGraph({
+    bridges: LANE_BRIDGES, baseShards, dirtyFacts: new Map([[file, edited]]), dirtyFiles: [file],
+    baseGraph: base, overlaySessionId: 'c'.repeat(64), openapiDocuments: documents,
+  });
+  assert.deepEqual(handlesTo(r.graph, 'symbol:p.web.OwnerController#listOwners'), want, 'the overlay links it the same way');
+  assert.ok(r.graph.nodes.has('endpoint:DELETE /petclinic/api/owners/{ownerId}'), 'and a route only the document declares is still a route');
+  assert.deepEqual(r.provisional.endpoints, [], 'nothing the base graph had comes back as new');
+  assert.deepEqual([...r.graph.nodes.keys()].sort(), [...base.nodes.keys()].sort(), 'no node dropped, none invented');
+});
+
+test('what the overlay cannot read again, it says as a limit: the table id generators a Spring XML declares', () => {
+  assert.deepEqual(unreadInputLimits({ meta: { laneStats: { idGenerators: { declared: 0, bound: 0 } } } }), []);
+  assert.deepEqual(unreadInputLimits({ meta: {} }), []);
+  const [said] = unreadInputLimits({ meta: { laneStats: { idGenerators: { declared: 2, sites: 5, bound: 4 } } } });
+  assert.equal(said.scope, 'overlay');
+  assert.match(said.reason, /^the base pack bound 4 call\(s\) to the 2 table id generator bean\(s\) its Spring XML declares/);
+  assert.match(said.reason, /unknown rather than absent/);
+  assert.doesNotMatch(said.reason, /[—·]/);
+  const state = overlayState({
+    lanes: { baseShards: new Map(), dirtyFacts: new Map(), dropFiles: [], webBaseShards: new Map(), webDirtyFacts: new Map(), webDropFiles: [], webConfigRecords: [], catalogRecords: [], lineageRecords: [], timingsMs: { loadBase: 0, java: 0, web: 0, sql: 0 } },
+    dirty: { webConfig: [], other: [] }, dirtyFiles: [], session: { overlaySessionId: 'd'.repeat(64) }, baseGraph: new Graph(),
+    profile: {}, selection: {}, sqlArgs: { identifierCase: 'exact' }, webRootsAbs: [], templateRootsAbs: [], limits: [said],
+  });
+  assert.deepEqual(state.limits, [said], 'and the overlay\'s answer carries it');
 });
 
 // ---------------------------------------------------------------------------
@@ -212,20 +300,81 @@ test('a conservative census does not reach through a guessed link, and a heurist
   assert.equal(walkEndpoints(g, { mode: 'conservative' }).walk.byMode, 1, 'the floor that stopped it is counted');
 });
 
-test('a picture of a route with a guessed handler starts at the route and says why', () => {
+const walkCtx = (g) => ({ graph: g, basis: { project: 't', buildDigest: 'd', builtAt: 'x', freshness: { verdict: 'unknown' } }, trust: { trustLevel: 'UNCERTIFIED' }, limits: [] });
+
+test('a picture of a route with a guessed handler starts at the handler, grades every row by the link, and says why', () => {
   const g = guessedGraph();
-  const ctx = { graph: g, basis: { project: 't', buildDigest: 'd', builtAt: 'x', freshness: { verdict: 'unknown' } }, trust: { trustLevel: 'UNCERTIFIED' }, limits: [] };
+  const ctx = walkCtx(g);
   const low = flow(g, { endpoint: 'GET /owners' }, ctx).answer;
   assert.equal(low.entry.start, 'endpoint:GET /owners');
   assert.equal(low.entry.handler, null, 'no handler the mode admits');
   assert.deepEqual(low.statements, []);
   assert.ok(JSON.stringify(flow(g, { endpoint: 'GET /owners' }, ctx).limits).includes('below the floor of mode=conservative'));
-  const high = flow(g, { endpoint: 'GET /owners', mode: 'heuristic' }, ctx).answer;
-  assert.equal(high.entry.start, 'endpoint:GET /owners', 'started at the route, so the link is on every path');
+  const r = flow(g, { endpoint: 'GET /owners', mode: 'heuristic' }, ctx);
+  const high = r.answer;
+  assert.equal(high.entry.start, 'symbol:p.C#list', 'the census starts at the handler, and so does the picture');
   assert.equal(high.entry.handler, 'p.C#list');
-  assert.deepEqual(high.statements.map((s) => [s.id, s.grade]), [['p.M.all', 'HEURISTIC']]);
+  assert.deepEqual(high.entry.link, { type: 'HANDLES', grade: 'HEURISTIC', rule: RULE });
+  assert.deepEqual(high.statements.map((s) => [s.id, s.grade, s.hops]), [['p.M.all', 'HEURISTIC', 2]], 'graded by the link, hops counted from the handler');
+  assert.match(high.walk.note, /linked to it only by a rule's guess \(HEURISTIC by openapi-generator\.spring-interface\), so every row below is graded by that link/);
   const plain = flow(g, { endpoint: 'GET /plain' }, ctx).answer;
   assert.equal(plain.entry.start, 'symbol:p.C#plain', 'a route its code declares still starts at its handler');
+  assert.deepEqual(plain.entry.link, { type: 'HANDLES', grade: 'EXACT', rule: null });
+});
+
+/** A route, its handler through `link`, a chain of `calls` EXACT calls, and a statement at the end of it. */
+function chainGraph(link, calls) {
+  const g = new Graph();
+  g.addNode({ id: 'endpoint:GET /deep', path: '/deep', httpMethod: 'GET' });
+  g.addNode({ id: 'table:t', kind: 'table' });
+  const syms = Array.from({ length: calls + 1 }, (_, i) => `symbol:p.S${i}#run`);
+  for (const id of syms) g.addNode({ id, symbol: id.slice(7), owner: id.slice(7, id.indexOf('#')), file: 'S.java' });
+  g.addNode({ id: 'statement:p.M.find', statementType: 'select' });
+  g.addEdge({ from: 'endpoint:GET /deep', to: syms[0], type: 'HANDLES', grade: link, evidence: link === 'EXACT' ? {} : { rule: RULE } });
+  for (let i = 0; i < calls; i++) g.addEdge({ from: syms[i], to: syms[i + 1], type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: syms[calls], to: 'statement:p.M.find', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+  g.addEdge({ from: 'statement:p.M.find', to: 'table:t', type: 'EXECUTES', grade: 'EXACT', evidence: { access: 'read' } });
+  return g;
+}
+
+test('heuristic_handles_depth_boundary_matches_endpoint_census: at one depth, the census and the picture agree on what a guessed handler reaches', () => {
+  // A HEURISTIC HANDLES, five CALLS, then IMPLEMENTS_STMT: the statement is six hops below the handler.
+  const g = chainGraph('HEURISTIC', 5);
+  const ctx = walkCtx(g);
+  for (const depth of [5, 6, 7]) {
+    const census = walkEndpoints(g, { mode: 'heuristic', depth }).endpoints[0].statements;
+    const picture = flow(g, { endpoint: 'GET /deep', mode: 'heuristic', depth }, ctx).answer.statements;
+    assert.deepEqual(picture.map((s) => [`statement:${s.id}`, s.grade]), census.map((s) => [s.id, s.grade]), `depth ${depth}`);
+  }
+  assert.equal(walkEndpoints(g, { mode: 'heuristic', depth: 6 }).endpoints[0].statements.length, 1, 'reached at depth 6, counted from the handler');
+});
+
+test('sound_set_handles_caps_flow_grade: a candidate-set link to the handler caps every row and table of the picture', () => {
+  const g = chainGraph('SOUND_SET', 2);
+  const ctx = walkCtx(g);
+  const census = walkEndpoints(g, { mode: 'conservative', depth: 6 }).endpoints[0].statements;
+  assert.deepEqual(census, [{ id: 'statement:p.M.find', grade: 'SOUND_SET' }]);
+  const a = flow(g, { endpoint: 'GET /deep', mode: 'conservative' }, ctx).answer;
+  assert.equal(a.entry.start, 'symbol:p.S0#run');
+  assert.deepEqual(a.statements.map((s) => s.grade), ['SOUND_SET'], 'not EXACT: the route reaches its handler only through a candidate set');
+  assert.deepEqual(a.services.map((s) => [s.id, s.grade]), [['p.S1#run', 'SOUND_SET']]);
+  assert.deepEqual(a.tables.map((t) => [t.table, t.grade]), [['t', 'SOUND_SET']]);
+  assert.deepEqual(a.entry.link, { type: 'HANDLES', grade: 'SOUND_SET', rule: RULE });
+  assert.match(a.walk.note, /linked to it by a candidate set \(SOUND_SET by openapi-generator\.spring-interface\), so no row below is graded above SOUND_SET/);
+  const exact = flow(chainGraph('EXACT', 2), { endpoint: 'GET /deep' }, walkCtx(chainGraph('EXACT', 2))).answer;
+  assert.deepEqual(exact.statements.map((s) => s.grade), ['EXACT'], 'a declared handler caps nothing');
+  assert.equal(exact.walk.note, null);
+});
+
+test('walking up, a route whose link to its handler is below the floor is not an endpoint of the answer, and the floor is counted', () => {
+  const g = guessedGraph();
+  const ctx = walkCtx(g);
+  const low = flow(g, { statement: 'p.M.all', direction: 'up' }, ctx).answer;
+  assert.deepEqual(low.endpoints.map((e) => [e.id, e.grade]), [['GET /plain', 'SOUND_SET']], 'the guessed route is not a conservative answer');
+  assert.ok(low.walk.cut.byMode >= 1);
+  assert.equal(low.walk.cut.byModeGrades.HEURISTIC, 1, 'counted once, by the grade that kept it out');
+  const high = flow(g, { statement: 'p.M.all', direction: 'up', mode: 'heuristic' }, ctx).answer;
+  assert.deepEqual(high.endpoints.map((e) => [e.id, e.grade]), [['GET /plain', 'SOUND_SET'], ['GET /owners', 'HEURISTIC']]);
 });
 
 // ---------------------------------------------------------------------------
@@ -258,7 +407,7 @@ test('cascade analyze links a contract-first controller, and the census, the gap
   const run = cli(['analyze', '--root', repo, '--project', 'contract', '--ddl', path.join(repo, 'db', 'schema.sql'),
     '--java-src', path.join(repo, 'src', 'main', 'java'), '--mappers', path.join(res, 'mapper'), '--openapi', path.join(res, 'openapi.yml')]);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stderr, /OpenAPI lane: 1 declared route\(s\) given a handler through an interface the build generates \(openapi-generator\.spring-interface 1\), graded HEURISTIC/);
+  assert.match(run.stderr, /OpenAPI lane: 1 declared route\(s\) given a handler through an interface named for the operation and not in the source tree \(openapi-generator\.spring-interface 1\), graded HEURISTIC/);
   assert.doesNotMatch(run.stderr, /OPENAPI_NOT_SERVED GET \/petclinic\/api\/owners:/, 'a route a rule gave a handler is not said to have none');
   const pack = JSON.parse(fs.readFileSync(path.join(repo, '.cascade', 'pack', 'pack.json'), 'utf8'));
   assert.equal(pack.meta.laneStats.openapi.contractLinks.links, 1);

@@ -66,11 +66,43 @@ function runBridge(bridges, fn, lane, graph, facts, opts, also = null) {
 
 /**
  * The code lane's options, with the documents when the OpenAPI lane runs too;
- * null runs no code lane. A caller that runs no OpenAPI bridge may still hand
- * the code lane documents in its own options (the working-tree overlay does).
+ * null runs no code lane.
  */
 function javaOptions(java, openapi, openapiDocuments) {
   return java && (openapi ? { ...java, openapiDocuments } : java);
+}
+
+/**
+ * THE CODE LANE'S OPTIONS, from the profile, for `analyze` and the working-tree
+ * overlay alike. Two callers that each wrote this list drifted apart: the
+ * overlay was handed the documents without the OpenAPI bridge that reads them,
+ * and lost every route a document declares and every contract link on one. What
+ * a caller cannot have is passed empty here and said by that caller (the
+ * overlay does not re-read the Spring XML id generators: src/cli/overlay_provider.mjs).
+ *
+ * @param {object|null} profile  the normalized profile
+ * @param {{packagePrefixes?:string[], idGenerators?:object[]}} [inputs]
+ *        what the run read beyond the profile: the package prefixes it analyzed
+ *        under (the profile's by default) and the id generators discovery found
+ */
+export function javaLaneOptions(profile, { packagePrefixes, idGenerators = [] } = {}) {
+  const p = profile ?? {};
+  return {
+    packagePrefixes: packagePrefixes ?? p.packagePrefixes ?? [],
+    generatedSources: p.generatedSources ?? { annotations: [], pathGlobs: [] },
+    // One declaration for the web bridge and the Java one: a Java service that
+    // calls another through a declared gateway prefix has nowhere else to say so.
+    gatewayRoutes: p.gatewayRoutes ?? {},
+    // The path prefixes configuration code puts before a controller's routes.
+    pathPrefixes: p.pathPrefixes ?? [],
+    // The table id generators the Spring XMLs declare (RM62).
+    idGenerators,
+  };
+}
+
+/** The OpenAPI bridge's options: it runs when a document was read, for `analyze` and the overlay alike. */
+export function openapiLaneOptions(documents) {
+  return Array.isArray(documents) && documents.length > 0 ? {} : null;
 }
 
 /**

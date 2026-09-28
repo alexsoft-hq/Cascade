@@ -9,6 +9,7 @@
 // declaration that would settle it.
 
 import { prefixedPath } from '../../../adapters/java/path_prefixes.mjs';
+import { routeServesMethod } from '../../../adapters/web/calls.mjs';
 
 /** A declared entry that was put before no route. */
 export function unusedPrefixNotes(jstats) {
@@ -24,20 +25,43 @@ export function unusedPrefixNotes(jstats) {
   });
 }
 
+/** Every route this pack serves, by path, with the methods it is declared for. */
+function servedByPath(graph) {
+  const served = new Map();
+  for (const n of graph.nodes.values()) {
+    if (n.kind !== 'endpoint' || n.outbound) continue;
+    if (!served.has(n.path)) served.set(n.path, []);
+    served.get(n.path).push(n.httpMethod ?? 'ANY');
+  }
+  return served;
+}
+
+/**
+ * The missed calls a prefix would make name a served route: same path once the
+ * prefix is before it, and a method that route serves. A missed call's method is
+ * the one the web lane keyed the route it missed by (ANY when it read none).
+ */
+function callsNamedWith(graph, missed) {
+  const served = servedByPath(graph);
+  const names = (prefix, e) => (served.get(prefixedPath(prefix, e.evidence.url.template)) ?? [])
+    .some((m) => routeServesMethod(m, graph.nodes.get(e.to)?.httpMethod ?? null));
+  return (prefix) => missed.filter((e) => names(prefix, e));
+}
+
 /**
  * A FRONTEND THAT DOES NOT WRITE THE DECLARED PREFIX. Once `/admin-api` is put
  * before a route, a frontend call written as `/system/user/page` names it only
  * when the web lane knows the frontend's base URL carries the prefix. Counted
  * from the web calls that missed: how many name a served route once a declared
- * prefix is put before them. Exact paths only, so the count is a floor.
+ * prefix is put before them, with the method the route serves (the rule the web
+ * lane matches a call by: src/adapters/web/calls.mjs, routeServesMethod). Exact
+ * paths only, so the count is a floor.
  */
 export function prefixNotOnCallsNotes(graph, jstats) {
   const declared = (jstats?.pathPrefixes ?? []).filter((p) => p.routes > 0).map((p) => p.prefix);
   if (declared.length === 0) return [];
-  const served = new Set();
-  for (const n of graph.nodes.values()) if (n.kind === 'endpoint' && !n.outbound) served.add(n.path);
   const missed = missedCallEdges(graph);
-  const hits = (prefix) => missed.filter((e) => served.has(prefixedPath(prefix, e.evidence.url.template)));
+  const hits = callsNamedWith(graph, missed);
   const best = declared.map((prefix) => ({ prefix, count: hits(prefix).length }))
     .sort((a, b) => b.count - a.count || (a.prefix < b.prefix ? -1 : 1))[0];
   if (!best || best.count === 0) return [];

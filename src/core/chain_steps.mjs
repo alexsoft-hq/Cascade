@@ -122,8 +122,22 @@ export function readWalkOptions(graph, opts = {}) {
   const isGenerated = (id) => graph.nodes.get(id)?.generated === true;
   return {
     start, direction, up, mode, maxDepth, maxNodes, follow, crossesHttp, isHttpHop,
-    allow, adjOf, stepTo, prevNodeOf, walkGenerated, isGenerated,
+    allow, adjOf, stepTo, prevNodeOf, walkGenerated, isGenerated, entryGrade: entryGradeOf(opts),
   };
+}
+
+/**
+ * THE LINK THAT BROUGHT THE WALK TO ITS START, when there was one. A picture of
+ * a route starts at the route's handler, and the route's HANDLES edge to it is
+ * the first link of every path from there: a handler only a rule guessed caps
+ * everything below it at HEURISTIC, as the whole-pack census caps it
+ * (src/core/walks.mjs). It caps grades and adds no hop, so depth still counts
+ * from the start. EXACT, the default, caps nothing.
+ */
+function entryGradeOf(opts) {
+  const g = opts.entryGrade ?? 'EXACT';
+  if (!Object.hasOwn(RANK, g)) throw new ChainError(`unknown entryGrade: ${JSON.stringify(g)}`);
+  return g;
 }
 
 
@@ -136,7 +150,7 @@ export function readWalkOptions(graph, opts = {}) {
 export function runBfs(graph, w) {
   const {
     start, maxDepth, maxNodes, follow, crossesHttp, isHttpHop, allow,
-    adjOf, stepTo, walkGenerated, isGenerated, up,
+    adjOf, stepTo, walkGenerated, isGenerated, up, entryGrade,
   } = w;
   // `byModeGrades` splits `byMode` by the grade that kept each edge out, because
   // a wider mode walks a HEURISTIC edge and no mode walks an UNRESOLVED one.
@@ -149,7 +163,7 @@ export function runBfs(graph, w) {
   // ancestor's CURRENT record it would report a path that was never walked —
   // longer than its own hops, and graded better than any path within the cap.
   // Following `parent` keeps hops === path.length and grade === weakest(path).
-  const root = { hops: 0, pathGrade: 'EXACT', via: null, parent: null, generated: isGenerated(start), http: 0 };
+  const root = { hops: 0, pathGrade: entryGrade, via: null, parent: null, generated: isGenerated(start), http: 0 };
   const queue = [{ id: start, rec: root }];
   while (queue.length) {
     const cur = queue.shift();
@@ -339,7 +353,10 @@ export function makePathReader(graph, w, best) {
     while (li > 0 && prevNodeOf(path[li]) !== start && isFolded(prevNodeOf(path[li]))) li -= 1;
     return runLink(path.slice(li));
   };
-  return { pathTo, linkFromRun: runLink, linkOf, drawLink, isMapperMethod, isHandlerSymbol };
+  // A row's grade: the weakest link on its path, and never above the link that
+  // brought the walk to its start (entryGradeOf).
+  const gradeOf = (path) => weaker(weakestOf(path), w.entryGrade);
+  return { pathTo, linkFromRun: runLink, linkOf, drawLink, isMapperMethod, isHandlerSymbol, gradeOf };
 }
 
 
@@ -398,7 +415,7 @@ export function makeNodeFacts(graph, w, best) {
  * rather than dropped.
  */
 function screenRow(h, id, n, rec) {
-  const { pathTo, drawLink } = h;
+  const { pathTo, drawLink, gradeOf } = h;
   const path = pathTo(id);
   return {
     id: strip(id),
@@ -408,7 +425,7 @@ function screenRow(h, id, n, rec) {
     group: n.group ?? null,
     component: n.component ?? null,
     hops: rec.hops,
-    grade: weakestOf(path),
+    grade: gradeOf(path),
     // A recording says the browser really was here. It is a MARKER beside
     // the grade, never a grade: nothing about it was walked.
     ...(n.observed === true ? { observed: true } : {}),
@@ -425,9 +442,9 @@ function screenRow(h, id, n, rec) {
  */
 function symbolRow(w, h, id, n, rec) {
   const { up } = w;
-  const { pathTo, drawLink, isHandlerSymbol, httpMark, webLanes } = h;
+  const { pathTo, drawLink, isHandlerSymbol, httpMark, webLanes, gradeOf } = h;
   const path = pathTo(id);
-  const grade = weakestOf(path);
+  const grade = gradeOf(path);
   const row = {
     id: strip(id),
     short: nodeLabel(n, id),
@@ -464,9 +481,9 @@ function symbolRow(w, h, id, n, rec) {
 /** A STATEMENT ROW, with the mapper it belongs to read from whichever side the walk came. */
 function statementRow(graph, w, h, id, n, rec) {
   const { up } = w;
-  const { pathTo, drawLink, mapperAbove, httpMark } = h;
+  const { pathTo, drawLink, mapperAbove, httpMark, gradeOf } = h;
   const path = pathTo(id);
-  const grade = weakestOf(path);
+  const grade = gradeOf(path);
   const last = path.length ? path[path.length - 1] : null;
   const above = up ? mapperAbove(id) : null;
   const mapper = up
@@ -510,7 +527,7 @@ function statementRow(graph, w, h, id, n, rec) {
  * reason the handler above it is one.
  */
 function endpointRow(graph, h, id, n, rec) {
-  const { pathTo, drawLink } = h;
+  const { pathTo, drawLink, gradeOf } = h;
   const path = pathTo(id);
   const frontend = frontendCallsOf(graph, id);
   return {
@@ -519,7 +536,7 @@ function endpointRow(graph, h, id, n, rec) {
     path: n.path ?? null,
     handler: n.handler ?? null,
     hops: rec.hops,
-    grade: weakestOf(path),
+    grade: gradeOf(path),
     file: n.file ?? null,
     line: n.line ?? null,
     ...(n.observed === true ? { observed: true } : {}),
@@ -571,7 +588,7 @@ export function collectRows(graph, w, h) {
   // endpoints reach this?". They sit at hop 1, graded EXACT because nothing on
   // the (empty) path weakened the definitional HANDLES edge.
   if (up && kindOf(start) === 'symbol' && isHandlerSymbol(start)) {
-    handlers.push({ id: start, hops: 0, grade: 'EXACT', http: 0 });
+    handlers.push({ id: start, hops: 0, grade: w.entryGrade, http: 0 });
   }
   return { services, webFunctions, screens, walkedEndpoints, handlers, reachedStatements, statements };
 }
@@ -671,6 +688,10 @@ export function buildDerivedEndpoints(graph, w, h, handlers) {
     for (const handler of handlers) {
       for (const e of graph.inEdges(handler.id)) {
         if (e.type !== 'HANDLES') continue;
+        // A route linked to its handler below this mode's floor is not an
+        // answer of this mode, and the floor that kept it out is counted, once:
+        // the BFS already counted the link off a route that is an HTTP hop.
+        if (!w.allow.has(e.grade)) { countDerivedFloor(w, h.cut, e, handler); continue; }
         const n = graph.nodes.get(e.from) ?? {};
         // The HANDLES edge is part of this row's evidence, so its grade is part
         // of the row's grade. It used to be assumed EXACT — true while every
@@ -724,6 +745,13 @@ export function buildDerivedEndpoints(graph, w, h, handlers) {
   return { epAgg, derivedEndpoints };
 }
 
+
+/** Count a route's HANDLES link the floor kept out of the derived endpoints lane, unless the BFS stepped past it already. */
+function countDerivedFloor(w, cut, e, handler) {
+  if (w.crossesHttp && w.isHttpHop(e.from) && handler.hops < w.maxDepth) return;
+  cut.byMode += 1;
+  cut.byModeGrades[e.grade] = (cut.byModeGrades[e.grade] ?? 0) + 1;
+}
 
 /** Every lane in the order the page reads it, so two answers never differ by sort. */
 export function sortLanes({ services, webFunctions, screens, statements, tables, endpoints }) {

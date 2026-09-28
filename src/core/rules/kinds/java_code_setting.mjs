@@ -2,13 +2,22 @@
 //
 // Some of what decides a project's routes is set by configuration code, not
 // declared: `RequestMappingHandlerMapping.setPathPrefixes(...)` puts a prefix
-// before the routes of the controllers a lambda picks, with the prefix read
-// from a property. No reading of the source can say what that sets, so the
-// profile has a key for it, and the one thing the engine CAN do is notice the
-// call and say which key to fill in. This kind knows HOW such a call is found:
-// by the method names each file invokes, as the Java worker records them
-// (`invocations`). The rule packs say WHICH names set WHICH profile key
-// (src/core/rules/packs/).
+// before the routes of the controllers a lambda picks, with the prefix often
+// read from a property. This engine does not read what such a call sets (a
+// constant prefix is readable in principle; this engine reads neither it nor
+// the predicate), so the profile has a key for it, and the one thing the engine
+// does is notice the call and say which key to fill in. This kind knows HOW such
+// a call is found: by the method names each file invokes, as the Java worker
+// records them (`invocations`). The rule packs say WHICH names set WHICH profile
+// key (src/core/rules/packs/).
+//
+// A NAME IS NOT A RECEIVER. The worker records the names a file calls, not what
+// it calls them on, so `addPathPrefix("/backup")` on a class's own method reads
+// the same as the Spring one. A rule therefore names, in full, the types that
+// declare each method (`types`), and a call is read as the setting only in a
+// file that can name one of them without spelling it out: it imports that type,
+// or its package whole, or sits in that package. A call written on a type spelled
+// in full in the code is missed, never guessed.
 //
 // It draws no edge and grades nothing. What it finds becomes a diagnostic when
 // the profile leaves the key undeclared (src/core/code_settings.mjs); a
@@ -22,16 +31,24 @@ const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.in
 const isText = (v) => typeof v === 'string' && v.trim() !== '';
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+/** The type that declares a call's method: its simple name `on`, and in `types` each full name it has (`<package>.<on>`), once. */
+function declaringTypeErrors(c, i) {
+  if (typeof c.on !== 'string' || !JAVA_NAME.test(c.on)) return [`params.calls[${i}].on must be the simple name of the type that declares the method`];
+  const ok = Array.isArray(c.types) && c.types.length > 0 && new Set(c.types).size === c.types.length
+    && c.types.every((t) => typeof t === 'string' && JAVA_TYPE.test(t) && t.endsWith(`.${c.on}`));
+  return ok ? [] : [`params.calls[${i}].types must list, once each, the full name of every type that declares the method, each ending in .${c.on}`];
+}
+
 function callErrors(calls) {
-  if (!Array.isArray(calls) || calls.length === 0) return ['params.calls must be a non-empty list of {on, method}'];
+  if (!Array.isArray(calls) || calls.length === 0) return ['params.calls must be a non-empty list of {on, method, types}'];
   const seen = new Set();
   return calls.flatMap((c, i) => {
-    if (!isObj(c)) return [`params.calls[${i}] must be an object {on, method}`];
-    const errors = unknownKeys(c, ['on', 'method', 'why']).map((k) => `params.calls[${i}] has an unknown key "${k}"`);
+    if (!isObj(c)) return [`params.calls[${i}] must be an object {on, method, types}`];
+    const errors = unknownKeys(c, ['on', 'method', 'types', 'why']).map((k) => `params.calls[${i}] has an unknown key "${k}"`);
     if (typeof c.method !== 'string' || !JAVA_NAME.test(c.method)) errors.push(`params.calls[${i}].method must be a Java method name`);
     else if (seen.has(c.method)) errors.push(`params.calls[${i}].method "${c.method}" is listed twice`);
     else seen.add(c.method);
-    if (typeof c.on !== 'string' || !JAVA_TYPE.test(c.on)) errors.push(`params.calls[${i}].on must name the type that declares the method`);
+    errors.push(...declaringTypeErrors(c, i));
     if (c.why !== undefined && !isText(c.why)) errors.push(`params.calls[${i}].why must be text`);
     return errors;
   });
@@ -64,34 +81,67 @@ function validateExample(example) {
 
 /** The rule, ready to read `invocations` records. */
 function compile(rule) {
-  const on = new Map(rule.params.calls.map((c) => [c.method, c.on]));
-  return { rule: rule.id, setting: rule.params.setting, effect: rule.params.effect, on };
+  const calls = new Map(rule.params.calls.map((c) => [c.method, { on: c.on, types: c.types }]));
+  return { rule: rule.id, setting: rule.params.setting, effect: rule.params.effect, calls };
 }
 
-/** What one `invocations` record holds that one compiled rule names. */
-function foundIn(record, compiled) {
+const NOTHING_VISIBLE = Object.freeze({ types: new Set(), packages: new Set() });
+const packageOf = (fqn) => fqn.slice(0, fqn.lastIndexOf('.'));
+
+/**
+ * What each file can name without spelling it out, from the worker's records:
+ * the types it imports one by one, and the packages it imports whole or sits in.
+ */
+function visibleByFile(javaFacts) {
+  const byFile = new Map();
+  const at = (file) => {
+    if (!byFile.has(file)) byFile.set(file, { types: new Set(), packages: new Set() });
+    return byFile.get(file);
+  };
+  for (const r of javaFacts) {
+    if (!r || typeof r.file !== 'string') continue;
+    if (r.kind === 'import' && typeof r.fqn === 'string') (r.simple === '*' ? at(r.file).packages : at(r.file).types).add(r.fqn);
+    else if (r.kind === 'type' && typeof r.package === 'string') at(r.file).packages.add(r.package);
+  }
+  return byFile;
+}
+
+/** Whether a file can name one of the types that declare the method. */
+const receiverShown = (call, visible) => call.types.some((t) => visible.types.has(t) || visible.packages.has(packageOf(t)));
+
+/** What one `invocations` record holds that one compiled rule names, on a type its file can name. */
+function foundIn(record, compiled, visible) {
   const names = Array.isArray(record.names) ? record.names : [];
   const lines = Array.isArray(record.lines) ? record.lines : [];
-  return names.flatMap((method, i) => (compiled.on.has(method) ? [{
-    rule: compiled.rule, setting: compiled.setting, effect: compiled.effect,
-    method, on: compiled.on.get(method), file: record.file ?? null, line: Number.isInteger(lines[i]) ? lines[i] : null,
-  }] : []));
+  return names.flatMap((method, i) => {
+    const call = compiled.calls.get(method);
+    if (!call || !receiverShown(call, visible)) return [];
+    return [{
+      rule: compiled.rule, setting: compiled.setting, effect: compiled.effect,
+      method, on: call.on, file: record.file ?? null, line: Number.isInteger(lines[i]) ? lines[i] : null,
+    }];
+  });
 }
 
 const byPlace = (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0)
   || String(a.file).localeCompare(String(b.file)) || (a.line ?? 0) - (b.line ?? 0) || a.method.localeCompare(b.method);
 
 /**
- * Every call the rules name, in the Java worker's records: which rule, which
- * setting, the method and the type that declares it, and where.
+ * Every call the rules name, in the Java worker's records, made in a file that
+ * can name a type that declares it: which rule, which setting, the method and
+ * that type, and where. A call of the same name in a file that cannot name any
+ * of them is some other method, and is not here.
  *
  * @param {object[]} javaFacts  the assembled worker records
  * @param {{compiled:object}[]} rules  the `java.code-setting` rules
  * @returns {{rule:string, setting:string, effect:string, method:string, on:string, file:(string|null), line:(number|null)}[]}
  */
 export function codeSettingsIn(javaFacts, rules) {
-  const records = (Array.isArray(javaFacts) ? javaFacts : []).filter((r) => r && r.kind === 'invocations');
-  return rules.flatMap((entry) => records.flatMap((r) => foundIn(r, entry.compiled))).sort(byPlace);
+  const facts = Array.isArray(javaFacts) ? javaFacts : [];
+  const records = facts.filter((r) => r && r.kind === 'invocations');
+  const visible = visibleByFile(facts);
+  const seen = (r) => visible.get(r.file) ?? NOTHING_VISIBLE;
+  return rules.flatMap((entry) => records.flatMap((r) => foundIn(r, entry.compiled, seen(r)))).sort(byPlace);
 }
 
 const canonical = (list) => JSON.stringify(list.map((e) => `${e.method}:${e.line}`).sort());

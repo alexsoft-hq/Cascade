@@ -6,11 +6,15 @@
     {
       "id": "openapi-generator.spring-interface",
       "kind": "java.contract-link",
-      "description": "A concrete class whose own implements clause names an interface the project does not declare, whose name ends in Api and is the name openapi-generator gives an operation's group (from one of its tags, or from the first segment of its path), handles that operation's route in a document this run reads with the method whose name is the operation's operationId. The generated interface is not read, so the link rests on the generator's naming and is HEURISTIC. An operationId the interface's name fits on two different routes is said and not linked; a method named like an operationId whose operation gives the interface another name is said too. An operationId the generator rewrites into another method name (one with a hyphen, one that is a Java keyword) is not matched: that link is missing, not guessed.",
+      "description": "A concrete class the framework serves (it carries @RestController or @Controller itself), whose own implements clause names an interface the project does not declare, whose name ends in Api and is the name openapi-generator gives an operation's group (from one of its tags, or from the first segment of its path), handles that operation's route in a document this run reads with the method whose name is the operation's operationId. That interface is not in the source tree and no generator configuration is read, so the link rests on the generator's naming and is HEURISTIC. A class that implements the interface and is not served (a client of the API) is not a handler; a controller that gets its annotation only from a superclass or a meta-annotation is not linked either: that link is missing, not guessed. An operationId the interface's name fits on two different routes is said and not linked; a method named like an operationId whose operation gives the interface another name is said too. An operationId the generator rewrites into another method name (one with a hyphen, one that is a Java keyword) is not matched: that link is missing, not guessed.",
       "why": "spring-petclinic-rest builds its API from src/main/resources/openapi.yml with openapi-generator (generator spring, interfaceOnly, useTags). Its controllers implement OwnersApi, PetsApi and the rest, which only the build writes, so the Java lane read controllers with no mapping and none of the 37 routes the document declares reached SQL.",
       "grade": "HEURISTIC",
       "params": {
         "interfaceName": { "from": ["tag", "path"], "suffix": "Api" },
+        "serverClass": {
+          "annotations": ["RestController", "Controller"],
+          "why": "Spring MVC serves the routes of a bean that carries @Controller (@RestController is one); with interfaceOnly the project writes that class and annotates it. A class that implements the same interface for another reason, such as a client that calls the API, serves nothing."
+        },
         "generator": {
           "name": "openapi-generator, generator spring with interfaceOnly",
           "declares": "One Java interface per group of operations, named by the group and apiNameSuffix (Api unless configured). The group is each of the operation's tags when useTags is true (an operation with no tag is in the tag default), else the first segment of its path (useTags defaults to false). Each operation is a method of that interface named by its operationId and carrying the operation's @RequestMapping; with interfaceOnly the project writes the class that implements it.",
@@ -36,6 +40,14 @@
           },
           "expect": [{ "handler": "com.example.rest.PetController#getPet", "endpoint": "GET /pets/{petId}" }],
           "why": "the generator's default names the interface from the path's first segment; an interface imported with its whole package is outside the tree all the same"
+        },
+        {
+          "source": "package com.example.client;\nimport com.example.api.OwnersApi;\npublic class OwnerClient implements OwnersApi {\n  public Object listOwners() { return null; }\n}\n@Component\nclass CachedOwnerClient implements OwnersApi {\n  public Object listOwners() { return null; }\n}\n",
+          "documents": {
+            "api/openapi.yaml": "openapi: 3.0.0\npaths:\n  /owners:\n    get:\n      tags: [owners]\n      operationId: listOwners\n"
+          },
+          "expect": [],
+          "why": "a class that implements the generated interface without being served (a client of the API, a bean that is not a controller) handles no route"
         },
         {
           "source": "package com.example.rest;\n@RestController\npublic class OwnerController {\n  public Object listOwners() { return null; }\n}\n",

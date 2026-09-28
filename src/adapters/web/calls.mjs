@@ -91,6 +91,21 @@ export function namesARoute(template) {
 }
 
 /**
+ * Whether a route serves a call's method: a call whose method was not read
+ * (null, or keyed ANY) may be any of them, and a route declared for no method
+ * (ANY) serves every one. The one rule a frontend call is matched by, here and
+ * wherever a note asks the same question (src/cli/commands/analyze/prefix_notes.mjs).
+ *
+ * @param {string|null|undefined} routeMethod  the endpoint node's httpMethod
+ * @param {string|null|undefined} callMethod   the call's method, null when unread
+ * @returns {boolean}
+ */
+export function routeServesMethod(routeMethod, callMethod) {
+  const route = routeMethod ?? 'ANY';
+  return callMethod == null || callMethod === 'ANY' || route === 'ANY' || route === callMethod;
+}
+
+/**
  * B6: the routes this pack SERVES, indexed the two ways a call is matched
  * against them — exactly, and by template.
  *
@@ -112,7 +127,7 @@ export function buildRouteIndex(g) {
   templatePaths.sort();
   const allRoutes = [...routesByPath.keys()].sort();
 
-  const methodOk = (route, method) => method === null || route.httpMethod === 'ANY' || route.httpMethod === method;
+  const methodOk = (route, method) => routeServesMethod(route.httpMethod, method);
   const matchUrl = (full, method) => {
     const p = normalizeUrl(full);
     const exact = (routesByPath.get(p) ?? []).filter((r) => methodOk(r, method));

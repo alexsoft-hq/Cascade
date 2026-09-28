@@ -20,7 +20,12 @@
         "owner": "com.example.web.CatalogController",
         "file": "src/main/java/com/example/web/CatalogController.java",
         "line": 31,
-        "start": "symbol:com.example.web.CatalogController#edit"
+        "start": "symbol:com.example.web.CatalogController#edit",
+        "link": {
+          "type": "HANDLES",
+          "grade": "EXACT",
+          "rule": null
+        }
       },
       "walk": {
         "mode": "conservative",

@@ -8,12 +8,16 @@
 // the Java lane sees a controller with no mapping, and the document's routes
 // stand with nothing under them.
 //
-// This kind knows HOW such a pairing is read: a concrete class whose own
-// implements clause names an interface the project does not declare, and a
-// method of that class whose name is an operation's operationId, where the
-// interface's name is the one the generator gives that operation's group. The
-// rule packs say WHICH generator's naming, which suffix, and where that naming
-// is written down (src/core/rules/packs/openapi-generator.json).
+// This kind knows HOW such a pairing is read: a concrete class the framework
+// serves (it carries one of the annotations the rule names, @RestController or
+// @Controller for Spring), whose own implements clause names an interface the
+// project does not declare, and a method of that class whose name is an
+// operation's operationId, where the interface's name is the one the generator
+// gives that operation's group. The rule packs say WHICH generator's naming,
+// which suffix, which annotations mark a served class, and where that naming is
+// written down (src/core/rules/packs/openapi-generator.json). A class that
+// implements the same interface without serving it (a client of the API, a
+// test double) is not a handler, and is not read as one.
 //
 // It is a guess, and graded as one: the interface that would state the pairing
 // is not read, so all that joins the two is the generator's naming convention.
@@ -113,6 +117,18 @@ function interfaceNameErrors(n) {
   return errors;
 }
 
+/** Which classes are handlers: the annotations, by simple name, that mark a class the framework serves. */
+function serverClassErrors(sc) {
+  if (!isObject(sc)) return ['params.serverClass must say which annotations mark a class the framework serves: {annotations, why}'];
+  const errors = unknownKeys(sc, ['annotations', 'why']).map((k) => `params.serverClass has an unknown key "${k}"`);
+  const list = sc.annotations;
+  if (!Array.isArray(list) || list.length === 0 || list.some((a) => typeof a !== 'string' || !JAVA_NAME.test(a)) || new Set(list).size !== list.length) {
+    errors.push('params.serverClass.annotations must list, once each, the simple name of an annotation a served class carries itself');
+  }
+  if (sc.why !== undefined && !isText(sc.why)) errors.push('params.serverClass.why must be text');
+  return errors;
+}
+
 /** A rule that pairs by a generator's naming says which generator, what it relies on it doing, and where that is written. */
 function generatorErrors(gen) {
   if (!isObject(gen)) return ['params.generator must say which generator names the interface, what the rule relies on it doing, and where that is written: {name, declares, source}'];
@@ -123,8 +139,8 @@ function generatorErrors(gen) {
 
 function validateParams(params) {
   if (!isObject(params)) return ['params must be an object'];
-  const errors = unknownKeys(params, ['interfaceName', 'generator']).map((k) => `params has an unknown key "${k}"`);
-  return [...errors, ...interfaceNameErrors(params.interfaceName), ...generatorErrors(params.generator)];
+  const errors = unknownKeys(params, ['interfaceName', 'generator', 'serverClass']).map((k) => `params has an unknown key "${k}"`);
+  return [...errors, ...interfaceNameErrors(params.interfaceName), ...generatorErrors(params.generator), ...serverClassErrors(params.serverClass)];
 }
 
 function expectErrors(expect) {
@@ -149,9 +165,13 @@ function validateExample(example) {
 /** The rule, ready to read: what an operation's interface may be called, and what a link from it is graded. */
 function compile(rule) {
   const { from, suffix } = rule.params.interfaceName;
+  const served = new Set(rule.params.serverClass.annotations);
   return {
     rule: rule.id, grade: rule.grade ?? 'HEURISTIC', suffix, generator: rule.params.generator.name,
     interfaceNames: (op) => interfaceNamesOf(op, from, suffix),
+    // The class's own annotations, as the worker records them (simple names).
+    // One it inherits or a meta-annotation is not read: a missing link, never a guessed one.
+    serves: (t) => (t.annotations ?? []).some((a) => served.has(a)),
   };
 }
 
@@ -241,7 +261,7 @@ function verdictsOfClass(t, names, byOperationId, rules) {
   const out = [];
   for (const { compiled } of rules) {
     const own = faces.filter((f) => f.simple.endsWith(compiled.suffix));
-    if (own.length === 0) continue;
+    if (own.length === 0 || !compiled.serves(t)) continue;
     for (const method of methodNamesOf(t)) {
       const ops = byOperationId.get(method);
       if (ops) out.push(...verdictsOfMethod(compiled, t, own, method, ops));
@@ -329,7 +349,7 @@ export const javaContractLink = Object.freeze({
   lane: 'java',
   stage: 'openapi-bridge',
   // Only a naming convention joins the two ends: the interface that would
-  // state the pairing is generated at build time and never read.
+  // state the pairing is not in the source tree, and is never read.
   gradeCap: 'HEURISTIC',
   validateParams,
   validateExample,

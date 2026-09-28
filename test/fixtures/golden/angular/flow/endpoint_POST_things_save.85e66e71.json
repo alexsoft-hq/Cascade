@@ -20,7 +20,12 @@
         "owner": "com.example.web.ThingController",
         "file": "src/main/java/com/example/web/ThingController.java",
         "line": 39,
-        "start": "symbol:com.example.web.ThingController#save"
+        "start": "symbol:com.example.web.ThingController#save",
+        "link": {
+          "type": "HANDLES",
+          "grade": "EXACT",
+          "rule": null
+        }
       },
       "walk": {
         "mode": "conservative",

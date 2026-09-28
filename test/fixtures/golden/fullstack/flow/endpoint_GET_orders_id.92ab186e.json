@@ -20,7 +20,12 @@
         "owner": "com.example.web.OrderController",
         "file": "src/main/java/com/example/web/OrderController.java",
         "line": 19,
-        "start": "symbol:com.example.web.OrderController#one"
+        "start": "symbol:com.example.web.OrderController#one",
+        "link": {
+          "type": "HANDLES",
+          "grade": "EXACT",
+          "rule": null
+        }
       },
       "walk": {
         "mode": "conservative",

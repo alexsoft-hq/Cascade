@@ -64,10 +64,14 @@ export { nodeLabel, frontendCallsOf, weakestOf, ChainError } from './chain_steps
  * @param {import('./graph.mjs').Graph} graph
  * @param {{start:string, direction?:'down'|'up', mode?:'strict'|'conservative'|'heuristic',
  *           maxDepth?:number, maxNodes?:number, edgeTypes?:string[],
- *           walkGenerated?:boolean}} opts
+ *           walkGenerated?:boolean, entryGrade?:string}} opts
  *          edgeTypes defaults to FLOW_EDGE_TYPES (minus HANDLES when walking up:
  *          endpoints are a DERIVED lane there, not a step of the walk)
  *          walkGenerated (default false) — see THE GENERATED RULE below
+ *          entryGrade (default EXACT) — the grade of the link that brought the
+ *          walk to `start` (a route's HANDLES edge to the handler a picture
+ *          starts at): every row is graded no higher, and depth still counts
+ *          from `start`
  * @returns {object} down: {start, direction, mode, depth, walked, other, services,
  *            statements, tables, layers, beyond:{tables}, byLinkGrade, cut,
  *            emptyReason, endLane}
@@ -81,7 +85,7 @@ export function chainWalk(graph, opts = {}) {
 
   // What a row needs to know: the path that reached it, the line it is drawn
   // with, and the four facts that come from the graph rather than from the walk.
-  const h = { best, ...makePathReader(graph, w, best), ...makeNodeFacts(graph, w, best) };
+  const h = { best, cut, ...makePathReader(graph, w, best), ...makeNodeFacts(graph, w, best) };
 
   // ---- the lanes ---------------------------------------------------------
   const rows = collectRows(graph, w, h);

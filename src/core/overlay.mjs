@@ -26,7 +26,7 @@ import { spliceFacts, assembleJavaFacts, assembleWebFacts } from './facts_store.
 import { withTypeRoles } from './java_roles.mjs';
 import { underAny, isWebPackageConfigFile } from './invalidate.mjs';
 import { isWebSourceFile } from './discover.mjs';
-import { assembleGraph } from './assemble.mjs';
+import { assembleGraph, javaLaneOptions, openapiLaneOptions } from './assemble.mjs';
 
 const GRADE_RANK = { UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 };
 
@@ -318,6 +318,14 @@ function markProvisional(graph, baseGraph) {
   return { provisional, provIds };
 }
 
+/** The Java bridge's options: the caller's, or built from the loose keys by the function `analyze` uses. */
+function overlayJavaOptions(a) {
+  if (a.java) return a.java;
+  return javaLaneOptions({
+    generatedSources: a.generatedSources ?? undefined, gatewayRoutes: a.gatewayRoutes ?? undefined, pathPrefixes: a.pathPrefixes ?? [],
+  }, { packagePrefixes: a.packagePrefixes ?? [] });
+}
+
 /**
  * Build the overlay graph.
  *
@@ -365,12 +373,18 @@ function markProvisional(graph, baseGraph) {
  *        `cascade analyze` does (src/cli/lane_options.mjs, src/cli/java_sql.mjs):
  *        without it an edit to a Spring Data, MyBatis-Plus or annotated MyBatis
  *        service reached no statement at all. What the overlay still does not
- *        re-read: OpenAPI documents as routes, run traces and Spring XML id
- *        generators, which `analyze` reads.
+ *        re-read: run traces and recordings (they add only RUNTIME_ONLY marks,
+ *        which no walk follows) and the Spring XML id generators, which the
+ *        caller says as a limit (src/cli/overlay_provider.mjs).
+ * @param {object} [a.java]  the Java bridge's options, built by the one
+ *        function `analyze` builds them with (javaLaneOptions in
+ *        src/core/assemble.mjs). Without it they are built from the loose keys
+ *        above through that same function.
  * @param {object[]|null} [a.openapiDocuments]  the OpenAPI documents the base
- *        pack read, as they are on disk now. Only the Java bridge reads them:
- *        a functional route whose prefix is composed elsewhere is placed where
- *        a document declares its operation id, as `analyze` places it (RM67).
+ *        pack read, as they are on disk now. They go where `analyze` sends
+ *        them: to the OpenAPI bridge, which puts the routes they declare on the
+ *        graph and draws the contract links a rule gives (RM67), and through it
+ *        to the Java bridge, which places a functional route by its operation id.
  * @returns {{graph:import('./graph.mjs').Graph, javaStats:object, webStats:(object|null),
  *            provisional:{symbols:string[], endpoints:string[], statements:string[], edges:number},
  *            taggedEdges:number}}
@@ -380,8 +394,7 @@ export function overlayGraph(a) {
     baseShards, dirtyFacts = new Map(), dropFiles = [],
     webBaseShards = new Map(), webDirtyFacts = new Map(), webDropFiles = [], webConfigRecords = [],
     catalogRecords = [], lineageRecords = [],
-    baseGraph, overlaySessionId, dirtyFiles = [], packagePrefixes = [], generatedSources = null,
-    gatewayRoutes = null, pathPrefixes = [], openapiDocuments = null,
+    baseGraph, overlaySessionId, dirtyFiles = [], openapiDocuments = null,
     identifierCase = 'exact', bridges = null, web = null, javaLanesOf = null,
   } = a ?? {};
   if (!(baseShards instanceof Map)) throw new OverlayError('baseShards must be a Map of file -> records');
@@ -404,11 +417,7 @@ export function overlayGraph(a) {
   const javaLanes = typeof javaLanesOf === 'function' ? javaLanesOf(javaFacts) : {};
   const { graph, javaStats, webStats } = assembleGraph({
     bridges, catalogRecords, lineageRecords: [...lineageRecords, ...(javaLanes.lineage ?? [])], javaFacts, webFacts, identifierCase,
-    java: {
-      packagePrefixes, pathPrefixes, ...(openapiDocuments ? { openapiDocuments } : {}),
-      ...(generatedSources ? { generatedSources } : {}),
-      ...(gatewayRoutes ? { gatewayRoutes } : {}),
-    },
+    java: overlayJavaOptions(a), openapiDocuments: openapiDocuments ?? [], openapi: openapiLaneOptions(openapiDocuments),
     jpa: javaLanes.jpa ?? null,
     mybatisPlus: javaLanes.mybatisPlus ?? null,
     web,

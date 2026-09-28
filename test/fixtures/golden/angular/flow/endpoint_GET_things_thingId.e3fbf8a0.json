@@ -20,7 +20,12 @@
         "owner": "com.example.web.ShopController",
         "file": "src/main/java/com/example/web/ShopController.java",
         "line": 24,
-        "start": "symbol:com.example.web.ShopController#thing"
+        "start": "symbol:com.example.web.ShopController#thing",
+        "link": {
+          "type": "HANDLES",
+          "grade": "EXACT",
+          "rule": null
+        }
       },
       "walk": {
         "mode": "conservative",

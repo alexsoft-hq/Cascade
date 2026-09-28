@@ -1671,12 +1671,14 @@ const UP_ENTRY_KINDS = Object.freeze(['column', 'table', 'statement', 'symbol'])
  * that difference is stated in the note, because the same route can then
  * reach more tables in the census than in this one picture.
  *
- * AND THE ROUTE'S LINK TO ITS HANDLER IS A LINK. A handler this mode's floor
- * does not admit is not walked into, and the note says why. One it admits
- * through a link weaker than a candidate set (a rule's guess, HEURISTIC) is not
- * started from either: the walk starts at the route, so the link is on every
- * path and every row is graded by it. A fact or a candidate-set link is the
- * route's own handler, as it always was.
+ * AND THE ROUTE'S LINK TO ITS HANDLER IS A LINK, read the way the whole-pack
+ * census reads it (src/core/walks.mjs, walkEndpoints). A handler this mode's
+ * floor does not admit is not walked into, and the note says why. One it admits
+ * is the start, whatever the grade of its link, so depth counts from the handler
+ * as the census counts it; and that link caps every row, as the census caps
+ * every statement it reaches. The card names the link, its grade and the rule
+ * that gave it, and the note says what a link weaker than a fact does to the
+ * rows below.
  */
 function flowEndpointEntry(graph, args, ctx, mode) {
   const epId = nodeId('endpoint', String(args.endpoint));
@@ -1685,8 +1687,9 @@ function flowEndpointEntry(graph, args, ctx, mode) {
   const handlerIds = handlersOf(graph, epId);
   const primary = handlerStartsOf(graph, epId, mode)[0] ?? null;
   const handler = primary ? primary.id : null;
-  const start = primary && gradeRank(primary.grade) >= gradeRank('SOUND_SET') ? handler : epId;
-  const handlerNote = entryHandlerNote(graph, { epId, mode, handlerIds, handler, start });
+  const start = handler ?? epId;
+  const link = primary ? handlesLinkOf(graph, epId, primary) : null;
+  const handlerNote = entryHandlerNote(graph, { epId, mode, handlerIds, handler, link });
   const handlerNode = handler ? graph.nodes.get(handler) : null;
   const entry = {
     kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
@@ -1699,8 +1702,15 @@ function flowEndpointEntry(graph, args, ctx, mode) {
     ...routeGradeFields(graph, epId),
     owner: handlerNode?.owner ?? null,
     file: ep.file ?? null, line: ep.line ?? null, start,
+    ...(link ? { link } : {}),
   };
-  return { start, entry, handlerNote, missing: null };
+  return { start, entryGrade: link ? link.grade : 'EXACT', entry, handlerNote, missing: null };
+}
+
+/** The HANDLES edge a picture starts through: its grade, and the rule that gave it when a rule did. */
+function handlesLinkOf(graph, epId, primary) {
+  const e = graph.outEdges(epId).find((x) => x.type === 'HANDLES' && x.to === primary.id && x.grade === primary.grade);
+  return { type: 'HANDLES', grade: primary.grade, rule: (e && graph.edgeAt(e.idx)?.evidence?.rule) ?? null };
 }
 
 /** The grades and rules of a route's HANDLES edges, as a note names them. */
@@ -1710,17 +1720,24 @@ function linkGradesOf(graph, epId) {
     .map((e) => `${e.grade}${ruleOf(e) ? ` by ${ruleOf(e)}` : ''}`))].sort().join(', ');
 }
 
+/** What a link weaker than a fact does to the rows below it, in one clause; null for a fact. */
+function entryLinkClause(link) {
+  const named = `${link.grade}${link.rule ? ` by ${link.rule}` : ''}`;
+  if (link.grade === 'SOUND_SET') return `this route's handler is linked to it by a candidate set (${named}), so no row below is graded above SOUND_SET`;
+  if (link.grade === 'EXACT') return null;
+  return `this route's handler is linked to it only by a rule's guess (${named}), so every row below is graded by that link`;
+}
+
 /** What a route's picture says about where it started, when there is something to say. */
-function entryHandlerNote(graph, { epId, mode, handlerIds, handler, start }) {
+function entryHandlerNote(graph, { epId, mode, handlerIds, handler, link }) {
   if (handlerIds.length > 0 && handler === null) {
     return `this route's handler is linked to it below the floor of mode=${mode} (${linkGradesOf(graph, epId)}), so this picture stops at the route. Ask with a mode that admits that grade to walk into it`;
   }
-  if (start === epId && handler !== null) {
-    return `this route's handler is linked to it only by a rule's guess (${linkGradesOf(graph, epId)}), so this picture starts at the route and every row is graded by that link${handlerIds.length > 1 ? `; it walks all ${handlerIds.length} handlers the route names` : ''}`;
-  }
-  if (handlerIds.length < 2) return null;
+  const linkClause = link ? entryLinkClause(link) : null;
+  if (handlerIds.length < 2) return linkClause;
   const others = handlerIds.filter((id) => id !== handler);
-  return `this route is declared by ${handlerIds.length} controller methods, which means the same route string sits in more than one module. This picture follows ${nodeLabel(graph.nodes.get(handler), handler)}; for the others, ask flow with symbol=${others.map(strip).join(' / symbol=')}. The whole-pack views (overview, map, coupling) walk ALL of them, so their counts for this route can be bigger than this picture`;
+  const many = `this route is declared by ${handlerIds.length} controller methods, which means the same route string sits in more than one module. This picture follows ${nodeLabel(graph.nodes.get(handler), handler)}; for the others, ask flow with symbol=${others.map(strip).join(' / symbol=')}. The whole-pack views (overview, map, coupling) walk ALL of them, so their counts for this route can be bigger than this picture`;
+  return linkClause ? `${linkClause}. ${many}` : many;
 }
 
 function flowEntry(graph, args, ctx, { entryKind, up, mode }) {
@@ -1735,7 +1752,7 @@ let entryLimits = [];
 if (entryKind === 'endpoint') {
   const r = flowEndpointEntry(graph, args, ctx, mode);
   if (r.missing) return r;
-  ({ start, entry, handlerNote } = r);
+  return { ...r, entryLimits };
 } else if (entryKind === 'screen') {
   // THE OTHER END OF THE ROUND TRIP (SPEC §1.1). A screen is named by its
   // COMPOSED path, the same string the node is keyed by, so `screen=/things/list`
@@ -1809,7 +1826,7 @@ if (entryKind === 'endpoint') {
  * the same walk continues over there and its rows join this answer carrying the
  * project they came from.
  */
-function flowCrossings(graph, args, ctx, { w, start, up, mode, depth }) {
+function flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade = 'EXACT' }) {
 // THE CROSSING (RM44). The walk above stopped where this pack stops: an
 // UNRESOLVED CALLS_HTTP edge onto a route this project calls and does not
 // serve is below every mode's floor. If another project this server serves
@@ -1821,7 +1838,7 @@ if (fed.wanted) {
   federated = up
     ? fed.crossUp(w.endpoints.map((e) => routeRef(e, { hops: e.hops, grade: e.grade, http: e.httpHops ?? 0 })), { mode, depth })
     : fed.crossDown(graph, [
-      { id: start, hops: 0, grade: 'EXACT', http: 0, project: fed.self },
+      { id: start, hops: 0, grade: entryGrade, http: 0, project: fed.self },
       ...[...w.services, ...w.webFunctions].map((s) => ({
         id: nodeId('symbol', s.id), hops: s.hops, grade: s.grade, http: s.httpHops ?? 0, project: fed.self,
       })),
@@ -1955,10 +1972,10 @@ export function flow(graph, args, ctx) {
 
   const found = flowEntry(graph, args, ctx, { entryKind, up, mode });
   if (found.missing) return found.missing;
-  const { start, entry, entryLimits, handlerNote } = found;
+  const { start, entry, entryLimits, handlerNote, entryGrade = 'EXACT' } = found;
 
-  const w = chainWalk(graph, { start, direction, mode, maxDepth: depth });
-  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth });
+  const w = chainWalk(graph, { start, direction, mode, maxDepth: depth, entryGrade });
+  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade });
 
   const limits = [...(ctx.limits ?? []), ...entryLimits, ...fed.limits()];
   const notes = [];

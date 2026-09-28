@@ -44,13 +44,15 @@ import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.m
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
 import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
+import { javaLaneOptions } from '../core/assemble.mjs';
 
 /**
  * The OpenAPI documents the base pack read, as they are on disk now (RM67).
- * The Java bridge places a functional route whose prefix is composed elsewhere
- * where a document declares its operation id, so an overlay without them would
- * drop routes the base pack has. A document gone from the tree is not read, as
- * `analyze` would not read it.
+ * The overlay hands them where `analyze` does: to the OpenAPI bridge, whose
+ * routes and contract links an overlay without them would drop, and through it
+ * to the Java bridge, which places a functional route whose prefix is composed
+ * elsewhere where a document declares its operation id. A document gone from
+ * the tree is not read, as `analyze` would not read it.
  */
 export function openApiDocumentsOf(pack, rootAbs) {
   const docs = pack?.meta?.laneStats?.openapi?.documents ?? [];
@@ -365,10 +367,29 @@ function webOptions(profile, webRootsAbs, templateRootsAbs) {
   };
 }
 
+/**
+ * WHAT THE BASE PACK READ THAT THE OVERLAY DOES NOT READ AGAIN, as limits. The
+ * table id generators a Spring XML declares (RM62) come from discovery's walk of
+ * the whole tree, which an overlay does not repeat: the calls the base pack bound
+ * to one reach no generator statement in an overlay graph, and an answer built
+ * on it must say so rather than read as "nothing there". The run traces and
+ * recordings are not read again either, and are not said: they add only
+ * RUNTIME_ONLY marks, which no walk follows, so no overlay answer moves by them.
+ */
+export function unreadInputLimits(pack) {
+  const ig = pack?.meta?.laneStats?.idGenerators ?? null;
+  if (!ig || !(ig.declared > 0)) return [];
+  return [{
+    scope: 'overlay',
+    reason: `the base pack bound ${ig.bound ?? 0} call(s) to the ${ig.declared} table id generator bean(s) its Spring XML declares. `
+      + 'The overlay does not re-read those XML files, so in this answer those calls reach no generator statement, and what they reach is unknown rather than absent',
+  }];
+}
+
 /** Fold the re-parsed facts and the reused shards into one graph, and say what happened. */
 export function overlayState({
   lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf = null,
-  openapiDocuments = null,
+  openapiDocuments = null, limits = [],
 }) {
   const tBuild = Date.now();
   const built = overlayGraph({
@@ -379,22 +400,16 @@ export function overlayState({
     web: webOptions(profile, webRootsAbs, templateRootsAbs),
     catalogRecords: lanes.catalogRecords, lineageRecords: lanes.lineageRecords,
     baseGraph, overlaySessionId: session.overlaySessionId,
-    dirtyFiles, packagePrefixes: selection.packagePrefixes ?? [],
-    // From the LIVE profile, for the same reason `generatedSources` below is: a
-    // gateway prefix or a path prefix declared since the pack was built takes
-    // effect here first.
-    gatewayRoutes: profile?.gatewayRoutes ?? {},
-    pathPrefixes: profile?.pathPrefixes ?? [],
+    dirtyFiles,
+    // The list `analyze` builds (src/core/assemble.mjs), from the LIVE profile:
+    // the overlay describes the bytes on disk now, so a gateway prefix, a path
+    // prefix or a generated-source declaration edited since the pack was built
+    // takes effect here first. The id generators are not re-read (limits).
+    java: javaLaneOptions(profile, { packagePrefixes: selection.packagePrefixes ?? [] }),
     openapiDocuments,
     // Same identity rule as the run that built the base pack — the overlay
     // declines above when the SQL arguments (which carry it) have moved.
     identifierCase: sqlArgs.identifierCase,
-    // From the LIVE profile, not the index: the fact index does not record a
-    // generated-source declaration, and the overlay describes the bytes on disk
-    // now. A declaration edited since the pack was built therefore takes effect
-    // on the overlaid files first — visible in `limits` as a changed skip count,
-    // never silently.
-    generatedSources: profile?.generatedSources ?? { annotations: [], pathGlobs: [] },
     javaLanesOf,
   });
   const timingsMs = { ...lanes.timingsMs, build: Date.now() - tBuild };
@@ -406,7 +421,7 @@ export function overlayState({
     webConfigFiles: dirty.webConfig,
     unmatched: dirty.other, provisional: built.provisional, taggedEdges: built.taggedEdges,
     reusedShards: lanes.reusedShards, javaStats: built.javaStats, webStats: built.webStats,
-    timingsMs, limits: [],
+    timingsMs, limits,
   };
 }
 
@@ -506,7 +521,7 @@ export function makeOverlayProvider({ packDir, pack, baseGraph, profile }) {
       mapperAlternatives: mapperAlternativesOf(profile, packDir),
     });
     return remember(session, overlayState({
-      lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs),
+      lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs), limits: unreadInputLimits(pack),
       selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf,
     }));
   };

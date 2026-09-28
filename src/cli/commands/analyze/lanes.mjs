@@ -18,7 +18,7 @@ import { wrapperFragmentStatements } from '../../../adapters/mp_bridge.mjs';
 import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
 import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
-import { assembleGraph } from '../../../core/assemble.mjs';
+import { assembleGraph, javaLaneOptions, openapiLaneOptions } from '../../../core/assemble.mjs';
 import { ProfileError } from '../../../core/profile.mjs';
 import { builtinRegistry } from '../../../core/rules/registry.mjs';
 import { webFactsSummary } from '../../../core/facts_store.mjs';
@@ -453,18 +453,8 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     catalogRecords: catalog, lineageRecords: lineage, javaFacts: result.javaFacts,
     webFacts, tsFacts: result.tsFacts ?? [], openapiDocuments: openapiDocs, otelTraces,
     identifierCase: sqlArgs.identifierCase,
-    java: runJava ? {
-      packagePrefixes: profile.packagePrefixes ?? [],
-      generatedSources: profile.generatedSources ?? { annotations: [], pathGlobs: [] },
-      // The SAME declaration the web bridge reads below, applied to the other
-      // half of the same problem: a Java service that calls another service
-      // through a declared gateway prefix has nowhere else to say so.
-      gatewayRoutes: profile.gatewayRoutes ?? {},
-      // The path prefixes configuration code puts before a controller's routes.
-      pathPrefixes: profile.pathPrefixes ?? [],
-      // The table id generators the Spring XMLs declare (RM62).
-      idGenerators: discovery?.idGenerators ?? [],
-    } : null,
+    // The same list the working-tree overlay builds (src/core/assemble.mjs).
+    java: runJava ? javaLaneOptions(profile, { idGenerators: discovery?.idGenerators ?? [] }) : null,
     // The profile's strategy, else the one the project's configuration names (index.mjs).
     jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
@@ -473,7 +463,7 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     ts: tsOpts && { ...tsOpts, catalogRecords: catalog },
     // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
     // frontend call must be able to land on a route only a document declares.
-    openapi: openapiDocs.length > 0 ? {} : null,
+    openapi: openapiLaneOptions(openapiDocs),
     web: webWorkerStats ? {
       // `gatewayRoutes` reaches the web bridge here and the Java bridge above:
       // one declaration, applied to a frontend call and to an imperative

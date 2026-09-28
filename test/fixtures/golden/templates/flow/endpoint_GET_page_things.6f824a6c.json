@@ -20,7 +20,12 @@
         "owner": "com.example.web.ThingPageController",
         "file": "src/main/java/com/example/web/ThingPageController.java",
         "line": 16,
-        "start": "symbol:com.example.web.ThingPageController#list"
+        "start": "symbol:com.example.web.ThingPageController#list",
+        "link": {
+          "type": "HANDLES",
+          "grade": "EXACT",
+          "rule": null
+        }
       },
       "walk": {
         "mode": "conservative",

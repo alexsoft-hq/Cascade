@@ -727,16 +727,16 @@ function budgetGaps(o, say) {
  */
 function contractGaps(o, say) {
   const c = o.laneStats?.openapi?.contractLinks ?? null;
-  if (!c) return;
-  const rules = Object.keys(c.byRule).join(', ');
+  // Only the links a rule DREW are its: a pairing whose route the code already
+  // maps to the same method added nothing, and is no guess of this pack's.
+  if (!c || (c.endpoints.length === 0 && c.unlinked.length === 0)) return;
+  const rules = Object.keys(c.byRule).filter((id) => (c.byRule[id].links ?? 0) > 0).join(', ');
   const unlinked = c.unlinked.length > 0
-    ? ` ${c.unlinked.length} more method(s) implement such an interface and are named like an operationId, and were left unlinked: an operationId on two routes, or an interface the operation would not be generated into`
+    ? ` ${c.unlinked.length} ${c.endpoints.length > 0 ? 'more ' : ''}method(s) implement such an interface and are named like an operationId, and were left unlinked: an operationId on two routes, or an interface the operation would not be generated into`
     : '';
-  say({
-    kind: 'contract-links', count: c.endpoints.length,
-    note: `${c.endpoints.length} declared route(s) have a handler only because ${rules} paired them by a code generator's naming: the interface that would state it is generated at build time and never read here. `
-      + `Those links are HEURISTIC, so a walk at mode=${o.mode} ${GRADE_SETS[o.mode]?.has('HEURISTIC') ? 'follows them' : 'does not follow them: ask with mode=heuristic to walk into that code'}.${unlinked}`,
-  });
+  const linked = c.endpoints.length === 0 ? '' : `${c.endpoints.length} declared route(s) have a handler only because ${rules} paired them by a code generator's naming: the interface that would state it is not in the source tree, so it is never read here. `
+    + `Those links are HEURISTIC, so a walk at mode=${o.mode} ${GRADE_SETS[o.mode]?.has('HEURISTIC') ? 'follows them' : 'does not follow them: ask with mode=heuristic to walk into that code'}.`;
+  say({ kind: 'contract-links', count: c.endpoints.length, note: `${linked}${linked ? unlinked : unlinked.trim()}` });
 }
 
 /**
