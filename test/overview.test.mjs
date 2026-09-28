@@ -222,7 +222,7 @@ test('buildOverview: at conservative the floor cuts nothing, and the note says w
   const o = buildOverview(fixtureGraph());
   const g = gapOf(o, 'mode-floor');
   assert.equal(g.count, 0);
-  assert.match(g.note, /mode=conservative, depth 8/);
+  assert.match(g.note, /mode=conservative, no depth cap/);
   assert.match(g.note, /mode=strict would refuse 4 more/);
   assert.equal(gapKinds(o).includes('depth-cap'), false, 'nothing was cut by depth here');
 });
@@ -373,7 +373,7 @@ function wideSqlOnly() {
 test('overview tool: one contract-valid answer on the overview axis, with the walk it used', () => {
   const r = call(fixtureGraph(), {});
   assert.equal(r.answer.mode, 'conservative');
-  assert.equal(r.answer.depth, 8);
+  assert.equal(r.answer.depth, null);
   assert.deepEqual(r.trust.axes, ['overview']);
   assert.equal(r.basis.freshness.verdict, 'unknown');
 });
@@ -588,28 +588,30 @@ test('overview on the mall pack: the code axis, and the hubs the endpoints conve
     // pathGlob the project declares can name them.
     generated: 0, generatedInternalEdges: 0, generatedBoundaryEdges: 0 });
   assert.equal(r.answer.hubs.tables.length, 10);
-  assert.deepEqual(r.answer.hubs.tables[0], { table: 'pms_product', endpoints: 29, statements: 13 });
+  assert.deepEqual(r.answer.hubs.tables[0], { table: 'pms_product', endpoints: 31, statements: 13 }); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (29 at depth 8)
   assert.equal(r.truncated.fields.find((f) => f.field === 'hubs.tables').total, 49);
   assert.deepEqual(r.answer.hubs.endpoints[0], {
-    endpoint: 'POST /order/generateOrder', httpMethod: 'POST', path: '/order/generateOrder', tables: 12, statements: 15,
+    // RM67: getPromotionProductList at hop 9 adds three tables and a statement (12 and 15 at depth 8)
+    endpoint: 'POST /order/generateOrder', httpMethod: 'POST', path: '/order/generateOrder', tables: 15, statements: 16,
   });
   assert.equal(r.truncated.fields.find((f) => f.field === 'hubs.endpoints').total, 204);
 });
 
-test('overview on the mall pack: the gaps are computed, and five chains are still open at depth 8', { skip: skipUnlessMall() }, () => {
+test('overview on the mall pack: the gaps are computed, no chain is cut with no hop cap, and five are when one asks for depth 8', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), {});
   const by = Object.fromEntries(r.answer.gaps.map((g) => [g.kind, g.count]));
   assert.deepEqual(by, {
     'unresolved-calls': null, 'external-symbols': 33, 'multi-handler-routes': 7,
     'endpoints-without-statement': 34,
-    'statements-not-reached': 698, 'tables-not-reached': 27, 'depth-cap': 5, 'mode-floor': 0,
+    'statements-not-reached': 698, 'tables-not-reached': 27, 'mode-floor': 0,
   });
-  // Five endpoints still had calls to walk at the cap, so every "reached"
-  // count above is a LOWER bound and the census says so rather than implying
-  // it walked everything. It was three before javafacts/4: resolving a
-  // controller's own `helper(x)` calls makes some chains one hop longer.
-  assert.match(r.answer.gaps.find((g) => g.kind === 'depth-cap').note, /5 endpoint\(s\) still had calls to walk when we stopped at depth 8/);
   assert.equal(overviewLimits(r).length, r.answer.gaps.length);
+  // Asked for depth 8, five endpoints still had calls to walk at the cap, so
+  // every "reached" count is then a LOWER bound and the census says so. With no
+  // hop cap (the rule every walk has, graph.mjs DEFAULT_WALK_DEPTH) nothing is
+  // cut and there is no such gap.
+  const at8 = call(mallGraph(), { depth: 8 });
+  assert.match(at8.answer.gaps.find((g) => g.kind === 'depth-cap').note, /5 endpoint\(s\) still had calls to walk when we stopped at depth 8/);
 });
 
 test('overview on the mall pack: the census is deterministic', { skip: skipUnlessMall() }, () => {

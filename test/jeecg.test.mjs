@@ -412,7 +412,10 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   // `count` nor `saveBatch` — so those three had no caller in this repository.
   // The number of ENDPOINTS that reach a statement is unchanged at 744, which
   // is the half of this that says nothing was disconnected.
-  assert.equal(o.reach.statementsReached, 748);
+  // 749 since RM67's one depth rule: with no hop cap POST /sys/user/importExcel
+  // reaches SysPositionMapper.selectPage, a statement no route reached within 8
+  // hops (748 at depth 8).
+  assert.equal(o.reach.statementsReached, 749);
   const gap = o.gaps.find((g) => g.kind === 'http-calls-leaving-pack');
   assert.equal(gap.count, outboundJava + outboundWeb);
   // The sentence counts BOTH producers of a CALLS_HTTP edge in this lane

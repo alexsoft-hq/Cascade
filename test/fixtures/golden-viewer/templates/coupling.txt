@@ -123,7 +123,8 @@
           <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
           <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
         </select>
-        <select id="cpdepth" data-t-title="coupling.depth.title" onchange title="how many calls deep we follow each endpoint" value="8">
+        <select id="cpdepth" data-t-title="coupling.depth.title" onchange title="how many calls deep we follow each endpoint: all, or fewer to narrow it">
+          <option data-t="depth.all" selected value>all</option>
           <option>
             1
           </option>
@@ -145,7 +146,7 @@
           <option>
             7
           </option>
-          <option selected>
+          <option>
             8
           </option>
         </select>

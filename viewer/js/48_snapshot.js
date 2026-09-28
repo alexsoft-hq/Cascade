@@ -102,7 +102,7 @@ function renderSnapshotChrome(){
   bar.replaceChildren(
     el('strong',{textContent:t('snap.title')}),
     el('span',{textContent:t('snap.question',{ dir:dirName, kind:SNAP.entry.kind, value:SNAP.entry.value,
-      mode:SNAP.args.mode, depth:SNAP.args.depth, limit:SNAP.args.limit })}),
+      mode:SNAP.args.mode, depth:depthText(SNAP.args.depth), limit:SNAP.args.limit })}),
     el('span',{textContent:t('snap.when',{ generated:SNAP.generatedAt||'?', digest:m.digest||'?', built:m.builtAt||'?',
       version:(SNAP.engine && SNAP.engine.version)||'?' })}),
     el('span',{className:(limits||truncated) ? 'snapwarn' : '', textContent:t('snap.honesty',{ trust, limits, truncated })}),

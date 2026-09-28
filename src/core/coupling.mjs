@@ -25,7 +25,7 @@
 // Pure: graph in, plain view model out — no contract, no paging, no DOM.
 
 import { walkEndpoints, groupOfPath, ROOT_GROUP } from './walks.mjs';
-import { GRADE_SETS, DEFAULT_WALK_DEPTH, sqlEdgesOf } from './graph.mjs';
+import { GRADE_SETS, DEFAULT_WALK_DEPTH, isWalkDepth, sqlEdgesOf } from './graph.mjs';
 
 // The endpoint walk and the group rule live in core/walks.mjs — the `map` view
 // runs the SAME walk over the same endpoints, so keeping it here would let two
@@ -158,7 +158,7 @@ export function buildCoupling(graph, opts = {}) {
   // of failing.
   if (!GRADE_SETS[mode]) throw new CouplingError(`unknown mode: ${JSON.stringify(mode)}`);
   const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
-  if (!Number.isInteger(depth) || depth < 1) throw new CouplingError(`depth must be a positive integer, got ${depth}`);
+  if (!isWalkDepth(depth)) throw new CouplingError(`depth must be a positive integer or none, got ${depth}`);
 
   // 1./2. Every endpoint's forward walk (core/walks.mjs, the same walk the `map`
   // view runs), folded into groups: how many endpoints each group has, and which

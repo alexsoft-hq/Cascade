@@ -76,10 +76,10 @@ export function crossDown(f, graph, callers, opts) {
           if (!routeNode(sib.graph, target.route.id, target.project, 'served')) continue;
           const grade = weaker(caller.grade, target.grade);
           const hopsBase = caller.hops + 1;   // the caller, and then the route it called
-          const remaining = opts.depth - hopsBase;
+          const remaining = opts.depth == null ? null : opts.depth - hopsBase;
           const httpBase = (caller.http ?? 0) + 1;
           recordCrossing(caller, call, { project: target.project, endpoint: target.route.id },
-            grade, r.ambiguous, remaining < 1 ? { depthCut: true } : {});
+            grade, r.ambiguous, remaining !== null && remaining < 1 ? { depthCut: true } : {});
           // THE ROUTE THE REQUEST ENTERED IS A ROW. The sibling's walk starts
           // AT that route, so nothing below draws it, and the endpoint lane
           // came back empty for a request that plainly entered one: "0 / 0,
@@ -90,7 +90,7 @@ export function crossDown(f, graph, callers, opts) {
           lanes.endpoints.push(crossedRouteRow(sib.graph, target.route.id, {
             project: target.project, hops: hopsBase, grade, httpBase, caller, crossGrade: target.grade,
           }));
-          if (remaining < 1) continue;
+          if (remaining !== null && remaining < 1) continue;
           const w = chainWalk(sib.graph, {
             start: target.route.id, direction: 'down', mode: opts.mode, maxDepth: remaining,
           });
@@ -196,11 +196,11 @@ export function crossUp(f, routes, opts) {
           const key = `${hit.project} ${callerId}`;
           if (visited.has(key)) continue;
           visited.add(key);
-          const remaining = opts.depth - hopsBase;
+          const remaining = opts.depth == null ? null : opts.depth - hopsBase;
           recordCrossing({ project: hit.project, id: callerId }, hit.call,
             { project: servedBy, endpoint: route.id }, grade, hit.ambiguous,
-            remaining < 1 ? { depthCut: true } : {});
-          if (remaining < 1) continue;
+            remaining !== null && remaining < 1 ? { depthCut: true } : {});
+          if (remaining !== null && remaining < 1) continue;
           // The calling method itself is a row. The crossing lands on it and
           // the sibling's walk starts there, so nothing else would draw it,
           // and the chain would jump from this route to whatever sits above.

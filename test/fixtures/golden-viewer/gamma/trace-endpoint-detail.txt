@@ -137,7 +137,8 @@
           <div class="tbmenubody">
             <label class="tbfield">
               <span data-t="tb.depth">depth</span>
-              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. All, the default, follows every one, as every tool does; a number narrows the walk, and what lies past it is unknown, not absent.">
+                <option data-t="depth.all" selected value>all</option>
                 <option>
                   1
                 </option>
@@ -159,7 +160,7 @@
                 <option>
                   7
                 </option>
-                <option selected>
+                <option>
                   8
                 </option>
               </select>
@@ -412,7 +413,7 @@ GController.get">
                 Transactions it runs through
                 <span class="count">(0)</span>
               </h2>
-              <div class="comment" style="margin-bottom: 6px">The @Transactional methods on its way down, in mode conservative to depth 8. Each one opens on the Transactions tab.</div>
+              <div class="comment" style="margin-bottom: 6px">The @Transactional methods on its way down, in mode conservative to depth not capped. Each one opens on the Transactions tab.</div>
               <ul class="list">
                 <li class="empty">No @Transactional method on its way down, in this mode and depth.</li>
               </ul>

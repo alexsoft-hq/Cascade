@@ -14,7 +14,6 @@ import { summary } from './tools_summary.mjs';
 import { rules } from './tools_rules.mjs';
 import { assertContract } from './contract.mjs';
 import { axisLimits, axisKnownGaps } from '../core/lanes.mjs';
-import { DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
 
 export const CATALOG_SCHEMA = 'cascade:mcp-catalog:1';
 
@@ -38,7 +37,7 @@ export const TOOLS = Object.freeze({
       + 'endpoints still expanding at the depth cap, and what the mode floor refused. A '
       + 'statement no endpoint reaches is "not reached from the endpoints we analysed", '
       + 'usually a generated mapper method, and that is NOT a claim the code is dead. mode='
-      + 'strict|conservative|heuristic (default conservative), depth 1..8 (default 8). '
+      + 'strict|conservative|heuristic (default conservative), depth 1..8 (default: no hop cap, the node cap is the guard). '
       + 'mode=strict usually reaches nothing, because controller to service is a call we '
       + 'cannot prove. The schema-bounded censuses (nodes, edges, grades, statementTypes) '
       + 'are COMPLETE: one row per kind, type and grade, never cut. `hubs` and the reach '
@@ -55,7 +54,7 @@ export const TOOLS = Object.freeze({
       type: 'object',
       properties: {
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
-        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'hops walked from each handler (default 8)' },
+        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'a narrowing: hops walked from each handler (default: no hop cap)' },
       },
     },
     fn: tools.overview,
@@ -82,7 +81,7 @@ export const TOOLS = Object.freeze({
       + 'endpoints}; kind=endpoint {endpoint, httpMethod, path, group, handlerShort, handlers, '
       + 'statements, tables}; kind=symbol {symbol, owner, short, file, line, transactional, '
       + 'mapperMethod, external}. `endpoints` on a row is how many HTTP endpoints reach it, '
-      + 'from ONE per-pack walk at mode=conservative, depth 8, which is the same forward walk '
+      + 'from ONE per-pack walk at mode=conservative with no hop cap, which is the same forward walk '
       + '`flow` draws and `map` and `coupling` count on, so a wider or deeper walk could reach '
       + 'more and `limits` says so. `screens` on a table or a column row is the same number '
       + 'one lane further out, from the `walkScreens` census `browse kind=screen` lists and '
@@ -216,8 +215,9 @@ export const TOOLS = Object.freeze({
       + 'its path, so a chain through one MAY_CALL is SOUND_SET even where its last edge is '
       + 'EXACT. mode=strict often returns NOTHING, because controller to service is a call we '
       + 'cannot prove and it sits below the strict floor; the limits and walk.note then say '
-      + 'so, and an empty band there is the mode rather than an absence. depth (1..8, default '
-      + `${DEFAULT_WALK_DEPTH}) bounds the walk,` + ' and what lies past the cap is unknown, not absent. `layers` is '
+      + 'so, and an empty band there is the mode rather than an absence. With no depth the walk '
+      + 'goes as far as the graph goes, as every census and impact tool does, and the node cap is '
+      + 'its guard; a depth (1..8) narrows it, and what lies past that cap is unknown, not absent. `layers` is '
       + 'the SAME walk folded per hop: one entry per hop 1..depth-reached with how many nodes '
       + '/ services / statements / tables sit there and their link grades. It is a census, '
       + 'never cut by limit, and its grade counts sum to walk.byLinkGrade. Layers cover '
@@ -232,7 +232,7 @@ export const TOOLS = Object.freeze({
       + 'them (and any client in this pack), with no statements lane; the route\'s own address '
       + 'grade caps every row, and on a pack with no frontend those two lanes say not-shipped. '
       + 'The lanes are then target, mapper statements, service layer and endpoints '
-      + `(no tables lane: the target IS that side), depth defaults to ${DEFAULT_WALK_DEPTH} as well, the handler method `
+      + '(no tables lane: the target IS that side), with no depth cap either unless one is asked for, the handler method '
       + 'is a service row flagged `handler`, and the endpoints are DERIVED from its HANDLES '
       + 'edges rather than walked, so a route above a handler that sat at the depth cap is in '
       + 'no layer and is counted in walk.beyond.endpoints. A statement or symbol target '
@@ -277,7 +277,7 @@ export const TOOLS = Object.freeze({
         table: { type: 'string', description: 'direction=up target: a table' },
         statement: { type: 'string', description: 'direction=up target: a mapper statement id' },
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
-        depth: { type: 'integer', minimum: 1, maximum: 8, description: `max hops walked (default ${DEFAULT_WALK_DEPTH}, both directions)` },
+        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'a narrowing: the most hops walked. Left out, a walk has no hop cap (both directions), as every census and impact tool walks' },
         limit: { type: 'integer', description: 'per-list cut: 1..200 (default 40) in chain mode, 1..500 (default 100) listing endpoints' },
         query: { type: 'string', description: 'list mode only: substring over "METHOD path handler"' },
         offset: { type: 'integer', minimum: 0, description: 'list mode: skip this many entries. Chain mode: cut every lane from here, in the walk\'s order, to fetch the next page of one lane' },
@@ -306,7 +306,7 @@ export const TOOLS = Object.freeze({
       + 'through ({route, fromEndpoint, grade, ambiguous, tables}). NO RELATIONSHIP EVER JOINS '
       + 'TWO PROJECTS: two services share no foreign key, so the only thing connecting the '
       + 'clusters is the HTTP call `via` names. The crossing walk runs at mode=conservative, '
-      + 'depth 8 (this tool takes no mode or depth of its own) and `limits` says so. '
+      + 'no hop cap (this tool takes no mode or depth of its own) and `limits` says so. '
       + '`answer.federation` says what was crossed, what was skipped and why, and '
       + '`basis.siblings` names every other pack this answer read. Ask a sibling table\'s '
       + 'columns of that project (`erd table=<name>` with its `project`). federate=false '
@@ -353,7 +353,7 @@ export const TOOLS = Object.freeze({
       properties: {
         axis: { type: 'string', enum: ['column', 'table'], description: 'what two groups share (default column)' },
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
-        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'hops walked from each endpoint (default 8)' },
+        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'a narrowing: hops walked from each endpoint (default: no hop cap)' },
         limit: { type: 'integer', description: 'pairs per page: 1..500 (default 50)' },
         offset: { type: 'integer' },
       },
@@ -388,7 +388,7 @@ export const TOOLS = Object.freeze({
       + '`joins` are the JOINS edges between drawn tables, '
       + 'undirected and once, with the count of statements that make the join. Attribution is '
       + 'by reachability, the SAME forward walk `flow` draws and `coupling` counts on, at '
-      + 'depth 8 by default. mode=strict usually draws no endpoint to table line at all, '
+      + 'no hop cap by default. mode=strict usually draws no endpoint to table line at all, '
       + 'because controller to service is a call we cannot prove. `summary` gives groups / '
       + 'endpoints / tables (the whole schema) / tablesTouched (how many are on the map) / '
       + 'links / the walk\'s cut census, and `summary.shown` how many of each kind survived '
@@ -420,7 +420,7 @@ export const TOOLS = Object.freeze({
       type: 'object',
       properties: {
         mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] },
-        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'hops walked from each endpoint (default 8)' },
+        depth: { type: 'integer', minimum: 1, maximum: 8, description: 'a narrowing: hops walked from each endpoint (default: no hop cap)' },
         federate: { type: 'boolean', description: 'default true: follow HTTP calls into the other projects this server serves' },
         federationHops: { type: 'integer', minimum: 0, maximum: 8, description: 'how many crossings one answer may chain (default 3)' },
         layers: {

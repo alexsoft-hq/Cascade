@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/20";
+    static final String VERSION = "javafacts/21";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -908,6 +908,19 @@ public class JavaFacts {
             rec.put("mappedSuperclass", mapped);
             rec.put("embeddable", embeddable);
             rec.put("superclass", ext);
+            // WHERE A HIERARCHY'S ROWS LIVE, as written (javafacts/21): the
+            // strategy `@Inheritance` names (null when it names none, or is not
+            // there: the JPA default, SINGLE_TABLE, is the bridge's to apply),
+            // the name `@Entity(name = …)` gives the entity (the default table
+            // is derived from it), and the key column `@PrimaryKeyJoinColumn`
+            // names on a JOINED subclass's table.
+            AnnotationTree inheritance = annNamed(typeAnns, "Inheritance");
+            List<String> strategy = (inheritance != null) ? memberNames(annAttr(inheritance, "strategy")) : new ArrayList<String>();
+            rec.put("inheritance", strategy.isEmpty() ? null : strategy.get(0));
+            AnnotationTree entityAnn = annNamed(typeAnns, "Entity");
+            rec.put("entityName", (entityAnn != null) ? firstString(annAttr(entityAnn, "name")) : null);
+            AnnotationTree pkJoin = annNamed(typeAnns, "PrimaryKeyJoinColumn");
+            rec.put("primaryKeyJoinColumn", (pkJoin != null) ? firstString(annAttr(pkJoin, "name")) : null);
             rec.put("attributes", attrs);
             // The named fetch plans this entity DECLARES (javafacts/10):
             // `@NamedEntityGraph(name = "Owner.pets", attributeNodes = …)`, which a
@@ -943,6 +956,9 @@ public class JavaFacts {
             // The TARGET of a collection association (`List<Pet> pets` -> "Pet").
             // Emitted separately so the bridge never has to re-parse a type name.
             at.put("typeArgSimple", args.isEmpty() ? null : args.get(0));
+            // …and every argument, in order (javafacts/21): a `Map<PetType, Pet>`'s
+            // other side is its VALUE type, the last one, not the first.
+            at.put("typeArgSimples", args);
             at.put("line", line);
             at.put("column", (column != null) ? firstString(annAttr(column, "name")) : null);
             at.put("id", names.contains("Id") || names.contains("EmbeddedId"));
@@ -971,6 +987,12 @@ public class JavaFacts {
                 at.put("joinTable", null);
             }
             at.put("embedded", names.contains("Embedded") || names.contains("EmbeddedId"));
+            // Values kept in a collection table of their own (javafacts/21), not a
+            // column of this entity's table.
+            at.put("elementCollection", names.contains("ElementCollection"));
+            // Every annotation's name, as written (javafacts/21): the bridge says
+            // which ones it does not read, rather than reading past them.
+            at.put("annotations", names);
             return at;
         }
 
@@ -2420,18 +2442,29 @@ public class JavaFacts {
                     String t = scope.get(n);
                     if (t != null) return t;
                 }
-                return UNKNOWN;
+                return inherited(n);
             }
             if (e instanceof MemberSelectTree) {
                 MemberSelectTree ms = (MemberSelectTree) e;
                 ExpressionTree base = ms.getExpression();
                 if (base instanceof IdentifierTree && "this".equals(((IdentifierTree) base).getName().toString())) {
+                    String f = ms.getIdentifier().toString();
                     Map<String, String> fields = classFields();
-                    String t = fields == null ? null : fields.get(ms.getIdentifier().toString());
-                    return t != null ? t : UNKNOWN;
+                    String t = fields == null ? null : fields.get(f);
+                    return t != null ? t : inherited(f);
                 }
             }
             return UNKNOWN;
+        }
+
+        /**
+         * A name this file binds nowhere, inside a named class: perhaps a field a
+         * superclass declares (javafacts/21), as `field:<class>#<name>`. Whether
+         * one does is read across files, from the field records, not here.
+         */
+        String inherited(String name) {
+            String c = classes.isEmpty() ? "" : classes.peek();
+            return c.isEmpty() ? UNKNOWN : "field:" + c + "#" + name;
         }
 
         /** A class's own fields: the one kind of scope `this.x` reads. */
@@ -2449,10 +2482,18 @@ public class JavaFacts {
             return (w == null || "var".equals(w)) ? UNKNOWN : w;
         }
 
-        /** Record one declaration: its written type, or `?` when it has none or a second one disagrees. */
+        /**
+         * Record one declaration: its written type, or `?` when it has none or a
+         * second one disagrees. A `var` takes the type its initializer's `new`
+         * writes (javafacts/21), the one thing that states it.
+         */
         static void declare(Map<String, String> scope, VariableTree v) {
             String name = v.getName().toString();
             String t = written(v.getType());
+            if (UNKNOWN.equals(t) && (v.getType() == null || "var".equals(typeWrittenName(v.getType())))
+                    && v.getInitializer() instanceof NewClassTree && ((NewClassTree) v.getInitializer()).getClassBody() == null) {
+                t = written(((NewClassTree) v.getInitializer()).getIdentifier());
+            }
             String prev = scope.get(name);
             scope.put(name, (prev == null || prev.equals(t)) ? t : UNKNOWN);
         }

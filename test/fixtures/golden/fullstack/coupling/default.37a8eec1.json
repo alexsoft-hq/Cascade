@@ -8,7 +8,7 @@
     "answer": {
       "axis": "column",
       "mode": "conservative",
-      "depth": 8,
+      "depth": null,
       "groups": [
         {
           "group": "catalog",
@@ -176,7 +176,7 @@
       },
       {
         "scope": "coupling",
-        "reason": "we attribute a statement to a group by following calls (conservative, depth 8), so a statement behind a shared service counts for every group that reaches it. 0 statement(s) are reached by 3 or more groups"
+        "reason": "we attribute a statement to a group by following calls (conservative, no depth cap), so a statement behind a shared service counts for every group that reaches it. 0 statement(s) are reached by 3 or more groups"
       },
       {
         "scope": "coupling",

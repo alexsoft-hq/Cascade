@@ -36,6 +36,8 @@ const SOURCES = {
   'Owner.java': `package com.example;
 import jakarta.persistence.*;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Entity
 @Table(name = "owners")
@@ -58,6 +60,35 @@ public class Owner {
     // A raw collection that names the other side in the annotation instead.
     @OneToMany(targetEntity = Note.class, fetch = FetchType.LAZY, mappedBy = "owner")
     private List notes;
+
+    // A Map: the key is how the pets are indexed, the value is the other side.
+    @OneToMany(mappedBy = "owner", fetch = FetchType.EAGER)
+    @MapKey
+    private Map<PetType, Pet> petsByType;
+
+    // Values in a table of their own, not a column of owners.
+    @ElementCollection
+    private Set<String> phones;
+}
+`,
+  'Animal.java': `package com.example;
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "animals")
+@Inheritance(strategy = InheritanceType.JOINED)
+public class Animal {
+    @Id
+    private Integer id;
+}
+`,
+  'Dog.java': `package com.example;
+import jakarta.persistence.*;
+
+@Entity(name = "Hound")
+@PrimaryKeyJoinColumn(name = "animal_id")
+public class Dog extends Animal {
+    private String breed;
 }
 `,
   'Pet.java': `package com.example;
@@ -255,4 +286,39 @@ test('javafacts/10: a class records the METHODS that carry @ModelAttribute, neve
   assert.deepEqual(ctl.modelAttributeMethods, ['findOwner', 'clock']);
   const plain = recs.find((r) => r.kind === 'type' && r.fqn === 'com.example.PlainService');
   assert.deepEqual(plain.modelAttributeMethods, [], 'a class with none carries an empty list, not a missing field');
+});
+
+test('javafacts/21: a Map-valued association records every type argument, so the value type is the other side', (t) => {
+  const recs = records(t);
+  if (!recs) { t.skip(SKIP); return; }
+  const owner = recs.find((r) => r.kind === 'entity' && r.fqn === 'com.example.Owner');
+  const by = new Map(owner.attributes.map((a) => [a.name, a]));
+  assert.deepEqual(by.get('petsByType').typeArgSimples, ['PetType', 'Pet']);
+  assert.deepEqual(by.get('pets').typeArgSimples, ['Pet']);
+  assert.deepEqual(by.get('lastName').typeArgSimples, []);
+});
+
+test('javafacts/21: an @ElementCollection is recorded as one', (t) => {
+  const recs = records(t);
+  if (!recs) { t.skip(SKIP); return; }
+  const owner = recs.find((r) => r.kind === 'entity' && r.fqn === 'com.example.Owner');
+  const by = new Map(owner.attributes.map((a) => [a.name, a]));
+  assert.equal(by.get('phones').elementCollection, true);
+  assert.equal(by.get('pets').elementCollection, false);
+  // Every annotation's name, as written: the bridge says which of them it does not read.
+  assert.deepEqual(by.get('pets').annotations, ['OneToMany', 'JoinColumn']);
+  assert.deepEqual(by.get('lastName').annotations, []);
+});
+
+test('javafacts/21: an entity records its inheritance strategy, entity name and key join column as written', (t) => {
+  const recs = records(t);
+  if (!recs) { t.skip(SKIP); return; }
+  const animal = recs.find((r) => r.kind === 'entity' && r.fqn === 'com.example.Animal');
+  const dog = recs.find((r) => r.kind === 'entity' && r.fqn === 'com.example.Dog');
+  assert.equal(animal.inheritance, 'JOINED');
+  assert.equal(animal.entityName, null, 'no name written: the class name is the bridge\'s default');
+  assert.equal(dog.inheritance, null, 'the strategy is written on the root only');
+  assert.equal(dog.entityName, 'Hound');
+  assert.equal(dog.primaryKeyJoinColumn, 'animal_id');
+  assert.equal(animal.primaryKeyJoinColumn, null);
 });

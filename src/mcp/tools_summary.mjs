@@ -44,7 +44,7 @@ function readArgs(args) {
   const mode = args.mode ?? 'conservative';
   if (!MODES.includes(mode)) throw new ToolError('bad-input', `mode must be ${MODES.join(', ')}`);
   const depth = args.depth ?? DEFAULT_WALK_DEPTH;
-  if (!Number.isInteger(depth) || depth < 1 || depth > 12) throw new ToolError('bad-input', 'depth must be a whole number from 1 to 12');
+  if (depth !== null && (!Number.isInteger(depth) || depth < 1 || depth > 12)) throw new ToolError('bad-input', 'depth must be a whole number from 1 to 12, or left out for no cap');
   const limit = args.limit ?? SUMMARY_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_MAX) throw new ToolError('bad-input', `limit must be a whole number from 1 to ${LIMIT_MAX}`);
   return { mode, depth, limit };

@@ -204,13 +204,16 @@ function legendSvg(model, t, p, y) {
   return textSvg(PAD, y, 't s b', t('card.links')) + items.join('');
 }
 
+/** The depth a saved answer was walked to, in the card's words. */
+const depthOf = (snap, t) => (snap.args.depth == null ? t('depth.none') : snap.args.depth);
+
 /** Which pack answered and how it was asked. The export time is left out, so the card is the same file every time. */
-function basisOf(snap) {
+function basisOf(snap, t) {
   const m = snap.meta ?? {};
   return {
     project: snap.project?.id ?? m.projectId ?? '?', digest: m.digest ?? '?',
     built: String(m.builtAt ?? '?').replace('T', ' ').replace(/\.\d+Z$|Z$/, ''),
-    mode: snap.args.mode, depth: snap.args.depth, version: snap.engine?.version ?? '?',
+    mode: snap.args.mode, depth: depthOf(snap, t), version: snap.engine?.version ?? '?',
   };
 }
 
@@ -225,7 +228,7 @@ function worthSvg(model, snap, t, p, y) {
   const warn = model.limits.length > 0 || model.cutLists > 0 ? p.warn : null;
   const worth = t('card.worth', { trust: model.trust ?? '?', limits: model.limits.length, cut: model.cutLists });
   return legendSvg(model, t, p, y)
-    + textSvg(PAD, y + 24, 't s c2', t('card.basis', basisOf(snap)))
+    + textSvg(PAD, y + 24, 't s c2', t('card.basis', basisOf(snap, t)))
     + textSvg(PAD, y + 42, 't s', worth, warn);
 }
 

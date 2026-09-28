@@ -112,7 +112,7 @@ test('every limit is written out word for word, and the pack and the question ar
   const flow = flowOf(out);
   assert.ok(flow.limits.length > 0, 'the fixture answer carries limits');
   for (const lim of flow.limits) assert.ok(visible(out.svg).includes(squeezed(`${lim.scope}: ${lim.reason}`)), `limit ${lim.scope} is written out whole`);
-  assert.match(out.svg, /delta, pack [0-9a-f]{12}, built [^,]+, mode conservative, depth 8, Cascade /);
+  assert.match(out.svg, /delta, pack [0-9a-f]{12}, built [^,]+, mode conservative, depth not capped, Cascade /);
 });
 
 test('a name is text and never markup, and a name too long for its chip keeps its whole self in a tooltip', () => {

@@ -205,7 +205,7 @@ test('every kind answers the directions FLOW_DIRECTIONS gives it and refuses the
 test('a saved file can be of a route walked up, the question built the way the page asks it', () => {
   assert.ok(SNAPSHOT_TABS.impact.kinds.includes('endpoint'));
   const q = snapshotQuery('impact', { kind: 'endpoint', value: 'DELETE /api/v1/user' });
-  assert.deepEqual(q.args, { direction: 'up', endpoint: 'DELETE /api/v1/user', mode: 'conservative', depth: 8, limit: 40 });
+  assert.deepEqual(q.args, { direction: 'up', endpoint: 'DELETE /api/v1/user', mode: 'conservative', depth: null, limit: 40 });
   assert.throws(() => snapshotQuery('impact', { kind: 'screen', value: '/x' }), /starts from/);
 });
 

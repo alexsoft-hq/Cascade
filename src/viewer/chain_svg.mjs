@@ -240,7 +240,7 @@ function headerLines(snap, t) {
   const cut = (flow.truncated?.fields ?? []).filter((f) => f.shown < f.total).length;
   const m = snap.meta ?? {};
   return [
-    t('snap.question', { dir: t(snap.tab === 'impact' ? 'trace.dir.up' : 'trace.dir.down'), kind: snap.entry.kind, value: snap.entry.value, mode: snap.args.mode, depth: snap.args.depth, limit: snap.args.limit }),
+    t('snap.question', { dir: t(snap.tab === 'impact' ? 'trace.dir.up' : 'trace.dir.down'), kind: snap.entry.kind, value: snap.entry.value, mode: snap.args.mode, depth: snap.args.depth == null ? t('depth.none') : snap.args.depth, limit: snap.args.limit }),
     t('snap.when', { generated: snap.generatedAt ?? '?', digest: m.digest ?? '?', built: m.builtAt ?? '?', version: snap.engine?.version ?? '?' }),
     t('snap.honesty.picture', { trust: flow.trust?.trustLevel ?? '?', limits, truncated: cut }),
   ];

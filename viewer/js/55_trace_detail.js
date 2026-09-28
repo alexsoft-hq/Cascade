@@ -42,7 +42,7 @@ async function traceDetail(){
  * list, and this place always asks for both, saying read or write on each row.
  */
 async function traceDetailAsk(tg){
-  const mode = byId('tmode').value, depth = Number(byId('tdepth').value);
+  const mode = byId('tmode').value, depth = depthArg('tdepth');
   const [got, screens] = await Promise.all([ traceDetailMain(tg, mode, depth),
     TRACE_SCREENS_OF.includes(tg.kind) ? api('screen_impact', { [tg.kind]:tg.id, mode }) : Promise.resolve(null) ]);
   return screens ? { ...got, screens } : got;
@@ -137,7 +137,7 @@ function traceTxPanel(tg, r){
   const cut = tf && tf.shown < tf.total;
   return el('div', { className:'panel' }, [
     el('h2', {}, [ t('trace.detail.tx') + ' ', el('span', { className:'count', textContent:'(' + rows.length + ')' }) ]),
-    el('div', { className:'comment', style:'margin-bottom:6px', textContent:t('trace.detail.tx.lead', { mode:a.walk ? a.walk.mode : '', depth:a.walk ? a.walk.depth : '' }) }),
+    el('div', { className:'comment', style:'margin-bottom:6px', textContent:t('trace.detail.tx.lead', { mode:a.walk ? a.walk.mode : '', depth:a.walk ? depthText(a.walk.depth) : '' }) }),
     el('ul', { className:'list' }, rows.length ? rows.map((x)=> el('li', {}, [
       el('a', { className:'id clickable', textContent:shortId('symbol:' + x.id), title:x.id, onclick:()=> openTx(x.id) }),
       el('span', { style:'display:flex;align-items:center;gap:6px;flex:none' }, [

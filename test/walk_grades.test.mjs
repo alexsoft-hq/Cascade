@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Graph, DEFAULT_WALK_DEPTH } from '../src/core/graph.mjs';
+import { Graph, DEFAULT_WALK_DEPTH, WALK_NODE_CAP } from '../src/core/graph.mjs';
 import { walkEndpoints } from '../src/core/walks.mjs';
 import { chainWalk } from '../src/core/chain.mjs';
 import { appliedIndex } from '../src/core/rules/applied.mjs';
@@ -59,22 +59,53 @@ test('flow_respects_executes_grade_and_mode_for_routine_tables: a table reached 
   assert.equal(walked.cut.byMode, 3, 'the same three, counted by the walk that stepped past the statement, not twice');
 });
 
-test('Flow and the census walk to one default depth, from one constant', () => {
-  assert.equal(DEFAULT_WALK_DEPTH, 8);
-  // a statement eight hops below the handler: seven CALLS, then IMPLEMENTS_STMT
+/** A route whose statement is ten hops below its handler, a column it reads, and a screen that calls the route through two functions. */
+function deepGraph() {
   const g = new Graph();
   g.addNode({ id: 'endpoint:GET /deep', path: '/deep', httpMethod: 'GET' });
-  const syms = Array.from({ length: 8 }, (_, i) => `symbol:p.S${i}#run`);
+  const syms = Array.from({ length: 10 }, (_, i) => `symbol:p.S${i}#run`);
   for (const id of syms) g.addNode({ id, file: 'S.java' });
-  g.addNode({ id: 'statement:p.M.find', statementType: 'select' });
+  for (const id of ['statement:p.M.find', 'table:t', 'column:t.c']) g.addNode({ id });
+  g.addEdge({ from: 'table:t', to: 'column:t.c', type: 'DECLARES', grade: 'EXACT' });
   g.addEdge({ from: 'endpoint:GET /deep', to: syms[0], type: 'HANDLES', grade: 'EXACT' });
-  for (let i = 0; i < 7; i++) g.addEdge({ from: syms[i], to: syms[i + 1], type: 'CALLS', grade: 'EXACT' });
-  g.addEdge({ from: syms[7], to: 'statement:p.M.find', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
-  assert.equal(walkEndpoints(g).endpoints[0].statements.length, 1, 'the census reaches it at its default depth');
-  const a = flow(g, { endpoint: 'GET /deep' }, ctxOf(g)).answer;
-  assert.equal(a.walk.depth, DEFAULT_WALK_DEPTH);
-  assert.deepEqual(a.statements.map((s) => s.id), ['p.M.find'], 'and so does Flow, at its own default');
-  assert.equal(chainWalk(g, { start: syms[0] }).depth, DEFAULT_WALK_DEPTH, 'and the walk itself');
+  for (let i = 0; i < syms.length - 1; i++) g.addEdge({ from: syms[i], to: syms[i + 1], type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: syms.at(-1), to: 'statement:p.M.find', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+  g.addEdge({ from: 'statement:p.M.find', to: 'table:t', type: 'EXECUTES', grade: 'EXACT', evidence: { access: 'read' } });
+  g.addEdge({ from: 'statement:p.M.find', to: 'column:t.c', type: 'READS', grade: 'EXACT' });
+  g.addNode({ id: 'screen:/deep', path: '/deep' });
+  g.addNode({ id: 'symbol:web/Deep.vue#setup', file: 'web/Deep.vue', lane: 'web' });
+  g.addNode({ id: 'symbol:web/api.ts#load', file: 'web/api.ts', lane: 'web' });
+  g.addEdge({ from: 'screen:/deep', to: 'symbol:web/Deep.vue#setup', type: 'RENDERS', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:web/Deep.vue#setup', to: 'symbol:web/api.ts#load', type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:web/api.ts#load', to: 'endpoint:GET /deep', type: 'CALLS_HTTP', grade: 'SOUND_SET' });
+  return g;
+}
+
+test('one_depth_rule_for_one_question: every walk goes as far as the graph goes, the node cap is its guard, and a depth is only a narrowing asked for', () => {
+  assert.equal(DEFAULT_WALK_DEPTH, null, 'no hop cap when nobody asks for one');
+  assert.equal(WALK_NODE_CAP, 4000);
+  const g = deepGraph();
+  const ctx = { ...ctxOf(g), pack: { digest: 'd' } };
+  // which routes reach t.c: the impact tool, the census row, and Trace up give one answer
+  const impact = callTool('endpoint_impact', { column: 't.c' }, ctx).answer.endpoints.map((e) => e.id);
+  assert.deepEqual(impact, ['GET /deep']);
+  const traceUp = flow(g, { column: 't.c', direction: 'up' }, ctx).answer;
+  assert.deepEqual(traceUp.endpoints.map((e) => e.id), impact, 'Trace up reaches the route the impact tool names');
+  assert.equal(traceUp.walk.depth, null);
+  assert.deepEqual(traceUp.screens.map((x) => x.id), callTool('screen_impact', { column: 't.c' }, ctx).answer.screens.map((x) => x.screen ?? x.id),
+    'and the screen screen_impact names, fourteen hops up');
+  const browse = callTool('browse', { kind: 'column' }, ctx).answer.items.find((r) => r.column === 't.c');
+  assert.equal(browse.endpoints, impact.length, 'the census row counts the same routes');
+  // down: the census and Flow reach the statement
+  assert.equal(walkEndpoints(g).endpoints[0].statements.length, 1);
+  const down = flow(g, { endpoint: 'GET /deep' }, ctxOf(g)).answer;
+  assert.deepEqual(down.statements.map((x) => x.id), ['p.M.find']);
+  assert.equal(down.walk.depth, null);
+  assert.equal(chainWalk(g, { start: 'symbol:p.S0#run' }).depth, null);
+  // a depth asked for narrows, and says what it cut
+  const narrow = flow(g, { endpoint: 'GET /deep', depth: 4 }, ctxOf(g));
+  assert.deepEqual(narrow.answer.statements, []);
+  assert.ok(narrow.limits.some((l) => /depth cap 4 reached/.test(l.reason)));
 });
 
 test('walk_counts_rejected_handler_beside_admitted_handler_existing: a route\'s handler below the floor is counted even when another is admitted', () => {
@@ -168,4 +199,49 @@ test('census_floors_statement_sql_edges: every view counts the tables and column
   // the statement row in Flow lists only the tables its mode admits
   const stRow = flow(g, { endpoint: 'GET /r', mode: 'strict' }, ctxOf(g)).answer.statements[0];
   assert.deepEqual(stRow.tables.map((t) => t.table), ['audit']);
+});
+
+/** A statement reached first on a short candidate path, then at the depth cap by a longer EXACT one; one HEURISTIC table beside it. */
+function capGraph() {
+  const g = new Graph();
+  for (const id of ['endpoint:GET /a', 'symbol:p.H#h', 'symbol:p.A#a', 'symbol:p.B#b', 'symbol:p.C#c', 'statement:p.M.s', 'table:t', 'table:g']) g.addNode({ id, ...(id.startsWith('symbol') ? { file: 'X.java' } : {}) });
+  g.addEdge({ from: 'endpoint:GET /a', to: 'symbol:p.H#h', type: 'HANDLES', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.H#h', to: 'symbol:p.A#a', type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.A#a', to: 'symbol:p.B#b', type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.B#b', to: 'statement:p.M.s', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.H#h', to: 'symbol:p.C#c', type: 'MAY_CALL', grade: 'SOUND_SET' });
+  g.addEdge({ from: 'symbol:p.C#c', to: 'statement:p.M.s', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+  g.addEdge({ from: 'statement:p.M.s', to: 'table:t', type: 'EXECUTES', grade: 'EXACT', evidence: { access: 'read' } });
+  g.addEdge({ from: 'statement:p.M.s', to: 'table:g', type: 'EXECUTES', grade: 'HEURISTIC', evidence: { access: 'read' } });
+  return g;
+}
+
+test('walk_counts_below_floor_sql_edge_once_when_statement_rereached_at_cap', () => {
+  const w = chainWalk(capGraph(), { start: 'symbol:p.H#h', direction: 'down', mode: 'conservative', maxDepth: 3 });
+  assert.deepEqual(w.tables.map((t) => t.table), ['t']);
+  assert.deepEqual([w.cut.byMode, w.cut.byModeGrades], [1, { HEURISTIC: 1 }], 'the one HEURISTIC EXECUTES, once');
+});
+
+test('flow_statement_entry_tables_match_row_in_mode and browse_statement_row_tables_in_census_mode', () => {
+  const g = capGraph();
+  const ctx = { ...ctxOf(g), pack: { digest: 'd' } };
+  const asEntry = flow(g, { statement: 'p.M.s', direction: 'up', mode: 'conservative' }, ctx).answer.entry.tables.map((t) => t.table);
+  const asRow = flow(g, { endpoint: 'GET /a', mode: 'conservative' }, ctx).answer.statements.find((x) => x.id === 'p.M.s').tables.map((t) => t.table);
+  assert.deepEqual(asEntry, ['t']);
+  assert.deepEqual(asEntry, asRow);
+  assert.deepEqual(flow(g, { statement: 'p.M.s', direction: 'up', mode: 'heuristic' }, ctx).answer.entry.tables.map((t) => t.table), ['g', 't']);
+  const rows = callTool('browse', { kind: 'statement' }, ctx).answer.items;
+  assert.equal(rows[0].tables, 1, 'the census mode counts t and not the table only a guess reaches');
+});
+
+test('services_count_every_sender_of_a_shared_statement', () => {
+  const g = new Graph();
+  for (const id of ['endpoint:GET /a', 'symbol:p.C#h', 'symbol:p.DaoA#q', 'symbol:p.DaoB#q', 'statement:ns.sel', 'table:t']) g.addNode({ id, ...(id.startsWith('symbol') ? { file: 'X.java' } : {}) });
+  g.addEdge({ from: 'endpoint:GET /a', to: 'symbol:p.C#h', type: 'HANDLES', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.C#h', to: 'symbol:p.DaoA#q', type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.C#h', to: 'symbol:p.DaoB#q', type: 'CALLS', grade: 'EXACT' });
+  g.addEdge({ from: 'symbol:p.DaoA#q', to: 'statement:ns.sel', type: 'IMPLEMENTS_STMT', grade: 'EXACT', evidence: { line: 10 } });
+  g.addEdge({ from: 'symbol:p.DaoB#q', to: 'statement:ns.sel', type: 'IMPLEMENTS_STMT', grade: 'EXACT', evidence: { line: 20 } });
+  g.addEdge({ from: 'statement:ns.sel', to: 'table:t', type: 'EXECUTES', grade: 'EXACT' });
+  assert.equal(buildOverview(g).code.services, 2, 'DaoA.q and DaoB.q both send it');
 });

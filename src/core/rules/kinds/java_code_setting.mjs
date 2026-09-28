@@ -14,15 +14,17 @@
 // A NAME IS NOT A RECEIVER. `addPathPrefix("/backup")` on a class's own method
 // is not Spring's. A rule names, in full, the types that declare each method
 // (`types`), and the worker records what each call's receiver is declared as
-// (javafacts/19): a call is the setting (`proof: 'receiver'`) when that declared
-// type is one of them, written in full or by a simple name the file imports
-// (the type or its package) or shares a package with, or when the call is on a
-// class whose own extends or implements clause names one of them that way. A
-// receiver the file does not state (a chain, an untyped lambda parameter) proves
-// nothing either way: in a file that can name one of the types it is said as a
-// lower note (`proof: 'import'`), and elsewhere it is not said. A receiver
-// declared as another type, or as a subclass of the rule's type that the source
-// does not show in this file, is missed, never guessed.
+// (javafacts/19, /21): a call is the setting (`proof: 'receiver'`) when that
+// declared type is one of them, or a type of the tree that extends one however
+// far up; a type name is read the way javac reads it in that file (a type the
+// file declares, a single-type import and a type of its own package all shadow
+// a package imported whole). A call on `this`, on a field a superclass declares
+// and on a `var` its `new` types are read the same way. A receiver the file does
+// not state (a chain, an untyped lambda parameter) proves nothing either way: in
+// a file whose name for the type means the rule's it is said as a lower note
+// (`proof: 'import'`), and elsewhere it is not said. A receiver declared as
+// another type is not the setting; one the tree does not show is missed, never
+// guessed.
 //
 // It draws no edge and grades nothing. What it finds becomes a diagnostic when
 // the profile leaves the key undeclared (src/core/code_settings.mjs); a
@@ -91,50 +93,116 @@ function compile(rule) {
   return { rule: rule.id, setting: rule.params.setting, effect: rule.params.effect, calls };
 }
 
-const NOTHING_VISIBLE = Object.freeze({ types: new Set(), packages: new Set() });
 /** How a call was read as the setting: its receiver's declared type says so, or only its file's imports allow it. */
 const PROOFS = Object.freeze(['receiver', 'import']);
 /** What the worker writes for a receiver the file does not state. */
 const UNSTATED = '?';
-const packageOf = (fqn) => fqn.slice(0, fqn.lastIndexOf('.'));
+/** How far up a class hierarchy a receiver is followed: past it, missed rather than guessed. */
+const HIERARCHY_CAP = 16;
 
 /**
- * What each file can name without spelling it out, from the worker's records:
- * the types it imports one by one, and the packages it imports whole or sits in.
+ * The worker's records, indexed to read a type name the way javac reads it in
+ * one file: its package, its single-type imports, the packages it imports whole,
+ * the types it declares itself; every type of the tree by name and by package;
+ * and every field a class declares, with the type it is declared as.
  */
-function visibleByFile(javaFacts) {
-  const byFile = new Map();
-  const at = (file) => {
-    if (!byFile.has(file)) byFile.set(file, { types: new Set(), packages: new Set() });
-    return byFile.get(file);
-  };
-  for (const r of javaFacts) {
-    if (!r || typeof r.file !== 'string') continue;
-    if (r.kind === 'import' && typeof r.fqn === 'string') (r.simple === '*' ? at(r.file).packages : at(r.file).types).add(r.fqn);
-    else if (r.kind === 'type' && typeof r.package === 'string') at(r.file).packages.add(r.package);
-  }
-  return byFile;
+function javaScope(facts) {
+  const sc = { files: new Map(), types: new Map(), byPackage: new Map(), fields: new Map() };
+  for (const r of facts) if (r && typeof r.file === 'string') indexRecord(sc, r);
+  return sc;
 }
 
-/** Whether a file can name one of the types that declare the method. */
-const receiverShown = (call, visible) => call.types.some((t) => visible.types.has(t) || visible.packages.has(packageOf(t)));
+/** One file's names, made on first sight. */
+function fileScope(sc, file) {
+  if (!sc.files.has(file)) sc.files.set(file, { pkg: null, single: new Map(), wild: new Set(), own: new Map() });
+  return sc.files.get(file);
+}
 
-/** A type as a file writes it, read as one of the call's types: in full, or by the simple name the file can name it by. */
-const namesType = (written, call, visible) => (written.includes('.') ? call.types.includes(written) : written === call.on && receiverShown(call, visible));
+/** One worker record into the scope: an import, a type or a field; anything else is not read here. */
+function indexRecord(sc, r) {
+  if (r.kind === 'import' && typeof r.fqn === 'string') {
+    const f = fileScope(sc, r.file);
+    if (r.simple === '*') f.wild.add(r.fqn); else f.single.set(r.simple, r.fqn);
+  } else if (r.kind === 'type' && typeof r.fqn === 'string') indexType(sc, r, fileScope(sc, r.file));
+  else if (r.kind === 'field' && typeof r.owner === 'string') sc.fields.set(`${r.owner}#${r.name}`, r);
+}
 
-/** Whether a class's own extends or implements clause names one of the call's types. */
-function classIsType(fqn, call, visible, typesByFqn) {
-  const t = typesByFqn.get(fqn);
-  if (!t) return false;
-  const written = [t.extendsWritten ?? t.extends, ...(t.implementsWritten ?? t.implements ?? [])];
-  return written.some((w) => typeof w === 'string' && namesType(w, call, visible));
+/** One type record into the scope: by name, in its file, and in its package when it is a top-level type. */
+function indexType(sc, r, file) {
+  sc.types.set(r.fqn, r);
+  const simple = r.fqn.slice(r.fqn.lastIndexOf('.') + 1);
+  file.pkg = r.package ?? file.pkg;
+  file.own.set(simple, r.fqn);
+  if (typeof r.package !== 'string' || r.fqn !== (r.package ? `${r.package}.${simple}` : simple)) return;
+  if (!sc.byPackage.has(r.package)) sc.byPackage.set(r.package, new Map());
+  sc.byPackage.get(r.package).set(simple, r.fqn);
+}
+
+/**
+ * A type name as one file means it, in the order javac reads it: written in
+ * full; a type the file declares; a single-type import; a type of the file's
+ * own package; then a package imported whole, when exactly one of them holds a
+ * type of that name the tree or the rule knows. Null when none does, or two do.
+ */
+function resolveName(sc, file, written, call) {
+  if (written.includes('.')) return written;
+  const f = sc.files.get(file);
+  if (!f) return null;
+  const direct = f.own.get(written) ?? f.single.get(written) ?? sc.byPackage.get(f.pkg)?.get(written);
+  if (direct) return direct;
+  const known = (q) => sc.types.has(q) || call.types.includes(q);
+  const candidates = [...f.wild].map((p) => `${p}.${written}`).filter(known);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+/** The supertypes a type record writes, extends first. */
+const supertypesOf = (t) => [t.extendsWritten ?? t.extends, ...(t.implementsWritten ?? t.implements ?? [])].filter((w) => typeof w === 'string');
+
+/** Whether a type is one of the call's types, or a type of the tree that extends or implements one, however far up. */
+function reachesType(sc, fqn, call, depth = 0) {
+  if (call.types.includes(fqn)) return true;
+  const t = sc.types.get(fqn);
+  if (!t || depth >= HIERARCHY_CAP) return false;
+  return supertypesOf(t).some((w) => {
+    const q = resolveName(sc, t.file, w, call);
+    return q !== null && reachesType(sc, q, call, depth + 1);
+  });
+}
+
+/**
+ * The type of the field a superclass of `owner` declares by that name, read in
+ * the file that declares it: undefined when the tree shows no such field (the
+ * name may be an outer class's field, or a superclass outside the tree's), null
+ * when the field's type does not resolve.
+ */
+function inheritedFieldType(sc, owner, name, call) {
+  let t = sc.types.get(owner);
+  for (let depth = 0; t && depth < HIERARCHY_CAP; depth += 1) {
+    const ext = t.extendsWritten ?? t.extends;
+    const up = typeof ext === 'string' ? resolveName(sc, t.file, ext, call) : null;
+    const field = up ? sc.fields.get(`${up}#${name}`) : undefined;
+    if (field) return typeof field.typeSimple === 'string' ? resolveName(sc, field.file, field.typeSimple, call) : null;
+    t = up ? sc.types.get(up) : undefined;
+  }
+  return undefined;
+}
+
+/** A receiver's type, resolved, as proof: 'receiver' when it is or extends one of the call's types. */
+const typeProof = (q, sc, call) => (typeof q === 'string' && reachesType(sc, q, call) ? 'receiver' : null);
+
+/** What a call on a name its class never binds proves: a superclass's field, or, when the tree shows none, what an unstated receiver does. */
+function fieldProof(receiver, call, sc, file) {
+  const [owner, name] = receiver.slice('field:'.length).split('#');
+  const q = inheritedFieldType(sc, owner, name, call);
+  return q === undefined ? proofOf(UNSTATED, call, sc, file) : typeProof(q, sc, call);
 }
 
 /** What one receiver proves: 'receiver', 'import', or null for a call that is not the setting. */
-function proofOf(receiver, call, visible, typesByFqn) {
-  if (receiver === UNSTATED) return receiverShown(call, visible) ? 'import' : null;
-  if (receiver.startsWith('this:')) return classIsType(receiver.slice('this:'.length), call, visible, typesByFqn) ? 'receiver' : null;
-  return namesType(receiver, call, visible) ? 'receiver' : null;
+function proofOf(receiver, call, sc, file) {
+  if (receiver === UNSTATED) return call.types.includes(resolveName(sc, file, call.on, call)) ? 'import' : null;
+  if (receiver.startsWith('this:')) return typeProof(receiver.slice('this:'.length), sc, call);
+  if (receiver.startsWith('field:')) return fieldProof(receiver, call, sc, file);
+  return typeProof(resolveName(sc, file, receiver, call), sc, call);
 }
 
 /** A name's receivers, `[receiver, line]` each; a record from before javafacts/19 states none. */
@@ -145,10 +213,10 @@ const beats = (site, best) => !best || (site.proof === 'receiver' && best.proof 
   || (site.proof === best.proof && (site.line ?? 0) < (best.line ?? 0));
 
 /** The best-proved site of one name: the first call whose receiver proves it, else the first its imports allow. */
-function siteOf(record, i, call, visible, typesByFqn) {
+function siteOf(record, i, call, sc) {
   let best = null;
   for (const [receiver, line] of receiversAt(record, i)) {
-    const proof = typeof receiver === 'string' ? proofOf(receiver, call, visible, typesByFqn) : null;
+    const proof = typeof receiver === 'string' ? proofOf(receiver, call, sc, record.file) : null;
     const site = proof ? { proof, line: Number.isInteger(line) ? line : null } : null;
     if (site && beats(site, best)) best = site;
   }
@@ -156,11 +224,11 @@ function siteOf(record, i, call, visible, typesByFqn) {
 }
 
 /** What one `invocations` record holds that one compiled rule names, as proved as its receivers allow. */
-function foundIn(record, compiled, visible, typesByFqn) {
+function foundIn(record, compiled, sc) {
   const names = Array.isArray(record.names) ? record.names : [];
   return names.flatMap((method, i) => {
     const call = compiled.calls.get(method);
-    const site = call ? siteOf(record, i, call, visible, typesByFqn) : null;
+    const site = call ? siteOf(record, i, call, sc) : null;
     if (!site) return [];
     return [{
       rule: compiled.rule, setting: compiled.setting, effect: compiled.effect,
@@ -185,10 +253,8 @@ const byPlace = (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0)
 export function codeSettingsIn(javaFacts, rules) {
   const facts = Array.isArray(javaFacts) ? javaFacts : [];
   const records = facts.filter((r) => r && r.kind === 'invocations');
-  const visible = visibleByFile(facts);
-  const typesByFqn = new Map(facts.filter((r) => r && r.kind === 'type' && typeof r.fqn === 'string').map((r) => [r.fqn, r]));
-  const seen = (r) => visible.get(r.file) ?? NOTHING_VISIBLE;
-  return rules.flatMap((entry) => records.flatMap((r) => foundIn(r, entry.compiled, seen(r), typesByFqn))).sort(byPlace);
+  const sc = javaScope(facts);
+  return rules.flatMap((entry) => records.flatMap((r) => foundIn(r, entry.compiled, sc))).sort(byPlace);
 }
 
 const canonical = (list) => JSON.stringify(list.map((e) => `${e.method}:${e.line}:${e.proof}`).sort());

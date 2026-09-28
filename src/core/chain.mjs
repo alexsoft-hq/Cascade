@@ -49,7 +49,7 @@
 
 import {
   buildDerivedEndpoints, buildLayers, buildTables, collectPageRows, collectRows,
-  countDepthBoundary, countLinkGrades, countOther, emptyReasonFor, makeNodeFacts,
+  collectSenders, countDepthBoundary, countLinkGrades, countOther, emptyReasonFor, makeNodeFacts,
   makePathReader, readWalkOptions, runBfs, sortLanes,
 } from './chain_steps.mjs';
 
@@ -80,12 +80,11 @@ export { nodeLabel, frontendCallsOf, weakestOf, ChainError } from './chain_steps
  */
 export function chainWalk(graph, opts = {}) {
   const w = readWalkOptions(graph, opts);
-  const { best, cut, root } = runBfs(graph, w);
+  const { best, cut, root, expanded } = runBfs(graph, w);
   countDepthBoundary(graph, w, best, cut);
 
-  // What a row needs to know: the path that reached it, the line it is drawn
-  // with, and the four facts that come from the graph rather than from the walk.
-  const h = { best, cut, ...makePathReader(graph, w, best), ...makeNodeFacts(graph, w, best) };
+  // What a row needs: its path, its line, and the facts the graph (not the walk) holds.
+  const h = { best, cut, expanded, ...makePathReader(graph, w, best), ...makeNodeFacts(graph, w, best) };
 
   // ---- the lanes ---------------------------------------------------------
   const rows = collectRows(graph, w, h);
@@ -127,7 +126,7 @@ export function chainWalk(graph, opts = {}) {
     direction: w.direction,
     mode: w.mode,
     laneNames,
-    depth: w.maxDepth,
+    depth: w.maxDepth, // null: no hop cap (graph.mjs)
     walked: best.size - (best.has(w.start) ? 1 : 0),
     other,
     ...lanes,
@@ -137,5 +136,6 @@ export function chainWalk(graph, opts = {}) {
     cut,
     emptyReason,
     endLane,
+    senders: collectSenders(graph, w, best), // every method that sends a reached statement itself
   };
 }

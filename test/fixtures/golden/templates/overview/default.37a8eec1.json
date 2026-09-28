@@ -7,7 +7,7 @@
   "answer": {
     "answer": {
       "mode": "conservative",
-      "depth": 8,
+      "depth": null,
       "pack": {
         "project": "templates",
         "digest": "499d0976614a",
@@ -345,7 +345,7 @@
         {
           "kind": "mode-floor",
           "count": 1,
-          "note": "walked at mode=conservative, depth 8: 1 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 22 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all",
+          "note": "walked at mode=conservative, no depth cap: 1 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 22 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all",
           "class": "query"
         }
       ],
@@ -426,7 +426,7 @@
       },
       {
         "scope": "overview",
-        "reason": "mode-floor (1): walked at mode=conservative, depth 8: 1 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 22 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all"
+        "reason": "mode-floor (1): walked at mode=conservative, no depth cap: 1 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 22 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all"
       }
     ],
     "truncated": {

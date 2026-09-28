@@ -1389,7 +1389,7 @@
       <details class="tbmenu" id="topts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
         <div class="tbmenubody">
           <label class="tbfield"><span data-t="tb.depth">depth</span>
-            <select id="tdepth" data-t-title="trace.depth.title" title="the most links a walk follows from the target"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
+            <select id="tdepth" data-t-title="trace.depth.title" title="the most links a walk follows from the target"><option value="" selected data-t="depth.all">all</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></label>
           <span class="seg" id="tview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
           <button id="tflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
         </div>
@@ -1440,7 +1440,7 @@
         <option value="strict" data-t="mode.strict" data-grade="EXACT">strict: proven links only (EXACT)</option>
         <option value="heuristic" data-t="mode.heuristic" data-grade="HEURISTIC">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
       </select>
-      <select id="cpdepth" data-t-title="coupling.depth.title" title="how many calls deep we follow each endpoint"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select>
+      <select id="cpdepth" data-t-title="coupling.depth.title" title="how many calls deep we follow each endpoint"><option value="" selected data-t="depth.all">all</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select>
       <label class="cpchk" data-t-title="coupling.all.title" title="off: show only the groups that appear in a pair"><input type="checkbox" id="cpall"> <span data-t="coupling.all">show all groups</span></label>
       <button id="cpdraw" class="primary" data-t="btn.draw">Draw</button>
     </div>
@@ -1475,7 +1475,7 @@
         <option value="conservative" selected data-t="graph.mode.conservative">conservative</option>
         <option value="heuristic" data-t="graph.mode.heuristic">heuristic</option>
       </select>
-      <select id="gdepth" data-t-title="graph.depth.title" title="how many calls deep we follow each endpoint"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select>
+      <select id="gdepth" data-t-title="graph.depth.title" title="how many calls deep we follow each endpoint"><option value="" selected data-t="depth.all">all</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select>
       <select id="gdir" class="hidden" data-t-title="graph.dir.title" title="which way to follow the lines">
         <option value="up" data-t="graph.dir.up">up: what depends on it (towards endpoints)</option>
         <option value="both" selected data-t="graph.dir.both">both</option>

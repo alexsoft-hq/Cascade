@@ -44,12 +44,12 @@ async function bootFile(html) {
 
 test('a question is built the way the page asks it: entry, mode, depth, limit, and up for Impact', () => {
   assert.deepEqual(snapshotQuery('flow', { kind: 'endpoint', value: 'GET /rows' }).args,
-    { endpoint: 'GET /rows', mode: 'conservative', depth: 8, limit: 40 });
+    { endpoint: 'GET /rows', mode: 'conservative', depth: null, limit: 40 });
   assert.deepEqual(snapshotQuery('impact', { kind: 'column', value: 'delta_rows.status', mode: 'strict', depth: 3, limit: 10 }).args,
     { direction: 'up', column: 'delta_rows.status', mode: 'strict', depth: 3, limit: 10 });
   // A screen opens on the same one default depth every walk from a route has
   // (core/graph.mjs DEFAULT_WALK_DEPTH), and a depth somebody chose is kept.
-  assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows' }).args.depth, 8);
+  assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows' }).args.depth, null);
   assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows', depth: 6 }).args.depth, 6);
   assert.equal(snapshotQuery('flow', { kind: 'screen', value: '/rows', depth: 3 }).args.depth, 3);
   // The page's own arguments come back to the same question.
@@ -97,7 +97,7 @@ test('the file points at no server and carries the tool answer exactly as the to
   const snap = carried(out.html);
   assert.equal(snap.schema, SNAPSHOT_SCHEMA);
   assert.equal(snap.generatedAt, AT);
-  assert.deepEqual(snap.args, { screen: '/rows', mode: 'conservative', depth: 8, limit: 40 });
+  assert.deepEqual(snap.args, { screen: '/rows', mode: 'conservative', depth: null, limit: 40 });
   const flow = snap.calls.find((c) => c.name === 'flow');
   assert.deepEqual(flow.answer, host.callTool('flow', { ...snap.args, project: 'delta' }),
     'the answer in the file is the answer the tool gives: basis, trust, limits and cut lists with it');
@@ -119,7 +119,7 @@ test('the file boots with no network, draws the chain, and says in its band what
   const band = page.byId.get('snapbar');
   assert.equal(band.classList.contains('hidden'), false);
   const text = band.textContent;
-  assert.match(text, /What it uses: screen \/rows, mode conservative, depth 8, up to 40 rows/);
+  assert.match(text, /What it uses: screen \/rows, mode conservative, depth not capped, up to 40 rows/);
   assert.match(text, new RegExp(`exported ${AT.replace(/\./g, '\\.')} from pack [0-9a-f]{12}`));
   const flow = carried(out.html).calls.find((c) => c.name === 'flow').answer;
   assert.match(text, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} limit\\(s\\), 0 cut list\\(s\\)`),
@@ -195,7 +195,7 @@ test('the Export button is off until a chain is drawn, then posts the question t
   assert.ok(sent, 'the page asked the server for the file');
   assert.equal(JSON.stringify(sent.body.arguments), ev(page.ctx, 'JSON.stringify(TRACEV.args)'));
   assert.deepEqual({ ...sent.body, arguments: null }, { tab: 'flow', arguments: null, lang: 'en', format: 'html', project: 'delta' });
-  assert.deepEqual(sent.body.arguments, { screen: '/rows', mode: 'conservative', depth: 8, limit: 40 });
+  assert.deepEqual(sent.body.arguments, { screen: '/rows', mode: 'conservative', depth: null, limit: 40 });
 });
 
 test('cascade export writes the same file the Export button gets, from a pack on disk', async (t) => {
@@ -208,7 +208,7 @@ test('cascade export writes the same file the Export button gets, from a pack on
   const out = path.join(work, 'x.html');
   const run = cli(['--endpoint', 'GET /rows', '--out', out]);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /wrote .*x\.html \(\d+ bytes\): flow from endpoint GET \/rows, mode conservative, depth 8, limit 40/);
+  assert.match(run.stdout, /wrote .*x\.html \(\d+ bytes\): flow from endpoint GET \/rows, mode conservative, no depth cap, limit 40/);
   assert.match(run.stdout, /trust \w+, \d+ limit\(s\), 0 cut list\(s\)/);
   const fromCli = carried(fs.readFileSync(out, 'utf8'));
   // The button's file for the same question carries the same answers; only the

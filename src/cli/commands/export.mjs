@@ -5,6 +5,7 @@
 // and the truncation notes the live page draws (src/viewer/snapshot.mjs). The
 // viewer's Export button writes the same file for the same question.
 
+import { depthSaid } from '../../core/graph.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SNAPSHOT_TABS } from '../../viewer/snapshot.mjs';
@@ -53,7 +54,7 @@ function printSummary(file, out) {
   const limits = Array.isArray(flow.limits) ? flow.limits.length : 0;
   const cut = flow.truncated && Array.isArray(flow.truncated.fields) ? flow.truncated.fields.filter((f) => f.shown < f.total).length : 0;
   process.stdout.write(`wrote ${file} (${out.bytes} bytes): ${out.snapshot.tab} from ${out.snapshot.entry.kind} ${out.snapshot.entry.value}, `
-    + `mode ${out.snapshot.args.mode}, depth ${out.snapshot.args.depth}, limit ${out.snapshot.args.limit}\n`);
+    + `mode ${out.snapshot.args.mode}, ${depthSaid(out.snapshot.args.depth)}, limit ${out.snapshot.args.limit}\n`);
   process.stdout.write(`trust ${flow.trust?.trustLevel ?? 'unknown'}, ${limits} limit(s), ${cut} cut list(s). The file carries all of them, `
     + (out.format === 'html' ? 'and opens in a browser with no server\n' : 'and is one picture a document can hold\n'));
 }

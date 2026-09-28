@@ -369,7 +369,7 @@ test('the walk behind `endpoints` is disclosed in `limits`, with its mode and it
   assert.ok(scopes.includes('browse'), 'the answer says what `endpoints` counts');
   const walk = r.limits.find((l) => l.scope === 'browse' && /mode=conservative/.test(l.reason));
   assert.ok(walk, `no walk disclosure in: ${JSON.stringify(scopes)}`);
-  assert.match(walk.reason, /depth 8/);
+  assert.match(walk.reason, /no depth cap/);
   assert.match(walk.reason, /unknown, not absent/);
   // A row that names an API GROUP has to say what a group IS.
   assert.ok(r.limits.some((l) => /first segment of an API path|moduleAttribution/.test(l.reason)));
@@ -440,16 +440,17 @@ test('mall: the busiest table, and its `endpoints` re-derived from the other dir
   assert.equal(top.table, 'pms_product');
   assert.deepEqual(
     { statementsRead: top.statementsRead, statementsWrite: top.statementsWrite, columns: top.columns, endpoints: top.endpoints, groups: top.groups },
-    { statementsRead: 12, statementsWrite: 10, columns: 42, endpoints: 29, groups: 8 },
+    // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut: two more routes, and their group, order
+    { statementsRead: 12, statementsWrite: 10, columns: 42, endpoints: 31, groups: 9 },
   );
 
   // THE INDEPENDENT RE-DERIVATION, walked the other way: the union, over every
   // column of that table, of the endpoints an UPWARD impact walk reaches
-  // (adapters/java_bridge.endpointsAffectingColumn). It is 31, not 29, and the
-  // difference is exactly the DEPTH CAP: `browse` walks forward at depth 8 (the
-  // whole-pack default every other census uses), while the upward walk is
-  // unbounded. So the tool's set must be a SUBSET, and the same forward walk at
-  // depth 10 must agree with the upward one exactly.
+  // (adapters/java_bridge.endpointsAffectingColumn). It was 31 against the
+  // row's 29 while the forward census stopped at depth 8 and the upward walk
+  // did not; with one depth rule for every walk (graph.mjs DEFAULT_WALK_DEPTH,
+  // no hop cap) the two readings are one number, and a forward walk narrowed to
+  // 8 is what loses the two routes that reach pms_product at 9 or 10 hops.
   const union = new Set();
   for (const n of g.nodes.values()) {
     if (n.kind !== 'column' || !n.id.startsWith('column:pms_product.')) continue;
@@ -465,11 +466,11 @@ test('mall: the busiest table, and its `endpoints` re-derived from the other dir
     }
     return seen;
   };
+  assert.deepEqual([...forward(null)].sort(), [...union].sort(), 'the row IS the forward walk, and it agrees with the upward one');
+  assert.equal(forward(null).size, top.endpoints);
   const at8 = forward(8);
-  assert.equal(at8.size, top.endpoints, 'the row IS the depth-8 forward walk');
+  assert.equal(at8.size, 29, 'narrowed to 8 hops, the two routes past it are the only difference');
   for (const id of at8) assert.ok(union.has(id), `${id} is in the forward walk but not the upward one`);
-  assert.deepEqual([...forward(10)].sort(), [...union].sort(),
-    'two more endpoints reach pms_product at 9 or 10 hops, and the depth cap is the only difference');
 });
 
 test('mall: the first browse answers well inside 2 s and every later one inside 50 ms', { skip: skipUnlessMall() }, () => {
@@ -491,7 +492,7 @@ test('mall: the busiest endpoint, and a route two controllers declare', { skip: 
   assert.equal(top.endpoint, 'POST /order/generateOrder');
   assert.equal(top.group, 'order');
   assert.equal(top.handlers, 1);
-  assert.equal(top.tables, 12);
+  assert.equal(top.tables, 15); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (12 at depth 8)
   // mall declares `GET /order/list` in two controllers; the row says so, and
   // `handlerShort` names the one the shared primary rule picks.
   const two = rowOf(call(g, { kind: 'endpoint', query: 'GET /order/list' }), 'endpoint', 'GET /order/list');

@@ -57,7 +57,7 @@ test('the band says the question and the worth, every limit is written out, and 
   const flow = out.snapshot.calls.find((c) => c.name === 'flow').answer;
   const cut = flow.truncated.fields.filter((f) => f.shown < f.total);
   assert.ok(cut.length > 0);
-  assert.match(out.svg, /What it uses: screen \/rows, mode conservative, depth 8, up to 1 rows/);
+  assert.match(out.svg, /What it uses: screen \/rows, mode conservative, depth not capped, up to 1 rows/);
   assert.match(out.svg, new RegExp(`exported ${AT.replace(/\./g, '\\.')} from pack [0-9a-f]{12}`));
   assert.match(out.svg, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} limit\\(s\\), ${cut.length} cut list\\(s\\), each one named under the picture`));
   for (const f of cut) assert.match(out.svg, new RegExp(`${f.total - f.shown} more row\\(s\\) here did not fit\\.`));

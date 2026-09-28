@@ -319,7 +319,7 @@ function ovRibbon(a){
   const ink3=cssVar('--t3');
   const svg=svgEl('svg',{class:'ribbonsvg', viewBox:'0 0 '+W+' '+H, preserveAspectRatio:'xMidYMid meet',
     role:'img', 'aria-label':t('ribbon.title')});
-  const note=t('ribbon.note',{mode:a.mode, depth:a.depth});
+  const note=t('ribbon.note',{mode:a.mode, depth:depthText(a.depth)});
   // The scale this picture used, as the picture's OWN accessible name — and as
   // a sentence under the heading, because a reader should not have to hover to
   // learn that the heights are square-rooted.

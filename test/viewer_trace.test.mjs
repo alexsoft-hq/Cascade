@@ -156,7 +156,7 @@ test('an answer is remembered under project, target, direction, mode, depth and 
   ev(ctx, "openTrace({kind:'table', id:'gamma_order'}, 'up')");
   await settle(ctx, 12);
   const n = flows(asked).length;
-  assert.equal(ev(ctx, 'traceKey(traceNow())'), 'gamma|table:gamma_order|up|conservative|8|40');
+  assert.equal(ev(ctx, 'traceKey(traceNow())'), 'gamma|table:gamma_order|up|conservative||40');
   byId.get('tmode').value = 'strict';
   byId.get('tmode').onchange();
   await settle(ctx, 12);
@@ -306,10 +306,10 @@ test('beside a walk, the limits that changed THIS answer, with the depth that wo
   const panel = byId.get('traceside').querySelector('.tlimits');
   assert.ok(panel, 'the limits panel stands beside the answer');
   assert.match(panel.textContent, /stopped at depth 1/);
-  const deeper = panel.querySelectorAll('button').find((b) => b.textContent === 'Go to depth 8');
+  const deeper = panel.querySelectorAll('button').find((b) => b.textContent === 'Follow it all the way');
   deeper.onclick();
   await settle(ctx, 12);
-  assert.equal(byId.get('tdepth').value, '8');
+  assert.equal(byId.get('tdepth').value, '', 'back to the one rule every walk has: no cap');
   assert.match(byId.get('traceside').querySelector('.tlimits').textContent, /No cap cut this answer/);
 });
 

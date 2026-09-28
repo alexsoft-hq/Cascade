@@ -146,7 +146,8 @@
           <option data-t="graph.mode.conservative" selected value="conservative">conservative</option>
           <option data-t="graph.mode.heuristic" value="heuristic">heuristic</option>
         </select>
-        <select id="gdepth" data-t-title="graph.depth.title" onchange title="how many calls deep we follow each endpoint" value="8">
+        <select id="gdepth" data-t-title="graph.depth.title" onchange title="how many calls deep we follow each endpoint: all, or fewer to narrow it">
+          <option data-t="depth.all" selected value>all</option>
           <option>
             1
           </option>
@@ -168,7 +169,7 @@
           <option>
             7
           </option>
-          <option selected>
+          <option>
             8
           </option>
         </select>

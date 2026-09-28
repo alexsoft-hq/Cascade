@@ -38,7 +38,7 @@
 
 import { walkEndpoints, walkScreens, groupOfPath, handlerStartsOf, primaryHandlerOf } from './walks.mjs';
 import { nodeLabel } from './chain.mjs';
-import { GRADE_SETS, DEFAULT_WALK_DEPTH, sqlEdgesOf } from './graph.mjs';
+import { GRADE_SETS, DEFAULT_WALK_DEPTH, isWalkDepth, sqlEdgesOf } from './graph.mjs';
 
 /** The `layers` values this view recognises. */
 export const LAYERS = Object.freeze(['statements', 'screens']);
@@ -500,7 +500,7 @@ export function buildMap(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new MapError(`unknown mode: ${JSON.stringify(mode)}`);
   const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
-  if (!Number.isInteger(depth) || depth < 1) throw new MapError(`depth must be a positive integer, got ${depth}`);
+  if (!isWalkDepth(depth)) throw new MapError(`depth must be a positive integer or none, got ${depth}`);
   const limit = opts.limit ?? DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) throw new MapError(`limit must be a positive integer, got ${limit}`);
   const asked = opts.layers ?? [];

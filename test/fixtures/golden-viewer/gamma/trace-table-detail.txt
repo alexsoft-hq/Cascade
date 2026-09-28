@@ -136,7 +136,8 @@
           <div class="tbmenubody">
             <label class="tbfield">
               <span data-t="tb.depth">depth</span>
-              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. All, the default, follows every one, as every tool does; a number narrows the walk, and what lies past it is unknown, not absent.">
+                <option data-t="depth.all" selected value>all</option>
                 <option>
                   1
                 </option>
@@ -158,7 +159,7 @@
                 <option>
                   7
                 </option>
-                <option selected>
+                <option>
                   8
                 </option>
               </select>

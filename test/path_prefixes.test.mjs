@@ -349,6 +349,62 @@ test('code_setting_fully_qualified_receiver_is_diagnosed and code_setting_import
   assert.match(said.reason, /none of these receivers is proven to be the type the rule names/);
 });
 
+/** The worker's records for files laid out by package path; null without a JDK. */
+const treeFactsCache = new Map();
+function treeFacts(files) {
+  const key = JSON.stringify(files);
+  if (treeFactsCache.has(key)) return treeFactsCache.get(key);
+  const jdk = findJdk();
+  if (!jdk) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-setting-tree-'));
+  for (const [name, body] of Object.entries(files)) {
+    fs.mkdirSync(path.join(dir, path.dirname(name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), body);
+  }
+  try { treeFactsCache.set(key, runJavaLane(jdk, dir, [dir], { quiet: true })); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  return treeFactsCache.get(key);
+}
+
+/** Astra's third review: a name another type shadows, and receivers a tree states without the rule's type written at the call. */
+const SHADOW_SOURCES = {
+  'com/x/A.java': 'package com.x; import org.springframework.web.servlet.config.annotation.*; import com.x.util.PathMatchConfigurer; class A implements WebMvcConfigurer { void cfg(PathMatchConfigurer c){ c.addPathPrefix("/backup", null); } }',
+  'com/x/util/PathMatchConfigurer.java': 'package com.x.util; public class PathMatchConfigurer { public void addPathPrefix(String p, Object o){} }',
+  'com/y/B.java': 'package com.y; import org.springframework.web.servlet.config.annotation.*; class B { void cfg(PathMatchConfigurer c){ c.addPathPrefix("/b", null); } }',
+  'com/y/PathMatchConfigurer.java': 'package com.y; class PathMatchConfigurer { void addPathPrefix(String p, Object o){} }',
+  'com/z/MyMapping.java': 'package com.z; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; public class MyMapping extends RequestMappingHandlerMapping {}',
+  'com/z/C.java': 'package com.z; class C { void cfg(){ MyMapping m = new MyMapping(); m.setPathPrefixes(null); } }',
+  'com/w/D.java': 'package com.w; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class D { void cfg(){ var m = new RequestMappingHandlerMapping(); m.setPathPrefixes(null); } }',
+  'com/v/E.java': 'package com.v; class E { void cfg(){ var m = new org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping(); m.setPathPrefixes(null); } }',
+  'com/u/Base.java': 'package com.u; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class Base { protected RequestMappingHandlerMapping mapping; }',
+  'com/u/F.java': 'package com.u; class F extends Base { void cfg(){ mapping.setPathPrefixes(null); } }',
+  'com/t/G.java': 'package com.t; import com.z.MyMapping; class G extends MyMapping { void cfg(){ setPathPrefixes(null); } }',
+  'com/s/H.java': 'package com.s; import org.springframework.web.servlet.config.annotation.*; class H { void cfg(PathMatchConfigurer c){ c.addPathPrefix("/h", null); } }',
+  'com/r/I.java': 'package com.r; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class I { RequestMappingHandlerMapping mapping; class Inner { void cfg(){ mapping.setPathPrefixes(null); } } }',
+  'com/r/K.java': 'package com.r; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; import static com.r.Holder.MAPPING; class K { void cfg(){ MAPPING.setPathPrefixes(null); } }',
+  'com/r/Holder.java': 'package com.r; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class Holder { static RequestMappingHandlerMapping MAPPING; }',
+  'com/q/OwnMapping.java': 'package com.q; class OwnMapping { void setPathPrefixes(Object o){} }',
+  'com/q/BaseJ.java': 'package com.q; class BaseJ { protected OwnMapping mapping; }',
+  'com/q/J.java': 'package com.q; import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping; class J extends BaseJ { void cfg(){ mapping.setPathPrefixes(null); } }',
+};
+
+test('code_setting_single_type_import_shadows_wildcard, code_setting_same_package_type_shadows_wildcard, code_setting_receiver_subclass_in_tree_is_diagnosed, code_setting_var_new_receiver_is_diagnosed: a name is read as Java reads it, and a receiver the tree states is followed', (t) => {
+  const f = treeFacts(SHADOW_SOURCES);
+  if (!f) { t.skip('no JDK found: see docs/setup/java-lane.md'); return; }
+  const found = codeSettingsIn(f, builtinRegistry().ofKind('java.code-setting'));
+  const by = (cls) => found.filter((x) => x.file?.endsWith(`/${cls}.java`)).map((x) => x.proof);
+  assert.deepEqual(by('A'), [], 'a single-type import of the project\'s own PathMatchConfigurer shadows the wildcard');
+  assert.deepEqual(by('B'), [], 'a type of the file\'s own package shadows the wildcard');
+  assert.deepEqual(by('H'), ['receiver'], 'with nothing shadowing it, the wildcard names Spring\'s');
+  assert.deepEqual(by('C'), ['receiver'], 'a project subclass of the mapping is the mapping');
+  assert.deepEqual(by('D'), ['receiver'], '`var m = new X()` declares m as X');
+  assert.deepEqual(by('E'), ['receiver'], 'and with X written in full');
+  assert.deepEqual(by('F'), ['receiver'], 'a field the superclass declares');
+  assert.deepEqual(by('G'), ['receiver'], 'a call on this, two classes below the mapping');
+  assert.deepEqual(by('I'), ['receiver'], 'an outer class field, from an inner class');
+  assert.deepEqual(by('K'), ['import'], 'a name no class in the tree declares for it stays unstated: a lower note where the file names the type');
+  assert.deepEqual(by('J'), [], 'a superclass field declared as another type is not the setting, whatever the file imports');
+});
+
 test('a code-setting call names the types that declare it, in full, or the rule is refused', () => {
   const entry = builtinRegistry().rules.get('spring-mvc.path-prefixes').rule;
   const refused = (calls) => {

@@ -938,7 +938,7 @@ test('erd: one cluster per connected project, and no relationship across two', (
   // Both disclosures are made, in the answer's own words.
   assert.ok(r.limits.some((l) => /No relationship on this answer joins two projects/.test(l.reason)),
     'the answer does not say that no relationship crosses two projects');
-  assert.ok(r.limits.some((l) => /mode=conservative, depth 8/.test(l.reason)),
+  assert.ok(r.limits.some((l) => /mode=conservative, no depth cap/.test(l.reason)),
     'the answer does not say which walk built the cluster');
 });
 

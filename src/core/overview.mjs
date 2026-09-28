@@ -21,7 +21,7 @@
 // come back WHOLE and sorted; the tool caps them and declares the cut.
 
 import { walkEndpoints, walkScreens, multiHandlerRoutes, handlersOf } from './walks.mjs';
-import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, sqlEdgesOf } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, depthSaid, isWalkDepth, sqlEdgesOf } from './graph.mjs';
 
 // The lattice order, strongest first — the order grades are reported in, so the
 // census reads the way the policy lattice does rather than by whichever grade
@@ -663,7 +663,7 @@ function reachGaps(o, say) {
   if (endpointsWithoutStatement.length > 0) {
     say({
       kind: 'endpoints-without-statement', count: endpointsWithoutStatement.length,
-      note: `${endpointsWithoutStatement.length} endpoint(s) reach no SQL statement at mode=${mode}, depth ${depth}. They may touch no database at all (login, file upload), or we could not tell where one of their calls goes`
+      note: `${endpointsWithoutStatement.length} endpoint(s) reach no SQL statement at mode=${mode}, ${depthSaid(depth)}. They may touch no database at all (login, file upload), or we could not tell where one of their calls goes`
         + (stoppedAtRoute > 0 ? `. ${stoppedAtRoute} of them stop at the route itself: every link from the route to its handler is graded below this mode's floor, so a wider mode walks into them` : ''),
     });
   }
@@ -789,7 +789,7 @@ function restGaps(o, say) {
   }
   say({
     kind: 'mode-floor', count: belowFloor,
-    note: `walked at mode=${mode}, depth ${depth}: ${belowFloor} flow edge(s) sit below this mode's grade floor, so we did not follow them`
+    note: `walked at mode=${mode}, ${depthSaid(depth)}: ${belowFloor} flow edge(s) sit below this mode's grade floor, so we did not follow them`
       + (onlyCandidate > 0
         ? `. mode=strict would refuse ${onlyCandidate} more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all`
         : '. This census is already at the strictest floor, so nothing here rests on a call we could not prove'),
@@ -871,7 +871,7 @@ export function buildOverview(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new OverviewError(`unknown mode: ${JSON.stringify(mode)}`);
   const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
-  if (!Number.isInteger(depth) || depth < 1) throw new OverviewError(`depth must be a positive integer, got ${depth}`);
+  if (!isWalkDepth(depth)) throw new OverviewError(`depth must be a positive integer or none, got ${depth}`);
   const lanes = Array.isArray(opts.lanes) ? opts.lanes : null;
   const laneStats = opts.laneStats && typeof opts.laneStats === 'object' ? opts.laneStats : null;
   const c = censusNodes(graph);

@@ -11,10 +11,17 @@ const GRADES = ['EXACT','SOUND_SET','HEURISTIC','RUNTIME_ONLY','UNRESOLVED'];
 // The grades each mode walks, MIRRORING src/core/graph.mjs GRADE_SETS: the page
 // says what a mode does with a grade, and may not invent a floor of its own.
 const MODE_ADMITS = { strict:['EXACT'], conservative:['EXACT','SOUND_SET'], heuristic:['EXACT','SOUND_SET','HEURISTIC'] };
-// The ONE default depth of every walk from a route, MIRRORING src/core/graph.mjs
-// DEFAULT_WALK_DEPTH (the page cannot import it); test/viewer_lanes.test.mjs holds
-// the two, and the depth controls' `selected` option, equal.
-const WALK_DEPTH_DEFAULT = 8;
+// The ONE depth rule of every walk, MIRRORING src/core/graph.mjs DEFAULT_WALK_DEPTH
+// (the page cannot import it): null, no hop cap, the node cap is the guard.
+// test/viewer_lanes.test.mjs holds the two, and the depth controls' `selected`
+// option (the empty one, "all"), equal. A number on a control is a narrowing.
+const WALK_DEPTH_DEFAULT = null;
+/** A depth control's value as a tool argument: the empty option is no cap. */
+function depthArg(id){ const v = byId(id).value; return v === '' ? null : Number(v); }
+/** The value a depth control shows for a depth. */
+function depthOption(d){ return d == null ? '' : String(d); }
+/** A depth as the page says it: the number, or that it is not capped. */
+function depthText(d){ return d == null || d === '' ? t('depth.none') : String(d); }
 const KINDS = ['column','table','statement','symbol','endpoint','domain'];
 // ---------- the drawing vocabulary: a line for certainty, a glyph for kind ----
 // ---------- the token accessor: ONE place the page reads a colour ------------

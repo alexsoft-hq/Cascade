@@ -484,7 +484,7 @@ test('flow up from a column: target → statements → services → endpoints, n
   assert.equal(a.entry.short, 'p.name');
   assert.equal(a.entry.start, nodeId('column', 'p.name'));
   assert.equal(a.walk.direction, 'up');
-  assert.equal(a.walk.depth, 8, 'the reverse walk defaults to the full 8 hops');
+  assert.equal(a.walk.depth, null, 'the reverse walk, like every walk, has no hop cap unless one is asked for');
   assert.equal(a.tables, undefined, 'walking up, the target IS the table side');
   assert.deepEqual(a.statements.map((s) => [s.id, s.hops]), [
     ['com.x.PMapper.selectByPrimaryKey', 1], ['com.x.PMapper.updateByPrimaryKey', 1],

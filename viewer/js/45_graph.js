@@ -2389,7 +2389,7 @@ async function drawMap(){
   // the reader is not looking at.
   const forMode=GRAPHV.mode, forWhere=GMAP.where;
   mapScreensDecide();
-  const args={ mode:byId('gmode').value, depth:Number(byId('gdepth').value) };
+  const args={ mode:byId('gmode').value, depth:depthArg('gdepth') };
   const layers=[];
   if(GMAP.layers) layers.push('statements');
   if(GMAP.screens===true) layers.push('screens');

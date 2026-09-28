@@ -702,7 +702,7 @@ test('flow: `screen=` walks down from the other end of the round trip', async ()
   assert.doesNotThrow(() => assertContract(r));
   assert.equal(r.answer.entry.kind, 'screen');
   assert.equal(r.answer.entry.component, 'src/screens/products/edit.vue');
-  assert.equal(r.answer.walk.depth, 8, 'a screen entry defaults to the full depth');
+  assert.equal(r.answer.walk.depth, null, 'a screen entry, like every walk, has no hop cap unless one is asked for');
   assert.deepEqual(r.truncated.fields.map((f) => f.field),
     ['webFunctions', 'endpoints', 'services', 'statements', 'tables']);
   assert.deepEqual(r.answer.webFunctions.map((x) => x.id),

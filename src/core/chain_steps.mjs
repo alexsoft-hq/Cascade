@@ -20,7 +20,7 @@
 
 // edge-type list — every impact walk shares them, not just this one (an ignored
 // type is not "skipped by mode": nothing was withheld from you).
-import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, SQL_EDGE_TYPES, sqlEdgesOf } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, WALK_NODE_CAP, SQL_EDGE_TYPES, hopCapOf, sqlEdgesOf } from './graph.mjs';
 
 // Grade rank for weakest-link math (mirrors the policy lattice).
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
@@ -63,8 +63,8 @@ export function readWalkOptions(graph, opts = {}) {
   }
   const up = direction === 'up';
   const mode = opts.mode ?? 'conservative';
-  const maxDepth = opts.maxDepth ?? DEFAULT_WALK_DEPTH;
-  const maxNodes = opts.maxNodes ?? 4000;
+  const maxDepth = opts.maxDepth === undefined ? DEFAULT_WALK_DEPTH : opts.maxDepth; // none: the node cap guards
+  const maxNodes = opts.maxNodes ?? WALK_NODE_CAP;
   // Walking UP, an endpoint is a ROUTE, not code: the walk stops at the handler
   // method and the endpoints lane is read from that method's HANDLES in-edges
   // directly — exactly as the tables lane is read from a reached statement's
@@ -121,7 +121,7 @@ export function readWalkOptions(graph, opts = {}) {
   const walkGenerated = opts.walkGenerated === true;
   const isGenerated = (id) => graph.nodes.get(id)?.generated === true;
   return {
-    start, direction, up, mode, maxDepth, maxNodes, follow, crossesHttp, isHttpHop,
+    start, direction, up, mode, maxDepth, hopCap: hopCapOf(maxDepth), maxNodes, follow, crossesHttp, isHttpHop,
     allow, adjOf, stepTo, prevNodeOf, walkGenerated, isGenerated, entryGrade: entryGradeOf(opts),
   };
 }
@@ -149,7 +149,7 @@ function entryGradeOf(opts) {
  */
 export function runBfs(graph, w) {
   const {
-    start, maxDepth, maxNodes, follow, crossesHttp, isHttpHop, allow,
+    start, hopCap, maxNodes, follow, crossesHttp, isHttpHop, allow,
     adjOf, stepTo, walkGenerated, isGenerated, up, entryGrade,
   } = w;
   // `byModeGrades` splits `byMode` by the grade that kept each edge out, because
@@ -167,7 +167,7 @@ export function runBfs(graph, w) {
   const queue = [{ id: start, rec: root }];
   while (queue.length) {
     const cur = queue.shift();
-    if (cur.rec.hops >= maxDepth) continue;
+    if (cur.rec.hops >= hopCap) continue;
     const adj = adjOf(cur.id);
     const countMode = !modeCounted.has(cur.id);
     if (countMode) modeCounted.add(cur.id);
@@ -212,7 +212,10 @@ export function runBfs(graph, w) {
       queue.push({ id: next, rec });
     }
   }
-  return { best, cut, root };
+  // `modeCounted` is every node the walk EXPANDED: a lane that reads a node's
+  // own edges afterwards counts what the floor kept out only where the walk
+  // never did, so an edge is counted once however the node was reached.
+  return { best, cut, root, expanded: modeCounted };
 }
 
 
@@ -221,7 +224,7 @@ export function runBfs(graph, w) {
  * beyond them is unknown, not absent. Counted onto `cut.depth`.
  */
 export function countDepthBoundary(graph, w, best, cut) {
-  const { start, maxDepth, follow, allow, adjOf, stepTo, walkGenerated, isGenerated, up } = w;
+  const { start, hopCap, follow, allow, adjOf, stepTo, walkGenerated, isGenerated, up } = w;
   // Nodes sitting at the depth cap that still had somewhere to go: what lies
   // beyond them is unknown, not absent. WHICH boundary hides something depends
   // on the direction, because each direction derives a different lane from a
@@ -243,7 +246,7 @@ export function countDepthBoundary(graph, w, best, cut) {
   //   method that called it and everything above that, in another module.
   const boundaryKinds = up ? new Set(['symbol', 'statement', 'endpoint']) : new Set(['symbol']);
   for (const [id, rec] of best) {
-    if (rec.hops !== maxDepth || !boundaryKinds.has(kindOf(id))) continue;
+    if (rec.hops !== hopCap || !boundaryKinds.has(kindOf(id))) continue;
     const genHere = !walkGenerated && rec.generated === true;
     for (const edge of adjOf(id)) {
       if (!follow.has(edge.type) || !allow.has(edge.grade)) continue;
@@ -682,7 +685,7 @@ export function buildTables(graph, w, h, reachedStatements) {
  * the BFS never expanded, is counted here.
  */
 function sqlEdgesAdmitted(graph, w, h, st) {
-  if (st.hops >= w.maxDepth) {
+  if (!h.expanded.has(st.id)) {
     for (const e of graph.outEdges(st.id)) {
       if (!SQL_EDGE_TYPES.includes(e.type) || w.allow.has(e.grade)) continue;
       h.cut.byMode += 1;
@@ -713,7 +716,7 @@ export function buildDerivedEndpoints(graph, w, h, handlers) {
         // A route linked to its handler below this mode's floor is not an
         // answer of this mode, and the floor that kept it out is counted, once:
         // the BFS already counted the link off a route that is an HTTP hop.
-        if (!w.allow.has(e.grade)) { countDerivedFloor(w, h.cut, e, handler); continue; }
+        if (!w.allow.has(e.grade)) { countDerivedFloor(w, h, e, handler); continue; }
         const n = graph.nodes.get(e.from) ?? {};
         // The HANDLES edge is part of this row's evidence, so its grade is part
         // of the row's grade. It used to be assumed EXACT — true while every
@@ -769,10 +772,29 @@ export function buildDerivedEndpoints(graph, w, h, handlers) {
 
 
 /** Count a route's HANDLES link the floor kept out of the derived endpoints lane, unless the BFS stepped past it already. */
-function countDerivedFloor(w, cut, e, handler) {
-  if (w.crossesHttp && w.isHttpHop(e.from) && handler.hops < w.maxDepth) return;
+function countDerivedFloor(w, h, e, handler) {
+  const { cut } = h;
+  if (w.crossesHttp && w.isHttpHop(e.from) && h.expanded.has(handler.id)) return;
   cut.byMode += 1;
   cut.byModeGrades[e.grade] = (cut.byModeGrades[e.grade] ?? 0) + 1;
+}
+
+/**
+ * The methods that SEND a statement the walk reached from a call in their own
+ * body (the binding edge names the line): every one of them, where a statement
+ * row names only the one its own path came through. Walking down only.
+ */
+export function collectSenders(graph, w, best) {
+  if (w.up) return [];
+  const out = new Set();
+  for (const id of best.keys()) {
+    if (kindOf(id) !== 'statement') continue;
+    for (const e of graph.inEdges(id)) {
+      if (e.type !== 'IMPLEMENTS_STMT' || !(best.has(e.from) || e.from === w.start)) continue;
+      if (graph.edgeAt(e.idx)?.evidence?.line != null) out.add(e.from);
+    }
+  }
+  return [...out].sort(cmp);
 }
 
 /** Every lane in the order the page reads it, so two answers never differ by sort. */
@@ -812,7 +834,7 @@ export function countLinkGrades(graph, w, best) {
  * @returns {{layers:object[], beyond:object, endLane:string}}
  */
 export function buildLayers(graph, w, h, lanes) {
-  const { start, up, maxDepth } = w;
+  const { start, up, hopCap } = w;
   const { best, webLanes } = h;
   const { services, statements, webFunctions, screens, walkedEndpoints, endpoints, agg } = lanes;
 
@@ -863,7 +885,7 @@ export function buildLayers(graph, w, h, lanes) {
   const beyond = up ? { endpoints: 0 } : { tables: 0 };
   if (up) {
     for (const ep of endpoints) {
-      if (ep.hops <= maxDepth) layerAt(ep.hops).endpoints += 1;
+      if (ep.hops <= hopCap) layerAt(ep.hops).endpoints += 1;
       else beyond.endpoints += 1;
     }
   } else {

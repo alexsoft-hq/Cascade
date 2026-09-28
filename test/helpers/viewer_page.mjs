@@ -345,14 +345,14 @@ export function fakeForceGraph() {
 export async function bootPage({ html, answer, hash = '', search = '', storage = {}, renderer = false, origin = '' } = {}) {
   const body = parseBody(html);
   // What a browser does with `<option value="x" selected>`: the select reports
-  // that option's value — and where the option has no `value` attribute, its
-  // own TEXT (`<option selected>6</option>`, both depth pickers).
+  // that option's value, an empty one included (`<option value="">all</option>`,
+  // the depth pickers' no-cap option), and where the option has no `value`
+  // attribute, its own TEXT (`<option>6</option>`).
   for (const sel of body.querySelectorAll('select')) {
     const chosen = sel.children.find((o) => o.attrs.has('selected')) || sel.children[0];
     if (!chosen) continue;
     const v = chosen.getAttribute('value');
-    const value = v != null && v !== '' ? v : chosen.textContent.trim();
-    if (value) sel.value = value;
+    sel.value = v != null ? v : chosen.textContent.trim();
   }
   const documentElement = new El('html');
   const byId = new Map();

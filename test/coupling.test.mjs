@@ -232,7 +232,7 @@ test('coupling tool: default axis is column, and the answer carries the matrix c
   const r = call(couplingGraph(), {});
   assert.equal(r.answer.axis, 'column');
   assert.equal(r.answer.mode, 'conservative');
-  assert.equal(r.answer.depth, 8);
+  assert.equal(r.answer.depth, null, 'no hop cap unless one is asked for (graph.mjs DEFAULT_WALK_DEPTH)');
   assert.deepEqual(r.answer.cells, [
     { writer: 'a', reader: 'b', count: 2 },
     { writer: 'c', reader: 'b', count: 1 },
@@ -254,7 +254,7 @@ test('coupling tool: limits name the three things this view cannot prove', () =>
   const r = call(couplingGraph(), {});
   const reasons = r.limits.map((l) => l.reason).join(' | ');
   assert.equal(r.limits.every((l) => l.scope === 'coupling'), true);
-  assert.match(reasons, /we attribute a statement to a group by following calls \(conservative, depth 8\)/);
+  assert.match(reasons, /we attribute a statement to a group by following calls \(conservative, no depth cap\)/);
   assert.match(reasons, /1 statement\(s\) are reached by 3 or more groups/);
   assert.match(reasons, /a group is the first segment of an API path/);
   assert.match(reasons, /sharing through the database only/);
@@ -265,7 +265,7 @@ test('coupling tool: an empty matrix the WALK produced says so, and names the wi
   const strict = call(g, { mode: 'strict' });
   assert.equal(strict.answer.pairs.length, 0);
   assert.equal(strict.answer.empty.pairs, 'none');
-  assert.ok(strict.limits.some((l) => /the walk reached no statement at all \(mode=strict, depth 8\)/.test(l.reason)
+  assert.ok(strict.limits.some((l) => /the walk reached no statement at all \(mode=strict, no depth cap\)/.test(l.reason)
     && /not because these groups share nothing; try mode=conservative/.test(l.reason)),
   'an empty answer under a narrow mode must not read as "nothing is shared"');
   // …and under heuristic there is no wider mode to suggest.
@@ -649,22 +649,22 @@ test('coupling tool: sharedStatements is a capped disclosure, not a page — it 
 // (test/helpers/mall_fixture.mjs): absent -> skip; a different digest or
 // commit -> skip naming both and the rebuild command; the pin -> run.
 
-test('coupling on the mall pack, table axis: 32 groups, 61 pairs, product→cart over 4 tables', { skip: skipUnlessMall() }, () => {
+test('coupling on the mall pack, table axis: 32 groups, 63 pairs, product→cart over 4 tables', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), { axis: 'table' });
   assert.equal(r.answer.summary.groups, 32);
   assert.equal(r.answer.summary.endpoints, 239);
-  assert.equal(r.answer.cells.length, 61);
-  assert.equal(r.answer.pairs.length, 50); // 61 cells, cut to the default limit of 50
+  assert.equal(r.answer.cells.length, 63); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (61 at depth 8)
+  assert.equal(r.answer.pairs.length, 50); // 63 cells, cut to the default limit of 50
   const top = r.answer.pairs[0];
   assert.equal(top.writer, 'product');
   assert.equal(top.reader, 'cart');
   assert.deepEqual(top.items, ['pms_product', 'pms_product_full_reduction', 'pms_product_ladder', 'pms_sku_stock']);
   assert.equal(top.count, 4);
-  // sparse by construction: 61 of 32×31 possible cells, and 22 groups in any of them
+  // sparse by construction: 63 of 32×31 possible cells, and 22 groups in any of them
   assert.equal(r.answer.summary.participatingGroups, 22);
   assert.deepEqual(r.answer.summary, {
     items: 49, coupledItems: 29, selfOnlyItems: 11, writeOnlyItems: 4, readOnlyItems: 5, groups: 32,
-    participatingGroups: 22, sharedStatements: 6, statements: 208, endpoints: 239,
+    participatingGroups: 22, sharedStatements: 7, statements: 208, endpoints: 239,
   });
   assert.deepEqual(r.answer.sharedStatements, [
     { statement: 'com.macro.mall.mapper.OmsCartItemMapper.selectByExample', groups: 3 },
@@ -673,15 +673,17 @@ test('coupling on the mall pack, table axis: 32 groups, 61 pairs, product→cart
     { statement: 'com.macro.mall.mapper.PmsProductMapper.selectByExample', groups: 3 },
     { statement: 'com.macro.mall.mapper.PmsProductMapper.updateByExampleSelective', groups: 3 },
     { statement: 'com.macro.mall.mapper.SmsCouponHistoryMapper.selectByExample', groups: 3 },
+    // RM67 one depth rule: reached at hop 9 by two order routes, which a cap of 8 cut
+    { statement: 'com.macro.mall.portal.dao.PortalProductDao.getPromotionProductList', groups: 3 },
   ]);
 });
 
-test('coupling on the mall pack, column axis: 61 pairs, and the top pair rests mostly on the shared statement', { skip: skipUnlessMall() }, () => {
+test('coupling on the mall pack, column axis: 63 pairs, and the top pair rests mostly on the shared statement', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), { axis: 'column' });
-  assert.equal(r.answer.cells.length, 61);
+  assert.equal(r.answer.cells.length, 63); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (61 at depth 8)
   assert.deepEqual(r.answer.summary, {
     items: 461, coupledItems: 267, selfOnlyItems: 93, writeOnlyItems: 10, readOnlyItems: 91, groups: 32,
-    participatingGroups: 22, sharedStatements: 6, statements: 208, endpoints: 239,
+    participatingGroups: 22, sharedStatements: 7, statements: 208, endpoints: 239,
   });
   const top = r.answer.pairs[0];
   assert.equal(`${top.writer}→${top.reader}`, 'productCategory→product');

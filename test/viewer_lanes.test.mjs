@@ -230,9 +230,9 @@ test('the Trace place opens on the engine\'s one default depth, and so does a sa
   for (const kind of ['endpoint', 'screen', 'symbol', 'statement', 'table', 'column']) {
     assert.equal(ev(ctx, `traceAutoDepth('${kind}')`), DEFAULT_WALK_DEPTH, `a ${kind} opens on the default`);
   }
-  for (const id of ['tdepth']) {
+  for (const id of ['tdepth', 'cpdepth', 'gdepth']) {
     const opened = byId.get(id).querySelectorAll('option').find((o) => o.attrs.has('selected'));
-    assert.equal(Number(opened.textContent), DEFAULT_WALK_DEPTH, `${id} opens on the default`);
+    assert.equal(opened.attrs.get('value') === '' ? null : Number(opened.textContent), DEFAULT_WALK_DEPTH, `${id} opens on the default, no cap`);
   }
   for (const tab of Object.values(SNAPSHOT_TABS)) assert.deepEqual([tab.depth, tab.screenDepth], [DEFAULT_WALK_DEPTH, DEFAULT_WALK_DEPTH]);
 });

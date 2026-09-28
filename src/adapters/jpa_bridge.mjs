@@ -295,7 +295,7 @@ function sqlVerbOf(sql) {
  * engine DERIVED is EXACT only where the project declared the naming strategy it
  * was derived by, and HEURISTIC otherwise.
  */
-function entityTables(entityRecords, { strategy, derivedGrade, namingEvidence, stats }) {
+function entityTables(entityRecords, { strategy, derivedGrade, namingEvidence, stats, resolveType }) {
 // ---- 1. entities -> tables ----------------------------------------------
 /** @type {Map<string, {fqn, table, tableId, grade, attributes:Map, pkColumn}>} */
 const entities = new Map();
@@ -304,11 +304,14 @@ for (const [fqn, rec] of entityRecords) {
   if (rec.entity !== true) continue; // @MappedSuperclass / @Embeddable map to no table
   stats.entities += 1;
   const simple = fqn.slice(fqn.lastIndexOf('.') + 1);
+  // `@Entity(name = "Hound")` renames the entity, and the default table is
+  // derived from that name, not from the class's (javafacts/21).
+  const entityName = typeof rec.entityName === 'string' && rec.entityName.length > 0 ? rec.entityName : simple;
   const explicit = typeof rec.tableName === 'string' && rec.tableName.length > 0;
-  const derived = derivedName(simple, strategy, derivedGrade);
+  const derived = derivedName(entityName, strategy, derivedGrade);
   const table = explicit ? rec.tableName : derived.name;
   entities.set(fqn, {
-    fqn, simple, record: rec,
+    fqn, simple, entityName, record: rec,
     table,
     tableGrade: explicit ? 'EXACT' : derived.grade,
     tableEvidence: explicit ? 'declared' : namingEvidence,
@@ -319,11 +322,167 @@ for (const [fqn, rec] of entityRecords) {
     // They are as much part of the row as the entity's own attributes, so a
     // `save()` writes them and a `findAll()` reads them.
     inboundColumns: [],
+    // The hierarchy (see `placeHierarchies`): the nearest entity this one
+    // extends, the strategy its root's @Inheritance names, and the entities
+    // that extend this one directly.
+    parent: null,
+    inheritance: null,
+    subclasses: [],
   });
 }
 
+  placeHierarchies(entities, entityRecords, resolveType, stats);
   return entities;
 }
+
+/** The @Inheritance strategies this bridge reads; the JPA default is SINGLE_TABLE. */
+const INHERITANCE_STRATEGIES = new Set(['SINGLE_TABLE', 'JOINED', 'TABLE_PER_CLASS']);
+
+/**
+ * WHERE A SUBCLASS'S ROWS LIVE. An entity that extends another entity (through
+ * any @MappedSuperclass between them) is part of that entity's hierarchy, and
+ * the ROOT's @Inheritance says how the hierarchy is stored:
+ *
+ *   SINGLE_TABLE (the default) -> every row is in the root's table; a subclass
+ *     has no table of its own, and Hibernate ignores a @Table on one, warning;
+ *   JOINED -> each class has its own table for the columns it declares, joined
+ *     to its parent's by the primary key (see `joinedKeys`);
+ *   TABLE_PER_CLASS -> each class has its own table with every column,
+ *     inherited ones too, which is how any entity is read without a hierarchy.
+ *
+ * A strategy written as anything else is not read: it is said, and the
+ * subclass's table is graded HEURISTIC.
+ */
+function placeHierarchies(entities, entityRecords, resolveType, stats) {
+  for (const e of entities.values()) e.parent = entityParentOf(e.fqn, entities, entityRecords, resolveType);
+  for (const e of entities.values()) {
+    if (!e.parent) continue;
+    e.parent.subclasses.push(e.fqn);
+    const root = rootOf(e);
+    root.inheritance = root.record.inheritance ?? 'SINGLE_TABLE';
+    e.inheritance = root.inheritance;
+    if (e.inheritance === 'SINGLE_TABLE') {
+      Object.assign(e, { table: root.table, tableGrade: root.tableGrade, tableEvidence: root.tableEvidence, sharesRootTable: true });
+    } else if (!INHERITANCE_STRATEGIES.has(e.inheritance)) {
+      e.tableGrade = 'HEURISTIC';
+      note(stats, 'inheritance-strategy-unread', `${root.fqn} declares @Inheritance(strategy = ${e.inheritance}), which this lane does not read, so where ${e.fqn} keeps its rows is not known`);
+    }
+  }
+}
+
+/** The nearest @Entity a class extends, through any @MappedSuperclass; null for none, or one outside the pack. */
+function entityParentOf(fqn, entities, entityRecords, resolveType) {
+  const seen = new Set([fqn]);
+  let cur = fqn;
+  for (;;) {
+    const rec = entityRecords.get(cur);
+    const up = rec && rec.superclass ? resolveType(cur, rec.superclass) : null;
+    if (!up || seen.has(up) || !entityRecords.has(up)) return null;
+    if (entities.has(up)) return entities.get(up);
+    seen.add(up);
+    cur = up;
+  }
+}
+
+/** The top entity of a hierarchy. */
+function rootOf(e) {
+  const seen = new Set();
+  let r = e;
+  while (r.parent && !seen.has(r.parent.fqn)) {
+    seen.add(r.fqn);
+    r = r.parent;
+  }
+  return r;
+}
+
+/**
+ * Under JOINED, the entity whose table holds what each class of the chain
+ * declares: an entity's own attributes are on its own table, and a
+ * @MappedSuperclass's are on the table of the entity just below it.
+ * @returns {Map<string, object>} class fqn -> entity
+ */
+function joinedHomes(e, entities, entityRecords, resolveType) {
+  const homes = new Map();
+  const seen = new Set();
+  let owner = e;
+  let cur = e.fqn;
+  while (cur && entityRecords.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    if (entities.has(cur)) owner = entities.get(cur);
+    homes.set(cur, owner);
+    const rec = entityRecords.get(cur);
+    cur = rec.superclass ? resolveType(cur, rec.superclass) : null;
+  }
+  return homes;
+}
+
+/**
+ * A JOINED subclass's table carries the primary key that joins it to its
+ * parent's: the column `@PrimaryKeyJoinColumn` names, or by default the parent
+ * key's own name, as sure as that name is.
+ */
+function joinedKeys(entities) {
+  const keyOf = (x, depth = 0) => {
+    if (x.inheritance !== 'JOINED' || !x.parent || depth > entities.size) return { column: x.pkColumn ?? 'id', grade: x.pkGrade ?? 'EXACT' };
+    const declared = x.record.primaryKeyJoinColumn;
+    return declared ? { column: declared, grade: 'EXACT' } : keyOf(x.parent, depth + 1);
+  };
+  for (const e of entities.values()) {
+    if (e.inheritance !== 'JOINED' || !e.parent) continue;
+    const key = keyOf(e);
+    e.joinedKey = { column: key.column, grade: weakest(e.tableGrade, key.grade) };
+  }
+  for (const e of entities.values()) {
+    if (!e.joinedKey) continue;
+    e.pkColumn = e.joinedKey.column;
+    e.inboundColumns.push({ column: e.joinedKey.column, grade: e.joinedKey.grade });
+  }
+}
+
+/** The entities that extend this one, however far down. */
+function descendantsOf(e, entities) {
+  const out = [];
+  const queue = [...e.subclasses];
+  while (queue.length > 0) {
+    const fqn = queue.shift();
+    if (out.includes(fqn)) continue;
+    out.push(fqn);
+    queue.push(...(entities.get(fqn)?.subclasses ?? []));
+  }
+  return out.sort(cmp);
+}
+
+/**
+ * A statement on an entity with subclasses is POLYMORPHIC: the row it reads or
+ * writes may be a subclass's, with columns (and under JOINED or
+ * TABLE_PER_CLASS, tables) of its own. Those are not followed, and said.
+ */
+function polymorphicNote(e, entities) {
+  if (!e || e.subclasses.length === 0) return [];
+  return [{
+    reason: 'polymorphic-subclasses-not-read',
+    detail: `${e.fqn} has subclass entities (${descendantsOf(e, entities).join(', ')}). A row this statement reads or writes may be one of theirs, and what they add (their own columns, and under ${e.inheritance} their own tables where it keeps them apart) is not followed`,
+  }];
+}
+
+/** The tables one row of an entity spans: its own, and under JOINED each parent's. */
+function rowTables(entity) {
+  const out = [entity];
+  let cur = entity;
+  while (cur.inheritance === 'JOINED' && cur.parent && !out.includes(cur.parent)) {
+    cur = cur.parent;
+    out.push(cur);
+  }
+  return out;
+}
+
+/** Mark every table one row of an entity spans, each as sure as its own name. */
+function markRow(map, entity, access, grade, evidence = null) {
+  for (const t of rowTables(entity)) mark(map, t.table, access, weakest(grade, t.tableGrade), evidence);
+}
+
+/** The entity whose table holds an attribute: under JOINED an inherited one is the parent's. */
+const homeOf = (entity, attr) => attr.home ?? entity;
 
 /**
  * 2. THE ATTRIBUTES, through the @MappedSuperclass chain. A base class's fields
@@ -339,7 +498,7 @@ const attributesOf = (fqn, seen = new Set()) => {
   if (!rec) return [];
   const superFqn = rec.superclass ? resolveType(fqn, rec.superclass) : null;
   const inherited = superFqn && entityRecords.has(superFqn) ? attributesOf(superFqn, seen) : [];
-  const own = Array.isArray(rec.attributes) ? rec.attributes : [];
+  const own = (Array.isArray(rec.attributes) ? rec.attributes : []).map((a) => ({ ...a, declaredBy: fqn }));
   // Base-most first, and a subclass attribute of the same name REPLACES the
   // inherited one (Java's own shadowing rule).
   const byName = new Map();
@@ -349,14 +508,53 @@ const attributesOf = (fqn, seen = new Set()) => {
 
 for (const e of entities.values()) {
   const attrs = attributesOf(e.fqn);
-  e.attributes = new Map();
-  for (const a of attrs) {
-    const mapped = mapAttribute(a, { strategy, derivedGrade, namingEvidence });
-    e.attributes.set(a.name, { ...a, ...mapped });
-    if (a.id === true && mapped.column) e.pkColumn = mapped.column;
+  const homes = e.inheritance === 'JOINED' && e.parent ? joinedHomes(e, entities, entityRecords, resolveType) : null;
+  const entityUnread = (ctx.classAnnotations?.get(e.fqn) ?? []).filter((n) => UNREAD_ENTITY_MAPPINGS.includes(n));
+  if (entityUnread.length > 0) {
+    note(ctx.stats, 'jpa-mapping-unread', `${e.fqn} is mapped with @${entityUnread.join(', @')}, which this lane does not read, so any of its columns may be named or placed otherwise`);
   }
+  e.attributes = new Map();
+  for (const a of attrs) readAttribute(e, a, { strategy, derivedGrade, namingEvidence, homes, entityUnread, stats: ctx.stats });
+}
+joinedKeys(entities);
 }
 
+/**
+ * Mapping annotations this bridge does not read, and that name or place a
+ * column otherwise than the simplest reading would: a composite key
+ * (`@JoinColumns`), a formula, an override of an inherited or embedded column,
+ * a secondary table. The grade rests on finding the right column, so an
+ * attribute that carries one keeps its reading, graded HEURISTIC, and the pack
+ * says so. `@MapsId` counts only without a `@JoinColumn`: with one, the column
+ * is named outright.
+ */
+const UNREAD_ATTRIBUTE_MAPPINGS = Object.freeze(['JoinColumns', 'JoinFormula', 'Formula', 'JoinColumnOrFormula', 'JoinColumnsOrFormulas',
+  'AttributeOverride', 'AttributeOverrides', 'AssociationOverride', 'AssociationOverrides']);
+const UNREAD_ENTITY_MAPPINGS = Object.freeze(['SecondaryTable', 'SecondaryTables', 'AttributeOverride', 'AttributeOverrides', 'AssociationOverride', 'AssociationOverrides']);
+
+/** The annotations on one attribute that this bridge does not read (javafacts/21 records them all). */
+function unreadMappings(a) {
+  const names = Array.isArray(a.annotations) ? a.annotations : [];
+  const out = names.filter((n) => UNREAD_ATTRIBUTE_MAPPINGS.includes(n));
+  if (names.includes('MapsId') && !a.joinColumn) out.push('MapsId');
+  return out;
+}
+
+/** One attribute of one entity: its column, the table that holds it, and what this lane did not read about it. */
+function readAttribute(e, a, ctx) {
+  const { homes, entityUnread, stats } = ctx;
+  const unread = unreadMappings(a);
+  const read = mapAttribute(a, ctx);
+  const mapped = unread.length > 0 || entityUnread.length > 0 ? { ...read, grade: 'HEURISTIC' } : read;
+  const home = homes ? homes.get(a.declaredBy) : null;
+  e.attributes.set(a.name, { ...a, ...mapped, ...(home && home !== e ? { home } : {}) });
+  if (a.id === true && mapped.column) Object.assign(e, { pkColumn: mapped.column, pkGrade: mapped.grade });
+  if (a.elementCollection === true) {
+    note(stats, 'element-collection-not-read', `${e.fqn}.${a.name} is an @ElementCollection: its values live in a table of their own, which this lane does not read, so no statement here reaches it`);
+  }
+  if (unread.length > 0) {
+    note(stats, 'jpa-mapping-unread', `${e.fqn}.${a.name} is mapped with @${unread.join(', @')}, which this lane does not read, so the column it names is a guess`);
+  }
 }
 
 /**
@@ -409,14 +607,16 @@ const ensureColumn = (table, column, grade) => {
 for (const e of entities.values()) {
   ensureTable(e.table, { mappedFrom: e.fqn });
   const tnode = g.nodes.get(tableIdOf(e.table));
-  if (tnode) {
+  // A single-table subclass lands on its root's table, which stays the root's.
+  if (tnode && e.sharesRootTable !== true) {
     tnode.jpaEntity = e.fqn;
     tnode.jpaMappingGrade = e.tableGrade;
   }
-  stats.tables += 1;
+  if (e.sharesRootTable !== true) stats.tables += 1;
   for (const a of e.attributes.values()) {
     if (!a.column) continue;
-    ensureColumn(e.table, a.column, weakest(e.tableGrade, a.grade));
+    const home = homeOf(e, a);
+    ensureColumn(home.table, a.column, weakest(home.tableGrade, a.grade));
     stats.columns += 1;
   }
 }
@@ -426,47 +626,20 @@ for (const e of entities.values()) {
 // adding N associations does not cost N scans of the edge list.
 const joinSeen = new Set();
 for (const edge of g.edges) if (edge.type === 'JOINS') joinSeen.add(`${edge.from}|${edge.to}`);
+const writers = { tableIdOf, ensureTable, ensureColumn, joinSeen };
 for (const e of entities.values()) {
+  if (e.joinedKey) {
+    ensureColumn(e.table, e.joinedKey.column, e.joinedKey.grade);
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(e.parent.table), `${e.table}.${e.joinedKey.column}=${e.parent.table}.${e.parent.pkColumn ?? 'id'}`, weakest(e.joinedKey.grade, e.parent.tableGrade), stats);
+  }
   for (const a of e.attributes.values()) {
+    if (!a.relation || a.transient === true) continue;
     const target = a.targetSimple ? entities.get(resolveType(e.fqn, a.targetSimple) ?? '') : null;
-    if (!a.relation) continue;
-    if (a.transient === true) continue;
     if (!target) {
-      if (a.relation) {
-        note(stats, 'association-target-unknown', `${e.fqn}.${a.name}: ${a.targetSimple ?? '?'} is not an @Entity this pack saw`);
-      }
+      note(stats, 'association-target-unknown', `${e.fqn}.${a.name}: ${a.targetSimple ?? '?'} is not an @Entity this pack saw`);
       continue;
     }
-    const pairGrade = weakest(e.tableGrade, target.tableGrade, a.grade);
-    if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
-      if (a.mappedBy) continue; // the OTHER side owns the column
-      const { col, colGrade } = ownedForeignKey(a, target, { strategy, pairGrade });
-      ensureColumn(e.table, col, colGrade);
-      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, colGrade, stats);
-    } else if (a.relation === 'oneToMany') {
-      // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
-      // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
-      // other side already declared it. Either way this table gains no column.
-      const { col, colGrade } = inboundForeignKey(a, e, { strategy, pairGrade });
-      if (col) {
-        ensureColumn(target.table, col, colGrade);
-        if (!target.inboundColumns.some((c) => c.column === col)) {
-          target.inboundColumns.push({ column: col, grade: colGrade });
-        }
-      }
-      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
-    } else if (a.relation === 'manyToMany') {
-      if (a.mappedBy) continue; // the owning side declares the join table
-      const jt = joinTableOf(e, a, target, { strategy, derivedGrade });
-      // Kept on the attribute so a statement that FOLLOWS this association later
-      // reaches the same three names, graded the same way, instead of a second
-      // reading of the mapping that could differ from this one.
-      a.joinTableResolved = jt;
-      ensureTable(jt.table, { joinTableFor: [e.fqn, target.fqn] });
-      for (const c of jt.columns) ensureColumn(c.table, c.column, c.grade);
-      addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(jt.table), `${e.table}.${e.pkColumn ?? 'id'}=${jt.table}.${jt.columns[0].column}`, jt.columns[0].grade, stats);
-      addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(jt.table), `${target.table}.${target.pkColumn ?? 'id'}=${jt.table}.${jt.columns[1].column}`, jt.columns[1].grade, stats);
-    }
+    linkAssociation(g, homeOf(e, a), a, target, { strategy, derivedGrade, stats, ...writers });
   }
 }
 
@@ -477,6 +650,56 @@ for (const e of entities.values()) {
 }
 
   return { tableIdOf, columnIdOf, ensureTable, ensureColumn };
+}
+
+/**
+ * Whether an association crosses a JOIN TABLE: a @ManyToMany, anything that
+ * writes @JoinTable, and a unidirectional @OneToMany with no @JoinColumn, which
+ * JPA maps through a join table too. The inverse side (`mappedBy`) crosses the
+ * owning side's, if any.
+ */
+const usesJoinTable = (a) => !a.mappedBy && (a.relation === 'manyToMany' || !!a.joinTable || (a.relation === 'oneToMany' && !a.joinColumn));
+
+/**
+ * One association's physical side: the foreign key it owns, the one it puts on
+ * the target, or the join table it crosses, with the JOINS edges between them.
+ * `e` is the entity whose table holds the attribute.
+ */
+function linkAssociation(g, e, a, target, ctx) {
+  const { strategy, stats, tableIdOf, ensureColumn, joinSeen } = ctx;
+  const pairGrade = weakest(e.tableGrade, target.tableGrade, a.grade);
+  if (usesJoinTable(a)) {
+    linkJoinTable(g, e, a, target, ctx);
+  } else if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
+    if (a.mappedBy) return; // the OTHER side owns the column
+    const { col, colGrade } = ownedForeignKey(a, target, { strategy, pairGrade });
+    ensureColumn(e.table, col, colGrade);
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, colGrade, stats);
+  } else if (a.relation === 'oneToMany') {
+    // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
+    // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
+    // other side already declared it. Either way this table gains no column.
+    const col = a.mappedBy ? null : a.joinColumn;
+    if (col) {
+      ensureColumn(target.table, col, pairGrade);
+      if (!target.inboundColumns.some((c) => c.column === col)) target.inboundColumns.push({ column: col, grade: pairGrade });
+    }
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
+  }
+}
+
+/** The join table one owning association crosses, its two columns, and the two JOINS edges to it. */
+function linkJoinTable(g, e, a, target, ctx) {
+  const { strategy, derivedGrade, stats, tableIdOf, ensureTable, ensureColumn, joinSeen } = ctx;
+  const jt = joinTableOf(e, a, target, { strategy, derivedGrade });
+  // Kept on the attribute so a statement that FOLLOWS this association later
+  // reaches the same three names, graded the same way, instead of a second
+  // reading of the mapping that could differ from this one.
+  a.joinTableResolved = jt;
+  ensureTable(jt.table, { joinTableFor: [e.fqn, target.fqn] });
+  for (const c of jt.columns) ensureColumn(c.table, c.column, c.grade);
+  addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(jt.table), `${e.table}.${e.pkColumn ?? 'id'}=${jt.table}.${jt.columns[0].column}`, jt.columns[0].grade, stats);
+  addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(jt.table), `${target.table}.${target.pkColumn ?? 'id'}=${jt.table}.${jt.columns[1].column}`, jt.columns[1].grade, stats);
 }
 
 /**
@@ -496,29 +719,30 @@ function ownedForeignKey(a, target, { strategy, pairGrade }) {
   return { col, colGrade };
 }
 
-/** The foreign key a unidirectional @OneToMany puts on the TARGET table: its @JoinColumn, or `<entity>_<pk>` by the strategy; none with `mappedBy`. */
-function inboundForeignKey(a, e, { strategy, pairGrade }) {
-  if (a.joinColumn) return { col: a.joinColumn, colGrade: pairGrade };
-  if (a.mappedBy) return { col: null, colGrade: pairGrade };
-  const fk = derivedName(`${e.simple}_${e.pkColumn ?? 'id'}`, strategy, pairGrade);
-  return { col: fk.name, colGrade: weakest(pairGrade, fk.grade) };
-}
-
 /**
  * The physical JOIN TABLE an association crosses, and how sure each of its three
  * names is. The table name, the owning column and the inverse column are three
  * separate declarations, and any one of them may be left to the naming strategy,
  * so each is graded on its own evidence.
+ *
+ * THE DEFAULTS. Spring Boot's SpringImplicitNamingStrategy names the table after
+ * the owning table's physical name and the attribute (`owners` + `_` +
+ * `specialTags`, then the physical strategy: `owners_special_tags`); every
+ * strategy the profile can declare is Spring Boot's. The two columns are JPA's
+ * (2.10.4, 2.10.5): the owning side's is the inverse attribute's name, or the
+ * owning entity's name when nothing maps the association back, then `_` and its
+ * key; the other side's is the attribute's name, `_`, the target's key.
  */
 function joinTableOf(e, a, target, { strategy, derivedGrade }) {
   const jt = a.joinTable;
   const named = !!(jt && jt.name);
-  const derivedTable = derivedName(`${e.simple}${target.simple}`, strategy, derivedGrade);
+  const derivedTable = derivedName(`${e.table}_${a.name}`, strategy, derivedGrade);
   const table = named ? jt.name : derivedTable.name;
-  const nameGrade = named ? 'EXACT' : derivedTable.grade;
-  const side = (declaredName, simple, pk) => (declaredName ? { name: declaredName, grade: 'EXACT' } : derivedName(`${simple}_${pk ?? 'id'}`, strategy, derivedGrade));
-  const left = side(jt?.joinColumns?.[0], e.simple, e.pkColumn);
-  const right = side(jt?.inverseJoinColumns?.[0], target.simple, target.pkColumn);
+  const nameGrade = named ? 'EXACT' : weakest(e.tableGrade, derivedTable.grade);
+  const inverse = [...(target.attributes?.values() ?? [])].find((t) => t.mappedBy === a.name);
+  const side = (declaredName, logical) => (declaredName ? { name: declaredName, grade: 'EXACT' } : derivedName(logical, strategy, derivedGrade));
+  const left = side(jt?.joinColumns?.[0], `${inverse ? inverse.name : e.entityName}_${e.pkColumn ?? 'id'}`);
+  const right = side(jt?.inverseJoinColumns?.[0], `${a.name}_${target.pkColumn ?? 'id'}`);
   return {
     table,
     grade: weakest(e.tableGrade, target.tableGrade, nameGrade),
@@ -606,6 +830,7 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
 
   const { resolveType } = buildTypeIndex(javaFacts);
   const entityRecords = new Map();   // fqn -> record
+  const classAnnotations = new Map(); // fqn -> the annotations its class carries
   const repositories = [];
   const calls = [];
   for (const r of javaFacts) {
@@ -613,6 +838,7 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     if (r.kind === 'entity') entityRecords.set(r.fqn, r);
     else if (r.kind === 'repository') repositories.push(r);
     else if (r.kind === 'call') calls.push(r);
+    else if (r.kind === 'type' && Array.isArray(r.annotations)) classAnnotations.set(r.fqn, r.annotations);
   }
 
   const stats = {
@@ -629,8 +855,8 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
   if (entityRecords.size === 0 && repositories.length === 0) return stats;
 
   const naming = { strategy, derivedGrade, namingEvidence, stats };
-  const entities = entityTables(entityRecords, naming);
-  attributesThroughSuperclasses(entities, entityRecords, { resolveType, ...naming });
+  const entities = entityTables(entityRecords, { ...naming, resolveType });
+  attributesThroughSuperclasses(entities, entityRecords, { resolveType, classAnnotations, ...naming });
   const nodes = tableColumnAndJoinNodes(g, entities, {
     opts, schema, resolveType, strategy, derivedGrade, stats,
   });
@@ -676,7 +902,12 @@ function namedEntityGraphs(entityRecords) {
 function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
   // `targetEntity = Pet.class` is the mapping saying the other side outright, so
   // it wins over the field's own type — which for a raw `List pets` says nothing.
-  const targetSimple = a.targetEntity ?? a.typeArgSimple ?? a.typeSimple ?? null;
+  // A to-many's other side is its ELEMENT type, the last type argument: a
+  // `List<Pet>` and a `Map<PetType, Pet>` both hold pets (javafacts/21).
+  const args = Array.isArray(a.typeArgSimples) ? a.typeArgSimples : [];
+  const toMany = a.relation === 'oneToMany' || a.relation === 'manyToMany';
+  const elementType = toMany && args.length > 0 ? args[args.length - 1] : a.typeArgSimple;
+  const targetSimple = a.targetEntity ?? elementType ?? a.typeSimple ?? null;
   const explicitColumn = typeof a.column === 'string' && a.column.length > 0;
   const explicitJoin = typeof a.joinColumn === 'string' && a.joinColumn.length > 0;
   // A @JoinTable(name=…, joinColumns=@JoinColumn(name=…)) declares the physical
@@ -691,6 +922,7 @@ function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
   };
   if (a.transient === true) return { ...base, column: null, grade: 'EXACT', reason: '@Transient' };
   if (a.embedded === true) return { ...base, column: null, grade: derivedGrade, reason: '@Embedded is not modelled' };
+  if (a.elementCollection === true) return { ...base, column: null, grade: 'HEURISTIC', reason: '@ElementCollection keeps its values in a table this lane does not read' };
   if (a.relation === 'oneToMany' || a.relation === 'manyToMany') {
     // The inverse side names no column and no join table of its own: the side
     // it is mapped by owns them, and grades them there. Nothing is derived here.
@@ -727,6 +959,7 @@ function addQueryStatement(g, ctx) {
   // plus the paths the query's own plan forces (JOIN FETCH, @EntityGraph).
   const forced = [...query.forced, ...entityGraphPaths(ctx, sink)];
   const limits = query.root ? applyFetchPlan(query.root, ctx, forced, sink) : [];
+  sink.unresolved.push(...polymorphicNote(query.root, ctx.entities));
 
   emitStatement(g, {
     sid, key, type, file: repo.file ?? null, line: method.line ?? null,
@@ -822,8 +1055,9 @@ function resolveDerivedRefs(parsed, ctx, sink) {
       sink.unresolved.push({ reason: 'property-has-no-column', detail: `${prop} resolves to ${last.entity}.${last.property}, which owns no column` });
       continue;
     }
-    touched.push({ table: owner.table, column: attr.column, grade: weakest(owner.tableGrade, attr.grade) });
-    if (!tableGrades.has(owner.table)) tableGrades.set(owner.table, owner.tableGrade);
+    const home = homeOf(owner, attr);
+    touched.push({ table: home.table, column: attr.column, grade: weakest(home.tableGrade, attr.grade) });
+    if (!tableGrades.has(home.table)) tableGrades.set(home.table, home.tableGrade);
     // A nested path is a join: every hop's owning table is read on the way.
     for (const hop of r.path.slice(0, -1)) {
       const hopOwner = entities.get(hop.entity);
@@ -837,10 +1071,21 @@ function resolveDerivedRefs(parsed, ctx, sink) {
     sink.reads.push(t);
     mark(sink.tableAccess, t.table, access === 'delete' && t.table === entity.table ? 'delete' : 'read', tableGrades.get(t.table) ?? t.grade);
   }
-  mark(sink.tableAccess, entity.table, access === 'delete' ? 'delete' : 'read', entity.tableGrade);
+  markRow(sink.tableAccess, entity, access === 'delete' ? 'delete' : 'read', entity.tableGrade);
   // A SELECT's result IS the entity, so the fetch plan applies to it. A derived
   // DELETE removes rows and returns none, so nothing is fetched with them.
   return { root: access === 'delete' ? null : entity, forced: [] };
+}
+
+/**
+ * The entity a JPQL `FROM` names: by the entity's name when `@Entity(name = …)`
+ * gives it one (that is the only name JPQL knows it by), else by the class.
+ */
+function jpqlEntityOf(name, ctx) {
+  const byName = [...ctx.entities.values()].find((e) => e.entityName === name && e.entityName !== e.simple);
+  if (byName) return byName;
+  const fqn = ctx.resolveType(ctx.repo.fqn, name) ?? [...ctx.entities.keys()].find((k) => k.endsWith(`.${name}`)) ?? null;
+  return fqn ? (ctx.entities.get(fqn) ?? null) : null;
 }
 
 /** A JPQL query's aliases and paths, resolved through the entity model. */
@@ -856,9 +1101,7 @@ function resolveJpqlRefs(read, ctx, sink) {
   const aliasFrom = new Map();
   const forced = [];
   for (const root of read.roots) {
-    const fqn = resolveType(ctx.repo.fqn, root.entity)
-      ?? [...entities.keys()].find((k) => k.endsWith(`.${root.entity}`)) ?? null;
-    const target = fqn ? entities.get(fqn) : null;
+    const target = jpqlEntityOf(root.entity, ctx);
     if (!target) {
       sink.unresolved.push({ reason: 'jpql-entity-unknown', detail: `FROM ${root.entity}: not an @Entity this pack saw` });
       continue;
@@ -905,7 +1148,7 @@ function resolveJpqlRefs(read, ctx, sink) {
     if (ref.path.length === 0) {
       // `SELECT o` / `SELECT COUNT(o)` — the whole row.
       for (const c of columnsOf(owner)) sink[bucket].push(c);
-      mark(sink.tableAccess, owner.table, bucket === 'writes' ? 'write' : 'read', owner.tableGrade);
+      markRow(sink.tableAccess, owner, bucket === 'writes' ? 'write' : 'read', owner.tableGrade);
       return;
     }
     let cur = owner;
@@ -923,8 +1166,9 @@ function resolveJpqlRefs(read, ctx, sink) {
           sink.unresolved.push({ reason: 'jpql-path-has-no-column', detail: `${ref.alias}.${ref.path.join('.')} owns no column` });
           return;
         }
-        sink[bucket].push({ table: cur.table, column: attr.column, grade: weakest(cur.tableGrade, attr.grade) });
-        mark(sink.tableAccess, cur.table, bucket === 'writes' ? 'write' : 'read', cur.tableGrade);
+        const home = homeOf(cur, attr);
+        sink[bucket].push({ table: home.table, column: attr.column, grade: weakest(home.tableGrade, attr.grade) });
+        mark(sink.tableAccess, home.table, bucket === 'writes' ? 'write' : 'read', home.tableGrade);
         return;
       }
       if (!hit.associationTo || !entities.has(hit.associationTo)) {
@@ -941,7 +1185,7 @@ function resolveJpqlRefs(read, ctx, sink) {
   if (read.kind === 'delete') {
     for (const root of read.roots) {
       const owner = aliasEntity.get(root.alias);
-      if (owner) mark(sink.tableAccess, owner.table, 'delete', owner.tableGrade);
+      if (owner) markRow(sink.tableAccess, owner, 'delete', owner.tableGrade);
     }
   }
   // Only a SELECT hands back entities, so only a SELECT has a fetch plan.
@@ -975,10 +1219,7 @@ function crossedJoinTable(owner, a, target, ctx) {
     const owning = target.attributes.get(a.mappedBy);
     return owning && owning.joinTableResolved ? owning.joinTableResolved : null;
   }
-  if (a.relation === 'manyToMany' || (a.joinTable && a.joinTable.name)) {
-    return joinTableOf(owner, a, target, ctx);
-  }
-  return null;
+  return usesJoinTable(a) ? joinTableOf(homeOf(owner, a), a, target, ctx) : null;
 }
 
 /**
@@ -1090,7 +1331,7 @@ function applyFetchPlan(root, ctx, forced, sink) {
       mark(sink.tableAccess, r.joinTable.table, 'read', weakest(r.grade, r.joinTable.grade), evidence);
     }
     for (const c of columnsOf(r.entity)) sink.reads.push({ ...c, grade: weakest(r.grade, c.grade), evidence });
-    mark(sink.tableAccess, r.entity.table, 'read', r.grade, evidence);
+    markRow(sink.tableAccess, r.entity, 'read', r.grade, evidence);
   }
   for (const d of diagnostics) sink.unresolved.push(d);
   ctx.stats.lazyAssociationsNotFollowed += lazy;
@@ -1106,18 +1347,18 @@ function addBuiltinStatement(g, ctx) {
   const key = statementKey(repoFqn, method);
   const sid = nodeId('statement', key);
   const family = BUILTIN_METHODS[method];
-  const sink = { reads: [], writes: [], tableAccess: new Map(), unresolved: [] };
+  const sink = { reads: [], writes: [], tableAccess: new Map(), unresolved: polymorphicNote(entity, ctx.entities) };
   let limits = [];
   let evidenceNote;
 
   if (family === 'save') {
     evidenceNote = 'a JPA save() merges the whole entity, so every mapped column of the row is written';
     for (const c of columnsOf(entity)) sink.writes.push(c);
-    mark(sink.tableAccess, entity.table, 'write', entity.tableGrade);
+    markRow(sink.tableAccess, entity, 'write', entity.tableGrade);
     applyCascade(entity, ctx, sink, 'save');
   } else if (family === 'delete') {
     evidenceNote = 'a JPA delete() removes the row; its columns are not individually written';
-    mark(sink.tableAccess, entity.table, 'delete', entity.tableGrade);
+    markRow(sink.tableAccess, entity, 'delete', entity.tableGrade);
     applyCascade(entity, ctx, sink, 'delete');
   } else if (family === 'findById') {
     evidenceNote = 'a by-id lookup reads the row through its primary key';
@@ -1126,12 +1367,12 @@ function addBuiltinStatement(g, ctx) {
     } else {
       sink.unresolved.push({ reason: 'no-primary-key', detail: `${entity.fqn} declares no @Id, so the by-id lookup names no column` });
     }
-    mark(sink.tableAccess, entity.table, 'read', entity.tableGrade);
+    markRow(sink.tableAccess, entity, 'read', entity.tableGrade);
     limits = applyFetchPlan(entity, ctx, [], sink);
   } else {
     evidenceNote = 'reads every mapped column of the row';
     for (const c of columnsOf(entity)) sink.reads.push(c);
-    mark(sink.tableAccess, entity.table, 'read', entity.tableGrade);
+    markRow(sink.tableAccess, entity, 'read', entity.tableGrade);
     limits = applyFetchPlan(entity, ctx, [], sink);
   }
   emitStatement(g, {
@@ -1176,7 +1417,7 @@ function applyCascade(entity, ctx, sink, operation) {
     if (operation === 'save') {
       for (const c of columnsOf(reached.entity)) sink.writes.push({ ...c, grade: weakest(c.grade, grade), evidence, via: 'jpa-cascade' });
     }
-    mark(sink.tableAccess, reached.entity.table, operation === 'save' ? 'write' : 'delete', grade, evidence);
+    markRow(sink.tableAccess, reached.entity, operation === 'save' ? 'write' : 'delete', grade, evidence);
   }
 }
 
@@ -1276,13 +1517,14 @@ function columnsOf(entity) {
   const out = [];
   const seen = new Set();
   for (const a of entity.attributes.values()) {
-    if (!a.column || seen.has(a.column)) continue;
-    seen.add(a.column);
-    out.push({ table: entity.table, column: a.column, grade: weakest(entity.tableGrade, a.grade) });
+    const home = homeOf(entity, a);
+    if (!a.column || seen.has(`${home.table}.${a.column}`)) continue;
+    seen.add(`${home.table}.${a.column}`);
+    out.push({ table: home.table, column: a.column, grade: weakest(home.tableGrade, a.grade) });
   }
   for (const c of entity.inboundColumns ?? []) {
-    if (seen.has(c.column)) continue;
-    seen.add(c.column);
+    if (seen.has(`${entity.table}.${c.column}`)) continue;
+    seen.add(`${entity.table}.${c.column}`);
     out.push({ table: entity.table, column: c.column, grade: c.grade });
   }
   return out;

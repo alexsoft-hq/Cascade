@@ -84,7 +84,7 @@ function traceAutoDepth(kind){
 function traceNow(){
   const tg = TRACE.target || { kind:'', id:'' };
   return { project:STATE.project || '', kind:tg.kind, id:tg.id, dir:TRACE.dir,
-    mode:byId('tmode').value, depth:Number(byId('tdepth').value), limit:TRACEV.limit };
+    mode:byId('tmode').value, depth:depthArg('tdepth'), limit:TRACEV.limit };
 }
 /** One string per question: project, target, direction, mode, depth, rows per lane. */
 function traceKey(q){
@@ -124,7 +124,7 @@ function traceSetTarget(target, dir){
   if(!target){ TRACE.target = null; return; }
   TRACE.target = { kind:String(target.kind), id:String(target.id) };
   TRACE.dir = traceDirFor(TRACE.target.kind, dir);
-  if(!TRACE.depthSet) byId('tdepth').value = String(traceAutoDepth(TRACE.target.kind));
+  if(!TRACE.depthSet) byId('tdepth').value = depthOption(traceAutoDepth(TRACE.target.kind));
   byId('tentry').value = TRACE.target.id;
   TRACEV.pick = { kind:TRACE.target.kind, value:TRACE.target.id };
   if(!was || was.kind !== TRACE.target.kind || was.id !== TRACE.target.id){ TRACEV.limit = 40; TRACEV.sel = null; }
@@ -207,7 +207,7 @@ function renderTraceHead(){
     el('span', { className:'tquestion' }, [ kindGlyph(TRACE_GLYPH[tg.kind], 12), ' ', t(TRACE_DIR_KEY[TRACE.dir]) + ': ',
       el('code', { className:'id', textContent:tg.id }) ]),
     walk ? el('span', { textContent:t('trace.q.mode', { mode:byId('tmode').value }) }) : null,
-    walk ? el('span', { title:t('trace.depth.title'), textContent:t('trace.q.depth', { n:byId('tdepth').value }) }) : null,
+    walk ? el('span', { title:t('trace.depth.title'), textContent:t('trace.q.depth', { n:depthText(byId('tdepth').value) }) }) : null,
     ...nodir);
 }
 /** Which half of the pane is on: the chain picture, or the details lists. */
@@ -247,7 +247,7 @@ function traceRestore(h){
   const depth = Number(h.depth);
   if(Number.isInteger(depth) && depth >= 1 && depth <= 8){
     byId('tdepth').value = String(depth);
-    TRACE.depthSet = !!kind && depth !== traceAutoDepth(kind);
+    TRACE.depthSet = !!kind;
   }
   if(!kind || !TRACE_DIRS[kind]){ if(TRACE.target || TRACE.edits) showAll('trace', true); return; }
   const target = { kind, id:h.pick.slice(at + 1) };
@@ -271,7 +271,7 @@ function traceLimitsPanel(v, r){
   const rows = [];
   const line = (n, text, btn)=> rows.push(el('div', { className:'tlim' }, [
     n != null ? el('span', { className:'ovnum', textContent:ovNum(n) }) : null, el('span', { textContent:text }), btn || null ]));
-  if(cut.depth > 0) line(cut.depth, t('trace.lim.depth', { depth:w.depth }), traceDeeperButton(w));
+  if(cut.depth > 0) line(cut.depth, t('trace.lim.depth', { depth:depthText(w.depth) }), traceDeeperButton(w));
   // Up at the deepest a walk goes, the screens a change is felt on are still
   // one question away: Details follows the same reach all the way up.
   if(cut.depth > 0 && Number(w.depth) >= 8 && w.direction === 'up' && TRACE.target && TRACE_SCREENS_OF.includes(TRACE.target.kind)) {
@@ -289,11 +289,11 @@ function traceLimitsPanel(v, r){
   return el('div', { className:'panel tlimits' }, [ el('h2', { textContent:t('trace.lim.title') }),
     rows.length ? el('div', {}, rows) : el('div', { className:'comment', textContent:t('trace.lim.none') }) ]);
 }
-/** The button that follows a cut walk to the deepest depth, when it is not there yet. */
+/** The button that lifts the depth a cut walk was narrowed to: every walk's own rule is no cap. */
 function traceDeeperButton(w){
-  if(!(Number(w.depth) < 8)) return null;
+  if(w.depth == null) return null;
   return el('button', { className:'mini', textContent:t('trace.lim.deeper'), title:t('trace.depth.title'),
-    onclick:()=>{ byId('tdepth').value = '8'; TRACE.depthSet = true; traceAsk(); } });
+    onclick:()=>{ byId('tdepth').value = depthOption(WALK_DEPTH_DEFAULT); TRACE.depthSet = false; traceAsk(); } });
 }
 /** A lane's name, in the reader's words, from the one table the lanes are drawn by. */
 function laneTitle(field){
@@ -409,7 +409,7 @@ function traceOnScreen(){
 function traceFromSnapshot(snap){
   const v = TRACEV;
   byId(v.modeId).value = snap.args.mode;
-  byId(v.depthId).value = String(snap.args.depth);
+  byId(v.depthId).value = depthOption(snap.args.depth);
   TRACE.depthSet = true;
   TRACE.target = { kind:snap.entry.kind, id:snap.entry.value };
   TRACE.dir = snap.tab === 'impact' ? 'up' : 'down';

@@ -23,7 +23,7 @@
 // Pure: graph in, plain result out — no contract, no paging, no DOM.
 
 import { chainWalk, frontendCallsOf } from './chain.mjs';
-import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, isWalkDepth } from './graph.mjs';
 
 // Re-exported from here because this is the module a reader looks in for the
 // endpoint helpers; it LIVES in chain.mjs because the chain walk needs it and
@@ -269,7 +269,7 @@ export function walkEndpoints(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new WalkError(`unknown mode: ${JSON.stringify(mode)}`);
   const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
-  if (!Number.isInteger(depth) || depth < 1) throw new WalkError(`depth must be a positive integer, got ${depth}`);
+  if (!isWalkDepth(depth)) throw new WalkError(`depth must be a positive integer or none, got ${depth}`);
 
   let endpoints = [];
   let outboundEndpoints = 0;
@@ -360,9 +360,7 @@ function censusStartsOf(graph, endpointId, mode, walk) {
  * method the lane only saw referenced.
  */
 function servicesOf(graph, w) {
-  const senders = w.statements.map((s) => s.path?.[s.path.length - 1])
-    .filter((e) => e && e.type === 'IMPLEMENTS_STMT' && e.evidence?.line != null)
-    .map((e) => e.from).filter((id) => graph.nodes.get(id)?.file);
+  const senders = (w.senders ?? []).filter((id) => graph.nodes.get(id)?.file);
   const rows = w.services.filter((s) => !s.external).map((s) => `symbol:${s.id}`);
   return [...new Set([...rows, ...senders])].filter((id) => !graph.inEdges(id).some((e) => e.type === 'HANDLES'));
 }
@@ -431,7 +429,7 @@ export function walkScreens(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new WalkError(`unknown mode: ${JSON.stringify(mode)}`);
   const depth = opts.depth ?? DEFAULT_WALK_DEPTH;
-  if (!Number.isInteger(depth) || depth < 1) throw new WalkError(`depth must be a positive integer, got ${depth}`);
+  if (!isWalkDepth(depth)) throw new WalkError(`depth must be a positive integer or none, got ${depth}`);
 
   const ids = [];
   for (const n of graph.nodes.values()) if (n.kind === 'screen') ids.push(n.id);

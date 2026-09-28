@@ -30,7 +30,7 @@
       "walk": {
         "mode": "conservative",
         "direction": "down",
-        "depth": 8,
+        "depth": null,
         "walked": 7,
         "other": 1,
         "byLinkGrade": {

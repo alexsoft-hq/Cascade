@@ -15,7 +15,7 @@
 // when the code axis (Java lane) lands, the same tools gain candidate grades and
 // the response contract already carries them.
 
-import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH, sqlEdgesOf } from '../core/graph.mjs';
+import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH, depthSaid, sqlEdgesOf } from '../core/graph.mjs';
 import { changeImpact } from '../core/overlay.mjs';
 import { chainWalk, nodeLabel } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
@@ -238,7 +238,7 @@ export function endpoint_impact(graph, args, ctx) {
 // that wants "how many routes does this screen reach?" reads the same numbers.
 const SCREEN_CENSUS = new WeakMap();
 const SCREEN_CENSUS_MODE = 'conservative';
-const SCREEN_CENSUS_DEPTH = 8;
+const SCREEN_CENSUS_DEPTH = DEFAULT_WALK_DEPTH;
 
 /**
  * The per-pack screen census, computed once and kept on the graph.
@@ -309,7 +309,7 @@ function screenReach(graph) {
 function screenWalkLimit() {
   return {
     scope: 'screen',
-    reason: `a screen reaches a route because a walk (mode=${SCREEN_CENSUS_MODE}, depth ${SCREEN_CENSUS_DEPTH}) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk \`flow\` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (\`observed\`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one`,
+    reason: `a screen reaches a route because a walk (mode=${SCREEN_CENSUS_MODE}, ${depthSaid(SCREEN_CENSUS_DEPTH)}) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk \`flow\` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (\`observed\`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one`,
   };
 }
 
@@ -842,7 +842,7 @@ function erdShape(graph, tset, withCols) {
 function erdLimitsFor(limits, { federated, tablesCut, tablesTotal, limit, focusKey }) {
   if (federated.length) {
     limits.push({ scope: 'erd', reason: `${federated.length} other registered project(s) are on this answer under \`federated\` (${federated.map((f) => f.project).join(', ')}), holding only the tables a request from THIS project reaches over an HTTP call. Their relationships are their own joins between those tables. No relationship on this answer joins two projects, because two services share no foreign key: the only thing that connects the clusters is the call, and \`via\` names the route it went through` });
-    limits.push({ scope: 'erd', reason: `the walk into another project runs at mode=${ERD_FEDERATION_MODE}, depth ${ERD_FEDERATION_DEPTH}, which is the default \`map\` and \`flow\` walk. \`erd\` takes no mode or depth of its own, so a table a wider walk would reach there is unknown rather than absent` });
+    limits.push({ scope: 'erd', reason: `the walk into another project runs at mode=${ERD_FEDERATION_MODE}, ${depthSaid(ERD_FEDERATION_DEPTH)}, which is the default \`map\` and \`flow\` walk. \`erd\` takes no mode or depth of its own, so a table a wider walk would reach there is unknown rather than absent` });
   }
   if (tablesCut > 0) {
     limits.push({ scope: 'erd', reason: `table cap ${limit} reached, so ${tablesCut} of ${tablesTotal} table(s) in scope are not drawn (we keep the most-joined${focusKey ? ', and the focus table always' : ''}). Every relationship between a kept and a cut table went with them. Raise limit (max ${ERD_LIMIT_MAX}); what is missing is unknown, not absent` });
@@ -1126,7 +1126,7 @@ export function coupling(graph, args, ctx) {
   if (Object.keys(empty).length) answer.empty = empty;
 
   const limits = [...(ctx.limits ?? []),
-    { scope: 'coupling', reason: `we attribute a statement to a group by following calls (${mode}, depth ${depth}), so a statement behind a shared service counts for every group that reaches it. ${c.summary.sharedStatements} statement(s) are reached by ${SHARED_AT} or more groups` },
+    { scope: 'coupling', reason: `we attribute a statement to a group by following calls (${mode}, ${depthSaid(depth)}), so a statement behind a shared service counts for every group that reaches it. ${c.summary.sharedStatements} statement(s) are reached by ${SHARED_AT} or more groups` },
     groupingLimit('coupling', ctx),
     { scope: 'coupling', reason: 'this view sees sharing through the database only. A direct call from one group to another is not counted here' },
   ];
@@ -1157,7 +1157,7 @@ export function coupling(graph, args, ctx) {
   // reported the way `flow` reports them.
   if (c.summary.endpoints > 0 && c.summary.statements === 0) {
     const wider = widerMode(mode);
-    limits.push({ scope: 'coupling', reason: `the walk reached no statement at all (mode=${mode}, depth ${depth}). This matrix is empty because of the walk, not because these groups share nothing${wider ? `; try mode=${wider}` : ''}` });
+    limits.push({ scope: 'coupling', reason: `the walk reached no statement at all (mode=${mode}, ${depthSaid(depth)}). This matrix is empty because of the walk, not because these groups share nothing${wider ? `; try mode=${wider}` : ''}` });
   } else if (w.byMode > 0) {
     const wider = widerThatHelps(mode, w.byMode, w.byModeGrades);
     limits.push({ scope: 'coupling', reason: wider
@@ -1323,7 +1323,7 @@ function mapWalkLimits(limits, s, { mode, depth }) {
   }
   if (s.endpoints > 0 && s.tablesTouched === 0) {
     const wider = widerMode(mode);
-    limits.push({ scope: 'map', reason: `the walk reached no statement at all (mode=${mode}, depth ${depth}). This map has no endpoint to table line because of the walk, not because these endpoints touch nothing${wider ? `; try mode=${wider}` : ''}` });
+    limits.push({ scope: 'map', reason: `the walk reached no statement at all (mode=${mode}, ${depthSaid(depth)}). This map has no endpoint to table line because of the walk, not because these endpoints touch nothing${wider ? `; try mode=${wider}` : ''}` });
   } else if (w.byMode > 0) {
     const wider = widerThatHelps(mode, w.byMode, w.byModeGrades);
     limits.push({ scope: 'map', reason: wider
@@ -1372,7 +1372,7 @@ export function map(graph, args, ctx) {
 
   const limits = [...(ctx.limits ?? []),
     groupingLimit('map', ctx),
-    { scope: 'map', reason: `a table is on this map because a walk (${mode}, depth ${depth}) from an endpoint reaches a statement that touches it. It is the same forward walk \`flow\` draws, and what a deeper or wider walk would add is unknown, not absent` },
+    { scope: 'map', reason: `a table is on this map because a walk (${mode}, ${depthSaid(depth)}) from an endpoint reaches a statement that touches it. It is the same forward walk \`flow\` draws, and what a deeper or wider walk would add is unknown, not absent` },
     ...fed.limits(),
   ];
   mapFederationLimits(limits, drawn, cutFederated);
@@ -1908,7 +1908,7 @@ if (entryKind === 'endpoint') {
     entry.statementType = n.statementType ?? null;
     // The same tables a statement ROW carries, so a statement read as the
     // TARGET is described exactly like one read as a row of the chain.
-    entry.tables = graph.outEdges(id)
+    entry.tables = sqlEdgesOf(graph, id, mode)
       .filter((e) => e.type === 'EXECUTES')
       .map((e) => ({ table: strip(e.to), access: graph.edgeAt(e.idx)?.evidence?.access ?? 'read' }))
       .sort((a, b) => cmpStr(a.table, b.table));
@@ -2631,7 +2631,7 @@ export function browse(graph, args, ctx) {
 
   const limits = [...(ctx.limits ?? []), ...entryLimits, {
     scope: 'browse',
-    reason: `\`endpoints\` on a row counts the endpoints whose walk (mode=${BROWSE_CENSUS_MODE}, depth ${BROWSE_CENSUS_DEPTH}) reaches a statement that touches it. It is the same forward walk \`flow\` draws and \`map\` and \`coupling\` count on, so what a deeper or wider walk would add is unknown, not absent`,
+    reason: `\`endpoints\` on a row counts the endpoints whose walk (mode=${BROWSE_CENSUS_MODE}, ${depthSaid(BROWSE_CENSUS_DEPTH)}) reaches a statement that touches it. It is the same forward walk \`flow\` draws and \`map\` and \`coupling\` count on, so what a deeper or wider walk would add is unknown, not absent`,
   }];
   if (kind === 'endpoint' || kind === 'table') limits.push(groupingLimit('browse', ctx));
   if (kind === 'screen' || reach) limits.push(screenWalkLimit());
@@ -2725,8 +2725,9 @@ function browseStatementRows(graph, census) {
   const out = [];
   for (const n of graph.nodes.values()) {
     if (n.kind !== 'statement') continue;
+    // In the census mode, as its `endpoints` beside it are counted.
     const tables = new Set();
-    for (const e of graph.outEdges(n.id)) if (e.type === 'EXECUTES') tables.add(e.to);
+    for (const e of sqlEdgesOf(graph, n.id, BROWSE_CENSUS_MODE)) if (e.type === 'EXECUTES') tables.add(e.to);
     const row = {
       statement: strip(n.id), type: n.statementType ?? null, tables: tables.size,
       // The statement's own two honesty flags, carried from the lanes: text

@@ -411,7 +411,7 @@ test('buildMap: a link whose end was cut goes with it, and the totals still name
 test('map tool: the default answer echoes its arguments and carries the summary', () => {
   const r = call(mapGraph(), {});
   assert.equal(r.answer.mode, 'conservative');
-  assert.equal(r.answer.depth, 8);
+  assert.equal(r.answer.depth, null);
   assert.equal(r.answer.limit, 6000);
   assert.deepEqual(r.answer.layers, { statements: false, screens: false });
   assert.equal(r.answer.nodes.length, 9);
@@ -461,7 +461,7 @@ test('map tool: an empty map from the MODE says so, and is not called an absence
   const r = call(mapGraph(), { mode: 'strict' });
   assert.equal(r.answer.links.filter((l) => l.kind === 'touches').length, 0);
   assert.equal(r.answer.summary.tablesTouched, 0);
-  assert.ok(r.limits.some((l) => /the walk reached no statement at all \(mode=strict, depth 8\)/.test(l.reason)));
+  assert.ok(r.limits.some((l) => /the walk reached no statement at all \(mode=strict, no depth cap\)/.test(l.reason)));
   assert.ok(r.limits.some((l) => /try mode=conservative/.test(l.reason)));
 });
 
@@ -489,7 +489,7 @@ test('map tool: reachable through the catalog dispatcher, contract-valid', () =>
 // (test/helpers/mall_fixture.mjs): absent -> skip; a different digest or
 // commit -> skip naming both and the rebuild command; the pin -> run.
 
-test('map on the mall pack: 32 groups, 239 endpoints, 49 of 76 tables, 345 touches, 27 joins', { skip: skipUnlessMall() }, () => {
+test('map on the mall pack: 32 groups, 239 endpoints, 49 of 76 tables, 352 touches, 27 joins', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), {});
   const a = r.answer;
   assert.deepEqual(a.summary.shown, { groups: 32, endpoints: 239, tables: 49, statements: 0, screens: 0 });
@@ -500,42 +500,42 @@ test('map on the mall pack: 32 groups, 239 endpoints, 49 of 76 tables, 345 touch
   assert.equal(a.nodes.length, 320); // 32 + 239 + 49
   const byKind = {};
   for (const l of a.links) byKind[l.kind] = (byKind[l.kind] ?? 0) + 1;
-  assert.deepEqual(byKind, { member: 239, touches: 345, joins: 27 });
-  assert.equal(a.links.length, 611);
-  assert.equal(a.summary.links, 611);
+  assert.deepEqual(byKind, { member: 239, touches: 352, joins: 27 }); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (345 at depth 8)
+  assert.equal(a.links.length, 618); // 611 at depth 8
+  assert.equal(a.summary.links, 618);
   // The memo: 239 endpoints and 239 DISTINCT handler chains — not because the
   // routes map one-to-one onto handlers (they do not: 7 routes name two
   // controllers each, and PmsBrandController#getList handles two routes), but
-  // because those two effects cancel on this pack. Five chains are still open at
-  // the depth cap.
+  // because those two effects cancel on this pack. With no hop cap no chain is
+  // open at a cap (five were, at depth 8).
   assert.deepEqual(a.summary.walk,
-    { starts: 239, depthCut: 7, depthCutStarts: 5, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 7, outboundEndpoints: 0 });
+    { starts: 239, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 7, outboundEndpoints: 0 });
   // …and those 7 routes are disclosed, not left for the reader to spot.
   assert.ok(r.limits.some((l) => /7 route\(s\) are declared by more than one controller method/.test(l.reason)));
   const twice = a.nodes.filter((n) => n.kind === 'endpoint' && n.handlers > 1);
   assert.equal(twice.length, 7);
 });
 
-test('map on the mall pack: the busiest table is pms_product, reached by 29 endpoints', { skip: skipUnlessMall() }, () => {
+test('map on the mall pack: the busiest table is pms_product, reached by 31 endpoints', { skip: skipUnlessMall() }, () => {
   const a = call(mallGraph(), {}).answer;
   const t = a.nodes.find((n) => n.id === 'table:pms_product');
   assert.equal(t.columnCount, 42);
   assert.equal(t.comment, '商品信息');
   const eps = a.links.filter((l) => l.kind === 'touches' && l.target === 'table:pms_product');
-  assert.equal(eps.length, 29);
+  assert.equal(eps.length, 31); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (29 at depth 8)
   const joins = a.links.filter((l) => l.kind === 'joins' && (l.source === 'table:pms_product' || l.target === 'table:pms_product'));
   assert.equal(joins.length, 10);
-  // degree is what is DRAWN around it: 29 endpoints + 10 joined tables
-  assert.equal(t.degree, 39);
+  // degree is what is DRAWN around it: 31 endpoints + 10 joined tables
+  assert.equal(t.degree, 41);
 });
 
-test('map on the mall pack: the statements layer draws 208 statements and 592 executes links', { skip: skipUnlessMall() }, () => {
+test('map on the mall pack: the statements layer draws 208 statements and 594 executes links', { skip: skipUnlessMall() }, () => {
   const a = call(mallGraph(), { layers: ['statements'] }).answer;
   assert.equal(a.summary.statements, 208);
   assert.equal(a.nodes.length, 528); // 32 + 239 + 49 + 208
   const byKind = {};
   for (const l of a.links) byKind[l.kind] = (byKind[l.kind] ?? 0) + 1;
-  assert.deepEqual(byKind, { member: 239, executes: 592, joins: 27 });
+  assert.deepEqual(byKind, { member: 239, executes: 594, joins: 27 }); // RM67 one depth rule: no hop cap, so POST /order/generateOrder and /generateConfirmOrder reach PortalProductDao.getPromotionProductList at hop 9, which a cap of 8 cut (592 at depth 8)
   assert.equal(a.links.some((l) => l.kind === 'touches'), false);
 });
 

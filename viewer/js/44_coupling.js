@@ -15,7 +15,7 @@ async function drawCoupling(){
   sum.replaceChildren(t('load.coupling'));
   wrap.replaceChildren(); side.replaceChildren();
   CP.cellEls=new Map();
-  const q={axis:CP.axis, mode:byId('cpmode').value, depth:Number(byId('cpdepth').value)};
+  const q={axis:CP.axis, mode:byId('cpmode').value, depth:depthArg('cpdepth')};
   // The PREVIOUS answer dies with the request, not with its reply: a query that
   // fails must not leave the old axis's matrix live behind a toolbar that now
   // says something else.
@@ -27,7 +27,7 @@ async function drawCoupling(){
   try{ r=await api('coupling',{...q, limit:500}); }
   catch(e){ if(stale(e)||mine!==CP.seq) return; sum.replaceChildren();
     wrap.replaceChildren(el('div',{className:'panel',
-      textContent:t('err.coupling',{axis:q.axis, mode:q.mode, depth:q.depth, message:e.message})})); return; }
+      textContent:t('err.coupling',{axis:q.axis, mode:q.mode, depth:depthText(q.depth), message:e.message})})); return; }
   if(mine!==CP.seq) return;
   CP.resp=r;
   renderCoupling();
@@ -44,7 +44,7 @@ function cpEmptyNote(a){
       t('cp.empty.bymode',{mode:a.mode, n:byMode}),
       wider? el('button',{className:'mini',style:'margin-left:8px',textContent:t('cp.empty.switch',{mode:wider}),onclick:()=>{ byId('cpmode').value=wider; drawCoupling(); }}) : null ]);
   }
-  return el('li',{className:'empty',textContent:t('cp.empty.none',{depth:a.depth})});
+  return el('li',{className:'empty',textContent:a.depth == null ? t('cp.empty.none.all') : t('cp.empty.none',{depth:a.depth})});
 }
 function renderCoupling(){
   const r=CP.resp; if(!r) return;

@@ -7,7 +7,7 @@
   "answer": {
     "answer": {
       "mode": "conservative",
-      "depth": 8,
+      "depth": null,
       "layers": {
         "statements": false,
         "screens": false
@@ -349,7 +349,7 @@
       },
       {
         "scope": "map",
-        "reason": "a table is on this map because a walk (conservative, depth 8) from an endpoint reaches a statement that touches it. It is the same forward walk `flow` draws, and what a deeper or wider walk would add is unknown, not absent"
+        "reason": "a table is on this map because a walk (conservative, no depth cap) from an endpoint reaches a statement that touches it. It is the same forward walk `flow` draws, and what a deeper or wider walk would add is unknown, not absent"
       },
       {
         "scope": "federation",

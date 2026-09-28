@@ -135,7 +135,7 @@ async function drawChain(v, keepLimit){
   if(v.lastRaw!==raw) laneReset(v);
   v.lastRaw=raw; v.open.clear();
   const args={ ...(TRACE.dir==='up' ? {direction:'up'} : {}), [tg.kind]:tg.id,
-    mode:byId(v.modeId).value, depth:Number(byId(v.depthId).value), limit:v.limit };
+    mode:byId(v.modeId).value, depth:depthArg(v.depthId), limit:v.limit };
   const key=traceKey(traceNow());
   const mine=++v.seq;
   const memo=PICKMEM.get(key);
@@ -806,7 +806,7 @@ function renderChainSide(v){
     el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.legend.path')}),
     // `other` is only mentioned when there IS one — a reached node this view
     // has no lane for (an injected type, an outbound call, a screen).
-    el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.walk.note',{walked:w.walked||0, depth:w.depth, mode:w.mode})
+    el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.walk.note',{walked:w.walked||0, depth:depthText(w.depth), mode:w.mode})
       +(w.other>0? t('chain.walk.other',{n:w.other}) : '')}),
     w.note? el('div',{className:'honesty',textContent:w.note}) : null
   ]));

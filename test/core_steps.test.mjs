@@ -133,8 +133,8 @@ test('chain steps: the four facts a row asks the GRAPH rather than the walk', ()
 test('chain steps: every reached node lands in exactly one lane, and a mapper method is folded', () => {
   const g = tinyGraph();
   const w = readWalkOptions(g, { start: START });
-  const { best } = runBfs(g, w);
-  const h = { best, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
+  const { best, cut, expanded } = runBfs(g, w);
+  const h = { best, cut, expanded, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
   const rows = collectRows(g, w, h);
   assert.deepEqual(rows.services.map((s) => s.id), ['com.x.OwnerService#find'],
     'the mapper method IS its statement, so it never doubles as a service');
@@ -149,8 +149,8 @@ test('chain steps: every reached node lands in exactly one lane, and a mapper me
 test('chain steps: the tables lane aggregates the statements, with distinct columns per table', () => {
   const g = tinyGraph();
   const w = readWalkOptions(g, { start: START });
-  const { best } = runBfs(g, w);
-  const h = { best, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
+  const { best, cut, expanded } = runBfs(g, w);
+  const h = { best, cut, expanded, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
   const rows = collectRows(g, w, h);
   const { tables, agg } = buildTables(g, w, h, rows.reachedStatements);
   assert.equal(tables.length, 1);
@@ -164,15 +164,15 @@ test('chain steps: the tables lane aggregates the statements, with distinct colu
   // echoing the thing that was asked about.
   const upW = readWalkOptions(g, { start: nodeId('column', 'owners.id'), direction: 'up' });
   const upBest = runBfs(g, upW);
-  const upH = { best: upBest.best, ...makePathReader(g, upW, upBest.best), ...makeNodeFacts(g, upW, upBest.best) };
+  const upH = { best: upBest.best, cut: upBest.cut, expanded: upBest.expanded, ...makePathReader(g, upW, upBest.best), ...makeNodeFacts(g, upW, upBest.best) };
   assert.deepEqual(buildTables(g, upW, upH, []).tables, []);
 });
 
 test('chain steps: walking up, the endpoints lane is DERIVED from the handlers, never walked onto', () => {
   const g = tinyGraph();
   const w = readWalkOptions(g, { start: nodeId('column', 'owners.id'), direction: 'up' });
-  const { best } = runBfs(g, w);
-  const h = { best, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
+  const { best, cut, expanded } = runBfs(g, w);
+  const h = { best, cut, expanded, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
   const rows = collectRows(g, w, h);
   assert.deepEqual(rows.handlers.map((x) => strip(x.id)), ['com.x.OwnerController#list']);
   const { derivedEndpoints, epAgg } = buildDerivedEndpoints(g, w, h, rows.handlers);
@@ -187,8 +187,8 @@ test('chain steps: walking up, the endpoints lane is DERIVED from the handlers, 
 test('chain steps: the censuses count what the lanes show, and what they do not', () => {
   const g = tinyGraph();
   const w = readWalkOptions(g, { start: START });
-  const { best } = runBfs(g, w);
-  const h = { best, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
+  const { best, cut, expanded } = runBfs(g, w);
+  const h = { best, cut, expanded, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
   const rows = collectRows(g, w, h);
   const { tables, agg } = buildTables(g, w, h, rows.reachedStatements);
   const byLinkGrade = countLinkGrades(g, w, best);
@@ -236,8 +236,8 @@ test('chain steps: the steps assemble to exactly what chainWalk answers', () => 
   const g = tinyGraph();
   const whole = chainWalk(g, { start: START, direction: 'down' });
   const w = readWalkOptions(g, { start: START, direction: 'down' });
-  const { best } = runBfs(g, w);
-  const h = { best, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
+  const { best, cut, expanded } = runBfs(g, w);
+  const h = { best, cut, expanded, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
   const rows = collectRows(g, w, h);
   assert.deepEqual(whole.services.map((s) => s.id), rows.services.map((s) => s.id));
   assert.deepEqual(whole.statements.map((s) => s.id), rows.statements.map((s) => s.id));

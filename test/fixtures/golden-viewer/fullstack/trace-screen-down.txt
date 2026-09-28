@@ -133,7 +133,8 @@
           <div class="tbmenubody">
             <label class="tbfield">
               <span data-t="tb.depth">depth</span>
-              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. All, the default, follows every one, as every tool does; a number narrows the walk, and what lies past it is unknown, not absent.">
+                <option data-t="depth.all" selected value>all</option>
                 <option>
                   1
                 </option>
@@ -155,7 +156,7 @@
                 <option>
                   7
                 </option>
-                <option selected>
+                <option>
                   8
                 </option>
               </select>
@@ -248,7 +249,7 @@
               <code class="id">/things/list</code>
             </span>
             <span>mode conservative</span>
-            <span title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent.">depth 8</span>
+            <span title="depth: the most links a walk follows from the target. All, the default, follows every one, as every tool does; a number narrows the walk, and what lies past it is unknown, not absent.">depth not capped</span>
             <span class="tnodir">A screen is the top of the chain, so nothing uses it.</span>
           </div>
           <div id="tracestrip" class="fstrip">
@@ -842,7 +843,7 @@ read">
               </li>
             </ul>
             <div class="comment" style="margin-top: 8px">A line shows the grade of that one link. The badge on a row is the weakest link on its way from the start, so a row can be weaker than the line into it. A line into a table carries the table's badge: the answer does not grade that last step alone.</div>
-            <div class="comment" style="margin-top: 8px">followed 17 nodes, depth 8, mode conservative</div>
+            <div class="comment" style="margin-top: 8px">followed 17 nodes, depth not capped, mode conservative</div>
           </div>
           <div class="rail">
             <div class="railhead">

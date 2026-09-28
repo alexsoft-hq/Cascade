@@ -729,7 +729,7 @@ test('the "This pack" card is gone, and every field it printed is still on the O
   const ribbon = byId.get('ovfold').querySelector('button.foldlead');
   assert.ok(ribbon, 'the ribbon is under a fold, not deleted');
   ribbon.onclick();
-  assert.match(byId.get('ovfold').textContent, /mode=conservative, depth 8/);
+  assert.match(byId.get('ovfold').textContent, /mode=conservative, depth not capped/);
 });
 
 test('a lane row is its name, then one line with the hop and the grade, always shown (RM67)', async (t) => {
@@ -2398,7 +2398,7 @@ test('the quick picks are the top of the list already loaded, and cost no reques
   card.querySelectorAll('.brpick')[0].click();
   await settle(ctx, 8);
   assert.deepEqual(toolCalls(calls, 'flow'),
-    [{ name: 'flow', args: { direction: 'up', table: 'gamma_order', mode: 'conservative', depth: 8, limit: 40 } }]);
+    [{ name: 'flow', args: { direction: 'up', table: 'gamma_order', mode: 'conservative', depth: null, limit: 40 } }]);
 });
 
 test('a pack with no code axis says the Java lane did not run, and still lists what it does have', async (t) => {
@@ -2774,16 +2774,16 @@ test('a pick writes the URL, and Back puts the previous picture up without askin
   // A table is walked up from, and the URL carries the whole question.
   rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=conservative&depth=8');
+  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=conservative');
   rowsOf(byId, 'tlist')[1].click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace&pick=table%3Agamma_item&dir=up&mode=conservative&depth=8');
+  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace&pick=table%3Agamma_item&dir=up&mode=conservative');
 
   // The Back button. The stub's history keeps no stack of its own, so the URL
   // is put back the way a browser would and `popstate` is delivered, which is
   // exactly what the page listens for.
   calls.length = 0;
-  ev(ctx, "location.hash='#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=conservative&depth=8'");
+  ev(ctx, "location.hash='#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=conservative'");
   fireWindow('popstate');
   await settle(ctx, 10);
   assert.deepEqual(toolCalls(calls), [], 'the answer was still in memory, so nothing was asked');
@@ -3261,7 +3261,7 @@ test('Trace lists screens from ONE browse request, and Details on a screen draws
   byId.get('tdir').querySelectorAll('button').find((b) => b.textContent === 'Details').onclick();
   await settle(ctx, 16);
   assert.deepEqual(toolCalls(calls, 'flow'),
-    [{ name: 'flow', args: { screen: '/rows', mode: 'conservative', depth: 8, limit: 200 } }]);
+    [{ name: 'flow', args: { screen: '/rows', mode: 'conservative', depth: null, limit: 200 } }]);
   const card = byId.get('view').textContent;
   assert.match(card, /src\/views\/rows\.vue/, 'the component the route mounts');
   assert.match(card, /what this screen runs/);
@@ -3269,7 +3269,7 @@ test('Trace lists screens from ONE browse request, and Details on a screen draws
   assert.match(card, /tables at the end/);
   assert.match(byId.get('tracehead').textContent, /A screen is the top of the chain, so nothing uses it/,
     'and why "Where it is used" is not offered');
-  assert.equal(ev(ctx, 'location.hash'), '#p=delta&tab=trace&pick=screen%3A%2Frows&dir=detail&mode=conservative&depth=8');
+  assert.equal(ev(ctx, 'location.hash'), '#p=delta&tab=trace&pick=screen%3A%2Frows&dir=detail&mode=conservative');
   // The function that SENDS is the one the endpoint rows hang off; the one that
   // only calls it leads to the request.
   const fns = byId.get('view').querySelectorAll('.panel')
@@ -3324,10 +3324,9 @@ test('down from a screen the chain draws six lanes, entry first', async (t) => {
   ev(ctx, "openTrace({kind:'screen', id:'/rows'}, 'down')");
   await settle(ctx, 20);
 
-  // The control shows the depth a screen needs to reach a table, and the
-  // request carried the number the control shows.
-  assert.equal(byId.get('tdepth').value, '8');
-  assert.equal(ev(ctx, 'TRACEV.resp.answer.walk.depth'), 8);
+  // The control shows the one depth rule (no cap), and the request carried it.
+  assert.equal(byId.get('tdepth').value, '', 'no cap, the rule every walk has');
+  assert.equal(ev(ctx, 'TRACEV.resp.answer.walk.depth'), null);
 
   const cols = byId.get('tracewrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
   assert.deepEqual(cols, ['entry', 'frontend function', 'endpoint', 'service layer', 'mapper statement', 'table']);

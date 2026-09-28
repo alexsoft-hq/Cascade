@@ -73,11 +73,29 @@ const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND
 export const GRADE_RANK = RANK;
 
 /**
- * How deep every walk from a route goes when nobody says: the census, the map,
- * coupling and a Flow picture alike. Two defaults (Flow walked 6, the census 8)
- * showed one route a statement in the census and none in Flow.
+ * ONE DEPTH RULE FOR EVERY WALK, both ways: a walk goes as far as the graph
+ * goes. The census, the map, coupling, the summary, the browse census, Flow and
+ * Trace down and up, and the impact tools answer "what does this reach" and
+ * "what reaches this" with no hop cap, so one question never gets two answers
+ * because two tools stopped at two depths (mall's pms_product.name reaches its
+ * screens in 9 hops: Trace, capped at 8, showed none where screen_impact showed
+ * 12). The guard is the node cap: a walk that reaches WALK_NODE_CAP nodes stops
+ * and says so. A depth is only ever a narrowing a caller asks for (Flow's
+ * `depth`), and an answer walked to one says what it cut there. Measured on the
+ * generality gate's pinned corpus before this rule: no census walk reached the
+ * node cap, the slowest census took the same time uncapped (130 ms on
+ * ruoyi-vue-pro), and lifting the cap of 8 reached 11 more routes' SQL on
+ * dolphinscheduler and 33 on ruoyi-vue-pro.
  */
-export const DEFAULT_WALK_DEPTH = 8;
+export const DEFAULT_WALK_DEPTH = null;
+/** The most nodes one walk records before it stops and says so. */
+export const WALK_NODE_CAP = 4000;
+/** A walk's depth as the hop count it stops at: the depth asked for, or none. */
+export const hopCapOf = (depth) => (depth == null ? Infinity : depth);
+/** A walk's depth in a sentence: `depth 4`, or `no depth cap`. */
+export const depthSaid = (depth) => (depth == null ? 'no depth cap' : `depth ${depth}`);
+/** Whether a depth is one a walk can be asked for: none, or a whole number of hops from one. */
+export const isWalkDepth = (depth) => depth === null || (Number.isInteger(depth) && depth >= 1);
 
 // Query grade sets (SPEC §3.3).
 export const GRADE_SETS = Object.freeze({
