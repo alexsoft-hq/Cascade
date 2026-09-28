@@ -29,7 +29,7 @@ import { createFactsStore, nodeFactsIo, validateIndex } from '../core/facts_stor
 import { INCREMENTAL_ENGINE_VERSION } from '../core/incremental.mjs';
 import { underAny } from '../core/invalidate.mjs';
 import { jpaNamingOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
-import { overlayGraph, classifyDirtyFiles } from '../core/overlay.mjs';
+import { overlayGraph, classifyDirtyFiles, ddlFilesOf } from '../core/overlay.mjs';
 import { assertOverlayable, runOverlayLanes, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
 import { overlaySession } from '../core/overlay_session.mjs';
 import { ownStateDirRel, isOwnStatePath } from '../core/paths.mjs';
@@ -40,7 +40,7 @@ import {
 } from './env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane, webPackagesRead } from './lanes_run.mjs';
 import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
-import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
+import { catalogLaneInputs, jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
 import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
@@ -230,11 +230,9 @@ export function refuse({ session, dirtyFiles, entries, idx, profile, baseCommit,
  * reading convention. `jdk` is looked up at most once, and only if a `.java`
  * really changed: an overlay over an edited `.vue` must not need a compiler.
  */
-function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives }) {
+function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives, catalogIn }) {
   const mapperDirsAbs = (selection.mapperDirs ?? []).map(absOf);
   const skipped = mapperAlternatives ?? [];
-  const ddlRels = selection.ddls ?? (selection.ddl ? [selection.ddl] : []);
-  const ddlAbsList = ddlRels.map(absOf);
   const pyRes = sqlPython();
   const A = path.join(ENGINE_ROOT, 'adapters', 'sql');
   const runpy = (script, args) => execFileSync(pyRes.path, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
@@ -275,15 +273,27 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
         return parseJsonl(runpy('lineage.py', ['--catalog', catFile, '--statements', stmtFile, ...sqlArgs.lineageArgs]));
       } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
     },
-    catalog: () => { needPy('the DDL catalog'); return parseJsonl(runpy('catalog_ddl.py', ['--identifier-case', sqlArgs.identifierCase, ...ddlAbsList])); },
+    catalog: () => { if (!catalogIn.fromSnapshot) needPy('the DDL catalog'); return catalogIn.read(runpy); },
     web: (targets) => runWebLane(rootAbs, targets, { sourceRoots, templateRoots: templateRootsAbs }),
     webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots, templateRoots: templateRootsAbs }),
   };
-  return { run, runpy, needPy, mapperDirsAbs, ddlRels, ddlAbsList, skipped };
+  return { run, runpy, needPy, mapperDirsAbs, skipped };
+}
+
+/**
+ * The catalog inputs the base pack's run read (src/cli/lane_options.mjs): the
+ * DDL files in the order the fact index records them, or the pinned snapshot
+ * when the pack says its catalog came from one. Only ever read on a cache miss,
+ * since a clean DDL keys the shard the run wrote; an edited one declines first.
+ */
+export function catalogInputsOf(pack, selection, absOf, sqlArgs) {
+  const files = ddlFilesOf(selection).map((rel) => ({ rel, abs: absOf(rel) }));
+  const fromSnapshot = pack?.meta?.catalog?.source === 'snapshot';
+  return catalogLaneInputs({ ddls: fromSnapshot ? [] : files, snapshot: fromSnapshot ? files[0] ?? null : null, sqlArgs });
 }
 
 /** Re-parse exactly the dirty files and read the rest back out of the shards. */
-export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives, profile = null }) {
+export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives, profile = null, pack = null }) {
   const selection = idx.selection ?? {};
   const store = createFactsStore({ io: ephemeralIo(nodeFactsIo(fs)), projectId: idx.project, env: process.env });
   const webRootsAbs = (selection.webRoots ?? []).map(absOf);
@@ -292,19 +302,20 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
   const templateRootsAbs = (selection.templateRoots ?? [])
     .filter((t) => t && typeof t === 'object' && typeof t.root === 'string')
     .map((t) => ({ root: absOf(t.root), engine: t.engine, suffix: t.suffix }));
-  const { run, runpy, needPy, mapperDirsAbs, ddlRels, ddlAbsList, skipped } = laneRunners({
-    rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives,
+  const catalogIn = catalogInputsOf(pack, selection, absOf, sqlArgs);
+  const { run, runpy, needPy, mapperDirsAbs, skipped } = laneRunners({
+    rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives, catalogIn,
   });
   const lanes = runOverlayLanes({
     index: idx, store, dirty, run, abs: absOf, hash: sha256File, workers: workerVersions(), webRootsAbs,
     templateRootsAbs,
     inputs: {
       mapperFiles: listMapperXml(mapperDirsAbs, skipped).map((p) => ({ rel: path.relative(rootAbs, p).split(path.sep).join('/'), abs: p })),
-      ddlFiles: ddlRels.map((rel, i) => ({ rel, abs: ddlAbsList[i] })),
+      ddlFiles: catalogIn.files,
       dialect: sqlArgs.dialect, identifierCase: sqlArgs.identifierCase,
       defaultSchema: sqlArgs.defaultSchema,
       mybatisArgs: sqlArgs.mybatisArgs, lineageArgs: sqlArgs.lineageArgs,
-      catalogArgs: [`identifier-case=${sqlArgs.identifierCase}`],
+      catalogArgs: catalogIn.shardArgs,
     },
   });
   const javaLanesOf = overlayJavaLanes({
@@ -534,7 +545,7 @@ export function layOverlay({ packDir, pack, baseGraph, profile, idx, session, en
   const rootAbs = idx.root;
   const absOf = (rel) => path.resolve(rootAbs, rel);
   const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf } = runLanes({
-    idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile,
+    idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile, pack,
     mapperAlternatives: mapperAlternativesOf(profile, packDir),
   });
   const webInputs = baseWebInputsOf(pack, rootAbs);

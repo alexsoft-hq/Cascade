@@ -242,7 +242,7 @@ const PROVISIONAL_KINDS = new Set(['symbol', 'endpoint', 'statement']);
  * script, a template — this engine has no lane for it).
  *
  * @param {{status:string, path:string}[]} files  root-relative, status A|M|D
- * @param {{javaRoots:string[], mapperDirs:string[], webRoots:string[], ddl:(string|null)}} selection
+ * @param {{javaRoots:string[], mapperDirs:string[], webRoots:string[], ddls?:string[], ddl?:(string|null)}} selection
  * @returns {{java:string[], javaDeleted:string[], web:string[], webDeleted:string[],
  *            webConfig:string[], xml:string[], ddl:string[], other:string[]}}
  */
@@ -250,12 +250,13 @@ export function classifyDirtyFiles(files, selection) {
   if (!Array.isArray(files)) throw new OverlayError('files must be an array');
   const sel = selection ?? {};
   const webRoots = sel.webRoots ?? [];
+  const ddls = ddlFilesOf(sel);
   const out = { java: [], javaDeleted: [], web: [], webDeleted: [], webConfig: [], xml: [], ddl: [], other: [] };
   for (const f of files) {
     const p = f && typeof f === 'object' ? f.path : f;
     if (typeof p !== 'string' || p.length === 0) throw new OverlayError('every changed file needs a path');
     const status = (f && f.status) || 'M';
-    if (sel.ddl && p === sel.ddl) { out.ddl.push(p); continue; }
+    if (ddls.includes(p)) { out.ddl.push(p); continue; }
     if (p.endsWith('.xml') && underAny(p, sel.mapperDirs ?? [])) { out.xml.push(p); continue; }
     if (p.endsWith('.java') && underAny(p, sel.javaRoots ?? [])) {
       (status === 'D' ? out.javaDeleted : out.java).push(p);
@@ -286,6 +287,18 @@ export function classifyDirtyFiles(files, selection) {
   out.javaDeleted = out.javaDeleted.filter((f) => !out.java.includes(f));
   out.webDeleted = out.webDeleted.filter((f) => !out.web.includes(f));
   return out;
+}
+
+/**
+ * EVERY catalog file a selection names, in the order the run applied them: the
+ * fact index records `ddls` since a schema could be split over files, and an
+ * older one a single `ddl`. Reading only the single key let an edited migration
+ * through as an unclaimed file, and the overlay then read a catalog nobody
+ * certified.
+ */
+export function ddlFilesOf(selection) {
+  const sel = selection ?? {};
+  return sel.ddls ?? (sel.ddl ? [sel.ddl] : []);
 }
 
 /** Whether a file is a template of one of the selection's template roots. */

@@ -25,11 +25,11 @@ import { builtinRegistry } from '../../../core/rules/registry.mjs';
 import { webFactsSummary } from '../../../core/facts_store.mjs';
 import { runLanesWithShards } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
-import { CATALOG_LIVE_WORKER_VERSION, workerVersions } from '../../../core/worker_versions.mjs';
-import { findJdk, listMapperXml, parseJsonl, jsonl } from '../../env.mjs';
+import { workerVersions } from '../../../core/worker_versions.mjs';
+import { findJdk, listMapperXml, parseJsonl } from '../../env.mjs';
 import { LANE_BRIDGES, runJavaLane, runTsLane, runWebLane } from '../../lanes_run.mjs';
 import { tsBridgeOptions, tsReachResolver } from '../../ts_inputs.mjs';
-import { jpaOptions, mybatisPlusOptions, whichJavaLanes } from '../../lane_options.mjs';
+import { catalogLaneInputs, jpaOptions, mybatisPlusOptions, whichJavaLanes } from '../../lane_options.mjs';
 import { annotationMappersOf, flattenAnnotationMappers, lineageOfStatements } from '../../java_sql.mjs';
 import { sha256File } from '../../state.mjs';
 import { sayWebWorker } from './census.mjs';
@@ -76,24 +76,17 @@ function tsRunners(root, tsSrc = []) {
   };
 }
 
-export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, mappers, webSrc, sqlArgs, runpy }) {
+export function laneRunners({ die }, { root, tmpDir, plan, sel, catalogIn, mappers, webSrc, sqlArgs, runpy }) {
   const mapperAlternatives = sel.mapperAlternatives ?? [];
   const catFile = path.join(tmpDir, 'catalog.jsonl');
   const stmtFile = path.join(tmpDir, 'statements.jsonl');
   let jdk = null;
   return {
+    // The DDL read by the catalog worker, or the pinned snapshot as it is
+    // (src/cli/lane_options.mjs, which the working-tree overlay reads it by too).
     catalog: () => {
-      if (snapshot) {
-        // No worker: the snapshot IS catalog records. It was produced once,
-        // by `cascade catalog fetch`, with the user's explicit confirmation.
-        process.stderr.write('SQL lane: catalog (pinned snapshot)…\n');
-        return jsonl(snapshot);
-      }
-      process.stderr.write('SQL lane: catalog…\n');
-      // The SAME identity rule the lineage worker matches statements with
-      // (§8.1): it is what decides whether two files declaring `SUPPLIER` and
-      // `supplier` declare one table or two.
-      return parseJsonl(runpy('catalog_ddl.py', catalogWorkerArgs(sqlArgs, ddls)));
+      process.stderr.write(`SQL lane: catalog${catalogIn.fromSnapshot ? ' (pinned snapshot)' : ''}…\n`);
+      return catalogIn.read(runpy);
     },
     mybatis: () => {
       process.stderr.write('SQL lane: mybatis statements…\n');
@@ -146,7 +139,9 @@ export function laneRunners({ die }, { root, tmpDir, plan, sel, snapshot, ddls, 
  * `src/core/incremental.mjs`'s decision, and this hands it the inputs.
  */
 export function runLanes(ctx, { root, tmpDir, plan, prevIndex, store, sel, selectionRel, ddls, snapshot, mappers, javaSrc, webSrc, sqlArgs, runpy, projectId, base, relOf, absOf, diagnostics }) {
-  const runners = laneRunners(ctx, { root, tmpDir, plan, sel, snapshot, ddls, mappers, webSrc, sqlArgs, runpy });
+  const fileOf = (f) => ({ rel: relOf(f), abs: path.resolve(f) });
+  const catalogIn = catalogLaneInputs({ ddls: ddls.map(fileOf), snapshot: snapshot ? fileOf(snapshot) : null, sqlArgs });
+  const runners = laneRunners(ctx, { root, tmpDir, plan, sel, catalogIn, mappers, webSrc, sqlArgs, runpy });
   const shardDiagnostics = [];
   const result = runLanesWithShards({
     plan,
@@ -158,21 +153,13 @@ export function runLanes(ctx, { root, tmpDir, plan, prevIndex, store, sel, selec
     },
     inputs: {
       mapperFiles: listMapperXml(mappers, sel.mapperAlternatives ?? []).map((p) => ({ rel: relOf(p), abs: p })),
-      ddlFiles: ddls.length > 0
-        ? ddls.map((f) => ({ rel: relOf(f), abs: path.resolve(f) }))
-        : snapshot ? [{ rel: relOf(snapshot), abs: path.resolve(snapshot) }] : [],
+      ddlFiles: catalogIn.files,
       dialect: sqlArgs.dialect,
       identifierCase: sqlArgs.identifierCase,
       defaultSchema: sqlArgs.defaultSchema,
       mybatisArgs: sqlArgs.mybatisArgs,
       lineageArgs: sqlArgs.lineageArgs,
-      // The snapshot's shard is keyed by the LIVE worker's version too, so a
-      // catalog_live.py change cannot be answered from a shard the previous
-      // generation produced (SPEC §17.7). See src/core/worker_versions.mjs
-      // for why this rides in `args` rather than in the index's worker map.
-      catalogArgs: snapshot
-        ? [`worker=${CATALOG_LIVE_WORKER_VERSION}`, 'source=snapshot']
-        : [`identifier-case=${sqlArgs.identifierCase}`],
+      catalogArgs: catalogIn.shardArgs,
     },
     run: runners,
     hash: sha256File,
@@ -228,16 +215,6 @@ export function annotationLineage({ javaSrc, result, store, prevIndex, catalog, 
  * MyBatis statement. Run AFTER the Java lane produced the repository facts and
  * BEFORE the graph is built, so those statements arrive as ordinary lineage.
  */
-/**
- * The DDL catalog worker's arguments. The dialect only when it is not MySQL, the
- * worker's own default, so a MySQL project's catalog is computed from the
- * arguments it always was (RM63).
- */
-function catalogWorkerArgs(sqlArgs, ddls) {
-  const dialectArgs = sqlArgs.dialect && sqlArgs.dialect !== 'mysql' ? ['--dialect', sqlArgs.dialect] : [];
-  return [...dialectArgs, '--identifier-case', sqlArgs.identifierCase, ...ddls];
-}
-
 export function nativeQueryLineage({ javaSrc, result, store, prevIndex, catalog, sqlArgs, plan, py, runners, diagnostics, discovery = null }) {
   // …and the two statements every eGovFrame table id generator runs (RM62): SQL
   // a class in a jar executes, written from the bean's properties, and read by

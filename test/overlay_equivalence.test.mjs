@@ -24,6 +24,12 @@
 //              analyze hands the web bridge the packages discovery found and the
 //              ports the Spring configuration states; the overlay used to hand
 //              it neither.
+//   postgres   the same backend over two PostgreSQL migrations, the second an
+//              ALTER only a PostgreSQL reading applies, compared twice: with the
+//              catalog shard the run wrote, and with the overlay reading the DDL
+//              itself, which it used to do as MySQL
+//   snapshot   the same schema from a pinned catalog snapshot, which the overlay
+//              used to hand the DDL reader as if it were DDL
 //
 // What the overlay cannot read again is not in this promise and is said as a
 // limit instead (the Spring XML id generators, an edited package.json or Spring
@@ -41,11 +47,12 @@ import { loadPack, projectPack } from '../src/core/pack.mjs';
 import { canonicalJson } from '../src/core/canonical.mjs';
 import { overlaySession } from '../src/core/overlay_session.mjs';
 import { classifyDirtyFiles } from '../src/core/overlay.mjs';
-import { baseWebInputsOf, indexOfPack, layOverlay, webInputLimits } from '../src/cli/overlay_provider.mjs';
+import { baseWebInputsOf, catalogInputsOf, indexOfPack, layOverlay, refuse, webInputLimits } from '../src/cli/overlay_provider.mjs';
 import { servedProfile } from '../src/cli/serve.mjs';
+import { casDir } from '../src/core/paths.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { ENGINE_ROOT, FIXTURES, TREES, backend, commit } from '../scripts/golden-trees.mjs';
-import { skipWithoutSqlLane } from './helpers/lane_prereqs.mjs';
+import { skipWithoutSqlLane, sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
 
@@ -114,8 +121,12 @@ function write(repo, rel, body) {
   fs.writeFileSync(path.join(repo, rel), body, 'utf8');
 }
 
-/** Build the tree, commit it, `init` and `analyze` it with the real CLI; the pack's directory and its cache. */
-function analyzed(t, name, build, flags) {
+/**
+ * Build the tree, commit it, `init` and `analyze` it with the real CLI; the
+ * pack's directory and its cache. `afterInit` edits what `init` wrote (the
+ * profile, a pinned snapshot) before the run reads it.
+ */
+function analyzed(t, name, build, flags, afterInit = null) {
   const base = tmpDir(t, `cascade-overlay-eq-${name}-`);
   const repo = path.join(base, 'repo');
   fs.mkdirSync(repo, { recursive: true });
@@ -124,6 +135,7 @@ function analyzed(t, name, build, flags) {
   const env = { ...process.env, CASCADE_HOME: path.join(base, 'home'), XDG_CACHE_HOME: path.join(base, 'cache') };
   const run = (args) => execFileSync(process.execPath, [CLI, ...args], { env, cwd: base, stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 1 << 28 });
   run(['init', '--root', repo, '--project', `eq-${name}`]);
+  if (afterInit) afterInit(repo);
   const packDir = path.join(base, 'pack');
   try {
     run(['analyze', '--root', repo, '--out', packDir, ...flags(repo)]);
@@ -133,12 +145,24 @@ function analyzed(t, name, build, flags) {
   return { packDir, cache: env.XDG_CACHE_HOME };
 }
 
-/** The overlay over NO dirty file, laid the way the provider lays every overlay. */
-function overlayOverNoEdit({ packDir, cache }) {
+/**
+ * The overlay over NO dirty file, laid the way the provider lays every overlay.
+ *
+ * `withoutCatalogShard` takes the catalog shard the run wrote out of the cache
+ * first. A clean DDL keys the shard the run wrote, so the overlay normally reads
+ * the catalog back; it reads the DDL itself only when that shard is not there,
+ * and this is how that read is held to the run's.
+ */
+function overlayOverNoEdit({ packDir, cache }, { withoutCatalogShard = false } = {}) {
   const pack = JSON.parse(fs.readFileSync(path.join(packDir, 'pack.json'), 'utf8'));
   const baseGraph = loadPack(pack, { verifyDigest: true });
   const stale = (msg) => { throw new Error(msg); };
   const idx = indexOfPack(path.join(packDir, 'facts-index.json'), pack, stale);
+  if (withoutCatalogShard) {
+    const shard = casDir(idx.project, 'catalog', idx.catalog.shardKey, { XDG_CACHE_HOME: cache });
+    assert.ok(fs.existsSync(shard), `the run wrote its catalog shard at ${shard}`);
+    fs.rmSync(shard, { recursive: true, force: true });
+  }
   const commitSha = pack.meta.base.commit;
   const session = overlaySession({ baseDigest: pack.digest, baseCommit: commitSha, headCommit: commitSha, dirtyFiles: [] });
   // The shard store is found through XDG_CACHE_HOME, as the analyze run found it.
@@ -259,6 +283,115 @@ test('ports and packages: over no edit, the overlay hands the web bridge the pac
   const here = r.pack.edges.find((e) => e.type === 'CALLS_HTTP' && e.from.endsWith('remote.js#listHere'));
   assert.match(here?.evidence?.sink?.instance ?? '', /^admin#/, 'and the admin package files its own calls');
   assertSameGraph(r);
+});
+
+// ---------------------------------------------------------------------------
+// the catalog: a PostgreSQL migration set, and a pinned snapshot
+// ---------------------------------------------------------------------------
+
+/**
+ * Two PostgreSQL migrations for the golden backend's tables. The second adds a
+ * column typed by an enum the first creates, `"kind" "Kind"`, which only a
+ * PostgreSQL reading can place: read as MySQL the ALTER is unreadable and the
+ * column is not there.
+ */
+const PG_MIGRATIONS = {
+  'prisma/migrations/20240101_init/migration.sql': `CREATE TYPE "Kind" AS ENUM ('box', 'twin');
+
+CREATE TABLE "thing" (
+  "id" BIGINT NOT NULL,
+  "name" VARCHAR(64),
+  CONSTRAINT "thing_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE "thing_tag" (
+  "id" BIGINT NOT NULL,
+  "thing_id" BIGINT NOT NULL,
+  "label" VARCHAR(32),
+  CONSTRAINT "thing_tag_pkey" PRIMARY KEY ("id")
+);
+`,
+  'prisma/migrations/20240102_kind/migration.sql': `ALTER TABLE "thing" ADD COLUMN "kind" "Kind";
+ALTER TABLE "thing" ALTER COLUMN "name" SET NOT NULL;
+`,
+};
+
+function postgresBackend(repo) {
+  backend(repo);
+  fs.rmSync(path.join(repo, 'db'), { recursive: true, force: true });
+  for (const [rel, body] of Object.entries(PG_MIGRATIONS)) write(repo, rel, body);
+}
+
+/** The profile `init` wrote, edited: the project runs on PostgreSQL. */
+function declarePostgres(repo, catalog = null) {
+  const file = path.join(repo, '.cascade', 'profile.json');
+  const profile = JSON.parse(fs.readFileSync(file, 'utf8'));
+  profile.sqlDialects = { ...(profile.sqlDialects ?? {}), main: 'postgresql' };
+  if (catalog) profile.catalog = { ...(profile.catalog ?? {}), ...catalog };
+  fs.writeFileSync(file, JSON.stringify(profile, null, 2));
+}
+
+const catalogColumn = (pack, id) => pack.nodes.find((n) => n.id === id && n.kind === 'column');
+
+test('postgres: over no edit, the overlay builds the analyzed graph from a PostgreSQL migration set, reading the DDL itself too', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const tree = analyzed(t, 'postgres', postgresBackend,
+    (repo) => ['--no-mappers', '--ddl', path.join(repo, 'prisma', 'migrations', '*', 'migration.sql')], (repo) => declarePostgres(repo));
+  const r = overlayOverNoEdit(tree);
+  assert.ok(catalogColumn(r.pack, 'column:thing.kind')?.type, 'the run read the ALTER that adds the enum-typed column');
+  assertSameGraph(r);
+  // The overlay's own read of the DDL, which it makes whenever the run's shard
+  // is not in the cache: the same dialect, the same files in the same order.
+  assertSameGraph(overlayOverNoEdit(tree, { withoutCatalogShard: true }));
+});
+
+test('snapshot: over no edit, the overlay builds the analyzed graph from the pinned catalog snapshot', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const { python } = sqlLaneVenv();
+  const r = overlayOverNoEdit(analyzed(t, 'snapshot', postgresBackend, () => ['--no-mappers'], (repo) => {
+    // What `cascade catalog fetch` pins: catalog records, here the ones the DDL
+    // reader gives for the same schema, where the profile says to read them.
+    const records = execFileSync(python, [path.join(ENGINE_ROOT, 'adapters', 'sql', 'catalog_ddl.py'), '--dialect', 'postgres', '--identifier-case', 'fold-lower',
+      ...Object.keys(PG_MIGRATIONS).map((rel) => path.join(repo, rel))], { stdio: ['ignore', 'pipe', 'ignore'] });
+    write(repo, '.cascade/catalog/columns.jsonl', records.toString('utf8'));
+    declarePostgres(repo, { source: 'jdbc' });
+  }));
+  assert.equal(r.pack.meta.catalog.source, 'snapshot', 'the run read the snapshot');
+  assert.ok(catalogColumn(r.pack, 'column:thing.kind')?.type, 'and its columns are in the pack');
+  assertSameGraph(r);
+});
+
+test('the catalog inputs an overlay reads are the run\'s: the DDL in the recorded order with the dialect, or the snapshot as it is', (t) => {
+  const root = tmpDir(t, 'cascade-overlay-eq-catalog-');
+  const absOf = (rel) => path.join(root, rel);
+  const sqlArgs = { dialect: 'postgres', identifierCase: 'fold-lower' };
+  const selection = { ddls: ['db/2.sql', 'db/1.sql'] };
+  const calls = [];
+  const runpy = (script, args) => { calls.push([script, ...args]); return ''; };
+  const ddl = catalogInputsOf({ meta: { catalog: { source: 'file' } } }, selection, absOf, sqlArgs);
+  ddl.read(runpy);
+  assert.deepEqual(calls, [['catalog_ddl.py', '--dialect', 'postgres', '--identifier-case', 'fold-lower', absOf('db/2.sql'), absOf('db/1.sql')]],
+    'the dialect, and the files in the order the run applied them');
+  assert.deepEqual([ddl.files.map((f) => f.rel), ddl.shardArgs, ddl.fromSnapshot], [['db/2.sql', 'db/1.sql'], ['identifier-case=fold-lower'], false]);
+  calls.length = 0;
+  catalogInputsOf({}, selection, absOf, { dialect: 'mysql', identifierCase: 'exact' }).read(runpy);
+  assert.deepEqual(calls[0].slice(0, 3), ['catalog_ddl.py', '--identifier-case', 'exact'], 'MySQL, the reader\'s own default, is not passed, as analyze never passed it');
+  write(root, '.cascade/catalog/columns.jsonl', '{"kind":"table","table":"t"}\n');
+  const snap = catalogInputsOf({ meta: { catalog: { source: 'snapshot' } } }, { ddls: ['.cascade/catalog/columns.jsonl'] }, absOf, sqlArgs);
+  assert.deepEqual(snap.read(() => { throw new Error('a snapshot runs no DDL reader'); }), [{ kind: 'table', table: 't' }]);
+  assert.deepEqual([snap.fromSnapshot, snap.shardArgs[1]], [true, 'source=snapshot']);
+});
+
+test('an edited migration of a split schema declines the overlay, as an edited single DDL always did', () => {
+  const selection = { ddls: ['prisma/migrations/20240101_init/migration.sql', 'prisma/migrations/20240102_kind/migration.sql'], javaRoots: ['src/main/java'] };
+  const entries = [{ path: 'prisma/migrations/20240102_kind/migration.sql', status: 'M' }];
+  assert.deepEqual(classifyDirtyFiles(entries, selection).ddl, ['prisma/migrations/20240102_kind/migration.sql']);
+  const verdict = refuse({
+    session: { state: 'fresh' }, dirtyFiles: entries.map((e) => e.path), entries, idx: { selection }, profile: null, baseCommit: 'a'.repeat(40), headCommit: 'a'.repeat(40),
+  });
+  assert.equal(verdict.state, 'declined');
+  assert.match(verdict.reason, /^schema file changed \(prisma\/migrations\/20240102_kind\/migration\.sql\)/);
+  assert.deepEqual(classifyDirtyFiles(entries, { ddl: 'db/schema.sql' }).other, ['prisma/migrations/20240102_kind/migration.sql'], 'a file the run did not read as DDL is not one');
 });
 
 // ---------------------------------------------------------------------------
