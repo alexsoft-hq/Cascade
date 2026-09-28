@@ -42,7 +42,7 @@ const json = (x, status = 200) => new Response(JSON.stringify(x), { status, head
  * `rules` from the pack above, the example verdicts, and any call `override`
  * names. Everything the page asks goes through `asked`.
  */
-async function bootPage(t, { hash = '#p=gamma&tab=overview', override = null, examples = true } = {}) {
+async function bootPage(t, { hash = '#p=gamma&tab=start', override = null, examples = true } = {}) {
   const { html, base } = await startViewer(t, ['gamma', 'delta']);
   const asked = [];
   const answer = async (url, opts) => {
@@ -134,7 +134,7 @@ test('with no verdicts from the server, the examples say so rather than claim th
 });
 
 // ---------------------------------------------------------------------------
-// the Overview: a share and its limit, and the blind spots by what to do
+// Start and Analysis status: a share and its limit, and the blind spots by what to do
 // ---------------------------------------------------------------------------
 
 test('a share is shown with the limit that bounds it, in its own card, and no ring draws it twice', async (t) => {
@@ -189,16 +189,36 @@ test('the blind spots are set out by what a reader can do, with the axes not bui
     OV.resp.answer.diagnostics = [{ kind:'TS_PREFIX_EXCLUDE_UNREAD', severity:'warn', key:'tsBackend',
       reason:'Declare the list as tsBackend.globalPrefixExclude in the profile to read it' }];
     renderOverview();`);
-  const panel = byId.get('ovherocol').querySelectorAll('.panel')[0];
-  assert.equal(panel.id, 'ovgaps', 'what we could not see is the first thing in the column');
+  // Since RM67-U2c the blind spots are rows on Analysis status, in a panel of
+  // their own, grouped in the order of what a reader can do: inputs first.
+  const panel = byId.get('stgaps').querySelector('.panel');
+  assert.equal(panel.id, 'ovgaps', 'what we could not see is its own panel on Analysis status');
+  const order = JSON.parse(ev(ctx, 'JSON.stringify(OV_GAP_GROUPS.map(([, k]) => t(k)))'));
+  assert.equal(order[0], 'Inputs it did not have');
   const heads = texts(panel.querySelectorAll('.ovgaplbl'));
-  assert.equal(heads[0], 'Inputs it did not have');
+  assert.ok(heads.indexOf('What it could not read') >= 0 && heads.indexOf('What this walk left out') >= 0, heads.join(' | '));
   assert.ok(heads.indexOf('What it could not read') < heads.indexOf('What this walk left out'));
-  assert.ok(texts(panel.querySelectorAll('button.ovchip')).some((x) => x.includes('screens: not collected')));
-  const diag = panel.querySelectorAll('button.ovchip').find((c) => c.textContent.includes('TS_PREFIX_EXCLUDE_UNREAD'));
-  assert.ok(diag, 'a lane diagnostic is a chip of its own, by the engine\'s own code');
-  diag.onclick();
-  assert.match(panel.textContent, /tsBackend\.globalPrefixExclude/, 'and it opens on the lane\'s own remedy');
+  assert.deepEqual(heads, order.filter((h) => heads.includes(h)), 'the groups keep that order');
+  // The axis not built is a row of the axes table, with the engine's reason.
+  const axis = byId.get('staxes').querySelector('tr#st-ov-axis-screen');
+  assert.ok(axis, 'the screen axis has its row');
+  assert.ok(axis.classList.contains('warn'));
+  assert.match(axis.textContent, /not collected/);
+  assert.match(axis.textContent, /screenAxis\.enabled is undeclared/);
+  // A lane diagnostic is a row of its own, by the engine's own code.
+  const diag = byId.get('stdiags').querySelector('.stitem#st-ov-diag-TS_PREFIX_EXCLUDE_UNREAD');
+  assert.ok(diag, 'a lane diagnostic is a row of its own, by the engine\'s own code');
+  assert.equal(diag.querySelector('.ovdiag').textContent, 'TS_PREFIX_EXCLUDE_UNREAD');
+  // Start lists the ones that change an answer, the input first, and each is
+  // the way to its row: the diagnostic opens on the lane's own remedy.
+  const starts = byId.get('sgaps').querySelectorAll('button.sgap');
+  assert.ok(starts[0].textContent.includes('screens: not collected'), texts(starts).join(' | '));
+  const toDiag = starts.find((c) => c.textContent.includes('TS_PREFIX_EXCLUDE_UNREAD'));
+  assert.ok(toDiag, 'Start lists the diagnostic by its code');
+  toDiag.onclick();
+  assert.equal(ev(ctx, 'STATE.tab'), 'status');
+  assert.match(byId.get('stdiags').querySelector('#st-ov-diag-TS_PREFIX_EXCLUDE_UNREAD').textContent, /tsBackend\.globalPrefixExclude/,
+    'and it opens on the lane\'s own remedy');
   // Every chip's class is the engine's: the page does not decide what kind a gap is.
   const classes = JSON.parse(ev(ctx, 'JSON.stringify(OV.resp.answer.gaps.map((g)=>g.class))'));
   assert.ok(classes.every((c) => ['input', 'unresolved', 'query', 'unreached', 'info'].includes(c)), classes.join(' '));

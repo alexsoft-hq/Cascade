@@ -160,7 +160,10 @@ async function bootFixture(t, project, ids) {
 
 test('the page draws the same thing on every tab of a Java + SQL pack', async (t) => {
   const page = await bootFixture(t, 'gamma', ['gamma', 'delta']);
-  await shot(page, 'gamma/overview');
+  // The five places (RM67-U2c): Start is the landing view, Analysis status
+  // holds what the Overview's side column and blind spots were.
+  await shot(page, 'gamma/start');
+  await shot(page, 'gamma/status', "activateTab('status')");
   // The Trace place (RM67-U2b): one target read each way it has.
   await shot(page, 'gamma/trace-column-detail', "openTrace({kind:'column', id:'gamma_order.total'}, 'detail')");
   await shot(page, 'gamma/trace-table-detail', "openTrace({kind:'table', id:'gamma_order'}, 'detail')");
@@ -176,7 +179,8 @@ test('the page draws the same thing on every tab of a Java + SQL pack', async (t
 
 test('the page draws the same thing on a pack with the screen axis', async (t) => {
   const page = await bootFixture(t, 'delta', ['gamma', 'delta']);
-  await shot(page, 'delta/overview');
+  await shot(page, 'delta/start');
+  await shot(page, 'delta/status', "activateTab('status')");
   await shot(page, 'delta/trace-screen-down', "openTrace({kind:'screen', id:'/rows'}, 'down')");
   await shot(page, 'delta/trace-screen-detail', "openTrace({kind:'screen', id:'/rows'}, 'detail')");
   await shot(page, 'delta/trace-endpoint-up', "openTrace({kind:'endpoint', id:'GET /rows'}, 'up')");
@@ -269,7 +273,8 @@ for (const { tree, endpoint, screen } of TREES) {
     const corpus = corpusOf(tree);
     const html = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'index.html'), 'utf8');
     const page = await bootPage({ html, search: `?project=${tree}`, renderer: true, answer: answerFrom(tree, corpus) });
-    await shot(page, `${tree}/overview`);
+    await shot(page, `${tree}/start`);
+    await shot(page, `${tree}/status`, "activateTab('status')");
     await shot(page, `${tree}/trace-endpoint-down`, `openTrace({kind:'endpoint', id:${JSON.stringify(endpoint)}}, 'down')`);
     await shot(page, `${tree}/trace-screen-down`, `openTrace({kind:'screen', id:${JSON.stringify(screen)}}, 'down')`);
     await shot(page, `${tree}/coupling`, "activateTab('coupling'); drawCoupling()");

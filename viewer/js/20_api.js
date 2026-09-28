@@ -80,7 +80,10 @@ const errPanel=(e)=> el('div',{className:'panel', textContent:t('err.generic',{m
 // still in memory is re-drawn without a request.
 function readHash(){
   const q=new URLSearchParams(String(location.hash||'').replace(/^#/,''));
-  return { p:q.get('p')||null, tab:q.get('tab')||null, pick:q.get('pick')||null, src:q.get('src')||null,
+  // A tab this page no longer has by that name (the Overview, a place's own
+  // name) is read as the view it became (OLD_TABS, 30_chrome.js).
+  const tab=q.get('tab')||null;
+  return { p:q.get('p')||null, tab:(tab && OLD_TABS[tab]) || tab, pick:q.get('pick')||null, src:q.get('src')||null,
     dir:q.get('dir')||null, mode:q.get('mode')||null, depth:q.get('depth')||null };
 }
 /**
@@ -95,14 +98,14 @@ function hashFor(to){
   // tab is open, rather than carrying an empty `p=`.
   const parts=[];
   if(to.project) parts.push('p='+encodeURIComponent(to.project));
-  parts.push('tab='+encodeURIComponent(to.tab||'overview'));
+  parts.push('tab='+encodeURIComponent(to.tab||'start'));
   if(to.pick) parts.push('pick='+encodeURIComponent(to.pick));
   for(const k of ['dir','mode','depth']) if(to.pick && to[k]!=null && to[k]!=='') parts.push(k+'='+encodeURIComponent(to[k]));
   if(to.src) parts.push('src='+encodeURIComponent(to.src));
   return '#'+parts.join('&');
 }
 function hashNow(){
-  return hashFor({ project:STATE.project, tab:STATE.tab||'overview',
+  return hashFor({ project:STATE.project, tab:STATE.tab||'start',
     pick:PICK[STATE.tab], src:(SRC.open && SRC.node) ? SRC.node : null,
     ...(STATE.tab==='trace' ? traceHashParts() : {}) });
 }
@@ -158,7 +161,7 @@ function switchProject(id, dest){
   resetProjectState();
   renderProjectChrome();
   loadMeta();
-  // The Overview is the landing answer for every project, whichever tab is on
+  // The overview is the landing answer for every project, whichever tab is on
   // screen; the visible tab then fills itself, because its cache is now empty.
   loadOverview();
   const to = dest && dest.tab && TABNAMES.indexOf(dest.tab)>=0 ? dest.tab : STATE.tab;
@@ -177,11 +180,10 @@ function resetProjectState(){
   PICKMEM.clear();
   SRC.mem.clear();
   srcClose();
-  OV.resp=null;
-  byId('ovcards').replaceChildren(); byId('ovpanels').replaceChildren(); byId('ovside').replaceChildren();
-  byId('ovhero').classList.add('hidden');
-  byId('ovherocol').replaceChildren(); byId('ovmapsub').replaceChildren();
-  byId('ovmapleg').replaceChildren(); byId('ovfold').replaceChildren();
+  OV.resp=null; OV.loading=false;
+  // Start and Analysis status are drawn from that answer, and Start's own
+  // question (its target, its map) was about the pack being left.
+  startReset(); statusReset();
   renderCascadeRail();
   renderMastChrome();
   view.replaceChildren();
@@ -216,7 +218,7 @@ function resetProjectState(){
   byId('etable').value='';
   byId('erdside').replaceChildren(); byId('erdiso').replaceChildren();
   byId('ehonesty').replaceChildren(); byId('erdleg').replaceChildren();
-  byId('txview').replaceChildren(); byId('rulesview').replaceChildren(); rulesReset(); resetCompare(); SUM.seq++; SUM.resp=null; SUM.sel=null;
+  byId('txview').replaceChildren(); byId('rulesview').replaceChildren(); rulesReset(); resetCompare();
 }
 async function loadMeta(){
   const forProject=STATE.project, mine=STATE.seq;

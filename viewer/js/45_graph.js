@@ -665,14 +665,42 @@ const mapTicks=()=> GMAP.layout==='none' ? 0
   : (GMAP.layout==='local' ? GMAP_LOCAL_TICKS : null);   // null: the mount's own number
 
 const esc=(s)=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-// The pane the picture fills, and the element the renderer mounts into.
-const mapWrapEl=()=> byId(GMAP.where==='overview' ? 'ovmap' : 'gwrap');
-const mapHostEl=()=> byId(GMAP.where==='overview' ? 'ovmapwrap' : 'gmapwrap');
-/** Move the live map to the other pane, keeping the answer and the layout. */
+// The pane the picture fills, and the element the renderer mounts into. There
+// is one since RM67-U2c: the Overview's copy of this map is gone, and the Start
+// place draws the summary instead (50_summary.js).
+const mapWrapEl=()=> byId('gwrap');
+const mapHostEl=()=> byId('gmapwrap');
+/** Kept for its one caller: the map has one pane, so there is nowhere to move it. */
 function mapMoveTo(where){
-  if(GMAP.where===where) return;
-  stopMap();              // saves the settled positions on the way out
   GMAP.where=where;
+}
+// THE ADVANCED VIEW (RM67-U2c). 3D and the moving dots are how a reader who
+// already knows this map explores it; a first look needs the flat, still one.
+// So both sit behind one switch, off by default and remembered. Off, the map is
+// drawn in 2D whatever 2D/3D says, and no dot moves on it, lit or not. The
+// Trace lanes' own dots are not this switch's: they are one small picture, and
+// their Options menu keeps its own toggle.
+const ADV_KEY='cascade.viewer.graph.advanced';
+function mapAdvancedLoad(){
+  GMAP.advanced = lsGet(ADV_KEY)==='on';
+  const b=byId('gadv');
+  if(b) b.onclick=()=> mapAdvancedToggle();
+  renderMapAdvanced();
+}
+function mapAdvancedToggle(){
+  GMAP.advanced=!GMAP.advanced;
+  lsSet(ADV_KEY, GMAP.advanced ? 'on' : 'off');
+  renderMapAdvanced();
+  // The projection may change (a 3D choice now counts), and the dots with it.
+  if(GRAPHV.mode==='map' && GMAP.resp && GMAP.rend==='3d') renderMap();
+  else mapRefresh();
+}
+function renderMapAdvanced(){
+  const b=byId('gadv'), box=byId('gadvbox');
+  if(!b || !box) return;
+  b.setAttribute('aria-pressed', String(!!GMAP.advanced));
+  b.classList.toggle('on', !!GMAP.advanced);
+  box.classList.toggle('hidden', !GMAP.advanced || GRAPHV.mode!=='map');
 }
 // Every node on this map is INK: what a node IS, is said by its glyph (a group
 // a large ring, an endpoint a triangle, a statement a diamond, a table a
@@ -1164,8 +1192,9 @@ const mapFlowN=(l)=> l.data.kind==='member' ? 1 : Math.min(4, 1+(l.data.statemen
 const mapFlowsAtRest=()=> GMAP.flow && GMAP.flowTouched;
 function mapParticles(l){
   // A reader who asked their system for less motion has already answered, and
-  // that answer outranks a spotlight.
-  if(reducedMotion()) return 0;
+  // that answer outranks a spotlight. So does a map drawn without the advanced
+  // view (RM67-U2c): it is still, lit or not.
+  if(reducedMotion() || !GMAP.advanced) return 0;
   if(l.data.kind==='joins') return 0;
   // A lit node OWNS the animation: its own lines flow and every other line is
   // still, so the eye follows the selection instead of the whole picture.
@@ -2265,10 +2294,6 @@ function mapClick(n){
   // clicks on the SAME node inside 400ms drill into `Around <node>`.
   if(GMAP.lastClick.id===n.id && now-GMAP.lastClick.at<400){
     GMAP.lastClick={id:null,at:0};
-    // From the Overview, a double-click is "show me this on the Graph tab":
-    // the node stays selected and the map moves there with its own layout.
-    if(GMAP.where==='overview'){ GMAP.sel=n.id; mapSetLit(n.id);
-      activateTab('graph'); return; }
     // A group is this view's own bucket, not a node the engine holds — there is
     // no neighbourhood to draw around it, so it just stays selected.
     if(n.kind!=='group'){ openGraph(n.id); return; }
@@ -2387,7 +2412,7 @@ async function drawMap(){
   // Mounting on arrival regardless left a second renderer alive inside the
   // hidden #gmapwrap — its own animation loop, its own canvas, behind a picture
   // the reader is not looking at.
-  const forMode=GRAPHV.mode, forWhere=GMAP.where;
+  const forMode=GRAPHV.mode;
   mapScreensDecide();
   const args={ mode:byId('gmode').value, depth:depthArg('gdepth') };
   const layers=[];
@@ -2414,8 +2439,7 @@ async function drawMap(){
   GMAP.nodes=[];
   // The tab left map mode while this was in flight: KEEP the answer — `‹ back to
   // map` will draw it without asking the server again — and mount nothing.
-  if(forWhere!==GMAP.where) return;
-  if(GMAP.where!=='overview' && (forMode!=='map' || GRAPHV.mode!=='map')) return;
+  if(forMode!=='map' || GRAPHV.mode!=='map') return;
   stopMap(false);
   renderMap();
 }
@@ -2425,10 +2449,9 @@ function renderMap(){
   // the reader chose are saved before the model is rebuilt on top of them.
   stopMap();
   const wrap=mapWrapEl(), host=mapHostEl();
-  // The Overview's cartography is always the 2D canvas: 2D/3D is a control on
-  // the Graph tab, and a WebGL context behind the landing page would be a cost
-  // nobody asked for.
-  let want=GMAP.where==='overview' ? '2d' : GMAP.rend;
+  // 3D is part of the advanced view (RM67-U2c): with it off the map is the 2D
+  // canvas whatever the 2D/3D switch last said, and no WebGL context is made.
+  let want=GMAP.advanced ? GMAP.rend : '2d';
   if(want==='3d' && !mapWebglOk()){ want='2d'; GMAP.fellBack=true; }
   else if(want==='3d'){ GMAP.fellBack=false; }
   // The 3D view is SEEDED from the flat one the first time it is opened, so the
@@ -2476,7 +2499,6 @@ function renderMap(){
   renderMapFoldNote();
   renderMapCounts();
   renderMapSide();
-  renderOvMapChrome();
   // An older server's overview carries no group count; the map's then fills
   // the header's lane the moment this picture exists.
   renderCascadeRail();
@@ -2733,11 +2755,11 @@ function mapFedCard(n, id, key, project){
   const d=n.data;
   // Which tab answers this kind over there. A route is a Trace question walked
   // down, a table an ERD one, a statement Trace's details, and anything else
-  // lands on that project's Overview, which is the one page every project has.
+  // lands on that project's Start, which is the one page every project has.
   const to = n.kind==='endpoint' ? { tab:'trace', pick:'endpoint:'+key, dir:'down' }
     : n.kind==='table' ? { tab:'erd', pick:'table:'+key }
       : n.kind==='statement' ? { tab:'trace', pick:'statement:'+key, dir:'detail' }
-        : { tab:'overview', pick:null };
+        : { tab:'start', pick:null };
   const facts=[el('span',{className:'tag fproj',title:project+'  '+t('chain.tag.project.title'),textContent:project})];
   if(n.kind==='endpoint' && d.httpMethod) facts.push(el('span',{className:'tag',textContent:d.httpMethod}));
   if(n.kind==='endpoint' && d.portal) facts.push(el('span',{className:'count',textContent:t('map.card.portal')}));
@@ -2877,27 +2899,6 @@ function mapRefit(){
   GMAP.refit=true;
   renderMap();
 }
-// THE OVERVIEW'S MAP IS ON A PAGE YOU SCROLL. A wheel over it used to zoom the
-// map, so a reader scrolling past the landing page zoomed a picture they were
-// not reading and could not get back. It now takes the wheel only once it has
-// been clicked (or with ctrl/cmd held, which is the browser's own zoom gesture
-// and never scrolls a page). The Graph tab's canvas fills its page and keeps
-// plain wheel zoom.
-function ovMapWheelGate(){
-  const box=byId('ovmap'), note=byId('ovwheel');
-  if(!box || box.__wheelgate) return;
-  box.__wheelgate=true;
-  const say=()=>{ if(note){ note.textContent=t('ov.map.wheel'); note.classList.toggle('hidden', !!box.__focused); } };
-  box.addEventListener('wheel', (e)=>{
-    if(box.__focused || e.ctrlKey || e.metaKey) return;
-    e.stopPropagation();   // the page scrolls; the map does not zoom
-    say();
-  }, {capture:true, passive:true});
-  box.addEventListener('mousedown', ()=>{ box.__focused=true; say(); }, {capture:true});
-  box.addEventListener('mouseenter', say);
-  box.addEventListener('mouseleave', ()=>{ if(note) note.classList.add('hidden'); });
-}
-
 // ---- the sub-mode switch ----------------------------------------------------
 // Map or Around: one toolbar, one canvas area, one rail. Nothing is destroyed
 // on the way out except the live renderer — the map's answer and the node
@@ -2935,6 +2936,8 @@ function graphSetMode(mode){
   byId('gfold').classList.toggle('hidden', !isMap);
   byId('gflow').classList.toggle('hidden', !isMap);
   if(!isMap) byId('gflownote').classList.add('hidden');
+  byId('gadv').classList.toggle('hidden', !isMap);
+  renderMapAdvanced();
   byId('gmode').classList.toggle('hidden', !isMap);
   byId('gdepth').classList.toggle('hidden', !isMap);
   byId('gdir').classList.toggle('hidden', isMap);

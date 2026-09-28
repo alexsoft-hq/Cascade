@@ -941,7 +941,8 @@ function flowCard(v, key, row){
 // caller that needs the list itself (the Draw button) can ask for it without
 // racing the dropdown that is being closed under it. null = too short to search.
 async function chainSuggestFetch(v, q){
-  if(v.name==='trace') return traceSuggestFetch(q);
+  // Start's box finds the same targets Trace's does (RM67-U2c).
+  if(v.name==='trace' || v.name==='start') return traceSuggestFetch(q);
   // The Graph tab focuses on ANY node, so its box offers both lists at once:
   // the endpoints (the flow tool's own list) and search's tables / columns /
   // statements. A method is typed as owner#name — nothing lists those.

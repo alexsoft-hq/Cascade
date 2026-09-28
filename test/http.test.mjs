@@ -450,7 +450,7 @@ test('GET /i18n/ko.json: 200, JSON content type, and it really is the Korean cat
   assert.equal(r.status, 200);
   assert.equal(r.headers['content-type'], 'application/json; charset=utf-8');
   const parsed = JSON.parse(Buffer.from(r.body).toString('utf8'));
-  assert.equal(typeof parsed['tab.overview'], 'string');
+  assert.equal(typeof parsed['tab.start'], 'string');
   assert.match(Buffer.from(r.body).toString('utf8'), /[\uac00-\ud7a3]/, 'the catalogue carries Hangul — that is what it is for');
 });
 
@@ -693,7 +693,7 @@ test('serveHttp: /i18n/<lang>.json is served, and every escape from it is a 404'
   const ko = await fake.call('GET', '/i18n/ko.json');
   assert.equal(ko.status, 200);
   assert.equal(ko.headers['content-type'], 'application/json; charset=utf-8');
-  assert.equal(typeof JSON.parse(Buffer.from(ko.body).toString('utf8'))['tab.overview'], 'string');
+  assert.equal(typeof JSON.parse(Buffer.from(ko.body).toString('utf8'))['tab.start'], 'string');
 
   // A literal ".." is normalised away by URL parsing before the route sees it
   // (so it lands on the page's own 404); a percent-encoded one survives to the

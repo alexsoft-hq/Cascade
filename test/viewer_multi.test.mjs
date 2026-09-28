@@ -147,7 +147,7 @@ test('the viewer serves its page, its bundles and its catalogues over a real soc
 
   const ko = await v.get('/i18n/ko.json');
   assert.equal(ko.status, 200);
-  assert.equal(typeof (await ko.json())['tab.overview'], 'string');
+  assert.equal(typeof (await ko.json())['tab.start'], 'string');
 });
 
 test('GET /api/projects lists both projects without loading either, then shows meta for the one that answered', async (t) => {

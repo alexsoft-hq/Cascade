@@ -274,19 +274,127 @@
     body.cmpprint .panel { break-inside:avoid; }
     body.cmpprint .cmppre { max-height:none; overflow:visible; }
   }
-  /* The Overview's summary picture: groups left, table families right, the links
-     drawn between them in an SVG that sits in the middle column. */
+  /* THE MAP ON START (50_summary.js): groups left, table families right, the
+     links drawn between them in an SVG laid over the picture. A box OPENS IN
+     PLACE: its head stays where it was and its routes or tables list under it,
+     in a list that scrolls rather than pushing the whole column down. */
+  .summap h2 { margin:0; }
+  .sumtitle { display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:space-between; margin-bottom:6px; }
+  .sumtitle select { font-size:12px; padding:4px 8px; max-width:100%; }
+  .sumcrumbs { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:12.5px; margin:0 0 10px; }
+  button.sumcrumb { background:none; border:0; border-bottom:1px dashed var(--frame); border-radius:0; padding:0;
+    color:var(--t2); font:inherit; cursor:pointer; }
+  button.sumcrumb:hover { color:var(--t1); border-bottom-color:var(--t1); }
+  .sumcrumb.here { color:var(--t1); font-weight:600; overflow-wrap:anywhere; }
+  .sumsep { color:var(--t3); }
+  .sumempty { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; font-size:12.5px; color:var(--warn);
+    border:1px dashed var(--warn); padding:8px 12px; margin:0 0 12px; }
   .sumgrid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; margin-top:8px; }
   @media (max-width:1100px){ .sumgrid { grid-template-columns:minmax(0,1fr); } }
-  .sumpic { display:grid; grid-template-columns:minmax(160px,1fr) minmax(80px,1.2fr) minmax(160px,1fr); position:relative; }
-  .sumcol { display:flex; flex-direction:column; gap:8px; }
+  .sumpic { display:grid; grid-template-columns:minmax(0,1fr) minmax(48px,.9fr) minmax(0,1fr); position:relative; min-width:0; }
+  .sumcol { display:flex; flex-direction:column; gap:8px; min-width:0; }
   .sumlinks { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
-  .sumbox { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; padding:7px 10px;
-    border:1px solid var(--frame); background:var(--g1); color:var(--t1); cursor:pointer; font:inherit; }
-  .sumbox.sel { box-shadow:inset 3px 0 0 var(--t1); }
+  .sumbox { display:flex; flex-direction:column; border:1px solid var(--frame); background:var(--g1); min-width:0; }
   .sumbox.sumothers { border-style:dashed; }
+  .sumbox.open { box-shadow:inset 3px 0 0 var(--t1); border-color:var(--t1); }
+  .sumbox.dim { opacity:.4; }
+  button.sumhead { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; width:100%;
+    padding:7px 10px; border:0; border-radius:0; background:none; color:var(--t1); cursor:pointer; font:inherit; }
+  button.sumhead:hover { background:var(--g0); }
   .sumname { font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
+  .sumrows { border-top:1px solid var(--hair); max-height:340px; overflow:auto; padding:2px 0; }
+  .sumrowwrap { display:flex; align-items:center; gap:6px; padding:1px 6px 1px 10px; min-width:0; }
+  button.sumrow { flex:1 1 auto; min-width:0; display:flex; text-align:left; background:none; border:0; border-radius:0;
+    padding:4px 0; color:var(--t1); font:12px var(--mono); cursor:pointer; overflow:hidden; white-space:nowrap; }
+  button.sumrow .phead { overflow:hidden; text-overflow:ellipsis; min-width:0; flex:0 1 auto; }
+  button.sumrow .ptail { flex:none; }
+  button.sumrow:hover { text-decoration:underline; }
+  button.sumrow.sel { font-weight:600; box-shadow:inset 0 -2px 0 var(--t1); }
+  button.mini.sumtrace { flex:none; padding:1px 7px; font-size:11px; }
+  button.mini.sumall { margin:6px 10px; }
   .sumdetail .list { max-height:60vh; overflow:auto; }
+  .sumgo { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px; }
+  .sumpath { padding:8px 0; border-top:1px solid var(--hair); }
+  .sumpathhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+  .sumpaths ul.list li { padding:4px 0; }
+  .sumpaths ul.list li button { flex:none; white-space:nowrap; }
+  .sumpaths .id { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; min-width:0; }
+
+  /* ---- the five places (RM67-U2c) ------------------------------------------ */
+  /* The second row: the views inside the place on screen, smaller than the
+     places and set on the same rule, so the two rows read as one address. */
+  .subtabs { grid-column:1 / -1; grid-row:6; display:flex; gap:18px; flex-wrap:wrap; padding:2px 0 0; }
+  .subtab { padding:6px 0 8px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; border-radius:0;
+    background:none; color:var(--t2); cursor:pointer; font-size:13px; font-family:inherit; }
+  .subtab:hover { color:var(--t1); border-bottom-color:var(--frame); }
+  .subtab.active { color:var(--t1); font-weight:600; border-bottom-color:var(--t1); }
+
+  /* ---- Start ------------------------------------------------------------- */
+  .startask h2 { font-size:15px; }
+  .startsearch { position:relative; display:flex; }
+  .startsearch input[type=text] { font-size:15px; padding:10px 12px; }
+  .starget:not(:empty) { margin-top:10px; }
+  .startpicked { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .startpicked .raillbl { display:inline; margin:0; }
+  .startpicked .id { word-break:break-all; }
+  .sentries { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:12px; }
+  @media (max-width:900px){ .sentries { grid-template-columns:minmax(0,1fr); } }
+  .startq { display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:left; padding:12px 14px;
+    border:1px solid var(--frame); border-radius:var(--r-tag); background:var(--g1); color:var(--t1); font:inherit; min-width:0; }
+  button.startq { cursor:pointer; }
+  button.startq:hover { border-color:var(--t1); }
+  .startq .sqtitle { font-size:15px; font-weight:600; }
+  .startq .sqsub { font-size:12.5px; color:var(--t2); line-height:1.45; overflow-wrap:anywhere; }
+  .startq.off { border-style:dashed; background:none; }
+  .startq.off .sqtitle { color:var(--t2); }
+  .startgrid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:14px; align-items:start; }
+  @media (max-width:1100px){ .startgrid { grid-template-columns:minmax(0,1fr); } }
+  .sfacts { display:grid; gap:6px; margin-bottom:10px; }
+  .sfact { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; font-size:13px; }
+  .sfact .raillbl { display:inline; margin:0; min-width:6em; }
+  .saxes { display:flex; flex-wrap:wrap; gap:6px; }
+  button.saxis { display:inline-flex; align-items:baseline; gap:4px; flex-wrap:wrap; padding:3px 9px; font-size:12px;
+    border-radius:var(--r-chip); max-width:100%; text-align:left; }
+  button.saxis.degraded, button.saxis.not-shipped { border-color:var(--warn); color:var(--warn); }
+  button.saxis.not-shipped { border-style:dashed; }
+  ul.sgaps { list-style:none; margin:6px 0 0; padding:0; display:grid; gap:4px; }
+  button.sgap { display:flex; width:100%; justify-content:space-between; gap:10px; text-align:left; padding:5px 9px;
+    font-size:12.5px; background:none; }
+  button.sgap.warn { border-color:var(--warn); color:var(--warn); }
+  button.sgap:hover { color:var(--t1); border-color:var(--t1); }
+  .sgapguess { margin-top:6px; }
+  .ovpanels3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
+  @media (max-width:1100px){ .ovpanels3 { grid-template-columns:minmax(0,1fr); } }
+  .ovpanels3 .panel { margin-bottom:0; min-width:0; }
+
+  /* ---- Analysis status ----------------------------------------------------- */
+  .stfacts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:stretch; margin-bottom:14px; }
+  @media (max-width:1100px){ .stfacts { grid-template-columns:minmax(0,1fr); } }
+  .stfacts .panel { margin-bottom:0; min-width:0; }
+  .stbig { font-size:15px; font-weight:600; margin-bottom:4px; overflow-wrap:anywhere; }
+  .stbig.warn { color:var(--warn); }
+  .stmain { min-width:0; }
+  table.staxes td { vertical-align:top; }
+  table.staxes td.stsrc { width:14em; overflow-wrap:anywhere; font-size:12px; }
+  table.staxes td:first-child { width:9em; }
+  table.staxes tr.warn b { color:var(--warn); }
+  .tag.warnt { color:var(--warn); border-color:var(--warn); }
+  .stgrp { padding:8px 0 2px; border-top:1px solid var(--hair); }
+  .stgrp:first-of-type { border-top:0; }
+  .stitem { padding:9px 0 9px 10px; border-left:2px solid var(--hair); margin:6px 0; }
+  /* A row a link went to says it is the one (ovGoToGaps puts it under the masthead). */
+  .stitem.stfocus, table.staxes tr.stfocus td { background:var(--src-hi); }
+  .stitem.warn { border-left-color:var(--warn); }
+  .stitemhead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:4px; }
+  .stitemhead b { font-weight:600; }
+  .stline { display:grid; grid-template-columns:7.5em minmax(0,1fr); gap:10px; font-size:12.5px; line-height:1.45; padding:2px 0; }
+  @media (max-width:620px){ .stline { grid-template-columns:minmax(0,1fr); gap:0; } }
+  .stlbl { color:var(--t3); }
+  .stval { min-width:0; color:var(--t1); overflow-wrap:anywhere; }
+  .stval code { font-family:var(--mono); font-size:12px; }
+  .stval .ovchips { margin-top:4px; }
+  .gadvbox { display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  #gadv.on { background:var(--t1); color:var(--g0); border-color:var(--t1); }
   /* THE SNAPSHOT BAND and the page an exported file is (48_snapshot.js). The
      band spans the masthead grid like the note above it. In the file there is
      one tab, no project list, no rail and nothing that would ask a server. */
@@ -311,6 +419,7 @@
     .mfolds { grid-row:4; }
     .mnote, .snapbar { grid-row:5; }
     .tabs { grid-row:6; margin-top:4px; }
+    .subtabs { grid-row:7; }
   }
   .tab { padding:8px 0 11px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px;
     background:none; color:var(--t2); cursor:pointer; font-size:14px; font-family:inherit; }
@@ -585,16 +694,7 @@
   /* One line under the denominator, for a dial whose DENOMINATOR is itself a
      lower bound: a router the server fills in at run time. */
   .kpi .kpinote { color:var(--t2); font-size:12px; margin-top:4px; line-height:1.4; }
-  /* ---- the hero, row 2: cartography, and what it does not show ----------- */
-  .ovhero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
-    gap:18px; align-items:start; margin-bottom:16px; }
-  @media (max-width:1100px){ .ovhero{ grid-template-columns:minmax(0,1fr); } }
-  .ovherocol { display:grid; gap:16px; align-content:start; }
-  .ovherocol .panel { margin-bottom:0; }
   .panelsub { color:var(--t2); font-size:12.5px; margin:0 0 12px; }
-  #ovmap { position:relative; height:420px; min-height:300px; overflow:hidden;
-    border:1px solid var(--hair); border-radius:10px; }
-  #ovmapwrap { position:absolute; inset:0; }
   /* A busiest table: its name in the table hue, a bar for how many endpoints
      can reach it, and the count. The bar GLOWS where the theme says so. */
   .ovbar { display:flex; align-items:center; gap:14px; padding:8px 0;
@@ -1181,18 +1281,10 @@
      the legend takes the left 46%, the count line the right 52%. */
   .gover-bl { bottom:8px; left:8px; max-width:46%; }
   .gover-br { right:8px; bottom:8px; max-width:50%; text-align:right; }
-  /* The Overview's map has no count line beside it, so its legend takes the
-     whole width rather than wrapping into three rows inside a narrow panel. */
-  #ovmap .gover-bl { max-width:calc(100% - 16px); }
   .gover .chips, .gover .gmapleg, .gover .klegend, .gover .gcount { margin:0; }
   .gover .gmapleg, .gover .klegend, .gover .gcount { font-size:12px; gap:8px; line-height:1.5; }
   .gover .gcount b, .gover .gcount .count { font-size:12px; }
   .gover button.chip { pointer-events:auto; }
-  /* The Overview is a page you scroll, so its map does not take the wheel until
-     it has been asked to. This says so, on hover, inside the canvas. */
-  .gwheel { position:absolute; z-index:4; left:50%; bottom:10px; transform:translateX(-50%);
-    padding:3px 9px; border-radius:var(--r-tag); background:var(--overlay);
-    border:1px solid var(--hair); color:var(--t2); font-size:11.5px; pointer-events:none; }
   .erdgrid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; }
   @media (max-width:1100px){ .erdgrid{ grid-template-columns:minmax(0,1fr); } }
   #erdwrap { height:78vh; min-height:540px; overflow:hidden; border:1px solid var(--frame); position:relative; }
@@ -1312,50 +1404,48 @@
   <!-- AN EXPORTED FILE SAYS SO FIRST (48_snapshot.js): the one question it
        answers, when and from which pack, and how much the answer is worth. -->
   <div class="snapbar hidden" id="snapbar" role="note"></div>
-  <div class="tabs">
-    <button type="button" class="tab active" data-tab="overview" data-t="tab.overview">Overview</button>
-    <button type="button" class="tab" data-tab="trace" data-t="tab.trace">Trace</button>
-    <button type="button" class="tab" data-tab="coupling" data-t="tab.coupling">Coupling</button>
-    <button type="button" class="tab" data-tab="graph" data-t="tab.graph">Graph</button>
-    <button type="button" class="tab" data-tab="erd" data-t="tab.erd">ERD</button>
-    <button type="button" class="tab" data-tab="tx" data-t="tab.tx">Transactions</button>
-    <button type="button" class="tab" data-tab="rules" data-t="tab.rules">Rules</button>
-    <button type="button" class="tab hidden" data-tab="compare" data-t="tab.compare">Compare</button>
+  <!-- FIVE PLACES (RM67-U2c), each a question a reader comes with. A place
+       that holds more than one view (Structure, Analysis status) opens a second
+       row under this one, `#subtabs`, drawn by renderPlaceChrome() in
+       30_chrome.js. A view is still what the page draws and what a URL's `tab=`
+       names, so every link written before this row still lands. -->
+  <div class="tabs" role="tablist">
+    <button type="button" class="tab active" data-place="start" data-t="tab.start">Start</button>
+    <button type="button" class="tab" data-place="trace" data-t="tab.trace">Trace</button>
+    <button type="button" class="tab" data-place="structure" data-t="tab.structure">Structure</button>
+    <button type="button" class="tab hidden" data-place="compare" data-t="tab.compare">Compare</button>
+    <button type="button" class="tab" data-place="status" data-t="tab.status">Analysis status</button>
   </div>
+  <div class="subtabs hidden" id="subtabs" role="tablist"></div>
 </header>
 
 <div class="wrap">
-  <!-- OVERVIEW TAB — the landing census, from ONE server answer -->
-  <div id="tab-overview">
-    <div class="hint" data-t-fold="hint.overview"></div>
-    <!-- THE HERO, in two rows.
-         (1) four KPI dials: how far the chain runs, as one number per lane with
-             the fraction under it and an arc gauge beside it. Every number is
-             `overview.answer.reach`, the same field the ribbon was drawn from.
-         (2) the CARTOGRAPHY: the live whole-pack map, at reduced height, from
-             the very `map` answer the Graph tab uses — asked once and shared,
-             so opening the Graph tab does not fetch it again. Beside it, the
-             busiest tables, the gaps and the edge grades.
-         The ribbon is not deleted: it is under the fold below the hero. -->
-    <div id="ovcards" class="ovkpis"></div>
-    <div id="ovhero" class="ovhero hidden">
-      <div class="panel ovmappanel">
-        <h2 data-t="ov.map.title">Cartography</h2>
-        <div class="panelsub" id="ovmapsub"></div>
-        <div id="ovmap" class="sheetgrid"><div id="ovmapwrap"></div>
-          <div class="gwheel hidden" id="ovwheel"></div>
-          <div class="gover gover-bl"><div class="gmapleg" id="ovmapleg"></div></div>
-        </div>
+  <!-- START (RM67-U2c) — the way in. It used to be the Overview, which opened
+       on four shares and a whole-pack drawing before a reader had said what they
+       came for. Now it asks first: a box that finds any target, and the three
+       questions a reader brings (what breaks if I change it, how far it reaches,
+       what the analysis did not see). Under them, what this analysis can see and
+       the gaps that change an answer, then the summary map (50_summary.js), the
+       way into the pack for a reader with no target yet. Everything else the
+       Overview held is on Analysis status. -->
+  <div id="tab-start">
+    <div class="hint" data-t-fold="hint.start"></div>
+    <div class="panel startask">
+      <h2 data-t="start.ask.title">Ask about one thing</h2>
+      <div class="startsearch">
+        <input type="text" id="sentry" data-t-ph="start.entry.ph" placeholder="find an API, screen, table, column, SQL or method (press / to search)" autocomplete="off">
+        <div id="ssug" class="sug hidden"></div>
       </div>
-      <div class="ovherocol" id="ovherocol"></div>
+      <div id="starget" class="starget"></div>
+      <div id="sentries" class="sentries"></div>
     </div>
-    <!-- THE SUMMARY PICTURE (50_summary.js): a fold, asked for when opened. -->
-    <div id="ovsummary"></div>
-    <div id="ovfold"></div>
-    <div class="ovgrid">
-      <div id="ovpanels" class="ovpanels"></div>
-      <div id="ovside" class="flowside"></div>
+    <div class="startgrid">
+      <div id="sscope" class="panel"></div>
+      <div id="sgaps" class="panel"></div>
     </div>
+    <div id="ovcards" class="ovkpis"></div>
+    <div id="ovsummary" class="panel summap"></div>
+    <div id="shubs" class="ovpanels3"></div>
   </div>
 
   <!-- TRACE TAB (RM67-U2b) — one place to ask about one target, either way.
@@ -1464,12 +1554,18 @@
         <input type="text" id="gfocus" style="width:100%" placeholder="find a group, an endpoint like GET /brand/list, or a table on the map…" autocomplete="off">
         <div id="gsug" class="sug hidden"></div>
       </div>
-      <span class="seg" id="grend" data-t-title="graph.rend.title" title="2D draws on a canvas. 3D draws the same graph in WebGL."><button class="on" data-rend="2d">2D</button><button data-rend="3d">3D</button></span>
       <button id="gfit" data-t-title="graph.fit.title" title="Fit the whole map in view">&#x2922;</button>
-      <span class="grendnote hidden" id="grendnote"></span>
       <span class="seg" id="gfold" data-t-title="graph.fold.title" title="folded: one node per API group, with its endpoints counted inside it. endpoints: every endpoint drawn around its own group"><button class="on" data-fold="folded" data-t="graph.fold.folded">folded</button><button data-fold="endpoints" data-t="graph.fold.endpoints">endpoints</button></span>
-      <button id="gflow" aria-pressed="true" title="the dots run the way the call goes: group → endpoint → table. Click to stop them.">Flow on</button>
-      <span class="grendnote hidden" id="gflownote"></span>
+      <!-- THE ADVANCED VIEW (RM67-U2c): 3D and the moving dots are one switch,
+           off by default. The flat, still map reads the same answer; the switch
+           only changes how it is drawn, and it is remembered. -->
+      <button id="gadv" aria-pressed="false" data-t="graph.adv" data-t-title="graph.adv.title" title="3D and the moving dots along the lines. Off, the map is flat and still.">Advanced view</button>
+      <span class="gadvbox hidden" id="gadvbox">
+        <span class="seg" id="grend" data-t-title="graph.rend.title" title="2D draws on a canvas. 3D draws the same graph in WebGL."><button class="on" data-rend="2d">2D</button><button data-rend="3d">3D</button></span>
+        <span class="grendnote hidden" id="grendnote"></span>
+        <button id="gflow" aria-pressed="true" title="the dots run the way the call goes: group → endpoint → table. Click to stop them.">Flow on</button>
+        <span class="grendnote hidden" id="gflownote"></span>
+      </span>
       <select id="gmode" data-t-title="graph.mode.title" title="which links the map follows">
         <option value="strict" data-t="graph.mode.strict">strict</option>
         <option value="conservative" selected data-t="graph.mode.conservative">conservative</option>
@@ -1528,15 +1624,35 @@
     <div id="ehonesty"></div>
   </div>
 
-  <!-- TRANSACTIONS TAB -->
+  <!-- TRANSACTIONS (a view of Structure) -->
   <div id="tab-tx" class="hidden">
     <div class="hint" data-t-fold="hint.tx"></div>
     <div id="txview"></div>
   </div>
 
-  <!-- COMPARE TAB (49_compare.js): shown only when this project has an earlier
-       build kept to compare with. The report, its Print and Save buttons and its
-       filter are drawn into #cmpview from the answer. -->
+  <!-- ANALYSIS STATUS (RM67-U2c, 57_status.js): what this analysis could and
+       could not see, in one place. Freshness, what the trust level rests on,
+       the mode the census was walked in, each axis with where it was read from,
+       every blind spot as a row (the cause, what it touches, what to do), the
+       lanes' diagnostics grouped by kind and cause, the census, and the
+       evidence rail with every limit. Rules is its second view. -->
+  <div id="tab-status" class="hidden">
+    <div class="hint" data-t-fold="hint.status"></div>
+    <div id="stfacts" class="stfacts"></div>
+    <div class="ovgrid">
+      <div class="stmain">
+        <div id="staxes"></div>
+        <div id="stgaps"></div>
+        <div id="stdiags"></div>
+        <div id="stconnected"></div>
+        <div id="ovfold"></div>
+        <div id="ovpanels" class="ovpanels"></div>
+      </div>
+      <div id="ovside" class="flowside"></div>
+    </div>
+  </div>
+
+  <!-- RULES (a view of Analysis status) -->
   <div id="tab-rules" class="hidden">
     <!-- Search and three filters over the rows the `rules` answer already holds:
          nothing here asks the server again. What applies to this project is the
@@ -1550,6 +1666,9 @@
     <div class="hint" data-t-fold="hint.rules"></div>
     <div id="rulesview"></div>
   </div>
+  <!-- COMPARE (49_compare.js): shown only when this project has an earlier
+       build kept to compare with. The report, its Print and Save buttons and its
+       filter are drawn into #cmpview from the answer. -->
   <div id="tab-compare" class="hidden">
     <div class="searchbar">
       <span class="comment" data-t="compare.base.label">compare this project against</span>
@@ -1623,6 +1742,8 @@
 <script src="/viewer/js/53_chain_lanes.js"></script>
 <script src="/viewer/js/54_trace.js"></script>
 <script src="/viewer/js/55_trace_detail.js"></script>
+<script src="/viewer/js/56_start.js"></script>
+<script src="/viewer/js/57_status.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

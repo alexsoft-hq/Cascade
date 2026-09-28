@@ -1,0 +1,836 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj hidden" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch."></select>
+        <span id="projone" class="projone">fullstack</span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java + web</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <span class="crlane" title="we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here.">
+        screens
+        <b>7 ~</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
+        api groups
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>12</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
+        services
+        <b>4</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
+        SQL
+        <b>5 ~</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT">
+        columns
+        <b>6 ~</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            11 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div id="snapbar" class="snapbar hidden" role="note"></div>
+    <div class="tabs" role="tablist">
+      <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+      <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+      <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+      <button class="tab active" aria-selected="true" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+    </div>
+    <div id="subtabs" class="subtabs" role="tablist">
+      <button class="subtab active" onclick type="button">Scope and gaps</button>
+      <button class="subtab" onclick type="button">Rules</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="tab-start" class="hidden">…</div>
+    <div id="tab-trace" class="hidden">…</div>
+    <div id="tab-coupling" class="hidden">…</div>
+    <div id="tab-graph" class="hidden">…</div>
+    <div id="tab-erd" class="hidden">…</div>
+    <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-status">
+      <div class="hint hintfold" data-t-fold="hint.status">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              What this analysis could and could not see, and what to do about each gap.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div id="stfacts" class="stfacts">
+        <div class="panel stfact">
+          <h2>How fresh</h2>
+          <div class="stbig">not compared with your working tree</div>
+          <div class="comment">there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.</div>
+          <div class="count">built <masked> from commit <commit>, digest ea867e7b728e</div>
+        </div>
+        <div class="panel stfact">
+          <h2>Verification</h2>
+          <div class="stbig">not certified</div>
+          <div class="comment">there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.</div>
+          <div class="comment">two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.</div>
+          <div class="ovchips">
+            <span class="tag">calibration-gate</span>
+            <span class="tag">golden:all-relations</span>
+            <span class="tag">no-calibration-state</span>
+            <span class="tag">no-project-golden</span>
+            <span class="tag">statements-axis-not-shipped</span>
+            <span class="tag">column-axis-degraded</span>
+            <span class="tag">jpa-axis-degraded</span>
+            <span class="tag">mybatisPlus-axis-not-shipped</span>
+            <span class="tag">screen-axis-degraded</span>
+          </div>
+        </div>
+        <div class="panel stfact">
+          <h2>How it was counted</h2>
+          <div class="stbig">mode conservative, depth not capped</div>
+          <div class="comment">Every share on Start and every count here follows only EXACT, SOUND_SET links, from each route down.</div>
+        </div>
+      </div>
+      <div class="ovgrid">
+        <div class="stmain">
+          <div id="staxes">
+            <div id="staxespanel" class="panel">
+              <h2>The axes: what was read, and from where</h2>
+              <div class="panelsub">An axis is one kind of thing the analysis reads. One it did not collect, or read only in part, changes every answer that needs it.</div>
+              <table class="ruled staxes">
+                <thead>
+                  <tr>
+                    <th>axis</th>
+                    <th>state</th>
+                    <th>read from</th>
+                    <th>what it changes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr id="st-ov-axis-catalog">
+                    <td>
+                      <b>database schema</b>
+                    </td>
+                    <td>
+                      <span class="tag">collected</span>
+                    </td>
+                    <td class="mono stsrc">db/schema.sql</td>
+                    <td>
+                      <div>The ERD's lines, the columns a SELECT * reads, and which table a bare column name belongs to.</div>
+                    </td>
+                  </tr>
+                  <tr id="st-ov-axis-statements" class="warn">
+                    <td>
+                      <b>SQL</b>
+                    </td>
+                    <td>
+                      <span class="tag warnt">not collected</span>
+                    </td>
+                    <td class="mono stsrc"></td>
+                    <td>
+                      <div>Every walk that ends in SQL, and every table and column a walk reaches.</div>
+                      <div class="comment">we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty</div>
+                    </td>
+                  </tr>
+                  <tr id="st-ov-axis-column" class="warn">
+                    <td>
+                      <b>columns</b>
+                    </td>
+                    <td>
+                      <span class="tag warnt">only partly read</span>
+                    </td>
+                    <td class="mono stsrc"></td>
+                    <td>
+                      <div>Which columns a statement reads and writes, and so every column's impact.</div>
+                      <div class="comment">where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT</div>
+                    </td>
+                  </tr>
+                  <tr id="st-ov-axis-code">
+                    <td>
+                      <b>code</b>
+                    </td>
+                    <td>
+                      <span class="tag">collected</span>
+                    </td>
+                    <td class="mono stsrc"></td>
+                    <td>
+                      <div>Every route, service and transaction. Without it no walk starts from an API.</div>
+                    </td>
+                  </tr>
+                  <tr id="st-ov-axis-web">
+                    <td>
+                      <b>frontend calls</b>
+                    </td>
+                    <td>
+                      <span class="tag">collected</span>
+                    </td>
+                    <td class="mono stsrc"></td>
+                    <td>
+                      <div>Which frontend functions call which API, and so every walk up to a screen.</div>
+                      <div class="comment">1 of 13 frontend call site(s) were traced to no client, so each of their edges is HEURISTIC at best; most often because the function called comes from a package the HTTP client pack does not name (1 call(s), e.g. helper.post)</div>
+                    </td>
+                  </tr>
+                  <tr id="st-ov-axis-screen" class="warn">
+                    <td>
+                      <b>screens</b>
+                    </td>
+                    <td>
+                      <span class="tag warnt">only partly read</span>
+                    </td>
+                    <td class="mono stsrc"></td>
+                    <td>
+                      <div>Which screens call which API, and every screen count.</div>
+                      <div class="comment">we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here.</div>
+                    </td>
+                  </tr>
+                  <tr id="st-ov-axis-jpa" class="warn">
+                    <td>
+                      <b>JPA mappings</b>
+                    </td>
+                    <td>
+                      <span class="tag warnt">only partly read</span>
+                    </td>
+                    <td class="mono stsrc"></td>
+                    <td>
+                      <div>The tables and columns an entity or a repository names, and how sure they are.</div>
+                      <div class="comment">we mapped 2 entity(ies) and 2 repository(ies), but the profile declares no jpa.namingStrategy. Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot's default (CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT</div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div id="stgaps">
+            <div id="ovgaps" class="panel">
+              <h2>
+                What we could not see
+                <span class="count">(5)</span>
+              </h2>
+              <div class="panelsub">Each row says its cause, what it touches, and what to do. The cause is the engine's own sentence, and it opens to the whole of it.</div>
+              <div class="panelsub">4 call(s) leave this project, 0 answered by a registered project and 4 not.</div>
+              <div class="stgrp">
+                <div class="ovgaplbl">Inputs it did not have</div>
+                <div id="st-ov-gap-http-calls-leaving-pack" class="stitem warn">
+                  <div class="stitemhead">
+                    <b>API calls to other services</b>
+                    <span class="ovnum">4</span>
+                    <span class="ovdiag" title="the engine's own name for this kind">http-calls-leaving-pack</span>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">cause</span>
+                    <div class="stval">
+                      <div class="fold">
+                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                          </svg>
+                          <span class="foldtext">
+                            4 HTTP call target(s) leave this pack.
+                          </span>
+                        </button>
+                        <div class="foldbody"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">touches</span>
+                    <div class="stval">
+                      <span>The routes this project calls and does not serve. What they reach is not in this pack.</span>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">what to do</span>
+                    <div class="stval">
+                      <span>Register the project that serves them. If they are this project's own, declare the prefix it is deployed under.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="stgrp">
+                <div class="ovgaplbl">What it could not read</div>
+                <div id="st-ov-gap-unresolved-calls" class="stitem warn">
+                  <div class="stitemhead">
+                    <b>calls we could not follow</b>
+                    <span class="ovnum">0</span>
+                    <span class="ovdiag" title="the engine's own name for this kind">unresolved-calls</span>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">cause</span>
+                    <div class="stval">
+                      <div class="fold">
+                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                          </svg>
+                          <span class="foldtext">
+                            we couldn't tell what 0 method calls point to, so they aren't in the graph.
+                          </span>
+                        </button>
+                        <div class="foldbody"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">touches</span>
+                    <div class="stval">
+                      <span>A chain that needs one of those calls ends short of where it really goes.</span>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">what to do</span>
+                    <div class="stval">
+                      <span>The cause splits them by reason. A module that was not passed in is the part you can fix.</span>
+                    </div>
+                  </div>
+                </div>
+                <div id="st-ov-gap-screen-components-unresolved" class="stitem warn">
+                  <div class="stitemhead">
+                    <b>screens with no component found</b>
+                    <span class="ovnum">5</span>
+                    <span class="ovdiag" title="the engine's own name for this kind">screen-components-unresolved</span>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">cause</span>
+                    <div class="stval">
+                      <div class="fold">
+                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                          </svg>
+                          <span class="foldtext">
+                            5 of 7 route declaration(s) name a component this lane could not resolve to a file it…
+                          </span>
+                        </button>
+                        <div class="foldbody"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">touches</span>
+                    <div class="stval">
+                      <span>Those screens. Nothing hangs off them, so they reach no API here.</span>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">what to do</span>
+                    <div class="stval">
+                      <span>Declare the alias or the source root the router's imports use, then analyze again.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="stgrp">
+                <div class="ovgaplbl">What this walk left out</div>
+                <div id="st-ov-gap-mode-floor" class="stitem">
+                  <div class="stitemhead">
+                    <b>connections this mode leaves out</b>
+                    <span class="ovnum">5</span>
+                    <span class="ovdiag" title="the engine's own name for this kind">mode-floor</span>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">cause</span>
+                    <div class="stval">
+                      <div class="fold">
+                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                          </svg>
+                          <span class="foldtext">
+                            walked at mode=conservative, no depth cap: 5 flow edge(s) sit below this mode's grade…
+                          </span>
+                        </button>
+                        <div class="foldbody"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">touches</span>
+                    <div class="stval">
+                      <span>Links this mode does not follow. Every walk in this mode stops before them.</span>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">what to do</span>
+                    <div class="stval">
+                      <span>On Trace, walk again in the wider mode the answer names. It says what that adds.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="stgrp">
+                <div class="ovgaplbl">Not reached: worth a look, not an error</div>
+                <div id="st-ov-gap-statements-not-reached" class="stitem">
+                  <div class="stitemhead">
+                    <b>SQL no endpoint reaches</b>
+                    <span class="ovnum">1</span>
+                    <span class="ovdiag" title="the engine's own name for this kind">statements-not-reached</span>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">cause</span>
+                    <div class="stval">
+                      <div class="fold">
+                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                          </svg>
+                          <span class="foldtext">
+                            1 of 5 statement(s) are not reached from the endpoints we analysed, and they are usually…
+                          </span>
+                        </button>
+                        <div class="foldbody"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">touches</span>
+                    <div class="stval">
+                      <span>SQL no route here calls. A scheduled job, another service or reflection may.</span>
+                      <div class="ovchips">
+                        <button class="ovchip" onclick title="com.example.domain.ThingRepository.findByName — view the SQL">ThingRepository.findByName</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stline">
+                    <span class="stlbl">what to do</span>
+                    <div class="stval">
+                      <span>Open one on Trace, Details, before you call any of it dead code.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="stdiags">
+            <div id="stdiag" class="panel">
+              <h2>
+                What the lanes reported
+                <span class="count">(0)</span>
+              </h2>
+              <div class="panelsub">No lane reported a problem.</div>
+            </div>
+          </div>
+          <div id="stconnected">
+            <div class="panel">
+              <h2>
+                Connected projects
+                <span class="count">(0)</span>
+              </h2>
+              <div class="panelsub">the routes this project calls and does not serve, and the registered project that answers each one. Click a row to go there.</div>
+              <div class="ovconn ovconn-none">
+                <div class="ovconnhead">
+                  <span class="grow">
+                    <span class="tag warn">nobody serves these</span>
+                  </span>
+                  <span class="count">5 call site(s) over 4 route(s)</span>
+                </div>
+                <div class="ovchips">
+                  <span class="ovchip" title="2 method(s) in this project make this call">GET /v/items</span>
+                  <span class="ovchip" title="1 method(s) in this project make this call">POST /health</span>
+                  <span class="ovchip" title="1 method(s) in this project make this call">GET /legacy/ping</span>
+                  <span class="ovchip" title="1 method(s) in this project make this call">POST /u/thing</span>
+                </div>
+                <div class="cpnote">these routes leave this project and no registered project serves them, so the chain stops at the call. Register the project that serves them and ask again.</div>
+              </div>
+            </div>
+          </div>
+          <div id="ovfold">
+            <div class="panel ovfoldwrap">
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    How far the chain gets
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
+          <div id="ovpanels" class="ovpanels">
+            <div class="panel">
+              <h2>How sure the lines are</h2>
+              <div class="panelsub">the line style says how sure, the colour says what kind</div>
+              <div class="ovgrades">
+                <span class="grade g-EXACT" title="EXACT 37">
+                  EXACT 37
+                </span>
+                <span class="grade g-SOUND_SET" title="SOUND_SET 24">
+                  SOUND_SET 24
+                </span>
+                <span class="grade g-UNRESOLVED" title="UNRESOLVED 5">
+                  UNRESOLVED 5
+                </span>
+              </div>
+            </div>
+            <div class="panel">
+              <h2>
+                What we found
+                <span class="count">(6 kinds)</span>
+              </h2>
+              <table class="ruled">
+                <thead>
+                  <tr>
+                    <th>kind</th>
+                    <th class="num">nodes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                        <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                      </svg>
+                      symbol
+                    </td>
+                    <td class="num">33</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                        <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                      </svg>
+                      endpoint
+                    </td>
+                    <td class="num">12</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                        <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                        <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+                      </svg>
+                      screen
+                    </td>
+                    <td class="num">7</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                        <circle cx="6" cy="6" fill="#F472B6" r="2"></circle>
+                      </svg>
+                      column
+                    </td>
+                    <td class="num">6</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                        <path d="M6,2.1L9.9,6L6,9.9L2.1,6Z" fill="#FB923C"></path>
+                      </svg>
+                      statement
+                    </td>
+                    <td class="num">5</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                        <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
+                      </svg>
+                      table
+                    </td>
+                    <td class="num">2</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel">
+              <h2>
+                Connections, by type and certainty
+                <span class="count">(12)</span>
+              </h2>
+              <table class="ruled">
+                <thead>
+                  <tr>
+                    <th>type</th>
+                    <th>grade</th>
+                    <th class="num">edges</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr title="MAY_CALL / SOUND_SET">
+                    <td>MAY_CALL</td>
+                    <td>
+                      <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                        SOUND_SET
+                      </span>
+                    </td>
+                    <td class="num">12</td>
+                  </tr>
+                  <tr title="CALLS_HTTP / SOUND_SET">
+                    <td>CALLS_HTTP</td>
+                    <td>
+                      <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                        SOUND_SET
+                      </span>
+                    </td>
+                    <td class="num">9</td>
+                  </tr>
+                  <tr title="HANDLES / EXACT">
+                    <td>HANDLES</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">8</td>
+                  </tr>
+                  <tr title="DECLARES / EXACT">
+                    <td>DECLARES</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">6</td>
+                  </tr>
+                  <tr title="CALLS_HTTP / UNRESOLVED">
+                    <td>CALLS_HTTP</td>
+                    <td>
+                      <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                        UNRESOLVED
+                      </span>
+                    </td>
+                    <td class="num">5</td>
+                  </tr>
+                  <tr title="EXECUTES / EXACT">
+                    <td>EXECUTES</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">5</td>
+                  </tr>
+                  <tr title="IMPLEMENTS_STMT / EXACT">
+                    <td>IMPLEMENTS_STMT</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">5</td>
+                  </tr>
+                  <tr title="READS / EXACT">
+                    <td>READS</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">4</td>
+                  </tr>
+                  <tr title="CALLS / EXACT">
+                    <td>CALLS</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">3</td>
+                  </tr>
+                  <tr title="CALLS / SOUND_SET">
+                    <td>CALLS</td>
+                    <td>
+                      <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                        SOUND_SET
+                      </span>
+                    </td>
+                    <td class="num">3</td>
+                  </tr>
+                  <tr title="RENDERS / EXACT">
+                    <td>RENDERS</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">3</td>
+                  </tr>
+                  <tr title="WRITES / EXACT">
+                    <td>WRITES</td>
+                    <td>
+                      <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                        EXACT
+                      </span>
+                    </td>
+                    <td class="num">3</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel">
+              <h2>The Java side</h2>
+              <table class="ruled">
+                <thead>
+                  <tr>
+                    <th>what</th>
+                    <th class="num">count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr title="methods we read out of the Java source">
+                    <td>symbols</td>
+                    <td class="num">33</td>
+                  </tr>
+                  <tr title="a library or framework class with no source here, so a chain that runs into one stops there">
+                    <td>external types</td>
+                    <td class="num">0</td>
+                  </tr>
+                  <tr title="methods marked `@Transactional`, so everything under one runs in a single commit">
+                    <td>@Transactional</td>
+                    <td class="num">1</td>
+                  </tr>
+                  <tr title="methods that are themselves a SQL statement">
+                    <td>mapper methods</td>
+                    <td class="num">5</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div id="ovside" class="flowside">
+          <div class="rail">
+            <div class="railhead">
+              <h2>What this answer is based on</h2>
+              <span class="legend">
+                how sure each line is:
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                  EXACT
+                </span>
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                  SOUND_SET
+                </span>
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
+                  <svg class="gbox">
+                    <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                  </svg>
+                  HEURISTIC
+                </span>
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
+                  RUNTIME_ONLY
+                </span>
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                  UNRESOLVED
+                </span>
+              </span>
+            </div>
+            <div class="railchips">
+              <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden  statements-axis-not-shipped  column-axis-degraded  jpa-axis-degraded  mybatisPlus-axis-not-shipped  screen-axis-degraded">UNCERTIFIED</span>
+              <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+              <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  11 limits
+                </span>
+              </button>
+            </div>
+            <div class="foldbody"></div>
+            <div class="railfolds">
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    basis
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    trust
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="tab-rules" class="hidden">…</div>
+    <div id="tab-compare" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+</body>

@@ -71,8 +71,8 @@ test('the page boots against a two-project server, picks a project and says whic
 
   assert.equal(ev(ctx, 'STATE.project'), 'alpha', 'with nothing to go on it takes the first served project');
   assert.equal(ev(ctx, "STATE.projects.map(p=>p.id).join()"), 'alpha,beta');
-  assert.equal(ev(ctx, 'location.hash'), '#p=alpha&tab=overview');
-  assert.equal(ev(ctx, 'STATE.tab'), 'overview');
+  assert.equal(ev(ctx, 'location.hash'), '#p=alpha&tab=start');
+  assert.equal(ev(ctx, 'STATE.tab'), 'start');
 
   // The selector is a <select> because there is more than one project.
   const sel = byId.get('projsel');
@@ -149,7 +149,7 @@ test('switching project clears every tab, re-asks, and never leaves a renderer b
   assert.equal(ev(ctx, 'TRACE.target'), null);
   assert.equal(ev(ctx, 'erdData'), null);
   assert.equal(ev(ctx, "GRAPHV.mode"), 'map', 'the Graph tab is put back on the whole-pack map');
-  assert.equal(ev(ctx, 'location.hash'), '#p=beta&tab=overview');
+  assert.equal(ev(ctx, 'location.hash'), '#p=beta&tab=start');
 
   await settle(ctx);
   for (const c of calls.filter((x) => x.url.startsWith('/api/call'))) assert.equal(c.body.project, 'beta');
@@ -213,7 +213,7 @@ test('the "My edits" panel is per project: changed_impact carries the project to
 test('the language toggle re-renders the chrome and asks the server for nothing', async (t) => {
   const { ctx, byId, calls, store } = await bootPage(t);
   const tabs = () => byId.get('proj').parentNode.parentNode.querySelectorAll('.tab').map((x) => x.textContent);
-  assert.deepEqual(tabs()[0], 'Overview');
+  assert.deepEqual(tabs()[0], 'Start');
   assert.equal(ev(ctx, 'I18N.lang'), 'en');
 
   const seg = byId.get('langseg');
@@ -228,7 +228,7 @@ test('the language toggle re-renders the chrome and asks the server for nothing'
   assert.equal(calls.length, 0, 'switching language must not re-ask the server');
 
   // The chrome moved...
-  assert.notEqual(tabs()[0], 'Overview');
+  assert.notEqual(tabs()[0], 'Start');
   assert.match(tabs()[0], /[가-힣]/);
   assert.match(byId.get('tedits').textContent, /[가-힣]/);
   // ...and no key was missing while it did.
@@ -241,7 +241,7 @@ test('the language toggle re-renders the chrome and asks the server for nothing'
   // Back to English, from the same catalogue, with no fetch either.
   seg.children[0].onclick();
   assert.equal(ev(ctx, 'I18N.lang'), 'en');
-  assert.deepEqual(tabs()[0], 'Overview');
+  assert.deepEqual(tabs()[0], 'Start');
   assert.equal(calls.length, 0);
 });
 
@@ -273,7 +273,7 @@ test('no project at all: the page says so and names the two commands that fix it
   assert.equal(none.classList.contains('hidden'), false);
   assert.match(none.textContent, /cascade init/);
   assert.match(none.textContent, /cascade analyze/);
-  assert.equal(ev(ctx, 'location.hash'), '#tab=overview', 'no project means no id to put in the hash');
+  assert.equal(ev(ctx, 'location.hash'), '#tab=start', 'no project means no id to put in the hash');
   assert.deepEqual(none.children.filter((c) => c.tagName === 'CODE').map((c) => c.textContent), ['cascade init', 'cascade analyze']);
   // ...and the server's refusal to answer is a banner, not a blank pane.
   assert.match(byId.get('ovcards').textContent + byId.get('proj').textContent, /serves no project/);
@@ -282,7 +282,7 @@ test('no project at all: the page says so and names the two commands that fix it
 test('?project= from the start-up line the CLI prints is honoured too', async (t) => {
   const { ctx } = await bootPage(t, { search: '?project=beta' });
   assert.equal(ev(ctx, 'STATE.project'), 'beta');
-  assert.equal(ev(ctx, 'location.hash'), '#p=beta&tab=overview');
+  assert.equal(ev(ctx, 'location.hash'), '#p=beta&tab=start');
 });
 
 test('the hints keep their emphasis: a catalogue string becomes elements, never HTML', async (t) => {
@@ -1145,23 +1145,29 @@ test('a golden set that passes, and one that fails, each keep their chip', async
   assert.equal(cls().includes('bad'), false);
 });
 
-test('a blind spot has a plain name, keeps the engine\'s kind on its tooltip, and is never red', async (t) => {
-  const { ctx, byId } = await bootPage(t);
+test('a blind spot has a plain name, keeps the engine\'s kind beside it, and is never red', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=status' });
   const kinds = JSON.parse(ev(ctx, 'JSON.stringify(OV.resp.answer.gaps.map((g)=>g.kind))'));
   assert.ok(kinds.length > 0, 'this fixture is expected to disclose blind spots');
 
-  // Since RM67 the panel also lists an axis the pack did not build whole and
-  // every lane diagnostic, grouped by what a reader can do; a gap's chip is the
-  // one whose tooltip ends in its kind.
-  const all = byId.get('ovherocol').querySelectorAll('button.foldlead.ovchip');
-  for (const c of all) {
+  // Since RM67-U2c every blind spot is a ROW on Analysis status, grouped by what
+  // a reader can do; the axes not built and the lanes' diagnostics are rows of
+  // their own panels on the same place. None of them, and none of the gaps
+  // Start lists, is painted as an error.
+  const all = byId.get('tab-status').querySelectorAll('.stitem');
+  assert.ok(all.length > 0);
+  for (const c of [...all, ...byId.get('sgaps').querySelectorAll('button.sgap')]) {
     assert.equal(c.classList.contains('bad'), false, `a blind spot is painted as an error: ${c.textContent}`);
   }
-  // The engine's own kind stays on every chip's tooltip beside the count, so
-  // the plain label never becomes the only name a reader can quote.
-  const chips = kinds.map((k) => all.find((c) => c.title.endsWith('  ' + k)));
-  for (const [i, c] of chips.entries()) assert.ok(c, `${kinds[i]} lost its kind: no chip carries it`);
-  assert.ok(all.length >= kinds.length, 'one chip per gap the answer carries, at least');
+  // The engine's own kind stays in every row's head beside the count, so the
+  // plain label never becomes the only name a reader can quote.
+  const rows = byId.get('stgaps').querySelectorAll('.stitem');
+  const chips = kinds.map((k) => rows.find((c) => (c.querySelector('.ovdiag') || {}).textContent === k));
+  for (const [i, c] of chips.entries()) {
+    assert.ok(c, `${kinds[i]} lost its kind: no row carries it`);
+    assert.equal(c.querySelector('.ovdiag').title, VIEWER_STRINGS.en['status.kind.title'], 'and says what that word is');
+  }
+  assert.equal(rows.length, kinds.length, 'one row per gap the answer carries');
 
   // Every kind this pack discloses reads in the reader's words, and none of
   // them still shows the slug. Every kind the engine can emit has a label now,
@@ -1170,9 +1176,9 @@ test('a blind spot has a plain name, keeps the engine\'s kind on its tooltip, an
     const key = `ov.gap.${k}.label`;
     assert.ok(Object.hasOwn(VIEWER_STRINGS.en, key), `${k} has no plain label`);
     const want = VIEWER_STRINGS.en[key];
-    const chip = chips[kinds.indexOf(k)];
-    assert.ok(chip.textContent.includes(want), `${k} did not read as "${want}": ${chip.textContent}`);
-    assert.equal(chip.textContent.includes(k.replace(/-/g, ' ')), false, `${k} still shows its slug`);
+    const name = chips[kinds.indexOf(k)].querySelector('.stitemhead b').textContent;
+    assert.ok(name.includes(want), `${k} did not read as "${want}": ${name}`);
+    assert.equal(name.includes(k.replace(/-/g, ' ')), false, `${k} still shows its slug`);
   }
 
   // The fallback is still there for the kind nobody has written yet: it reads
@@ -1215,34 +1221,33 @@ test('the grade legend moved out of the masthead and into the evidence rail', as
   }
 });
 
-test('the Overview and the Graph tab share ONE map answer and ONE renderer', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t);
-  assert.equal(ev(ctx, 'GMAP.where'), 'overview', 'the cartography IS the map, mounted on the Overview');
-  // The renderer itself is a vendored browser bundle no vm has, so the page
-  // never gets as far as fetching the answer here; the answer is asked for by
-  // hand, and what is under test is that MOVING TABS does not ask again.
-  await ev(ctx, "(async () => { GMAP.resp = await api('map', {}); })()");
-  await settle(ctx, 4);
-  calls.length = 0;
+test('Start draws no copy of the whole-pack map: only the Graph view asks `map`, once, and mounts one renderer', async (t) => {
+  // With a stand-in renderer, so a mount really happens and can be counted.
+  // The whole-pack map lives on Structure > Graph alone (RM67-U2c); Start
+  // draws the summary instead, which is another question.
+  const { ctx, byId, calls } = await bootPage(t, { renderer: true });
+  assert.equal(ev(ctx, 'STATE.tab'), 'start');
+  assert.deepEqual(toolCalls(calls, 'map'), [], 'Start asks for no whole-pack map');
+  assert.equal(ev(ctx, 'GMAP.api'), null, 'and mounts no renderer');
+  for (const id of ['ovhero', 'ovmap', 'ovmapwrap']) assert.equal(byId.get(id), undefined, `#${id} is gone from the page`);
+  // Every renderer the page builds from here on is counted.
+  ev(ctx, `(() => { const F = window.ForceGraph; window.__mounts = 0;
+    window.ForceGraph = function () { window.__mounts++; return F(); }; })()`);
 
-  byId.get('proj').parentNode.parentNode.querySelectorAll('.tab')
-    .find((b) => b.dataset.tab === 'graph').onclick();
-  await settle(ctx, 6);
+  ev(ctx, "activateTab('graph')");
+  await settle(ctx, 20);
+  assert.equal(toolCalls(calls, 'map').length, 1, 'the Graph view asks for the map once');
+  assert.equal(ev(ctx, 'GMAP.resp !== null && GMAP.api !== null'), true, 'and draws it');
+  assert.equal(ev(ctx, 'window.__mounts'), 1);
 
-  assert.equal(ev(ctx, 'GMAP.where'), 'graph', 'the picture moved to the Graph tab');
-  assert.equal(ev(ctx, 'GMAP.resp !== null'), true, 'with the answer it already had');
-  assert.deepEqual(calls.filter((c) => c.body && c.body.name === 'map'), [],
-    'switching tabs must not fetch the map again');
-
-  // …and back, still one answer and still one mount.
-  byId.get('proj').parentNode.parentNode.querySelectorAll('.tab')
-    .find((b) => b.dataset.tab === 'overview').onclick();
-  await settle(ctx, 6);
-  assert.equal(ev(ctx, 'GMAP.where'), 'overview');
-  assert.deepEqual(calls.filter((c) => c.body && c.body.name === 'map'), []);
-  assert.equal(byId.get('gmapwrap').children.length, 0,
-    'the pane the picture left is emptied — no renderer, and no label plane, behind a hidden tab');
-  assert.ok(byId.get('ovmapwrap').children.length > 0, 'and the pane it moved to holds it');
+  // Back and forth: still one answer and still one mount.
+  for (const tab of ['start', 'graph', 'start', 'graph']) {
+    ev(ctx, `activateTab('${tab}')`);
+    await settle(ctx, 6);
+  }
+  assert.equal(toolCalls(calls, 'map').length, 1, 'switching views must not fetch the map again');
+  assert.equal(ev(ctx, 'window.__mounts'), 1, 'nor build a second renderer');
+  assert.equal(byId.get('gmapwrap').children.length, 1, 'one picture area, not two');
 });
 
 // ---------------------------------------------------------------------------
@@ -1402,8 +1407,8 @@ const MAP_ANSWER = {
 };
 
 /** Put that answer in the page and build the picture's model from it. */
-async function withMap(t) {
-  const boot = await bootPage(t, { hash: '#p=alpha&tab=graph' });
+async function withMap(t, storage = {}) {
+  const boot = await bootPage(t, { hash: '#p=alpha&tab=graph', storage });
   ev(boot.ctx, `GMAP.resp = { answer: ${JSON.stringify(MAP_ANSWER)}, limits: [] };
     GMAP.where='graph'; GMAP.pos=new Map(); GMAP.open=new Set(); GMAP.hidden=new Set(); GMAP.sel=null;
     buildMapModel();`);
@@ -1768,10 +1773,16 @@ test('the chain being read owns the motion: its dots brighten, the rest come off
   assert.equal(groups().filter((g) => g.classList.contains('off')).length, 0, 'and they all run again');
 });
 
+// The dots on the map are part of the advanced view (RM67-U2c), off by default:
+// these two tests are about what the dots do once a reader has turned it on.
+const ADVANCED_ON = { 'cascade.viewer.graph.advanced': 'on' };
+
 test('the resting map does not move: the toggle has to say so, but a lit chain flows anyway', async (t) => {
-  const { ctx, byId } = await withMap(t);
+  const { ctx, byId } = await withMap(t, ADVANCED_ON);
   const dots = (i) => Number(ev(ctx, `mapParticles(GMAP.links[${i}])`));
   const note = () => byId.get('gflownote').textContent;
+  assert.equal(ev(ctx, 'GMAP.advanced'), true, 'the advanced view remembered from last time');
+  assert.equal(byId.get('gadvbox').classList.contains('hidden'), false, 'so the 3D and Flow toggles are on the toolbar');
 
   // Untouched. The signal theme's own default is "on" — the LANES take that,
   // because there the dots sit on a handful of connectors and are the point —
@@ -1805,10 +1816,23 @@ test('the resting map does not move: the toggle has to say so, but a lit chain f
   assert.ok(dots(0) > 0, 'and every line carries the direction');
   ev(ctx, 'renderMapFlowNote()');
   assert.equal(note(), '', 'the note is gone: the toggle speaks for itself now');
+
+  // With the advanced view OFF the map is still, lit or not, whatever the
+  // toggle says, and the toggles themselves leave the toolbar.
+  ev(ctx, 'mapAdvancedToggle()');
+  assert.equal(ev(ctx, 'GMAP.advanced'), false);
+  assert.equal(dots(0), 0, 'a map at rest with the flow asked for is still');
+  ev(ctx, 'mapSetLit(GMAP.links[0].sid);');
+  assert.equal(ev(ctx, 'GMAP.lit.links.has(GMAP.links[0].i)'), true, 'the link is lit');
+  assert.equal(dots(0), 0, 'and even a lit link carries no dot');
+  assert.equal(byId.get('gadvbox').classList.contains('hidden'), true, 'the 3D and Flow toggles are hidden');
+  // It is the switch that stopped them: turned back on, the lit chain flows.
+  ev(ctx, 'mapAdvancedToggle()');
+  assert.ok(dots(0) > 0);
 });
 
 test('less motion means less motion: not even a spotlight animates', async (t) => {
-  const { ctx } = await withMap(t);
+  const { ctx } = await withMap(t, ADVANCED_ON);
   ev(ctx, "globalThis.matchMedia = () => ({ matches: true }); GMAP.flow=true; GMAP.flowTouched=true; mapSetLit(GMAP.links[0].sid);");
   assert.equal(Number(ev(ctx, 'mapParticles(GMAP.links[0])')), 0);
   ev(ctx, 'delete globalThis.matchMedia;');
@@ -2192,11 +2216,11 @@ test('Trace OPENS on the pack: one browse request, rows on screen, nothing to ty
   assert.deepEqual(byId.get('tlist').querySelectorAll('.brgname').map((g) => g.textContent),
     ['▾ order', '▾ admin']);
 
-  // Coming back to a tab that has already answered asks for nothing again.
-  ev(ctx, `document.querySelector('.tab[data-tab="overview"]').click()`);
+  // Coming back to a place that has already answered asks for nothing again.
+  ev(ctx, `document.querySelector('.tab[data-place="start"]').click()`);
   await settle(ctx, 6);
   calls.length = 0;
-  ev(ctx, `document.querySelector('.tab[data-tab="trace"]').click()`);
+  ev(ctx, `document.querySelector('.tab[data-place="trace"]').click()`);
   await settle(ctx, 6);
   assert.deepEqual(toolCalls(calls), []);
 });
@@ -2748,22 +2772,22 @@ test('Escape is TWO steps while a box has the focus: the box first, the tab seco
   assert.equal(byId.get('tshowall').disabled, true);
 });
 
-test('clicking the tab you are already on puts it back; clicking another one does not', async (t) => {
+test('clicking the place you are already on puts it back; clicking another one does not', async (t) => {
   const { ctx, byId, body } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 10);
   assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order');
 
-  // Another tab is a MOVE, not a reset: Trace keeps its pick for the way back.
-  body.querySelector('.tab[data-tab="overview"]').click();
+  // Another place is a MOVE, not a reset: Trace keeps its pick for the way back.
+  body.querySelector('.tab[data-place="start"]').click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order', 'leaving a tab keeps its last pick');
-  body.querySelector('.tab[data-tab="trace"]').click();
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order', 'leaving a place keeps its last pick');
+  body.querySelector('.tab[data-place="trace"]').click();
   await settle(ctx, 8);
   assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order', 'and coming back keeps it too');
 
-  // The tab you are ON: the gesture every reader already tries.
-  body.querySelector('.tab[data-tab="trace"]').click();
+  // The place you are ON: the gesture every reader already tries.
+  body.querySelector('.tab[data-place="trace"]').click();
   await settle(ctx, 8);
   assert.equal(ev(ctx, 'RAIL.trace.sel'), null);
   assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace');
@@ -3174,8 +3198,8 @@ test('a pack with no frontend has no screens lane number to show, and says so', 
   assert.match(lane.title, /analysed without the part that counts these/);
 });
 
-test('the Overview grows a fifth dial and a screens list, both from an answer', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=overview' });
+test('Start grows a fifth dial and a screens list, both from an answer', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=start' });
 
   // The dial is `reachingATable / screens`, field for field.
   const got = JSON.parse(ev(ctx, `(() => {
@@ -3195,25 +3219,26 @@ test('the Overview grows a fifth dial and a screens list, both from an answer', 
   await settle(ctx, 4);
   assert.match(byId.get('ovcards').querySelectorAll('.kpinote')[0].textContent, /fills this router in at run time/);
 
-  // The three blind spots a screen axis brings with it are chips like every
-  // other — this pack's recording is one of them. The chip reads the plain
-  // label (RM36) and the engine's own kind is on its tooltip beside the count.
+  // The three blind spots a screen axis brings with it are rows on Analysis
+  // status like every other — this pack's recording is one of them. The row
+  // reads the plain label (RM36) and the engine's own kind is beside the count.
   ev(ctx, 'OV.resp.answer.screens.serverDriven = false; renderOverview();');
   await settle(ctx, 4);
   const gaps = JSON.parse(ev(ctx, 'JSON.stringify(OV.resp.answer.gaps.map((g)=>g.kind))'));
   assert.ok(gaps.includes('screens-seen-at-run-time'), gaps.join(', '));
-  const gapChips = byId.get('ovherocol').querySelectorAll('.ovchip').map((c) => c.textContent);
-  assert.ok(gapChips.some((c) => c.includes(VIEWER_STRINGS.en['ov.gap.screens-seen-at-run-time.label'])),
-    gapChips.join(' | '));
-  assert.ok(byId.get('ovherocol').querySelectorAll('button.foldlead.ovchip')
-    .some((c) => c.title.includes('screens-seen-at-run-time')), 'the engine kind left the tooltip');
+  const gapRows = byId.get('stgaps').querySelectorAll('.stitem');
+  const gapNames = gapRows.map((c) => c.querySelector('.stitemhead b').textContent);
+  assert.ok(gapNames.some((c) => c.includes(VIEWER_STRINGS.en['ov.gap.screens-seen-at-run-time.label'])),
+    gapNames.join(' | '));
+  assert.ok(gapRows.some((c) => c.querySelector('.ovdiag').textContent === 'screens-seen-at-run-time'),
+    'the engine kind left the row');
 
   // The list is ONE browse request, and a click walks the chain from that screen.
   const browses = toolCalls(calls, 'browse').filter((c) => c.args.kind === 'screen');
   assert.deepEqual(browses, [{ name: 'browse', args: { kind: 'screen', sort: 'tables', limit: 5 } }]);
-  const panel = byId.get('ovpanels').querySelectorAll('.panel')
+  const panel = byId.get('shubs').querySelectorAll('.panel')
     .find((x) => x.textContent.includes('Screens, by how many tables they reach'));
-  assert.ok(panel, 'the panel is on the tab');
+  assert.ok(panel, 'the panel is on Start');
   const rows = panel.querySelectorAll('td.wrapcell a');
   assert.deepEqual(rows.map((a) => a.textContent), ['/rows', '/quiet']);
   rows[0].onclick();
@@ -3225,10 +3250,10 @@ test('the Overview grows a fifth dial and a screens list, both from an answer', 
 });
 
 test('a pack with no frontend draws no screens list: the section says why, in one line', async (t) => {
-  const { byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=overview' });
+  const { byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=start' });
   assert.deepEqual(toolCalls(calls, 'browse').filter((c) => c.args.kind === 'screen'), [],
     'nothing to list means nothing is asked for');
-  const panel = byId.get('ovpanels').querySelectorAll('.panel')
+  const panel = byId.get('shubs').querySelectorAll('.panel')
     .find((x) => x.textContent.includes('Screens, by how many tables they reach'));
   assert.ok(panel);
   assert.match(panel.textContent, /analysed without a frontend/);
@@ -3865,9 +3890,10 @@ test('the lane row gives the NAME the width and the project chip the ellipsis', 
   assert.match(rule('.frowtop .grade, .fhopn, .frowtop .kglyph'), /flex:none/);
 });
 
-test('the overview says how many calls leave this project, and says nothing when none do', async (t) => {
+test('Analysis status says how many calls leave this project, and says nothing when none do', async (t) => {
   const { ctx } = await bootPage(t);
-  const panel = (fed) => ev(ctx, `ovGapsPanel({gaps: [], empty: {gaps: 'none'}, federation: ${JSON.stringify(fed)}}).textContent`);
+  // The blind-spot panel on Analysis status is where the count is said.
+  const panel = (fed) => ev(ctx, `statusGapsPanel({gaps: [], empty: {gaps: 'none'}, federation: ${JSON.stringify(fed)}}).textContent`);
   assert.match(panel({ calls: 3, answered: 2, unmatched: 1, projects: ['served'] }),
     /3 call\(s\) leave this project, 2 answered by a registered project and 1 not\./);
   assert.equal(/call\(s\) leave/.test(panel({ calls: 0, answered: 0, unmatched: 0, projects: [] })), false,
@@ -4012,16 +4038,16 @@ function connectedCensus() {
   };
 }
 
-test('the Overview lists the connected projects, their routes, and the calls nobody serves', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+test('Analysis status lists the connected projects, their routes, and the calls nobody serves', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=status' });
   const out = ev(ctx, `(() => { try {
       OV.resp.answer.federation = ${JSON.stringify(connectedCensus())};
       renderOverview();
       return 'rendered';
     } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
-  assert.equal(out, 'rendered', 'the Overview threw instead of drawing the panel');
+  assert.equal(out, 'rendered', 'the page threw instead of drawing the panel');
 
-  const rows = byId.get('ovherocol').querySelectorAll('.ovconn');
+  const rows = byId.get('stconnected').querySelectorAll('.ovconn');
   assert.equal(rows.length, 3, 'one row per connected project, and one for what nobody serves');
   // The project's name, and the two numbers behind it: how many methods make
   // the call, over how many routes.
@@ -4042,18 +4068,20 @@ test('the Overview lists the connected projects, their routes, and the calls nob
   assert.match(missing.textContent, /Register the project that serves them/);
 
   // THE WHOLE ROW IS THE CONTROL: clicking it goes to that project, through the
-  // same switchProject a deep link uses.
+  // same switchProject a deep link uses, and lands on its Start.
   assert.equal(ev(ctx, 'STATE.project'), 'alpha');
   rows[0].onclick();
   await settle(ctx, 20);
   assert.equal(ev(ctx, 'STATE.project'), 'beta');
+  assert.equal(ev(ctx, 'STATE.tab'), 'start');
 });
 
 test('a project that calls nobody gets no connected-projects panel at all', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=status' });
   ev(ctx, `OV.resp.answer.federation = { calls: 0, answered: 0, unmatched: 0, projects: [], byProject: [], unmatchedRoutes: [] };
     renderOverview();`);
-  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0);
+  assert.equal(byId.get('stconnected').querySelectorAll('.ovconn').length, 0);
+  assert.equal(byId.get('stconnected').children.length, 0, 'not an empty panel either');
 });
 
 /**
@@ -4076,7 +4104,7 @@ function textNodesIn(root) {
 }
 
 test('a panel that is absent leaves NOTHING behind, in either shape of the answer', async (t) => {
-  const { ctx, byId, body } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  const { ctx, byId, body } = await bootPage(t, { hash: '#p=alpha&tab=status' });
   const stray = () => textNodesIn(body).filter((n) => n.text === 'null' || n.text === 'undefined');
 
   // (1) A project with NO connected projects, which is most of them: the census
@@ -4085,20 +4113,20 @@ test('a panel that is absent leaves NOTHING behind, in either shape of the answe
   //     `null` between "What we could not see" and "How sure the lines are" on
   //     every one of them.
   assert.equal(ev(ctx, 'OV.resp.answer.federation.calls'), 0, 'this fixture calls nobody');
-  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0, 'and so has no connected panel');
+  assert.equal(byId.get('stconnected').querySelectorAll('.ovconn').length, 0, 'and so has no connected panel');
   assert.deepEqual(stray(), [], 'the page printed the word null or undefined at these places');
 
   // (2) ...and with the panel present, which is the other half: dropping the
   //     empty slots must not drop a panel that is really there.
   ev(ctx, `OV.resp.answer.federation = ${JSON.stringify(connectedCensus())}; renderOverview();`);
-  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 3);
+  assert.equal(byId.get('stconnected').querySelectorAll('.ovconn').length, 3);
   assert.deepEqual(stray(), []);
 
   // (3) The third shape, and the other `return null` in the panel: an answer
   //     with no federation block at all, which is what a pack built before that
   //     census existed carries.
   ev(ctx, 'delete OV.resp.answer.federation; renderOverview();');
-  assert.equal(byId.get('ovherocol').querySelectorAll('.ovconn').length, 0);
+  assert.equal(byId.get('stconnected').querySelectorAll('.ovconn').length, 0);
   assert.deepEqual(stray(), []);
 });
 
@@ -4133,11 +4161,11 @@ test('the source footer says WHY with either half of it missing, and prints no n
 });
 
 test('a single-project server with an unanswered call shows the unmatched row alone', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=overview' });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=status' });
   ev(ctx, `OV.resp.answer.federation = { calls: 1, answered: 0, unmatched: 1, projects: [], byProject: [],
       unmatchedRoutes: [{ method: 'GET', path: '/owners/{ownerId}', sites: 1 }] };
     renderOverview();`);
-  const rows = byId.get('ovherocol').querySelectorAll('.ovconn');
+  const rows = byId.get('stconnected').querySelectorAll('.ovconn');
   assert.equal(rows.length, 1);
   assert.ok(rows[0].className.includes('ovconn-none'));
   assert.match(rows[0].textContent, /GET \/owners\/\{ownerId\}/);

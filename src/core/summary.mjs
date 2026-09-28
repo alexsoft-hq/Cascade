@@ -211,7 +211,8 @@ function foldRanked(rows, size, limit) {
  * THE SUMMARY of one pack.
  *
  * @param {import('./graph.mjs').Graph} graph
- * @param {{mode?:string, depth?:number, packageDepth?:number|null, limit?:number}} [opts]
+ * @param {{mode?:string, depth?:number, packageDepth?:number|null, limit?:number, through?:string}} [opts]
+ *        `through` names one route or table (a node id) whose paths the answer also carries.
  */
 export function buildSummary(graph, opts = {}) {
   const limit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : SUMMARY_LIMIT;
@@ -241,7 +242,49 @@ export function buildSummary(graph, opts = {}) {
       pair.grade = weakest(pair.grade, grade);
     }
   }
-  return summaryAnswer({ groups, families, pairs, rule: { groups: rule, tables: fam.rule }, limit, endpoints, walk });
+  const answer = summaryAnswer({ groups, families, pairs, rule: { groups: rule, tables: fam.rule }, limit, endpoints, walk });
+  if (opts.through) answer.through = summaryThrough(opts.through, { reach, groupOf, familyOf: fam.familyOf, answer });
+  return answer;
+}
+
+/** The box a group or a family is drawn in: its own, or the folded one. */
+const boxOf = (kept, name) => (kept.has(name) ? name : OTHERS);
+
+/**
+ * THE PATHS THROUGH ONE ROUTE OR ONE TABLE (RM67-U2c), from the same walk as the
+ * boxes, so a reader who picks one node sees only the lines that run through it.
+ * A route: the families it reaches, each with its tables there and the weakest
+ * grade on the way. A table: the groups whose routes reach it, each with those
+ * routes and the weakest grade. Each is named by the box it is drawn in, the
+ * folded `(others)` included. A route this walk did not start from, or a table
+ * no route reaches, has no line: `links` is empty and its box is null.
+ *
+ * @param {string} node  `endpoint:<route>` or `table:<name>`
+ */
+export function summaryThrough(node, { reach, groupOf, familyOf, answer }) {
+  const groups = new Set(answer.groups.map((g) => g.name));
+  const families = new Set(answer.families.map((f) => f.name));
+  const links = new Map();
+  const add = (box, key, member, grade) => {
+    if (!links.has(box)) links.set(box, { [key]: box, members: [], grade: null });
+    const l = links.get(box);
+    l.members.push(member);
+    l.grade = weakest(l.grade, grade);
+  };
+  if (node.startsWith('endpoint:')) {
+    const hit = reach.find(([ep]) => ep.id === node);
+    for (const [tableId, grade] of hit ? hit[1] : []) add(boxOf(families, familyOf.get(tableId)), 'family', tableId, grade);
+    return { node, group: hit ? boxOf(groups, groupOf.get(node)) : null, links: throughLinks(links, 'family', 'tables') };
+  }
+  for (const [ep, tables] of reach) if (tables.has(node)) add(boxOf(groups, groupOf.get(ep.id)), 'group', ep.id, tables.get(node));
+  return { node, family: familyOf.has(node) ? boxOf(families, familyOf.get(node)) : null, links: throughLinks(links, 'group', 'endpoints') };
+}
+
+/** The links of one node, by box name, each with its members sorted under their own name. */
+function throughLinks(links, key, field) {
+  return [...links.values()]
+    .map((l) => ({ [key]: l[key], [field]: [...l.members].sort(cmp), grade: l.grade }))
+    .sort((a, b) => cmp(a[key], b[key]));
 }
 
 /** The kept boxes, the folded ones as one box a side, and the links between them. */

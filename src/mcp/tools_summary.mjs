@@ -40,20 +40,35 @@ function familyLimit(rule) {
     : `a table family is the tables whose names start with the same letters${under}, because the names here carry no underscore. It is a naming pattern, not a schema`;
 }
 
-function readArgs(args) {
+function readArgs(args, graph) {
   const mode = args.mode ?? 'conservative';
   if (!MODES.includes(mode)) throw new ToolError('bad-input', `mode must be ${MODES.join(', ')}`);
   const depth = args.depth ?? DEFAULT_WALK_DEPTH;
   if (depth !== null && (!Number.isInteger(depth) || depth < 1 || depth > 12)) throw new ToolError('bad-input', 'depth must be a whole number from 1 to 12, or left out for no cap');
   const limit = args.limit ?? SUMMARY_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_MAX) throw new ToolError('bad-input', `limit must be a whole number from 1 to ${LIMIT_MAX}`);
-  return { mode, depth, limit };
+  return { mode, depth, limit, through: readThrough(graph, args) };
+}
+
+/**
+ * The one route or table whose paths the answer should also carry, as a node
+ * id, or null. A name the pack does not hold is refused by name: an empty set of
+ * lines would read as "nothing runs through it".
+ */
+function readThrough(graph, args) {
+  if (args.endpoint != null && args.table != null) throw new ToolError('bad-input', 'give endpoint or table, not both');
+  const [kind, key] = args.endpoint != null ? ['endpoint', args.endpoint] : args.table != null ? ['table', args.table] : [null, null];
+  if (!kind) return null;
+  if (typeof key !== 'string' || key === '') throw new ToolError('bad-input', `${kind} must be a non-empty string`);
+  const id = `${kind}:${key}`;
+  if (!graph.nodes.has(id)) throw new ToolError('unknown-node', `node not in pack: ${id}`);
+  return id;
 }
 
 export function summary(graph, args, ctx) {
-  const { mode, depth, limit } = readArgs(args || {});
+  const { mode, depth, limit, through } = readArgs(args || {}, graph);
   const packageDepth = ctx.profile?.moduleAttribution?.packageDepth ?? null;
-  const s = buildSummary(graph, { mode, depth, limit, packageDepth });
+  const s = buildSummary(graph, { mode, depth, limit, packageDepth, through });
   const own = [
     { scope: 'summary:groups', reason: groupLimit(s.rule.groups) },
     { scope: 'summary:families', reason: familyLimit(s.rule.tables) },

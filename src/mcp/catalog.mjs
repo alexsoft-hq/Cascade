@@ -486,10 +486,16 @@ export const TOOLS = Object.freeze({
       + 'read from the package tree (below the package every handler shares) and a family from the '
       + 'table names, which are patterns and not declared modules. The boxes past `limit` are folded '
       + 'into `otherGroups` and `otherFamilies`, and their links into an `(others)` box, so nothing '
-      + 'the walk reached is dropped.',
+      + 'the walk reached is dropped. Name one `endpoint` or one `table` and `answer.through` also '
+      + 'carries the paths through it: a route\'s families with the tables it reaches in each, or a '
+      + 'table\'s groups with the routes that reach it, each with the weakest grade on the way.',
     inputSchema: {
       type: 'object',
-      properties: { mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] }, depth: { type: 'integer' }, limit: { type: 'integer' } },
+      properties: {
+        mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'] }, depth: { type: 'integer' }, limit: { type: 'integer' },
+        endpoint: { type: 'string', description: 'one route, "VERB /path", whose paths through the boxes to add' },
+        table: { type: 'string', description: 'one table whose paths through the boxes to add' },
+      },
     },
     fn: summary,
   },

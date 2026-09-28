@@ -194,10 +194,15 @@ const flood = () => [
 
 test('a flood of one diagnostic is one blind spot with its count, and inside it one line per thing it says', async (t) => {
   const { ctx, body } = await bootBig(t);
-  ev(ctx, `activateTab('overview'); OV.resp.answer.diagnostics = ${JSON.stringify(flood())}; renderOverview();`);
+  // The lanes' diagnostics are rows of their own on Analysis status (RM67-U2c).
+  ev(ctx, `activateTab('status'); OV.resp.answer.diagnostics = ${JSON.stringify(flood())}; renderOverview();`);
   await settle(ctx, 4);
-  const chips = body.querySelectorAll('#ovgaps')[0].querySelectorAll('.ovdiag');
-  assert.deepEqual(chips.map((c) => c.textContent).sort(), ['SHARD_UNUSABLE', 'TS_PREFIX_UNREAD'], 'one chip per kind, not 867');
+  const items = body.querySelector('#stdiags').querySelectorAll('.stitem');
+  const chips = items.map((r) => r.querySelector('.stitemhead .ovdiag'));
+  assert.deepEqual(chips.map((c) => c.textContent).sort(), ['SHARD_UNUSABLE', 'TS_PREFIX_UNREAD'], 'one row per kind, not 867');
+  const shard = items.find((r) => r.id === 'st-ov-diag-SHARD_UNUSABLE');
+  assert.ok(shard, 'the row a link from Start goes to');
+  assert.equal(shard.querySelector('.stitemhead .ovnum').textContent, '866', 'with its count');
   const g = JSON.parse(ev(ctx, `JSON.stringify(diagGroups(${JSON.stringify(flood())}).map((x)=>({kind:x.kind,count:x.count,causes:x.causes.map((c)=>c.count)})))`));
   assert.deepEqual(g, [{ kind: 'SHARD_UNUSABLE', count: 866, causes: [860, 6] }, { kind: 'TS_PREFIX_UNREAD', count: 1, causes: [1] }],
     'two ways to fail are two lines, never one cause for all');

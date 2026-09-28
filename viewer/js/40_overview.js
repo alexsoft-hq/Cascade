@@ -1,4 +1,4 @@
-// 40_overview.js — the Overview tab: the pack at a glance, from ONE answer.
+// 40_overview.js — the landing answer, from ONE `overview` call: what Start and Analysis status draw with.
 //
 // ONE of the page's scripts, and they share ONE global scope: the numbers in the
 // file names are the order the browser runs them in (see the tags at the foot of
@@ -20,10 +20,11 @@ async function loadOverview(){
   const cards=byId('ovcards'), panels=byId('ovpanels'), side=byId('ovside');
   cards.replaceChildren(el('div',{className:'panel',textContent:t('load.overview')}));
   panels.replaceChildren(); side.replaceChildren();
+  OV.loading=true;
   let r;
   try { r=await api('overview',{}); }
-  catch(e){ if(stale(e)) return; cards.replaceChildren(errPanel(e)); return; }
-  OV.resp=r;
+  catch(e){ if(stale(e)) return; OV.loading=false; cards.replaceChildren(errPanel(e)); return; }
+  OV.resp=r; OV.loading=false;
   OV.screens=null;
   renderOverview();
   // THE ONE EXTRA REQUEST THIS TAB MAKES, and only where there is something to
@@ -31,7 +32,7 @@ async function loadOverview(){
   // Explore rail draws. The overview answer carries the screen CENSUS but no
   // per-screen rows, and the page must not invent them. Drawn when it lands, so
   // nothing on this tab waits for it.
-  // A snapshot shows no Overview tab, so it carries no screen list for it.
+  // A snapshot shows no Start place, so it carries no screen list for it.
   if(!r.answer.screens || SNAP) return;
   const mine=STATE.seq, forProject=STATE.project;
   let b;
@@ -41,26 +42,17 @@ async function loadOverview(){
   OV.screens=b;
   renderOverview();
 }
+/**
+ * THE LANDING ANSWER, drawn where it is read (RM67-U2c): the Start place gets
+ * what a reader decides with (what this analysis can see, the gaps that change
+ * an answer, the shares, the busiest things to start from), Analysis status
+ * gets everything else, and the masthead its rail and chips. One answer, so the
+ * three can never disagree.
+ */
 function renderOverview(){
   const r=OV.resp; if(!r) return;
-  renderSummaryFold();
-  const a=r.answer;
-  byId('ovcards').replaceChildren(...ovKpis(a));
-  byId('ovhero').classList.remove('hidden');
-  // `setKids` and not `replaceChildren`: the connected-projects panel is null on
-  // a project that has no connected projects, which is most of them, and a null
-  // handed to replaceChildren does not disappear. The DOM converts it with
-  // ToString, so the word `null` was printed between two panels of the Overview.
-  // WHAT WE COULD NOT SEE comes first (RM67): it is one of the three questions
-  // a reader arrives with, and every share above it is read through it.
-  setKids(byId('ovherocol'), ovGapsPanel(a), ovHubBars(r,a), ovConnectedPanel(a), ovGradesPanel(a));
-  // The ribbon is NOT deleted: it is the drawing theme's own picture of the same
-  // four numbers, one click below the dials that replaced it.
-  byId('ovfold').replaceChildren(el('div',{className:'panel ovfoldwrap'},[
-    fold('ov.ribbon', [t('ribbon.title')], ()=> [ovRibbon(a)]) ]));
-  byId('ovpanels').replaceChildren(ovNodesPanel(a), ovEdgesPanel(a),
-    ovCodePanel(a), ovHubEndpoints(r,a), ovHubScreens(a));
-  byId('ovside').replaceChildren(honesty(r, 'overview'));
+  renderStart(r);
+  renderStatus(r);
   // The screens layer's default is a COUNT, and the count is on THIS answer. A
   // map drawn before it landed (a deep link straight to the Graph tab) was
   // asked for without the layer, so it is asked again — once, and only where
@@ -74,7 +66,6 @@ function renderOverview(){
   // was collected, and how many routes are guesses. A rail drawn before it
   // landed (a deep link) is told now, from what it already holds.
   for(const tab of RAILTABS) if(RAIL[tab].resp){ railRenderChips(tab); railRenderCount(tab); }
-  ovMapMount();
 }
 
 // ---- the hero, row 1: one card per lane of the chain -----------------------
@@ -202,14 +193,22 @@ function ovKpiUncollected(k, a){
   ]);
 }
 /**
- * Take the reader to the blind spots, and open the one a limit named. The
- * panel is on this tab; from any other it is one tab switch away.
+ * Take the reader to Analysis status, and to the row a limit named (an axis,
+ * `ov.axis.<axis>`, or a blind spot, `ov.gap.<kind>`), opened.
  */
 function ovGoToGaps(key){
-  if(STATE.tab!=='overview') activateTab('overview');
-  if(key && !foldIsOpen(key)){ foldSetOpen(key, true); if(OV.resp) renderOverview(); }
-  const box=byId('ovgaps');
-  if(box && box.scrollIntoView) box.scrollIntoView({block:'start', behavior:'smooth'});
+  if(STATE.tab!=='status') activateTab('status');
+  if(key && !foldIsOpen(key)){ foldSetOpen(key, true); if(OV.resp) renderStatus(OV.resp); }
+  const box=(key && byId(statusRowId(key))) || byId('stgaps');
+  for(const x of document.querySelectorAll('.stfocus')) x.classList.remove('stfocus');
+  if(key && box) box.classList.add('stfocus');
+  // The masthead is sticky and its height moves with the width, so the row is
+  // put just under it rather than behind it.
+  if(box && box.scrollIntoView){
+    box.scrollIntoView({block:'start'});
+    const hd=document.querySelector('header');
+    if(hd && hd.getBoundingClientRect && window.scrollBy) window.scrollBy(0, -(hd.getBoundingClientRect().height+10));
+  }
 }
 
 // ---- the hero, row 2: what the map cannot say ------------------------------
@@ -252,34 +251,6 @@ function ovGradesPanel(a){
           title:g.grade+' '+ovNum(g.count)}, [g.grade+' '+ovNum(g.count)])))
       : el('div',{className:'empty',textContent:emptyText(a.empty,'edges')}) ]);
 }
-// The cartography's own words: what the picture shows, counted off the SAME
-// answer the Graph tab draws, and how to read it.
-function renderOvMapChrome(){
-  const sub=byId('ovmapsub');
-  if(!sub) return;
-  if(!GMAP.resp){ sub.replaceChildren(); return; }
-  const s=GMAP.resp.answer.summary;
-  const say=(key,params)=> el('span',{}, richNodes(t(key,params)));
-  // GLANCE is the two counts this picture adds \u2014 how many groups it drew and
-  // how many lines. The endpoint and table censuses are the masthead rail's,
-  // one line up, and are not printed twice. HOW TO READ it is one click away,
-  // like every other sentence on this page.
-  sub.replaceChildren(fold('ov.map.lead',
-    [ say('gcount.groups',{n:s.shown.groups}), '\u00a0\u00a0', say('gcount.links',{n:GMAP.links.length}) ],
-    ()=> [el('div',{className:'comment'},[t('ov.map.hint')])] ));
-  renderMapLegend('ovmapleg');
-}
-// Bring the live map here. The ANSWER is asked for once and shared with the
-// Graph tab: opening that tab moves the same renderer and the same layout, and
-// asks the server for nothing.
-function ovMapMount(){
-  if(STATE.tab!=='overview' || !OV.resp) return;
-  mapMoveTo('overview');
-  if(!GMAP.resp){ drawMap(); return; }
-  if(!GMAP.api || GMAP.mounted!==byId('ovmapwrap')) renderMap();
-  else renderOvMapChrome();
-}
-
 // ---- the hero: the cascade ribbon ------------------------------------------
 // The ONE bold thing on this page. Four lanes of the chain, left to right, each
 // a vertical band whose height is proportional to the SQUARE ROOT of its count:
@@ -423,11 +394,9 @@ function ovCodePanel(a){
     c.statementsWithoutMapper? el('div',{className:'comment',style:'margin-top:8px',
       textContent:t('ov.code.nomapper',{n:ovNum(c.statementsWithoutMapper)})}) : null ]);
 }
-// The honesty panel, at GLANCE level: chips, `kind count`, one fold each. A
-// chip opens the engine's own sentence about that gap, and the sample ids under
-// it, each still a handoff to the view that can answer "so what IS this one?".
-// Nothing is dropped; the count is outside the fold, because a count is what a
-// glance is for.
+// THE BLIND SPOTS, and the words they are said in. Analysis status draws them
+// as rows (57_status.js: the cause, what it touches, what to do) and Start lists
+// the ones that change an answer (56_start.js); both read the vocabulary here.
 //
 // GROUPED BY WHAT A READER CAN DO ABOUT IT (RM67). A flat row of eleven chips
 // put "no schema was read" beside "SQL no endpoint reaches" beside "the depth
@@ -451,10 +420,13 @@ const OV_GAP_GROUPS = [
 const OV_GAP_TINTED = new Set(['input', 'unresolved']);
 // The chain's axes, in the order the chain runs, each with its name in the
 // reader's words. `jpa` and `mybatisPlus` are the Java lane's own bridges and
-// say "the lane did not run" on every other stack, which is noise here.
+// say "the lane did not run" on every other stack, which is noise here; they
+// are listed only when they ran and read part of what they could
+// (OV_BRIDGE_AXES, RM67-U2c), because then they change a grade.
 const OV_AXES = [['catalog','ov.axis.name.catalog'], ['statements','ov.axis.name.statements'],
   ['column','ov.axis.name.column'], ['code','ov.axis.name.code'], ['web','ov.axis.name.web'],
   ['screen','ov.axis.name.screen']];
+const OV_BRIDGE_AXES = [['jpa','ov.axis.name.jpa'], ['mybatisPlus','ov.axis.name.mybatisPlus']];
 // A gap that already says what its axis says: the axis is not said twice.
 const OV_AXIS_GAP = { catalog:'no-catalog', code:'not-shipped' };
 // THE NAME OF A GAP, in the reader's words. `unresolved-calls` is what the
@@ -471,60 +443,6 @@ const OV_AXIS_GAP = { catalog:'no-catalog', code:'not-shipped' };
 function ovGapLabel(kind){
   const key='ov.gap.'+kind+'.label';
   return Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : String(kind).replace(/-/g,' ');
-}
-/** Every thing the panel lists: the gaps, the axes not built whole, and the lanes' diagnostics. */
-function ovGapItems(a){
-  const gaps=a.gaps||[];
-  const said=new Set(gaps.map((g)=>g.kind));
-  const count=(n)=> el('span',{className:'ovnum',textContent:n==null?'unknown':ovNum(n)});
-  const items=gaps.map((g)=>({ cls:g.class||'info', key:'ov.gap.'+g.kind, title:(g.count==null?'unknown':ovNum(g.count))+'  '+g.kind,
-    head:[ ovGapLabel(g.kind), count(g.count) ],
-    body:()=>{ const out=[el('div',{className:'ovgapnote',textContent:g.note})];
-      const c=ovGapChips(a,g.kind); if(c) out.push(c); return out; } }));
-  for(const [axis, nameKey] of OV_AXES){
-    const st=ovAxisStatus(a, axis);
-    if((st!=='not-shipped' && st!=='degraded') || said.has(OV_AXIS_GAP[axis])) continue;
-    items.push({ cls: st==='not-shipped' ? 'input' : 'unresolved', key:'ov.axis.'+axis, title:axis+' '+st,
-      head:[ t(st==='not-shipped' ? 'ov.axis.notshipped' : 'ov.axis.degraded', {axis:t(nameKey)}) ],
-      body:()=> [el('div',{className:'ovgapnote',textContent:ovAxisReason(a, axis)})] });
-  }
-  // One chip per KIND of diagnostic, with its count (RM67): 866 of one kind
-  // were 866 chips. Its body says what they say, grouped, with the first few.
-  for(const g of diagGroups(a.diagnostics||[])){
-    items.push({ cls:'unresolved', key:'ov.diag.'+g.kind, title:g.kind+'  '+g.count,
-      head:[ el('span',{className:'ovdiag',textContent:g.kind}), count(g.count) ],
-      body:()=> diagGroupBody('ov.diag.'+g.kind, g) });
-  }
-  return items;
-}
-function ovGapsPanel(a){
-  const items=ovGapItems(a);
-  // HOW MUCH OF THIS PROJECT LEAVES IT (RM44), counted by the engine on this
-  // same answer and never re-derived here. Drawn only where there IS a call
-  // that leaves: on a project that talks to nobody the sentence would be noise.
-  const fed=a.federation||null;
-  const kids=[ el('h2',{},[t('ov.gaps.title')+' ', el('span',{className:'count',textContent:'('+items.length+')'})]),
-    el('div',{className:'panelsub',textContent:t('ov.gaps.note',{n:items.length})}),
-    (fed && fed.calls>0)
-      ? el('div',{className:'panelsub',textContent:t('ov.federation.note',{n:fed.calls, k:fed.answered, m:fed.unmatched})})
-      : null ];
-  if(!items.length){ kids.push(el('ul',{className:'list'},[emptyNote(a.empty,'gaps')])); return el('div',{className:'panel',id:'ovgaps'},kids); }
-  for(const [cls, labelKey] of OV_GAP_GROUPS){
-    const mine=items.filter((x)=> x.cls===cls);
-    if(mine.length) kids.push(ovGapGroup(labelKey, mine, OV_GAP_TINTED.has(cls)));
-  }
-  return el('div',{className:'panel',id:'ovgaps'},kids);
-}
-/** One group: its heading, its chips, and the bodies they open, right under the chips. */
-function ovGapGroup(labelKey, items, tinted){
-  const chips=el('div',{className:'ovchips'});
-  const bodies=el('div',{className:'ovgapbodies'});
-  for(const it of items){
-    const [head, body]=foldParts(it.key, it.head, it.body, 'ovchip'+(tinted?' warn':''));
-    head.title=it.title;
-    chips.append(head); bodies.append(body);
-  }
-  return el('div',{className:'ovgapgrp'},[ el('div',{className:'ovgaplbl',textContent:t(labelKey)}), chips, bodies ]);
 }
 // How many routes a connected-project row lists before it says "+n more".
 const OV_CONNECTED_ROUTES=5;
@@ -562,7 +480,7 @@ function ovConnectedPanel(a){
     el('div',{className:'panelsub',textContent:t('ov.connected.note')}) ];
   for(const p of rows){
     kids.push(el('button',{className:'ovconn', title:t('ov.connected.open.title',{p:p.project}),
-      onclick:()=>switchProject(p.project, {tab:'overview'})},[
+      onclick:()=>switchProject(p.project, {tab:'start'})},[
       el('div',{className:'ovconnhead'},[
         el('span',{className:'grow'},[
           el('span',{className:'fedring',style:'border-color:'+color(p.project)}), ' ',

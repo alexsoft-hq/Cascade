@@ -37,7 +37,7 @@ const compareBuilds=()=> (STATE.meta && STATE.meta.projectId===STATE.project && 
 /** The tab exists only where this project has an earlier build to compare with. */
 function renderCompareChrome(){
   const builds=compareBuilds();
-  const tab=document.querySelector('.tab[data-tab="compare"]');
+  const tab=document.querySelector('.tab[data-place="compare"]');
   if(tab) tab.classList.toggle('hidden', builds.length===0 || !!SNAP);
   const sel=byId('cmpbase');
   if(!sel) return;

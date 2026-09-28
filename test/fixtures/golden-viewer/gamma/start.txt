@@ -1,0 +1,431 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch." value="gamma">
+          <option selected="true" title="gamma  lanes: sql  (not loaded)" value="gamma">gamma</option>
+          <option title="delta  lanes: sql  (not loaded)" value="delta">delta</option>
+        </select>
+        <span id="projone" class="projone hidden"></span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <button class="crlane hollow crlink" onclick title="this project was analysed without the part that counts these, so the number is missing rather than zero. Click to see why and what to set." type="button">
+        screens
+        <b>not collected</b>
+      </button>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
+        api groups
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
+        services
+        <b>4</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        SQL
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        columns
+        <b>4</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            4 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div id="snapbar" class="snapbar hidden" role="note"></div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" aria-selected="true" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+      <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+      <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+      <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+    </div>
+    <div id="subtabs" class="subtabs hidden" role="tablist"></div>
+  </header>
+  <div class="wrap">
+    <div id="tab-start">
+      <div class="hint hintfold" data-t-fold="hint.start">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              Pick one thing, then ask what breaks if it changes or how far it reaches.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div class="panel startask">
+        <h2 data-t="start.ask.title">Ask about one thing</h2>
+        <div class="startsearch">
+          <input id="sentry" autocomplete="off" data-t-ph="start.entry.ph" placeholder="find an API, screen, table, column, SQL or method (/ jumps here)" type="text"></input>
+          <div id="ssug" class="sug hidden"></div>
+        </div>
+        <div id="starget" class="starget"></div>
+        <div id="sentries" class="sentries">
+          <button class="startq" onclick type="button">
+            <span class="sqtitle">What breaks if I change it?</span>
+            <span class="sqsub">Pick a target above, or open the list of tables and pick one there.</span>
+          </button>
+          <button class="startq" onclick type="button">
+            <span class="sqtitle">How far does it reach?</span>
+            <span class="sqsub">Pick a target above, or open the list of APIs and pick one there.</span>
+          </button>
+          <button class="startq" onclick type="button">
+            <span class="sqtitle">What did the analysis not see?</span>
+            <span class="sqsub">4 things it could not see; 1 of them can change an answer.</span>
+          </button>
+        </div>
+      </div>
+      <div class="startgrid">
+        <div id="sscope" class="panel">
+          <h2>What this analysis can see</h2>
+          <div class="sfacts">
+            <div class="sfact">
+              <span class="raillbl">read by</span>
+              <span>sql + java</span>
+            </div>
+            <div class="sfact">
+              <span class="raillbl">counted in</span>
+              <span>mode conservative, depth not capped, following EXACT, SOUND_SET links</span>
+            </div>
+          </div>
+          <div class="saxes"></div>
+        </div>
+        <div id="sgaps" class="panel">
+          <h2>
+            Gaps that change an answer
+            <span class="count">(1)</span>
+          </h2>
+          <div class="panelsub">What the analysis did not have or could not read. An answer that runs through one of these is shorter or less sure than it looks.</div>
+          <ul class="sgaps">
+            <li>
+              <button class="sgap warn" onclick type="button">
+                <span>calls we could not follow</span>
+              </button>
+            </li>
+          </ul>
+          <button class="mini" onclick style="margin-top: 8px" type="button">All 4 on Analysis status</button>
+        </div>
+      </div>
+      <div id="ovcards" class="ovkpis">
+        <div class="kpi" aria-label="endpoints that reach SQL: 67%, 2 / 3" style="color: #22D3EE">
+          <div class="kpilbl">endpoints that reach SQL</div>
+          <div class="kpinum">
+            67
+            <span class="kpipct">%</span>
+          </div>
+          <div class="kpiden">
+            <b>2 / 3</b>
+            1 reach no SQL
+          </div>
+        </div>
+        <div class="kpi" aria-label="SQL statements reached: 100%, 3 / 3" style="color: #FB923C">
+          <div class="kpilbl">SQL statements reached</div>
+          <div class="kpinum">
+            100
+            <span class="kpipct">%</span>
+          </div>
+          <div class="kpiden">
+            <b>3 / 3</b>
+            0 nothing calls
+          </div>
+        </div>
+        <div class="kpi" aria-label="tables reached: 67%, 2 / 3" style="color: #34D399">
+          <div class="kpilbl">tables reached</div>
+          <div class="kpinum">
+            67
+            <span class="kpipct">%</span>
+          </div>
+          <div class="kpiden">
+            <b>2 / 3</b>
+            1 reached by no API
+          </div>
+        </div>
+        <div class="kpi" aria-label="columns reached: 75%, 3 / 4" style="color: #F472B6">
+          <div class="kpilbl">columns reached</div>
+          <div class="kpinum">
+            75
+            <span class="kpipct">%</span>
+          </div>
+          <div class="kpiden">
+            <b>3 / 4</b>
+            1 nothing reaches
+          </div>
+        </div>
+      </div>
+      <div id="ovsummary" class="panel summap">
+        <div class="sumtop">
+          <div class="sumtitle">
+            <h2>The map: which code reaches which tables</h2>
+            <select id="summode" onchange title="which links the walks behind this map follow" value="conservative">
+              <option value="strict">strict: proven links only (EXACT)</option>
+              <option value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
+              <option value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
+            </select>
+          </div>
+          <div class="panelsub">Groups are the first segment of each route's path. Families are tables whose names start with the same word, below gamma.</div>
+        </div>
+        <nav class="sumcrumbs" aria-label="where you are on the map">
+          <span class="sumcrumb here">Whole map</span>
+        </nav>
+        <div class="sumgrid">
+          <div class="sumpic">
+            <div class="sumcol">
+              <div class="sumbox">
+                <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
+                  <span class="sumname">order</span>
+                  <span class="count">2 route(s), 2 table(s)</span>
+                </button>
+              </div>
+              <div class="sumbox">
+                <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
+                  <span class="sumname">admin</span>
+                  <span class="count">1 route(s), 0 table(s)</span>
+                </button>
+              </div>
+            </div>
+            <div class="sumgap"></div>
+            <div class="sumcol">
+              <div class="sumbox">
+                <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
+                  <span class="sumname">item</span>
+                  <span class="count">1 table(s)</span>
+                </button>
+              </div>
+              <div class="sumbox">
+                <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
+                  <span class="sumname">order</span>
+                  <span class="count">1 table(s)</span>
+                </button>
+              </div>
+            </div>
+            <svg class="sumlinks" height="620" width="900">
+              <path d="M900,310 C450,310 450,310 0,310" data-family="item" data-grade="SOUND_SET" data-group="order" fill="none" opacity="0.85" stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="2">
+                <title>1 table(s) reached by 1 route(s), weakest grade SOUND_SET</title>
+              </path>
+              <path d="M900,310 C450,310 450,310 0,310" data-family="order" data-grade="SOUND_SET" data-group="order" fill="none" opacity="0.85" stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="2">
+                <title>1 table(s) reached by 2 route(s), weakest grade SOUND_SET</title>
+              </path>
+            </svg>
+          </div>
+          <div class="flowside">
+            <div class="panel">
+              <div class="comment">Open a box to see what it holds. Pick a route or a table in it to see only its paths, and go into Trace from any of them.</div>
+              <div class="count" style="margin-top: 6px">3 routes in 2 groups reach 2 tables in 2 families.</div>
+            </div>
+            <div class="rail">
+              <div class="railhead">
+                <h2>What this answer is based on</h2>
+                <span class="legend">
+                  how sure each line is:
+                  <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                    EXACT
+                  </span>
+                  <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                    SOUND_SET
+                  </span>
+                  <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
+                    <svg class="gbox">
+                      <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                    </svg>
+                    HEURISTIC
+                  </span>
+                  <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
+                    RUNTIME_ONLY
+                  </span>
+                  <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                    UNRESOLVED
+                  </span>
+                </span>
+              </div>
+              <div class="railchips">
+                <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">UNCERTIFIED</span>
+                <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+                <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    2 limits
+                  </span>
+                </button>
+              </div>
+              <div class="foldbody"></div>
+              <div class="railfolds">
+                <div class="fold">
+                  <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                    <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                      <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                    </svg>
+                    <span class="foldtext">
+                      basis
+                    </span>
+                  </button>
+                  <div class="foldbody"></div>
+                </div>
+                <div class="fold">
+                  <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                    <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                      <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                    </svg>
+                    <span class="foldtext">
+                      trust
+                    </span>
+                  </button>
+                  <div class="foldbody"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="shubs" class="ovpanels3">
+        <div class="panel">
+          <h2>
+            Tables, by how many APIs reach them
+            <span class="count">(2)</span>
+          </h2>
+          <div class="panelsub">by how many endpoints can reach them</div>
+          <div class="ovbar">
+            <b title="gamma_order">gamma_order</b>
+            <span class="ovbartrack">
+              <i style="width: 100.0%"></i>
+            </span>
+            <button class="ovbarn mini" onclick title="which APIs would be affected if you changed this table">2</button>
+          </div>
+          <div class="ovbar">
+            <b title="gamma_item">gamma_item</b>
+            <span class="ovbartrack">
+              <i style="width: 50.0%"></i>
+            </span>
+            <button class="ovbarn mini" onclick title="which APIs would be affected if you changed this table">1</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>
+            APIs, by how many tables they touch
+            <span class="count">(2)</span>
+          </h2>
+          <table class="ruled">
+            <thead>
+              <tr>
+                <th>endpoint</th>
+                <th class="num">tables</th>
+                <th class="num">statements</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="wrapcell">
+                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                    <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                  </svg>
+                  <a class="id clickable" onclick title="the chain this call runs through">POST /order/save</a>
+                </td>
+                <td class="num">2</td>
+                <td class="num">2</td>
+              </tr>
+              <tr>
+                <td class="wrapcell">
+                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                    <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                  </svg>
+                  <a class="id clickable" onclick title="the chain this call runs through">GET /order/{id}</a>
+                </td>
+                <td class="num">1</td>
+                <td class="num">1</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>
+            Screens, by how many tables they reach
+          </h2>
+          <div class="empty">This project was analysed without a frontend, so there is no screen to show here.</div>
+        </div>
+      </div>
+    </div>
+    <div id="tab-trace" class="hidden">…</div>
+    <div id="tab-coupling" class="hidden">…</div>
+    <div id="tab-graph" class="hidden">…</div>
+    <div id="tab-erd" class="hidden">…</div>
+    <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-status" class="hidden">…</div>
+    <div id="tab-rules" class="hidden">…</div>
+    <div id="tab-compare" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+</body>

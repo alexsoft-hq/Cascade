@@ -90,7 +90,8 @@ async function bootWith(t, { ids = ['alpha', 'beta'], earlier = [], hash = '', h
   return boot({ html, hash, origin: base, answer });
 }
 
-const tabButton = (page) => page.body.querySelectorAll('.tab').find((n) => n.getAttribute('data-tab') === 'compare');
+// Compare is one of the five places on the first row (RM67-U2c).
+const placeButton = (page) => page.body.querySelectorAll('.tab').find((n) => n.getAttribute('data-place') === 'compare');
 const view = (page) => page.byId.get('cmpview');
 const rows = (page) => view(page).querySelectorAll('li.cmprow');
 const rowWith = (page, text) => rows(page).find((li) => li.textContent.includes(text));
@@ -124,18 +125,18 @@ async function drawn(page) {
 const gammaPage = (t, extra = {}) => bootWith(t, { ids: ['gamma'], earlier: ['gamma'], mutate: gammaEarlier, hash: '#p=gamma&tab=compare', ...extra });
 
 // ---------------------------------------------------------------------------
-// The tab, its base, and the race
+// The place, its base, and the race
 // ---------------------------------------------------------------------------
 
-test('a project with no earlier build has no Compare tab, even on a server with other projects', async (t) => {
-  const page = await bootWith(t, { hash: '#p=beta&tab=overview' });
-  assert.equal(tabButton(page).classList.contains('hidden'), true);
+test('a project with no earlier build has no Compare place, even on a server with other projects', async (t) => {
+  const page = await bootWith(t, { hash: '#p=beta&tab=start' });
+  assert.equal(placeButton(page).classList.contains('hidden'), true);
   assert.equal(page.byId.get('cmpbase').children.length, 0, 'another served project is never offered as a base');
 });
 
-test('the Compare tab offers this project\'s earlier builds only, and draws the one chosen, conditions first', async (t) => {
+test('the Compare place offers this project\'s earlier builds only, and draws the one chosen, conditions first', async (t) => {
   const page = await bootWith(t, { earlier: ['beta'], hash: '#p=beta&tab=compare' });
-  assert.equal(tabButton(page).classList.contains('hidden'), false);
+  assert.equal(placeButton(page).classList.contains('hidden'), false);
   const options = page.byId.get('cmpbase').children;
   assert.equal(options.length, 1);
   assert.match(options[0].textContent, /^commit aaaaaaaaaaaa, built /);
@@ -164,13 +165,13 @@ test('switching between two projects that both keep builds asks the new project 
   assert.equal(ev(page.ctx, 'CMP.resp.basis.project'), 'alpha');
 });
 
-test('switching to a project with no earlier build hides the tab and drops the old comparison', async (t) => {
+test('switching to a project with no earlier build hides the place and drops the old comparison', async (t) => {
   const page = await bootWith(t, { earlier: ['beta'], hash: '#p=beta&tab=compare' });
   await drawn(page);
   ev(page.ctx, "switchProject('alpha')");
   await settle(page.ctx);
   assert.equal(ev(page.ctx, 'CMP.resp'), null);
-  assert.equal(tabButton(page).classList.contains('hidden'), true);
+  assert.equal(placeButton(page).classList.contains('hidden'), true);
 });
 
 test('an answer for the old project that arrives after a switch is not drawn for the new one', async (t) => {

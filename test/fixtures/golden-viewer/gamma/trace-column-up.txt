@@ -101,19 +101,17 @@
     </div>
     <div id="proj" class="mnote"></div>
     <div id="snapbar" class="snapbar hidden" role="note"></div>
-    <div class="tabs">
-      <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
-      <button class="tab active" data-t="tab.trace" data-tab="trace" onclick type="button">Trace</button>
-      <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
-      <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
-      <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
-      <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
-      <button class="tab" data-t="tab.rules" data-tab="rules" onclick type="button">Rules</button>
-      <button class="tab hidden" data-t="tab.compare" data-tab="compare" onclick type="button">…</button>
+    <div class="tabs" role="tablist">
+      <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+      <button class="tab active" aria-selected="true" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+      <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+      <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
     </div>
+    <div id="subtabs" class="subtabs hidden" role="tablist"></div>
   </header>
   <div class="wrap">
-    <div id="tab-overview" class="hidden">…</div>
+    <div id="tab-start" class="hidden">…</div>
     <div id="tab-trace">
       <div class="searchbar">
         <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
@@ -876,6 +874,7 @@ via GController.save">
     <div id="tab-graph" class="hidden">…</div>
     <div id="tab-erd" class="hidden">…</div>
     <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-status" class="hidden">…</div>
     <div id="tab-rules" class="hidden">…</div>
     <div id="tab-compare" class="hidden">…</div>
   </div>

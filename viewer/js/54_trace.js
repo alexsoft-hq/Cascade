@@ -56,6 +56,9 @@ const TRACE_NODIR = {
 // change question on the schema's side, a reach question on the code's.
 const TRACE_DIR_DEFAULT = { endpoint:'down', screen:'down', symbol:'down', statement:'up', table:'up', column:'up' };
 const TRACE_DIR_KEY = { down:'trace.dir.down', up:'trace.dir.up', detail:'trace.dir.detail' };
+// What the list says before a pick, when the place is already reading one way
+// (a question asked from Start with no target, RM67-U2c).
+const TRACE_LEAD = { up:'rail.lead.trace.up', down:'rail.lead.trace.down' };
 const TRACE_DIR_TITLE = { down:'trace.dir.down.title', up:'trace.dir.up.title', detail:'trace.dir.detail.title' };
 // Every link written before Trace names the tab it was on. Each lands here,
 // read the way that tab read its pick.
@@ -94,7 +97,7 @@ function traceKey(q){
 // ---- 2. the start of the question ----------------------------------------------
 /**
  * ASK THE TRACE PLACE ONE QUESTION: this target, this way. Every hand-off on
- * the page comes through here (a rail row, the Overview, a Graph card, a
+ * the page comes through here (a rail row, Start, a Graph card, a
  * transaction, a row's "Trace from here"), so the kind is always SAID, never
  * guessed back out of a name.
  * @param {{kind:string, id:string}} target
@@ -108,7 +111,7 @@ function openTrace(target, dir){
 /**
  * THE WAY INTO TRACE FROM ANOTHER TAB: a button named by the direction it asks
  * ("What it uses", "Where it is used"), offered only for a direction the kind
- * has. The Graph cards, the Overview, the ERD, Coupling, Compare and the Rules
+ * has. The Graph cards, Start, the ERD, Coupling, Compare and the Rules
  * all hand off through here, so every one of them says it the same way.
  * @returns {HTMLElement|null} null when this kind has no such direction
  */

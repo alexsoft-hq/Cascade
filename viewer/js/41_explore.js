@@ -1196,7 +1196,9 @@ function railIdle(tab){
   const R = RAIL[tab], D = RAILDEF[tab];
   const host = vwrap(TRACEV);
   const picks = R.rows.slice(0, 5);
-  const lead = D.lead;
+  // A question asked from Start with no target yet (RM67-U2c) is said here, in
+  // the direction it will be read, while the list is on a kind that has it.
+  const lead = traceHas(R.kind, TRACE.dir) ? (TRACE_LEAD[TRACE.dir] || D.lead) : D.lead;
   const card = el('div', { className:'panel brlead' }, [
     el('div', { className:'comment', textContent:t(lead) }),
     picks.length ? el('h2', { textContent:t('rail.picks'), style:'margin-top:12px' }) : null,

@@ -7,14 +7,15 @@
 // the same single scope the page always had, said in files a reader can find
 // their way around and a linter can read.
 
-// CLICKING THE TAB YOU ARE ALREADY ON puts it back to its opening state. It is
-// the gesture every reader already tries, and until now it did nothing.
-// Everything the PAGE navigates with calls activateTab directly, so an internal
-// hand-off to a tab never reads as that click.
+// CLICKING THE PLACE YOU ARE ALREADY ON puts the view on screen back to its
+// opening state. It is the gesture every reader already tries. Another place
+// opens on the view it was last on (openPlace). Everything the PAGE navigates
+// with calls activateTab directly, so an internal hand-off never reads as that
+// click.
 document.querySelectorAll('.tab').forEach((node)=> { node.onclick=()=>{
-  const name=node.dataset.tab;
-  if(name===STATE.tab && Object.hasOwn(SHOWALL, name)){ showAll(name); return; }
-  activateTab(name);
+  const place=node.dataset.place;
+  if(placeOf(STATE.tab).id===place && Object.hasOwn(SHOWALL, STATE.tab)){ showAll(STATE.tab); return; }
+  openPlace(place);
 }; });
 window.addEventListener('hashchange', applyHash);
 window.addEventListener('popstate', applyHash);
@@ -48,6 +49,8 @@ document.addEventListener('keydown', (e)=>{
 // the three ways to save the answer on screen.
 wireChainToolbar(TRACEV);
 traceWire();
+// Start's box and its three questions, and the map under them.
+startWire();
 for(const [format, id] of Object.entries(EXPORT_BUTTONS.trace)) byId(id).onclick=()=>exportChain(TRACEV, format);
 byId('cmpdraw').onclick=()=>drawCompare();
 byId('cmpbase').onchange=()=>drawCompare();
@@ -145,14 +148,12 @@ document.addEventListener('visibilitychange', ()=>{
   // choice back. Nothing is rendered yet to re-render.
   setTheme(lsGet(LS_THEME) || THEMES[0], true);
   // ...and the one flow preference the map and the two lane views share.
-  flowPrefLoad(); fedPrefLoad();
+  flowPrefLoad(); fedPrefLoad(); mapAdvancedLoad();
   const kl = document.getElementById('klegend');
   KINDS.forEach(k=> kl.append(el('span',{},[ kindDot(k, 11), k ])));
   renderLineLegend();
   renderMapLegend();
-  renderMapLegend('ovmapleg');
   graphPaneWatch();
-  ovMapWheelGate();
   if(SNAP){ await snapshotBoot(); return; }   // an exported file asks nobody
   // Every translation is fetched at start-up, not on the first click: the
   // toggle names each language in ITS OWN language, and it cannot do that for a
@@ -168,12 +169,12 @@ document.addEventListener('visibilitychange', ()=>{
   // server prints at start-up, then what this browser chose last time.
   STATE.project=[hash.p, new URLSearchParams(location.search).get('project'), lsGet(LS_PROJECT)].find(known) || ids[0] || null;
   if(STATE.project) lsSet(LS_PROJECT, STATE.project);
-  STATE.tab=(hash.tab && TABNAMES.indexOf(hash.tab)>=0) ? hash.tab : 'overview';
+  STATE.tab=(hash.tab && TABNAMES.indexOf(hash.tab)>=0) ? hash.tab : 'start';
   setLang(lsGet(LS_LANG) || 'en');   // applyChrome() runs inside
   byId('projsel').onchange=(e)=>switchProject(e.target.value);
   writeHash();
   loadMeta();
-  // The Overview is the landing answer whichever tab a link points at.
+  // The overview is the landing answer whichever tab a link points at.
   loadOverview();
   activateTab(STATE.tab);
   landOn(hash);

@@ -123,7 +123,7 @@ async function snapshotBoot(){
   STATE.project=SNAP.project.id;
   STATE.tab='trace';
   setLang(SNAP.lang||'en');
-  for(const n of document.querySelectorAll('.tab')) n.classList.toggle('snaptab', n.dataset.tab==='trace');
+  for(const n of document.querySelectorAll('.tab')) n.classList.toggle('snaptab', n.dataset.place==='trace');
   loadMeta();
   loadOverview();
   traceFromSnapshot(SNAP);

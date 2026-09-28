@@ -66,7 +66,7 @@ const gradeColor=(g)=> cssVar(g==='UNRESOLVED' ? '--t3' : '--edge');
 // where this is still used. The six glyphs were tried on the map too and lost:
 // at three to eight pixels across a triangle, a diamond and a rectangle are
 // three smudges, and the reader was left counting corners instead of reading
-// the shape of the system. So the map, Around and the Overview's cartography
+// the shape of the system. So the map and Around
 // draw one circle per node and say the kind in its FILL (`--n-*`, kindFill
 // below), exactly as the ERD already did. Certainty is still the line pattern,
 // which is the part that survives a photocopier.
@@ -142,7 +142,7 @@ const lsSet=(k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){ /* storage switc
 // asked FOR: one that arrives after the reader has moved elsewhere is dropped,
 // never drawn. That is the GMAP.seq rule applied to the whole page — a deep
 // link into another project must not flash this project's answer.
-const STATE={ project:null, projects:[], meta:null, tab:'overview', seq:0 };
+const STATE={ project:null, projects:[], meta:null, tab:'start', seq:0 };
 
 // ---------- THE SOURCE PANE: the evidence, at reading size -------------------
 //
@@ -380,11 +380,10 @@ function mapFlowDefault(){
   return themeGlows();   // the drawing theme has no motion anywhere on the page
 }
 
-// WHERE the map is mounted. The Overview's cartography and the Graph tab draw
-// the SAME answer with the SAME renderer, at two sizes — only one of them is on
-// screen at a time (they are tabs), so only one renderer is ever alive. Moving
-// between them tears the old mount down (which saves the settled positions) and
-// mounts in the other host, so the picture the reader learned comes back.
+// WHERE the map is mounted: the Graph view, the one pane it has since the
+// Overview's second copy went (RM67-U2c). A trip through Around tears the
+// mount down (which saves the settled positions) and mounts it again, so the
+// picture the reader learned comes back.
 const GMAP={ where:'graph', mounted:null,
   resp:null, seq:0, findSeq:0, rend:'2d', drawn:null, api:null,
   sel:null, hover:null, lit:null, litLabels:new Set(), restLabels:new Set(),
@@ -471,10 +470,10 @@ const ERD={ api:null, famColor:null, sideSeq:0, answer:null, iso:[], cols:new Ma
 // the matrix is the overview and the way into a pair.
 const CP={resp:null, sel:null, seq:0, axis:'column', showAll:false, cellEls:new Map()};
 
-// ---------- Overview tab: the pack at a glance, from ONE answer ----------
-// The landing page. It asks the server once and draws what comes back: the
+// ---------- the landing answer: Start and Analysis status, from ONE answer ----------
+// Both places draw it (RM67-U2c). It is asked once and drawn from: the
 // ribbon, the census, the gaps and the hubs are all fields of that one
 // response, so nothing here can disagree with the engine. The only arithmetic
 // the page does is a band's height and the "n of total" split of two numbers
 // the answer already carries — it never walks the graph itself.
-const OV = { resp:null, screens:null };
+const OV = { resp:null, screens:null, loading:false };

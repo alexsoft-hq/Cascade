@@ -190,13 +190,13 @@ test('en itself carries no Hangul, and ko is really a translation', () => {
 
 test('the real catalogues, end to end: Korean answers, English is the floor', () => {
   const t = makeT(CATALOG, 'ko');
-  assert.notEqual(t('tab.overview'), VIEWER_STRINGS.en['tab.overview'], 'ko must actually translate a tab name');
+  assert.notEqual(t('tab.start'), VIEWER_STRINGS.en['tab.start'], 'ko must actually translate a tab name');
   assert.equal(t('err.generic', { message: 'unknown-key: no such column' }).includes('unknown-key: no such column'), true,
     "the engine's own sentence is relayed inside the translated frame");
   assert.deepEqual([...t.missing], [], 'no key of the real catalogue is missing');
   assert.deepEqual([...t.fellBack], [], 'nothing the page asked for fell back to English');
   const en = makeT(CATALOG, 'en');
-  assert.equal(en('tab.overview'), 'Overview');
+  assert.equal(en('tab.start'), 'Start');
 });
 
 test('the round\'s new chrome is keyed and translated: the theme toggle, the chips, the dials', () => {
@@ -208,7 +208,7 @@ test('the round\'s new chrome is keyed and translated: the theme toggle, the chi
     'mast.trust', 'mast.limits',
     'kpi.endpoints', 'kpi.statements', 'kpi.tables', 'kpi.columns',
     'kpi.rest.endpoints', 'kpi.rest.statements', 'kpi.rest.tables', 'kpi.rest.columns',
-    'ov.map.title', 'ov.map.hint', 'ov.gaps.note', 'ov.grades.title', 'ov.grades.note',
+    'ov.grades.title', 'ov.grades.note',
     'ov.hubtables.by',
   ];
   for (const k of added) {

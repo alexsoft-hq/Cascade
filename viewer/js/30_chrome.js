@@ -68,30 +68,78 @@ function setLang(lang){
   applyChrome();
 }
 
-// ---------- tabs / init ----------
-// Trace replaced Explore, Flow and Impact (RM67-U2b); a link that still names
-// one of those is read by traceReadHash and lands on Trace.
-const TABNAMES=['overview','trace','coupling','graph','erd','tx','rules','compare'];
+// ---------- five places, and the views inside them (RM67-U2c) ----------
+// The tab bar used to be ten things of three different sorts on one line:
+// questions (Explore, Flow, Impact), drawings (Graph, ERD, Coupling) and the
+// analysis's own state (Rules). It is now five PLACES, each a question a reader
+// comes with. A place with more than one VIEW shows a second row that switches
+// between them. A view is still the unit the page draws (`#tab-<view>`) and
+// keeps its own state, and it is what a URL's `tab=` names, so `tab=graph`,
+// `tab=erd`, `tab=tx` and `tab=rules` land where they always did.
+const PLACES=[
+  { id:'start', views:['start'] },
+  { id:'trace', views:['trace'] },
+  { id:'structure', views:['graph','erd','coupling','tx'] },
+  { id:'compare', views:['compare'] },
+  { id:'status', views:['status','rules'] },
+];
+const TABNAMES=PLACES.flatMap((p)=> p.views);
+// What each view is called on its place's second row, key by key.
+const VIEW_KEY={ graph:'tab.graph', erd:'tab.erd', coupling:'tab.coupling', tx:'tab.tx',
+  status:'tab.status.view', rules:'tab.rules' };
+// A `tab=` a link may still carry that names no view today: the Overview is
+// the Start place now, and a place's own name opens its first view. Trace's
+// three old names (explore, flow, impact) are read by traceReadHash, because
+// each carries a direction as well.
+const OLD_TABS={ overview:'start', structure:'graph' };
+const placeOf=(view)=> PLACES.find((p)=> p.views.includes(view)) || PLACES[0];
+// The view each place was last on, so coming back to a place lands where the
+// reader left it. Per page, not remembered: a fresh page opens each on its first.
+const PLACE_LAST={};
 const LAZY_TABS={ tx:{ box:'txview', load:()=>loadTx() }, rules:{ box:'rulesview', load:()=>loadRules() } };
 // Showing a tab and LOADING a tab are two different things: a project switch
 // empties every tab's cache and then asks the visible one to fill itself again,
 // which is exactly `loadTab` with nothing cached.
 function activateTab(name){
-  if(TABNAMES.indexOf(name)<0) name='overview';
+  name=OLD_TABS[name] || name;
+  if(TABNAMES.indexOf(name)<0) name='start';
   STATE.tab=name;
-  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab===name));
+  PLACE_LAST[placeOf(name).id]=name;
+  renderPlaceChrome();
   TABNAMES.forEach(n=> document.getElementById('tab-'+n).classList.toggle('hidden', name!==n));
   writeHash();
   loadTab(name);
   refreshShowAll();
 }
-function loadTab(name){
-  if (name==='overview'){
-    if(!byId('ovcards').hasChildNodes()) loadOverview();
-    // The cartography is the live map: bring it here (from the Graph tab, if
-    // that is where it was) rather than mounting a second one.
-    else ovMapMount();
+/** Open a place on the view it was last on, or its first. */
+function openPlace(id){
+  const p=PLACES.find((x)=> x.id===id);
+  if(p) activateTab(PLACE_LAST[p.id] || p.views[0]);
+}
+/**
+ * The place on screen, marked on the first row, and the second row for a place
+ * that holds more than one view. Clicking the view already on screen puts it
+ * back to its opening state, as clicking its place does.
+ */
+function renderPlaceChrome(){
+  const place=placeOf(STATE.tab);
+  for(const x of document.querySelectorAll('.tab')){
+    const on=x.dataset.place===place.id;
+    x.classList.toggle('active', on);
+    x.setAttribute('aria-selected', String(on));
   }
+  const row=byId('subtabs');
+  if(!row) return;
+  row.classList.toggle('hidden', place.views.length<2);
+  row.replaceChildren(...(place.views.length<2 ? [] : place.views.map((v)=> el('button',{
+    type:'button', className:'subtab'+(v===STATE.tab ? ' active' : ''), textContent:t(VIEW_KEY[v]),
+    onclick:()=> ((v===STATE.tab && Object.hasOwn(SHOWALL, v)) ? showAll(v) : activateTab(v)) }))));
+}
+function loadTab(name){
+  // Start and Analysis status are both drawn from the one landing answer; the
+  // map on Start asks its own question once Start is on screen.
+  if ((name==='start' || name==='status') && !OV.resp && !OV.loading) loadOverview();
+  if (name==='start') startOnScreen();
   // A tab that draws one answer into one box asks for it once, when the box is empty.
   const lazy=LAZY_TABS[name];
   if (lazy && !byId(lazy.box).hasChildNodes()) lazy.load();
@@ -303,6 +351,7 @@ function applyChrome(){
   for(const n of document.querySelectorAll('[data-t-title]')) n.title=t(n.dataset.tTitle);
   for(const n of document.querySelectorAll('[data-t-ph]')) n.placeholder=t(n.dataset.tPh);
   renderProjectChrome();
+  renderPlaceChrome();
   renderCompareChrome();
   renderRulesChrome();
   renderLangChrome();
@@ -338,7 +387,7 @@ function renderFoldHint(n){
 // what changed. (test/viewer_multi.test.mjs asserts the zero-request part.)
 function renderAuthoredChrome(){
   renderMapLegend();
-  // The Overview and the Graph rail are drawn in JavaScript too — and neither
+  // Start, Analysis status and the Graph rail are drawn in JavaScript too — and none
   // asks the server for anything to be drawn again.
   if(OV.resp) renderOverview();
   if(GRAPHV.mode==='around' && GRAPHV.resp){

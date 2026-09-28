@@ -189,7 +189,8 @@ test('a new link carries direction, mode and depth, and a reload asks the same q
 
 /** Every tab a link written before Trace could name, with the project, a pick and a source pane. */
 const OLD_LINKS = [
-  ['overview', null, { tab: 'overview' }],
+  // The Overview became the Start place (RM67-U2c).
+  ['overview', null, { tab: 'start' }],
   ['explore', 'table:gamma_order', { tab: 'trace', dir: 'detail', pick: 'table:gamma_order' }],
   ['explore', 'column:gamma_order.total', { tab: 'trace', dir: 'detail', pick: 'column:gamma_order.total' }],
   ['explore', 'statement:com.g.GMapper.selectOrder', { tab: 'trace', dir: 'detail', pick: 'statement:com.g.GMapper.selectOrder' }],
