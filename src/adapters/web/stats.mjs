@@ -136,6 +136,11 @@ function emptyCallStats() {
     // is in on to the client (R2-K). It is counted in `untraced` too, because
     // nothing here can say the URL it carries is the one that is sent.
     urlNotHandedOn: 0,
+    // A traced call whose URL went through a wrapper hop that reads the
+    // parameter it is in without handing it on in a way the syntax spells (a
+    // local, a rest, a closure, `this`): taken as reaching the sink, and counted,
+    // because this lane does not follow values (review 2, item 2).
+    urlThroughUnreadHop: 0,
     // A call that reached no client and whose callee TAKES A PATH APART rather
     // than asking for one (`pathname.startsWith('/x')`, `p.split('/')`).
     // Counted apart from `notUrlShaped` because the argument really is a path
@@ -194,9 +199,8 @@ export function emptyWebStats() {
       // lane cannot honestly leave out: a URL that resolved to nothing but
       // interpolations. It is not `noMatch` (it matches far too much) and not
       // `expression` (the worker did resolve it), so it is counted as itself.
-      byReason: {
-        parameter: 0, expression: 0, importedConstant: 0, noMatch: 0, outsidePack: 0, allHoles: 0,
-      },
+      // `noBuild`: base URL and path front are set in different builds.
+      byReason: { parameter: 0, expression: 0, importedConstant: 0, noMatch: 0, outsidePack: 0, allHoles: 0, noBuild: 0 },
     },
     navigation: emptyNavigationStats(), untraced: emptyUntracedStats(),
     matches: { exact: 0, template: 0, multi: 0 }, url: emptyUrlStats(),

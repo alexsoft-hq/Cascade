@@ -777,7 +777,7 @@ test('a URL that never resolved gets NO edge, and is counted by the reason the w
   assert.deepEqual(edgesOf(g), []);
   assert.equal(stats.unresolved.total, 3);
   assert.deepEqual(stats.unresolved.byReason,
-    { parameter: 1, expression: 1, importedConstant: 1, noMatch: 0, outsidePack: 0, allHoles: 0 });
+    { parameter: 1, expression: 1, importedConstant: 1, noMatch: 0, outsidePack: 0, allHoles: 0, noBuild: 0 });
 });
 
 test('a URL that is nothing but interpolation names no route, and is counted as such', () => {
@@ -907,7 +907,7 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   const stats = addWebFacts(g, []);
   assert.deepEqual(edgesOf(g), []);
   assert.deepEqual(stats.calls, {
-    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, urlNotHandedOn: 0,
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, urlNotHandedOn: 0, urlThroughUnreadHop: 0,
     stringMethod: 0, template: 0, formSubmits: 0, locationRequests: 0, formSubmitsWithoutAddress: 0,
     nexacro: 0, nexacroUnreadable: 0, websquare: 0, websquareUnreadable: 0, notAFunction: 0, passedAsValue: 0,
   });

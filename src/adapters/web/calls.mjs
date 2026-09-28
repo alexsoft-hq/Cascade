@@ -493,7 +493,7 @@ function makeHoleFiller({ constantOf, configFor, ports }) {
     if (got === null) return { ...NONE, hole };
     return {
       value: got.text, assumed, from: got.from, env: envNamesOf(expr), guess: got.guess, reads: got.reads,
-      ...(got.away ? { away: got.away } : {}),
+      ...(got.away ? { away: got.away } : {}), ...(got.modes ? { modes: got.modes } : {}),
     };
   };
   return (file, pkg, h, leading) => {
@@ -558,6 +558,7 @@ function noteFill(acc, h, got) {
     acc.leadingBase = true;
     if (acc.guess === null && got.guess) acc.guess = got.guess;
     if (got.away) acc.away = got.away;
+    if (got.modes) acc.modes = got.modes;
   }
   if (acc.substituted.some((s) => s.name === h.name && s.value === got.value)) return;
   acc.substituted.push({
@@ -596,7 +597,7 @@ function withImportedConstants(file, pkg, call, from, fill) {
   const resolved = Array.isArray(from) ? from : null;
   const url = call.url ?? {};
   const acc = {
-    substituted: [], assumed: false, guess: null, leadingBase: false, away: null,
+    substituted: [], assumed: false, guess: null, leadingBase: false, away: null, modes: null,
   };
   if (resolved === null || resolved.length === 0) return { resolved, ...acc };
   const one = resolved.length === 1;
@@ -727,14 +728,42 @@ function callerOverride(m, c) {
   return stated !== null ? { value: stated, from: 'config' } : { value: m.value, from: 'wrapper-default' };
 }
 
+/** Every hop of the wrapper chain a call goes through, the caller's side first; a return hop is null. */
+function hopsOf(wrappers, key) {
+  const hops = [];
+  for (let cur = key, i = 0; cur && i < FIXPOINT_LIMIT; i += 1) {
+    const w = wrappers.get(cur);
+    if (!w) break;
+    hops.push(w.call ?? null);
+    cur = w.next ?? null;
+  }
+  return hops;
+}
+
 /**
- * The method a WRAPPER sets on what it forwards, or null when it sets none: the
- * one its own hop writes, as it is, unless the caller's options can replace it.
+ * THE METHOD THE REQUEST THAT LEAVES CARRIES (review 2, item 1), walked hop by
+ * hop from the caller to the sink. A hop that writes a method after what it was
+ * handed sets it, whatever came before; one that writes it before is a default,
+ * which a method already on the way in replaces, and which the caller's own
+ * options replace when no hop has written one yet. A hop that writes none
+ * passes on what it was handed. Null when no hop writes a method.
  */
-function wrapperMethodOf(w, c) {
-  const m = w && w.call ? w.call.method : null;
-  if (!m || !m.value) return null;
-  return m.overridable ? callerOverride(m, c) : { value: m.value, from: 'wrapper-verb' };
+function chainMethodOf(wrappers, key, c) {
+  let state = null;
+  hopsOf(wrappers, key).forEach((hop, i) => {
+    const m = hop ? hop.method : null;
+    if (!m || !m.value) return;
+    if (!m.overridable) { state = { value: m.value, from: 'wrapper-verb' }; return; }
+    if (state === null) state = callerOverride(i === 0 ? m : { ...m, overridable: { ...m.overridable, by: callerPositions(c) } }, c);
+    else if (state.value === null) state = { value: null, from: 'absent', wrapperDefault: m.value };
+  });
+  return state;
+}
+
+/** Where the caller's options are, for a default written further down the chain: the URL's argument, else all three. */
+function callerPositions(c) {
+  const at = c.url && c.url.at ? c.url.at : null;
+  return at !== null ? [at.arg] : [0, 1, 2];
 }
 
 /**
@@ -771,7 +800,7 @@ function countUntraced(stats, c, why) {
 function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
   return (c, sink, target) => {
     if (sink.kind === 'wrapper' && target && target.kind === 'member') {
-      const fromWrapper = wrapperMethodOf(wrappers.get(target.key), c);
+      const fromWrapper = chainMethodOf(wrappers, target.key, c);
       if (fromWrapper !== null) return fromWrapper;
     }
     if (c.method && c.method.value) return { value: c.method.value, from: c.method.from ?? 'config' };
@@ -781,7 +810,8 @@ function makeMethodFor({ wrappers, libraries, pack, injectedClients }) {
       const lib = libraries.get(sink.module);
       if (lib && lib.defaultMethod) return { value: lib.defaultMethod, from: 'library-default' };
     }
-    if (sink.kind === 'platform') {
+    // A wrapper that ends at `fetch` sends what `fetch` sends by default.
+    if (sink.kind === 'platform' || sink.kind === 'wrapper') {
       const p = (pack.platform ?? []).find((x) => x.name === sink.module);
       if (p && p.defaultMethod) return { value: p.defaultMethod, from: 'library-default' };
     }
@@ -899,7 +929,7 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
     };
   }
   const throughAWrapper = target !== null && target.kind === 'member' && wrappers.has(target.key);
-  if (throughAWrapper && handsOnTheUrl(wrappers.get(target.key).call, c)) {
+  if (throughAWrapper && urlReachesTheSink(wrappers, target.key, c, stats)) {
     stats.calls.traced += 1;
     return { sink: wrapperSink(wrappers, target.key), target };
   }
@@ -923,20 +953,51 @@ function wrapperSink(wrappers, key) {
 }
 
 /**
- * WHETHER A WRAPPER HANDS THE CALLER'S URL ON (R2-K). Only a hop the worker
- * recorded as a forward says what it hands on, and there the argument the
- * caller's URL was read from has to be among it: an object whose key held the
- * URL, spread in or passed whole, or the URL itself passed whole. A wrapper
- * that hands on something else sends a URL this call did not write, so the
- * call is not traced through it. Any other hop is a call record, and there a
- * wrapper is recognized as it always was.
+ * Where the URL goes at ONE hop, from where it is in the function's parameters
+ * (`place`: a parameter, and the key it sits under when it is in an object).
+ * Passed whole or spread in, it keeps its key; passed as one key of an object,
+ * it gains that key; `options.url` passed as a value loses it. Null when the
+ * hop's spelled hand-on does not carry it.
  */
-function handsOnTheUrl(call, c) {
-  if (!call || !Array.isArray(call.hands)) return true;
+function handOn(place, hands) {
+  for (const h of hands) {
+    if (h.param !== place.param) continue;
+    if (place.key === null) {
+      if (h.as === 'argument') return { param: h.arg, key: null };
+      if (h.as === 'key') return { param: h.arg, key: h.key };
+    } else if (h.as === 'argument' || h.as === 'spread') return { param: h.arg, key: place.key };
+    else if (h.as === 'member' && h.key === place.key) return { param: h.arg, key: null };
+  }
+  return null;
+}
+
+/**
+ * WHETHER THE CALLER'S URL REACHES THE SINK (R2-K, review 2 item 2), walked hop
+ * by hop down the wrapper chain: every hop must hand on the parameter the URL
+ * is in. A hop that hands it on as its syntax spells it moves the URL along; one
+ * that only READS that parameter (through a local, a rest, a closure) or reads
+ * something that could carry it (`this`, a `let`) is followed no further and
+ * counted, because this lane does not follow values; one that reads it nowhere
+ * has dropped it, and the call is not traced through the chain. A hop the worker
+ * wrote nothing about (a return) is taken as before.
+ */
+function urlReachesTheSink(wrappers, key, c, stats) {
+  const hops = hopsOf(wrappers, key);
   const at = c.url && c.url.at ? c.url.at : null;
-  if (at === null) return false;
-  const ways = typeof at.key === 'string' ? ['spread', 'argument'] : ['argument'];
-  return call.hands.some((h) => h.param === at.arg && ways.includes(h.as));
+  if (at === null) return !(hops[0] && Array.isArray(hops[0].hands) && !hops[0].reads);
+  let place = { param: at.arg, key: typeof at.key === 'string' ? at.key : null };
+  for (const hop of hops) {
+    if (!hop || (!hop.reads && !Array.isArray(hop.hands))) return true;
+    const next = handOn(place, hop.hands ?? []);
+    if (next !== null) { place = next; continue; }
+    const reads = hop.reads ?? null;
+    if (reads !== null && (reads.open === true || reads.params.includes(place.param))) {
+      stats.calls.urlThroughUnreadHop += 1;
+      return true;
+    }
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -1012,6 +1073,7 @@ function readCallUrl(file, pkg, c, { ctxVars, constantOf, fill }) {
     substituted: [...(c.url.substituted ?? []), ...imported.substituted],
     assumed: imported.assumed === true,
     guess: imported.guess ?? null,
+    modes: imported.modes ?? null,
   };
 }
 
@@ -1061,7 +1123,7 @@ export function classifyCallSites({
         assumed: (target && target.assumed === true) || u.assumed,
         template: isTemplate, resolved, absolute,
         ...(substituted.length > 0 ? { substituted } : {}),
-        ...(u.guess ? { guess: u.guess } : {}),
+        ...(u.guess ? { guess: u.guess } : {}), ...(u.modes ? { buildModes: u.modes } : {}),
       });
       if (Array.isArray(resolved) && !isTemplate) {
         if (!callsPerInstance.has(instanceId)) callsPerInstance.set(instanceId, []);
@@ -1272,6 +1334,19 @@ function leavesThePack(absolute, cfg) {
 }
 
 /**
+ * NO BUILD SENDS IT (review 2, item 4): the builds the client's base URL holds
+ * in and the builds the front of the path holds in share none, so the two are
+ * never one request. Counted as unresolved (`noBuild`), and no edge is placed.
+ */
+function noBuildSendsIt(site, prefix, stats) {
+  if (!Array.isArray(site.buildModes) || !Array.isArray(prefix.modes)) return false;
+  if (site.buildModes.some((m) => prefix.modes.includes(m))) return false;
+  stats.unresolved.total += 1;
+  stats.unresolved.byReason.noBuild += 1;
+  return true;
+}
+
+/**
  * THIS MACHINE, ANOTHER SERVICE: where the call goes to this machine on a port
  * no application of this pack listens on (base_url.mjs otherPortOf), through
  * its client's base URL, the base URL at its front, or its own address. Null
@@ -1317,6 +1392,7 @@ export function placeHttpEdges({
     // is not part of any route the pack serves, so the prefix is the empty
     // string and nothing had to be guessed to know that.
     const prefix = site.template ? TEMPLATE_PREFIX : prefixOf(site.instanceId);
+    if (noBuildSendsIt(site, prefix, stats)) continue;
     const absolute = site.absolute ?? call.url.absolute ?? null;
     const away = awayOfSite(prefix, absolute, ports);
     const outsidePack = away !== null || leavesThePack(absolute, configFor(site.pkg));
@@ -1420,27 +1496,75 @@ function importEvidence(specifier, found, assumed) {
  * HEURISTIC. A field the class assigns itself (`this.x = new X()`) is not this
  * rule's, and neither is a client: the HTTP pass already explained that one.
  */
-function typedFieldTarget({ files, resolver }, file, className, parts) {
+function typedFieldTarget({ files, resolver, providersOf }, file, className, parts) {
   const v = resolver.fieldValue(file, className, parts[0], 0);
   if (!v || v.kind !== 'class-instance' || typeof v.typed !== 'string') return null;
-  const at = v.key.lastIndexOf('#');
-  const typeFile = v.key.slice(0, at);
-  const name = `${v.key.slice(at + 1)}.${parts[1]}`;
-  if (!files.get(typeFile)?.functions.has(name)) return null;
+  const behind = providersOf(v.key);
+  const found = behind.classes.map((key) => {
+    const at = key.lastIndexOf('#');
+    return { file: key.slice(0, at), type: key.slice(at + 1), name: `${key.slice(at + 1)}.${parts[1]}` };
+  }).filter((t) => files.get(t.file)?.functions.has(t.name));
+  if (found.length === 0) return null;
   const assumed = v.assumed === true;
-  return {
-    file: typeFile,
-    name,
-    grade: assumed ? 'HEURISTIC' : 'SOUND_SET',
+  // A candidate set a provider this lane does not read may add to is not one
+  // guaranteed to hold the truth (review 2, item 6).
+  const grade = assumed || behind.unread.length > 0 ? 'HEURISTIC' : 'SOUND_SET';
+  const providers = behind.providers.length > 0 || behind.unread.length > 0
+    ? { providers: { candidates: found.map((t) => `${t.file}#${t.name}`), ...(behind.unread.length > 0 ? { unread: behind.unread } : {}) } }
+    : {};
+  const [first, ...rest] = found.map((t) => ({
+    file: t.file,
+    name: t.name,
+    grade,
     evidence: {
-      rule: 'typed-field', field: parts[0], type: v.key.slice(at + 1), via: v.typed, origin: `${typeFile}#${name}`,
-      ...(v.viaStar === true ? { viaStar: true } : {}), ...(assumed ? { assumedAlias: true } : {}),
+      rule: 'typed-field', field: parts[0], type: t.type, via: v.typed, origin: `${t.file}#${t.name}`,
+      ...(v.viaStar === true ? { viaStar: true } : {}), ...(assumed ? { assumedAlias: true } : {}), ...providers,
     },
+  }));
+  return rest.length > 0 ? { ...first, also: rest } : first;
+}
+
+/**
+ * WHAT THE PROVIDERS IN THE TREE PUT BEHIND A TOKEN (review 2, item 6), for a
+ * field whose type is that token: the class itself, every class a `useClass`
+ * names, and what a `useExisting` token has behind it in turn. Which injector
+ * serves the field (a component's, a module's, the application's) is not read,
+ * so every provider in the tree is a candidate. A factory, a value, or a class
+ * this lane did not read is `unread`: the set may then be short.
+ */
+function makeProvidersOf({ files, resolver }) {
+  const byToken = new Map();
+  for (const [file, f] of files) {
+    for (const p of f.providers ?? []) {
+      const token = resolver.rootValue(file, p.token.callee, p.token.binding ?? null, 0);
+      if (!token || token.kind !== 'class') continue;
+      const target = p.target ? resolver.rootValue(file, p.target.callee, p.target.binding ?? null, 0) : null;
+      if (!byToken.has(token.key)) byToken.set(token.key, []);
+      byToken.get(token.key).push({
+        use: p.use, via: p.via, file, line: p.line, target: target && target.kind === 'class' ? target.key : null,
+      });
+    }
+  }
+  const expand = (key, out, seen) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.classes.push(key);
+    for (const p of byToken.get(key) ?? []) {
+      out.providers.push(p);
+      if (p.use === 'unread' || p.target === null) out.unread.push({ use: p.via, file: p.file, line: p.line });
+      else if (p.use === 'existing') expand(p.target, out, seen);
+      else if (!out.classes.includes(p.target)) out.classes.push(p.target);
+    }
+  };
+  return (key) => {
+    const out = { classes: [], providers: [], unread: [] };
+    expand(key, out, new Set());
+    return out;
   };
 }
 
 /** What one call NAMES, when it names a function this lane read. */
-function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats }) {
+function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats, providersOf }) {
   const { resolveSpecifier, resolveExport } = resolver;
   return (file, c) => {
     const callee = c.callee ?? null;
@@ -1459,7 +1583,7 @@ function makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats }) {
     // recorded under `<Class>.<name>`.
     if (binding && binding.kind === 'this') {
       if (typeof binding.class !== 'string') return null;
-      if (parts.length === 2) return typedFieldTarget({ files, resolver }, file, binding.class, parts);
+      if (parts.length === 2) return typedFieldTarget({ files, resolver, providersOf }, file, binding.class, parts);
       if (parts.length !== 1) return null;
       const name = `${binding.class}.${parts[0]}`;
       return f.functions.has(name) ? sameFile(name) : null;
@@ -1591,7 +1715,10 @@ function collectCallPairs({ fileNames, files, callTargetOf, fnRefTargetOf, stats
   for (const file of fileNames) {
     for (const c of files.get(file).calls) {
       const t = callTargetOf(file, c);
-      if (t) remember(file, c.enclosing ?? '(module)', t);
+      if (!t) continue;
+      remember(file, c.enclosing ?? '(module)', t);
+      // Every class a provider may put behind a typed field is a candidate too.
+      for (const also of t.also ?? []) remember(file, c.enclosing ?? '(module)', also);
     }
   }
   // A SECOND PASS, after every call has had its say. A pair that is both CALLED
@@ -1634,7 +1761,9 @@ export function linkFrontendCalls({
 }) {
   const httpSiteCalls = new Set(sites.map((s) => s.call));
   const members = memberIndex(files);
-  const callTargetOf = makeCallTargetOf({ files, members, resolver, httpSiteCalls, stats });
+  const callTargetOf = makeCallTargetOf({
+    files, members, resolver, httpSiteCalls, stats, providersOf: makeProvidersOf({ files, resolver }),
+  });
   const fnRefTargetOf = makeFnRefTargetOf({ files, members, resolver });
 
   const symbolMeta = new Map(); // symbol node id -> {file, name}

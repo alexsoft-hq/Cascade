@@ -226,10 +226,18 @@ function outcome(raw, from, extra) {
  * and, when the source wrote a default, that literal for every mode no file
  * sets it in. With a default and no mode at all, the literal alone.
  */
-function envOutcomes(cfg, env, fallback, branch) {
+/**
+ * Whether a value read for `X` is SET, as the operator its default is written
+ * with sees it (review 2, item 5): `X || 'lit'` takes the literal for the empty
+ * string too, since `''` is falsy; `X ?? 'lit'` keeps `''`, which is neither
+ * null nor undefined. A dotenv file writes `X=` as the empty string.
+ */
+const isSet = (value, operator) => value !== null && !(operator === '||' && value === '');
+
+function envOutcomes(cfg, env, fallback, branch, operator = null) {
   const out = [];
   for (const m of envByMode(cfg, env)) {
-    if (m.value !== null) out.push(outcome(m.value, 'env-file', { mode: m.mode, file: m.file, env, branch }));
+    if (isSet(m.value, fallback === null ? null : operator)) out.push(outcome(m.value, 'env-file', { mode: m.mode, file: m.file, env, branch }));
     else if (fallback !== null) out.push(outcome(fallback, 'fallback', { mode: m.mode, env, branch }));
   }
   if (out.length === 0 && fallback !== null) out.push(outcome(fallback, 'fallback', { env, branch }));
@@ -240,7 +248,7 @@ function envOutcomes(cfg, env, fallback, branch) {
 function fallbackOf(summary) {
   const env = envNameOf(summary.left);
   const right = summary.right ?? null;
-  return env !== null && right && right.kind === 'string' ? { env, fallback: right.value } : null;
+  return env !== null && right && right.kind === 'string' ? { env, fallback: right.value, operator: summary.operator ?? '||' } : null;
 }
 
 /**
@@ -251,13 +259,14 @@ function fallbackOf(summary) {
 function holeInMode(cfg, h, mode) {
   let env = h && h.kind === 'name' ? envNameOfSpelling(h.name) : null;
   let fallback = null;
+  let operator = null;
   if (env === null && h && h.kind === 'env-expr' && h.expr && h.expr.kind === 'fallback') {
     const fb = fallbackOf(h.expr);
-    if (fb !== null) ({ env, fallback } = fb);
+    if (fb !== null) ({ env, fallback, operator } = fb);
   }
   if (env === null) return undefined;
   const m = envByMode(cfg, env).find((x) => x.mode === mode);
-  if (m && m.value !== null) return { value: m.value, from: 'env-file', file: m.file, env };
+  if (m && isSet(m.value, operator)) return { value: m.value, from: 'env-file', file: m.file, env };
   return fallback === null ? null : { value: fallback, from: 'fallback', file: null, env };
 }
 
@@ -310,7 +319,7 @@ function outcomesOf(cfg, summary, branch) {
     }
     case 'fallback': {
       const fb = fallbackOf(summary);
-      return one(fb === null ? [] : envOutcomes(cfg, fb.env, fb.fallback, branch));
+      return one(fb === null ? [] : envOutcomes(cfg, fb.env, fb.fallback, branch, fb.operator));
     }
     case 'ternary': return ternaryOutcomes(cfg, summary, branch);
     default: return one([]);
@@ -329,6 +338,19 @@ export function readBase(cfg, summary) {
   const got = outcomesOf(cfg, summary, null);
   const detailed = summary.kind === 'fallback' || summary.kind === 'ternary' || summary.kind === 'template';
   return { state: got.complete ? 'known' : 'unknown', outcomes: got.outcomes, detailed };
+}
+
+/**
+ * THE BUILDS a value holds in (review 2, item 4): null when it holds in every
+ * build the package's tool makes (a literal, a default, or a file for each), else
+ * the modes a file sets it for. A value set only for development and another
+ * set only for production are never one request: no build sends both.
+ */
+export function buildModesOf(cfg, outcomes) {
+  if (outcomes.length === 0 || outcomes.some((o) => o.mode === null)) return null;
+  const modes = [...new Set(outcomes.map((o) => o.mode))].sort();
+  const all = modesOf(cfg, buildToolOf(cfg.dependencies));
+  return all.every((m) => modes.includes(m)) ? null : modes;
 }
 
 /**
@@ -378,7 +400,9 @@ export function fillFromExpression(cfg, summary, ports = null) {
   const shown = outcomes.find((o) => o.where === 'local') ?? outcomes[0];
   const absolute = outcomes.every((o) => o.host !== null);
   const away = awayOf(outcomes, ports);
+  const modes = buildModesOf(cfg, outcomes);
   return {
+    ...(modes ? { modes } : {}),
     text: absolute ? shown.raw.replace(/\/+$/, '') : shown.path,
     from: outcomes.some((o) => o.from === 'fallback') ? 'fallback' : 'env-file',
     guess: away === null ? guessOf(outcomes) : null,

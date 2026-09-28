@@ -29,7 +29,7 @@ import {
 import { navigationAssignmentOf } from './navigation.mjs';
 import { formActionAssignment, formMethodAssignment } from './forms.mjs';
 import { emitRouteRef, maybeRoute } from './routers.mjs';
-import { paramIndexOf } from './forwards.mjs';
+import { paramIndexOf, paramOwnerOf } from './forwards.mjs';
 
 /**
  * Pass 1: hoist what the top level declares. A function at the top of a file
@@ -682,6 +682,7 @@ export function visitClass(ctx, node, env, exportedAs) {
       ...(isComponentClass(ctx, node, env) ? { component: true } : {}),
     }, line);
   }
+  providersInDecorators(ctx, node, env);
   // A TYPED FIELD IS AN ASSIGNMENT the class never writes (RM67): the
   // framework fills it, and the record says with what type.
   for (const [field, t] of typed) {
@@ -720,7 +721,7 @@ export function visitFunctionBody(ctx, node, env, entry) {
   for (const p of node.params || []) for (const n of patternNames(p)) scope.declare(n, null);
   // A NAMED function's own parameters, so a call inside it can say which of
   // them it hands on (R2-K); a callback's are not the function's.
-  if (entry) Object.assign(entry, { paramScope: scope, paramIndex: paramIndexOf(node) });
+  if (entry) Object.assign(entry, { paramScope: scope, paramIndex: paramIndexOf(node), paramOwner: paramOwnerOf(node) });
   // A CLIENT ARRIVES AS A PARAMETER, in a function the framework fills in.
   // The map is inherited downward, because `$http.get(url).then(function () {
   // $http.post(…) })` is the same client one scope deeper.
@@ -757,6 +758,7 @@ export function visitFunctionBody(ctx, node, env, entry) {
  * `a.b` would be a path this lane invented rather than one the caller writes.
  */
 export function visitObject(ctx, node, env, defaultMember, owner = null) {
+  noteProvider(ctx, node, env);
   const memberOf = (name) => (owner !== null && name !== null ? `${owner}.${name}` : null);
   for (const p of node.properties) {
     if (p.type === 'ObjectMethod') {
@@ -783,6 +785,54 @@ export function visitObject(ctx, node, env, defaultMember, owner = null) {
     }
     eachChild(p, (child) => ctx.visit(child, env));
   }
+}
+
+/** A token or a class a provider names, as the bridge resolves a callee: the spelling and its binding. */
+function providerName(ctx, node, env) {
+  const c = node && (node.type === 'Identifier' || node.type === 'MemberExpression') ? calleeOf(node) : null;
+  if (!c || c.root === null || c.root === 'this' || c.path.includes('*')) return null;
+  return { callee: c, binding: bindingOf(ctx, c.root, env.scope, env.classInfo) };
+}
+
+/**
+ * A PROVIDER (review 2, item 6): `{ provide: Base, useClass: Replacement }`,
+ * wherever it is written, one record with the token, what it uses, and the
+ * class or token it names. The keys are the injection pack's
+ * (packs/injection.json); which injector the object ends up in is not read, so
+ * the bridge takes every provider in the tree as a candidate for its token.
+ */
+function noteProvider(ctx, node, env) {
+  for (const form of ctx.providerForms ?? []) {
+    const token = providerName(ctx, propOf(node, form.tokenKey ?? 'provide'), env);
+    if (token === null) continue;
+    for (const [key, use] of Object.entries(form.uses ?? {})) {
+      const value = propOf(node, key);
+      if (value === null) continue;
+      const target = use === 'unread' ? null : providerName(ctx, value, env);
+      const line = ctx.lineOf(node);
+      ctx.emit({
+        kind: 'provider', file: ctx.relFile, line, token, use: target === null ? 'unread' : use, via: key,
+        ...(target ? { target } : {}),
+      }, line);
+      return;
+    }
+  }
+}
+
+/**
+ * The providers a class's decorators declare (`@Component({ providers })`,
+ * `@NgModule({ providers })`). The class walk does not visit its decorators,
+ * and visiting them as calls would record a call per decorator, so only the
+ * object literals inside them are read, for providers and nothing else.
+ */
+function providersInDecorators(ctx, node, env) {
+  if ((ctx.providerForms ?? []).length === 0) return;
+  const walk = (n) => {
+    if (!n) return;
+    if (n.type === 'ObjectExpression') noteProvider(ctx, n, env);
+    eachChild(n, walk);
+  };
+  for (const d of node.decorators ?? []) walk(d.expression);
 }
 
 /**

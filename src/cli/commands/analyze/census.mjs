@@ -537,8 +537,14 @@ function sayNavigationsAndPages(webBridgeStats) {
  */
 function sayUrlNotHandedOn(calls) {
   const n = calls?.urlNotHandedOn ?? 0;
-  if (n === 0) return;
-  process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so each is graded HEURISTIC as a call this lane could not trace\n`);
+  if (n > 0) {
+    process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so each is graded HEURISTIC as a call this lane could not trace\n`);
+  }
+  // Said apart: taken as reaching the client, on a hop this lane does not read.
+  const unread = calls?.urlThroughUnreadHop ?? 0;
+  if (unread > 0) {
+    process.stderr.write(`  [info] WEB_URL_THROUGH_UNREAD_HOP ${unread} traced call(s) reach the client through a wrapper step that passes the argument their URL is in through a local, a rest or \`this\`, which this lane does not follow: taken as reaching it, as a wrapper always was\n`);
+  }
 }
 
 /**

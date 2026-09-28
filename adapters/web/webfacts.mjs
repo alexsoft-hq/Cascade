@@ -149,6 +149,16 @@
 // object summary with a spread in it says so (`spread`), and a call's URL says
 // which argument, and which key of it, it was read from (`at`).
 //
+// webfacts/17 LETS THE BRIDGE WALK A WRAPPER CHAIN HOP BY HOP (review 2). A
+// call record inside a named function now carries what it hands on of that
+// function's parameters (`hands`, which also spells `options.url` passed as a
+// value) and which of them it reads at all (`reads`, `lib/reads.mjs`), so a URL
+// a hop drops is told apart from one it moves through a local. A method `fetch`
+// reads out of its options object says what can replace it (`overridable`), as
+// a config object's does. And a provider object, `{ provide: Base, useClass:
+// Replacement }`, prints a `provider` record wherever it is written, a class
+// decorator's argument included, with the keys the injection pack names.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -159,7 +169,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/16';
+const VERSION = 'webfacts/17';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -465,6 +475,9 @@ function walkState(packs) {
     // field set from `inject(T)` holds a T, and a T a library pack names as an
     // instance type is a client whose positional verbs this file can read.
     injectors: packs.flatMap((p) => p.injectors ?? []),
+    // WHAT A PROVIDER PUTS BEHIND A TOKEN (review 2, item 6): the keys of
+    // `{ provide: T, useClass: X }`, read wherever the object is written.
+    providerForms: packs.flatMap((p) => p.providers ?? []),
     componentDecorators: packs.flatMap((p) => p.componentClasses ?? []),
     libraries: packs.flatMap((p) => p.libraries ?? []),
     globalClients,

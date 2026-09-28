@@ -38,10 +38,45 @@ export const SERVER_PORT = Object.freeze({
 /** Keys that say an application's configuration is served from outside the tree. */
 const CONFIG_CLIENT_RE = /^spring\.cloud\.(?:config|nacos\.config|consul\.config|zookeeper\.config)\./;
 
-/** A `spring.config.import` that names a location, not a file on the classpath. */
-const REMOTE_IMPORT_RE = /(?:^|[,:\s])(?:configserver|nacos|consul|zookeeper|vault|aws-parameterstore|aws-secretsmanager|http|https):/;
+/**
+ * Keys that bring in configuration this reader does not follow (review 2, item
+ * 11): an import, even of a file on the classpath, another location, another
+ * file name. What such configuration sets is not read, so the port is not known.
+ */
+const UNFOLLOWED_KEYS = Object.freeze([
+  'spring.config.import', 'spring.config.location', 'spring.config.additional-location', 'spring.config.name',
+]);
+
+/** Keys that choose which profiles apply; with a placeholder in them, which files apply is not known. */
+const PROFILE_KEY_RE = /^spring\.profiles\.(?:active|include|group\..+)$/;
+
+/** What in one entry makes the application's configuration not fully read, or null. */
+function unfollowedOf(key, value) {
+  if (CONFIG_CLIENT_RE.test(`${key}.`)) return key.split('.').slice(0, 3).join('.');
+  if (UNFOLLOWED_KEYS.includes(key)) return key;
+  if (PROFILE_KEY_RE.test(key) && String(value).includes('${')) return `${key} (a placeholder)`;
+  return null;
+}
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** `spring.config.import[0]` and `spring.config.import.0` are the same key as `spring.config.import`. */
+const normalizeIndex = (key) => String(key).replace(/\[\d+\]$/, '').replace(/\.\d+$/, '');
+
+/**
+ * A Java source that loads configuration itself (`@PropertySource`), as one more
+ * record for its application: what that file sets is not read either.
+ * @param {string} filePath  the Java file, root-relative
+ * @param {string} text
+ * @returns {object|null}
+ */
+export function serverPortsOfJava(filePath, text) {
+  if (!/@PropertySource\b/.test(String(text))) return null;
+  const f = String(filePath).split('\\').join('/');
+  const at = f.lastIndexOf('/src/main/java/');
+  const app = at >= 0 ? `${f.slice(0, at)}/src/main/resources` : path.posix.dirname(f);
+  return { file: filePath, app, ports: [], unreadable: [], external: '@PropertySource' };
+}
 
 /** The application a configuration file belongs to: the path up to its `resources` directory. */
 function applicationOf(filePath) {
@@ -62,9 +97,10 @@ export function serverPortsOfFile(file) {
   const conditional = conditionalDocuments(file.path, entries);
   const out = { file: file.path, app: applicationOf(file.path), ports: [], unreadable: [], external: false };
   for (const e of entries) {
-    const key = relaxedKey(e.key);
-    if (CONFIG_CLIENT_RE.test(`${key}.`) || (key === 'spring.config.import' && REMOTE_IMPORT_RE.test(e.value))) {
-      out.external = true;
+    const key = relaxedKey(normalizeIndex(e.key));
+    const unfollowed = unfollowedOf(key, e.value);
+    if (unfollowed !== null) {
+      if (out.external === false) out.external = unfollowed;
       continue;
     }
     if (key !== SERVER_PORT.key) continue;
@@ -79,8 +115,13 @@ export function serverPortsOfFile(file) {
 function portsOfApplication(app, files) {
   const unreadable = files.flatMap((f) => f.unreadable.map((u) => `${f.file}:${u.line} (${u.raw})`));
   if (unreadable.length > 0) return { app, ports: null, why: `server.port is not a number the tree states at ${unreadable.join(', ')}` };
-  const external = files.filter((f) => f.external).map((f) => f.file);
-  if (external.length > 0) return { app, ports: null, why: `${external.join(', ')} takes the configuration from outside this tree` };
+  const external = files.filter((f) => f.external);
+  if (external.length > 0) {
+    return {
+      app, ports: null,
+      why: `${external.map((f) => `${f.file} (${f.external === true ? 'configuration from outside this tree' : f.external})`).join(', ')} brings in configuration this reader does not follow`,
+    };
+  }
   const declared = files.flatMap((f) => f.ports);
   const ports = new Set(declared.map((p) => p.port));
   // With no profile active, a document that sets nothing leaves Spring's default.

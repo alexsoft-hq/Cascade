@@ -117,6 +117,7 @@ function bucket(f, r) {
     case 'route': f.routes.push(r); break;
     case 'routeRef': f.routeRefs.push(r); break;
     case 'registration': f.registrations.push(r); break;
+    case 'provider': f.providers.push(r); break;
     case 'template': f.template = r; break;
     default: break;
   }
@@ -142,7 +143,7 @@ export function indexWebFacts(records) {
       f = {
         imports: [], exports: [], functions: new Map(), constants: new Map(),
         bindings: new Map(), classes: new Map(), objects: new Set(), assigns: [], calls: [], routes: [],
-        registrations: [], routeRefs: [], // a route or a list NAMED by name (RM67)
+        registrations: [], routeRefs: [], providers: [], // named routes (RM67), DI providers (review 2)
         // The calls that change the SCREEN rather than send a request (RM59).
         navigations: [],
         // `router.push(…)` on an imported name, and whether THIS file is the

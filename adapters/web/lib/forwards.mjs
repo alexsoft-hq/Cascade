@@ -23,7 +23,7 @@
 // wrapper, the other files. It says what this call passes on; whether that
 // reaches a request is the bridge's question.
 
-import { keyName } from './ast.mjs';
+import { keyName, patternNames } from './ast.mjs';
 
 /** The keys a method is written under in a config object, in the order the call reader tries them. */
 const METHOD_KEYS = ['method', 'type'];
@@ -44,6 +44,21 @@ export function paramIndexOf(node) {
 }
 
 /**
+ * Every name a parameter binds, to that parameter's position: `(a, { b, ...c })`
+ * gives a 0, b 1 and c 1. What a call READS of the parameters (`readsOf`) is
+ * asked of these, because a part of a parameter still carries what the caller
+ * put in it.
+ * @returns {Map<string,number>}
+ */
+export function paramOwnerOf(node) {
+  const out = new Map();
+  (node.params ?? []).forEach((p, i) => {
+    for (const n of patternNames(p)) if (!out.has(n)) out.set(n, i);
+  });
+  return out;
+}
+
+/**
  * The position of `name` among the enclosing NAMED function's own parameters,
  * or -1. A callback inside it that declares the same name has its own, and the
  * scope the name is found in is what tells the two apart.
@@ -52,6 +67,15 @@ function paramAt(env, name) {
   const fn = env.func;
   if (!fn || !fn.paramIndex || !fn.paramIndex.has(name)) return -1;
   return env.scope.find(name) === fn.paramScope ? fn.paramIndex.get(name) : -1;
+}
+
+/** `option.url` on a parameter: the parameter's position and the key, or null. */
+function memberOfParam(node, env) {
+  if (!node || (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression')) return null;
+  if (node.computed || !node.property || node.property.type !== 'Identifier') return null;
+  if (!node.object || node.object.type !== 'Identifier') return null;
+  const param = paramAt(env, node.object.name);
+  return param >= 0 ? { param, key: node.property.name } : null;
 }
 
 /** What one object argument hands on: its spreads, and the values of its keys. */
@@ -82,7 +106,12 @@ export function handsOf(node, env) {
     if (a.type === 'Identifier') {
       const param = paramAt(env, a.name);
       if (param >= 0) out.push({ param, arg, as: 'argument' });
-    } else if (a.type === 'ObjectExpression') handsInObject(a, arg, env, out);
+      return;
+    }
+    if (a.type === 'ObjectExpression') { handsInObject(a, arg, env, out); return; }
+    // `fetch(options.url, options)`: one key of a parameter, passed as the value.
+    const member = memberOfParam(a, env);
+    if (member !== null) out.push({ param: member.param, arg, as: 'member', key: member.key });
   });
   return out;
 }

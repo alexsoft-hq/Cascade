@@ -24,7 +24,7 @@ import {
   findViewResolvers, findXmlViewResolvers, findIdGenerators, findDbTypeDeclarations, looksLikeSpringBeansXml,
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
-import { serverPortsOfFile } from './server_ports.mjs';
+import { serverPortsOfFile, serverPortsOfJava } from './server_ports.mjs';
 import { builtinRegistry, RuleError } from './rules/registry.mjs';
 import { nestAppsOf, noteNestPackage, noteTypeScriptBackendFile, prismaProvidersOf } from './discover_nest.mjs';
 
@@ -799,6 +799,9 @@ function classifyJavaFile(d, f) {
     // Same rule, same reason: the count is what makes `cascade init` declare
     // the `mybatis-plus` framework pack.
     if (MYBATIS_PLUS_RE.test(text)) counts.mybatisPlusFiles += 1;
+    // …and configuration the code loads itself, which leaves the port unread.
+    const loaded = isTestPath(rel(absFile)) ? null : serverPortsOfJava(rel(absFile), text);
+    if (loaded !== null) d.serverPorts.push(loaded);
     return true;
   }
 

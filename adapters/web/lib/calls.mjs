@@ -19,6 +19,7 @@ import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from 
 import { isEngineCall, websquareSubmissionOf } from './websquare_calls.mjs';
 import { envSpellingOf, isEnvExpression } from './ast.mjs';
 import { handsOf, methodOverrideOf } from './forwards.mjs';
+import { readsOf } from './reads.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
 export const VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
@@ -409,7 +410,9 @@ function withPlace(url, summaries, urlSummary) {
  * `method` wins over, and `lib/forwards.mjs` says which spreads can do that.
  */
 function withOverride(method, node, env) {
-  if (!method || method.from !== 'config' || !method.value) return method;
+  // `fetch(u, { method: 'GET', ...o })` reads its method out of the options
+  // object too (`positional`), and is replaced the same way.
+  if (!method || (method.from !== 'config' && method.from !== 'positional') || !method.value) return method;
   const over = methodOverrideOf(node, env, method.value);
   return over === null ? method : { ...method, overridable: over };
 }
@@ -428,7 +431,23 @@ function noteForward(ctx, node, env, { isNew, callee, binding, summaries, line }
   if (hands.length === 0) return;
   const method = withOverride(methodOf(callee, summaries, null), node, env);
   if (!Array.isArray(rec.forwards)) rec.forwards = [];
-  rec.forwards.push({ line, callee, binding, method, hands });
+  const reads = readsOf(node, env);
+  rec.forwards.push({ line, callee, binding, method, hands, ...(reads ? { reads } : {}) });
+}
+
+/**
+ * WHAT A CALL PASSES ON of its named function's parameters, on its own record
+ * (review 2, item 2): the bridge walks a wrapper chain hop by hop, and a URL
+ * reaches the sink only when every hop hands on the parameter it is in. Left
+ * off outside a named function, where there are no parameters to pass.
+ */
+function withHands(rec, node, env) {
+  if (!env.func) return rec;
+  const hands = handsOf(node, env);
+  const reads = readsOf(node, env);
+  if (hands.length > 0) rec.hands = hands;
+  if (reads) rec.reads = reads;
+  return rec;
 }
 
 /**
@@ -485,7 +504,7 @@ function httpCallRecord(ctx, node, env, { isNew, callee, line, routeArg, summari
   // frontend's ordinary call records do not each grow an empty list.
   const refs = fnRefsOf(ctx, node.arguments, env);
   if (refs.length > 0) rec.fnRefs = refs;
-  return rec;
+  return withHands(rec, node, env);
 }
 
 /**

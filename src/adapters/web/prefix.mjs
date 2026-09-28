@@ -34,7 +34,7 @@ import {
 } from './shared.mjs';
 import { sortKey } from './symbols.mjs';
 import {
-  awayOf, guessOf, readBase, readsOf,
+  awayOf, buildModesOf, guessOf, readBase, readsOf,
 } from './base_url.mjs';
 
 // Where it has always been exported from, so every importer still finds it.
@@ -236,9 +236,11 @@ function baseUrlValue(ctx, summary, pkg, assumed = false) {
   // ABSOLUTE only when every build that gives this path spells a host: a dev
   // proxy never sees an absolute address, and one relative build still goes
   // through it.
+  // The builds the chosen value holds in, when not every one (review 2, item 4).
+  const modes = buildModesOf(ctx.configFor(pkg), mine);
   return {
     state: 'known', value, values: paths, ambiguous, absolute: mine.every((o) => o.host !== null),
-    ...(guess ? { guess } : {}), ...(away ? { away } : {}), ...reads,
+    ...(guess ? { guess } : {}), ...(away ? { away } : {}), ...(modes ? { modes } : {}), ...reads,
   };
 }
 
@@ -289,7 +291,10 @@ function derivedPrefix(ctx, base, pkg) {
   if (base.state !== 'known' || base.ambiguous) return null;
   // A value that rests on a default or on a deployment's host is still READ
   // from the source, so it is derived; the guess it rests on goes with it.
-  const guess = base.guess ? { guess: base.guess } : base.away ? { away: base.away } : {};
+  const guess = {
+    ...(base.guess ? { guess: base.guess } : base.away ? { away: base.away } : {}),
+    ...(base.modes ? { modes: base.modes } : {}),
+  };
   if (base.absolute) return { value: base.value, from: 'derived', candidates: [], ...guess };
   const p = throughProxy(ctx, base.value, pkg);
   return p.ok ? { value: p.value, from: 'derived', candidates: [], ...guess } : null;
