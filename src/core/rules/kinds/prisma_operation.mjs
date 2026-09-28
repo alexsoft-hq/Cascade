@@ -36,6 +36,11 @@ const LINKS = Object.freeze(['set', 'clear', 'replace']);
 const IDLE_LITERALS = Object.freeze(['false', '[]']);
 const IDLE_ON = Object.freeze(['any', 'one-to-one', 'many-to-many']);
 const IDLE_DROPS = Object.freeze(['all', 'writes']);
+// The kinds of relation a nested write's `lookup` list names, as seen from the
+// model it is written on: the list side of a one-to-many, its to-one side (the
+// key in this model), a one-to-one with the key here or in the other model, and
+// an implicit many-to-many.
+const RELATION_KINDS = Object.freeze(['one-to-many-list', 'one-to-many-one', 'one-to-one-here', 'one-to-one-there', 'many-to-many']);
 const NAME = /^[$_A-Za-z][$_A-Za-z0-9]*$/;
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
 const isObject = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
@@ -92,11 +97,31 @@ function idleErrors(at, idle) {
   return idle.flatMap((e, i) => idleEntryErrors(`${at}.idle[${i}]`, e));
 }
 
-/** One nested write: what it does to the related rows, whether it sets or clears the link, how its value is read, and which literal values leave it idle. */
+// Whether the rows a write hangs its nested writes from are made by it, or were there before.
+const ROW_STATES = Object.freeze(['new', 'existing']);
+const kindsOrErrors = (x, at) => (x === undefined || (Array.isArray(x) && x.every((k) => RELATION_KINDS.includes(k))) ? [] : [`${at} must list kinds from ${RELATION_KINDS.join(', ')}`]);
+
+/** A nested write's `lookup`: the kinds of relation on which it first finds the rows its value names (`named`), and the rows linked to the one it hangs from (`linked`); and whether the rows it writes nested writes under are new (`nests`). */
+function lookupErrors(at, w) {
+  const errors = w.nests === undefined || ROW_STATES.includes(w.nests) ? [] : [`${at}.nests must be one of ${ROW_STATES.join(', ')}`];
+  if (w.lookup === undefined) return errors;
+  if (!isObject(w.lookup)) return [...errors, `${at}.lookup must be an object`];
+  const keys = unknownKeys(w.lookup, ['named', 'linked']).map((k) => `${at}.lookup has an unknown key "${k}"`);
+  return [...errors, ...keys, ...kindsOrErrors(w.lookup.named, `${at}.lookup.named`), ...kindsOrErrors(w.lookup.linked, `${at}.lookup.linked`)];
+}
+
+/** params.argumentRows: the arguments whose rows are new or were there before, for the nested writes under them. */
+function argumentRowsErrors(x) {
+  if (x === undefined) return [];
+  if (!isObject(x) || !Object.values(x).every((v) => ROW_STATES.includes(v))) return [`params.argumentRows must map an argument to one of ${ROW_STATES.join(', ')}`];
+  return [];
+}
+
+/** One nested write: what it does to the related rows, whether it sets or clears the link, how its value is read, which literal values leave it idle, and where it looks rows up first. */
 function nestedWriteErrors(name, w) {
   const at = `params.nestedWrites.${name}`;
   if (!NAME.test(name) || !isObject(w)) return [`params.nestedWrites has ${JSON.stringify(name)}, which is not a nested write`];
-  const errors = [...unknownKeys(w, ['rows', 'link', 'value', 'arguments', 'idle']).map((k) => `${at} has an unknown key "${k}"`), ...idleErrors(at, w.idle)];
+  const errors = [...unknownKeys(w, ['rows', 'link', 'value', 'arguments', 'idle', 'lookup', 'nests']).map((k) => `${at} has an unknown key "${k}"`), ...idleErrors(at, w.idle), ...lookupErrors(at, w)];
   if (!ROWS.includes(w.rows)) errors.push(`${at}.rows must be one of ${ROWS.join(', ')}`);
   if (w.link !== undefined && !LINKS.includes(w.link)) errors.push(`${at}.link must be one of ${LINKS.join(', ')}`);
   if (w.value !== undefined && !ROLES.includes(w.value)) errors.push(`${at}.value must be one of ${ROLES.join(', ')}`);
@@ -135,12 +160,12 @@ function relationParamErrors(params) {
   const nested = params.nestedWrites === undefined ? [] : isObject(params.nestedWrites)
     ? Object.entries(params.nestedWrites).flatMap(([name, w]) => nestedWriteErrors(name, w)) : ['params.nestedWrites must be an object'];
   const filters = [...namesOrErrors(params.relationFilters, 'params.relationFilters'), ...namesOrErrors(params.relationNullFilters, 'params.relationNullFilters')];
-  return [...filters, ...relationCountErrors(params.relationCount), ...nested, ...extensionsErrors(params.extensions)];
+  return [...filters, ...relationCountErrors(params.relationCount), ...nested, ...extensionsErrors(params.extensions), ...argumentRowsErrors(params.argumentRows)];
 }
 
 function validateParams(params) {
   if (!isObject(params)) return ['params must be an object'];
-  const known = ['arguments', 'operations', 'combinators', 'transaction', 'relationFilters', 'relationNullFilters', 'relationCount', 'nestedWrites', 'extensions'];
+  const known = ['arguments', 'argumentRows', 'operations', 'combinators', 'transaction', 'relationFilters', 'relationNullFilters', 'relationCount', 'nestedWrites', 'extensions'];
   const errors = unknownKeys(params, known).map((k) => `params has an unknown key "${k}"`);
   errors.push(...rolesErrors(params.arguments ?? {}, 'params.arguments'), ...namesOrErrors(params.combinators, 'params.combinators'));
   errors.push(...transactionErrors(params.transaction), ...relationParamErrors(params));
@@ -171,6 +196,7 @@ function readingOf(p) {
   return {
     roles: p.arguments ?? {}, combinators: p.combinators ?? [], relationFilters: p.relationFilters ?? [], relationNullFilters: p.relationNullFilters ?? [],
     relationCount: p.relationCount ? { key: p.relationCount.key, arguments: p.relationCount.arguments ?? {} } : null, nestedWrites: p.nestedWrites ?? {},
+    argumentRows: p.argumentRows ?? {},
   };
 }
 

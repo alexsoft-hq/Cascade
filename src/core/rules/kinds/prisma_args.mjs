@@ -27,7 +27,14 @@
 // `disconnect: false` on a one-to-one, `delete: []`, which still looks the
 // rows up) is not followed when it does nothing on every relation, else is
 // marked with the entries that apply (`idle`), for the bridge to decide on the
-// relation it is; a `replace` link (`set`) handed `[]` only clears. A computed
+// relation it is; a `replace` link (`set`) handed `[]` only clears. Each entry
+// carries the kinds of relation on which the operation looks the related rows
+// up before it writes (`lookup`, from the pack), for the bridge, and whether
+// the row it hangs from is new (`parentRows`): nothing is linked to a row a
+// create makes yet, so there are no linked rows to look up under it. Which
+// rows are new is the statement's (an insert makes its row), an argument's
+// (`argumentRows`: an upsert's create and update) or a nested write's
+// (`nests`: a nested create's rows are new). A computed
 // field of the client's extension (`computed`, by model) in a projection reads
 // the fields it needs; where a spread may add or replace the model's computed
 // fields (`open`), what a field it may compute needs is not known, and said.
@@ -53,8 +60,15 @@ export function fieldIndex(model) {
 function effects(statement, model, shared) {
   return {
     statement, model, idx: fieldIndex(model), reads: new Set(), writes: new Set(), mayReads: new Set(), relations: new Set(), follow: [], wholeRow: false,
-    runtimeOnly: shared.runtimeOnly, unknownKeys: shared.unknownKeys, prefix: shared.prefix, cfg: shared.cfg, rule: shared.rule,
+    runtimeOnly: shared.runtimeOnly, unknownKeys: shared.unknownKeys, prefix: shared.prefix, cfg: shared.cfg, rule: shared.rule, rows: shared.rows ?? 'existing',
   };
+}
+
+/** The effects the writes under one argument go to: the same, with the rows they hang from as the pack's `argumentRows` says (an upsert's create makes its row). */
+function rowsUnder(fx, key) {
+  const rows = Object.hasOwn(fx.cfg.argumentRows ?? {}, key) ? fx.cfg.argumentRows[key] : fx.rows;
+  // Every collection is shared, so what the view records is the call's.
+  return rows === fx.rows ? fx : { ...fx, rows };
 }
 
 /** Where in the argument a key sits, for naming it: `select.email`, `include.posts.title`. */
@@ -143,14 +157,15 @@ export function readGiven(given, roles, fx) {
   for (const [key, value] of Object.entries(given)) {
     const role = roles[key];
     if (role === undefined) { fx.unknownKeys.add(`${fx.prefix}${key}`); continue; }
-    if (role !== 'none') readArgument(role, value, fx, key);
+    if (role !== 'none') readArgument(role, value, rowsUnder(fx, key), key);
   }
 }
 
 /** A relation's effects, as an entry of `fx.follow`: `how` it is reached, the `access` its rows get, and whether a run-time value decides it (`may`). */
 function follow(fx, key, target, how, extra = {}) {
-  const child = effects(fx.statement, target, { runtimeOnly: fx.runtimeOnly, unknownKeys: fx.unknownKeys, prefix: `${fx.prefix}${key}.`, cfg: fx.cfg, rule: fx.rule });
-  fx.follow.push({ relation: key, target: target.name, how, access: 'read', ...extra, fx: child });
+  const { nests, ...entry } = extra;
+  const child = effects(fx.statement, target, { runtimeOnly: fx.runtimeOnly, unknownKeys: fx.unknownKeys, prefix: `${fx.prefix}${key}.`, cfg: fx.cfg, rule: fx.rule, rows: nests ?? fx.rows });
+  fx.follow.push({ relation: key, target: target.name, how, access: 'read', ...entry, parentRows: fx.rows, fx: child });
   return child;
 }
 
@@ -241,7 +256,7 @@ function nestedEntry(op, spec, x) {
   const idle = (spec.idle ?? []).filter((e) => idleMatches(e, x)).map((e) => ({ on: e.on ?? 'any', drops: e.drops ?? 'all' }));
   if (idle.length > 0 && idle[0].on === 'any' && idle[0].drops === 'all') return null;
   const link = spec.link === 'replace' && literalOf(x) === '[]' ? 'clear' : spec.link;
-  return { op, access: spec.rows === 'none' ? 'read' : spec.rows, ...(link ? { link } : {}), ...(idle.length > 0 ? { idle } : {}) };
+  return { op, access: spec.rows === 'none' ? 'read' : spec.rows, ...(link ? { link } : {}), ...(idle.length > 0 ? { idle } : {}), ...(spec.lookup ? { lookup: spec.lookup } : {}), ...(spec.nests ? { nests: spec.nests } : {}) };
 }
 
 /** A relation in a write: each nested operation (`create`, `connect`, `update`, ...) as the pack describes it; a value held in a variable MAY write it, in a way only the running program knows. */
@@ -301,7 +316,7 @@ function argIsFullyKnown(arg) {
  * relation (absent, none is followed).
  */
 export function readCall(op, args, model, cfg, rule) {
-  const fx = effects(op.statement, model, { runtimeOnly: new Set(), unknownKeys: new Set(), prefix: '', cfg, rule });
+  const fx = effects(op.statement, model, { runtimeOnly: new Set(), unknownKeys: new Set(), prefix: '', cfg, rule, rows: op.statement === 'insert' ? 'new' : 'existing' });
   const arg = args[0];
   if (arg && arg.k !== 'obj' && arg.k !== 'none') fx.runtimeOnly.add('arguments');
   if (arg && (arg.spread || arg.computed)) fx.runtimeOnly.add('arguments');

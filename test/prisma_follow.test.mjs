@@ -55,6 +55,7 @@ const SCHEMA = readPrismaSchema([
   '}',
   'model Badge {',
   '  id     Int   @id',
+  '  label  String',
   '  teamId Int?  @unique',
   '  team   Team? @relation(fields: [teamId], references: [id])',
   '}',
@@ -465,4 +466,86 @@ test('a computed field named like a real one reads the real one and what it need
     '    await x.user.findMany({ select: { id: true } });',
   ]);
   assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [read]', 'READS EXACT User.email', 'READS EXACT User.id'], 'measured: SELECT User.id, User.email');
+});
+
+// ---------------------------------------------------------------------------
+// a nested write that looks the related rows up before it writes
+//
+// Measured on Prisma 6.19.0 over SQLite (.oss-work/rm67/y3/harness/measured-y3.jsonl):
+// on the list side of a one-to-many, set, disconnect, delete, deleteMany,
+// update, updateMany, upsert and connectOrCreate first send
+// `SELECT Post.id, Post.authorId FROM Post WHERE ... AND Post.authorId IN (?)`;
+// on a many-to-many they read `_TagToUser.B, _TagToUser.A` and then `Tag.id`;
+// on a one-to-one whose key is in the other table they read `Badge.id,
+// Badge.userId`, create included; on the to-one side of a one-to-many
+// (`Post.author`) update, upsert, delete and disconnect read `User.id`. A
+// create on the list side, a createMany and a connect on the list side send
+// no SELECT on the related table.
+// ---------------------------------------------------------------------------
+
+test('nested_write_lookup_reads_the_related_key_before_it_writes', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { deleteMany: { title: t } } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { updateMany: { where: { published: true }, data: { title: t } } } }, select: { id: true } });',
+    '    await this.prisma.team.update({ where: { id }, data: { members: { set: [{ id: 1 }] } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { tags: { update: [{ where: { id: 1 }, data: { name: t } }] } }, select: { id: true } });',
+    '    await this.prisma.team.update({ where: { id }, data: { badge: { update: { label: t } } }, select: { id: true } });',
+    '    await this.prisma.member.update({ where: { id }, data: { team: { update: { name: t } } }, select: { id: true } });',
+  ]);
+  const has = (n, ...want) => { for (const w of want) assert.ok(edgesOf(sid(n)).includes(w), `statement ${n}: ${w}`); };
+  has(0, 'EXECUTES EXACT Post [read] via User.posts', 'EXECUTES EXACT Post [delete] via User.posts', 'READS EXACT Post.id via User.posts', 'READS EXACT Post.authorId via User.posts', 'READS EXACT Post.title via User.posts');
+  has(1, 'EXECUTES EXACT Post [read] via User.posts', 'EXECUTES EXACT Post [write] via User.posts', 'READS EXACT Post.id via User.posts', 'WRITES EXACT Post.title via User.posts');
+  has(2, 'EXECUTES EXACT Member [read] via Team.members', 'EXECUTES EXACT Member [write] via Team.members', 'READS EXACT Member.id via Team.members', 'WRITES EXACT Member.teamId via Team.members');
+  has(3, 'EXECUTES EXACT Tag [read] via User.tags', 'EXECUTES EXACT Tag [write] via User.tags', 'EXECUTES EXACT _TagToUser [read] via User.tags', 'READS EXACT Tag.id via User.tags', 'READS EXACT _TagToUser.A via User.tags');
+  has(4, 'EXECUTES EXACT Badge [read] via Team.badge', 'EXECUTES EXACT Badge [write] via Team.badge', 'READS EXACT Badge.id via Team.badge', 'READS EXACT Badge.teamId via Team.badge', 'WRITES EXACT Badge.label via Team.badge');
+  has(5, 'EXECUTES EXACT Team [read] via Member.team', 'EXECUTES EXACT Team [write] via Member.team', 'READS EXACT Team.id via Member.team', 'READS EXACT Member.teamId via Member.team');
+});
+
+test('a nested write that sends no lookup draws no read of the related table: a create or createMany on the list side', () => {
+  const { edgesOf, sid } = run([
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { create: [{ title: t, published: true }] } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { posts: { createMany: { data: [{ title: t, published: true }] } } }, select: { id: true } });',
+    '    await this.prisma.team.update({ where: { id }, data: { badge: { create: { label: t } } }, select: { id: true } });',
+  ]);
+  for (const n of [0, 1]) {
+    assert.ok(!edgesOf(sid(n)).includes('EXECUTES EXACT Post [read] via User.posts'), `statement ${n}: INSERT only`);
+    assert.ok(!edgesOf(sid(n)).includes('READS EXACT Post.id via User.posts'), `statement ${n}`);
+  }
+  assert.ok(edgesOf(sid(2)).includes('EXECUTES EXACT Badge [read] via Team.badge'), 'a one-to-one create looks up the row that held the link, to clear it');
+  assert.ok(edgesOf(sid(2)).includes('READS EXACT Badge.id via Team.badge'));
+});
+
+test('a create on the side that holds the key looks the old related row up on a one-to-one, and not on the to-one side of a one-to-many', () => {
+  // Measured: badge.update({ data: { user: { create } } }) sends SELECT User.id ... User.id IN (?) after the INSERT;
+  // post.update({ data: { author: { create } } }) sends the INSERT and the UPDATE of Post alone.
+  const { edgesOf, sid } = run([
+    '    await this.prisma.badge.update({ where: { id }, data: { team: { create: { name: t } } }, select: { id: true } });',
+    '    await this.prisma.member.update({ where: { id }, data: { team: { create: { name: t } } }, select: { id: true } });',
+  ]);
+  assert.ok(edgesOf(sid(0)).includes('EXECUTES EXACT Team [read] via Badge.team'));
+  assert.ok(!edgesOf(sid(1)).includes('EXECUTES EXACT Team [read] via Member.team'));
+  assert.ok(edgesOf(sid(1)).includes('EXECUTES EXACT Team [write] via Member.team'));
+});
+
+test('a lookup of the rows linked to this one is not sent under a create, an upsert\'s create included; a lookup of the rows the value names always is', () => {
+  // Measured: user.create({ data: { badge: { create } } }) sends two INSERTs and no SELECT on Badge;
+  // user.create({ data: { tags: { connect } } }) sends SELECT Tag.id and the INSERT into _TagToUser, and
+  // no read of _TagToUser; user.update with tags connect reads _TagToUser no more than that.
+  const { edgesOf, sid } = run([
+    '    await this.prisma.team.create({ data: { name: t, badge: { create: { label: t } } }, select: { id: true } });',
+    '    await this.prisma.user.create({ data: { email: t, tags: { connect: [{ id: 1 }] } }, select: { id: true } });',
+    '    await this.prisma.user.update({ where: { id }, data: { tags: { connect: [{ id: 1 }] } }, select: { id: true } });',
+    '    await this.prisma.team.upsert({ where: { id }, create: { name: t }, update: { badge: { create: { label: t } } }, select: { id: true } });',
+    '    await this.prisma.team.upsert({ where: { id }, create: { name: t, badge: { create: { label: t } } }, update: { name: t }, select: { id: true } });',
+    '    await this.prisma.post.update({ where: { id }, data: { author: { create: { email: t, profile: { create: {} } } } }, select: { id: true } });',
+    '    await this.prisma.post.update({ where: { id }, data: { author: { update: { profile: { create: {} } } } }, select: { id: true } });',
+  ]);
+  assert.ok(!edgesOf(sid(0)).some((e) => e.startsWith('EXECUTES') && e.includes('Badge [read]')), 'a new team has no badge to look up');
+  assert.ok(edgesOf(sid(1)).includes('EXECUTES EXACT Tag [read] via User.tags'), 'the tag connect names is found');
+  assert.ok(!edgesOf(sid(1)).includes('EXECUTES EXACT _TagToUser [read] via User.tags'));
+  assert.ok(!edgesOf(sid(2)).includes('EXECUTES EXACT _TagToUser [read] via User.tags'), 'a connect finds the rows it names, not the ones linked already');
+  assert.ok(edgesOf(sid(3)).includes('EXECUTES EXACT Badge [read] via Team.badge'), 'the update of an upsert works on a team that is there, as its other writes are drawn');
+  assert.ok(!edgesOf(sid(4)).some((e) => e.includes('Badge [read]')), 'the create of an upsert makes a team with no badge');
+  assert.ok(!edgesOf(sid(5)).includes('EXECUTES EXACT Profile [read] via User.profile'), 'a nested create\'s row is new too: the user it makes has no profile yet');
+  assert.ok(edgesOf(sid(6)).includes('EXECUTES EXACT Profile [read] via User.profile'), 'a nested update\'s row is there: its profile is looked up, to clear its link');
 });

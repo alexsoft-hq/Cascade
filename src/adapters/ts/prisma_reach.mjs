@@ -26,9 +26,17 @@
 // filter is (prisma-engines, query-builders/sql-query-builder/src/filter/
 // visitor.rs, visit_one_relation_is_null_filter). A nested write the rule
 // marked idle gives what the first entry that applies to this relation leaves:
-// nothing (`drops: all`), or the lookup of the rows alone (`drops: writes`: the
-// related table read, the join, and the related rows' key, as Prisma selects
-// them before it finds nothing to change).
+// nothing (`drops: all`), or the lookup of the rows alone (`drops: writes`).
+//
+// A LOOKUP is the SELECT Prisma sends before a nested write changes rows it has
+// to find first: the related table read, its key, the join's columns, and on a
+// many-to-many the implicit table. A write finds the rows its value names
+// (`named`: a connect's), or the rows linked to the one it hangs from
+// (`linked`: a delete's, through the implicit table on a many-to-many); there
+// are none linked to a row the call is creating, so no linked lookup is sent
+// under a create. Which operations send one on which kind of relation is the
+// pack's (`lookup`, measured on Prisma 6.19.0: a create on the
+// list side sends an INSERT alone, a delete there first selects the rows).
 //
 // ONE EDGE PER TABLE AND ACCESS, as the SQL lane gives one per table and access
 // a statement has (adapters/sql/lineage.py): a call that reads a table and
@@ -122,13 +130,43 @@ function followAll(c, a, parent, fx, grade, unresolved) {
 function followOne(c, a, { name, rel, f, lookupOnly }, g, unresolved) {
   const evidence = { via: 'prisma', operation: a.operation, relation: name };
   if (localNullCheck(c, rel, f, g, evidence)) return;
-  c.table(rel.targetTable, lookupOnly ? 'read' : f.access, g, evidence);
+  if (!lookupOnly) c.table(rel.targetTable, f.access, g, evidence);
   for (const cid of rel.joinReads) c.column('READS', cid, g, evidence);
-  // A lookup changes no link: it reads the implicit table, as a write that names none does.
-  linkEdges(c, rel, lookupOnly ? { link: null } : f, g, evidence);
-  if (lookupOnly) for (const cid of rel.targetKey) c.column('READS', cid, g, evidence);
+  if (!lookupOnly) linkEdges(c, rel, f, g, evidence);
+  lookupEdges(c, rel, lookupOf(f, rel, lookupOnly), g, evidence);
   modelColumns(c, a.catalog, rel.target, f.fx, g, evidence);
   followAll(c, a, rel.target, f.fx, g, unresolved);
+}
+
+/**
+ * The kind of a relation as the pack's `lookup` lists name it, from the side it
+ * is followed from; null when the schema does not say whether it is one-to-one.
+ */
+function relationKind(rel) {
+  if (rel.joinTable) return 'many-to-many';
+  if (typeof rel.oneToOne !== 'boolean') return null;
+  if (rel.inline) return rel.oneToOne ? 'one-to-one-here' : 'one-to-many-one';
+  return rel.oneToOne ? 'one-to-one-there' : 'one-to-many-list';
+}
+
+/**
+ * The lookup a nested write sends on this relation: `{named, linked}`, whether
+ * it finds the rows its value names, and the rows linked to the one it hangs
+ * from (none are, under a create). A write left with its lookup alone (`drops:
+ * writes`) finds the linked rows.
+ */
+function lookupOf(f, rel, lookupOnly) {
+  const kind = relationKind(rel);
+  const linked = (lookupOnly || (f.lookup?.linked ?? []).includes(kind)) && f.parentRows !== 'new';
+  return { named: (f.lookup?.named ?? []).includes(kind), linked };
+}
+
+/** The SELECT a nested write sends to find the related rows: their table and key, and the implicit table when it finds the linked ones on a many-to-many. */
+function lookupEdges(c, rel, { named, linked }, g, evidence) {
+  if (!named && !linked) return;
+  c.table(rel.targetTable, 'read', g, evidence);
+  if (rel.joinTable && linked) c.table(rel.joinTable, 'read', g, evidence);
+  for (const cid of rel.targetKey) c.column('READS', cid, g, evidence);
 }
 
 /**

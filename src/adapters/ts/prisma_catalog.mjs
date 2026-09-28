@@ -216,7 +216,7 @@ function relationJoin(key, r, ids) {
   const other = r.other.map((f) => ids.columns.get(`${r.target.name}.${f}`));
   if ([...own, ...other].some((x) => !x)) return { ok: false, why: 'its fields or references name a field that is not a column' };
   const link = r.holder === 'self' ? { table: ids.tables.get(model), columns: own } : { table: targetTable, columns: other };
-  return { ok: true, target: r.target, targetTable, joinTable: null, joinReads: [...own, ...other], link, inline: r.holder === 'self', oneToOne: r.oneToOne === true };
+  return { ok: true, target: r.target, targetTable, joinTable: null, joinReads: [...own, ...other], link, inline: r.holder === 'self', oneToOne: r.oneToOne ?? null };
 }
 
 function newStats(schema, sql) {
