@@ -2471,7 +2471,7 @@
    ]
   },
   "src/cli/commands/analyze/lanes.mjs": {
-   "maxLines": 64,
+   "maxLines": 57,
    "maxBranches": 19,
    "longest": "laneRunners",
    "branchiest": "laneRunners",
@@ -2481,8 +2481,8 @@
     "assembleAll",
     "assembleAll/1",
     "catalog",
-    "catalogWorkerArgs",
     "diag",
+    "fileOf",
     "java",
     "laneRunners",
     "lineage",
@@ -2497,7 +2497,6 @@
     "readOpenApiDocs",
     "runLanes",
     "runLanes/1",
-    "runLanes/2",
     "ts",
     "tsList",
     "tsList/1",
@@ -3003,10 +3002,15 @@
    "longest": "mybatisPlusOptions",
    "branchiest": "whichJavaLanes",
    "functions": [
+    "catalogLaneInputs",
+    "ddlCatalog",
+    "ddlCatalog/1",
     "has",
     "has/1",
     "jpaOptions",
     "mybatisPlusOptions",
+    "read",
+    "snapshotCatalog",
     "whichJavaLanes"
    ]
   },
@@ -3062,6 +3066,8 @@
     "baseWebInputsOf/1",
     "baseWebInputsOf/2",
     "catalog",
+    "catalogInputsOf",
+    "catalogInputsOf/1",
     "declinedState",
     "dirtyEntries",
     "dirtyEntries/1",
@@ -3101,7 +3107,6 @@
     "runLanes/1",
     "runLanes/2",
     "runLanes/3",
-    "runLanes/4",
     "runpy",
     "stale",
     "toRel",
@@ -4379,7 +4384,7 @@
   },
   "src/core/overlay.mjs": {
    "maxLines": 69,
-   "maxBranches": 29,
+   "maxBranches": 28,
    "longest": "overlayGraph",
    "branchiest": "classifyDirtyFiles",
    "functions": [
@@ -4389,6 +4394,7 @@
     "classifyDirtyFiles/2",
     "columnsFrom",
     "constructor",
+    "ddlFilesOf",
     "endpointsFrom",
     "endpointsReachedFrom",
     "isTemplateFileOf",
