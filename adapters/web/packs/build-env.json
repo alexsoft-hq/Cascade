@@ -1,0 +1,63 @@
+{
+  "pack": "build-env",
+  "why": "A frontend rarely writes its server's address as one literal. It reads an environment value (`process.env.X`, `import.meta.env.X`), often with a literal to fall back on (`X || 'http://localhost:8080/api'`), and what that value holds is decided by the BUILD: which `.env` files the build tool reads, in which order, for which mode. That is each tool's own documented behaviour, not a project's habit, so it is declared here and the web lane reads it: a value is what the file this tool reads last for that mode says, and a fallback literal is what runs only where no such file sets the name. The same goes for the hosts that mean this machine: an absolute address on one of them is a backend's development server, whatever port it names, and not another deployable.",
+  "localHosts": ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"],
+  "reading": "A tool is chosen by the first row whose `dependencies` the package.json names (dependencies or devDependencies); none named means `default`. `files` is lowest precedence first, with `{mode}` the build mode: for one mode, the LAST file in the list that sets a name gives its value. `modes` are the builds the tool makes with no flag; `customModes` says whether a `.env.<mode>` file names one more.",
+  "tools": [
+    {
+      "name": "next",
+      "dependencies": ["next"],
+      "files": [".env", ".env.{mode}", ".env.local", ".env.{mode}.local"],
+      "modes": ["development", "production"],
+      "customModes": false,
+      "source": "Next.js loads .env.$(NODE_ENV).local, .env.local, .env.$(NODE_ENV) and .env, and the first one that sets a name wins; NODE_ENV is development under `next dev` and production under `next build`"
+    },
+    {
+      "name": "create-react-app",
+      "dependencies": ["react-scripts"],
+      "files": [".env", ".env.{mode}", ".env.local", ".env.{mode}.local"],
+      "modes": ["development", "production"],
+      "customModes": false,
+      "source": "react-scripts config/env.js reads .env.{NODE_ENV}.local, .env.local, .env.{NODE_ENV} and .env in that order and never overrides a name already set; `start` builds development and `build` builds production, and there is no other mode"
+    },
+    {
+      "name": "ngx-env",
+      "dependencies": ["@ngx-env/builder"],
+      "files": [".env", ".env.local", ".env.{mode}", ".env.{mode}.local"],
+      "modes": ["development", "production"],
+      "customModes": true,
+      "source": "@ngx-env/builder gives the Angular CLI the dotenv files Vite reads, in Vite's order"
+    },
+    {
+      "name": "vite",
+      "dependencies": ["vite"],
+      "files": [".env", ".env.local", ".env.{mode}", ".env.{mode}.local"],
+      "modes": ["development", "production"],
+      "customModes": true,
+      "source": "Vite's loadEnv reads .env, .env.local, .env.[mode] and .env.[mode].local, a later file overriding an earlier one; `vite` serves development, `vite build` builds production, and `--mode` names any other"
+    },
+    {
+      "name": "vue-cli",
+      "dependencies": ["@vue/cli-service"],
+      "files": [".env", ".env.local", ".env.{mode}", ".env.{mode}.local"],
+      "modes": ["development", "production"],
+      "customModes": true,
+      "source": "Vue CLI loads .env.[mode].local, .env.[mode], .env.local and .env and keeps the first value a name gets; `serve` is development, `build` is production, and `--mode` names any other"
+    },
+    {
+      "name": "angular-cli",
+      "dependencies": ["@angular/cli", "@angular-devkit/build-angular"],
+      "files": [],
+      "modes": ["development", "production"],
+      "customModes": false,
+      "source": "the Angular CLI reads no .env file: configuration is the environment.ts file a build configuration names"
+    }
+  ],
+  "default": {
+    "name": "dotenv-modes",
+    "files": [".env", ".env.local", ".env.{mode}", ".env.{mode}.local"],
+    "modes": ["development", "production"],
+    "customModes": true,
+    "source": "a package whose build tool none of the rows above names is read by the convention Vite and Vue CLI share, which is also what this lane read before the tools were told apart"
+  }
+}

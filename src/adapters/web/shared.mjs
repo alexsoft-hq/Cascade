@@ -23,6 +23,17 @@
  */
 export { normalizeUrlPath as normalizeUrl, escapeRe } from '../http_routes.mjs';
 
+/**
+ * A base URL or a proxy context with one leading slash and no trailing one:
+ * the spelling a PREFIX is compared in, where `''` means no prefix at all.
+ */
+export function normalizeTail(v) {
+  let s = String(v ?? '').trim();
+  if (s === '' || s === '/') return '';
+  if (!s.startsWith('/')) s = `/${s}`;
+  return s.endsWith('/') ? s.slice(0, -1) : s;
+}
+
 /** Ascending string order, and the only comparator in this directory. */
 export const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 

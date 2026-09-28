@@ -6,8 +6,12 @@
 //   declared     the profile's `gatewayRoutes` says which front-end prefix maps
 //                onto which back-end one, and which service answers it
 //   derived      the base URL is in the source (a literal, an env value, an
+//                env value's default, every branch of a conditional, an
 //                absolute address) and a dev-server proxy rule explains what of
-//                it reaches the server
+//                it reaches the server. What each of those holds per build is
+//                base_url.mjs's answer; a value that rests on a default literal
+//                or on a host that is not this machine is still derived, and
+//                carries that `guess`, which grades its edges HEURISTIC
 //   auto         nothing states it, so every candidate is matched against the
 //                routes this pack serves and the one that hits most wins. A
 //                guess, and every edge through it is HEURISTIC
@@ -16,8 +20,8 @@
 // its paths from the application root, so its prefix is the empty string.
 //
 // It also owns the package table those rules read from — which directory each
-// file belongs to, and what that package's `.env` files, proxy rules and path
-// aliases say.
+// file belongs to, and what that package's `.env` files, proxy rules, path
+// aliases and build dependencies say.
 //
 // WHAT IT MUST NEVER KNOW ABOUT: the fact stream's calls, the screens, the
 // graph. It is handed the routes this pack serves as two plain collections and
@@ -25,8 +29,14 @@
 // them, and it looks at nothing else.
 
 import { gatewayRouteOf } from '../../core/profile.mjs';
-import { cmp, configDirOf, normalizePosix, normalizeUrl } from './shared.mjs';
+import {
+  cmp, configDirOf, normalizePosix, normalizeTail, normalizeUrl,
+} from './shared.mjs';
 import { sortKey } from './symbols.mjs';
+import { guessOf, readBase, readsOf } from './base_url.mjs';
+
+// Where it has always been exported from, so every importer still finds it.
+export { normalizeTail };
 
 /** The mode whose value wins when two .env files disagree and nothing else decides. */
 const PREFERRED_MODE = 'development';
@@ -50,18 +60,11 @@ export const WEB_PREFIX_BASIS = Object.freeze({
  */
 export const TEMPLATE_PREFIX = Object.freeze({ value: '', from: 'context-path', front: '', candidates: [] });
 
-/** A base URL or a proxy context with one leading slash and no trailing one. */
-export function normalizeTail(v) {
-  let s = String(v ?? '').trim();
-  if (s === '' || s === '/') return '';
-  if (!s.startsWith('/')) s = `/${s}`;
-  return s.endsWith('/') ? s.slice(0, -1) : s;
-}
-
 /**
  * An absolute address read down to its PATH, or a relative value left alone.
  * The host rides along when there was one, because the caller has to know
- * whether a proxy rule still applies.
+ * whether a proxy rule still applies. The base URL reader now works on
+ * base_url.mjs's outcomes; this stays for what reads one address alone.
  */
 export function absoluteSplit(raw) {
   const m = /^(https?:)?\/\/([^/]+)(\/.*)?$/.exec(String(raw ?? ''));
@@ -85,16 +88,7 @@ export function absoluteSplit(raw) {
  * @returns {{packageDirs:Set<string>, packageOf:Function, configFor:Function}}
  */
 export function readPackages({ opts, configs }) {
-  const packageDirs = new Set();
-  for (const p of opts.packages ?? []) {
-    // discovery names the package.json, and the package is the directory it sits in.
-    if (p && typeof p.path === 'string') packageDirs.add(configDirOf(normalizePosix(p.path)));
-  }
-  // A SCOPED alias record (RM67) comes from a directory INSIDE a package, and
-  // that directory is not a package: it names no dependencies and holds no
-  // .env, so it must not become one.
-  for (const c of configs) if (typeof c.scope !== 'string') packageDirs.add(configDirOf(c.file));
-  if (packageDirs.size === 0) packageDirs.add('');
+  const packageDirs = packageDirsOf(opts, configs);
   const sortedPackages = [...packageDirs].sort((a, b) => b.length - a.length || cmp(a, b));
   const packageOf = (file) => {
     for (const d of sortedPackages) {
@@ -104,13 +98,17 @@ export function readPackages({ opts, configs }) {
   };
   const pkgConfig = new Map();
   const configFor = (dir) => {
-    let c = pkgConfig.get(dir);
-    if (!c) { c = { env: new Map(), proxies: [], aliases: [], scopedAliases: [], axiosBaseUrl: null }; pkgConfig.set(dir, c); }
-    return c;
+    if (!pkgConfig.has(dir)) {
+      pkgConfig.set(dir, {
+        env: new Map(), proxies: [], aliases: [], scopedAliases: [], axiosBaseUrl: null, dependencies: null,
+      });
+    }
+    return pkgConfig.get(dir);
   };
   for (const d of packageDirs) configFor(d);
   for (const c of configs.slice().sort((a, b) => cmp(sortKey(a), sortKey(b)))) {
     const dir = configDirOf(c.file);
+    if (c.what === 'package' && !packageDirs.has(dir)) continue;
     fileConfigRecord(configFor(packageDirs.has(dir) ? dir : packageOf(c.file)), c);
   }
   for (const cfg of pkgConfig.values()) {
@@ -122,6 +120,25 @@ export function readPackages({ opts, configs }) {
   return { packageDirs, packageOf, configFor };
 }
 
+/** The package directories: the ones discovery names, and the ones a config record sits in. */
+function packageDirsOf(opts, configs) {
+  const packageDirs = new Set();
+  for (const p of opts.packages ?? []) {
+    // discovery names the package.json, and the package is the directory it sits in.
+    if (p && typeof p.path === 'string') packageDirs.add(configDirOf(normalizePosix(p.path)));
+  }
+  // A SCOPED alias record (RM67) comes from a directory INSIDE a package, and
+  // that directory is not a package: it names no dependencies and holds no
+  // .env, so it must not become one. A package.json's own record names no
+  // package the others did not either: it only says what one of them builds
+  // with.
+  for (const c of configs) {
+    if (typeof c.scope !== 'string' && c.what !== 'package') packageDirs.add(configDirOf(c.file));
+  }
+  if (packageDirs.size === 0) packageDirs.add('');
+  return packageDirs;
+}
+
 /** One config record filed under what it declares. */
 function fileConfigRecord(cfg, c) {
   if (c.what === 'env') {
@@ -130,6 +147,7 @@ function fileConfigRecord(cfg, c) {
   } else if (c.what === 'proxy') cfg.proxies.push(c);
   else if (c.what === 'alias') (typeof c.scope === 'string' ? cfg.scopedAliases : cfg.aliases).push(c);
   else if (c.what === 'axios-defaults' && c.key === 'baseURL') cfg.axiosBaseUrl = c.value ?? null;
+  else if (c.what === 'package') cfg.dependencies = Array.isArray(c.dependencies) ? c.dependencies : [];
 }
 
 /**
@@ -147,10 +165,10 @@ function fileConfigRecord(cfg, c) {
  */
 
 /**
- * ONE env name read across every mode the project declares.
+ * WHICH PATH a base URL is, when its builds read more than one.
  *
- * The modes DISAGREE more often than not. Two shapes, both measured on the
- * frontends this round was built against:
+ * The builds DISAGREE more often than not. Two shapes, both measured on the
+ * frontends this was built against:
  *
  *   - `/dev-api`, `/prod-api` and `/stage-api` for the same variable: three
  *     real prefixes, and exactly one of them has a dev-proxy rule explaining
@@ -158,23 +176,20 @@ function fileConfigRecord(cfg, c) {
  *   - a relative path for development and two absolute addresses for the two
  *     deployments, all three ending in the SAME path. Compared as strings
  *     those disagree; compared as PATHS they are one value, which is what
- *     they are. So the comparison is on paths.
+ *     they are. So `paths` is already a list of paths.
  *
  * Only when neither settles it is the answer ambiguous, and the auto step
- * takes over.
+ * takes over. A conditional (`a ? b : c`) is settled the same way: its
+ * branches are more builds of one base URL.
  */
-function envValue(ctx, pkg, name) {
+function settlePaths(ctx, pkg, paths, outcomes) {
+  if (paths.length === 1) return { value: paths[0], ambiguous: false };
   const cfg = ctx.configFor(pkg);
-  const rows = cfg.env.get(name) ?? [];
-  if (rows.length === 0) return { value: null, values: [], ambiguous: false };
-  const values = [...new Set(rows.map((r) => absoluteSplit(r.value).value))].sort();
-  if (values.length === 1) return { value: values[0], values, ambiguous: false };
-  const explained = values.filter((v) => v !== '' && cfg.proxies.some((p) => v === p.context || v.startsWith(p.context)));
-  if (explained.length === 1) return { value: explained[0], values, ambiguous: false };
-  const byMode = (m) => rows.find((r) => r.mode === m);
-  const chosen = byMode(PREFERRED_MODE)
-    ?? rows.slice().sort((a, b) => cmp(a.mode ?? '', b.mode ?? '') || cmp(a.file, b.file))[0];
-  return { value: absoluteSplit(chosen.value).value, values, ambiguous: true };
+  const explained = paths.filter((v) => v !== '' && cfg.proxies.some((p) => v === p.context || v.startsWith(p.context)));
+  if (explained.length === 1) return { value: explained[0], ambiguous: false };
+  const chosen = outcomes.find((o) => o.mode === PREFERRED_MODE)
+    ?? outcomes.slice().sort((a, b) => cmp(a.mode ?? '', b.mode ?? '') || cmp(a.file ?? '', b.file ?? ''))[0];
+  return { value: chosen.path, ambiguous: true };
 }
 
 /**
@@ -186,27 +201,40 @@ function envValue(ctx, pkg, name) {
  *            sends the path as written, which is a prefix of ''. Calling it a
  *            guess would grade every `fetch('/health')` in the corpus
  *            HEURISTIC for a fact the library documents.
- *   known    the value was read (a literal, an env value, an absolute address).
- *   unknown  a base URL IS declared and this lane could not read it: an env
- *            name with no .env record, a template with a hole in it, an
- *            expression. THAT is what the auto step exists for.
+ *   known    the value was read (a literal, an env value, an absolute address,
+ *            an env value's default, every branch of a conditional).
+ *   unknown  a base URL IS declared and this lane could not read all of it: an
+ *            env name no .env file this build reads sets, a template with a
+ *            hole in it, an expression, a conditional with one such branch.
+ *            THAT is what the auto step exists for, and whatever WAS read is
+ *            among its candidates.
+ *
+ * What the value rests on rides along as `guess` (base_url.mjs), and for a
+ * default or a conditional the reads themselves (`reads`), so the edge says
+ * which build gave which value.
  */
-function baseUrlValue(ctx, summary, pkg) {
-  if (!summary) return { state: 'absent', value: '', values: [''], absolute: false, ambiguous: false };
-  if (summary.kind === 'string') return absoluteSplit(summary.value);
-  if (summary.kind === 'template' && (summary.dynamicParts ?? 0) === 0) return absoluteSplit(summary.template);
-  if (summary.kind === 'member' && Array.isArray(summary.path) && summary.path.length >= 2
-    && summary.path[0] === 'env' && (summary.root === 'process' || summary.root === 'import.meta')) {
-    const e = envValue(ctx, pkg, summary.path[1]);
-    if (e.value === null) return { state: 'unknown', value: '', values: [''], absolute: false, ambiguous: false };
-    // `absolute` is false here even when the env value was an absolute
-    // address: `envValue` already reduced every value to its PATH, so what
-    // comes back is a path and the proxy rules apply to it like any other.
+function baseUrlValue(ctx, summary, pkg, assumed = false) {
+  const read = readBase(ctx.configFor(pkg), summary);
+  if (read.state === 'absent') return { state: 'absent', value: '', values: [''], absolute: false, ambiguous: false };
+  const paths = [...new Set(read.outcomes.map((o) => o.path))].sort();
+  const reads = read.detailed ? { reads: readsOf(read.outcomes) } : {};
+  if (read.state === 'unknown') {
     return {
-      state: 'known', value: e.value, values: e.values, absolute: false, ambiguous: e.ambiguous,
+      state: 'unknown', value: '', values: paths.length > 0 ? paths : [''], absolute: false, ambiguous: false, ...reads,
     };
   }
-  return { state: 'unknown', value: '', values: [''], absolute: false, ambiguous: false };
+  const { value, ambiguous } = settlePaths(ctx, pkg, paths, read.outcomes);
+  const mine = read.outcomes.filter((o) => o.path === value);
+  // Read through an alias this engine assumed, the value is only as good as
+  // that guess, whatever it holds.
+  const guess = guessOf(mine) ?? (assumed ? 'assumed-alias' : null);
+  // ABSOLUTE only when every build that gives this path spells a host: a dev
+  // proxy never sees an absolute address, and one relative build still goes
+  // through it.
+  return {
+    state: 'known', value, values: paths, ambiguous, absolute: mine.every((o) => o.host !== null),
+    ...(guess ? { guess } : {}), ...reads,
+  };
 }
 
 /** The proxy rule that explains a relative base URL, and what it leaves. */
@@ -254,9 +282,12 @@ function declaredPrefix(ctx, base) {
 function derivedPrefix(ctx, base, pkg) {
   if (base.state === 'absent') return { value: '', from: 'derived', candidates: [] };
   if (base.state !== 'known' || base.ambiguous) return null;
-  if (base.absolute) return { value: base.value, from: 'derived', candidates: [] };
+  // A value that rests on a default or on a deployment's host is still READ
+  // from the source, so it is derived; the guess it rests on goes with it.
+  const guess = base.guess ? { guess: base.guess } : {};
+  if (base.absolute) return { value: base.value, from: 'derived', candidates: [], ...guess };
   const p = throughProxy(ctx, base.value, pkg);
-  return p.ok ? { value: p.value, from: 'derived', candidates: [] } : null;
+  return p.ok ? { value: p.value, from: 'derived', candidates: [], ...guess } : null;
 }
 
 /**
@@ -314,8 +345,13 @@ export function makePrefixes(deps) {
     if (prefixCache.has(instanceId)) return prefixCache.get(instanceId);
     const inst = ctx.instanceOf.get(instanceId) ?? { id: instanceId, module: null, baseURL: null, package: '' };
     const pkg = inst.package ?? '';
-    const summary = inst.baseURL ?? ctx.configFor(pkg).axiosBaseUrl ?? null;
-    const base = baseUrlValue(ctx, summary, pkg);
+    const written = inst.baseURL ?? ctx.configFor(pkg).axiosBaseUrl ?? null;
+    // A base URL written as a NAME is read where the name is declared
+    // (base_url.mjs makeBaseReader); the client's own file is the one before
+    // the `#` of its id.
+    const named = inst.baseURL && ctx.readBaseName
+      ? ctx.readBaseName(inst.id.slice(0, inst.id.lastIndexOf('#')), inst.baseURL) : null;
+    const base = baseUrlValue(ctx, named ? named.summary : written, pkg, named ? named.assumed : false);
     const out = declaredPrefix(ctx, base)
       ?? derivedPrefix(ctx, base, pkg)
       ?? autoPrefix(ctx, base, pkg, instanceId);
@@ -324,6 +360,9 @@ export function makePrefixes(deps) {
     // which is what a HAR recording holds (src/adapters/har_bridge.mjs). They
     // are the same string only when no dev-server proxy rewrote anything.
     out.front = base.state === 'known' ? base.value : '';
+    // WHICH BUILD GAVE WHICH VALUE, for a base URL with a default or a
+    // condition in it: the edge has to say whether the literal was used.
+    if (base.reads) out.reads = base.reads;
     prefixCache.set(instanceId, out);
     return out;
   };
@@ -347,6 +386,8 @@ export function prefixCensus({ instanceOf, prefixOf, stats }) {
       // declared has no service to name, and an always-present null would read
       // as "we looked and found nothing".
       ...(p.service ? { service: p.service } : {}),
+      // Only when the value rests on one (base_url.mjs WEB_BASE_GUESS).
+      ...(p.guess ? { guess: p.guess } : {}),
       candidates: p.from === 'auto' ? p.candidates : [],
     });
   }

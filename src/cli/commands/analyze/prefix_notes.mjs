@@ -3,9 +3,10 @@
 // Two things can go quietly wrong with a declared `pathPrefixes`, and both are
 // said here rather than left to the numbers: an entry that no controller class
 // passed (a typo, or a package that moved), and a frontend whose calls do not
-// carry the prefix the backend is now keyed under (its base URL is an env value
-// the web lane cannot read). Neither changes the graph: they are notes, and the
-// second only names the declaration that would settle it.
+// carry the prefix the backend is now keyed under (its base URL was not read,
+// or the calls were never traced to the client that carries it). Neither
+// changes the graph: they are notes, and the second only names the
+// declaration that would settle it.
 
 import { prefixedPath } from '../../../adapters/java/path_prefixes.mjs';
 
@@ -35,16 +36,32 @@ export function prefixNotOnCallsNotes(graph, jstats) {
   if (declared.length === 0) return [];
   const served = new Set();
   for (const n of graph.nodes.values()) if (n.kind === 'endpoint' && !n.outbound) served.add(n.path);
-  const missed = graph.edges
-    .filter((e) => e.type === 'CALLS_HTTP' && e.grade === 'UNRESOLVED' && e.evidence?.sink && !e.evidence.url?.host)
-    .map((e) => e.evidence.url?.template).filter((t) => typeof t === 'string');
-  const best = declared.map((prefix) => ({ prefix, count: missed.filter((t) => served.has(prefixedPath(prefix, t))).length }))
+  const missed = missedCallEdges(graph);
+  const hits = (prefix) => missed.filter((e) => served.has(prefixedPath(prefix, e.evidence.url.template)));
+  const best = declared.map((prefix) => ({ prefix, count: hits(prefix).length }))
     .sort((a, b) => b.count - a.count || (a.prefix < b.prefix ? -1 : 1))[0];
   if (!best || best.count === 0) return [];
+  const untraced = hits(best.prefix).filter((e) => e.evidence.sink.kind === 'untraced').length;
   return [{
-    kind: 'PREFIX_NOT_ON_CALLS', severity: 'warn', key: 'gatewayRoutes',
-    reason: `${best.count} of ${missed.length} frontend call(s) that name no route here would name one with ${best.prefix} before them, `
-      + 'the prefix pathPrefixes puts before the routes they mean. If the frontend\'s base URL carries it (an env value the web lane does not read), '
-      + `declare gatewayRoutes {"*": "${best.prefix}"}, or map the prefix the frontend writes onto it`,
+    kind: 'PREFIX_NOT_ON_CALLS', severity: 'warn', key: 'gatewayRoutes', reason: notOnCallsReason(best, missed.length, untraced),
   }];
+}
+
+/**
+ * The sentence. A call traced to no client had no client's base URL put before
+ * it, however well the lane read that base URL: a different cure from a base
+ * URL nobody could read, so it is said apart.
+ */
+function notOnCallsReason(best, missedCount, untraced) {
+  return `${best.count} of ${missedCount} frontend call(s) that name no route here would name one with ${best.prefix} before them, `
+    + 'the prefix pathPrefixes puts before the routes they mean'
+    + `${untraced > 0 ? `; ${untraced} of them were traced to no client, so no client's base URL was put before them` : ''}. `
+    + 'If the frontend\'s base URL carries it and this run did not read or apply it, '
+    + `declare gatewayRoutes {"*": "${best.prefix}"}, or map the prefix the frontend writes onto it`;
+}
+
+/** The web calls that named no route here, written as a path with no host. */
+function missedCallEdges(graph) {
+  return graph.edges.filter((e) => e.type === 'CALLS_HTTP' && e.grade === 'UNRESOLVED' && e.evidence?.sink
+    && !e.evidence.url?.host && typeof e.evidence.url?.template === 'string');
 }

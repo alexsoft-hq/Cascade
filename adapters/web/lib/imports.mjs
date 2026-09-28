@@ -23,7 +23,9 @@
 // files in the tree. Every function takes the walk's CONTEXT first, so a reader
 // can see at the signature what a rule is allowed to reach.
 
-import { calleeOf, eachChild, isFunctionNode, keyName, patternNames, propOf, Scope, summarizeArg } from './ast.mjs';
+import {
+  calleeOf, eachChild, isEnvExpression, isFunctionNode, keyName, patternNames, propOf, Scope, summarizeArg,
+} from './ast.mjs';
 import { navigationAssignmentOf } from './navigation.mjs';
 import { formActionAssignment, formMethodAssignment } from './forms.mjs';
 import { emitRouteRef, maybeRoute } from './routers.mjs';
@@ -154,20 +156,42 @@ function nestedStrings(node) {
   return out;
 }
 
-/** A top-level constant: a string, or an object/enum of strings. */
+/**
+ * The members of an object literal whose value is a BUILD fact (see
+ * isEnvExpression): `{ base_url: import.meta.env.VITE_BASE_URL +
+ * import.meta.env.VITE_API_URL }`. Null when there are none.
+ */
+function envMembers(node) {
+  if (!node || node.type !== 'ObjectExpression') return null;
+  const out = {};
+  let any = false;
+  for (const p of node.properties) {
+    if (p.type !== 'ObjectProperty') continue;
+    const key = keyName(p);
+    const s = key === null ? null : summarizeArg(p.value);
+    if (s === null || !isEnvExpression(s)) continue;
+    out[key] = s;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+/** A top-level constant: a string, an object/enum of strings, or a value the build decides. */
 export function recordConstant(ctx, name, written, exported, line) {
   const { top, emit, relFile } = ctx;
   // `{…} as const` and `{…} satisfies T` hold the object they are written around.
   const node = withoutTypeScript(written);
   const m = stringMembers(node);
   const nested = nestedStrings(node);
-  if (m && (m.members.size > 0 || nested.size > 0)) {
+  const exprMembers = envMembers(node);
+  if (m && (m.members.size > 0 || nested.size > 0 || exprMembers !== null)) {
     const members = {};
     for (const [k, v] of m.members) members[k] = v;
-    top.constants.set(name, { members: m.members, value: null, ...(nested.size > 0 ? { nested } : {}) });
+    const more = { ...(nested.size > 0 ? { nested } : {}), ...(exprMembers ? { exprMembers } : {}) };
+    top.constants.set(name, { members: m.members, value: null, ...more });
     emit({
       kind: 'constant', file: relFile, line, name, exported, members, omitted: m.omitted,
-      ...(nested.size > 0 ? { nested: Object.fromEntries(nested) } : {}),
+      ...(nested.size > 0 ? { nested: Object.fromEntries(nested) } : {}), ...(exprMembers ? { exprMembers } : {}),
     }, line);
     return true;
   }
@@ -176,7 +200,22 @@ export function recordConstant(ctx, name, written, exported, line) {
     emit({ kind: 'constant', file: relFile, line, name, exported, value: node.value }, line);
     return true;
   }
-  return false;
+  return recordEnvExpression(ctx, name, node, exported, line);
+}
+
+/**
+ * `export const API = process.env.X || 'http://localhost:8080/api'`: a constant
+ * whose value is a BUILD fact. The record carries the expression whole
+ * (`expr`) and no `value`, because what X holds is in the package's `.env`
+ * files and one file cannot read those; the bridge does. It is kept out of
+ * `top.constants` on purpose: nothing in this file may read it as text. A bare
+ * `process.env.X` is left to the binding record it has always had.
+ */
+function recordEnvExpression(ctx, name, node, exported, line) {
+  const s = node ? summarizeArg(node) : null;
+  if (s === null || s.kind === 'member' || !isEnvExpression(s)) return false;
+  ctx.emit({ kind: 'constant', file: ctx.relFile, line, name, exported, expr: s }, line);
+  return true;
 }
 
 /**
@@ -209,10 +248,36 @@ export function initOf(ctx, init, env) {
     const first = init.arguments[0];
     if (first && first.type === 'ObjectExpression') {
       const b = propOf(first, 'baseURL');
-      if (b) out.baseURL = summarizeArg(b);
+      if (b) out.baseURL = baseUrlSummary(ctx, b, env);
     }
   }
   return out;
+}
+
+/**
+ * A base URL as the bridge can follow it. `baseURL: base_url`, where the top of
+ * the module wrote `const { base_url } = config`, is the member `config.base_url`:
+ * the name alone says nothing, the member says where to look.
+ */
+function baseUrlSummary(ctx, node, env) {
+  const s = summarizeArg(node);
+  if (s.kind !== 'ident') return s;
+  const d = ctx.top.destructured ? ctx.top.destructured.get(s.name) : undefined;
+  const where = env.scope.find(s.name);
+  if (!d || !where || !where.isModule) return s;
+  return { kind: 'member', root: d.root, path: [d.key] };
+}
+
+/** `const { a, b: c } = obj` at the top of a module: which member of `obj` each name is. */
+function noteDestructured(ctx, node, decl, env) {
+  if (!env.scope.isModule || node.kind !== 'const' || !decl.init || decl.id.type !== 'ObjectPattern') return;
+  if (decl.init.type !== 'Identifier') return;
+  for (const p of decl.id.properties) {
+    // A default (`{ a = '/x' }`) is a second value, and a rest is no member.
+    if (p.type !== 'ObjectProperty' || p.value.type !== 'Identifier') continue;
+    const key = keyName(p);
+    if (key !== null) ctx.top.destructured.set(p.value.name, { root: decl.init.name, key });
+  }
 }
 
 /** The `typed` init a TYPE name makes: what the field holds is an instance of it. */
@@ -488,6 +553,7 @@ export function visitVariableDeclaration(ctx, node, env, exportedAs) {
     for (const n of names) env.scope.declare(n, decl.init, node.kind !== 'const');
     const simple = decl.id.type === 'Identifier' ? decl.id.name : null;
     const line = lineOf(decl);
+    noteDestructured(ctx, node, decl, env);
     // `const x = require('y')` names the local the import lands in, which a
     // bare `require('y')` further down cannot.
     if (decl.init && isRequireCall(ctx, decl.init, env)) {

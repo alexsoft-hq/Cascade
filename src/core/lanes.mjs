@@ -961,6 +961,49 @@ function clientScreenPhrases(byKind) {
 const SCREEN_UNRESOLVED_SHARE = 0.2;
 
 /**
+ * The base URLs a web edge rests on that are GUESSES, as axis reasons that say
+ * what to do (src/adapters/web/base_url.mjs): a client's base URL, or the front
+ * of a call's URL, that is an environment value's default literal no `.env`
+ * file the build reads sets, or a host that is not this machine in any build.
+ *
+ * @param {Object} web  `laneStats.web`
+ * @returns {string[]}
+ */
+function baseUrlGuesses(web) {
+  const byGuess = new Map();
+  for (const [dir, p] of Object.entries(web.prefix ?? {})) {
+    for (const i of p.instances ?? []) {
+      if (!i.guess) continue;
+      if (!byGuess.has(i.guess)) byGuess.set(i.guess, new Set());
+      byGuess.get(i.guess).add(dir || '.');
+    }
+  }
+  const onCalls = (web.url && web.url.guessed) || {};
+  // Where the guess sits, in the words a reader looks for: the clients of
+  // which packages, and how many call URLs begin with one.
+  const where = (guess) => {
+    const dirs = [...(byGuess.get(guess) ?? [])].sort();
+    const parts = [];
+    if (dirs.length > 0) parts.push(`the client base URL in ${dirs.join(', ')}`);
+    if ((onCalls[guess] ?? 0) > 0) parts.push(`the front of ${onCalls[guess]} call URL(s)`);
+    return parts.join(' and ');
+  };
+  const out = [];
+  const fallback = where('fallback');
+  if (fallback !== '') {
+    out.push(`${fallback} rest on an environment value's default literal, because no .env file the build reads sets that value: set it in one`);
+  }
+  const host = where('deployment-host');
+  if (host !== '') {
+    out.push(`${host} name only hosts that are not this machine: if one of them runs this backend, `
+      + 'give the development build a value on this machine in a .env file, or declare gatewayRoutes {"*": "<back>"}');
+  }
+  const alias = where('assumed-alias');
+  if (alias !== '') out.push(`${alias} were read through an import alias this engine assumed: declare the alias`);
+  return out;
+}
+
+/**
  * The web axis, stated from what the lane and its bridge actually did.
  *
  * @param {Object|null} web  `laneStats.web` (the worker's counts merged with the bridge's)
@@ -1015,6 +1058,7 @@ function webAxis(web) {
     why.push(`prefix chosen by match count for ${dirs.join(', ')}: declare gatewayRoutes {"<front>": "<back>"}`);
   }
   if (assumedAliases > 0) why.push(`alias @ assumed as src, on ${assumedAliases} call(s)`);
+  why.push(...baseUrlGuesses(web));
   if (why.length === 0) return { status: 'shipped', reason: null };
   if (untraced > 0) why.push(`${untraced} call(s) untraced`);
   return {

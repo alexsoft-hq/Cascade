@@ -124,6 +124,20 @@
 // directory with a tsconfig of its own inside a package gets its aliases as
 // config records with a `scope`.
 //
+// webfacts/15 KEEPS A DEFAULT BESIDE THE VALUE IT STANDS IN FOR (R2-B).
+// `process.env.X || 'http://localhost:8080/api'` is how a frontend names its
+// server when nothing else does, and which half runs is a BUILD fact: whether a
+// `.env` file the build tool reads sets X. So an argument written with `||` or
+// `??` is summarized as a `fallback` of both halves rather than as `other`; a
+// top-level `const` bound to one prints a `constant` record with `env` and
+// `fallback` and no `value`; a URL hole built on one stays an `env` hole that
+// carries its `fallback`; and each package prints one `config` record, `what:
+// "package"`, naming the dependencies its package.json declares, which is how
+// the bridge tells which build tool reads which `.env` files. A URL whose host
+// or query string is cut off keeps only the holes still in its path: the
+// query's holes used to stay in the list, which then no longer lined up with
+// the text and could not be filled by anybody.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -134,7 +148,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/14';
+const VERSION = 'webfacts/15';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -314,6 +328,9 @@ function analyzeFile(ctx) {
     bindings: new Map(),  // name -> record
     functions: new Map(), // name -> record
     xhr: new Set(),       // names bound to `new XMLHttpRequest()`
+    // `const { base_url } = config` at the top level: name -> {root, key}, so a
+    // base URL written as that name says which member of which object it is.
+    destructured: new Map(),
   };
   const usedFunctionNames = new Map();
   const funcEntries = [];
@@ -971,7 +988,7 @@ if (!atAliasDeclared && fs.existsSync(path.join(pkgDir, 'src'))) {
 
 }
 
-function readPackageConfig(pkgDir, root, out) {
+function readPackageConfig(pkgDir, root, out, deps) {
   const rel = (abs) => toPosix(path.relative(root, abs));
   const records = [];
   const parsedFiles = [];
@@ -979,6 +996,15 @@ function readPackageConfig(pkgDir, root, out) {
   let entries;
   try { entries = fs.readdirSync(pkgDir); } catch { return { records, parsedFiles }; }
 
+  // WHAT THE PACKAGE BUILDS WITH, as its package.json names it. Which `.env`
+  // files a value comes from is the build tool's rule, and the bridge picks
+  // the tool out of these names (packs/build-env.json).
+  if (entries.includes('package.json')) {
+    records.push({
+      kind: 'config', file: rel(path.join(pkgDir, 'package.json')), line: 1, what: 'package',
+      dependencies: Object.keys(deps ?? {}).sort(),
+    });
+  }
   readDotenvFiles({ pkgDir, entries, rel, records, out });
   const declaredInBundler = readBundlerConfig({ pkgDir, entries, rel, records, parsedFiles });
   const declaredInTsconfig = readTsconfig({ pkgDir, entries, rel, records });
@@ -1660,11 +1686,11 @@ function packagesOf(roots) {
  * A config file the walk also picked up (a source root that IS the package
  * directory) is taken out of the file set, so it is not read twice.
  */
-function readTheConfigs(pkgDirs, root, out, found, packageOf) {
+function readTheConfigs(pkgDirs, root, out, found, { packageOf, depsOfPkg }) {
   const configRecords = [];
   const configParsed = [];
   for (const dir of [...pkgDirs].sort()) {
-    const res = readPackageConfig(dir, root, out);
+    const res = readPackageConfig(dir, root, out, depsOfPkg.get(dir));
     configRecords.push(...res.records);
     configParsed.push(...res.parsedFiles);
   }
@@ -1761,7 +1787,7 @@ function main(argv) {
     return { records: res.records, apiHandler: res.apiFiles > 0 };
   };
 
-  const configs = readTheConfigs(pkgDirs, root, out, found, packageOf);
+  const configs = readTheConfigs(pkgDirs, root, out, found, { packageOf, depsOfPkg });
   const byFile = new Map();
   const push = (rel, rec, line, order) => {
     if (!byFile.has(rel)) byFile.set(rel, []);

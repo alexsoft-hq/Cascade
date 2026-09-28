@@ -26,9 +26,9 @@ import { routeMatches } from '../http_routes.mjs';
 import { isComponentFile, memberIndex, webEndpointId, webSymbolId } from './symbols.mjs';
 import { TEMPLATE_PREFIX } from './prefix.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
-
-/** Hosts that mean "this machine", so an absolute URL to one is not another deployable. */
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
+import {
+  declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost,
+} from './base_url.mjs';
 
 /**
  * The two evidence rules RM60 added, spelled here the way the worker stamps
@@ -379,16 +379,27 @@ function withContextPath(call, contextVars, from) {
 // file it is in. Where the file was found through an ASSUMED alias, the site is
 // marked assumed and grades down, the same as everything else that rests on
 // that guess.
+//
+// AN ENVIRONMENT READ AT THE FRONT OF A URL IS A BASE URL written at the call
+// site: `API_BASE_URL + '/polls'` with `API_BASE_URL = process.env.X ||
+// 'http://localhost:8080/api'`. Its value is a build fact, read the way a
+// client's base URL is (base_url.mjs), and it goes in only when every build
+// gives it one path. What it rests on goes with it: a default literal, or a
+// host that is not this machine, grades the call HEURISTIC.
 // ---------------------------------------------------------------------------
 
-/** The text an imported constant holds, or null. Memoized per (file, hole). */
+/**
+ * The text an imported constant holds, or the value the build decides that it
+ * is bound to (`expr`, base_url.mjs declaredValueOf), or neither. Memoized per
+ * (file, hole).
+ */
 function makeConstantOf({ files, resolver }) {
   const { resolveSpecifier, resolveExport } = resolver;
   const memo = new Map();
   return (file, hole) => {
     const key = `${file} ${hole.source} ${hole.imported} ${hole.name}`;
     if (memo.has(key)) return memo.get(key);
-    const out = { value: null, assumed: false };
+    const out = { value: null, assumed: false, expr: null };
     const dot = String(hole.name).indexOf('.');
     const member = dot > 0 ? hole.name.slice(dot + 1) : null;
     // `a.b.c` is a path through objects nobody recorded, and it is refused the
@@ -398,20 +409,48 @@ function makeConstantOf({ files, resolver }) {
     const wanted = namespace ? member : hole.imported;
     const r = typeof hole.source === 'string' && !tooDeep && wanted !== null
       ? resolveSpecifier(file, hole.source) : {};
-    if (r.file) {
-      const hit = resolveExport(r.file, wanted, 0);
-      if (hit && !hit.external && hit.file) {
-        const rec = files.get(hit.file)?.constants.get(hit.name) ?? null;
-        const v = rec === null ? null
-          : (namespace || member === null ? rec.value : (rec.members ?? {})[member]);
-        if (typeof v === 'string') {
-          out.value = v;
-          out.assumed = r.assumed === true || hit.assumed === true;
-        }
-      }
+    const hit = r.file ? resolveExport(r.file, wanted, 0) : null;
+    if (hit && !hit.external && hit.file) {
+      const got = declaredValueOf(files, hit.file, hit.name, namespace || member === null ? null : member);
+      if (got !== null && got.kind === 'string') out.value = got.value;
+      else if (got !== null) out.expr = got;
+      out.assumed = got !== null && (r.assumed === true || hit.assumed === true);
     }
     memo.set(key, out);
     return out;
+  };
+}
+
+/**
+ * What ONE hole of a call's URL is filled with, and what that rests on.
+ *
+ * An imported constant's literal goes in wherever its hole is (RM58). An
+ * environment read goes in only at the FRONT of the URL, where it is a base
+ * URL, and only when every build gives it one path: a value in the middle of
+ * a path, or one the builds disagree about, stays a hole, counted as `env`.
+ *
+ * @returns {(file:string, pkg:string, hole:object, leading:boolean) => object}
+ */
+function makeHoleFiller({ constantOf, configFor }) {
+  const NONE = { value: null, assumed: false };
+  const fromBuild = (pkg, expr, hole, assumed) => {
+    const got = expr === null ? null : fillFromExpression(configFor(pkg), expr);
+    if (got === null) return { ...NONE, hole };
+    return {
+      value: got.text, assumed, from: got.from, env: envNamesOf(expr), guess: got.guess, reads: got.reads,
+    };
+  };
+  return (file, pkg, h, leading) => {
+    if (!h) return NONE;
+    if (h.kind === 'import') {
+      const got = constantOf(file, h);
+      if (typeof got.value === 'string') return { value: got.value, assumed: got.assumed, from: 'import' };
+      if (got.expr === null) return NONE;
+      const hole = { ...h, kind: 'env' };
+      return leading ? fromBuild(pkg, got.expr, hole, got.assumed) : { ...NONE, hole };
+    }
+    if (h.kind !== 'env' || !leading) return NONE;
+    return fromBuild(pkg, h.expr ?? envReadOfSpelling(h.name), h, false);
   };
 }
 
@@ -453,17 +492,54 @@ function wholeImportedConstant(file, call, constantOf) {
 }
 
 /**
- * One call's URL candidates with every hole an IMPORTED constant explains
- * filled in, and what that took.
- *
- * @returns {{resolved:object[], substituted:object[], assumed:boolean}}
+ * What one filled hole adds to the call: the substitution a reader traces the
+ * text back by, the alias it may rest on, and, for an environment read at the
+ * front, the guess its value may rest on.
  */
-function withImportedConstants(file, call, from, constantOf) {
+function noteFill(acc, h, got) {
+  acc.assumed = acc.assumed || got.assumed === true;
+  if (got.from !== 'import') {
+    acc.leadingBase = true;
+    if (acc.guess === null && got.guess) acc.guess = got.guess;
+  }
+  if (acc.substituted.some((s) => s.name === h.name && s.value === got.value)) return;
+  acc.substituted.push({
+    name: h.name, value: got.value, from: got.from,
+    ...(got.env ? { env: got.env } : {}), ...(got.reads ? { reads: got.reads } : {}),
+  });
+}
+
+/** One URL candidate with every hole `fillAt` can fill filled in. */
+function fillCandidate(cand, parts, holes, fillAt, acc) {
+  const text = [];
+  const remaining = [];
+  for (let i = 0; i < holes.length; i += 1) {
+    text.push(parts[i]);
+    const got = fillAt(holes[i], i);
+    if (typeof got.value !== 'string') { text.push('{*}'); remaining.push(got.hole ?? holes[i]); continue; }
+    text.push(got.value);
+    noteFill(acc, holes[i], got);
+  }
+  text.push(parts[parts.length - 1]);
+  if (remaining.length === holes.length) return { ...cand, holes: remaining };
+  return {
+    ...cand, template: text.join(''), dynamicParts: remaining.length, holes: remaining,
+  };
+}
+
+/**
+ * One call's URL candidates with every hole an IMPORTED constant explains
+ * filled in, and an environment read at the front of it (see makeHoleFiller),
+ * and what that took.
+ *
+ * @returns {{resolved:object[], substituted:object[], assumed:boolean,
+ *            guess:(string|null), leadingBase:boolean}}
+ */
+function withImportedConstants(file, pkg, call, from, fill) {
   const resolved = Array.isArray(from) ? from : null;
   const url = call.url ?? {};
-  const substituted = [];
-  let assumed = false;
-  if (resolved === null || resolved.length === 0) return { resolved, substituted, assumed };
+  const acc = { substituted: [], assumed: false, guess: null, leadingBase: false };
+  if (resolved === null || resolved.length === 0) return { resolved, ...acc };
   const one = resolved.length === 1;
   const out = resolved.map((cand) => {
     const holes = Array.isArray(cand.holes) ? cand.holes
@@ -473,26 +549,9 @@ function withImportedConstants(file, call, from, constantOf) {
     // The hole list and the `{*}` have to line up, or a value would land in the
     // wrong place, and a wrong path is worse than a hole.
     if (parts.length - 1 !== holes.length) return { ...cand, holes };
-    const text = [];
-    const remaining = [];
-    for (let i = 0; i < holes.length; i += 1) {
-      text.push(parts[i]);
-      const h = holes[i];
-      const got = h && h.kind === 'import' ? constantOf(file, h) : { value: null, assumed: false };
-      if (typeof got.value !== 'string') { text.push('{*}'); remaining.push(h); continue; }
-      text.push(got.value);
-      assumed = assumed || got.assumed;
-      if (!substituted.some((s) => s.name === h.name && s.value === got.value)) {
-        substituted.push({ name: h.name, value: got.value, from: 'import' });
-      }
-    }
-    text.push(parts[parts.length - 1]);
-    if (remaining.length === holes.length) return { ...cand, holes };
-    return {
-      ...cand, template: text.join(''), dynamicParts: remaining.length, holes: remaining,
-    };
+    return fillCandidate(cand, parts, holes, (h, i) => fill(file, pkg, h, i === 0 && parts[0] === ''), acc);
   });
-  return { resolved: out, substituted, assumed };
+  return { resolved: out, ...acc };
 }
 
 /**
@@ -521,16 +580,24 @@ function withoutHost(resolved) {
   return { resolved: out, absolute };
 }
 
+/** Where a value the BRIDGE put into a URL was read; anything else is the worker's same-file one. */
+const BRIDGE_FILLS = new Set(['import', 'env-file', 'fallback']);
+
 /**
  * The holes a call site is LEFT with, and the constants that went into it.
  *
  * Counted per call site and once per distinct hole: a template that names the
  * same parameter twice is one thing a reader cannot see, not two.
  */
-function countUrlCensus(stats, resolved, substituted) {
+function countUrlCensus(stats, resolved, substituted, guess) {
   for (const s of substituted) {
-    const from = s.from === 'import' ? 'import' : 'same-file';
+    const from = BRIDGE_FILLS.has(s.from) ? s.from : 'same-file';
     stats.url.substituted[from] = (stats.url.substituted[from] ?? 0) + 1;
+  }
+  // A URL whose front rests on a guess, by which guess: the axis names these.
+  if (guess) {
+    if (!stats.url.guessed) stats.url.guessed = {};
+    stats.url.guessed[guess] = (stats.url.guessed[guess] ?? 0) + 1;
   }
   const seen = new Set();
   for (const cand of resolved ?? []) {
@@ -756,6 +823,38 @@ function countAddressless(c, stats) {
 }
 
 /**
+ * What one call's URL IS once the other files have had their say: the
+ * constants another module exports and an environment read at its front put
+ * in, the host and query taken off text that changed, a page's context path
+ * read.
+ */
+function readCallUrl(file, pkg, c, { ctxVars, constantOf, fill }) {
+  // A HOLE ANOTHER MODULE'S CONSTANT EXPLAINS (RM58), filled before anything
+  // else reads the template: what this call asks for is decided on the text
+  // with the constants in it. A URL that IS such a constant rather than a
+  // template with one in it is the same fact (RM59).
+  const imported = wholeImportedConstant(file, c, constantOf)
+    ?? withImportedConstants(file, pkg, c, c.url.resolved, fill);
+  // Only text that CHANGED here needs the host and query taken off it: what
+  // the worker resolved has already been through that, and running it again
+  // over every call would quietly re-read URLs no constant touched.
+  const host = imported.substituted.length === 0
+    ? { resolved: imported.resolved, absolute: null } : withoutHost(imported.resolved);
+  // A HOST AN ENVIRONMENT READ PUT ON THE FRONT is a base URL's host, not a
+  // call to another deployable: whether it is this pack's is what the guess
+  // on the site says, the same way it is for a client's base URL.
+  const absolute = host.absolute && imported.leadingBase
+    ? { ...host.absolute, base: true } : (host.absolute ?? c.url.absolute ?? null);
+  return {
+    resolved: withContextPath(c, ctxVars, host.resolved),
+    absolute,
+    substituted: [...(c.url.substituted ?? []), ...imported.substituted],
+    assumed: imported.assumed === true,
+    guess: imported.guess ?? null,
+  };
+}
+
+/**
  * The FIRST of the two passes over the calls: what each call site is, and which
  * URLs each client instance sends.
  *
@@ -770,6 +869,7 @@ export function classifyCallSites({
 }) {
   const methodFor = makeMethodFor(deps);
   const constantOf = makeConstantOf({ files, resolver: deps.resolver });
+  const fill = makeHoleFiller({ constantOf, configFor: deps.configFor });
   const sites = [];
   for (const file of fileNames) {
     const f = files.get(file);
@@ -784,35 +884,23 @@ export function classifyCallSites({
     }
     for (const c of f.calls) {
       if (!c.url) { countAddressless(c, stats); continue; }
-      // A HOLE ANOTHER MODULE'S CONSTANT EXPLAINS (RM58), filled before
-      // anything else reads the template: what this call asks for is decided
-      // on the text with the constants in it. A URL that IS such a constant
-      // rather than a template with one in it is the same fact (RM59).
-      const imported = wholeImportedConstant(file, c, constantOf)
-        ?? withImportedConstants(file, c, c.url.resolved, constantOf);
-      // Only text that CHANGED here needs the host and query taken off it: what
-      // the worker resolved has already been through that, and running it again
-      // over every call would quietly re-read URLs no constant touched.
-      const host = imported.substituted.length === 0
-        ? { resolved: imported.resolved, absolute: null } : withoutHost(imported.resolved);
-      const absolute = host.absolute ?? c.url.absolute ?? null;
-      const resolved = withContextPath(c, ctxVars, host.resolved);
+      const u = readCallUrl(file, pkg, c, { ctxVars, constantOf, fill });
+      const { resolved, absolute, substituted } = u;
       const found = sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps });
       if (found === null) continue;
       const { sink, target } = found;
-      const substituted = [...(c.url.substituted ?? []), ...imported.substituted];
       stats.calls.withUrl += 1;
-      countUrlCensus(stats, resolved, substituted);
+      countUrlCensus(stats, resolved, substituted, u.guess);
       const instanceId = sink.instance ?? `${pkg}#(package)`;
       if (!instanceOf.has(instanceId)) {
         instanceOf.set(instanceId, { id: instanceId, module: sink.module, baseURL: null, package: pkg });
       }
-      const method = methodFor(c, sink, target);
       sites.push({
-        file, pkg, call: c, sink, target, instanceId, method,
-        assumed: (target && target.assumed === true) || imported.assumed,
+        file, pkg, call: c, sink, target, instanceId, method: methodFor(c, sink, target),
+        assumed: (target && target.assumed === true) || u.assumed,
         template: isTemplate, resolved, absolute,
         ...(substituted.length > 0 ? { substituted } : {}),
+        ...(u.guess ? { guess: u.guess } : {}),
       });
       if (Array.isArray(resolved) && !isTemplate) {
         if (!callsPerInstance.has(instanceId)) callsPerInstance.set(instanceId, []);
@@ -836,7 +924,13 @@ function fullUrlOf(written, { prefix, absolute, gatewayRoutes, gatewayKeys }) {
   let full = absolute !== null
     ? normalizeUrl(written)
     : normalizeUrl(`${prefix.value}${normalizeUrl(written)}`);
-  let prefixEvidence = { value: prefix.value, from: prefix.from };
+  // What the base URL rested on, and which build gave which value, only when
+  // there is something to say (prefix.mjs): a plain base URL's evidence is
+  // what it always was.
+  let prefixEvidence = {
+    value: prefix.value, from: prefix.from,
+    ...(prefix.guess ? { guess: prefix.guess } : {}), ...(prefix.reads ? { reads: prefix.reads } : {}),
+  };
   // WHICH SERVICE ANSWERS THIS CALL, when the declared route names one. A
   // gateway route table says both halves — the prefix a request is forwarded
   // with, and the deployable it is forwarded to — and the second half is what
@@ -898,6 +992,9 @@ function callEvidence(site, { written, full, via, absolute, prefixEvidence, decl
       // built on, and where its literal was read. `written` is the path with
       // them already in it, so this is how a reader gets back to the source.
       ...(site.substituted ? { substituted: site.substituted } : {}),
+      // What the front of the URL rests on when an environment read put it
+      // there: a default literal, or a host that is not this machine.
+      ...(site.guess ? { guess: site.guess } : {}),
     },
     method: site.method,
     prefix: prefixEvidence,
@@ -939,6 +1036,9 @@ function placeCandidate(cand, site, ctx) {
   // NOTHING RISES ABOVE SOUND_SET ON A CALL, a page's form included: which
   // handler answers a path is the route table's answer, not the markup's.
   if (prefixEvidence.from === 'auto' || site.assumed || site.method.value === null) grade = 'HEURISTIC';
+  // A base URL, the client's or the one at the front of this URL, that rests
+  // on a default literal or on a deployment's host (base_url.mjs).
+  if (prefixEvidence.guess || site.guess) grade = 'HEURISTIC';
 
   const fromId = noteCaller(site, nodesToAdd, files);
   httpFunctionIds.add(fromId);
@@ -994,6 +1094,19 @@ function countSite(site, seen, { stats, unmatched, prefix, outsidePack }) {
 }
 
 /**
+ * Whether an absolute URL names ANOTHER deployable. This machine is not one,
+ * whatever port it names: that is a backend's development server
+ * (packs/build-env.json `localHosts`). A host a dev-proxy rule forwards to is
+ * where this frontend's own requests go. And a host an environment read put on
+ * the front is a base URL's, which the site's guess grades instead of sending
+ * the call out of the pack, exactly as a client's base URL is graded.
+ */
+function leavesThePack(absolute, cfg) {
+  if (absolute === null || absolute.base === true || isLocalHost(absolute.host)) return false;
+  return !cfg.proxies.some((p) => typeof p.target === 'string' && p.target.includes(absolute.host));
+}
+
+/**
  * The SECOND pass: one CALLS_HTTP edge per (call candidate, route it matched),
  * and an outbound endpoint node for a URL nothing here answers.
  *
@@ -1027,8 +1140,7 @@ export function placeHttpEdges({
     // string and nothing had to be guessed to know that.
     const prefix = site.template ? TEMPLATE_PREFIX : prefixOf(site.instanceId);
     const absolute = site.absolute ?? call.url.absolute ?? null;
-    const outsidePack = absolute !== null && !LOCAL_HOSTS.has(absolute.host)
-      && !configFor(site.pkg).proxies.some((p) => typeof p.target === 'string' && p.target.includes(absolute.host));
+    const outsidePack = leavesThePack(absolute, configFor(site.pkg));
     const ctx = {
       g, files, nodesToAdd, edges, stats, matchUrl, gatewayRoutes, gatewayKeys,
       prefix, absolute, outsidePack, unmatched, httpFunctionIds, matchedRoutePaths,

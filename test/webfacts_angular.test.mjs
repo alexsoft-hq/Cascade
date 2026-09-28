@@ -206,13 +206,19 @@ test('the fixture is a frontend with no manifest of its own', () => {
 // Cold and incremental must read the same bytes the same way
 // ---------------------------------------------------------------------------
 
+// A package's own configuration (its assumed alias, the dependencies its
+// package.json names) is read again by every run, from whichever package the
+// run finds above what it was handed. It is never a fact about one file, and
+// the cache never keeps it with one (src/core/facts_store.mjs).
+const PACKAGE_LEVEL = new Set(['alias', 'package']);
+
 test('a per-FILE run records exactly what the whole-root run recorded for that file', () => {
   // This is the shape an incremental run takes: the CLI hands the worker the
   // changed files, not the roots. The `templateUrl` search must not move with
   // it, which is what `--web-root` is for.
   const cold = execFileSync(process.execPath, [WORKER, '--root', FIXTURE, '--web-root', SRC, SRC], { maxBuffer: 1 << 28 })
     .toString('utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
-    .filter((r) => r.kind !== 'header' && r.kind !== 'summary' && r.what !== 'alias');
+    .filter((r) => r.kind !== 'header' && r.kind !== 'summary' && !PACKAGE_LEVEL.has(r.what));
   const byFile = new Map();
   for (const r of cold) {
     if (!byFile.has(r.file)) byFile.set(r.file, []);
@@ -222,7 +228,7 @@ test('a per-FILE run records exactly what the whole-root run recorded for that f
   for (const [rel, expected] of [...byFile].sort()) {
     const one = execFileSync(process.execPath, [WORKER, '--root', FIXTURE, '--web-root', SRC, path.join(FIXTURE, rel)], { maxBuffer: 1 << 28 })
       .toString('utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
-      .filter((r) => r.kind !== 'header' && r.kind !== 'summary' && r.what !== 'alias')
+      .filter((r) => r.kind !== 'header' && r.kind !== 'summary' && !PACKAGE_LEVEL.has(r.what))
       .map((r) => JSON.stringify(r));
     assert.deepEqual(one, expected, `${rel} reads differently on its own`);
   }

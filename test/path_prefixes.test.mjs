@@ -300,6 +300,9 @@ test('a frontend call that misses only for want of the declared prefix names the
   assert.equal(note.key, 'gatewayRoutes');
   assert.match(note.reason, /^1 of 1 frontend call\(s\) that name no route here would name one with \/admin-api before them/);
   assert.match(note.reason, /declare gatewayRoutes \{"\*": "\/admin-api"\}/);
+  // The call was traced to no client, so no client's base URL could have put
+  // the prefix there, however well it was read (R2-B).
+  assert.match(note.reason, /1 of them were traced to no client/);
   const settled = graphWithAMissedCall('/admin-api/system/user/nothing');
   assert.deepEqual(prefixNotOnCallsNotes(settled.g, settled.stats), [], 'a call that already carries the prefix and still misses is not this');
   const g0 = new Graph();

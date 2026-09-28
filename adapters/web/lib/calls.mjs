@@ -17,9 +17,17 @@ import { navigationOf } from './navigation.mjs';
 import { formCall } from './forms.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
 import { isEngineCall, websquareSubmissionOf } from './websquare_calls.mjs';
+import { envSpellingOf, isEnvExpression } from './ast.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
 export const VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+
+/**
+ * The argument shapes that are never a verb call's URL. A default written with
+ * `||` or `??` joined `other` there when the summaries learned to say what one
+ * is, so a call reads exactly the argument it read before.
+ */
+const NOT_A_URL_ARGUMENT = new Set(['object', 'other', 'fallback']);
 
 /** How far a walk down a member/call spine goes before it gives up. */
 export const HOP_GUARD = 64;
@@ -274,7 +282,7 @@ function urlArgumentOf(ctx, { callee, summaries, routeArg, platformSink, globalC
       for (let i = 0; i < summaries.length; i += 1) {
         const s = summaries[i];
         if (routeArg[i]) continue;
-        if (s.kind === 'object' || s.kind === 'other') continue;
+        if (NOT_A_URL_ARGUMENT.has(s.kind)) continue;
         if (httpShaped) { urlSummary = s; break; }
         if (looksLikeUrlSummary(s)) { urlSummary = s; break; }
         if ((s.kind === 'member' || s.kind === 'ident') && resolvesToUrl(ctx, s, env.scope)) {
@@ -538,9 +546,11 @@ export function visitCall(ctx, node, env) {
 // WHAT STAYS A HOLE, and what it is then called:
 //   parameter  a name local to the enclosing function: one it was handed, or a
 //              `let` of its own. Neither is stated where the call is written
-//   env        `process.env.X`, `import.meta.env.X`, or a constant bound to
-//              one. An env value is a DEPLOYMENT fact, not a source fact, and
-//              filling it in would state something this repository does not
+//   env        `process.env.X`, `import.meta.env.X`, `X || 'lit'`, `A + B` of
+//              those, a condition over them, or a constant bound to one. What
+//              X holds is in the package's `.env` files, which are other files,
+//              so the hole keeps the expression whole (`expr`) and the bridge,
+//              which reads those files, decides what goes in
 //   call       a call. What it returns is a program, not a spelling
 //   import     a name another module exports. One file cannot follow it, so the
 //              record carries the specifier and the bridge finishes the job
@@ -550,6 +560,28 @@ export function visitCall(ctx, node, env) {
 /** Whether a name is the deployment's environment rather than this source's. */
 const isEnvName = (name) => /^(process\.env|import\.meta\.env)(\.|$)/.test(name);
 
+/**
+ * What a MEMBER path (`Api.BASE`, `config.base_url`) holds: a string member of
+ * a constant this file declares, a member the build decides, or a hole of the
+ * kind its root says.
+ */
+function reduceMember(ctx, name, dot, scope) {
+  const { top } = ctx;
+  const root = name.slice(0, dot);
+  const member = name.slice(dot + 1);
+  const c = top.constants.get(root);
+  const outer = scope.find(root);
+  const statedRoot = outer === null || !outer.mutable.has(root);
+  if (c && c.members && c.members.has(member) && statedRoot) {
+    return { value: c.members.get(member), from: 'same-file' };
+  }
+  const expr = c && c.exprMembers && statedRoot ? (c.exprMembers[member] ?? null) : null;
+  if (expr !== null) return envHole(expr, name);
+  if (outer && !outer.isModule) return { value: null, kind: 'parameter', name };
+  if (top.imports.has(root)) return { value: null, kind: 'import', name, ...top.imports.get(root) };
+  return { value: null, kind: 'unknown', name };
+}
+
 /** What one NAME holds, followed as far as this file states it. */
 function reduceName(ctx, name, scope, seen) {
   const { top, summarizeArg } = ctx;
@@ -557,19 +589,7 @@ function reduceName(ctx, name, scope, seen) {
   seen.add(name);
   if (isEnvName(name)) return { value: null, kind: 'env', name };
   const dot = name.indexOf('.');
-  if (dot > 0) {
-    const root = name.slice(0, dot);
-    const member = name.slice(dot + 1);
-    const c = top.constants.get(root);
-    const outer = scope.find(root);
-    const statedRoot = outer === null || !outer.mutable.has(root);
-    if (c && c.members && c.members.has(member) && statedRoot) {
-      return { value: c.members.get(member), from: 'same-file' };
-    }
-    if (outer && !outer.isModule) return { value: null, kind: 'parameter', name };
-    if (top.imports.has(root)) return { value: null, kind: 'import', name, ...top.imports.get(root) };
-    return { value: null, kind: 'unknown', name };
-  }
+  if (dot > 0) return reduceMember(ctx, name, dot, scope);
   const found = scope.find(name);
   // A `let` is not bound to the literal beside it: the next line may assign it
   // again, and `let t = "0"; if (…) t = params.t` is real code. Only a `const`
@@ -584,10 +604,24 @@ function reduceName(ctx, name, scope, seen) {
   const c = top.constants.get(name);
   if (c && typeof c.value === 'string' && stated) return { value: c.value, from: 'same-file' };
   if (top.imports.has(name)) return { value: null, kind: 'import', name, ...top.imports.get(name) };
+  // `const { base_url } = config` binds base_url to ONE MEMBER of config, not to
+  // config itself, which is what the declaration's initializer alone would say.
+  const d = found && found.isModule && stated && top.destructured ? top.destructured.get(name) : undefined;
+  if (d) return reduceName(ctx, `${d.root}.${d.key}`, scope, seen);
   if (found && found.isModule && found.names.get(name) && stated) {
     return reduceSummary(ctx, summarizeArg(found.names.get(name)), scope, seen, name);
   }
   return { value: null, kind: 'unknown', name };
+}
+
+/**
+ * A value the BUILD decides, as a hole: `env`, like any environment read, with
+ * the expression kept whole (`expr`) so the bridge can read it per build. A
+ * bare `process.env.X` needs no `expr`: its name says it all.
+ */
+function envHole(expr, name) {
+  if (expr.kind === 'member') return { value: null, kind: 'env', name: envSpellingOf(expr) };
+  return { value: null, kind: 'env', name: name ?? envSpellingOf(expr), expr };
 }
 
 /** The same question asked of what a name was ASSIGNED, one summary at a time. */
@@ -596,6 +630,7 @@ function reduceSummary(ctx, summary, scope, seen, name) {
   if (summary.kind === 'string') return { value: summary.value, from: 'same-file' };
   if (summary.kind === 'ident') return reduceName(ctx, summary.name, scope, seen);
   if (summary.kind === 'member') return reduceName(ctx, [summary.root, ...summary.path].join('.'), scope, seen);
+  if (isEnvExpression(summary)) return envHole(summary, name);
   if (summary.kind === 'template') {
     // A constant built out of other constants. It counts only when it reduces
     // ALL the way: half a path is not a path.
@@ -604,6 +639,13 @@ function reduceSummary(ctx, summary, scope, seen, name) {
     return { value: null, kind: inner.holes.length > 0 ? inner.holes[0].kind : 'unknown', name };
   }
   return { value: null, kind: 'unknown', name };
+}
+
+/** What ONE hole of a template holds, as far as this file states it. */
+function reduceHole(ctx, hole, scope, seen) {
+  if (hole.kind === 'name') return reduceName(ctx, hole.name, scope, seen === null ? new Set() : new Set(seen));
+  if (hole.kind === 'env-expr') return envHole(hole.expr, null);
+  return { value: null, kind: hole.kind === 'call' ? 'call' : 'unknown', ...(hole.name ? { name: hole.name } : {}) };
 }
 
 /**
@@ -629,9 +671,7 @@ export function fillHoles(ctx, summary, scope, seen = null) {
   for (let i = 0; i < holes.length; i += 1) {
     out.push(parts[i]);
     const hole = holes[i];
-    const red = hole.kind === 'name'
-      ? reduceName(ctx, hole.name, scope, seen === null ? new Set() : new Set(seen))
-      : { value: null, kind: hole.kind === 'call' ? 'call' : 'unknown', ...(hole.name ? { name: hole.name } : {}) };
+    const red = reduceHole(ctx, hole, scope, seen);
     if (typeof red.value === 'string') {
       out.push(red.value);
       if (!substituted.some((s) => s.name === hole.name)) {
@@ -778,19 +818,37 @@ export function buildUrl(ctx, summary, scope) {
   resolved = resolved.map((cand) => {
     const r = throughTemplateUrl(ctx, cand);
     let t = r.template;
+    let before = 0;
     const abs = /^(https?:)?\/\/([^/]+)(\/.*)?$/.exec(t);
     if (abs) {
       absolute = { host: abs[2], path: abs[3] ?? '/' };
+      before = holesIn(t.slice(0, t.length - (abs[3] ?? '').length));
       t = abs[3] ?? '/';
     }
     const q = t.indexOf('?');
     if (q >= 0) { if (query === null) query = t.slice(q + 1); t = t.slice(0, q); }
-    return { ...r, template: t };
+    return { ...r, template: t, ...holesOfPath(r, t, before) };
   });
   url.resolved = foldSubstitutions(url, resolved);
   if (query !== null) url.query = query;
   if (absolute !== null) url.absolute = absolute;
   return url;
+}
+
+const holesIn = (text) => text.split('{*}').length - 1;
+
+/**
+ * The holes that are still in the PATH once a host and a query string were
+ * taken off it. `/polls?page=${p}` keeps one `{*}`-free path and two holes
+ * that were in the query, and a hole list longer than the text it describes
+ * cannot be filled in by anybody: the bridge refuses a list that does not line
+ * up, and rightly.
+ */
+function holesOfPath(r, path, before) {
+  if (!Array.isArray(r.holes)) return {};
+  const kept = holesIn(path);
+  if (before === 0 && kept === r.holes.length) return {};
+  return { holes: r.holes.slice(before, before + kept) };
 }
 
 /**

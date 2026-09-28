@@ -15,6 +15,12 @@ import path from 'node:path';
 /** The object keys a call's config argument is summarized by. */
 const CONFIG_KEYS = ['url', 'method', 'baseURL', 'type', 'data', 'params'];
 
+/**
+ * The operators whose right side is a DEFAULT: JavaScript's own, so this is
+ * language and not a framework's convention. `&&` is not one of them.
+ */
+const FALLBACK_OPERATORS = new Set(['||', '??']);
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -93,6 +99,14 @@ export function summarizeArg(node) {
         kind: 'ternary',
         candidates: [summarizeArg(node.consequent), summarizeArg(node.alternate)],
       };
+    // `X || 'lit'` and `X ?? 'lit'`: the right side is what the value is when
+    // the left one is not set. Which one runs is not stated here, so both halves
+    // are kept and whoever knows what sets X decides.
+    case 'LogicalExpression':
+      if (!FALLBACK_OPERATORS.has(node.operator)) break;
+      return {
+        kind: 'fallback', operator: node.operator, left: summarizeArg(node.left), right: summarizeArg(node.right),
+      };
     case 'Identifier':
       return { kind: 'ident', name: node.name };
     case 'MemberExpression':
@@ -101,22 +115,94 @@ export function summarizeArg(node) {
       if (!c || c.root === null) break;
       return { kind: 'member', root: c.root, path: c.path };
     }
-    case 'ObjectExpression': {
-      const keys = {};
-      for (const key of CONFIG_KEYS) {
-        const v = propOf(node, key);
-        if (v === null) continue;
-        // `data` and `params` are the request BODY. What is in them is the
-        // application's business, never a route, so they are recorded as
-        // present and not summarized any further.
-        keys[key] = (key === 'data' || key === 'params') ? 'present' : summarizeArg(v);
-      }
-      return { kind: 'object', keys };
-    }
+    case 'ObjectExpression':
+      return summarizeObject(node);
     default:
       break;
   }
   return { kind: 'other' };
+}
+
+/** An object literal summarized by the config keys a request reads. */
+function summarizeObject(node) {
+  const keys = {};
+  for (const key of CONFIG_KEYS) {
+    const v = propOf(node, key);
+    if (v === null) continue;
+    // `data` and `params` are the request BODY. What is in them is the
+    // application's business, never a route, so they are recorded as
+    // present and not summarized any further.
+    keys[key] = (key === 'data' || key === 'params') ? 'present' : summarizeArg(v);
+  }
+  return { kind: 'object', keys };
+}
+
+/**
+ * The environment NAME a summary reads, or null: `process.env.X` (the spelling
+ * a webpack-based build replaces) and `import.meta.env.X` (Vite's) both give
+ * `X`. A deeper path is not an environment value, it is a member of one.
+ */
+export function envReadOf(summary) {
+  if (!summary || summary.kind !== 'member' || !Array.isArray(summary.path)) return null;
+  if (summary.root !== 'process' && summary.root !== 'import.meta') return null;
+  if (summary.path.length !== 2 || summary.path[0] !== 'env' || summary.path[1] === '*') return null;
+  return summary.path[1];
+}
+
+/**
+ * `process.env.X || 'lit'` read as what it is: the environment name, how the
+ * source spells the read (`name`), the literal it falls back to, and the
+ * operator. Null for any other shape, so a `this.base || '/api'` is never
+ * mistaken for one.
+ */
+export function envFallbackOf(summary) {
+  if (!summary || summary.kind !== 'fallback') return null;
+  const env = envReadOf(summary.left);
+  const right = summary.right ?? null;
+  if (env === null || !right || right.kind !== 'string') return null;
+  return {
+    env, name: [summary.left.root, ...summary.left.path].join('.'), fallback: right.value, operator: summary.operator,
+  };
+}
+
+/** `process.env.X` and `import.meta.env.X` as a hole spells them. */
+const ENV_SPELLING = /^(?:process\.env|import\.meta\.env)\.[^.*]+$/;
+
+/** A hole of a template whose value the build decides, and nothing else does. */
+const isEnvHole = (h) => !!h && ((h.kind === 'name' && ENV_SPELLING.test(h.name)) || h.kind === 'env-expr');
+
+/**
+ * WHETHER A VALUE IS A BUILD FACT: an environment read, one with a default
+ * (`X || 'lit'`), text made of nothing but environment reads and literals
+ * (`VITE_BASE_URL + VITE_API_URL`), or a condition whose every branch is one of
+ * those or a literal. What such a value holds is in the package's `.env` files,
+ * which one file cannot read, so the summary is kept whole for the bridge to
+ * read per build (src/adapters/web/base_url.mjs) and never read as text here.
+ */
+export function isEnvExpression(summary) {
+  if (!summary) return false;
+  switch (summary.kind) {
+    case 'member': return envReadOf(summary) !== null;
+    case 'fallback': return envFallbackOf(summary) !== null;
+    case 'template': return Array.isArray(summary.holes) && summary.holes.length > 0 && summary.holes.every(isEnvHole);
+    case 'ternary':
+      return summary.candidates.every((c) => c.kind === 'string' || isEnvExpression(c))
+        && summary.candidates.some(isEnvExpression);
+    default: return false;
+  }
+}
+
+/** The first environment read an expression spells, for a hole to be named by. */
+export function envSpellingOf(summary) {
+  if (!summary) return null;
+  if (summary.kind === 'member') return envReadOf(summary) === null ? null : [summary.root, ...summary.path].join('.');
+  if (summary.kind === 'fallback') return envSpellingOf(summary.left);
+  if (summary.kind === 'template') {
+    const h = (summary.holes ?? []).find(isEnvHole);
+    return h ? (h.kind === 'name' ? h.name : envSpellingOf(h.expr)) : null;
+  }
+  if (summary.kind === 'ternary') return summary.candidates.map(envSpellingOf).find((s) => s !== null) ?? null;
+  return null;
 }
 
 /** A hole written as a plain name (`api`, `Api.BASE`), or null. */
@@ -130,7 +216,7 @@ function nameOfHole(n) {
   return null;
 }
 
-/** What ONE interpolation is: a name, a call, or something neither. */
+/** What ONE interpolation is: a name, a call, a build fact written in place, or something else. */
 function holeOf(n) {
   const name = nameOfHole(n);
   if (name !== null && !name.split('.').includes('*')) return { kind: 'name', name };
@@ -138,6 +224,10 @@ function holeOf(n) {
     const c = n.callee ? calleeOf(n.callee) : null;
     const spelling = c && c.root !== null ? [c.root, ...c.path].join('.') : null;
     return spelling === null ? { kind: 'call' } : { kind: 'call', name: spelling };
+  }
+  if (n && (n.type === 'LogicalExpression' || n.type === 'ConditionalExpression')) {
+    const s = summarizeArg(n);
+    if (isEnvExpression(s)) return { kind: 'env-expr', expr: s };
   }
   return { kind: 'other' };
 }
@@ -154,10 +244,12 @@ function holeOf(n) {
  *
  * `holes` says WHAT EACH INTERPOLATION WAS, in the order they are written, so
  * that whoever knows what a name holds can put the value back where the hole is
- * (RM58). Three kinds, and nothing here decides between them beyond the syntax:
- *   name   a bare identifier or a plain member path (`POSTS_URL`, `Api.BASE`)
- *   call   a call, whose callee spelling rides along when it has one
- *   other  anything else, which no name can be given to
+ * (RM58). Four kinds, and nothing here decides between them beyond the syntax:
+ *   name      a bare identifier or a plain member path (`POSTS_URL`, `Api.BASE`)
+ *   call      a call, whose callee spelling rides along when it has one
+ *   env-expr  `(process.env.X || '/api')`, `(a ? process.env.X : '/')`: a
+ *             value the build decides, kept whole (see isEnvExpression)
+ *   other     anything else, which no name can be given to
  * A member path with a computed segment (`a[b]`) is not a name, because the
  * segment is a value rather than a spelling.
  *

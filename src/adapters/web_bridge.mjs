@@ -40,6 +40,7 @@
 // opens by saying what it owns and what it must never know about:
 //   symbols.mjs  the files, the names in them, and what each name IS
 //   prefix.mjs   what a frontend's URL is missing, and how we know
+//   base_url.mjs what a base URL holds in each build, and what that rests on
 //   calls.mjs    which route does this function ask the server for
 //   screens.mjs  the screens a ROUTER declares, and what each one renders
 //   pages.mjs    the screens the SERVER renders, and what a handler returned
@@ -60,6 +61,7 @@ import {
 import {
   makePrefixes, prefixCensus, readPackages, WEB_PREFIX_BASIS,
 } from './web/prefix.mjs';
+import { makeBaseReader, WEB_BASE_GUESS } from './web/base_url.mjs';
 import {
   buildRouteIndex, classifyCallSites, linkFrontendCalls, placeHttpEdges, routeMatches,
   traceWrappers, STRING_METHODS, WEB_CALL_BASIS,
@@ -81,7 +83,7 @@ export {
   isComponentFile, registryNameOf, routeMatches, webEndpointId, webScreenId, webSymbolId,
   NAVIGATION_RULE, STRING_METHODS,
   PAGE_RENDERS_BASIS, SCREEN_RENDERS_BASIS, SCREEN_ROOT_GROUP, SCREEN_UNRESOLVED_SHARE,
-  WEB_CALL_BASIS, WEB_PREFIX_BASIS,
+  WEB_BASE_GUESS, WEB_CALL_BASIS, WEB_PREFIX_BASIS,
 };
 
 /**
@@ -159,6 +161,7 @@ function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
     exactPaths,
     templatePaths,
     routeMatches,
+    readBaseName: makeBaseReader({ files: read.files, resolver: read.resolver }),
   });
   const sites = classifyCallSites({
     fileNames: read.fileNames,
@@ -181,6 +184,9 @@ function placeTheCalls(g, read, { gatewayRoutes, stats, nodesToAdd, edges }) {
       pack: read.pack,
       stats,
       resolver: read.resolver,
+      // What an environment read at the front of a URL holds is the package's
+      // `.env` files' answer (src/adapters/web/base_url.mjs).
+      configFor: read.configFor,
     },
   });
   const placed = placeHttpEdges({

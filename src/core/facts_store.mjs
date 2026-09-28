@@ -350,13 +350,13 @@ export function spliceFacts(allShards, ops = {}) {
  * The `config` records that belong to a PACKAGE rather than to a source file.
  *
  * `adapters/web/webfacts.mjs` emits `config` records from two places: a package
- * directory (its `.env*` values, its dev-server proxy rules, its path aliases)
- * and a source file (an `axios.defaults.baseURL = …` assignment, which is code).
+ * directory (its `.env*` values, its dev-server proxy rules, its path aliases,
+ * the dependencies its package.json names) and a source file (an `axios.defaults.baseURL = …` assignment, which is code).
  * Only the first group is package-level, and only the first group is left out of
  * the per-file shards, because a package's configuration is not a fact ABOUT the
  * file it happens to be written in.
  */
-const WEB_PACKAGE_CONFIG_WHAT = new Set(['env', 'proxy', 'alias']);
+const WEB_PACKAGE_CONFIG_WHAT = new Set(['env', 'proxy', 'alias', 'package']);
 
 /**
  * The sort key adapters/web/webfacts.mjs assigns a record, reproduced here.
