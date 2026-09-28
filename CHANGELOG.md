@@ -94,8 +94,11 @@ Each dated section below is one round of work. The round protocol is in
   HEURISTIC, because two of its exclude entries are built at run time, and all
   118 EXACT once the list is declared; 151 Prisma statements, two of them in a
   transaction callback, and one call on a client `$extends` made named as
-  unread. 104 of the 118 endpoints reach a table, and 98 of the 105 its Angular
-  frontend calls. `cascade init` finds the application by its bootstrap and
+  unread (such a client is read since; see the `schema.prisma` entry below).
+  104 of the 118 endpoints reach a table, and 98 of the 105 its Angular
+  frontend calls, measured when a walk still crossed a HEURISTIC route link at
+  `conservative` (it no longer does; see the entry on a route's link below).
+  `cascade init` finds the application by its bootstrap and
   writes it, with the database the schema's datasource names. A project that
   sets no `tsBackend` keeps the profile digest and the calibration pin it had.
   The working-tree overlay does not re-read TypeScript yet, and says so
@@ -112,6 +115,244 @@ Each dated section below is one round of work. The round protocol is in
   time, so the same pack writes the same bytes. The README now opens with one,
   exported from litemall. The two pictures share their escaping, grade marks and
   frame in `src/viewer/svg_doc.mjs`; the chain picture's bytes are unchanged.
+
+- **A contract-first Spring controller handles the routes its OpenAPI document
+  declares.** openapi-generator writes one interface per group of operations at
+  build time, with one method per operation named by its operationId, and the
+  project's controllers implement those interfaces. The interfaces are never in
+  the source tree, so the Java lane saw controllers with no mapping and the
+  document's routes had nothing under them. A new rule kind,
+  `java.contract-link`, and the `openapi-generator` pack pair the two by the
+  generator's naming: a class the framework serves (`@RestController` or
+  `@Controller` on the class itself) whose own implements clause names an
+  interface the project does not declare, named as the generator names an
+  operation's group, handles that operation's route with the method its
+  operationId names ([docs/rules.md](docs/rules.md)). The link is a `HANDLES`
+  edge graded HEURISTIC, the kind's cap, and its evidence says the interface is
+  not in the source tree and no generator configuration is read. A near miss is
+  said and not linked (`CONTRACT_NOT_LINKED`: an operationId on two routes, or an
+  interface the operation would not be generated into), `analyze` prints how many
+  routes a rule gave a handler, and the overview carries a `contract-links` gap.
+  On spring-petclinic-rest, 36 of the 37 routes its document declares are linked,
+  every one on a method the source marks `@Override`; the 37th, `/oops`, has no
+  implementer. Endpoints reaching SQL go from 0 to 13 of 38 at `mode=heuristic`
+  and stay at 0 at `conservative`, as a HEURISTIC link should.
+
+- **A Spring path prefix set in configuration code: `pathPrefixes`, and a
+  warning when it is not declared.** Spring can serve controllers under a prefix
+  that code sets (`RequestMappingHandlerMapping.setPathPrefixes`,
+  `PathMatchConfigurer.addPathPrefix`), with the value in a property and the
+  choice of controllers in a lambda. This engine reads neither, so every route
+  of such a project was recorded without its prefix. The profile's new
+  `pathPrefixes` list declares them: a `prefix`, the controllers' `packages` as
+  an Ant pattern over the package name, and an `annotation` the class carries,
+  applied the way Spring applies them (the first entry a class passes wins). A
+  Feign client's route is the address it calls and takes no prefix, and neither
+  does a functional route, which Spring never prefixes. A prefixed endpoint
+  records `pathPrefix` and `apiGroup`. When the Java facts show such a call and
+  nothing is declared, `analyze` warns `SETTING_IN_CODE` with the file, the line
+  and the key to fill (the `spring-mvc` pack, read by the new `java.code-setting`
+  kind, which reads a call by its receiver's declared type, and says a call on
+  a receiver the file does not type only as an `info` note).
+  `PATH_PREFIX_UNUSED` names an entry no controller passed, and
+  `PREFIX_NOT_ON_CALLS` says when frontend calls miss a route only for want of
+  the prefix. A project that declares none keeps its pack and its profile
+  digest. On ruoyi-vue-pro, undeclared, the warning points at
+  `YudaoWebAutoConfiguration.java:53`; declared, 3,101 routes go under
+  `/admin-api` and 153 under `/app-api`, endpoints rise from 3,213 to 3,270
+  (routes an admin and an app controller shared were one node) and endpoints
+  reaching SQL from 2,626 to 2,663.
+
+- **Spring's functional routes are endpoints.** A method declared to return a
+  `RouterFunction` builds its routes with calls, not annotations, and none of
+  them was read. The Java worker now records such a method's body as a tree,
+  and a new kind, `java.route-function`, reads it with the vocabulary of the
+  `spring-functional` pack: RouterFunctions and RequestPredicates in WebFlux
+  and WebMvc, and springdoc's SpringdocRouteBuilder. A route gets the endpoint
+  id every lane uses, so one an OpenAPI document declares is corroborated, not
+  duplicated. Its `HANDLES` edge is EXACT where the source names the class and
+  the method and nothing in the tree overrides it, and SOUND_SET through a
+  declared type, over every override below it. The builder is read as it runs:
+  one object whatever names hold it, a local assigned again at the value it
+  holds where it is used, the operation id it was given last. A route whose
+  prefix code elsewhere composes is placed only where a document declares the
+  operation id it names, with its verb, at a path ending in its own, and is
+  HEURISTIC there, since no mount the source states puts it there. What is not
+  read is said
+  (`JAVA_ROUTE_NOT_READ`): a path in a variable, a call the pack does not name,
+  and a handler lambda that does more than call one method, whose route is kept
+  with `handlerUnread` and no handler. On halo, whose 400 documented routes had
+  no handler, 176 routes now have one, 167 of them documented: 12 EXACT links,
+  and 164 HEURISTIC ones placed by operation id, so `conservative` walks 12 of
+  them to a handler and `heuristic` all 176. No SQL
+  statement is reached: halo stores its data through its own extension store.
+  jeecg-boot and petclinic-ms each gain one gateway route with no handler,
+  `GET /`.
+
+- **Angular: `HttpClient` known by its type, and a `Routes` array as screens.**
+  An Angular service asks for `HttpClient` by type (`inject(HttpClient)` or a
+  constructor parameter), so a call through it was traced to no client and
+  graded HEURISTIC. A client pack can now name a library by the type an
+  instance is declared with, and a component's `this.orders.list()` reaches the
+  service method, and every class a provider puts behind that type, as a
+  `CALLS` edge graded SOUND_SET, or HEURISTIC when a factory, a value or a class
+  this lane did not read leaves the set possibly short. The `angular-routes` pack reads a route
+  object only in a file that imports `@angular/router`, so a Vue or React file
+  reads as before, and routes one file names in another are followed for every
+  router: a lazily loaded list, a list bound to a name, a path written as a
+  constant another module exports. A path that cannot be composed is counted,
+  never guessed. On ghostfolio, web calls go from 1 SOUND_SET and 104 HEURISTIC
+  to 105 SOUND_SET, and screens from 0 to 65 (31 of them rendering a
+  component's functions; 30 reach a table in heuristic mode, or in conservative
+  mode once `tsBackend.globalPrefixExclude` is declared). jhipster-sample-app
+  goes from 0 screens to 35, 5 of them reaching a table.
+
+- **A base URL the build decides is read from the `.env` files the build tool
+  reads.** A frontend names its server as `process.env.X || 'http://localhost:8080/api'`,
+  as `import.meta.env.A + import.meta.env.B`, as a condition on `NODE_ENV`, or
+  as a member of a config object, and the web lane read none of those. Which
+  `.env` files each build tool reads, in which order and for which mode, is now
+  a pack (`adapters/web/packs/build-env.json`: Vite, Vue CLI, Create React App,
+  Next.js, @ngx-env, Angular CLI), chosen by the dependencies the package names.
+  A base URL is read once per branch and build mode, its parts joined only
+  within one build; one path across all of them is the prefix, and branches
+  that disagree are settled only by a proxy rule, as before. `X || 'lit'` takes
+  the literal when a `.env` file writes `X=`, since the empty string is falsy,
+  and `X ?? 'lit'` keeps it. `localhost`, `127.0.0.1`, `0.0.0.0` and `[::1]` with any port
+  are this machine, so a call to one is matched against this pack. A value
+  resting on a default no `.env` file sets, on hosts that are not this machine,
+  or on an assumed import alias is a guess, and every edge built on it is
+  HEURISTIC; the web axis says which and what to set. On polls-app, 0 web calls
+  reached a route and 11 now do, all HEURISTIC because they rest on the default;
+  on eladmin, 90 calls go from HEURISTIC to SOUND_SET and the web axis from
+  degraded to shipped; on ruoyi-vue-pro, where no prefix was found for the
+  client before, `/admin-api` is now derived from its `.env` files.
+
+- **An HTTP wrapper written as an object's methods is traced into the method,
+  to the client.** A frontend that keeps its client as
+  `export default { get: (option) => request({ method: 'GET', ...option }) }` and
+  calls `request.get({ url, params })` in every api module was untraced: the lane
+  did not follow an object literal's method, and the method calls a helper its
+  own file declares. The web worker now records the calls that hand one of a
+  function's own parameters on (`forwards`), and the bridge follows them and
+  resolves `x.get(...)` to the member the worker recorded. The method is the one
+  the request finally goes out with, walked hop by hop to the client: a method a
+  hop writes after what it was handed sets it, one written before is a default
+  the caller's own `method` replaces, and it is left absent, grading the edge
+  HEURISTIC, when the caller's options could carry one the lane cannot see. The
+  caller's URL reaches the client only if every hop hands on the parameter it is
+  in; a hop that drops it is not a path for that call (`WEB_URL_NOT_HANDED_ON`).
+  On ruoyi-vue-pro, with its prefixes and a
+  gateway route declared, traced call sites rise from 2 to 2,749 and untraced
+  ones fall from 2,908 to 163; SOUND_SET edges go from 1 to 2,729, and every
+  call that matched a route before lands on the same path. Screens reaching an
+  endpoint go from 0 to 88 of 100, and reaching a table from 0 to 61, at
+  `conservative`. On jeecg-boot the same rule traces 3 call sites through
+  `downloadFile`, checked against the source.
+
+- **A call on this machine goes to the service its port names.** Discovery now
+  reads each Spring application's `server.port`, every profile included, plus
+  Spring Boot's default 8080 where nothing that applies without a profile sets
+  it (`src/core/server_ports.mjs`). A frontend call to this machine on a port no
+  application of the pack listens on is left outbound, with both ports and the
+  file named on `evidence.away`, and `analyze` warns `WEB_OTHER_PORT`. The ports
+  are unknown, and nothing is decided by port, when a value is a placeholder,
+  when an application takes its configuration from a config server, Nacos,
+  Consul or ZooKeeper, or when no Spring configuration was read; one unknown
+  application makes the whole pack's ports unknown. So does configuration the
+  reader does not follow: any `spring.config.import`, `spring.config.location`,
+  `additional-location` or `name`, a profile key with a placeholder, or a Java
+  source with `@PropertySource`, which never falls back to 8080. Ports read:
+  polls-app 8080, eladmin 8000, ruoyi-vue-pro 8080 and 48080, mall 8080, 8081,
+  8082 and 8085; petclinic-ms, jeecg-boot and ruoyi-vue unknown (a config
+  server, Nacos, an `@PropertySource`). No measured call went to another port.
+
+- **`schema.prisma` is the catalog, a Prisma call follows its relations, and a
+  client `$extends` makes is a client.** Every model of `schema.prisma` is now a
+  table and every scalar field a column, with its type, nullability and key,
+  and every relation a `JOINS` edge; an implicit many-to-many is the `_AToB`
+  table Prisma makes. A project with no DDL ships the catalog and column axes
+  from it. With a SQL catalog too, the schema corroborates the tables it
+  declares, and where the two state a table, a column, a key or a nullability
+  differently the difference is counted and said (`PRISMA_CATALOG_DISAGREES`).
+  A relation in `include` or `select`, a relation filter, a relation `_count` and
+  a nested write are read into the model they reach, as part of the call's own
+  statement, each edge naming its relation. A local holding what `$extends`
+  made of a client is a client; an extension with a `query` component, or one
+  not read, makes its calls HEURISTIC. A local is a client only as the
+  declaration it is: the same name declared again in an inner block is another
+  local, and one assigned again anywhere in its scope is counted as unread,
+  with the reason. A relation filtered on `null` whose foreign key sits on the
+  filtered model's side reads that key column alone, as Prisma's engine tests
+  it; a nested write handed a literal that makes Prisma change nothing draws
+  only what Prisma still sends (the pack's `idle` entries: `create: []` sends
+  nothing, `delete: []` still looks the related rows up); one call keeps
+  one `EXECUTES` edge per table and access, as the SQL lane does; and where the
+  schema and the SQL catalog state a column's key or nullability differently,
+  the column keeps both (`declarationsDiffer`), since neither is known to be
+  the newer. On ghostfolio, the catalog axis goes from
+  not shipped to shipped and the column axis from degraded to shipped, 18 stub
+  tables become 21 declared ones, 132 columns become 150 with a type and a key,
+  `JOINS` go from 0 to 22, `relation-not-followed` gaps from 52 to 0, and
+  endpoint-to-table pairs from 322 to 533. On nestjs-prisma-starter, the 2
+  tables and 15 columns its migrations declare are corroborated with no
+  disagreement.
+
+- **TypeORM, in the TypeScript lane: entities as a catalog, each repository
+  call and query builder as a statement.** A NestJS application on TypeORM now
+  reaches its tables. Entities become tables and columns, named as TypeORM
+  names them under the naming strategy, table prefix and schema the DataSource
+  options give. Each fact is read on its own; when the options are not written
+  out (`forRoot()` with no argument, a variable, a factory this engine does not
+  read), a name that depends on it is HEURISTIC, with the reason and
+  `TS_TYPEORM_NAMING_ASSUMED`, a table name the decorator writes included,
+  since a prefix goes before it too. The profile's new `tsBackend.typeorm`
+  block (`namingStrategy`, `entityPrefix`, `schema`) declares what the options
+  leave to run time, and stays out of the profile digest until it is set. Each
+  Repository or EntityManager call is a statement of its own, reading its
+  `where`, `select`, `order` and `relations` by role, with the eager relations
+  and the named relations a find joins whatever its `select` names; a
+  `createQueryBuilder` chain is read step by step, each run keeping what it
+  selects. A repository held in a local is bound where the local is declared.
+  What the lane knows about TypeORM is the new `typeorm` pack, read by four new
+  kinds with examples `cascade rules test` runs. On
+  nestjs-realworld-example-app, 0 statements become 48 over 6 tables and 26
+  columns; its `forRoot()` leaves the strategy, prefix and schema to run time,
+  so no table is reached at `conservative` until `tsBackend.typeorm` declares
+  them, and then 20 of its 21 endpoints reach their tables and columns.
+  nestjs-boilerplate gets 31 statements over 5 tables and 25 columns, every
+  name matching its TypeORM-generated migration.
+
+- **A TypeScript call through an abstract class or an interface reaches the
+  classes that answer it, and a monorepo's shared library is read.** A call
+  through a field typed with a type of the project, and `this.m()` in a base
+  class, now reach the nearest declaration of the method for the type and for
+  every class of the tree that extends or implements it, never an abstract one.
+  What the NestJS modules bind to the type settles the set (the `nestjs.providers`
+  rule, kind `ts.provider-binding`): the edge is SOUND_SET when the bindings make
+  the set complete, and HEURISTIC, with the reason on `evidence.dispatch`, when
+  it may be short. The lane also reads, round by round, every file the
+  application's imports reach inside the analyzed root, never `node_modules` or
+  a test file; the files it read are on `meta.laneStats.ts.reached`. On
+  nestjs-boilerplate, whose services call their repositories through abstract
+  classes, endpoints reaching a statement go from 0 to 19 of 20, all at
+  `conservative`. ghostfolio's run reads 496 files, 175 of them in `libs/common`,
+  and 303 of the 331 calls it counted as calls into a package now reach a
+  function.
+
+- **The `rules` MCP tool, and an overview that says what bounds its numbers.**
+  `rules` lists every kind, pack and rule with what each gave in this pack
+  (links by type and grade, nodes by kind), the ones that gave something first,
+  or one rule whole with its links and nodes, a page at a time
+  ([docs/mcp.md](docs/mcp.md#rules)). The overview adds `reach.routeGrades`
+  (how sure each served route's link to its handler is), `code.services` (the
+  methods between a handler and its SQL, a service that calls its ORM directly
+  included), `diagnostics` (the run's warn and error diagnostics, each also a
+  limit) and a `class` on every gap that says what a reader can do about it. A
+  route's API group is read below the prefix its lane knows the application is
+  deployed under (a NestJS global prefix and version; a `RouterModule` path is
+  part of the group), where the first path segment used to put every route
+  under `/api` in one group.
 
 ### Changed
 
@@ -137,6 +378,53 @@ Each dated section below is one round of work. The round protocol is in
   worker leaves its root out (`--exclude-root`), and so does the incremental
   plan: an edit to a backend file re-reads it once, in its own lane.
 
+- **A route's link to its handler is a link of the path, and a route's picture
+  is graded by it.** A walk used to start below a route at its handler whatever
+  the `HANDLES` edge's grade, so a handler only a rule guessed looked as sure as
+  one the source states. Now the whole-pack census (overview, map, coupling,
+  summary) starts only from the handlers the mode admits and caps what each
+  reaches by that link. `flow` from a route starts at the first handler the mode
+  admits, counts depth from it as the census does, grades no row above the
+  link, and names it in `entry.link`; when the mode admits none, the picture
+  stops at the route and says why. A table in the picture is graded by every
+  link on its path, the statement's own `EXECUTES` included, so one reached
+  through a candidate-set `EXECUTES` is no longer drawn EXACT or kept in
+  `strict`. Every walk from a route now has one default depth, 8: `flow`
+  walked 6 and the census 8, so one route could show a statement in the census
+  and none in `flow`. Walking up, a route below the mode's floor is
+  no longer an endpoint row of that mode and is counted with what the mode cut,
+  and the map labels a route with the handler its mode walks. Packs whose
+  `HANDLES` edges are all EXACT answer as before: six real packs were compared
+  route by route in all three modes. On ghostfolio, whose route links are
+  HEURISTIC until `tsBackend.globalPrefixExclude` is declared, `flow` at
+  `mode=heuristic` now agrees with the census on all 118 routes, where it agreed
+  on 93, and at `conservative` neither walks into them.
+
+- **The catalog axis follows one rule for every source.** A DDL, a snapshot,
+  `schema.prisma` and TypeORM entities ship the catalog when every table and
+  column name is written in the source or follows a rule the run knows applies,
+  and degrade it when a name had to be assumed. The mapping that declared the
+  tables is named in `axes.catalog.sources`, not in a note, since a note rides
+  on every answer as a limit and where the names came from limits nothing.
+
+- **The web axis says what it could not trace.** Calls traced to no client are
+  counted by why and by callee, and when there are any the axis carries a note
+  with the count and the main reason, which rides on every answer as a limit.
+  The axis is degraded when untraced calls are at least as many as traced ones.
+  Packs whose calls are mostly traced gain the note and keep their status:
+  ruoyi-vue-pro 163 of 2,912 calls, jeecg-boot 100 of 936, ruoyi-vue 13 of 138,
+  eladmin 5 of 103, mall 3 of 151.
+
+- **Every cached fact of the Java, web and TypeScript workers is read again
+  once.** The workers are now `javafacts/19` (a method that returns a
+  `RouterFunction`, the locals it assigns, and the calls each file makes with
+  their receivers), `webfacts/17`
+  (build-decided base URLs, Angular routes, typed fields and providers, and
+  what each call in a function hands on and reads) and `tsfacts/6` (what a method returns,
+  type arguments, where each local is declared, interfaces), and the catalog
+  worker is `catalog-ddl/8`. A worker's version is part of every cached fact's
+  key, so the first analyze after upgrading re-reads each file once.
+
 ### Fixed
 
 - **An uncommitted edit's impact reaches the persistence layer the pack does.**
@@ -155,8 +443,8 @@ Each dated section below is one round of work. The round protocol is in
   it; the same file now gives the same answer both ways. Without the SQL lane's
   python, a native query's lineage is still read from the cache, and an overlay
   that would have to re-read MyBatis annotations declines instead of answering
-  without them. OpenAPI documents, run traces and Spring XML id generators are
-  still read by `analyze` only.
+  without them. Run traces and Spring XML id generators are still read by
+  `analyze` only; the OpenAPI documents are now read again too (see below).
 - **A type named like a MyBatis-Plus base, but another type, is not a mapper.**
   The MyBatis-Plus rules now write their base types in full
   (`com.baomidou.mybatisplus.core.mapper.BaseMapper`), and a supertype is read
@@ -220,6 +508,59 @@ Each dated section below is one round of work. The round protocol is in
   before, and of the 240 `.sql` files in 24 local repositories none reads to
   different tables. The catalog worker is now `catalog-ddl/6`, so a catalog
   cached by an earlier version is read again once.
+- **An uncommitted edit keeps the routes an OpenAPI document declares, the
+  handlers a rule linked to them, and the web lane's packages and ports.** The working-tree overlay did not run the
+  OpenAPI bridge, so on a pack whose routes come from a document, one edited
+  file made them disappear from the answer. On spring-petclinic-rest, a comment
+  added to one controller took the overlay from 38 endpoints and 37 `HANDLES`
+  edges to 1 and 1. The overlay now reads the documents the pack read, as they
+  are on disk, and runs the bridge as `analyze` does, with the Java lane's
+  options from the one function both use; the same edit now keeps all 38 and
+  37. The overlay also handed the web bridge no frontend packages and no server
+  ports, so with no edit at all a frontend package with no config file of its
+  own filed its clients under another directory, and a call to another
+  service's port reached this pack's route. It now hands over the packages and
+  ports the pack read, and a test lays the overlay over three unedited trees and
+  finds every node and edge the same. What it keeps without reading again (an
+  edited `package.json`, an edited Spring configuration, the table id generators
+  a Spring XML declares) is said in the answer's limits.
+- **An uncommitted edit's overlay reads the catalog the way `analyze` does.**
+  The overlay's own catalog run passed no dialect, so when it read the DDL
+  itself a PostgreSQL migration set was read as MySQL: on ghostfolio's 126
+  Prisma migrations that lost 53 nodes and 49 edges and changed 27 column
+  types. A pack whose catalog came from a pinned snapshot missed its cached
+  shard every time and handed the snapshot to the DDL reader, so every overlay
+  of it had no tables. And an edited migration was not declined: the overlay
+  looked for the catalog under an older key of the fact index, so the edit
+  passed as a file nothing claimed. The overlay now takes the same files, shard key
+  and reader as `analyze` (the DDL with its dialect, or the snapshot as it is),
+  and an edit to any catalog file the run read declines it.
+- **A frontend function that hands its request to the global `fetch` is a
+  wrapper.** The check for a platform client came after the line that skips a
+  callee with no declaration, and the global `fetch` has none, so no function
+  wrapping it was ever a wrapper and its callers' calls were untraced. A method
+  written before a spread in `fetch`'s options is a default the caller may
+  replace. On
+  polls-app, 11 calls are now traced through its fetch wrapper (still HEURISTIC:
+  they rest on a default base URL), and untraced calls fall from 15 to 4.
+- **A migration's `ALTER` that sets `NOT NULL`, changes a type or moves the
+  primary key is applied.** The DDL reader skipped `ALTER COLUMN SET/DROP NOT
+  NULL`, `ALTER COLUMN TYPE`, adding or dropping a primary key, and every
+  `ALTER TABLE` sqlglot reads only as text, so a catalog folded from migrations
+  kept the state the first `CREATE` gave it. They are applied now, clause by
+  clause: a key named in its `CREATE` or `ADD`, MySQL's `PRIMARY` or
+  PostgreSQL's `<table>_pkey` is dropped by that name (the last is said, as a
+  convention), a primary key's columns are `NOT NULL`, and a clause not applied
+  is named (`alter_clause_unsupported`, `alter_unreadable`). On ghostfolio's
+  Prisma migrations, the 10 places where the SQL catalog disagreed with
+  `schema.prisma` were the SQL side being stale; now there are none. The catalog
+  worker is `catalog-ddl/8`.
+- **A column the dialect reads with no name is left out, never a column named
+  `''`.** A PostgreSQL migration read as MySQL (a profile with no
+  `sqlDialects.main`) reads a name in double quotes as a string, so
+  `"role" "Role" NOT NULL` became a column with an empty name beside the real
+  ones. A `CREATE`, an `ALTER ADD` or a `MODIFY` now leaves such a column out with
+  a `column_unnamed` diagnostic that names the dialect setting to check.
 
 ## [0.8.11] - 2026-09-15
 

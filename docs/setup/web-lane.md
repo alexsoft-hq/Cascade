@@ -16,8 +16,8 @@ evidence, shown and never walked.
 
 Every edge it writes says what it rested on, and the `web` axis is `shipped`
 only when nothing about the frontend had to be guessed. A prefix this engine
-worked out by counting matches, or a path alias it assumed, makes the axis
-`degraded` and names what to declare.
+worked out by counting matches, a path alias it assumed, or a base URL that
+rests on a guess makes the axis `degraded` and names what to declare.
 
 ## What it needs
 
@@ -78,7 +78,18 @@ holding the nearest `package.json`): the dotenv files (`.env`, `.env.local`,
 `.env.<mode>`, `.env.<mode>.local`), `vue.config.js` and `vite.config.*` for the
 dev-server proxy table, and `tsconfig.json` / `jsconfig.json` / the bundler
 config for path aliases. Those three between them decide what `'/api'` in a call
-actually reaches, and the bridge uses all of them.
+actually reaches, and the bridge uses all of them. It also reads the
+dependencies the package's `package.json` names, because they say which build
+tool reads which of those dotenv files (see *A base URL the build decides*
+below).
+
+A workspace often keeps several applications and libraries under one
+`package.json`, each in a directory with a `tsconfig.json` of its own that
+says little more than `"extends": "../../tsconfig.base.json"`. So every
+directory between a source file and its package that holds a `tsconfig.json`
+or `jsconfig.json` gets the aliases that file means: its relative `extends`
+chain is followed the way the compiler follows it, and the aliases apply to the
+files under that directory before the package's own.
 
 ### Server-rendered pages
 
@@ -510,18 +521,22 @@ nothing across files; that is the bridge's job):
 | `file` | the language, the Vue script blocks, how many errors the parser recovered from |
 | `import` / `export` | what this file takes and gives, dynamic `import()` included |
 | `function` | the named functions, with the rule that a callback gets no name of its own and is attributed to the nearest named function |
-| `constant` | an enum or object literal of string members, and `export const X = '/x'` |
+| `constant` | an enum or object literal of string members, and `export const X = '/x'`. A constant whose value the build decides (an env read, a default, env reads joined, a condition over them) keeps that expression as `expr`, or `exprMembers` for an object's members |
 | `binding` | a top-level `const` whose initializer is a call, a `new`, or another name, plus the `baseURL` when one is built there |
-| `class` | a class, with the methods and fields it declares (a client written as a class is as common as one written as a function) |
-| `assign` | `this.<field> = …` anywhere in a class body, with the same `init` shape a `binding` carries — this is where a class puts the client it sends through |
-| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open` |
-| `route` | a route declaration, with its path AS WRITTEN, its component, its parent and its child count |
-| `config` | the env values, the proxy rules and the aliases described above |
+| `class` | a class, with the methods and fields it declares (a client written as a class is as common as one written as a function). `component: true` when a decorator a router pack names marks it (Angular's `@Component`) |
+| `assign` | `this.<field> = …` anywhere in a class body, with the same `init` shape a `binding` carries — this is where a class puts the client it sends through. A field whose TYPE the class states (a constructor parameter property, a field set from a declared injector) is an `assign` too, with a `typed` init |
+| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`) and which of the function's parameters its arguments read (`reads`) |
+| `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`, wherever it is written, a class decorator's argument included |
+| `route` | a route declaration, with its path AS WRITTEN, its component, its parent and its child count. A route of a module pack also carries what joins it to other files: the list it sits in (`list`), a path written as a constant (`pathRef`), the list it loads lazily (`childrenFrom`), the export a lazy component names (`componentExport`), and `grouping` / `outlet` |
+| `routeRef` | a route or a list named by NAME inside a list or under `children`, and a list a child registrar (`forChild`) registers |
+| `config` | the env values, the proxy rules and the aliases described above. An alias read from a nested `tsconfig.json` carries the directory it governs (`scope`), and each package prints one `what: "package"` record with the dependencies its `package.json` names |
 
 A `function` also carries what it RETURNS, when the last `return` at the top
 level of its body is a call or a `new` — that is how a factory (`return new
 Client(opts)`) and a forwarding method (`return this.request(…)`) are followed.
-A `this`-rooted callee inside a class body says which class it belongs to
+It also carries its `forwards`: the calls on a name the file declares that hand
+on one of the function's own parameters, with what each hands on and the method
+it writes (see *What a wrapper is* below). A `this`-rooted callee inside a class body says which class it belongs to
 (`binding: {kind: "this", class: "…"}`), so `this.inner.request(cfg)` can be
 traced to the field the constructor assigned.
 
@@ -548,8 +563,8 @@ cascade analyze [--web-src <dir>... | --no-web] [--openapi <file>... | --no-open
 With no flag, the lane runs over the roots discovery found, but **only when the
 profile declares the `web` framework pack**. `cascade init` declares it whenever
 it finds a `package.json` with a `vue`, `react`, `@angular/core` or `svelte`
-dependency, and adds `vue-router` / `react-router` / `angular-router` when the
-same package depends on one. The documents follow the same three-way rule with
+dependency, and adds `vue-router` / `react-router` / `angular-router` (AngularJS)
+/ `angular-routes` (`@angular/router`) when the same package depends on one. The documents follow the same three-way rule with
 no pack to declare: `--openapi` first, then the profile's `openapi.documents`,
 then whatever discovery found.
 
@@ -651,8 +666,8 @@ registration in it is named in one warning:
 
 A route object has no syntax of its own: it is a plain object whose KEY NAMES a
 framework decided on. Those names live in `adapters/web/packs/*.json`, one file
-per convention, and the worker loads every file in that directory at start. Two
-ship today:
+per convention, and the worker loads every file in that directory at start. The
+vue-router one:
 
 ```json
 {
@@ -730,6 +745,62 @@ $stateProvider
   abstract `app` whose url is `''` is `/owners`.
 - `$routeProvider.when('/legacy', {templateUrl, controller})` is the ngRoute
   spelling of the same thing, with the path as the first argument.
+
+### The module form (`angular-routes`)
+
+Angular 2 and later (`@angular/router`) declares its routes as a `Routes` array
+of plain objects. Its keys `path`, `component` and `children` are the same words
+vue-router and react-router use, so an object alone cannot say whose it is.
+What says it is the file: a route file imports from `@angular/router`. So
+`adapters/web/packs/angular-routes.json` is a **module pack**
+(`routesFrom: "module"`, `modules: ["@angular/router"]`): it reads a route
+object only in a file that imports that module, and in such a file it is the
+pack that reads it. A file that imports none is read exactly as before, which
+is what keeps a Vue or React project's routes as they were.
+
+What it reads:
+
+- `component`, and `loadComponent: () => import('./x')` (the module's default
+  export) or `.then(m => m.X)` (its export `X`);
+- `loadChildren: () => import('./x.routes')`, the list that module exports by
+  default or the one `.then` picks;
+- `children`, `redirectTo`, `title` and `outlet`;
+- a route bound to a name (`const ordersRoute: Route = {…}`), which in such a
+  file is a route and not somebody's configuration.
+
+Two kinds of declaration compose and are not screens, and each is counted
+(`laneStats.web.screens.lists`): a **group**, a route with children and no
+component of its own (its children render in the outlet above it,
+`groupings`), and a route for a **named outlet**, drawn beside the page rather
+than being one (`outlets`). A class decorated with `@Component` imported from
+`@angular/core` makes its `.ts` file a component, so a screen renders the
+components its component imports, as candidates, as a Vue screen does.
+
+### Routes named across files
+
+A router that declares its routes in several files joins them by NAME, and the
+bridge follows those names for every router, not only Angular's
+(`src/adapters/web/route_lists.mjs`). A route's path is composed onto the path
+of the route that loads or names the list it sits in:
+
+- a lazily loaded list (`loadChildren`);
+- a list or a route bound to a name and placed in another list
+  (`[ordersRoute, ...errorRoutes]`);
+- `children: ORDER_ROUTES`, a list written somewhere else.
+
+A path written as a constant (`path: appPaths.orders.path`) is read through
+that constant, in the same file or across an import, nested object text and
+destructured names included, because the constant is still a literal somebody
+wrote. A route loaded from two places is two screens.
+
+A path that cannot be composed is not guessed. That is a constant this lane
+cannot read (a `$localize` template, say), or a list registered with
+`RouterModule.forChild` that no route here loads. Such a route is not a screen.
+It is counted (`pathUnknown`, `pathRefsUnresolved`, `childListsWithoutParent`),
+the names that could not be followed are listed (`unresolved`), and the run
+prints `SCREEN_PATH_UNKNOWN` and a `SCREEN_ROUTE_NAME_UNREAD` for each of the
+first five names. Past a
+fifth of the declared routes, the screen axis is `degraded`.
 
 ### A route declaration is never an HTTP call
 
@@ -864,12 +935,12 @@ and turns each call site into one edge per route it can be shown to reach.
 |---|---|---|
 | an OpenAPI document that declares the route | **EXACT**, as a declaration | the document is the project's own statement that the route exists, so the endpoint node is exact about THAT and about nothing else. A route the code also serves is corroborated and keeps the grade the code lane gave it; a route only the document names gets **no handler edge**, so a frontend call reaches the endpoint and stops there, and the `code` axis says `degraded` with that reason. See *OpenAPI documents* below |
 | a platform sink (`fetch`, `XMLHttpRequest.open`) with a URL that matches a route this pack serves | **SOUND_SET** | the browser sends the request itself and the URL argument is the URL by contract; nothing had to decide that this is an HTTP call |
-| an HTTP client library instance (a declaration pack names the library) called through one of its verbs | **SOUND_SET** | the library sends the request, and the URL is the argument the library reads |
+| an HTTP client library instance (a declaration pack names the library) called through one of its verbs, including a field whose TYPE the class declares as that client | **SOUND_SET** | the library sends the request, and the URL is the argument the library reads |
 | a **wrapper** traced back to one of those, by following what each name is bound to | **SOUND_SET** | every hop is a binding the lane read, and the hops are on the edge (`evidence.sink.chain`) |
 | a URL-shaped argument handed to a call the lane could **not** trace to any sink | **HEURISTIC** | the call may send this URL or may only build it: a rule guessed |
-| any of the above where the prefix was chosen by match count, a path alias was assumed, or the call has no method at all | **HEURISTIC** | one part of the answer is a guess, so the whole edge is |
+| any of the above where the prefix was chosen by match count, a path alias was assumed, the base URL rests on a guess (see *A base URL the build decides*), or the call has no method at all | **HEURISTIC** | one part of the answer is a guess, so the whole edge is |
 | a browser recording (HAR) | **RUNTIME_ONLY** | a recording proves a request happened once and proves nothing about what the code can do, so the edge sits below every query mode's floor: it is **shown** (`observed: true`) and **never walked**, and it never raises the grade of the static edge beside it. An APM trace or an access log is still not read. See *Recordings (HAR)* below |
-| a URL that resolved but no route here answers, or one naming another host | **UNRESOLVED** | the edge is below every mode's floor, so no walk follows it. The route is a node marked `outbound`, `source: "web"`, exactly as a Feign call that leaves the pack is |
+| a URL that resolved but no route here answers, one naming another host, or one on this machine on a port no application of this pack listens on | **UNRESOLVED** | the edge is below every mode's floor, so no walk follows it. The route is a node marked `outbound`, `source: "web"`, exactly as a Feign call that leaves the pack is |
 
 A call whose URL never resolved at all gets **no edge** and is counted by the
 reason the worker gave (`parameter`, `expression`, `importedConstant`). Two more
@@ -900,6 +971,72 @@ and whose `request(config)` returns `this.inner.request(config)` is followed all
 the way to `axios.create`, and the edge records the chain and the depth. The
 method comes from the wrapper's own verb where it has one, then from the call's
 config, then from the library's documented default (`method.from` says which).
+A verb whose name is not a method (`jsonp`, superagent's `del`) takes its method
+from the library's verb table in the pack (`library-verb`).
+
+A function that hands its request to the browser's global `fetch` is a wrapper
+too. It was not before: a global `fetch` binds nothing, so the lane asked what
+the callee resolved to, found nothing, and never reached the question of whether
+the call was a platform sink. That question now comes first. A method `fetch`
+reads out of an options object written before a spread
+(`fetch(u, { method: 'GET', ...o })`) is a default the caller's own `method`
+may replace, and a wrapper that ends at `fetch` with no method anywhere sends
+`fetch`'s default.
+
+**A wrapper written as an object's methods.** Plenty of frontends keep their
+client as an object:
+
+```ts
+// config/axios/index.ts
+const request = (option) => service({ ...option })
+export default {
+  get: (option) => request({ method: 'GET', ...option }),
+  post: (option) => request({ method: 'POST', ...option }),
+}
+// every api module
+request.get({ url: '/system/user/page', params })
+```
+
+An object literal whose functions the worker recorded (a default export, a
+named `const`, or such a `const` exported as the default) is a value a name
+holds, and `request.get(…)` is traced into `get` by the owner the worker
+recorded, never by the key alone. The method then calls a helper its own file
+declares, and a call on a local name is not a call record. So the worker writes
+the calls that hand on one of the function's own parameters (as an argument,
+spread into an object argument, or under a key) on the function record as
+`forwards`, beside `returns`, and the bridge follows them the same way, forwards
+first. Such a chain is SOUND_SET, never EXACT, like every wrapper, and
+`laneStats.web.wrappers.byKind.objectMethod` counts these wrappers. A call on
+`this` inside such a method is not a forward: only a call on a name the file
+declares is.
+
+**Where the method comes from, through a forward.** The method is the one the
+request finally goes out with, so the chain is walked hop by hop, from the
+caller to the client. A verb a hop writes AFTER what it was handed
+(`{ ...option, method: 'GET' }`) sets it (`method.from: "wrapper-verb"`). One
+written BEFORE (`{ method: 'GET', ...option }`) is a default that a method
+already on the way in, or the caller's own `method` key, replaces:
+
+- the caller's object literal names a method: that one (`config`);
+- it names none, and has no spread of its own: the wrapper's (`wrapper-default`);
+- the caller's options could carry one the lane cannot see (a spread in them, a
+  name, an argument past the three a call record reads): no method,
+  `from: "absent"` with `wrapperDefault` beside it, and the edge is HEURISTIC.
+
+**Where the URL comes from, through a forward.** The URL is the caller's, read
+where the call record says it was (`url.at`: the argument, and the key when the
+argument is an object). It reaches the client only if every hop down to it
+hands on the parameter the URL is in: an object spread in or passed whole, or
+the URL itself passed whole. The worker records, on each call inside a named
+function, what it hands on (`hands`) and which of the function's parameters its
+arguments mention (`reads`, directly or through a `const` declared from one). A
+hop that reads the URL's parameter nowhere has dropped it and would send a URL
+this call did not write, so the call is not traced through it. It is graded as
+untraced, counted in `laneStats.web.calls.urlNotHandedOn`, and the run prints
+`WEB_URL_NOT_HANDED_ON` when there are any. A hop that reads the parameter only
+through something the worker does not follow (a `let`, a rest, `this`,
+`arguments`) is taken as reaching the client, as a wrapper always was, and
+counted in `calls.urlThroughUnreadHop` (`WEB_URL_THROUGH_UNREAD_HOP`).
 
 ### The prefix, and how to declare it
 
@@ -938,6 +1075,100 @@ The key is applied in both places a prefix can sit: on the client's base URL,
 and on the CALL PATH itself when the call carries the prefix (`$http.get(
 '/api/customer/owners')` with no base URL at all, which is what a frontend
 served by a gateway looks like). The longest matching key wins.
+
+### A base URL the build decides
+
+A frontend rarely writes its server's address as one literal. It reads an
+environment value, often with a literal to fall back on, and what that value
+holds depends on the build. All of these are read:
+
+```js
+const API_BASE_URL = process.env.API_URL || 'http://localhost:8080/api'  // a default
+baseURL: import.meta.env.VITE_BASE_URL + import.meta.env.VITE_API_URL    // env values joined
+baseURL: process.env.NODE_ENV === 'production' ? process.env.BASE : '/'   // a condition
+const { base_url } = config  // at module scope: base_url is config.base_url
+```
+
+Which `.env` files a build reads, in which order and for which mode, is each
+build tool's own documented rule, so it is a declaration:
+`adapters/web/packs/build-env.json`. The tool is the first row whose dependency
+the package's `package.json` names (Next.js, Create React App, `@ngx-env`, Vite,
+Vue CLI, the Angular CLI, which reads no `.env` file at all), and a package that
+names none of them is read in the order Vite and Vue CLI share. The builds are
+the tool's own modes (`development`, `production`), plus, for a tool that takes
+`--mode`, each mode a `.env.<mode>` file names.
+
+The lane reads a base URL into one outcome per branch and per build: a path, a
+host, and what it rests on.
+
+- When every outcome gives one path, that path is the prefix, `derived`. For a
+  base URL with a default or a condition in it, the reads are on the edge as
+  `evidence.prefix.reads` (the branch, the file, the modes), so a reader can see
+  whether the literal was the one used.
+- When the outcomes give different paths, only a dev-proxy rule settles it, as
+  before; otherwise the prefix is `auto`.
+- Parts are joined only within one build. A client's base URL and an
+  environment value at the front of a call's path are joined only in a build
+  that sets both; when they hold in disjoint builds, the call is unresolved
+  (`unresolved.byReason.noBuild`), never a path mixed from two builds.
+- A base URL written as a name (`baseURL: API_BASE`) is followed to where the
+  name is declared, through imports.
+- An environment value at the FRONT of a call's own URL
+  (`API_BASE_URL + '/polls'`) is a base URL written at the call site. It is put
+  in only when every build gives it one path. One in the middle of a path, or
+  one the builds disagree about, stays an `env` hole.
+
+**This machine is not another deployable.** An absolute address on `localhost`,
+`127.0.0.1`, `0.0.0.0` or `[::1]`, with any port, is a backend's development
+server (the pack's `localHosts`). A call to one is matched against this pack
+instead of being left outside it. Which port means which service is the next
+section.
+
+**Three things a base URL can rest on are guesses.** Every edge built on one is
+HEURISTIC, with `guess` on `evidence.prefix` (a client's base URL) or on
+`evidence.url` (the front of a call's URL), and the `web` axis is `degraded`
+with a reason that says what to do:
+
+| `guess` | what the value rests on | what the axis tells you to do |
+|---|---|---|
+| `fallback` | in at least one build, the literal of `X \|\| 'lit'`, because no `.env` file that build reads sets X, or one writes it empty (`X=`: the empty string is falsy, where `X ?? 'lit'` keeps it). A shell, a CI job or a container may set it, and nothing in the tree can show that nothing does | set the value in a `.env` file the build reads |
+| `deployment-host` | every build names a host that is not this machine, and which code answers there is not in the source. When one build opens the same path on this machine, the remote builds are read as that backend deployed, and there is no guess | give the development build an address on this machine in a `.env` file, or declare `gatewayRoutes {"*": "<back>"}` |
+| `assumed-alias` | the base URL was read from a module reached through an import alias this engine assumed | declare the alias |
+
+### This machine, another port
+
+`http://localhost:8081/owners` and `http://localhost:8082/visits` are both this
+machine. In a repository with more than one backend, the port is what tells the
+services apart. So discovery reads `server.port` from each Spring application's
+own configuration (`application*` and `bootstrap*`, in `.yml`, `.yaml` or
+`.properties`), every profile included, because each profile is one way the same
+application runs. An application is the `resources` directory its configuration
+sits in. Where no document that applies without a profile sets the port, the
+application also listens on Spring Boot's documented default, 8080.
+
+A call to this machine on a port it WRITES that no application of this pack
+listens on is another service's call: in its own address, in its client's base
+URL in every build, or in an environment value at its front. It stays outbound,
+graded UNRESOLVED with `target: "outside-pack"`, and `evidence.away` names both
+ports and the file that set them. When its path is one this pack also serves,
+the edge lands on that route's node, still UNRESOLVED, so no walk follows it.
+The same port, no port written, or ports that are not known: as before.
+
+The ports are not known, and nothing is decided by port, when a `server.port` is
+a placeholder (`${PORT:8080}`) or not a number, when an application takes its
+configuration from outside the tree (a config server, Nacos, Consul,
+ZooKeeper), when it points at configuration this reader does not follow (any
+`spring.config.import`, a classpath file included, `spring.config.location`,
+`additional-location` or `name`, a profile key with a placeholder, or a Java
+source with `@PropertySource`), or when no Spring configuration was read. One application whose
+port is not known makes the whole pack's unknown, because a call on "another"
+port may be that application's. `cascade analyze` prints the ports and the files
+they came from, or why they are not known, and warns `WEB_OTHER_PORT` with the
+count when a call went to another port:
+
+```
+Web lane: this pack listens on port(s) 8080 (server.port in src/main/resources/application.properties)
+```
 
 ### Gateway routes you do not have to type
 
@@ -1076,6 +1307,32 @@ That is also the one place a **relative** path counts as a URL: `$http.get(
 'api/customer/owners')` has no leading slash, and a bare `get('size')` still
 does not become a call. The difference is the client, not the string.
 
+**A client known by its type.** Angular's `HttpClient` is never built by the
+file that uses it: a class asks for it by TYPE and the framework hands it an
+instance. So a library row can name the types an instance is declared with:
+
+```json
+{ "module": "@angular/common/http", "instanceTypes": ["HttpClient"],
+  "verbs": { "get": "GET", "post": "POST", "jsonp": "GET", … },
+  "generic": ["request"], "positional": { "request": { "methodArg": 0, "urlArg": 1 } } }
+```
+
+A field holds such an instance when the class states its type in one of two
+ways, and the type is imported from that module under one of `instanceTypes`:
+
+- a constructor parameter property, `constructor(private http: HttpClient)`,
+  which is TypeScript's own field declaration;
+- a field set from an injector `adapters/web/packs/injection.json` names,
+  `http = inject(HttpClient)` with `inject` from `@angular/core`.
+
+A parameter carrying a decorator (`@Inject(TOKEN)`) is not read: the token
+decides what it holds, not the type written beside it. A call through such a
+field is **SOUND_SET**, and `evidence.sink.typed` says which way the type was
+stated (`constructor-parameter` or `injector`). The module itself is not a
+client, since `HttpParams` and `HttpHeaders` come from it too. `positional`
+says `request(method, url, options)` takes its method and URL by position; a
+method that is not a verb written out is no method, and the edge is HEURISTIC.
+
 ### A URL built on a constant
 
 Most frontends do not write the path at the call site. They write it once, at
@@ -1178,7 +1435,37 @@ Web lane: 1 client instance(s), 0 wrapper(s) (deepest 0), 121 exact and 0 templa
 
 The first line is the worker's, the other two the bridge's. The same counts go
 into `pack.meta.laneStats.web`, so what was printed and what was recorded cannot
-disagree.
+disagree. Below them come the ports this pack listens on, or why they are not
+known (see *This machine, another port*), `WEB_URL_NOT_HANDED_ON` when a
+wrapper did not hand a call's URL on, and `WEB_URL_THROUGH_UNREAD_HOP` when a
+URL passed a hop through something the lane does not follow.
+
+### What the web axis says
+
+The `web` axis is `shipped` when nothing about the frontend had to be guessed.
+It is `degraded` when no call reached a route this pack serves, or when part of
+what did rests on a guess:
+
+- a prefix chosen by match count, or not found even that way (`auto`, `none`);
+- a call through an alias this engine assumed;
+- a base URL that rests on a guess (the table in *A base URL the build decides*);
+- calls traced to no client at least as many as the calls traced.
+
+A few untraced calls do not degrade the axis. Each is still an edge, graded
+HEURISTIC and saying so on itself. They are said in a **note** on the axis
+instead, and an axis note rides on every answer as a limit even when the axis
+shipped: how many call sites were traced to no client, the main reason, and a
+callee it happened on. The reasons are counted on
+`laneStats.web.untraced.byReason`, and the five commonest callees with their
+reason on `untraced.callees`:
+
+| reason | the function called |
+|---|---|
+| `unbound` | is bound to nothing this lane follows (an object of functions, a parameter, a global) |
+| `external` | comes from a package the HTTP client pack does not name |
+| `not-a-wrapper` | is the project's own, and hands the request to no client this lane knows |
+| `not-a-verb` | is a client, called through a method that is not one of its verbs |
+| `url-not-handed-on` | is a wrapper that does not hand the argument the URL is in on to the client |
 
 ## Incremental: what is cached, and what never is
 
@@ -1239,6 +1526,17 @@ grade. That is a MARKER, not a grade: the lattice is untouched.
 `frontendCalls`: how many frontend functions call it. That is the half of the
 blast radius that is not below the edit.
 
+**What else the overlay reads, and what it does not.** It reads the OpenAPI
+documents the base pack read, as they are on disk now, and runs the OpenAPI
+bridge on them as `analyze` does, so a document's routes and the contract links
+on them (see *OpenAPI documents* below) survive an edit. It hands the bridge the
+frontend packages and the server ports the base pack read, as `analyze` does,
+so an overlay over no edit builds the graph the pack holds, and a call the pack
+left outbound because of its port stays outbound. It does not decide those two
+again: an edited `package.json` near a frontend, or an edited Spring
+configuration when the pack read ports, is named in the answer's `limits`. A
+pack built before it recorded its packages says so too.
+
 Measured on the integration fixture, one edited `.vue`: **67 ms** total for the
 lanes (web 63, sql 1, graph 3), against a one-second gate.
 
@@ -1285,6 +1583,27 @@ drift census is on `meta.laneStats.openapi` and in the overview's
 - **served and not declared** — undocumented API.
 
 This engine reports both and judges neither.
+
+**Contract-first backends.** A Spring project built contract-first keeps its
+API in the document, and openapi-generator writes one interface per group of
+operations at build time (`OwnersApi`), which the project's controllers
+implement. The source tree never holds those interfaces, so the Java lane sees
+controllers with no mapping, and the document's routes have nothing under them.
+The rule `openapi-generator.spring-interface` pairs the two by the generator's
+naming, for a class the framework serves (`@RestController`, `@Controller`)
+only, and draws a HANDLES edge graded **HEURISTIC**, with the rule, the
+operationId, the documents and the interface on its evidence. How the rule
+reads the names is in [the rule packs page](../rules.md).
+
+`cascade analyze` prints how many declared routes the rule gave a handler, warns
+`CONTRACT_NOT_LINKED` for a method it would not link, and prints no
+`OPENAPI_NOT_SERVED` for a route it linked. `laneStats.openapi.contractLinks`
+lists the links and the methods left unlinked; a pairing whose route the code
+already maps to the same method is counted apart (`alreadyHandled`), never as a
+link. The overview says the same in a `contract-links` gap. The drift census
+still counts those routes as declared and not served, because no mapping in the
+source serves them. A walk at the default `conservative` mode does not follow a
+HEURISTIC link; `mode=heuristic` does.
 
 **Without a Java lane.** This is what the layer is really for. A backend written
 in something this engine has no lane for — Node, Go, Python, .NET — still
@@ -1486,6 +1805,7 @@ how the name was followed:
 | `EXACT` | a static import with a named or default specifier, followed through a relative path or a DECLARED alias to a function this lane read; or a call by name inside one file (`getList()`, `this.getList()`) |
 | `SOUND_SET` | the same, but the name came through an `export *` barrel or a re-export chain, so WHICH file it came from was a choice |
 | `SOUND_SET` | the function was never called here at all: it was PASSED AS A VALUE to some other call, and the receiver may call it |
+| `SOUND_SET` | `this.orders.list()` through a field whose TYPE the class states (a constructor parameter property, or `orders = inject(OrderService)`), onto the method of the class that type names and of every class a provider puts behind it (rule `typed-field`). Never EXACT: a provider may put another class in the type's place. HEURISTIC when the set may be short: a provider made by `useFactory` or `useValue`, or one naming a class this lane did not read |
 | `HEURISTIC` | an ASSUMED alias was on the path |
 
 A call onto an imported name that is **not** a function (a constant, a
@@ -1544,8 +1864,9 @@ a grade alone cannot tell a followed call from a handed-over function.
 or that reaches one through these edges, is in the graph; a formatter or a date
 helper is counted (`laneStats.web.functions`) and left out, because otherwise the
 pack doubles in size for code no question is ever about. A function in a
-component file (`.vue`, `.tsx`, `.jsx`) carries `component: true`, so a tool can
-tell a function in a screen from an api function. A `.ts` or `.js` module that
+component file (`.vue`, `.tsx`, `.jsx`, or a `.ts` file with a class Angular's
+`@Component` marks) carries `component: true`, so a tool can tell a function in
+a screen from an api function. A `.ts` or `.js` module that
 exports a function returning JSX is a component too, and this version does NOT
 catch that: the fact stream carries no JSX marker, so the rule is the file
 extension and nothing else.
@@ -1620,7 +1941,7 @@ rather have no screen axis than a partial one.
   |---|---|
   | `true` | build screens, whatever this run happens to read. `cascade init` writes this when it finds a router package in the analyzed tree |
   | `false` | build none, whatever this run happens to read. Your word, and the engine does not argue with it |
-  | `null`, or the key absent | decide it from what the run READS: on when `frameworkPacks` names a router pack, when a frontend package this run really reads depends on `vue-router`, `react-router` or an AngularJS router, or when the run reads a template root at all; off otherwise. This is the default |
+  | `null`, or the key absent | decide it from what the run READS: on when `frameworkPacks` names a router pack, when a frontend package this run really reads depends on `vue-router`, `react-router`, an AngularJS router or `@angular/router`, or when the run reads a template root at all; off otherwise. This is the default |
 
   The third state exists for the layout `--web-src ../front/src` describes. `cascade init`
   discovers the **analyzed tree**, so a backend whose frontend is checked out beside
@@ -1649,7 +1970,8 @@ rather have no screen axis than a partial one.
 `shipped` needs all three: the gate is on, at least one screen has a RENDERS
 edge, and nothing about the reading was a guess. It is `degraded` when the app
 fetches its menu from the server, when more than a fifth of the declared routes name a component
-this lane could not resolve, when `nameSource` asks for something not shipped, or
+this lane could not resolve, when more than a fifth have a path it could not
+compose (see *Routes named across files*), when `nameSource` asks for something not shipped, or
 when screens were built and not one of them reaches a function. It is
 `not-shipped` only when the gate is off or no route was read at all. When it is
 off, the axis reason names which of the three rules above turned it off.
@@ -1751,7 +2073,8 @@ plus `--web-src` builds screens without anybody editing a profile.
   version reads; a trace from an APM agent or an access log is not.
 - **No JSX detection outside the file extension.** A `.ts` or `.js` module that
   exports a function returning JSX is a component, and this version treats only
-  `.vue`, `.tsx` and `.jsx` as one.
+  `.vue`, `.tsx` and `.jsx` as one, plus a `.ts` file whose class a pack's
+  decorator marks (Angular's `@Component`).
 - **No screen a route does not declare**, unless a recording found the page. A
   router filled in from the server contributes only the routes in the source, and
   the axis says so.

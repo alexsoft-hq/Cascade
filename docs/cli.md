@@ -161,6 +161,10 @@ the database its `schema.prisma` names (`provider = "postgresql"`) to
 `profile.sqlDialects.main`. Two applications write none, and say which it
 found: a pack reads one. See [the TypeScript lane](setup/ts-lane.md).
 
+A path prefix Spring configuration code sets cannot be discovered, so a
+`pathPrefixes` list you declared is kept when `init` runs again, `--force`
+included. See [the Java lane](setup/java-lane.md#a-prefix-set-in-configuration-code-pathprefixes).
+
 - `--root <dir>` — the tree to discover (default: the current directory).
 - `--project <id>` — the id to register it under (default: derived from the
   directory name).
@@ -283,9 +287,12 @@ both apply; otherwise it is cold **and says why**.
   a schema split one file per service is `--ddl a.sql --ddl b.sql --ddl c.sql`
   or `--ddl 'svc-*/db/mysql/schema.sql'`. The files are applied **in the order
   given**, so a base schema followed by its migrations reads as the history it
-  is: `CREATE TABLE` declares, `ALTER TABLE ADD/DROP/MODIFY/CHANGE COLUMN` and
-  `RENAME TABLE` amend, and two files declaring the same table are reported
-  (`DUPLICATE_TABLE_DECLARATION`) with the first kept, never merged.
+  is: `CREATE TABLE` declares; `ALTER TABLE ADD/DROP/MODIFY/CHANGE/RENAME
+  COLUMN`, `ALTER COLUMN SET/DROP NOT NULL` and `TYPE`, adding or dropping a
+  primary key, and `RENAME TABLE` amend; and two files declaring the same table
+  are reported (`DUPLICATE_TABLE_DECLARATION`) with the first kept, never
+  merged. An `ALTER` clause not applied is named (`alter_clause_unsupported`,
+  `alter_unreadable`).
 
   With no `--ddl` at all, discovery classifies every `.sql` it found by
   **dialect** (from the path — `db/mysql/…`, `schema_h2.sql` — and otherwise from
@@ -315,9 +322,11 @@ both apply; otherwise it is cold **and says why**.
 - `--ts-src <dir>` — the root of a NestJS application. The TypeScript lane reads
   the routes the controllers its modules register serve (under the global
   prefix and URI version the bootstrap sets), the calls between its methods,
-  and every Prisma call as a statement of its own, against the application's
-  `schema.prisma`. One application per pack: a second root is named and left
-  out. An unflagged run reads the profile's `tsBackend.app` when the profile
+  and every Prisma or TypeORM call as a statement of its own, against the
+  application's `schema.prisma` or its TypeORM entities. It also reads the files
+  the application's imports reach elsewhere in `--root` (a monorepo's shared
+  library), never `node_modules`. One application per pack: a second root is
+  named and left out. An unflagged run reads the profile's `tsBackend.app` when the profile
   declares the `nestjs` framework pack, which `cascade init` writes when it
   finds one application. A frontend root around it leaves its files to this
   lane. See [the TypeScript lane setup page](setup/ts-lane.md).
@@ -330,8 +339,15 @@ both apply; otherwise it is cold **and says why**.
   added with **no handler edge**, because a declaration says a route exists and
   says nothing about what runs below it. The two drift lists — declared and not
   served, served and not declared — are on `meta.laneStats.openapi` and in the
-  overview's `openapi-drift` gap. With no flag, the documents come from the
-  profile's `openapi.documents`, and failing that from discovery.
+  overview's `openapi-drift` gap. Two readings give a declared route a handler
+  that no mapping annotation names: a Spring controller that implements the
+  interface openapi-generator writes from the document, paired by the
+  generator's naming and graded HEURISTIC ([rules.md](rules.md)), and a Spring
+  functional route whose prefix code elsewhere composes, placed where the
+  document declares the operation id it names and graded HEURISTIC too
+  ([the Java lane](setup/java-lane.md)). With no flag, the
+  documents come from the profile's `openapi.documents`, and failing that from
+  discovery.
 - `--no-openapi` — read no document even when the profile or discovery names one.
 - `--har <file>` — a browser recording (HAR 1.2, what Chrome DevTools saves from
   the Network panel); repeat for several. Every request in it whose path matches
@@ -645,6 +661,18 @@ not the pack, not the fact cache.
 A row marked `PROVISIONAL` exists only in the overlay — no certified run has
 seen it. After a commit the overlay is discarded and the answer is `behind`,
 naming `cascade analyze` as the cure.
+
+The overlay reads the OpenAPI documents the pack read, as they are on disk now,
+so a document's routes and the handlers a rule linked to them are still there.
+It reads the catalog as `analyze` did (the same DDL files with their dialect,
+or the snapshot), and declines when any of those files is edited.
+It hands the web lane the frontend packages and server ports the pack read, so
+with no edit it answers as the pack does. What it does not read again it says
+in the answer: the table id generators a Spring XML declares, when the pack
+bound any, an edited `package.json` near a frontend, and an edited Spring
+configuration when the pack read ports: the overlay keeps the packages and
+ports as the pack read them. A pack that reads a TypeScript backend is
+declined (`ts-not-overlaid`); `--mode base-only` still answers.
 
 ## `cascade view`
 

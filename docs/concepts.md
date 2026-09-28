@@ -12,7 +12,7 @@ whole point is that nothing moves **up** it.
 |---|---|---|
 | `EXACT` | proved unique by syntax, symbols and constants | a handler calling a mapper method directly |
 | `SOUND_SET` | a conservative candidate set the real target is *guaranteed to be inside* | the possible implementations behind an interface dispatch |
-| `HEURISTIC` | plausible from a project convention; a recovered or partial binding | a column name derived from a field name with no declared naming strategy |
+| `HEURISTIC` | plausible from a project convention; a recovered or partial binding | a column name derived from a field name with no declared naming strategy; a route's handler paired with it only by a code generator's naming |
 | `RUNTIME_ONLY` | not statically decidable; needs runtime evidence | a bean or URL chosen from external configuration |
 | `UNRESOLVED` | the analysis failed, or the shape is unsupported | a parse failure, a missing dependency |
 
@@ -35,6 +35,22 @@ anything weaker on the way, like every other edge.
 
 A walk is graded by its **weakest link**: a chain that passes through one
 `SOUND_SET` call is `SOUND_SET`, however exact the rest of it was.
+
+**A route's link to its handler is a link too.** Most `HANDLES` edges are
+`EXACT`, but not all. A handler a rule paired with a route by a code
+generator's naming is `HEURISTIC`. So is a NestJS route an exclude the engine
+could not read may move. A Spring functional route whose handler is reached
+through a field typed with an interface is `SOUND_SET`. So a walk from a route
+starts at its handler only when the mode admits that link. Depth counts from the
+handler, and no row, table or page below it is graded above the link
+(`src/core/walks.mjs`). The whole-pack census (overview, map, coupling,
+summary) and a `flow` picture read the link the same way, so they agree on how
+deep a route reaches and how sure it is. A picture names the link it started
+through (`entry.link`: type, grade, rule). When the mode admits no handler of
+the route, the picture stops at the route and says which grade kept it out.
+Walking up, a route whose link is below the mode's floor is not an endpoint row
+of that mode; it is counted in `walk.cut.byMode` with the other links the mode
+did not walk. The `map` names a route after the handler its mode walks.
 
 Query modes pick a floor: `strict` uses confirmed edges only, `conservative`
 adds candidate calls, `heuristic` also admits guessed rules. A question that
@@ -135,6 +151,23 @@ re-analysis of the same bytes. Commit your edit and the overlay is *discarded*,
 answering `behind` and naming `cascade analyze` as the cure — never a quiet fall
 back to the pre-edit answer.
 
+The overlay reads the OpenAPI documents the base pack read, as they are on disk
+now, and runs the OpenAPI bridge on them as `analyze` does, so a document's
+routes and the handlers a rule linked to them survive an edit. It reads the
+catalog with the same files, dialect or snapshot as `analyze`, and an edit to
+any catalog file the run read declines the overlay. It hands the web
+bridge the frontend packages and the server ports the base pack read, as
+`analyze` does, so an overlay over no edit at all builds the analyzed graph
+(`test/overlay_equivalence.test.mjs`). A few inputs it does not read again, and
+it says so. An edited `package.json` near a frontend, or an edited Spring
+configuration when ports were read, is named in `limits`: the overlay keeps the
+packages and ports the base pack read. The table id generators a Spring XML
+declares come from a walk of the whole tree; when the base pack bound any, the
+answer carries a `limits` sentence saying those calls reach no generator here. A
+pack that reads a TypeScript backend is declined with `ts-not-overlaid`, and
+`base-only` still answers. Run traces and recordings are not read again and not
+said: they only add `RUNTIME_ONLY` marks, which no walk follows.
+
 The second speed also covers *reruns*: a run after a small edit reuses the
 content-addressed shards of everything that did not change, and the result must
 equal a cold run of the same state **byte for byte** (invariant I-9,
@@ -209,9 +242,19 @@ it proves nothing about what the code can do.
 
 `degraded` is not only about a missing input. The `web` axis is `shipped` only
 when nothing about the frontend had to be guessed: a URL prefix this engine
-worked out by counting matches, or a path alias it assumed because the project
-declares none, makes the axis `degraded` and the reason names what to declare to
-fix it.
+worked out by counting matches, a path alias it assumed because the project
+declares none, or a base URL resting on a default no `.env` file sets or only
+on hosts that are not this machine, makes the axis `degraded` and the reason names
+what to declare to fix it. So does a lane that traced as many calls to no client
+as it traced to one. Fewer untraced calls do not degrade the axis; they ride on
+every answer as a note that says how many, and why most of them were not traced.
+
+The `catalog` axis ships from a DDL, a fetched snapshot, `schema.prisma` or
+TypeORM entities. When a mapping declared the tables, the axis names it in its
+`sources` (`schema.prisma`, or the TypeORM entities with their counts). It is
+`degraded` when a TypeORM table or column name rests on what the run could not
+confirm, such as a naming strategy or a table prefix the options leave to run
+time.
 
 It can also mean **the axis stops earlier than it looks**. A pack whose routes
 came from an OpenAPI document and not from source has endpoints and nothing under

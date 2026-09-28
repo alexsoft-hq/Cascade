@@ -17,8 +17,8 @@
 
 이 레인이 만드는 엣지는 모두 근거를 적어 둡니다. `web` 축은 프런트엔드에
 대해 아무것도 추측하지 않았을 때만 `shipped` 가 됩니다. 엔진이 매칭 개수를 세어
-알아낸 접두사나 가정한 경로 별칭이 있으면 축은 `degraded` 가 되고, 무엇을
-선언하면 되는지 이름으로 알려 줍니다.
+알아낸 접두사, 가정한 경로 별칭, 추측에 기댄 base URL 이 있으면 축은 `degraded`
+가 되고, 무엇을 선언하면 되는지 이름으로 알려 줍니다.
 
 ## 무엇이 필요한가
 
@@ -77,7 +77,17 @@ lane 줄이 측정된 숫자이고, estimate 의 숫자는 하한입니다.
 `.env.<mode>`, `.env.<mode>.local`), 개발 서버 프록시 표를 위한 `vue.config.js`
 와 `vite.config.*`, 그리고 경로 별칭을 위한 `tsconfig.json` 이나
 `jsconfig.json` 또는 번들러 설정입니다. 이 셋이 함께 호출 속의 `'/api'` 가 실제로
-어디에 닿는지를 정하고, 브리지는 셋을 모두 씁니다.
+어디에 닿는지를 정하고, 브리지는 셋을 모두 씁니다. 패키지의 `package.json` 이
+적은 의존성도 읽습니다. 어떤 빌드 도구가 어떤 dotenv 파일을 읽는지가 거기서
+정해지기 때문입니다(아래 *빌드가 정하는 base URL* 참조).
+
+워크스페이스는 `package.json` 하나 아래에 애플리케이션과 라이브러리를 여럿 두는
+일이 많습니다. 각 디렉터리에는 자기 `tsconfig.json` 이 있는데, 내용은
+`"extends": "../../tsconfig.base.json"` 한 줄뿐인 경우가 흔합니다. 그래서 소스
+파일과 그 패키지 사이에서 `tsconfig.json` 이나 `jsconfig.json` 을 가진
+디렉터리마다, 그 파일이 뜻하는 별칭을 읽습니다. 상대 경로 `extends` 사슬을
+컴파일러와 같은 방식으로 따라가고, 그 별칭은 그 디렉터리 아래 파일에 패키지
+자신의 별칭보다 먼저 적용합니다.
 
 ### 서버가 그리는 페이지
 
@@ -490,17 +500,22 @@ the file tree: 62 page(s) declared by where they sit, 9 file(s) under the router
 | `file` | 언어, Vue 스크립트 블록, 파서가 복구한 오류 수 |
 | `import` / `export` | 이 파일이 무엇을 받고 무엇을 주는가. 동적 `import()` 포함 |
 | `function` | 이름 있는 함수들. 콜백은 자기 이름을 갖지 않고 가장 가까운 이름 있는 함수에 귀속됩니다 |
-| `constant` | 문자열 멤버로 된 enum 이나 객체 리터럴, 그리고 `export const X = '/x'` |
+| `constant` | 문자열 멤버로 된 enum 이나 객체 리터럴, 그리고 `export const X = '/x'`. 값이 빌드에 따라 정해지는 상수(env 읽기, 기본값, env 끼리 이어 붙인 것, 그 위의 조건식)는 그 식을 `expr` 로, 객체 멤버라면 `exprMembers` 로 남깁니다 |
 | `binding` | 초기화가 호출이나 `new` 또는 다른 이름인 최상위 `const`, 그리고 거기서 만들어진 `baseURL` |
-| `class` | 클래스와 그것이 선언하는 메서드와 필드. 클라이언트를 클래스로 쓰는 것은 함수로 쓰는 것만큼 흔합니다 |
-| `assign` | 클래스 본문 어디서든 나오는 `this.<field> = …`. `binding` 과 같은 `init` 모양을 갖습니다. 클래스가 요청을 보낼 클라이언트를 넣어 두는 자리입니다 |
-| `call` | import 나 지역 바인딩을 거치거나, URL 처럼 생긴 인자를 들고 있거나, `fetch` 또는 `XMLHttpRequest.open` 인 호출 지점 |
-| `route` | 라우트 선언. **쓰인 그대로의** 경로, 컴포넌트, 부모, 자식 수 |
-| `config` | 위에서 말한 env 값, 프록시 규칙, 별칭 |
+| `class` | 클래스와 그것이 선언하는 메서드와 필드. 클라이언트를 클래스로 쓰는 것은 함수로 쓰는 것만큼 흔합니다. 라우터 팩이 이름 댄 데코레이터(Angular 의 `@Component`)가 붙어 있으면 `component: true` 입니다 |
+| `assign` | 클래스 본문 어디서든 나오는 `this.<field> = …`. `binding` 과 같은 `init` 모양을 갖습니다. 클래스가 요청을 보낼 클라이언트를 넣어 두는 자리입니다. 클래스가 **타입**을 밝힌 필드(생성자 매개변수 프로퍼티, 선언된 인젝터로 채우는 필드)도 `typed` init 을 가진 `assign` 입니다 |
+| `call` | import 나 지역 바인딩을 거치거나, URL 처럼 생긴 인자를 들고 있거나, `fetch` 또는 `XMLHttpRequest.open` 인 호출 지점. URL 을 몇 번째 인자의 어느 키에서 읽었는지도 적습니다(`url.at`). 이름 있는 함수 안의 호출이면 무엇을 넘기는지(`hands`)와 인자가 어느 매개변수를 쓰는지(`reads`)도 적습니다 |
+| `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`. 어디에 적었든 읽고, 클래스 데코레이터의 인자에 적은 것도 포함합니다 |
+| `route` | 라우트 선언. **쓰인 그대로의** 경로, 컴포넌트, 부모, 자식 수. 모듈 팩의 라우트는 다른 파일과 잇는 정보도 들고 있습니다. 자기가 들어 있는 목록(`list`), 상수로 쓴 경로(`pathRef`), 지연 로딩하는 목록(`childrenFrom`), 지연 컴포넌트가 가리키는 export(`componentExport`), 그리고 `grouping` / `outlet` 입니다 |
+| `routeRef` | 목록 안이나 `children` 에 **이름**으로 적힌 라우트와 목록, 그리고 자식 등록자(`forChild`)가 등록한 목록 |
+| `config` | 위에서 말한 env 값, 프록시 규칙, 별칭. 안쪽 `tsconfig.json` 에서 읽은 별칭은 자기가 다스리는 디렉터리(`scope`)를 달고 있고, 패키지마다 `package.json` 의 의존성을 담은 `what: "package"` 레코드가 하나씩 나옵니다 |
 
 `function` 은 본문 최상위의 마지막 `return` 이 호출이나 `new` 일 때 무엇을
 **반환하는지**도 함께 기록합니다. 팩토리(`return new Client(opts)`)와 전달
-메서드(`return this.request(…)`)를 이렇게 따라갑니다. 클래스 본문 안의
+메서드(`return this.request(…)`)를 이렇게 따라갑니다. `forwards` 도 기록합니다.
+파일이 선언한 이름을 부르면서 함수가 받은 매개변수를 그대로 넘기는 호출들이고,
+무엇을 어떻게 넘기는지와 그 호출이 적은 메서드가 함께 들어갑니다(아래 *래퍼란
+무엇인가* 참조). 클래스 본문 안의
 `this` 로 시작하는 피호출자는 자기가 어느 클래스에 속하는지 밝히므로
 (`binding: {kind: "this", class: "…"}`), `this.inner.request(cfg)` 를 생성자가
 대입한 필드까지 추적할 수 있습니다.
@@ -529,7 +544,7 @@ cascade analyze [--web-src <dir>... | --no-web] [--openapi <file>... | --no-open
 프레임워크 팩을 선언한 경우에만** 그렇습니다. `cascade init` 은 `vue`, `react`,
 `@angular/core`, `svelte` 에 의존하는 `package.json` 을 찾으면 그것을 선언하고,
 같은 패키지가 라우터에 의존하면 `vue-router` / `react-router` / `angular-router`
-를 더합니다. 문서는 선언할 팩 없이 같은 3 단 규칙을 따릅니다. `--openapi` 가
+(AngularJS) / `angular-routes`(`@angular/router`)를 더합니다. 문서는 선언할 팩 없이 같은 3 단 규칙을 따릅니다. `--openapi` 가
 먼저, 그다음 프로파일의 `openapi.documents`, 그다음 발견이 찾은 것입니다.
 
 ## package.json 이 없는 프런트엔드
@@ -706,6 +721,61 @@ $stateProvider
 - `$routeProvider.when('/legacy', {templateUrl, controller})` 는 같은 것의 ngRoute
   철자이고, 경로가 첫 인자입니다.
 
+### 모듈 형태 (`angular-routes`)
+
+Angular 2 이후(`@angular/router`)는 라우트를 평범한 객체의 `Routes` 배열로
+선언합니다. 그런데 키 `path`, `component`, `children` 은 vue-router 와
+react-router 도 쓰는 단어입니다. 객체만 봐서는 누구 것인지 알 수 없습니다. 그걸
+말해 주는 건 파일입니다. 라우트 파일은 `@angular/router` 에서 무언가를
+import 합니다. 그래서 `adapters/web/packs/angular-routes.json` 은 **모듈 팩**
+(`routesFrom: "module"`, `modules: ["@angular/router"]`)입니다. 그 모듈을
+import 한 파일에서만 라우트 객체를 읽고, 그런 파일에서는 이 팩이 읽습니다. 아무것도
+import 하지 않은 파일은 전과 똑같이 읽습니다. Vue 나 React 프로젝트의 라우트가
+그대로 남는 이유입니다.
+
+읽는 것은 다음과 같습니다.
+
+- `component`, 그리고 `loadComponent: () => import('./x')`(그 모듈의 default
+  export) 또는 `.then(m => m.X)`(그 모듈의 export `X`)
+- `loadChildren: () => import('./x.routes')`. 그 모듈이 default 로 export 한
+  목록이나 `.then` 이 고른 목록입니다
+- `children`, `redirectTo`, `title`, `outlet`
+- 이름에 묶은 라우트(`const ordersRoute: Route = {…}`). 이런 파일에서는 누군가의
+  설정 객체가 아니라 라우트입니다
+
+합성에는 참여하지만 화면은 아닌 선언이 두 가지 있고, 각각 셉니다
+(`laneStats.web.screens.lists`). 하나는 **그룹**입니다. 자식은 있고 자기
+컴포넌트는 없는 라우트로, 자식들이 위쪽 outlet 에 그려집니다(`groupings`). 다른
+하나는 **이름 있는 outlet** 용 라우트입니다. 페이지 자체가 아니라 페이지 옆에
+그려집니다(`outlets`). `@angular/core` 에서 import 한 `@Component` 가 붙은
+클래스가 있으면 그 `.ts` 파일은 컴포넌트입니다. 그래서 화면은 자기 컴포넌트가
+import 한 컴포넌트들을 후보로 그립니다. Vue 화면과 같은 방식입니다.
+
+### 파일을 넘나들며 이름으로 이은 라우트
+
+라우트를 여러 파일에 나눠 선언하는 라우터는 **이름**으로 그 파일들을 잇습니다.
+브리지는 Angular 만이 아니라 모든 라우터에 대해 그 이름을 따라갑니다
+(`src/adapters/web/route_lists.mjs`). 라우트의 경로는 자기가 들어 있는 목록을
+불러오거나 이름으로 적은 라우트의 경로 위에 합성합니다.
+
+- 지연 로딩하는 목록(`loadChildren`)
+- 이름에 묶어 두고 다른 목록에 넣은 목록이나 라우트
+  (`[ordersRoute, ...errorRoutes]`)
+- 다른 곳에 쓴 목록을 가리키는 `children: ORDER_ROUTES`
+
+상수로 쓴 경로(`path: appPaths.orders.path`)는 그 상수를 따라가서 읽습니다. 같은
+파일이든 import 너머든 읽고, 객체 안쪽 깊은 곳의 텍스트와 구조 분해로 꺼낸 이름도
+읽습니다. 상수도 누군가 쓴 리터럴이기 때문입니다. 두 곳에서 불러오는 라우트는
+화면 둘이 됩니다.
+
+합성할 수 없는 경로는 추측하지 않습니다. 이 레인이 읽지 못하는 상수(예를 들어
+`$localize` 템플릿)이거나, `RouterModule.forChild` 로 등록했는데 여기 어떤
+라우트도 불러오지 않는 목록인 경우입니다. 그런 라우트는 화면이 아닙니다. 대신
+셉니다(`pathUnknown`, `pathRefsUnresolved`, `childListsWithoutParent`). 따라가지
+못한 이름은 목록(`unresolved`)에 남고, 실행은 `SCREEN_PATH_UNKNOWN` 과 처음
+다섯 이름에 대한 `SCREEN_ROUTE_NAME_UNREAD` 를 출력합니다. 선언된 라우트의
+5분의 1을 넘으면 screen 축이 `degraded` 가 됩니다.
+
 ### 라우트 선언은 결코 HTTP 호출이 아닙니다
 
 `$stateProvider.state('owners', {url: '/owners'})` 가 워커에서 `/owners` 를 향한
@@ -836,12 +906,12 @@ JavaScript 파서는 그것을 보지 못합니다. 그래서 템플릿 리더 �
 |---|---|---|
 | 라우트를 선언하는 OpenAPI 문서 | 선언으로서 **EXACT** | 문서는 그 라우트가 존재한다는 프로젝트 자신의 진술이므로, 엔드포인트 노드는 **그것에 대해서만** 정확하고 다른 것에 대해서는 아닙니다. 코드도 서빙하는 라우트는 서로 뒷받침하며 코드 레인이 준 등급을 유지합니다. 문서만 이름 대는 라우트는 **핸들러 엣지를 얻지 못하므로**, 프런트엔드 호출이 엔드포인트에 닿고 거기서 멈추고 `code` 축이 그 이유로 `degraded` 가 됩니다. 아래 *OpenAPI 문서* 를 보세요 |
 | 플랫폼 싱크(`fetch`, `XMLHttpRequest.open`)의 URL 이 이 pack 이 서빙하는 라우트와 맞음 | **SOUND_SET** | 요청을 브라우저가 직접 보내고 URL 인자가 계약상 URL 입니다. 이것이 HTTP 호출이라는 판단이 필요 없습니다 |
-| 선언 팩이 이름을 아는 HTTP 클라이언트 인스턴스를 그 라이브러리의 동사 메서드로 호출 | **SOUND_SET** | 라이브러리가 요청을 보내고, URL 은 라이브러리가 읽는 인자입니다 |
+| 선언 팩이 이름을 아는 HTTP 클라이언트 인스턴스를 그 라이브러리의 동사 메서드로 호출. 클래스가 그 클라이언트 **타입**으로 선언한 필드도 여기 들어갑니다 | **SOUND_SET** | 라이브러리가 요청을 보내고, URL 은 라이브러리가 읽는 인자입니다 |
 | 각 이름이 무엇에 묶였는지를 따라가 위의 둘 중 하나까지 도달한 **래퍼** | **SOUND_SET** | 모든 홉이 레인이 실제로 읽은 바인딩이고, 그 홉들이 엣지에 실립니다(`evidence.sink.chain`) |
 | 어떤 싱크로도 추적하지 **못한** 호출에 넘겨진 URL 모양의 인자 | **HEURISTIC** | 그 호출이 이 URL 을 보낼 수도, 그저 만들기만 할 수도 있습니다. 규칙 하나를 추측했습니다 |
-| 위의 어느 경우든 접두사를 매칭 개수로 골랐거나, 경로 별칭을 가정했거나, 호출에 메서드가 아예 없는 경우 | **HEURISTIC** | 답의 한 부분이 추측이면 엣지 전체가 추측입니다 |
+| 위의 어느 경우든 접두사를 매칭 개수로 골랐거나, 경로 별칭을 가정했거나, base URL 이 추측에 기대거나(*빌드가 정하는 base URL* 참조), 호출에 메서드가 아예 없는 경우 | **HEURISTIC** | 답의 한 부분이 추측이면 엣지 전체가 추측입니다 |
 | 브라우저 기록(HAR) | **RUNTIME_ONLY** | 기록은 요청이 한 번 일어났음을 증명할 뿐 코드가 무엇을 할 수 있는지는 증명하지 않으므로, 엣지는 모든 질의 모드의 하한 아래에 있습니다. **보여 주고**(`observed: true`) **절대 걷지 않으며**, 옆의 정적 엣지의 등급을 올리지도 않습니다. APM 트레이스나 액세스 로그는 여전히 읽지 않습니다. 아래 *기록(HAR)* 을 보세요 |
-| 해석은 되었지만 이곳의 어떤 라우트도 답하지 않거나, 다른 호스트를 가리키는 URL | **UNRESOLVED** | 모든 모드의 하한 아래이므로 어떤 걷기도 따라가지 않습니다. 라우트는 pack 을 떠나는 Feign 호출과 똑같이 `outbound`, `source: "web"` 으로 표시된 노드로 남습니다 |
+| 해석은 되었지만 이곳의 어떤 라우트도 답하지 않거나, 다른 호스트를 가리키거나, 이 머신이지만 이 pack 의 어떤 애플리케이션도 듣지 않는 포트를 가리키는 URL | **UNRESOLVED** | 모든 모드의 하한 아래이므로 어떤 걷기도 따라가지 않습니다. 라우트는 pack 을 떠나는 Feign 호출과 똑같이 `outbound`, `source: "web"` 으로 표시된 노드로 남습니다 |
 
 URL 을 아예 해석하지 못한 호출은 **엣지를 얻지 못하고**, 워커가 준 이유
 (`parameter`, `expression`, `importedConstant`)로 집계됩니다. 브리지에서 오는
@@ -870,7 +940,71 @@ URL 을 아예 해석하지 못한 호출은 **엣지를 얻지 못하고**, 워
 `request(config)` 가 `this.inner.request(config)` 를 반환하는 클래스는
 `axios.create` 까지 끝까지 따라가고, 엣지가 그 사슬과 깊이를 기록합니다. 메서드는
 래퍼 자신의 동사가 있으면 거기서, 없으면 호출의 config 에서, 그다음 라이브러리의
-문서화된 기본값에서 옵니다(`method.from` 이 어느 쪽인지 말합니다).
+문서화된 기본값에서 옵니다(`method.from` 이 어느 쪽인지 말합니다). 이름이 HTTP
+메서드가 아닌 동사(`jsonp`, superagent 의 `del`)는 팩에 적힌 그 라이브러리의 동사
+표에서 메서드를 가져옵니다(`library-verb`).
+
+브라우저 전역 `fetch` 에 요청을 넘기는 함수도 래퍼입니다. 전에는 아니었습니다.
+전역 `fetch` 는 아무것에도 묶여 있지 않습니다. 그래서 레인이 피호출자가 무엇인지
+찾다가 아무것도 못 찾고, 이 호출이 플랫폼 싱크인지 묻는 데까지 가지 못했습니다.
+이제는 그 질문을 먼저 합니다. spread 앞에 적은 옵션 객체에서 `fetch` 가 읽는
+메서드(`fetch(u, { method: 'GET', ...o })`)는 기본값이고, 호출자가 자기 `method` 로
+바꿀 수 있습니다. 어디에도 메서드가 없이 `fetch` 에서 끝나는 래퍼는 `fetch` 의
+기본값으로 보냅니다.
+
+**객체의 메서드로 쓴 래퍼.** 클라이언트를 객체로 두는 프런트엔드가 많습니다.
+
+```ts
+// config/axios/index.ts
+const request = (option) => service({ ...option })
+export default {
+  get: (option) => request({ method: 'GET', ...option }),
+  post: (option) => request({ method: 'POST', ...option }),
+}
+// 모든 api 모듈
+request.get({ url: '/system/user/page', params })
+```
+
+워커가 함수를 기록한 객체 리터럴은 이름이 담는 값입니다. default export, 이름
+있는 `const`, 그 `const` 를 default 로 export 한 경우 모두 그렇습니다.
+`request.get(…)` 은 워커가 기록한 소유자를 보고 `get` 으로 따라갑니다. 키 이름만
+보고 고르지 않습니다. 그 메서드는 다시 자기 파일이 선언한 헬퍼를 부르는데,
+지역 이름을 부르는 호출은 호출 레코드가 아닙니다. 그래서 워커는 함수가 받은
+매개변수를 넘기는 호출을 함수 레코드에 `forwards` 로 적어 둡니다. 넘기는 방식은
+인자로 그대로, 객체 인자에 spread 로, 키의 값으로 세 가지입니다. `returns` 옆에
+적히고, 브리지는 `returns` 와 같은 방식으로 따라가되 `forwards` 를 먼저 봅니다.
+이런 사슬은 다른 래퍼처럼 SOUND_SET 이고 EXACT 는 되지 않습니다.
+`laneStats.web.wrappers.byKind.objectMethod` 가 이런 래퍼를 셉니다. 그 메서드
+안에서 `this` 를 부르는 호출은 forward 가 아닙니다. 파일이 선언한 이름을 부르는
+호출만 forward 입니다.
+
+**forward 를 거칠 때 메서드는 어디서 오는가.** 메서드는 요청이 마지막에 실제로
+나가는 메서드입니다. 그래서 호출자에서 클라이언트까지 사슬을 한 홉씩 따라갑니다.
+홉이 넘겨받은 것 **뒤에** 쓴 동사(`{ ...option, method: 'GET' }`)가 메서드를
+정합니다(`method.from: "wrapper-verb"`). **앞에** 쓴 동사(`{ method: 'GET',
+...option }`)는 기본값입니다. 이미 넘어오던 메서드나 호출자 자신의 `method` 키가
+있으면 그게 이깁니다.
+
+- 호출자의 객체 리터럴이 메서드를 적었으면 그 메서드입니다(`config`).
+- 적지 않았고 자기 spread 도 없으면 래퍼의 값입니다(`wrapper-default`).
+- 레인이 볼 수 없는 메서드가 호출자 옵션에 들어 있을 수 있으면(옵션 안의
+  spread, 이름, call 레코드가 읽는 세 인자 뒤의 인자) 메서드를 정하지 않습니다.
+  `from: "absent"` 로 두고 옆에 `wrapperDefault` 를 적으며, 엣지는 HEURISTIC
+  입니다.
+
+**forward 를 거칠 때 URL 은 어디서 오는가.** URL 은 호출자의 것이고, call 레코드가
+말하는 자리에서 읽습니다(`url.at`: 몇 번째 인자인지, 객체라면 어느 키인지). 이
+URL 은 클라이언트까지 가는 홉이 모두 URL 이 든 매개변수를 넘겨야 클라이언트에
+닿습니다. 객체를 spread 로 넣거나 통째로 넘기거나, URL 자체를 통째로 넘기는
+경우입니다. 워커는 이름 있는 함수 안의 호출마다 무엇을 넘기는지(`hands`)와, 인자가
+함수의 어느 매개변수를 쓰는지(`reads`. 직접 쓰거나, 매개변수로 선언한 `const` 를
+거쳐 쓰는 경우)를 적습니다. URL 의 매개변수를 어디서도 쓰지 않는 홉은 그걸 버린
+것이고, 이 호출이 쓰지 않은 URL 을 보내게 됩니다. 그래서 그 사슬로는 추적하지
+않습니다. 추적 안 된 호출로 등급을 매기고 `laneStats.web.calls.urlNotHandedOn` 으로
+세며, 하나라도 있으면 실행이 `WEB_URL_NOT_HANDED_ON` 을 출력합니다. 워커가 따라가지
+않는 것(`let`, rest, `this`, `arguments`)을 거쳐서만 매개변수를 쓰는 홉은, 래퍼가
+늘 그랬듯 클라이언트까지 닿는다고 보고 `calls.urlThroughUnreadHop`
+(`WEB_URL_THROUGH_UNREAD_HOP`)으로 셉니다.
 
 ### 접두사, 그리고 그것을 선언하는 법
 
@@ -909,6 +1043,98 @@ URL 을 아예 해석하지 못한 호출은 **엣지를 얻지 못하고**, 워
 리고 호출이 접두사를 직접 달고 있을 때는 **호출 경로 자체**입니다(base URL 이
 아예 없는 `$http.get('/api/customer/owners')` 가 그렇고, 게이트웨이가 서빙하는
 프런트엔드가 그렇게 생겼습니다). 가장 긴 키가 이깁니다.
+
+### 빌드가 정하는 base URL
+
+프런트엔드가 서버 주소를 리터럴 하나로 쓰는 일은 드뭅니다. 보통은 환경 값을
+읽고, 기댈 기본값 리터럴을 옆에 둡니다. 그 값이 무엇인지는 빌드에 달려 있습니다.
+다음은 모두 읽습니다.
+
+```js
+const API_BASE_URL = process.env.API_URL || 'http://localhost:8080/api'  // 기본값
+baseURL: import.meta.env.VITE_BASE_URL + import.meta.env.VITE_API_URL    // env 값 이어 붙이기
+baseURL: process.env.NODE_ENV === 'production' ? process.env.BASE : '/'   // 조건식
+const { base_url } = config  // 모듈 최상단: base_url 은 config.base_url
+```
+
+빌드가 어떤 `.env` 파일을 어떤 순서로, 어느 모드에서 읽는지는 빌드 도구마다
+문서로 정해 둔 규칙입니다. 그래서 선언으로 둡니다.
+`adapters/web/packs/build-env.json` 입니다. 도구는 패키지의 `package.json` 이
+적은 의존성과 처음 맞는 행으로 고릅니다. Next.js, Create React App, `@ngx-env`,
+Vite, Vue CLI, Angular CLI 입니다(Angular CLI 는 `.env` 파일을 아예 읽지
+않습니다). 어느 것도 적지 않은 패키지는 Vite 와 Vue CLI 가 함께 쓰는 순서로
+읽습니다. 빌드는 그 도구 자신의 모드(`development`, `production`)이고,
+`--mode` 를 받는 도구라면 `.env.<mode>` 파일이 이름 댄 모드도 하나씩 더합니다.
+
+레인은 base URL 을 분기마다, 빌드마다 결과 하나로 읽습니다. 결과는 경로, 호스트,
+그리고 무엇에 기댔는지입니다.
+
+- 모든 결과가 경로 하나를 가리키면 그 경로가 접두사이고 `derived` 입니다. 기본값이나
+  조건식이 들어 있는 base URL 이면 읽은 내용이 엣지의 `evidence.prefix.reads` 에
+  실립니다(분기, 파일, 모드). 그래서 기본값 리터럴이 쓰였는지를 읽는 사람이 볼 수
+  있습니다.
+- 결과들이 서로 다른 경로를 가리키면 전처럼 개발 프록시 규칙만이 정리합니다.
+  정리되지 않으면 접두사는 `auto` 입니다.
+- 부분들은 한 빌드 안에서만 이어 붙입니다. 클라이언트의 base URL 과 호출 경로 맨
+  앞의 환경 값은 둘 다 정하는 빌드에서만 합칩니다. 둘이 서로 다른 빌드에서만 값을
+  가지면, 두 빌드를 섞은 경로를 만들지 않고 그 호출을 풀지 못한 것으로
+  둡니다(`unresolved.byReason.noBuild`).
+- 이름으로 쓴 base URL(`baseURL: API_BASE`)은 import 를 따라가 그 이름이 선언된
+  자리에서 읽습니다.
+- 호출 URL **맨 앞**의 환경 값(`API_BASE_URL + '/polls'`)은 호출 자리에서 쓴
+  base URL 입니다. 모든 빌드가 경로 하나를 줄 때만 채웁니다. 경로 중간에 있는
+  환경 값이나 빌드마다 다른 값은 `env` 구멍으로 남습니다.
+
+**이 머신은 다른 배포 대상이 아닙니다.** `localhost`, `127.0.0.1`, `0.0.0.0`,
+`[::1]` 위의 절대 주소는 포트가 무엇이든 백엔드의 개발 서버입니다(팩의
+`localHosts`). 그런 주소로 가는 호출은 pack 밖으로 빼지 않고 이 pack 에 대조합니다.
+어느 포트가 어느 서비스인지는 다음 절에서 다룹니다.
+
+**base URL 이 기댈 수 있는 것 중 셋은 추측입니다.** 그 위에 선 엣지는 모두
+HEURISTIC 이고, `guess` 가 `evidence.prefix`(클라이언트의 base URL)나
+`evidence.url`(호출 URL 의 앞부분)에 붙습니다. `web` 축은 `degraded` 가 되고,
+이유에 무엇을 하면 되는지 적습니다.
+
+| `guess` | 값이 기댄 것 | 축이 권하는 조치 |
+|---|---|---|
+| `fallback` | 적어도 한 빌드에서 `X \|\| 'lit'` 의 리터럴입니다. 그 빌드가 읽는 `.env` 파일 어디에도 X 가 없거나, 빈 값으로 적었기 때문입니다(`X=`. 빈 문자열은 거짓으로 치고, `X ?? 'lit'` 은 빈 문자열을 그대로 둡니다). 셸, CI 작업, 컨테이너가 X 를 넣을 수 있고, 트리 안의 무엇도 아무도 안 넣는다고 보여 줄 수 없습니다 | 빌드가 읽는 `.env` 파일에 값을 적습니다 |
+| `deployment-host` | 모든 빌드가 이 머신이 아닌 호스트를 가리키고, 거기서 어떤 코드가 답하는지는 소스에 없습니다. 같은 경로를 이 머신에서 여는 빌드가 하나라도 있으면 원격 빌드들은 그 백엔드를 배포한 것으로 보고, 추측으로 치지 않습니다 | 개발 빌드에 이 머신 주소를 `.env` 파일로 주거나, `gatewayRoutes {"*": "<back>"}` 를 선언합니다 |
+| `assumed-alias` | 이 엔진이 가정한 import 별칭을 거쳐 닿은 모듈에서 base URL 을 읽었습니다 | 별칭을 선언합니다 |
+
+### 이 머신, 다른 포트
+
+`http://localhost:8081/owners` 와 `http://localhost:8082/visits` 는 둘 다 이
+머신입니다. 백엔드가 여럿인 저장소에서는 포트가 서비스를 가릅니다. 그래서 발견
+단계가 Spring 애플리케이션마다 자기 설정(`application*`, `bootstrap*`, 확장자는
+`.yml`, `.yaml`, `.properties`)에서 `server.port` 를 읽습니다. 프로필마다 같은
+애플리케이션이 도는 방식 하나이므로 모든 프로필을 포함합니다. 애플리케이션 하나는
+설정 파일이 들어 있는 `resources` 디렉터리 하나입니다. 프로필 없이 적용되는
+문서가 포트를 정하지 않으면, 그 애플리케이션은 Spring Boot 의 문서화된 기본값
+8080 에서도 듣는다고 봅니다.
+
+이 머신으로 가는 호출이 **적어 둔** 포트를 이 pack 의 어떤 애플리케이션도 듣지
+않으면, 다른 서비스로 가는 호출입니다. 포트는 호출 자신의 주소, 모든 빌드에서의
+클라이언트 base URL, 호출 앞부분의 환경 값 중 어디에 적혀 있어도 됩니다. 이런
+호출은 밖으로 나가는 것으로 남습니다. 등급은 UNRESOLVED, `target: "outside-pack"`
+이고, `evidence.away` 가 두 포트와 포트를 정한 파일을 말합니다. 그 경로가 이
+pack 도 서빙하는 경로면 엣지는 그 라우트 노드에 붙되 여전히 UNRESOLVED 라서
+어떤 걷기도 따라가지 않습니다. 포트가 같거나, 포트를 적지 않았거나, 포트를
+모르면 전과 같습니다.
+
+`server.port` 가 자리표시자(`${PORT:8080}`)이거나 숫자가 아닐 때, 애플리케이션이
+설정을 트리 밖(config server, Nacos, Consul, ZooKeeper)에서 가져올 때, 이 리더가
+따라가지 않는 설정을 가리킬 때(클래스패스 파일까지 포함한 모든
+`spring.config.import`, `spring.config.location`, `additional-location`, `name`,
+자리표시자가 든 프로필 키, `@PropertySource` 가 붙은 Java 소스), Spring 설정을
+하나도 읽지 못했을 때는 포트를 모르는 것으로 보고, 포트로는 아무것도 정하지
+않습니다. 애플리케이션 하나라도 포트를 모르면 pack 전체의 포트를 모르는 것으로
+봅니다. "다른" 포트로 가는 호출이 바로 그 애플리케이션의 것일 수 있기 때문입니다.
+`cascade analyze` 는 포트와 그 포트를 읽은 파일을, 모르면 그 이유를 출력합니다.
+다른 포트로 간 호출이 있으면 그 수와 함께 `WEB_OTHER_PORT` 를 경고합니다.
+
+```
+Web lane: this pack listens on port(s) 8080 (server.port in src/main/resources/application.properties)
+```
 
 ### 타이핑하지 않아도 되는 게이트웨이 라우트
 
@@ -1043,6 +1269,34 @@ import 하게 두지 않습니다. `$http` 는 이름으로 채워지는 **매�
 `get('size')` 는 여전히 호출이 되지 않습니다. 차이를 만드는 것은 문자열이 아니라
 클라이언트입니다.
 
+**타입으로 알아보는 클라이언트.** Angular 의 `HttpClient` 는 그것을 쓰는 파일이
+만들지 않습니다. 클래스가 **타입**으로 달라고 하면 프레임워크가 인스턴스를
+넣어 줍니다. 그래서 라이브러리 행은 인스턴스를 선언할 때 쓰는 타입을 이름 댈 수
+있습니다.
+
+```json
+{ "module": "@angular/common/http", "instanceTypes": ["HttpClient"],
+  "verbs": { "get": "GET", "post": "POST", "jsonp": "GET", … },
+  "generic": ["request"], "positional": { "request": { "methodArg": 0, "urlArg": 1 } } }
+```
+
+클래스가 필드의 타입을 다음 둘 중 한 가지로 밝히고, 그 타입을 이 모듈에서
+`instanceTypes` 의 이름으로 import 했으면, 그 필드가 인스턴스를 담습니다.
+
+- 생성자 매개변수 프로퍼티 `constructor(private http: HttpClient)`. TypeScript
+  자체의 필드 선언입니다.
+- `adapters/web/packs/injection.json` 이 이름 댄 인젝터로 채우는 필드.
+  `@angular/core` 의 `inject` 로 쓴 `http = inject(HttpClient)` 입니다.
+
+데코레이터(`@Inject(TOKEN)`)가 붙은 매개변수는 읽지 않습니다. 무엇이 들어올지는
+옆에 적힌 타입이 아니라 토큰이 정하기 때문입니다. 이런 필드를 거친 호출은
+**SOUND_SET** 이고, `evidence.sink.typed` 가 타입을 어떻게 밝혔는지 말합니다
+(`constructor-parameter` 또는 `injector`). 모듈 자체는 클라이언트가 아닙니다.
+`HttpParams` 와 `HttpHeaders` 도 같은 모듈에서 오기 때문입니다. `positional` 은
+`request(method, url, options)` 가 메서드와 URL 을 위치로 받는다는 뜻입니다.
+메서드 자리에 동사를 직접 쓰지 않았으면 메서드가 없는 것으로 보고, 엣지는
+HEURISTIC 입니다.
+
 ### 상수 위에 올려 쓴 URL
 
 대부분의 프런트엔드는 호출 지점에 경로를 쓰지 않습니다. 파일 위쪽에 한 번 쓰고,
@@ -1144,7 +1398,37 @@ Web lane: 1 client instance(s), 0 wrapper(s) (deepest 0), 121 exact and 0 templa
 
 첫 줄은 워커의 것이고 나머지 둘은 브리지의 것입니다. 같은 숫자가
 `pack.meta.laneStats.web` 으로도 들어가므로, 출력된 것과 기록된 것이 어긋날 수
-없습니다.
+없습니다. 그 아래에는 이 pack 이 듣는 포트, 또는 모르는 이유가 나오고(*이 머신,
+다른 포트* 참조), 래퍼가 호출의 URL 을 넘기지 않은 경우가 있으면
+`WEB_URL_NOT_HANDED_ON` 이, URL 이 레인이 따라가지 않는 것을 거쳐 홉을 지났으면
+`WEB_URL_THROUGH_UNREAD_HOP` 이 나옵니다.
+
+### web 축이 말하는 것
+
+`web` 축은 프런트엔드에 대해 아무것도 추측하지 않았을 때 `shipped` 입니다. 어떤
+호출도 이 pack 이 서빙하는 라우트에 닿지 못했거나, 닿은 것 중 일부가 추측에
+기댔으면 `degraded` 입니다. 추측이란 다음과 같습니다.
+
+- 매칭 개수로 고른 접두사, 또는 그렇게도 찾지 못한 접두사(`auto`, `none`)
+- 이 엔진이 가정한 별칭을 거친 호출
+- 추측에 기댄 base URL(*빌드가 정하는 base URL* 의 표)
+- 추적된 호출만큼, 또는 그보다 많은 추적 안 된 호출
+
+추적 안 된 호출이 몇 개 있는 정도로는 축이 내려가지 않습니다. 각각이 여전히
+엣지이고, HEURISTIC 등급과 그 이유를 스스로 달고 있기 때문입니다. 대신 축의
+**note** 로 말합니다. 축의 note 는 축이 shipped 여도 모든 답에 limit 으로 따라
+붙습니다. 호출 지점 중 몇 개가 어떤 클라이언트로도 추적되지 않았는지, 가장 흔한
+이유, 그 일이 일어난 피호출자 하나를 적습니다. 이유별 개수는
+`laneStats.web.untraced.byReason` 에, 가장 흔한 피호출자 다섯과 그 이유는
+`untraced.callees` 에 있습니다.
+
+| 이유 | 부른 함수가 |
+|---|---|
+| `unbound` | 이 레인이 따라가는 무엇에도 묶여 있지 않습니다(함수를 담은 객체, 매개변수, 전역) |
+| `external` | HTTP 클라이언트 팩이 이름 대지 않은 패키지에서 왔습니다 |
+| `not-a-wrapper` | 프로젝트 자신의 함수이고, 이 레인이 아는 어떤 클라이언트에도 요청을 넘기지 않습니다 |
+| `not-a-verb` | 클라이언트이지만, 그 클라이언트의 동사가 아닌 메서드로 불렸습니다 |
+| `url-not-handed-on` | URL 이 든 인자를 클라이언트로 넘기지 않는 래퍼입니다 |
 
 ## 증분: 무엇이 캐시되고 무엇은 절대 안 되는가
 
@@ -1203,6 +1487,16 @@ Java 쪽과 같은 이유로 안전합니다. 워커는 **파일을 넘나드는
 `frontendCalls` 가 붙습니다. 프런트엔드 함수 몇 개가 그것을 부르는지입니다. 그것이
 편집 아래쪽이 아닌 폭발 반경의 나머지 절반입니다.
 
+**오버레이가 더 읽는 것과 읽지 않는 것.** base pack 이 읽은 OpenAPI 문서를 지금
+디스크에 있는 그대로 읽고, `analyze` 처럼 OpenAPI 브리지를 돌립니다. 그래서
+문서가 선언한 라우트와 그 위의 계약 링크(아래 *OpenAPI 문서* 참조)가 편집 뒤에도
+남습니다. 브리지에는 base pack 이 읽은 프런트엔드 패키지와 서버 포트를 `analyze` 와
+똑같이 넘깁니다. 그래서 아무것도 고치지 않은 트리에 얹은 오버레이는 pack 과 같은
+그래프를 만들고, pack 이 포트 때문에 밖으로 남긴 호출은 오버레이에서도 밖에 남습니다.
+이 둘을 다시 정하지는 않습니다. 프런트엔드 근처의 `package.json` 을 고쳤거나, 포트를
+읽은 pack 에서 Spring 설정을 고쳤으면 답의 `limits` 에 적습니다. 패키지 목록을 기록하기
+전에 만든 pack 이면 그것도 알립니다.
+
 통합 픽스처에서 측정: `.vue` 하나를 고쳤을 때 레인 전체 **67 ms**(web 63, sql 1,
 graph 3), 기준선은 1 초입니다.
 
@@ -1246,6 +1540,26 @@ Swagger 2 는 `basePath` 에서, OpenAPI 3 은 `servers[0].url` 의 경로 부�
 - **서빙되나 선언되지 않음**: 문서화되지 않은 API 입니다.
 
 이 엔진은 둘 다 보고하고 어느 쪽도 판정하지 않습니다.
+
+**계약 우선(contract-first) 백엔드.** 계약 우선으로 만든 Spring 프로젝트는 API 를
+문서에 두고, openapi-generator 가 빌드할 때 operation 묶음마다 인터페이스를
+하나씩 씁니다(`OwnersApi`). 프로젝트의 컨트롤러는 그 인터페이스를 구현합니다.
+소스 트리에는 그 인터페이스가 없으므로, Java 레인은 매핑이 없는 컨트롤러를 보고
+문서의 라우트 아래에는 아무것도 없습니다. 룰 `openapi-generator.spring-interface`
+가 생성기의 이름 규칙으로 둘을 짝짓습니다. 프레임워크가 서빙하는 클래스
+(`@RestController`, `@Controller`)만 대상으로 하고, **HEURISTIC** 등급의 HANDLES
+엣지를 긋습니다. 근거에는 룰, operationId, 문서, 인터페이스가 실립니다. 룰이
+이름을 어떻게 읽는지는 [룰 팩 페이지](../rules.md)에 있습니다.
+
+`cascade analyze` 는 이 룰이 핸들러를 준 선언 라우트 수를 출력하고, 연결하지 않은
+메서드에는 `CONTRACT_NOT_LINKED` 를 경고하며, 연결한 라우트에는
+`OPENAPI_NOT_SERVED` 를 내지 않습니다. `laneStats.openapi.contractLinks` 가 링크와
+연결하지 않은 메서드를 나열합니다. 코드가 이미 같은 메서드로 매핑한 라우트의
+짝은 링크가 아니라 따로 셉니다(`alreadyHandled`). overview 도 `contract-links`
+갭으로 같은 내용을 말합니다. 드리프트 집계는 그 라우트들을 여전히 "선언되었으나
+서빙되지 않음"으로 셉니다. 소스의 어떤 매핑도 그 라우트를 서빙하지 않기
+때문입니다. 기본 `conservative` 모드의 걷기는 HEURISTIC 링크를 따라가지 않고,
+`mode=heuristic` 은 따라갑니다.
 
 **Java 레인이 없을 때.** 이 계층이 정말로 필요한 자리가 여기입니다. 이 엔진에
 레인이 없는 언어로 쓰인 백엔드 — Node, Go, Python, .NET — 도 문서는 펴내고,
@@ -1440,6 +1754,7 @@ import 가 파일을 이름 대는 것과 같기 때문입니다. 이름이 두 
 | `EXACT` | named 나 default 지정자를 쓴 정적 import 를 상대 경로나 **선언된** 별칭을 통해 이 레인이 읽은 함수까지 따라간 경우, 또는 한 파일 안에서 이름으로 부른 경우(`getList()`, `this.getList()`) |
 | `SOUND_SET` | 같은 경우이되 이름이 `export *` 배럴이나 재export 사슬을 거쳐 왔고, 그래서 어느 파일에서 왔는지가 선택이었던 경우 |
 | `SOUND_SET` | 여기서는 아예 호출되지 않았고, 다른 호출에 **값으로 넘겨진** 경우. 받은 쪽이 그것을 부를 수 있습니다 |
+| `SOUND_SET` | 클래스가 **타입**을 밝힌 필드(생성자 매개변수 프로퍼티, 또는 `orders = inject(OrderService)`)를 거친 `this.orders.list()` 를, 그 타입이 가리키는 클래스와, provider 가 그 타입 자리에 넣는 모든 클래스의 메서드로 이은 경우(룰 `typed-field`). provider 가 그 타입 자리에 다른 클래스를 넣을 수 있으므로 EXACT 는 되지 않습니다. `useFactory` 나 `useValue` 로 만든 provider, 이 레인이 읽지 않은 클래스를 가리키는 provider 가 있어 후보가 빠졌을 수 있으면 HEURISTIC 입니다 |
 | `HEURISTIC` | 경로 위에 **가정된** 별칭이 있었던 경우 |
 
 함수가 **아닌** import 된 이름(상수, 컴포넌트) 위의 호출은 엣지를 만들지 않고
@@ -1495,8 +1810,9 @@ EXACT 가 아닙니다.** `usePagedList` 가 자기 `api` 를 실제로 부르�
 **HTTP 에 닿는 함수만 노드를 얻습니다.** 요청을 보내거나 이 엣지들을 통해 요청에
 닿는 함수는 그래프에 들어가고, 포매터나 날짜 헬퍼는 집계만 되고
 (`laneStats.web.functions`) 빠집니다. 그러지 않으면 아무 질문도 하지 않을 코드
-때문에 pack 이 두 배가 되기 때문입니다. 컴포넌트 파일(`.vue`, `.tsx`, `.jsx`)
-안의 함수는 `component: true` 를 달고 있어서, 도구가 화면 안의 함수와 api 함수를
+때문에 pack 이 두 배가 되기 때문입니다. 컴포넌트 파일(`.vue`, `.tsx`, `.jsx`,
+또는 Angular 의 `@Component` 가 붙은 클래스가 있는 `.ts` 파일) 안의 함수는
+`component: true` 를 달고 있어서, 도구가 화면 안의 함수와 api 함수를
 구분할 수 있습니다. JSX 를 반환하는 함수를 export 하는 `.ts` 나 `.js` 모듈도
 컴포넌트이지만 이 버전은 그것을 잡지 **않습니다.** 사실 스트림에 JSX 표시가 없으
 므로 규칙은 파일 확장자뿐입니다.
@@ -1568,7 +1884,7 @@ menuEndpoints}` 로 기록되므로, 독자가 규칙을 그대로 받아들이�
   |---|---|
   | `true` | 이 실행이 무엇을 읽든 화면을 만듭니다. `cascade init` 은 분석 대상 트리에서 라우터 패키지를 찾으면 이것을 씁니다 |
   | `false` | 이 실행이 무엇을 읽든 만들지 않습니다. 여러분의 말이고 엔진은 따집니다 |
-  | `null` 또는 키 없음 | 실행이 **읽는** 것을 보고 결정합니다. `frameworkPacks` 가 라우터 팩을 대거나, 이 실행이 실제로 읽는 프런트엔드 패키지가 `vue-router`, `react-router`, AngularJS 라우터에 의존하거나, 이 실행이 템플릿 루트를 하나라도 읽으면 켜고, 아니면 끕니다. 기본값입니다 |
+  | `null` 또는 키 없음 | 실행이 **읽는** 것을 보고 결정합니다. `frameworkPacks` 가 라우터 팩을 대거나, 이 실행이 실제로 읽는 프런트엔드 패키지가 `vue-router`, `react-router`, AngularJS 라우터, `@angular/router` 에 의존하거나, 이 실행이 템플릿 루트를 하나라도 읽으면 켜고, 아니면 끕니다. 기본값입니다 |
 
   세 번째 상태는 `--web-src ../front/src` 같은 배치를 위해 있습니다. `cascade
   init` 은 **분석 대상 트리**를 발견하므로, 프런트엔드가 옆에 체크아웃된 백엔드에는
@@ -1597,8 +1913,9 @@ menuEndpoints}` 로 기록되므로, 독자가 규칙을 그대로 받아들이�
 
 `shipped` 에는 셋이 다 필요합니다. 게이트가 켜져 있고, 최소 하나의 화면이
 RENDERS 엣지를 갖고, 읽는 과정에서 추측한 것이 하나도 없어야 합니다. 앱이 서버에서
-메뉴를 받아 올 때, 선언된 라우트의 5분의 1 이상이 이 레인이 해석하지 못한
-컴포넌트를 지목할 때, `nameSource` 가 제공하지 않는 것을 요구할 때, 화면은
+메뉴를 받아 올 때, 선언된 라우트 중 5분의 1을 넘는 라우트가 이 레인이 해석하지 못한
+컴포넌트를 지목할 때, 5분의 1을 넘는 라우트의 경로를 합성하지 못했을 때(*파일을
+넘나들며 이름으로 이은 라우트* 참조), `nameSource` 가 제공하지 않는 것을 요구할 때, 화면은
 만들어졌는데 그중 어느 것도 함수에 닿지 않을 때 `degraded` 입니다. 게이트가 꺼져
 있거나 라우트를 하나도 읽지 못한 경우에만 `not-shipped` 입니다. 꺼져 있을 때는 축
 이유가 위의 세 규칙 중 무엇이 껐는지를 밝힙니다.
@@ -1689,7 +2006,8 @@ lastSeen, methods}` 입니다. 그 등급은 **모든** 질의 모드의 하한 
 - **APM 이나 서버 로그 입력은 없습니다.** 이 버전이 읽는 런타임 출처는 HAR 기록
   하나뿐이고, APM 에이전트의 트레이스나 액세스 로그는 아닙니다.
 - **파일 확장자 밖의 JSX 감지는 없습니다.** JSX 를 반환하는 함수를 export 하는
-  `.ts` 나 `.js` 모듈도 컴포넌트이지만, 이 버전은 `.vue`, `.tsx`, `.jsx` 만
+  `.ts` 나 `.js` 모듈도 컴포넌트이지만, 이 버전은 `.vue`, `.tsx`, `.jsx` 와, 팩이
+  이름 댄 데코레이터(Angular 의 `@Component`)가 붙은 클래스가 있는 `.ts` 파일만
   컴포넌트로 봅니다.
 - **라우트가 선언하지 않은 화면은 없습니다.** 기록이 그 페이지를 찾은 경우만
   예외입니다. 서버가 채워 주는 라우터는 소스 안의 라우트만 기여하고, 축이 그렇다고

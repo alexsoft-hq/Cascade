@@ -69,6 +69,8 @@ endpoint_impact { "column": "pms_product.price" }
 |---|---|---|
 | `endpoint → handler` (HANDLES) | **EXACT** | a Spring mapping annotation on a **concrete controller** method *is* its handler — definitional |
 | `endpoint → implementer` (HANDLES) | **SOUND_SET** | a mapping on an interface/abstract *declaration* is a route **contract**; the handler is the implementer matched through `implements` by name (and arity) — a resolution, not a definition |
+| `endpoint → handler` (HANDLES), a functional route | **EXACT** or **SOUND_SET** | a route built with calls in a method that returns a `RouterFunction`: EXACT where the source names the class and the method and nothing overrides it, SOUND_SET through a declared type, HEURISTIC where only an OpenAPI document places the route ([below](#routes-built-with-calls-functional-endpoints)) |
+| `endpoint → handler` (HANDLES), a contract-first controller | **HEURISTIC** | a controller implements an interface a code generator writes at build time; only the generator's naming pairs the method with the document's route ([below](#a-controller-that-implements-a-generated-interface)) |
 | `clientMethod → endpoint` (CALLS_HTTP) | **SOUND_SET** | an HTTP client call reaches a route this pack also serves — the internal HTTP hop. Two ways of writing one: a `@FeignClient`/`@HttpExchange` method, and an imperative `WebClient`/`RestClient`/`RestTemplate` call |
 | `clientMethod → endpoint` (CALLS_HTTP) | **UNRESOLVED** | …or one it does not serve: the target is outside the pack, so no walk follows the edge and it is counted instead (`httpCallsUnresolved`) |
 | `mapperMethod → statement` (IMPLEMENTS_STMT) | **EXACT** | a MyBatis statement id *is* the mapper interface FQN + method — definitional |
@@ -354,6 +356,177 @@ handlers** — one of which was the caller. Classified, every route has exactly
 one handler, and the 116 mapped methods across the 6 `@FeignClient` interfaces
 become 116 CALLS_HTTP edges: 107 to a route this pack also serves, 9 to a route
 it does not.
+
+### A prefix set in configuration code (`pathPrefixes`)
+
+Spring can serve controllers under a prefix that no mapping writes:
+`RequestMappingHandlerMapping.setPathPrefixes(...)`, a map from a prefix to a
+predicate over the controller class, or `PathMatchConfigurer.addPathPrefix(prefix,
+predicate)` in a `WebMvcConfigurer` or a `WebFluxConfigurer`. The predicate is a
+lambda and the prefix is usually a property. This engine does not read either (a
+prefix written as a constant is readable in principle, and is not read either),
+so such a controller's routes were recorded without their prefix, and a
+frontend call to the real address named nothing. The profile says what the
+prefixes are:
+
+```json
+{ "pathPrefixes": [
+  { "prefix": "/admin-api", "packages": "**.controller.admin.**", "annotation": "RestController" },
+  { "prefix": "/app-api",   "packages": "**.controller.app.**",   "annotation": "RestController" } ] }
+```
+
+- `prefix` is the prefix as Spring puts it before a route, with any property it
+  names already resolved. A `${...}` or a space in it is refused.
+- `packages` is an Ant pattern over the controller class's package, with `.`
+  between segments, read as Spring's `AntPathMatcher(".")` reads it: `*` within
+  one segment, `?` one character, `**` any number of whole segments, none
+  included. A project that hands such a pattern to Spring copies it across as
+  it is.
+- `annotation` is the simple name of an annotation the class itself carries.
+  One it inherits, or a meta-annotation, is not read.
+- `from` is a note of where the value was read, and rides on the endpoint.
+
+Either test may be left out, and an entry with neither applies to every
+controller. Any other key is refused, because a misspelt test would put the
+prefix on every controller.
+
+The lane tests the class that serves a route, and the first entry the class
+passes wins, as it does in Spring. The prefix goes before the path before the
+endpoint is keyed, so the route is the address a frontend calls. A route
+contract is served under its implementer's prefix, because that is the class
+Spring tests. A contract nobody implements, a `@FeignClient` route (the
+address it calls, written at the call) and a functional route (Spring applies
+these prefixes to the annotation handler mapping, not to a router function)
+take none. A prefixed endpoint carries `pathPrefix` (the value, the declaration
+`pathPrefixes[i]`, its tests and its `from`) and `apiGroup`, the first path
+segment after the prefix, so the views that group routes read the group below
+the prefix instead of putting every route in one. Its HANDLES edge names the
+rule `route-path-prefix` and keeps the grade of the mapping.
+
+`cascade analyze` says what came of it, and three warnings say what may be
+wrong:
+
+```
+Java lane: 2 declared path prefix(es) (pathPrefixes): /admin-api on 3101 route(s), /app-api on 153 route(s)
+```
+
+- `SETTING_IN_CODE`: the Java facts show a call to Spring's `setPathPrefixes`
+  or `addPathPrefix` on a receiver the file declares as that Spring type (or a
+  class that extends or implements it), and `pathPrefixes` is empty. It names
+  the file, the line and this key. A call whose receiver's type the file does
+  not state, in a file that imports the Spring type, is said at severity
+  `info`, since nothing proves it is Spring's. The calls are named by the `spring-mvc` rule pack, through the
+  `java.code-setting` kind ([rules.md](../rules.md#a-setting-made-in-code)).
+- `PATH_PREFIX_UNUSED`: an entry no controller class passed. A typo, or a
+  package that moved.
+- `PREFIX_NOT_ON_CALLS`: frontend calls that named no route would name a served
+  one with a declared prefix before them, on a method that route serves. This
+  happens when the frontend's base URL carries the prefix and the web lane did
+  not read or apply it, and the warning names the `gatewayRoutes` entry that
+  settles it (`{"*": "/admin-api"}`). It counts exact paths only, so the number
+  is a floor, and it says apart how many of those calls were traced to no
+  client.
+
+The key needs `spring-mvc` in `frameworkPacks` (or a `--java-src` run);
+otherwise `RECORDED_NOT_ACTED` says an unflagged run reads no controller to put
+the prefixes on. It is left
+out of the profile digest until it is set, so a project that declares none
+keeps its digest, and `cascade init` run again keeps a declared list. The
+working-tree overlay applies the same prefixes.
+
+Measured on ruoyi-vue-pro, which serves its admin and app controllers under
+`/admin-api` and `/app-api` from `setPathPrefixes`: with nothing declared the
+pack is unchanged and `SETTING_IN_CODE` names `YudaoWebAutoConfiguration.java:53`.
+Declared, 3,101 routes go under `/admin-api` and 153 under `/app-api`,
+endpoints rise from 3,213 to 3,270 (before, an admin route and an app route
+with the same path were one node with two handlers), and endpoints reaching SQL
+from 2,626 to 2,663.
+
+### Routes built with calls: functional endpoints
+
+A method declared to return a `RouterFunction` builds its routes with calls,
+not annotations:
+
+```java
+@Bean RouterFunction<ServerResponse> routes(OwnerHandler handler) {
+  return route().nest(path("/owners"), b -> b.GET("/{id}", handler::show)).build();
+}
+```
+
+The worker records such a method's body (and that of a method returning a
+`Supplier` of one) as a tree of the calls it is written with, and decides
+nothing. The `spring-functional` rule pack says which call starts a builder,
+adds a route, nests, joins or keeps routes, and which argument is the path, the
+predicate, the handler or springdoc's operation, for Spring's own builders on
+WebFlux and WebMvc and for springdoc's `SpringdocRouteBuilder`
+([rules.md](../rules.md#routes-built-with-calls)). A builder a project adds is
+a pack entry.
+
+- **Where a route is served.** A `@Bean` method's routes are served at the
+  paths their calls compose. A route-building method of the same class that the
+  bean calls with no argument is read there, under the bean's prefix. Any other
+  one is mounted by code elsewhere, which decides its prefix, so its route is
+  placed only where an OpenAPI document declares the operation id the route
+  names, with its verb, at a path that ends with the route's own. The route
+  then has the document's full path, its HANDLES edge is HEURISTIC (no mount
+  the source states puts it there, only a document that may be stale), and the
+  evidence names the document. Two routes of the code that name one operation
+  are placed by neither.
+- **One node per route.** A route gets the endpoint id every lane uses, so a
+  route a document declares is corroborated, not duplicated, and a frontend
+  call lands on it as on a mapped one. The operation id rides on the endpoint.
+- **Which method runs.** HANDLES is EXACT where the source names the class and
+  the method and nothing in the tree overrides it (`this::list`, or
+  `OwnerHandler::list` of a type the tree declares with that method). Through
+  a declared type (a field, a parameter, a local, or `this` with an override
+  below it) it is SOUND_SET, over every method an object of that type may run:
+  the type's own or inherited one and every override below it. A lambda that
+  calls one method names that method.
+- **What is not read is said.** A handler this lane cannot name (a lambda that
+  does more than call one method, a handler held in a variable) leaves the
+  route as an endpoint node with `handlerUnread: true` and no HANDLES edge. A
+  path in a variable, a predicate or a call the pack does not name, and a
+  helper handed arguments are counted in `laneStats.functionalRoutes`, and the
+  first few are printed as `JAVA_ROUTE_NOT_READ`. An operation id the code
+  names that a document gives to another route is counted in
+  `operationIdDisagreements` and printed as `OPERATION_ID_DISAGREES`.
+- **No declared prefix.** `pathPrefixes` is not put on these routes; see above.
+
+`--no-openapi` turns off the placement by operation id with the rest of the
+OpenAPI lane. The working-tree overlay reads the same documents, so it places
+the same routes.
+
+Measured on halo, which builds its custom API this way: none of the 400 routes
+its OpenAPI documents declare had a handler before; now 167 do, among 176
+routes with a handler. 12 of those links are EXACT and 164 are HEURISTIC, every
+one of them placed by operation id, so the default `conservative` mode walks 12
+routes to a handler and `heuristic` walks all 176. None reaches a SQL
+statement, because halo stores its data through its own extension store. The gateways of jeecg-boot and
+spring-petclinic-microservices each serve one route this way, `GET /`,
+from an inline lambda, so each is a node with `handlerUnread` and no HANDLES
+edge.
+
+### A controller that implements a generated interface
+
+A contract-first project builds its API from an OpenAPI document with
+openapi-generator, which writes one interface per group of operations
+(`OwnersApi`) at build time. The project's `@RestController` implements it.
+The interface is not in the source tree, so this lane sees a controller whose
+methods carry no mapping, and serves nothing from it.
+
+The `openapi-generator` rule pack pairs them after the document's routes are on
+the graph: a method of a served class whose name is an operation's operationId,
+where the class implements an interface outside the tree named as the generator
+names that operation's group, handles that operation's route. The HANDLES edge
+is HEURISTIC, because the pairing rests on a naming convention and neither the
+interface nor the generator's configuration is read. The rule, what it links
+and what it says instead are in [rules.md](../rules.md#a-contract-only-the-build-writes).
+
+Measured on spring-petclinic-rest: 36 of the 37 routes its document declares
+are linked (the 37th, `/oops`, has no implementer in the source), each on a
+method the source marks `@Override`. Endpoints reaching SQL go from 0 of 38 to
+13 of 38 at `mode=heuristic`, and stay at 0 at `conservative`, as a HEURISTIC
+link should.
 
 ### An imperative client call is an HTTP hop too
 

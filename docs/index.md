@@ -117,7 +117,7 @@ server into an AI client and reads the answers:
 | [setup/sql-lane.md](setup/sql-lane.md) | Python and sqlglot, the dialects, and where the DDL comes from |
 | [setup/java-lane.md](setup/java-lane.md) | the JDK, what the lane resolves, and what it does not; JPA and MyBatis-Plus |
 | [setup/web-lane.md](setup/web-lane.md) | the frontend lane: the vendored parser, wrappers, prefixes, screens, OpenAPI, recordings |
-| [setup/ts-lane.md](setup/ts-lane.md) | the TypeScript backend lane: NestJS routes, the calls between methods, Prisma calls as statements |
+| [setup/ts-lane.md](setup/ts-lane.md) | the TypeScript backend lane: NestJS routes, the calls between methods, Prisma and TypeORM calls as statements |
 | [setup/db-catalog.md](setup/db-catalog.md) | the three ways to get column comments, and what each costs |
 | [setup/runtime-evidence.md](setup/runtime-evidence.md) | execution traces as evidence: which implementation really ran, shown beside the grade and never above it |
 | [ko/index.md](ko/index.md) | the Korean pages |

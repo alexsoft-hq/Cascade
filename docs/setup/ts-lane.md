@@ -1,19 +1,20 @@
-# TypeScript lane (NestJS + Prisma) setup
+# TypeScript lane (NestJS, Prisma, TypeORM) setup
 
 **English** | [한국어](../ko/setup/ts-lane.md)
 
 The TypeScript lane reads a **NestJS backend**: the routes its controllers
-serve, the calls between its methods, and every **Prisma** call as a SQL
-statement against the tables and columns `schema.prisma` declares. It is the
-same round trip the Java lane gives a Spring application
-(`endpoint → handler → service → statement → table → column`), so a frontend
-call the web lane reads meets a Nest route exactly as it meets a Spring one.
+serve, the calls between its methods, and every **Prisma** or **TypeORM** call
+as a SQL statement against the tables and columns `schema.prisma` or the
+TypeORM entities declare. It is the same round trip the Java lane gives a
+Spring application (`endpoint → handler → service → statement → table →
+column`), so a frontend call the web lane reads meets a Nest route exactly as
+it meets a Spring one.
 
 What it does not know, it does not state as known. A route whose address the
 source holds in a variable is not made; a route whose address holds only if an
 exclude this lane cannot read does not name it is made and graded HEURISTIC; a
-Prisma argument this lane cannot read is named on the statement. Every such gap
-is a diagnostic that says why.
+Prisma or TypeORM argument this lane cannot read is named on the statement.
+Every such gap is a diagnostic that says why.
 
 ## What it needs
 
@@ -39,13 +40,26 @@ fold into one. Analyze each as its own project.
 `--ts-src <dir>` names the application for one run instead, and `--no-ts`
 switches the lane off. A frontend root that holds the backend too (an Nx
 workspace like ghostfolio, with one `package.json` for both) is read by the web
-lane **without** the backend's files: they are this lane's.
+lane **without** the backend's files: they are this lane's. The lane reads the
+application's root, and the files its imports reach elsewhere in the analyzed
+root (see "Shared libraries", below).
 
 The lane line says what came of it:
 
 ```
 TypeScript lane: 310 file(s), 118 route(s) from 34 registered controller(s), 1368 call(s) linked, 1001 into packages, 1777 on a receiver not typed here; Prisma: 149 statement(s) from 149 client call(s)
 ```
+
+The line says more when the run found more: how many files were read outside
+the application because its imports reached them, how many linked calls went
+into those files, and how many went through a type classes of the project
+extend or implement (with how many the modules' bindings settled, and how many
+are graded HEURISTIC). A TypeORM application adds its statements, entities and
+naming strategy after the Prisma part. When `schema.prisma` was read, a second
+`TypeScript lane: schema.prisma:` line says what it declared: its tables and
+columns, or the SQL catalog's it corroborated with the disagreements, the joins
+its relations are, and how many statements follow a relation or go through a
+client `$extends` made.
 
 ## Routes
 
@@ -120,15 +134,94 @@ receiver is one this lane can type:
 |---|---|
 | `ts-this-method` | `this.m()`: a method of the same class, or of a class it extends |
 | `ts-injected-field` | `this.svc.m()`: a method of the class a constructor-injected field is typed with |
+| `ts-this-dispatch` | `this.m()` where classes of the project extend this one: the nearest declaration of `m` for this class and for each of them |
+| `ts-field-dispatch` | `this.svc.m()` where the field's type is an abstract class, an interface, or a class the project extends: the nearest declaration of `m` for each class the field may hold |
 | `ts-function` | `f()`: a function the file declares or imports by name |
 | `ts-static-method` | `Cls.m()`: a static method of a class the file names |
 
 SOUND_SET because a subclass may override the method, and the provider bound to
-a field's type may be another class. A call into a package is counted apart
+a field's type may be another class. Where classes of the project do extend or
+implement the type, the call is linked to each of them (below). A call into a
+package is counted apart
 from one on a receiver this lane does not type (a local variable, a parameter, a
 chain through a field): the first is no gap in the project's links, the second
 is. A decorator is not a call its method makes; it runs once, when the class is
 defined.
+
+### A call through an abstract class or an interface
+
+`this.users.findById(id)` on a field typed with an abstract class runs the
+`findById` of whatever object Nest injected, never the abstract declaration,
+which has no body. Through an interface there is no body at all. And `this.m()`
+in a base class runs a subclass's override whenever `this` is one. So a call
+through a type that classes of the project extend or implement reaches, for the
+type and for each such class (directly or through another class or interface),
+the nearest declaration of the method. An abstract method is never a target.
+`evidence.dispatch` names the type and how many methods the set holds
+(`candidates`). A type no class of the project extends or implements is linked
+as before.
+
+The set rests on the project's own `extends` and `implements` clauses.
+TypeScript also accepts an object of the right shape that names neither, so the
+set is complete only when something settles it:
+
+- For a field, what the NestJS modules bind to its type (rule
+  `nestjs.providers`, kind `ts.provider-binding`). A class listed in
+  `providers` binds itself, and `{ provide: T, useClass: C }` binds `T` to `C`.
+  The modules read are the ones the application loads, from its root module
+  through each one's imports, when that walk is read whole. Otherwise they are
+  every module of the tree, with what a module's static method (`forRoot()`)
+  returns. When the bindings settle it, the edges go to the bound classes only,
+  and `evidence.dispatch` says which modules bound it (`bound`), which reading
+  settled it (`boundBy`), and how many candidates it narrowed from
+  (`narrowedFrom`).
+- For `this.m()`, `this` is always an instance of a class of the tree, unless
+  the type's package may be published.
+
+The edge is SOUND_SET when the set is complete. When it may be short, the edge
+is HEURISTIC, with the reason in `evidence.dispatch.incomplete`:
+
+- a binding made by `useFactory`, `useValue` or `useExisting`, which is not
+  read;
+- a provider, a providers list or a module this engine cannot read;
+- a package's module handed the type in the imports, which may bind it;
+- no module binds the type;
+- a constructor parameter decorated `@Inject(token)`, which the token fills,
+  not the type;
+- a field that is not a parameter of the class's own constructor, which Nest
+  does not fill;
+- a class the code makes with `new`, handing it whatever it likes;
+- a type declared in a package that may be published: one that is not the
+  application's own package and is not marked `"private": true`, so a class
+  outside this tree may extend it.
+
+`TS_DISPATCH_INCOMPLETE` counts the HEURISTIC calls and names the commonest
+reasons. `TS_BINDING_NOT_READ` names each type bound in a way this engine does
+not read.
+
+## Shared libraries
+
+An application in a monorepo imports code outside its own root: a shared
+library, reached through a tsconfig `paths` alias, its `baseUrl`, or a relative
+path. The lane reads the application's files and then, round by round, every
+file their imports and re-exports reach inside the analyzed root, until none is
+new. An import is resolved exactly as the bridge resolves it, so the file read
+for an import is the file the bridge takes it to mean. It never reads
+`node_modules`, a test file or test directory, or a file outside the analyzed
+root. A name imported from such a library is linked like the application's
+own, not counted as a package's.
+
+The files read outside the application are listed on
+`meta.laneStats.ts.reached`, and the lane line counts them. They are analysis
+inputs like any other: one that differs from HEAD makes the pack dirty.
+
+A file the web lane reads too (a frontend and a backend sharing a library)
+keeps one shard per lane, so neither lane re-reads it for the other. A function
+both lanes make is one node, since it is one piece of code, and its `lanes`
+names both. `TS_SYMBOL_SHARED_WITH_WEB` says which: the web lane addresses the
+requests such a function sends by the frontend's rules, so a walk from a
+backend route that passes through it takes those requests at the address the
+frontend would use.
 
 ## Prisma
 
@@ -157,14 +250,17 @@ What a call reads and writes comes from its argument, read by the
 have a role, and a filter's `AND`, `OR` and `NOT` are read into. A key naming a
 compound unique or id reads the fields the schema joins under that name
 (`@@unique([a, b], name: "pair")`, or `a_b` with no name); a key is never split
-on `_` to guess them. What the rule cannot follow travels on the statement:
+on `_` to guess them. A relation the call names is followed into the model it
+reaches (see "Relations", below). What the rule cannot follow travels on the
+statement:
 
-- `relation-not-followed`: an `include`, or a relation field in a `select`,
-  reaches another table this statement does not name.
-- `argument-not-read`: a key the rule does not know (a relation's `_count`
-  inside an `include`, for one).
+- `relation-not-followed`: a relation the schema does not let this lane place,
+  with why.
+- `argument-not-read`: a key the rule does not know, with the path it was found
+  under.
 - `columnsRuntimeOnly`: an argument held in a variable, spread, or written with
-  a computed key, so which columns it touches is only known when it runs.
+  a computed key, so which columns it touches is only known when it runs. The
+  statement names the key.
 - A `select` value that is neither `true` nor `false` (`email: showEmail`) MAY
   read its column: that READS edge is graded SOUND_SET, and the statement names
   the key that made it uncertain.
@@ -173,36 +269,339 @@ With no `select`, and an argument read whole, a read reads every scalar column
 of the model.
 
 A call that names a model and an operation of the schema on a receiver this
-lane does not know to be a client (a client held in a local variable, one
-`$extends` made) makes no statement, and is said: `TS_PRISMA_CALL_UNREAD` counts
-them and names a few.
+lane does not know to be a client (a client handed to a function as a
+parameter, a local assigned again) makes no statement, and is said:
+`TS_PRISMA_CALL_UNREAD` counts them and names a few, with why when the lane
+knows it.
 
 `schema.prisma` is found at `prisma/schema.prisma` at or above the application
 root, where Prisma looks first; a package's own `"prisma": { "schema": ... }`
 or the profile's `tsBackend.prismaSchema` names another. It is read again on
-every run, and its path, sha256 and provider are on `meta.laneStats.ts`. A table
-no DDL declared is added as a stub with `declaredBy: "prisma"`; a table a
-migration's DDL declared is the same node.
+every run, and its path, sha256 and provider are on `meta.laneStats.ts`.
+
+### schema.prisma is the catalog
+
+Every model of `schema.prisma` is a table and every scalar field a column,
+whether a call names it or not; a `view` block is read the same way. The nodes
+have the shape the SQL lane gives a DDL's: a column carries its type as the
+schema writes it (`String`, `String[]`, an enum's name, and `nativeType` for a
+`@db.X` attribute), `nullable` from `?`, and `pk` from `@id` or `@@id`, and
+every node says `declaredBy: "prisma"`. A relation is a `JOINS` edge between
+the two tables, on the columns its `fields` and `references` name, graded EXACT
+because the schema states it. An implicit many-to-many (two lists, no `fields`
+on either side) is the table Prisma makes for it: `_` and the relation's name,
+or with none the two model names in alphabetical order joined by `To`
+(`_OrderToTag`). Its columns `A` and `B` point at the ids of the first and the
+second model, and it is joined to both. Whether `(A, B)` is a primary key or a
+unique index depends on the Prisma version, so neither column says it is in a
+key. Whether a list column allows NULL is not in the schema, so a list's
+`nullable` is null. With no DDL, the pack's `meta.catalog` is
+`{source: "prisma", path, sha256}`, and the catalog axis ships with
+`schema.prisma` in `axes.catalog.sources`. Where the names came from is not a
+limit on an answer, so it is not a note.
+
+When the run also reads a SQL catalog (migrations named as the DDL, or a
+snapshot), a table that catalog declares is not declared twice. Its nodes stay
+the SQL lane's, and the schema corroborates them (`prismaModel`,
+`prismaField`). What the two state differently is a disagreement: a table or a
+column only one of them declares (`table-not-in-catalog`,
+`column-not-in-catalog`, `table-not-in-schema`, `column-not-in-schema`), a
+primary key (`pk-differs`), or a nullability (`nullable-differs`). Neither is
+taken to be the newer, since a migration may lag the schema, or the schema the
+database. So a column whose key or nullability the two state differently keeps
+both on its node, each under its source:
+`declarationsDiffer: { pk: { catalog, prisma }, nullable: { catalog, prisma } }`.
+The node's own `pk` is the SQL catalog's, as the node is. Every disagreement is
+counted on `meta.laneStats.ts.prisma.catalog`, said in one
+`PRISMA_CATALOG_DISAGREES` diagnostic, and noted on the catalog axis. A column
+only the schema declares is added as the schema's, since the client sends it;
+one only the SQL catalog declares is only said, since no Prisma call can name
+it. Types are not compared: Prisma's `String` and the database's `TEXT` are two
+vocabularies, not a disagreement.
+
+### Relations
+
+A relation a call names is followed into the model it reaches: in `include` or
+`select` (`true` is its whole row, an object is a find of its own there), in a
+filter (`some`, `every`, `none`, `is`, `isNot`, or a to-one filter written
+straight), in an `orderBy`, as a `_count`, and as a nested write (`create`,
+`createMany`, `connect`, `connectOrCreate`, `set`, `disconnect`, `update`,
+`updateMany`, `upsert`, `delete`, `deleteMany`). The statement then reads,
+writes or deletes the related table and its columns, and reads the columns the
+join matches on, on both sides. A write that sets or clears the link writes the
+columns that hold it, on whichever side they sit, or inserts or deletes rows of
+the implicit table. Every such edge names the relation in `evidence.relation`.
+The names are pack data (`prisma.json`: `relationFilters`,
+`relationNullFilters`, `relationCount`, `nestedWrites`).
+
+A relation is part of the call's own statement, not a statement of its own.
+Which SQL Prisma sends for it depends on things the call site does not settle:
+one query with a join under `relationLoadStrategy: "join"`, one more query per
+relation level under `"query"` (the default without the relationJoins preview
+feature), several statements in one transaction for a nested write. What all of
+those share is the call site, and the call site is what a method implements.
+
+One call keeps one `EXECUTES` edge per table and access (read, write, delete),
+as the SQL lane does, so a call that reads a table and writes it is found by
+both questions. Each takes the strongest grade any path gave that access. A
+column keeps one edge per type, at the strongest grade.
+
+A relation value only the running program knows (`include: { posts: flag }`,
+`data: { account }`) is followed as one that MAY happen: its edges are
+SOUND_SET, and the statement names the key in `columnsRuntimeOnly`. A relation
+the schema does not let this lane place stays `relation-not-followed`, with
+why: its other side is missing or not the only candidate, its `fields` and
+`references` do not match, or it is an implicit many-to-many the schema does
+not place: of a model with itself (which side is `A` the schema does not say),
+between models without a one-field id, or across two `@@schema` blocks.
+
+**What a literal changes.** A relation filtered on null (`author: null`,
+`{ is: null }`, `{ isNot: null }`; the pack names the keys in
+`relationNullFilters`) only checks the link. When the foreign key is in the
+filtered model's own table, the statement reads that key column and nothing of
+the other table, as Prisma's engine tests it. When the key is in the other
+table, that table is followed as any filter is.
+
+A nested write handed a literal that makes Prisma change nothing draws what
+Prisma still sends, and no more. Each nested write lists those literals in the
+pack's `idle` entries: the value (`[]` or `false`, of the whole value or of
+one argument), the relations it applies on, and what it drops, every edge or
+only the writes. The first entry that applies to the relation wins:
+
+- `[]` for `create`, `connect`, `connectOrCreate`, `update`, `updateMany`,
+  `upsert` and `deleteMany`, and `createMany: { data: [] }`: no edge, since
+  Prisma sends nothing for them.
+- `delete: false`, and `disconnect: false` on a one-to-one relation: no edge.
+  On the to-one side of a one-to-many, Prisma disconnects whatever the boolean,
+  so that write stays.
+- `disconnect: []` on a many-to-many: no edge, since no query is built.
+- `delete: []`, and `disconnect: []` on a one-to-many: no write, but Prisma
+  still selects the related rows before it finds nothing to change. So the
+  statement keeps the related table read, the join, the implicit table on a
+  many-to-many, and the related rows' key.
+
+`set` replaces the link: it clears it, then sets it, so `set: []` still
+clears.
+
+### A client `$extends` makes
+
+A local that holds what `$extends` made of a client field,
+`const x = this.prisma.$extends({...})`, is a client for the calls made through
+it from that line on. So is a local that holds what a method of the class
+returns (`const x = this.client()`), when every `return` of that method is such
+a call or the client field itself. An extension this lane reads whole, written
+there or made by `Prisma.defineExtension` in a local of the same method, with no
+`query` component, leaves those calls as sure as the client. One it cannot
+read, or one with a `query` component (which intercepts an operation and may
+change what it sends), makes them HEURISTIC. The statement says which in
+`prismaEvidence.extension` (the method, whether it was read, its components),
+and `prismaEvidence.returnedBy` names the method a client came from. The names
+are pack data (`prisma.json`: `extensions`).
+
+A field an extension's `result` component computes is not a column. Selecting
+it reads the fields its `needs` sets to true, through the computed fields it
+needs in turn, whether it is declared for one model or for `$allModels`. One
+with no `needs` reads nothing more. One whose `needs` this lane cannot read is
+named in `columnsRuntimeOnly`. A set of computed fields is open where a spread
+or a computed key may add a field to it or replace one written there, in the
+model's object or in the `result` component itself. Selecting a field of an
+open set claims none of its `needs`: the statement says they are known only at
+run time, and a real field of that name is still read.
+
+### Which local is a client
+
+A local holds a client as the declaration it is, not by its name. The worker
+scopes each file the way the language does (`adapters/ts/tsscope.mjs`) and says
+which declaration a call's receiver is. The same name declared again in an
+inner block, or an inner function's parameter that shadows a transaction's
+client, is another local, and a call on it is not a client call. A local
+assigned again anywhere in its scope (`x = other`, `x++`, a `for...of` target)
+may hold anything by the time of a call, so it holds a client nowhere: its
+calls are not read, and `TS_PRISMA_CALL_UNREAD` lists them with that reason.
+
+## TypeORM
+
+A NestJS application on TypeORM is read the way one on Prisma is: its entities
+are the catalog, and each call that sends SQL is a statement. What the lane
+knows about TypeORM is the `typeorm` rule pack
+(`src/core/rules/packs/typeorm.json`), read through four kinds
+(`typeorm.entity`, `typeorm.receiver`, `typeorm.operation`,
+`typeorm.query-builder`), with examples `cascade rules test` runs.
+
+### Entities are a catalog
+
+A class decorated `@Entity` is a table, and each property a column decorator
+marks (`@Column`, `@PrimaryColumn`, `@PrimaryGeneratedColumn`,
+`@ObjectIdColumn`, `@CreateDateColumn`, `@UpdateDateColumn`, `@VersionColumn`,
+`@DeleteDateColumn`) is a column. Columns a class inherits from a class of the
+project it extends are its own, as TypeORM reads the whole prototype chain. A
+`@ManyToOne`, or a `@OneToOne` with `@JoinColumn`, adds the join column that
+holds it; a `@ManyToMany` with `@JoinTable` adds the join table and its two
+columns. Each relation that owns its join column, and each join table, is a
+`JOINS` edge. Every column is in the pack, whether a call reads it or not. A
+property a subclass only declares again with no TypeORM decorator
+(`declare email: string`) hides none of the columns the class it extends maps.
+
+A table only the entities declare is a stub node with `declaredBy: "typeorm"`:
+the entities are what the application declares, not what the database has. A
+table a DDL declared is that same node, marked `typeormCatalogMatch`.
+
+### Names follow TypeORM's naming strategy, prefix and schema
+
+A name the decorator does not write is derived the way TypeORM's metadata
+builders derive it, under the naming strategy the DataSource options name in
+`namingStrategy`. The options also carry an `entityPrefix`, put before every
+table name, and a `schema`, given to every entity that names none. All three
+are read the same way, fact by fact:
+
+- The options are read where an application writes them:
+  `TypeOrmModule.forRoot({...})`, what a `forRootAsync` `useFactory` returns,
+  `createTypeOrmOptions()` of its `useClass` or `useExisting`,
+  `createConnection({...})`, and `new DataSource({...})`. A
+  `new DataSource(options)` inside a `dataSourceFactory` is the same options,
+  not another place.
+- Options that name no strategy mean `DefaultNamingStrategy`.
+  `new SnakeNamingStrategy()` from typeorm-naming-strategies is the other
+  strategy the pack knows.
+- When every place is read and all agree, the fact is known.
+- When a place is not written out (`forRoot()` with no argument reads ormconfig
+  or the environment; options in a variable, spread, or built by code this
+  engine does not read; a strategy class the pack does not name), when two
+  places disagree, or when no place is found, the fact is not known. The reason
+  is on `meta.laneStats.ts.typeorm.naming`, and `TS_TYPEORM_NAMING_ASSUMED` says
+  which names it leaves HEURISTIC.
+- A derived name is EXACT only when the strategy is known. A table name, one the
+  decorator writes included, is EXACT only when the prefix is known and, for an
+  entity that names no schema, the schema is. The options' schema keys the
+  table as `schema.table`, as the SQL lane keys one.
+- TypeORM's `snakeCase` changed at 0.2.35 and again at 0.2.38. A derived name
+  those versions spell differently is HEURISTIC even under a known strategy,
+  since the installed version decides it. So is a derived join table name
+  longer than 29 characters, which a 0.3 driver may shorten (Oracle's alias
+  limit).
+- A `@JoinColumn` or `@JoinTable` name held in a value rather than written as a
+  literal leaves the default name HEURISTIC.
+
+`tsBackend.typeorm` in the profile declares what the options leave to run time:
+`namingStrategy` (by the name the pack gives it, `default` or `snake`),
+`entityPrefix` and `schema`. `null` is not declared, and `""` is declared none.
+A declared fact is used instead of what the options say, and a declaration that
+differs from what the options write is said in `TS_TYPEORM_NAMING_DECLARED`.
+Every table name waits for the prefix, so an application whose options are not
+in the source reaches no table in the default `conservative` mode until it
+declares the block. A
+strategy name the pack does not know stops the analysis with a profile error
+that lists the ones it does.
+
+### Each call site is a statement
+
+A TypeORM call that sends SQL is a statement of its own:
+`statement:typeorm:<file>#<Class.method>/<n>`, the n-th TypeORM call of that
+method, numbered as Prisma calls are. A call that sends nothing (`create`,
+`merge`) takes no number. The calls are the ones made on a receiver the
+`typeorm.receivers` rule knows:
+
+- a repository: a field `@InjectRepository(E)` injects, a field typed
+  `Repository<E>` or `TreeRepository<E>`, a project class that extends
+  `Repository<E>` or that `@EntityRepository(E)` marks, and `getRepository(E)`
+  on a data source, on an entity manager, or as TypeORM 0.2's own function;
+- an entity manager: a field typed `EntityManager` or injected by
+  `@InjectEntityManager()`, the `manager` of a data source or a repository,
+  TypeORM 0.2's `getManager()`, and the manager a `transaction` callback is
+  handed. Its operations name the entity in their first argument;
+- a data source: a field typed `DataSource` or `Connection`.
+
+A local that holds a repository or a manager
+(`const repo = this.ds.getRepository(User)`) is bound where it is declared, as
+a Prisma client local is: the same name declared in an inner block is another
+local, and a local assigned again may hold anything at the call, so its calls
+are not read and `TS_TYPEORM_RECEIVER_UNREAD` says so.
+
+An operation is read by the part each argument plays (`typeorm.operations`):
+
+- Find options by role: `where` filters (an array of wheres is an OR),
+  `select` returns what it names, `order` reads, `relations` loads the
+  relations it names. TypeORM 0.2's `findOne(conditions)` and `findOne(id)` are
+  told apart by TypeORM's own test, and an object whose keys are all find
+  options and none a property is options, so TypeORM 0.3's
+  `{ select: { email: true } }` is not read as a condition.
+- A find with no `select` returns every column of the entity. A find loads its
+  eager relations, and theirs, as TypeORM joins them (at most eight deep, never
+  twice into one entity), and the relations its options name, each whole,
+  whatever its `select` names, as TypeORM's SelectQueryBuilder joins them. A
+  relation the options name brings its target's eager relations too: one level
+  down EXACT, past it SOUND_SET. `loadEagerRelations: false` stops the eager
+  ones.
+- An update or an insert writes the properties its values name. `save`, or an
+  insert, of a value not written out MAY write any column: those WRITES are
+  SOUND_SET, and the statement says `columnsRuntimeOnly`.
+- `softDelete`, `restore`, `softRemove` and `recover` write the entity's
+  `@DeleteDateColumn`.
+
+A `createQueryBuilder` chain is read at the call that makes it, with every step
+written on it and the calls made later in the same method on the local that
+holds it, found by where that local is declared. Aliases are read first, since
+TypeORM builds the SQL when the query runs. Each run of the query returns what
+is selected at that point, so two runs with two selections keep both. `alias.property` in a condition's text names a column of the
+entity that alias stands for. A join adds its table, and a `...AndSelect` join
+returns that table's row. `select` narrows what is returned; `update`,
+`delete` and `insert` make it that statement; `set` and `values` write what
+they name. A step written under a condition, in a loop or in a callback MAY
+run, so what it reads is SOUND_SET, and a `select` there keeps the selection it
+may leave in place as candidates. A step this rule cannot place (a condition
+built with `Brackets`, a method the pack does not name) is
+`builder-step-not-read` on the statement. A builder with no step that runs the
+query where it is made says `builder-not-run-here`, and its edges are
+SOUND_SET.
+
+What is not read is said:
+
+| diagnostic | what the source did |
+|---|---|
+| `TS_TYPEORM_CALL_UNREAD` | raw SQL (`query()`), an operation the pack does not name, or a call on no entity this engine read |
+| `TS_TYPEORM_RECEIVER_UNREAD` | an operation that names an entity, on a receiver not known to be a repository or an entity manager, or on a local that held one and is assigned again |
+| `TS_TYPEORM_MAPPING_UNREAD` | mapping this engine does not read: an embedded entity (`@Column(() => Address)`), a class `@ChildEntity`, `@ViewEntity`, `@TableInheritance` or `@Tree` marks, join options not written out, a relation whose target is not an entity this engine read |
+| `TS_TYPEORM_NAMING_ASSUMED` | options this engine could not read, so the naming strategy, the prefix or the schema is not known, and the names that depend on it are HEURISTIC |
+| `TS_TYPEORM_NAMING_DECLARED` | the profile's `tsBackend.typeorm` declares a fact other than the one the options write; the profile's is used |
+
+A relation in a `where` stays `relation-not-followed` on the statement, and a
+key the entity does not have is `argument-not-read`.
+
+The catalog axis ships when every table and column name is written in the
+decorators or follows a strategy the run knows, with
+`TypeORM entities (N table(s), M column(s))` in `axes.catalog.sources`. When a
+name had to be derived by a rule the run could not confirm (an unknown strategy,
+prefix or schema, a spelling the TypeORM versions disagree on), the catalog and
+column axes are
+degraded, with the reason, and a DDL beside the entities does not lift that.
 
 ## The profile
 
 ```json
 "frameworkPacks": ["nestjs"],
-"tsBackend": { "app": "../apps/api/src", "prismaSchema": null, "globalPrefix": null, "globalPrefixExclude": null }
+"tsBackend": { "app": "../apps/api/src", "prismaSchema": null, "globalPrefix": null, "globalPrefixExclude": null,
+               "typeorm": { "namingStrategy": null, "entityPrefix": null, "schema": null } }
 ```
 
-- `tsBackend.app` — the application root, manifest-relative. Read when
+- `tsBackend.app`: the application root, manifest-relative. Read when
   `frameworkPacks` declares `nestjs`.
-- `tsBackend.prismaSchema` — the schema, when it is not where Prisma looks first.
-- `tsBackend.globalPrefix` — the prefix the application is deployed under, for a
+- `tsBackend.prismaSchema`: the schema, when it is not where Prisma looks first.
+- `tsBackend.globalPrefix`: the prefix the application is deployed under, for a
   bootstrap that reads it from configuration. `""` is a real answer: no prefix.
-- `tsBackend.globalPrefixExclude` — the route patterns that prefix excludes, in
+- `tsBackend.globalPrefixExclude`: the route patterns that prefix excludes, in
   Nest's own syntax (`["health", "docs{/*rest}"]`), for a bootstrap that builds
   the list at run time. Declared, it replaces the bootstrap's list.
+- `tsBackend.typeorm`: the TypeORM `namingStrategy`, `entityPrefix` and
+  `schema` the DataSource runs with, for options the source does not write out
+  (see *Names follow TypeORM's naming strategy, prefix and schema*).
 
 A project that sets none of these keeps the profile digest it had before they
 existed, so upgrading does not look to the calibration gate like a change of
-target. Reading another application does: the root read is part of the pin.
+target. The `typeorm` block came after the others, so it is left out of the
+digest on its own while all three are `null`: a project that set `tsBackend`
+before the block existed keeps its digest too. Reading another application does
+move it:
+the root read is part of the pin.
 
 `cascade init` also writes the datasource `provider` of `schema.prisma` to
 `sqlDialects.main` when it is a dialect a profile may name (`postgresql`,
@@ -212,10 +611,15 @@ are written in that database's SQL.
 ## What is cached, and what is not
 
 Each file's facts are cached like the web lane's, by the bytes of the file: a
-second run re-reads only what changed. What crosses files (which file an import
-names, which class a field is typed with, which controllers are registered) is
-decided again on every run, over the whole application, together with the
-tsconfig `paths` and `schema.prisma`, so a cached file never holds a conclusion
+second run re-reads only what changed. Which files are read is decided again on
+every run: the application's, and those its imports reach elsewhere in the
+analyzed root. A shard still holds one file's records, and the facts index
+records the files read in its own `tsFiles` map, apart from the web lane's.
+What crosses files (which file an import names, which class a field is typed
+with, which controllers are registered, which classes a module binds to a type)
+is decided again on every run, over the whole application, together with the
+tsconfig `paths`, `schema.prisma` and the `package.json` files that say whether
+a type's package may be published, so a cached file never holds a conclusion
 about another.
 
 `cascade impact` on uncommitted changes (the working-tree overlay) does not
@@ -225,10 +629,13 @@ re-read TypeScript yet: on a pack with this lane it declines with
 ## Not in this version
 
 - Guards, interceptors and pipes as edges.
-- Following a Prisma relation (`include`) into the table it reaches, a
-  relation's `_count`, a client made by `$extends`, and raw SQL (`$queryRaw`).
-- A call through an interface or an abstract class to the classes that
-  implement it.
-- TypeORM, Mongoose, Next.js route handlers, Express without Nest.
-- Files outside the application root that a tsconfig path reaches (a shared
-  library in a monorepo): a name imported from one is counted as a package's.
+- Raw SQL: Prisma's `$queryRaw` and `$executeRaw`, TypeORM's `query()`.
+- Prisma's fluent relation API (`findUnique(...).posts()`), a client held in a
+  class field that `$extends` made, and an implicit many-to-many of a model with
+  itself.
+- TypeORM embedded entities, table inheritance (`@ChildEntity`,
+  `@TableInheritance`), view and tree entities, Active Record calls
+  (`User.find()` on a `BaseEntity`), custom repositories made with
+  `Repository.extend({...})`, and what `save` or `remove` cascades to related
+  entities.
+- Mongoose, Next.js route handlers, Express without Nest.

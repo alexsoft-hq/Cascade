@@ -85,7 +85,7 @@ above.
 
 | tool | the question it answers | arguments (`*` = required) |
 |---|---|---|
-| `overview` | **Start here.** What is in this pack, how much of it is wired end to end from an HTTP route down to a table, and what the engine could not see. `screens.byKind` splits the screens into `router` (a frontend router declared them) and `page` (a controller renders them) | `mode` `depth` |
+| `overview` | **Start here.** What is in this pack, how much of it is wired end to end from an HTTP route down to a table, and what the engine could not see. `screens.byKind` splits the screens into `router` (a frontend router declared them) and `page` (a controller renders them). `reach.routeGrades` counts the served routes by the grade of their link to a handler, `code.services` counts the methods between a handler and its SQL (the ones the walks pass through, and a method that sends SQL from a call in its own body, such as a NestJS service calling Prisma), `diagnostics` lists the run's warn and error diagnostics (each is a `limits` entry too), and every entry of `gaps` carries a `class` saying what a reader can do about it: `input`, `unresolved`, `query`, `unreached` or `info` | `mode` `depth` |
 | `projects` | Which projects does this server serve, and what is in memory? Answers from the registry alone — no pack is loaded | — |
 | `search` | Find a table, column or statement by a name substring. Matches names and business comments, **not** source full text | `query*` `limit` |
 | `browse` | List one kind (table, column, statement, endpoint, symbol, screen) with the numbers to pick by on each row, for when you have no name yet. `endpoints` per row comes from one per-pack walk at `conservative`/depth 8; `kind=symbol` needs a `query`. `kind=screen` gives `{screen, path, label, title, group, component, source, endpoints, tables, observed}`, and a page the server renders adds `{kind: "page", template, engine, routes}` | `kind*` `query` `table` `sort` `limit` `offset` |
@@ -93,7 +93,7 @@ above.
 | `endpoint_impact` | If I change this column, which HTTP endpoints are affected? Walks the code axis; each endpoint carries the weakest grade on its path. On a pack with a screen axis every row also carries `screens: {count, sample}` | `column*` `mode` `limit` `offset` |
 | `screen_impact` | If I change this column, table, statement or method, which **screens** are affected? The same walk two lanes further out, through the frontend's own calls and the `RENDERS` edge, plus one step off `RENDERS_PAGE` so a server-rendered page whose HANDLER touches the column is listed too. Each row names the routes it goes through, and `observed` says whether a recording confirms the call | `column` `table` `statement` `symbol` `mode` `limit` `offset` |
 | `table_usage` | Which statements touch this table, with access, and per-column read/write counts | `table*` `limit` `offset` |
-| `flow` | The chain behind one API call: entry → services → statements → tables, with hops and the walked path. `screen=<router path>` starts at the other end of the round trip (screen → its component functions → the routes they call → services → statements → tables), and `screen=view:<view name>` starts at a page the server renders; walking up, a pack with a frontend gains `webFunctions` and `screens` at the far end, and walking DOWN from a route the `screens` lane lists the page that route shows. `walk.laneNames` says which lanes the answer has. List mode takes `kind=endpoint` (default) or `kind=screen` | `endpoint` `screen` `symbol` `column` `table` `statement` `direction` `kind` `mode` `depth` `limit` `query` `offset` |
+| `flow` | The chain behind one API call: entry → services → statements → tables, with hops and the walked path. `screen=<router path>` starts at the other end of the round trip (screen → its component functions → the routes they call → services → statements → tables), and `screen=view:<view name>` starts at a page the server renders; walking up, a pack with a frontend gains `webFunctions` and `screens` at the far end, and walking DOWN from a route the `screens` lane lists the page that route shows. `walk.laneNames` says which lanes the answer has. From a route, the picture starts at the first handler the mode admits and no row is graded above that link, which `entry.link` names; when the mode admits none, it stops at the route and says why (see [concepts.md](concepts.md)). List mode takes `kind=endpoint` (default) or `kind=screen` | `endpoint` `screen` `symbol` `column` `table` `statement` `direction` `kind` `mode` `depth` `limit` `query` `offset` |
 | `transactions` | The `@Transactional` boundaries and each one's atomic read/write footprint | `method` `limit` `offset` |
 | `erd` | An ERD recovered from the joins the mapper SQL witnesses — foreign keys are never read | `table` `hops` `limit` |
 | `coupling` | Which API group writes what another group reads — the DB sharing no call edge shows | `axis` `mode` `depth` `limit` `offset` |
@@ -123,7 +123,7 @@ that way.
     "rules": [ { "id": "prisma.client", "pack": "prisma", "kind": "ts.type-role", "lane": "ts",
                  "grade": "EXACT", "gave": { "edges": 151, "nodes": 0 }, "here": true, … },
                { "id": "prisma.operations", "gave": { "edges": 0, "nodes": 151 }, "here": true, … } ],
-    "totals": { "packs": 5, "rules": 9, "here": 3 }, … } }
+    "totals": { "packs": 9, "rules": 17, "here": 3 }, … } }
 ```
 
 - The list puts what gave something in THIS pack first, the biggest first, and
@@ -345,6 +345,7 @@ projects is listed under both, which is what `ambiguous` means on a crossing.
 | `GET /api/projects` | the `projects` tool's answer |
 | `POST /api/call` | `{name, arguments, project?}` — one tool call |
 | `GET /api/meta` | the served project's pack metadata (`?project=`) |
+| `GET /api/rules` | the rule packs this engine carries, read-only, with how many links and nodes each rule gave in the served pack (`?project=`) |
 | `GET /api/rules/examples` | whether each rule's examples hold, one verdict per example, run once per server through the same workers `cascade rules test` uses |
 | `GET /api/source` | one node's source, read from the working tree: the snippet, the absolute path, the 1-based line range it cut and the file's length (`?node=`, `?project=`, `?whole=1` for the whole file instead of the snippet) |
 | `GET /vendor/<file>` | the two vendored MIT browser bundles the graph pictures render with |
