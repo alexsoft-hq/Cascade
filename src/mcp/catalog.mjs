@@ -11,6 +11,7 @@
 import * as tools from './tools.mjs';
 import { pack_diff } from './tools_diff.mjs';
 import { summary } from './tools_summary.mjs';
+import { rules } from './tools_rules.mjs';
 import { assertContract } from './contract.mjs';
 import { axisLimits, axisKnownGaps } from '../core/lanes.mjs';
 
@@ -318,7 +319,8 @@ export const TOOLS = Object.freeze({
       'Which API group writes what another API group reads? Two groups can depend on each '
       + 'other through the database with no call edge between them, and this finds those '
       + 'pairs. A group is the FIRST PATH SEGMENT of an endpoint (/product/update/{id} gives '
-      + 'product; an empty one gives (root)). It is a naming habit, not a module boundary '
+      + 'product; an empty one gives (root)), read below the prefix the application is deployed '
+      + 'under where its lane knows one (/api/v1/users gives users). It is a naming habit, not a module boundary '
       + 'anyone declared. axis=column (default) pairs groups through a shared column; '
       + 'axis=table through a shared table, where the EXECUTES access decides the side '
       + '(write or delete makes a writer, read makes a reader). Returns `groups` with '
@@ -360,7 +362,8 @@ export const TOOLS = Object.freeze({
       + 'label, group?, degree, + the kind\'s facts}] and `links` [{source, target, kind: '
       + 'member|touches|joins|executes, access?, grade, statements?, witness?}]. A group is '
       + 'the FIRST PATH SEGMENT of an endpoint (/product/update/{id} gives product; an empty '
-      + 'one gives (root)), which is a naming habit rather than a declared module boundary, '
+      + 'one gives (root)), read below the prefix the application is deployed under where its '
+      + 'lane knows one, which is a naming habit rather than a declared module boundary, '
       + 'and `member` is the group to endpoint link. A `touches` link is endpoint to table, '
       + 'ONE per pair, with `access` aggregated (read / write / delete / read+write) over the '
       + 'statements that endpoint reaches and `statements` counting them. Its `grade` is the '
@@ -527,6 +530,40 @@ export const TOOLS = Object.freeze({
       required: ['table'],
     },
     fn: tools.table_usage,
+  },
+  rules: {
+    description:
+      'Which RULES does this engine run, and what did each one give in THIS pack? A rule is '
+      + 'framework knowledge written as data (src/core/rules/packs/*.json): which decorator makes '
+      + 'a route, which base type makes a mapper, what a Prisma call reads and writes. A link a '
+      + 'rule gave names it in `evidence.rule`, and a node a rule decided names it in an evidence '
+      + 'block of its own (`prismaEvidence.rule` on a statement). With no `rule`, the answer lists '
+      + 'every kind ({name, lane, stage, gradeCap, draws}), every pack, and every rule with `gave: '
+      + '{edges, nodes}` in this pack and `here` (it gave something), sorted by what it gave, the '
+      + 'biggest first. `query` (a substring of the id, pack, kind or description), `kind`, `lane` '
+      + '(java, ts, sql) and `here: true` narrow the list. `gave` also counts them by `byType` and '
+      + '`byGrade` (the links) and `byKind` (the nodes). `gave` is null for a kind that only '
+      + 'classifies (the database a file path names) where the pack names the rule nowhere: '
+      + 'there is nothing to count, which is not the same as unused; a classifying rule a lane '
+      + 'does name (TypeORM receivers, on the statement link they typed) is counted. With `rule`, '
+      + 'the answer is that rule whole (description, why, grade, params, examples), `gave`, '
+      + 'the `edges` it gave (both ends as {id, kind, label}, the grade and '
+      + 'the sentence its lane wrote) and the `nodes` it marked, a page of `limit` (default 50) '
+      + 'from `offset`. Whether the examples still hold is `cascade rules test`, which runs them '
+      + 'through the workers; this answer does not run them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rule: { type: 'string', description: 'a rule id, such as nestjs.routes: that rule whole, and what it gave here' },
+        query: { type: 'string', description: 'list only: a case-insensitive substring of the id, pack, kind or description' },
+        kind: { type: 'string', description: 'list only: one rule kind, such as java.type-role' },
+        lane: { type: 'string', enum: ['java', 'ts', 'sql'], description: 'list only: the rules of one lane' },
+        here: { type: 'boolean', description: 'list only: only the rules that gave something in this pack' },
+        limit: { type: 'integer', minimum: 1, maximum: 500, description: 'with rule: edges and nodes per page, 1..500 (default 50)' },
+        offset: { type: 'integer', minimum: 0 },
+      },
+    },
+    fn: rules,
   },
   projects: {
     description:

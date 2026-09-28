@@ -42,6 +42,17 @@ test('where a rule left its mark: the edges of a pack that name it, and null for
   assert.equal(ruleOf(rulesCatalog(builtinRegistry()), 'mybatis-plus.mapper').appliedHere, null, 'no pack, no count');
 });
 
+test('a node a rule decided counts too: a Prisma statement names its operation rule in its own evidence', () => {
+  const graph = {
+    edges: [{ type: 'HANDLES', evidence: { rule: 'nestjs.routes' } }],
+    nodes: new Map([['statement:prisma:a.ts#A.b/0', { id: 'statement:prisma:a.ts#A.b/0', prismaEvidence: { rule: 'prisma.operations', client: 'prisma.client' } }]]),
+  };
+  const catalog = rulesCatalog(builtinRegistry(), graph);
+  assert.equal(ruleOf(catalog, 'prisma.operations').appliedHere, 1, 'it made one statement, which is not "0 links"');
+  assert.equal(ruleOf(catalog, 'prisma.client').appliedHere, 0, 'naming the client is not naming the rule that made it');
+  assert.equal(ruleOf(catalog, 'nestjs.routes').appliedHere, 1);
+});
+
 test('GET /api/rules answers the catalog for the project asked about, and nothing else does', () => {
   const asked = [];
   const deps = { rules: (project) => { asked.push(project); return rulesCatalog(builtinRegistry(), GRAPH); } };

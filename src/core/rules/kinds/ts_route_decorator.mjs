@@ -213,6 +213,7 @@ function runExamples(entries, env) {
 
 export const tsRouteDecorator = Object.freeze({
   name: 'ts.route-decorator',
+  lane: 'ts',
   stage: 'ts-facts',
   // A route written in a decorator's literal is what the framework serves.
   gradeCap: 'EXACT',

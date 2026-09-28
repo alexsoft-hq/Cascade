@@ -84,6 +84,7 @@ function runExamples(entries, env) {
 
 export const tsTypeRole = Object.freeze({
   name: 'ts.type-role',
+  lane: 'ts',
   stage: 'ts-facts',
   gradeCap: 'EXACT',
   validateParams,

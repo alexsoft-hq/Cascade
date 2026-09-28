@@ -66,10 +66,15 @@
      the mint read as the same hue at four pixels across. In `drawing` they are
      that theme's own muted inks, a printed map rather than a greyscale one, and
      certainty is still the LINE pattern, which is the part that photocopies. */
+  /* THE QUIETEST INK STILL READS (RM67). `--t3` is secondary text: counts,
+     second lines, the lead of a fold. It measured 3.5 to 4.2:1 in the signal
+     theme (#6E7A9A) and 3.4 to 3.7:1 on paper (#7B8794), under the 4.5:1 a
+     reading text needs. It is now #8A96B5 (5.0:1 on --g3, the brightest dark
+     ground) and #5F6B7A (5.0:1 on --g0, 5.4:1 on paper). */
   [data-theme="signal"] {
     --g0:#0B1020; --g1:#111729; --g2:#171E33; --g3:#1E2740;
     --hair:#273354; --frame:#2C3A5E;
-    --t1:#EAF0FF; --t2:#A7B3D1; --t3:#6E7A9A;
+    --t1:#EAF0FF; --t2:#A7B3D1; --t3:#8A96B5;
     --k-group:#C4B5FD; --k-endpoint:#22D3EE; --k-service:#A78BFA;
     --k-statement:#FB923C; --k-table:#34D399; --k-column:#F472B6;
     --k-screen:#F9A8D4; --k-webfn:#67E8F9;
@@ -103,7 +108,7 @@
   [data-theme="drawing"] {
     --g0:#F3F5F8; --g1:#FFFFFF; --g2:#FFFFFF; --g3:#F3F5F8;
     --hair:#E1E6EC; --frame:#C7CFDA;
-    --t1:#1B2A41; --t2:#4A5568; --t3:#7B8794;
+    --t1:#1B2A41; --t2:#4A5568; --t3:#5F6B7A;
     --k-group:#1B2A41; --k-endpoint:#1B2A41; --k-service:#1B2A41;
     --k-statement:#1B2A41; --k-table:#1B2A41; --k-column:#1B2A41;
     --k-screen:#8A2A62; --k-webfn:#3C6FB0;
@@ -212,6 +217,9 @@
   .crlane { display:inline-flex; align-items:baseline; gap:7px; white-space:nowrap; }
   .crlane b { font:500 13px/1 var(--mono); color:var(--t1); font-variant-numeric:tabular-nums; }
   .crlane.hollow, .crlane.hollow b { color:var(--t3); font-weight:400; }
+  button.crlane.crlink { font:inherit; font-size:12px; background:none; border:0; border-radius:0;
+    padding:0; cursor:pointer; border-bottom:1px dashed var(--hair); }
+  button.crlane.crlink:hover { color:var(--t1); border-bottom-color:var(--frame); }
   .crrule { width:20px; height:1px; background:var(--hair); margin:0 10px; flex:none;
     align-self:center; }
   /* Loading, and the server's own refusal: said under the line, not instead of
@@ -333,11 +341,45 @@
   .hint.hintfold .foldbody { max-width:80ch; }
   .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr; } }
-  /* The Rules tab: a rule's params and examples are JSON and code, shown as written. */
-  .rulesrc { font-family:var(--mono); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--g3); border:1px solid var(--hair); border-radius:4px; padding:6px 8px; margin:4px 0; }
-  .rulepack { margin-top:12px; }
-  .rulerow.sel { box-shadow:inset 2px 0 0 var(--t1); background:var(--g0); }
-  .ruleex li { margin-bottom:8px; }
+  /* THE RULES TAB (51_rules.js). The list on the left, what applies here first;
+     one rule on the right, with what it gave and the way to each link. A
+     rule's params and examples are JSON and code, shown as written. */
+  .rulesgrid { display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); gap:18px; align-items:start; }
+  @media (max-width:900px){ .rulesgrid { grid-template-columns:minmax(0,1fr); } }
+  .ruleslist { padding:10px 0 6px; }
+  .rulesum { font-size:12.5px; color:var(--t2); padding:0 14px 8px; }
+  .rulegrp { font-size:12px; font-weight:600; color:var(--t2); padding:10px 14px 5px; border-top:1px solid var(--hair); }
+  button.rulerow { display:block; width:100%; text-align:left; background:none; border:0; border-radius:0;
+    border-bottom:1px solid var(--hair); padding:7px 14px 8px; cursor:pointer; font:inherit; color:inherit; }
+  button.rulerow:hover { background:var(--g0); border-color:var(--hair); }
+  button.rulerow.on { background:var(--g0); box-shadow:inset 2px 0 0 var(--t1); }
+  .ruleline { display:flex; align-items:baseline; justify-content:space-between; gap:10px; min-width:0; }
+  .ruleid { font-family:var(--mono); font-size:12.5px; color:var(--t1); overflow-wrap:anywhere; }
+  .ruleid.big { font-size:14px; font-weight:500; }
+  .rulegave { font-size:12px; color:var(--t3); text-align:right; flex:none; max-width:55%; }
+  .rulegave.here { color:var(--t1); }
+  .rulemeta { display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+  .rulemore { font-size:12px; color:var(--t2); padding:9px 14px 4px; }
+  .rulegrade, .rulecap { display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--t3); }
+  .rulehead { display:flex; gap:7px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
+  .ruledetail h3 { font-size:13px; margin:16px 0 6px; }
+  .ruledesc { margin:4px 0 6px; line-height:1.5; }
+  .rulecensus { font-size:12.5px; color:var(--t1); margin-bottom:6px; }
+  ul.rulelinks li { gap:10px; }
+  .rulelinkends { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; }
+  .rulelinkgrade { display:inline-flex; align-items:center; gap:6px; flex:none; }
+  button.ruleend, span.ruleend { display:inline-flex; align-items:center; gap:4px; max-width:100%; padding:1px 6px;
+    font:12px var(--mono); color:var(--t1); background:none; border:1px solid var(--hair); border-radius:var(--r-tag);
+    overflow-wrap:anywhere; text-align:left; }
+  button.ruleend { cursor:pointer; }
+  button.ruleend:hover { border-color:var(--t1); }
+  .rulepager { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .rulefold { margin-top:14px; }
+  .rulesrc { font-family:var(--mono); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--g3); border:1px solid var(--hair); border-radius:4px; padding:6px 8px; margin:4px 0; max-height:260px; overflow:auto; }
+  .ruleex li { margin-bottom:10px; }
+  .ruleok, .rulebad { display:inline-block; font-size:12px; font-weight:600; margin-bottom:2px; }
+  .ruleok { color:var(--ok); }
+  .rulebad { color:var(--bad); }
   /* A sheet: square, one hairline frame, no shadow, no gradient. */
   .panel { background:var(--panel-bg); border:1px solid var(--hair); border-radius:var(--r-panel);
     box-shadow:var(--panel-shadow); padding:14px 16px; margin-bottom:14px; }
@@ -393,11 +435,11 @@
   li.prov { outline:1px dashed var(--t3); outline-offset:2px; }
   .empty { color:var(--t3); padding:7px 0; font-size:13px; }
   .comment { color:var(--t2); font-size:12px; line-height:1.45; }
-  .count { color:var(--t3); font-size:11.5px; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .count { color:var(--t3); font-size:12px; font-family:var(--sans); font-variant-numeric:tabular-nums; }
   .dot { width:7px; height:7px; background:var(--t1); display:inline-block; }
   .kglyph { vertical-align:-1px; flex:none; }
   /* The kind / grade legends above a picture. */
-  .klegend, .gmapleg, .famleg { display:flex; gap:13px; flex-wrap:wrap; font-size:11.5px;
+  .klegend, .gmapleg, .famleg { display:flex; gap:13px; flex-wrap:wrap; font-size:12px;
     color:var(--t2); margin-bottom:9px; align-items:center; }
   .klegend span, .gmapleg span, .famleg span { display:inline-flex; align-items:center; gap:5px; }
   .gmapleg b, .famleg b { color:var(--t1); font-weight:600; }
@@ -475,14 +517,14 @@
   .railhead { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px;
     margin-bottom:10px; }
   .legend { display:flex; gap:7px; flex-wrap:wrap; align-items:center;
-    font-size:11.5px; color:var(--t3); }
+    font-size:12px; color:var(--t3); }
   /* A note the ENGINE wrote, inside a pane of the page's own: set apart by a
      rule down its left edge rather than by a box of its own. */
   .honesty { margin-top:10px; padding:2px 0 2px 11px; border-left:2px solid var(--frame);
     font-size:12px; color:var(--t2); line-height:1.5; overflow-wrap:anywhere; }
   .railsec { border-top:1px solid var(--hair); padding:8px 0 0; margin-top:8px; }
   .railsec:first-of-type { border-top:0; padding-top:0; margin-top:0; }
-  .raillbl { display:block; font-size:11px; color:var(--t3); margin-bottom:3px; }
+  .raillbl { display:block; font-size:12px; color:var(--t3); margin-bottom:3px; }
   .railrow { display:flex; justify-content:space-between; gap:12px; padding:1px 0; }
   .railrow span:last-child { font-family:var(--mono); text-align:right; overflow-wrap:anywhere; color:var(--t1); }
   .raillim { padding:3px 0; }
@@ -522,35 +564,33 @@
   @media (max-width:620px){ .ovkpis{ grid-template-columns:minmax(0,1fr); } }
   .kpi { position:relative; background:linear-gradient(180deg,var(--g3),var(--g1));
     border:1px solid var(--hair); border-radius:var(--r-panel); box-shadow:var(--panel-shadow);
-    padding:16px 18px 14px; overflow:hidden; min-width:0; }
+    padding:14px 18px 12px; overflow:hidden; min-width:0; }
   .kpi .kpilbl { color:var(--t2); font-size:12.5px; }
   .kpi .kpinum { font:600 40px/1.05 var(--sans); letter-spacing:-.02em;
     font-variant-numeric:tabular-nums; margin:6px 0 2px; color:currentColor; }
   .kpi .kpipct { font-size:20px; color:var(--t3); }
-  .kpi .kpiden { color:var(--t3); font:12px var(--mono); font-variant-numeric:tabular-nums;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .kpi .kpidial { position:absolute; right:14px; top:14px; }
+  .kpi .kpiden { color:var(--t2); font:12.5px var(--sans); font-variant-numeric:tabular-nums;
+    line-height:1.4; }
+  .kpi .kpiden b { color:var(--t1); font-weight:500; }
+  /* THE LIMIT a share is read with, in the same card: a line of text that is a
+     button to the blind spot explaining it. Amber, the page's colour for a
+     boundary of what the analysis could see, never the error red. */
+  .kpi button.kpilimit { display:block; width:100%; text-align:left; margin-top:6px; padding:0;
+    border:0; border-radius:0; background:none; cursor:pointer; color:var(--warn);
+    font:12px/1.4 var(--sans); }
+  .kpi button.kpilimit:hover { text-decoration:underline; border:0; }
+  /* An axis never built has no share: the card says so in words, not a 0%. */
+  .kpi .kpinum.kpinone { font:500 17px/1.3 var(--sans); color:var(--t2); margin:12px 0 4px; letter-spacing:0; }
   /* One line under the denominator, for a dial whose DENOMINATOR is itself a
      lower bound: a router the server fills in at run time. */
-  .kpi .kpinote { color:var(--t3); font-size:11.5px; margin-top:3px; line-height:1.35; }
-  .kpi .kpitrack { stroke:var(--g3); }
-  [data-theme="signal"] .kpi .kpitrack { stroke:#1E2740; }
-  .kpi .kpiarc { stroke:currentColor; filter:var(--kpiglow); }
-  [data-theme="signal"] .kpi { --kpiglow:drop-shadow(0 0 6px currentColor); }
-  [data-theme="drawing"] .kpi { --kpiglow:none; }
-  /* The arcs draw themselves in, once, on the first paint of the signal theme —
-     600ms, and never again. The drawing theme has no motion at all, and neither
-     does a reader who asked their system for less of it (the global
-     prefers-reduced-motion rule below turns every animation off). */
-  @keyframes kpisweep { from { stroke-dasharray:0 1000; } }
-  [data-theme="signal"] .kpi .kpiarc { animation:kpisweep .6s ease-out 1; }
+  .kpi .kpinote { color:var(--t2); font-size:12px; margin-top:4px; line-height:1.4; }
   /* ---- the hero, row 2: cartography, and what it does not show ----------- */
   .ovhero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
     gap:18px; align-items:start; margin-bottom:16px; }
   @media (max-width:1100px){ .ovhero{ grid-template-columns:minmax(0,1fr); } }
   .ovherocol { display:grid; gap:16px; align-content:start; }
   .ovherocol .panel { margin-bottom:0; }
-  .panelsub { color:var(--t3); font-size:12.5px; margin:0 0 14px; }
+  .panelsub { color:var(--t2); font-size:12.5px; margin:0 0 12px; }
   #ovmap { position:relative; height:420px; min-height:300px; overflow:hidden;
     border:1px solid var(--hair); border-radius:10px; }
   #ovmapwrap { position:absolute; inset:0; }
@@ -601,7 +641,7 @@
   .ovnum { font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:12.5px; }
   .ovgapnote { font-size:12px; color:var(--t2); margin-top:3px; line-height:1.45; max-width:80ch; }
   .ovchips { display:flex; flex-wrap:wrap; gap:6px; margin-top:7px; }
-  button.ovchip { padding:2px 9px; font:400 11px var(--mono); border-radius:var(--r-chip);
+  button.ovchip { padding:2px 9px; font:400 12px var(--sans); border-radius:var(--r-chip);
     max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   button.ovchip:hover { border-color:var(--t1); color:var(--t1); }
   /* A gap chip is a fold LEAD wearing the chip's box: what we could not see at
@@ -618,6 +658,16 @@
   button.ovchip.warn:hover { color:inherit; }
   button.ovchip.warn .foldchev { color:inherit; }
   .ovgapbodies { margin-top:7px; }
+  /* ONE GROUP per thing a reader can do about a blind spot: its heading, its
+     chips, and the notes they open right under them. */
+  .ovgapgrp { padding:9px 0 3px; border-top:1px solid var(--hair); }
+  .ovgapgrp:first-of-type { border-top:0; }
+  .ovgaplbl { font-size:12px; font-weight:600; color:var(--t2); }
+  .ovgapgrp .ovchips { margin-top:5px; }
+  .ovgapgrp .ovgapbodies { margin-top:4px; }
+  /* A lane's diagnostic is named by the engine's own code, so it is set as one. */
+  .ovdiag { font-family:var(--mono); font-size:11.5px; }
+  .ovchip .ovnum { margin-left:6px; }
   .ovhubmore { margin-top:7px; font-size:12px; }
 
   /* ---- Flow / Impact: four lanes with an SVG link overlay behind them ----- */
@@ -690,7 +740,7 @@
      gives way: it shrinks, ellipsises, and keeps the whole id in its tooltip. */
   .tag.fproj { flex:0 1 auto; max-width:45%; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
-  .fhopn { font:400 10px var(--mono); color:var(--t3); border:1px solid var(--hair);
+  .fhopn { font:400 11px var(--mono); color:var(--t3); border:1px solid var(--hair);
     border-radius:var(--r-tag); padding:0 4px; }
   /* In the signal room a hop chip carries its row's own kind, so a lane reads
      as one colour from the glyph through the number. In the drawing theme every
@@ -712,10 +762,10 @@
   .fsub > * { min-width:0; }
   .fsub .tag, .fsub .grade { flex:none; }
   .fsub .comment, .fsub .count { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .fhop { font-size:11px; color:var(--t3); margin:12px 0 5px; border-top:1px solid var(--frame);
+  .fhop { font-size:12px; color:var(--t3); margin:12px 0 5px; border-top:1px solid var(--frame);
     padding-top:5px; }
   /* A candidate band inside a hop: the divider carries the band's own stroke. */
-  .fdiv { font-size:11px; margin:9px 0 5px; padding-top:5px; border-top:1.5px dashed var(--t3);
+  .fdiv { font-size:12px; margin:9px 0 5px; padding-top:5px; border-top:1.5px dashed var(--t3);
     color:var(--t2); }
   .fdiv.fheur { border-top-style:dotted; }
   /* A connector says how sure the hop is (the colour and the dash) and whether
@@ -760,6 +810,20 @@
   .seg button + button { border-left:1px solid var(--frame); }
   .seg button.on, .seg button.on:hover { background:var(--t1); color:var(--g0); }
   .seg.mini button { padding:3px 9px; font-size:12px; }
+  /* A TOOLBAR MENU: a setting a reader changes on purpose, one click away. The
+     summary wears a button's box; the body drops under it and holds the very
+     controls that used to stand in the toolbar, ids and all. */
+  details.tbmenu { position:relative; }
+  details.tbmenu > summary { list-style:none; cursor:pointer; padding:7px 10px; border:1px solid var(--frame);
+    border-radius:var(--r-tag); background:var(--field-bg); color:var(--t1); font:13px var(--sans); white-space:nowrap; }
+  details.tbmenu > summary::-webkit-details-marker { display:none; }
+  details.tbmenu > summary::after { content:'\25BE'; margin-left:6px; color:var(--t3); }
+  details.tbmenu[open] > summary { border-color:var(--t1); }
+  .tbmenubody { position:absolute; z-index:20; top:calc(100% + 4px); right:0; display:flex; gap:8px; align-items:center;
+    padding:10px; background:var(--g1); border:1px solid var(--frame); border-radius:var(--r-tag);
+    box-shadow:var(--panel-shadow); white-space:nowrap; }
+  .tbmenubody.tbcol { flex-direction:column; align-items:stretch; }
+  .tbfield { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--t2); }
   .flowwrap.layersmode { display:block; min-width:0; max-width:840px; }
   .lyrlead { font-size:12.5px; color:var(--t2); margin:2px 2px 12px; }
   .lyr { display:grid; grid-template-columns:62px minmax(110px,1fr) 74px 84px 62px 66px; gap:10px;
@@ -774,7 +838,7 @@
   /* A DERIVED hop: no link grades were walked into it, so it gets a hatched bar
      and the words next to it, never a grade stroke it did not earn. */
   .lyrbarfill.lyrderived { background:repeating-linear-gradient(45deg,var(--hair),var(--hair) 3px,var(--g1) 3px,var(--g1) 6px); }
-  .lyrderivedlbl { font-size:10.5px; color:var(--t3); white-space:nowrap; flex:none; }
+  .lyrderivedlbl { font-size:12px; color:var(--t3); white-space:nowrap; flex:none; }
   .lyrbody { padding:2px 0 12px 62px; max-width:540px; }
   .lyrend { margin-top:16px; border-top:1px solid var(--frame); padding-top:10px; }
 
@@ -809,7 +873,7 @@
   .cppair .cpg { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cparrow { color:var(--t3); flex:none; }
   #cpside .id { overflow-wrap:anywhere; }
-  .cpnote { margin-top:7px; font-size:11.5px; color:var(--t2); line-height:1.5; }
+  .cpnote { margin-top:7px; font-size:12px; color:var(--t2); line-height:1.5; }
   .cpnote .tag { margin-right:5px; }
 
   /* ---- the browse rail: every tab opens showing the PACK ------------------ */
@@ -845,29 +909,31 @@
     background:var(--g1); border:0; border-radius:0;
     box-shadow:inset 1px 0 0 var(--frame), inset 0 1px 0 var(--frame); }
   .brkinds button + button { border-left:0; }
-  .brn { font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10px;
-    opacity:.7; margin-left:auto; }
+  .brn { font-variant-numeric:tabular-nums; font-size:11px; color:var(--t3); margin-left:auto; }
   .brfilter { display:flex; gap:6px; align-items:center; }
   .brfilter input[type=text] { min-width:0; font-size:13px; padding:6px 9px; }
   .brfilter button { padding:6px 9px; font-size:12px; flex:none; }
   .brsort { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .brsort select { flex:0 1 auto; min-width:0; font-size:12px; padding:3px 6px; }
-  .brcount { font-size:11px; color:var(--t3); font-family:var(--mono);
-    font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .brcount { font-size:12px; color:var(--t3); font-variant-numeric:tabular-nums; white-space:nowrap; }
   /* The count line grows a second sentence on ONE list: the endpoints the
      masthead counts and this rail does not, because they are routes the pack
      calls and does not serve. Two numbers on one screen that do not match is a
      bug report; connected, it is a fact. */
   .brcount.brwide { white-space:normal; text-align:right; }
   .brout { display:block; color:var(--t3); font-family:var(--sans);
-    font-size:10.5px; line-height:1.35; margin-top:2px; }
+    font-size:12px; line-height:1.35; margin-top:2px; }
+  .brout.brwarn { color:var(--warn); }
+  .brgrade { display:inline-flex; }
+  .leftout .honesty { margin-top:6px; }
+  .leftfix { margin-top:10px; }
   .brlist { flex:1 1 auto; min-height:0; overflow:auto; }
   .brlist .empty { padding:12px; font-size:12px; color:var(--t2); line-height:1.5; }
   .brfoot { padding:7px 12px; border-top:1px solid var(--hair); display:flex;
     align-items:center; justify-content:space-between; gap:8px; }
   .brfoot:empty { display:none; }
   .brkeys { padding:7px 12px 9px; border-top:1px solid var(--hair);
-    font-size:10.5px; color:var(--t3); }
+    font-size:12px; color:var(--t3); }
   /* A row is a ruled line, never a card: the id in Mono, a dim second line, and
      the numbers you would pick by, right aligned in tabular figures. */
   .brwrap { display:flex; align-items:stretch; border-bottom:1px solid var(--hair); }
@@ -886,20 +952,24 @@
   .brline { display:flex; align-items:center; gap:8px; min-width:0; }
   .brid { font-family:var(--mono); font-size:12px; flex:1; min-width:0; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; color:var(--t1); }
-  .brsub { font-size:10.5px; color:var(--t3); margin-top:1px; overflow:hidden;
+  .brsub { font-size:12px; color:var(--t3); margin-top:1px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
   .brstats { display:flex; align-items:center; gap:7px; flex:none; }
+  /* A route cut from the middle (pathLabel): the head gives way, the tail stays. */
+  .psplit { display:flex; min-width:0; }
+  .psplit .phead { flex:0 1 auto; min-width:2ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .psplit .ptail { flex:0 0 auto; max-width:85%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* A LABEL, not a glyph. The row used to read `◆ 22 ▶ 29`, which is a legend
      the reader does not have; it now reads `sql 22  api 29`. The labels are the
      engine's own nouns and are the same in every language, the number stays in
      tabular figures so a column of rows lines up, and the full sentence is
      still in the chip's title. */
-  .brstat { display:inline-flex; align-items:baseline; gap:3px; font-family:var(--mono);
-    font-variant-numeric:tabular-nums; font-size:10.5px; color:var(--t2); }
-  .brstat .brlbl { font-size:9.5px; color:var(--t3); }
+  .brstat { display:inline-flex; align-items:baseline; gap:3px;
+    font-variant-numeric:tabular-nums; font-size:12px; color:var(--t2); }
+  .brstat .brlbl { font-size:11px; color:var(--t3); }
   .brstat.read, .brstat.read .brlbl { color:var(--read); }
   .brstat.write, .brstat.write .brlbl { color:var(--write); }
-  .brflag { font:400 9.5px/1.5 var(--mono); padding:0 4px; border:1px solid var(--frame);
+  .brflag { font:400 11px/1.4 var(--mono); padding:0 4px; border:1px solid var(--frame);
     border-radius:var(--r-tag); color:var(--t3); flex:none; }
   /* Flow buckets its rows under the API group each endpoint belongs to. */
   button.brgroup { display:flex; width:100%; text-align:left; align-items:center; gap:8px;
@@ -908,8 +978,8 @@
     position:sticky; top:0; z-index:1; }
   button.brgroup:hover { color:var(--t1); border-color:var(--hair); }
   .brgname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-weight:600; color:var(--t1); font-family:var(--mono); font-size:11.5px; }
-  .brgn { font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10px; color:var(--t3); }
+    font-weight:600; color:var(--t1); font-family:var(--mono); font-size:12px; }
+  .brgn { font-variant-numeric:tabular-nums; font-size:12px; color:var(--t3); }
   /* Impact opens a table into its own columns: the caret is its own control, so
      the row beside it still picks the table. */
   button.brcaret { flex:none; width:22px; padding:0; border:0; border-radius:0;
@@ -973,7 +1043,7 @@
   .srcgrab:hover::after, .srcgrab.on::after { opacity:.8; }
   .srchd { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px;
     padding:9px 14px 9px 18px; border-bottom:1px solid var(--hair);
-    font-size:11.5px; color:var(--t3); }
+    font-size:12px; color:var(--t3); }
   .srchd .srcnode { font-family:var(--mono); font-size:12px; color:var(--t1);
     min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .srcgap { flex:1 1 8px; min-width:0; }
@@ -1060,8 +1130,8 @@
      whole width rather than wrapping into three rows inside a narrow panel. */
   #ovmap .gover-bl { max-width:calc(100% - 16px); }
   .gover .chips, .gover .gmapleg, .gover .klegend, .gover .gcount { margin:0; }
-  .gover .gmapleg, .gover .klegend, .gover .gcount { font-size:10.5px; gap:8px; line-height:1.5; }
-  .gover .gcount b, .gover .gcount .count { font-size:10.5px; }
+  .gover .gmapleg, .gover .klegend, .gover .gcount { font-size:12px; gap:8px; line-height:1.5; }
+  .gover .gcount b, .gover .gcount .count { font-size:12px; }
   .gover button.chip { pointer-events:auto; }
   /* The Overview is a page you scroll, so its map does not take the wheel until
      it has been asked to. This says so, on hover, inside the canvas. */
@@ -1274,16 +1344,29 @@
         <input type="text" id="fentry" style="width:100%" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" autocomplete="off">
         <div id="fsug" class="sug hidden"></div>
       </div>
+      <button id="fdraw" class="primary" data-t="btn.draw">Draw</button>
       <select id="fmode" data-t-title="mode.title" title="how sure a call has to be before we follow it">
         <option value="conservative" selected data-t="mode.conservative">conservative: also follow likely calls</option>
         <option value="strict" data-t="mode.strict">strict: only calls we can prove</option>
         <option value="heuristic" data-t="mode.heuristic">heuristic: also follow guessed rules</option>
       </select>
-      <select id="fdepth" data-t-title="flow.depth.title" title="how many calls deep to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select>
-      <span class="seg" id="fview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
-      <button id="fflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
-      <button id="fdraw" class="primary" data-t="btn.draw">Draw</button>
-      <span class="seg" id="fexports"><button id="fexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="fsvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="fpng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button></span>
+      <!-- WHAT A READER NEEDS FIRST is the target and the Draw button, then how
+           sure a call has to be. How deep, which drawing and whether the dots
+           run are settings a reader changes on purpose, so they sit one click
+           away, and the three ways to save the picture are one menu (RM67). -->
+      <details class="tbmenu" id="fopts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+        <div class="tbmenubody">
+          <label class="tbfield"><span data-t="tb.depth">depth</span>
+            <select id="fdepth" data-t-title="flow.depth.title" title="how many calls deep to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select></label>
+          <span class="seg" id="fview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
+          <button id="fflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
+        </div>
+      </details>
+      <details class="tbmenu" id="fexports"><summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as a file">Save as</summary>
+        <div class="tbmenubody tbcol">
+          <button id="fexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="fsvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="fpng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button>
+        </div>
+      </details>
       <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.flow"></div>
@@ -1316,16 +1399,29 @@
         <input type="text" id="ientry" style="width:100%" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" autocomplete="off">
         <div id="isug" class="sug hidden"></div>
       </div>
+      <button id="idraw" class="primary" data-t="btn.draw">Draw</button>
       <select id="imode" data-t-title="mode.title" title="how sure a call has to be before we follow it">
         <option value="conservative" selected data-t="mode.conservative">conservative: also follow likely calls</option>
         <option value="strict" data-t="mode.strict">strict: only calls we can prove</option>
         <option value="heuristic" data-t="mode.heuristic">heuristic: also follow guessed rules</option>
       </select>
-      <select id="idepth" data-t-title="impact.depth.title" title="how many calls back to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select>
-      <span class="seg" id="iview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
-      <button id="iflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
-      <button id="idraw" class="primary" data-t="btn.draw">Draw</button>
-      <span class="seg" id="iexports"><button id="iexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="isvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="ipng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button></span>
+      <!-- WHAT A READER NEEDS FIRST is the target and the Draw button, then how
+           sure a call has to be. How deep, which drawing and whether the dots
+           run are settings a reader changes on purpose, so they sit one click
+           away, and the three ways to save the picture are one menu (RM67). -->
+      <details class="tbmenu" id="iopts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+        <div class="tbmenubody">
+          <label class="tbfield"><span data-t="tb.depth">depth</span>
+            <select id="idepth" data-t-title="impact.depth.title" title="how many calls back to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
+          <span class="seg" id="iview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
+          <button id="iflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
+        </div>
+      </details>
+      <details class="tbmenu" id="iexports"><summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as a file">Save as</summary>
+        <div class="tbmenubody tbcol">
+          <button id="iexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="isvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="ipng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button>
+        </div>
+      </details>
       <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.impact"></div>
@@ -1455,6 +1551,16 @@
        build kept to compare with. The report, its Print and Save buttons and its
        filter are drawn into #cmpview from the answer. -->
   <div id="tab-rules" class="hidden">
+    <!-- Search and three filters over the rows the `rules` answer already holds:
+         nothing here asks the server again. What applies to this project is the
+         default scope (51_rules.js). -->
+    <div class="searchbar">
+      <input type="text" id="rq" data-t-ph="rules.filter.ph" placeholder="find a rule by its name, pack or what it says" autocomplete="off">
+      <select id="rkind" data-t-title="rules.kind.title" title="rules of one kind"></select>
+      <select id="rlane" data-t-title="rules.lane.title" title="rules one lane of the analysis runs"></select>
+      <span class="seg" id="rscope" data-t-title="rules.scope.title" title="the rules that gave something in this project, or every rule the engine carries"></span>
+    </div>
+    <div class="hint" data-t-fold="hint.rules"></div>
     <div id="rulesview"></div>
   </div>
   <div id="tab-compare" class="hidden">
@@ -1523,6 +1629,7 @@
 <script src="/viewer/js/49_compare.js"></script>
 <script src="/viewer/js/50_summary.js"></script>
 <script src="/viewer/js/51_rules.js"></script>
+<script src="/viewer/js/52_rules_draw.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

@@ -301,6 +301,13 @@ function sourceRoute({ deps, query, project }) {
   return answered(() => deps.source(node, project, { whole }), 'source-error', 'source read failed');
 }
 
+function ruleExamplesRoute({ deps }) {
+  // Whether each rule's examples hold, run the way `cascade rules test` runs
+  // them. It is about the engine, not a project, so it takes none.
+  if (typeof deps.ruleExamples !== 'function') return err(404, 'not-found', 'this server does not run rule examples');
+  return answered(() => deps.ruleExamples(), 'rules-error', 'rule examples failed');
+}
+
 function rulesRoute({ deps, project }) {
   // The rules this engine carries, read-only, and how many edges of this
   // project's pack each one gave (src/core/rules/catalog.mjs).
@@ -325,6 +332,7 @@ const API_ROUTES = Object.freeze({
   '/api/meta': { method: 'GET', run: ({ deps, project }) => answered(() => (deps.meta && deps.meta(project)) || {}, 'meta-error', 'meta failed') },
   '/api/tools': { method: 'GET', run: ({ deps }) => ({ status: 200, json: deps.toolList() }) },
   '/api/rules': { method: 'GET', run: rulesRoute },
+  '/api/rules/examples': { method: 'GET', run: ruleExamplesRoute },
   // The registry listing, through the SAME dispatcher the AI calls over stdio
   // (§13: one catalog, two transports) — so the page and the model cannot be
   // told different things about which projects exist.

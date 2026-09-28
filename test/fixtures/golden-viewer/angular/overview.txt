@@ -36,7 +36,7 @@
         <b>6</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
         api groups
         <b>6</b>
       </span>
@@ -46,14 +46,14 @@
         <b>19</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane">
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.">
         services
-        <b>28</b>
+        <b>4</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane hollow" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
+      <span class="crlane" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
         SQL
-        <b>not shipped</b>
+        <b>5 ~</b>
       </span>
       <span class="crrule"></span>
       <span class="crlane">
@@ -127,65 +127,62 @@
         </div>
       </div>
       <div id="ovcards" class="ovkpis">
-        <div class="kpi" aria-label="endpoints that reach SQL: 100% — 13 / 13" style="color: #22D3EE">
+        <div class="kpi" aria-label="endpoints that reach SQL: 100%, 13 / 13" style="color: #22D3EE">
           <div class="kpilbl">endpoints that reach SQL</div>
           <div class="kpinum">
             100
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">13 / 13 0 reach no SQL</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="163.4 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>13 / 13</b>
+            0 reach no SQL
+          </div>
         </div>
-        <div class="kpi" aria-label="SQL statements reached: 80% — 4 / 5" style="color: #FB923C">
+        <div class="kpi" aria-label="SQL statements reached: 80%, 4 / 5" style="color: #FB923C">
           <div class="kpilbl">SQL statements reached</div>
           <div class="kpinum">
             80
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">4 / 5 1 nothing calls</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="130.7 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>4 / 5</b>
+            1 nothing calls
+          </div>
+          <button class="kpilimit" onclick title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty" type="button">not collected in this analysis</button>
         </div>
-        <div class="kpi" aria-label="tables reached: 100% — 2 / 2" style="color: #34D399">
+        <div class="kpi" aria-label="tables reached: 100%, 2 / 2" style="color: #34D399">
           <div class="kpilbl">tables reached</div>
           <div class="kpinum">
             100
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">2 / 2 0 sit behind no route</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="163.4 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>2 / 2</b>
+            0 sit behind no route
+          </div>
         </div>
-        <div class="kpi" aria-label="columns reached: 67% — 4 / 6" style="color: #F472B6">
+        <div class="kpi" aria-label="columns reached: 67%, 4 / 6" style="color: #F472B6">
           <div class="kpilbl">columns reached</div>
           <div class="kpinum">
             67
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">4 / 6 2 nothing reaches</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="109.5 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>4 / 6</b>
+            2 nothing reaches
+          </div>
+          <button class="kpilimit" onclick title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT" type="button">a lower bound: a column counts only where the SQL names it</button>
         </div>
-        <div class="kpi" aria-label="screens that reach a table: 33% — 2 / 6" style="color: #F9A8D4">
+        <div class="kpi" aria-label="screens that reach a table: 33%, 2 / 6" style="color: #F9A8D4">
           <div class="kpilbl">screens that reach a table</div>
           <div class="kpinum">
             33
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">2 / 6 4 reach none</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="53.9 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>2 / 6</b>
+            4 reach none
+          </div>
         </div>
       </div>
       <div id="ovhero" class="ovhero">
@@ -251,7 +248,7 @@
                 </span>
                 <b style="margin-left: 8px">lines:</b>
                 <span>
-                  <span class="swatch" style="background: #6E7A9A"></span>
+                  <span class="swatch" style="background: #8A96B5"></span>
                   group → endpoint
                 </span>
                 <span>
@@ -275,6 +272,110 @@
           </div>
         </div>
         <div id="ovherocol" class="ovherocol">
+          <div id="ovgaps" class="panel">
+            <h2>
+              What we could not see
+              <span class="count">(7)</span>
+            </h2>
+            <div class="panelsub">7 things, set out by what you can do about each</div>
+            <div class="panelsub">6 call(s) leave this project, 0 answered by a registered project and 6 not.</div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">Inputs it did not have</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="6  http-calls-leaving-pack" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    API calls to other services
+                    <span class="ovnum">6</span>
+                  </span>
+                </button>
+                <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="statements not-shipped" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    SQL: not collected
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">What it could not read</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="0  unresolved-calls" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    calls we could not follow
+                    <span class="ovnum">0</span>
+                  </span>
+                </button>
+                <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="1  screen-components-unresolved" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    screens with no component found
+                    <span class="ovnum">1</span>
+                  </span>
+                </button>
+                <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="column degraded" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    columns: only partly read
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+                <div class="foldbody"></div>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">What this walk left out</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="10  mode-floor" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    connections this mode leaves out
+                    <span class="ovnum">10</span>
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+              </div>
+            </div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">Not reached: worth a look, not an error</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  statements-not-reached" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    SQL no endpoint reaches
+                    <span class="ovnum">1</span>
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
           <div class="panel">
             <h2>
               Tables, by how many APIs reach them
@@ -294,68 +395,6 @@
                 <i style="width: 18.2%"></i>
               </span>
               <button class="ovbarn mini" onclick title="which APIs would be affected if you changed this table">2</button>
-            </div>
-          </div>
-          <div class="panel">
-            <h2>
-              What we could not see
-              <span class="count">(5)</span>
-            </h2>
-            <div class="panelsub">5 kinds of blind spot</div>
-            <div class="panelsub">6 call(s) leave this project, 0 answered by a registered project and 6 not.</div>
-            <div class="ovchips">
-              <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="0  unresolved-calls" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  calls we could not follow
-                  <span class="ovnum" style="margin-left: 6px">0</span>
-                </span>
-              </button>
-              <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="6  http-calls-leaving-pack" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  API calls to other services
-                  <span class="ovnum" style="margin-left: 6px">6</span>
-                </span>
-              </button>
-              <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  screen-components-unresolved" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  screens with no component found
-                  <span class="ovnum" style="margin-left: 6px">1</span>
-                </span>
-              </button>
-              <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  statements-not-reached" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  SQL no endpoint reaches
-                  <span class="ovnum" style="margin-left: 6px">1</span>
-                </span>
-              </button>
-              <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="10  mode-floor" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  connections this mode leaves out
-                  <span class="ovnum" style="margin-left: 6px">10</span>
-                </span>
-              </button>
-            </div>
-            <div class="ovgapbodies">
-              <div class="foldbody"></div>
-              <div class="foldbody"></div>
-              <div class="foldbody"></div>
-              <div class="foldbody"></div>
-              <div class="foldbody"></div>
             </div>
           </div>
           <div class="panel">

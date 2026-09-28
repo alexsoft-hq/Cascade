@@ -355,16 +355,20 @@ function flowEntryRow(v, entry){
   // up on .map. The route lives on `route`; the entry has no walked path.
   // The start carries no grade either (the server sends none for hop 0), so it
   // gets none here rather than a made-up EXACT.
-  return flowMakeRow(v, entry.start,'entry',null,[
+  // A ROUTE'S OWN ADDRESS HAS A GRADE (RM67): its HANDLES edge, which no walk
+  // down from the handler crosses. A guessed address is said on the row itself.
+  return flowMakeRow(v, entry.start,'entry',entry.grade||null,[
     el('div',{className:'frowtop'},[
       kindGlyph(entry.kind, 12),
       v.direction==='up'? el('span',{className:'tag',textContent:entry.kind}) : null,
-      el('span',{className:'fname',title:full,textContent:title})]),
+      el('span',{className:'fname',title:full,textContent:title}),
+      (entry.grade && entry.grade!=='EXACT') ? badge(entry.grade) : null]),
     el('div',{className:'fsub'},[el('span',{className:'comment',title:sub,textContent:sub})])
   ],{ hops:0, kind:entry.kind, route:entry.path??null, httpMethod:entry.httpMethod??null,
       handler:entry.handler??null, handlerShort:entry.handlerShort??null, short:entry.short??null,
       owner:entry.owner??null, transactional:entry.transactional===true,
-      comment:entry.comment??null, statementType:entry.statementType??null,
+      // A route's own grade comes with its lane's reason, and the card says it where a comment goes.
+      comment:entry.comment??entry.gradeBasis??null, statementType:entry.statementType??null,
       table:entry.kind==='table'?entry.id:null, column:entry.kind==='column'?entry.id:null,
       tables:entry.tables??null,   // a statement TARGET carries its tables, like a statement row
       file:entry.file??null, line:entry.line??null, start:entry.start });
@@ -435,7 +439,7 @@ function flowEndpointRow(v, e){
   const via = (e.link && e.link.fromShort) || e.handlerShort || (e.handler ? shortId('symbol:'+e.handler) : '');
   v.linkSpecs.push({from:flinkKey(e,from), to:fkey(e,'endpoint:'+e.id), grade:e.grade, observed:linkObserved(e)});
   return flowMakeRow(v, fkey(e,'endpoint:'+e.id),'endpoint',e.grade,[
-    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), el('span',{className:'fname',title:e.id,textContent:e.id}), projTag(e), badge(e.grade)]),
+    el('div',{className:'frowtop'},[kindGlyph('endpoint',12), el('span',{className:'fname psplit',title:e.id}, pathLabel(e.id)), projTag(e), badge(e.grade)]),
     el('div',{className:'fsub'},[el('span',{className:'count',title: from ? ('via '+from.slice(from.indexOf(':')+1)) : '',
       textContent:t('chain.hop',{n:e.hops})+'\u00a0\u00a0'+via})]),
     // Two things a route on a pack with a frontend owes the reader: how much of
@@ -841,6 +845,8 @@ function renderChainSide(v){
   const kids=[];
   if(v.sel && v.rows.has(v.sel)) kids.push(flowCard(v, v.sel, v.rows.get(v.sel)));
   const counts=w.byLinkGrade||{};
+  const left=chainLeftOut(v, r);
+  if(left) kids.push(left);
   kids.push(el('div',{className:'panel'},[
     el('h2',{textContent:t('chain.legend.title')}),
     // The grade name and its badge are the ENGINE's; only the sentence beside
@@ -867,6 +873,42 @@ function renderChainSide(v){
   }
   kids.push(honesty(r, v.direction==='down'?'flow':'impact'));
   side.replaceChildren(...kids);
+}
+/** The narrowest wider mode that would walk some of what this one left out, from the grades the walk counted; null when none would. */
+function chainWiderMode(mode, byGrade){
+  const order=Object.keys(MODE_ADMITS);
+  const grades=Object.keys(byGrade||{}).filter((g)=> byGrade[g]>0);
+  for(const m of order.slice(order.indexOf(mode)+1)) if(!grades.length || grades.some((g)=> MODE_ADMITS[m].includes(g))) return m;
+  return null;
+}
+/**
+ * WHAT THIS WALK LEFT OUT, AND WHAT BRINGS IT IN (RM67). The mode floor used to
+ * be one sentence in the evidence rail's limits. It is now said where the
+ * picture is read: how many links this mode did not walk, by grade, the wider
+ * mode that would walk them, and the analysis's own diagnostics, each naming
+ * what it could not read and, most of them, what to declare so the link is
+ * sure instead of guessed. Absent when the walk left nothing out.
+ */
+function chainLeftOut(v, r){
+  const w=r.answer.walk||{}, cut=w.cut||{};
+  if(!(cut.byMode>0)) return null;
+  const by=cut.byModeGrades||{};
+  const split=GRADES.filter((g)=> by[g]>0).map((g)=> ovNum(by[g])+' '+g).join(', ');
+  const wider=chainWiderMode(w.mode, by);
+  const diags=(OV.resp && OV.resp.answer.diagnostics) || [];
+  // Since the walk reads a route's link to its handler as the path's first
+  // link, a route graded below this mode's floor is where the picture stops.
+  const entry=r.answer.entry||{};
+  const stopped=entry.kind==='endpoint' && entry.grade && !(MODE_ADMITS[w.mode]||[]).includes(entry.grade);
+  return el('div',{className:'panel leftout'},[
+    el('h2',{textContent:t('chain.left.title')}),
+    stopped ? el('div',{className:'comment',style:'margin-bottom:4px'},[ t('chain.left.route',{grade:entry.grade, mode:w.mode}) ]) : null,
+    el('div',{className:'comment'},[ t('chain.left.say',{n:ovNum(cut.byMode), mode:w.mode}), split ? ' ('+split+')' : '' ]),
+    wider ? el('button',{className:'mini',style:'margin-top:6px',textContent:t('chain.empty.switch',{mode:wider}),
+      onclick:()=>{ byId(v.modeId).value=wider; drawChain(v); }}) : el('div',{className:'comment',textContent:t('chain.left.nomode')}),
+    diags.length ? el('div',{className:'leftfix'},[ el('div',{className:'raillbl',textContent:t('chain.left.fix')}),
+      ...diags.map((d)=> el('div',{className:'honesty'},[ el('span',{className:'ovdiag',textContent:d.kind}), ' ', d.reason ])) ]) : null,
+  ]);
 }
 function flowCard(v, key, row){
   const d=row.data||{}, kind=row.kind;

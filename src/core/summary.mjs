@@ -33,7 +33,7 @@
 // A link between a group and a family is one or more tables some route of the
 // group reaches through a statement, graded by the weakest link on the way.
 
-import { walkEndpoints, handlersOf } from './walks.mjs';
+import { walkEndpoints, handlersOf, laneGroupOf } from './walks.mjs';
 
 /** How many groups and table families are drawn before the rest are folded into one box. */
 export const SUMMARY_LIMIT = 10;
@@ -51,11 +51,18 @@ const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND
 const weakest = (a, b) => (a == null ? b : b == null ? a : RANK[a] <= RANK[b] ? a : b);
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** The package segments of one handler symbol id, its class name dropped. */
+/**
+ * Where one handler's code sits, as segments: a Java owner's package, its class
+ * name dropped, or a file-keyed owner's directories, its file name dropped. A
+ * lane that keys a symbol by its file (`app/users/users.controller.ts#Users.get`)
+ * has a directory where Java has a package, and reading that path by its dots
+ * made a group of every file.
+ */
 function packageOf(handlerId) {
   const key = String(handlerId).replace(/^symbol:/, '');
   const owner = key.includes('#') ? key.slice(0, key.lastIndexOf('#')) : key;
-  return owner.split('.').filter(Boolean).slice(0, -1);
+  if (owner.includes('/')) return { tokens: owner.split('/').filter(Boolean).slice(0, -1), sep: '/' };
+  return { tokens: owner.split('.').filter(Boolean).slice(0, -1), sep: '.' };
 }
 
 /** The tokens every item of a list starts with. */
@@ -123,8 +130,16 @@ export function descendGroups(items, { sep, wide, fullNames = false }) {
  * The rule the groups follow, and each route's group under it.
  * @returns {{rule:object, groupOf:Map<string,string>}}
  */
-/** Routes grouped by their path segments, with the same descent (`/api/mdm/x` under a shared `/api` is `mdm`). */
-function pathGroups(endpoints, limit, extra = {}) {
+/**
+ * Routes grouped by their path segments, with the same descent (`/api/mdm/x`
+ * under a shared `/api` is `mdm`). Where every route's lane wrote the group its
+ * deployment prefix leaves (`apiGroup`), that is the group, and nothing is guessed.
+ */
+function pathGroups(graph, endpoints, limit, extra = {}) {
+  const lane = endpoints.map((ep) => laneGroupOf(graph.nodes.get(ep.id)));
+  if (endpoints.length > 0 && lane.every((g) => g !== null)) {
+    return { rule: { kind: 'lane', ...extra }, groupOf: new Map(endpoints.map((ep, i) => [ep.id, lane[i]])) };
+  }
   const items = endpoints.map((ep) => ({ key: ep.id, tokens: String(ep.path ?? '').split('/').filter((s) => s && !s.startsWith('{') && !s.startsWith(':')) }));
   const d = descendGroups(items, { sep: '/', wide: limit * 2 });
   return { rule: { kind: 'path', ...extra, commonPath: `/${d.prefix.join('/')}` }, groupOf: d.groupOf };
@@ -136,17 +151,20 @@ export function groupRule(graph, endpoints, packageDepth, limit = SUMMARY_LIMIT)
   }
   const items = [];
   const groupOf = new Map();
+  let sep = '.';
   for (const ep of endpoints) {
     const h = handlersOf(graph, ep.id)[0];
-    if (h) items.push({ key: ep.id, tokens: packageOf(h) });
-    else groupOf.set(ep.id, NO_HANDLER);
+    if (!h) { groupOf.set(ep.id, NO_HANDLER); continue; }
+    const where = packageOf(h);
+    items.push({ key: ep.id, tokens: where.tokens });
+    sep = where.sep;
   }
-  if (items.length === 0) return pathGroups(endpoints, limit);
-  const d = descendGroups(items, { sep: '.', wide: limit * 2 });
+  if (items.length === 0) return pathGroups(graph, endpoints, limit);
+  const d = descendGroups(items, { sep, wide: limit * 2 });
   // Every route's code in one package is one box: the route paths then say more.
-  if (new Set(d.groupOf.values()).size < 2) return pathGroups(endpoints, limit, { onePackage: d.prefix.join('.') });
+  if (new Set(d.groupOf.values()).size < 2) return pathGroups(graph, endpoints, limit, { onePackage: d.prefix.join(sep) });
   for (const [k, v] of d.groupOf) groupOf.set(k, v);
-  return { rule: { kind: 'code-path', commonPrefix: d.prefix.join('.') }, groupOf };
+  return { rule: { kind: 'code-path', commonPrefix: d.prefix.join(sep), ...(sep === '/' ? { by: 'directory' } : {}) }, groupOf };
 }
 
 /** A table's bare name, lower case, schema dropped. */

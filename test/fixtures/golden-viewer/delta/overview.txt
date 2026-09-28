@@ -39,7 +39,7 @@
         <b>2</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
         api groups
         <b>1</b>
       </span>
@@ -49,9 +49,9 @@
         <b>2</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane">
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.">
         services
-        <b>9</b>
+        <b>2</b>
       </span>
       <span class="crrule"></span>
       <span class="crlane">
@@ -130,65 +130,60 @@
         </div>
       </div>
       <div id="ovcards" class="ovkpis">
-        <div class="kpi" aria-label="endpoints that reach SQL: 100% — 2 / 2" style="color: #22D3EE">
+        <div class="kpi" aria-label="endpoints that reach SQL: 100%, 2 / 2" style="color: #22D3EE">
           <div class="kpilbl">endpoints that reach SQL</div>
           <div class="kpinum">
             100
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">2 / 2 0 reach no SQL</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="163.4 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>2 / 2</b>
+            0 reach no SQL
+          </div>
         </div>
-        <div class="kpi" aria-label="SQL statements reached: 100% — 2 / 2" style="color: #FB923C">
+        <div class="kpi" aria-label="SQL statements reached: 100%, 2 / 2" style="color: #FB923C">
           <div class="kpilbl">SQL statements reached</div>
           <div class="kpinum">
             100
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">2 / 2 0 nothing calls</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="163.4 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>2 / 2</b>
+            0 nothing calls
+          </div>
         </div>
-        <div class="kpi" aria-label="tables reached: 100% — 1 / 1" style="color: #34D399">
+        <div class="kpi" aria-label="tables reached: 100%, 1 / 1" style="color: #34D399">
           <div class="kpilbl">tables reached</div>
           <div class="kpinum">
             100
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">1 / 1 0 sit behind no route</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="163.4 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>1 / 1</b>
+            0 sit behind no route
+          </div>
         </div>
-        <div class="kpi" aria-label="columns reached: 50% — 1 / 2" style="color: #F472B6">
+        <div class="kpi" aria-label="columns reached: 50%, 1 / 2" style="color: #F472B6">
           <div class="kpilbl">columns reached</div>
           <div class="kpinum">
             50
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">1 / 2 1 nothing reaches</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="81.7 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>1 / 2</b>
+            1 nothing reaches
+          </div>
         </div>
-        <div class="kpi" aria-label="screens that reach a table: 50% — 1 / 2" style="color: #F9A8D4">
+        <div class="kpi" aria-label="screens that reach a table: 50%, 1 / 2" style="color: #F9A8D4">
           <div class="kpilbl">screens that reach a table</div>
           <div class="kpinum">
             50
             <span class="kpipct">%</span>
           </div>
-          <div class="kpiden">1 / 2 1 reach none</div>
-          <svg class="kpidial" aria-hidden="true" height="64" viewBox="0 0 64 64" width="64">
-            <circle class="kpitrack" cx="32" cy="32" fill="none" r="26" stroke-width="7"></circle>
-            <circle class="kpiarc" cx="32" cy="32" fill="none" r="26" stroke-dasharray="81.7 326.7" stroke-linecap="round" stroke-width="7" transform="rotate(-90 32 32)"></circle>
-          </svg>
+          <div class="kpiden">
+            <b>1 / 2</b>
+            1 reach none
+          </div>
         </div>
       </div>
       <div id="ovhero" class="ovhero">
@@ -254,7 +249,7 @@
                 </span>
                 <b style="margin-left: 8px">lines:</b>
                 <span>
-                  <span class="swatch" style="background: #6E7A9A"></span>
+                  <span class="swatch" style="background: #8A96B5"></span>
                   group → endpoint
                 </span>
                 <span>
@@ -278,6 +273,64 @@
           </div>
         </div>
         <div id="ovherocol" class="ovherocol">
+          <div id="ovgaps" class="panel">
+            <h2>
+              What we could not see
+              <span class="count">(3)</span>
+            </h2>
+            <div class="panelsub">3 things, set out by what you can do about each</div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">What it could not read</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="unknown  unresolved-calls" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    calls we could not follow
+                    <span class="ovnum">unknown</span>
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+              </div>
+            </div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">What this walk left out</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  mode-floor" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    connections this mode leaves out
+                    <span class="ovnum">1</span>
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+              </div>
+            </div>
+            <div class="ovgapgrp">
+              <div class="ovgaplbl">For the record</div>
+              <div class="ovchips">
+                <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  screens-seen-at-run-time" type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    screens known only from a recording
+                    <span class="ovnum">1</span>
+                  </span>
+                </button>
+              </div>
+              <div class="ovgapbodies">
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
           <div class="panel">
             <h2>
               Tables, by how many APIs reach them
@@ -290,47 +343,6 @@
                 <i style="width: 100.0%"></i>
               </span>
               <button class="ovbarn mini" onclick title="which APIs would be affected if you changed this table">2</button>
-            </div>
-          </div>
-          <div class="panel">
-            <h2>
-              What we could not see
-              <span class="count">(3)</span>
-            </h2>
-            <div class="panelsub">3 kinds of blind spot</div>
-            <div class="ovchips">
-              <button class="foldlead ovchip warn" aria-expanded="false" aria-label="show the full text" onclick title="unknown  unresolved-calls" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  calls we could not follow
-                  <span class="ovnum" style="margin-left: 6px">unknown</span>
-                </span>
-              </button>
-              <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  screens-seen-at-run-time" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  screens known only from a recording
-                  <span class="ovnum" style="margin-left: 6px">1</span>
-                </span>
-              </button>
-              <button class="foldlead ovchip" aria-expanded="false" aria-label="show the full text" onclick title="1  mode-floor" type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  connections this mode leaves out
-                  <span class="ovnum" style="margin-left: 6px">1</span>
-                </span>
-              </button>
-            </div>
-            <div class="ovgapbodies">
-              <div class="foldbody"></div>
-              <div class="foldbody"></div>
-              <div class="foldbody"></div>
             </div>
           </div>
           <div class="panel">

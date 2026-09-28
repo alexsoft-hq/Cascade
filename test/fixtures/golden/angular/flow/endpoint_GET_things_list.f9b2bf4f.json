@@ -16,6 +16,7 @@
         "handler": "com.example.web.ThingController#list",
         "handlerShort": "ThingController#list",
         "handlers": 1,
+        "grade": "EXACT",
         "owner": "com.example.web.ThingController",
         "file": "src/main/java/com/example/web/ThingController.java",
         "line": 24,
@@ -36,6 +37,7 @@
           "depth": 0,
           "nodeCap": false,
           "byMode": 0,
+          "byModeGrades": {},
           "generated": 0
         },
         "beyond": {

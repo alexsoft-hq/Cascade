@@ -242,6 +242,7 @@ function runExamples(entries, env) {
 
 export const javaRouteFunction = Object.freeze({
   name: 'java.route-function',
+  lane: 'java',
   stage: 'java-bridge',
   // A route whose path and handler the source states is what the framework serves.
   gradeCap: 'EXACT',

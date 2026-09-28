@@ -864,14 +864,17 @@ function railRenderChips(tab){
   if (!D.chipsId) return;
   const R = RAIL[tab];
   const box = byId(D.chipsId);
-  // FLOW'S SWITCH IS ONLY A SWITCH WHERE THERE IS SOMETHING TO SWITCH TO. On a
-  // pack with no frontend the `Screens` half would list nothing for ever, so
-  // the whole control stands down rather than offering a dead half. Read off
-  // the answer's own kind census, never guessed.
+  // FLOW'S SWITCH IS ONLY A SWITCH WHERE THERE IS SOMETHING TO SAY WITH IT. On
+  // a pack whose screen axis was never built the `Screens` half stays, and
+  // lists why and what to set (railScreensWhy): hiding it left a reader unable
+  // to tell "this tool reads no screens" from "this run was not given them"
+  // (RM67). On a pack that has no frontend at all and declares no screen axis
+  // there is nothing to say, and the control stands down. Read off the
+  // answers' own census and axes, never guessed.
   if (tab === 'flow') {
     // Not yet answered counts as "no": a control that appears and then vanishes
     // under the pointer is worse than one that arrives with its own numbers.
-    const none = R.counts == null || !R.counts.screen;
+    const none = R.counts == null || (!R.counts.screen && !railScreensWhy());
     box.classList.toggle('hidden', none);
     if (none) { box.replaceChildren(); return; }
   }
@@ -884,8 +887,10 @@ function railRenderChips(tab){
     t(RAIL_KIND_KEY[k]),
     // Methods carry no total: they cannot be listed until two letters are typed,
     // so a number beside them would promise a list this rail will not show.
-    (k !== 'symbol' && R.counts && R.counts[k] != null)
-      ? el('span', { className:'brn', textContent: ovNum(R.counts[k]) }) : null,
+    // Screens the run never collected carry a dash, not a zero.
+    (k === 'screen' && railScreensWhy()) ? el('span', { className:'brn', textContent:'\u2014' })
+      : (k !== 'symbol' && R.counts && R.counts[k] != null)
+        ? el('span', { className:'brn', textContent: ovNum(R.counts[k]) }) : null,
   ])));
 }
 /**
@@ -909,6 +914,37 @@ function railOutboundNote(tab){
   if (!(extra > 0)) return null;
   return t('rail.count.outbound', { n: served, m: extra });
 }
+/** The pack's own reason its screen axis was not built, or null when it was (or the pack declared nothing). */
+function railScreensWhy(){
+  const a = OV.resp && OV.resp.answer;
+  const ax = a && a.axes && a.axes.screen;
+  return (ax && ax.status === 'not-shipped' && !a.screens) ? (ax.reason || t('crail.notshipped.title')) : null;
+}
+/** Why there is no screen to list, in the engine's words, and the way to the blind spot that says what to set. */
+function railScreensWhyNote(why){
+  return el('div', { className:'empty' }, [
+    el('div', { textContent:t('rail.screens.none') }),
+    el('div', { className:'comment', style:'margin:6px 0', textContent:why }),
+    el('button', { className:'mini', textContent:t('rail.screens.fix'), onclick:() => ovGoToGaps('ov.axis.screen') }),
+  ]);
+}
+/**
+ * How many of the routes this pack serves have an address their lane could
+ * only guess, from the overview's own count (`reach.routeGrades`). Said on the
+ * list itself, because every row of a list that is mostly guesses otherwise
+ * reads as sure. Null when every route is sure.
+ */
+/** Whether most of the routes this pack serves have a guessed address (the overview's own count). */
+function railGuessedMostly(){
+  const rg = OV.resp && OV.resp.answer.reach && OV.resp.answer.reach.routeGrades;
+  if (!rg) return false;
+  const all = Object.values(rg).reduce((n, x) => n + x, 0);
+  return (all - (rg.EXACT || 0) - (rg.SOUND_SET || 0)) * 2 > all;
+}
+function railGuessedNote(){
+  // The rail's own counts come from the conservative census, the overview's mode.
+  return OV.resp ? ovRoutesGuessed(OV.resp.answer) : null;
+}
 function railRenderSort(tab){
   const R = RAIL[tab], sel = byId(RAILDEF[tab].sortId);
   const sorts = RAIL_SORTS[R.kind];
@@ -922,9 +958,11 @@ function railRenderCount(tab){
   const box = byId(RAILDEF[tab].countId);
   if (!R.resp) { box.replaceChildren(); box.classList.remove('brwide'); return; }
   const note = R.kind === 'endpoint' ? railOutboundNote(tab) : null;
-  box.classList.toggle('brwide', !!note);
+  const guessed = R.kind === 'endpoint' ? railGuessedNote() : null;
+  box.classList.toggle('brwide', !!(note || guessed));
   setKids(box, t('rail.count', { n:R.shown.length, m:R.resp.answer.total }),
-    note ? el('span', { className:'brout', textContent:note }) : null);
+    note ? el('span', { className:'brout', textContent:note }) : null,
+    guessed ? el('span', { className:'brout brwarn', textContent:guessed }) : null);
 }
 function railRenderMore(tab){
   const R = RAIL[tab], foot = byId(RAILDEF[tab].moreId);
@@ -946,7 +984,8 @@ function railRenderRows(tab){
     // names what was typed. A list that came back empty BEFORE anybody typed is
     // the engine's, so it keeps the engine's own reason ("not shipped" for a
     // lane that never ran, never "nothing here").
-    list.replaceChildren(el('div', { className:'empty', textContent: R.rows.length
+    const why = (!R.rows.length && R.kind === 'screen') ? railScreensWhy() : null;
+    list.replaceChildren(why ? railScreensWhyNote(why) : el('div', { className:'empty', textContent: R.rows.length
       ? t('rail.filter.none', { q: railTyped(tab) })
       : emptyText(R.resp.answer.empty, 'items') }));
     return;
@@ -1021,8 +1060,10 @@ function railRowNodes(tab, kind, row, kids, child){
   }, [
     el('div', { className:'brline' }, [
       // A column UNDER its own table does not repeat the table's name.
-      el('span', { className:'brid',
-        textContent: (child && kind === 'column') ? id.slice(String(row.table || '').length + 1) : railLabel(kind, row) }),
+      kind === 'endpoint'
+        ? el('span', { className:'brid psplit' }, pathLabel(railLabel(kind, row)))
+        : el('span', { className:'brid',
+          textContent: (child && kind === 'column') ? id.slice(String(row.table || '').length + 1) : railLabel(kind, row) }),
       el('span', { className:'brstats' }, railStats(kind, row)),
     ]),
     railSub(kind, row),
@@ -1089,6 +1130,11 @@ function railStats(kind, row){
     railStat('api', row.endpoints, 'rail.stat.endpoints.title'),
   ].filter(Boolean);
   if (kind === 'endpoint') return [
+    // A route whose own address is a guess says so on its row (RM67), where
+    // such routes are the few. Where they are most of the list, the count line
+    // says so once and a badge on every row would only push the names out.
+    (row.grade && row.grade !== 'EXACT' && row.grade !== 'SOUND_SET' && !railGuessedMostly())
+      ? el('span', { className:'brgrade', title:t('rail.stat.grade.title') }, [badge(row.grade)]) : null,
     row.handlers > 1 ? railFlag('x' + row.handlers, t('rail.stat.handlers.title')) : null,
     railStat('sql', row.statements, 'rail.stat.statements.title'),
     railStat('tbl', row.tables, 'rail.stat.tables.title'),

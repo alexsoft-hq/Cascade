@@ -388,7 +388,7 @@ test('buildCoupling: the depth cap is CARRIED, not discarded — the pair past i
   const g = deepChainGraph();
   const deep = buildCoupling(g, { axis: 'column', depth: 8 });
   assert.deepEqual(pairKeys(deep.pairs), ['a→b']);
-  assert.deepEqual(deep.walk, { starts: 2, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints: 0 });
+  assert.deepEqual(deep.walk, { starts: 2, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints: 0 });
   const shallow = buildCoupling(g, { axis: 'column', depth: 4 });
   assert.equal(shallow.pairs.length, 0, 'a\'s write is 5 hops down: at depth 4 it is not attributed');
   assert.equal(shallow.walk.depthCut, 1, 'and the mapper method still expanding at the cap is counted');
@@ -718,7 +718,7 @@ test('coupling on the mall pack: depth 4 cuts the walk and loses pairs; depth 8 
   // Five chains are STILL open at depth 8 — the census says so instead of
   // implying the walk finished.
   assert.deepEqual(deep.answer.walk,
-    { starts: 239, depthCut: 7, depthCutStarts: 5, nodeCapStarts: 0, byMode: 0, generated: 0, multiHandlerEndpoints: 7, outboundEndpoints: 0 });
+    { starts: 239, depthCut: 7, depthCutStarts: 5, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 7, outboundEndpoints: 0 });
   assert.ok(deep.limits.some((l) => /depth cap 8 reached at 7 call\(s\) across 5 endpoint chain\(s\)/.test(l.reason)));
   // nothing on this pack records an EXECUTES edge without an access
   assert.equal(deep.limits.some((l) => /EXECUTES edge\(s\) carry no read/.test(l.reason)), false);
@@ -768,7 +768,11 @@ test('coupling on the mall pack: depth 4 cuts the walk and loses pairs; depth 8 
 // runs is `walk.depthCut` at depth 4, 70 -> 72, which counts calls the cap cut
 // rather than anything the answer contains. Every group, pair, cell and summary
 // figure this file pins is asserted separately above and none of them moved.
-const COUPLING_BYTES_SHA256 = '33d0f543f28c12ebd9993c2fb1e6b1e24d62bd184f3b8cef3c574ff8268d278c';
+//
+// RM67 re-pinned it for ONE added field: `walk.byModeGrades`, the grade split of
+// `walk.byMode`. With that field deleted from every answer the bytes hash to the
+// earlier pin, 33d0f543f28c12ebd9993c2fb1e6b1e24d62bd184f3b8cef3c574ff8268d278c.
+const COUPLING_BYTES_SHA256 = 'd2c678226390139d95a8b89db28e77c9cc746ce6da250cf5d30fb30051a0af81';
 
 test('buildCoupling on the mall pack is byte-identical to the pre-walk-refactor engine', { skip: skipUnlessMall() }, () => {
   const out = [];

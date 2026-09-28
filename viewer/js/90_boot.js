@@ -46,6 +46,7 @@ document.getElementById('q').addEventListener('input', ()=>railFilterInput('expl
 document.getElementById('edits').onclick = showEdits;
 railWire();
 srcWire();
+rulesWire();
 // The five Show all buttons, and the page's one Escape rule. The pane's own
 // keys (j / k / arrows to scroll a line, f for the whole file) ride the same
 // listener, because they only mean anything while the pane is open.
@@ -105,6 +106,14 @@ byId('cmpbase').onchange=()=>drawCompare();
   byId('gfit').onclick=()=>mapRefit();
   document.addEventListener('click',(ev)=>{ if(!ev.target.closest('#gsug') && ev.target.id!=='gfocus') closeSug(GRAPHV); });
 })();
+// A toolbar menu (Options, Save as) closes when the reader clicks anywhere
+// else, and after a button inside it did its job.
+document.addEventListener('click', (ev)=>{
+  const inMenu = ev.target && ev.target.closest ? ev.target.closest('details.tbmenu') : null;
+  for(const d of document.querySelectorAll('details.tbmenu')){
+    if(d.open && (d!==inMenu || (ev.target.tagName==='BUTTON' && ev.target.closest('.tbmenubody')))) d.open=false;
+  }
+});
 window.addEventListener('resize', graphPaneOnResize);
 // the bezier ends are measured from the DOM, so a resize must re-measure them
 let chainResizeTimer=null;

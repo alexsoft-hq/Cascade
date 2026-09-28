@@ -94,6 +94,7 @@ function runExamples(entries, env) {
 
 export const typeormEntity = Object.freeze({
   name: 'typeorm.entity',
+  lane: 'ts',
   stage: 'ts-facts',
   // A name the decorator writes is a fact; a derived one is graded where it is used.
   gradeCap: null,

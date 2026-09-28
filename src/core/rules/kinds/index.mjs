@@ -5,8 +5,8 @@
 // framework's variation does not fit any kind here, the answer is a new kind
 // with its own tests, never an expression written inside a rule.
 //
-// Every kind answers the same things: its `name`, the `stage` of an analysis it
-// runs in, the strongest grade it may give (`gradeCap`, null for a
+// Every kind answers the same things: its `name`, the `lane` whose analysis runs
+// it (java, ts, sql), the `stage` of an analysis it runs in, the strongest grade it may give (`gradeCap`, null for a
 // classification that draws no edge), `validateParams` (handed the whole rule
 // too, for a param whose rules depend on the rule's grade), `validateExample`,
 // `compile`, and either `runExample` (one example at a time) or `runExamples`

@@ -326,6 +326,7 @@ function runExamples(entries, env) {
 
 export const javaContractLink = Object.freeze({
   name: 'java.contract-link',
+  lane: 'java',
   stage: 'openapi-bridge',
   // Only a naming convention joins the two ends: the interface that would
   // state the pairing is generated at build time and never read.

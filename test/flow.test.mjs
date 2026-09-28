@@ -188,7 +188,7 @@ test('flow chain: an endpoint whose handler calls nothing — every lane empty, 
   assert.equal(r.answer.walk.walked, 0);
   assert.deepEqual(r.answer.layers, []); // nothing was walked, so there is no hop to fold
   assert.deepEqual(r.answer.empty, { services: 'none', statements: 'none', tables: 'none', layers: 'none' });
-  assert.deepEqual(r.answer.walk.cut, { depth: 0, nodeCap: false, byMode: 0, generated: 0 });
+  assert.deepEqual(r.answer.walk.cut, { depth: 0, nodeCap: false, byMode: 0, byModeGrades: {}, generated: 0 });
   assert.deepEqual(r.answer.walk.beyond, { tables: 0 });
   assert.equal(r.answer.walk.note, null);
   assert.equal(r.limits.length, 0);
@@ -723,7 +723,7 @@ test('flow up on the mall pack: pms_product.price reaches 27 endpoints at hop 6,
   const g = mallGraph();
   const r = call(g, { column: 'pms_product.price', direction: 'up', depth: 8, limit: 200 });
   assert.equal(r.answer.walk.walked, 115);
-  assert.deepEqual(r.answer.walk.cut, { depth: 0, nodeCap: false, byMode: 0, generated: 0 });
+  assert.deepEqual(r.answer.walk.cut, { depth: 0, nodeCap: false, byMode: 0, byModeGrades: {}, generated: 0 });
   assert.equal(r.answer.statements.length, 18);
   assert.equal(r.answer.services.length, 79);
   assert.equal(r.answer.endpoints.length, 27);

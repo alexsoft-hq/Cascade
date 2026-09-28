@@ -34,12 +34,12 @@
       <span id="mbuild" class="mbuild hidden">…</span>
     </div>
     <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
-      <span class="crlane hollow" title="this project was analysed without the part that counts these, so the number is missing rather than zero">
+      <button class="crlane hollow crlink" onclick title="this project was analysed without the part that counts these, so the number is missing rather than zero. Click to see why and what to set." type="button">
         screens
-        <b>not shipped</b>
-      </span>
+        <b>not collected</b>
+      </button>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
         api groups
         <b>2</b>
       </span>
@@ -49,9 +49,9 @@
         <b>3</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane">
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.">
         services
-        <b>10</b>
+        <b>4</b>
       </span>
       <span class="crrule"></span>
       <span class="crlane">
@@ -125,52 +125,63 @@
           <input id="ientry" autocomplete="off" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" style="width:100%" type="text" value="gamma_order.total"></input>
           <div id="isug" class="sug hidden"></div>
         </div>
+        <button id="idraw" class="primary" data-t="btn.draw" onclick>Draw</button>
         <select id="imode" data-t-title="mode.title" onchange title="how sure a call has to be before we follow it" value="conservative">
           <option data-t="mode.conservative" selected value="conservative">conservative: also follow likely calls</option>
           <option data-t="mode.strict" value="strict">strict: only calls we can prove</option>
           <option data-t="mode.heuristic" value="heuristic">heuristic: also follow guessed rules</option>
         </select>
-        <select id="idepth" data-t-title="impact.depth.title" onchange title="how many calls back to follow" value="8">
-          <option>
-            1
-          </option>
-          <option>
-            2
-          </option>
-          <option>
-            3
-          </option>
-          <option>
-            4
-          </option>
-          <option>
-            5
-          </option>
-          <option>
-            6
-          </option>
-          <option>
-            7
-          </option>
-          <option selected>
-            8
-          </option>
-        </select>
-        <span id="iview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
-          <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
-          <button data-t="view.layers" data-view="layers" onclick>by hop</button>
-        </span>
-        <button id="iflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
-        <button id="idraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <span id="iexports" class="seg">
-          <button id="iexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">Export</button>
-          <button id="isvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
-            SVG
-          </button>
-          <button id="ipng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
-            PNG
-          </button>
-        </span>
+        <details id="iopts" class="tbmenu">
+          <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+          <div class="tbmenubody">
+            <label class="tbfield">
+              <span data-t="tb.depth">depth</span>
+              <select id="idepth" data-t-title="impact.depth.title" onchange title="how many calls back to follow" value="8">
+                <option>
+                  1
+                </option>
+                <option>
+                  2
+                </option>
+                <option>
+                  3
+                </option>
+                <option>
+                  4
+                </option>
+                <option>
+                  5
+                </option>
+                <option>
+                  6
+                </option>
+                <option>
+                  7
+                </option>
+                <option selected>
+                  8
+                </option>
+              </select>
+            </label>
+            <span id="iview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
+              <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
+              <button data-t="view.layers" data-view="layers" onclick>by hop</button>
+            </span>
+            <button id="iflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+          </div>
+        </details>
+        <details id="iexports" class="tbmenu">
+          <summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as one HTML file, an SVG or a PNG">Save as</summary>
+          <div class="tbmenubody tbcol">
+            <button id="iexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
+            <button id="isvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+              SVG
+            </button>
+            <button id="ipng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+              PNG
+            </button>
+          </div>
+        </details>
         <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
       <div class="hint hintfold" data-t-fold="hint.impact">
@@ -599,7 +610,9 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <span class="fname" title="GET /order/{id}">GET /order/{id}</span>
+                  <span class="fname psplit" title="GET /order/{id}">
+                    <span class="ptail">GET /order/{id}</span>
+                  </span>
                   <span class="grade g-SOUND_SET">
                     SOUND_SET
                   </span>
@@ -613,7 +626,9 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <span class="fname" title="POST /order/save">POST /order/save</span>
+                  <span class="fname psplit" title="POST /order/save">
+                    <span class="ptail">POST /order/save</span>
+                  </span>
                   <span class="grade g-SOUND_SET">
                     SOUND_SET
                   </span>

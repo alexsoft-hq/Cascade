@@ -82,6 +82,7 @@ function runExample(match, example) {
 
 export const sqlDialectPath = Object.freeze({
   name: 'sql.dialect-path',
+  lane: 'sql',
   stage: 'discovery',
   // A classification of a file, not an edge: there is no grade to cap.
   gradeCap: null,

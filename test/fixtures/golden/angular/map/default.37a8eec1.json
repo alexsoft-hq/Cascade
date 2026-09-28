@@ -425,6 +425,7 @@
           "depthCutStarts": 0,
           "nodeCapStarts": 0,
           "byMode": 0,
+          "byModeGrades": {},
           "generated": 0,
           "multiHandlerEndpoints": 0,
           "outboundEndpoints": 6
@@ -481,7 +482,7 @@
       },
       {
         "scope": "map",
-        "reason": "a group is the first segment of an API path. It is a naming habit, not a module boundary anyone declared"
+        "reason": "a group is the first segment of an API path, read below the prefix the application is deployed under where its lane knows one (a global prefix, a version, a module path). It is a naming habit, not a module boundary anyone declared"
       },
       {
         "scope": "map",

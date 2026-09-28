@@ -38,13 +38,16 @@
           "depth": 0,
           "nodeCap": false,
           "byMode": 4,
+          "byModeGrades": {
+            "HEURISTIC": 4
+          },
           "generated": 0
         },
         "beyond": {
           "tables": 0
         },
         "endLane": "tables",
-        "note": "4 link(s) below the grade floor of mode=conservative were not walked, so an empty band here can be the mode rather than an absence; try mode=heuristic"
+        "note": "4 link(s) below the grade floor of mode=conservative were not walked (4 HEURISTIC), so an empty band here can be the mode rather than an absence; try mode=heuristic"
       },
       "layers": [],
       "webFunctions": [],
@@ -111,7 +114,7 @@
       },
       {
         "scope": "flow",
-        "reason": "4 link(s) below the grade floor of mode=conservative were not walked, so an empty band here can be the mode rather than an absence; try mode=heuristic"
+        "reason": "4 link(s) below the grade floor of mode=conservative were not walked (4 HEURISTIC), so an empty band here can be the mode rather than an absence; try mode=heuristic"
       }
     ],
     "truncated": {

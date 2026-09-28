@@ -8,6 +8,9 @@
 // their way around and a linter can read.
 
 const GRADES = ['EXACT','SOUND_SET','HEURISTIC','RUNTIME_ONLY','UNRESOLVED'];
+// The grades each mode walks, MIRRORING src/core/graph.mjs GRADE_SETS: the page
+// says what a mode does with a grade, and may not invent a floor of its own.
+const MODE_ADMITS = { strict:['EXACT'], conservative:['EXACT','SOUND_SET'], heuristic:['EXACT','SOUND_SET','HEURISTIC'] };
 const KINDS = ['column','table','statement','symbol','endpoint','domain'];
 // ---------- the drawing vocabulary: a line for certainty, a glyph for kind ----
 // ---------- the token accessor: ONE place the page reads a colour ------------

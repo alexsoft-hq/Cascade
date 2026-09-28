@@ -46,6 +46,9 @@ export function packMeta(pack) {
     // leaves nothing behind — that is why it is counted at ingest).
     axes: pack.meta?.axes ?? null,
     laneStats: pack.meta?.laneStats ?? null,
+    // What the run could not read, each in its lane's words and most naming
+    // what to declare: `overview` relays the ones a lane marked warn or error.
+    diagnostics: pack.meta?.diagnostics ?? null,
     // What the pack was analyzed under, for comparing two packs (pack_diff).
     analysis: pack.meta?.analysis ?? null,
   };

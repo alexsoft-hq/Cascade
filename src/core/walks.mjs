@@ -59,11 +59,23 @@ export function groupOfPath(path) {
 export const UNKNOWN_PACKAGE_GROUP = '(unknown package)';
 
 /**
+ * The group a lane gave an endpoint, or null. A lane that knows where a route's
+ * DEPLOYMENT prefix ends (a global prefix, a version, a module path) writes the
+ * first segment after it as `apiGroup`, because the first segment of the whole
+ * address is then the prefix, and every route of the application falls into it.
+ */
+export function laneGroupOf(node) {
+  const g = node && node.apiGroup;
+  return typeof g === 'string' && g !== '' ? g : null;
+}
+
+/**
  * The API group of one endpoint node, under the profile's module-attribution
  * rule (`moduleAttribution.packageDepth`, SPEC §6.2).
  *
- * `packageDepth: null` (the default) keeps the path rule above — the first path
- * segment. A number switches to the DECLARED rule: the handler's own package,
+ * `packageDepth: null` (the default) keeps the path rule above, read after the
+ * prefix the lane knows is a deployment's: the endpoint's `apiGroup` when its
+ * lane wrote one, the first path segment otherwise. A number switches to the DECLARED rule: the handler's own package,
  * truncated to that many segments (depth 4 → `com.example.mall.product`). That
  * is a code-structure boundary rather than a URL-naming convention, which is
  * why a project that has one says so in its profile instead of the engine
@@ -81,7 +93,7 @@ export const UNKNOWN_PACKAGE_GROUP = '(unknown package)';
  */
 export function groupOfEndpoint(node, opts = {}) {
   const depth = opts.packageDepth ?? null;
-  if (depth == null) return groupOfPath(node && node.path);
+  if (depth == null) return laneGroupOf(node) ?? groupOfPath(node && node.path);
   if (!Number.isInteger(depth) || depth < 1) {
     throw new WalkError(`packageDepth must be a positive integer or null, got ${JSON.stringify(depth)}`);
   }
@@ -295,8 +307,8 @@ export function walkEndpoints(graph, opts = {}) {
   endpoints.sort((a, b) => cmp(a.id, b.id)); // deterministic walk order
 
   const walkCache = new Map(); // start node id -> {statements:[{id,grade}], cutDepth:number}
-  const walk = { starts: 0, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints };
-  const how = { mode, depth, maxNodes: opts.maxNodes ?? null };
+  const walk = { starts: 0, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints };
+  const how = { mode, depth, maxNodes: opts.maxNodes ?? null, services: new Set() };
   for (const ep of endpoints) {
     const handlers = handlerStartsOf(graph, ep.id, mode);
     // A route whose every handler sits below this mode's floor starts at
@@ -318,14 +330,17 @@ export function walkEndpoints(graph, opts = {}) {
     ep.statements = [...reached.entries()].map(([id, grade]) => ({ id, grade })).sort((a, b) => cmp(a.id, b.id));
   }
 
-  return { endpoints, walk };
+  return { endpoints, walk, services: how.services };
 }
 
 /**
  * The statements one start reaches, walked once whatever how many routes start
- * there, and its cuts added to the census the first time.
+ * there, and its cuts added to the census the first time. Its `services` are
+ * the methods the Flow tab draws between a route's handler and its SQL: a
+ * route's own handler is never one of them, and neither is a library method
+ * the lane only saw referenced.
  */
-function walkedFrom(graph, start, { mode, depth, maxNodes }, walkCache, walk) {
+function walkedFrom(graph, start, { mode, depth, maxNodes, services }, walkCache, walk) {
   const known = walkCache.get(start);
   if (known) return known;
   const w = chainWalk(graph, {
@@ -334,14 +349,18 @@ function walkedFrom(graph, start, { mode, depth, maxNodes }, walkCache, walk) {
   });
   const cached = {
     statements: w.statements.map((s) => ({ id: `statement:${s.id}`, grade: s.grade })),
+    services: w.services.filter((s) => !s.external).map((s) => `symbol:${s.id}`)
+      .filter((id) => !graph.inEdges(id).some((e) => e.type === 'HANDLES')),
     cutDepth: w.cut.depth,
   };
   walkCache.set(start, cached);
+  for (const id of cached.services) services.add(id);
   walk.starts += 1;
   walk.depthCut += w.cut.depth;
   if (w.cut.depth > 0) walk.depthCutStarts += 1;
   if (w.cut.nodeCap) walk.nodeCapStarts += 1;
   walk.byMode += w.cut.byMode;
+  for (const [g, n] of Object.entries(w.cut.byModeGrades ?? {})) walk.byModeGrades[g] = (walk.byModeGrades[g] ?? 0) + n;
   walk.generated += w.cut.generated;
   return cached;
 }

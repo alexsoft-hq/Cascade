@@ -115,6 +115,7 @@ function runExamples(entries, env) {
 
 export const javaCodeSetting = Object.freeze({
   name: 'java.code-setting',
+  lane: 'java',
   stage: 'java-facts',
   // A call noticed and said, not an edge: there is no grade to cap.
   gradeCap: null,

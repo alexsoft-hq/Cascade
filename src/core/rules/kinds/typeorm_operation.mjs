@@ -117,6 +117,7 @@ function runExamples(entries, env) {
 
 export const typeormOperation = Object.freeze({
   name: 'typeorm.operation',
+  lane: 'ts',
   stage: 'ts-facts',
   // A property named as a literal key of the call is one the call reads or writes.
   gradeCap: 'EXACT',

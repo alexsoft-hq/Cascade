@@ -11,6 +11,7 @@ import path from 'node:path';
 import { toolList } from '../../mcp/catalog.mjs';
 import { builtinRegistry } from '../../core/rules/registry.mjs';
 import { rulesCatalog } from '../../core/rules/catalog.mjs';
+import { exampleVerdicts } from '../rule_examples.mjs';
 import { serveHttp } from '../../mcp/http.mjs';
 import { readSourceFor } from '../../viewer/source.mjs';
 import { exportSnapshot, projectMeta } from '../snapshot_export.mjs';
@@ -42,6 +43,16 @@ export function run(cli) {
 }
 
 /**
+ * Whether each rule's examples hold, run once per server through the same
+ * workers `cascade rules test` uses: the packs are part of the engine, so the
+ * answer cannot change while this process runs.
+ */
+function examplesOnce() {
+  let examples = null;
+  return () => { examples ??= exampleVerdicts(builtinRegistry()); return examples; };
+}
+
+/**
  * What the server is allowed to answer with: the tool catalog, the one project
  * host, and the four directories it may read a file out of. Nothing else on
  * disk is reachable through any route.
@@ -55,9 +66,9 @@ function viewerDeps(host) {
     toolList,
     callTool: (name, args) => host.callTool(name, args),
     meta: (project) => projectMeta(host, project),
-    // The Rules tab: the rule packs this engine runs, and where each left its
-    // mark in this project's pack.
+    // The rule packs, where each left its mark here, and whether their examples hold.
     rules: (project) => rulesCatalog(builtinRegistry(), contextOf(project).ctx.graph),
+    ruleExamples: examplesOnce(),
     // The Export button: one answer, written as a file that opens anywhere.
     exportSnapshot: (request) => exportSnapshot(host, request),
     // The two vendored MIT browser bundles the Graph tab's map renderers load

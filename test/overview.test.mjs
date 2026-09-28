@@ -120,6 +120,8 @@ test('buildOverview: reach walks every handler forward and counts what is connec
   const { samples, ...counts } = o.reach;
   assert.deepEqual(counts, {
     endpoints: 2, outboundEndpoints: 0, endpointsWithoutStatement: 1, endpointsWithMultipleHandlers: 0,
+    // both routes' addresses are what their controllers declare
+    routeGrades: { EXACT: 2 },
     statements: 3, statementsReached: 2,
     tables: 2, tablesReached: 1,
     columns: 3, columnsReached: 1,
@@ -160,6 +162,7 @@ test('buildOverview: a route declared TWICE is walked through BOTH handlers — 
   const { samples, ...counts } = o.reach;
   assert.deepEqual(counts, {
     endpoints: 2, outboundEndpoints: 0, endpointsWithoutStatement: 1, endpointsWithMultipleHandlers: 1,
+    routeGrades: { EXACT: 2 },
     // 3 of 3 statements and both tables, because ZController#one's chain counts
     // too. Walking only the first handler gave 2 / 1 / 1 and called M.orphan an
     // orphan.
@@ -228,6 +231,9 @@ test('buildOverview: at conservative the floor cuts nothing, and the note says w
 test('buildOverview: the code block counts the symbols, the ones with no source, and the boundaries', () => {
   const o = buildOverview(fixtureGraph());
   assert.deepEqual(o.code, { symbols: 7, external: 1, transactional: 1, mapperMethods: 3, statementsWithoutMapper: 0,
+    // AService#run: the handler is a route's, the three M methods are mapper
+    // methods, and Helper#help is a library method with no source here
+    services: 1,
     // no MyBatis-Plus in this fixture: three zeros, which is "the lane found
     // none", not "the lane did not run" — `axes.mybatisPlus` says which
     mpEntities: 0, mpBuiltinStatements: 0, mpStatementsRuntimeOnlyColumns: 0,
@@ -250,7 +256,7 @@ test('buildOverview: hubs rank the reached tables by how many endpoints arrive, 
 test('buildOverview: a SQL-only pack reports the code block as zeros and ONE not-shipped gap', () => {
   const o = buildOverview(sqlOnly());
   assert.deepEqual(o.code, { symbols: 0, external: 0, transactional: 0, mapperMethods: 0, statementsWithoutMapper: 0,
-    mpEntities: 0, mpBuiltinStatements: 0, mpStatementsRuntimeOnlyColumns: 0,
+    services: 0, mpEntities: 0, mpBuiltinStatements: 0, mpStatementsRuntimeOnlyColumns: 0,
     generated: 0, generatedInternalEdges: 0, generatedBoundaryEdges: 0 });
   assert.equal(o.reach.endpoints, 0);
   assert.equal(o.reach.statementsReached, 0);
@@ -528,6 +534,8 @@ test('overview on the mall pack: 208 of 906 statements and 49 of 76 tables are r
   const { samples, ...counts } = r.answer.reach;
   assert.deepEqual(counts, {
     endpoints: 239, outboundEndpoints: 0, endpointsWithoutStatement: 34, endpointsWithMultipleHandlers: 7,
+    // every mall route is a Spring mapping its controller declares
+    routeGrades: { EXACT: 239 },
     statements: 906, statementsReached: 208,
     tables: 76, tablesReached: 49,
     columns: 669, columnsReached: 461,
@@ -554,12 +562,18 @@ test('overview on the mall pack: 208 of 906 statements and 49 of 76 tables are r
   assert.equal(r.truncated.fields.find((f) => f.field === 'reach.samples.unreachedTables').total, 27);
 });
 
+// The services lane over every mall route, each method once: the project's own
+// methods between a controller method and a mapper method (RM67).
+const SERVICES_ON_MALL = 588;
+
 test('overview on the mall pack: the code axis, and the hubs the endpoints converge on', { skip: skipUnlessMall() }, () => {
   const r = call(mallGraph(), {});
   // RM35: symbols 10784 -> 10869, of which external 26 -> 33.
   // `transactional` and `mapperMethods` did not move, which is the check that
   // nothing already connected did.
   assert.deepEqual(r.answer.code, { symbols: 10869, external: 33, transactional: 35, mapperMethods: 904, statementsWithoutMapper: 2,
+    // the methods mall's routes walk through between a handler and the SQL
+    services: SERVICES_ON_MALL,
     // mall is MyBatis-generator, not MyBatis-Plus: `grep -rl "BaseMapper\|@TableName"`
     // over its sources finds nothing, so this lane adds nothing to it.
     mpEntities: 0, mpBuiltinStatements: 0, mpStatementsRuntimeOnlyColumns: 0,

@@ -138,7 +138,9 @@ export function runBfs(graph, w) {
     start, maxDepth, maxNodes, follow, crossesHttp, isHttpHop, allow,
     adjOf, stepTo, walkGenerated, isGenerated, up,
   } = w;
-  const cut = { depth: 0, nodeCap: false, byMode: 0, generated: 0 };
+  // `byModeGrades` splits `byMode` by the grade that kept each edge out, because
+  // a wider mode walks a HEURISTIC edge and no mode walks an UNRESOLVED one.
+  const cut = { depth: 0, nodeCap: false, byMode: 0, byModeGrades: {}, generated: 0 };
   const best = new Map(); // id -> {hops, pathGrade, via, parent}
   const modeCounted = new Set(); // nodes whose skipped-by-mode edges are already counted
   // fewer hops). A record is an IMMUTABLE SNAPSHOT that carries the parent
@@ -167,7 +169,7 @@ export function runBfs(graph, w) {
       if (!allow.has(edge.grade)) {
         // Skipped ONLY because of the grade floor — the caller reports this as
         // "the mode did not look", never as "there is nothing there".
-        if (countMode) cut.byMode += 1;
+        if (countMode) { cut.byMode += 1; cut.byModeGrades[edge.grade] = (cut.byModeGrades[edge.grade] ?? 0) + 1; }
         continue;
       }
       const next = stepTo(edge);
@@ -936,6 +938,7 @@ export function emptyReasonFor(w) {
 /**
  * Display name of a node — the one rule the tools, the walk and the page share:
  * symbol → `Class#method`, statement/column → the last two dotted segments,
+ * a symbol or statement keyed by a file → `file.ts#Class.method`,
  * endpoint → `METHOD path`. Works from the id alone when the node is absent.
  * @param {object|null|undefined} node
  * @param {string} id
@@ -949,15 +952,13 @@ export function nodeLabel(node, id) {
   // A screen's short name is whatever `screenAxis.pathRule` made of its path,
   // and the path itself when the profile declared no rule.
   if (kind === 'screen') return node && typeof node.label === 'string' && node.label !== '' ? node.label : key;
-  if (kind === 'symbol') {
-    const h = key.lastIndexOf('#');
-    // A WEB symbol is keyed by a file PATH, not by a package: shortening it at
-    // the last dot before the `#` would leave "js#getOrder", which reads as
-    // nothing. The file's own name is the short form there.
-    if (key.includes('/')) return h >= 0 ? `${key.slice(key.lastIndexOf('/', h) + 1)}` : key;
-    const dot = key.lastIndexOf('.', h);
-    return h >= 0 ? key.slice(dot + 1) : key;
-  }
+  const h = key.lastIndexOf('#');
+  // A symbol or a statement keyed by a file PATH, not by a package (a web or a
+  // TypeScript method, a Prisma call site): shortening it at the last dot
+  // before the `#` would leave "js#getOrder" or "ts#Users.list/0", which reads
+  // as nothing. The file's own name is the short form there.
+  if ((kind === 'symbol' || kind === 'statement') && h >= 0 && key.lastIndexOf('/', h) >= 0) return key.slice(key.lastIndexOf('/', h) + 1);
+  if (kind === 'symbol') return h >= 0 ? key.slice(key.lastIndexOf('.', h) + 1) : key;
   if (kind === 'column' || kind === 'statement') { const p = key.split('.'); return p.slice(-2).join('.'); }
   return key;
 }

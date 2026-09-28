@@ -39,7 +39,7 @@
         <b>2</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
         api groups
         <b>1</b>
       </span>
@@ -49,9 +49,9 @@
         <b>2</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane">
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.">
         services
-        <b>9</b>
+        <b>2</b>
       </span>
       <span class="crrule"></span>
       <span class="crlane">
@@ -277,7 +277,7 @@
               </span>
               <b style="margin-left: 8px">lines:</b>
               <span>
-                <span class="swatch" style="background: #6E7A9A"></span>
+                <span class="swatch" style="background: #8A96B5"></span>
                 group → endpoint
               </span>
               <span>

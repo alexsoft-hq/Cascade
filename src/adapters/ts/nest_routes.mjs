@@ -192,7 +192,7 @@ function routesOfController(compiled, entry, ctx) {
     const own = joinRoute(modulePaths.get(entry.module) ?? '', r.path);
     const { head, uncertain } = prefixFor(prefix, r.verb, own);
     return segments.map((segment) => ({
-      verb: r.verb, path: joinRoute(head, segment, own), file: r.file, cls: r.cls, method: r.method, line: r.line, rule: compiled.rule,
+      verb: r.verb, path: joinRoute(head, segment, own), ownPath: r.path, file: r.file, cls: r.cls, method: r.method, line: r.line, rule: compiled.rule,
       ...(uncertain ? { grade: 'HEURISTIC', uncertain: `the global prefix "${prefix.prefix}" excludes ${prefix.unreadExcludes} route pattern(s) this engine cannot read; if one names this route it is served without the prefix` } : {}),
     }));
   });
@@ -213,7 +213,9 @@ function unmarkedRouteClasses(project, compiled, viewOf, controllers) {
 
 /**
  * THE ROUTES the application serves, each with its handler, and every reason a
- * route could not be made. `unregistered` is null when the application itself
+ * route could not be made. A route's `ownPath` is its controller's and method's
+ * own path, before the module path, the version and the global prefix: the part
+ * a deployment does not decide, which the bridge groups routes by. `unregistered` is null when the application itself
  * could not be read, so which controllers it registers was never asked.
  *
  * @param {object} project  readProject's answer

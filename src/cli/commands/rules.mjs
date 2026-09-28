@@ -13,20 +13,14 @@
 // example does not hold, and 2 when an example could not be run at all (a Java
 // example needs a JDK): an example nobody ran is not one that holds.
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { builtinRegistry } from '../../core/rules/registry.mjs';
 import { testRules } from '../../core/rules/examples.mjs';
 import { explainTypeRoles } from '../../core/rules/explain.mjs';
 import { withTypeRoles } from '../../core/java_roles.mjs';
 import { FactsStoreError } from '../../core/facts_store.mjs';
 import { readEntityModel } from '../../adapters/mp_bridge.mjs';
-import { readOpenApiDocument } from '../../adapters/openapi_bridge.mjs';
-import { findJdk } from '../env.mjs';
-import { runJavaLane } from '../lanes_run.mjs';
 import { cachedJavaFacts, CachedFactsError } from '../cached_facts.mjs';
-import { factsOfFile, valueOfSource } from '../../../adapters/ts/tsfacts.mjs';
+import { ruleExampleEnv } from '../rule_examples.mjs';
 
 const USAGE = 'usage: cascade rules list [--json]\n'
   + '       cascade rules show <rule id> [--json]\n'
@@ -65,32 +59,6 @@ function show(registry, id, asJson, die) {
   for (const ex of e.rule.examples) print(`  ${JSON.stringify(ex)}`);
 }
 
-/**
- * The Java worker, run over example sources written to a scratch tree that is
- * removed after; null when there is no JDK, so the examples are reported not run.
- */
-function javaWorkerForExamples() {
-  const jdk = findJdk();
-  if (!jdk) return null;
-  return (files) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-rule-examples-'));
-    try {
-      writeSources(dir, files);
-      return runJavaLane(jdk, dir, [dir], { quiet: true });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  };
-}
-
-/** Each example source written under `dir` at its own relative name. */
-function writeSources(dir, files) {
-  for (const f of files) {
-    fs.mkdirSync(path.dirname(path.join(dir, f.name)), { recursive: true });
-    fs.writeFileSync(path.join(dir, f.name), f.text);
-  }
-}
-
 function statusOf(r) {
   if (r.notRun) return 'SKIP';
   return r.failures.length === 0 ? 'ok  ' : 'FAIL';
@@ -106,15 +74,10 @@ function printResults(results, only) {
   print(results.length === 0 ? `no rule or pack ${JSON.stringify(only)}` : `${held} of ${results.length} rule(s) hold every example`);
 }
 
-/**
- * The readers that run in process: a TypeScript example needs nothing but the
- * engine, and neither does an OpenAPI document.
- */
-const IN_PROCESS_READERS = Object.freeze({ tsFacts: factsOfFile, tsValue: valueOfSource, openApiDocument: readOpenApiDocument });
-
 function test(registry, only, asJson) {
-  const javaFacts = javaWorkerForExamples();
-  const results = testRules(registry, { only, env: { ...IN_PROCESS_READERS, ...(javaFacts ? { javaFacts } : {}) } });
+  // The workers the examples run through (src/cli/rule_examples.mjs), the same
+  // ones the viewer's Rules tab runs them through.
+  const results = testRules(registry, { only, env: ruleExampleEnv() });
   if (asJson) print(JSON.stringify(results, null, 2));
   else printResults(results, only);
   const failed = results.length === 0 || results.some((r) => r.failures.length > 0);

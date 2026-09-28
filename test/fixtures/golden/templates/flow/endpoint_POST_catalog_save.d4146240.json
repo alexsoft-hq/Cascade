@@ -16,6 +16,7 @@
         "handler": "com.example.web.CatalogController#save",
         "handlerShort": "CatalogController#save",
         "handlers": 1,
+        "grade": "EXACT",
         "owner": "com.example.web.CatalogController",
         "file": "src/main/java/com/example/web/CatalogController.java",
         "line": 26,
@@ -36,6 +37,7 @@
           "depth": 0,
           "nodeCap": false,
           "byMode": 0,
+          "byModeGrades": {},
           "generated": 0
         },
         "beyond": {

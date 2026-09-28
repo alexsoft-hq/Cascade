@@ -292,7 +292,8 @@ test('Flow is offered for an endpoint the head still has, and the one the earlie
 test('print opens every fold and marks the page for the print sheet; the mark goes when printing ends', async (t) => {
   const page = await gammaPage(t);
   await drawn(page);
-  ev(page.ctx, 'var PRINTED=null; window.print=function(){ PRINTED={ marked:document.body.classList.contains("cmpprint"), open:[...document.body.querySelectorAll("details")].every((d)=> d.open===true) }; };');
+  // The report's folds: a toolbar menu elsewhere on the page (Options, Save as) is not one.
+  ev(page.ctx, 'var PRINTED=null; window.print=function(){ PRINTED={ marked:document.body.classList.contains("cmpprint"), open:[...document.getElementById("cmpview").querySelectorAll("details")].every((d)=> d.open===true) }; };');
   assert.ok(view(page).querySelectorAll('details').some((d) => !d.open), 'a fold starts closed');
   view(page).querySelector('#cmpprint').onclick();
   assert.equal(ev(page.ctx, 'JSON.stringify(PRINTED)'), '{"marked":true,"open":true}');

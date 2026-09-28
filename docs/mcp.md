@@ -102,9 +102,45 @@ above.
 | `summary` | The whole pack in about ten boxes a side: groups of routes by where their handler code sits, the table families they reach, and the links between them with the tables, routes and weakest grade behind each. Every box lists its members. Read `limits`: an undeclared group is read from the package tree and a family from the table names | `mode` `depth` `limit` |
 | `pack_diff` | What changed between two packs of ONE project: nodes and edges added, removed or regraded; changed node attributes (for example column type or transaction marker); changed edge evidence (for example access); and location-only moves separately. Each changed field retains its base/head value and whether it was absent, and duplicate edge records remain distinct. Affected endpoints/screens are static candidates from both recorded graphs, including candidate-grade edges, for additions, removals, regrades and content changes; moves alone do not inflate them. They are not runtime or behaviour proof. This is recorded graph change, not every source/body change or a safety verdict. The additive schema remains `cascade:pack-diff:1`; `comparisonVersion: 2` identifies this expanded comparator. The addressed project is the head; the base is an earlier build from its pack history (`base_commit`, `base_history`) or another served pack of the same repository (`base`). Packs of different repositories are refused. Read `answer.conditions` first | `base_commit` `base_history` `base` `limit` |
 | `changed_impact` | The working-tree overlay: I edited these files — what is the blast radius? Re-parses the dirty files on each call. An edited component file also reports `touched.screens`, the screens its functions are drawn on | `files` `mode` `limit` `offset` |
+| `rules` | Which rules does this engine run, and what did each give in this pack? With no `rule`: every kind, pack and rule, each rule with `gave: {edges, nodes}` here, sorted by what it gave. With `rule`: that rule whole, and the links and nodes it gave, a page at a time. See [Rules](#rules) | `rule` `query` `kind` `lane` `here` `limit` `offset` |
 
 Grades, the `mode` floors, and what `limits` / `truncated` mean are in
 [concepts.md](concepts.md).
+
+## Rules
+
+What the engine knows about frameworks is in rule packs
+([rules.md](rules.md)), and every link a rule gave names it in its evidence
+(`evidence.rule`). A rule can also decide what a node is without drawing a line:
+a Prisma operation rule decides what one call site's statement reads and writes,
+and the statement names it in an evidence block of its own
+(`prismaEvidence.rule`). `rules` counts both, for any lane that marks its nodes
+that way.
+
+```jsonc
+// tools/call {"name":"rules","arguments":{"here":true}}
+{ "answer": {
+    "rules": [ { "id": "prisma.client", "pack": "prisma", "kind": "ts.type-role", "lane": "ts",
+                 "grade": "EXACT", "gave": { "edges": 151, "nodes": 0 }, "here": true, … },
+               { "id": "prisma.operations", "gave": { "edges": 0, "nodes": 151 }, "here": true, … } ],
+    "totals": { "packs": 5, "rules": 9, "here": 3 }, … } }
+```
+
+- The list puts what gave something in THIS pack first, the biggest first, and
+  the rest by id. `query`, `kind`, `lane` (`java`, `ts`, `sql`) and `here: true`
+  narrow it.
+- `gave` is `null` for a kind that only classifies (the database a file path
+  names) where the pack names the rule nowhere: there is nothing to count,
+  which is not the same as unused. A classifying rule a lane does name, such as
+  `typeorm.receivers` on the statement link it typed, is counted. Asked for one, such a rule's lists
+  are `not-shipped` and a `limits` sentence says why.
+- With `rule`, `edges` carry both ends (`{id, kind, label}`), the grade and the
+  sentence the lane wrote, and `nodes` the nodes it marked; both are paged by
+  `limit` (default 50) and `offset`, and `gave.byType`, `gave.byGrade` and
+  `gave.byKind` count them whole (the list carries the same counts).
+- It does not run a rule's examples: that needs the workers, and an answer must
+  not depend on the machine that asked. `cascade rules test` runs them, and the
+  viewer's Rules tab shows each example's verdict from the same run.
 
 ## Federation — one answer across several projects
 
@@ -309,6 +345,7 @@ projects is listed under both, which is what `ambiguous` means on a crossing.
 | `GET /api/projects` | the `projects` tool's answer |
 | `POST /api/call` | `{name, arguments, project?}` — one tool call |
 | `GET /api/meta` | the served project's pack metadata (`?project=`) |
+| `GET /api/rules/examples` | whether each rule's examples hold, one verdict per example, run once per server through the same workers `cascade rules test` uses |
 | `GET /api/source` | one node's source, read from the working tree: the snippet, the absolute path, the 1-based line range it cut and the file's length (`?node=`, `?project=`, `?whole=1` for the whole file instead of the snippet) |
 | `GET /vendor/<file>` | the two vendored MIT browser bundles the graph pictures render with |
 | `GET /i18n/<lang>.json` | one interface-language catalogue (English is compiled into the page) |

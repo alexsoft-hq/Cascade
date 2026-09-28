@@ -36,6 +36,7 @@
           "depth": 0,
           "nodeCap": false,
           "byMode": 0,
+          "byModeGrades": {},
           "generated": 0
         },
         "beyond": {

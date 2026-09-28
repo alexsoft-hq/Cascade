@@ -36,7 +36,7 @@
         <b>6</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route, like the /product in /product/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the Graph map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
         api groups
         <b>6</b>
       </span>
@@ -46,14 +46,14 @@
         <b>19</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane">
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once. It is the services lane Flow draws. A controller method, a frontend function, a mapper method and a library method are not counted.">
         services
-        <b>28</b>
+        <b>4</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane hollow" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
+      <span class="crlane" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
         SQL
-        <b>not shipped</b>
+        <b>5 ~</b>
       </span>
       <span class="crrule"></span>
       <span class="crlane">
@@ -121,52 +121,63 @@
           <input id="fentry" autocomplete="off" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" style="width:100%" type="text" value="/things"></input>
           <div id="fsug" class="sug hidden"></div>
         </div>
+        <button id="fdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
         <select id="fmode" data-t-title="mode.title" onchange title="how sure a call has to be before we follow it" value="conservative">
           <option data-t="mode.conservative" selected value="conservative">conservative: also follow likely calls</option>
           <option data-t="mode.strict" value="strict">strict: only calls we can prove</option>
           <option data-t="mode.heuristic" value="heuristic">heuristic: also follow guessed rules</option>
         </select>
-        <select id="fdepth" data-t-title="flow.depth.title" onchange title="how many calls deep to follow" value="8">
-          <option>
-            1
-          </option>
-          <option>
-            2
-          </option>
-          <option>
-            3
-          </option>
-          <option>
-            4
-          </option>
-          <option>
-            5
-          </option>
-          <option selected>
-            6
-          </option>
-          <option>
-            7
-          </option>
-          <option>
-            8
-          </option>
-        </select>
-        <span id="fview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
-          <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
-          <button data-t="view.layers" data-view="layers" onclick>by hop</button>
-        </span>
-        <button id="fflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
-        <button id="fdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <span id="fexports" class="seg">
-          <button id="fexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">Export</button>
-          <button id="fsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
-            SVG
-          </button>
-          <button id="fpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
-            PNG
-          </button>
-        </span>
+        <details id="fopts" class="tbmenu">
+          <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+          <div class="tbmenubody">
+            <label class="tbfield">
+              <span data-t="tb.depth">depth</span>
+              <select id="fdepth" data-t-title="flow.depth.title" onchange title="how many calls deep to follow" value="8">
+                <option>
+                  1
+                </option>
+                <option>
+                  2
+                </option>
+                <option>
+                  3
+                </option>
+                <option>
+                  4
+                </option>
+                <option>
+                  5
+                </option>
+                <option selected>
+                  6
+                </option>
+                <option>
+                  7
+                </option>
+                <option>
+                  8
+                </option>
+              </select>
+            </label>
+            <span id="fview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
+              <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
+              <button data-t="view.layers" data-view="layers" onclick>by hop</button>
+            </span>
+            <button id="fflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+          </div>
+        </details>
+        <details id="fexports" class="tbmenu">
+          <summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as one HTML file, an SVG or a PNG">Save as</summary>
+          <div class="tbmenubody tbcol">
+            <button id="fexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
+            <button id="fsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+              SVG
+            </button>
+            <button id="fpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+              PNG
+            </button>
+          </div>
+        </details>
         <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
       <div class="hint hintfold" data-t-fold="hint.flow">
@@ -393,7 +404,10 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <span class="fname" title="GET /api/shop/badges">GET /api/shop/badges</span>
+                  <span class="fname psplit" title="GET /api/shop/badges">
+                    <span class="phead">GET /api</span>
+                    <span class="ptail">/shop/badges</span>
+                  </span>
                   <span class="grade g-SOUND_SET">
                     SOUND_SET
                   </span>
@@ -500,6 +514,14 @@
           </div>
         </div>
         <div id="flowside" class="flowside">
+          <div class="panel leftout">
+            <h2>What this walk left out</h2>
+            <div class="comment">
+              Mode conservative did not walk 2 link(s) it does not trust
+              (2 UNRESOLVED)
+            </div>
+            <div class="comment">No mode walks these: they are decided at run time, or we could not tell what they point to.</div>
+          </div>
           <div class="panel">
             <h2>how to read the lines</h2>
             <ul class="list">
@@ -544,7 +566,7 @@
               </li>
             </ul>
             <div class="comment" style="margin-top: 8px">followed 9 nodes, depth 8, mode conservative</div>
-            <div class="honesty">2 link(s) below the grade floor of mode=conservative were not walked, so an empty band here can be the mode rather than an absence; try mode=heuristic</div>
+            <div class="honesty">2 link(s) are RUNTIME_ONLY/UNRESOLVED, which no mode walks, so an empty band here is what we could not resolve rather than the mode</div>
           </div>
           <div class="rail">
             <div class="railhead">

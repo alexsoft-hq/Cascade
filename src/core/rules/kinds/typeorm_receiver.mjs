@@ -120,6 +120,7 @@ function runExamples(entries, env) {
 
 export const typeormReceiver = Object.freeze({
   name: 'typeorm.receiver',
+  lane: 'ts',
   stage: 'ts-facts',
   gradeCap: null,
   validateParams,

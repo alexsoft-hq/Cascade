@@ -221,11 +221,11 @@ test('kind=endpoint: an endpoint that reaches no statement is LISTED with zeroes
     'sorted by path, and the outbound /billing/charge is absent');
   assert.deepEqual(rowOf(r, 'endpoint', 'POST /p/create'), {
     endpoint: 'POST /p/create', httpMethod: 'POST', path: '/p/create', group: 'p',
-    handlerShort: 'PController#create', handlers: 1, statements: 0, tables: 0,
+    handlerShort: 'PController#create', handlers: 1, grade: 'EXACT', statements: 0, tables: 0,
   });
   assert.deepEqual(rowOf(r, 'endpoint', 'POST /p/save'), {
     endpoint: 'POST /p/save', httpMethod: 'POST', path: '/p/save', group: 'p',
-    handlerShort: 'PController#save', handlers: 1, statements: 1, tables: 2,
+    handlerShort: 'PController#save', handlers: 1, grade: 'EXACT', statements: 1, tables: 2,
   });
   assert.equal(r.answer.total, 4);
 });

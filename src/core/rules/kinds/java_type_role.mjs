@@ -249,6 +249,8 @@ function exampleResults(entry, facts) {
 
 export const javaTypeRole = Object.freeze({
   name: 'java.type-role',
+  // The lane whose analysis runs it, so a reader can find the rules of their stack.
+  lane: 'java',
   stage: 'java-facts',
   // A role read from a supertype the source writes down; a rule relying on a
   // library's declaration is graded below it (see libraryErrors).

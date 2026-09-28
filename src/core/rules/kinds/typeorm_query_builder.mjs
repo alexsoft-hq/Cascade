@@ -230,6 +230,7 @@ function runExamples(entries, env) {
 
 export const typeormQueryBuilder = Object.freeze({
   name: 'typeorm.query-builder',
+  lane: 'ts',
   stage: 'ts-facts',
   // A column a step's text names by its alias is one the query reads.
   gradeCap: 'EXACT',

@@ -812,7 +812,10 @@ test('the contrast of every text pair, in both themes, by the WCAG formula', asy
   const rows = [];
   for (const theme of ['signal', 'drawing']) {
     const tok = themeTokens(html, theme);
-    const pairs = [['--t1', '--g0'], ['--t2', '--g1'], ...KIND_TOKENS.map((k) => [k, '--g1'])];
+    // The quietest ink too, on every ground it is printed on (RM67): counts,
+    // second lines and fold leads are text a reader has to read.
+    const pairs = [['--t1', '--g0'], ['--t2', '--g1'], ['--t3', '--g0'], ['--t3', '--g1'], ['--t3', '--g2'], ['--t3', '--g3'],
+      ...KIND_TOKENS.map((k) => [k, '--g1'])];
     for (const [fg, bg] of pairs) {
       const ratio = contrast(tok[fg], tok[bg]);
       rows.push(`${theme} ${fg} on ${bg}: ${ratio.toFixed(2)}:1`);
@@ -1162,16 +1165,18 @@ test('a blind spot has a plain name, keeps the engine\'s kind on its tooltip, an
   const kinds = JSON.parse(ev(ctx, 'JSON.stringify(OV.resp.answer.gaps.map((g)=>g.kind))'));
   assert.ok(kinds.length > 0, 'this fixture is expected to disclose blind spots');
 
-  const chips = byId.get('ovherocol').querySelectorAll('button.foldlead.ovchip');
-  assert.equal(chips.length, kinds.length, 'one chip per gap the answer carries');
-  for (const c of chips) {
+  // Since RM67 the panel also lists an axis the pack did not build whole and
+  // every lane diagnostic, grouped by what a reader can do; a gap's chip is the
+  // one whose tooltip ends in its kind.
+  const all = byId.get('ovherocol').querySelectorAll('button.foldlead.ovchip');
+  for (const c of all) {
     assert.equal(c.classList.contains('bad'), false, `a blind spot is painted as an error: ${c.textContent}`);
   }
   // The engine's own kind stays on every chip's tooltip beside the count, so
   // the plain label never becomes the only name a reader can quote.
-  for (const [i, c] of chips.entries()) {
-    assert.ok(c.title.includes(kinds[i]), `${kinds[i]} lost its kind: ${c.title}`);
-  }
+  const chips = kinds.map((k) => all.find((c) => c.title.endsWith('  ' + k)));
+  for (const [i, c] of chips.entries()) assert.ok(c, `${kinds[i]} lost its kind: no chip carries it`);
+  assert.ok(all.length >= kinds.length, 'one chip per gap the answer carries, at least');
 
   // Every kind this pack discloses reads in the reader's words, and none of
   // them still shows the slug. Every kind the engine can emit has a label now,
@@ -3093,14 +3098,26 @@ test('the masthead rail carries a screens lane, and says shipped, degraded and n
   assert.equal(deg.title, 'the router is filled in by the server');
   assert.equal(deg.classList.contains('hollow'), false, 'a degraded axis still has a number');
 
-  // NOT SHIPPED: the word, hollow, with the reason as the title — the same
-  // treatment every other not-shipped lane gets.
-  ev(ctx, `OV.resp.answer.axes.screen = { status:'not-shipped', reason:'the profile turns the screen axis off' };
+  // NOT SHIPPED: the words, hollow, with the reason as the title, and a way to
+  // the blind spot that says what to set (RM67).
+  ev(ctx, `delete OV.resp.answer.screens;
+    OV.resp.answer.axes.screen = { status:'not-shipped', reason:'the profile turns the screen axis off' };
     renderCascadeRail();`);
   const off = byId.get('crail').querySelectorAll('.crlane')[0];
-  assert.equal(off.children[0].textContent, 'not shipped');
+  assert.equal(off.children[0].textContent, 'not collected');
   assert.equal(off.classList.contains('hollow'), true);
+  assert.equal(off.tagName, 'BUTTON', 'the lane is the way to why it was not collected');
   assert.equal(off.title, 'the profile turns the screen axis off');
+
+  // AN AXIS NOT BUILT WHOSE LANE STILL HAS A COUNT: no schema was read, and the
+  // SQL still named tables. The rail keeps the count, marked partial, with the
+  // reason on it, rather than saying "not shipped" beside a card that counts
+  // those very tables (RM67).
+  ev(ctx, `OV.resp.answer.axes.catalog = { status:'not-shipped', reason:'no catalog was read here' };
+    renderCascadeRail();`);
+  const tables = byId.get('crail').querySelectorAll('.crlane').find((n) => n.textContent.startsWith('tables'));
+  assert.match(tables.children[0].textContent, /^\d+\s~$/);
+  assert.equal(tables.title, 'no catalog was read here');
 });
 
 test('a project whose requests end elsewhere says both numbers under the dial', async (t) => {
@@ -3132,7 +3149,7 @@ test('a project whose requests end elsewhere says both numbers under the dial', 
 test('a pack with no frontend has no screens lane number to show, and says so', async (t) => {
   const { byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=overview' });
   const lane = byId.get('crail').querySelectorAll('.crlane')[0];
-  assert.equal(lane.children[0].textContent, 'not shipped');
+  assert.equal(lane.children[0].textContent, 'not collected');
   assert.equal(lane.classList.contains('hollow'), true);
   assert.match(lane.title, /analysed without the part that counts these/);
 });

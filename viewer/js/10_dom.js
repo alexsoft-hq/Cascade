@@ -294,5 +294,16 @@ function listPanel(title, total, items, render, emptyReasons, emptyField) {
   else for (const it of items) ul.append(render(it));
   return el('div',{className:'panel'}, [el('h2',{}, [title+' ', el('span',{className:'count', textContent: total!=null?`(${total})`:''})]), ul]);
 }
+/**
+ * A ROUTE'S NAME, CUT FROM THE MIDDLE. Routes of one application share their
+ * head (`GET /api/v1/portfolio/...`), so an ellipsis at the end cut away the
+ * part that tells two of them apart. The last two segments are kept whole and
+ * the head gives way first; the whole route is in the row's title and its text.
+ */
+function pathLabel(text){
+  const s=String(text), cut=s.lastIndexOf('/', s.lastIndexOf('/')-1);
+  if(cut<=s.indexOf('/')) return [el('span',{className:'ptail',textContent:s})];
+  return [ el('span',{className:'phead',textContent:s.slice(0,cut)}), el('span',{className:'ptail',textContent:s.slice(cut)}) ];
+}
 const byId=(id)=>document.getElementById(id);
 const vwrap=(v)=>byId(v.wrapId), vside=(v)=>byId(v.sideId), vsvg=(v)=>vwrap(v).querySelector('svg.flowsvg');

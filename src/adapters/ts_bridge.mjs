@@ -16,6 +16,7 @@
 // another lane already made keeps its fields; this lane only adds its handler.
 
 import { nodeId } from '../core/graph.mjs';
+import { groupOfPath } from '../core/walks.mjs';
 import { builtinRegistry } from '../core/rules/registry.mjs';
 import { readProject } from './ts/project.mjs';
 import { nestRoutes } from './ts/nest_routes.mjs';
@@ -26,13 +27,22 @@ import { addTypeormStatements, typeormDiagnostics } from './ts/typeorm.mjs';
 
 const HANDLES_BASIS = 'a controller the application registers declares this route in a decorator';
 
-/** The route as an endpoint, and its handler. A route whose address rests on an exclude this engine could not read says so, at the grade that says it. */
+/**
+ * The route as an endpoint, and its handler. A route whose address rests on an
+ * exclude this engine could not read says so, at the grade that says it.
+ *
+ * `apiGroup` is the first segment of the route's own path, below the global
+ * prefix, the version and the module path: `/api/v1/users/{id}` is `users`.
+ * Those three are how the application is deployed, so grouping by the first
+ * segment of the whole address put every route of a prefixed application in
+ * one group. The core reads it wherever it groups routes (core/walks.mjs).
+ */
 function addRoute(g, r) {
   const epId = nodeId('endpoint', `${r.verb} ${r.path}`);
   const handler = methodSymbolId(r.file, r.cls, r.method);
   const existing = g.nodes.get(epId);
   if (!existing) {
-    g.addNode({ id: epId, path: r.path, httpMethod: r.verb, handler, file: r.file, line: r.line ?? null, source: 'nestjs' });
+    g.addNode({ id: epId, path: r.path, httpMethod: r.verb, handler, apiGroup: groupOfPath(r.ownPath), file: r.file, line: r.line ?? null, source: 'nestjs' });
   } else if (existing.handler && existing.handler !== handler) {
     existing.handlers = [...new Set([...(existing.handlers ?? [existing.handler]), handler])].sort();
   }

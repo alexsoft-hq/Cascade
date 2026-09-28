@@ -1,107 +1,123 @@
-// 51_rules.js — the Rules tab: the rule packs this engine runs, read-only.
+// 51_rules.js — the Rules tab: what it holds, and how it asks for it.
 //
 // ONE of the page's scripts, sharing the page's one global scope (see the tags
-// at the foot of viewer/index.html).
+// at the foot of viewer/index.html). The drawing is 52_rules_draw.js.
 //
-// What each rule says, why it is there, its params and its examples, and how
-// many links of this project's pack it gave: the same packs `cascade rules show`
-// prints, so a person reads here what the engine runs. A rule is changed in its
-// JSON pack (docs/rules.md), and `cascade rules test` says whether its examples
-// still hold; nothing here edits one.
+// A rule is framework knowledge written as data (docs/rules.md): which
+// decorator makes a route, which base type makes a mapper, what a Prisma call
+// reads and writes. A link a rule gave names it in its evidence, so a reader
+// looking at a guessed route or a generic statement can ask "which rule said
+// so?", and a reader looking at a rule can ask "what did it give here?".
+//
+// EVERY NUMBER IS THE `rules` TOOL'S (src/mcp/tools_rules.mjs), the same answer
+// a model gets over MCP: the list with what each rule gave in this pack, and one
+// rule whole with the links and nodes it gave, a page at a time. Whether a
+// rule's examples hold comes from `GET /api/rules/examples`, which runs them the
+// way `cascade rules test` does. The page filters the rows it holds and counts
+// nothing itself.
+//
+// WHAT APPLIES HERE COMES FIRST (RM67). The tab used to open on the first pack
+// by name, so a NestJS project opened on a MyBatis-Plus-Join rule that did
+// nothing for it, and a Prisma rule that had made every statement said "0 links".
+// It now opens on the rules that gave something in this project, biggest first,
+// with the rest one click away.
 
-const RULES = { catalog:null, pick:null };
+const RULES = { list:null, examples:null, detail:new Map(), pick:null, offset:0, q:'', kind:'', lane:'', scope:null, seq:0 };
+const RULES_PAGE = 10;
+const RULES_LANES = ['java', 'ts', 'sql'];
 
-async function fetchRules(){
-  const was=STATE.project;
-  const r=await fetch(withProject('/api/rules'));
-  const j=await r.json();
-  if(was!==STATE.project) throw staleAnswer(was);
-  if(j.error) throw new Error(j.error.code+': '+j.error.message);
-  return j;
+/** Everything the tab held for the project being left. */
+function rulesReset(){
+  RULES.list=null; RULES.detail.clear(); RULES.pick=null; RULES.offset=0; RULES.scope=null; RULES.seq++;
 }
 
 async function loadRules(){
-  const box=byId('rulesview');
-  box.replaceChildren(el('div',{className:'panel',textContent:t('rules.loading')}));
-  try { RULES.catalog=await fetchRules(); } catch(e){ if(stale(e)) return; box.replaceChildren(errPanel(e)); return; }
+  byId('rulesview').replaceChildren(el('div',{className:'panel',textContent:t('rules.loading')}));
+  const mine=++RULES.seq;
+  let r;
+  try { r=await api('rules', {}); } catch(e){ rulesFailed(e, mine); return; }
+  if(mine===RULES.seq) rulesTake(r);
+}
+function rulesFailed(e, mine){
+  if(stale(e) || mine!==RULES.seq) return;
+  byId('rulesview').replaceChildren(errPanel(e));
+}
+/** The list landed: open on what applies here when anything does, and on its biggest rule. */
+function rulesTake(r){
+  RULES.list=r;
+  if(RULES.scope===null) RULES.scope = r.answer.totals.here>0 ? 'here' : 'all';
+  RULES.pick=rulesDefaultPick();
+  drawRules();
+  rulesLoadExamples();
+  if(RULES.pick) rulesLoadDetail(RULES.pick, 0);
+}
+/** The rule picked before, while it is still on the list; else the first row. */
+function rulesDefaultPick(){
+  const shown=rulesShown();
+  if(RULES.pick && shown.some((x)=> x.id===RULES.pick)) return RULES.pick;
+  return shown.length ? shown[0].id : null;
+}
+
+/** Whether each example holds: about the engine, not a project, so asked once. */
+async function rulesLoadExamples(){
+  if(RULES.examples || SNAP) return;
+  try { RULES.examples=rulesVerdicts(await (await fetch('/api/rules/examples')).json()); }
+  catch(e){ /* no verdicts: the examples are shown without one, and say so */ }
+  if(RULES.list) drawRules();
+}
+const rulesVerdicts=(j)=> (j && Array.isArray(j.rules)) ? new Map(j.rules.map((x)=> [x.id, x])) : null;
+
+/** One rule whole, and a page of what it gave, kept per rule and offset. */
+async function rulesLoadDetail(id, offset){
+  const key=id+'@'+offset;
+  if(RULES.detail.has(key)) { drawRules(); return; }
+  const mine=RULES.seq, project=STATE.project;
+  let r;
+  try { r=await api('rules', { rule:id, limit:RULES_PAGE, offset }); }
+  catch(e){ if(stale(e)) return; r={ error:e }; }
+  if(mine!==RULES.seq || project!==STATE.project) return;
+  RULES.detail.set(key, r);
   drawRules();
 }
 
-const allRules=(cat)=> cat.packs.flatMap((p)=>p.rules);
-
-/** A language change redraws the tab's own words from the catalogue already held; nothing is asked again. */
+/** A language change redraws the tab's own words from the answers already held; nothing is asked again. */
 function renderRulesChrome(){
-  if(RULES.catalog) drawRules();
+  rulesRenderToolbar();
+  if(RULES.list) drawRules();
 }
 
-function drawRules(){
-  const cat=RULES.catalog;
-  const pick=allRules(cat).find((r)=>r.id===RULES.pick) || allRules(cat)[0] || null;
-  byId('rulesview').replaceChildren(el('div',{className:'cols'},[ rulesListPanel(cat, pick), ruleDetailPanel(cat, pick) ]));
+// The filters, each on its own: the scope, the lane, the kind and the words typed.
+const rulesTyped=()=> RULES.q.trim().toLowerCase();
+const RULES_FILTERS=[
+  (x)=> RULES.scope!=='here' || x.here,
+  (x)=> !RULES.lane || x.lane===RULES.lane,
+  (x)=> !RULES.kind || x.kind===RULES.kind,
+  (x)=> !rulesTyped() || (x.id+' '+x.pack+' '+x.kind+' '+x.description).toLowerCase().includes(rulesTyped()),
+];
+/** The rows this list shows, out of the rows the answer holds. */
+function rulesShown(){
+  const rows=(RULES.list && RULES.list.answer.rules) || [];
+  return rows.filter((x)=> RULES_FILTERS.every((f)=> f(x)));
 }
 
-function rulesListPanel(cat, pick){
-  return el('div',{className:'panel'},[
-    el('h2',{textContent:t('rules.title')}),
-    el('div',{className:'comment',textContent:t('rules.lede')}),
-    ...cat.packs.map((p)=> el('div',{className:'rulepack'},[
-      el('h3',{textContent:p.name+'@'+p.version}),
-      el('div',{className:'comment',textContent:p.description}),
-      el('ul',{className:'list'}, p.rules.map((r)=> ruleRow(cat, r, r===pick))),
-    ])),
-  ]);
+function rulesSetScope(scope){
+  RULES.scope=scope;
+  drawRules();
 }
-
-function ruleRow(cat, r, active){
-  return el('li',{className: active ? 'rulerow sel' : 'rulerow'},[
-    el('a',{className:'id clickable',textContent:r.id,onclick:()=>{ RULES.pick=r.id; drawRules(); }}),
-    el('span',{},[ el('span',{className:'tag',textContent:r.kind}), ' ', gradeOf(cat, r), ' ', appliedTag(r) ]),
-  ]);
+function rulesPick(id){
+  RULES.pick=id; RULES.offset=0;
+  drawRules();
+  rulesLoadDetail(id, 0);
 }
-
-/** The grade a rule gives: its own, else its kind's; a kind that only classifies gives none. */
-function gradeOf(cat, r){
-  const cap=(cat.kinds.find((k)=>k.name===r.kind)||{}).gradeCap || null;
-  const g=r.grade || cap;
-  return g ? badge(g) : null;
+function rulesPage(id, offset){
+  RULES.offset=offset;
+  rulesLoadDetail(id, offset);
 }
-
-function appliedTag(r){
-  if(r.appliedHere===null) return el('span',{className:'tag',title:t('rules.applied.none.title'),textContent:t('rules.applied.none')});
-  return el('span',{className:'tag',title:t('rules.applied.title'),textContent:t('rules.applied',{n:r.appliedHere})});
-}
-
-function ruleDetailPanel(cat, r){
-  if(!r) return el('div',{className:'panel',textContent:t('rules.empty')});
-  const { library, ...params }=r.params||{};
-  return el('div',{className:'panel'},[
-    el('div',{className:'srchead'},[ el('span',{className:'id',textContent:r.id}), el('span',{className:'tag',textContent:r.kind}), gradeOf(cat, r) ]),
-    el('p',{textContent:r.description}),
-    r.why ? el('h3',{textContent:t('rules.why')}) : null,
-    r.why ? el('p',{className:'comment',textContent:r.why}) : null,
-    library ? libraryBlock(library) : null,
-    el('h3',{textContent:t('rules.params')}),
-    el('pre',{className:'rulesrc',textContent:JSON.stringify(params, null, 2)}),
-    el('h3',{textContent:t('rules.examples',{n:r.examples.length})}),
-    el('ol',{className:'ruleex'}, r.examples.map(exampleItem)),
-    el('div',{className:'comment',textContent:t('rules.how')}),
-  ]);
-}
-
-/** What a rule relying on a library's declaration relies on, and where anyone can check it. */
-function libraryBlock(lib){
-  return el('div',{},[
-    el('h3',{textContent:t('rules.library')}),
-    el('div',{className:'id',textContent:lib.type}),
-    el('pre',{className:'rulesrc',textContent:lib.declares}),
-    el('div',{className:'comment',textContent:t('rules.library.source',{source:lib.source})}),
-  ]);
-}
-
-function exampleItem(ex){
-  return el('li',{},[
-    el('pre',{className:'rulesrc',textContent: ex.source!==undefined ? ex.source : ex.path}),
-    el('div',{className:'comment',textContent:t('rules.expect',{expect:JSON.stringify(ex.expect)})}),
-    ex.why ? el('div',{className:'comment',textContent:ex.why}) : null,
-  ]);
+/** The toolbar's controls, wired once; each redraws from the rows already held. */
+function rulesWire(){
+  const q=byId('rq');
+  if(!q) return;
+  q.addEventListener('input', ()=>{ RULES.q=q.value; drawRules(); });
+  byId('rkind').onchange=(e)=>{ RULES.kind=e.target.value; drawRules(); };
+  byId('rlane').onchange=(e)=>{ RULES.lane=e.target.value; drawRules(); };
 }

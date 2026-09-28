@@ -20,7 +20,7 @@
 // Pure: graph in, plain view model out — no contract, no paging, no DOM. Lists
 // come back WHOLE and sorted; the tool caps them and declares the cut.
 
-import { walkEndpoints, walkScreens, multiHandlerRoutes } from './walks.mjs';
+import { walkEndpoints, walkScreens, multiHandlerRoutes, handlersOf } from './walks.mjs';
 import { GRADE_SETS, FLOW_EDGE_TYPES } from './graph.mjs';
 
 // The lattice order, strongest first — the order grades are reported in, so the
@@ -32,6 +32,31 @@ const GRADE_ORDER = Object.freeze(['EXACT', 'SOUND_SET', 'HEURISTIC', 'RUNTIME_O
 const UNTYPED = 'unknown';
 /** How many duplicated FQNs the `duplicate-types` note names inline. */
 const DUPLICATE_TYPES_NAMED = 3;
+
+/**
+ * WHAT A READER CAN DO ABOUT EACH GAP, which is how the page sorts them:
+ *   input       this run did not have something (a schema, a lane, the project a
+ *               call goes to); the note names what to give it
+ *   unresolved  it had the input and could not read part of it; the note says
+ *               where and why
+ *   query       this walk chose not to look (a mode floor, a depth, a cap); a
+ *               wider question looks
+ *   unreached   the walk looked and did not get there: worth a look, not an error
+ *   info        a fact about the pack a reader should know, with nothing to fix
+ * A kind this table does not name is `info`, so a new gap is shown, not lost.
+ */
+const GAP_CLASS = Object.freeze({
+  'no-catalog': 'input', 'not-shipped': 'input', 'http-calls-leaving-pack': 'input',
+  'unresolved-calls': 'unresolved', 'external-symbols': 'unresolved', 'screen-components-unresolved': 'unresolved',
+  'screens-from-server': 'unresolved', 'jpa-statements-unresolved': 'unresolved', 'mp-columns-runtime-only': 'unresolved',
+  'mode-floor': 'query', 'depth-cap': 'query', 'node-cap': 'query', 'generated-walk-skip': 'query',
+  'endpoints-without-statement': 'unreached', 'statements-not-reached': 'unreached', 'tables-not-reached': 'unreached',
+  'openapi-drift': 'unreached',
+  'multi-handler-routes': 'info', 'duplicate-types': 'info', 'generated-code': 'info',
+  'screens-seen-at-run-time': 'info', 'runtime-evidence': 'info',
+});
+/** The class of a gap kind (see GAP_CLASS). */
+export const gapClassOf = (kind) => GAP_CLASS[kind] ?? 'info';
 
 // How many multi-handler routes the gap NOTE names inline. The whole list is in
 // `reach.samples.multiHandlerEndpoints`; the note is a sentence, not a table.
@@ -277,7 +302,7 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
   // on the same handler walk the same chain once — and a route declared by TWO
   // controllers contributes BOTH, or the second module's code would be counted
   // as unreached).
-  const { endpoints: walked, walk } = walkEndpoints(graph, { mode, depth });
+  const { endpoints: walked, walk, services } = walkEndpoints(graph, { mode, depth });
   const reachedStatements = new Set();
   const endpointsWithoutStatement = [];
   const tableEndpoints = new Map();  // table node id -> Set(endpoint id)
@@ -341,11 +366,40 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
   const unreachedTables = tableIds.filter((id) => !reachedTables.has(id)).map(strip);
 
   return {
+    servicesReached: services.size, routeGrades: routeGradesOf(graph, endpointIds), stoppedAtRoute: stoppedAtRouteOf(graph, walked),
     walked, walk, reachedStatements, endpointsWithoutStatement, tableEndpoints, tableStatements,
     endpointRows, depthCapped, reachedTables, reachedColumns, screenNodes, webScreenStats,
     screensBlock, multiHandler, statements, tables, outboundEndpoints, endpoints, codeAxis,
     unreachedStatements, unreachedTables,
   };
+}
+
+/**
+ * HOW SURE EACH ROUTE'S OWN ADDRESS IS: the served routes counted by the grade
+ * of their HANDLES edge, the strongest where a route has two handlers. A walk
+ * starts at the handler, so this grade is nowhere on a Flow picture drawn down
+ * from the route, and it is the grade a lane gives a route whose address rests
+ * on something it could not read.
+ */
+function routeGradesOf(graph, endpointIds) {
+  const counts = new Map();
+  for (const id of endpointIds) {
+    let best = null;
+    for (const e of graph.outEdges(id)) {
+      if (e.type === 'HANDLES' && (best === null || GRADE_ORDER.indexOf(e.grade) < GRADE_ORDER.indexOf(best))) best = e.grade;
+    }
+    if (best !== null) counts.set(best, (counts.get(best) ?? 0) + 1);
+  }
+  return Object.fromEntries(GRADE_ORDER.filter((g) => counts.has(g)).map((g) => [g, counts.get(g)]));
+}
+
+/**
+ * The routes this walk stopped at: each names a handler, and every link to one
+ * is below this mode's floor, so the walk started at the route and went
+ * nowhere. Said beside "reach no SQL", because that is a different reason.
+ */
+function stoppedAtRouteOf(graph, walked) {
+  return walked.filter((ep) => ep.handlers === 0 && handlersOf(graph, ep.id).length > 0).length;
 }
 
 /**
@@ -391,7 +445,7 @@ function buildGaps(o) {
   // be attributed to a table), SELECT * cannot be expanded, and a column answer
   // holds what the SQL spelled out rather than the whole truth. `count` is the
   // tables that came from statements alone, because that number IS the size of
-  const say = (gap) => gaps.push(gap);
+  const say = (gap) => gaps.push({ ...gap, class: gapClassOf(gap.kind) });
   schemaGaps(o, say);
   routeGaps(o, say);
   laneGaps(o, say);
@@ -400,6 +454,22 @@ function buildGaps(o) {
   budgetGaps(o, say);
   restGaps(o, say);
   return gaps;
+}
+
+/**
+ * How many method calls the lanes could not place, summed over every lane that
+ * counts them: the Java lane's own `unresolvedCalls`, and `calls.unresolved` in
+ * any other lane's block (the TypeScript lane's). Null when no lane counted, so
+ * a pack whose lanes kept no tally is unknown rather than zero.
+ */
+export function unresolvedCallsOf(laneStats) {
+  if (!laneStats) return null;
+  let n = Number.isInteger(laneStats.unresolvedCalls) ? laneStats.unresolvedCalls : null;
+  for (const block of Object.values(laneStats)) {
+    const u = block && typeof block === 'object' && block.calls ? block.calls.unresolved : undefined;
+    if (Number.isInteger(u)) n = (n ?? 0) + u;
+  }
+  return n;
 }
 
 /**
@@ -427,7 +497,7 @@ function schemaGaps(o, say) {
       note: `we read this pack without the Java lane${lanes ? ` (lanes: ${lanes.join(' + ')})` : ''}, so it holds no endpoint at all. All ${statements} statement(s) here have no known caller, and the service, endpoint and @Transactional counts are absent, not empty`,
     });
   } else {
-    const unresolved = laneStats && Number.isInteger(laneStats.unresolvedCalls) ? laneStats.unresolvedCalls : null;
+    const unresolved = unresolvedCallsOf(laneStats);
     say({
       kind: 'unresolved-calls', count: unresolved,
       note: unresolved == null
@@ -575,7 +645,7 @@ function laneGaps(o, say) {
  */
 function reachGaps(o, say) {
   const {
-    depth, endpointsWithoutStatement, mode, screensBlock, statements, tables,
+    depth, endpointsWithoutStatement, mode, screensBlock, statements, stoppedAtRoute, tables,
     unreachedStatements, unreachedTables,
   } = o;
   if (screensBlock && screensBlock.componentUnresolved > 0) {
@@ -589,7 +659,8 @@ function reachGaps(o, say) {
   if (endpointsWithoutStatement.length > 0) {
     say({
       kind: 'endpoints-without-statement', count: endpointsWithoutStatement.length,
-      note: `${endpointsWithoutStatement.length} endpoint(s) reach no SQL statement at mode=${mode}, depth ${depth}. They may touch no database at all (login, file upload), or we could not tell where one of their calls goes`,
+      note: `${endpointsWithoutStatement.length} endpoint(s) reach no SQL statement at mode=${mode}, depth ${depth}. They may touch no database at all (login, file upload), or we could not tell where one of their calls goes`
+        + (stoppedAtRoute > 0 ? `. ${stoppedAtRoute} of them stop at the route itself: every link from the route to its handler is graded below this mode's floor, so a wider mode walks into them` : ''),
     });
   }
   if (unreachedStatements.length > 0) {
@@ -766,6 +837,29 @@ function laneBlocks(laneStats) {
   return out;
 }
 
+/** THE CODE AXIS, sized: what the lanes read, and what the walks reached of it. */
+function codeBlock(o) {
+  return {
+    symbols: o.symbols, external: o.external, transactional: o.transactional,
+    mapperMethods: o.mapperMethods.size, statementsWithoutMapper: o.statementsWithoutMapper,
+    // The methods the walks pass through between a route's handler and its
+    // SQL, each once: the Flow tab's services lane, over every route. A
+    // controller method, a frontend function and a mapper method are not one.
+    // A reach, not a census: a method no route's walk gets to is not here.
+    services: o.servicesReached,
+    // What the MyBatis-Plus lane added to the CODE axis: entities mapped,
+    // built-in statements generated, and how many of those name their columns
+    // only at run time. Reported here as well as under `mybatisPlus` because
+    // this is the block a reader looks at to size the code axis.
+    mpEntities: o.mpEntities, mpBuiltinStatements: o.mpStatements, mpStatementsRuntimeOnlyColumns: o.mpRuntimeOnly,
+    // 0 on a project that declared no generatedSources — which is "nothing was
+    // classified", NOT "there is no generated code here". `gaps` says which.
+    generated: o.generatedSymbols,
+    generatedInternalEdges: o.generatedInternalEdges,
+    generatedBoundaryEdges: o.generatedBoundaryEdges,
+  };
+}
+
 export function buildOverview(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   if (!GRADE_SETS[mode]) throw new OverviewError(`unknown mode: ${JSON.stringify(mode)}`);
@@ -783,13 +877,11 @@ export function buildOverview(graph, opts = {}) {
   // is the one thing that keeps a field on the answer and the number behind it
   // from drifting apart.
   const {
-    columns, endpoints, endpointsWithoutStatement, external, generatedBoundaryEdges,
-    generatedInternalEdges, generatedSymbols, hubEndpoints, hubTables, jpaEntities,
-    jpaRepositories, jpaStatements, jpaUnresolved, mapperMethods, mpEntities, mpLogicDelete,
+    columns, endpoints, endpointsWithoutStatement, hubEndpoints, hubTables, jpaEntities,
+    jpaRepositories, jpaStatements, jpaUnresolved, mpEntities, mpLogicDelete,
     mpRuntimeOnly, mpStatements, mpUnresolved, multiHandler, nodeCount, outboundEndpoints,
-    reachedColumns, reachedStatements, reachedTables, screensBlock, statementTypeCount,
-    statements, statementsWithoutMapper, symbols, tables, transactional, unreachedStatements,
-    unreachedTables, edgeCount, gradeCount,
+    reachedColumns, reachedStatements, reachedTables, routeGrades, screensBlock, statementTypeCount,
+    statements, tables, unreachedStatements, unreachedTables, edgeCount, gradeCount,
   } = o;
   return {
     mode,
@@ -812,6 +904,8 @@ export function buildOverview(graph, opts = {}) {
       // How many routes more than one controller method declares. The walk above
       // covers every one of their handlers; this is the count that says so.
       endpointsWithMultipleHandlers: multiHandler.length,
+      // The served routes by the grade of their own address (routeGradesOf).
+      routeGrades,
       statements,
       statementsReached: reachedStatements.size,
       tables,
@@ -828,19 +922,7 @@ export function buildOverview(graph, opts = {}) {
         multiHandlerEndpoints: multiHandler,
       },
     },
-    code: {
-      symbols, external, transactional, mapperMethods: mapperMethods.size, statementsWithoutMapper,
-      // What the MyBatis-Plus lane added to the CODE axis: entities mapped,
-      // built-in statements generated, and how many of those name their columns
-      // only at run time. Reported here as well as under `mybatisPlus` because
-      // this is the block a reader looks at to size the code axis.
-      mpEntities, mpBuiltinStatements: mpStatements, mpStatementsRuntimeOnlyColumns: mpRuntimeOnly,
-      // 0 on a project that declared no generatedSources — which is "nothing was
-      // classified", NOT "there is no generated code here". `gaps` says which.
-      generated: generatedSymbols,
-      generatedInternalEdges,
-      generatedBoundaryEdges,
-    },
+    code: codeBlock(o),
     jpa: {
       entities: jpaEntities,
       repositories: jpaRepositories.size,

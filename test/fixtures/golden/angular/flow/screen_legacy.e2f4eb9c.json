@@ -38,13 +38,16 @@
           "depth": 0,
           "nodeCap": false,
           "byMode": 1,
+          "byModeGrades": {
+            "UNRESOLVED": 1
+          },
           "generated": 0
         },
         "beyond": {
           "tables": 0
         },
         "endLane": "tables",
-        "note": "1 link(s) below the grade floor of mode=conservative were not walked, so an empty band here can be the mode rather than an absence; try mode=heuristic"
+        "note": "1 link(s) are RUNTIME_ONLY/UNRESOLVED, which no mode walks, so an empty band here is what we could not resolve rather than the mode"
       },
       "layers": [
         {
@@ -180,7 +183,7 @@
       },
       {
         "scope": "flow",
-        "reason": "1 link(s) below the grade floor of mode=conservative were not walked, so an empty band here can be the mode rather than an absence; try mode=heuristic"
+        "reason": "1 link(s) are RUNTIME_ONLY/UNRESOLVED, which no mode walks, so an empty band here is what we could not resolve rather than the mode"
       }
     ],
     "truncated": {

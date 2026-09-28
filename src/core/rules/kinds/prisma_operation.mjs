@@ -191,6 +191,7 @@ function runExamples(entries, env) {
 
 export const prismaOperation = Object.freeze({
   name: 'prisma.operation',
+  lane: 'ts',
   stage: 'ts-facts',
   // A field named as a literal key of the call is one the call reads or writes.
   gradeCap: 'EXACT',

@@ -15,7 +15,7 @@
 // when the code axis (Java lane) lands, the same tools gain candidate grades and
 // the response contract already carries them.
 
-import { nodeId, FLOW_EDGE_TYPES } from '../core/graph.mjs';
+import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS } from '../core/graph.mjs';
 import { changeImpact } from '../core/overlay.mjs';
 import { chainWalk, nodeLabel } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
@@ -58,6 +58,32 @@ const REACH_MODE = { strict: 'strict', conservative: 'conservative', heuristic: 
 const reachMode = (m) => (Object.hasOwn(REACH_MODE, m) ? REACH_MODE[m] : undefined);
 // The next mode that would look wider than this one; null when already widest.
 const widerMode = (m) => (m === 'strict' ? 'conservative' : m === 'conservative' ? 'heuristic' : null);
+/**
+ * The links a mode floor kept out, by grade, as a clause to follow "were not
+ * walked": how many of each grade, and which no mode walks at all,
+ * because "try a wider mode" is only half true when some were UNRESOLVED. Empty
+ * where the walk recorded no split.
+ */
+function floorSplit(byModeGrades, wider) {
+  const parts = Object.entries(byModeGrades ?? {}).filter(([, n]) => n > 0).sort(([a], [b]) => cmpStr(a, b));
+  if (parts.length === 0) return '';
+  const never = parts.filter(([g]) => !GRADE_SETS.heuristic.has(g)).map(([g]) => g);
+  return ` (${parts.map(([g, n]) => `${n} ${g}`).join(', ')}${never.length > 0 && wider ? `; no mode walks the ${never.join(' or ')} ones` : ''})`;
+}
+/**
+ * The narrowest wider mode that would walk some of the links this one's floor
+ * kept out, or null when none would: already the widest, or every one of them
+ * is RUNTIME_ONLY or UNRESOLVED. A walk that recorded no split is taken at its
+ * word, as before: the next mode up.
+ */
+function widerThatHelps(mode, byMode, byModeGrades) {
+  const parts = Object.entries(byModeGrades ?? {}).filter(([, n]) => n > 0);
+  if (parts.length === 0) return widerMode(mode);
+  for (let m = widerMode(mode); m; m = widerMode(m)) {
+    if (parts.some(([g]) => GRADE_SETS[m].has(g))) return m;
+  }
+  return null;
+}
 
 /** column_impact — "if I change this column, which statements break?" */
 export function column_impact(graph, args, ctx) {
@@ -1119,9 +1145,9 @@ export function coupling(graph, args, ctx) {
     const wider = widerMode(mode);
     limits.push({ scope: 'coupling', reason: `the walk reached no statement at all (mode=${mode}, depth ${depth}). This matrix is empty because of the walk, not because these groups share nothing${wider ? `; try mode=${wider}` : ''}` });
   } else if (w.byMode > 0) {
-    const wider = widerMode(mode);
+    const wider = widerThatHelps(mode, w.byMode, w.byModeGrades);
     limits.push({ scope: 'coupling', reason: wider
-      ? `${w.byMode} link(s) below the grade floor of mode=${mode} were not walked. An empty cell here can be the mode, not an absence. Try mode=${wider}`
+      ? `${w.byMode} link(s) below the grade floor of mode=${mode} were not walked${floorSplit(w.byModeGrades, wider)}. An empty cell here can be the mode, not an absence. Try mode=${wider}`
       : `${w.byMode} link(s) are RUNTIME_ONLY/UNRESOLVED, and no mode walks them, so an empty cell here is what the analyzer could not resolve, not the mode` });
   }
   if (c.unknownAccess > 0) {
@@ -1285,9 +1311,9 @@ function mapWalkLimits(limits, s, { mode, depth }) {
     const wider = widerMode(mode);
     limits.push({ scope: 'map', reason: `the walk reached no statement at all (mode=${mode}, depth ${depth}). This map has no endpoint to table line because of the walk, not because these endpoints touch nothing${wider ? `; try mode=${wider}` : ''}` });
   } else if (w.byMode > 0) {
-    const wider = widerMode(mode);
+    const wider = widerThatHelps(mode, w.byMode, w.byModeGrades);
     limits.push({ scope: 'map', reason: wider
-      ? `${w.byMode} link(s) below the grade floor of mode=${mode} were not walked. A missing line here can be the mode, not an absence. Try mode=${wider}`
+      ? `${w.byMode} link(s) below the grade floor of mode=${mode} were not walked${floorSplit(w.byModeGrades, wider)}. A missing line here can be the mode, not an absence. Try mode=${wider}`
       : `${w.byMode} link(s) are RUNTIME_ONLY/UNRESOLVED, and no mode walks them, so a missing line here is what the analyzer could not resolve, not the mode` });
   }
 }
@@ -1441,6 +1467,33 @@ function federatedPicture(crossings, self) {
 // behind a "showing 10 of 12" and call the answer a census anyway.
 const OVERVIEW_CAP = 10;
 
+/** Why each empty list of an overview answer is empty. */
+function overviewEmpty(answer, meta) {
+  const empty = {};
+  if (answer.nodes.length === 0) empty.nodes = 'none';
+  if (answer.edges.length === 0) empty.edges = 'none';
+  if (answer.grades.length === 0) empty.grades = 'none';
+  // No statement at all is the SQL lane never having run, not "this schema has
+  // no queries" — the same word the other tools use for a lane that is absent.
+  if (answer.statementTypes.length === 0) empty.statementTypes = 'not-shipped';
+  if (answer.gaps.length === 0) empty.gaps = 'none';
+  // A pack that kept no run diagnostics at all said nothing, which is not "none".
+  if (answer.diagnostics.length === 0) empty.diagnostics = Array.isArray(meta?.diagnostics) ? 'none' : 'not-shipped';
+  return empty;
+}
+
+/**
+ * What the ANALYSIS could not read, in the lanes' own words: the run's
+ * diagnostics a lane marked `warn` or `error`, each of which names what it could
+ * not read and, where there is one, what to declare. An `info` one is a default
+ * the run assumed and said so, which is the profile's business, not a gap.
+ */
+function packDiagnostics(meta) {
+  return (Array.isArray(meta?.diagnostics) ? meta.diagnostics : [])
+    .filter((d) => d && (d.severity === 'warn' || d.severity === 'error'))
+    .map((d) => ({ kind: d.kind, severity: d.severity, key: d.key ?? null, reason: d.reason }));
+}
+
 /**
  * overview — the pack at a glance: what is in it, how much of it is connected
  * from an HTTP route down to a table, and what the engine could not see. The
@@ -1521,19 +1574,13 @@ export function overview(graph, args, ctx) {
     ...(o.openapi ? { openapi: o.openapi } : {}),
     hubs: { tables: cut(o.hubs.tables), endpoints: cut(o.hubs.endpoints) },
     gaps: o.gaps,
+    diagnostics: packDiagnostics(meta),
     // HOW MUCH OF THIS PACK LEAVES IT (RM44): the calls that go to a route this
     // project does not serve, and how many of those another registered project
     // answers. Counted here so the page states it rather than re-deriving it.
     federation: federationCensus(graph, ctx),
   };
-  const empty = {};
-  if (answer.nodes.length === 0) empty.nodes = 'none';
-  if (answer.edges.length === 0) empty.edges = 'none';
-  if (answer.grades.length === 0) empty.grades = 'none';
-  // No statement at all is the SQL lane never having run, not "this schema has
-  // no queries" — the same word the other tools use for a lane that is absent.
-  if (answer.statementTypes.length === 0) empty.statementTypes = 'not-shipped';
-  if (answer.gaps.length === 0) empty.gaps = 'none';
+  const empty = overviewEmpty(answer, meta);
   if (Object.keys(empty).length) answer.empty = empty;
 
   // The honesty block twice, in the two places a reader looks: `gaps` is the
@@ -1541,7 +1588,7 @@ export function overview(graph, args, ctx) {
   const limits = [...(ctx.limits ?? []), ...o.gaps.map((g) => ({
     scope: 'overview',
     reason: `${g.kind} (${g.count == null ? 'unknown' : g.count}): ${g.note}`,
-  }))];
+  })), ...answer.diagnostics.map((d) => ({ scope: `diagnostic:${d.kind}`, reason: d.reason }))];
   if (!meta) limits.push({ scope: 'overview', reason: 'this server supplied no pack metadata, so project, digest, build time, lanes and base commit are unknown, not absent' });
 
   const trunc = [
@@ -1649,6 +1696,7 @@ function flowEndpointEntry(graph, args, ctx, mode) {
     handler: handler ? strip(handler) : (ep.handler ?? null),
     handlerShort: handler ? nodeLabel(handlerNode, handler) : null,
     handlers: handlerIds.length,
+    ...routeGradeFields(graph, epId),
     owner: handlerNode?.owner ?? null,
     file: ep.file ?? null, line: ep.line ?? null, start,
   };
@@ -1830,9 +1878,9 @@ function flowNotes(limits, notes, { w, up, depth, mode, handlerNote, codeAxis, c
     // Name the mode that WOULD look wider, if there is one. Under heuristic
     // there is none: those links are below every floor, and saying "try
     // conservative" there would send the reader backwards.
-    const wider = widerMode(mode);
+    const wider = widerThatHelps(mode, w.cut.byMode, w.cut.byModeGrades);
     note(wider
-      ? `${w.cut.byMode} link(s) below the grade floor of mode=${mode} were not walked, so an empty band here can be the mode rather than an absence; try mode=${wider}`
+      ? `${w.cut.byMode} link(s) below the grade floor of mode=${mode} were not walked${floorSplit(w.cut.byModeGrades, wider)}, so an empty band here can be the mode rather than an absence; try mode=${wider}`
       : `${w.cut.byMode} link(s) are RUNTIME_ONLY/UNRESOLVED, which no mode walks, so an empty band here is what we could not resolve rather than the mode`);
   }
   // No code axis at all: the lanes above the SQL are not empty, they were never
@@ -2121,6 +2169,27 @@ function endpointHandler(graph, n) {
     handlerId,
     handlerShort: handlerId ? nodeLabel(graph.nodes.get(handlerId), handlerId) : null,
   };
+}
+
+/**
+ * HOW SURE A ROUTE'S OWN ADDRESS IS: the grade of its HANDLES edge, the
+ * strongest where two handlers declare it, with the reason its lane wrote.
+ * Null for a route with no handler. A walk starts at the handler, so without
+ * this a route whose address is a guess reads as sure as any other.
+ */
+function routeGrade(graph, epId) {
+  let best = null;
+  for (const e of graph.outEdges(epId)) {
+    if (e.type === 'HANDLES' && (best === null || gradeRank(e.grade) > gradeRank(best.grade))) best = e;
+  }
+  // An adjacency entry carries no evidence: the full record does.
+  return best ? { grade: best.grade, basis: graph.edgeAt(best.idx)?.evidence?.basis ?? null } : null;
+}
+
+/** The route's own grade and its lane's reason, as fields of a flow entry; none for a route with no handler. */
+function routeGradeFields(graph, epId) {
+  const rg = routeGrade(graph, epId);
+  return rg ? { grade: rg.grade, ...(rg.basis ? { gradeBasis: rg.basis } : {}) } : {};
 }
 
 /** flow list mode — the endpoints or screens a chain can be walked from (the entry picker). */
@@ -2573,6 +2642,7 @@ function browseEndpointRows(graph, census, opts) {
     const row = {
       endpoint: strip(n.id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
       group: opts.groupOf(n.id), handlerShort, handlers: handlerIds.length,
+      grade: routeGrade(graph, n.id)?.grade ?? null,
       statements: reach.statements.size, tables: reach.tables.size,
     };
     out.push({ row, hay: `${row.httpMethod ?? ''} ${row.path ?? ''} ${handlerIds.map(strip).join(' ')}`.toLowerCase() });
@@ -2787,7 +2857,7 @@ function packageDepthOf(ctx) {
 function groupingLimit(scope, ctx) {
   const depth = packageDepthOf(ctx);
   return depth == null
-    ? { scope, reason: 'a group is the first segment of an API path. It is a naming habit, not a module boundary anyone declared' }
+    ? { scope, reason: 'a group is the first segment of an API path, read below the prefix the application is deployed under where its lane knows one (a global prefix, a version, a module path). It is a naming habit, not a module boundary anyone declared' }
     : { scope, reason: `a group is the handler's package, cut to ${depth} segment(s) by the profile's moduleAttribution.packageDepth. That is a boundary the project declared in its code layout, not the API path` };
 }
 function anyKind(graph, kind) {

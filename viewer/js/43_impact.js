@@ -15,19 +15,44 @@ async function railToggleTable(tab, id){
   if (R.cols.has(id)) { railRenderRows(tab); return; }   // asked once, kept
   R.cols.set(id, null);                                  // null means "on its way"
   railRenderRows(tab);
-  try {
-    const r = await api('browse', { kind:'column', table:id, limit:RAIL_PAGE });
-    R.cols.set(id, r.answer.items || []);
-  } catch(e){
-    if (stale(e)) { R.cols.delete(id); return; }
-    R.cols.set(id, []);
-  }
+  const got = await railFetchColumns(id);
+  if (!got) { R.cols.delete(id); return; }
+  R.cols.set(id, got);
   railRenderRows(tab);
 }
+/**
+ * One table's columns: `{items, empty}`, or `{error}` when the lookup failed,
+ * or null for an answer the page has moved on from. A FAILED LOOKUP IS NOT AN
+ * EMPTY TABLE: it used to be stored as an empty list and drawn as "nothing
+ * here", which on the Impact tab reads as "no column of this table is affected
+ * by anything". It is kept as a failure, with the server's own sentence and a
+ * way to ask again.
+ */
+async function railFetchColumns(id){
+  try {
+    const r = await api('browse', { kind:'column', table:id, limit:RAIL_PAGE });
+    return { items:r.answer.items || [], empty:r.answer.empty || null };
+  } catch(e){ return stale(e) ? null : { error:e }; }
+}
+/** A lookup that failed, said as one: the server's own sentence, and a way to ask again. */
+function railColumnsFailed(tab, id, e){
+  return el('div', { className:'empty railerr' }, [
+    t('rail.tree.failed', { message:(e && e.message) || String(e) }), ' ',
+    el('button', { className:'mini', textContent:t('rail.tree.retry'), onclick:() => railRetryTable(tab, id) }) ]);
+}
+/** Ask for a table's columns again, after a lookup that failed. */
+function railRetryTable(tab, id){
+  const R = RAIL[tab];
+  R.cols.delete(id);
+  R.openTables.delete(id);
+  railToggleTable(tab, id);
+}
 function railChildren(tab, id){
-  const R = RAIL[tab], cols = R.cols.get(id);
-  if (cols == null) return el('div', { className:'brchildren' }, [el('div', { className:'empty', textContent:t('rail.tree.loading') })]);
-  if (!cols.length) return el('div', { className:'brchildren' }, [el('div', { className:'empty', textContent:t('empty.none') })]);
+  const R = RAIL[tab], got = R.cols.get(id);
+  if (got == null) return el('div', { className:'brchildren' }, [el('div', { className:'empty', textContent:t('rail.tree.loading') })]);
+  if (got.error) return el('div', { className:'brchildren' }, [railColumnsFailed(tab, id, got.error)]);
+  const cols = got.items;
+  if (!cols.length) return el('div', { className:'brchildren' }, [el('div', { className:'empty', textContent:emptyText(got.empty, 'items') })]);
   const kids = [];
   for (const c of cols) railRowNodes(tab, 'column', c, kids, true);
   return el('div', { className:'brchildren' }, kids);

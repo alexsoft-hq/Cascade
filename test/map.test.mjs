@@ -117,7 +117,7 @@ test('walkEndpoints: two routes on the SAME handler chain are ONE walk (memoised
   // methods, so 4 distinct starts here — the memo is proved on the mall pack
   // below (155 starts for 160 endpoints).
   assert.equal(w.walk.starts, 4);
-  assert.deepEqual(w.walk, { starts: 4, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints: 0 });
+  assert.deepEqual(w.walk, { starts: 4, depthCut: 0, depthCutStarts: 0, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 0, outboundEndpoints: 0 });
 });
 
 test('walkEndpoints: an unknown mode / a bad depth is refused before anything is walked', () => {
@@ -509,7 +509,7 @@ test('map on the mall pack: 32 groups, 239 endpoints, 49 of 76 tables, 345 touch
   // because those two effects cancel on this pack. Five chains are still open at
   // the depth cap.
   assert.deepEqual(a.summary.walk,
-    { starts: 239, depthCut: 7, depthCutStarts: 5, nodeCapStarts: 0, byMode: 0, generated: 0, multiHandlerEndpoints: 7, outboundEndpoints: 0 });
+    { starts: 239, depthCut: 7, depthCutStarts: 5, nodeCapStarts: 0, byMode: 0, byModeGrades: {}, generated: 0, multiHandlerEndpoints: 7, outboundEndpoints: 0 });
   // …and those 7 routes are disclosed, not left for the reader to spot.
   assert.ok(r.limits.some((l) => /7 route\(s\) are declared by more than one controller method/.test(l.reason)));
   const twice = a.nodes.filter((n) => n.kind === 'endpoint' && n.handlers > 1);

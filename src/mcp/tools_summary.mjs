@@ -19,7 +19,12 @@ function groupLimit(rule) {
     return `a group is the handler's package cut to ${rule.packageDepth} segment(s), as the profile declares in moduleAttribution.packageDepth`;
   }
   if (rule.kind === 'code-path') {
-    return `a group is where the handler code sits, read below the package every handler shares (${rule.commonPrefix || 'none'}). Nobody declared it a module, so it is often a business area and not always one. Declare moduleAttribution.packageDepth to set the groups yourself`;
+    return `a group is where the handler code sits, read below the ${rule.by === 'directory' ? 'directory' : 'package'} every handler shares (${rule.commonPrefix || 'none'}). Nobody declared it a module, so it is often a business area and not always one. Declare moduleAttribution.packageDepth to set the groups yourself`;
+  }
+  if (rule.kind === 'lane') {
+    return 'a group is the first segment of a route below the prefix the application is deployed under, as its lane read that prefix from the source'
+      + (rule.onePackage ? `, because every handler sits in the one package ${rule.onePackage}` : '')
+      + '. It is how the routes are named, not a module anyone declared';
   }
   return `a group is the route path's segment below ${rule.commonPath}`
     + (rule.onePackage ? `, because every handler sits in the one package ${rule.onePackage}` : ', because no route here has a handler')
