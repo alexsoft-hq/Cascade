@@ -313,7 +313,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
     note: 'the root of the NestJS application the TypeScript lane reads when frameworkPacks declares nestjs, manifest-relative. One application per pack: an endpoint is keyed by its verb and path alone. `cascade init` writes the root of the one application it finds (a package depending on @nestjs/core whose source calls NestFactory.create); --ts-src still wins for one run',
   },
   'tsBackend.prismaSchema': {
-    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    status: 'consumed', where: 'src/cli/ts_inputs.mjs',
     note: 'the schema.prisma the application\'s Prisma calls are read against, manifest-relative. Null finds `prisma/schema.prisma` at or above the application root, which is where Prisma itself looks first; a declared file that is not there is a warning, and no Prisma call is read. The schema is read again on every run and recorded by hash on laneStats.ts',
   },
   'tsBackend.globalPrefix': {
@@ -325,15 +325,15 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
     note: 'the route patterns the global prefix excludes, in Nest\'s own pattern syntax (`health`, `users/:id`, `docs{/*rest}`), used INSTEAD of the bootstrap\'s `exclude` option. It is for an exclude list the bootstrap builds at run time (a template, a spread of a list): while one entry is unread, every route under the prefix is graded HEURISTIC, because an unread entry may name it',
   },
   'tsBackend.typeorm.namingStrategy': {
-    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    status: 'consumed', where: 'src/cli/ts_inputs.mjs',
     note: 'the naming strategy the application\'s TypeORM DataSource runs with, by the name the typeorm rule pack gives it (`default` for DefaultNamingStrategy, `snake` for typeorm-naming-strategies\' SnakeNamingStrategy; "" is none named, which is the default), used INSTEAD of what the DataSource options in the source name. It is for options the source does not write out (`TypeOrmModule.forRoot()` reads ormconfig or the environment, a factory this engine does not read): undeclared there, the names a strategy derives are graded HEURISTIC. A declaration that differs from what the options name is used and said',
   },
   'tsBackend.typeorm.entityPrefix': {
-    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    status: 'consumed', where: 'src/cli/ts_inputs.mjs',
     note: 'the entityPrefix the TypeORM DataSource puts before every table name ("" for none), used INSTEAD of what the options say. While it is neither declared nor read from options the source writes out, no table name is EXACT, the ones the decorators write included, since the prefix goes before them too',
   },
   'tsBackend.typeorm.schema': {
-    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    status: 'consumed', where: 'src/cli/ts_inputs.mjs',
     note: 'the schema the TypeORM DataSource gives every entity that names none ("" for none), used INSTEAD of what the options say. A table is then keyed schema.table, as the SQL lane keys one. While it is neither declared nor read, the table of an entity that names no schema is not EXACT',
   },
   'jpa.namingStrategy': {

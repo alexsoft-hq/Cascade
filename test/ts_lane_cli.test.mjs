@@ -220,12 +220,14 @@ test('a shared lib the TypeScript lane read, edited, makes the pack the working 
   assert.deepEqual(pack.meta.base.dirtyFiles, ['libs/common/src/email.ts']);
 });
 
-test('the working-tree overlay declines a pack that reads TypeScript, and base-only still answers', (t) => {
+test('the working-tree overlay re-reads the edited TypeScript file of a pack that reads the lane, and base-only still answers', (t) => {
   const { ws } = initAndAnalyze(t);
   fs.appendFileSync(path.join(ws.dir, SERVICE), '\n// dirty\n');
   const overlaid = cli(['impact', '--root', ws.dir, '--file', SERVICE], ws);
-  assert.notEqual(overlaid.code, 0);
-  assert.match(overlaid.stderr, /overlay unavailable \[ts-not-overlaid\]: this pack reads a TypeScript backend/);
+  assert.equal(overlaid.code, 0, overlaid.stderr);
+  assert.match(overlaid.stdout, /^overlay [0-9a-f]+ \(fresh\): re-parsed 0 java \+ 0 frontend \+ 1 TypeScript file\(s\), dropped 0, provisional 0 node\(s\) \/ 0 edge\(s\)$/m,
+    'a comment adds no fact, so nothing is provisional');
+  assert.match(overlaid.stdout, /^ {2}GET \/api\/v1\/users {2}\[SOUND_SET\]$/m, 'and the routes above the file are the answer');
   const baseOnly = cli(['impact', '--root', ws.dir, '--file', SERVICE, '--mode', 'base-only'], ws);
   assert.equal(baseOnly.code, 0, baseOnly.stderr);
   assert.match(baseOnly.stdout, /mode base-only/);

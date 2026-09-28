@@ -29,8 +29,8 @@ import { createFactsStore, nodeFactsIo, validateIndex } from '../core/facts_stor
 import { INCREMENTAL_ENGINE_VERSION } from '../core/incremental.mjs';
 import { underAny } from '../core/invalidate.mjs';
 import { jpaNamingOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
-import { overlayGraph, classifyDirtyFiles, ddlFilesOf } from '../core/overlay.mjs';
-import { assertOverlayable, runOverlayLanes, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
+import { overlayGraph, classifyDirtyFiles, classifyTsDirtyFiles, ddlFilesOf } from '../core/overlay.mjs';
+import { assertOverlayable, runOverlayLanes, runOverlayTsLane, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
 import { overlaySession } from '../core/overlay_session.mjs';
 import { ownStateDirRel, isOwnStatePath } from '../core/paths.mjs';
 import { normalizeProfile } from '../core/profile.mjs';
@@ -39,6 +39,7 @@ import {
   ENGINE_ROOT, findJdk, gitText, listMapperXml, parseJsonl, realPath, splitZ, sqlPython, noSqlPython,
 } from './env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane, webPackagesRead } from './lanes_run.mjs';
+import { tsLaneInputFiles, tsLaneOptions, tsLaneRunners } from './ts_inputs.mjs';
 import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
 import { catalogLaneInputs, jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
@@ -229,6 +230,9 @@ export function refuse({ session, dirtyFiles, entries, idx, profile, baseCommit,
  * The four lane invocations an overlay may make, bound to this run's roots and
  * reading convention. `jdk` is looked up at most once, and only if a `.java`
  * really changed: an overlay over an edited `.vue` must not need a compiler.
+ * The web worker leaves the TypeScript backend's root out, as it did for
+ * `analyze`: those files are that lane's, and the frontend's package
+ * configuration is read over the files the frontend really has.
  */
 function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, stale, jdkBox, mapperAlternatives, catalogIn }) {
   const mapperDirsAbs = (selection.mapperDirs ?? []).map(absOf);
@@ -238,6 +242,7 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
   const runpy = (script, args) => execFileSync(pyRes.path, [path.join(A, script), ...args], { maxBuffer: 1 << 28 }).toString('utf8');
   const needPy = (what) => { if (!pyRes.ok) stale(noSqlPython(`the overlay must rerun ${what} and`, pyRes)); };
   const sourceRoots = (selection.webRoots ?? []).map(absOf);
+  const excludeRoots = (selection.tsRoots ?? []).map(absOf);
   const run = {
     java: (targets) => {
       if (!jdkBox.jdk) {
@@ -274,8 +279,8 @@ function laneRunners({ rootAbs, selection, sqlArgs, absOf, templateRootsAbs, sta
       } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
     },
     catalog: () => { if (!catalogIn.fromSnapshot) needPy('the DDL catalog'); return catalogIn.read(runpy); },
-    web: (targets) => runWebLane(rootAbs, targets, { sourceRoots, templateRoots: templateRootsAbs }),
-    webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots, templateRoots: templateRootsAbs }),
+    web: (targets) => runWebLane(rootAbs, targets, { sourceRoots, templateRoots: templateRootsAbs, excludeRoots }),
+    webConfigs: (roots) => runWebLane(rootAbs, roots, { configsOnly: true, sourceRoots, templateRoots: templateRootsAbs, excludeRoots }),
   };
   return { run, runpy, needPy, mapperDirsAbs, skipped };
 }
@@ -292,8 +297,29 @@ export function catalogInputsOf(pack, selection, absOf, sqlArgs) {
   return catalogLaneInputs({ ddls: fromSnapshot ? [] : files, snapshot: fromSnapshot ? files[0] ?? null : null, sqlArgs });
 }
 
+/**
+ * THE TYPESCRIPT LANE OF AN OVERLAY, or null when the base pack read none: the
+ * walk `analyze` runs over the shards (src/core/overlay_lanes.mjs
+ * runOverlayTsLane), with the runners `analyze` runs it with, and the bridge's
+ * options built by the one function `analyze` builds them with
+ * (src/cli/ts_inputs.mjs), from the tsconfig, schema.prisma and package.json
+ * files on disk now; and which of the changed files the lane claims.
+ */
+function overlayTsLane({ idx, store, rootAbs, absOf, profile, profileDir, sqlArgs, catalogRecords, changed }) {
+  const appRootAbs = (idx.selection?.tsRoots ?? []).map(absOf)[0] ?? null;
+  if (!appRootAbs) return null;
+  const lane = runOverlayTsLane({
+    index: idx, store, rootsAbs: [appRootAbs], run: tsLaneRunners(rootAbs, appRootAbs), hash: sha256File, abs: absOf, changed,
+  });
+  const options = tsLaneOptions({ rootAbs, appRootAbs, profile, profileDir, sqlArgs, catalogRecords });
+  const claims = classifyTsDirtyFiles(changed, {
+    read: lane.tsFilesRead, baseRead: Object.keys(idx.tsFiles ?? {}), inputFiles: tsLaneInputFiles(rootAbs, appRootAbs, options.prismaSchemaFile),
+  });
+  return { ...lane, options, claims };
+}
+
 /** Re-parse exactly the dirty files and read the rest back out of the shards. */
-export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives, profile = null, pack = null }) {
+export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, mapperAlternatives, profile = null, pack = null, profileDir = null, changed = [] }) {
   const selection = idx.selection ?? {};
   const store = createFactsStore({ io: ephemeralIo(nodeFactsIo(fs)), projectId: idx.project, env: process.env });
   const webRootsAbs = (selection.webRoots ?? []).map(absOf);
@@ -322,7 +348,8 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
     profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy,
     catalogRecords: lanes.catalogRecords, statementRecords: lanes.statementRecords,
   });
-  return { lanes, webRootsAbs, templateRootsAbs, javaLanesOf };
+  const ts = overlayTsLane({ idx, store, rootAbs, absOf, profile, profileDir, sqlArgs, catalogRecords: lanes.catalogRecords, changed });
+  return { lanes, webRootsAbs, templateRootsAbs, javaLanesOf, ts };
 }
 
 /**
@@ -450,10 +477,33 @@ export function unreadInputLimits(pack) {
   }];
 }
 
+/**
+ * WHICH APPLICATION THE TYPESCRIPT LANE READS, said when the live profile
+ * names another. The overlay reads the root the fact index records, the one
+ * the base pack read, because every shard and every import it follows belongs
+ * to that application; a profile that has named another since changes what
+ * the next `analyze` reads, and this answer does not see it.
+ *
+ * @param {object} idx  the fact index
+ * @param {object|null} profile  the live profile
+ * @param {string|null} profileDir  the directory `tsBackend.app` is relative to
+ */
+export function tsInputLimits(idx, profile, profileDir) {
+  const read = idx.selection?.tsRoots?.[0];
+  const named = (profile?.frameworkPacks ?? []).includes('nestjs') ? profile?.tsBackend?.app : null;
+  if (typeof read !== 'string' || typeof named !== 'string' || !profileDir) return [];
+  const namedRel = path.relative(idx.root, path.resolve(profileDir, named)).split(path.sep).join('/');
+  if (namedRel === read) return [];
+  return [{
+    scope: 'overlay',
+    reason: `the profile names the TypeScript application ${namedRel}, and this pack read ${read}. The overlay reads ${read}, as the base pack did, so ${namedRel} is not seen in this answer. Run \`cascade analyze\``,
+  }];
+}
+
 /** Fold the re-parsed facts and the reused shards into one graph, and say what happened. */
 export function overlayState({
   lanes, dirty, dirtyFiles, session, baseGraph, profile, selection, sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf = null,
-  openapiDocuments = null, limits = [], webInputs = null,
+  openapiDocuments = null, limits = [], webInputs = null, ts = null,
 }) {
   const tBuild = Date.now();
   const built = overlayGraph({
@@ -475,18 +525,37 @@ export function overlayState({
     // declines above when the SQL arguments (which carry it) have moved.
     identifierCase: sqlArgs.identifierCase,
     javaLanesOf,
+    // The TypeScript lane's stream, and the options `analyze` builds (src/cli/ts_inputs.mjs).
+    tsFacts: ts?.tsFacts ?? [], ts: ts?.options ?? null,
   });
-  const timingsMs = { ...lanes.timingsMs, build: Date.now() - tBuild };
-  timingsMs.total = timingsMs.loadBase + timingsMs.java + timingsMs.web + timingsMs.sql + timingsMs.build;
+  const timingsMs = { ...lanes.timingsMs, ts: ts?.ms ?? 0, build: Date.now() - tBuild };
+  timingsMs.total = timingsMs.loadBase + timingsMs.java + timingsMs.web + timingsMs.sql + timingsMs.ts + timingsMs.build;
   return {
     applied: true, state: 'fresh', session, graph: built.graph,
     dirtyFiles, parsedFiles: lanes.parsedFiles, droppedFiles: lanes.dropFiles,
     parsedWebFiles: lanes.parsedWebFiles, droppedWebFiles: lanes.webDropFiles,
-    webConfigFiles: dirty.webConfig,
-    unmatched: dirty.other, provisional: built.provisional, taggedEdges: built.taggedEdges,
-    reusedShards: lanes.reusedShards, javaStats: built.javaStats, webStats: built.webStats,
+    webConfigFiles: dirty.webConfig, ...tsReport(ts),
+    unmatched: unclaimedByTs(dirty.other, ts), provisional: built.provisional, taggedEdges: built.taggedEdges,
+    reusedShards: lanes.reusedShards, javaStats: built.javaStats, webStats: built.webStats, tsStats: built.tsStats,
     timingsMs, limits,
   };
+}
+
+/**
+ * What an overlay's TypeScript lane read, for the answer to say: the files
+ * the worker read again, those the base pack read and this overlay no longer
+ * does, and the lane-wide inputs (a tsconfig, schema.prisma, a package.json)
+ * it found changed and read again whole.
+ */
+function tsReport(ts) {
+  return { parsedTsFiles: ts?.parsedTsFiles ?? [], droppedTsFiles: ts?.droppedTsFiles ?? [], tsConfigFiles: ts?.claims.tsConfig ?? [] };
+}
+
+/** The changed files no lane claimed, less those the TypeScript lane did: that lane claims them after it ran. */
+function unclaimedByTs(other, ts) {
+  if (!ts) return other;
+  const claimed = new Set([...ts.claims.ts, ...ts.claims.tsConfig]);
+  return other.filter((f) => !claimed.has(f));
 }
 
 /**
@@ -544,16 +613,27 @@ export function layOverlay({ packDir, pack, baseGraph, profile, idx, session, en
   if (!verdict.ok) return verdict;
   const rootAbs = idx.root;
   const absOf = (rel) => path.resolve(rootAbs, rel);
-  const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf } = runLanes({
+  const profileDir = profileDirOf(packDir, pack);
+  const { lanes, webRootsAbs, templateRootsAbs, javaLanesOf, ts } = runLanes({
     idx, dirty: verdict.dirty, sqlArgs: verdict.sqlArgs, rootAbs, absOf, stale, jdkBox, profile, pack,
-    mapperAlternatives: mapperAlternativesOf(profile, packDir),
+    mapperAlternatives: mapperAlternativesOf(profile, packDir), profileDir, changed: dirtyFiles,
   });
   const webInputs = baseWebInputsOf(pack, rootAbs);
   return overlayState({
     lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs),
-    limits: [...unreadInputLimits(pack), ...webInputLimits(pack, entries, verdict.dirty, webInputs)], webInputs,
-    selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf,
+    limits: [...unreadInputLimits(pack), ...webInputLimits(pack, entries, verdict.dirty, webInputs), ...tsInputLimits(idx, profile, profileDir)], webInputs,
+    selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf, ts,
   });
+}
+
+/**
+ * The directory of the profile the overlay is served with: the file the pack
+ * recorded, else the one beside the pack (src/cli/serve.mjs servedProfile).
+ * `tsBackend.prismaSchema` is relative to it, as `analyze` read it.
+ */
+function profileDirOf(packDir, pack) {
+  const file = [pack?.meta?.profile, path.join(packDir, '..', 'profile.json')].find((f) => typeof f === 'string' && fs.existsSync(f));
+  return file ? path.dirname(file) : null;
 }
 
 /**

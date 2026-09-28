@@ -48,14 +48,24 @@ function printOverlayLine({ baseOnly, o, ov, verbose }) {
     return;
   }
   const t = o.timingsMs ?? {};
-  process.stdout.write(`overlay ${shortSessionId(o.overlaySessionId)} (fresh): re-parsed ${o.parsedFiles.length} java + ${(o.parsedWebFiles ?? []).length} frontend file(s), `
-    + `dropped ${o.droppedFiles.length + (o.droppedWebFiles ?? []).length}, `
-    + `provisional ${o.provisionalIds.symbols.length + o.provisionalIds.endpoints.length + o.provisionalIds.statements.length} node(s) / ${o.provisionalEdges} edge(s)\n`);
-  process.stdout.write(`timings ms: load-base ${t.loadBase} + java ${t.java} + web ${t.web} + sql ${t.sql} + graph ${t.build} = ${t.total}\n`);
+  const c = overlayCounts(o);
+  process.stdout.write(`overlay ${shortSessionId(o.overlaySessionId)} (fresh): re-parsed ${c.parsed} file(s), `
+    + `dropped ${c.dropped}, provisional ${c.provisional} node(s) / ${o.provisionalEdges} edge(s)\n`);
+  process.stdout.write(`timings ms: load-base ${t.loadBase} + java ${t.java} + web ${t.web} + sql ${t.sql} + ts ${t.ts} + graph ${t.build} = ${t.total}\n`);
   if (!verbose) return;
   process.stdout.write(`  reused ${ov.reusedShards} cached java shard(s); dirty documents: ${Object.entries(o.docVersions).map(([f, h]) => `${f}@${h ? h.slice(0, 8) : 'absent'}`).join(', ')}\n`);
-  process.stdout.write(`  parsed: ${o.parsedFiles.join(', ') || '(none)'}\n`);
+  process.stdout.write(`  parsed: ${[...o.parsedFiles, ...o.parsedTsFiles].join(', ') || '(none)'}\n`);
   if (o.unmatchedLanes.length) process.stdout.write(`  no lane claims: ${o.unmatchedLanes.join(', ')}\n`);
+}
+
+/** How many files each lane read again and how many it dropped, and how many nodes only the overlay has. */
+function overlayCounts(o) {
+  const n = (list) => (list ?? []).length;
+  return {
+    parsed: `${n(o.parsedFiles)} java + ${n(o.parsedWebFiles)} frontend + ${n(o.parsedTsFiles)} TypeScript`,
+    dropped: n(o.droppedFiles) + n(o.droppedWebFiles) + n(o.droppedTsFiles),
+    provisional: ['symbols', 'endpoints', 'statements', 'tables', 'columns'].reduce((sum, k) => sum + n(o.provisionalIds[k]), 0),
+  };
 }
 
 /** The answer itself: what was touched, what it reaches, and what it could not place. */

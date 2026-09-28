@@ -178,9 +178,10 @@ function coldReason(input, cold) {
  * too. And a TEMPLATE FILE (RM48): it goes through the same worker, its facts
  * sit in the same kind of shard, and an edit to it invalidates that shard and
  * nothing else. What makes it one is the root it sits under and the suffix
- * that root's view resolver appends.
+ * that root's view resolver appends. The working-tree overlay sorts its dirty
+ * files by this same rule (src/core/overlay.mjs).
  */
-function webInputOf(selection) {
+export function webInputOf(selection) {
   const webRoots = selection.webRoots ?? [];
   const tsRoots = selection.tsRoots ?? [];
   const templateRoots = (selection.templateRoots ?? [])

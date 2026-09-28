@@ -1,7 +1,7 @@
 // overlay_lanes.mjs — getting the DIRTY files parsed, fast (SPEC §10, §2.3).
 //
 // The gates are ≤1 s for a single edited file and ≤3 s for the impact answer,
-// so the overlay may not re-run the pipeline. It runs exactly four things:
+// so the overlay may not re-run the pipeline. It runs exactly five things:
 //
 //   web      the webfacts worker over the dirty frontend files ONLY, plus the
 //            package configuration (`.env*`, the dev proxy, the aliases), which
@@ -21,19 +21,25 @@
 //   lineage  only for statements whose shard is not already in the cache. The
 //            per-statement shards RM3 wrote make a mapper edit cost the
 //            statements that actually moved, not the project's SQL.
+//   ts       the tsfacts worker over the TypeScript files whose bytes no longer
+//            key their shard, and over any file an import reaches for the first
+//            time (`runOverlayTsLane`). Which files the lane reads follows
+//            their imports, so the lane is walked again over the shards; it
+//            costs a hash per file and a directory listing.
 //
-// The reuse logic is not re-implemented here: `runSqlLanesWithShards` from
-// src/core/incremental.mjs is the same function `cascade analyze` runs, handed
-// a store whose writes go to memory. That is the point — an uncommitted edit
-// MUST NOT become a cached fact (§10.1), and an overlay that recomputed SQL by
-// its own route could omit something the certified re-analysis finds.
+// The reuse logic is not re-implemented here: `runSqlLanesWithShards` and
+// `runTsLaneWithShards` from src/core/incremental.mjs are the functions
+// `cascade analyze` runs, handed a store whose writes go to memory. That is
+// the point — an uncommitted edit MUST NOT become a cached fact (§10.1), and an
+// overlay that recomputed SQL by its own route could omit something the
+// certified re-analysis finds.
 //
 // IMPURE by design (it spawns workers and reads shards), and kept thin: every
 // decision it makes is in a pure module (overlay.mjs / overlay_session.mjs /
 // invalidate.mjs) and every edge is injected.
 
 import { splitJavaFactsByFile, splitWebFactsByFile, FactsStoreError } from './facts_store.mjs';
-import { runSqlLanesWithShards } from './incremental.mjs';
+import { runSqlLanesWithShards, runTsLaneWithShards } from './incremental.mjs';
 
 /**
  * A store io that READS the real cache and swallows every write.
@@ -192,6 +198,63 @@ export function runOverlayLanes(a) {
 }
 
 /**
+ * THE TYPESCRIPT LANE, walked the way `analyze` walks it
+ * (src/core/incremental.mjs runTsLaneWithShards) over a store whose writes go
+ * nowhere. That is what makes an overlay over no edit the analyzed graph: the
+ * same files listed under the application's root, the same shards reused, the
+ * same imports followed. An edited file's bytes no longer key its shard, so the
+ * worker reads it again; a file an edited import now reaches is read for the
+ * first time, and one no import reaches any more is left out, as the next
+ * `analyze` would. Nothing crosses files here: the bridge decides that over the
+ * whole stream (src/core/assemble.mjs).
+ *
+ * THE STALE RULE. The worker reads again only what the working tree changed,
+ * or what the base pack never read. A file the base pack read, that git does
+ * not list as changed, and whose shard still does not apply means the fact
+ * cache no longer describes this pack: the TypeScript worker changed (its
+ * version is in every shard's key), the shard is gone, or the file changed
+ * where git does not look. Reading all of it again would blow the latency gate
+ * and describe a pack nobody built, so the overlay declines and names the cure.
+ *
+ * @param {Object} a
+ * @param {Object} a.index  the pack's fact index; its `tsFiles` are what the base read
+ * @param {Object} a.store  a facts store over `ephemeralIo`
+ * @param {string[]} a.rootsAbs  the application's root, as the index records it; empty runs nothing
+ * @param {{tsList:Function, ts:Function, tsResolver:Function}} a.run  src/cli/ts_inputs.mjs tsLaneRunners
+ * @param {(abs:string)=>string} a.hash
+ * @param {(rel:string)=>string} a.abs
+ * @param {string[]} a.changed  every path the working tree changed, root-relative
+ * @returns {{tsFacts:object[], parsedTsFiles:string[], droppedTsFiles:string[], tsFilesRead:string[], ms:number}}
+ */
+export function runOverlayTsLane({ index, store, rootsAbs = [], run, hash, abs, changed = [], clock = () => Date.now() }) {
+  const t0 = clock();
+  if (rootsAbs.length === 0) return { tsFacts: [], parsedTsFiles: [], droppedTsFiles: [], tsFilesRead: [], ms: 0 };
+  const dirty = new Set(changed);
+  const relOf = new Map();
+  const absOf = (rel) => { const a = abs(rel); relOf.set(a, rel); return a; };
+  const ts = runTsLaneWithShards({
+    index, store, roots: rootsAbs, hash, abs: absOf, force: false,
+    run: { ...run, ts: (targets) => { assertTsShardsApply(index, targets.map((t) => relOf.get(t) ?? t), dirty); return run.ts(targets); } },
+  });
+  const read = Object.keys(ts.tsFiles).sort();
+  const now = new Set(read);
+  return {
+    tsFacts: ts.tsFacts, parsedTsFiles: ts.reparsed,
+    droppedTsFiles: Object.keys(index.tsFiles ?? {}).filter((f) => !now.has(f)).sort(),
+    tsFilesRead: read, ms: clock() - t0,
+  };
+}
+
+/** The stale rule of `runOverlayTsLane`: a file about to be read again that the base read and the working tree did not change. */
+function assertTsShardsApply(index, files, dirty) {
+  const unseen = files.filter((f) => index.tsFiles?.[f] && !dirty.has(f));
+  if (unseen.length === 0) return;
+  throw new OverlayStaleError(`the cached TypeScript facts of ${unseen.length} file(s) the working tree did not change no longer apply `
+    + `(${unseen.slice(0, 3).join(', ')}${unseen.length > 3 ? ', and more' : ''}): the TypeScript worker changed since the pack was built, `
+    + 'a shard is gone from the fact cache, or a file changed where git does not look. Run `cascade analyze` to read them again');
+}
+
+/**
  * The overlay cannot be computed from what is on disk (SPEC §17.4
  * `overlay-stale`). The caller turns this into a structured error that names
  * `cascade analyze` as the cure — never into a quiet fallback to the pre-edit
@@ -199,14 +262,15 @@ export function runOverlayLanes(a) {
  */
 /**
  * Whether the overlay can re-read what a pack's fact index holds. The
- * TypeScript backend lane is read by `analyze` only for now: an overlay without
- * it would answer about every TypeScript file as if it had no code, so a pack
- * that reads one is declined, and base-only still answers.
+ * TypeScript lane's entries sit in the index's own `tsFiles`, which is how the
+ * overlay knows which files that lane read. An index written before they did
+ * kept them among the other lanes' in `files`; the overlay cannot tell there
+ * which files the lane read, so it declines, and base-only still answers.
  */
 export function assertOverlayable(index) {
-  // Its entries sit in `tsFiles`; an index written before they did kept them in `files`.
-  if (Object.keys(index.tsFiles ?? {}).length > 0 || Object.values(index.files ?? {}).some((e) => e?.lane === 'ts')) {
-    throw new OverlayStaleError('this pack reads a TypeScript backend, and the working-tree overlay does not re-read TypeScript yet', 'ts-not-overlaid');
+  if (Object.values(index.files ?? {}).some((e) => e?.lane === 'ts')) {
+    throw new OverlayStaleError('this pack\'s fact index keeps its TypeScript shards among the other lanes\' (an older engine wrote it), '
+      + 'so the working-tree overlay cannot tell which files the TypeScript lane read. Run `cascade analyze` to write the index again', 'ts-not-overlaid');
   }
 }
 

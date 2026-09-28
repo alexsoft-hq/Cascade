@@ -24,8 +24,7 @@
 import { FLOW_EDGE_TYPES } from './graph.mjs';
 import { spliceFacts, assembleJavaFacts, assembleWebFacts } from './facts_store.mjs';
 import { withTypeRoles } from './java_roles.mjs';
-import { underAny, isWebPackageConfigFile } from './invalidate.mjs';
-import { isWebSourceFile } from './discover.mjs';
+import { underAny, isWebPackageConfigFile, webInputOf } from './invalidate.mjs';
 import { assembleGraph, javaLaneOptions, openapiLaneOptions } from './assemble.mjs';
 
 const GRADE_RANK = { UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 };
@@ -231,18 +230,26 @@ export class OverlayError extends Error {
 // PURE: it takes records and returns a graph. Reading the shards and running
 // the workers is src/core/overlay_lanes.mjs's job.
 
-/** Node kinds an overlay can INVENT. A table/column comes from the catalog, which the overlay never recomputes. */
-const PROVISIONAL_KINDS = new Set(['symbol', 'endpoint', 'statement']);
+/**
+ * Node kinds an overlay can INVENT. A table or a column too: the overlay never
+ * re-reads a DDL (an edited one declines), but the TypeScript lane's catalog
+ * is code and schema.prisma, read again on every overlay, so an edited entity
+ * can declare a column no certified run has seen.
+ */
+const PROVISIONAL_KINDS = new Set(['symbol', 'endpoint', 'statement', 'table', 'column']);
 
 /**
  * Sort the dirty files into the lanes that can consume them.
  *
  * A file no lane claims is NOT dropped: it comes back in `other`, and the
  * caller reports it as "impact unknown, not zero" (a `.properties`, a build
- * script, a template — this engine has no lane for it).
+ * script, a template — this engine has no lane for it). A TypeScript file
+ * lands there too: which files that lane reads follows the imports of the
+ * files it read, so it is claimed after the lane ran (`classifyTsDirtyFiles`).
  *
  * @param {{status:string, path:string}[]} files  root-relative, status A|M|D
- * @param {{javaRoots:string[], mapperDirs:string[], webRoots:string[], ddls?:string[], ddl?:(string|null)}} selection
+ * @param {{javaRoots:string[], mapperDirs:string[], webRoots:string[], tsRoots?:string[], templateRoots?:object[],
+ *          ddls?:string[], ddl?:(string|null)}} selection
  * @returns {{java:string[], javaDeleted:string[], web:string[], webDeleted:string[],
  *            webConfig:string[], xml:string[], ddl:string[], other:string[]}}
  */
@@ -251,6 +258,11 @@ export function classifyDirtyFiles(files, selection) {
   const sel = selection ?? {};
   const webRoots = sel.webRoots ?? [];
   const ddls = ddlFilesOf(sel);
+  // The web lane's files by the rule `analyze` plans with: a frontend source
+  // under a web root and not under the TypeScript backend's root, which is that
+  // lane's (a workspace whose frontend root holds the API too), or a TEMPLATE
+  // (RM48), which the same worker reads into the same kind of shard.
+  const isWebInput = webInputOf(sel);
   const out = { java: [], javaDeleted: [], web: [], webDeleted: [], webConfig: [], xml: [], ddl: [], other: [] };
   for (const f of files) {
     const p = f && typeof f === 'object' ? f.path : f;
@@ -262,13 +274,7 @@ export function classifyDirtyFiles(files, selection) {
       (status === 'D' ? out.javaDeleted : out.java).push(p);
       continue;
     }
-    if (isWebSourceFile(p) && underAny(p, webRoots)) {
-      (status === 'D' ? out.webDeleted : out.web).push(p);
-      continue;
-    }
-    // A TEMPLATE IS A WEB-LANE FILE (RM48): the same worker reads it and the
-    // same kind of shard holds its facts.
-    if (isTemplateFileOf(p, sel.templateRoots ?? [])) {
+    if (isWebInput(p)) {
       (status === 'D' ? out.webDeleted : out.web).push(p);
       continue;
     }
@@ -301,10 +307,43 @@ export function ddlFilesOf(selection) {
   return sel.ddls ?? (sel.ddl ? [sel.ddl] : []);
 }
 
-/** Whether a file is a template of one of the selection's template roots. */
-function isTemplateFileOf(file, templateRoots) {
-  return templateRoots.some((t) => t && typeof t === 'object' && typeof t.root === 'string'
-    && typeof t.suffix === 'string' && file.endsWith(t.suffix) && underAny(file, [t.root]));
+/**
+ * WHICH DIRTY FILES THE TYPESCRIPT LANE CLAIMS, asked after it ran, because
+ * the files it reads follow the imports of the files it read:
+ *
+ *   ts        a source file it read now, or one the base pack read that it no
+ *             longer reads (deleted, or no import reaches it any more)
+ *   tsConfig  a file every TypeScript file's meaning rests on, which the lane
+ *             read again whole: a tsconfig of the application's chain or one
+ *             that would take the nearest one's place, its schema.prisma, and a
+ *             package.json at or above a file it read, which says whether a
+ *             type's package may be published
+ *
+ * @param {string[]} files  the dirty paths, root-relative
+ * @param {{read?:string[], baseRead?:string[], inputFiles?:string[]}} lane
+ *        the files the lane read now and those the base pack read, and the
+ *        lane-wide input files (src/cli/ts_inputs.mjs tsLaneInputFiles)
+ * @returns {{ts:string[], tsConfig:string[]}}
+ */
+export function classifyTsDirtyFiles(files, { read = [], baseRead = [], inputFiles = [] } = {}) {
+  const source = new Set([...read, ...baseRead]);
+  const inputs = new Set(inputFiles);
+  const out = { ts: [], tsConfig: [] };
+  for (const f of files) {
+    if (source.has(f)) out.ts.push(f);
+    else if (inputs.has(f) || packageAbove(f, read)) out.tsConfig.push(f);
+  }
+  out.ts.sort();
+  out.tsConfig.sort();
+  return out;
+}
+
+/** A package.json whose directory holds one of `files`. */
+function packageAbove(file, files) {
+  const slash = file.lastIndexOf('/');
+  if (file.slice(slash + 1) !== 'package.json') return false;
+  const dir = slash < 0 ? '' : file.slice(0, slash + 1);
+  return files.some((f) => f.startsWith(dir));
 }
 
 /** A config file sits in a directory that holds a web root, or inside one. */
@@ -317,17 +356,15 @@ function nearWebRoot(file, webRoots) {
 
 /** Every symbol, endpoint and statement the base graph never had: marked provisional, and listed by kind. */
 function markProvisional(graph, baseGraph) {
-  const provisional = { symbols: [], endpoints: [], statements: [], edges: 0 };
+  const provisional = { symbols: [], endpoints: [], statements: [], tables: [], columns: [], edges: 0 };
   const provIds = new Set();
   for (const [id, node] of graph.nodes) {
     if (!PROVISIONAL_KINDS.has(node.kind) || baseGraph.nodes.has(id)) continue;
     node.provisional = true;
     provIds.add(id);
-    if (node.kind === 'symbol') provisional.symbols.push(id);
-    else if (node.kind === 'endpoint') provisional.endpoints.push(id);
-    else provisional.statements.push(id);
+    provisional[`${node.kind}s`].push(id);
   }
-  for (const k of ['symbols', 'endpoints', 'statements']) provisional[k].sort();
+  for (const k of ['symbols', 'endpoints', 'statements', 'tables', 'columns']) provisional[k].sort();
   return { provisional, provIds };
 }
 
@@ -404,28 +441,44 @@ function overlayJavaOptions(a) {
  *        them: to the OpenAPI bridge, which puts the routes they declare on the
  *        graph and draws the contract links a rule gives (RM67), and through it
  *        to the Java bridge, which places a functional route by its operation id.
- * @returns {{graph:import('./graph.mjs').Graph, javaStats:object, webStats:(object|null),
- *            provisional:{symbols:string[], endpoints:string[], statements:string[], edges:number},
+ * @param {object[]} [a.tsFacts]  the TypeScript backend's whole tsfacts stream:
+ *        the edited files read again, the rest from their shards, each file the
+ *        imports reach now, walked the way `analyze` walks them
+ *        (src/core/overlay_lanes.mjs runOverlayTsLane)
+ * @param {object|null} [a.ts]  options for the TypeScript bridge, built by the
+ *        one function `analyze` builds them with (tsLaneOptions in
+ *        src/cli/ts_inputs.mjs); null runs no TypeScript bridge
+ * @returns {{graph:import('./graph.mjs').Graph, javaStats:object, webStats:(object|null), tsStats:(object|null),
+ *            provisional:{symbols:string[], endpoints:string[], statements:string[], tables:string[], columns:string[], edges:number},
  *            taggedEdges:number}}
  */
 export function overlayGraph(a) {
-  const {
-    baseShards, dirtyFacts = new Map(), dropFiles = [],
-    webBaseShards = new Map(), webDirtyFacts = new Map(), webDropFiles = [], webConfigRecords = [],
-    catalogRecords = [], lineageRecords = [],
-    baseGraph, overlaySessionId, dirtyFiles = [], openapiDocuments = null,
-    identifierCase = 'exact', bridges = null, web = null, javaLanesOf = null,
-  } = a ?? {};
+  const { baseShards, baseGraph, overlaySessionId, dirtyFiles = [] } = a ?? {};
   if (!(baseShards instanceof Map)) throw new OverlayError('baseShards must be a Map of file -> records');
   if (!baseGraph || typeof baseGraph.nodes?.has !== 'function') throw new OverlayError('baseGraph is required. Without it nothing can be called new');
   if (typeof overlaySessionId !== 'string' || overlaySessionId.length === 0) throw new OverlayError('overlaySessionId is required');
+  const { graph, javaStats, webStats, tsStats } = assembleOverlay(a);
+  // ---- provisional: ids the base graph never had -------------------------
+  const { provisional, provIds } = markProvisional(graph, baseGraph);
+  const taggedEdges = tagOverlayEdges(graph, { dirtyFiles, overlaySessionId, provIds, provisional });
+  return { graph, javaStats, webStats, tsStats, provisional, taggedEdges };
+}
 
-  // The SAME assembly `cascade analyze` runs: splice the shards, put the stream
-  // back into the worker's own order, then the two bridges — through the one
-  // core-owned seam both callers share (src/core/assemble.mjs), so an overlay
-  // graph and an analyze graph cannot be built two different ways. Nothing is
-  // written anywhere — an uncommitted edit must never become a cached fact
-  // (SPEC §10.1: MUST NOT publish).
+/**
+ * The SAME assembly `cascade analyze` runs: splice the shards, put the stream
+ * back into the worker's own order, then the bridges, through the one
+ * core-owned seam both callers share (src/core/assemble.mjs), so an overlay
+ * graph and an analyze graph cannot be built two different ways. Nothing is
+ * written anywhere: an uncommitted edit must never become a cached fact
+ * (SPEC §10.1: MUST NOT publish).
+ */
+function assembleOverlay(a) {
+  const {
+    baseShards, dirtyFacts = new Map(), dropFiles = [],
+    webBaseShards = new Map(), webDirtyFacts = new Map(), webDropFiles = [], webConfigRecords = [],
+    tsFacts = [], ts = null, catalogRecords = [], lineageRecords = [], openapiDocuments = null,
+    identifierCase = 'exact', bridges = null, web = null, javaLanesOf = null,
+  } = a;
   const shards = spliceFacts(baseShards, { replaceForFiles: dirtyFacts, dropFiles });
   const javaFacts = withTypeRoles(assembleJavaFacts(shards));
   // The web lane goes through the same splice, with one difference: the package
@@ -434,24 +487,30 @@ export function overlayGraph(a) {
   const webShards = spliceFacts(webBaseShards, { replaceForFiles: webDirtyFacts, dropFiles: webDropFiles });
   const webFacts = assembleWebFacts(webShards, webConfigRecords);
   const javaLanes = typeof javaLanesOf === 'function' ? javaLanesOf(javaFacts) : {};
-  const { graph, javaStats, webStats } = assembleGraph({
-    bridges, catalogRecords, lineageRecords: [...lineageRecords, ...(javaLanes.lineage ?? [])], javaFacts, webFacts, identifierCase,
+  // The TypeScript lane arrives assembled already: which files it reads follows
+  // their imports, so the caller ran the walk `analyze` runs over the shards
+  // (src/core/incremental.mjs runTsLaneWithShards). What crosses files, from an
+  // import to a Prisma client or a TypeORM repository, is the bridge's, here.
+  return assembleGraph({
+    bridges, catalogRecords, lineageRecords: [...lineageRecords, ...(javaLanes.lineage ?? [])], javaFacts, webFacts, tsFacts, identifierCase,
     java: overlayJavaOptions(a), openapiDocuments: openapiDocuments ?? [], openapi: openapiLaneOptions(openapiDocuments),
     jpa: javaLanes.jpa ?? null,
     mybatisPlus: javaLanes.mybatisPlus ?? null,
+    ts,
     web,
   });
+}
 
-  // ---- provisional: ids the base graph never had -------------------------
-  const { provisional, provIds } = markProvisional(graph, baseGraph);
-
-  // ---- provenance: which edges came out of a re-read file ----------------
-  // An edge's provenance is the file whose bytes produced the fact. For a call
-  // that is the CALLER's file, for a dispatch edge the implementation's, for
-  // HANDLES the controller's. Rather than encode that case by case, an edge is
-  // tagged when EITHER end sits in a dirty file: the tag is a disclosure, and
-  // over-disclosure is the safe direction here (§10.2 — over-approximate,
-  // never omit).
+/**
+ * PROVENANCE: which edges came out of a re-read file, and which touch a node
+ * only the overlay has. An edge's provenance is the file whose bytes produced
+ * the fact. For a call that is the CALLER's file, for a dispatch edge the
+ * implementation's, for HANDLES the controller's. Rather than encode that case
+ * by case, an edge is tagged when EITHER end sits in a dirty file: the tag is a
+ * disclosure, and over-disclosure is the safe direction here (§10.2 —
+ * over-approximate, never omit). Returns how many edges were tagged.
+ */
+function tagOverlayEdges(graph, { dirtyFiles, overlaySessionId, provIds, provisional }) {
   const dirty = dirtyFiles.map(normalize);
   const inDirty = new Map(); // node id -> boolean (each node asked once)
   const touchesDirty = (id) => {
@@ -474,6 +533,5 @@ export function overlayGraph(a) {
       provisional.edges += 1;
     }
   }
-
-  return { graph, javaStats, webStats, provisional, taggedEdges };
+  return taggedEdges;
 }

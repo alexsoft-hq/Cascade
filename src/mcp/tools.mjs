@@ -496,6 +496,8 @@ export function changed_impact(graph, args, ctx) {
   // leaving it under "impact unknown" would tell the reader to go and check a
   // file this engine has already checked. A file no lane read stays unmatched.
   const hasWebEdits = (r.touched.webSymbols ?? []).length > 0;
+  // A TypeScript file with no node stays unmatched: an entity declares tables
+  // and columns no node of it names, and a type can move a call elsewhere.
   const laneRead = new Set(applied ? (ov.parsedWebFiles ?? []) : []);
   const unmatched = r.unmatchedFiles.filter((f) => !laneRead.has(f));
   const readNoNode = r.unmatchedFiles.filter((f) => laneRead.has(f));
@@ -584,12 +586,20 @@ function overlayReport(ov, applied) {
     parsedWebFiles: ov.parsedWebFiles ?? [],
     droppedWebFiles: ov.droppedWebFiles ?? [],
     webConfigFiles: ov.webConfigFiles ?? [],
+    // The TypeScript lane: the files read again, those no import reaches now,
+    // and the tsconfig, schema.prisma and package.json files read again whole.
+    parsedTsFiles: ov.parsedTsFiles ?? [],
+    droppedTsFiles: ov.droppedTsFiles ?? [],
+    tsConfigFiles: ov.tsConfigFiles ?? [],
     unmatchedLanes: ov.unmatched ?? [],
     provisionalEdges: ov.provisional?.edges ?? 0,
     provisionalIds: {
       symbols: ov.provisional?.symbols ?? [],
       endpoints: ov.provisional?.endpoints ?? [],
       statements: ov.provisional?.statements ?? [],
+      // An entity or schema.prisma the TypeScript lane read again can declare these.
+      tables: ov.provisional?.tables ?? [],
+      columns: ov.provisional?.columns ?? [],
     },
     timingsMs: ov.timingsMs ?? null,
   };

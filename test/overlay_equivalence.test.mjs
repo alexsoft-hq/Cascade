@@ -30,12 +30,19 @@
 //              itself, which it used to do as MySQL
 //   snapshot   the same schema from a pinned catalog snapshot, which the overlay
 //              used to hand the DDL reader as if it were DDL
+//   ts-prisma  a NestJS API on Prisma with schema.prisma as its catalog, a lib a
+//              tsconfig path reaches, and a frontend beside it (test/fixtures/ts-nest)
+//   ts-typeorm a NestJS API on TypeORM: entities, a repository, a query builder
+//   ts-dispatch the ts-nest workspace with a call through an abstract class the
+//              module binds, and a lib function both the web lane and the
+//              TypeScript lane read, which is one node naming both lanes
 //
 // What the overlay cannot read again is not in this promise and is said as a
 // limit instead (the Spring XML id generators, an edited package.json or Spring
 // configuration); the limits are pinned at the end of this file.
 //
-// Needs a JDK and the SQL lane's python; skips out loud without them.
+// The Java trees need a JDK and the SQL lane's python, and skip out loud
+// without them; the TypeScript trees need neither.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,6 +60,7 @@ import { casDir } from '../src/core/paths.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { ENGINE_ROOT, FIXTURES, TREES, backend, commit } from '../scripts/golden-trees.mjs';
 import { skipWithoutSqlLane, sqlLaneVenv } from './helpers/lane_prereqs.mjs';
+import { SHARED_API, dispatchTree, prismaTree, typeormTree } from './helpers/ts_trees.mjs';
 
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
 
@@ -392,6 +400,48 @@ test('an edited migration of a split schema declines the overlay, as an edited s
   assert.equal(verdict.state, 'declined');
   assert.match(verdict.reason, /^schema file changed \(prisma\/migrations\/20240102_kind\/migration\.sql\)/);
   assert.deepEqual(classifyDirtyFiles(entries, { ddl: 'db/schema.sql' }).other, ['prisma/migrations/20240102_kind/migration.sql'], 'a file the run did not read as DDL is not one');
+});
+
+// ---------------------------------------------------------------------------
+// the TypeScript lane (RM67): the analyze walk over the shards, and the bridge
+// with the options analyze builds, over no edit
+// ---------------------------------------------------------------------------
+
+/** Nothing was read again and nothing dropped: every shard the run wrote applied. */
+function assertEveryTsShardApplied(r) {
+  assert.deepEqual([r.state.parsedTsFiles, r.state.droppedTsFiles, r.state.tsConfigFiles], [[], [], []]);
+}
+
+test('ts-prisma: over no edit, the overlay builds the analyzed graph, schema.prisma, the Prisma statements, the lib a tsconfig path reaches and the frontend included', { timeout: 600000 }, (t) => {
+  const r = overlayOverNoEdit(analyzed(t, 'ts-prisma', prismaTree, () => []));
+  assert.equal(r.pack.meta.catalog.source, 'prisma', 'schema.prisma is the catalog');
+  assert.ok(r.pack.edges.some((e) => e.type === 'IMPLEMENTS_STMT' && e.to.startsWith('statement:prisma:')), 'the tree has Prisma statements');
+  assert.deepEqual(r.pack.meta.laneStats.ts.reached, ['libs/common/src/email.ts'], 'and a lib its imports reach');
+  assert.ok(r.pack.edges.some((e) => e.type === 'CALLS_HTTP' && e.to === 'endpoint:GET /api/v1/users'), 'and a frontend call that lands on a Nest route');
+  assertEveryTsShardApplied(r);
+  assertSameGraph(r);
+});
+
+test('ts-typeorm: over no edit, the overlay builds the analyzed graph, the entities as a catalog and every repository and builder statement included', { timeout: 600000 }, (t) => {
+  const r = overlayOverNoEdit(analyzed(t, 'ts-typeorm', typeormTree, () => []));
+  const reads = r.pack.edges.filter((e) => e.type === 'READS' && e.from.endsWith('ArticleService.list/0')).map((e) => `${e.to} ${e.grade}`);
+  assert.deepEqual(reads, ['column:article.id EXACT', 'column:article.title EXACT'], 'a select the options name every fact for');
+  assert.ok(r.pack.nodes.some((n) => n.id === 'column:article.authorId' && n.declaredBy === 'typeorm'), 'and a join column the entities declare');
+  assertEveryTsShardApplied(r);
+  assertSameGraph(r);
+});
+
+test('ts-dispatch: over no edit, the overlay builds the analyzed graph, a call through an abstract class the module binds, and a lib function both lanes read', { timeout: 600000 }, (t) => {
+  const r = overlayOverNoEdit(analyzed(t, 'ts-dispatch', dispatchTree, () => []));
+  const send = r.pack.edges.filter((e) => e.type === 'MAY_CALL' && e.from.endsWith('UsersService.create') && e.to.endsWith('.send'));
+  assert.deepEqual(send.map((e) => [e.to, e.grade]), [['symbol:apps/api/src/notify/email.notifier.ts#EmailNotifier.send', 'SOUND_SET']], 'the binding narrows the abstract call to one class');
+  // One function, two lanes: the web lane reads the lib as the frontend's, the
+  // TypeScript lane as a file the API imports, and the overlay keeps it so.
+  const shared = `symbol:${SHARED_API}#pingHealth`;
+  assert.deepEqual(r.pack.nodes.find((n) => n.id === shared)?.lanes, ['ts', 'web']);
+  assert.deepEqual(r.overlay.nodes.find((n) => n.id === shared)?.lanes, ['ts', 'web']);
+  assertEveryTsShardApplied(r);
+  assertSameGraph(r);
 });
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import { factsOfFile } from '../adapters/ts/tsfacts.mjs';
 import { declareAxes } from '../src/core/lanes.mjs';
 import { buildRegistry, RuleError } from '../src/core/rules/registry.mjs';
 import { normalizeProfile, validateProfile, ProfileError, PROFILE_KEY_CONSUMERS } from '../src/core/profile.mjs';
-import { typeormDeclared } from '../src/cli/commands/analyze/lanes.mjs';
+import { typeormDeclared } from '../src/cli/ts_inputs.mjs';
 
 const recordsOf = (files) => files.flatMap(([name, source]) => factsOfFile(name, source));
 

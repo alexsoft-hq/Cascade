@@ -197,7 +197,7 @@ function webFactsWithShards({ plan, index, store, selection, run, hash, abs, wor
  * file's CURRENT bytes is the key the index recorded, the rest read again by
  * the worker in one invocation.
  */
-function readTsBatch(batch, { index, store, run, hash, abs, cold, diag, newIndex, shards, counts }) {
+function readTsBatch(batch, { index, store, run, hash, abs, cold, diag, tsFiles, shards, counts }) {
   const keyOf = (file) => tsShardKey({ path: file, contentSha256: hash(abs(file)), workerVersion: TS_WORKER_VERSION });
   const reparse = [];
   for (const file of batch) {
@@ -206,7 +206,7 @@ function readTsBatch(batch, { index, store, run, hash, abs, cold, diag, newIndex
     const hit = entry && entry.shardKey === key ? tryRead(store, 'tsfacts', key, entry, diag, `tsfacts ${file}`) : null;
     if (hit) {
       shards.set(file, hit.records);
-      newIndex.tsFiles[file] = { lane: 'ts', shardKey: key, sha256: hit.sha256, lines: hit.lines };
+      tsFiles[file] = { lane: 'ts', shardKey: key, sha256: hit.sha256, lines: hit.lines };
       counts.reused += 1;
     } else reparse.push(file);
   }
@@ -217,9 +217,9 @@ function readTsBatch(batch, { index, store, run, hash, abs, cold, diag, newIndex
     const key = keyOf(file);
     const w = store.write('tsfacts', key, records);
     shards.set(file, records);
-    newIndex.tsFiles[file] = { lane: 'ts', shardKey: key, sha256: w.sha256, lines: w.lines };
+    tsFiles[file] = { lane: 'ts', shardKey: key, sha256: w.sha256, lines: w.lines };
   }
-  counts.reparsed += reparse.length;
+  counts.reparsed.push(...reparse);
 }
 
 /** The files the imports and re-exports of `batch` name that this run has not read yet, in path order. */
@@ -261,19 +261,40 @@ function reachedFrom(batch, shards, resolve, seen) {
 function tsFactsWithShards({ index, store, selection, run, hash, abs, cold, diag, newIndex, stats }) {
   const roots = selection.tsRootsAbs ?? [];
   if (roots.length === 0) return [];
+  const ts = runTsLaneWithShards({ index, store, roots, run, hash, abs, force: cold, diag });
+  newIndex.tsFiles = ts.tsFiles;
+  Object.assign(stats, ts.stats);
+  return ts.tsFacts;
+}
+
+/**
+ * THE TYPESCRIPT LANE OVER ITS SHARDS, for `analyze` and the working-tree
+ * overlay alike (see `tsFactsWithShards` for the rules). Split out, as
+ * `runSqlLanesWithShards` is, so the overlay runs this very code over a store
+ * whose writes go nowhere: the files it reads, the shards it reuses and the
+ * imports it follows are then the ones `analyze` would, edit or no edit, and an
+ * uncommitted edit still never becomes a cached fact.
+ *
+ * @param {{index:(object|null), store:object, roots:string[], run:{tsList:Function, ts:Function, tsResolver?:Function},
+ *          hash:Function, abs:Function, force?:boolean, diag?:Function}} a
+ *        `roots` absolute; `force` reuses no shard (a cold run)
+ * @returns {{tsFacts:object[], tsFiles:Object<string,object>, reparsed:string[],
+ *            stats:{reusedTs:number, reparsedTs:number, reachedTs?:number}}}
+ *        `tsFiles` the index entries of every file read, `reparsed` the files the worker read again
+ */
+export function runTsLaneWithShards({ index = null, store, roots, run, hash, abs, force = false, diag = () => {} }) {
   const listed = run.tsList(roots);
   const resolve = typeof run.tsResolver === 'function' ? run.tsResolver(listed) : null;
-  newIndex.tsFiles = {};
+  const tsFiles = {};
   const shards = new Map();
-  const counts = { reused: 0, reparsed: 0 };
+  const counts = { reused: 0, reparsed: [] };
   const seen = new Set(listed);
   for (let batch = [...listed]; batch.length > 0; batch = reachedFrom(batch, shards, resolve, seen)) {
-    readTsBatch(batch, { index, store, run, hash, abs, cold, diag, newIndex, shards, counts });
+    readTsBatch(batch, { index, store, run, hash, abs, cold: force, diag, tsFiles, shards, counts });
   }
-  stats.reusedTs = counts.reused;
-  stats.reparsedTs = counts.reparsed;
+  const stats = { reusedTs: counts.reused, reparsedTs: counts.reparsed.length };
   if (seen.size > listed.length) stats.reachedTs = seen.size - listed.length;
-  return assembleTsFacts(shards);
+  return { tsFacts: assembleTsFacts(shards), tsFiles, reparsed: counts.reparsed.sort(), stats };
 }
 
 /**

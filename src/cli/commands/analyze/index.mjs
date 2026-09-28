@@ -15,13 +15,14 @@ import { symbolsSharedWithOtherLanes } from '../../../adapters/ts_bridge.mjs';
 import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf, jpaNamingOf } from '../../../core/lanes.mjs';
 import { ENGINE_ROOT, SCRATCH, listMapperXml, noSqlPython, sqlPython } from '../../env.mjs';
 import { webPackagesRead } from '../../lanes_run.mjs';
+import { tsLaneOptions } from '../../ts_inputs.mjs';
 import {
   sayDdlChoice, sayHarLane, sayIdentity, sayJavaLanes, sayLaneLine, sayMapperCensus,
   sayNoSchemaFetched, sayOpenApiLane, sayResult, sayRuntimeEvidence, sayScreenAxisAndTemplates,
   sayTsLane, sayVendoredWebRoots, sayWebBridge,
 } from './census.mjs';
 import {
-  annotationLineage, assembleAll, nativeQueryLineage, readOpenApiDocs, runLanes, tsOptionsOf,
+  annotationLineage, assembleAll, nativeQueryLineage, readOpenApiDocs, runLanes,
   webWorkerStatsOf, whichLanesAssemble, wrapperFragmentLineage,
 } from './lanes.mjs';
 import { withPackLock } from '../../pack_history.mjs';
@@ -179,7 +180,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
   } = prepared;
   const openapiDocs = readOpenApiDocs(ctx, { openapiFiles, root, diagnostics });
   const { webFacts, webWorkerStats } = webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root, relOf });
-  const tsOpts = tsOptionsOf({ root, sel, profile, manifestDir: resolved.dotCascade }, sqlArgs, diagnostics);
+  const tsOpts = tsLaneOptions({ rootAbs: path.resolve(root), appRootAbs: sel.tsSrc[0], profile, profileDir: resolved.dotCascade, sqlArgs, catalogRecords: catalog }, diagnostics);
   const {
     graph: g, javaStats: jstats, jpaStats, mpStats, tsStats, openapiStats, webStats: webBridgeStats,
     runtimeStats, otelTraces, webBridgeMs,

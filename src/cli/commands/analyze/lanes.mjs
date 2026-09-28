@@ -19,16 +19,14 @@ import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
 import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
 import { assembleGraph, javaLaneOptions, openapiLaneOptions, webLaneOptions } from '../../../core/assemble.mjs';
-import { ProfileError } from '../../../core/profile.mjs';
 import { serverPortsOf } from '../../../core/server_ports.mjs';
-import { builtinRegistry } from '../../../core/rules/registry.mjs';
 import { webFactsSummary } from '../../../core/facts_store.mjs';
 import { runLanesWithShards } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
 import { findJdk, listMapperXml, parseJsonl } from '../../env.mjs';
-import { LANE_BRIDGES, runJavaLane, runTsLane, runWebLane } from '../../lanes_run.mjs';
-import { tsBridgeOptions, tsReachResolver } from '../../ts_inputs.mjs';
+import { LANE_BRIDGES, runJavaLane, runWebLane } from '../../lanes_run.mjs';
+import { tsLaneRunners } from '../../ts_inputs.mjs';
 import { catalogLaneInputs, jpaOptions, mybatisPlusOptions, whichJavaLanes } from '../../lane_options.mjs';
 import { annotationMappersOf, flattenAnnotationMappers, lineageOfStatements } from '../../java_sql.mjs';
 import { sha256File } from '../../state.mjs';
@@ -64,16 +62,15 @@ function mybatisArgv({ root, tmpDir, mappers, mapperAlternatives, sqlArgs }) {
   return [...base, '--files-from', listFile];
 }
 
-/** The TypeScript backend lane's runners: the files it would read, those files read, and where an import of one leads. */
+/**
+ * The TypeScript backend lane's runners: the files it would read, those files
+ * read, and where an import of one leads. The working-tree overlay takes the
+ * same ones (src/cli/ts_inputs.mjs).
+ */
 function tsRunners(root, tsSrc = []) {
-  return {
-    tsList: (roots) => runTsLane(root, roots, { list: true }).filter((r) => r.kind === 'sourceFile').map((r) => r.file),
-    tsResolver: (listed) => (tsSrc.length > 0 ? tsReachResolver({ rootAbs: path.resolve(root), appRootAbs: tsSrc[0], listed }) : null),
-    ts: (targets) => {
-      process.stderr.write(`TypeScript lane: reading ${targets.length} file(s)…\n`);
-      return runTsLane(root, targets);
-    },
-  };
+  return tsLaneRunners(path.resolve(root), tsSrc[0] ?? null, {
+    onRead: (targets) => process.stderr.write(`TypeScript lane: reading ${targets.length} file(s)…\n`),
+  });
 }
 
 export function laneRunners({ die }, { root, tmpDir, plan, sel, catalogIn, mappers, webSrc, sqlArgs, runpy }) {
@@ -383,44 +380,6 @@ export function webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root,
  * rule handed in is the SAME one the lineage worker matched with, so a bridge
  * cannot key a table differently from the worker that resolved it.
  */
-/**
- * The TypeScript bridge's options for the one application this run reads
- * (src/core/lanes.mjs keeps it to one): its tsconfig's module paths, its
- * schema.prisma (src/cli/ts_inputs.mjs), and the global prefix the profile
- * declares when the source only names one.
- */
-export function tsOptionsOf({ root, sel, profile, manifestDir }, sqlArgs, diagnostics) {
-  const app = sel.tsSrc[0];
-  if (!app) return null;
-  const ts = profile.tsBackend ?? {};
-  const declaredSchema = ts.prismaSchema ? path.resolve(manifestDir ?? root, ts.prismaSchema) : null;
-  const opts = tsBridgeOptions({ rootAbs: path.resolve(root), appRootAbs: app, declaredSchema, sqlArgs });
-  if (declaredSchema && !opts.prisma) {
-    diagnostics.push({ kind: 'MISSING_INPUT', severity: 'warn', key: 'tsBackend.prismaSchema', reason: `tsBackend.prismaSchema names ${ts.prismaSchema}, which is not there, so no Prisma call is read` });
-  }
-  // The application's root, so its own files are told from those its imports reached elsewhere.
-  const appRoot = path.relative(path.resolve(root), app).split(path.sep).join('/');
-  return {
-    ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null,
-    typeorm: typeormDeclared(ts.typeorm), appRoot,
-  };
-}
-
-/**
- * What the profile's `tsBackend.typeorm` block declares, its naming strategy
- * checked against the strategies the typeorm rule pack names ("" is none
- * named, which the pack's default is). Null when it declares nothing.
- */
-export function typeormDeclared(block) {
-  if (!block || Object.values(block).every((v) => v == null)) return null;
-  const name = block.namingStrategy ?? null;
-  const known = builtinRegistry().ofKind('typeorm.entity').flatMap((e) => e.rule.params.strategies.map((s) => s.name));
-  if (name !== null && name !== '' && !known.includes(name)) {
-    throw new ProfileError(`profile.tsBackend.typeorm.namingStrategy must be null, "" or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(name)}`);
-  }
-  return { namingStrategy: name, entityPrefix: block.entityPrefix ?? null, schema: block.schema ?? null };
-}
-
 export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, tsOpts = null }) {
   // The web bridge's own wall time, measured around the bridge and not around
   // the whole assembly: it is the number the lane line reports, so it has to
@@ -449,9 +408,9 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     // The profile's strategy, else the one the project's configuration names (index.mjs).
     jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
-    // The TypeScript backend (index.mjs reads its tsconfig and schema.prisma),
-    // with the SQL catalog this run read, for schema.prisma to be read against.
-    ts: tsOpts && { ...tsOpts, catalogRecords: catalog },
+    // The TypeScript backend, with the options the working-tree overlay builds
+    // too (src/cli/ts_inputs.mjs tsLaneOptions, which index.mjs called).
+    ts: tsOpts,
     // The documents run BEFORE the web bridge (src/core/assemble.mjs): a
     // frontend call must be able to land on a route only a document declares.
     openapi: openapiLaneOptions(openapiDocs),

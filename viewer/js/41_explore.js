@@ -632,6 +632,18 @@ async function doSearch(q) {
       mk('Statements', a.statements||[], 'statement', null), honesty(r, 'explore'));
   } catch(e){ if(stale(e)) return; view.replaceChildren(errPanel(e)); }
 }
+// The files each lane of the overlay read again and dropped, and the nodes only
+// the overlay has (a TypeScript entity it read again can add a table or a column).
+function editsOverlayCounts(o) {
+  const n = (l) => (l || []).length;
+  const ids = o.provisionalIds || {};
+  return {
+    parsed: [...(o.parsedFiles || []), ...(o.parsedWebFiles || []), ...(o.parsedTsFiles || [])].sort(),
+    dropped: n(o.droppedFiles) + n(o.droppedWebFiles) + n(o.droppedTsFiles),
+    provisional: ['symbols', 'endpoints', 'statements', 'tables', 'columns'].reduce((s, k) => s + n(ids[k]), 0),
+  };
+}
+
 async function showEdits() {
   view.replaceChildren(el('div',{className:'panel', textContent:t('load.edits')}));
   try {
@@ -640,16 +652,15 @@ async function showEdits() {
     // actually re-parsed. Without it a provisional row has no provenance.
     const o = a.overlay || null;
     const provSyms = new Set((o&&o.provisionalIds&&o.provisionalIds.symbols||[]).map(x=>x.replace(/^symbol:/,'')));
+    const oc = o && o.applied ? editsOverlayCounts(o) : null;
     const ovPanel = o ? el('div',{className:'panel'},[
       el('h2',{textContent: o.applied ? 'working-tree overlay '+String(o.overlaySessionId||'').slice(0,12) : 'overlay NOT applied ('+o.state+')'}),
       el('p',{className:'hint', textContent: o.applied
-        ? ('re-parsed '+(o.parsedFiles.length+(o.parsedWebFiles||[]).length)+' file(s), dropped '
-           +(o.droppedFiles.length+(o.droppedWebFiles||[]).length)+' — '
-           +(o.provisionalIds.symbols.length+o.provisionalIds.endpoints.length+o.provisionalIds.statements.length)
+        ? ('re-parsed '+oc.parsed.length+' file(s), dropped '+oc.dropped+' — '+oc.provisional
            +' provisional node(s), '+o.provisionalEdges+' provisional edge(s)'
-           +(o.timingsMs? '  ['+o.timingsMs.total+' ms: java '+o.timingsMs.java+', web '+(o.timingsMs.web||0)+', sql '+o.timingsMs.sql+', graph '+o.timingsMs.build+']':''))
+           +(o.timingsMs? '  ['+o.timingsMs.total+' ms: java '+o.timingsMs.java+', web '+(o.timingsMs.web||0)+', ts '+(o.timingsMs.ts||0)+', sql '+o.timingsMs.sql+', graph '+o.timingsMs.build+']':''))
         : (o.reason||'')}),
-      o.applied && (o.parsedFiles.length+(o.parsedWebFiles||[]).length) ? el('ul',{className:'list'}, [...o.parsedFiles, ...(o.parsedWebFiles||[])].sort().map(f=>el('li',{},[
+      o.applied && oc.parsed.length ? el('ul',{className:'list'}, oc.parsed.map(f=>el('li',{},[
         el('span',{className:'id',textContent:f}),
         el('span',{className:'tag',textContent:'re-parsed'+(o.docVersions&&o.docVersions[f]? ' @'+String(o.docVersions[f]).slice(0,8):'')})]))) : null
     ]) : null;
