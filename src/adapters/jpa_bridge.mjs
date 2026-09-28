@@ -692,6 +692,9 @@ function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
   if (a.transient === true) return { ...base, column: null, grade: 'EXACT', reason: '@Transient' };
   if (a.embedded === true) return { ...base, column: null, grade: derivedGrade, reason: '@Embedded is not modelled' };
   if (a.relation === 'oneToMany' || a.relation === 'manyToMany') {
+    // The inverse side names no column and no join table of its own: the side
+    // it is mapped by owns them, and grades them there. Nothing is derived here.
+    if (a.mappedBy) return { ...base, column: null, grade: 'EXACT', reason: 'mappedBy: the other side owns the column' };
     return { ...base, column: null, grade: explicitJoin || explicitJoinTable ? 'EXACT' : derivedGrade };
   }
   if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
@@ -797,6 +800,9 @@ function resolveDerivedRefs(parsed, ctx, sink) {
   const lookup = makeLookup(entities, resolveType);
 
   const touched = [];
+  // Each table's own grade, the one its access is marked with: a column whose
+  // name is derived is a guess on its own READS edge, not on the table.
+  const tableGrades = new Map([[entity.table, entity.tableGrade]]);
   const props = [...parsed.parts.map((p) => p.property), ...parsed.orderBy.map((o) => o.property)];
   if (props.length === 0 && access === 'select') {
     // `findAll`, `findAllByOrderBy…` with no predicate: the query reads the whole
@@ -817,6 +823,7 @@ function resolveDerivedRefs(parsed, ctx, sink) {
       continue;
     }
     touched.push({ table: owner.table, column: attr.column, grade: weakest(owner.tableGrade, attr.grade) });
+    if (!tableGrades.has(owner.table)) tableGrades.set(owner.table, owner.tableGrade);
     // A nested path is a join: every hop's owning table is read on the way.
     for (const hop of r.path.slice(0, -1)) {
       const hopOwner = entities.get(hop.entity);
@@ -828,7 +835,7 @@ function resolveDerivedRefs(parsed, ctx, sink) {
   // the TABLE access is what says the row goes away. Same split lineage.py makes.
   for (const t of touched) {
     sink.reads.push(t);
-    mark(sink.tableAccess, t.table, access === 'delete' && t.table === entity.table ? 'delete' : 'read', t.grade);
+    mark(sink.tableAccess, t.table, access === 'delete' && t.table === entity.table ? 'delete' : 'read', tableGrades.get(t.table) ?? t.grade);
   }
   mark(sink.tableAccess, entity.table, access === 'delete' ? 'delete' : 'read', entity.tableGrade);
   // A SELECT's result IS the entity, so the fetch plan applies to it. A derived
@@ -1015,7 +1022,10 @@ function fetchClosure(root, ctx, forced) {
     }
     seen.add(target.fqn);
     const path = [...cur.path, a.name];
-    const grade = weakest(cur.grade, a.grade ?? 'EXACT', target.tableGrade);
+    // A table is reached because the fetch loads it and the mapping names it:
+    // the key's NAME is graded on the key's own READS edge (and a join table's
+    // on its own columns), never on the table the association reaches.
+    const grade = weakest(cur.grade, target.tableGrade);
     reached.push({ entity: target, joinTable: crossedJoinTable(cur.entity, a, target, ctx), path, grade, rule, fetch });
     queue.push({ entity: target, path, depth: cur.depth + 1, grade });
   };
@@ -1188,7 +1198,9 @@ function cascadeClosure(root, ctx, operation = 'save') {
       const target = targetFqn ? entities.get(targetFqn) : null;
       if (!target || seen.has(target.fqn)) continue;
       seen.add(target.fqn);
-      const grade = weakest(cur.grade, a.grade, target.tableGrade);
+      // As a fetch: the cascade and the target's name reach the table, and a
+      // derived key name stays on the key's own edge.
+      const grade = weakest(cur.grade, target.tableGrade);
       const path = [...cur.path, a.name];
       out.push({ entity: target, path, grade, joinTable: crossedJoinTable(cur.entity, a, target, ctx) });
       queue.push({ entity: target, path, depth: cur.depth + 1, grade });

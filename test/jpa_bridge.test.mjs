@@ -336,7 +336,10 @@ test('a derived query reads exactly its predicate columns, and binds the method 
   assert.equal(gradeOf(g, 'IMPLEMENTS_STMT', nodeId('symbol', `${P}.OwnerRepository#findByLastName`), sid), 'EXACT');
   const reads = g.edges.filter((e) => e.from === sid && e.type === 'READS').map((e) => e.to);
   assert.deepEqual(reads, [colId('owners', 'last_name')]);
-  assert.equal(gradeOf(g, 'EXECUTES', sid, tableId('owners')), 'HEURISTIC');
+  // @Table names owners, so the table is EXACT; the column's name is derived by
+  // a strategy nobody declared, and that guess stays on its own READS edge.
+  assert.equal(gradeOf(g, 'EXECUTES', sid, tableId('owners')), 'EXACT');
+  assert.equal(gradeOf(g, 'READS', sid, colId('owners', 'last_name')), 'HEURISTIC');
   assert.equal(stats.statementsByType.derived, 1);
 });
 

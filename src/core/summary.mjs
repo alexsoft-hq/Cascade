@@ -33,6 +33,7 @@
 // A link between a group and a family is one or more tables some route of the
 // group reaches through a statement, graded by the weakest link on the way.
 
+import { sqlEdgesOf } from './graph.mjs';
 import { walkEndpoints, handlersOf, laneGroupOf } from './walks.mjs';
 
 /** How many groups and table families are drawn before the rest are folded into one box. */
@@ -187,12 +188,12 @@ export function familyRule(tableIds, limit = SUMMARY_LIMIT) {
 }
 
 /** Every table one route reaches, with the weakest grade on the way to each. */
-function tablesOfEndpoint(graph, ep, stmtTables) {
+function tablesOfEndpoint(graph, ep, stmtTables, mode) {
   const out = new Map();
   for (const s of ep.statements) {
     let tables = stmtTables.get(s.id);
     if (!tables) {
-      tables = graph.outEdges(s.id).filter((e) => e.type === 'EXECUTES').map((e) => ({ id: e.to, grade: e.grade }));
+      tables = sqlEdgesOf(graph, s.id, mode).filter((e) => e.type === 'EXECUTES').map((e) => ({ id: e.to, grade: e.grade }));
       stmtTables.set(s.id, tables);
     }
     for (const t of tables) out.set(t.id, weakest(out.get(t.id), weakest(s.grade, t.grade)));
@@ -217,7 +218,7 @@ export function buildSummary(graph, opts = {}) {
   const { endpoints, walk } = walkEndpoints(graph, { mode: opts.mode, depth: opts.depth, packageDepth: opts.packageDepth ?? null });
   const { rule, groupOf } = groupRule(graph, endpoints, opts.packageDepth ?? null, limit);
   const stmtTables = new Map();
-  const reach = endpoints.map((ep) => [ep, tablesOfEndpoint(graph, ep, stmtTables)]);
+  const reach = endpoints.map((ep) => [ep, tablesOfEndpoint(graph, ep, stmtTables, opts.mode ?? 'conservative')]);
   const allTables = [...new Set(reach.flatMap(([, t]) => [...t.keys()]))].sort(cmp);
   const fam = familyRule(allTables, limit);
   const groups = new Map();

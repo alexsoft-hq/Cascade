@@ -38,7 +38,7 @@
 
 import { walkEndpoints, walkScreens, groupOfPath, handlerStartsOf, primaryHandlerOf } from './walks.mjs';
 import { nodeLabel } from './chain.mjs';
-import { GRADE_SETS, DEFAULT_WALK_DEPTH } from './graph.mjs';
+import { GRADE_SETS, DEFAULT_WALK_DEPTH, sqlEdgesOf } from './graph.mjs';
 
 /** The `layers` values this view recognises. */
 export const LAYERS = Object.freeze(['statements', 'screens']);
@@ -113,7 +113,7 @@ for (const ep of endpoints) {
  * 2. WHAT EACH ENDPOINT ENDS AT: the tables its walk touches, the statements it
  * runs, and the weakest grade on the way to each.
  */
-function mapReaches(graph, endpoints, withStatements) {
+function mapReaches(graph, endpoints, withStatements, mode) {
 // ---- 2. what each endpoint ends at --------------------------------------
 // `touches` is the SHORTCUT link endpoint→table, with the statements folded
 // into it; the `statements` layer replaces it with the two real steps
@@ -134,7 +134,7 @@ for (const ep of endpoints) {
       if (!cur) epToStmt.set(k, { source: ep.id, target: s.id, kind: 'executes', grade: s.grade });
       else if (RANK[s.grade] > RANK[cur.grade]) cur.grade = s.grade;
     }
-    for (const e of graph.outEdges(s.id)) {
+    for (const e of sqlEdgesOf(graph, s.id, mode)) {
       if (e.type !== 'EXECUTES') continue;
       const access = graph.edgeAt(e.idx)?.evidence?.access ?? 'read';
       touchedTables.add(e.to);
@@ -536,7 +536,7 @@ export function buildMap(graph, opts = {}) {
   });
 
   const groupOf = mapGroups(endpoints);
-  const { touches, epToStmt, stmtToTable, stmtGrade, touchedTables } = mapReaches(graph, endpoints, withStatements);
+  const { touches, epToStmt, stmtToTable, stmtGrade, touchedTables } = mapReaches(graph, endpoints, withStatements, mode);
   const { screenRows, screensReaching, screensTotal } = mapScreens(graph, { endpoints, mode, depth, withScreens });
   const { tableFacts, nodes } = mapNodes(graph, {
     endpoints, extraNodes, groupOf, screenRows, stmtGrade, touchedTables, withStatements, mode,

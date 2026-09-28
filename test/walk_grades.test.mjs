@@ -15,6 +15,10 @@ import { chainWalk } from '../src/core/chain.mjs';
 import { appliedIndex } from '../src/core/rules/applied.mjs';
 import { buildOverview } from '../src/core/overview.mjs';
 import { flow } from '../src/mcp/tools.mjs';
+import { buildMap } from '../src/core/map.mjs';
+import { buildSummary } from '../src/core/summary.mjs';
+import { buildCoupling } from '../src/core/coupling.mjs';
+import { callTool } from '../src/mcp/catalog.mjs';
 
 const ctxOf = (g) => ({ graph: g, basis: { project: 't', buildDigest: 'd', builtAt: 'x', freshness: { verdict: 'unknown' } }, trust: { trustLevel: 'UNCERTIFIED' }, limits: [] });
 
@@ -121,4 +125,47 @@ test('the overview counts a service that sends its SQL itself as a service, and 
   g.addEdge({ from: 'symbol:p.OrderService#list', to: 'symbol:p.OrderMapper#selectAll', type: 'MAY_CALL', grade: 'SOUND_SET' });
   g.addEdge({ from: 'symbol:p.OrderMapper#selectAll', to: 'statement:p.OrderMapper.selectAll', type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
   assert.equal(buildOverview(g).code.services, 2, 'UsersService.list and OrderService.list; not the controllers, not the mapper method');
+});
+
+/** The routine graph with a guessed table beside it: `guessed` reached only through a HEURISTIC EXECUTES and READS, and a @Transactional service above it. */
+function guessedTableGraph() {
+  const g = routineGraph();
+  g.addNode({ id: 'table:guessed', kind: 'table' });
+  g.addNode({ id: 'column:guessed.name' });
+  g.addEdge({ from: 'table:guessed', to: 'column:guessed.name', type: 'DECLARES', grade: 'EXACT' });
+  g.addEdge({ from: 'statement:p.M.call', to: 'table:guessed', type: 'EXECUTES', grade: 'HEURISTIC', evidence: { access: 'read' } });
+  g.addEdge({ from: 'statement:p.M.call', to: 'column:guessed.name', type: 'READS', grade: 'HEURISTIC' });
+  g.nodes.get('symbol:p.C#run').transactional = true;
+  return g;
+}
+
+test('census_floors_statement_sql_edges: every view counts the tables and columns a walk reaches in its mode as Flow draws them', () => {
+  const g = guessedTableGraph();
+  const flowTables = (mode) => flow(g, { endpoint: 'GET /r', mode }, ctxOf(g)).answer.tables.map((t) => t.table).sort();
+  const census = (mode) => { const r = buildOverview(g, { mode }).reach; return [r.tablesReached, r.columnsReached]; };
+  assert.deepEqual(flowTables('strict'), ['audit']);
+  assert.deepEqual(census('strict'), [1, 0], 'strict: audit alone, and no column an EXACT edge reads');
+  assert.deepEqual(flowTables('conservative'), ['audit', 'order_lines', 'orders']);
+  assert.deepEqual(census('conservative'), [3, 1], 'conservative: not the table and column only a guess reaches');
+  assert.deepEqual(flowTables('heuristic'), ['audit', 'guessed', 'order_lines', 'orders']);
+  assert.deepEqual(census('heuristic'), [4, 2]);
+  // the map draws the same tables, in the same mode
+  const touched = (mode) => buildMap(g, { mode }).links.filter((l) => l.kind === 'touches').map((l) => l.target).sort();
+  assert.deepEqual(touched('conservative'), ['table:audit', 'table:order_lines', 'table:orders']);
+  assert.deepEqual(touched('strict'), ['table:audit']);
+  // the summary's families and coupling's items too
+  const summaryTables = (mode) => buildSummary(g, { mode }).families.flatMap((f) => f.tables).sort();
+  assert.ok(!summaryTables('conservative').includes('table:guessed') && summaryTables('heuristic').includes('table:guessed'));
+  const couplingItems = (mode) => buildCoupling(g, { mode, axis: 'table' }).summary.items;
+  assert.equal(couplingItems('conservative') + 1, couplingItems('heuristic'), 'the guessed table is an item only where its edge is admitted');
+  // the browse census and transactions answer at conservative, their fixed mode
+  const ctx = { ...ctxOf(g), pack: { digest: 'd' } };
+  const browse = callTool('browse', { kind: 'table' }, ctx).answer.items;
+  assert.deepEqual(Object.fromEntries(browse.map((r) => [r.table, r.endpoints])), { audit: 1, guessed: 0, order_lines: 1, orders: 1 });
+  const tx = callTool('transactions', { method: 'p.C#run' }, ctx).answer;
+  const txRow = tx.boundaries?.[0] ?? tx.items?.[0] ?? tx;
+  assert.ok(!JSON.stringify(txRow).includes('guessed'), 'a transaction does not touch a table only a guess reaches');
+  // the statement row in Flow lists only the tables its mode admits
+  const stRow = flow(g, { endpoint: 'GET /r', mode: 'strict' }, ctxOf(g)).answer.statements[0];
+  assert.deepEqual(stRow.tables.map((t) => t.table), ['audit']);
 });

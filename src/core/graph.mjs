@@ -86,6 +86,28 @@ export const GRADE_SETS = Object.freeze({
   heuristic: new Set(['EXACT', 'SOUND_SET', 'HEURISTIC']),
 });
 
+/** The edges a statement names what it touches by: its tables, and the columns it reads and writes. */
+export const SQL_EDGE_TYPES = Object.freeze(['EXECUTES', 'READS', 'WRITES']);
+
+/**
+ * THE ONE RULE for what a walk reaches through a statement it reached: the
+ * statement's EXECUTES, READS and WRITES edges this mode's floor admits. Flow's
+ * tables lane, the overview census, the map, the summary, coupling, the browse
+ * census and transactions all count by it, so a table a conservative walk
+ * reaches only through a HEURISTIC EXECUTES is in none of them, and every view
+ * counts the same tables and columns in the same mode.
+ *
+ * @param {Graph} graph
+ * @param {string} statementId
+ * @param {'strict'|'conservative'|'heuristic'} mode
+ * @returns {object[]} the admitted adjacency entries, in adjacency order
+ */
+export function sqlEdgesOf(graph, statementId, mode) {
+  const allow = GRADE_SETS[mode];
+  if (!allow) throw new GraphError(`unknown mode: ${JSON.stringify(mode)}`);
+  return graph.outEdges(statementId).filter((e) => SQL_EDGE_TYPES.includes(e.type) && allow.has(e.grade));
+}
+
 /**
  * Canonical, position-independent node ID (SPEC §8.1).
  * @param {typeof NODE_KINDS[number]} kind

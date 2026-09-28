@@ -159,6 +159,77 @@ test('the evidence says WHICH rule reached each table and whether the fetch was 
   assert.equal(exec.evidence.access, 'read');
 });
 
+/**
+ * spring-petclinic's own mapping, and petclinic-ms's: Owner.pets is the INVERSE
+ * side (`mappedBy = "owner"`), so it names no column; Pet.owner owns
+ * `@JoinColumn(name = "owner_id")`; every table is named by @Table. With no
+ * naming strategy declared, a name the strategy would derive is a guess, and
+ * here there is none on the way to a table.
+ */
+function mappedByFacts() {
+  return [
+    type('Owner', { annotations: ['Entity', 'Table'] }),
+    entity('Owner', {
+      tableName: 'owners',
+      attributes: [
+        attr('id', { typeSimple: 'Integer', id: true }),
+        attr('lastName'),
+        attr('pets', { typeSimple: 'Set', typeArgSimple: 'Pet', relation: 'oneToMany', fetch: 'EAGER', cascade: ['ALL'], mappedBy: 'owner' }),
+      ],
+    }),
+    type('Pet', { annotations: ['Entity', 'Table'] }),
+    entity('Pet', {
+      tableName: 'pets',
+      attributes: [
+        attr('id', { typeSimple: 'Integer', id: true }),
+        attr('name', { column: 'name' }),
+        attr('owner', { typeSimple: 'Owner', relation: 'manyToOne', joinColumn: 'owner_id' }),
+        attr('type', { typeSimple: 'PetType', relation: 'manyToOne', joinColumn: 'type_id' }),
+        attr('birthDate'),
+      ],
+    }),
+    type('PetType', { annotations: ['Entity', 'Table'] }),
+    entity('PetType', { tableName: 'types', attributes: [attr('id', { typeSimple: 'Integer', id: true }), attr('name', { column: 'name' })] }),
+    type('OwnerRepository', { typeKind: 'interface', implements: ['JpaRepository'] }),
+    repository('OwnerRepository', { entityTypeSimple: 'Owner', methods: [method('findById')] }),
+  ];
+}
+
+test('jpa_mapped_by_fetch_reach_is_graded_by_fetch_and_table: a table an eager association reaches is as sure as the fetch and the table\'s name, and a column keeps its own grade', () => {
+  const g = G();
+  addJpaFacts(g, mappedByFacts(), { namingStrategy: null });
+  const sid = stmtId('OwnerRepository', 'findById');
+  const exec = (t) => g.edges.find((e) => e.from === sid && e.to === tableId(t) && e.type === 'EXECUTES');
+  assert.equal(exec('pets').grade, 'EXACT', 'fetch = EAGER is written, and @Table names pets: the mappedBy side derives nothing');
+  assert.equal(exec('types').grade, 'EXACT', 'Pet.type is eager by the specification, and @Table names types');
+  const read = (t, c) => g.edges.find((e) => e.from === sid && e.to === colId(t, c) && e.type === 'READS');
+  assert.equal(read('pets', 'owner_id').grade, 'EXACT', 'the key @JoinColumn names');
+  assert.equal(read('pets', 'birth_date').grade, 'HEURISTIC', 'a column whose name the assumed strategy derives stays a guess on its own edge');
+  const join = g.edges.find((e) => e.type === 'JOINS' && [e.from, e.to].sort().join(' ') === `${tableId('owners')} ${tableId('pets')}`);
+  assert.equal(join.grade, 'EXACT', 'the inverse side derives no name, so the relation between the two named tables is stated');
+  // a foreign key whose NAME is derived still reaches a table @Table names: the name is the column's grade, not the table's
+  const derivedKey = mappedByFacts().map((r) => (r.kind === 'entity' && r.fqn.endsWith('.Pet')
+    ? { ...r, attributes: r.attributes.map((a) => (a.name === 'type' ? { ...a, joinColumn: null } : a)) } : r));
+  const g2 = G();
+  addJpaFacts(g2, derivedKey, { namingStrategy: null });
+  assert.equal(g2.edges.find((e) => e.from === sid && e.to === tableId('types') && e.type === 'EXECUTES').grade, 'EXACT');
+  assert.equal(g2.edges.find((e) => e.from === sid && e.to === colId('pets', 'type_id') && e.type === 'READS').grade, 'HEURISTIC');
+});
+
+test('a query\'s own table is graded by its name, not by the names of the columns it reads (jpa_table_access_graded_by_table_name)', () => {
+  // mes4u's JobDispatchesView: @Table(name = "job_dispatches_v"), and fields whose column names the assumed strategy derives
+  const facts = [...mappedByFacts(),
+    type('PetRepository', { typeKind: 'interface', implements: ['JpaRepository'] }),
+    repository('PetRepository', { entityTypeSimple: 'Pet', methods: [method('findAll'), method('findByBirthDate')] })];
+  const g = G();
+  addJpaFacts(g, facts, { namingStrategy: null });
+  for (const m of ['findAll', 'findByBirthDate']) {
+    const sid = stmtId('PetRepository', m);
+    assert.equal(g.edges.find((e) => e.from === sid && e.to === tableId('pets') && e.type === 'EXECUTES').grade, 'EXACT', `${m}: @Table names pets`);
+    assert.equal(g.edges.find((e) => e.from === sid && e.to === colId('pets', 'birth_date') && e.type === 'READS').grade, 'HEURISTIC', `${m}: the derived column stays a guess on its own edge`);
+  }
+});
+
 test('a LAZY association stays out, and the statement says how much of the row it did not read', () => {
   const g = G();
   const stats = addJpaFacts(g, petclinicFacts('LAZY'), { namingStrategy: 'spring-snake-case' });

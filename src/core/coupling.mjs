@@ -25,7 +25,7 @@
 // Pure: graph in, plain view model out — no contract, no paging, no DOM.
 
 import { walkEndpoints, groupOfPath, ROOT_GROUP } from './walks.mjs';
-import { GRADE_SETS, DEFAULT_WALK_DEPTH } from './graph.mjs';
+import { GRADE_SETS, DEFAULT_WALK_DEPTH, sqlEdgesOf } from './graph.mjs';
 
 // The endpoint walk and the group rule live in core/walks.mjs — the `map` view
 // runs the SAME walk over the same endpoints, so keeping it here would let two
@@ -67,7 +67,7 @@ export const SHARED_VIA_CAP = 5;
  * would silently drop a write, and dropping it would lose the table. The count
  * is disclosed by the caller, never absorbed.
  */
-function itemsPerGroup(graph, stmtGroups, axis) {
+function itemsPerGroup(graph, stmtGroups, axis, mode) {
   const items = new Map(); // item key -> {writers: Map(group -> Set(stmt)), readers: same}
   const touch = (key, side, group, stmtId) => {
     let it = items.get(key);
@@ -79,7 +79,7 @@ function itemsPerGroup(graph, stmtGroups, axis) {
   };
   let unknownAccess = 0;
   for (const [stmtId, groups] of stmtGroups) {
-    for (const e of graph.outEdges(stmtId)) {
+    for (const e of sqlEdgesOf(graph, stmtId, mode)) {
       let sides = null;
       if (axis === 'column') {
         if (e.type === 'WRITES') sides = ['writers'];
@@ -179,7 +179,7 @@ export function buildCoupling(graph, opts = {}) {
     }
   }
 
-  const { items, unknownAccess } = itemsPerGroup(graph, stmtGroups, axis);
+  const { items, unknownAccess } = itemsPerGroup(graph, stmtGroups, axis, mode);
 
   // 4. The fan-out disclosure: statements so many groups reach that attributing
   // them to any one group says little.

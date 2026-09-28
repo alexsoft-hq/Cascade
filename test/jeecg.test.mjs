@@ -699,13 +699,24 @@ test('jeecgboot/JeecgBoot: the MyBatis-Plus lane maps what nobody wrote down', {
   // pack: SysDictMapper.java:51 carries
   //   @Select("SELECT db_source FROM onl_cgform_head WHERE table_name = #{tableName} …")
   // and `onl_cgform_head` is named by no other statement in this project.
-  assert.equal(o.reach.tablesReached, 73);   // RM14: 40, RM15: 72
+  // RM67: the census counts a table in its mode as Flow draws it (graph.mjs
+  // sqlEdgesOf). SIX tables are reached only through a MyBatis-Plus built-in on
+  // an entity with no @TableName, whose table name the lane derives by
+  // convention (HEURISTIC), so a conservative census no longer counts them:
+  // open_api, open_api_auth, open_api_log, open_api_permission, sys_data_log
+  // (SysDataLog.java:28, `@Data` and no @TableName) and sys_permission_data_rule.
+  assert.equal(o.reach.tablesReached, 67);   // RM14: 40, RM15: 72, before RM67's floor: 73
   // FIVE more columns, and the same reading gives all five: `db_source` and
   // `table_name` of that table, plus three columns of `sys_gateway_route`
   // (`sys_org_code`, `update_by`, `update_time`) that only
   //   SysGatewayRouteMapper.java:33 @Select("select * from sys_gateway_route where del_flag = 1")
   // expands onto — no other statement in the project names them.
-  assert.equal(o.reach.columnsReached, 805); // RM14: 312, RM15: 800
+  // RM67: a column a MyBatis-Plus built-in reads or writes through a field with
+  // no @TableField is named by the lane's convention (HEURISTIC), so the
+  // conservative census counts 436 of them where it counted 805. A heuristic
+  // census counts them all again (measured on the generality gate's pin of this
+  // repository: 836 columns and 73 tables at heuristic, 467 and 67 at conservative).
+  assert.equal(o.reach.columnsReached, 436); // RM14: 312, RM15: 800, before RM67's floor: 805
   const gap = o.gaps.find((g) => g.kind === 'mp-columns-runtime-only');
   assert.equal(gap.count, 82);
   assert.match(gap.note, /only what we could read/);

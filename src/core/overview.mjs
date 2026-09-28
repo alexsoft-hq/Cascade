@@ -21,7 +21,7 @@
 // come back WHOLE and sorted; the tool caps them and declares the cut.
 
 import { walkEndpoints, walkScreens, multiHandlerRoutes, handlersOf } from './walks.mjs';
-import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, sqlEdgesOf } from './graph.mjs';
 
 // The lattice order, strongest first — the order grades are reported in, so the
 // census reads the way the policy lattice does rather than by whichever grade
@@ -319,7 +319,7 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
     for (const s of ep.statements) {
       const sid = s.id;
       reachedStatements.add(sid);
-      for (const e of graph.outEdges(sid)) {
+      for (const e of sqlEdgesOf(graph, sid, mode)) {
         if (e.type !== 'EXECUTES') continue;
         tables.add(e.to);
         addTo(tableEndpoints, e.to, epId);
@@ -339,7 +339,7 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
   const reachedTables = new Set();
   const reachedColumns = new Set();
   for (const sid of reachedStatements) {
-    for (const e of graph.outEdges(sid)) {
+    for (const e of sqlEdgesOf(graph, sid, mode)) {
       if (e.type === 'EXECUTES') reachedTables.add(e.to);
       else if (e.type === 'READS' || e.type === 'WRITES') reachedColumns.add(e.to);
     }

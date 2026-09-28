@@ -15,7 +15,7 @@
 // when the code axis (Java lane) lands, the same tools gain candidate grades and
 // the response contract already carries them.
 
-import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
+import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH, sqlEdgesOf } from '../core/graph.mjs';
 import { changeImpact } from '../core/overlay.mjs';
 import { chainWalk, nodeLabel } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
@@ -295,7 +295,7 @@ function screenReach(graph) {
   for (const r of screenCensus(graph).rows) {
     for (const tid of r.tables) add(tables, tid, r.id);
     for (const sid of r.statements) {
-      for (const e of graph.outEdges(sid)) {
+      for (const e of sqlEdgesOf(graph, sid, SCREEN_CENSUS_MODE)) {
         if (e.type === 'READS' || e.type === 'WRITES') add(columns, e.to, r.id);
       }
     }
@@ -1011,7 +1011,7 @@ export function transactions(graph, args, ctx) {
     // 3 800-endpoint pack, 2 300 boundaries x 105 068 edges = 242M steps, and
     // this one tool took 1.45 s of a 2 s gate while every other took under 200 ms.
     for (const sid of stmts) {
-      for (const e of graph.outEdges(sid)) {
+      for (const e of sqlEdgesOf(graph, sid, 'conservative')) {
         if (e.type === 'WRITES') { const c = strip(e.to); writes.add(c); tables.add(tableOf(c)); }
         else if (e.type === 'READS') { const c = strip(e.to); reads.add(c); tables.add(tableOf(c)); }
         else if (e.type === 'EXECUTES') tables.add(strip(e.to));
@@ -2392,7 +2392,7 @@ function browseCensus(graph) {
     const tables = new Set();
     for (const sid of statements) {
       add(stmtEps, sid, ep.id);
-      for (const e of graph.outEdges(sid)) {
+      for (const e of sqlEdgesOf(graph, sid, BROWSE_CENSUS_MODE)) {
         if (e.type === 'EXECUTES') { tables.add(e.to); add(tableEps, e.to, ep.id); }
         else if (e.type === 'READS' || e.type === 'WRITES') add(colEps, e.to, ep.id);
       }

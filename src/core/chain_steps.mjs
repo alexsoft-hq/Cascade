@@ -20,7 +20,7 @@
 
 // edge-type list — every impact walk shares them, not just this one (an ignored
 // type is not "skipped by mode": nothing was withheld from you).
-import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH } from './graph.mjs';
+import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, SQL_EDGE_TYPES, sqlEdgesOf } from './graph.mjs';
 
 // Grade rank for weakest-link math (mirrors the policy lattice).
 const RANK = Object.freeze({ UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 });
@@ -512,7 +512,9 @@ function statementRow(graph, w, h, id, n, rec) {
       link: drawLink(path, rec),
       ...(httpMark(rec) ?? {}),
       path,
-      tables: graph.outEdges(id)
+      // The tables this mode reaches through the statement, as the tables lane
+      // and every census count them (graph.mjs sqlEdgesOf).
+      tables: sqlEdgesOf(graph, id, w.mode)
         .filter((e) => e.type === 'EXECUTES')
         .map((e) => ({ table: strip(e.to), access: graph.edgeAt(e.idx)?.evidence?.access ?? 'read' }))
         .sort((a, b) => cmp(a.table, b.table)),
@@ -680,16 +682,14 @@ export function buildTables(graph, w, h, reachedStatements) {
  * the BFS never expanded, is counted here.
  */
 function sqlEdgesAdmitted(graph, w, h, st) {
-  const out = [];
-  const counted = st.hops < w.maxDepth;
-  for (const e of graph.outEdges(st.id)) {
-    if (e.type !== 'EXECUTES' && e.type !== 'READS' && e.type !== 'WRITES') continue;
-    if (w.allow.has(e.grade)) { out.push(e); continue; }
-    if (counted) continue;
-    h.cut.byMode += 1;
-    h.cut.byModeGrades[e.grade] = (h.cut.byModeGrades[e.grade] ?? 0) + 1;
+  if (st.hops >= w.maxDepth) {
+    for (const e of graph.outEdges(st.id)) {
+      if (!SQL_EDGE_TYPES.includes(e.type) || w.allow.has(e.grade)) continue;
+      h.cut.byMode += 1;
+      h.cut.byModeGrades[e.grade] = (h.cut.byModeGrades[e.grade] ?? 0) + 1;
+    }
   }
-  return out;
+  return sqlEdgesOf(graph, st.id, w.mode);
 }
 
 /**
