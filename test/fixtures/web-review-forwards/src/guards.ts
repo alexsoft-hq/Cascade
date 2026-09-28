@@ -1,6 +1,6 @@
 import axios from 'axios';
-// Hops whose hand-on this lane reads (a member, a spread) and hops it cannot
-// (a local, a rest): the URL still reaches the sink in each.
+// Hops that hand the URL on through a member, a spread, a copy held in a local
+// and a rest that does not name `url`: it reaches the sink in each.
 const byMember = (options: any) => fetch(options.url, options);
 const byLocal = (option: any) => { const copy = { ...option }; return axios(copy); };
 const byRest = (option: any) => { const { headers, ...rest } = option; return axios({ ...rest, headers }); };

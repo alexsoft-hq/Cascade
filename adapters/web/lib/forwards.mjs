@@ -1,15 +1,14 @@
 // forwards.mjs — what a function HANDS ON of what it was given.
 //
-// WHAT THIS MODULE OWNS. Two questions about one call written inside a named
-// function, both answered from that call's syntax and the function's own
-// parameter list (RM67, R2-K):
-//   the hands     which of the function's own parameters the call passes on,
-//                 and how: as an argument, spread into an object argument, or
-//                 as the value of one of that object's keys
+// WHAT THIS MODULE OWNS. A named function's own parameter list, and one
+// question about one call written inside it, answered from that call's syntax
+// (RM67, R2-K):
 //   the override  whether a method the call writes into its object can be
 //                 replaced by what the caller handed in. `{ method: 'GET',
 //                 ...option }` sets a default the caller's own `method`
 //                 replaces; `{ ...option, method: 'GET' }` sets the method
+// What the call HANDS ON of those parameters is `origins.mjs`'s question,
+// because a parameter is handed on through a rest or a copy as often as whole.
 //
 // A wrapper written as an object's method (`export default { get: (option) =>
 // request({ method: 'GET', ...option }) }`) calls a helper this file declares,
@@ -67,53 +66,6 @@ function paramAt(env, name) {
   const fn = env.func;
   if (!fn || !fn.paramIndex || !fn.paramIndex.has(name)) return -1;
   return env.scope.find(name) === fn.paramScope ? fn.paramIndex.get(name) : -1;
-}
-
-/** `option.url` on a parameter: the parameter's position and the key, or null. */
-function memberOfParam(node, env) {
-  if (!node || (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression')) return null;
-  if (node.computed || !node.property || node.property.type !== 'Identifier') return null;
-  if (!node.object || node.object.type !== 'Identifier') return null;
-  const param = paramAt(env, node.object.name);
-  return param >= 0 ? { param, key: node.property.name } : null;
-}
-
-/** What one object argument hands on: its spreads, and the values of its keys. */
-function handsInObject(objectNode, arg, env, out) {
-  for (const p of objectNode.properties) {
-    if (p.type === 'SpreadElement' && p.argument && p.argument.type === 'Identifier') {
-      const param = paramAt(env, p.argument.name);
-      if (param >= 0) out.push({ param, arg, as: 'spread' });
-      continue;
-    }
-    if (p.type !== 'ObjectProperty' || !p.value || p.value.type !== 'Identifier') continue;
-    const param = paramAt(env, p.value.name);
-    const key = keyName(p);
-    if (param >= 0 && key !== null) out.push({ param, arg, as: 'key', key });
-  }
-}
-
-/**
- * THE HANDS: what one call passes on of the enclosing function's own
- * parameters, each as `{param, arg, as}` (and `key` when `as` is `key`). Only
- * the first three arguments are read, the same three a call record summarizes.
- * @returns {object[]} empty when the call hands on nothing the function was given
- */
-export function handsOf(node, env) {
-  const out = [];
-  (node.arguments ?? []).slice(0, 3).forEach((a, arg) => {
-    if (!a) return;
-    if (a.type === 'Identifier') {
-      const param = paramAt(env, a.name);
-      if (param >= 0) out.push({ param, arg, as: 'argument' });
-      return;
-    }
-    if (a.type === 'ObjectExpression') { handsInObject(a, arg, env, out); return; }
-    // `fetch(options.url, options)`: one key of a parameter, passed as the value.
-    const member = memberOfParam(a, env);
-    if (member !== null) out.push({ param: member.param, arg, as: 'member', key: member.key });
-  });
-  return out;
 }
 
 /** Where an object literal writes `verb` under one of the method keys, or null. */

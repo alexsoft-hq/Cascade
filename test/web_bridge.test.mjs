@@ -907,7 +907,7 @@ test('an empty fact stream is a legal run that says nothing happened', () => {
   const stats = addWebFacts(g, []);
   assert.deepEqual(edgesOf(g), []);
   assert.deepEqual(stats.calls, {
-    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, urlNotHandedOn: 0, urlThroughUnreadHop: 0,
+    withUrl: 0, traced: 0, platform: 0, injected: 0, untraced: 0, notUrlShaped: 0, urlNotHandedOn: 0, urlThroughUnreadHop: 0, unreadHopBy: {},
     stringMethod: 0, template: 0, formSubmits: 0, locationRequests: 0, formSubmitsWithoutAddress: 0,
     nexacro: 0, nexacroUnreadable: 0, websquare: 0, websquareUnreadable: 0, notAFunction: 0, passedAsValue: 0,
   });

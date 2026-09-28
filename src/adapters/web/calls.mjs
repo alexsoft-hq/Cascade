@@ -929,9 +929,10 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
     };
   }
   const throughAWrapper = target !== null && target.kind === 'member' && wrappers.has(target.key);
-  if (throughAWrapper && urlReachesTheSink(wrappers, target.key, c, stats)) {
+  const via = throughAWrapper ? urlReachesTheSink(wrappers, target.key, c, stats) : null;
+  if (via !== null && via.reached) {
     stats.calls.traced += 1;
-    return { sink: wrapperSink(wrappers, target.key), target };
+    return { sink: wrapperSink(wrappers, target.key, via.unsettled), target };
   }
   const found = untracedSink(c, {
     resolved, absolute, target, stats, throughAWrapper,
@@ -940,8 +941,12 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
   return found;
 }
 
-/** The sink a call reaches through a wrapper chain: the deepest hop first, the one the caller named last. */
-function wrapperSink(wrappers, key) {
+/**
+ * The sink a call reaches through a wrapper chain: the deepest hop first, the
+ * one the caller named last; and the hop that does not settle whether the URL
+ * reaches it, when one does not.
+ */
+function wrapperSink(wrappers, key, unsettled = null) {
   const chain = [];
   let cur = key;
   for (let i = 0; i < FIXPOINT_LIMIT && cur; i += 1) {
@@ -949,55 +954,104 @@ function wrapperSink(wrappers, key) {
     cur = wrappers.get(cur)?.next ?? null;
   }
   const w = wrappers.get(key);
-  return { kind: 'wrapper', module: w.sink.module, instance: w.sink.instance, chain: chain.reverse(), depth: w.depth };
+  return {
+    kind: 'wrapper', module: w.sink.module, instance: w.sink.instance, chain: chain.reverse(), depth: w.depth,
+    ...(unsettled ? { unsettled } : {}),
+  };
 }
 
 /**
  * Where the URL goes at ONE hop, from where it is in the function's parameters
  * (`place`: a parameter, and the key it sits under when it is in an object).
- * Passed whole or spread in, it keeps its key; passed as one key of an object,
- * it gains that key; `options.url` passed as a value loses it. Null when the
- * hop's spelled hand-on does not carry it.
+ * Null when no hand the hop's syntax spells carries it.
  */
 function handOn(place, hands) {
   for (const h of hands) {
-    if (h.param !== place.param) continue;
-    if (place.key === null) {
-      if (h.as === 'argument') return { param: h.arg, key: null };
-      if (h.as === 'key') return { param: h.arg, key: h.key };
-    } else if (h.as === 'argument' || h.as === 'spread') return { param: h.arg, key: place.key };
-    else if (h.as === 'member' && h.key === place.key) return { param: h.arg, key: null };
+    const next = h.param === place.param ? handOnOne(place, h) : null;
+    if (next !== null) return next;
   }
   return null;
 }
 
 /**
+ * Where ONE hand puts the URL. Passed whole or spread in, it keeps its key;
+ * passed as one key of an object, it gains that key; `options.url` passed as a
+ * value loses it. A rest or a copy carries every key but the ones it names
+ * (`minus`); a part carries its own key (`part`) and nothing else. When the
+ * URL is the parameter itself, only the parameter carries it.
+ */
+function handOnOne(place, h) {
+  if (place.key === null) {
+    if (h.minus || h.part !== undefined) return null;
+    if (h.as === 'argument') return { param: h.arg, key: null };
+    return h.as === 'key' ? { param: h.arg, key: h.key } : null;
+  }
+  if ((h.minus ?? []).includes(place.key)) return null;
+  if (h.as === 'member') return h.key === place.key ? { param: h.arg, key: null } : null;
+  if (h.as === 'key') return h.part === place.key ? { param: h.arg, key: h.key } : null;
+  return h.as === 'argument' || h.as === 'spread' ? { param: h.arg, key: place.key } : null;
+}
+
+/**
+ * WHY A HOP THE CODE DOES NOT SETTLE MAY STILL CARRY THE URL, by what the
+ * worker saw in the arguments the hop passes (lib/reads.mjs). The edge of a
+ * call through such a hop names the hop and one of these, and is graded
+ * HEURISTIC: it may reach the client with the caller's URL, and nothing
+ * written says it does.
+ */
+export const UNSETTLED_BECAUSE = Object.freeze({
+  reassigned: 'a step of the wrapper chain passes the request through a variable it assigns again (a let, a var, a parameter written over), so what reaches the client is not what the code first put in it',
+  this: 'a step of the wrapper chain passes the request through `this`, which may or may not hold the URL the caller gave',
+  arguments: 'a step of the wrapper chain passes `arguments`, which may or may not hold the URL the caller gave',
+  unbound: 'a step of the wrapper chain passes a name with no value written beside it (a callback\'s parameter, a function), which may or may not hold the URL',
+  deep: 'a step of the wrapper chain reaches the argument the URL is in through more locals than this lane follows',
+  computed: 'a step of the wrapper chain passes the argument the URL is in through an expression this lane does not evaluate (a call on it, a nested object)',
+  unrecorded: 'a step of the wrapper chain is a return or a call whose arguments this lane did not read',
+});
+
+/** Whether what a hop reads apart from its hands could carry the URL at `place`. */
+function readsCarry(reads, place) {
+  if ((reads.params ?? []).includes(place.param)) return true;
+  return (reads.partial ?? []).some((r) => r.param === place.param
+    && (r.key !== undefined ? r.key === place.key : place.key !== null && !r.minus.includes(place.key)));
+}
+
+/** Why a hop whose hands do not carry the URL may still carry it, or null when it dropped it. */
+function unsettledWhy(hop, place) {
+  if (!hop || (!hop.reads && !Array.isArray(hop.hands))) return { why: 'unrecorded' };
+  const reads = hop.reads ?? null;
+  if (reads === null) return null;
+  if (reads.open) return { why: reads.open.why ?? 'unbound', ...(reads.open.name ? { name: reads.open.name } : {}) };
+  return readsCarry(reads, place) ? { why: 'computed' } : null;
+}
+
+/**
  * WHETHER THE CALLER'S URL REACHES THE SINK (R2-K, review 2 item 2), walked hop
- * by hop down the wrapper chain: every hop must hand on the parameter the URL
- * is in. A hop that hands it on as its syntax spells it moves the URL along; one
- * that only READS that parameter (through a local, a rest, a closure) or reads
- * something that could carry it (`this`, a `let`) is followed no further and
- * counted, because this lane does not follow values; one that reads it nowhere
- * has dropped it, and the call is not traced through the chain. A hop the worker
- * wrote nothing about (a return) is taken as before.
+ * by hop down the wrapper chain: every hop must hand on the part of its
+ * parameters the URL is in. A hop whose syntax settles it moves the URL along
+ * or drops it, and a dropped URL is not traced through the chain. A hop whose
+ * syntax does not settle it (lib/reads.mjs) is followed no further: the call
+ * is taken as reaching the sink, and `unsettled` names the hop and why, which
+ * grades its edge HEURISTIC.
+ * @returns {{reached:boolean, unsettled:(object|null)}}
  */
 function urlReachesTheSink(wrappers, key, c, stats) {
   const hops = hopsOf(wrappers, key);
   const at = c.url && c.url.at ? c.url.at : null;
-  if (at === null) return !(hops[0] && Array.isArray(hops[0].hands) && !hops[0].reads);
+  if (at === null) return { reached: !(hops[0] && Array.isArray(hops[0].hands) && !hops[0].reads), unsettled: null };
   let place = { param: at.arg, key: typeof at.key === 'string' ? at.key : null };
-  for (const hop of hops) {
-    if (!hop || (!hop.reads && !Array.isArray(hop.hands))) return true;
-    const next = handOn(place, hop.hands ?? []);
+  for (let i = 0, cur = key; i < hops.length; i += 1, cur = wrappers.get(cur)?.next ?? null) {
+    const hop = hops[i];
+    const next = hop && Array.isArray(hop.hands) ? handOn(place, hop.hands) : null;
     if (next !== null) { place = next; continue; }
-    const reads = hop.reads ?? null;
-    if (reads !== null && (reads.open === true || reads.params.includes(place.param))) {
-      stats.calls.urlThroughUnreadHop += 1;
-      return true;
-    }
-    return false;
+    const why = unsettledWhy(hop, place);
+    if (why === null) return { reached: false, unsettled: null };
+    stats.calls.urlThroughUnreadHop += 1;
+    stats.calls.unreadHopBy[why.why] = (stats.calls.unreadHopBy[why.why] ?? 0) + 1;
+    const line = hop && Number.isInteger(hop.line) ? { line: hop.line } : {};
+    return { reached: true, unsettled: { hop: cur, ...line, ...why, reason: UNSETTLED_BECAUSE[why.why] } };
   }
-  return true;
+  return { reached: true, unsettled: null };
 }
 
 /**
@@ -1187,6 +1241,14 @@ function noteCaller(site, nodesToAdd, files) {
   return fromId;
 }
 
+/** What an edge says about the sink its call reached, and the wrapper step that leaves the URL unsettled. */
+function sinkEvidence(sink) {
+  return {
+    kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth, ...typedOf(sink),
+    ...(sink.unsettled ? { unsettled: sink.unsettled } : {}),
+  };
+}
+
 /** Everything an edge from this call site says about itself. */
 function callEvidence(site, {
   written, full, via, absolute, prefixEvidence, declaredService, found, away = null,
@@ -1206,7 +1268,7 @@ function callEvidence(site, {
     // element, or never found at all.
     ...(call.formSubmit ? { form: call.formSubmit } : {}),
     ...(site.template && call.template ? { attribute: call.template.attr, wrote: call.template.written } : {}),
-    sink: { kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth, ...typedOf(sink) },
+    sink: sinkEvidence(sink),
     // `written` is the path as the code spells it, `template` the path this
     // pack was searched for. An absolute URL keeps its HOST here, because
     // the node id is a path and two hosts would otherwise be one node.
@@ -1263,9 +1325,9 @@ function placeCandidate(cand, site, ctx) {
   // NOTHING RISES ABOVE SOUND_SET ON A CALL, a page's form included: which
   // handler answers a path is the route table's answer, not the markup's.
   if (prefixEvidence.from === 'auto' || site.assumed || site.method.value === null) grade = 'HEURISTIC';
-  // A base URL, the client's or the one at the front of this URL, that rests
-  // on a default literal or on a deployment's host (base_url.mjs).
-  if (prefixEvidence.guess || site.guess) grade = 'HEURISTIC';
+  // A base URL that rests on a default literal or a deployment's host
+  // (base_url.mjs), or a wrapper step that may or may not hand the URL on.
+  if (prefixEvidence.guess || site.guess || site.sink.unsettled) grade = 'HEURISTIC';
 
   const fromId = noteCaller(site, nodesToAdd, files);
   httpFunctionIds.add(fromId);

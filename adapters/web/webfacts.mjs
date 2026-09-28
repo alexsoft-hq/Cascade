@@ -159,6 +159,17 @@
 // Replacement }`, prints a `provider` record wherever it is written, a class
 // decorator's argument included, with the keys the injection pack names.
 //
+// webfacts/18 SAYS WHICH PART OF A PARAMETER A HOP HANDS ON (review 2, item 2,
+// made precise). A wrapper rarely passes its options on as they came in: it
+// destructures them (`const { headers, ...rest } = option`), copies them, or
+// takes one key out. `lib/origins.mjs` follows a parameter through a `const`
+// alias, a rest, a spread copy and a signature pattern, so a hand now says
+// which keys it no longer carries (`minus`) or which key of the parameter it
+// is (`part`), and `options.url` written as a key's value is a hand too.
+// `reads` is now what the call reads APART from its hands, with the parts it
+// reads (`partial`), and `open` says why (`{why, name}`): a variable assigned
+// again, a parameter the body writes over, `this`.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -169,7 +180,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/17';
+const VERSION = 'webfacts/18';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

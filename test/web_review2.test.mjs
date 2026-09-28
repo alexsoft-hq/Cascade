@@ -72,17 +72,108 @@ test('fetch_wrapper_respects_method_after_spread', () => {
 });
 
 test('a hop that hands the URL on through a member, a local or a rest still reaches the sink', () => {
-  // The guards beside the reviewer's cases: what this lane reads (a member, a
-  // spread) and what it cannot follow but must not call a discard (a local, a rest).
+  // The guards beside the reviewer's cases: a member, a spread copy held in a
+  // local, and a rest that does not name `url`. Each is settled by the syntax.
   const { g } = forwards();
   for (const fn of ['throughMember', 'throughLocal', 'throughRest']) {
     const e = httpFrom(g, 'src/callers.ts', fn);
     assert.ok(e.some((x) => x.to.endsWith(' /items') && x.grade === 'SOUND_SET'), `${fn}: ${JSON.stringify(e)}`);
+    assert.ok(e.every((x) => x.evidence.sink.unsettled === undefined), fn);
   }
   // A default the first hop writes before the caller's options, and a later hop
   // that writes none: the caller's POST is what leaves.
   const post = httpFrom(g, 'src/callers.ts', 'callerMethod');
   assert.deepEqual(post.map((x) => [x.to, x.evidence.method.value]), [[webEndpointId('POST', '/items'), 'POST']]);
+});
+
+// ---------------------------------------------------------------------------
+// What a hop hands on, settled by the syntax or not (item 2, made precise)
+// ---------------------------------------------------------------------------
+
+const SETTLED = path.join(FIXTURES, 'web-review-settled');
+const settled = () => {
+  const g = graphWith(everyVerb(['/items', '/other']));
+  const stats = addWebFacts(g, factsOf(SETTLED));
+  return { g, stats, from: (fn) => httpFrom(g, 'src/callers.ts', fn) };
+};
+const ITEMS = webEndpointId('GET', '/items');
+
+test('a_rest_or_copy_that_does_not_name_the_url_carries_it', () => {
+  // `const { headersType, headers, ...otherOption } = option; axios({ ...otherOption })`:
+  // the rest holds every key the pattern does not name, `url` among them. So
+  // do a copy, an alias, a part put back under its key and `option.url` as a
+  // key's value. Each is settled: SOUND_SET, and no hop left unsettled.
+  const { from, stats } = settled();
+  for (const fn of ['viaRest', 'viaKeep', 'viaSignatureKeep', 'viaAlias', 'viaCopy', 'viaKey']) {
+    const e = from(fn);
+    assert.deepEqual(e.map((x) => [x.to, x.grade]), [[ITEMS, 'SOUND_SET']], fn);
+    assert.equal(e[0].evidence.sink.kind, 'wrapper', fn);
+    assert.equal(e[0].evidence.sink.unsettled, undefined, fn);
+  }
+  // Only the six hops the syntax does not settle are counted.
+  assert.equal(stats.calls.urlThroughUnreadHop, 6);
+});
+
+test('a_hop_that_names_the_url_and_does_not_hand_it_on_drops_it', () => {
+  // `const { url, ...rest } = option; axios({ ...rest })`, the same in the
+  // signature, a copy that writes its own `url` over the caller's, and one
+  // that reads `headers`, another key it took out, which holds no URL.
+  const { from, stats } = settled();
+  for (const fn of ['viaDrop', 'viaSignatureDrop', 'viaOverwrite', 'viaDropWithHeaders']) {
+    const e = from(fn);
+    assert.equal(e.some((x) => x.to === ITEMS && x.grade === 'SOUND_SET'), false, `${fn}: ${JSON.stringify(e)}`);
+    assert.ok(e.every((x) => x.evidence.sink.kind === 'untraced'), fn);
+  }
+  assert.ok(stats.calls.urlNotHandedOn >= 4, JSON.stringify(stats.calls));
+});
+
+test('a_hop_the_source_does_not_settle_is_heuristic_and_says_why', () => {
+  // A variable assigned again, a parameter written over, `this`, a call on
+  // the options, and the URL taken out and put back through a call on it: it
+  // may reach the client, and nothing written says what it is when it does.
+  const { from, stats } = settled();
+  const cases = {
+    viaReassigned: { hop: 'src/hops.ts#reassigned', why: 'reassigned', name: 'conf' },
+    viaWrittenOver: { hop: 'src/hops.ts#writtenOver', why: 'reassigned', name: 'option' },
+    viaThis: { hop: 'src/hops.ts#throughThis', why: 'this' },
+    viaCall: { hop: 'src/hops.ts#throughCall', why: 'computed' },
+    viaPrefix: { hop: 'src/hops.ts#prefixes', why: 'computed' },
+  };
+  for (const [fn, want] of Object.entries(cases)) {
+    const e = from(fn);
+    assert.deepEqual(e.map((x) => [x.to, x.grade]), [[ITEMS, 'HEURISTIC']], fn);
+    const u = e[0].evidence.sink.unsettled;
+    assert.ok(u, `${fn}: ${JSON.stringify(e[0].evidence.sink)}`);
+    assert.deepEqual({ hop: u.hop, why: u.why, ...(u.name ? { name: u.name } : {}) }, want, fn);
+    assert.equal(typeof u.reason, 'string', fn);
+    assert.equal(Number.isInteger(u.line), true, fn);
+  }
+  // A step this lane reads only as the call it returns, whose arguments it did
+  // not record: not settled either, and the step is named without a line.
+  const back = from('viaReturn');
+  assert.deepEqual(back.map((x) => [x.to, x.grade]), [[ITEMS, 'HEURISTIC']]);
+  const { reason, ...rest } = back[0].evidence.sink.unsettled;
+  assert.deepEqual(rest, { hop: 'src/hops.ts#throughReturn', why: 'unrecorded' });
+  assert.equal(typeof reason, 'string');
+  assert.deepEqual(stats.calls.unreadHopBy, {
+    reassigned: 2, this: 1, computed: 2, unrecorded: 1,
+  });
+});
+
+test('a hand says which keys a rest no longer carries and which key a part is', () => {
+  const facts = factsOf(SETTLED);
+  const callIn = (name) => facts.find((r) => r.kind === 'call' && r.file === 'src/hops.ts' && r.enclosing === name);
+  assert.deepEqual(callIn('request').hands, [{ param: 0, arg: 0, as: 'spread', minus: ['headers', 'headersType'] }]);
+  assert.deepEqual(callIn('keepsUrl').hands, [
+    { param: 0, arg: 0, as: 'spread', minus: ['url'] },
+    { param: 0, arg: 0, as: 'key', key: 'url', part: 'url' },
+  ]);
+  assert.deepEqual(callIn('byKey').hands, [{ param: 0, arg: 0, as: 'key', key: 'url', part: 'url' }]);
+  // What a call reads apart from its hands: the parts inside `headers: {…}`.
+  assert.deepEqual(callIn('request').reads, {
+    params: [], partial: [{ param: 0, key: 'headers' }, { param: 0, key: 'headersType' }],
+  });
+  assert.deepEqual(callIn('reassigned').reads, { params: [], open: { why: 'reassigned', name: 'conf' } });
 });
 
 // ---------------------------------------------------------------------------

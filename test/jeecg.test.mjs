@@ -421,8 +421,14 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   assert.equal(web.instances, 1, JSON.stringify(web.prefix));
   assert.ok(web.wrappers.count > 100, `${web.wrappers.count} wrapper(s)`);
   assert.ok(web.wrappers.maxDepth >= 2, `deepest wrapper chain ${web.wrappers.maxDepth}`);
-  assert.ok(web.resolved.SOUND_SET > 475,
+  // Every one of them is matched, and the generic method is what grades them:
+  // `VAxios.request` copies its options into `let conf = cloneDeep(config)`
+  // and hands `conf` to a hook and to `supportFormData`, which assign it
+  // again. Whether the URL the caller wrote is the one that leaves is not
+  // settled by the code, so those edges are HEURISTIC and name that step.
+  assert.ok(web.resolved.SOUND_SET + web.resolved.HEURISTIC > 475,
     `the grep-level floor for this pair is 475 matched calls, this pack has ${web.resolved.SOUND_SET} sound + ${web.resolved.HEURISTIC} heuristic`);
+  assert.ok(web.calls.unreadHopBy.reassigned > 475, JSON.stringify(web.calls.unreadHopBy));
   // Nothing in this frontend's source states the prefix its calls go through,
   // and nothing needs to: the client is built with no baseURL at all, so the
   // path as written IS the path, and the axis is shipped rather than guessed.
@@ -437,6 +443,9 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   assert.equal(webEdge.evidence.sink.module, 'axios');
   assert.equal(webEdge.evidence.sink.chain.length, 2);
   assert.equal(graph.nodes.get(webEdge.from).lane, 'web');
+  const step = webEdge.evidence.sink.unsettled;
+  assert.deepEqual([step.hop.slice(step.hop.indexOf('#')), step.why, step.name], ['#VAxios.request', 'reassigned', 'conf']);
+  assert.notEqual(webEdge.grade, 'SOUND_SET');
 });
 
 // ===========================================================================

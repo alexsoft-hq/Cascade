@@ -531,6 +531,17 @@ function sayNavigationsAndPages(webBridgeStats) {
   }
 }
 
+/** What a wrapper step the code does not settle passes the request through, by the bridge's key for it. */
+const UNREAD_HOP_WORDS = Object.freeze({
+  reassigned: 'a variable assigned again',
+  this: '`this`',
+  arguments: '`arguments`',
+  unbound: 'a name with no value beside it',
+  deep: 'more locals than are followed',
+  computed: 'an expression on the options',
+  unrecorded: 'a step whose arguments were not read',
+});
+
 /**
  * A call whose wrapper does not hand its URL on (R2-K) is graded as one this
  * lane could not trace, and says so once rather than hiding in `untraced`.
@@ -540,10 +551,12 @@ function sayUrlNotHandedOn(calls) {
   if (n > 0) {
     process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so each is graded HEURISTIC as a call this lane could not trace\n`);
   }
-  // Said apart: taken as reaching the client, on a hop this lane does not read.
+  // Said apart: taken as reaching the client, through a step the code does not settle.
   const unread = calls?.urlThroughUnreadHop ?? 0;
   if (unread > 0) {
-    process.stderr.write(`  [info] WEB_URL_THROUGH_UNREAD_HOP ${unread} traced call(s) reach the client through a wrapper step that passes the argument their URL is in through a local, a rest or \`this\`, which this lane does not follow: taken as reaching it, as a wrapper always was\n`);
+    const by = Object.entries(calls.unreadHopBy ?? {}).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .map(([why, k]) => `${UNREAD_HOP_WORDS[why] ?? why} ${k}`).join(', ');
+    process.stderr.write(`  [info] WEB_URL_THROUGH_UNREAD_HOP ${unread} traced call(s) reach the client through a wrapper step the code does not settle (${by}): each may or may not carry the URL its caller gave, so each is graded HEURISTIC and its edge names the step and why\n`);
   }
 }
 

@@ -29,7 +29,7 @@ import {
 import { navigationAssignmentOf } from './navigation.mjs';
 import { formActionAssignment, formMethodAssignment } from './forms.mjs';
 import { emitRouteRef, maybeRoute } from './routers.mjs';
-import { paramIndexOf, paramOwnerOf } from './forwards.mjs';
+import { noteOrigins, paramFactsOf } from './origins.mjs';
 
 /**
  * Pass 1: hoist what the top level declares. A function at the top of a file
@@ -552,6 +552,7 @@ export function visitVariableDeclaration(ctx, node, env, exportedAs) {
   for (const decl of node.declarations) {
     const names = patternNames(decl.id);
     for (const n of names) env.scope.declare(n, decl.init, node.kind !== 'const');
+    noteOrigins(node, decl, env);
     const simple = decl.id.type === 'Identifier' ? decl.id.name : null;
     const line = lineOf(decl);
     noteDestructured(ctx, node, decl, env);
@@ -721,7 +722,7 @@ export function visitFunctionBody(ctx, node, env, entry) {
   for (const p of node.params || []) for (const n of patternNames(p)) scope.declare(n, null);
   // A NAMED function's own parameters, so a call inside it can say which of
   // them it hands on (R2-K); a callback's are not the function's.
-  if (entry) Object.assign(entry, { paramScope: scope, paramIndex: paramIndexOf(node), paramOwner: paramOwnerOf(node) });
+  if (entry) Object.assign(entry, paramFactsOf(node, scope));
   // A CLIENT ARRIVES AS A PARAMETER, in a function the framework fills in.
   // The map is inherited downward, because `$http.get(url).then(function () {
   // $http.post(…) })` is the same client one scope deeper.

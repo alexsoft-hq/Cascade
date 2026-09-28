@@ -136,11 +136,13 @@ function emptyCallStats() {
     // is in on to the client (R2-K). It is counted in `untraced` too, because
     // nothing here can say the URL it carries is the one that is sent.
     urlNotHandedOn: 0,
-    // A traced call whose URL went through a wrapper hop that reads the
-    // parameter it is in without handing it on in a way the syntax spells (a
-    // local, a rest, a closure, `this`): taken as reaching the sink, and counted,
-    // because this lane does not follow values (review 2, item 2).
+    // A traced call whose URL went through a wrapper hop whose syntax does not
+    // settle whether it hands the URL on (a variable assigned again, `this`, a
+    // call on the options): taken as reaching the sink, graded HEURISTIC, and
+    // counted by why (review 2, item 2). A rest, a copy or a part of the
+    // options is settled, and is not counted here.
     urlThroughUnreadHop: 0,
+    unreadHopBy: {},
     // A call that reached no client and whose callee TAKES A PATH APART rather
     // than asking for one (`pathname.startsWith('/x')`, `p.split('/')`).
     // Counted apart from `notUrlShaped` because the argument really is a path

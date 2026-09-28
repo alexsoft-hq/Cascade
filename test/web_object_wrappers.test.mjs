@@ -86,8 +86,9 @@ test('an object\'s method that hands its options to a helper the file declares s
     // Written BEFORE the caller's options, so the caller's own `method` wins.
     method: { value: 'GET', from: 'config', overridable: { key: 'method', by: [0] } },
     hands: [{ param: 0, arg: 0, as: 'spread' }],
-    // Which of its parameters the call reads at all (review 2, item 2).
-    reads: { params: [0] },
+    // What the call reads of its parameters apart from its hands (review 2,
+    // item 2): nothing, since the spread is the whole of it.
+    reads: { params: [] },
   }]);
   // Written AFTER them, so nothing the caller hands in replaces it.
   assert.deepEqual(fnRec(INDEX, 'put').forwards[0].method, { value: 'PUT', from: 'config' });

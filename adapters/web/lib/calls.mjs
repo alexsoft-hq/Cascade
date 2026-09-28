@@ -18,7 +18,8 @@ import { formCall } from './forms.mjs';
 import { resolveTransactionUrl, TRANSACTION_METHOD, TRANSACTION_URL_KEYS } from './nexacro.mjs';
 import { isEngineCall, websquareSubmissionOf } from './websquare_calls.mjs';
 import { envSpellingOf, isEnvExpression } from './ast.mjs';
-import { handsOf, methodOverrideOf } from './forwards.mjs';
+import { methodOverrideOf } from './forwards.mjs';
+import { handsOf } from './origins.mjs';
 import { readsOf } from './reads.mjs';
 
 /** The HTTP verbs a call can name in its own callee, or a form can spell out. */
@@ -427,11 +428,12 @@ function withOverride(method, node, env) {
 function noteForward(ctx, node, env, { isNew, callee, binding, summaries, line }) {
   const rec = env.func ? env.func.record : null;
   if (isNew || !rec || !callee || callee.path.length > 1 || !binding || binding.kind !== 'local') return;
-  const hands = handsOf(node, env);
+  const used = new Set();
+  const hands = handsOf(node, env, used);
   if (hands.length === 0) return;
   const method = withOverride(methodOf(callee, summaries, null), node, env);
   if (!Array.isArray(rec.forwards)) rec.forwards = [];
-  const reads = readsOf(node, env);
+  const reads = readsOf(node, env, used);
   rec.forwards.push({ line, callee, binding, method, hands, ...(reads ? { reads } : {}) });
 }
 
@@ -443,8 +445,9 @@ function noteForward(ctx, node, env, { isNew, callee, binding, summaries, line }
  */
 function withHands(rec, node, env) {
   if (!env.func) return rec;
-  const hands = handsOf(node, env);
-  const reads = readsOf(node, env);
+  const used = new Set();
+  const hands = handsOf(node, env, used);
+  const reads = readsOf(node, env, used);
   if (hands.length > 0) rec.hands = hands;
   if (reads) rec.reads = reads;
   return rec;
