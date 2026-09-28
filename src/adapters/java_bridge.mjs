@@ -103,13 +103,13 @@ export {
  * @returns {{ensureSymbol:(memberFqn:string)=>string, isExternalType:(fqn:string)=>boolean,
  *            fileOf:(fqn:string)=>(string|null), isGeneratedMember:(fqn:string)=>boolean}}
  */
-function makeSymbolWriter({ g, stats, types, packagePrefixes, lineOfMember, generatedFqns }) {
+function makeSymbolWriter({ g, stats, types, anonymousTypes, packagePrefixes, lineOfMember, generatedFqns }) {
   // A member of a generated type is generated. The owner is the whole rule:
   // nothing here reads a NAME, so a hand-written class in a generated module is
   // classified generated (which is what the declaration said) and a class called
   // `FooExample` outside one is not.
   const isGeneratedMember = (memberFqn) => generatedFqns.has(ownerOf(memberFqn));
-  const fileOf = (typeFqn) => types.get(typeFqn)?.file ?? null;
+  const fileOf = (typeFqn) => types.get(typeFqn)?.file ?? anonymousTypes?.get(typeFqn)?.file ?? null; // …or the anonymous class it is
   // A type is EXTERNAL when the profile declares top-level packages and the
   // type's own package is outside all of them. Its package comes from the type
   // record when the lane parsed it, and from the FQN otherwise (a type the lane
@@ -161,7 +161,7 @@ export function javaSymbolWriter(g, javaFacts, opts = {}) {
   const generatedSources = opts.generatedSources && typeof opts.generatedSources === 'object'
     ? opts.generatedSources : { annotations: [], pathGlobs: [] };
   return makeSymbolWriter({
-    g, stats: { externalSymbols: 0, generatedSymbols: 0 }, types: typeIndex.types,
+    g, stats: { externalSymbols: 0, generatedSymbols: 0 }, types: typeIndex.types, anonymousTypes: typeIndex.anonymousTypes,
     packagePrefixes: Array.isArray(opts.packagePrefixes) ? opts.packagePrefixes.slice().sort() : [],
     lineOfMember: facts.lineOfMember, generatedFqns: classifyGeneratedTypes(typeIndex.types, generatedSources).fqns,
   }).ensureSymbol;
@@ -262,7 +262,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
     // FQN cannot make one module's declaration answer for another's.
     typeAt: (fqn, file) => (file ? typeIndex.typesByFile.get(`${fqn} ${file}`) : undefined) ?? typeIndex.types.get(fqn),
     ...makeSymbolWriter({
-      g, stats, types: typeIndex.types, packagePrefixes, lineOfMember: facts.lineOfMember, generatedFqns,
+      g, stats, types: typeIndex.types, anonymousTypes: typeIndex.anonymousTypes, packagePrefixes, lineOfMember: facts.lineOfMember, generatedFqns,
     }),
   };
 

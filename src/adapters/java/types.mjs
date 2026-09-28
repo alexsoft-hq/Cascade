@@ -392,6 +392,8 @@ function indexedType(r) {
     client: (r.client && typeof r.client === 'object') ? r.client : null,
     declaredMethods: list(r.declaredMethods),
     declaredMethodLines: list(r.declaredMethodLines),
+    // An interface's methods that have a body (javafacts/20), as "name/arity".
+    defaultMethods: list(r.defaultMethods),
     modelAttributeMethods: list(r.modelAttributeMethods),
     // The name Spring knows this class by, when its stereotype annotation gave
     // it one (javafacts/11). Null is not "no name": Spring then decapitalises
@@ -509,10 +511,14 @@ export function buildTypeIndex(javaFacts) {
   const importsByOwner = new Map();
   const wildcardsByOwner = new Map();
   const simpleIndex = new Map();
+  // Anonymous classes by id (javafacts/20). Kept apart from `types`: nothing
+  // but a question about what an object of a type may run reads them.
+  const anonymousTypes = new Map();
 
   for (const r of javaFacts ?? []) {
     if (!r || typeof r !== 'object') continue;
-    if (r.kind === 'type') {
+    if (r.kind === 'anonymous') anonymousTypes.set(r.id, r);
+    else if (r.kind === 'type') {
       types.set(r.fqn, indexedType(r));
       // TWO FILES CAN DECLARE THE SAME FQN. Not a mistake and not rare: jeecg-boot
       // ships `org.jeecg.common.system.api.ISysBaseAPI` twice — a plain interface
@@ -561,7 +567,7 @@ export function buildTypeIndex(javaFacts) {
 
   return {
     types, typesByFile, filesByFqn, importsByOwner, wildcardsByOwner, simpleIndex,
-    enclosingChainOf, topLevelOf, resolveType,
+    enclosingChainOf, topLevelOf, resolveType, anonymousTypes,
   };
 }
 

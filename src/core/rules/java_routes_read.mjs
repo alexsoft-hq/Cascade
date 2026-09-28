@@ -200,15 +200,27 @@ export function readHandler(node, ctx) {
 export function readOperationId(node, ctx) {
   if (!node || node.k !== 'lambda' || node.p.length !== 1) return null;
   const [param] = node.p;
-  const chains = node.e ? [node.e] : (node.b ?? []).filter((s) => s.s === 'expr').map((s) => s.e);
+  const names = ctx.vocab.operationId;
+  const stmts = node.e ? [{ s: 'expr', e: node.e }] : (node.b ?? []);
   // The builder keeps the id it was given LAST: the last statement, and in a
   // chain the outermost call. A last call whose argument is not a literal
-  // leaves the id not known, never the one an earlier call named.
-  for (const chain of chains.slice().reverse()) {
-    const found = operationIdIn(chain, param, ctx.vocab.operationId);
+  // leaves the id not known, never the one an earlier call named; so does a
+  // later statement that may call it where this reader does not follow (under
+  // an if, in a loop, nested in another call's argument).
+  for (const s of stmts.slice().reverse()) {
+    const found = s.s === 'expr' ? operationIdIn(s.e, param, names) : undefined;
     if (found !== undefined) return found;
+    if (mayCallAny(s, names)) return null;
   }
   return null;
+}
+
+/** Whether a recorded statement or expression calls one of `names` anywhere inside it, read or not. */
+function mayCallAny(node, names) {
+  if (!node || typeof node !== 'object') return false;
+  if (Array.isArray(node)) return node.some((x) => mayCallAny(x, names));
+  if ((node.k === 'call' && names.has(node.n)) || (node.c ?? []).some((n) => names.has(n))) return true;
+  return Object.values(node).some((v) => typeof v === 'object' && mayCallAny(v, names));
 }
 
 /** The id the outermost operation-id call of one chain on `param` names: a string, null when it is not a literal, undefined when none is called. */

@@ -198,13 +198,18 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   // answers with a static page from a lambda that calls no method of this
   // repository, so there is no method to link and the node carries
   // `handlerUnread` instead of a guessed one.
-  assert.deepEqual([...perRoute.entries()].sort(), [[0, 1], [1, 969]],
-    '970 routes this pack serves: 969 with exactly one handler, one served by an inline lambda');
+  // RM67 review 3: a mapping that names several methods serves each one. 40
+  // handlers declare `method = {RequestMethod.PUT, RequestMethod.POST}` (the
+  // frontend's saveOrUpdate calls POST them, SysUserController.java:194 among
+  // them), and OpenApiController.java:161 names all eight methods, so the lane
+  // reads 40 + 7 routes it used to drop: 969 + 47.
+  assert.deepEqual([...perRoute.entries()].sort(), [[0, 1], [1, 1016]],
+    '1017 routes this pack serves: 1016 with exactly one handler, one served by an inline lambda');
   assert.equal(graph.nodes.get('endpoint:GET /')?.handlerUnread, true,
     'the route with no handler is the gateway index page, and it says its handler was not read');
   assert.equal(outboundJava, 9, '9 endpoint nodes exist only as the target of a declarative client call');
   assert.ok(outboundWeb > 0, 'and the frontend names routes this pack does not serve either');
-  assert.equal(stats.handles, 969);
+  assert.equal(stats.handles, 1016);
 
   // ---- 4. no @FeignClient method is ever a handler ------------------------
   for (const e of graph.edges) {
@@ -383,15 +388,20 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   //      edges above (§1) — the /openapi/* controllers and /sys/log/exportXls,
   //      which are precisely the five classes that use JeecgController's field.
   const o = buildOverview(graph, { laneStats: stats, lanes: pack.meta.lanes });
-  // 969 annotated routes plus the gateway's functional `GET /` (§3).
-  assert.equal(o.reach.endpoints, 970);
+  // 1016 annotated routes plus the gateway's functional `GET /` (§3); 969 until
+  // a `method = {...}` list served each of its methods (RM67 review 3).
+  assert.equal(o.reach.endpoints, 1017);
   // 9 routes a @FeignClient method calls, plus the ones the FRONTEND calls and
   // this pack does not serve (RM28). Both are `outbound`, and the gap note
   // below splits them, because they are not the same thing to fix: a Feign call
   // that leaves is another deployable, a frontend call that leaves is as often
   // a prefix nobody declared.
   assert.equal(o.reach.outboundEndpoints, outboundJava + outboundWeb);
-  assert.equal(o.reach.endpoints - o.reach.endpointsWithoutStatement, 744);
+  // RM67 review 3: 790. Each of the 47 routes a method list adds runs a handler
+  // an existing route already runs, and reaches what that twin reaches: 46 reach
+  // a statement, and POST /sys/tableWhiteList/edit reaches none, as its PUT twin
+  // never did. So 744 + 46, and no statement count moves.
+  assert.equal(o.reach.endpoints - o.reach.endpointsWithoutStatement, 790);
   // 748 STATEMENTS, WHERE RM20 REACHED 796. The 48 that dropped out are RM37's:
   // every one of them is a MyBatis-Plus built-in (`count`, `list`, `page`,
   // `saveBatch`) on a service whose controller never calls it from a mapped
@@ -702,8 +712,10 @@ test('jeecgboot/JeecgBoot: the MyBatis-Plus lane maps what nobody wrote down', {
   assert.equal(o.code.mpBuiltinStatements, 542);
   // 970 routes, of which 744 now reach a statement (RM14: 234, RM15: 717). The
   // 970th is the gateway's functional `GET /`, which serves a static page.
-  assert.equal(o.reach.endpoints, 970);
-  assert.equal(o.reach.endpoints - o.reach.endpointsWithoutStatement, 744);
+  // RM67 review 3: 47 more, each method a `method = {...}` list names (see the
+  // route census above), 46 of them reaching a statement as their twins do.
+  assert.equal(o.reach.endpoints, 1017);
+  assert.equal(o.reach.endpoints - o.reach.endpointsWithoutStatement, 790);
   // ONE more table, and it was read from the source before it was read from the
   // pack: SysDictMapper.java:51 carries
   //   @Select("SELECT db_source FROM onl_cgform_head WHERE table_name = #{tableName} …")

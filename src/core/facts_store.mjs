@@ -268,6 +268,8 @@ const NEWER_SORT_KEYS = Object.freeze({
   // javafacts/16: one method that builds functional routes. Two overloads of one
   // name and arity differ by the line they are declared on.
   routeFunction: (rec) => `5routefn${SEP}${rec.owner}${SEP}${rec.method}${SEP}${rec.paramCount}${SEP}${padLine(rec.line)}`,
+  // javafacts/20: an anonymous class, by the id its owner and its order give it.
+  anonymous: (rec) => `2anon${SEP}${rec.id}`,
 });
 
 /** A newer kind's key, or null for a record that is not shard content (header, summary, a kind nobody keys). */

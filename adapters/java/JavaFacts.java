@@ -20,7 +20,7 @@
  *
  * Record kinds: header, parse_error, import, type, entity, repository, field,
  * endpoint, method, transactional, call, httpCall, mpEntity, mpMapper, mpService, mpWrapper,
- * invocations, routeFunction. EVERY record but the header carries a
+ * invocations, routeFunction, anonymous. EVERY record but the header carries a
  * `file`, because the incremental core shards the stream by file: a record
  * without one would be silently dropped from the cache (src/core/facts_store.mjs
  * mirrors the sort keys and a test proves the mirror byte-for-byte).
@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/19";
+    static final String VERSION = "javafacts/20";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -479,6 +479,43 @@ public class JavaFacts {
             return lineOf(sel);
         }
 
+        /**
+         * One `anonymous` record per anonymous class this type's own code writes
+         * (javafacts/20): the type it extends or implements, as written, and the
+         * methods it declares. `Hd hd = new Hd(){ public R h(...) {...} };` is an
+         * object of type Hd whose h is this one, so a call or a handler through
+         * a Hd may run it. EVIDENCE ONLY; the id is this type's name, `$anonymous`
+         * and the order the classes are written in, which is not javac's
+         * binary name. A nested named type is its own owner and is left out.
+         */
+        void emitAnonymous(final String fqn, ClassTree ct) {
+            final int[] n = { 0 };
+            for (Tree member : ct.getMembers()) {
+                if (member instanceof ClassTree) continue;
+                member.accept(new TreeScanner<Void, Void>() {
+                    @Override public Void visitNewClass(NewClassTree nc, Void p) {
+                        ClassTree body = nc.getClassBody();
+                        if (body != null) {
+                            n[0]++;
+                            String id = fqn + "$anonymous" + n[0];
+                            Map<String, Object> rec = new LinkedHashMap<>();
+                            rec.put("kind", "anonymous");
+                            rec.put("id", id);
+                            rec.put("owner", fqn);
+                            rec.put("supertype", typeSimpleName(nc.getIdentifier()));
+                            rec.put("supertypeWritten", writtenName(nc.getIdentifier()));
+                            rec.put("declaredMethods", declaredMethodsOf(body));
+                            rec.put("declaredMethodLines", declaredMethodLinesOf(body));
+                            rec.put("line", lineOf(nc));
+                            rec.put("file", rel);
+                            sink.add("2anon" + SEP + id, rec);
+                        }
+                        return super.visitNewClass(nc, p);
+                    }
+                }, null);
+            }
+        }
+
         void processType(ClassTree ct, String enclosingFqn) {
             String name = ct.getSimpleName().toString();
             if (name.isEmpty()) return; // anonymous class: no stable FQN
@@ -551,6 +588,12 @@ public class JavaFacts {
             typeRec.put("declaredMethods", declaredMethodsOf(ct));
             // …and where each of them is declared, aligned index-for-index.
             typeRec.put("declaredMethodLines", declaredMethodLinesOf(ct));
+            // An interface's methods that have a body, as "name/arity"
+            // (javafacts/20): a class that implements the interface and declares
+            // no method of that name runs this one. Absent on a class, and on an
+            // interface with none.
+            List<String> defaults = defaultMethodsOf(ct);
+            if (!defaults.isEmpty()) typeRec.put("defaultMethods", defaults);
             // The methods this type declares that carry `@ModelAttribute`
             // (javafacts/10). Spring runs them before each handler of the class, so
             // nothing in the source calls them and no call record can name them.
@@ -566,6 +609,7 @@ public class JavaFacts {
             typeRec.put("file", rel);
             sink.types++;
             sink.add("2type" + SEP + fqn, typeRec);
+            emitAnonymous(fqn, ct);
 
             // Imports belong to the file; attribute them to each top-level type
             // so the bridge can resolve simple->FQN by the call's owning type.
@@ -664,8 +708,11 @@ public class JavaFacts {
             // and Spring joins it in FRONT of any class-level @RequestMapping. Path
             // assembly lives in ONE place — here — so the bridge never has to
             // re-join two halves of a route.
-            String basePath = joinPathParts(clientPathOf(annotationsOf(ct.getModifiers().getAnnotations())),
-                    classLevelBasePath(annotationsOf(ct.getModifiers().getAnnotations())));
+            // …once for each path a class-level array names (javafacts/20).
+            List<String> basePaths = new ArrayList<>();
+            for (String classPath : classLevelBasePaths(annotationsOf(ct.getModifiers().getAnnotations()))) {
+                basePaths.add(joinPathParts(clientPathOf(annotationsOf(ct.getModifiers().getAnnotations())), classPath));
+            }
             // @Transactional at class level applies to every method (a transaction
             // boundary); method-level overrides/adds. Recorded so the graph can
             // show a transaction's read/write footprint.
@@ -752,21 +799,29 @@ public class JavaFacts {
                         sink.add("6tx" + SEP + txm, tr);
                     }
 
-                    Mapping mp = methodMapping(m);
-                    if (mp != null) {
+                    List<Mapping> mappings = methodMappings(m);
+                    if (mappings != null) {
                         isHandler = true;
-                        String path = joinPath(basePath, mp.path);
                         String handler = fqn + "#" + mname;
-                        Map<String, Object> ep = new LinkedHashMap<>();
-                        ep.put("kind", "endpoint");
-                        ep.put("httpMethod", mp.httpMethod);
-                        ep.put("path", path);
-                        ep.put("handler", handler);
-                        ep.put("handlerType", fqn);
-                        ep.put("line", lineOf(m));
-                        ep.put("file", rel);
-                        sink.endpoints++;
-                        sink.add("4endpoint" + SEP + handler + SEP + mp.httpMethod + SEP + path, ep);
+                        // A route for each class path, method and path the
+                        // annotations name; two spellings of one route are one.
+                        java.util.Set<String> seenRoutes = new java.util.HashSet<>();
+                        for (String basePath : basePaths) {
+                            for (Mapping mp : mappings) {
+                                String path = joinPath(basePath, mp.path);
+                                if (!seenRoutes.add(mp.httpMethod + " " + path)) continue;
+                                Map<String, Object> ep = new LinkedHashMap<>();
+                                ep.put("kind", "endpoint");
+                                ep.put("httpMethod", mp.httpMethod);
+                                ep.put("path", path);
+                                ep.put("handler", handler);
+                                ep.put("handlerType", fqn);
+                                ep.put("line", lineOf(m));
+                                ep.put("file", rel);
+                                sink.endpoints++;
+                                sink.add("4endpoint" + SEP + handler + SEP + mp.httpMethod + SEP + path, ep);
+                            }
+                        }
                     }
 
                     // method records: interface methods (mapper bindings) + handlers.
@@ -1374,6 +1429,7 @@ public class JavaFacts {
                     o.put("s", "other");
                     o.put("t", s.getKind().name());
                     putAssigned(o, s);
+                    putCalled(o, s);
                 }
                 if (s instanceof ReturnTree || s instanceof VariableTree) putAssigned(o, s);
                 o.put("l", lineOf(s));
@@ -1457,7 +1513,27 @@ public class JavaFacts {
                 }
                 o.put("k", "other");
                 o.put("t", (e == null) ? null : e.getKind().name());
+                if (e != null) putCalled(o, e);
                 return o;
+            }
+
+            /**
+             * The names of the methods called anywhere inside a statement or an
+             * expression this tree does not record whole (javafacts/20): an if,
+             * a loop, a conditional expression. The reader cannot follow what
+             * they do, but it can see that `operationId` may be called in one.
+             */
+            void putCalled(Map<String, Object> o, Tree t) {
+                final java.util.TreeSet<String> names = new java.util.TreeSet<>();
+                t.accept(new TreeScanner<Void, Void>() {
+                    @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
+                        Tree sel = inv.getMethodSelect();
+                        if (sel instanceof MemberSelectTree) names.add(((MemberSelectTree) sel).getIdentifier().toString());
+                        else if (sel instanceof IdentifierTree) names.add(((IdentifierTree) sel).getName().toString());
+                        return super.visitMethodInvocation(inv, p);
+                    }
+                }, null);
+                if (!names.isEmpty()) o.put("c", new ArrayList<Object>(names));
             }
 
             Map<String, Object> call(MethodInvocationTree inv, Map<String, Object> o) {
@@ -2458,21 +2534,32 @@ public class JavaFacts {
         Mapping(String httpMethod, String path) { this.httpMethod = httpMethod; this.path = path; }
     }
 
-    static Mapping methodMapping(MethodTree m) {
+    /**
+     * Every route a method's mapping annotation declares (javafacts/20): one per
+     * method it names and per path it names. `method = {PUT, POST}` serves the
+     * handler for both, and `value = {"/a", "/b"}` at both, so reading only the
+     * first of either list dropped routes Spring serves. Null when the method
+     * carries no mapping annotation.
+     */
+    static List<Mapping> methodMappings(MethodTree m) {
         for (AnnotationTree a : m.getModifiers().getAnnotations()) {
             String simple = typeSimpleName(a.getAnnotationType());
             if (simple == null) continue;
+            List<String> verbs = new ArrayList<>();
             switch (simple) {
-                case "GetMapping":    return new Mapping("GET", annPath(a));
-                case "PostMapping":   return new Mapping("POST", annPath(a));
-                case "PutMapping":    return new Mapping("PUT", annPath(a));
-                case "DeleteMapping": return new Mapping("DELETE", annPath(a));
-                case "PatchMapping":  return new Mapping("PATCH", annPath(a));
-                case "RequestMapping":
-                    return new Mapping(requestMethodOf(a), annPath(a));
-                default:
-                    // not a mapping annotation
+                case "GetMapping":    verbs.add("GET"); break;
+                case "PostMapping":   verbs.add("POST"); break;
+                case "PutMapping":    verbs.add("PUT"); break;
+                case "DeleteMapping": verbs.add("DELETE"); break;
+                case "PatchMapping":  verbs.add("PATCH"); break;
+                case "RequestMapping": verbs.addAll(requestMethodsOf(a)); break;
+                default: continue; // not a mapping annotation
             }
+            List<Mapping> out = new ArrayList<>();
+            for (String verb : verbs) {
+                for (String p : annPaths(a)) out.add(new Mapping(verb, p));
+            }
+            return out;
         }
         return null;
     }
@@ -2737,6 +2824,19 @@ public class JavaFacts {
     }
 
     /** Every method a type declares, as "name/arity"; constructors excluded, order kept. */
+    /** An interface's methods declared `default`, as "name/arity", in declaration order, each once; empty for a class. */
+    static List<String> defaultMethodsOf(ClassTree ct) {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        if (ct.getKind() == Tree.Kind.INTERFACE) {
+            for (Tree member : ct.getMembers()) {
+                if (!(member instanceof MethodTree)) continue;
+                MethodTree m = (MethodTree) member;
+                if (m.getModifiers().getFlags().contains(Modifier.DEFAULT)) out.add(m.getName() + "/" + m.getParameters().size());
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
     static List<String> declaredMethodsOf(ClassTree ct) {
         return new ArrayList<>(declaredMethodKeys(ct));
     }
@@ -2761,7 +2861,12 @@ public class JavaFacts {
         return joinPath(a, b);
     }
 
-    static String classLevelBasePath(List<AnnotationTree> anns) {
+    /**
+     * The paths a class-level mapping puts in front of its methods' routes: each
+     * one a `value`/`path` array names (javafacts/20). A single null when the
+     * class names none, so the method's own path stands alone.
+     */
+    static List<String> classLevelBasePaths(List<AnnotationTree> anns) {
         for (AnnotationTree a : anns) {
             String simple = typeSimpleName(a.getAnnotationType());
             if (simple == null) continue;
@@ -2772,27 +2877,50 @@ public class JavaFacts {
                 case "PutMapping":
                 case "DeleteMapping":
                 case "PatchMapping":
-                    String p = annPath(a);
-                    if (p != null) return p;
+                    List<String> ps = annPaths(a);
+                    if (ps.get(0) != null) return ps;
                     break;
                 default:
             }
         }
-        return null;
+        List<String> none = new ArrayList<>();
+        none.add(null);
+        return none;
     }
 
-    // Path from an annotation's value/path attribute (positional or named).
-    static String annPath(AnnotationTree a) {
+    /**
+     * The paths an annotation's value/path attribute names, positional or named,
+     * one string or an array of them, first spelling first, each once. A single
+     * null when it names no literal path, which is how a mapping with no path
+     * has always been read.
+     */
+    static List<String> annPaths(AnnotationTree a) {
         ExpressionTree e = annAttr(a, "value");
         if (e == null) e = annAttr(a, "path");
-        return firstString(e);
+        List<String> out = new ArrayList<>(new java.util.LinkedHashSet<>(stringValues(unwrap(e))));
+        if (out.isEmpty()) out.add(null);
+        return out;
     }
 
-    // httpMethod from a @RequestMapping's method= attribute; ANY if absent.
-    static String requestMethodOf(AnnotationTree a) {
-        ExpressionTree e = annAttr(a, "method");
-        String m = firstMemberName(e);
-        return (m != null) ? m : "ANY";
+    /**
+     * The HTTP methods a @RequestMapping's `method` attribute names, one or an
+     * array of them, each once in the order written (javafacts/20); ANY when it
+     * names none, which is what Spring serves then.
+     */
+    static List<String> requestMethodsOf(AnnotationTree a) {
+        ExpressionTree e = unwrap(annAttr(a, "method"));
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        if (e instanceof NewArrayTree && ((NewArrayTree) e).getInitializers() != null) {
+            for (ExpressionTree it : ((NewArrayTree) e).getInitializers()) {
+                String m = firstMemberName(it);
+                if (m != null) out.add(m);
+            }
+        } else {
+            String m = firstMemberName(e);
+            if (m != null) out.add(m);
+        }
+        if (out.isEmpty()) out.add("ANY");
+        return new ArrayList<>(out);
     }
 
     // Return the expression for a named attribute, or the positional value for "value".

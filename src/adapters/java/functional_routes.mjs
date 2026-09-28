@@ -54,42 +54,98 @@ function typeNamed(ctx, owner, written) {
   return base ? [base, ...rest].join('.') : null;
 }
 
-/** Every type below `fqn` in the tree: its implementors, their subclasses, and so on down. */
+const nameOf = (entry) => String(entry).slice(0, String(entry).lastIndexOf('/'));
+const anonymousIndex = new WeakMap();
+
+/** The anonymous classes of the tree by the type each extends or implements, read once per bridge run. */
+function anonymousBySupertype(ctx) {
+  let idx = anonymousIndex.get(ctx);
+  if (idx) return idx;
+  idx = new Map();
+  for (const a of [...(ctx.anonymousTypes?.values() ?? [])].sort((x, y) => cmp(x.id, y.id))) {
+    const sup = ctx.resolveType(a.owner, a.supertype);
+    if (sup) idx.set(sup, [...(idx.get(sup) ?? []), a.id]);
+  }
+  anonymousIndex.set(ctx, idx);
+  return idx;
+}
+
+/** Every type below `fqn` in the tree: its implementors, their subclasses, the anonymous classes written from them, and so on down. */
 function descendantsOf(ctx, fqn) {
   const seen = new Set();
   const queue = [fqn];
+  const anonymous = anonymousBySupertype(ctx);
   while (queue.length > 0) {
     const cur = queue.shift();
-    for (const sub of [...(ctx.implementorsOf.get(cur) ?? []), ...(ctx.subclassesOf.get(cur) ?? [])]) {
+    for (const sub of [...(ctx.implementorsOf.get(cur) ?? []), ...(ctx.subclassesOf.get(cur) ?? []), ...(anonymous.get(cur) ?? [])]) {
       if (!seen.has(sub) && sub !== fqn) { seen.add(sub); queue.push(sub); }
     }
   }
   return [...seen];
 }
 
-/** The method an object of exactly this class runs: its own, or the one it inherits; null for an interface or a type not read. */
+/** The interfaces a type names in its own implements (an interface: its extends) clause. */
+const interfacesOf = (ctx, fqn) => (ctx.types.get(fqn)?.implementsSimple ?? []).map((s) => ctx.resolveType(fqn, s)).filter(Boolean);
+
+/**
+ * The default bodies a class runs for `method` when neither it nor a class
+ * above it declares one: the nearest default up each interface line of it and
+ * of its superclasses. Two lines may each have one; both are candidates.
+ */
+function interfaceDefaults(ctx, fqn, method) {
+  const out = new Set();
+  const seen = new Set();
+  const queue = [];
+  for (let c = fqn, i = 0; c && i < 32; c = ctx.superOf.get(c), i += 1) queue.push(...interfacesOf(ctx, c));
+  while (queue.length > 0) {
+    const i = queue.shift();
+    if (seen.has(i)) continue;
+    seen.add(i);
+    if ((ctx.types.get(i)?.defaultMethods ?? []).some((e) => nameOf(e) === method)) out.add(`${i}#${method}`);
+    else queue.push(...interfacesOf(ctx, i));
+  }
+  return [...out];
+}
+
+/**
+ * The methods an object of exactly this type runs: its own, the one a class
+ * above it declares, or an interface's default body. An interface runs its own
+ * default, which an implementor outside the tree may keep; an anonymous class
+ * adds only what it declares, since what it inherits its supertype gives.
+ */
 function runsAs(ctx, fqn, method) {
+  const anon = ctx.anonymousTypes?.get(fqn);
+  if (anon) return (anon.declaredMethods ?? []).some((e) => nameOf(e) === method) ? [`${fqn}#${method}`] : [];
   const t = ctx.types.get(fqn);
-  if (!t || t.typeKind === 'interface') return null;
-  if (ctx.declares(fqn, method, null)) return `${fqn}#${method}`;
+  if (!t) return [];
+  if (t.typeKind === 'interface') return (t.defaultMethods ?? []).some((e) => nameOf(e) === method) ? [`${fqn}#${method}`] : [];
+  if (ctx.declares(fqn, method, null)) return [`${fqn}#${method}`];
   const up = findDeclaringAncestor(fqn, method, null, { types: ctx.types, superOf: ctx.superOf, declares: ctx.declares });
-  return up ? `${up.declaredBy}#${method}` : null;
+  return up ? [`${up.declaredBy}#${method}`] : interfaceDefaults(ctx, fqn, method);
 }
 
 /**
  * The methods an object of this declared type may run for `method`: what the
- * type itself runs, and what each type below it runs, overrides included. The
- * object may be any of them, so the set holds every one (`Base b = new
- * Derived()` reaches `Derived#h`). A type this run did not read may run its own.
+ * type itself runs, and what each type below it runs, overrides, inherited
+ * interface defaults and anonymous subclasses included. The object may be any
+ * of them, so the set holds every one (`Base b = new Derived()` reaches
+ * `Derived#h`). A type this run did not read may run its own.
  */
 function membersOfType(ctx, fqn, method) {
   const out = new Set();
   if (!ctx.types.has(fqn)) out.add(`${fqn}#${method}`);
-  for (const t of [fqn, ...descendantsOf(ctx, fqn)]) {
-    const m = runsAs(ctx, t, method);
-    if (m) out.add(m);
-  }
+  for (const t of [fqn, ...descendantsOf(ctx, fqn)]) for (const m of runsAs(ctx, t, method)) out.add(m);
   return out.size > 0 ? [...out].sort(cmp) : [`${fqn}#${method}`];
+}
+
+/** Where a candidate method is declared: a type's declaration line, or the one its anonymous class records. */
+function lineOfCandidate(ctx, member) {
+  const line = ctx.declaredLineOf.get(member);
+  if (line != null) return line;
+  const hash = member.lastIndexOf('#');
+  const anon = ctx.anonymousTypes?.get(member.slice(0, hash));
+  const at = (anon?.declaredMethods ?? []).findIndex((e) => nameOf(e) === member.slice(hash + 1));
+  return at >= 0 ? anon.declaredMethodLines?.[at] ?? null : null;
 }
 
 /**
@@ -240,7 +296,7 @@ function placeRoute(ctx, fn, r, declared, out) {
   const grade = gradeOf(where, resolved);
   for (const member of resolved.members) {
     out.routes.push({
-      epId, httpMethod: r.verb, path: where.path, handler: member, line: ctx.declaredLineOf.get(member) ?? null,
+      epId, httpMethod: r.verb, path: where.path, handler: member, line: lineOfCandidate(ctx, member),
       grade, operationId: r.operationId ?? null, evidence: evidenceOf(fn, r, where, resolved),
     });
   }
