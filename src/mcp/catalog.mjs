@@ -226,8 +226,12 @@ export const TOOLS = Object.freeze({
       + 'walk.beyond.tables instead. direction=up runs from a column, table, statement or '
       + 'method back to the HTTP endpoints that can reach it, which is the change-impact '
       + 'question, and every endpoint carries the weakest grade on its path. Walking up, pass '
-      + 'exactly one of column/table/statement/symbol, because an endpoint has nothing '
-      + 'upstream. The lanes are then target, mapper statements, service layer and endpoints '
+      + 'exactly one of endpoint/column/table/statement/symbol; a screen has nothing upstream. '
+      + 'Up from an ENDPOINT is "where is this API used": the walk starts at the route and '
+      + 'climbs what calls it over HTTP, the frontend functions and the screens that render '
+      + 'them (and any client in this pack), with no statements lane; the route\'s own address '
+      + 'grade caps every row, and on a pack with no frontend those two lanes say not-shipped. '
+      + 'The lanes are then target, mapper statements, service layer and endpoints '
       + `(no tables lane: the target IS that side), depth defaults to ${DEFAULT_WALK_DEPTH} as well, the handler method `
       + 'is a service row flagged `handler`, and the endpoints are DERIVED from its HANDLES '
       + 'edges rather than walked, so a route above a handler that sat at the depth cap is in '
@@ -264,11 +268,11 @@ export const TOOLS = Object.freeze({
     inputSchema: {
       type: 'object',
       properties: {
-        endpoint: { type: 'string', description: '"METHOD /path" key of an endpoint node (direction=down only)' },
+        endpoint: { type: 'string', description: '"METHOD /path" key of an endpoint node: down, the code it runs; up, what calls it' },
         screen: { type: 'string', description: 'direction=down entry: a screen\'s composed router path, e.g. "/things/list"' },
         kind: { type: 'string', enum: ['endpoint', 'screen'], description: 'list mode only: which entries to list (default endpoint)' },
         symbol: { type: 'string', description: 'owner#method: the method to walk down from, or up from' },
-        direction: { type: 'string', enum: ['down', 'up'], description: 'down (default): what this call runs through. up: which endpoints can reach this target' },
+        direction: { type: 'string', enum: ['down', 'up'], description: 'down (default): what this call runs through. up: which endpoints and screens can reach this target' },
         column: { type: 'string', description: 'direction=up target: schema.table.column or table.column' },
         table: { type: 'string', description: 'direction=up target: a table' },
         statement: { type: 'string', description: 'direction=up target: a mapper statement id' },

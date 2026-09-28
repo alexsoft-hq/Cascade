@@ -33,21 +33,10 @@ document.querySelectorAll('#cpaxis button').forEach(b=> b.onclick=()=>{
 });
 document.getElementById('ereset').onclick = ()=>{ document.getElementById('etable').value=''; if(erdClearFn) erdClearFn(); if(erdResetFn) erdResetFn(); };
 document.getElementById('etable').addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=e.target.value.trim(); if(q && erdSelectFn) erdSelectFn(q); else if(erdClearFn) erdClearFn(); } });
-// Explore's box is the rail's filter AND the old search box. Enter takes the
-// highlighted row; with nothing highlighted (the filter matched none of the
-// rows this kind holds) it asks the server, exactly as it always did.
-document.getElementById('q').addEventListener('keydown', e=>{
-  if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); railMove('explore', e.key==='ArrowDown'?1:-1); return; }
-  if(e.key!=='Enter') return;
-  if(railEnter('explore')) return;
-  doSearch(e.target.value.trim());
-});
-document.getElementById('q').addEventListener('input', ()=>railFilterInput('explore'));
-document.getElementById('edits').onclick = showEdits;
 railWire();
 srcWire();
 rulesWire();
-// The five Show all buttons, and the page's one Escape rule. The pane's own
+// The Show all buttons, and the page's one Escape rule. The pane's own
 // keys (j / k / arrows to scroll a line, f for the whole file) ride the same
 // listener, because they only mean anything while the pane is open.
 for(const [tab, id] of Object.entries(SHOWALL)) byId(id).onclick = ()=>showAll(tab);
@@ -55,10 +44,11 @@ document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape'){ escapeRule(e); return; }
   if(srcKeydown(e) && e.preventDefault) e.preventDefault();
 });
-// Both lane tabs are wired by the same function — one behaviour, two pictures.
-wireChainToolbar(FLOWV);
-wireChainToolbar(IMPACTV);
-for(const v of [FLOWV, IMPACTV]) for(const [format, id] of Object.entries(EXPORT_BUTTONS[v.name])) byId(id).onclick=()=>exportChain(v, format);
+// The Trace place: its box and its picture, the controls only it has, and
+// the three ways to save the answer on screen.
+wireChainToolbar(TRACEV);
+traceWire();
+for(const [format, id] of Object.entries(EXPORT_BUTTONS.trace)) byId(id).onclick=()=>exportChain(TRACEV, format);
 byId('cmpdraw').onclick=()=>drawCompare();
 byId('cmpbase').onchange=()=>drawCompare();
 // The Graph tab's entry box is the SAME typeahead the lane tabs use (one
@@ -100,8 +90,7 @@ byId('cmpbase').onchange=()=>drawCompare();
   // The flow is a property of the PICTURE, not of the answer: nothing is
   // re-queried and nothing is re-laid-out, the renderers are just re-read.
   byId('gflow').onclick=()=>flowToggle();
-  byId('fflow').onclick=()=>flowToggle();
-  byId('iflow').onclick=()=>flowToggle();
+  byId('tflow').onclick=()=>flowToggle();
   byId('gback').onclick=()=>graphMode('map');
   byId('gfit').onclick=()=>mapRefit();
   document.addEventListener('click',(ev)=>{ if(!ev.target.closest('#gsug') && ev.target.id!=='gfocus') closeSug(GRAPHV); });
@@ -125,7 +114,7 @@ window.addEventListener('resize', ()=>{ clearTimeout(chainResizeTimer); chainRes
   // The source pane is fixed under a masthead whose height moves with the
   // width, and its own width is a share of the window until the reader drags it.
   srcPaneApply();
-  for(const v of [FLOWV, IMPACTV]) if(v.resp && v.view==='lanes') drawChainLinks(v);
+  if(TRACEV.resp && TRACEV.view==='lanes') drawChainLinks(TRACEV);
   // Every canvas renderer owns a canvas sized in PIXELS: it has to be told. The
   // layouts are not recomputed — a resize is a different window on the same
   // picture, not a different picture.
@@ -143,7 +132,7 @@ window.addEventListener('resize', ()=>{ clearTimeout(chainResizeTimer); chainRes
 // move. Throttled, and never a re-measure of the beziers - only the dots.
 let laneScrollTimer=null;
 window.addEventListener('scroll', ()=>{ clearTimeout(laneScrollTimer); laneScrollTimer=setTimeout(()=>{
-  for(const v of [FLOWV, IMPACTV]) if(v.resp && v.view==='lanes') laneFlowVisibility(v);
+  if(TRACEV.resp && TRACEV.view==='lanes') laneFlowVisibility(TRACEV);
 },140); }, {passive:true});
 // A hidden tab is not being read. SMIL keeps its own clock, so it is told.
 document.addEventListener('visibilitychange', ()=>{
@@ -170,7 +159,9 @@ document.addEventListener('visibilitychange', ()=>{
   // catalogue it has not read.
   await Promise.all(LANGS.filter((l)=>l!=='en').map(loadCatalog));
   await loadProjects();
-  const hash=readHash();
+  // A link written before Trace (tab=explore, flow or impact) is read as the
+  // Trace question it asked, so it lands on the same target.
+  const hash=traceReadHash(readHash());
   const ids=STATE.projects.map((p)=>p.id);
   const known=(x)=> !!x && ids.indexOf(x)>=0;
   // The hash wins (it is what a shared link says), then the ?project= the
@@ -185,11 +176,20 @@ document.addEventListener('visibilitychange', ()=>{
   // The Overview is the landing answer whichever tab a link points at.
   loadOverview();
   activateTab(STATE.tab);
-  // ...and a link that names a pick lands ON it, source pane and all. Nothing
-  // is in memory on a cold load, so this is the one place a restore asks.
-  if(hash.pick && Object.hasOwn(PICK, STATE.tab)) pickAsk(STATE.tab, hash.pick);
-  // ...and only if the pick did not already open it on that very node, or the
-  // page would ask for the same file twice on one load.
-  if(hash.src && !(SRC.open && SRC.node===hash.src)) srcOpen(hash.src, {tab:STATE.tab, push:false});
+  landOn(hash);
   refreshShowAll();
 })();
+/**
+ * A link that names a pick lands ON it, source pane and all. Nothing is in
+ * memory on a cold load, so this is the one place a restore asks.
+ */
+function landOn(hash){
+  if(hash.pick && STATE.tab==='trace') traceRestore(hash);
+  else if(hash.pick && Object.hasOwn(PICK, STATE.tab)) pickAsk(STATE.tab, hash.pick);
+  // ...and the pane only if the pick did not already open it on that very
+  // node, or the page would ask for the same file twice on one load.
+  if(hash.src && !(SRC.open && SRC.node===hash.src)) srcOpen(hash.src, {tab:STATE.tab, push:false});
+  // The URL says the pane is open too, on a tab with no pick as on one with a
+  // pick still on its way (its answer writes the URL again when it lands).
+  if(SRC.open) writeHash();
+}

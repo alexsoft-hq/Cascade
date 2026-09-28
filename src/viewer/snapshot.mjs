@@ -37,7 +37,9 @@ export const SNAPSHOT_TABS = Object.freeze({
   // One default depth for every walk from a route (core/graph.mjs), so the
   // file asks what the tab would have asked.
   flow: Object.freeze({ direction: 'down', kinds: Object.freeze(['endpoint', 'screen', 'symbol']), depth: DEFAULT_WALK_DEPTH, screenDepth: DEFAULT_WALK_DEPTH }),
-  impact: Object.freeze({ direction: 'up', kinds: Object.freeze(['table', 'column', 'statement', 'symbol']), depth: DEFAULT_WALK_DEPTH, screenDepth: DEFAULT_WALK_DEPTH }),
+  // Up from a route is "where is this API used" (RM67-U2b), the Trace place's
+  // other half of a route: the frontend functions and screens that call it.
+  impact: Object.freeze({ direction: 'up', kinds: Object.freeze(['table', 'column', 'statement', 'symbol', 'endpoint']), depth: DEFAULT_WALK_DEPTH, screenDepth: DEFAULT_WALK_DEPTH }),
 });
 
 /** The modes both tabs offer, and the one they open on. */

@@ -26,11 +26,11 @@ async function showTx(method){
   try {
     const r=await api('transactions',{method});
     const d=r.answer.transactions[0]; if(!d){ tv.replaceChildren(el('div',{className:'panel',textContent:'not found'})); return; }
-    const head=el('div',{className:'panel'},[ el('div',{className:'srchead'},[ el('button',{textContent:'All transactions', onclick:loadTx}), el('span',{className:'id',textContent:d.method}), el('span',{className:'tag',textContent:d.scope||''}), el('button',{className:'mini',textContent:'Source', title:t('src.open.title'), onclick:()=>srcOpen('symbol:'+d.method, {tab:'tx'})}), el('button',{className:'mini',textContent:'Flow', title:t('btn.tx.flow.title'), onclick:()=>openFlow({symbol:d.method})}), el('button',{className:'mini',textContent:'Impact', title:t('btn.tx.impact.title'), onclick:()=>openImpact({symbol:d.method})}) ]),
+    const head=el('div',{className:'panel'},[ el('div',{className:'srchead'},[ el('button',{textContent:'All transactions', onclick:loadTx}), el('span',{className:'id',textContent:d.method}), el('span',{className:'tag',textContent:d.scope||''}), el('button',{className:'mini',textContent:'Source', title:t('src.open.title'), onclick:()=>srcOpen('symbol:'+d.method, {tab:'tx'})}), traceButton('symbol', d.method, 'down'), traceButton('symbol', d.method, 'up') ]),
       el('div',{className:'comment',textContent:d.statementCount+' statements\u00a0\u00a0'+d.tableCount+' tables\u00a0\u00a0atomic'}) ,
       el('div',{style:'margin-top:6px'}, (d.tables||[]).map(t=>el('button',{textContent:t,style:'margin:2px 4px 0 0',onclick:()=>openErd(t)}))) ]);
-    const wPanel=listPanel('writes', (d.writes||[]).length, d.writes||[], (c)=>el('li',{},[el('a',{className:'id clickable',textContent:c,onclick:()=>showColumn('column:'+c)}), el('span',{className:'tag write',textContent:'write'})]), {writes:'none'}, 'writes');
-    const rPanel=listPanel('reads', (d.reads||[]).length, d.reads||[], (c)=>el('li',{},[el('a',{className:'id clickable',textContent:c,onclick:()=>showColumn('column:'+c)}), el('span',{className:'tag read',textContent:'read'})]), {reads:'none'}, 'reads');
+    const wPanel=listPanel('writes', (d.writes||[]).length, d.writes||[], (c)=>el('li',{},[el('a',{className:'id clickable',textContent:c,onclick:()=>openTrace({kind:'column', id:c}, 'detail')}), el('span',{className:'tag write',textContent:'write'})]), {writes:'none'}, 'writes');
+    const rPanel=listPanel('reads', (d.reads||[]).length, d.reads||[], (c)=>el('li',{},[el('a',{className:'id clickable',textContent:c,onclick:()=>openTrace({kind:'column', id:c}, 'detail')}), el('span',{className:'tag read',textContent:'read'})]), {reads:'none'}, 'reads');
     const kids=[head, el('div',{className:'cols'},[wPanel,rPanel])];
     kids.push(honesty(r, 'tx'));
     tv.replaceChildren(...kids);

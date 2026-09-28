@@ -269,14 +269,14 @@ function cmpEndList(title, kind, touched, a){
   return cmpList(title, touched.total, endRows(touched, a).map((row)=> endRow(kind, row)), t('compare.ends.note'));
 }
 /**
- * An end the head is known to have gets a Flow button; one the earlier build
+ * An end the head is known to have gets a Trace button; one the earlier build
  * alone had is said so, and one whose presence is not known is said so too.
  * Neither of those opens anything: there may be no chain to walk.
  */
 function endRow(kind, row){
   const name=row.id.slice(kind.length+1);
   const tail = row.head===true
-    ? el('button',{ type:'button', className:'mini', textContent:'Flow', title:t('btn.flow.title'), onclick:()=> openFlow({ [kind]:name }) })
+    ? traceButton(kind, name, 'down')
     : el('span',{className:'count',textContent:t(row.head===false ? 'compare.ends.gone' : 'compare.ends.unknown')});
   return el('li',{className:'cmprow'},[
     el('span',{className:'mono',textContent:name}),

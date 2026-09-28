@@ -390,8 +390,21 @@ function nameSplit(text){
   const s=String(text);
   let cut=-1;
   for(const c of ['.','#','_','/']) cut=Math.max(cut, s.lastIndexOf(c, s.length-2));
+  // A CamelCase name with no separator (`PmsProductAttributeValueDao`) gives
+  // way at its last word boundary instead, so `ValueDao` stays (RM67-U2b).
+  if(cut<=0) cut=camelCut(s);
   if(cut<=0) return [el('span',{className:'ptail',textContent:s})];
   return [ el('span',{className:'phead',textContent:s.slice(0,cut+1)}), el('span',{className:'ptail',textContent:s.slice(cut+1)}) ];
+}
+/**
+ * Where a CamelCase name gives way: before its second-to-last capital that
+ * follows a lower-case letter, so the tail keeps the last two words. -1 when the
+ * name has fewer than three such words, which is short enough to keep whole.
+ */
+function camelCut(s){
+  const at=[];
+  for(let i=1;i<s.length;i++) if(/[A-Z]/.test(s[i]) && /[a-z0-9]/.test(s[i-1])) at.push(i);
+  return at.length>=2 ? at[at.length-2]-1 : -1;
 }
 const byId=(id)=>document.getElementById(id);
 const vwrap=(v)=>byId(v.wrapId), vside=(v)=>byId(v.sideId), vsvg=(v)=>vwrap(v).querySelector('svg.flowsvg');

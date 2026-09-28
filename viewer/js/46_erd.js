@@ -704,7 +704,7 @@ function renderErdIsolated(iso){
       ()=> [el('div',{className:'comment',textContent:t('erd.iso.body')})]),
     el('div',{className:'isogrid'}, iso.map(t=>el('button',{className:'isochip',
       title:t.table+(t.comment?' — '+t.comment:'')+'  ['+t.columnCount+' cols]\u00a0\u00a0open in Explore',
-      onclick:()=>{ activateTab('explore'); showTable(t.table); }},
+      onclick:()=>openTrace({kind:'table', id:t.table}, 'detail')},
       [ kindGlyph('table', 12), t.table ])))
   ]));
 }
@@ -787,8 +787,8 @@ async function renderErdSideTable(id){
       rels.length+' relationship(s)' ].filter(Boolean).join('\u00a0\u00a0')}),
     el('div',{style:'margin-top:7px;display:flex;gap:6px;flex-wrap:wrap'},[
       el('button',{className:'mini',textContent:'Table',title:t('btn.table.title'),
-        onclick:()=>{ activateTab('explore'); showTable(id); }}),
-      el('button',{className:'mini',textContent:'Impact',title:t('btn.impact.table.title'),onclick:()=>openImpact({table:id})}),
+        onclick:()=>openTrace({kind:'table', id}, 'detail')}),
+      traceButton('table', id, 'up'),
       el('button',{className:'mini',textContent:'Graph',onclick:()=>openGraph('table:'+id)}) ]),
     el('h2',{style:'margin-top:12px'},[t('erd.side.rels')+' ',el('span',{className:'count',textContent:t('erd.side.count',{n:rels.length})})]),
     el('ul',{className:'list'}, rels.length? rels.map(r=>el('li',{},[
@@ -849,7 +849,7 @@ function erdViaCard(n){
     el('div',{style:'margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'},[
       el('button',{className:'mini',textContent:t('map.card.open',{p:n.project}),
         title:t('map.card.open.title',{p:n.project}),
-        onclick:()=>{ location.hash = hashFor({ project:n.project, tab:'flow', pick:'endpoint:'+n.route }); }}) ]),
+        onclick:()=>{ location.hash = hashFor({ project:n.project, tab:'trace', pick:'endpoint:'+n.route, dir:'down' }); }}) ]),
   ]);
 }
 

@@ -77,6 +77,37 @@ test('a long name takes two lines at most, broken where the name breaks, and giv
   for (const line of cut) assert.ok(line.length <= 24, line);
 });
 
+test('a name whose first line breaks early still keeps its tail: the surplus comes out of the middle', () => {
+  // Review 3b (N4): the first line broke at a word before the room, the last
+  // line ran over, and its end was cut, so V1 and V2 drew the same.
+  const name = (v) => `com.shop.order.OrderQueryRepositoryCustom.findAllByUserIdAndStatusAndCreatedAtBetweenOrderByCreatedAtDesc${v}`;
+  const [a, b] = [fitLines(name('V1'), 44), fitLines(name('V2'), 44)];
+  assert.notDeepEqual(a, b, 'two names that differ in their tail are drawn differently');
+  assert.match(a.at(-1), /DescV1$/);
+  assert.match(b.at(-1), /DescV2$/);
+  // The property, over widths and names: every line fits, and the name's last
+  // eight characters are the drawing's last eight.
+  const names = [name('V1'), 'GET /sys/tenant/getTenantPageListByUserIdAndSubTableQueryFieldsWithTheirOwnPagesV2',
+    'jeecgboot-vue3/src/views/system/depart/components/DepartFormTabRuleManagerInnerSubTableQueryList.vue#onSubmit',
+    `VeryLong${'Segment'.repeat(20)}.selectByExample`];
+  for (const n of names) for (const per of [12, 20, 24, 30, 44, 48]) {
+    const out = fitLines(n, per);
+    assert.ok(out.length <= 2, `${n} @${per}: ${out}`);
+    for (const line of out) assert.ok(line.length <= per, `${n} @${per}: "${line}" is ${line.length}`);
+    assert.equal(out.join('').slice(-8), n.slice(-8), `${n} @${per}: the tail is kept (${out.join(' / ')})`);
+  }
+});
+
+test('a Prisma statement and a TypeORM statement of one method are told apart by their client', () => {
+  // Review 3b (N5): each client numbers its call sites from #0, and the short
+  // name leaves the client off, so both read `S.m #0`.
+  const [p, o] = labels(['statement:prisma:src/a.service.ts#S.m/0', 'statement:typeorm:src/a.service.ts#S.m/0']);
+  assert.notEqual(p, o);
+  assert.deepEqual([p, o], ['S.m #0 (prisma)', 'S.m #0 (typeorm)']);
+  // Alone, a statement keeps its short name: the client is a step it grows by.
+  assert.deepEqual(labels(['statement:prisma:src/a.service.ts#S.m/0']), ['S.m #0']);
+});
+
 test('a lane is as wide as its longest name needs, between the floor and the cap', () => {
   assert.equal(laneWidth(['t']).width, CHAIN_FIT.min);
   assert.equal(laneWidth(['x'.repeat(500)]).width, CHAIN_FIT.max);

@@ -233,7 +233,7 @@ function ovHubBars(r,a){
     el('span',{className:'ovbartrack'},[ el('i',{style:'width:'+(100*(x.endpoints||0)/top).toFixed(1)+'%'}) ]),
     el('button',{className:'ovbarn mini',
       title:t('btn.impact.table.title'),
-      onclick:()=>openImpact({table:x.table}), textContent:ovNum(x.endpoints)}) ]);
+      onclick:()=>openTrace({kind:'table', id:x.table}, 'up'), textContent:ovNum(x.endpoints)}) ]);
   for(const x of rows.slice(0,OV_BAR_TOP)) kids.push(bar(x));
   if(rows.length>OV_BAR_TOP) kids.push(el('div',{className:'ovhubmore'},[
     fold('ov.hubtables.rest', [t('ov.hub.more',{n:rows.length-OV_BAR_TOP, total})],
@@ -587,13 +587,13 @@ function ovGapChips(a,kind){
     ? el('div',{className:'ovchips'}, items.map(it=>el('button',{className:'ovchip',textContent:label(it),title:it+' — '+title,onclick:()=>go(it)})))
     : null;
   if(kind==='endpoints-without-statement')
-    return chips(s.endpointsWithoutStatement, t('btn.flow.title'), (x)=>x, (id)=>openFlow({endpoint:id}));
+    return chips(s.endpointsWithoutStatement, t('btn.flow.title'), (x)=>x, (id)=>openTrace({kind:'endpoint', id}, 'down'));
   if(kind==='tables-not-reached')
     return chips(s.unreachedTables, t('ov.gap.table.title'), (x)=>x,
-      (t)=>{ activateTab('explore'); showTable(t); });
+      (t)=>openTrace({kind:'table', id:t}, 'detail'));
   if(kind==='statements-not-reached')
     return chips(s.unreachedStatements, 'view the SQL', ovShort,
-      (id)=>{ activateTab('explore'); showSource('statement:'+id); });
+      (id)=>{ openTrace({kind:'statement', id}, 'detail'); showSource('statement:'+id); });
   return null;
 }
 // Where the pack concentrates. An empty hub list on a pack with no endpoints is
@@ -618,7 +618,7 @@ function ovHubTables(r,a){
     [{label:'table'},{label:'endpoints',num:true},{label:'statements',num:true}],
     (x)=> el('tr',{},[
       el('td',{className:'wrapcell'},[ kindGlyph('table',12), ' ',
-        el('a',{className:'id clickable',textContent:x.table,title:'which endpoints can reach this table',onclick:()=>openImpact({table:x.table})}) ]),
+        el('a',{className:'id clickable',textContent:x.table,title:'which endpoints can reach this table',onclick:()=>openTrace({kind:'table', id:x.table}, 'up')}) ]),
       el('td',{className:'num',textContent:ovNum(x.endpoints)}),
       el('td',{className:'num',textContent:ovNum(x.statements)}) ]),
     'ov.hubtables.rest', emptyText({hubs:ovHubEmpty(a)},'hubs'));
@@ -645,7 +645,7 @@ function ovHubScreens(a){
   const row=(x)=> el('tr',{},[
     el('td',{className:'wrapcell'},[ kindGlyph('screen',12), ' ',
       el('a',{className:'id clickable',textContent:x.screen,title:t('btn.flow.screen.title'),
-        onclick:()=>openFlow({screen:x.screen})}) ]),
+        onclick:()=>openTrace({kind:'screen', id:x.screen}, 'down')}) ]),
     el('td',{className:'num',textContent:ovNum(x.tables)}),
     el('td',{className:'num',textContent:ovNum(x.endpoints)}) ]);
   kids.push(rows.length
@@ -660,7 +660,7 @@ function ovHubEndpoints(r,a){
     [{label:'endpoint'},{label:'tables',num:true},{label:'statements',num:true}],
     (x)=> el('tr',{},[
       el('td',{className:'wrapcell'},[ kindGlyph('endpoint',12), ' ',
-        el('a',{className:'id clickable',textContent:x.endpoint,title:'the chain this call runs through',onclick:()=>openFlow({endpoint:x.endpoint})}) ]),
+        el('a',{className:'id clickable',textContent:x.endpoint,title:'the chain this call runs through',onclick:()=>openTrace({kind:'endpoint', id:x.endpoint}, 'down')}) ]),
       el('td',{className:'num',textContent:ovNum(x.tables)}),
       el('td',{className:'num',textContent:ovNum(x.statements)}) ]),
     'ov.hubendpoints.rest', emptyText({hubs:ovHubEmpty(a)},'hubs'));
@@ -733,8 +733,11 @@ function renderCascadeRail(){
   const a=OV.resp && OV.resp.answer;
   if(!a){ box.replaceChildren(); box.title=''; return; }
   const census=new Map((a.nodes||[]).map((n)=>[n.kind, n.count]));
-  const groups=(GMAP.resp && GMAP.resp.answer && GMAP.resp.answer.summary)
-    ? GMAP.resp.answer.summary.groups : null;
+  // The overview counts the api groups by the rule the map groups by (RM67-U2b),
+  // so the lane is right whichever tab a page opens on. An answer from an
+  // older server has no count, and the map's own fills it once drawn.
+  const groups=(a.reach && a.reach.groups!=null) ? a.reach.groups
+    : ((GMAP.resp && GMAP.resp.answer && GMAP.resp.answer.summary) ? GMAP.resp.answer.summary.groups : null);
   box.title=t('crail.title');
   const kids=[];
   CRAIL.forEach(([kind,key],i)=>{

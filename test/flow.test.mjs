@@ -636,7 +636,8 @@ test('flow: the direction and the entry must agree — every bad combination is 
   const bad = (args, re) => assert.throws(() => flow(g, args, ctx(g)),
     (e) => e instanceof ToolError && e.code === 'bad-input' && (!re || re.test(e.message)));
   bad({ direction: 'sideways', column: 'p.name' }, /direction must be down \| up/);
-  bad({ direction: 'up', endpoint: 'GET /p/{id}' }, /an endpoint has nothing upstream/);
+  // A route has callers (RM67-U2b); a screen is the one thing nothing calls.
+  bad({ direction: 'up', screen: '/p' }, /a screen is the top of the chain/);
   bad({ direction: 'up' }, /needs a target/);            // no list mode upstream
   bad({ direction: 'up', column: 'p.name', table: 'p' }, /exactly one/);
   bad({ direction: 'up', symbol: 'com.x.PServiceImpl#load', statement: 'com.x.PMapper.selectByPrimaryKey' }, /exactly one/);

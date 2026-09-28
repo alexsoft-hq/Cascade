@@ -96,7 +96,7 @@ export function labelParts(id, fit = CHAIN_FIT) {
   const s = String(id);
   const c = s.indexOf(':');
   const kind = c >= 0 ? s.slice(0, c) : '';
-  let key = c >= 0 ? s.slice(c + 1) : s;
+  const key = c >= 0 ? s.slice(c + 1) : s;
   const max = fit.routeMax ?? CHAIN_FIT.routeMax;
   if (kind === 'endpoint') {
     const sp = key.indexOf(' ');
@@ -106,7 +106,15 @@ export function labelParts(id, fit = CHAIN_FIT) {
   if (kind === 'table') return { core: key, owner: key, levels: 0, at: () => key };
   if (kind === 'column') return dottedParts(key.split('.'), null);
   // An ORM statement is keyed by its kind of client first (`prisma:`, `typeorm:`).
-  if (kind === 'statement') key = key.replace(/^[a-z][a-z0-9-]*:(?!\/)/, '');
+  // The short name leaves it off; it is the first thing that tells two call
+  // sites of one method apart when two clients count their calls from #0 each.
+  const client = kind === 'statement' ? /^([a-z][a-z0-9-]*):(?!\/)/.exec(key) : null;
+  if (client) return withClient(memberParts(key.slice(client[0].length)), client[1]);
+  return memberParts(key);
+}
+
+/** A method, a statement or a dotted name, as labelParts reads it once its kind is known. */
+function memberParts(key) {
   const h = key.indexOf('#');
   if (h >= 0) {
     const left = key.slice(0, h);
@@ -114,6 +122,15 @@ export function labelParts(id, fit = CHAIN_FIT) {
   }
   const segs = key.split('.');
   return segs.length > 1 ? dottedParts(segs, null) : { core: key, owner: key, levels: 0, at: () => key };
+}
+
+/**
+ * An ORM statement's name with its client as the FIRST step it grows by:
+ * `UserService.deleteUser #0 (prisma)` beside `... #0 (typeorm)`, then the
+ * file and its folders as for any member.
+ */
+function withClient(p, client) {
+  return { ...p, levels: p.levels + 1, at: (q) => (q ? `${p.at(q - 1)} (${client})` : p.at(0)) };
 }
 
 /**
@@ -167,21 +184,31 @@ function nameBreakAt(s, width) {
  * @returns {string[]}
  */
 export function fitLines(text, perLine, lines = CHAIN_FIT.lines) {
-  let s = String(text ?? '');
+  const src = String(text ?? '');
   const room = Math.max(4, perLine);
-  const budget = room * lines - 2;
-  if (s.length > budget) {
-    const head = s.slice(0, nameBreakAt(s, Math.floor(budget * 0.35)));
-    s = `${head}…${s.slice(s.length - (budget - head.length - 1))}`;
+  // A line that breaks early at a name boundary leaves the last line longer
+  // than the room. That surplus comes out of the MIDDLE too, one more cut, and
+  // the lines are laid again: cutting the end of the last line dropped the
+  // tail, so `...DescV1` and `...DescV2` drew the same (review 3b, N4).
+  for (let budget = room * lines - 2; budget >= room;) {
+    const out = [];
+    let s = src.length > budget ? middleCut(src, budget) : src;
+    while (s.length > room && out.length < lines - 1) {
+      const at = nameBreakAt(s, room);
+      out.push(s.slice(0, at));
+      s = s.slice(at);
+    }
+    if (s.length <= room) return [...out, s];
+    budget -= s.length - room;
   }
-  const out = [];
-  while (s.length > room && out.length < lines - 1) {
-    const at = nameBreakAt(s, room);
-    out.push(s.slice(0, at));
-    s = s.slice(at);
-  }
-  out.push(s.length > room ? `${s.slice(0, room - 1)}…` : s);
-  return out;
+  return [middleCut(src, room)];
+}
+
+/** A name cut to `budget` characters in the middle, at a name boundary, the tail kept whole. */
+function middleCut(s, budget) {
+  if (s.length <= budget) return s;
+  const head = s.slice(0, nameBreakAt(s, Math.floor(budget * 0.35)));
+  return `${head}…${s.slice(s.length - (budget - head.length - 1))}`;
 }
 
 /**
@@ -250,6 +277,23 @@ export function orderLanes(lanes, links, sweeps = 4) {
     for (let li = cur.length - 2; li >= 0; li -= 1) sweep(li, 1);
   }
   return cur;
+}
+
+/**
+ * AN EMPTY LANE GOES LAST (RM67-U2b). A lane the walk found nothing in is drawn
+ * after every lane that has rows, each group keeping its own order, so no line
+ * crosses an empty lane on its way to a lane further out. Up from a route the
+ * service and endpoint lanes are usually empty (only a client in this pack
+ * calls a route over HTTP), and drawn in walk order every line from the route
+ * to the frontend ran through both. The first lane, the entry, stays first.
+ * @template T
+ * @param {T[]} lanes  the entry lane, then the answer's lanes in walk order
+ * @param {(lane:T)=>number} rowsOf  how many rows a lane has on this picture
+ * @returns {T[]}
+ */
+export function emptyLanesLast(lanes, rowsOf) {
+  const [entry, ...rest] = lanes;
+  return [entry, ...rest.filter((l) => rowsOf(l) > 0), ...rest.filter((l) => !(rowsOf(l) > 0))];
 }
 
 /**

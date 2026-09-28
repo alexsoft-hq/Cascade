@@ -1,0 +1,497 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch." value="gamma">
+          <option selected="true" title="gamma  lanes: sql  (not loaded)" value="gamma">gamma</option>
+          <option title="delta  lanes: sql  (not loaded)" value="delta">delta</option>
+        </select>
+        <span id="projone" class="projone hidden"></span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <button class="crlane hollow crlink" onclick title="this project was analysed without the part that counts these, so the number is missing rather than zero. Click to see why and what to set." type="button">
+        screens
+        <b>not collected</b>
+      </button>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
+        api groups
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
+        services
+        <b>4</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        SQL
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        columns
+        <b>4</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            4 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div id="snapbar" class="snapbar hidden" role="note"></div>
+    <div class="tabs">
+      <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
+      <button class="tab active" data-t="tab.trace" data-tab="trace" onclick type="button">Trace</button>
+      <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
+      <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
+      <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
+      <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+      <button class="tab" data-t="tab.rules" data-tab="rules" onclick type="button">Rules</button>
+      <button class="tab hidden" data-t="tab.compare" data-tab="compare" onclick type="button">…</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="tab-overview" class="hidden">…</div>
+    <div id="tab-trace">
+      <div class="searchbar">
+        <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
+        <div style="position:relative;flex:1;min-width:240px">
+          <input id="tentry" autocomplete="off" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" style="width:100%" type="text" value="POST /order/save"></input>
+          <div id="tsug" class="sug hidden"></div>
+        </div>
+        <button id="tdraw" class="primary" data-t="btn.trace" onclick>Trace</button>
+        <span id="tdir" class="seg tdir" data-t-title="trace.dir.title" title="which way to read the target. Only the ways this kind of target has are shown.">
+          <button aria-pressed="false" onclick title="follow it down: the code it runs and the tables it ends at" type="button">What it uses</button>
+          <button aria-pressed="false" onclick title="follow it up: the code, APIs and screens that reach it, which is what a change here would touch" type="button">Where it is used</button>
+          <button class="on" aria-pressed="true" onclick title="what it is, as lists: its SQL, its columns with reads and writes, or the transactions it runs through" type="button">Details</button>
+        </span>
+        <select id="tmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+          <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
+          <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
+          <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
+        </select>
+        <details id="topts" class="tbmenu">
+          <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+          <div class="tbmenubody">
+            <label class="tbfield">
+              <span data-t="tb.depth">depth</span>
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
+                <option>
+                  1
+                </option>
+                <option>
+                  2
+                </option>
+                <option>
+                  3
+                </option>
+                <option>
+                  4
+                </option>
+                <option>
+                  5
+                </option>
+                <option>
+                  6
+                </option>
+                <option>
+                  7
+                </option>
+                <option selected>
+                  8
+                </option>
+              </select>
+            </label>
+            <span id="tview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
+              <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
+              <button data-t="view.layers" data-view="layers" onclick>by hop</button>
+            </span>
+            <button id="tflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+          </div>
+        </details>
+        <details id="texports" class="tbmenu">
+          <summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as one HTML file, an SVG or a PNG">Save as</summary>
+          <div class="tbmenubody tbcol">
+            <button id="texport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
+            <button id="tsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+              SVG
+            </button>
+            <button id="tpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+              PNG
+            </button>
+          </div>
+        </details>
+        <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" onclick title="what your uncommitted git changes would affect">My edits</button>
+        <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+      </div>
+      <div class="hint hintfold" data-t-fold="hint.trace">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              Pick one thing, then read what it uses, where it is used, or what it is.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div class="flowgrid">
+        <div id="tracerail" class="browserail">
+          <div class="brtop">
+            <span id="tkinds" class="seg brkinds">
+              <button class="on" onclick>
+                Endpoints
+                <span class="brn">3</span>
+              </button>
+              <button onclick>
+                Tables
+                <span class="brn">3</span>
+              </button>
+              <button onclick>
+                Columns
+                <span class="brn">4</span>
+              </button>
+              <button onclick>
+                Statements
+                <span class="brn">3</span>
+              </button>
+              <button onclick title="Type two letters in the filter to list methods.">
+                Methods
+              </button>
+            </span>
+            <div class="brsort">
+              <select id="tsort" data-t-title="rail.sort.title" onchange title="what puts a row at the top of this list" value="tables">
+                <option selected="true" value="tables">tables</option>
+                <option value="statements">statements</option>
+                <option value="path">path</option>
+              </select>
+              <span id="tcount" class="brcount">
+                3 shown of 3
+              </span>
+              <button id="tclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
+                &#x2715;
+              </button>
+            </div>
+          </div>
+          <div id="tlist" class="brlist" role="listbox" tabindex="-1">
+            <button class="brgroup" onclick>
+              <span class="brgname">▾ order</span>
+              <span class="brgn">2 endpoints</span>
+              <span class="brgn">2 reach SQL</span>
+            </button>
+            <button class="brrow on" aria-selected="true" onclick role="option" title="POST /order/save">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="ptail">POST /order/save</span>
+                </span>
+                <span class="brstats">
+                  <span class="brstat" title="how many SQL statements touch this">
+                    <i class="brlbl">sql</i>
+                    2
+                  </span>
+                  <span class="brstat" title="how many tables this reaches">
+                    <i class="brlbl">tbl</i>
+                    2
+                  </span>
+                </span>
+              </div>
+              <div class="brsub">GController#save</div>
+            </button>
+            <button class="brrow cur" aria-selected="false" onclick role="option" title="GET /order/{id}">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="ptail">GET /order/{id}</span>
+                </span>
+                <span class="brstats">
+                  <span class="brstat" title="how many SQL statements touch this">
+                    <i class="brlbl">sql</i>
+                    1
+                  </span>
+                  <span class="brstat" title="how many tables this reaches">
+                    <i class="brlbl">tbl</i>
+                    1
+                  </span>
+                </span>
+              </div>
+              <div class="brsub">GController#get</div>
+            </button>
+            <button class="brgroup" onclick>
+              <span class="brgname">▾ admin</span>
+              <span class="brgn">1 endpoints</span>
+              <span class="brgn">0 reach SQL</span>
+            </button>
+            <button class="brrow" aria-selected="false" onclick role="option" title="GET /admin/ping">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="ptail">GET /admin/ping</span>
+                </span>
+                <span class="brstats">
+                  <span class="brstat" title="how many SQL statements touch this">
+                    <i class="brlbl">sql</i>
+                    0
+                  </span>
+                  <span class="brstat" title="how many tables this reaches">
+                    <i class="brlbl">tbl</i>
+                    0
+                  </span>
+                </span>
+              </div>
+              <div class="brsub">AController#ping</div>
+            </button>
+          </div>
+          <div id="tmore" class="brfoot"></div>
+          <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
+          <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
+        </div>
+        <div class="flowpane detailmode">
+          <div id="tracehead" class="tracehead" role="note">
+            <span class="tquestion">
+              <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+              </svg>
+              Details:
+              <code class="id">POST /order/save</code>
+            </span>
+          </div>
+          <div id="tracestrip" class="fstrip hidden">…</div>
+          <div id="tracecanvas" class="flowcanvas">
+            <div id="tracewrap" class="flowwrap lanesmode">
+              <svg class="flowsvg" height="undefined" width="undefined"></svg>
+              <div class="fcol" data-field="entry" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">target</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                    </svg>
+                    <span class="fname" title="GET /order/{id}
+GController.get">
+                      <span class="fline">GET /order/{id}</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="tag">endpoint</span>
+                    <span class="comment" title="GController.get">GController.get</span>
+                  </div>
+                </div>
+              </div>
+              <div class="fcol fempty" data-field="services" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">service layer</span>
+                    <span class="count" title="how many rows the walk found in this lane">0</span>
+                  </div>
+                </div>
+                <ul class="list">
+                  <li class="empty">none: nothing reaches this</li>
+                </ul>
+              </div>
+              <div class="fcol fempty" data-field="endpoints" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">endpoint</span>
+                    <span class="count" title="how many rows the walk found in this lane">0</span>
+                  </div>
+                </div>
+                <ul class="list">
+                  <li class="empty">none: nothing reaches this</li>
+                </ul>
+              </div>
+              <div class="fcol fempty" data-field="webFunctions" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">frontend function</span>
+                    <span class="count" title="how many rows the walk found in this lane">0</span>
+                  </div>
+                </div>
+                <ul class="list">
+                  <li class="empty">not shipped: this project was analysed without the Java side, so there is nothing here to list</li>
+                </ul>
+              </div>
+              <div class="fcol fempty" data-field="screens" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">screen</span>
+                    <span class="count" title="how many rows the walk found in this lane">0</span>
+                  </div>
+                </div>
+                <ul class="list">
+                  <li class="empty">not shipped: this project was analysed without the Java side, so there is nothing here to list</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div id="view" class="tracedetail">
+            <div class="panel">
+              <h2>API route</h2>
+              <div class="srchead">
+                <span style="display: flex; align-items: center; gap: 8px; min-width: 0">
+                  <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                    <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                  </svg>
+                  <code class="id" style="overflow-wrap: anywhere">POST /order/save</code>
+                  <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                    EXACT
+                  </span>
+                </span>
+                <button class="mini" onclick title="open this file at this line in your editor">Source</button>
+              </div>
+              <div class="comment">handler GController.save com.g.GController src/GController.java:30</div>
+            </div>
+            <div class="panel">
+              <h2>
+                Transactions it runs through
+                <span class="count">(0)</span>
+              </h2>
+              <div class="comment" style="margin-bottom: 6px">The @Transactional methods on its way down, in mode conservative to depth 8. Each one opens on the Transactions tab.</div>
+              <ul class="list">
+                <li class="empty">No @Transactional method on its way down, in this mode and depth.</li>
+              </ul>
+            </div>
+            <div class="rail">
+              <div class="railhead">
+                <h2>What this answer is based on</h2>
+                <span class="legend">
+                  how sure each line is:
+                  <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                    EXACT
+                  </span>
+                  <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                    SOUND_SET
+                  </span>
+                  <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
+                    <svg class="gbox">
+                      <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                    </svg>
+                    HEURISTIC
+                  </span>
+                  <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
+                    RUNTIME_ONLY
+                  </span>
+                  <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                    UNRESOLVED
+                  </span>
+                </span>
+              </div>
+              <div class="railchips">
+                <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">UNCERTIFIED</span>
+                <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+                <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    1 limits
+                  </span>
+                </button>
+              </div>
+              <div class="foldbody"></div>
+              <div class="railfolds">
+                <div class="fold">
+                  <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                    <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                      <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                    </svg>
+                    <span class="foldtext">
+                      basis
+                    </span>
+                  </button>
+                  <div class="foldbody"></div>
+                </div>
+                <div class="fold">
+                  <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                    <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                      <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                    </svg>
+                    <span class="foldtext">
+                      trust
+                    </span>
+                  </button>
+                  <div class="foldbody"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="traceside" class="flowside"></div>
+      </div>
+    </div>
+    <div id="tab-coupling" class="hidden">…</div>
+    <div id="tab-graph" class="hidden">…</div>
+    <div id="tab-erd" class="hidden">…</div>
+    <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-rules" class="hidden">…</div>
+    <div id="tab-compare" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+</body>

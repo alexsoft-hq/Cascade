@@ -305,9 +305,14 @@ function srcWire(){
 /** Every tab that used to draw its own preview says the same thing now. */
 function showSource(nodeId, opts){ srcOpen(nodeId, opts); }
 
-const pickKey = (tab, id) => tab + '|' + id;
-function pickRemember(tab, id, payload){
-  PICKMEM.set(pickKey(tab, id), payload);
+/**
+ * Keep one answer under the WHOLE question it answered (traceKey: project,
+ * target, direction, mode, depth, rows per lane), so the Back button and a
+ * second visit re-draw it without a request, and an answer asked in another
+ * mode or depth is never handed back as this one.
+ */
+function pickRemember(key, payload){
+  PICKMEM.set(key, payload);
   while(PICKMEM.size > PICKMEM_MAX) PICKMEM.delete(PICKMEM.keys().next().value);
 }
 /** Record a pick and push it into the browser's history. */
@@ -325,50 +330,20 @@ function railSyncPick(tab, kind, key){
   railMarkSel(tab);
 }
 /**
- * Put a tab back on one pick, for the Back button. An answer still in memory is
- * re-drawn from memory and asks the server for NOTHING; one that has fallen out
- * of the memo is asked for again, the same way the original click asked.
+ * Put the Graph or the ERD tab back on one pick, for the Back button. Trace
+ * puts its whole question back itself (traceRestore), because a pick there is
+ * a target AND a direction, a mode and a depth.
  */
 function pickRestore(tab, id){
   if(PICK[tab] === id) return;
   if(!id){ showAll(tab, true); return; }
-  const memo = PICKMEM.get(pickKey(tab, id));
-  if(memo) pickDrawFrom(tab, id, memo); else pickAsk(tab, id);
-}
-function pickDrawFrom(tab, id, memo){
-  const kind = id.slice(0, id.indexOf(':')), key = id.slice(id.indexOf(':') + 1);
-  PICK[tab] = id;
-  if(tab === 'explore'){
-    if(memo.table) renderTableAnswer(key, memo.table);
-    else if(memo.column) renderColumnAnswer(key, memo.column.ci, memo.column.ei);
-    else if(memo.screen) renderScreenAnswer(key, memo.screen);
-    else srcOpen(id, { tab:'explore', push:false });
-  } else if(tab === 'flow' || tab === 'impact'){
-    const v = tab === 'flow' ? FLOWV : IMPACTV;
-    v.resp = memo.r; v.sel = null; v.limit = memo.limit || 40;
-    byId(v.entryId).value = memo.raw != null ? memo.raw : key;
-    renderChain(v, memo.r);
-  }
-  railSyncPick(tab, kind, key);
-  refreshShowAll();
+  pickAsk(tab, id);
 }
 function pickAsk(tab, id){
   const at = id.indexOf(':');
   if(at < 0) return;
-  const kind = id.slice(0, at), key = id.slice(at + 1);
-  if(tab === 'explore'){
-    railSyncPick(tab, kind, key);
-    if(kind === 'table') showTable(key);
-    else if(kind === 'column') showColumn(key);
-    else if(kind === 'screen') showScreen(key);
-    else { PICK[tab] = id; srcOpen(id, { tab:'explore', push:false }); }
-    return;
-  }
-  if(tab === 'flow'){ railSyncPick(tab, kind, key);
-    openFlow(kind === 'symbol' ? { symbol:key } : kind === 'screen' ? { screen:key } : { endpoint:key }); return; }
-  if(tab === 'impact'){ railSyncPick(tab, kind, key); openImpact({ [kind]:key }); return; }
   if(tab === 'graph'){ openGraph(id); return; }
-  if(tab === 'erd'){ openErd(key); return; }
+  if(tab === 'erd'){ openErd(id.slice(at + 1)); return; }
 }
 
 /**
@@ -401,15 +376,19 @@ function showAll(tab, quiet){
       railRender(tab);
       const list = byId(D.listId); if(list) list.scrollTop = 0;
     }
-    if(tab === 'explore'){ view.replaceChildren(); railIdle('explore'); }
-    if(tab === 'flow' || tab === 'impact'){
-      const v = tab === 'flow' ? FLOWV : IMPACTV;
-      v.seq++; v.resp = null; v.sel = null; v.pick = null; v.limit = 40;
+    if(tab === 'trace'){
+      // Back to no question at all: no target, no answer, the list and its lead.
+      const v = TRACEV;
+      TRACE.target = null; TRACE.edits = false;
+      v.seq++; v.resp = null; v.args = null; v.sel = null; v.pick = null; v.limit = 40; v.lastKey = null;
       v.rows.clear(); v.linkSpecs = []; v.paths = []; v.layerOpen.clear();
       laneReset(v);
       const w = vwrap(v); w.classList.remove('layersmode'); w.replaceChildren();
       vside(v).replaceChildren();
+      view.replaceChildren();
       closeSug(v);
+      renderTraceChrome();
+      refreshExportButtons();
       railIdle(tab);
     }
     if(tab === 'graph'){
@@ -437,15 +416,9 @@ function showAll(tab, quiet){
 /** Is this tab showing something narrower than what it opened on? */
 function tabNarrowed(tab){
   if(srcFor(tab)) return true;
-  if(tab === 'explore'){
-    if(RAIL.explore.sel !== null || railTyped('explore')) return true;
-    // An answer standing where the lead card was is a narrowing too: a search,
-    // a table, a column, the edits panel.
-    return view.hasChildNodes() && view.querySelector('.brlead') == null;
-  }
-  if(tab === 'flow' || tab === 'impact'){
-    const R = RAIL[tab], v = tab === 'flow' ? FLOWV : IMPACTV;
-    return !!v.resp || R.sel !== null || !!railTyped(tab)
+  if(tab === 'trace'){
+    const R = RAIL[tab];
+    return !!TRACE.target || TRACE.edits || R.sel !== null || !!railTyped(tab)
       || R.closedGroups.size > 0 || R.openTables.size > 0;
   }
   if(tab === 'graph'){
@@ -485,78 +458,61 @@ function escapeRule(e){
   showAll(tab);
 }
 
-// ---------- Explore tab ----------
+// ---------- the details lists (Trace, direction "details") ----------
 // ASKING and DRAWING are two functions, not one: the Back button re-draws a
 // picture from the answer already in memory, and it can only do that if the
-// drawing does not have a request wired into it.
-async function showColumn(colId) {
-  const key = colId.startsWith('column:') ? colId.slice(7) : colId;
-  view.replaceChildren(el('div',{className:'panel', textContent:'querying '+key+' …'}));
-  try {
-    const [ci, ei] = await Promise.all([ api('column_impact',{column:key,mode:'both'}), api('endpoint_impact',{column:key}) ]);
-    pickRemember('explore', 'column:'+key, { column:{ ci, ei } });
-    renderColumnAnswer(key, ci, ei);
-    pickSet('explore', 'column:'+key);
-  } catch(e){ if(stale(e)) return; view.replaceChildren(errPanel(e)); }
-}
+// drawing does not have a request wired into it. The asking is traceDetail's
+// (55_trace_detail.js); these only draw.
+/**
+ * ONE COLUMN: the SQL that reads or writes it, every grade with its badge and
+ * read or write on each row, and the routes above those statements in the grade
+ * mode on screen. The first list is not filtered by that mode (it lists what the
+ * SQL names), and its heading says so, so the two counts are not read as one.
+ */
 function renderColumnAnswer(key, ci, ei) {
   {
     const stmts = ci.answer.statements||[];
-    const stmtPanel = listPanel('SQL statements', ci.truncated?.fields?.[0]?.total ?? stmts.length, stmts,
-      (s)=> el('li',{}, [ el('a',{className:'id clickable', textContent:s.id, title:'view SQL', onclick:()=>showSource('statement:'+s.id)}), el('span',{}, [ el('span',{className:'tag '+s.access, textContent:s.access}), ' ', badge(s.grade) ]) ]),
+    const reads = stmts.filter((s)=> s.access==='read').length, writes = stmts.length-reads;
+    const stmtPanel = listPanel(t('detail.column.sql',{r:reads, w:writes}), ci.truncated?.fields?.[0]?.total ?? stmts.length, stmts,
+      (s)=> el('li',{}, [ el('a',{className:'id clickable', textContent:shortId('statement:'+s.id), title:s.id, onclick:()=>showSource('statement:'+s.id)}),
+        el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'}, [ el('span',{className:'tag '+s.access, title:t('detail.access.title'), textContent:s.access}), badge(s.grade),
+          el('button',{className:'mini ttrace', textContent:t('trace.from'), title:t('trace.from.title'), onclick:()=>openTrace({kind:'statement', id:s.id}, 'up')}) ]) ]),
       ci.answer.empty, 'statements');
     const eps = ei.answer.endpoints||[];
-    const epPanel = listPanel('HTTP endpoints affected', ei.truncated?.fields?.[0]?.total ?? eps.length, eps,
-      (e)=> el('li',{}, [ epName(e, el('a',{className:'id clickable', textContent:e.httpMethod+' '+e.path, title:'view handler (controller) source', onclick:()=>showSource('endpoint:'+e.id)})),
+    const epPanel = listPanel(t('detail.column.routes',{mode:byId('tmode').value}), ei.truncated?.fields?.[0]?.total ?? eps.length, eps,
+      (e)=> el('li',{}, [ epName(e, el('a',{className:'id clickable', textContent:e.httpMethod+' '+e.path, title:t('src.open.title'), onclick:()=>showSource('endpoint:'+e.id)})),
         el('span',{style:'display:flex;align-items:center;gap:6px'},[ flowRowButton(e, e.id), badge(e.grade) ]) ]), ei.answer.empty, 'endpoints');
     const head = el('div',{className:'panel'}, [
-      el('h2',{textContent:'column'}),
+      el('h2',{textContent:t('detail.column')}),
       el('div',{}, [ el('span',{className:'id', textContent:key}), '  ',
-        el('button',{textContent:'DDL', title:'view CREATE TABLE', onclick:()=>showSource('column:'+key)}), ' ',
-        el('button',{textContent:'Impact', title:t('btn.impact.column.title'), onclick:()=>openImpact({column:key})}), ' ',
+        el('button',{textContent:'DDL', title:t('detail.ddl.title'), onclick:()=>showSource('column:'+key)}), ' ',
         el('button',{textContent:'Graph', onclick:()=>openGraph('column:'+key)}) ]),
-      ci.answer.comment ? el('div',{className:'comment', textContent:'“'+ci.answer.comment+'”'+(ci.answer.type?'\u00a0\u00a0'+ci.answer.type:'')}) : null
+      ci.answer.comment ? el('div',{className:'comment', textContent:'“'+ci.answer.comment+'”'+(ci.answer.type?'  '+ci.answer.type:'')}) : null
     ]);
-    view.replaceChildren(head, el('div',{className:'cols'},[stmtPanel, epPanel]), honesty(ei, 'explore'));
+    view.replaceChildren(head, el('div',{className:'cols'},[stmtPanel, epPanel]), honesty(ei, 'trace'));
   }
   refreshShowAll();
 }
-async function showTable(table) {
-  view.replaceChildren(el('div',{className:'panel', textContent:'querying '+table+'…'}));
-  try {
-    const r = await api('table_usage',{table});
-    pickRemember('explore', 'table:'+table, { table:r });
-    renderTableAnswer(table, r);
-    pickSet('explore', 'table:'+table);
-  } catch(e){ if(stale(e)) return; view.replaceChildren(errPanel(e)); }
-}
+/** ONE TABLE: the SQL that touches it, read or write on each row, and its columns with how many statements read and write each. */
 function renderTableAnswer(table, r) {
   {
     const a = r.answer;
-    const stmtPanel = listPanel('statements touching '+table, r.truncated?.fields?.[0]?.total ?? (a.statements||[]).length, a.statements||[],
-      (s)=> el('li',{}, [ el('a',{className:'id clickable',textContent:s.id, title:'view SQL', onclick:()=>showSource('statement:'+s.id)}), el('span',{className:'tag',textContent:s.access}) ]), a.empty, 'statements');
-    const colPanel = listPanel('columns (read/write counts)', (a.columns||[]).length, a.columns||[],
-      (c)=> el('li',{}, [ el('a',{className:'id',textContent:c.column, onclick:()=>showColumn(c.column)}),
-        el('span',{}, [ el('span',{className:'tag read',textContent:'r '+c.reads}), ' ', el('span',{className:'tag write',textContent:'w '+c.writes}) ]) ]), a.empty, 'columns');
-    view.replaceChildren(el('div',{className:'panel'},[el('h2',{textContent:'table'}), el('div',{},[el('span',{className:'id',textContent:table}),'  ',el('button',{textContent:'ERD',onclick:()=>openErd(table)}),' ',el('button',{textContent:'Impact',title:t('btn.impact.table.title'),onclick:()=>openImpact({table})}),' ',el('button',{textContent:'Graph',onclick:()=>openGraph('table:'+table)})])]),
-      el('div',{className:'cols'},[stmtPanel,colPanel]), honesty(r, 'explore'));
+    const stmtPanel = listPanel(t('detail.table.sql'), r.truncated?.fields?.[0]?.total ?? (a.statements||[]).length, a.statements||[],
+      (s)=> el('li',{}, [ el('a',{className:'id clickable',textContent:shortId('statement:'+s.id), title:s.id, onclick:()=>showSource('statement:'+s.id)}),
+        el('span',{className:'tag '+(s.access==='read'?'read':'write'),title:t('detail.access.title'),textContent:s.access}) ]), a.empty, 'statements');
+    const colPanel = listPanel(t('detail.table.columns'), (a.columns||[]).length, a.columns||[],
+      (c)=> el('li',{}, [ el('a',{className:'id clickable',textContent:c.column, onclick:()=>openTrace({kind:'column', id:c.column}, 'detail')}),
+        el('span',{}, [ el('span',{className:'tag read',title:t('rail.stat.reads.title'),textContent:'r '+c.reads}), ' ', el('span',{className:'tag write',title:t('rail.stat.writes.title'),textContent:'w '+c.writes}) ]) ]), a.empty, 'columns');
+    view.replaceChildren(el('div',{className:'panel'},[el('h2',{textContent:t('detail.table')}), el('div',{},[el('span',{className:'id',textContent:table}),'  ',el('button',{textContent:'ERD',onclick:()=>openErd(table)}),' ',el('button',{textContent:'Graph',onclick:()=>openGraph('table:'+table)})])]),
+      el('div',{className:'cols'},[stmtPanel,colPanel]), honesty(r, 'trace'));
   }
   refreshShowAll();
 }
-// ---------- Explore: one SCREEN, from one answer -----------------------------
+// ---------- Details: one SCREEN, from one answer -----------------------------
 // The far end of the round trip, read the way a table is read. The card is ONE
 // `flow screen=` answer: what the route mounts, the functions that component
 // runs, the API routes those functions reach and the tables the request ends
 // at. Nothing here is counted or walked by the page.
-async function showScreen(path) {
-  view.replaceChildren(el('div',{className:'panel', textContent:t('load.screen')}));
-  try {
-    const r = await api('flow',{ screen:path, depth:8, limit:200 });
-    pickRemember('explore', 'screen:'+path, { screen:r });
-    renderScreenAnswer(path, r);
-    pickSet('explore', 'screen:'+path);
-  } catch(e){ if(stale(e)) return; view.replaceChildren(errPanel(e)); }
-}
 function renderScreenAnswer(path, r) {
   const a=r.answer, e=a.entry||{};
   // WHICH of these functions actually sends the request: the ones the ANSWER's
@@ -564,7 +520,7 @@ function renderScreenAnswer(path, r) {
   // them. Read off the rows this answer carries, never re-derived — so a lane
   // the limit cut is a lane this reading does not claim to have seen.
   const senders=new Set((a.endpoints||[]).map(x=>x.link&&x.link.from).filter(Boolean));
-  const srcOf=(id)=> srcOpen(id, { tab:'explore', push:false });
+  const srcOf=(id)=> srcOpen(id, { tab:'trace' });
   const head=el('div',{className:'panel'},[
     el('h2',{textContent:t('screen.title')}),
     // WHAT IT IS on the left, WHAT YOU CAN DO on the right: the head row is a
@@ -577,7 +533,6 @@ function renderScreenAnswer(path, r) {
         e.observed? el('span',{className:'tag',title:t('chain.tag.seen.title'),textContent:t('chain.tag.seen')}) : null ]),
       el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
         el('button',{className:'mini',textContent:'Source',title:t('src.open.title'),onclick:()=>srcOf('screen:'+path)}),
-        el('button',{className:'mini',textContent:'Flow',title:t('btn.flow.screen.title'),onclick:()=>openFlow({screen:path})}),
         el('button',{className:'mini',textContent:'Graph',title:t('btn.graph.screen.title'),onclick:()=>openGraph('screen:'+path)}) ]),
     ]),
     e.title? el('div',{className:'comment',textContent:e.title}) : null,
@@ -592,9 +547,6 @@ function renderScreenAnswer(path, r) {
       e.engine? el('span',{className:'tag',textContent:e.engine}) : null ]) : null,
     (e.routes&&e.routes.length)? el('div',{className:'comment'},
       [ t('screen.renderedby')+' '+e.routes.join(', ') ]) : null,
-    // Impact is not a button here and the card says why, rather than leaving a
-    // reader to wonder where the other half of the pair went.
-    el('div',{className:'comment',textContent:t('screen.noimpact')}),
   ]);
   const fnPanel=listPanel(t('screen.renders'), ovTotal(r,'webFunctions',(a.webFunctions||[]).length), a.webFunctions||[],
     (w)=> el('li',{},[
@@ -612,25 +564,12 @@ function renderScreenAnswer(path, r) {
         badge(x.grade) ]) ]), a.empty, 'endpoints');
   const tblPanel=listPanel(t('screen.tables'), ovTotal(r,'tables',(a.tables||[]).length), a.tables||[],
     (x)=> el('li',{},[
-      el('a',{className:'id clickable',textContent:x.table,title:t('btn.table.title'),onclick:()=>showTable(x.table)}),
+      el('a',{className:'id clickable',textContent:x.table,title:t('btn.table.title'),onclick:()=>openTrace({kind:'table', id:x.table}, 'detail')}),
       el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
         el('span',{className:'count',textContent:x.access||''}),
         badge(x.grade) ]) ]), a.empty, 'tables');
-  view.replaceChildren(head, el('div',{className:'cols'},[fnPanel, epPanel]), tblPanel, honesty(r, 'explore'));
+  view.replaceChildren(head, el('div',{className:'cols'},[fnPanel, epPanel]), tblPanel, honesty(r, 'trace'));
   refreshShowAll();
-}
-async function doSearch(q) {
-  if (!q || q.length<2) return;
-  view.replaceChildren(el('div',{className:'panel', textContent:t('load.search')}));
-  try {
-    const r = await api('search',{query:q}); const a = r.answer;
-    const mk = (title, arr, key, click) => listPanel(title, null, arr,
-      (x)=> el('li',{}, [ click ? el('a',{className:'id', textContent:x[key], onclick:()=>click(x[key])}) : el('span',{className:'id',textContent:x[key]}),
-        x.comment? el('span',{className:'comment', textContent:x.comment}):null ]), a.empty, title.toLowerCase());
-    view.replaceChildren(mk('Columns', a.columns||[], 'column', (c)=>showColumn(c)),
-      mk('Tables', a.tables||[], 'table', (t)=>showTable(t)),
-      mk('Statements', a.statements||[], 'statement', null), honesty(r, 'explore'));
-  } catch(e){ if(stale(e)) return; view.replaceChildren(errPanel(e)); }
 }
 // The files each lane of the overlay read again and dropped, and the nodes only
 // the overlay has (a TypeScript entity it read again can add a table or a column).
@@ -700,21 +639,21 @@ async function showEdits() {
       (e)=> el('li',{className:e.provisional?'prov':''}, [ el('a',{className:'id clickable',textContent:e.id, title:'view handler source', onclick:()=>showSource('endpoint:'+e.id)}), badge(e.grade), e.provisional? el('span',{className:'tag prov',textContent:'provisional'}):null ]), a.empty, 'calledEndpoints') : null;
     const cols = a.downstreamColumns||[];
     const colPanel = listPanel(t('edits.downstream'), totalOf('downstreamColumns', cols.length), cols,
-      (c)=> el('li',{className:c.provisional?'prov':''}, [ el('a',{className:'id',textContent:c.id, onclick:()=>showColumn('column:'+c.id)}), badge(c.grade), c.provisional? el('span',{className:'tag prov',textContent:'provisional'}):null ]), a.empty, 'downstreamColumns');
+      (c)=> el('li',{className:c.provisional?'prov':''}, [ el('a',{className:'id',textContent:c.id, onclick:()=>openTrace({kind:'column', id:c.id}, 'detail')}), badge(c.grade), c.provisional? el('span',{className:'tag prov',textContent:'provisional'}):null ]), a.empty, 'downstreamColumns');
     setKids(view, ovPanel, files, symPanel, webPanel, screenPanel, calledPanel, el('div',{className:'cols'},[epPanel,colPanel]), honesty(r, 'edits'));
   } catch(e){ if(stale(e)) return; view.replaceChildren(errPanel(e)); }
 }
-// WHICH END OF THE ROUND TRIP the Flow rail lists, remembered per project. A
-// reader working on a frontend opens Flow on the screens; a reader working on
-// the API opens it on the routes, and neither should have to say so twice. It
-// is per project because it is a fact about the project, not about the browser.
-const LS_FLOWKIND = 'cascade.viewer.flowkind.';
-const railRememberedKind = (tab) => (tab === 'flow' && STATE.project)
-  ? lsGet(LS_FLOWKIND + STATE.project) : null;
+// WHICH KIND the Trace list shows, remembered per project. A reader working
+// on a frontend opens it on the screens; a reader working on the schema opens
+// it on the tables, and neither should have to say so twice. It is per project
+// because it is a fact about the project, not about the browser.
+const LS_TRACEKIND = 'cascade.viewer.tracekind.';
+const railRememberedKind = (tab) => (tab === 'trace' && STATE.project)
+  ? lsGet(LS_TRACEKIND + STATE.project) : null;
 function railRememberKind(tab, kind){
-  if (tab === 'flow' && STATE.project) lsSet(LS_FLOWKIND + STATE.project, kind);
+  if (tab === 'trace' && STATE.project) lsSet(LS_TRACEKIND + STATE.project, kind);
 }
-/** Which of the three tabs is on screen, or null. */
+/** Which tab with a list is on screen, or null. */
 function railVisibleTab(){
   for (const tab of RAILTABS) if (!byId('tab-'+tab).classList.contains('hidden')) return tab;
   return null;
@@ -722,8 +661,8 @@ function railVisibleTab(){
 /**
  * WHAT THE READER TYPED into this tab's box, and nothing else.
  *
- * A PICK IS NOT A FILTER. On Flow and Impact the box does double duty: it
- * filters the rail AND names the chain to draw, so `openFlow`, a restore from
+ * A PICK IS NOT A FILTER. On Trace the box does double duty: it filters the
+ * rail AND names the target, so `openTrace`, a restore from
  * `#…&pick=`, and a hand-off from another tab all WRITE the picked id into it.
  * Reading the box back as the filter turned every one of those into a filter:
  * a reload on a pick showed `1 shown of 239` and one row, with the list the
@@ -862,10 +801,10 @@ function railApplyFilter(tab){
   const q = railTyped(tab).toLowerCase();
   R.q = q;
   R.shown = q ? R.rows.filter((row, i) => R.hays[i].includes(q)) : R.rows.slice();
-  // Flow reads by module, so its rows sit under the API group the SERVER put on
-  // each of them. A stable sort by that label keeps the server's order inside
-  // every group.
-  if (tab === 'flow') {
+  // Routes and screens read by module, so their rows sit under the group the
+  // SERVER put on each of them. A stable sort by that label keeps the server's
+  // order inside every group.
+  if (railGrouped(tab)) {
     const order = [];
     for (const row of R.shown) if (!order.includes(row.group)) order.push(row.group);
     R.shown = R.shown.slice().sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
@@ -876,22 +815,15 @@ function railRenderChips(tab){
   if (!D.chipsId) return;
   const R = RAIL[tab];
   const box = byId(D.chipsId);
-  // FLOW'S SWITCH IS ONLY A SWITCH WHERE THERE IS SOMETHING TO SAY WITH IT. On
-  // a pack whose screen axis was never built the `Screens` half stays, and
-  // lists why and what to set (railScreensWhy): hiding it left a reader unable
-  // to tell "this tool reads no screens" from "this run was not given them"
-  // (RM67). On a pack that has no frontend at all and declares no screen axis
-  // there is nothing to say, and the control stands down. Read off the
-  // answers' own census and axes, never guessed.
-  if (tab === 'flow') {
-    // Not yet answered counts as "no": a control that appears and then vanishes
-    // under the pointer is worse than one that arrives with its own numbers.
-    const none = R.counts == null || (!R.counts.screen && !railScreensWhy());
-    box.classList.toggle('hidden', none);
-    if (none) { box.replaceChildren(); return; }
-  }
-  box.title = tab === 'flow' ? t('rail.flowkind.title') : '';
-  box.replaceChildren(...D.kinds.map((k) => el('button', {
+  // THE SCREENS CHIP IS THERE WHERE THERE IS SOMETHING TO SAY WITH IT. On a
+  // pack whose screen axis was never built it stays, and lists why and what to
+  // set (railScreensWhy): hiding it left a reader unable to tell "this tool
+  // reads no screens" from "this run was not given them" (RM67). On a pack that
+  // has no frontend at all and declares no screen axis there is nothing to say,
+  // and the chip stands down. Read off the answers' own census and axes.
+  const quiet = (k) => k === 'screen' && R.counts != null && !R.counts.screen && !railScreensWhy();
+  box.title = '';
+  box.replaceChildren(...D.kinds.filter((k) => !quiet(k)).map((k) => el('button', {
     className: k === R.kind ? 'on' : '',
     title: k === 'symbol' ? t('rail.kind.symbol.hint') : (k === 'endpoint' ? (railOutboundNote(tab) || '') : ''),
     onclick: () => railSetKind(tab, k),
@@ -1003,7 +935,7 @@ function railRenderRows(tab){
     return;
   }
   const kids = [];
-  if (tab === 'flow') railGroupNodes(tab, kids);
+  if (railGrouped(tab)) railGroupNodes(tab, kids);
   else for (const row of R.shown) railRowNodes(tab, R.kind, row, kids, false);
   list.replaceChildren(...kids);
   railSetCur(tab, railInitialCur(tab));
@@ -1085,9 +1017,9 @@ function railRowNodes(tab, kind, row, kids, child){
   btn.setAttribute('role', 'option');
   btn.setAttribute('aria-selected', picked ? 'true' : 'false');
   btn.addEventListener('keydown', (ev) => railRowKey(tab, ev));
-  // Impact opens a table into its own columns. The caret is its OWN control, so
-  // the row beside it still picks the table.
-  if (tab === 'impact' && kind === 'table') {
+  // A table opens into its own columns. The caret is its OWN control, so the
+  // row beside it still picks the table.
+  if (tab === 'trace' && kind === 'table') {
     const open = R.openTables.has(id);
     const caret = el('button', { className:'brcaret', textContent: open ? '▾' : '▸',
       title:t('rail.tree.title'), onclick: () => railToggleTable(tab, id) });
@@ -1175,32 +1107,20 @@ function railSub(kind, row){
 }
 
 // ---- picking ----------------------------------------------------------------
-// The existing renderers take over from here, unchanged: this only says WHICH
-// one and with what.
+// A row is a TARGET: it becomes the start of the Trace question, read the way
+// the place is reading now when that kind can be (openTrace). A source pane
+// already open follows the pick; a closed one stays closed.
 function railPick(tab, kind, row){
   const R = RAIL[tab], id = railId(kind, row);
   R.sel = id; R.selKind = kind;
   railCloseDrawer(tab);
   railMarkSel(tab);
-  if (tab === 'explore') {
-    if (kind === 'screen') { showScreen(id); return; }
-    if (kind === 'statement' || kind === 'symbol') {
-      // A statement or a method IS its source, so picking one IS the request
-      // for the pane. The pane and the pick are ONE history entry: the URL
-      // carries both.
-      srcOpen(kind + ':' + id, { tab:'explore', push:false });
-      pickSet('explore', kind + ':' + id);
-      return;
-    }
-    if (kind === 'table') showTable(id); else showColumn(id);
-    // A pane already open follows the pick; a closed one stays closed.
-    if (srcIsOpen()) srcOpen(kind + ':' + id, { tab:'explore', push:false });
-    return;
-  }
-  if (tab === 'flow') { openFlow(kind === 'screen' ? { screen:id } : { endpoint:id }); return; }
-  const arg = {};
-  arg[kind] = id;
-  openImpact(arg);
+  openTrace({ kind, id }, TRACE.dir);
+  if (srcIsOpen()) srcOpen(kind + ':' + id, { tab:'trace', push:false });
+}
+/** Whether this list is bucketed by group: routes and screens are, the rest are not. */
+function railGrouped(tab){
+  return tab === 'trace' && (RAIL[tab].kind === 'endpoint' || RAIL[tab].kind === 'screen');
 }
 /** Re-mark the picked row without re-rendering the list under the reader. */
 function railMarkSel(tab){
@@ -1274,9 +1194,9 @@ function railFilterNow(tab){
 function railIdle(tab){
   if (!railIsIdle(tab)) return;
   const R = RAIL[tab], D = RAILDEF[tab];
-  const host = tab === 'explore' ? view : byId(tab === 'flow' ? 'flowwrap' : 'impactwrap');
+  const host = vwrap(TRACEV);
   const picks = R.rows.slice(0, 5);
-  const lead = (tab === 'flow' && R.kind === 'screen') ? 'rail.lead.flow.screen' : D.lead;
+  const lead = D.lead;
   const card = el('div', { className:'panel brlead' }, [
     el('div', { className:'comment', textContent:t(lead) }),
     picks.length ? el('h2', { textContent:t('rail.picks'), style:'margin-top:12px' }) : null,
@@ -1287,20 +1207,14 @@ function railIdle(tab){
       ]),
     ]))) : null,
   ]);
-  if (tab !== 'explore') host.classList.remove('layersmode');
+  host.classList.remove('layersmode');
+  tracePane('chain');
   host.replaceChildren(card);
 }
+/** The place is idle while it asks no question: no target, no edits, nothing typed. */
 function railIsIdle(tab){
-  // Explore's right-hand side is idle while it is EMPTY, or while THIS card is
-  // still the thing standing on it (so a language switch re-draws it). A table,
-  // a search result or the edits panel is an answer, and this must not land on
-  // one of those.
-  if (tab === 'explore') {
-    if (RAIL.explore.sel !== null) return false;
-    return !view.hasChildNodes() || view.querySelector('.brlead') != null;
-  }
-  const v = tab === 'flow' ? FLOWV : IMPACTV;
-  return !v.resp && !railTyped(tab);
+  void tab;
+  return !TRACE.target && !TRACE.edits && !railTyped('trace');
 }
 
 // ---- the drawer, under 1100px -----------------------------------------------

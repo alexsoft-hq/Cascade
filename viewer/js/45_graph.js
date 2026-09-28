@@ -505,12 +505,8 @@ function renderGraphSide(){
 function graphFocusCard(a){
   const n=graphNodeOf(a, a.focus), key=a.focus.slice(a.focus.indexOf(':')+1);
   const btns=el('div',{style:'margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'},[graphSourceButton(a.focus)]);
-  if(n.kind==='endpoint'||n.kind==='symbol')
-    btns.append(el('button',{className:'mini', textContent:'Flow', title:t('btn.flow.title'),
-      onclick:()=>openFlow(n.kind==='endpoint'?{endpoint:key}:{symbol:key})}));
-  if(['column','table','statement','symbol'].includes(n.kind))
-    btns.append(el('button',{className:'mini', textContent:'Impact', title:t('btn.impact.title'),
-      onclick:()=>openImpact({[n.kind]:key})}));
+  // The two ways Trace reads this node, only where its kind has them.
+  for(const b of [traceButton(n.kind, key, 'down'), traceButton(n.kind, key, 'up')]) if(b) btns.append(b);
   if(n.kind==='table')
     btns.append(el('button',{className:'mini', textContent:'ERD', title:t('btn.erd.title'), onclick:()=>openErd(key)}));
   return el('div',{className:'panel fcard'},[
@@ -2481,8 +2477,8 @@ function renderMap(){
   renderMapCounts();
   renderMapSide();
   renderOvMapChrome();
-  // The map is the only answer that counts api groups, so the header's rail
-  // fills its first lane the moment this picture exists.
+  // An older server's overview carries no group count; the map's then fills
+  // the header's lane the moment this picture exists.
   renderCascadeRail();
 }
 function renderMapRendNote(){
@@ -2505,7 +2501,7 @@ function renderMapFlowNote(){
   // its button said "Flow on", reported itself pressed, and nothing moved. The
   // Graph button now reports what its own picture does, which is what the note
   // beside it says in words.
-  for(const id of ['gflow','fflow','iflow']){
+  for(const id of ['gflow','tflow']){
     const x=byId(id); if(!x) continue;
     x.textContent=t(GMAP.flow ? 'graph.flow.on' : 'graph.flow.off');
     x.classList.toggle('off', !GMAP.flow);
@@ -2687,14 +2683,13 @@ function mapNodeCard(id){
     btns.append(el('button',{className:'mini', textContent:'Around',
       title:t('btn.around.title'), onclick:()=>openGraph(id)}));
   }
-  if(n.kind==='endpoint') btns.append(el('button',{className:'mini', textContent:'Flow',
-    title:t('btn.flow.title'), onclick:()=>openFlow({endpoint:key})}));
-  // A SCREEN is a top: Flow walks down from it, and there is nothing above it
-  // for Impact to answer.
-  if(n.kind==='screen') btns.append(el('button',{className:'mini', textContent:'Flow',
-    title:t('btn.flow.screen.title'), onclick:()=>openFlow({screen:key})}));
-  if(n.kind==='table'||n.kind==='statement') btns.append(el('button',{className:'mini', textContent:'Impact',
-    title:t('btn.impact.title'), onclick:()=>openImpact({[n.kind]:key})}));
+  // The ways Trace reads this node, only where its kind has them: a screen is
+  // the top of the chain and gets no "where it is used" (TRACE_DIRS).
+  if(n.kind!=='group'){
+    const down=traceButton(n.kind, key, 'down'), up=traceButton(n.kind, key, 'up');
+    if(down) btns.append(down);
+    if(up) btns.append(up);
+  }
   if(n.kind==='table') btns.append(el('button',{className:'mini', textContent:'ERD',
     title:t('btn.erd.title'), onclick:()=>openErd(key)}));
   const facts=[];
@@ -2736,12 +2731,12 @@ function mapNodeCard(id){
  */
 function mapFedCard(n, id, key, project){
   const d=n.data;
-  // Which tab answers this kind over there. A route is a Flow question, a table
-  // an ERD one, and anything else lands on that project's Overview, which is
-  // the one page every project has.
-  const to = n.kind==='endpoint' ? { tab:'flow', pick:'endpoint:'+key }
+  // Which tab answers this kind over there. A route is a Trace question walked
+  // down, a table an ERD one, a statement Trace's details, and anything else
+  // lands on that project's Overview, which is the one page every project has.
+  const to = n.kind==='endpoint' ? { tab:'trace', pick:'endpoint:'+key, dir:'down' }
     : n.kind==='table' ? { tab:'erd', pick:'table:'+key }
-      : n.kind==='statement' ? { tab:'explore', pick:'statement:'+key }
+      : n.kind==='statement' ? { tab:'trace', pick:'statement:'+key, dir:'detail' }
         : { tab:'overview', pick:null };
   const facts=[el('span',{className:'tag fproj',title:project+'  '+t('chain.tag.project.title'),textContent:project})];
   if(n.kind==='endpoint' && d.httpMethod) facts.push(el('span',{className:'tag',textContent:d.httpMethod}));

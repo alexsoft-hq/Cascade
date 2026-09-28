@@ -146,16 +146,12 @@ function rulesEnd(end){
     ? el('button',{type:'button', className:'ruleend', title:end.id+'  '+t(go.title), onclick:go.run},[ kindGlyph(end.kind, 11), ' ', end.label ])
     : el('span',{className:'ruleend',title:end.id},[ kindGlyph(end.kind, 11), ' ', end.label ]);
 }
-/** Where a node of each kind is read: a route and a method walked down, a statement, table or column walked up. */
+/** Where a node of each kind is read on Trace: a route, a screen and a method walked down, a statement, table or column walked up. */
 function rulesGoTo(end){
   const key=String(end.id).slice(String(end.id).indexOf(':')+1);
-  if(end.kind==='endpoint') return { title:'btn.flow.title', run:()=> openFlow({endpoint:key}) };
-  if(end.kind==='screen') return { title:'btn.flow.screen.title', run:()=> openFlow({screen:key}) };
-  if(end.kind==='symbol') return { title:'btn.flow.title', run:()=> openFlow({symbol:key}) };
-  if(end.kind==='statement' || end.kind==='table' || end.kind==='column') {
-    return { title:'btn.impact.title', run:()=> openImpact({[end.kind]:key}) };
-  }
-  return null;
+  const dir=traceHas(end.kind, 'down') ? 'down' : 'up';
+  if(!traceHas(end.kind, dir)) return null;
+  return { title:dir==='down' ? 'trace.dir.down.title' : 'trace.dir.up.title', run:()=> openTrace({ kind:end.kind, id:key }, dir) };
 }
 function rulesPager(id, d){
   const f=(d.truncated && d.truncated.fields)||[];

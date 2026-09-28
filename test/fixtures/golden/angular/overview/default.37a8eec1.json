@@ -176,6 +176,7 @@
         "routeGrades": {
           "EXACT": 13
         },
+        "groups": 6,
         "statements": 5,
         "statementsReached": 4,
         "tables": 2,

@@ -102,12 +102,12 @@ function summaryDetail(a){
     return el('div',{className:'panel sumdetail'},[ el('h2',{textContent:name}),
       el('ul',{className:'list'}, g.endpoints.map((id)=>{ const route=id.slice('endpoint:'.length);
         return el('li',{},[ el('span',{className:'mono',textContent:route}),
-          el('button',{className:'mini',textContent:'Flow',title:t('btn.flow.title'),onclick:()=>openFlow({endpoint:route})}) ]); })) ]);
+          traceButton('endpoint', route, 'down') ]); })) ]);
   }
   const f = name==='(others)' ? { tables:a.otherFamilies.tables } : a.families.find((x)=>x.name===name);
   if(!f) return null;
   return el('div',{className:'panel sumdetail'},[ el('h2',{textContent:name}),
     el('ul',{className:'list'}, f.tables.map((id)=>{ const table=id.slice('table:'.length);
       return el('li',{},[ el('span',{className:'mono',textContent:table}),
-        el('button',{className:'mini',textContent:'Impact',title:t('summary.impact.title'),onclick:()=>openImpact({table})}) ]); })) ]);
+        traceButton('table', table, 'up') ]); })) ]);
 }

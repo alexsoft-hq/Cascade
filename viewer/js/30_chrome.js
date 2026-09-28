@@ -69,8 +69,9 @@ function setLang(lang){
 }
 
 // ---------- tabs / init ----------
-const TABNAMES=['overview','explore','flow','impact','coupling','graph','erd','tx','rules','compare'];
-const CHAINTABS={flow:FLOWV, impact:IMPACTV};
+// Trace replaced Explore, Flow and Impact (RM67-U2b); a link that still names
+// one of those is read by traceReadHash and lands on Trace.
+const TABNAMES=['overview','trace','coupling','graph','erd','tx','rules','compare'];
 const LAZY_TABS={ tx:{ box:'txview', load:()=>loadTx() }, rules:{ box:'rulesview', load:()=>loadRules() } };
 // Showing a tab and LOADING a tab are two different things: a project switch
 // empties every tab's cache and then asks the visible one to fill itself again,
@@ -95,17 +96,11 @@ function loadTab(name){
   const lazy=LAZY_TABS[name];
   if (lazy && !byId(lazy.box).hasChildNodes()) lazy.load();
   if (name==='compare' && !byId('cmpview').hasChildNodes()) drawCompare();
-  // Explore, Flow and Impact open SHOWING the pack: the rail draws what it
-  // already holds, and asks the server for its list exactly once.
-  // A snapshot holds one answer and no list to browse, so it opens no rail.
+  // Trace opens SHOWING the pack: the rail draws what it already holds, and
+  // asks the server for its list exactly once. A snapshot holds one answer and
+  // no list to browse, so it opens no rail.
   if (RAILDEF[name] && !SNAP) railOpenTab(name);
-  const v=CHAINTABS[name];
-  if (v){
-    if(!vwrap(v).hasChildNodes()) drawChain(v);
-    // The picture may have been rendered while this tab was hidden (no layout,
-    // so no lines could be measured). Now that it is visible, measure it.
-    else if(v.resp && v.view==='lanes') requestAnimationFrame(()=>drawChainLinks(v));
-  }
+  if (name==='trace') traceOnScreen();
   if (name==='erd' && !document.getElementById('erdside').hasChildNodes()) { document.getElementById('etable').value=''; drawErd(); }
   if (name==='coupling' && !document.getElementById('cpmatrix').hasChildNodes()) drawCoupling();
   // The Graph tab opens on the WHOLE map and loads it on first visit — the old
@@ -359,7 +354,11 @@ function renderAuthoredChrome(){
   // The lane STRIP carries page words too — the lane headings, the hop dividers,
   // the candidate bands — so the whole picture is drawn again, not only the rail
   // beside it. From the answer already in memory, like everything else here.
-  for(const v of [FLOWV, IMPACTV]) if(v.resp) renderChain(v, v.resp);
+  if(TRACEV.resp && TRACE.dir!=='detail') renderChain(TRACEV, TRACEV.resp);
+  // The details lists are page words around the engine's rows, so they are
+  // drawn again too, from the answer remembered under the question on screen.
+  else if(TRACE.target && TRACE.dir==='detail' && PICKMEM.has(TRACEV.lastKey)) traceDetailDraw(TRACE.target, PICKMEM.get(TRACEV.lastKey));
+  renderTraceChrome();
   if(erdData){
     redrawErdLegend();
     renderErdIsolated(ERD.iso||[]);

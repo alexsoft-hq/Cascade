@@ -295,8 +295,9 @@
   .snapbar strong { color:var(--t1); font-weight:600; }
   .snapbar .snapwarn { color:var(--warn); }
   body.snapshot .tab:not(.snaptab), body.snapshot .browserail, body.snapshot .brtoggle,
-  body.snapshot .showall, body.snapshot #fdraw, body.snapshot #idraw,
-  body.snapshot #fexports, body.snapshot #iexports, body.snapshot button.moreb, body.snapshot #langseg, body.snapshot #mbuildbtn { display:none !important; }
+  body.snapshot .showall, body.snapshot #tdraw, body.snapshot #tdir, body.snapshot #tedits,
+  body.snapshot #texports, body.snapshot button.moreb, body.snapshot #langseg, body.snapshot #mbuildbtn,
+  body.snapshot .ttrace { display:none !important; }
   body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr) 320px; grid-template-areas:"canvas side"; }
   @media (max-width:1660px){ body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas" "side"; } }
   /* Tabs are WORDS ON A RULE: the active one is underlined in the endpoint hue,
@@ -717,6 +718,27 @@
   button.fstripchip { padding:2px 8px; font-size:12px; white-space:nowrap; }
   input.fstripfind { width:190px; max-width:100%; font-size:12px; padding:4px 8px; }
   .fstripfound { white-space:nowrap; }
+  /* THE TRACE PLACE (RM67-U2b). The direction switch sits after the Trace
+     button: a target first, then which way to read it. The line over the
+     answer says what was asked and names a direction this target does not
+     have, in words, instead of a greyed-out button nobody can ask about. */
+  .tdir:empty { display:none; }
+  .tdir button { white-space:nowrap; }
+  .tracehead { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:7px 10px;
+    border:1px solid var(--frame); border-bottom:0; background:var(--g2); font-size:12.5px; color:var(--t2); }
+  .tracehead .tquestion { color:var(--t1); }
+  .tracehead .tnodir { color:var(--t3); }
+  .flowpane > .tracehead + .fstrip { border-top:1px solid var(--hair); }
+  .tracedetail { min-width:0; }
+  .flowpane.detailmode .flowcanvas, .flowpane.detailmode .fstrip { display:none; }
+  /* A lane the walk found nothing in is a heading and its reason, not a
+     200px column of empty space the lines have to cross. */
+  .flowwrap.lanesmode > .fcol.fempty { width:150px !important; }
+  /* The limits that change THIS answer, beside it (not only in a status page). */
+  .tlimits .tlim { display:flex; gap:8px; align-items:baseline; margin:4px 0; font-size:12.5px; line-height:1.45; }
+  .tlimits .tlim .ovnum { flex:none; }
+  .tlimits button.mini { margin-left:auto; flex:none; }
+  button.ttrace { font-weight:600; }
   /* The card the tab shows BEFORE anything is picked is the only child of the
      strip, so it takes the pane rather than sitting in one lane's width. */
   .flowwrap > .panel { flex:1; min-width:0; margin:0; }
@@ -1292,9 +1314,7 @@
   <div class="snapbar hidden" id="snapbar" role="note"></div>
   <div class="tabs">
     <button type="button" class="tab active" data-tab="overview" data-t="tab.overview">Overview</button>
-    <button type="button" class="tab" data-tab="explore" data-t="tab.explore">Explore</button>
-    <button type="button" class="tab" data-tab="flow" data-t="tab.flow">Flow</button>
-    <button type="button" class="tab" data-tab="impact" data-t="tab.impact">Impact</button>
+    <button type="button" class="tab" data-tab="trace" data-t="tab.trace">Trace</button>
     <button type="button" class="tab" data-tab="coupling" data-t="tab.coupling">Coupling</button>
     <button type="button" class="tab" data-tab="graph" data-t="tab.graph">Graph</button>
     <button type="button" class="tab" data-tab="erd" data-t="tab.erd">ERD</button>
@@ -1338,142 +1358,76 @@
     </div>
   </div>
 
-  <!-- EXPLORE TAB — the browse rail on the left, the answer on the right. The
-       search box is IN the rail now: it filters the rows already on screen, and
-       Enter still asks the server the way it always did. -->
-  <div id="tab-explore" class="hidden">
+  <!-- TRACE TAB (RM67-U2b) — one place to ask about one target, either way.
+       Explore, Flow and Impact were three tabs over one question: pick a thing,
+       then read what it uses, where it is used, or what it is. Now the thing is
+       picked once (the box searches every kind, the rail lists them), and the
+       direction is a switch that offers only what this kind of target has
+       (54_trace.js TRACE_DIRS, mirroring the tool's FLOW_DIRECTIONS). The
+       START of the question is the target; a row clicked in the picture is only
+       looked at, and "Trace from here" is what moves the start. -->
+  <div id="tab-trace" class="hidden">
     <div class="searchbar">
-      <button id="exdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" title="open the list of things you can pick from">Browse</button>
-      <button id="edits" class="primary" data-t="explore.edits" data-t-title="explore.edits.title" title="what your uncommitted git changes would affect">My edits</button>
-      <button id="exshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
-    </div>
-    <div class="hint" data-t-fold="hint.explore"></div>
-    <div class="exgrid">
-      <div class="browserail" id="exrail">
-        <div class="brtop">
-          <span class="seg brkinds" id="exkinds"></span>
-          <div class="brfilter">
-            <input type="text" id="q" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" autocomplete="off">
-            <button id="exclose" class="brclose" data-t-title="rail.close" title="close the list">&#x2715;</button>
-          </div>
-          <div class="brsort">
-            <select id="exsort" data-t-title="rail.sort.title" title="what puts a row at the top of this list"></select>
-            <span class="brcount" id="excount"></span>
-          </div>
-        </div>
-        <div class="brlist" id="exlist" role="listbox" tabindex="-1"></div>
-        <div class="brfoot" id="exmore"></div>
-        <div class="brkeys" data-t="rail.keys">&#x2191;&#x2193; move, Enter picks, / filters</div>
-      </div>
-      <div id="view"></div>
-    </div>
-  </div>
-
-  <!-- FLOW TAB -->
-  <div id="tab-flow" class="hidden">
-    <div class="searchbar">
-      <button id="fdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" title="open the list of things you can pick from">Browse</button>
+      <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" title="open the list of things you can pick from">Browse</button>
       <div style="position:relative;flex:1;min-width:240px">
-        <input type="text" id="fentry" style="width:100%" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" autocomplete="off">
-        <div id="fsug" class="sug hidden"></div>
+        <input type="text" id="tentry" style="width:100%" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" autocomplete="off">
+        <div id="tsug" class="sug hidden"></div>
       </div>
-      <button id="fdraw" class="primary" data-t="btn.draw">Draw</button>
-      <select id="fmode" data-t-title="mode.title" title="which links the walk follows">
+      <button id="tdraw" class="primary" data-t="btn.trace">Trace</button>
+      <!-- Which way to read the target. Drawn by 54_trace.js from the target's
+           own kind: a direction it does not have is not a greyed-out button, it
+           is absent, and the line under the toolbar says why. -->
+      <span class="seg tdir" id="tdir" data-t-title="trace.dir.title" title="which way to read the target"></span>
+      <select id="tmode" data-t-title="mode.title" title="which links the walk follows">
         <option value="conservative" selected data-t="mode.conservative" data-grade="SOUND_SET">conservative: proven links + candidate sets (SOUND_SET)</option>
         <option value="strict" data-t="mode.strict" data-grade="EXACT">strict: proven links only (EXACT)</option>
         <option value="heuristic" data-t="mode.heuristic" data-grade="HEURISTIC">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
       </select>
-      <!-- WHAT A READER NEEDS FIRST is the target and the Draw button, then how
-           sure a call has to be. How deep, which drawing and whether the dots
-           run are settings a reader changes on purpose, so they sit one click
-           away, and the three ways to save the picture are one menu (RM67). -->
-      <details class="tbmenu" id="fopts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+      <!-- Three settings with three names: the MODE says which grades a walk
+           follows (above), the DEPTH how many links it follows at most, and the
+           rows per lane how many are shown (each lane's own "fetch more"). -->
+      <details class="tbmenu" id="topts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
         <div class="tbmenubody">
           <label class="tbfield"><span data-t="tb.depth">depth</span>
-            <select id="fdepth" data-t-title="flow.depth.title" title="how many calls deep to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
-          <span class="seg" id="fview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
-          <button id="fflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
+            <select id="tdepth" data-t-title="trace.depth.title" title="the most links a walk follows from the target"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
+          <span class="seg" id="tview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
+          <button id="tflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
         </div>
       </details>
-      <details class="tbmenu" id="fexports"><summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as a file">Save as</summary>
+      <details class="tbmenu" id="texports"><summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as a file">Save as</summary>
         <div class="tbmenubody tbcol">
-          <button id="fexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="fsvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="fpng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button>
+          <button id="texport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="tsvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="tpng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button>
         </div>
       </details>
-      <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+      <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" title="what your uncommitted git changes would affect">My edits</button>
+      <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
-    <div class="hint" data-t-fold="hint.flow"></div>
+    <div class="hint" data-t-fold="hint.trace"></div>
     <div class="flowgrid">
-      <div class="browserail" id="flowrail">
+      <div class="browserail" id="tracerail">
         <div class="brtop">
-          <!-- Which END of the round trip this list is of: the API routes a
-               chain can be walked from, or the screens that call them. -->
-          <span class="seg brkinds" id="fkinds"></span>
+          <span class="seg brkinds" id="tkinds"></span>
           <div class="brsort">
-            <select id="fsort" data-t-title="rail.sort.title" title="what puts a row at the top of this list"></select>
-            <span class="brcount" id="fcount"></span>
-            <button id="fclose" class="brclose" data-t-title="rail.close" title="close the list">&#x2715;</button>
+            <select id="tsort" data-t-title="rail.sort.title" title="what puts a row at the top of this list"></select>
+            <span class="brcount" id="tcount"></span>
+            <button id="tclose" class="brclose" data-t-title="rail.close" title="close the list">&#x2715;</button>
           </div>
         </div>
-        <div class="brlist" id="flist" role="listbox" tabindex="-1"></div>
-        <div class="brfoot" id="fmore"></div>
+        <div class="brlist" id="tlist" role="listbox" tabindex="-1"></div>
+        <div class="brfoot" id="tmore"></div>
         <div class="brkeys" data-t="rail.keys">&#x2191;&#x2193; move, Enter picks, / filters</div>
       </div>
-      <div class="flowpane"><div id="flowstrip" class="fstrip hidden"></div><div id="flowcanvas" class="flowcanvas"><div id="flowwrap" class="flowwrap"></div></div></div>
-      <div id="flowside" class="flowside"></div>
-    </div>
-  </div>
-
-  <!-- IMPACT TAB — the same machinery, walked backwards -->
-  <div id="tab-impact" class="hidden">
-    <div class="searchbar">
-      <button id="idrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" title="open the list of things you can pick from">Browse</button>
-      <div style="position:relative;flex:1;min-width:240px">
-        <input type="text" id="ientry" style="width:100%" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" autocomplete="off">
-        <div id="isug" class="sug hidden"></div>
+      <div class="flowpane">
+        <!-- What is being asked, and a direction this target does not have, said
+             in one line over the answer rather than as a disabled control. -->
+        <div id="tracehead" class="tracehead hidden" role="note"></div>
+        <div id="tracestrip" class="fstrip hidden"></div>
+        <div id="tracecanvas" class="flowcanvas"><div id="tracewrap" class="flowwrap"></div></div>
+        <!-- DETAILS: what the target is, read as lists (a table's SQL and columns,
+             a column's reads and writes, a route's transactions). -->
+        <div id="view" class="tracedetail hidden"></div>
       </div>
-      <button id="idraw" class="primary" data-t="btn.draw">Draw</button>
-      <select id="imode" data-t-title="mode.title" title="which links the walk follows">
-        <option value="conservative" selected data-t="mode.conservative" data-grade="SOUND_SET">conservative: proven links + candidate sets (SOUND_SET)</option>
-        <option value="strict" data-t="mode.strict" data-grade="EXACT">strict: proven links only (EXACT)</option>
-        <option value="heuristic" data-t="mode.heuristic" data-grade="HEURISTIC">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
-      </select>
-      <!-- WHAT A READER NEEDS FIRST is the target and the Draw button, then how
-           sure a call has to be. How deep, which drawing and whether the dots
-           run are settings a reader changes on purpose, so they sit one click
-           away, and the three ways to save the picture are one menu (RM67). -->
-      <details class="tbmenu" id="iopts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
-        <div class="tbmenubody">
-          <label class="tbfield"><span data-t="tb.depth">depth</span>
-            <select id="idepth" data-t-title="impact.depth.title" title="how many calls back to follow"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
-          <span class="seg" id="iview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
-          <button id="iflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
-        </div>
-      </details>
-      <details class="tbmenu" id="iexports"><summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as a file">Save as</summary>
-        <div class="tbmenubody tbcol">
-          <button id="iexport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="isvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="ipng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button>
-        </div>
-      </details>
-      <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
-    </div>
-    <div class="hint" data-t-fold="hint.impact"></div>
-    <div class="flowgrid">
-      <div class="browserail" id="impactrail">
-        <div class="brtop">
-          <span class="seg brkinds" id="ikinds"></span>
-          <div class="brsort">
-            <select id="isort" data-t-title="rail.sort.title" title="what puts a row at the top of this list"></select>
-            <span class="brcount" id="icount"></span>
-            <button id="iclose" class="brclose" data-t-title="rail.close" title="close the list">&#x2715;</button>
-          </div>
-        </div>
-        <div class="brlist" id="ilist" role="listbox" tabindex="-1"></div>
-        <div class="brfoot" id="imore"></div>
-        <div class="brkeys" data-t="rail.keys">&#x2191;&#x2193; move, Enter picks, / filters</div>
-      </div>
-      <div class="flowpane"><div id="impactstrip" class="fstrip hidden"></div><div id="impactcanvas" class="flowcanvas"><div id="impactwrap" class="flowwrap"></div></div></div>
-      <div id="impactside" class="flowside"></div>
+      <div id="traceside" class="flowside"></div>
     </div>
   </div>
 
@@ -1667,6 +1621,8 @@
 <script src="/viewer/js/51_rules.js"></script>
 <script src="/viewer/js/52_rules_draw.js"></script>
 <script src="/viewer/js/53_chain_lanes.js"></script>
+<script src="/viewer/js/54_trace.js"></script>
+<script src="/viewer/js/55_trace_detail.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

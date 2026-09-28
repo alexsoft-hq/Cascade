@@ -30,11 +30,9 @@ const CHAIN_LANES = {
     ['webFunctions','chain.lane.webFunctions',(v,x)=>flowWebFnRow(v,x),true],
     ['screens','chain.lane.screens',(v,x)=>flowScreenRow(v,x),true] ] },
 };
-// The depth each tab's control OPENS on (the `selected` option in the markup),
-// and the depth a screen entry needs: since RM67 one default for every walk from
-// a route, the engine's (WALK_DEPTH_DEFAULT), in both directions.
-const CHAIN_DEPTH_DEFAULT = { down:WALK_DEPTH_DEFAULT, up:WALK_DEPTH_DEFAULT };
-const CHAIN_SCREEN_DEPTH = WALK_DEPTH_DEFAULT;
+// The depth the Trace control OPENS on (the `selected` option in the markup)
+// is the engine's one default for every walk (WALK_DEPTH_DEFAULT); a target's
+// automatic depth is traceAutoDepth's (54_trace.js).
 /** The lanes THIS answer has, in the order the page draws them left to right. */
 function chainLanes(v, a){
   return CHAIN_LANES[v.direction].lanes.filter(([field]) => Array.isArray(a[field]));
@@ -83,24 +81,13 @@ function closeSug(v){
   box.replaceChildren();
   box.classList.add('hidden');
 }
-function openFlow(arg){
-  activateTab('flow');
-  // WHICH END the caller meant, carried explicitly. A screen path and a route
-  // both start with a slash, and the page must never have to guess back out of
-  // the text which of the two a handoff was about.
-  const kind=['endpoint','symbol','screen'].find(k=>arg&&arg[k]);
-  byId('fentry').value = (kind?arg[kind]:'')||'';
-  FLOWV.pick = kind ? {kind, value:arg[kind]} : null;
-  closeSug(FLOWV);
-  drawChain(FLOWV);
-}
 /**
  * Follow ONE ROUTE down its chain, in the project that SERVES it.
  *
  * A federated row on a list names another pack: asking THIS project for that
  * route gets `unknown-endpoint` back, because this project does not serve it.
  * So the page goes there instead, through the same hash the address bar
- * carries: the project switches, the Flow tab opens, and the walk is asked of
+ * carries: the project switches, Trace opens, and the walk is asked of
  * the pack that answers the call. A row with no project is this project's own
  * and is opened exactly as it always was.
  * @param {object} row  the answer row (its `project`, when it has one)
@@ -108,103 +95,69 @@ function openFlow(arg){
  */
 function openFlowFor(row, id){
   const p = row && row.project;
-  if(!p || p===STATE.project){ openFlow({endpoint:id}); return; }
-  location.hash = hashFor({ project:p, tab:'flow', pick:'endpoint:'+id });
+  if(!p || p===STATE.project){ openTrace({kind:'endpoint', id}, 'down'); return; }
+  location.hash = hashFor({ project:p, tab:'trace', pick:'endpoint:'+id, dir:'down' });
 }
 /** What "follow this route" MEANS on this row: here, or over in that project. */
 function flowRowTitle(row){
   return (row && row.project && row.project!==STATE.project)
     ? t('btn.flow.other.title',{p:row.project}) : t('btn.flow.title');
 }
-/** The Flow button on a list row, addressed to whichever project serves it. */
+/** The Trace button on a list row: this route, walked down, in whichever project serves it. */
 function flowRowButton(row, id){
-  return el('button',{className:'mini', textContent:'Flow',
+  return el('button',{className:'mini', textContent:t('btn.trace'),
     title:flowRowTitle(row), onclick:()=>openFlowFor(row, id)});
 }
-// Which tool arguments this entry box means. Walking down that is one rule (a
-// '#' is a method, anything else a route). Walking up, WHICH KIND carries this
-// key is the engine's answer, not a guess from the dots in the name — the same
-// text can be a column here and a statement there.
-async function chainArgs(v, raw){
-  if(v.direction==='down'){
-    if(raw.includes('#')) return {symbol:raw};
-    // A pick already SAYS which end of the round trip it is — from the rail,
-    // from the typeahead, or from a handoff — so nothing is guessed here.
-    if(v.pick && v.pick.value===raw && (v.pick.kind==='screen'||v.pick.kind==='endpoint')) return {[v.pick.kind]:raw};
-    // Hand-typed: a route id carries its METHOD ("GET /order/list"), a screen
-    // is the path on its own, so a bare path is the screen end.
-    if(raw.startsWith('/')) return {screen:raw};
-    return {endpoint:raw};
-  }
-  const a={direction:'up'};
-  if(raw.includes('#')){ a.symbol=raw; return a; }
-  if(v.pick && v.pick.value===raw){ a[v.pick.kind]=raw; return a; }
-  try{
-    const s=(await api('search',{query:raw, limit:100})).answer;
-    if((s.tables||[]).some(t=>t.table===raw)) a.table=raw;
-    else if((s.columns||[]).some(c=>c.column===raw)) a.column=raw;
-    else if((s.statements||[]).some(x=>x.statement===raw)) a.statement=raw;
-  }catch(e){ /* the shape rule below, so the ENGINE names what it cannot find */ }
-  if(!a.table&&!a.column&&!a.statement){ if(raw.split('.').length>=2) a.column=raw; else a.table=raw; }
-  return a;
-}
+/**
+ * DRAW THE TRACE QUESTION (54_trace.js TRACE): its target, walked the way
+ * TRACE.dir says, in the mode and to the depth on the controls, with v.limit
+ * rows per lane. An answer already in memory under that WHOLE key (traceKey) is
+ * drawn from memory; any other is asked for once. With no target the place
+ * shows its lead and the top of the list instead.
+ */
 async function drawChain(v, keepLimit){
-  const raw=byId(v.entryId).value.trim();
+  const tg=TRACE.target;
   const wrap=vwrap(v), side=vside(v);
-  if(!raw){
-    // Not a grey box telling the reader to type: the lead sentence and five
-    // rows off the top of the list the rail already holds.
+  if(!tg || TRACE.edits){
     wrap.classList.remove('layersmode');
-    side.replaceChildren(); v.resp=null; v.args=null;
+    side.replaceChildren(); v.resp=null; v.args=null; v.lastKey=null;
     laneReset(v); v.lastRaw=null;
     refreshExportButtons();
     railIdle(v.name);
     return;
   }
+  if(TRACE.dir==='detail') return traceDetail();
+  tracePane('chain');
   if(!keepLimit) v.limit=40;
-  // A new target forgets the old picture's folds and find; a new mode or depth
-  // for the same target keeps what the reader typed in the find box.
+  // A new target or direction forgets the old picture's folds and find; a new
+  // mode or depth for the same one keeps what the reader typed in the find box.
+  const raw=tg.kind+':'+tg.id+'|'+TRACE.dir;
   if(v.lastRaw!==raw) laneReset(v);
   v.lastRaw=raw; v.open.clear();
-  wrap.replaceChildren(el('div',{className:'empty',textContent: t(v.direction==='up' ? 'load.impact' : 'load.flow')}));
+  const args={ ...(TRACE.dir==='up' ? {direction:'up'} : {}), [tg.kind]:tg.id,
+    mode:byId(v.modeId).value, depth:Number(byId(v.depthId).value), limit:v.limit };
+  const key=traceKey(traceNow());
   const mine=++v.seq;
-  let args;
-  try{ args=await chainArgs(v, raw); }
-  catch(e){ if(stale(e)||mine!==v.seq) return; wrap.replaceChildren(errPanel(e)); side.replaceChildren(); return; }
-  if(mine!==v.seq) return;
-  args.mode=byId(v.modeId).value;
-  // A SCREEN IS FURTHER OUT THAN A ROUTE. Its own function, the api function it
-  // calls, the route, the handler, the service, the mapper and the statement is
-  // seven hops before a table is in sight — which is why `flow` itself defaults
-  // a screen entry to 8. This tab's control opens on 6, which is right for a
-  // route and stops a screen chain dead among the services, and the two lanes
-  // below it would then read "none" when the truth is the cap. So a screen
-  // entry raises the CONTROL to the engine's own screen default, where the
-  // reader can see the number that was used and can still change it: a value
-  // the reader has already chosen is left exactly as they set it.
-  const depthSel=byId(v.depthId);
-  if(args.screen!=null && Number(depthSel.value)===CHAIN_DEPTH_DEFAULT[v.direction]){
-    depthSel.value=String(CHAIN_SCREEN_DEPTH);
-  }
-  args.depth=Number(depthSel.value);
-  args.limit=v.limit;
+  const memo=PICKMEM.get(key);
+  if(memo){ traceChainShow(v, memo.r, memo.args, key); return; }
+  wrap.replaceChildren(el('div',{className:'empty',textContent: t(TRACE.dir==='up' ? 'load.impact' : 'load.flow')}));
   let r; try{ r=await api('flow',args); }
   catch(e){ if(stale(e)||mine!==v.seq) return; wrap.replaceChildren(errPanel(e)); side.replaceChildren(); return; }
-  if(mine!==v.seq) return;   // a newer Draw is in flight — this answer is stale
-  v.resp=r; v.args=args; v.sel=null;
+  if(mine!==v.seq) return;   // a newer question is in flight: this answer is stale
+  pickRemember(key, { r, args });
+  traceChainShow(v, r, args, key);
+}
+/** Put one answer on screen, and the question it answered in the URL. */
+function traceChainShow(v, r, args, key){
+  v.resp=r; v.args=args; v.sel=null; v.lastKey=key;
   renderChain(v, r);
   refreshExportButtons();
-  // WHICH pick this picture is of, said the way the URL says it: the kind is
-  // the one the tool was actually asked with, never guessed back out of the
-  // name. The answer is kept so the Back button can re-draw it for nothing.
-  const argKind=['endpoint','screen','symbol','table','column','statement'].find((k)=>args[k]!=null);
-  if(argKind){
-    const id=argKind+':'+args[argKind];
-    pickRemember(v.name, id, { r, raw, limit:v.limit });
-    pickSet(v.name, id);
-  }
+  traceWritePick();
 }
 function renderChain(v, r){
+  // The picture is drawn the way ITS answer walked, whatever the switch says
+  // by the time it lands (a remembered answer is drawn by the same function).
+  v.direction = (r.answer.walk && r.answer.walk.direction) || v.direction;
   refreshShowAll();
   v.rows.clear(); v.linkSpecs=[]; v.paths=[];
   const tf={}; for(const f of (r.truncated&&r.truncated.fields)||[]) tf[f.field]=f;
@@ -776,12 +729,12 @@ function laneFlowVisibility(v){
 }
 /** Re-read the shared Flow preference on both lane views, without re-asking. */
 function laneFlowRefresh(){
-  for(const v of [FLOWV, IMPACTV]) if(v.resp && v.view==='lanes') drawChainLinks(v);
+  for(const v of [TRACEV]) if(v.resp && v.view==='lanes') drawChainLinks(v);
 }
 // The tab going away stops every dot on the page: SMIL keeps its own clock, and
 // an <svg> can be told to hold it.
 function laneFlowPause(hidden){
-  for(const v of [FLOWV, IMPACTV]){
+  for(const v of [TRACEV]){
     const svg=vsvg(v); if(!svg) continue;
     try{ if(hidden) svg.pauseAnimations(); else svg.unpauseAnimations(); }catch(e){ /* a browser with no SMIL control: the dots keep running, which is not worth an error */ }
   }
@@ -836,6 +789,9 @@ function renderChainSide(v){
   const kids=[];
   if(v.sel && v.rows.has(v.sel)) kids.push(flowCard(v, v.sel, v.rows.get(v.sel)));
   const counts=w.byLinkGrade||{};
+  // WHAT LIMITS THIS ANSWER stands beside it, first (RM67-U2b): the cut counts,
+  // then the mode floor. The engine's own sentences stay in the rail below.
+  kids.push(traceLimitsPanel(v, r));
   const left=chainLeftOut(v, r);
   if(left) kids.push(left);
   kids.push(el('div',{className:'panel'},[
@@ -854,18 +810,7 @@ function renderChainSide(v){
       +(w.other>0? t('chain.walk.other',{n:w.other}) : '')}),
     w.note? el('div',{className:'honesty',textContent:w.note}) : null
   ]));
-  // The other view of the SAME target: Explore answers "which statements and
-  // endpoints touch this column/table" in lists, where this tab draws it.
-  const entry=r.answer.entry||{};
-  if(v.direction==='up' && (entry.kind==='column'||entry.kind==='table')){
-    kids.push(el('div',{className:'panel'},[
-      el('div',{className:'comment'},[ t('chain.other.view'),
-        el('button',{className:'mini',textContent:t('chain.other.explore'),title:t('chain.other.explore.title'),
-          onclick:()=>{ activateTab('explore');
-            entry.kind==='column' ? showColumn(entry.id) : showTable(entry.id); }}) ])
-    ]));
-  }
-  kids.push(honesty(r, v.direction==='down'?'flow':'impact'));
+  kids.push(honesty(r, 'trace'));
   side.replaceChildren(...kids);
 }
 /** The narrowest wider mode that would walk some of what this one left out, from the grades the walk counted; null when none would. */
@@ -947,26 +892,18 @@ function flowCard(v, key, row){
   // The card keeps a SIX-LINE excerpt, cut from the very answer the pane asked
   // for; it no longer holds a scrolling code box of its own.
   const showSrc=()=> srcOpen(key, {tab:v.name, grade:row.grade||null, basis:why, excerpt:body});
+  // A CLICK LOOKS; "TRACE FROM HERE" MOVES THE START (RM67-U2b). The card is
+  // about the row the reader clicked, and the question on screen stays theirs
+  // until they ask to start again from this row, read the same way when it
+  // can be.
+  if(traceCanStart(key, d)) btns.append(el('button',{className:'mini ttrace',textContent:t('trace.from'),title:t('trace.from.title'),onclick:()=>traceFrom(key)}));
   if(kind==='table'){
     btns.append(el('button',{className:'mini',textContent:'ERD',onclick:()=>openErd(d.table)}),
-      el('button',{className:'mini',textContent:'Table',onclick:()=>{ activateTab('explore'); showTable(d.table); }}),
+      el('button',{className:'mini',textContent:t('trace.dir.detail'),title:t('trace.dir.detail.title'),onclick:()=>openTrace({kind:'table', id:d.table}, 'detail')}),
       el('button',{className:'mini',textContent:'Graph',onclick:()=>openGraph(key)}));
   } else {
     btns.append(el('button',{className:'mini',textContent:'Source',onclick:showSrc}),
       el('button',{className:'mini',textContent:'Graph',onclick:()=>openGraph(key)}));
-  }
-  // The round trip: from a route back down the chain it runs through.
-  if(kind==='endpoint') btns.append(el('button',{className:'mini',textContent:'Flow',title:t('btn.flow.title'),onclick:()=>openFlow({endpoint:d.id})}));
-  // ...and from a SCREEN, the whole trip: the browser's own functions, the
-  // routes they call, and the tables the request ends at. Impact is not offered
-  // on a screen because a screen is the top of the chain: nothing is above it.
-  if(kind==='screen') btns.append(el('button',{className:'mini',textContent:'Flow',title:t('btn.flow.screen.title'),onclick:()=>openFlow({screen:d.id})}));
-  // …and the other way: from a row of the forward chain to "what else reaches
-  // this?". Only offered on the Flow tab — on Impact you are already there.
-  if(v.direction==='down'){
-    const target = kind==='service'? {symbol:d.id} : kind==='statement'? {statement:d.id}
-      : kind==='table'? {table:d.table} : (kind==='entry'&&d.kind==='symbol')? {symbol:key.slice(key.indexOf(':')+1)} : null;
-    if(target) btns.append(el('button',{className:'mini',textContent:'Impact',title:t('btn.impact.title'),onclick:()=>openImpact(target)}));
   }
   // A ROW FROM ANOTHER PROJECT answers to another pack. Its source, its graph
   // and its impact are that project's questions, and every button here would
@@ -979,7 +916,7 @@ function flowCard(v, key, row){
       el('span',{className:'tag '+(t.access==='read'?'read':'write'),title:t.access,textContent:t.table}))));
   }
   // THE PANE IS AN IDE PREVIEW, NOT A POPUP. It opens when the reader ASKS for
-  // it (the button above, an Explore statement or method row, or a `src=` in
+  // it (the button above, a details row, or a `src=` in
   // the link they followed) and then FOLLOWS every row they pick, in place. It
   // does not open itself over the card and the evidence rail the reader was
   // about to read, and one the reader has closed stays closed.
@@ -998,34 +935,13 @@ function flowCard(v, key, row){
   panel.append(body);
   return panel;
 }
-// The typeahead. Walking down it lists ENDPOINTS (the tool's own list mode);
-// walking up it flattens `search`'s three lists — a target can be a column, a
-// table or a statement, and the chip says which so the kind is never guessed.
+// The typeahead. On Trace it offers every kind a question can start from
+// (traceSuggestFetch), and the chip says which so the kind is never guessed.
 // WHAT the box would show for `q` — no DOM, no sequence, no side effects, so a
 // caller that needs the list itself (the Draw button) can ask for it without
 // racing the dropdown that is being closed under it. null = too short to search.
 async function chainSuggestFetch(v, q){
-  if(v.direction==='down'){
-    // BOTH ENDS of the round trip, from the tool's own two list modes: the
-    // routes a chain can be walked from, and the screens that call them. A
-    // pack with no frontend answers the second with nothing, and the box then
-    // reads exactly as it always did.
-    const hasScreens=!!(OV.resp && OV.resp.answer && OV.resp.answer.screens);
-    const [eps, scr]=await Promise.all([
-      api('flow', q? {query:q, limit:50} : {limit:20}).then(r=>r.answer.entries||[], ()=>[]),
-      hasScreens
-        ? api('flow', q? {kind:'screen', query:q, limit:20} : {kind:'screen', limit:8}).then(r=>r.answer.entries||[], ()=>[])
-        : Promise.resolve([]),
-    ]);
-    const items=[
-      ...scr.map(s=>({value:s.screen, kind:'screen', sub:s.title||s.component||''})),
-      ...eps.map(e=>({value:e.id, kind:'endpoint', sub:e.handlerShort||''})),
-    ];
-    // What you TYPED, if it is an id, is what you meant — whichever end it is.
-    const hit=(x)=> x.value.toLowerCase()===String(q||'').toLowerCase() ? 0 : 1;
-    items.sort((x,y)=> hit(x)-hit(y));   // stable: each list keeps its own order
-    return items;
-  }
+  if(v.name==='trace') return traceSuggestFetch(q);
   // The Graph tab focuses on ANY node, so its box offers both lists at once:
   // the endpoints (the flow tool's own list) and search's tables / columns /
   // statements. A method is typed as owner#name — nothing lists those.
@@ -1046,21 +962,7 @@ async function chainSuggestFetch(v, q){
     items.sort((x,y)=> (hit(x)-hit(y)) || (GRANK[x.kind]-GRANK[y.kind]));
     return items;
   }
-  if(!q || q.length<2) return null;
-  const s=(await api('search',{query:q, limit:20})).answer;
-  const items=[
-    ...(s.tables||[]).map(t=>({value:t.table, kind:'table', sub:t.comment||''})),
-    ...(s.columns||[]).map(c=>({value:c.column, kind:'column', sub:c.comment||''})),
-    ...(s.statements||[]).map(x=>({value:x.statement, kind:'statement', sub:''})),
-  ];
-  // What you TYPED, if it is an id, is what you meant — whatever kind it is.
-  // Then the widest thing first: a table, then its columns, then statements.
-  // (Typing "pms_product" used to bury the table itself under 20 of its own
-  // columns, off the bottom of the box.)
-  const KRANK={table:0, column:1, statement:2};
-  const exact=(x)=> x.value.toLowerCase()===q.toLowerCase() ? 0 : 1;
-  items.sort((x,y)=> (exact(x)-exact(y)) || (KRANK[x.kind]-KRANK[y.kind]));   // stable: keeps each list's own order
-  return items;
+  return null;
 }
 // Put a resolved list ON SCREEN. Row 0 is marked `.cur` because Enter and Draw
 // take it: whatever they would substitute is visible BEFORE it is taken.
@@ -1164,27 +1066,27 @@ async function chainCommit(v){
 }
 // Every control of one lane tab, wired once for both.
 function wireChainToolbar(v){
-  byId(v.name==='flow'?'fdraw':'idraw').onclick = ()=>chainCommit(v);
+  byId('tdraw').onclick = ()=>chainCommit(v);
   const input=byId(v.entryId);
   input.addEventListener('keydown', e=>{
     const box=byId(v.sugId), open=!box.classList.contains('hidden');
     // The dropdown owns the arrows while it is up. Closed, they belong to the
-    // rail beside the picture.
+    // rail beside the picture, and then Enter takes the row they moved to, as
+    // Explore's box did: the box is the list's filter as well as the search.
     if(e.key==='ArrowDown'||e.key==='ArrowUp'){
       if(open){ e.preventDefault(); chainSugMove(v, e.key==='ArrowDown'?1:-1); }
-      else { e.preventDefault(); railMove(v.name, e.key==='ArrowDown'?1:-1); }
+      else { e.preventDefault(); railMove(v.name, e.key==='ArrowDown'?1:-1); v.railArrowed=true; }
       return;
     }
     if(e.key!=='Enter') return;
+    if(!open && v.railArrowed && railEnter(v.name)){ v.railArrowed=false; return; }
     chainCommit(v);
   });
   // ONE box, two jobs: it still resolves what you type through the typeahead,
   // and it filters the rail from the rows already loaded, asking nothing.
-  input.addEventListener('input', ()=>{ v.pick=null; clearTimeout(v.sugTimer); v.sugTimer=setTimeout(()=>chainSuggest(v, input.value.trim()),150);
+  input.addEventListener('input', ()=>{ v.pick=null; v.railArrowed=false; clearTimeout(v.sugTimer); v.sugTimer=setTimeout(()=>chainSuggest(v, input.value.trim()),150);
     railFilterInput(v.name); });
   input.addEventListener('focus', ()=>{ if(!input.value.trim()) chainSuggest(v, ''); });
-  byId(v.modeId).onchange = ()=>drawChain(v);
-  byId(v.depthId).onchange = ()=>drawChain(v);
   // lanes | layers — two renderings of the SAME answer: no re-query on toggle.
   document.querySelectorAll('#'+v.segId+' button').forEach(b=> b.onclick=()=>{
     if(v.view===b.dataset.view) return;

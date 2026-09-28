@@ -39,7 +39,7 @@
         <b>not collected</b>
       </button>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
         api groups
         <b>2</b>
       </span>
@@ -103,9 +103,7 @@
     <div id="snapbar" class="snapbar hidden" role="note"></div>
     <div class="tabs">
       <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
-      <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
-      <button class="tab" data-t="tab.flow" data-tab="flow" onclick type="button">Flow</button>
-      <button class="tab active" data-t="tab.impact" data-tab="impact" onclick type="button">Impact</button>
+      <button class="tab active" data-t="tab.trace" data-tab="trace" onclick type="button">Trace</button>
       <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
       <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
       <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
@@ -116,27 +114,29 @@
   </header>
   <div class="wrap">
     <div id="tab-overview" class="hidden">…</div>
-    <div id="tab-explore" class="hidden">…</div>
-    <div id="tab-flow" class="hidden">…</div>
-    <div id="tab-impact">
+    <div id="tab-trace">
       <div class="searchbar">
-        <button id="idrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
+        <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
         <div style="position:relative;flex:1;min-width:240px">
-          <input id="ientry" autocomplete="off" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" style="width:100%" type="text" value="gamma_order.total"></input>
-          <div id="isug" class="sug hidden"></div>
+          <input id="tentry" autocomplete="off" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" style="width:100%" type="text" value="gamma_order.total"></input>
+          <div id="tsug" class="sug hidden"></div>
         </div>
-        <button id="idraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <select id="imode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+        <button id="tdraw" class="primary" data-t="btn.trace" onclick>Trace</button>
+        <span id="tdir" class="seg tdir" data-t-title="trace.dir.title" title="which way to read the target. Only the ways this kind of target has are shown.">
+          <button class="on" aria-pressed="true" onclick title="follow it up: the code, APIs and screens that reach it, which is what a change here would touch" type="button">Where it is used</button>
+          <button aria-pressed="false" onclick title="what it is, as lists: its SQL, its columns with reads and writes, or the transactions it runs through" type="button">Details</button>
+        </span>
+        <select id="tmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
           <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
           <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
           <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
         </select>
-        <details id="iopts" class="tbmenu">
+        <details id="topts" class="tbmenu">
           <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
           <div class="tbmenubody">
             <label class="tbfield">
               <span data-t="tb.depth">depth</span>
-              <select id="idepth" data-t-title="impact.depth.title" onchange title="how many calls back to follow" value="8">
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
                 <option>
                   1
                 </option>
@@ -163,47 +163,56 @@
                 </option>
               </select>
             </label>
-            <span id="iview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
+            <span id="tview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
               <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
               <button data-t="view.layers" data-view="layers" onclick>by hop</button>
             </span>
-            <button id="iflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+            <button id="tflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
           </div>
         </details>
-        <details id="iexports" class="tbmenu">
+        <details id="texports" class="tbmenu">
           <summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as one HTML file, an SVG or a PNG">Save as</summary>
           <div class="tbmenubody tbcol">
-            <button id="iexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
-            <button id="isvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+            <button id="texport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
+            <button id="tsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
               SVG
             </button>
-            <button id="ipng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+            <button id="tpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
               PNG
             </button>
           </div>
         </details>
-        <button id="ishowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+        <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" onclick title="what your uncommitted git changes would affect">My edits</button>
+        <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
-      <div class="hint hintfold" data-t-fold="hint.impact">
+      <div class="hint hintfold" data-t-fold="hint.trace">
         <div class="fold">
           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
               <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
             </svg>
             <span class="foldtext">
-              Pick a column, table or method and see which APIs would be affected if you changed it.
+              Pick one thing, then read what it uses, where it is used, or what it is.
             </span>
           </button>
           <div class="foldbody"></div>
         </div>
       </div>
       <div class="flowgrid">
-        <div id="impactrail" class="browserail">
+        <div id="tracerail" class="browserail">
           <div class="brtop">
-            <span id="ikinds" class="seg brkinds">
-              <button class="on" onclick>
+            <span id="tkinds" class="seg brkinds">
+              <button onclick>
+                Endpoints
+                <span class="brn">3</span>
+              </button>
+              <button onclick>
                 Tables
                 <span class="brn">3</span>
+              </button>
+              <button class="on" onclick>
+                Columns
+                <span class="brn">4</span>
               </button>
               <button onclick>
                 Statements
@@ -214,93 +223,132 @@
               </button>
             </span>
             <div class="brsort">
-              <select id="isort" data-t-title="rail.sort.title" onchange title="what puts a row at the top of this list" value="endpoints">
-                <option value="statements">statements</option>
-                <option selected="true" value="endpoints">endpoints</option>
-                <option value="groups">API groups</option>
-                <option value="columns">columns</option>
+              <select id="tsort" data-t-title="rail.sort.title" onchange title="what puts a row at the top of this list" value="writes">
+                <option selected="true" value="writes">writes</option>
+                <option value="reads">reads</option>
+                <option value="endpoints">endpoints</option>
                 <option value="name">name</option>
               </select>
-              <span id="icount" class="brcount">
-                3 shown of 3
+              <span id="tcount" class="brcount">
+                4 shown of 4
               </span>
-              <button id="iclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
+              <button id="tclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
                 &#x2715;
               </button>
             </div>
           </div>
-          <div id="ilist" class="brlist" role="listbox" tabindex="-1">
-            <div class="brwrap">
-              <button class="brcaret" aria-expanded="false" onclick title="show the columns of this table">▸</button>
-              <button class="brrow cur" aria-selected="false" onclick role="option" title="gamma_order">
-                <div class="brline">
-                  <span class="brid psplit">
-                    <span class="phead">gamma_</span>
-                    <span class="ptail">order</span>
+          <div id="tlist" class="brlist" role="listbox" tabindex="-1">
+            <button class="brrow cur" aria-selected="false" onclick role="option" title="gamma_item.order_id">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="phead">gamma_item.order_</span>
+                  <span class="ptail">id</span>
+                </span>
+                <span class="brstats">
+                  <span class="brstat read" title="how many SQL statements read this column">
+                    <i class="brlbl">r</i>
+                    0
                   </span>
-                  <span class="brstats">
-                    <span class="brstat" title="how many SQL statements touch this">
-                      <i class="brlbl">sql</i>
-                      2
-                    </span>
-                    <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
-                      <i class="brlbl">api</i>
-                      2
-                    </span>
+                  <span class="brstat write" title="how many SQL statements write this column">
+                    <i class="brlbl">w</i>
+                    1
                   </span>
-                </div>
-                <div class="brsub">the orders table</div>
-              </button>
-            </div>
-            <div class="brwrap">
-              <button class="brcaret" aria-expanded="false" onclick title="show the columns of this table">▸</button>
-              <button class="brrow" aria-selected="false" onclick role="option" title="gamma_item">
-                <div class="brline">
-                  <span class="brid psplit">
-                    <span class="phead">gamma_</span>
-                    <span class="ptail">item</span>
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                    <i class="brlbl">api</i>
+                    1
                   </span>
-                  <span class="brstats">
-                    <span class="brstat" title="how many SQL statements touch this">
-                      <i class="brlbl">sql</i>
-                      1
-                    </span>
-                    <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
-                      <i class="brlbl">api</i>
-                      1
-                    </span>
+                </span>
+              </div>
+            </button>
+            <button class="brrow on" aria-selected="true" onclick role="option" title="gamma_order.total">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="phead">gamma_order.</span>
+                  <span class="ptail">total</span>
+                </span>
+                <span class="brstats">
+                  <span class="brstat read" title="how many SQL statements read this column">
+                    <i class="brlbl">r</i>
+                    1
                   </span>
-                </div>
-              </button>
-            </div>
-            <div class="brwrap">
-              <button class="brcaret" aria-expanded="false" onclick title="show the columns of this table">▸</button>
-              <button class="brrow" aria-selected="false" onclick role="option" title="gamma_audit">
-                <div class="brline">
-                  <span class="brid psplit">
-                    <span class="phead">gamma_</span>
-                    <span class="ptail">audit</span>
+                  <span class="brstat write" title="how many SQL statements write this column">
+                    <i class="brlbl">w</i>
+                    1
                   </span>
-                  <span class="brstats">
-                    <span class="brstat" title="how many SQL statements touch this">
-                      <i class="brlbl">sql</i>
-                      0
-                    </span>
-                    <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
-                      <i class="brlbl">api</i>
-                      0
-                    </span>
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                    <i class="brlbl">api</i>
+                    2
                   </span>
-                </div>
-              </button>
-            </div>
+                </span>
+              </div>
+              <div class="brsub">gamma money</div>
+            </button>
+            <button class="brrow" aria-selected="false" onclick role="option" title="gamma_audit.id">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="phead">gamma_audit.</span>
+                  <span class="ptail">id</span>
+                </span>
+                <span class="brstats">
+                  <span class="brflag" title="this column is part of the primary key">pk</span>
+                  <span class="brstat read" title="how many SQL statements read this column">
+                    <i class="brlbl">r</i>
+                    0
+                  </span>
+                  <span class="brstat write" title="how many SQL statements write this column">
+                    <i class="brlbl">w</i>
+                    0
+                  </span>
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                    <i class="brlbl">api</i>
+                    0
+                  </span>
+                </span>
+              </div>
+            </button>
+            <button class="brrow" aria-selected="false" onclick role="option" title="gamma_order.id">
+              <div class="brline">
+                <span class="brid psplit">
+                  <span class="phead">gamma_order.</span>
+                  <span class="ptail">id</span>
+                </span>
+                <span class="brstats">
+                  <span class="brflag" title="this column is part of the primary key">pk</span>
+                  <span class="brstat read" title="how many SQL statements read this column">
+                    <i class="brlbl">r</i>
+                    1
+                  </span>
+                  <span class="brstat write" title="how many SQL statements write this column">
+                    <i class="brlbl">w</i>
+                    0
+                  </span>
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                    <i class="brlbl">api</i>
+                    1
+                  </span>
+                </span>
+              </div>
+              <div class="brsub">primary key</div>
+            </button>
           </div>
-          <div id="imore" class="brfoot"></div>
+          <div id="tmore" class="brfoot"></div>
           <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
           <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
         </div>
         <div class="flowpane">
-          <div id="impactstrip" class="fstrip">
+          <div id="tracehead" class="tracehead" role="note">
+            <span class="tquestion">
+              <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                <circle cx="6" cy="6" fill="#F472B6" r="2"></circle>
+              </svg>
+              Where it is used:
+              <code class="id">gamma_order.total</code>
+            </span>
+            <span>mode conservative</span>
+            <span title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent.">depth 8</span>
+            <span class="tnodir">A column is where a chain ends, so it uses nothing.</span>
+          </div>
+          <div id="tracestrip" class="fstrip">
             <div class="fstripinfo">
               <span class="fstripstart" title="column:gamma_order.total">
                 <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
@@ -324,146 +372,146 @@
             <input class="fstripfind" data-t-ph="chain.find.ph" data-t-title="chain.find.title" placeholder="find in this picture" title="find a row by name or id. A folded row that matches is opened, and Enter goes to the next one." type="search"></input>
             <span class="count fstripfound"></span>
           </div>
-          <div id="impactcanvas" class="flowcanvas">
-            <div id="impactwrap" class="flowwrap lanesmode">
+          <div id="tracecanvas" class="flowcanvas">
+            <div id="tracewrap" class="flowwrap lanesmode">
               <svg class="flowsvg" height="undefined" width="undefined">
-                <path id="fp-impact-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <path id="fp-trace-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="0s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-0"></mpath>
+                      <mpath href="#fp-trace-0"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-3.333333333333333s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-0"></mpath>
+                      <mpath href="#fp-trace-0"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-6.666666666666666s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-0"></mpath>
+                      <mpath href="#fp-trace-0"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-1" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <path id="fp-trace-1" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-3.7s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-1"></mpath>
+                      <mpath href="#fp-trace-1"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-7.033333333333333s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-1"></mpath>
+                      <mpath href="#fp-trace-1"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-10.366666666666667s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-1"></mpath>
+                      <mpath href="#fp-trace-1"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-2" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-2" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-7.4s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-2"></mpath>
+                      <mpath href="#fp-trace-2"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-10.733333333333333s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-2"></mpath>
+                      <mpath href="#fp-trace-2"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-14.066666666666666s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-2"></mpath>
+                      <mpath href="#fp-trace-2"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-3" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-3" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-1.0999999999999988s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-3"></mpath>
+                      <mpath href="#fp-trace-3"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-4.433333333333332s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-3"></mpath>
+                      <mpath href="#fp-trace-3"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-7.766666666666665s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-3"></mpath>
+                      <mpath href="#fp-trace-3"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-4" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-4" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-0.288s" calcMode="linear" dur="0.6s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-4"></mpath>
+                      <mpath href="#fp-trace-4"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-5" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-5" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-0.51s" calcMode="linear" dur="0.6s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-5"></mpath>
+                      <mpath href="#fp-trace-5"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-6" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-6" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-0.13199999999999984s" calcMode="linear" dur="0.6s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-6"></mpath>
+                      <mpath href="#fp-trace-6"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-7" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-7" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-0.3539999999999999s" calcMode="linear" dur="0.6s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-7"></mpath>
+                      <mpath href="#fp-trace-7"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-8" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <path id="fp-trace-8" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-9.6s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-8"></mpath>
+                      <mpath href="#fp-trace-8"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-12.933333333333332s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-8"></mpath>
+                      <mpath href="#fp-trace-8"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-16.266666666666666s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-8"></mpath>
+                      <mpath href="#fp-trace-8"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-impact-9" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <path id="fp-trace-9" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-3.3000000000000007s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-9"></mpath>
+                      <mpath href="#fp-trace-9"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-6.633333333333333s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-9"></mpath>
+                      <mpath href="#fp-trace-9"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-9.966666666666667s" calcMode="linear" dur="10s" keyPoints="1;0" keyTimes="0;1" repeatCount="indefinite">
-                      <mpath href="#fp-impact-9"></mpath>
+                      <mpath href="#fp-trace-9"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
@@ -704,8 +752,13 @@ via GController.save">
               </div>
             </div>
           </div>
+          <div id="view" class="tracedetail hidden">…</div>
         </div>
-        <div id="impactside" class="flowside">
+        <div id="traceside" class="flowside">
+          <div class="panel tlimits">
+            <h2>What limited this answer</h2>
+            <div class="comment">No cap cut this answer, and every lane is shown whole.</div>
+          </div>
           <div class="panel">
             <h2>how to read the lines</h2>
             <ul class="list">
@@ -751,12 +804,6 @@ via GController.save">
             </ul>
             <div class="comment" style="margin-top: 8px">A line shows the grade of that one link. The badge on a row is the weakest link on its way from the start, so a row can be weaker than the line into it. A line into a table carries the table's badge: the answer does not grade that last step alone.</div>
             <div class="comment" style="margin-top: 8px">followed 10 nodes, depth 8, mode conservative</div>
-          </div>
-          <div class="panel">
-            <div class="comment">
-              other view:
-              <button class="mini" onclick title="the same target as plain lists of statements and endpoints">Explore</button>
-            </div>
           </div>
           <div class="rail">
             <div class="railhead">

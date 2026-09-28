@@ -182,7 +182,7 @@ export const VIEWER_STRINGS = {
     // The six steps of the chain this engine follows, in the order it walks it.
     'crail.title': 'the steps this tool follows, in order. Every count comes straight from the overview answer.',
     'crail.groups': 'api groups',
-    'crail.groups.title': 'an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.',
+    'crail.groups.title': 'an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.',
     'crail.endpoints': 'endpoints',
     'crail.services': 'services',
     'crail.services.title': 'the methods the routes\' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.',
@@ -217,15 +217,64 @@ export const VIEWER_STRINGS = {
     'theme.light': 'Light',
     // ---- tabs ----------------------------------------------------------
     'tab.overview': 'Overview',
-    'tab.explore': 'Explore',
-    'tab.flow': 'Flow',
-    'tab.impact': 'Impact',
     'tab.coupling': 'Coupling',
     'tab.graph': 'Graph',
     'tab.erd': 'ERD',
     'tab.tx': 'Transactions',
     'tab.compare': 'Compare',
     'tab.rules': 'Rules',
+    'trace.lim.todetail': 'This is the deepest a walk goes. Details lists the screens a change here is felt on, with no depth cap.',
+    'detail.screens.routes': '{n} API',
+    'detail.screens': 'Screens a change here is felt on, mode {mode}, with no depth cap',
+    'detail.table.columns': 'columns, with how many statements read and write each',
+    'detail.table.sql': 'SQL that touches it',
+    'detail.table': 'table',
+    'detail.ddl.title': 'view CREATE TABLE',
+    'detail.access.title': 'what this statement does here, in the words the SQL lane recorded: read or write',
+    'detail.column.routes': 'APIs above that SQL, mode {mode}',
+    'detail.column.sql': 'SQL that reads or writes it, every grade ({r} read, {w} write)',
+    'detail.column': 'column',
+    'trace.detail.tx.none': 'No @Transactional method on its way down, in this mode and depth.',
+    'trace.detail.tx.open': 'open this boundary on the Transactions tab',
+    'trace.detail.tx.self': 'this one',
+    'trace.detail.tx.lead': 'The @Transactional methods on its way down, in mode {mode} to depth {depth}. Each one opens on the Transactions tab.',
+    'trace.detail.tx': 'Transactions it runs through',
+    'trace.detail.handler': 'handler {h}',
+    'trace.detail.statement': 'SQL statement',
+    'trace.detail.symbol': 'method',
+    'trace.detail.endpoint': 'API route',
+    'load.detail': 'reading the details…',
+    'trace.from.title': 'start the question again from this row, read the same way where it can be',
+    'trace.from': 'Trace from here',
+    'trace.lim.none': 'No cap cut this answer, and every lane is shown whole.',
+    'trace.lim.noscreens': 'No frontend was analyzed, so which screens call this is unknown.',
+    'trace.lim.page': 'rows in {lane} are not shown yet: {shown} of {total}. The lane heading fetches more.',
+    'trace.lim.beyond': 'more rows in {lane} are named just past the depth cap and were not walked.',
+    'trace.lim.generated': 'steps inside generated code were skipped, as the profile declares.',
+    'trace.lim.nodecap': 'The walk reached its node cap. This chain is bigger than one picture.',
+    'trace.lim.deeper': 'Go to depth 8',
+    'trace.lim.depth': 'rows stopped at depth {depth}, and what lies past them was not followed.',
+    'trace.lim.title': 'What limited this answer',
+    'rail.lead.trace': 'Pick something from the list, or search any kind in the box above, to start.',
+    'hint.trace.more': 'Search any API, screen, table, column, SQL statement or method, or pick one from the list. What it uses follows it down to the tables, and where it is used follows it up to the APIs and screens a change would touch. Clicking a row in the picture shows that row, and Trace from here starts again from it. The box beside the picture says what limited this answer.',
+    'hint.trace.lead': 'Pick one thing, then read what it uses, where it is used, or what it is.',
+    'trace.q.depth': 'depth {n}',
+    'trace.q.mode': 'mode {mode}',
+    'trace.nodir.column.down': 'A column is where a chain ends, so it uses nothing.',
+    'trace.nodir.table.down': 'A table is where a chain ends, so it uses nothing. Its columns are under Details.',
+    'trace.nodir.statement.down': 'A statement uses only its own tables. They are under Details.',
+    'trace.nodir.screen.up': 'A screen is the top of the chain, so nothing uses it.',
+    'trace.depth.title': 'depth: the most links a walk follows from the target. What lies past it is unknown, not absent.',
+    'trace.dir.detail.title': 'what it is, as lists: its SQL, its columns with reads and writes, or the transactions it runs through',
+    'trace.dir.detail': 'Details',
+    'trace.dir.up.title': 'follow it up: the code, APIs and screens that reach it, which is what a change here would touch',
+    'trace.dir.up': 'Where it is used',
+    'trace.dir.down.title': 'follow it down: the code it runs and the tables it ends at',
+    'trace.dir.down': 'What it uses',
+    'trace.dir.title': 'which way to read the target. Only the ways this kind of target has are shown.',
+    'trace.entry.ph': 'an API, screen, table, column, SQL or method',
+    'btn.trace': 'Trace',
+    'tab.trace': 'Trace',
     'rules.loading': 'Reading the rule packs…',
     'rules.filter.ph': 'find a rule by its name, pack or what it says',
     'rules.kind.title': 'rules of one kind',
@@ -302,7 +351,7 @@ export const VIEWER_STRINGS = {
     'export.png.failed': 'this browser could not turn the picture into a PNG. Save the SVG instead',
     'btn.export.title': 'save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside',
     'snap.title': 'Snapshot',
-    'snap.question': '{tab} from {kind} {value}, mode {mode}, depth {depth}, up to {limit} rows',
+    'snap.question': '{dir}: {kind} {value}, mode {mode}, depth {depth}, up to {limit} rows',
     'snap.when': 'exported {generated} from pack {digest}, built {built}, Cascade {version}',
     'snap.honesty': 'this answer: trust {trust}, {limits} limit(s), {truncated} cut list(s), each one named in the rail beside the picture',
     'snap.honesty.picture': 'this answer: trust {trust}, {limits} limit(s), {truncated} cut list(s), each one named under the picture',
@@ -480,8 +529,6 @@ export const VIEWER_STRINGS = {
     'screen.sends.title': 'this function makes the HTTP call itself',
     'screen.leadsto': 'leads to',
     'screen.leadsto.title': 'this function calls something else that makes the HTTP call',
-    'screen.noimpact': 'A screen is the top of the chain, so there is nothing above it to ask about.',
-    'load.screen': 'following this screen down to the tables…',
     // ---- the evidence rail, beside every answer --------------------------
     // Only the HEADING is the page's. The field labels under it name the
     // engine's own contract fields and stay in the engine's language.
@@ -541,8 +588,6 @@ export const VIEWER_STRINGS = {
     'ribbon.say.tables': '{reached} of {total} tables are reached from an endpoint. No endpoint reaches the other {rest}. Some statement may still write them; what is missing is the HTTP route above.',
     'ribbon.say.columns': '{reached} of {total} columns are reached from an endpoint. Nothing reaches the other {rest}.',
     // ---- Explore tab ----------------------------------------------------
-    'hint.explore.lead': 'Search a table, column or SQL statement, then open one to see what it touches.',
-    'hint.explore.more': 'Type part of a name and pick a result. Click a column to see the SQL statements that read or write it, and the APIs above those statements. Each answer says how sure we are and what we could not prove.',
     'explore.edits': 'My edits',
     'explore.edits.title': 'what your uncommitted git changes would affect',
     'load.search': 'searching…',
@@ -559,9 +604,6 @@ export const VIEWER_STRINGS = {
     'edits.frontendcalls': '{n} frontend call(s)',
     'edits.frontendcalls.title': 'how many frontend functions call this route',
     // ---- Flow tab -------------------------------------------------------
-    'hint.flow.lead': 'Pick one API and follow it from the route down to the tables it ends at.',
-    'hint.flow.more': 'Read it left to right: the endpoint, the service methods it may run through, the mapper statements those reach, and the tables at the end. A solid line is proven, a dashed line is a candidate set that holds the real target, and a dash-dot line is a guess to check. Hover a row to light its chain, and click it for the path, the source and the SQL.',
-    'flow.depth.title': 'how many calls deep to follow',
     'load.flow': 'following the chain…',
     // ---- Flow / Impact side panels (both tabs draw with one function) ----
     // The grade NAMES beside these lines are the engine's and are printed as
@@ -570,9 +612,6 @@ export const VIEWER_STRINGS = {
     'chain.legend.links': '{n} connections',
     'chain.walk.note': 'followed {walked} nodes, depth {depth}, mode {mode}',
     'chain.walk.other': ', plus {n} we reached that this picture has no place for',
-    'chain.other.view': 'other view: ',
-    'chain.other.explore': 'Explore',
-    'chain.other.explore.title': 'the same target as plain lists of statements and endpoints',
     'chain.path.up': 'path up from the target',
     'chain.path.down': 'path down from the entry',
     // ---- Flow / Impact: the column headings and the captions inside one ---
@@ -680,9 +719,6 @@ export const VIEWER_STRINGS = {
     'chain.card.otherproject': 'This row is in {p}. This page shows one project at a time, so switch the selector to {p} to open its source or walk it further.',
     'chain.nosource': 'no source: we never saw this type in the code',
     // ---- Impact tab -----------------------------------------------------
-    'hint.impact.lead': 'Pick a column, table or method and see which APIs would be affected if you changed it.',
-    'hint.impact.more': 'Read it left to right: the thing you are changing, the SQL statements that touch it, the service methods above them, and the endpoints that can reach it. Each row carries the weakest link on its path, so one call through a candidate set makes the whole row a candidate.',
-    'impact.depth.title': 'how many calls back to follow',
     'load.impact': 'following the chain back to the endpoints…',
     // ---- the browse rail, on Explore, Flow and Impact --------------------
     // Every tab opens showing the PACK, not an empty box: a left column that
@@ -693,7 +729,6 @@ export const VIEWER_STRINGS = {
     'rail.browse': 'Browse',
     'rail.browse.title': 'open the list of things you can pick from',
     'rail.close': 'Close the list',
-    'rail.filter.ph': 'filter, or exact name + Enter',
     // The rail's OWN empty state. A filter that matched none of the rows on
     // screen is the page's own doing, so it says so in the page's own words:
     // the engine's `not-shipped` / `none` belong to a list that was empty
@@ -726,9 +761,6 @@ export const VIEWER_STRINGS = {
     'rail.sort.tables': 'tables',
     // What the right-hand side says before anything is picked: one sentence,
     // and five rows off the top of the list already loaded.
-    'rail.lead.explore': 'Pick a table, column or statement from the list to see what touches it.',
-    'rail.lead.flow': 'Pick an endpoint from the list to follow it down to the tables it ends at.',
-    'rail.lead.impact': 'Pick a table or column from the list to see which APIs a change would affect.',
     'rail.picks': 'Start with one of these',
     // A stat chip on a row says what its number counts.
     'rail.stat.statements.title': 'how many SQL statements touch this',
@@ -755,8 +787,6 @@ export const VIEWER_STRINGS = {
     'rail.group.reachapi': '{n} reach an API',
     // Flow can be walked from either end of the round trip, so its rail says
     // which end its list is of.
-    'rail.flowkind.title': 'draw the chain from an API route, or from the screen that calls one',
-    'rail.lead.flow.screen': 'Pick a screen from the list to follow it down to the tables it ends at.',
     // Impact opens a table into its own columns, one request per table.
     'rail.tree.title': 'show the columns of this table',
     'rail.tree.loading': 'loading the columns…',
@@ -864,14 +894,11 @@ export const VIEWER_STRINGS = {
     'btn.flow.other.title': 'open this route in {p}, the project that serves it. The page switches to that project.',
     'btn.graph.screen.title': 'put this screen in the middle of the map',
     'btn.impact.title': 'which APIs would be affected if you changed this',
-    'btn.impact.column.title': 'which APIs would be affected if you changed this column',
     'btn.impact.table.title': 'which APIs would be affected if you changed this table',
     'btn.erd.title': 'this table on the schema map',
     'btn.table.title': 'the SQL and the columns that touch this table',
     'btn.around.title': 'draw the rings around this node',
     'btn.recentre.title': 'put this node in the middle and draw its neighbors',
-    'btn.tx.flow.title': 'follow this method down to the tables',
-    'btn.tx.impact.title': 'which APIs can reach this transaction',
     // ---- the count line under a picture -----------------------------------
     // What the drawing SHOWS, counted. The numbers are the answer's, and the
     // node-cap note is the engine's own words, relayed there. The EDGE KINDS in
@@ -1024,7 +1051,6 @@ export const VIEWER_STRINGS = {
     'summary.others.families': '{n} smaller family(ies), {tables} table(s)',
     'summary.link.title': '{tables} table(s) reached by {routes} route(s), weakest grade {grade}',
     'summary.pick': 'Click a box to list what it holds, and walk any of it from there.',
-    'summary.impact.title': 'what changing this table affects, in the Impact tab',
     'hint.compare.lead': 'What changed in this project since an earlier build of it, as one report.',
     'hint.compare.more': 'Every certified analyze keeps the pack it replaces, and this tab compares the pack on screen with one of those, as one report to read from the top. Read the conditions first: a difference is a code change only when both builds were analyzed the same way. A changed attribute or evidence is shown with its value before and after, and a move in the source is listed apart. Print it or save it as Markdown from the buttons under the title; for any other commit, `cascade diff --base-commit <rev>` builds the base.',
     'compare.base.label': 'compare with an earlier build of this project',

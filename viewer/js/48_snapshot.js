@@ -8,19 +8,22 @@
 // their way around and a linter can read.
 
 // ---------- the Export button, on a live page ---------------------------------
-// What the button sends is the question the picture on screen answered: the tab
-// and the arguments `drawChain` last asked `flow` with. The server writes the
+// What the button sends is the question the picture on screen answered: the
+// arguments `drawChain` last asked `flow` with, and which of the two pictures a
+// file is of (`flow` down, `impact` up, the names `cascade export --tab` takes).
+// The server writes the
 // file with the same generator `cascade export` uses (src/viewer/snapshot.mjs),
 // so the button and the command line cannot write two different files for one
 // question. The page only saves what comes back.
-const EXPORT_BUTTONS={ flow:{html:'fexport', svg:'fsvg', png:'fpng'}, impact:{html:'iexport', svg:'isvg', png:'ipng'} };
-/** A picture with no answer on screen has nothing to write. */
+const EXPORT_BUTTONS={ trace:{html:'texport', svg:'tsvg', png:'tpng'} };
+/** Which saved picture an answer is: down is a Flow file, up an Impact one. */
+const exportTabOf=(v)=> v.direction==='up' ? 'impact' : 'flow';
+/** A picture with no answer on screen has nothing to write, and the details lists are not a picture. */
 function refreshExportButtons(){
-  for(const v of [FLOWV, IMPACTV]){
-    for(const id of Object.values(EXPORT_BUTTONS[v.name])){
-      const b=byId(id);
-      if(b) b.disabled = !!SNAP || !(v.resp && v.args);
-    }
+  const v=TRACEV;
+  for(const id of Object.values(EXPORT_BUTTONS[v.name])){
+    const b=byId(id);
+    if(b) b.disabled = !!SNAP || !(v.resp && v.args) || TRACE.dir==='detail' || TRACE.edits;
   }
 }
 /**
@@ -31,7 +34,7 @@ async function exportChain(v, format='html'){
   if(SNAP || !v.resp || !v.args) return;
   for(const id of Object.values(EXPORT_BUTTONS[v.name])) byId(id).disabled=true;
   try{
-    const body={ tab:v.name, arguments:v.args, lang:I18N.lang, format: format==='html' ? 'html' : 'svg', ...(STATE.project ? {project:STATE.project} : {}) };
+    const body={ tab:exportTabOf(v), arguments:v.args, lang:I18N.lang, format: format==='html' ? 'html' : 'svg', ...(STATE.project ? {project:STATE.project} : {}) };
     const r=await fetch('/api/export', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
     const j=await r.json();
     if(j.error) throw new Error(j.error.code+': '+j.error.message);
@@ -94,10 +97,11 @@ function renderSnapshotChrome(){
   const truncated=a && a.truncated && Array.isArray(a.truncated.fields) ? a.truncated.fields.filter((f)=>f.shown<f.total).length : 0;
   const trust=a && a.trust && a.trust.trustLevel ? a.trust.trustLevel : '?';
   const m=SNAP.meta||{};
-  const tabName=SNAP.tab==='impact' ? t('tab.impact') : t('tab.flow');
+  // The file answers one Trace question: the direction is its name.
+  const dirName=t(SNAP.tab==='impact' ? 'trace.dir.up' : 'trace.dir.down');
   bar.replaceChildren(
     el('strong',{textContent:t('snap.title')}),
-    el('span',{textContent:t('snap.question',{ tab:tabName, kind:SNAP.entry.kind, value:SNAP.entry.value,
+    el('span',{textContent:t('snap.question',{ dir:dirName, kind:SNAP.entry.kind, value:SNAP.entry.value,
       mode:SNAP.args.mode, depth:SNAP.args.depth, limit:SNAP.args.limit })}),
     el('span',{textContent:t('snap.when',{ generated:SNAP.generatedAt||'?', digest:m.digest||'?', built:m.builtAt||'?',
       version:(SNAP.engine && SNAP.engine.version)||'?' })}),
@@ -117,21 +121,15 @@ async function snapshotBoot(){
   await Promise.all(Object.keys(SNAP.catalogs||{}).map(loadCatalog));
   await loadProjects();
   STATE.project=SNAP.project.id;
-  STATE.tab=SNAP.tab;
+  STATE.tab='trace';
   setLang(SNAP.lang||'en');
-  for(const n of document.querySelectorAll('.tab')) n.classList.toggle('snaptab', n.dataset.tab===SNAP.tab);
+  for(const n of document.querySelectorAll('.tab')) n.classList.toggle('snaptab', n.dataset.tab==='trace');
   loadMeta();
   loadOverview();
-  const v=CHAINTABS[SNAP.tab];
-  byId(v.entryId).value=SNAP.entry.value;
-  v.pick={ kind:SNAP.entry.kind, value:SNAP.entry.value };
-  byId(v.modeId).value=SNAP.args.mode;
-  byId(v.depthId).value=String(SNAP.args.depth);
-  v.limit=SNAP.args.limit;
-  for(const id of [v.entryId, v.modeId, v.depthId]) byId(id).disabled=true;
+  traceFromSnapshot(SNAP);
   // Drawn before the tab opens, so opening it finds a picture and asks nothing.
-  const drawn=drawChain(v, true);
-  activateTab(SNAP.tab);
+  const drawn=drawChain(TRACEV, true);
+  activateTab('trace');
   await drawn;
   renderSnapshotChrome();
   refreshExportButtons();

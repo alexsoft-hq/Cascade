@@ -295,14 +295,17 @@ function screensCensus(graph, { mode, depth }, screenNodes, webScreenStats) {
 /**
  * 3. THE END-TO-END WALK, and everything derived from where it got to.
  */
-function walkAxis(graph, { mode, depth, laneStats }, c) {
+function walkAxis(graph, { mode, depth, laneStats, packageDepth = null }, c) {
   const { endpointIds, statementIds, tableIds } = c;
   // 3. The end-to-end walk: the Flow tab's own forward chain, from every
   // handler of every route (core/walks.mjs caches by START node, so two routes
   // on the same handler walk the same chain once — and a route declared by TWO
   // controllers contributes BOTH, or the second module's code would be counted
   // as unreached).
-  const { endpoints: walked, walk, services } = walkEndpoints(graph, { mode, depth });
+  // `packageDepth` changes how a route is GROUPED and nothing it reaches, so the
+  // group count below is the map's own (RM67-U2b): the masthead says it on every
+  // page, not only once a map is drawn.
+  const { endpoints: walked, walk, services } = walkEndpoints(graph, { mode, depth, packageDepth });
   const reachedStatements = new Set();
   const endpointsWithoutStatement = [];
   const tableEndpoints = new Map();  // table node id -> Set(endpoint id)
@@ -366,6 +369,7 @@ function walkAxis(graph, { mode, depth, laneStats }, c) {
   const unreachedTables = tableIds.filter((id) => !reachedTables.has(id)).map(strip);
 
   return {
+    groups: new Set(walked.map((ep) => ep.group)).size,
     servicesReached: services.size, routeGrades: routeGradesOf(graph, endpointIds), stoppedAtRoute: stoppedAtRouteOf(graph, walked),
     walked, walk, reachedStatements, endpointsWithoutStatement, tableEndpoints, tableStatements,
     endpointRows, depthCapped, reachedTables, reachedColumns, screenNodes, webScreenStats,
@@ -872,7 +876,7 @@ export function buildOverview(graph, opts = {}) {
   const laneStats = opts.laneStats && typeof opts.laneStats === 'object' ? opts.laneStats : null;
   const c = censusNodes(graph);
   const e = censusEdges(graph, mode, c.generatedIds);
-  const r = walkAxis(graph, { mode, depth, laneStats }, c);
+  const r = walkAxis(graph, { mode, depth, laneStats, packageDepth: opts.packageDepth ?? null }, c);
   const h = hubsOf(c, e, r);
   const o = { mode, depth, lanes, laneStats, opts, ...c, ...e, ...r, ...h };
   const gaps = buildGaps(o);
@@ -880,7 +884,7 @@ export function buildOverview(graph, opts = {}) {
   // is the one thing that keeps a field on the answer and the number behind it
   // from drifting apart.
   const {
-    columns, endpoints, endpointsWithoutStatement, hubEndpoints, hubTables, jpaEntities,
+    columns, endpoints, endpointsWithoutStatement, groups, hubEndpoints, hubTables, jpaEntities,
     jpaRepositories, jpaStatements, jpaUnresolved, mpEntities, mpLogicDelete,
     mpRuntimeOnly, mpStatements, mpUnresolved, multiHandler, nodeCount, outboundEndpoints,
     reachedColumns, reachedStatements, reachedTables, routeGrades, screensBlock, statementTypeCount,
@@ -907,8 +911,8 @@ export function buildOverview(graph, opts = {}) {
       // How many routes more than one controller method declares. The walk above
       // covers every one of their handlers; this is the count that says so.
       endpointsWithMultipleHandlers: multiHandler.length,
-      // The served routes by the grade of their own address (routeGradesOf).
-      routeGrades,
+      // Served routes by their address grade; the api groups the map draws (walkAxis).
+      routeGrades, groups,
       statements,
       statementsReached: reachedStatements.size,
       tables,

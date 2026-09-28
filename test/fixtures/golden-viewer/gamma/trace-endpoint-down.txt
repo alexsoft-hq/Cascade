@@ -39,7 +39,7 @@
         <b>not collected</b>
       </button>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
         api groups
         <b>2</b>
       </span>
@@ -103,9 +103,7 @@
     <div id="snapbar" class="snapbar hidden" role="note"></div>
     <div class="tabs">
       <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
-      <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
-      <button class="tab active" data-t="tab.flow" data-tab="flow" onclick type="button">Flow</button>
-      <button class="tab" data-t="tab.impact" data-tab="impact" onclick type="button">Impact</button>
+      <button class="tab active" data-t="tab.trace" data-tab="trace" onclick type="button">Trace</button>
       <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
       <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
       <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
@@ -116,26 +114,30 @@
   </header>
   <div class="wrap">
     <div id="tab-overview" class="hidden">…</div>
-    <div id="tab-explore" class="hidden">…</div>
-    <div id="tab-flow">
+    <div id="tab-trace">
       <div class="searchbar">
-        <button id="fdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
+        <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
         <div style="position:relative;flex:1;min-width:240px">
-          <input id="fentry" autocomplete="off" data-t-ph="rail.filter.ph" placeholder="filter, or exact name + Enter" style="width:100%" type="text" value="GET /order/{id}"></input>
-          <div id="fsug" class="sug hidden"></div>
+          <input id="tentry" autocomplete="off" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" style="width:100%" type="text" value="GET /order/{id}"></input>
+          <div id="tsug" class="sug hidden"></div>
         </div>
-        <button id="fdraw" class="primary" data-t="btn.draw" onclick>Draw</button>
-        <select id="fmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+        <button id="tdraw" class="primary" data-t="btn.trace" onclick>Trace</button>
+        <span id="tdir" class="seg tdir" data-t-title="trace.dir.title" title="which way to read the target. Only the ways this kind of target has are shown.">
+          <button class="on" aria-pressed="true" onclick title="follow it down: the code it runs and the tables it ends at" type="button">What it uses</button>
+          <button aria-pressed="false" onclick title="follow it up: the code, APIs and screens that reach it, which is what a change here would touch" type="button">Where it is used</button>
+          <button aria-pressed="false" onclick title="what it is, as lists: its SQL, its columns with reads and writes, or the transactions it runs through" type="button">Details</button>
+        </span>
+        <select id="tmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
           <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
           <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
           <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
         </select>
-        <details id="fopts" class="tbmenu">
+        <details id="topts" class="tbmenu">
           <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
           <div class="tbmenubody">
             <label class="tbfield">
               <span data-t="tb.depth">depth</span>
-              <select id="fdepth" data-t-title="flow.depth.title" onchange title="how many calls deep to follow" value="8">
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
                 <option>
                   1
                 </option>
@@ -162,65 +164,86 @@
                 </option>
               </select>
             </label>
-            <span id="fview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
+            <span id="tview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
               <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
               <button data-t="view.layers" data-view="layers" onclick>by hop</button>
             </span>
-            <button id="fflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+            <button id="tflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
           </div>
         </details>
-        <details id="fexports" class="tbmenu">
+        <details id="texports" class="tbmenu">
           <summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as one HTML file, an SVG or a PNG">Save as</summary>
           <div class="tbmenubody tbcol">
-            <button id="fexport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
-            <button id="fsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+            <button id="texport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
+            <button id="tsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
               SVG
             </button>
-            <button id="fpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+            <button id="tpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
               PNG
             </button>
           </div>
         </details>
-        <button id="fshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+        <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" onclick title="what your uncommitted git changes would affect">My edits</button>
+        <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
-      <div class="hint hintfold" data-t-fold="hint.flow">
+      <div class="hint hintfold" data-t-fold="hint.trace">
         <div class="fold">
           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
               <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
             </svg>
             <span class="foldtext">
-              Pick one API and follow it from the route down to the tables it ends at.
+              Pick one thing, then read what it uses, where it is used, or what it is.
             </span>
           </button>
           <div class="foldbody"></div>
         </div>
       </div>
       <div class="flowgrid">
-        <div id="flowrail" class="browserail">
+        <div id="tracerail" class="browserail">
           <div class="brtop">
-            <span id="fkinds" class="seg brkinds hidden"></span>
+            <span id="tkinds" class="seg brkinds">
+              <button class="on" onclick>
+                Endpoints
+                <span class="brn">3</span>
+              </button>
+              <button onclick>
+                Tables
+                <span class="brn">3</span>
+              </button>
+              <button onclick>
+                Columns
+                <span class="brn">4</span>
+              </button>
+              <button onclick>
+                Statements
+                <span class="brn">3</span>
+              </button>
+              <button onclick title="Type two letters in the filter to list methods.">
+                Methods
+              </button>
+            </span>
             <div class="brsort">
-              <select id="fsort" data-t-title="rail.sort.title" onchange title="what puts a row at the top of this list" value="tables">
+              <select id="tsort" data-t-title="rail.sort.title" onchange title="what puts a row at the top of this list" value="tables">
                 <option selected="true" value="tables">tables</option>
                 <option value="statements">statements</option>
                 <option value="path">path</option>
               </select>
-              <span id="fcount" class="brcount">
+              <span id="tcount" class="brcount">
                 3 shown of 3
               </span>
-              <button id="fclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
+              <button id="tclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
                 &#x2715;
               </button>
             </div>
           </div>
-          <div id="flist" class="brlist" role="listbox" tabindex="-1">
+          <div id="tlist" class="brlist" role="listbox" tabindex="-1">
             <button class="brgroup" onclick>
               <span class="brgname">▾ order</span>
               <span class="brgn">2 endpoints</span>
               <span class="brgn">2 reach SQL</span>
             </button>
-            <button class="brrow cur" aria-selected="false" onclick role="option" title="POST /order/save">
+            <button class="brrow" aria-selected="false" onclick role="option" title="POST /order/save">
               <div class="brline">
                 <span class="brid psplit">
                   <span class="ptail">POST /order/save</span>
@@ -238,7 +261,7 @@
               </div>
               <div class="brsub">GController#save</div>
             </button>
-            <button class="brrow" aria-selected="false" onclick role="option" title="GET /order/{id}">
+            <button class="brrow on cur" aria-selected="true" onclick role="option" title="GET /order/{id}">
               <div class="brline">
                 <span class="brid psplit">
                   <span class="ptail">GET /order/{id}</span>
@@ -280,12 +303,23 @@
               <div class="brsub">AController#ping</div>
             </button>
           </div>
-          <div id="fmore" class="brfoot"></div>
+          <div id="tmore" class="brfoot"></div>
           <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
           <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
         </div>
         <div class="flowpane">
-          <div id="flowstrip" class="fstrip">
+          <div id="tracehead" class="tracehead" role="note">
+            <span class="tquestion">
+              <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+              </svg>
+              What it uses:
+              <code class="id">GET /order/{id}</code>
+            </span>
+            <span>mode conservative</span>
+            <span title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent.">depth 8</span>
+          </div>
+          <div id="tracestrip" class="fstrip">
             <div class="fstripinfo">
               <span class="fstripstart" title="endpoint:GET /order/{id}">
                 <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
@@ -309,68 +343,68 @@
             <input class="fstripfind" data-t-ph="chain.find.ph" data-t-title="chain.find.title" placeholder="find in this picture" title="find a row by name or id. A folded row that matches is opened, and Enter goes to the next one." type="search"></input>
             <span class="count fstripfound"></span>
           </div>
-          <div id="flowcanvas" class="flowcanvas">
-            <div id="flowwrap" class="flowwrap lanesmode">
+          <div id="tracecanvas" class="flowcanvas">
+            <div id="tracewrap" class="flowwrap lanesmode">
               <svg class="flowsvg" height="undefined" width="undefined">
-                <path id="fp-flow-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="0s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-0"></mpath>
+                      <mpath href="#fp-trace-0"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-3.333333333333333s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-0"></mpath>
+                      <mpath href="#fp-trace-0"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-6.666666666666666s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-0"></mpath>
+                      <mpath href="#fp-trace-0"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-flow-1" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-1" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-0.222s" dur="0.6s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-1"></mpath>
+                      <mpath href="#fp-trace-1"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-flow-2" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-2" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-7.4s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-2"></mpath>
+                      <mpath href="#fp-trace-2"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-10.733333333333333s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-2"></mpath>
+                      <mpath href="#fp-trace-2"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#7C89AD" r="2.2">
                     <animatemotion begin="-14.066666666666666s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-2"></mpath>
+                      <mpath href="#fp-trace-2"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
-                <path id="fp-flow-3" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <path id="fp-trace-3" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
                 <g class="fdots">
                   <circle fill="#60A5FA" r="2.2">
                     <animatemotion begin="-1.0999999999999988s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-3"></mpath>
+                      <mpath href="#fp-trace-3"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#60A5FA" r="2.2">
                     <animatemotion begin="-4.433333333333332s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-3"></mpath>
+                      <mpath href="#fp-trace-3"></mpath>
                     </animatemotion>
                   </circle>
                   <circle fill="#60A5FA" r="2.2">
                     <animatemotion begin="-7.766666666666665s" dur="10s" repeatCount="indefinite">
-                      <mpath href="#fp-flow-3"></mpath>
+                      <mpath href="#fp-trace-3"></mpath>
                     </animatemotion>
                   </circle>
                 </g>
@@ -504,8 +538,13 @@ read">
               </div>
             </div>
           </div>
+          <div id="view" class="tracedetail hidden">…</div>
         </div>
-        <div id="flowside" class="flowside">
+        <div id="traceside" class="flowside">
+          <div class="panel tlimits">
+            <h2>What limited this answer</h2>
+            <div class="comment">No cap cut this answer, and every lane is shown whole.</div>
+          </div>
           <div class="panel">
             <h2>how to read the lines</h2>
             <ul class="list">
@@ -618,7 +657,6 @@ read">
         </div>
       </div>
     </div>
-    <div id="tab-impact" class="hidden">…</div>
     <div id="tab-coupling" class="hidden">…</div>
     <div id="tab-graph" class="hidden">…</div>
     <div id="tab-erd" class="hidden">…</div>

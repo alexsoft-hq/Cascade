@@ -36,7 +36,7 @@
         <b>6</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview answer does not count groups, so this number fills in once the map has been drawn.">
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
         api groups
         <b>6</b>
       </span>
@@ -100,9 +100,7 @@
     <div id="snapbar" class="snapbar hidden" role="note"></div>
     <div class="tabs">
       <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
-      <button class="tab" data-t="tab.explore" data-tab="explore" onclick type="button">Explore</button>
-      <button class="tab" data-t="tab.flow" data-tab="flow" onclick type="button">Flow</button>
-      <button class="tab" data-t="tab.impact" data-tab="impact" onclick type="button">Impact</button>
+      <button class="tab" data-t="tab.trace" data-tab="trace" onclick type="button">Trace</button>
       <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
       <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
       <button class="tab active" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
@@ -113,9 +111,7 @@
   </header>
   <div class="wrap">
     <div id="tab-overview" class="hidden">…</div>
-    <div id="tab-explore" class="hidden">…</div>
-    <div id="tab-flow" class="hidden">…</div>
-    <div id="tab-impact" class="hidden">…</div>
+    <div id="tab-trace" class="hidden">…</div>
     <div id="tab-coupling" class="hidden">…</div>
     <div id="tab-graph" class="hidden">…</div>
     <div id="tab-erd">

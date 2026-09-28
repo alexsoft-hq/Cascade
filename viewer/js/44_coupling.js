@@ -172,7 +172,7 @@ function cpDetail(a, p){
       t('cp.viashared.note') ]) : null,
     // THIS pair's evidence, not the pack's most-reached statements.
     (p.sharedVia&&p.sharedVia.length)? el('ul',{className:'list'}, p.sharedVia.map(sid=>el('li',{},[
-      el('a',{className:'id clickable',textContent:sid,title:'view the SQL',onclick:()=>{ activateTab('explore'); showSource('statement:'+sid); }}),
+      el('a',{className:'id clickable',textContent:sid,title:'view the SQL',onclick:()=>{ openTrace({kind:'statement', id:sid}, 'detail'); showSource('statement:'+sid); }}),
       el('span',{className:'tag warn',textContent:'shared'}) ]))) : null
   ]);
   const list=el('div',{className:'panel'},[
@@ -182,7 +182,7 @@ function cpDetail(a, p){
       el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
         a.axis==='table'? el('button',{className:'mini',textContent:'ERD',title:t('btn.erd.title'),onclick:()=>openErd(it)}) : null,
         el('button',{className:'mini',textContent:'Impact',title:t('btn.impact.title'),
-          onclick:()=> a.axis==='column'? openImpact({column:it}) : openImpact({table:it})}) ]) ]))
+          onclick:()=> openTrace({kind:a.axis==='column' ? 'column' : 'table', id:it}, 'up')}) ]) ]))
       : [el('li',{className:'empty',textContent:'none'})])
   ]);
   return [head, list];

@@ -70,7 +70,9 @@ function laneModel(v, a){
   }
   const labels=chainLabels(lanes.flatMap((l)=> l.rows.map((r)=> r.id)));
   for(const l of lanes) for(const r of l.rows) r.owner=(labels.get(r.id)||{}).owner||r.id;
-  return { lanes, links, labels };
+  // A lane the walk found nothing in is drawn after every lane with rows, so no
+  // line runs behind an empty lane to reach the one past it (chainlayout.mjs).
+  return { lanes:emptyLanesLast(lanes, (l)=> l.rows.length), links, labels };
 }
 /** The rows no fold may hide: the chain through the selected row, and what the find box found. */
 function laneKeep(v, m){
@@ -123,7 +125,7 @@ function laneColumn(v, lane, rows, tf, a, keep){
   v.perLine=fit.perLine;
   const fold=foldLane(rows, { keep, open:v.open, lane:lane.field||'entry' });
   for(const [k,p] of fold.proxy) v.proxy.set(k,p);
-  const box=el('div',{className:'fcol', style:'width:'+fit.width+'px'});
+  const box=el('div',{className:'fcol'+(rows.length ? '' : ' fempty'), style:'width:'+fit.width+'px'});
   box.dataset.field=lane.field||'entry';
   box.append(laneHead(v, lane, rows.length, fold.shown, lane.field ? tf[lane.field] : null));
   const keys=[];

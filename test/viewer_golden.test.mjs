@@ -14,7 +14,7 @@
 //                            every tool the page can call has a real answer:
 //                            browse, search, column_impact, table_usage,
 //                            transactions, neighborhood, the lot. This is what
-//                            covers Explore, Impact and Transactions.
+//                            covers Trace's details and walks up, and Transactions.
 //   the recorded corpus      test/fixtures/golden/ holds every answer the
 //                            server gave over the three fixture TREES (a real
 //                            Spring backend with three different frontends) —
@@ -23,8 +23,8 @@
 //                            all. It carries `overview`, `map`, `erd`,
 //                            `coupling`, `flow` down from each endpoint and
 //                            screen, and the two impact tools; the tabs it
-//                            cannot drive (Explore's detail tools, Impact's
-//                            walk UP, the browse rail) are the fixture packs'
+//                            cannot drive (Trace's details, its walks UP, the
+//                            browse rail) are the fixture packs'
 //                            half of the job.
 //
 // WHAT IS RECORDED: the body, serialised as text — every element, its id, its
@@ -161,10 +161,13 @@ async function bootFixture(t, project, ids) {
 test('the page draws the same thing on every tab of a Java + SQL pack', async (t) => {
   const page = await bootFixture(t, 'gamma', ['gamma', 'delta']);
   await shot(page, 'gamma/overview');
-  await shot(page, 'gamma/explore-column', "activateTab('explore'); showColumn('gamma_order.total')");
-  await shot(page, 'gamma/explore-table', "showTable('gamma_order')");
-  await shot(page, 'gamma/flow-endpoint', "openFlow({endpoint:'GET /order/{id}'})");
-  await shot(page, 'gamma/impact-column', "openImpact({column:'gamma_order.total'})");
+  // The Trace place (RM67-U2b): one target read each way it has.
+  await shot(page, 'gamma/trace-column-detail', "openTrace({kind:'column', id:'gamma_order.total'}, 'detail')");
+  await shot(page, 'gamma/trace-table-detail', "openTrace({kind:'table', id:'gamma_order'}, 'detail')");
+  await shot(page, 'gamma/trace-endpoint-down', "openTrace({kind:'endpoint', id:'GET /order/{id}'}, 'down')");
+  await shot(page, 'gamma/trace-endpoint-up', "openTrace({kind:'endpoint', id:'GET /order/{id}'}, 'up')");
+  await shot(page, 'gamma/trace-endpoint-detail', "openTrace({kind:'endpoint', id:'POST /order/save'}, 'detail')");
+  await shot(page, 'gamma/trace-column-up', "openTrace({kind:'column', id:'gamma_order.total'}, 'up')");
   await shot(page, 'gamma/coupling', "activateTab('coupling'); drawCoupling()");
   await shot(page, 'gamma/graph', "activateTab('graph')");
   await shot(page, 'gamma/erd', "activateTab('erd')");
@@ -174,8 +177,9 @@ test('the page draws the same thing on every tab of a Java + SQL pack', async (t
 test('the page draws the same thing on a pack with the screen axis', async (t) => {
   const page = await bootFixture(t, 'delta', ['gamma', 'delta']);
   await shot(page, 'delta/overview');
-  await shot(page, 'delta/flow-screen', "openFlow({screen:'/rows'})");
-  await shot(page, 'delta/explore-screen', "activateTab('explore'); showScreen('/rows')");
+  await shot(page, 'delta/trace-screen-down', "openTrace({kind:'screen', id:'/rows'}, 'down')");
+  await shot(page, 'delta/trace-screen-detail', "openTrace({kind:'screen', id:'/rows'}, 'detail')");
+  await shot(page, 'delta/trace-endpoint-up', "openTrace({kind:'endpoint', id:'GET /rows'}, 'up')");
   await shot(page, 'delta/graph', "activateTab('graph')");
 });
 
@@ -266,8 +270,8 @@ for (const { tree, endpoint, screen } of TREES) {
     const html = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'index.html'), 'utf8');
     const page = await bootPage({ html, search: `?project=${tree}`, renderer: true, answer: answerFrom(tree, corpus) });
     await shot(page, `${tree}/overview`);
-    await shot(page, `${tree}/flow-endpoint`, `openFlow({endpoint:${JSON.stringify(endpoint)}})`);
-    await shot(page, `${tree}/flow-screen`, `openFlow({screen:${JSON.stringify(screen)}})`);
+    await shot(page, `${tree}/trace-endpoint-down`, `openTrace({kind:'endpoint', id:${JSON.stringify(endpoint)}}, 'down')`);
+    await shot(page, `${tree}/trace-screen-down`, `openTrace({kind:'screen', id:${JSON.stringify(screen)}}, 'down')`);
     await shot(page, `${tree}/coupling`, "activateTab('coupling'); drawCoupling()");
     await shot(page, `${tree}/graph`, "activateTab('graph')");
     await shot(page, `${tree}/erd`, "activateTab('erd')");

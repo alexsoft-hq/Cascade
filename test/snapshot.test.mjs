@@ -110,14 +110,16 @@ test('the file boots with no network, draws the chain, and says in its band what
   const page = await bootFile(out.html);
   assert.deepEqual(page.calls, [], 'it asked the network for nothing');
   assert.equal(ev(page.ctx, 'JSON.stringify(SNAP_MISSES)'), '[]', 'and every question it asked was one it holds');
-  assert.equal(ev(page.ctx, 'STATE.tab'), 'flow');
-  assert.ok(ev(page.ctx, 'FLOWV.rows.size') > 0, 'the chain is drawn');
+  // A Flow file is the Trace place asking its one question walked down (RM67-U2b).
+  assert.equal(ev(page.ctx, 'STATE.tab'), 'trace');
+  assert.equal(ev(page.ctx, 'TRACE.dir'), 'down');
+  assert.ok(ev(page.ctx, 'TRACEV.rows.size') > 0, 'the chain is drawn');
   assert.equal(ev(page.ctx, 'document.body.classList.contains("snapshot")'), true);
-  assert.equal(page.byId.get('fdepth').disabled, true, 'the controls that would ask another question are off');
+  assert.equal(page.byId.get('tdepth').disabled, true, 'the controls that would ask another question are off');
   const band = page.byId.get('snapbar');
   assert.equal(band.classList.contains('hidden'), false);
   const text = band.textContent;
-  assert.match(text, /Flow from screen \/rows, mode conservative, depth 8, up to 40 rows/);
+  assert.match(text, /What it uses: screen \/rows, mode conservative, depth 8, up to 40 rows/);
   assert.match(text, new RegExp(`exported ${AT.replace(/\./g, '\\.')} from pack [0-9a-f]{12}`));
   const flow = carried(out.html).calls.find((c) => c.name === 'flow').answer;
   assert.match(text, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} limit\\(s\\), 0 cut list\\(s\\)`),
@@ -139,8 +141,9 @@ test('a question the file does not hold is answered with a sentence, not a guess
   const out = exportSnapshot(host, { tab: 'impact', args: { column: 'delta_rows.status', direction: 'up' }, generatedAt: AT });
   const page = await bootFile(out.html);
   assert.deepEqual(page.calls, []);
-  assert.equal(ev(page.ctx, 'STATE.tab'), 'impact');
-  assert.ok(ev(page.ctx, 'IMPACTV.rows.size') > 0);
+  assert.equal(ev(page.ctx, 'STATE.tab'), 'trace');
+  assert.equal(ev(page.ctx, 'TRACE.dir'), 'up', 'an Impact file is the question walked up');
+  assert.ok(ev(page.ctx, 'TRACEV.rows.size') > 0);
   const miss = await ev(page.ctx, "api('flow',{endpoint:'GET /rows',mode:'strict',depth:1,limit:1}).then(()=>null,(e)=>[e.code,e.message])");
   assert.equal(miss[0], 'not-in-snapshot');
   assert.match(miss[1], /holds only the answer it was exported with/);
@@ -178,19 +181,19 @@ test('POST /api/export returns the file, and a bad question is a 400 with the re
 
 test('the Export button is off until a chain is drawn, then posts the question that chain answered', async (t) => {
   const { html, base } = await startViewer(t, ['delta']);
-  const page = await boot({ html, hash: '#p=delta&tab=flow', origin: base, answer: (url, opts) => fetch(base + url, opts) });
-  assert.equal(page.byId.get('fexport').disabled, true);
-  await ev(page.ctx, "openFlow({screen:'/rows'})");
-  for (let i = 0; i < 20 && !ev(page.ctx, 'FLOWV.resp'); i += 1) await new Promise((r) => setTimeout(r, 10));
-  assert.equal(page.byId.get('fexport').disabled, false);
+  const page = await boot({ html, hash: '#p=delta&tab=trace', origin: base, answer: (url, opts) => fetch(base + url, opts) });
+  assert.equal(page.byId.get('texport').disabled, true);
+  await ev(page.ctx, "openTrace({kind:'screen', id:'/rows'}, 'down')");
+  for (let i = 0; i < 20 && !ev(page.ctx, 'TRACEV.resp'); i += 1) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(page.byId.get('texport').disabled, false);
   // The browser's download is not here; what the page SENT is what is checked.
   page.sandbox.URL.createObjectURL = () => 'blob:x';
   page.sandbox.URL.revokeObjectURL = () => {};
   page.sandbox.Blob = class { constructor(parts) { this.parts = parts; } };
-  await ev(page.ctx, 'exportChain(FLOWV)');
+  await ev(page.ctx, 'exportChain(TRACEV)');
   const sent = page.calls.find((c) => c.url === '/api/export');
   assert.ok(sent, 'the page asked the server for the file');
-  assert.equal(JSON.stringify(sent.body.arguments), ev(page.ctx, 'JSON.stringify(FLOWV.args)'));
+  assert.equal(JSON.stringify(sent.body.arguments), ev(page.ctx, 'JSON.stringify(TRACEV.args)'));
   assert.deepEqual({ ...sent.body, arguments: null }, { tab: 'flow', arguments: null, lang: 'en', format: 'html', project: 'delta' });
   assert.deepEqual(sent.body.arguments, { screen: '/rows', mode: 'conservative', depth: 8, limit: 40 });
 });
@@ -213,9 +216,10 @@ test('cascade export writes the same file the Export button gets, from a pack on
   const fromButton = exportSnapshot(host, { tab: 'flow', args: { endpoint: 'GET /rows' }, generatedAt: AT }).snapshot;
   const answers = (snap) => JSON.stringify(snap.calls.map((c) => [c.name, c.args, c.answer.answer]));
   assert.equal(answers(fromCli), answers(fromButton));
-  const bad = cli(['--tab', 'impact', '--endpoint', 'GET /x']);
+  // A screen is the top of the chain: nothing is above it to walk up to.
+  const bad = cli(['--tab', 'impact', '--screen', '/rows']);
   assert.notEqual(bad.status, 0);
-  assert.match(bad.stderr, /the impact tab does not start from --endpoint/);
+  assert.match(bad.stderr, /the impact tab does not start from --screen/);
   const two = cli(['--endpoint', 'GET /rows', '--screen', '/rows']);
   assert.notEqual(two.status, 0);
   assert.match(two.stderr, /name exactly one place the flow picture starts from/);

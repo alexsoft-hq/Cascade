@@ -1533,7 +1533,7 @@ export function overview(graph, args, ctx) {
   };
 
   const o = buildOverview(graph, {
-    mode, depth, lanes: pack.lanes, laneStats: meta?.laneStats ?? null,
+    mode, depth, lanes: pack.lanes, laneStats: meta?.laneStats ?? null, packageDepth: packageDepthOf(ctx),
     // The pack's own axis declaration, so the census can disclose the one gap
     // it cannot see in the graph: a pack with no schema still has tables (the
     // statements named them), and only the axes say the catalog never ran.
@@ -1630,9 +1630,27 @@ const FLOW_LANES = Object.freeze({
   down: ['services', 'statements', 'tables'],
   up: ['statements', 'services', 'endpoints'],
 });
+/**
+ * WHICH WAY A WALK CAN GO FROM EACH KIND OF TARGET (RM67-U2b): the one table
+ * the refusals in `flowEntryKind` read, and the one the viewer's direction
+ * switch mirrors (viewer/js/54_trace.js TRACE_DIRS, held equal by a test).
+ *
+ *   down  what it uses: from a route, a screen or a method to the tables.
+ *   up    where it is used: from a column, a table, a statement or a method to
+ *         the routes and screens above it, and from a ROUTE to the frontend
+ *         functions and screens that call it (and any client in this pack).
+ *
+ * A screen has no `up`: nothing calls a screen, it is the top of the chain. A
+ * statement, a table and a column have no `down`: a statement's tables are its
+ * own SQL, read in full whatever the depth, and a table is where a chain ends.
+ */
+export const FLOW_DIRECTIONS = Object.freeze({
+  down: Object.freeze(['endpoint', 'screen', 'symbol']),
+  up: Object.freeze(['endpoint', 'column', 'table', 'statement', 'symbol']),
+});
 // direction=up starts at one of these (exactly one); direction=down at an
 // endpoint, a screen or a method, as before.
-const UP_ENTRY_KINDS = Object.freeze(['column', 'table', 'statement', 'symbol']);
+const UP_ENTRY_KINDS = FLOW_DIRECTIONS.up;
 
 /**
  * flow — the chain behind one API call: "if I hit this endpoint, which code does
@@ -1717,6 +1735,73 @@ function flowEndpointEntry(graph, args, ctx, mode) {
   return { start, entryGrade: link ? link.grade : 'EXACT', entry, handlerNote, missing: null };
 }
 
+/**
+ * A ROUTE AS THE TARGET OF A WALK UP (RM67-U2b): "where is this API used?".
+ *
+ * The walk starts AT the route, not at its handler: what sits above a route is
+ * whatever calls it over HTTP, the frontend functions and the screens that
+ * render them, and any client in this pack. It is the walk every other target
+ * gets, with the same mode floor, depth, weakest-link grading and cut counts.
+ *
+ * THE ROUTE'S OWN ADDRESS IS THE FIRST LINK. A caller is matched to this route
+ * by its address, and that address is only as sure as the route's link to the
+ * code that declares it (its HANDLES edge). So the strongest such link this
+ * mode admits caps every row, as the same link caps a walk down from the route.
+ * A route this mode admits no such link for is where the picture stops: no
+ * caller is walked, the links are counted as the floor's, and the note says so.
+ */
+function flowRouteTarget(graph, args, ctx, mode) {
+  const epId = nodeId('endpoint', String(args.endpoint));
+  const ep = graph.nodes.get(epId);
+  if (!ep) return { missing: notFound(ctx, 'endpoint', args.endpoint) };
+  const links = graph.outEdges(epId).filter((e) => e.type === 'HANDLES');
+  const admitted = links.filter((e) => GRADE_SETS[mode].has(e.grade));
+  const best = admitted.reduce((b, e) => (b === null || gradeRank(e.grade) > gradeRank(b.grade) ? e : b), null);
+  const stop = links.length > 0 && best === null;
+  const { handlerShort } = endpointHandler(graph, ep);
+  const entry = {
+    kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
+    handler: best ? strip(best.to) : (ep.handler ?? null), handlerShort,
+    handlers: handlersOf(graph, epId).length,
+    ...routeGradeFields(graph, epId),
+    file: ep.file ?? null, line: ep.line ?? null, start: epId,
+  };
+  const rule = best ? (graph.edgeAt(best.idx)?.evidence?.rule ?? null) : null;
+  const handlerNote = stop
+    ? `this route's own address rests on a link below the floor of mode=${mode} (${linkGradesOf(graph, epId)}), so no caller of it is walked. Ask with a mode that admits that grade`
+    : (best && best.grade !== 'EXACT'
+      ? `this route's own address rests on a link graded ${best.grade}${rule ? ` by ${rule}` : ''}, and a caller is matched to the route by that address, so no caller is graded above ${best.grade}`
+      : null);
+  return { start: epId, entryGrade: best ? best.grade : 'EXACT', entry, handlerNote, stopLinks: stop ? links : null, missing: null };
+}
+
+/**
+ * THE LANES A ROUTE'S CALLERS ARE DRAWN IN. Up from a route nothing is a
+ * statement (what calls a route is code, never SQL), so that lane is not one of
+ * this answer's. The frontend lanes ARE the question, so on a pack with no
+ * frontend they are still this answer's lanes, with the reason they are empty,
+ * rather than absent: absent would leave "no screen calls this" to be read off
+ * a pack that never read a screen.
+ */
+function routeTargetLanes(graph, ctx, w) {
+  const lanes = w.laneNames.filter((l) => l !== 'statements');
+  if (!lanes.includes('webFunctions')) {
+    const why = axisStatus(graph, ctx, 'screen') === 'not-shipped' ? 'not-shipped' : 'none';
+    lanes.push('webFunctions', 'screens');
+    w.emptyReason.webFunctions = why;
+    w.emptyReason.screens = why;
+  }
+  w.laneNames = lanes;
+}
+
+/** A route whose own address this mode does not admit: its links are what the floor kept out. */
+function routeFloorCut(w, links) {
+  for (const e of links) {
+    w.cut.byMode += 1;
+    w.cut.byModeGrades[e.grade] = (w.cut.byModeGrades[e.grade] ?? 0) + 1;
+  }
+}
+
 /** The HANDLES edge a picture starts through: its grade, and the rule that gave it when a rule did. */
 function handlesLinkOf(graph, epId, primary) {
   const e = graph.outEdges(epId).find((x) => x.type === 'HANDLES' && x.to === primary.id && x.grade === primary.grade);
@@ -1760,7 +1845,7 @@ let handlerNote = null;
 // rule rather than matched literally (see schemaArg).
 let entryLimits = [];
 if (entryKind === 'endpoint') {
-  const r = flowEndpointEntry(graph, args, ctx, mode);
+  const r = up ? flowRouteTarget(graph, args, ctx, mode) : flowEndpointEntry(graph, args, ctx, mode);
   if (r.missing) return r;
   return { ...r, entryLimits };
 } else if (entryKind === 'screen') {
@@ -1836,17 +1921,19 @@ if (entryKind === 'endpoint') {
  * the same walk continues over there and its rows join this answer carrying the
  * project they came from.
  */
-function flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade = 'EXACT' }) {
+function flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade = 'EXACT', entryRoute = null }) {
 // THE CROSSING (RM44). The walk above stopped where this pack stops: an
 // UNRESOLVED CALLS_HTTP edge onto a route this project calls and does not
 // serve is below every mode's floor. If another project this server serves
 // answers that route, the same walk continues over there and its rows join
-// this answer carrying the project they came from.
+// this answer carrying the project they came from. Up from a ROUTE, the route
+// itself is the first one another project may call (RM67-U2b).
 const fed = makeFederator(ctx, args);
 let federated = emptyFedLanes();
 if (fed.wanted) {
+  const routes = entryRoute ? [entryRoute, ...w.endpoints] : w.endpoints;
   federated = up
-    ? fed.crossUp(w.endpoints.map((e) => routeRef(e, { hops: e.hops, grade: e.grade, http: e.httpHops ?? 0 })), { mode, depth })
+    ? fed.crossUp(routes.map((e) => routeRef(e, { hops: e.hops, grade: e.grade, http: e.httpHops ?? 0 })), { mode, depth })
     : fed.crossDown(graph, [
       { id: start, hops: 0, grade: entryGrade, http: 0, project: fed.self },
       ...[...w.services, ...w.webFunctions].map((s) => ({
@@ -1863,16 +1950,17 @@ const crossedRows = Object.values(federated).reduce((n, rows) => n + rows.length
 /**
  * WHICH KIND OF THING THIS WALK STARTS AT, and the refusals that say why not.
  *
- * An endpoint is where a request ENTERS: nothing in this graph calls it, so
- * there is nothing upstream of one. A column, a table and a statement are the
- * other end of the same chain, so walking DOWN from one is the same mistake in
- * the other direction. Both are refused by name rather than answered empty.
+ * A screen is where the round trip BEGINS: nothing calls a screen, so there is
+ * nothing upstream of one. A column, a table and a statement are the other end
+ * of the same chain, so walking DOWN from one is the same mistake in the other
+ * direction. Both are refused by name rather than answered empty. A route has
+ * both: down is the code it runs, up is what calls it (FLOW_DIRECTIONS).
  *
  * @returns {string|null} the entry key, or null when this is list mode
  */
 function flowEntryKind(args, up, has) {
   if (up) {
-    if (has('endpoint')) throw new ToolError('bad-input', 'an endpoint has nothing upstream. direction=up starts at a column, table, statement or method (symbol=)');
+    if (has('screen')) throw new ToolError('bad-input', 'a screen is the top of the chain and nothing calls it. direction=up starts at an endpoint, a method (symbol=), a statement, a table or a column');
     const given = UP_ENTRY_KINDS.filter(has);
     if (given.length > 1) throw new ToolError('bad-input', `pass exactly one of ${UP_ENTRY_KINDS.join(' / ')}, got ${given.join(', ')}`);
     if (given.length === 0) throw new ToolError('bad-input', `direction=up needs a target: one of ${UP_ENTRY_KINDS.join(' / ')} (there is no list mode upstream)`);
@@ -1880,7 +1968,7 @@ function flowEntryKind(args, up, has) {
   }
   const wrong = ['column', 'table', 'statement'].filter(has);
   if (wrong.length) throw new ToolError('bad-input', `${wrong.join('/')} is a direction=up target. direction=down starts at an endpoint, a screen or a method (symbol=)`);
-  const given = ['endpoint', 'screen', 'symbol'].filter(has);
+  const given = FLOW_DIRECTIONS.down.filter(has);
   if (given.length > 1) throw new ToolError('bad-input', `pass exactly one of endpoint / screen / symbol, got ${given.join(', ')}`);
   return given.length === 0 ? null : given[0];
 }
@@ -1932,7 +2020,7 @@ function flowNotes(limits, notes, { w, up, depth, mode, handlerNote, codeAxis, c
  * and a CODE lane on a pack with no code axis is "not-shipped": "none" would
  * read as "no endpoint reaches this column" when the Java lane was never run.
  */
-function flowLanes(answer, { w, up, direction, federated, limit, offset = 0, codeAxis }) {
+function flowLanes(answer, { w, up, direction, federated, limit, offset = 0, codeAxis, screenAxis = 'shipped' }) {
   const empty = {};
   const trunc = [];
   const laneList = [...(w.laneNames ?? FLOW_LANES[direction])];
@@ -1950,9 +2038,12 @@ function flowLanes(answer, { w, up, direction, federated, limit, offset = 0, cod
     // A page past the end of a lane that HAS rows walked off the list, the way a
     // list page does: "not-in-this-axis", never "none", which would say nothing
     // reaches it.
+    // An empty SCREENS lane on a pack whose screen axis was never built is the
+    // same: a pack can carry frontend functions and no router (RM67-U2b).
     if (all.length === 0) {
       empty[field] = w.emptyReason[field]
-        ?? ((field === 'services' || field === 'endpoints') && !codeAxis ? 'not-shipped' : 'none');
+        ?? (((field === 'services' || field === 'endpoints') && !codeAxis)
+          || (field === 'screens' && screenAxis === 'not-shipped') ? 'not-shipped' : 'none');
     } else if (shown.length === 0) empty[field] = 'not-in-this-axis';
     trunc.push(truncField(field, shown.length, all.length, offset, FLOW_ORDER[field]));
   }
@@ -1984,15 +2075,27 @@ export function flow(graph, args, ctx) {
 
   const found = flowEntry(graph, args, ctx, { entryKind, up, mode });
   if (found.missing) return found.missing;
-  const { start, entry, entryLimits, handlerNote, entryGrade = 'EXACT' } = found;
+  const { start, entry, entryLimits, handlerNote, entryGrade = 'EXACT', stopLinks = null } = found;
 
-  const w = chainWalk(graph, { start, direction, mode, maxDepth: depth, entryGrade });
-  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade });
+  // A route whose own address this mode does not admit is walked no further
+  // (flowRouteTarget): depth 0, and its links counted as the floor's.
+  const w = chainWalk(graph, { start, direction, mode, maxDepth: stopLinks ? 0 : depth, entryGrade });
+  if (stopLinks) routeFloorCut(w, stopLinks);
+  const routeTarget = up && entryKind === 'endpoint';
+  if (routeTarget) routeTargetLanes(graph, ctx, w);
+  const entryRoute = routeTarget && !stopLinks
+    ? { id: entry.id, httpMethod: entry.httpMethod, path: entry.path, hops: 0, grade: entryGrade } : null;
+  const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade, entryRoute });
 
   const limits = [...(ctx.limits ?? []), ...entryLimits, ...fed.limits()];
   const notes = [];
   const codeAxis = hasCodeAxis(graph, ctx);
   flowNotes(limits, notes, { w, up, depth, mode, handlerNote, codeAxis, crossedRows });
+  if (routeTarget && w.emptyReason.screens === 'not-shipped') {
+    const reason = 'this pack has no frontend, because no web lane ran, so which screens and frontend functions call this route is unknown here, not none';
+    limits.push({ scope: 'flow', reason });
+    notes.push(reason);
+  }
 
   const answer = {
     entry,
@@ -2013,7 +2116,8 @@ export function flow(graph, args, ctx) {
     // why it carries no truncated entry.
     layers: w.layers,
   };
-  const { empty, trunc } = flowLanes(answer, { w, up, direction, federated, limit, offset, codeAxis });
+  const { empty, trunc } = flowLanes(answer, { w, up, direction, federated, limit, offset, codeAxis,
+    screenAxis: axisStatus(graph, ctx, 'screen') });
   if (answer.layers.length === 0) empty.layers = 'none'; // a walk that reached nothing has no layers
   if (Object.keys(empty).length) answer.empty = empty;
   answer.federation = fed.block();

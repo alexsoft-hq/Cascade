@@ -34,7 +34,7 @@ export const SVG_LANES = Object.freeze({
 });
 
 import { GRADE_DASH, dashAttr, escapeXml as esc, gradeBadgeSvg, svgDocument } from './svg_doc.mjs';
-import { CHAIN_FIT, chainLabels, fitLines, laneWidth, orderLanes } from './chainlayout.mjs';
+import { CHAIN_FIT, chainLabels, emptyLanesLast, fitLines, laneWidth, orderLanes } from './chainlayout.mjs';
 
 /** The live page's dash per grade, spelled once in chainlayout.mjs and read from here by the tests. */
 export { GRADE_DASH };
@@ -142,7 +142,8 @@ function lanesOf(response, direction) {
     const rows = a[field].map((x) => ({ ...rowOf(field, x), group: grouped ? `${x.hops}|${BANDS.includes(x.grade) ? x.grade : 'other'}` : field }));
     lanes.push({ field, rows, shown: a[field].length, total: t ? t.total : a[field].length });
   }
-  return lanes;
+  // The page's rule: a lane with no rows is drawn after every lane with some.
+  return emptyLanesLast(lanes, (l) => l.rows.length);
 }
 
 /**
@@ -239,7 +240,7 @@ function headerLines(snap, t) {
   const cut = (flow.truncated?.fields ?? []).filter((f) => f.shown < f.total).length;
   const m = snap.meta ?? {};
   return [
-    t('snap.question', { tab: t(snap.tab === 'impact' ? 'tab.impact' : 'tab.flow'), kind: snap.entry.kind, value: snap.entry.value, mode: snap.args.mode, depth: snap.args.depth, limit: snap.args.limit }),
+    t('snap.question', { dir: t(snap.tab === 'impact' ? 'trace.dir.up' : 'trace.dir.down'), kind: snap.entry.kind, value: snap.entry.value, mode: snap.args.mode, depth: snap.args.depth, limit: snap.args.limit }),
     t('snap.when', { generated: snap.generatedAt ?? '?', digest: m.digest ?? '?', built: m.builtAt ?? '?', version: snap.engine?.version ?? '?' }),
     t('snap.honesty.picture', { trust: flow.trust?.trustLevel ?? '?', limits, truncated: cut }),
   ];

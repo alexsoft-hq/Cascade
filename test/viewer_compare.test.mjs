@@ -272,21 +272,21 @@ test('a hostile value is text on screen, and the Markdown file keeps it inside c
   assert.ok(md.endsWith('no verdict on behavior or risk.\n'));
 });
 
-test('Flow is offered for an endpoint the head still has, and the one the earlier build alone had opens nothing', async (t) => {
+test('Trace is offered for an endpoint the head still has, and the one the earlier build alone had opens nothing', async (t) => {
   const page = await gammaPage(t);
   await drawn(page);
   const gone = rowWith(page, 'GET /retired');
   assert.ok(gone, 'the route the earlier build alone had is listed');
-  assert.equal(gone.querySelectorAll('button').length, 0, 'and offers no Flow');
+  assert.equal(gone.querySelectorAll('button').length, 0, 'and offers no way into Trace');
   assert.match(gone.textContent, /earlier build only/);
   const here = rows(page).find((li) => li.textContent.startsWith('GET /order/{id}'));
   assert.ok(here, 'the route above the changed symbol is listed');
   const flow = here.querySelector('button');
-  assert.equal(flow.textContent, 'Flow');
+  assert.equal(flow.textContent, 'What it uses');
   flow.onclick();
   await settle(page.ctx, 3);
-  assert.equal(ev(page.ctx, 'STATE.tab'), 'flow');
-  assert.equal(ev(page.ctx, 'JSON.stringify(FLOWV.pick)'), '{"kind":"endpoint","value":"GET /order/{id}"}');
+  assert.equal(ev(page.ctx, 'STATE.tab'), 'trace');
+  assert.equal(ev(page.ctx, 'JSON.stringify([TRACE.target, TRACE.dir])'), '[{"kind":"endpoint","id":"GET /order/{id}"},"down"]');
 });
 
 test('print opens every fold and marks the page for the print sheet; the mark goes when printing ends', async (t) => {
@@ -455,7 +455,7 @@ test('a cut list says how many rows it left out, on screen and in the file, and 
   assert.ok(md.includes('4 more row(s) here did not fit'));
 });
 
-test('an edge whose evidence only points elsewhere in the source is a moved edge, said with its own note; a changed screen offers Flow', async (t) => {
+test('an edge whose evidence only points elsewhere in the source is a moved edge, said with its own note; a changed screen offers Trace', async (t) => {
   const deltaEarlier = (earlier) => {
     earlier.nodes.find((n) => n.id === 'screen:/rows').title = 'Old rows';
     earlier.edges.find((e) => e.type === 'CALLS_HTTP').evidence.file = 'old-session.har';
@@ -470,13 +470,13 @@ test('an edge whose evidence only points elsewhere in the source is a moved edge
   assert.match(text, /Only the source location fields of the evidence differ\. A grade change on the same relation/);
   assert.doesNotMatch(text, /compare\.[a-z.]+/, 'no catalogue key stands in for its text');
   assert.match(text, /Source location only: 0 node\(s\) and 1 edge\(s\) moved/);
-  // The screen whose title changed is above its own change, in the head, so it opens on Flow.
+  // The screen whose title changed is above its own change, in the head, so it opens on Trace, walked down.
   const screen = panelRows(page, 'Screens above the change (1)')[0];
-  assert.match(screen.textContent, /^\/rowsFlow$/);
+  assert.match(screen.textContent, /^\/rowsWhat it uses$/);
   screen.querySelector('button').onclick();
   await settle(page.ctx, 3);
-  assert.equal(ev(page.ctx, 'STATE.tab'), 'flow');
-  assert.equal(ev(page.ctx, 'JSON.stringify(FLOWV.pick)'), '{"kind":"screen","value":"/rows"}');
+  assert.equal(ev(page.ctx, 'STATE.tab'), 'trace');
+  assert.equal(ev(page.ctx, 'JSON.stringify([TRACE.target, TRACE.dir])'), '[{"kind":"screen","id":"/rows"},"down"]');
   ev(page.ctx, 'var SAVED=null; snapshotSave=function(name, data){ SAVED=data; };');
   ev(page.ctx, 'downloadCompare()');
   const md = ev(page.ctx, 'SAVED');

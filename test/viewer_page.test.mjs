@@ -144,8 +144,9 @@ test('switching project clears every tab, re-asks, and never leaves a renderer b
   assert.equal(ev(ctx, 'GA.api'), null, 'the Around renderer was torn down');
   assert.equal(ev(ctx, 'ERD.api'), null, 'the ERD renderer was torn down');
   assert.equal(ev(ctx, 'CP.resp'), null);
-  assert.equal(ev(ctx, 'FLOWV.resp'), null);
-  assert.equal(ev(ctx, 'IMPACTV.resp'), null);
+  // Trace holds one picture and one question, and both belong to the pack left.
+  assert.equal(ev(ctx, 'TRACEV.resp'), null);
+  assert.equal(ev(ctx, 'TRACE.target'), null);
   assert.equal(ev(ctx, 'erdData'), null);
   assert.equal(ev(ctx, "GRAPHV.mode"), 'map', 'the Graph tab is put back on the whole-pack map');
   assert.equal(ev(ctx, 'location.hash'), '#p=beta&tab=overview');
@@ -200,9 +201,9 @@ test('an answer for the project the reader has left is DROPPED, not drawn', asyn
 });
 
 test('the "My edits" panel is per project: changed_impact carries the project too', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { hash: '#p=beta&tab=explore' });
+  const { ctx, byId, calls } = await bootPage(t, { hash: '#p=beta&tab=trace' });
   calls.length = 0;
-  byId.get('edits').onclick();
+  byId.get('tedits').onclick();
   await settle(ctx, 4);
   const edits = calls.filter((c) => c.body && c.body.name === 'changed_impact');
   assert.equal(edits.length, 1, 'the button asked the engine exactly once');
@@ -229,7 +230,7 @@ test('the language toggle re-renders the chrome and asks the server for nothing'
   // The chrome moved...
   assert.notEqual(tabs()[0], 'Overview');
   assert.match(tabs()[0], /[가-힣]/);
-  assert.match(byId.get('edits').textContent, /[가-힣]/);
+  assert.match(byId.get('tedits').textContent, /[가-힣]/);
   // ...and no key was missing while it did.
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.missing])'), '[]');
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.fellBack])'), '[]');
@@ -299,7 +300,7 @@ test('the hints keep their emphasis: a catalogue string becomes elements, never 
   assert.equal(hint.textContent.includes('**'), false, 'the marker itself must not reach the page');
 });
 
-test('a language switch re-renders the panels the PAGE authors — Graph map, Impact and ERD — and still asks for nothing', async (t) => {
+test('a language switch re-renders the panels the PAGE authors — Graph map, Trace and ERD — and still asks for nothing', async (t) => {
   const { ctx, byId, calls } = await bootPage(t);
 
   // The three side panels the page writes in JAVASCRIPT beside an answer,
@@ -320,23 +321,23 @@ test('a language switch re-renders the panels the PAGE authors — Graph map, Im
   await settle(ctx, 12);
   ev(ctx, 'drawErd()');
   await settle(ctx, 12);
-  // Impact walks UP from a column, which this SQL-only fixture does have. The
-  // toolbar's own commit path spends a `search` request resolving what was
-  // typed; the answer is what this test needs, so it is asked for directly.
+  // Trace walks UP from a column, which this SQL-only fixture does have. The
+  // answer is what this test needs, not the toolbar, so it is asked for
+  // directly and only the side beside the picture is drawn from it.
   ev(ctx, `(async () => {
     const r = await api('flow', { column: 'alpha_order.total', direction: 'up', depth: 8 });
-    IMPACTV.resp = r; IMPACTV.sel = null; IMPACTV.rows = new Map();
-    renderChainSide(IMPACTV);
+    TRACEV.resp = r; TRACEV.sel = null; TRACEV.rows = new Map();
+    renderChainSide(TRACEV);
   })()`);
   await settle(ctx, 12);
 
   const gside = () => byId.get('gside').textContent;
   const erdside = () => byId.get('erdside').textContent;
-  const iside = () => byId.get('impactside').textContent;
+  const iside = () => byId.get('traceside').textContent;
   const mapleg = () => byId.get('gmapleg').textContent;
   assert.match(gside(), /the whole project/, 'the Graph lead card is drawn');
   assert.match(erdside(), /whole-schema map/, 'the ERD side is drawn');
-  assert.match(iside(), /how to read the lines/, 'the Impact side is drawn');
+  assert.match(iside(), /how to read the lines/, 'the Trace side is drawn');
   assert.match(mapleg(), /nodes:/, 'the map legend is drawn');
 
   calls.length = 0;
@@ -350,7 +351,7 @@ test('a language switch re-renders the panels the PAGE authors — Graph map, Im
 
   // (2) ...and the page-authored panels really did move.
   for (const [what, read] of [['Graph lead card', gside], ['ERD side', erdside],
-    ['Impact side', iside], ['map legend', mapleg]]) {
+    ['Trace side', iside], ['map legend', mapleg]]) {
     assert.match(read(), /[가-힣]/, `the ${what} is still in English`);
   }
   assert.equal(/the whole project/.test(gside()), false);
@@ -368,7 +369,7 @@ test('a language switch re-renders the panels the PAGE authors — Graph map, Im
 });
 
 // ---------------------------------------------------------------------------
-// The Flow / Impact lane strip: it has to FIT the pane it is in (RM16b §1)
+// The Trace lane strip: it has to FIT the pane it is in (RM16b §1)
 // ---------------------------------------------------------------------------
 
 /** The page's one <style> block, as text. */
@@ -404,17 +405,17 @@ test('a lane is as wide as its names need, within a floor and a cap, and the PAN
 });
 
 test('a rendered lane carries the width its longest name needs, between 200 and 360px', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=impact' });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   await ev(ctx, `(async () => {
     const r = await api('flow', { column: 'alpha_order.total', direction: 'up', depth: 8 });
-    IMPACTV.resp = r; IMPACTV.sel = null;
-    renderChain(IMPACTV, r);
+    TRACEV.resp = r; TRACEV.sel = null;
+    renderChain(TRACEV, r);
   })()`);
   await settle(ctx, 8);
-  const cols = byId.get('impactwrap').querySelectorAll('.fcol');
+  const cols = byId.get('tracewrap').querySelectorAll('.fcol');
   assert.equal(cols.length, 4, 'the target and its three lanes');
   // The width is what the names ask for, by the one rule the saved SVG reads too.
-  const want = JSON.parse(ev(ctx, "JSON.stringify(IMPACTV.model.lanes.map((l) => laneWidth(l.rows.map((r) => IMPACTV.labels.get(r.id).text)).width))"));
+  const want = JSON.parse(ev(ctx, "JSON.stringify(TRACEV.model.lanes.map((l) => laneWidth(l.rows.map((r) => TRACEV.labels.get(r.id).text)).width))"));
   assert.deepEqual(cols.map((c) => parseFloat(c.style.getPropertyValue('width'))), want);
   for (const w of want) assert.ok(w >= 200 && w <= 360, `a lane is ${w}px wide`);
 });
@@ -424,16 +425,16 @@ test('a rendered lane carries the width its longest name needs, between 200 and 
 // ---------------------------------------------------------------------------
 
 test('a language switch moves the lane HEADINGS and hop captions — and still asks for nothing', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { hash: '#p=alpha&tab=impact' });
+  const { ctx, byId, calls } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   await ev(ctx, `(async () => {
     const r = await api('flow', { column: 'alpha_order.total', direction: 'up', depth: 8 });
-    IMPACTV.resp = r; IMPACTV.sel = null;
-    renderChain(IMPACTV, r);
+    TRACEV.resp = r; TRACEV.sel = null;
+    renderChain(TRACEV, r);
   })()`);
   await settle(ctx, 8);
 
-  const heads = () => byId.get('impactwrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
-  const hops = () => byId.get('impactwrap').querySelectorAll('.fhop').map((x) => x.textContent);
+  const heads = () => byId.get('tracewrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
+  const hops = () => byId.get('tracewrap').querySelectorAll('.fhop').map((x) => x.textContent);
   assert.deepEqual(heads(), ['target', 'mapper statement', 'service layer', 'endpoint']);
   assert.ok(hops().length > 0, 'the walk put rows under at least one hop');
   for (const h of hops()) assert.match(h, /^hop \d/);
@@ -1652,20 +1653,21 @@ test('the ERD tints are DESATURATED kin of the kind palette, not new colours', a
 });
 
 // ---------------------------------------------------------------------------
-// RM22 — direction on the Flow and Impact lanes
+// RM22 — direction on the Trace lanes
 // ---------------------------------------------------------------------------
 
+/** A walk UP on Trace, drawn by the page's own render path: the direction drawn backwards. */
 async function withLanes(t, storage) {
-  const boot = await bootPage(t, { hash: '#p=alpha&tab=impact', storage });
+  const boot = await bootPage(t, { hash: '#p=alpha&tab=trace', storage });
   await ev(boot.ctx, `(async () => {
     const r = await api('flow', { column: 'alpha_order.total', direction: 'up', depth: 8 });
-    IMPACTV.resp = r; IMPACTV.sel = null;
-    renderChain(IMPACTV, r);
+    TRACEV.resp = r; TRACEV.sel = null;
+    renderChain(TRACEV, r);
   })()`);
   await settle(boot.ctx, 8);
   return boot;
 }
-const laneSvg = (byId) => byId.get('impactwrap').querySelectorAll('svg').at(0);
+const laneSvg = (byId) => byId.get('tracewrap').querySelectorAll('svg').at(0);
 
 test('every visible connector carries 1-3 dots, riding its own path in the call direction', async (t) => {
   const { ctx, byId } = await withLanes(t);
@@ -1677,7 +1679,7 @@ test('every visible connector carries 1-3 dots, riding its own path in the call 
 
   const ids = paths.map((p) => p.getAttribute('id'));
   assert.equal(new Set(ids).size, ids.length, 'each connector has an id of its own for the <mpath>');
-  for (const id of ids) assert.match(id, /^fp-impact-\d+$/, 'scoped to the view, so Flow and Impact never collide');
+  for (const id of ids) assert.match(id, /^fp-trace-\d+$/, 'scoped to the view it is drawn in, so no other picture collides with it');
 
   for (const g of groups) {
     assert.ok(g.kids.length >= 1 && g.kids.length <= 3, `a connector carries ${g.kids.length} dots`);
@@ -1687,7 +1689,7 @@ test('every visible connector carries 1-3 dots, riding its own path in the call 
       const anim = c.kids[0];
       assert.equal(anim.tagName, 'ANIMATEMOTION');
       assert.equal(anim.getAttribute('repeatCount'), 'indefinite');
-      assert.equal(anim.getAttribute('keyPoints'), '1;0', 'Impact runs its dots the way the CALL goes');
+      assert.equal(anim.getAttribute('keyPoints'), '1;0', 'walking up, the dots still run the way the CALL goes');
       const mpath = anim.kids[0];
       assert.equal(mpath.tagName, 'MPATH');
       assert.ok(ids.includes(mpath.getAttribute('href').slice(1)), 'and it rides a path that exists');
@@ -1702,7 +1704,7 @@ test('every visible connector carries 1-3 dots, riding its own path in the call 
 
 test('a reader who asked for less motion gets an arrowhead, and not one animation', async (t) => {
   const { ctx, byId } = await withLanes(t);
-  ev(ctx, "globalThis.matchMedia = () => ({ matches: true }); drawChainLinks(IMPACTV);");
+  ev(ctx, "globalThis.matchMedia = () => ({ matches: true }); drawChainLinks(TRACEV);");
   const svg = laneSvg(byId);
   const paths = svg.querySelectorAll('path');
   const links = paths.filter((p) => p.className === 'flink');
@@ -1711,11 +1713,11 @@ test('a reader who asked for less motion gets an arrowhead, and not one animatio
   assert.equal(arrows.length, links.length, 'one static arrowhead per connector instead');
   assert.equal(svg.querySelectorAll('animateMotion').length, 0, 'and nothing moves');
   assert.equal(svg.querySelectorAll('g').filter((g) => g.className === 'fdots').length, 0);
-  ev(ctx, 'delete globalThis.matchMedia; drawChainLinks(IMPACTV);');
+  ev(ctx, 'delete globalThis.matchMedia; drawChainLinks(TRACEV);');
   assert.ok(laneSvg(byId).querySelectorAll('animateMotion').length > 0, 'and it comes back when they change their mind');
 });
 
-test('Flow on/off is ONE preference: one key, the map and both lane views', async (t) => {
+test('Flow on/off is ONE preference: one key, the map and the Trace lanes', async (t) => {
   const { ctx, byId, store } = await withLanes(t);
   const KEY = ev(ctx, 'FLOW_KEY');
   assert.equal(KEY, 'cascade.viewer.flow');
@@ -1727,7 +1729,7 @@ test('Flow on/off is ONE preference: one key, the map and both lane views', asyn
   assert.equal(laneSvg(byId).querySelectorAll('animateMotion').length, 0, 'the lanes stopped');
   assert.equal(Number(ev(ctx, 'mapParticles({i:0, data:{kind:"touches", statements:2}})')), 0,
     'and so did the map');
-  for (const id of ['gflow', 'fflow', 'iflow']) {
+  for (const id of ['gflow', 'tflow']) {
     assert.equal(byId.get(id).textContent, 'Flow off', `${id} says so too`);
     assert.equal(byId.get(id).getAttribute('aria-pressed'), 'false');
   }
@@ -1748,20 +1750,20 @@ test('the chain being read owns the motion: its dots brighten, the rest come off
   const { ctx, byId } = await withLanes(t);
   const groups = () => laneSvg(byId).querySelectorAll('g').filter((g) => /\bfdots\b/.test(g.className));
   assert.equal(groups().filter((g) => g.classList.contains('hot')).length, 0, 'nothing is hot at rest');
-  const key = ev(ctx, 'JSON.stringify(IMPACTV.paths[0].to)');
-  ev(ctx, `flowHover(IMPACTV, ${key})`);
+  const key = ev(ctx, 'JSON.stringify(TRACEV.paths[0].to)');
+  ev(ctx, `flowHover(TRACEV, ${key})`);
   const hot = groups().filter((g) => g.classList.contains('hot'));
   assert.ok(hot.length > 0, 'the chain through that row is lit');
   assert.equal(hot.length + groups().filter((g) => g.classList.contains('off')).length, groups().length,
     'every connector is one or the other');
 
   // A row nothing joins: the whole picture stops, and none of it is hot.
-  ev(ctx, "flowHover(IMPACTV, 'nothing:at:all')");
+  ev(ctx, "flowHover(TRACEV, 'nothing:at:all')");
   assert.equal(groups().filter((g) => g.classList.contains('hot')).length, 0);
   assert.equal(groups().filter((g) => g.classList.contains('off')).length, groups().length,
     'the connectors outside the chain being read stop');
 
-  ev(ctx, 'flowClearHover(IMPACTV)');
+  ev(ctx, 'flowClearHover(TRACEV)');
   assert.equal(groups().filter((g) => g.classList.contains('hot')).length, 0);
   assert.equal(groups().filter((g) => g.classList.contains('off')).length, 0, 'and they all run again');
 });
@@ -2047,9 +2049,9 @@ test('the flow button reports what its own picture does, in all three states', a
     } else {
       assert.equal(hidden, true, `stored ${stored}: nothing to explain when it really is running`);
     }
-    // The two lane buttons answer for THEIR pictures, which do run on the
+    // The Trace button answers for ITS picture, which does run on the
     // preference alone.
-    assert.equal(boot.byId.get('fflow').getAttribute('aria-pressed'), String(ev(boot.ctx, 'GMAP.flow')));
+    assert.equal(boot.byId.get('tflow').getAttribute('aria-pressed'), String(ev(boot.ctx, 'GMAP.flow')));
   }
 });
 
@@ -2145,7 +2147,7 @@ test('the measurement checks itself: a top that moves as the height is applied i
 });
 
 // ---------------------------------------------------------------------------
-// RM27: the browse rail. Every tab opens SHOWING the pack, and the page counts
+// RM27: the browse rail. Trace opens SHOWING the pack, and the page counts
 // nothing: the rows, the counts and the chips are one `browse` answer, and the
 // filter is a substring test over what is already here.
 // ---------------------------------------------------------------------------
@@ -2161,138 +2163,153 @@ const toolCalls = (calls, name) => calls
   .filter((c) => c.url.startsWith('/api/call') && c.body && (!name || c.body.name === name))
   .map((c) => ({ name: c.body.name, args: c.body.arguments }));
 const rowsOf = (byId, listId) => byId.get(listId).querySelectorAll('.brrow');
+/** The kind chip on the Trace list whose label starts with `label` ("Tables", "Endpoints"). */
+const kindChip = (byId, label) => byId.get('tkinds').children.find((b) => b.textContent.startsWith(label));
 
-test('each of the three tabs OPENS on the pack: one browse request, rows on screen, nothing to type first', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+test('Trace OPENS on the pack: one browse request, rows on screen, nothing to type first', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
 
-  // Explore: the tables, busiest first, from ONE request.
-  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'table', limit: 200, sort: 'statements' } }]);
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
-  assert.equal(byId.get('excount').textContent, '3 shown of 3');
+  // The tables, the ones the most endpoints reach first, from ONE request.
+  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'table', limit: 200, sort: 'endpoints' } }]);
+  assert.deepEqual(toolCalls(calls, 'flow'), [], 'opening Trace draws no chain: there is nothing to draw yet');
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
+  assert.equal(byId.get('tcount').textContent, '3 shown of 3');
   // The kind chips carry the pack's own totals, and Methods carries none: it
-  // cannot be listed until two letters are typed.
-  // Screens is there with its own total: this fixture has no frontend, so the
-  // total is 0 and picking it says "not shipped" in the engine's own words.
-  assert.deepEqual(byId.get('exkinds').children.map((b) => b.textContent),
-    ['Tables3', 'Columns4', 'Statements3', 'Endpoints3', 'Methods', 'Screens0']);
+  // cannot be listed until two letters are typed. This fixture has no
+  // frontend and declares no screen axis, so there is no Screens chip at all.
+  assert.deepEqual(byId.get('tkinds').children.map((b) => b.textContent),
+    ['Endpoints3', 'Tables3', 'Columns4', 'Statements3', 'Methods']);
 
+  // The routes are one chip away, and one request.
   calls.length = 0;
-  ev(ctx, `document.querySelector('.tab[data-tab="flow"]').click()`);
+  kindChip(byId, 'Endpoints').onclick();
   await settle(ctx, 8);
   assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'endpoint', limit: 200, sort: 'tables' } }]);
-  assert.deepEqual(toolCalls(calls, 'flow'), [], 'opening Flow draws no chain: there is nothing to draw yet');
-  assert.deepEqual(rowsOf(byId, 'flist').map((r) => r.title),
+  assert.deepEqual(toolCalls(calls, 'flow'), [], 'a list is not a chain: nothing is drawn yet');
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title),
     ['POST /order/save', 'GET /order/{id}', 'GET /admin/ping']);
-  // Flow buckets its rows under the API group the server put on each of them.
-  assert.deepEqual(byId.get('flist').querySelectorAll('.brgname').map((g) => g.textContent),
+  // The routes sit under the API group the server put on each of them.
+  assert.deepEqual(byId.get('tlist').querySelectorAll('.brgname').map((g) => g.textContent),
     ['▾ order', '▾ admin']);
 
-  calls.length = 0;
-  ev(ctx, `document.querySelector('.tab[data-tab="impact"]').click()`);
-  await settle(ctx, 8);
-  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'table', limit: 200, sort: 'endpoints' } }]);
-  assert.deepEqual(rowsOf(byId, 'ilist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
-
   // Coming back to a tab that has already answered asks for nothing again.
+  ev(ctx, `document.querySelector('.tab[data-tab="overview"]').click()`);
+  await settle(ctx, 6);
   calls.length = 0;
-  ev(ctx, `document.querySelector('.tab[data-tab="explore"]').click()`);
+  ev(ctx, `document.querySelector('.tab[data-tab="trace"]').click()`);
   await settle(ctx, 6);
   assert.deepEqual(toolCalls(calls), []);
 });
 
-test('typing in the filter sends NO request and narrows the rows the page already holds', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+test('typing in the filter sends NO request of its own and narrows the rows the page already holds', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   calls.length = 0;
-  const q = byId.get('q');
+  const q = byId.get('tentry');
+  // ONE box, two jobs (RM67-U2b): it filters the list AND offers suggestions
+  // of every kind for what was typed. The suggestions are asked for, each one
+  // carrying the typed text; the FILTER asks for nothing, so any request that
+  // is not a suggestion for exactly what was typed is the filter's, and wrong.
+  const typedTexts = [];
+  const notSuggestions = () => toolCalls(calls).filter((c) => !typedTexts.includes(c.args.query));
   // The filter is debounced (RAIL_FILTER_MS), so every step waits past it.
-  const typed = async (text) => { q.value = text; fire(q, 'input'); await settle(ctx, 40); };
+  const typed = async (text) => { typedTexts.push(text); q.value = text; fire(q, 'input'); await settle(ctx, 40); };
   await typed('item');
-  assert.deepEqual(toolCalls(calls), [], 'the filter is a substring test, not a query');
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['gamma_item']);
-  assert.equal(byId.get('excount').textContent, '1 shown of 3');
+  assert.deepEqual(notSuggestions(), [], 'the filter is a substring test, not a query');
+  assert.deepEqual(toolCalls(calls, 'browse').filter((c) => c.args.kind !== 'symbol'), [], 'the list is never asked for again');
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_item']);
+  assert.equal(byId.get('tcount').textContent, '1 shown of 3');
   // A comment matches too, and the count line still names the pack's total.
   await typed('ORDERS TABLE');
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['gamma_order']);
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_order']);
   // Nothing matched is the PAGE's own sentence, and it names what was typed.
   // It must NOT borrow the engine's `not-in-this-axis` wording, which is about
   // the walk having nothing on that side of the chain.
   await typed('zzz');
-  assert.deepEqual(rowsOf(byId, 'exlist'), []);
-  assert.equal(byId.get('exlist').textContent, 'no row matches zzz');
-  assert.equal(/not on this side of the chain/.test(byId.get('exlist').textContent), false);
-  assert.deepEqual(toolCalls(calls), [], 'still nothing asked');
+  assert.deepEqual(rowsOf(byId, 'tlist'), []);
+  assert.equal(byId.get('tlist').textContent, 'no row matches zzz');
+  assert.equal(/not on this side of the chain/.test(byId.get('tlist').textContent), false);
+  assert.deepEqual(notSuggestions(), [], 'still nothing asked but the suggestions');
 });
 
 test('a filter that matches nothing is the PAGE speaking; an empty list is the ENGINE', async (t) => {
-  // The same miss, on all three tabs, and the three of them say the same thing.
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  const miss = async (tab, inputId, listId) => {
-    ev(ctx, `document.querySelector('.tab[data-tab="${tab}"]').click()`);
-    await settle(ctx, 10);
-    const box = byId.get(inputId);
-    box.value = 'zzz';
-    fire(box, 'input');
-    await settle(ctx, 40);
-    return byId.get(listId).textContent;
-  };
-  assert.equal(await miss('explore', 'q', 'exlist'), 'no row matches zzz');
-  assert.equal(await miss('flow', 'fentry', 'flist'), 'no row matches zzz');
-  assert.equal(await miss('impact', 'ientry', 'ilist'), 'no row matches zzz');
+  // The same miss on the plain list and on the grouped one (the routes), and
+  // the two of them say the same thing.
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  const box = byId.get('tentry');
+  box.value = 'zzz';
+  fire(box, 'input');
+  await settle(ctx, 40);
+  assert.equal(byId.get('tlist').textContent, 'no row matches zzz');
+  kindChip(byId, 'Endpoints').onclick();
+  await settle(ctx, 12);
+  assert.equal(ev(ctx, 'RAIL.trace.kind'), 'endpoint');
+  assert.equal(byId.get('tlist').textContent, 'no row matches zzz', 'the grouped list says it the same way');
   // ...and it is a catalogue key, so it moves with the language.
   byId.get('langseg').children[1].onclick();
   await settle(ctx, 6);
-  assert.match(byId.get('ilist').textContent, /[가-힣]/);
-  assert.match(byId.get('ilist').textContent, /zzz/, 'the translation still names what was typed');
+  assert.match(byId.get('tlist').textContent, /[가-힣]/);
+  assert.match(byId.get('tlist').textContent, /zzz/, 'the translation still names what was typed');
 
   // A list that is empty BEFORE anybody types keeps the ENGINE's own reason.
-  const noJava = await bootPage(t, { hash: '#p=alpha&tab=flow' });
-  await settle(noJava.ctx, 6);
-  assert.match(noJava.byId.get('flist').textContent, /not shipped/);
-  assert.equal(/no row matches/.test(noJava.byId.get('flist').textContent), false);
+  const noJava = await bootPage(t, { hash: '#p=alpha&tab=trace' });
+  kindChip(noJava.byId, 'Endpoints').onclick();
+  await settle(noJava.ctx, 10);
+  assert.match(noJava.byId.get('tlist').textContent, /not shipped/);
+  assert.equal(/no row matches/.test(noJava.byId.get('tlist').textContent), false);
 });
 
 test('picking a row hands the id to the renderer that answers it, and the row stays marked', async (t) => {
-  const explore = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  explore.calls.length = 0;
-  rowsOf(explore.byId, 'exlist')[0].click();
-  await settle(explore.ctx, 8);
-  assert.deepEqual(toolCalls(explore.calls, 'table_usage'),
-    [{ name: 'table_usage', args: { table: 'gamma_order' } }]);
-  const marked = rowsOf(explore.byId, 'exlist').filter((r) => r.getAttribute('aria-selected') === 'true');
-  assert.deepEqual(marked.map((r) => r.title), ['gamma_order']);
-  assert.equal(marked[0].classList.contains('on'), true);
-
-  const flow = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=flow' });
-  flow.calls.length = 0;
-  rowsOf(flow.byId, 'flist')[0].click();
-  await settle(flow.ctx, 10);
-  const drawn = toolCalls(flow.calls, 'flow');
-  assert.equal(drawn.length, 1, `Flow drew ${drawn.length} chains`);
-  assert.equal(drawn[0].args.endpoint, 'POST /order/save');
-  assert.equal(drawn[0].args.direction, undefined, 'walking down is the default');
-  assert.equal(flow.byId.get('fentry').value, 'POST /order/save');
-
-  const impact = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=impact' });
-  impact.calls.length = 0;
-  rowsOf(impact.byId, 'ilist')[0].click();
-  await settle(impact.ctx, 10);
-  const up = toolCalls(impact.calls, 'flow');
-  assert.equal(up.length, 1, `Impact drew ${up.length} chains`);
+  // A TABLE: it has no "what it uses", so a pick walks up from it.
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  calls.length = 0;
+  rowsOf(byId, 'tlist')[0].click();
+  await settle(ctx, 10);
+  const up = toolCalls(calls, 'flow');
+  assert.equal(up.length, 1, `the pick drew ${up.length} chains`);
   assert.equal(up[0].args.direction, 'up');
   assert.equal(up[0].args.table, 'gamma_order', 'the KIND is carried, never guessed back out of the name');
-  assert.deepEqual(toolCalls(impact.calls, 'search'), [], 'a picked row needs no second request to learn its kind');
+  assert.deepEqual(toolCalls(calls, 'search'), [], 'a picked row needs no second request to learn its kind');
+  const marked = () => rowsOf(byId, 'tlist').filter((r) => r.getAttribute('aria-selected') === 'true');
+  assert.deepEqual(marked().map((r) => r.title), ['gamma_order']);
+  assert.equal(marked()[0].classList.contains('on'), true);
+
+  // DETAILS: the table's own answer. The place stays on Details, so the next
+  // row picked is answered by the same renderer.
+  calls.length = 0;
+  byId.get('tdir').querySelectorAll('button').find((b) => b.textContent === 'Details').onclick();
+  await settle(ctx, 10);
+  assert.deepEqual(toolCalls(calls, 'table_usage'), [{ name: 'table_usage', args: { table: 'gamma_order' } }]);
+  calls.length = 0;
+  rowsOf(byId, 'tlist')[1].click();
+  await settle(ctx, 10);
+  assert.deepEqual(toolCalls(calls, 'table_usage'), [{ name: 'table_usage', args: { table: 'gamma_item' } }]);
+  assert.deepEqual(toolCalls(calls, 'flow'), [], 'details are not a walk');
+  assert.deepEqual(marked().map((r) => r.title), ['gamma_item']);
+
+  // A ROUTE: walked down, which is the default.
+  const flow = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  kindChip(flow.byId, 'Endpoints').onclick();
+  await settle(flow.ctx, 10);
+  flow.calls.length = 0;
+  rowsOf(flow.byId, 'tlist')[0].click();
+  await settle(flow.ctx, 10);
+  const drawn = toolCalls(flow.calls, 'flow');
+  assert.equal(drawn.length, 1, `the pick drew ${drawn.length} chains`);
+  assert.equal(drawn[0].args.endpoint, 'POST /order/save');
+  assert.equal(drawn[0].args.direction, undefined, 'walking down is the default');
+  assert.equal(flow.byId.get('tentry').value, 'POST /order/save');
 });
 
-test('the Impact caret opens a table into its own columns, with ONE request, asked once', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=impact' });
+test('the caret on the Trace list opens a table into its own columns, with ONE request, asked once', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   calls.length = 0;
-  const caret = byId.get('ilist').querySelectorAll('.brcaret')[0];
+  const caret = byId.get('tlist').querySelectorAll('.brcaret')[0];
   assert.equal(caret.getAttribute('aria-expanded'), 'false');
   caret.click();
   await settle(ctx, 8);
   assert.deepEqual(toolCalls(calls, 'browse'),
     [{ name: 'browse', args: { kind: 'column', table: 'gamma_order', limit: 200 } }]);
-  const kids = byId.get('ilist').querySelectorAll('.brchild');
+  const kids = byId.get('tlist').querySelectorAll('.brchild');
   assert.deepEqual(kids.map((k) => k.title), ['gamma_order.total', 'gamma_order.id'],
     'the columns of that table, most written first');
   assert.deepEqual(kids.map((k) => k.querySelector('.brid').textContent), ['total', 'id'],
@@ -2300,17 +2317,17 @@ test('the Impact caret opens a table into its own columns, with ONE request, ask
 
   // Collapse and open again: the answer is kept, so nothing is asked twice.
   calls.length = 0;
-  byId.get('ilist').querySelectorAll('.brcaret')[0].click();
+  byId.get('tlist').querySelectorAll('.brcaret')[0].click();
   await settle(ctx, 4);
-  assert.deepEqual(byId.get('ilist').querySelectorAll('.brchild'), []);
-  byId.get('ilist').querySelectorAll('.brcaret')[0].click();
+  assert.deepEqual(byId.get('tlist').querySelectorAll('.brchild'), []);
+  byId.get('tlist').querySelectorAll('.brcaret')[0].click();
   await settle(ctx, 6);
   assert.deepEqual(toolCalls(calls), []);
-  assert.equal(byId.get('ilist').querySelectorAll('.brchild').length, 2);
+  assert.equal(byId.get('tlist').querySelectorAll('.brchild').length, 2);
 
   // A column picked from the tree walks up from THAT column.
   calls.length = 0;
-  byId.get('ilist').querySelectorAll('.brchild')[0].click();
+  byId.get('tlist').querySelectorAll('.brchild')[0].click();
   await settle(ctx, 10);
   const up = toolCalls(calls, 'flow');
   assert.equal(up.length, 1);
@@ -2319,93 +2336,99 @@ test('the Impact caret opens a table into its own columns, with ONE request, ask
 });
 
 test('a language switch re-draws the whole rail from memory and asks the server for nothing', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  assert.equal(byId.get('excount').textContent, '3 shown of 3');
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  assert.equal(byId.get('tcount').textContent, '3 shown of 3');
   calls.length = 0;
   byId.get('langseg').children[1].onclick();   // -> ko
   await settle(ctx, 6);
 
   assert.deepEqual(calls, [], `the switch asked the server for: ${calls.map((c) => c.url).join(', ')}`);
   for (const [what, text] of [
-    ['the kind chips', byId.get('exkinds').textContent],
-    ['the count line', byId.get('excount').textContent],
-    ['the keyboard hint', byId.get('exrail').querySelector('.brkeys').textContent],
-    ['the sort options', byId.get('exsort').textContent],
-    ['the lead card', byId.get('view').textContent],
+    ['the kind chips', byId.get('tkinds').textContent],
+    ['the count line', byId.get('tcount').textContent],
+    ['the keyboard hint', byId.get('tracerail').querySelector('.brkeys').textContent],
+    ['the sort options', byId.get('tsort').textContent],
+    ['the lead card', byId.get('tracewrap').textContent],
   ]) assert.match(text, /[가-힣]/, `${what} is still in English`);
   // The ROWS are the engine's own ids and are relayed, never translated.
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.missing])'), '[]');
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.fellBack])'), '[]');
 });
 
 test('the arrow keys move the highlight, Enter picks, and neither asks the server anything on the way', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  const q = byId.get('q');
-  assert.equal(ev(ctx, 'RAIL.explore.cur'), 0, 'the first row is highlighted as soon as the list lands');
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  const q = byId.get('tentry');
+  assert.equal(ev(ctx, 'RAIL.trace.cur'), 0, 'the first row is highlighted as soon as the list lands');
   calls.length = 0;
   fire(q, 'keydown', { key: 'ArrowDown' });
-  assert.equal(ev(ctx, 'RAIL.explore.cur'), 1);
+  assert.equal(ev(ctx, 'RAIL.trace.cur'), 1);
   fire(q, 'keydown', { key: 'ArrowDown' });
-  assert.equal(ev(ctx, 'RAIL.explore.cur'), 2);
+  assert.equal(ev(ctx, 'RAIL.trace.cur'), 2);
   fire(q, 'keydown', { key: 'ArrowUp' });
-  assert.equal(ev(ctx, 'RAIL.explore.cur'), 1);
-  assert.deepEqual(rowsOf(byId, 'exlist').filter((r) => r.classList.contains('cur')).map((r) => r.title), ['gamma_item']);
+  assert.equal(ev(ctx, 'RAIL.trace.cur'), 1);
+  assert.deepEqual(rowsOf(byId, 'tlist').filter((r) => r.classList.contains('cur')).map((r) => r.title), ['gamma_item']);
   assert.deepEqual(toolCalls(calls), [], 'moving the highlight asks nothing');
 
+  // Enter takes the highlighted row, exactly as a click on it would: a table
+  // is walked up from.
   fire(q, 'keydown', { key: 'Enter' });
   await settle(ctx, 8);
-  assert.deepEqual(toolCalls(calls, 'table_usage'),
-    [{ name: 'table_usage', args: { table: 'gamma_item' } }]);
+  assert.deepEqual(JSON.parse(ev(ctx, 'JSON.stringify(TRACE.target)')), { kind: 'table', id: 'gamma_item' },
+    'the highlighted row is the one Enter picked');
+  const up = toolCalls(calls, 'flow');
+  assert.equal(up.length, 1, `Enter drew ${up.length} chains`);
+  assert.deepEqual([up[0].args.direction, up[0].args.table], ['up', 'gamma_item']);
   assert.deepEqual(toolCalls(calls, 'search'), [], 'Enter took the highlighted row, so it never fell back to a search');
 });
 
 test('the quick picks are the top of the list already loaded, and cost no request of their own', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  const card = byId.get('view').querySelector('.brlead');
-  assert.ok(card, 'the right-hand side carries the lead card, not a grey box telling you to type');
-  assert.match(card.textContent, /Pick a table, column or statement/);
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  const card = byId.get('tracewrap').querySelector('.brlead');
+  assert.ok(card, 'the picture area carries the lead card, not a grey box telling you to type');
+  assert.match(card.textContent, /Pick something from the list, or search any kind in the box above/);
   const picks = card.querySelectorAll('.brpick').map((b) => b.querySelector('.brid').textContent);
   assert.ok(picks.length > 0 && picks.length <= 5, `${picks.length} quick picks`);
-  const loaded = ev(ctx, 'JSON.stringify(RAIL.explore.rows.map((r)=>r.table))');
-  assert.deepEqual(picks, JSON.parse(loaded).slice(0, 5), 'the five busiest, off the rows already here');
+  const loaded = ev(ctx, 'JSON.stringify(RAIL.trace.rows.map((r)=>r.table))');
+  assert.deepEqual(picks, JSON.parse(loaded).slice(0, 5), 'the top five, off the rows already here');
   for (const p of picks) assert.ok(JSON.parse(loaded).includes(p), `${p} is not one of the loaded rows`);
 
-  // Clicking one is the same as clicking its row.
+  // Clicking one is the same as clicking its row: a table is walked up from.
   calls.length = 0;
   card.querySelectorAll('.brpick')[0].click();
   await settle(ctx, 8);
-  assert.deepEqual(toolCalls(calls, 'table_usage'),
-    [{ name: 'table_usage', args: { table: 'gamma_order' } }]);
+  assert.deepEqual(toolCalls(calls, 'flow'),
+    [{ name: 'flow', args: { direction: 'up', table: 'gamma_order', mode: 'conservative', depth: 8, limit: 40 } }]);
 });
 
 test('a pack with no code axis says the Java lane did not run, and still lists what it does have', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=flow' });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   await settle(ctx, 6);
-  assert.deepEqual(rowsOf(byId, 'flist'), []);
-  assert.match(byId.get('flist').textContent, /not shipped: this project was analysed without the Java side/);
-  assert.equal(ev(ctx, "RAIL.flow.resp.answer.empty.items"), 'not-shipped',
-    "the page prints the ENGINE's own reason, it does not decide one");
-  // Explore, on the same pack, still opens on its tables.
-  ev(ctx, `document.querySelector('.tab[data-tab="explore"]').click()`);
+  // The list still opens on its tables.
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['alpha_order']);
+  assert.equal(kindChip(byId, 'Endpoints').textContent, 'Endpoints0', 'zero endpoints, said as a zero');
+  // ...and its routes say why there are none.
+  kindChip(byId, 'Endpoints').onclick();
   await settle(ctx, 8);
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['alpha_order']);
-  assert.equal(byId.get('exkinds').children[3].textContent, 'Endpoints0', 'zero endpoints, said as a zero');
+  assert.deepEqual(rowsOf(byId, 'tlist'), []);
+  assert.match(byId.get('tlist').textContent, /not shipped: this project was analysed without the Java side/);
+  assert.equal(ev(ctx, "RAIL.trace.resp.answer.empty.items"), 'not-shipped',
+    "the page prints the ENGINE's own reason, it does not decide one");
 });
 
 test('the rail is a browse ANSWER, never a count the page did: every number on it comes off the wire', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  const answer = JSON.parse(ev(ctx, 'JSON.stringify(RAIL.explore.resp.answer)'));
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  const answer = JSON.parse(ev(ctx, 'JSON.stringify(RAIL.trace.resp.answer)'));
   assert.deepEqual(answer.counts, { table: 3, column: 4, statement: 3, endpoint: 3, symbol: 10, screen: 0 });
   assert.equal(answer.total, 3);
   // The stat chips beside a row are that row's own fields, not a re-derivation.
   const first = answer.items[0];
   assert.deepEqual([first.table, first.statementsRead, first.statementsWrite, first.endpoints],
     ['gamma_order', 1, 1, 2]);
-  const chips = rowsOf(byId, 'exlist')[0].querySelectorAll('.brstat').map((c) => c.textContent);
+  const chips = rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat').map((c) => c.textContent);
   assert.deepEqual(chips, ['sql2', 'api2'], 'statements touching, then endpoints reaching, each with its own label');
   // ...and each one says what it counts.
-  const titles = rowsOf(byId, 'exlist')[0].querySelectorAll('.brstat').map((c) => c.title);
+  const titles = rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat').map((c) => c.title);
   assert.match(titles[0], /how many SQL statements touch this/);
   assert.match(titles[1], /mode=conservative, depth 8/);
 });
@@ -2423,18 +2446,31 @@ const srcCalls = (calls) => calls.filter((c) => c.url.startsWith('/api/source'))
 /** The pane's gutter, as the numbers a reader sees, and which of them are marked. */
 const gutter = (byId) => byId.get('srcbody').querySelectorAll('.srcln')
   .map((row) => ({ no: row.querySelector('.srcno').textContent, hi: row.classList.contains('hi') }));
-/** Open the Explore rail on one kind and click the row whose id is `id`. */
+/**
+ * Put the Trace list on Statements, click the row whose id is `id`, and open
+ * its source the way a reader asks for it. A pick is a question, not a request
+ * for the file (RM67-U2b): the pane opens when the reader presses Source, here
+ * on the card of the statement's own row, and follows every pick after that.
+ */
 async function pickStatement(ctx, byId, id) {
-  ev(ctx, "railSetKind('explore','statement')");
+  ev(ctx, "railSetKind('trace','statement')");
   await settle(ctx, 10);
-  const row = rowsOf(byId, 'exlist').find((r) => r.title === id);
-  assert.ok(row, `no rail row for ${id}: ${rowsOf(byId, 'exlist').map((r) => r.title).join(', ')}`);
+  const row = rowsOf(byId, 'tlist').find((r) => r.title === id);
+  assert.ok(row, `no rail row for ${id}: ${rowsOf(byId, 'tlist').map((r) => r.title).join(', ')}`);
+  const wasOpen = ev(ctx, 'SRC.open');
   row.click();
+  await settle(ctx, 10);
+  if (wasOpen) return;   // an open pane follows the pick by itself
+  assert.equal(ev(ctx, 'SRC.open'), false, 'a pick is not a request for the file');
+  fire(ev(ctx, `TRACEV.rows.get(${JSON.stringify(`statement:${id}`)}).els[0]`), 'click');
+  const source = byId.get('traceside').querySelector('.fcard').querySelectorAll('button').find((b) => b.textContent === 'Source');
+  assert.ok(source, 'the card of the statement offers its source');
+  source.click();
   await settle(ctx, 10);
 }
 
 test('a source opens INTO THE PANE: one request, a gutter of real file lines, and the range marked', async (t) => {
-  const { ctx, byId, calls, html } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+  const { ctx, byId, calls, html } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   calls.length = 0;
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
 
@@ -2465,7 +2501,7 @@ test('a source opens INTO THE PANE: one request, a gutter of real file lines, an
 });
 
 test('the whole-file toggle asks ONCE more, keeps the same marked range, and asks nothing on the way back', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
   calls.length = 0;
 
@@ -2492,11 +2528,11 @@ test('the whole-file toggle asks ONCE more, keeps the same marked range, and ask
 });
 
 test('a second pick REPLACES the pane, never opens a second one, and Escape closes it', async (t) => {
-  const { ctx, byId, calls, fireDoc } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+  const { ctx, byId, calls, fireDoc } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
   calls.length = 0;
 
-  rowsOf(byId, 'exlist').find((r) => r.title === 'com.g.GMapper.updateOrder').click();
+  rowsOf(byId, 'tlist').find((r) => r.title === 'com.g.GMapper.updateOrder').click();
   await settle(ctx, 10);
 
   assert.equal(Number(ev(ctx, "document.querySelectorAll('.srcpane').length")), 1, 'one pane, still');
@@ -2512,7 +2548,7 @@ test('a second pick REPLACES the pane, never opens a second one, and Escape clos
 });
 
 test("the editor control remembers the reader's editor, and its link carries that editor's scheme", async (t) => {
-  const { ctx, byId, store } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+  const { ctx, byId, store } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
 
   const sel = byId.get('srchd').querySelector('select');
@@ -2534,13 +2570,13 @@ test("the editor control remembers the reader's editor, and its link carries tha
   assert.equal(byId.get('srchd').querySelectorAll('button.mini').map((b) => b.textContent).includes('Copy path'), true);
 
   // ...and a reader who comes back tomorrow gets the editor they chose.
-  const again = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore', storage: { 'cascade.viewer.editor': 'idea' } });
+  const again = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace', storage: { 'cascade.viewer.editor': 'idea' } });
   await pickStatement(again.ctx, again.byId, 'com.g.GMapper.selectOrder');
   assert.match(again.byId.get('srchd').querySelector('.srcopen').getAttribute('href'), /^idea:\/\/open/);
 });
 
 test('the pane remembers how wide the reader made it, inside its own floor and ceiling', async (t) => {
-  const { ctx, byId, store } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+  const { ctx, byId, store } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
   // 1400px of window: the default is 56vw, and the pane is docked, not floating.
   assert.equal(byId.get('srcpane').style.width, '784px');
@@ -2550,16 +2586,16 @@ test('the pane remembers how wide the reader made it, inside its own floor and c
   assert.equal(Number(ev(ctx, 'srcSetWidth(80)')), 420, 'narrower than the floor is the floor');
   assert.equal(Number(ev(ctx, 'srcSetWidth(9000)')), 1260, '...and wider than 90vw is 90vw');
 
-  const remembered = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore', storage: { 'cascade.viewer.srcpane.w': '620' } });
+  const remembered = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace', storage: { 'cascade.viewer.srcpane.w': '620' } });
   await pickStatement(remembered.ctx, remembered.byId, 'com.g.GMapper.selectOrder');
   assert.equal(remembered.byId.get('srcpane').style.width, '620px');
 });
 
 test("the rail's stat chips are LABELLED, one label set per kind, and a label is not translated", async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  const chips = () => rowsOf(byId, 'exlist')[0].querySelectorAll('.brstat')
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  const chips = () => rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat')
     .map((c) => [c.querySelector('.brlbl').textContent, c.textContent]);
-  const kind = async (k) => { ev(ctx, `railSetKind('explore','${k}')`); await settle(ctx, 10); };
+  const kind = async (k) => { ev(ctx, `railSetKind('trace','${k}')`); await settle(ctx, 10); };
 
   // tables: how much SQL touches it, how many endpoints reach it.
   assert.deepEqual(chips(), [['sql', 'sql2'], ['api', 'api2']]);
@@ -2576,13 +2612,14 @@ test("the rail's stat chips are LABELLED, one label set per kind, and a label is
   byId.get('langseg').children[1].onclick();
   await settle(ctx, 8);
   assert.deepEqual(chips(), before, 'a label is a noun the engine owns');
-  assert.match(rowsOf(byId, 'exlist')[0].querySelectorAll('.brstat')[0].title, /[가-힣]/,
+  assert.match(rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat')[0].title, /[가-힣]/,
     '...and the title that says what it counts is translated');
 });
 
 test('the kind chips WRAP evenly instead of scrolling a chip off the rail', async (t) => {
-  const { html, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  assert.equal(byId.get('exkinds').children.length, 6, 'six chips, all of them rendered');
+  // delta has a frontend, so its Trace list offers every one of the six kinds.
+  const { html, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=trace' });
+  assert.equal(byId.get('tkinds').children.length, 6, 'six chips, all of them rendered');
   const css = html.slice(html.indexOf('.brkinds {'), html.indexOf('.brfilter {'));
   assert.match(css, /grid-template-columns:repeat\(auto-fit, minmax\(92px, 1fr\)\)/,
     'equal cells that wrap, so six chips read as two rows of three');
@@ -2593,80 +2630,78 @@ test('the kind chips WRAP evenly instead of scrolling a chip off the rail', asyn
 test('the rail connects its endpoint count to the masthead\'s, because they are not the same number', async (t) => {
   // gamma serves three endpoints and calls none it does not serve, so nothing
   // is said: the sentence exists only when there IS a difference.
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  assert.equal(ev(ctx, "String(railOutboundNote('explore'))"), 'null');
-  assert.equal(byId.get('exkinds').children[3].title, '', 'no difference, no sentence');
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  assert.equal(ev(ctx, "String(railOutboundNote('trace'))"), 'null');
+  assert.equal(kindChip(byId, 'Endpoints').title, '', 'no difference, no sentence');
 
   // Now the census the OVERVIEW answered says four and browse still says three:
   // the one in between is a route this pack calls and does not serve.
-  ev(ctx, "OV.resp.answer.nodes.find((n)=>n.kind==='endpoint').count = 4; railSetKind('explore','endpoint');");
+  ev(ctx, "OV.resp.answer.nodes.find((n)=>n.kind==='endpoint').count = 4; railSetKind('trace','endpoint');");
   await settle(ctx, 12);
   const want = '3 served; 1 more are routes this pack calls and does not serve';
-  assert.equal(ev(ctx, "railOutboundNote('explore')"), want);
-  assert.equal(byId.get('exkinds').children[3].title, want, 'the Endpoints chip says it');
-  assert.match(byId.get('excount').textContent, /3 shown of 3/);
-  assert.match(byId.get('excount').textContent, /1 more are routes/, 'and so does the count line');
+  assert.equal(ev(ctx, "railOutboundNote('trace')"), want);
+  assert.equal(kindChip(byId, 'Endpoints').title, want, 'the Endpoints chip says it');
+  assert.match(byId.get('tcount').textContent, /3 shown of 3/);
+  assert.match(byId.get('tcount').textContent, /1 more are routes/, 'and so does the count line');
 });
 
 test('Show all is disabled while a tab IS its opening state', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  for (const [tab, id] of [['explore', 'exshowall'], ['flow', 'fshowall'], ['impact', 'ishowall'], ['erd', 'eshowall']]) {
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  for (const [tab, id] of [['trace', 'tshowall'], ['erd', 'eshowall']]) {
     ev(ctx, `activateTab('${tab}')`);
     await settle(ctx, 10);
     assert.equal(byId.get(id).disabled, true, `${tab} says it is narrowed when it is not`);
   }
 });
 
-test('Show all puts Explore, Flow and Impact back where they opened, and says so in the URL', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+test('Show all puts Trace back where it opened, and says so in the URL', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
 
-  // EXPLORE: a filter, a pick and the source pane are three narrowings at once.
-  const q = byId.get('q');
+  // A filter, a pick and the source pane are three narrowings at once.
+  const q = byId.get('tentry');
   q.value = 'order'; fire(q, 'input');
   await settle(ctx, 30);
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
-  assert.equal(byId.get('exshowall').disabled, false);
+  assert.equal(byId.get('tshowall').disabled, false);
   assert.match(ev(ctx, 'location.hash'), /pick=statement/);
   assert.match(ev(ctx, 'location.hash'), /src=statement/);
 
   calls.length = 0;
-  byId.get('exshowall').click();
+  byId.get('tshowall').click();
   await settle(ctx, 10);
-  assert.equal(byId.get('q').value, '', 'the filter is cleared');
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), null, 'nothing is picked');
+  assert.equal(byId.get('tentry').value, '', 'the filter is cleared');
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), null, 'nothing is picked');
   assert.equal(ev(ctx, 'SRC.open'), false, 'the source pane is closed');
-  assert.ok(byId.get('view').querySelector('.brlead'), 'the quick-picks card is back');
-  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=explore', 'and the URL says so');
-  assert.equal(byId.get('exshowall').disabled, true, 'the control reports the state it produced');
+  assert.ok(byId.get('tracewrap').querySelector('.brlead'), 'the quick-picks card is back');
+  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace', 'and the URL says so');
+  assert.equal(byId.get('tshowall').disabled, true, 'the control reports the state it produced');
   assert.deepEqual(toolCalls(calls), [], 'putting a tab back asks the server for nothing');
 
-  // FLOW: a picture drawn, and a group folded shut.
-  ev(ctx, "activateTab('flow')");
+  // A picture drawn, and a group of routes folded shut.
+  kindChip(byId, 'Endpoints').onclick();
   await settle(ctx, 10);
-  rowsOf(byId, 'flist')[0].click();
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 14);
-  ev(ctx, "RAIL.flow.closedGroups.add('order'); railRenderRows('flow')");
-  assert.equal(byId.get('fshowall').disabled, false);
-  byId.get('fshowall').click();
+  ev(ctx, "RAIL.trace.closedGroups.add('order'); railRenderRows('trace')");
+  assert.equal(byId.get('tshowall').disabled, false);
+  byId.get('tshowall').click();
   await settle(ctx, 8);
-  assert.equal(ev(ctx, 'FLOWV.resp'), null, 'the picture is cleared');
-  assert.equal(Number(ev(ctx, 'RAIL.flow.closedGroups.size')), 0, 'every group is open again');
-  assert.equal(byId.get('fentry').value, '');
-  assert.ok(byId.get('flowwrap').querySelector('.brlead'), 'and the lead card is back on the canvas');
-  assert.equal(byId.get('fshowall').disabled, true);
+  assert.equal(ev(ctx, 'TRACEV.resp'), null, 'the picture is cleared');
+  assert.equal(Number(ev(ctx, 'RAIL.trace.closedGroups.size')), 0, 'every group is open again');
+  assert.equal(byId.get('tentry').value, '');
+  assert.ok(byId.get('tracewrap').querySelector('.brlead'), 'and the lead card is back on the canvas');
+  assert.equal(byId.get('tshowall').disabled, true);
 
-  // IMPACT: a table unfolded into its own columns.
-  ev(ctx, "activateTab('impact')");
+  // A table unfolded into its own columns.
+  byId.get('tlist').querySelectorAll('.brcaret')[0].click();
   await settle(ctx, 10);
-  byId.get('ilist').querySelectorAll('.brcaret')[0].click();
-  await settle(ctx, 10);
-  assert.equal(Number(ev(ctx, 'RAIL.impact.openTables.size')), 1);
-  assert.equal(byId.get('ishowall').disabled, false);
-  byId.get('ishowall').click();
+  assert.equal(Number(ev(ctx, 'RAIL.trace.openTables.size')), 1);
+  assert.equal(byId.get('tshowall').disabled, false);
+  byId.get('tshowall').click();
   await settle(ctx, 8);
-  assert.equal(Number(ev(ctx, 'RAIL.impact.openTables.size')), 0, 'folded back');
-  assert.deepEqual(byId.get('ilist').querySelectorAll('.brchild'), []);
-  assert.equal(byId.get('ishowall').disabled, true);
+  assert.equal(Number(ev(ctx, 'RAIL.trace.openTables.size')), 0, 'folded back');
+  assert.deepEqual(byId.get('tlist').querySelectorAll('.brchild'), []);
+  assert.equal(byId.get('tshowall').disabled, true);
 });
 
 test('Show all folds the Graph map back and clears the ERD highlight', async (t) => {
@@ -2695,87 +2730,88 @@ test('Show all folds the Graph map back and clears the ERD highlight', async (t)
 });
 
 test('Escape is TWO steps while a box has the focus: the box first, the tab second', async (t) => {
-  const { ctx, byId, fireDoc } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  rowsOf(byId, 'exlist')[0].click();
+  const { ctx, byId, fireDoc } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 10);
-  const q = byId.get('q');
+  const q = byId.get('tentry');
   q.value = 'gamma'; fire(q, 'input');
   await settle(ctx, 30);
 
   fireDoc('keydown', { key: 'Escape', target: q });
   await settle(ctx, 6);
   assert.equal(q.value, '', 'the first Escape empties the box the reader was typing in');
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), 'gamma_order', '...and leaves the pick alone');
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order', '...and leaves the pick alone');
 
   fireDoc('keydown', { key: 'Escape', target: q });
   await settle(ctx, 8);
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), null, 'the second one puts the tab back');
-  assert.equal(byId.get('exshowall').disabled, true);
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), null, 'the second one puts the tab back');
+  assert.equal(byId.get('tshowall').disabled, true);
 });
 
 test('clicking the tab you are already on puts it back; clicking another one does not', async (t) => {
-  const { ctx, byId, body } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  rowsOf(byId, 'exlist')[0].click();
+  const { ctx, byId, body } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), 'gamma_order');
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order');
 
-  // Another tab is a MOVE, not a reset: Explore keeps its pick for the way back.
-  body.querySelector('.tab[data-tab="flow"]').click();
+  // Another tab is a MOVE, not a reset: Trace keeps its pick for the way back.
+  body.querySelector('.tab[data-tab="overview"]').click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), 'gamma_order', 'leaving a tab keeps its last pick');
-  body.querySelector('.tab[data-tab="explore"]').click();
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order', 'leaving a tab keeps its last pick');
+  body.querySelector('.tab[data-tab="trace"]').click();
   await settle(ctx, 8);
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), 'gamma_order', 'and coming back keeps it too');
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), 'gamma_order', 'and coming back keeps it too');
 
   // The tab you are ON: the gesture every reader already tries.
-  body.querySelector('.tab[data-tab="explore"]').click();
+  body.querySelector('.tab[data-tab="trace"]').click();
   await settle(ctx, 8);
-  assert.equal(ev(ctx, 'RAIL.explore.sel'), null);
-  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=explore');
+  assert.equal(ev(ctx, 'RAIL.trace.sel'), null);
+  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace');
 });
 
 test('a pick writes the URL, and Back puts the previous picture up without asking for it again', async (t) => {
-  const { ctx, byId, calls, fireWindow } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  rowsOf(byId, 'exlist')[0].click();
+  const { ctx, byId, calls, fireWindow } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  // A table is walked up from, and the URL carries the whole question.
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=explore&pick=table%3Agamma_order');
-  rowsOf(byId, 'exlist')[1].click();
+  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=conservative&depth=8');
+  rowsOf(byId, 'tlist')[1].click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=explore&pick=table%3Agamma_item');
+  assert.equal(ev(ctx, 'location.hash'), '#p=gamma&tab=trace&pick=table%3Agamma_item&dir=up&mode=conservative&depth=8');
 
   // The Back button. The stub's history keeps no stack of its own, so the URL
   // is put back the way a browser would and `popstate` is delivered, which is
   // exactly what the page listens for.
   calls.length = 0;
-  ev(ctx, "location.hash='#p=gamma&tab=explore&pick=table%3Agamma_order'");
+  ev(ctx, "location.hash='#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=conservative&depth=8'");
   fireWindow('popstate');
   await settle(ctx, 10);
   assert.deepEqual(toolCalls(calls), [], 'the answer was still in memory, so nothing was asked');
-  assert.equal(ev(ctx, 'PICK.explore'), 'table:gamma_order');
-  assert.match(byId.get('view').textContent, /gamma_order/);
-  assert.deepEqual(rowsOf(byId, 'exlist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
+  assert.equal(ev(ctx, 'PICK.trace'), 'table:gamma_order');
+  assert.match(byId.get('tracewrap').textContent, /gamma_order/);
+  assert.deepEqual(rowsOf(byId, 'tlist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
     ['gamma_order'], 'and the rail row is marked again');
 
   // One more step back is the opening state, and that costs nothing either.
   calls.length = 0;
-  ev(ctx, "location.hash='#p=gamma&tab=explore'");
+  ev(ctx, "location.hash='#p=gamma&tab=trace'");
   fireWindow('popstate');
   await settle(ctx, 8);
   assert.deepEqual(toolCalls(calls), []);
-  assert.equal(ev(ctx, 'PICK.explore'), null);
-  assert.ok(byId.get('view').querySelector('.brlead'));
+  assert.equal(ev(ctx, 'PICK.trace'), null);
+  assert.ok(byId.get('tracewrap').querySelector('.brlead'));
 });
 
 test('a deep link that names a pick and a source lands on both', async (t) => {
   const { ctx, byId, calls } = await bootPage(t, {
     ids: ['gamma'],
-    hash: '#p=gamma&tab=explore&pick=statement%3Acom.g.GMapper.updateOrder&src=statement%3Acom.g.GMapper.updateOrder',
+    hash: '#p=gamma&tab=trace&pick=statement%3Acom.g.GMapper.updateOrder&dir=detail&src=statement%3Acom.g.GMapper.updateOrder',
   });
   await settle(ctx, 14);
   assert.equal(ev(ctx, 'SRC.open'), true, 'the pane is open on the node the link named');
   assert.equal(ev(ctx, 'SRC.node'), 'statement:com.g.GMapper.updateOrder');
   assert.deepEqual(gutter(byId).map((x) => x.no), ['6', '7', '8']);
-  assert.equal(ev(ctx, 'PICK.explore'), 'statement:com.g.GMapper.updateOrder');
+  assert.equal(ev(ctx, 'PICK.trace'), 'statement:com.g.GMapper.updateOrder');
   assert.equal(srcCalls(calls).length, 1, 'a cold load asks once, and only once');
 });
 
@@ -2817,57 +2853,56 @@ test('two callers asking for the same file at once put ONE request on the wire',
 });
 
 test('Show all puts the rail back on the kind the tab OPENED on, and asks nothing to do it', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  // Explore opens on Tables. Drill into Statements, pick one, then ask for the
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  // Trace opens on Tables. Drill into Statements, pick one, then ask for the
   // whole tab back: the first screen is the list the tab opened with.
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
-  assert.equal(ev(ctx, 'RAIL.explore.kind'), 'statement');
-  assert.equal(byId.get('exkinds').children[2].className, 'on', 'the Statements chip is the lit one');
+  assert.equal(ev(ctx, 'RAIL.trace.kind'), 'statement');
+  assert.equal(kindChip(byId, 'Statements').className, 'on', 'the Statements chip is the lit one');
 
   calls.length = 0;
-  byId.get('exshowall').click();
+  byId.get('tshowall').click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'RAIL.explore.kind'), 'table', 'the kind is part of the opening state');
-  assert.equal(byId.get('exkinds').children[0].className, 'on', 'and the chip strip says so');
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
+  assert.equal(ev(ctx, 'RAIL.trace.kind'), 'table', 'the kind is part of the opening state');
+  assert.equal(kindChip(byId, 'Tables').className, 'on', 'and the chip strip says so');
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
   assert.deepEqual(toolCalls(calls), [],
     'the answer for the opening kind was already read once, so this costs nothing');
-  assert.equal(byId.get('exshowall').disabled, true);
+  assert.equal(byId.get('tshowall').disabled, true);
+  assert.equal(ev(ctx, 'RAIL.trace.sort'), 'endpoints', "...with this place's own default sort");
 
-  // Impact opens on Tables too, and its own sort ("endpoints") comes back with it.
-  ev(ctx, "activateTab('impact')");
+  // A kind changed with nothing picked comes back the same way, sort and all.
+  ev(ctx, "railSetKind('trace','statement')");
   await settle(ctx, 12);
-  ev(ctx, "railSetKind('impact','statement')");
-  await settle(ctx, 12);
-  assert.equal(ev(ctx, 'RAIL.impact.kind'), 'statement');
+  assert.equal(ev(ctx, 'RAIL.trace.kind'), 'statement');
   calls.length = 0;
-  byId.get('ishowall').click();
+  byId.get('tshowall').click();
   await settle(ctx, 10);
-  assert.equal(ev(ctx, 'RAIL.impact.kind'), 'table');
-  assert.equal(ev(ctx, 'RAIL.impact.sort'), 'endpoints', "...with this tab's own default sort");
+  assert.equal(ev(ctx, 'RAIL.trace.kind'), 'table');
+  assert.equal(ev(ctx, 'RAIL.trace.sort'), 'endpoints', "...with this place's own default sort");
   assert.deepEqual(toolCalls(calls), []);
 });
 
 test('a kind the rail has already shown is drawn from memory, not asked for again', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   calls.length = 0;
-  ev(ctx, "railSetKind('explore','column')");
+  ev(ctx, "railSetKind('trace','column')");
   await settle(ctx, 12);
   assert.deepEqual(toolCalls(calls, 'browse').map((c) => c.args.kind), ['column'], 'a kind never asked for is a request');
 
   calls.length = 0;
-  ev(ctx, "railSetKind('explore','table')");
+  ev(ctx, "railSetKind('trace','table')");
   await settle(ctx, 10);
   assert.deepEqual(toolCalls(calls), [], 'going back to a list already read asks nothing');
-  assert.deepEqual(rowsOf(byId, 'exlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
-  assert.equal(byId.get('excount').textContent, '3 shown of 3');
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
+  assert.equal(byId.get('tcount').textContent, '3 shown of 3');
 });
 
 test('a statement or a method row reads SHORT, with the full id one hover away', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  ev(ctx, "railSetKind('explore','statement')");
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  ev(ctx, "railSetKind('trace','statement')");
   await settle(ctx, 12);
-  const rows = rowsOf(byId, 'exlist');
+  const rows = rowsOf(byId, 'tlist');
   // The list is 320px wide and every one of these shares `com.g.GMapper.`: the
   // prefix is what an ellipsis would have kept and the name is what it cut.
   assert.deepEqual(rows.map((r) => r.querySelector('.brid').textContent).sort(),
@@ -2876,21 +2911,21 @@ test('a statement or a method row reads SHORT, with the full id one hover away',
     ['com.g.GMapper.insertItem', 'com.g.GMapper.selectOrder', 'com.g.GMapper.updateOrder'],
     'the full id is still what the row is titled');
   // ...and it is still what the filter matches, so a package name finds rows.
-  const q = byId.get('q');
+  const q = byId.get('tentry');
   q.value = 'com.g'; fire(q, 'input');
   await settle(ctx, 30);
-  assert.equal(rowsOf(byId, 'exlist').length, 3, 'filtering on the prefix still finds them');
+  assert.equal(rowsOf(byId, 'tlist').length, 3, 'filtering on the prefix still finds them');
 
   // A METHOD reads Class.method, the same rule the chain lanes use (RM67:
   // src/viewer/chainlayout.mjs labelParts, where the saved SVG asks too).
   q.value = ''; fire(q, 'input');
   await settle(ctx, 30);
-  ev(ctx, "railSetKind('explore','symbol')");
+  ev(ctx, "railSetKind('trace','symbol')");
   await settle(ctx, 6);
-  byId.get('q').value = 'GController';
-  fire(byId.get('q'), 'input');
+  byId.get('tentry').value = 'GController';
+  fire(byId.get('tentry'), 'input');
   await settle(ctx, 90);   // kind=symbol is the one filter that IS a query (250ms)
-  const syms = rowsOf(byId, 'exlist');
+  const syms = rowsOf(byId, 'tlist');
   assert.ok(syms.length > 0, 'the method list answered');
   assert.deepEqual(syms.map((r) => r.querySelector('.brid').textContent).sort(),
     ['GController.get', 'GController.save']);
@@ -2902,10 +2937,10 @@ test('a statement or a method row reads SHORT, with the full id one hover away',
 });
 
 test('the quick picks read the same way the rows do, full id and all', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  ev(ctx, "railSetKind('explore','statement')");
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  ev(ctx, "railSetKind('trace','statement')");
   await settle(ctx, 12);
-  const picks = byId.get('view').querySelector('.brlead').querySelectorAll('.brpick');
+  const picks = byId.get('tracewrap').querySelector('.brlead').querySelectorAll('.brpick');
   assert.ok(picks.length > 0);
   assert.deepEqual(picks.map((b) => b.querySelector('.brid').textContent).sort(),
     ['GMapper.insertItem', 'GMapper.selectOrder', 'GMapper.updateOrder']);
@@ -2917,15 +2952,15 @@ test('the pane opens only when it is ASKED for, then follows; a closed one stays
   // The IDE rule. A chain row carries a card and an evidence rail (the path
   // down from the entry, the grade sentences), and a pane that opened by itself
   // covered the very thing the reader clicked the row to read.
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=flow' });
-  // The depth picker's value is its option TEXT, which this parser does not
-  // keep: say it, or the walk is asked for at depth 0 and refused.
-  byId.get('fdepth').value = '6';
-  rowsOf(byId, 'flist')[0].click();
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  // A route walked down, so the picture holds the statements it runs.
+  kindChip(byId, 'Endpoints').onclick();
+  await settle(ctx, 10);
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 14);
-  const statementRows = () => byId.get('flowwrap').querySelectorAll('.frow')
+  const statementRows = () => byId.get('tracewrap').querySelectorAll('.frow')
     .filter((r) => String(r.textContent).includes('GMapper'));
-  assert.ok(statementRows().length >= 2, `the chain drew ${statementRows().length} mapper rows: ${byId.get('flowwrap').textContent.slice(0, 200)}`);
+  assert.ok(statementRows().length >= 2, `the chain drew ${statementRows().length} mapper rows: ${byId.get('tracewrap').textContent.slice(0, 200)}`);
 
   // 1. A row picked with the pane CLOSED asks for no source and opens nothing.
   calls.length = 0;
@@ -2934,7 +2969,7 @@ test('the pane opens only when it is ASKED for, then follows; a closed one stays
   assert.deepEqual(srcCalls(calls), [], 'a chain row is not a request for the source');
   assert.equal(ev(ctx, 'SRC.open'), false);
   assert.equal(byId.get('srcpane').classList.contains('hidden'), true, 'the pane stayed shut');
-  const card = () => byId.get('flowside').querySelectorAll('button.mini').find((b) => b.textContent === 'Source');
+  const card = () => byId.get('traceside').querySelectorAll('button.mini').find((b) => b.textContent === 'Source');
   assert.ok(card(), 'the card offers the way in');
 
   // 2. Pressing Source is the request: one, and the pane opens.
@@ -2964,11 +2999,11 @@ test('the pane opens only when it is ASKED for, then follows; a closed one stays
   assert.equal(byId.get('srcpane').classList.contains('hidden'), true);
 });
 
-test('an Explore table pick follows an OPEN pane and leaves a closed one closed', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  // Closed: picking a table is a table answer, not a source request.
+test('a Trace table pick follows an OPEN pane and leaves a closed one closed', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  // Closed: picking a table is a question about the table, not a source request.
   calls.length = 0;
-  rowsOf(byId, 'exlist')[0].click();
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 12);
   assert.deepEqual(srcCalls(calls), []);
   assert.equal(ev(ctx, 'SRC.open'), false);
@@ -2976,76 +3011,76 @@ test('an Explore table pick follows an OPEN pane and leaves a closed one closed'
   // Open it on a statement, come back to Tables, and the pane follows the pick.
   await pickStatement(ctx, byId, 'com.g.GMapper.selectOrder');
   assert.equal(ev(ctx, 'SRC.open'), true);
-  ev(ctx, "railSetKind('explore','table')");
+  ev(ctx, "railSetKind('trace','table')");
   await settle(ctx, 12);
   calls.length = 0;
-  rowsOf(byId, 'exlist')[0].click();
+  rowsOf(byId, 'tlist')[0].click();
   await settle(ctx, 12);
   assert.equal(ev(ctx, 'SRC.node'), 'table:gamma_order', 'the open pane followed the table');
   assert.equal(srcCalls(calls).length, 1);
 });
 
 test('a PICK is not a filter: a link that names one lands on the whole list, with that row marked', async (t) => {
-  // The box on Flow and Impact does double duty — it filters the rail AND names
-  // the chain to draw — so a restore from the hash WRITES the picked id into
-  // it. Read back as a filter that showed one row and threw the list away.
+  // The Trace box does double duty — it filters the rail AND names the target
+  // — so a restore from the hash WRITES the picked id into it. Read back as a
+  // filter that showed one row and threw the list away.
   const flow = await bootPage(t, {
     ids: ['gamma'],
-    hash: '#p=gamma&tab=flow&pick=endpoint%3APOST%20%2Forder%2Fsave',
+    hash: '#p=gamma&tab=trace&pick=endpoint%3APOST%20%2Forder%2Fsave&dir=down',
   });
   await settle(flow.ctx, 16);
-  const total = Number(ev(flow.ctx, 'RAIL.flow.resp.answer.total'));
+  const total = Number(ev(flow.ctx, 'RAIL.trace.resp.answer.total'));
   assert.equal(total, 3, 'gamma serves three endpoints');
-  assert.equal(rowsOf(flow.byId, 'flist').length, total, 'every row the list holds is on screen');
-  assert.equal(flow.byId.get('fcount').textContent, `${total} shown of ${total}`);
-  assert.equal(flow.byId.get('fentry').value, 'POST /order/save', 'the box still names the chain');
-  assert.equal(ev(flow.ctx, "RAIL.flow.typed"), '', 'and the page typing in it is not typing');
-  assert.deepEqual(rowsOf(flow.byId, 'flist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
+  assert.equal(ev(flow.ctx, 'RAIL.trace.kind'), 'endpoint', 'the list follows the kind the link names');
+  assert.equal(rowsOf(flow.byId, 'tlist').length, total, 'every row the list holds is on screen');
+  assert.equal(flow.byId.get('tcount').textContent, `${total} shown of ${total}`);
+  assert.equal(flow.byId.get('tentry').value, 'POST /order/save', 'the box still names the chain');
+  assert.equal(ev(flow.ctx, "RAIL.trace.typed"), '', 'and the page typing in it is not typing');
+  assert.deepEqual(rowsOf(flow.byId, 'tlist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
     ['POST /order/save'], 'the picked row is marked');
-  assert.equal(Number(ev(flow.ctx, 'RAIL.flow.cur')), rowsOf(flow.byId, 'flist').findIndex((r) => r.title === 'POST /order/save'),
+  assert.equal(Number(ev(flow.ctx, 'RAIL.trace.cur')), rowsOf(flow.byId, 'tlist').findIndex((r) => r.title === 'POST /order/save'),
     '...and it keeps the highlight, so it is scrolled to rather than hunted for');
-  // ...and the chain itself was asked for, from the pick the link named. (The
-  // DRAWING needs the depth picker, whose value is its option text, and this
-  // parser keeps no text nodes: the picture is checked in a real browser.)
+  // ...and the chain itself was asked for, from the pick the link named.
   const drawn = toolCalls(flow.calls, 'flow').filter((c) => c.args.endpoint);
   assert.equal(drawn.length, 1, `the restore drew ${drawn.length} chains`);
   assert.equal(drawn[0].args.endpoint, 'POST /order/save');
 
-  // The same on Impact, whose box is written by the restore too.
-  const impact = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=impact&pick=table%3Agamma_item' });
+  // The same walking up, whose box is written by the restore too.
+  const impact = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace&pick=table%3Agamma_item&dir=up' });
   await settle(impact.ctx, 16);
-  assert.equal(rowsOf(impact.byId, 'ilist').length, Number(ev(impact.ctx, 'RAIL.impact.resp.answer.total')));
-  assert.equal(impact.byId.get('ientry').value, 'gamma_item');
-  assert.equal(ev(impact.ctx, "RAIL.impact.typed"), '');
-  assert.deepEqual(rowsOf(impact.byId, 'ilist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
+  assert.equal(rowsOf(impact.byId, 'tlist').length, Number(ev(impact.ctx, 'RAIL.trace.resp.answer.total')));
+  assert.equal(impact.byId.get('tentry').value, 'gamma_item');
+  assert.equal(ev(impact.ctx, "RAIL.trace.typed"), '');
+  assert.deepEqual(rowsOf(impact.byId, 'tlist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
     ['gamma_item']);
 
-  // ...and on Explore, where the same box is also the search box.
-  const explore = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore&pick=table%3Agamma_item' });
+  // ...and on Details, where the same box is also the search box.
+  const explore = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace&pick=table%3Agamma_item&dir=detail' });
   await settle(explore.ctx, 16);
-  assert.equal(rowsOf(explore.byId, 'exlist').length, 3);
-  assert.equal(explore.byId.get('excount').textContent, '3 shown of 3');
-  assert.deepEqual(rowsOf(explore.byId, 'exlist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
+  assert.equal(rowsOf(explore.byId, 'tlist').length, 3);
+  assert.equal(explore.byId.get('tcount').textContent, '3 shown of 3');
+  assert.deepEqual(rowsOf(explore.byId, 'tlist').filter((r) => r.getAttribute('aria-selected') === 'true').map((r) => r.title),
     ['gamma_item']);
 });
 
 test('a hand-off from another tab does not filter the rail it lands on either', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=explore' });
-  // Explore -> Impact, the way a table card's `Impact` button does it: the page
-  // writes the table name into Impact's box.
-  ev(ctx, "openImpact({table:'gamma_order'})");
+  const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=overview' });
+  // Overview -> Trace, the way a table's "Where it is used" button does it:
+  // the page writes the table name into the Trace box.
+  ev(ctx, "openTrace({kind:'table', id:'gamma_order'}, 'up')");
   await settle(ctx, 16);
-  assert.equal(byId.get('ientry').value, 'gamma_order');
-  assert.equal(ev(ctx, "RAIL.impact.typed"), '');
-  assert.equal(rowsOf(byId, 'ilist').length, 3, 'the whole list is still there');
-  assert.equal(byId.get('icount').textContent, '3 shown of 3');
+  assert.equal(ev(ctx, 'STATE.tab'), 'trace');
+  assert.equal(byId.get('tentry').value, 'gamma_order');
+  assert.equal(ev(ctx, "RAIL.trace.typed"), '');
+  assert.equal(rowsOf(byId, 'tlist').length, 3, 'the whole list is still there');
+  assert.equal(byId.get('tcount').textContent, '3 shown of 3');
 
   // What the READER types still filters, and Escape gives the list back.
-  const box = byId.get('ientry');
+  const box = byId.get('tentry');
   box.value = 'gamma_item'; fire(box, 'input');
   await settle(ctx, 40);
-  assert.equal(ev(ctx, "RAIL.impact.typed"), 'gamma_item');
-  assert.deepEqual(rowsOf(byId, 'ilist').map((r) => r.title), ['gamma_item']);
+  assert.equal(ev(ctx, "RAIL.trace.typed"), 'gamma_item');
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_item']);
 });
 
 // ---------------------------------------------------------------------------
@@ -3183,8 +3218,9 @@ test('the Overview grows a fifth dial and a screens list, both from an answer', 
   assert.deepEqual(rows.map((a) => a.textContent), ['/rows', '/quiet']);
   rows[0].onclick();
   await settle(ctx, 12);
-  assert.equal(ev(ctx, 'STATE.tab'), 'flow');
-  assert.equal(byId.get('fentry').value, '/rows');
+  assert.equal(ev(ctx, 'STATE.tab'), 'trace');
+  assert.equal(ev(ctx, 'TRACE.dir'), 'down', 'a screen is walked down, to the tables');
+  assert.equal(byId.get('tentry').value, '/rows');
   assert.deepEqual(toolCalls(calls, 'flow').filter((c) => c.args.screen).map((c) => c.args.screen), ['/rows']);
 });
 
@@ -3198,17 +3234,17 @@ test('a pack with no frontend draws no screens list: the section says why, in on
   assert.match(panel.textContent, /analysed without a frontend/);
 });
 
-test('Explore lists screens from ONE browse request, and a pick opens the screen card', async (t) => {
-  const { ctx, byId, calls } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=explore' });
-  assert.equal(byId.get('exkinds').children.map((b) => b.textContent).join('|'),
-    'Tables1|Columns2|Statements2|Endpoints2|Methods|Screens2');
+test('Trace lists screens from ONE browse request, and Details on a screen draws its card', async (t) => {
+  const { ctx, byId, calls } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=trace' });
+  assert.equal(byId.get('tkinds').children.map((b) => b.textContent).join('|'),
+    'Endpoints2|Screens2|Tables1|Columns2|Statements2|Methods');
 
   calls.length = 0;
-  byId.get('exkinds').children[5].onclick();
+  kindChip(byId, 'Screens').onclick();
   await settle(ctx, 12);
   assert.deepEqual(toolCalls(calls, 'browse'),
     [{ name: 'browse', args: { kind: 'screen', limit: 200, sort: 'endpoints' } }]);
-  const rows = rowsOf(byId, 'exlist');
+  const rows = rowsOf(byId, 'tlist');
   assert.deepEqual(rows.map((r) => r.title), ['/rows', '/quiet']);
   // The row: the label, the title under it, `api` / `tbl` and the `seen` mark.
   assert.deepEqual(rows[0].querySelectorAll('.brstat').map((x) => x.textContent), ['api2', 'tbl1']);
@@ -3217,19 +3253,23 @@ test('Explore lists screens from ONE browse request, and a pick opens the screen
   assert.deepEqual(rows[1].querySelectorAll('.brflag').map((x) => x.textContent), [],
     'the screen no recording saw carries no mark');
 
-  // A pick is one `flow screen=` request, and the card is drawn from it.
-  calls.length = 0;
+  // A pick walks down from the screen, its only way; Details is one
+  // `flow screen=` request, and the card is drawn from it.
   rows[0].onclick();
   await settle(ctx, 16);
+  calls.length = 0;
+  byId.get('tdir').querySelectorAll('button').find((b) => b.textContent === 'Details').onclick();
+  await settle(ctx, 16);
   assert.deepEqual(toolCalls(calls, 'flow'),
-    [{ name: 'flow', args: { screen: '/rows', depth: 8, limit: 200 } }]);
+    [{ name: 'flow', args: { screen: '/rows', mode: 'conservative', depth: 8, limit: 200 } }]);
   const card = byId.get('view').textContent;
   assert.match(card, /src\/views\/rows\.vue/, 'the component the route mounts');
   assert.match(card, /what this screen runs/);
   assert.match(card, /API routes it reaches/);
   assert.match(card, /tables at the end/);
-  assert.match(card, /nothing above it to ask about/, 'and why Impact is not offered');
-  assert.equal(ev(ctx, 'location.hash'), '#p=delta&tab=explore&pick=screen%3A%2Frows');
+  assert.match(byId.get('tracehead').textContent, /A screen is the top of the chain, so nothing uses it/,
+    'and why "Where it is used" is not offered');
+  assert.equal(ev(ctx, 'location.hash'), '#p=delta&tab=trace&pick=screen%3A%2Frows&dir=detail&mode=conservative&depth=8');
   // The function that SENDS is the one the endpoint rows hang off; the one that
   // only calls it leads to the request.
   const fns = byId.get('view').querySelectorAll('.panel')
@@ -3238,58 +3278,62 @@ test('Explore lists screens from ONE browse request, and a pick opens the screen
     ['leads to', 'sends', 'sends']);
 });
 
-test('Flow lists either end of the round trip, and remembers which one per project', async (t) => {
-  const { ctx, byId, calls, store } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=flow' });
-  assert.deepEqual(byId.get('fkinds').children.map((b) => b.textContent), ['Endpoints2', 'Screens2']);
-  assert.deepEqual(rowsOf(byId, 'flist').map((r) => r.title), ['GET /rows', 'POST /rows/save']);
+test('Trace lists either end of the round trip, and remembers which one per project', async (t) => {
+  const { ctx, byId, calls, store } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=trace' });
+  // Both ends are one chip each on the one list.
+  assert.deepEqual(byId.get('tkinds').children.map((b) => b.textContent).slice(0, 2), ['Endpoints2', 'Screens2']);
+  kindChip(byId, 'Endpoints').onclick();
+  await settle(ctx, 12);
+  assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['GET /rows', 'POST /rows/save']);
 
   calls.length = 0;
-  byId.get('fkinds').children[1].onclick();
+  kindChip(byId, 'Screens').onclick();
   await settle(ctx, 12);
   assert.deepEqual(toolCalls(calls, 'browse'),
     [{ name: 'browse', args: { kind: 'screen', limit: 200, sort: 'endpoints' } }]);
   // The screens are bucketed under their own group, with the group's counts.
-  assert.deepEqual(byId.get('flist').querySelectorAll('.brgname').map((g) => g.textContent),
+  assert.deepEqual(byId.get('tlist').querySelectorAll('.brgname').map((g) => g.textContent),
     ['▾ rows', '▾ quiet']);
-  assert.deepEqual(byId.get('flist').querySelectorAll('.brgn').map((g) => g.textContent),
+  assert.deepEqual(byId.get('tlist').querySelectorAll('.brgn').map((g) => g.textContent),
     ['1 screens', '1 reach an API', '1 screens', '0 reach an API']);
-  assert.equal(store.get('cascade.viewer.flowkind.delta'), 'screen');
+  assert.equal(store.get('cascade.viewer.tracekind.delta'), 'screen');
 
   // A pick draws `flow screen=`.
   calls.length = 0;
-  rowsOf(byId, 'flist')[0].onclick();
+  rowsOf(byId, 'tlist')[0].onclick();
   await settle(ctx, 16);
   assert.deepEqual(toolCalls(calls, 'flow').map((c) => c.args.screen), ['/rows']);
 
   // …and the next visit to this project opens on the end the reader left it on.
-  const again = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=flow',
-    storage: { 'cascade.viewer.flowkind.delta': 'screen' } });
-  assert.equal(ev(again.ctx, 'RAIL.flow.kind'), 'screen');
-  assert.deepEqual(toolCalls(again.calls, 'browse').filter((c) => c.args.kind === 'endpoint'), [],
-    'and it does not ask for the list it is not showing');
+  const again = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=trace',
+    storage: { 'cascade.viewer.tracekind.delta': 'screen' } });
+  assert.equal(ev(again.ctx, 'RAIL.trace.kind'), 'screen');
+  assert.deepEqual(toolCalls(again.calls, 'browse').filter((c) => c.args.kind !== 'screen'), [],
+    'and it does not ask for a list it is not showing');
 });
 
-test('a pack with no frontend is offered no Flow kind switch at all', async (t) => {
-  const { byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=flow' });
-  assert.equal(byId.get('fkinds').classList.contains('hidden'), true);
-  assert.equal(byId.get('fkinds').children.length, 0);
+test('a pack with no frontend is offered no Screens chip at all', async (t) => {
+  const { byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
+  const chips = byId.get('tkinds').children.map((b) => b.textContent);
+  assert.equal(chips.some((c) => c.startsWith('Screens')), false, `a Screens chip on a pack with no frontend: ${chips.join(' | ')}`);
+  assert.deepEqual(chips, ['Endpoints3', 'Tables3', 'Columns4', 'Statements3', 'Methods'], 'and every other kind is still offered');
 });
 
 test('down from a screen the chain draws six lanes, entry first', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=flow' });
-  ev(ctx, "openFlow({screen:'/rows'})");
+  const { ctx, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=trace' });
+  ev(ctx, "openTrace({kind:'screen', id:'/rows'}, 'down')");
   await settle(ctx, 20);
 
-  // The control was raised to the depth a screen needs, in the open, and the
+  // The control shows the depth a screen needs to reach a table, and the
   // request carried the number the control shows.
-  assert.equal(byId.get('fdepth').value, '8');
-  assert.equal(ev(ctx, 'FLOWV.resp.answer.walk.depth'), 8);
+  assert.equal(byId.get('tdepth').value, '8');
+  assert.equal(ev(ctx, 'TRACEV.resp.answer.walk.depth'), 8);
 
-  const cols = byId.get('flowwrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
+  const cols = byId.get('tracewrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
   assert.deepEqual(cols, ['entry', 'frontend function', 'endpoint', 'service layer', 'mapper statement', 'table']);
-  const rows = byId.get('flowwrap').querySelectorAll('.frow');
+  const rows = byId.get('tracewrap').querySelectorAll('.frow');
   assert.ok(rows.length >= 9, `the six lanes really hold rows: ${rows.length}`);
-  const names = byId.get('flowwrap').querySelectorAll('.fname').map((x) => x.textContent);
+  const names = byId.get('tracewrap').querySelectorAll('.fname').map((x) => x.textContent);
   // A frontend function reads module.function; its file is one hover away.
   assert.ok(names.includes('rows.getList'), names.join(', '));
   assert.ok(names.includes('GET /rows'), names.join(', '));
@@ -3297,35 +3341,35 @@ test('down from a screen the chain draws six lanes, entry first', async (t) => {
 
   // A frontend row says which kind of function it is, and the route rows carry
   // the two facts only a pack with a frontend has.
-  const wrapText = byId.get('flowwrap').textContent;
+  const wrapText = byId.get('tracewrap').textContent;
   assert.match(wrapText, /component/);
   assert.match(wrapText, /web 1/, 'how many frontend functions call the route');
   assert.match(wrapText, /seen/, 'and that a recording confirms one of them');
 });
 
 test('up from a column the chain closes with the frontend function and the screen', async (t) => {
-  const { ctx, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=impact' });
-  ev(ctx, "openImpact({column:'delta_rows.status'})");
+  const { ctx, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=trace' });
+  ev(ctx, "openTrace({kind:'column', id:'delta_rows.status'}, 'up')");
   await settle(ctx, 20);
-  const cols = byId.get('impactwrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
+  const cols = byId.get('tracewrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
   assert.deepEqual(cols, ['target', 'mapper statement', 'service layer', 'endpoint', 'frontend function', 'screen']);
-  const names = byId.get('impactwrap').querySelectorAll('.fname').map((x) => x.textContent);
+  const names = byId.get('tracewrap').querySelectorAll('.fname').map((x) => x.textContent);
   assert.ok(names.includes('/rows'), names.join(', '));
   assert.ok(names.includes('rows.listRows'), names.join(', '));
 
   // The by-hop view ENDS on the screens, not on the routes, because that is the
   // last lane this answer has.
-  assert.equal(ev(ctx, "chainEndField(IMPACTV, IMPACTV.resp.answer)"), 'screens');
-  ev(ctx, "document.querySelectorAll('#iview button')[1].onclick()");
+  assert.equal(ev(ctx, "chainEndField(TRACEV, TRACEV.resp.answer)"), 'screens');
+  ev(ctx, "document.querySelectorAll('#tview button')[1].onclick()");
   await settle(ctx, 8);
-  assert.match(byId.get('impactwrap').textContent, /end of the chain: screens|screens/);
-  ev(ctx, "document.querySelectorAll('#iview button')[0].onclick()");
+  assert.match(byId.get('tracewrap').textContent, /end of the chain: screens|screens/);
+  ev(ctx, "document.querySelectorAll('#tview button')[0].onclick()");
   await settle(ctx, 8);
 
   // A language switch re-renders the new headings out of the catalogue alone.
   ev(ctx, "setLang('ko')");
   await settle(ctx, 8);
-  const ko = byId.get('impactwrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
+  const ko = byId.get('tracewrap').querySelectorAll('.fcoltitle').map((x) => x.textContent);
   assert.equal(ko[4], '프런트엔드 함수');
   assert.equal(ko[5], '화면');
 });
@@ -3463,17 +3507,17 @@ function tracedFlow(observed) {
   };
 }
 
-/** Draw one of those on the Flow tab, through the page's own render path. */
+/** Draw one of those on Trace, through the page's own render path. */
 async function drawTraced(t, observed) {
-  const boot = await bootPage(t, { hash: '#p=alpha&tab=flow' });
-  ev(boot.ctx, `FLOWV.resp = ${JSON.stringify(tracedFlow(observed))}; FLOWV.sel = null; renderChain(FLOWV, FLOWV.resp);`);
+  const boot = await bootPage(t, { hash: '#p=alpha&tab=trace' });
+  ev(boot.ctx, `TRACEV.resp = ${JSON.stringify(tracedFlow(observed))}; TRACEV.sel = null; renderChain(TRACEV, TRACEV.resp);`);
   await settle(boot.ctx, 8);
   return boot;
 }
 
 /** The rows of one lane, as {name, tags} — the two things this round changes. */
 function laneRows(byId) {
-  return byId.get('flowwrap').querySelectorAll('.frow').map((r) => ({
+  return byId.get('tracewrap').querySelectorAll('.frow').map((r) => ({
     name: (r.querySelector('.fname') || { textContent: '' }).textContent,
     tags: r.querySelectorAll('.tag').map((x) => x.textContent),
     tips: r.querySelectorAll('.tag').map((x) => x.title),
@@ -3481,7 +3525,7 @@ function laneRows(byId) {
   }));
 }
 
-test('a Flow row a trace ran through carries the seen tag, and its unobserved sibling is untouched', async (t) => {
+test('on Trace, a row the recording ran through carries the seen tag, and its unobserved sibling is untouched', async (t) => {
   const { byId } = await drawTraced(t, true);
   const rows = laneRows(byId);
   const seen = (n) => rows.find((r) => r.name === n).tags.includes('seen');
@@ -3498,7 +3542,7 @@ test('a Flow row a trace ran through carries the seen tag, and its unobserved si
   for (const n of ['PmsBrandServiceImpl.listBrand', 'PmsBrandServiceOther.listBrand']) {
     assert.equal(rows.find((r) => r.name === n).grade, 'SOUND_SET', `${n} lost or gained a grade`);
   }
-  const bands = byId.get('flowwrap').querySelectorAll('.fdiv').map((d) => d.textContent);
+  const bands = byId.get('tracewrap').querySelectorAll('.fdiv').map((d) => d.textContent);
   assert.ok(bands.some((b) => /2 .*could/i.test(b) || /2/.test(b)),
     `the candidate band still counts both: ${bands.join(' | ')}`);
 
@@ -3515,12 +3559,12 @@ test('the same answer with no runtime marks draws no seen tag at all', async (t)
   const rows = laneRows(byId);
   assert.equal(rows.length > 0, true, 'the lanes really drew rows');
   for (const r of rows) assert.equal(r.tags.includes('seen'), false, `${r.name} invented a mark`);
-  assert.equal(/seen/.test(byId.get('flowwrap').textContent), false);
+  assert.equal(/seen/.test(byId.get('tracewrap').textContent), false);
 });
 
 test('the drawn connector for an observed hop is heavier, and keeps its grade colour and dash', async (t) => {
   const { ctx, byId, html } = await drawTraced(t, true);
-  const svg = byId.get('flowwrap').querySelectorAll('svg').at(0);
+  const svg = byId.get('tracewrap').querySelectorAll('svg').at(0);
   const links = svg.querySelectorAll('path').filter((p) => p.className.split(' ').includes('flink'));
   assert.equal(links.length, 4, 'entry to two services, each service to its statement');
   const obs = links.filter((p) => p.className.split(' ').includes('obs'));
@@ -3540,9 +3584,9 @@ test('the drawn connector for an observed hop is heavier, and keeps its grade co
   assert.match(cssRule(css, 'path.flink.hot.obs').join(' '), /stroke-width\s*:\s*3\.4/);
 
   // …and with no runtime marks the page draws no `obs` line at all.
-  ev(ctx, `FLOWV.resp = ${JSON.stringify(tracedFlow(false))}; renderChain(FLOWV, FLOWV.resp);`);
+  ev(ctx, `TRACEV.resp = ${JSON.stringify(tracedFlow(false))}; renderChain(TRACEV, TRACEV.resp);`);
   await settle(ctx, 8);
-  const plain = byId.get('flowwrap').querySelectorAll('svg').at(0).querySelectorAll('path');
+  const plain = byId.get('tracewrap').querySelectorAll('svg').at(0).querySelectorAll('path');
   assert.equal(plain.filter((p) => p.className.split(' ').includes('obs')).length, 0);
 });
 
@@ -3653,12 +3697,12 @@ test('a statement whose columns are only known at run time draws that tag, and t
   // the two `t('chain.tag.runtime…')` calls threw and the WHOLE lane strip
   // failed to render. Reachable on any pack with the MyBatis-Plus lane (jeecg
   // has 82 such statements, jeepay 20).
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=flow' });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   const a = tracedFlow(false);
   a.answer.statements[0].columnsRuntimeOnly = true;
   a.answer.statements[0].statementType = 'mp-builtin';
   const out = ev(ctx, `(() => { try {
-      FLOWV.resp = ${JSON.stringify(a)}; FLOWV.sel = null; renderChain(FLOWV, FLOWV.resp);
+      TRACEV.resp = ${JSON.stringify(a)}; TRACEV.sel = null; renderChain(TRACEV, TRACEV.resp);
       return 'rendered';
     } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
   assert.equal(out, 'rendered', 'the render threw instead of drawing the lanes');
@@ -3674,7 +3718,7 @@ test('a statement whose columns are only known at run time draws that tag, and t
 
   // The statement TYPE still colours the access tag off its own value, which is
   // the other thing that local was for.
-  const typeTag = byId.get('flowwrap').querySelectorAll('.frow')
+  const typeTag = byId.get('tracewrap').querySelectorAll('.frow')
     .find((r) => (r.querySelector('.fname') || {}).textContent === 'PmsBrandMapper.selectByExample')
     .querySelectorAll('span').find((x) => x.textContent === 'mp-builtin');
   assert.ok(typeTag, 'the statement type is still printed');
@@ -3736,10 +3780,10 @@ function federatedFlow() {
   };
 }
 
-test('a Flow row from another project wears its badge, and two projects\' rows do not collide', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=flow' });
+test('a Trace row from another project wears its badge, and two projects\' rows do not collide', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   const out = ev(ctx, `(() => { try {
-      FLOWV.resp = ${JSON.stringify(federatedFlow())}; FLOWV.sel = null; renderChain(FLOWV, FLOWV.resp);
+      TRACEV.resp = ${JSON.stringify(federatedFlow())}; TRACEV.sel = null; renderChain(TRACEV, TRACEV.resp);
       return 'rendered';
     } catch (e) { return e.constructor.name + ': ' + e.message; } })()`);
   assert.equal(out, 'rendered', 'the render threw instead of drawing the lanes');
@@ -3757,10 +3801,10 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
   // the key was scoped, the second row overwrote the first in `v.rows` and a
   // click lit the wrong one.
   assert.equal(rows.filter((r) => r.name === 'types').length, 2);
-  assert.equal(ev(ctx, "FLOWV.rows.has('table:types')"), true, "this project's row keeps the bare id");
-  assert.equal(ev(ctx, "FLOWV.rows.has('served table:types')"), true, 'the other project\'s row is a row of its own');
-  assert.equal(ev(ctx, "FLOWV.rows.get('served table:types').data.reads"), 2);
-  assert.equal(ev(ctx, "FLOWV.rows.get('table:types').data.reads"), 1);
+  assert.equal(ev(ctx, "TRACEV.rows.has('table:types')"), true, "this project's row keeps the bare id");
+  assert.equal(ev(ctx, "TRACEV.rows.has('served table:types')"), true, 'the other project\'s row is a row of its own');
+  assert.equal(ev(ctx, "TRACEV.rows.get('served table:types').data.reads"), 2);
+  assert.equal(ev(ctx, "TRACEV.rows.get('table:types').data.reads"), 1);
 
   // THE NAME COMES FIRST, and the project chip after it. The name is what the
   // reader is looking for; with the chip in front of it the name had no width
@@ -3769,7 +3813,7 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
   // name gone. Since RM67 the hop and the grade are on the line UNDER the name
   // (.fmeta), so the name line holds the glyph, the name and the chip.
   const kids = (r, sel) => r.querySelector(sel).children.map((c) => c.className.split(' ')[0]);
-  const named = (name) => byId.get('flowwrap').querySelectorAll('.frow')
+  const named = (name) => byId.get('tracewrap').querySelectorAll('.frow')
     .filter((r) => (r.querySelector('.fname') || {}).textContent === name);
   assert.deepEqual(named('Ctl.get').map((r) => kids(r, '.frowtop')), [['kglyph', 'fname', 'tag']],
     'the name is drawn before the project chip');
@@ -3781,7 +3825,7 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
   assert.deepEqual(kids(own, '.frowtop'), ['kglyph', 'fname'], "this project's own row wears no chip");
   // The chip carries the whole project id in its tooltip, because the chip
   // itself is the thing that gets cut.
-  const chip = byId.get('flowwrap').querySelectorAll('.frow')
+  const chip = byId.get('tracewrap').querySelectorAll('.frow')
     .find((r) => (r.querySelector('.fname') || {}).textContent === 'Ctl.get')
     .querySelector('.fproj');
   assert.equal(chip.textContent, 'served');
@@ -3789,8 +3833,8 @@ test('a Flow row from another project wears its badge, and two projects\' rows d
 
   // The card for a federated row NAMES the project and offers no button that
   // would ask this project for another project's file.
-  ev(ctx, "flowSelect(FLOWV, 'served table:types')");
-  const card = byId.get('flowside').querySelectorAll('.fcard')[0];
+  ev(ctx, "flowSelect(TRACEV, 'served table:types')");
+  const card = byId.get('traceside').querySelectorAll('.fcard')[0];
   assert.ok(card, 'the card did not open');
   assert.match(card.textContent, /project served/);
   assert.match(card.textContent, /switch the selector to served/);
@@ -3832,14 +3876,14 @@ test('the overview says how many calls leave this project, and says nothing when
 });
 
 // ---------------------------------------------------------------------------
-// A federated route on an Explore list (RM44)
+// A federated route on a Trace details list (RM44)
 // ---------------------------------------------------------------------------
 
 /**
  * `endpoint_impact` for a column of this project, with one route of its own and
  * one that another registered project serves. The second row is the case the
- * chip and the project-aware Flow button exist for: this project cannot answer
- * that route at all, so a Flow button addressed HERE gets `unknown-endpoint`.
+ * chip and the project-aware Trace button exist for: this project cannot answer
+ * that route at all, so a Trace button addressed HERE gets `unknown-endpoint`.
  */
 function federatedColumnAnswer() {
   const wrap = (answer) => ({
@@ -3864,21 +3908,21 @@ function federatedColumnAnswer() {
   };
 }
 
-/** The `<li>` rows of the "HTTP endpoints affected" panel, as {name, chip, btn}. */
+/** The `<li>` rows of a column's "APIs above that SQL" panel, as {name, chip, btn}. */
 function epRows(byId) {
   const panels = byId.get('view').querySelectorAll('.panel');
-  const panel = panels.find((p) => (p.querySelector('h2') || { textContent: '' }).textContent.startsWith('HTTP endpoints affected'));
+  const panel = panels.find((p) => (p.querySelector('h2') || { textContent: '' }).textContent.startsWith('APIs above that SQL'));
   assert.ok(panel, 'the endpoints panel is missing');
   return panel.querySelectorAll('li').map((li) => ({
     name: (li.querySelector('a.id') || {}).textContent,
     chip: li.querySelector('.fproj'),
-    btn: li.querySelectorAll('button').find((b) => b.textContent === 'Flow'),
+    btn: li.querySelectorAll('button').find((b) => b.textContent === 'Trace'),
     order: (li.querySelector('a.id').parentNode.children || []).map((c) => c.className.split(' ')[0]),
   }));
 }
 
-test('an Explore endpoint row from another project wears the chip after its name', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=explore' });
+test('a details endpoint row from another project wears the chip after its name', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   const { ci, ei } = federatedColumnAnswer();
   const out = ev(ctx, `(() => { try {
       renderColumnAnswer('owners.id', ${JSON.stringify(ci)}, ${JSON.stringify(ei)}); return 'rendered';
@@ -3896,35 +3940,37 @@ test('an Explore endpoint row from another project wears the chip after its name
   assert.equal(rows[1].chip.textContent, 'beta');
   assert.match(rows[1].chip.title, /^beta {2}this row is in another registered project/);
   assert.deepEqual(rows[1].order, ['id', 'tag'], 'the name comes first, the chip after it');
-  // ...and its Flow button says where it goes.
+  // ...and its Trace button says where it goes.
   assert.match(rows[1].btn.title, /open this route in beta, the project that serves it/);
   assert.match(rows[0].btn.title, /follow this call down to the tables/);
 });
 
-test('...and its Flow button opens the route in the project that serves it', async (t) => {
-  const { ctx, byId, calls, fireWindow } = await bootPage(t, { hash: '#p=alpha&tab=explore' });
+test('...and its Trace button opens the route in the project that serves it', async (t) => {
+  const { ctx, byId, calls, fireWindow } = await bootPage(t, { hash: '#p=alpha&tab=trace' });
   const { ci, ei } = federatedColumnAnswer();
   ev(ctx, `renderColumnAnswer('owners.id', ${JSON.stringify(ci)}, ${JSON.stringify(ei)})`);
 
-  // A row of THIS project keeps today's behaviour: the Flow tab, same project.
+  // A row of THIS project keeps today's behaviour: the route walked down, same project.
   epRows(byId)[0].btn.onclick();
   await settle(ctx, 4);
   assert.equal(ev(ctx, 'STATE.project'), 'alpha');
-  assert.equal(ev(ctx, 'STATE.tab'), 'flow');
-  assert.match(ev(ctx, 'location.hash'), /^#p=alpha&tab=flow/, 'the project in the hash did not change');
+  assert.equal(ev(ctx, 'STATE.tab'), 'trace');
+  assert.deepEqual(JSON.parse(ev(ctx, 'JSON.stringify([TRACE.target, TRACE.dir])')),
+    [{ kind: 'endpoint', id: 'GET /owners/{ownerId}' }, 'down']);
+  assert.match(ev(ctx, 'location.hash'), /^#p=alpha&tab=trace/, 'the project in the hash did not change');
 
   // The federated row builds a hash for the OTHER project, naming the tab and
-  // the route to land on, and the page follows it there.
-  ev(ctx, `activateTab('explore')`);
+  // the route to land on, and the page follows it there. (The column's
+  // details are drawn again from the same answer first.)
   ev(ctx, `renderColumnAnswer('owners.id', ${JSON.stringify(ci)}, ${JSON.stringify(ei)})`);
   calls.length = 0;
   epRows(byId)[1].btn.onclick();
   assert.equal(ev(ctx, 'location.hash'),
-    '#p=beta&tab=flow&pick=' + encodeURIComponent('endpoint:GET /api/gateway/owners/{ownerId}'));
+    '#p=beta&tab=trace&pick=' + encodeURIComponent('endpoint:GET /api/gateway/owners/{ownerId}') + '&dir=down');
   fireWindow('hashchange');
   await settle(ctx, 10);
   assert.equal(ev(ctx, 'STATE.project'), 'beta', 'the page went to the project that serves the route');
-  assert.equal(ev(ctx, 'STATE.tab'), 'flow');
+  assert.equal(ev(ctx, 'STATE.tab'), 'trace');
   // ...and every call it then made was asked of THAT project, not of this one.
   const asked = calls.filter((c) => c.url.startsWith('/api/call'));
   assert.ok(asked.length > 0, 'the arriving project was asked nothing');

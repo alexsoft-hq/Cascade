@@ -70,7 +70,9 @@ const view = document.getElementById('view');
 const errPanel=(e)=> el('div',{className:'panel', textContent:t('err.generic',{message:(e&&e.message)||String(e)})});
 
 // ---------- the URL hash: which project, which tab, which pick --------------
-// `#p=<id>&tab=<name>&pick=<node id>&src=<node id>`. A tab or a project change
+// `#p=<id>&tab=<name>&pick=<node id>&src=<node id>`, and on Trace the rest of
+// the question: `&dir=<down|up|detail>&mode=<mode>&depth=<n>` (RM67-U2b), so a
+// shared link asks the same question. A tab or a project change
 // REPLACES the entry (they are not steps a Back button should undo one at a
 // time); a PICK, and opening the source pane, PUSH one — so Back returns to the
 // previous picture and a reload lands on the same one. `popstate` and
@@ -78,13 +80,15 @@ const errPanel=(e)=> el('div',{className:'panel', textContent:t('err.generic',{m
 // still in memory is re-drawn without a request.
 function readHash(){
   const q=new URLSearchParams(String(location.hash||'').replace(/^#/,''));
-  return { p:q.get('p')||null, tab:q.get('tab')||null, pick:q.get('pick')||null, src:q.get('src')||null };
+  return { p:q.get('p')||null, tab:q.get('tab')||null, pick:q.get('pick')||null, src:q.get('src')||null,
+    dir:q.get('dir')||null, mode:q.get('mode')||null, depth:q.get('depth')||null };
 }
 /**
  * The hash for one destination. ONE place knows the format, so a hand-off that
  * names another project (a federated row's Flow button) builds the same string
  * the address bar already carries rather than a second spelling of it.
- * @param {{project:?string, tab:?string, pick:?string, src:?string}} to
+ * @param {{project:?string, tab:?string, pick:?string, src:?string,
+ *          dir:?string, mode:?string, depth:?(string|number)}} to
  */
 function hashFor(to){
   // A server with no project has no id to write: the hash then says only which
@@ -93,12 +97,14 @@ function hashFor(to){
   if(to.project) parts.push('p='+encodeURIComponent(to.project));
   parts.push('tab='+encodeURIComponent(to.tab||'overview'));
   if(to.pick) parts.push('pick='+encodeURIComponent(to.pick));
+  for(const k of ['dir','mode','depth']) if(to.pick && to[k]!=null && to[k]!=='') parts.push(k+'='+encodeURIComponent(to[k]));
   if(to.src) parts.push('src='+encodeURIComponent(to.src));
   return '#'+parts.join('&');
 }
 function hashNow(){
   return hashFor({ project:STATE.project, tab:STATE.tab||'overview',
-    pick:PICK[STATE.tab], src:(SRC.open && SRC.node) ? SRC.node : null });
+    pick:PICK[STATE.tab], src:(SRC.open && SRC.node) ? SRC.node : null,
+    ...(STATE.tab==='trace' ? traceHashParts() : {}) });
 }
 function writeHash(push){
   if(HASHLOCK) return;
@@ -108,16 +114,24 @@ function writeHash(push){
   catch(e){ location.hash=h; }
 }
 function applyHash(){
-  const h=readHash();
-  if(h.p && h.p!==STATE.project && STATE.projects.some((x)=>x.id===h.p)){ switchProject(h.p, { tab:h.tab, pick:h.pick }); return; }
+  // A link written before Trace (tab=explore, flow or impact) is read as the
+  // Trace question it was (traceReadHash), and lands on the same target.
+  const h=traceReadHash(readHash());
+  if(h.p && h.p!==STATE.project && STATE.projects.some((x)=>x.id===h.p)){ switchProject(h.p, h); return; }
   const was=HASHLOCK; HASHLOCK=true;
   try{
     if(h.tab && h.tab!==STATE.tab && TABNAMES.indexOf(h.tab)>=0) activateTab(h.tab);
-    if(Object.hasOwn(PICK, STATE.tab)) pickRestore(STATE.tab, h.pick||null);
+    restorePickFrom(h);
     if(h.src){ if(!SRC.open || SRC.node!==h.src) srcOpen(h.src, {push:false}); }
     else if(SRC.open) srcClose();
   } finally { HASHLOCK=was; }
   refreshShowAll();
+}
+
+/** Put the tab on screen back on the pick a URL names: Trace its whole question, Graph and ERD their node. */
+function restorePickFrom(h){
+  if(STATE.tab==='trace') traceRestore(h);
+  else if(Object.hasOwn(PICK, STATE.tab)) pickRestore(STATE.tab, h.pick||null);
 }
 
 // ---------- the project selector --------------------------------------------
@@ -128,7 +142,8 @@ function applyHash(){
 // anything re-asked.
 /**
  * @param {string} id
- * @param {{tab:?string, pick:?string}} [dest] where the reader asked to LAND.
+ * @param {{tab:?string, pick:?string, dir:?string, mode:?string, depth:?string}} [dest]
+ *        where the reader asked to LAND.
  *        A deep link, or a federated row's Flow button, names a tab and a pick
  *        as well as a project, and both belong to the project that is arriving.
  *        The tab is switched only AFTER the old project's state is gone, so
@@ -148,7 +163,8 @@ function switchProject(id, dest){
   loadOverview();
   const to = dest && dest.tab && TABNAMES.indexOf(dest.tab)>=0 ? dest.tab : STATE.tab;
   if(to!==STATE.tab) activateTab(to); else loadTab(STATE.tab);
-  if(dest && dest.pick && Object.hasOwn(PICK, STATE.tab)) pickAsk(STATE.tab, dest.pick);
+  if(dest && dest.pick && STATE.tab==='trace') traceRestore(dest);
+  else if(dest && dest.pick && Object.hasOwn(PICK, STATE.tab)) pickAsk(STATE.tab, dest.pick);
 }
 // Everything the PREVIOUS project left behind. A renderer that is not stopped
 // here keeps its own animation loop and its own canvas alive behind the new
@@ -180,13 +196,7 @@ function resetProjectState(){
     byId(RAILDEF[tab].moreId).replaceChildren();
     if(RAILDEF[tab].chipsId) byId(RAILDEF[tab].chipsId).replaceChildren();
   }
-  for(const v of [FLOWV, IMPACTV]){
-    v.seq++; v.resp=null; v.args=null; v.sel=null; v.pick=null; v.limit=40;
-    v.rows.clear(); v.linkSpecs=[]; v.paths=[]; v.layerOpen.clear(); laneReset(v);
-    const w=vwrap(v); w.classList.remove('layersmode'); w.replaceChildren();
-    vside(v).replaceChildren();
-    closeSug(v);
-  }
+  traceResetProject();
   CP.seq++; CP.resp=null; CP.sel=null; CP.cellEls=new Map();
   byId('cpsummary').replaceChildren(); byId('cpmatrix').replaceChildren(); byId('cpside').replaceChildren();
   GRAPHV.seq++; GMAP.seq++; GMAP.findSeq++;

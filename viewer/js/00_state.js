@@ -199,11 +199,13 @@ const SRC={ open:false, node:null, tab:null, whole:false, resp:null, loading:fal
 // its opening state — which makes the button a readout as well as a way back.
 // Escape does the same thing from anywhere in the tab, and the browser's own
 // Back button undoes one pick at a time, because a pick now writes the URL.
-const SHOWALL = { explore:'exshowall', flow:'fshowall', impact:'ishowall', graph:'gshowall', erd:'eshowall' };
+const SHOWALL = { trace:'tshowall', graph:'gshowall', erd:'eshowall' };
 // The last pick each of those tabs made, as a full `<kind>:<key>` node id, and
 // the answer it was drawn from. The ID goes in the URL, so a reload lands on the
-// same picture; the ANSWER stays here, so a Back button costs no request.
-const PICK = { explore:null, flow:null, impact:null, graph:null, erd:null };
+// same picture; the ANSWER stays here, so a Back button costs no request. On
+// Trace the pick is the START of the question (TRACE.target), never a row the
+// reader clicked in the picture.
+const PICK = { trace:null, graph:null, erd:null };
 const PICKMEM = new Map();
 const PICKMEM_MAX = 24;
 // True while the page is APPLYING a URL rather than writing one: without it,
@@ -254,23 +256,16 @@ const RAIL_KIND_KEY = { table:'rail.kind.table', column:'rail.kind.column',
 const RAIL_SORT_KEY = { name:'rail.sort.name', path:'rail.sort.path', tables:'rail.sort.tables',
   statements:'rail.sort.statements', endpoints:'rail.sort.endpoints', groups:'rail.sort.groups',
   columns:'rail.sort.columns', reads:'rail.sort.reads', writes:'rail.sort.writes' };
-// Impact is read for one question ("what would a change here break?"), so its
-// table list opens on the tables the most endpoints reach, not the busiest SQL.
-const RAIL_TAB_SORT = { impact: { table:'endpoints' } };
+// Trace is most often asked "what would a change here break?", so its table
+// list opens on the tables the most endpoints reach, not the busiest SQL.
+const RAIL_TAB_SORT = { trace: { table:'endpoints' } };
+// ONE LIST FOR THE TRACE PLACE (RM67-U2b): every kind a question can start
+// from. The kind it opens on is remembered per project, because which end a
+// reader starts from is a property of the project, not of the browser.
 const RAILDEF = {
-  explore: { kinds:['table','column','statement','endpoint','symbol','screen'], kind:'table',
-    railId:'exrail', listId:'exlist', countId:'excount', moreId:'exmore', sortId:'exsort',
-    chipsId:'exkinds', drawerId:'exdrawer', closeId:'exclose', inputId:'q', lead:'rail.lead.explore' },
-  // Flow can be walked from either end of the round trip: the routes this pack
-  // serves, or the screens that call them. The switch is remembered per
-  // project, because which end you read from is a property of the project you
-  // are reading, not of the browser.
-  flow: { kinds:['endpoint','screen'], kind:'endpoint',
-    railId:'flowrail', listId:'flist', countId:'fcount', moreId:'fmore', sortId:'fsort',
-    chipsId:'fkinds', drawerId:'fdrawer', closeId:'fclose', inputId:'fentry', lead:'rail.lead.flow' },
-  impact: { kinds:['table','statement','symbol'], kind:'table',
-    railId:'impactrail', listId:'ilist', countId:'icount', moreId:'imore', sortId:'isort',
-    chipsId:'ikinds', drawerId:'idrawer', closeId:'iclose', inputId:'ientry', lead:'rail.lead.impact' },
+  trace: { kinds:['endpoint','screen','table','column','statement','symbol'], kind:'table',
+    railId:'tracerail', listId:'tlist', countId:'tcount', moreId:'tmore', sortId:'tsort',
+    chipsId:'tkinds', drawerId:'tdrawer', closeId:'tclose', inputId:'tentry', lead:'rail.lead.trace' },
 };
 const RAILTABS = Object.keys(RAILDEF);
 const RAIL = {};
@@ -330,10 +325,24 @@ function laneViewState(){
   return { model:null, labels:null, perLine:null, open:new Set(), find:'', found:new Set(),
     proxy:new Map(), colKeys:[], findEl:null, lastRaw:null };
 }
-const FLOWV = makeChainView({name:'flow', direction:'down', wrapId:'flowwrap', sideId:'flowside',
-  entryId:'fentry', sugId:'fsug', modeId:'fmode', depthId:'fdepth', segId:'fview'});
-const IMPACTV = makeChainView({name:'impact', direction:'up', wrapId:'impactwrap', sideId:'impactside',
-  entryId:'ientry', sugId:'isug', modeId:'imode', depthId:'idepth', segId:'iview'});
+// ONE picture for the Trace place, drawn either way: its `direction` is the
+// direction of the answer on screen, set from that answer (renderChain).
+const TRACEV = makeChainView({name:'trace', direction:'down', wrapId:'tracewrap', sideId:'traceside',
+  entryId:'tentry', sugId:'tsug', modeId:'tmode', depthId:'tdepth', segId:'tview'});
+/**
+ * THE QUESTION THE TRACE PLACE IS ASKING (RM67-U2b), kept apart from what the
+ * picture shows:
+ *   target    the START: {kind, id}. Only a pick, a hand-off or "Trace from
+ *             here" moves it; a row clicked in the picture is TRACEV.sel.
+ *   dir       'down' what it uses, 'up' where it is used, 'detail' what it is.
+ *             Switching it keeps the target.
+ *   depthSet  whether the reader chose the depth. A chosen depth survives a
+ *             direction switch and a new target; only the automatic default
+ *             adapts to the target (traceAutoDepth).
+ * Mode and depth live in their controls (#tmode, #tdepth); the rows per lane
+ * in TRACEV.limit. Those four and the target are the cache key (traceKey).
+ */
+const TRACE = { target:null, dir:'down', depthSet:false, edits:false };
 
 // ---------- Graph tab: one node's neighborhood, laid out by hop ----------
 // The answer is `neighborhood`'s: nodes and graded edges around a focus. The

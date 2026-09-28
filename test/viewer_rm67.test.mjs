@@ -118,11 +118,11 @@ test('a rule opens on what it gave here, each link a way to the tab that reads i
   const ex = detail().querySelector('.ruleex').children;
   assert.equal(ex[0].querySelector('.ruleok').textContent, 'holds');
   assert.equal(ex[1].querySelector('.rulebad').textContent, 'does not hold');
-  // A route end opens the route on Flow.
+  // A route end opens the route on Trace, walked down.
   ends[0].onclick();
   await settle(ctx, 6);
-  assert.equal(ev(ctx, 'STATE.tab'), 'flow');
-  assert.equal(ev(ctx, 'JSON.stringify(FLOWV.pick)'), '{"kind":"endpoint","value":"GET /api/users"}');
+  assert.equal(ev(ctx, 'STATE.tab'), 'trace');
+  assert.equal(ev(ctx, 'JSON.stringify([TRACE.target, TRACE.dir])'), '[{"kind":"endpoint","id":"GET /api/users"},"down"]');
 });
 
 test('with no verdicts from the server, the examples say so rather than claim they hold', async (t) => {
@@ -165,12 +165,12 @@ test('a share is shown with the limit that bounds it, in its own card, and no ri
   assert.equal(card.querySelector('.kpinote').textContent, 'tables and columns from schema.prisma');
 });
 
-test('Flow says when this mode stopped at the route itself, and how to go further', async (t) => {
-  const { ctx } = await bootPage(t, { hash: '#p=gamma&tab=flow' });
+test('Trace says when this mode stopped at the route itself, and how to go further', async (t) => {
+  const { ctx } = await bootPage(t, { hash: '#p=gamma&tab=trace' });
   await settle(ctx, 10);
   const answer = { answer: { entry: { kind: 'endpoint', id: 'GET /a', grade: 'HEURISTIC', start: 'endpoint:GET /a' },
     walk: { mode: 'conservative', cut: { byMode: 1, byModeGrades: { HEURISTIC: 1 } } } } };
-  const panel = ev(ctx, `chainLeftOut(FLOWV, ${JSON.stringify(answer)}).textContent`);
+  const panel = ev(ctx, `chainLeftOut(TRACEV, ${JSON.stringify(answer)}).textContent`);
   assert.match(panel, /This route's own link to its handler is graded HEURISTIC, so mode conservative stops at the route\./);
   // Each grade left out is named, counted and said in the legend's words (RM67).
   assert.match(panel, /did not follow 1 link\(s\) of a grade it does not admit/);
@@ -178,7 +178,7 @@ test('Flow says when this mode stopped at the route itself, and how to go furthe
   assert.match(panel, /Switch to heuristic/);
   answer.answer.walk.mode = 'heuristic';
   answer.answer.walk.cut = { byMode: 1, byModeGrades: { UNRESOLVED: 1 } };
-  const wide = ev(ctx, `chainLeftOut(FLOWV, ${JSON.stringify(answer)}).textContent`);
+  const wide = ev(ctx, `chainLeftOut(TRACEV, ${JSON.stringify(answer)}).textContent`);
   assert.doesNotMatch(wide, /stops at the route/, 'a mode that walks the grade does not stop there');
   assert.match(wide, /No mode walks these/);
 });
@@ -220,49 +220,52 @@ test('a column lookup that fails is a failure with its reason and a way to ask a
   let fail = true;
   const override = (url, body) => (fail && body && body.name === 'browse' && body.arguments.kind === 'column'
     ? json({ error: { code: 'pack-unreadable', message: 'the pack could not be read' } }, 503) : null);
-  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=impact', override });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=trace', override });
   await settle(ctx, 10);
-  byId.get('ilist').querySelectorAll('.brcaret')[0].click();
+  byId.get('tlist').querySelectorAll('.brcaret')[0].click();
   await settle(ctx, 10);
-  const child = byId.get('ilist').querySelector('.brchildren');
+  const child = byId.get('tlist').querySelector('.brchildren');
   assert.match(child.textContent, /The columns could not be read: pack-unreadable: the pack could not be read/);
   assert.doesNotMatch(child.textContent, /Nothing/);
   fail = false;
   child.querySelector('button').onclick();
   await settle(ctx, 10);
-  assert.ok(byId.get('ilist').querySelectorAll('.brchild').length > 0, 'asked again, the columns are there');
+  assert.ok(byId.get('tlist').querySelectorAll('.brchild').length > 0, 'asked again, the columns are there');
 });
 
-test('a screen axis that was not collected keeps its entry on Flow, and says why and what to set', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=flow' });
+test('a screen axis that was not collected keeps its entry on Trace, and says why and what to set', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=trace' });
   await settle(ctx, 10);
-  assert.equal(byId.get('fkinds').classList.contains('hidden'), true, 'a pack that declares no screen axis has nothing to say');
-  ev(ctx, `OV.resp.answer.axes.screen = { status:'not-shipped', reason:'screenAxis.enabled is undeclared' }; railRenderChips('flow');`);
-  assert.equal(byId.get('fkinds').classList.contains('hidden'), false);
-  assert.equal(byId.get('fkinds').children[1].querySelector('.brn').textContent, '—', 'a dash, not a zero');
-  byId.get('fkinds').children[1].onclick();
+  const chip = () => byId.get('tkinds').children.find((c) => /^Screens/.test(c.textContent));
+  assert.equal(chip(), undefined, 'a pack that declares no screen axis has nothing to say');
+  ev(ctx, `OV.resp.answer.axes.screen = { status:'not-shipped', reason:'screenAxis.enabled is undeclared' }; railRenderChips('trace');`);
+  assert.equal(chip().querySelector('.brn').textContent, '—', 'a dash, not a zero');
+  chip().onclick();
   await settle(ctx, 10);
-  assert.match(byId.get('flist').textContent, /No screen was collected in this analysis\.screenAxis\.enabled is undeclared/);
+  assert.match(byId.get('tlist').textContent, /No screen was collected in this analysis\.screenAxis\.enabled is undeclared/);
 });
 
 test('a list mostly of guessed routes says so once; a few guessed routes carry their grade on the row', async (t) => {
-  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=flow' });
+  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=trace' });
+  await settle(ctx, 10);
+  ev(ctx, "railSetKind('trace', 'endpoint')");
   await settle(ctx, 10);
   const row = { grade: 'HEURISTIC', statements: 1, tables: 1, handlers: 1 };
-  ev(ctx, "OV.resp.answer.reach.routeGrades = { EXACT:3, HEURISTIC:1 }; railRenderCount('flow');");
-  assert.match(byId.get('fcount').textContent, /1 of 4 routes graded HEURISTIC/);
+  ev(ctx, "OV.resp.answer.reach.routeGrades = { EXACT:3, HEURISTIC:1 }; railRenderCount('trace');");
+  assert.match(byId.get('tcount').textContent, /1 of 4 routes graded HEURISTIC/);
   assert.equal(ev(ctx, `railStats('endpoint', ${JSON.stringify(row)})[0].className`), 'brgrade');
-  ev(ctx, "OV.resp.answer.reach.routeGrades = { EXACT:1, HEURISTIC:3 }; railRenderCount('flow');");
-  assert.match(byId.get('fcount').textContent, /3 of 4 routes graded HEURISTIC/);
+  ev(ctx, "OV.resp.answer.reach.routeGrades = { EXACT:1, HEURISTIC:3 }; railRenderCount('trace');");
+  assert.match(byId.get('tcount').textContent, /3 of 4 routes graded HEURISTIC/);
   assert.notEqual(ev(ctx, `railStats('endpoint', ${JSON.stringify(row)})[0].className`), 'brgrade');
 });
 
-test('the chain toolbars put the target and Draw first; depth, drawing and motion, and the three saves, are one menu each', async (t) => {
+test('the Trace toolbar puts the target, Trace and the direction first; depth, drawing and motion, and the three saves, are one menu each', async (t) => {
   const { byId } = await bootPage(t);
-  for (const x of ['f', 'i']) {
+  for (const x of ['t']) {
     const bar = byId.get(`${x}entry`).parentNode.parentNode;
     const order = bar.children.map((c) => c.id || c.children[0]?.id || c.tagName);
-    assert.ok(order.indexOf(`${x}draw`) < order.indexOf(`${x}mode`), order.join(' '));
+    assert.ok(order.indexOf(`${x}draw`) < order.indexOf(`${x}dir`), order.join(' '));
+    assert.ok(order.indexOf(`${x}dir`) < order.indexOf(`${x}mode`), order.join(' '));
     assert.equal(byId.get(`${x}depth`).closest('details').id, `${x}opts`);
     assert.equal(byId.get(`${x}flow`).closest('details').id, `${x}opts`);
     for (const id of ['export', 'svg', 'png']) assert.equal(byId.get(`${x}${id}`).closest('details').id, `${x}exports`);

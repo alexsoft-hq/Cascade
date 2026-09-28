@@ -1,0 +1,922 @@
+<body>
+  <svg class="marksprite" aria-hidden="true" focusable="false">
+    <symbol id="cascade-mark" fill="none" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+      <path d="M2.5 4.5h8v6" stroke="#1B2A41" stroke-width="2.8"></path>
+      <path d="M10.5 10.5h5.5v6" stroke="#2B5FA5" stroke-width="2.2"></path>
+      <path d="M16 16.5h3.5" stroke="#7FA6D8" stroke-width="1.6"></path>
+      <circle cx="20.5" cy="16.5" fill="#2B5FA5" r="1.9"></circle>
+    </symbol>
+  </svg>
+  <header>
+    <h1>
+      <svg class="mark" aria-hidden="true" focusable="false">
+        <use href="#cascade-mark"></use>
+      </svg>
+      Cascade
+    </h1>
+    <div id="mline" class="mline">
+      <span class="mval" data-t-title="mast.project" title="which project this page is showing">
+        <select id="projsel" class="proj hidden" data-t-title="project.select.title" onchange title="which project this page is about. Switching clears every tab and asks the new project from scratch."></select>
+        <span id="projone" class="projone">fullstack</span>
+        <span id="projnone" class="projnone hidden"></span>
+      </span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <span id="mlanes" class="mval" data-t-title="mast.lanes" title="which analyzers ran over this project">sql + java + web</span>
+      <span class="msep" aria-hidden="true">
+        ·
+      </span>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <span id="mbuild" class="mbuild hidden">…</span>
+    </div>
+    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
+      <span class="crlane" title="we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here.">
+        screens
+        <b>7 ~</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
+        api groups
+        <b>3</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        endpoints
+        <b>12</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
+        services
+        <b>4</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
+        SQL
+        <b>5 ~</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane">
+        tables
+        <b>2</b>
+      </span>
+      <span class="crrule"></span>
+      <span class="crlane" title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT">
+        columns
+        <b>6 ~</b>
+      </span>
+    </div>
+    <div id="mchips" class="mchips">
+      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
+        <span class="mdot" aria-hidden="true"></span>
+        <span id="mfreshsr" class="sronly">freshness unknown</span>
+        <span id="mfresh"></span>
+      </span>
+      <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
+      <span id="mtracechip" class="mchip quiet hidden">…</span>
+      <span id="mlimitcell">
+        <button class="foldlead mchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+          </svg>
+          <span class="foldtext">
+            11 limits
+          </span>
+        </button>
+      </span>
+      <span id="langseg" class="seg mini" data-t-title="lang.title" title="the language of this page. Words the engine itself wrote, like grades and limits, stay in English so you can match them against the raw answer.">
+        <button class="on" onclick>EN</button>
+        <button onclick>한국어</button>
+      </span>
+      <span id="themeseg" class="seg mini" data-t-title="theme.title" title="how this page is drawn. Dark gives every kind of node its own colour and makes a lit one glow. Light is ink on paper, where the shape carries the kind and a greyscale print still reads.">
+        <button class="on" onclick>Dark</button>
+        <button onclick>Light</button>
+      </span>
+    </div>
+    <div id="mfolds" class="mfolds">
+      <div class="foldbody"></div>
+    </div>
+    <div id="proj" class="mnote"></div>
+    <div id="snapbar" class="snapbar hidden" role="note"></div>
+    <div class="tabs">
+      <button class="tab" data-t="tab.overview" data-tab="overview" onclick type="button">Overview</button>
+      <button class="tab active" data-t="tab.trace" data-tab="trace" onclick type="button">Trace</button>
+      <button class="tab" data-t="tab.coupling" data-tab="coupling" onclick type="button">Coupling</button>
+      <button class="tab" data-t="tab.graph" data-tab="graph" onclick type="button">Graph</button>
+      <button class="tab" data-t="tab.erd" data-tab="erd" onclick type="button">ERD</button>
+      <button class="tab" data-t="tab.tx" data-tab="tx" onclick type="button">Transactions</button>
+      <button class="tab" data-t="tab.rules" data-tab="rules" onclick type="button">Rules</button>
+      <button class="tab hidden" data-t="tab.compare" data-tab="compare" onclick type="button">…</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="tab-overview" class="hidden">…</div>
+    <div id="tab-trace">
+      <div class="searchbar">
+        <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
+        <div style="position:relative;flex:1;min-width:240px">
+          <input id="tentry" autocomplete="off" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" style="width:100%" type="text" value="/things/list"></input>
+          <div id="tsug" class="sug hidden"></div>
+        </div>
+        <button id="tdraw" class="primary" data-t="btn.trace" onclick>Trace</button>
+        <span id="tdir" class="seg tdir" data-t-title="trace.dir.title" title="which way to read the target. Only the ways this kind of target has are shown.">
+          <button class="on" aria-pressed="true" onclick title="follow it down: the code it runs and the tables it ends at" type="button">What it uses</button>
+          <button aria-pressed="false" onclick title="what it is, as lists: its SQL, its columns with reads and writes, or the transactions it runs through" type="button">Details</button>
+        </span>
+        <select id="tmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
+          <option data-grade="SOUND_SET" data-t="mode.conservative" selected value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
+          <option data-grade="EXACT" data-t="mode.strict" value="strict">strict: proven links only (EXACT)</option>
+          <option data-grade="HEURISTIC" data-t="mode.heuristic" value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
+        </select>
+        <details id="topts" class="tbmenu">
+          <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
+          <div class="tbmenubody">
+            <label class="tbfield">
+              <span data-t="tb.depth">depth</span>
+              <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent." value="8">
+                <option>
+                  1
+                </option>
+                <option>
+                  2
+                </option>
+                <option>
+                  3
+                </option>
+                <option>
+                  4
+                </option>
+                <option>
+                  5
+                </option>
+                <option>
+                  6
+                </option>
+                <option>
+                  7
+                </option>
+                <option selected>
+                  8
+                </option>
+              </select>
+            </label>
+            <span id="tview" class="seg" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time.">
+              <button class="on" data-t="view.lanes" data-view="lanes" onclick>chain</button>
+              <button data-t="view.layers" data-view="layers" onclick>by hop</button>
+            </span>
+            <button id="tflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+          </div>
+        </details>
+        <details id="texports" class="tbmenu">
+          <summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as one HTML file, an SVG or a PNG">Save as</summary>
+          <div class="tbmenubody tbcol">
+            <button id="texport" data-t="btn.export" data-t-title="btn.export.title" disabled onclick title="save this picture as one HTML file that opens without Cascade: the answer, its grades and its limits are inside">HTML file</button>
+            <button id="tsvg" data-t-title="btn.svg.title" disabled onclick title="save this picture as one SVG, for a slide or a document: every row, grade, cut and limit is drawn in it">
+              SVG
+            </button>
+            <button id="tpng" data-t-title="btn.png.title" disabled onclick title="save this picture as a PNG, made in this browser from the SVG: every row, grade, cut and limit is drawn in it">
+              PNG
+            </button>
+          </div>
+        </details>
+        <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" onclick title="what your uncommitted git changes would affect">My edits</button>
+        <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
+      </div>
+      <div class="hint hintfold" data-t-fold="hint.trace">
+        <div class="fold">
+          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+            </svg>
+            <span class="foldtext">
+              Pick one thing, then read what it uses, where it is used, or what it is.
+            </span>
+          </button>
+          <div class="foldbody"></div>
+        </div>
+      </div>
+      <div class="flowgrid">
+        <div id="tracerail" class="browserail">
+          <div class="brtop">
+            <span id="tkinds" class="seg brkinds">
+              <button onclick>
+                Endpoints
+              </button>
+              <button class="on" onclick>
+                Screens
+              </button>
+              <button onclick>
+                Tables
+              </button>
+              <button onclick>
+                Columns
+              </button>
+              <button onclick>
+                Statements
+              </button>
+              <button onclick title="Type two letters in the filter to list methods.">
+                Methods
+              </button>
+            </span>
+            <div class="brsort">
+              <select id="tsort" data-t-title="rail.sort.title" onchange title="what puts a row at the top of this list" value="endpoints">
+                <option selected="true" value="endpoints">endpoints</option>
+                <option value="tables">tables</option>
+                <option value="name">name</option>
+              </select>
+              <span id="tcount" class="brcount"></span>
+              <button id="tclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
+                &#x2715;
+              </button>
+            </div>
+          </div>
+          <div id="tlist" class="brlist" role="listbox" tabindex="-1">
+            <div class="panel">error: unknown-key: nothing recorded for browse</div>
+          </div>
+          <div id="tmore" class="brfoot"></div>
+          <div class="brkeys" data-t="rail.keys">↑↓ move, Enter picks, / filters</div>
+          <button class="railgrab" data-t-title="rail.resize.title" title="drag to make this list wider or narrower. Double-click to put it back."></button>
+        </div>
+        <div class="flowpane">
+          <div id="tracehead" class="tracehead" role="note">
+            <span class="tquestion">
+              <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+              </svg>
+              What it uses:
+              <code class="id">/things/list</code>
+            </span>
+            <span>mode conservative</span>
+            <span title="depth: the most links a walk follows from the target. What lies past it is unknown, not absent.">depth 8</span>
+            <span class="tnodir">A screen is the top of the chain, so nothing uses it.</span>
+          </div>
+          <div id="tracestrip" class="fstrip">
+            <div class="fstripinfo">
+              <span class="fstripstart" title="screen:/things/list">
+                <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                  <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                  <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+                </svg>
+                <span class="fstripname">/things/list</span>
+              </span>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>frontend function</span>
+                <span class="count">4</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>endpoint</span>
+                <span class="count">2</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>service layer</span>
+                <span class="count">4</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>mapper statement</span>
+                <span class="count">2</span>
+              </button>
+              <button class="fstripchip" onclick title="bring this lane into view">
+                <span>table</span>
+                <span class="count">1</span>
+              </button>
+            </div>
+            <input class="fstripfind" data-t-ph="chain.find.ph" data-t-title="chain.find.title" placeholder="find in this picture" title="find a row by name or id. A folded row that matches is opened, and Enter goes to the next one." type="search"></input>
+            <span class="count fstripfound"></span>
+          </div>
+          <div id="tracecanvas" class="flowcanvas">
+            <div id="tracewrap" class="flowwrap lanesmode">
+              <svg class="flowsvg" height="undefined" width="undefined">
+                <path id="fp-trace-0" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="0s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-0"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-3.333333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-0"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-6.666666666666666s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-0"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-1" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-3.7s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-1"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-7.033333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-1"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-10.366666666666667s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-1"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-2" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-0.444s" dur="0.6s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-2"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-3" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-0.06599999999999992s" dur="0.6s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-3"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-4" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-4.8s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-4"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-8.133333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-4"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-11.466666666666665s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-4"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-5" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-8.5s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-5"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-11.833333333333334s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-5"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-15.166666666666666s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-5"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-6" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-2.1999999999999975s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-6"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-5.53333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-6"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-8.866666666666664s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-6"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-7" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-5.899999999999999s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-7"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-9.23333333333333s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-7"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-12.566666666666663s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-7"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-8" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-0.576s" dur="0.6s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-8"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-9" class="flink" d="M0,310 C-22,310 -22,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-0.19800000000000004s" dur="0.6s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-9"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-10" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-7.000000000000002s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-10"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-10.333333333333334s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-10"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-13.666666666666668s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-10"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-11" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-0.7000000000000028s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-11"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-4.033333333333336s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-11"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#7C89AD" r="2.2">
+                    <animatemotion begin="-7.366666666666669s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-11"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+                <path id="fp-trace-12" class="flink" d="M900,310 C926,310 -26,310 0,310" stroke="#7C89AD" stroke-dasharray="6 3"></path>
+                <g class="fdots">
+                  <circle fill="#60A5FA" r="2.2">
+                    <animatemotion begin="-4.399999999999995s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-12"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#60A5FA" r="2.2">
+                    <animatemotion begin="-7.733333333333327s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-12"></mpath>
+                    </animatemotion>
+                  </circle>
+                  <circle fill="#60A5FA" r="2.2">
+                    <animatemotion begin="-11.06666666666666s" dur="10s" repeatCount="indefinite">
+                      <mpath href="#fp-trace-12"></mpath>
+                    </animatemotion>
+                  </circle>
+                </g>
+              </svg>
+              <div class="fcol" data-field="entry" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">entry</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                      <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+                    </svg>
+                    <span class="fname" title="/things/list">
+                      <span class="fline">/things/list</span>
+                    </span>
+                  </div>
+                  <div class="fmeta"></div>
+                </div>
+              </div>
+              <div class="fcol" data-field="webFunctions" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">frontend function</span>
+                    <span class="count" title="how many rows the walk found in this lane">4</span>
+                  </div>
+                </div>
+                <div class="fhop">hop 1</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="front/src/views/things/list.vue#getList
+front/src/views/things/list.vue">
+                      <span class="fline">list.getList</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-webfn" title="hop 1">1</span>
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                      EXACT
+                    </span>
+                    <span class="tag" title="this function is declared in the file the route mounts as its screen">component</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="front/src/views/things/list.vue#openOrder
+front/src/views/things/list.vue">
+                      <span class="fline">list.openOrder</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-webfn" title="hop 1">1</span>
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                      EXACT
+                    </span>
+                    <span class="tag" title="this function is declared in the file the route mounts as its screen">component</span>
+                  </div>
+                </div>
+                <div class="fhop">hop 2</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="front/src/api/orders.js#getOrder
+front/src/api/orders.js">
+                      <span class="fline">orders.getOrder</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-webfn" title="hop 2">2</span>
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                      EXACT
+                    </span>
+                    <span class="tag" title="this function is in a module the component imports, not in the component itself">api</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#67E8F9" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="front/src/api/things.js#listThings
+front/src/api/things.js">
+                      <span class="fline">things.listThings</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-webfn" title="hop 2">2</span>
+                    <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                      EXACT
+                    </span>
+                    <span class="tag" title="this function is in a module the component imports, not in the component itself">api</span>
+                  </div>
+                </div>
+              </div>
+              <div class="fcol" data-field="endpoints" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">endpoint</span>
+                    <span class="count" title="how many rows the walk found in this lane">2</span>
+                  </div>
+                </div>
+                <div class="fhop">hop 3</div>
+                <div class="fdiv">candidate set (2): the real target is among these</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                    </svg>
+                    <span class="fname" title="GET /orders/{id}
+via orders.getOrder">
+                      <span class="fline">GET /orders/{id}</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-endpoint" title="hop 3">3</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="count" title="how many frontend functions call this route">web 1</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
+                    </svg>
+                    <span class="fname" title="GET /things/list
+via things.listThings">
+                      <span class="fline">GET /things/list</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-endpoint" title="hop 3">3</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="count" title="how many frontend functions call this route">web 2</span>
+                  </div>
+                </div>
+              </div>
+              <div class="fcol" data-field="services" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">service layer</span>
+                    <span class="count" title="how many rows the walk found in this lane">4</span>
+                  </div>
+                </div>
+                <div class="fhop">hop 4</div>
+                <div class="fdiv">candidate set (2): the real target is among these</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="com.example.web.OrderController#one
+src/main/java/com/example/web/OrderController.java">
+                      <span class="fline">OrderController.one</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-service" title="hop 4">4</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="com.example.web.ThingController#list
+src/main/java/com/example/web/ThingController.java">
+                      <span class="fline">ThingController.list</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-service" title="hop 4">4</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                  </div>
+                </div>
+                <div class="fhop">hop 5</div>
+                <div class="fdiv">candidate set (2): the real target is among these</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="com.example.service.ThingService#byId
+src/main/java/com/example/service/ThingService.java">
+                      <span class="fline">ThingService.byId</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-service" title="hop 5">5</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
+                    </svg>
+                    <span class="fname" title="com.example.service.ThingService#list
+src/main/java/com/example/service/ThingService.java">
+                      <span class="fline">ThingService.list</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-service" title="hop 5">5</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div class="fcol" data-field="statements" style="width: 229px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">mapper statement</span>
+                    <span class="count" title="how many rows the walk found in this lane">2</span>
+                  </div>
+                </div>
+                <div class="fhop">hop 7</div>
+                <div class="fdiv">reached through a candidate call (2)</div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M6,2.1L9.9,6L6,9.9L2.1,6Z" fill="#FB923C"></path>
+                    </svg>
+                    <span class="fname" title="com.example.domain.ThingRepository.findById
+via ThingRepository.findById
+thing">
+                      <span class="fline">ThingRepository.findById</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-statement" title="hop 7">7</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="tag read">builtin</span>
+                    <span class="count" title="thing">thing</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <path d="M6,2.1L9.9,6L6,9.9L2.1,6Z" fill="#FB923C"></path>
+                    </svg>
+                    <span class="fname" title="com.example.domain.ThingRepository.findByKind
+via ThingRepository.findByKind
+thing">
+                      <span class="fline">ThingRepository.findByKind</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-statement" title="hop 7">7</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="tag read">derived</span>
+                    <span class="count" title="thing">thing</span>
+                  </div>
+                </div>
+              </div>
+              <div class="fcol" data-field="tables" style="width: 200px">
+                <div class="fcolhd">
+                  <div class="fcolhead">
+                    <span class="fcoltitle">table</span>
+                    <span class="count" title="how many rows the walk found in this lane">1</span>
+                  </div>
+                </div>
+                <div class="frow" role="button" tabIndex="0">
+                  <div class="frowtop">
+                    <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                      <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
+                    </svg>
+                    <span class="fname" title="thing
+one row per thing
+via ThingRepository.findById
+read">
+                      <span class="fline">thing</span>
+                    </span>
+                  </div>
+                  <div class="fmeta">
+                    <span class="fhopn kh-table" title="hop 8">8</span>
+                    <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                      SOUND_SET
+                    </span>
+                    <span class="tag read" title="distinct columns read">R 2</span>
+                    <span class="comment" title="one row per thing">one row per thing</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="view" class="tracedetail hidden"></div>
+        </div>
+        <div id="traceside" class="flowside">
+          <div class="panel tlimits">
+            <h2>What limited this answer</h2>
+            <div class="comment">No cap cut this answer, and every lane is shown whole.</div>
+          </div>
+          <div class="panel">
+            <h2>how to read the lines</h2>
+            <ul class="list">
+              <li>
+                <span style="display: flex; align-items: center; gap: 7px">
+                  <svg aria-hidden="true" height="9" width="38">
+                    <line stroke="#7C89AD" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
+                  </svg>
+                  <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                    EXACT
+                  </span>
+                  <span class="comment">proven: the source or a framework contract states it</span>
+                </span>
+                <span class="count">9 connections</span>
+              </li>
+              <li>
+                <span style="display: flex; align-items: center; gap: 7px">
+                  <svg aria-hidden="true" height="9" width="38">
+                    <line stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
+                  </svg>
+                  <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                    SOUND_SET
+                  </span>
+                  <span class="comment">a candidate set sure to hold the real target</span>
+                </span>
+                <span class="count">6 connections</span>
+              </li>
+              <li>
+                <span style="display: flex; align-items: center; gap: 7px">
+                  <svg aria-hidden="true" height="9" width="38">
+                    <line stroke="#7C89AD" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
+                  </svg>
+                  <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
+                    <svg class="gbox">
+                      <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                    </svg>
+                    HEURISTIC
+                  </span>
+                  <span class="comment">a guess from a convention or an incomplete reading; check it</span>
+                </span>
+                <span class="count">0 connections</span>
+              </li>
+            </ul>
+            <div class="comment" style="margin-top: 8px">A line shows the grade of that one link. The badge on a row is the weakest link on its way from the start, so a row can be weaker than the line into it. A line into a table carries the table's badge: the answer does not grade that last step alone.</div>
+            <div class="comment" style="margin-top: 8px">followed 17 nodes, depth 8, mode conservative</div>
+          </div>
+          <div class="rail">
+            <div class="railhead">
+              <h2>What this answer is based on</h2>
+              <span class="legend">
+                how sure each line is:
+                <span class="grade g-EXACT" title="proven: the source or a framework contract states it">
+                  EXACT
+                </span>
+                <span class="grade g-SOUND_SET" title="a candidate set sure to hold the real target">
+                  SOUND_SET
+                </span>
+                <span class="grade g-HEURISTIC" title="a guess from a convention or an incomplete reading; check it">
+                  <svg class="gbox">
+                    <rect fill="none" height="100%" rx="2" stroke="#EAF0FF" stroke-dasharray="6 3 1.5 3" stroke-width="1.5" width="100%" x="0.75" y="0.75"></rect>
+                  </svg>
+                  HEURISTIC
+                </span>
+                <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
+                  RUNTIME_ONLY
+                </span>
+                <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                  UNRESOLVED
+                </span>
+              </span>
+            </div>
+            <div class="railchips">
+              <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden  statements-axis-not-shipped  column-axis-degraded  jpa-axis-degraded  mybatisPlus-axis-not-shipped  screen-axis-degraded">UNCERTIFIED</span>
+              <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+              <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                </svg>
+                <span class="foldtext">
+                  6 limits
+                </span>
+              </button>
+            </div>
+            <div class="foldbody"></div>
+            <div class="railfolds">
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    basis
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    trust
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="tab-coupling" class="hidden">…</div>
+    <div id="tab-graph" class="hidden">…</div>
+    <div id="tab-erd" class="hidden">…</div>
+    <div id="tab-tx" class="hidden">…</div>
+    <div id="tab-rules" class="hidden">…</div>
+    <div id="tab-compare" class="hidden">…</div>
+  </div>
+  <div id="brscrim" class="brscrim" onclick></div>
+  <div id="srcpane" class="srcpane hidden" role="complementary">…</div>
+</body>

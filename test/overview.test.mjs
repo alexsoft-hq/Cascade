@@ -122,6 +122,8 @@ test('buildOverview: reach walks every handler forward and counts what is connec
     endpoints: 2, outboundEndpoints: 0, endpointsWithoutStatement: 1, endpointsWithMultipleHandlers: 0,
     // both routes' addresses are what their controllers declare
     routeGrades: { EXACT: 2 },
+    // /a/one and /b/ping: two api groups, as the map groups them (RM67-U2b)
+    groups: 2,
     statements: 3, statementsReached: 2,
     tables: 2, tablesReached: 1,
     columns: 3, columnsReached: 1,
@@ -163,6 +165,7 @@ test('buildOverview: a route declared TWICE is walked through BOTH handlers — 
   assert.deepEqual(counts, {
     endpoints: 2, outboundEndpoints: 0, endpointsWithoutStatement: 1, endpointsWithMultipleHandlers: 1,
     routeGrades: { EXACT: 2 },
+    groups: 2,
     // 3 of 3 statements and both tables, because ZController#one's chain counts
     // too. Walking only the first handler gave 2 / 1 / 1 and called M.orphan an
     // orphan.
@@ -536,6 +539,8 @@ test('overview on the mall pack: 208 of 906 statements and 49 of 76 tables are r
     endpoints: 239, outboundEndpoints: 0, endpointsWithoutStatement: 34, endpointsWithMultipleHandlers: 7,
     // every mall route is a Spring mapping its controller declares
     routeGrades: { EXACT: 239 },
+    // the api groups the map draws for mall (RM67-U2b)
+    groups: 32,
     statements: 906, statementsReached: 208,
     tables: 76, tablesReached: 49,
     columns: 669, columnsReached: 461,

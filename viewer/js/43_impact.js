@@ -1,4 +1,4 @@
-// 43_impact.js — the Impact tab: Flow, walked upstream.
+// 43_impact.js — the table tree in the Trace list: a table opens into its own columns.
 //
 // ONE of the page's scripts, and they share ONE global scope: the numbers in the
 // file names are the order the browser runs them in (see the tags at the foot of
@@ -56,15 +56,4 @@ function railChildren(tab, id){
   const kids = [];
   for (const c of cols) railRowNodes(tab, 'column', c, kids, true);
   return el('div', { className:'brchildren' }, kids);
-}
-// The mirror handoff: "what breaks if I change THIS?" — from an Explore head, a
-// Flow row's card, or a transaction boundary. The kind is carried explicitly so
-// the page never has to guess it back out of the name.
-function openImpact(arg){
-  activateTab('impact');
-  const kind=['column','table','statement','symbol'].find(k=>arg&&arg[k]);
-  byId('ientry').value = (kind?arg[kind]:'')||'';
-  IMPACTV.pick = kind ? {kind, value:arg[kind]} : null;
-  closeSug(IMPACTV);
-  drawChain(IMPACTV);
 }

@@ -62,13 +62,13 @@ async function bootBig(t, { total = 30, limit = 40 } = {}) {
     }
     return fetch(base + url, opts);
   };
-  const page = await boot({ html, hash: '#p=gamma&tab=flow', storage: {}, origin: base, answer });
-  ev(page.ctx, "openFlow({endpoint:'GET /big'})");
+  const page = await boot({ html, hash: '#p=gamma&tab=trace', storage: {}, origin: base, answer });
+  ev(page.ctx, "openTrace({kind:'endpoint', id:'GET /big'}, 'down')");
   await settle(page.ctx, 20);
   return { ...page, asked };
 }
 
-const lane = (byId, field) => byId.get('flowwrap').querySelectorAll('.fcol').find((c) => c.dataset.field === field);
+const lane = (byId, field) => byId.get('tracewrap').querySelectorAll('.fcol').find((c) => c.dataset.field === field);
 const names = (col) => col.querySelectorAll('.frow').map((r) => (r.querySelector('.fname') || {}).textContent);
 
 test('a long lane folds one owner\'s rows into one row, with the true count, and opens it in place', async (t) => {
@@ -93,14 +93,14 @@ test('a long lane folds one owner\'s rows into one row, with the true count, and
 test('a row the reader picked is never folded, and a chain through a folded row is opened to be drawn whole', async (t) => {
   const { ctx, byId } = await bootBig(t);
   // The statement hangs off OrderServiceImpl#m0, which sits inside a fold.
-  assert.equal(ev(ctx, "FLOWV.proxy.get('symbol:com.big.OrderServiceImpl#m0')") !== 'symbol:com.big.OrderServiceImpl#m0', true);
-  ev(ctx, "flowSelect(FLOWV, 'statement:com.big.OrderMapper.select')");
+  assert.equal(ev(ctx, "TRACEV.proxy.get('symbol:com.big.OrderServiceImpl#m0')") !== 'symbol:com.big.OrderServiceImpl#m0', true);
+  ev(ctx, "flowSelect(TRACEV, 'statement:com.big.OrderMapper.select')");
   await settle(ctx, 4);
-  assert.equal(ev(ctx, "FLOWV.proxy.get('symbol:com.big.OrderServiceImpl#m0')"), 'symbol:com.big.OrderServiceImpl#m0', 'the chain is drawn whole');
+  assert.equal(ev(ctx, "TRACEV.proxy.get('symbol:com.big.OrderServiceImpl#m0')"), 'symbol:com.big.OrderServiceImpl#m0', 'the chain is drawn whole');
   assert.ok(names(lane(byId, 'services')).includes('OrderServiceImpl.m0'));
   // ...and it stays lit when the pointer leaves: the picked chain, not nothing.
-  ev(ctx, 'flowClearHover(FLOWV)');
-  const row = (k) => ev(ctx, `FLOWV.rows.get(${JSON.stringify(k)}).els[0].className`);
+  ev(ctx, 'flowClearHover(TRACEV)');
+  const row = (k) => ev(ctx, `TRACEV.rows.get(${JSON.stringify(k)}).els[0].className`);
   assert.match(row('symbol:com.big.OrderServiceImpl#m0'), /\bhot\b/);
   assert.match(row('statement:com.big.OrderMapper.select'), /\bhot\b/);
   assert.match(row('table:orders'), /\bhot\b/);
@@ -108,14 +108,14 @@ test('a row the reader picked is never folded, and a chain through a folded row 
 
 test('the find box finds a row by name, opens whatever folds it, and says how many it found', async (t) => {
   const { ctx, byId } = await bootBig(t);
-  ev(ctx, "FLOWV.find='MemberServiceImpl.m5'; laneRerender(FLOWV)");
+  ev(ctx, "TRACEV.find='MemberServiceImpl.m5'; laneRerender(TRACEV)");
   await settle(ctx, 4);
-  assert.equal(ev(ctx, 'FLOWV.found.size'), 1);
+  assert.equal(ev(ctx, 'TRACEV.found.size'), 1);
   const col = lane(byId, 'services');
   const hit = col.querySelectorAll('.frow').find((r) => (r.querySelector('.fname') || {}).textContent === 'MemberServiceImpl.m5');
   assert.ok(hit, 'the found row is drawn on its own');
   assert.match(hit.className, /\bfound\b/);
-  assert.match(byId.get('flowstrip').textContent, /1 found/);
+  assert.match(byId.get('tracestrip').textContent, /1 found/);
 });
 
 test('"fetch more" asks the tool for the next page of that lane and keeps the rows it had', async (t) => {
@@ -127,26 +127,26 @@ test('"fetch more" asks the tool for the next page of that lane and keeps the ro
   btn.onclick();
   await settle(ctx, 12);
   assert.deepEqual(asked.at(-1).offset, 40, 'the next page starts where the lane stopped');
-  assert.equal(ev(ctx, 'FLOWV.resp.answer.services.length'), 50);
-  assert.equal(ev(ctx, "FLOWV.resp.truncated.fields.find((f)=>f.field==='services').nextOffset"), null);
-  assert.equal(ev(ctx, 'FLOWV.args.limit'), 50, 'the export asks for what is on screen');
+  assert.equal(ev(ctx, 'TRACEV.resp.answer.services.length'), 50);
+  assert.equal(ev(ctx, "TRACEV.resp.truncated.fields.find((f)=>f.field==='services').nextOffset"), null);
+  assert.equal(ev(ctx, 'TRACEV.args.limit'), 50, 'the export asks for what is on screen');
   assert.match(lane(byId, 'services').querySelector('.fcolsub').textContent, /50 fetched, 50 in all/);
 });
 
 test('a line is dashed by the grade of that one link, from the page\'s one dash table; the badge is the path\'s', async (t) => {
   const { ctx, byId } = await bootBig(t);
   // OrderMapper.select: its link from the service is EXACT, its path SOUND_SET.
-  ev(ctx, "flowSelect(FLOWV, 'statement:com.big.OrderMapper.select')");
+  ev(ctx, "flowSelect(TRACEV, 'statement:com.big.OrderMapper.select')");
   await settle(ctx, 4);
-  const paths = byId.get('flowwrap').querySelectorAll('path').filter((p) => /\bflink\b/.test(p.className));
-  const byId2 = (to) => paths.find((p) => ev(ctx, `FLOWV.paths.find((x)=>x.id===${JSON.stringify(p.getAttribute('id'))}).to`) === to);
+  const paths = byId.get('tracewrap').querySelectorAll('path').filter((p) => /\bflink\b/.test(p.className));
+  const byId2 = (to) => paths.find((p) => ev(ctx, `TRACEV.paths.find((x)=>x.id===${JSON.stringify(p.getAttribute('id'))}).to`) === to);
   const exact = byId2('statement:com.big.OrderMapper.select');
   assert.ok(exact, 'the link into the statement is drawn');
   assert.equal(exact.getAttribute('stroke-dasharray'), null, 'an EXACT link is solid');
-  const stmt = ev(ctx, "FLOWV.rows.get('statement:com.big.OrderMapper.select').els[0].querySelector('.grade').textContent");
+  const stmt = ev(ctx, "TRACEV.rows.get('statement:com.big.OrderMapper.select').els[0].querySelector('.grade').textContent");
   assert.equal(stmt, 'SOUND_SET', 'the row still wears its path\'s grade');
   for (const p of paths) {
-    const g = ev(ctx, `FLOWV.linkSpecs.find((l)=>FLOWV.paths.find((x)=>x.id===${JSON.stringify(p.getAttribute('id'))}).to===l.to).grade`);
+    const g = ev(ctx, `TRACEV.linkSpecs.find((l)=>TRACEV.paths.find((x)=>x.id===${JSON.stringify(p.getAttribute('id'))}).to===l.to).grade`);
     assert.equal(p.getAttribute('stroke-dasharray'), GRADE_DASH[g], `a ${g} link`);
   }
 });
@@ -154,9 +154,9 @@ test('a line is dashed by the grade of that one link, from the page\'s one dash 
 test('the arrows walk the picture: across to the row a link joins, and down a lane', async (t) => {
   const { ctx, byId } = await bootBig(t);
   let focused = null;
-  const rows = byId.get('flowwrap').querySelectorAll('.frow');
+  const rows = byId.get('tracewrap').querySelectorAll('.frow');
   for (const r of rows) r.focus = () => { focused = r; };
-  const entry = ev(ctx, "FLOWV.rows.get(FLOWV.model.lanes[0].rows[0].key).els[0]") ;
+  const entry = ev(ctx, "TRACEV.rows.get(TRACEV.model.lanes[0].rows[0].key).els[0]") ;
   const key = (ev2) => { for (const fn of entry._listeners.get('keydown')) fn({ key: ev2, preventDefault() {} }); };
   key('ArrowRight');
   assert.ok(focused, 'right moves into the next lane');
@@ -169,7 +169,7 @@ test('the arrows walk the picture: across to the row a link joins, and down a la
 
 test('the modes say what each one admits, with the grade after it, in both languages', async (t) => {
   const { ctx, byId } = await bootBig(t);
-  const opts = () => byId.get('fmode').querySelectorAll('option').map((o) => o.textContent);
+  const opts = () => byId.get('tmode').querySelectorAll('option').map((o) => o.textContent);
   assert.deepEqual(opts(), ['conservative: proven links + candidate sets (SOUND_SET)', 'strict: proven links only (EXACT)',
     'heuristic: proven links + candidate sets + guesses (HEURISTIC)']);
   assert.equal(opts().some((o) => /likely/.test(o)), false, 'a candidate set is a guarantee, not a likelihood');
@@ -178,7 +178,7 @@ test('the modes say what each one admits, with the grade after it, in both langu
   assert.deepEqual(opts(), ['conservative: 확정 연결 + 후보 집합 (SOUND_SET)', 'strict: 확정 연결만 (EXACT)',
     'heuristic: 확정 연결 + 후보 집합 + 추정 (HEURISTIC)']);
   // The legend beside the picture says the same words as the badges' tooltips.
-  const legend = byId.get('flowside').textContent;
+  const legend = byId.get('traceside').textContent;
   assert.match(legend, /실제 대상을 반드시 포함하는 후보 집합입니다/);
   assert.equal(ev(ctx, "badge('SOUND_SET').title"), '실제 대상을 반드시 포함하는 후보 집합입니다');
 });
@@ -211,24 +211,26 @@ test('a flood of one diagnostic is one blind spot with its count, and inside it 
 
 test('the list beside the picture can be made wider, is remembered, and cuts a name in the middle', async (t) => {
   const { ctx, byId, store } = await bootBig(t);
-  assert.ok(byId.get('flowrail').querySelector('.railgrab'), 'the list has a grip');
+  assert.ok(byId.get('tracerail').querySelector('.railgrab'), 'the list has a grip');
   assert.equal(ev(ctx, 'railWidthSet(9999)'), 640);
   assert.equal(ev(ctx, 'railWidthSet(10)'), 260);
   assert.equal(ev(ctx, "document.documentElement.style.getPropertyValue('--railw')"), '260px');
-  const grab = byId.get('flowrail').querySelector('.railgrab');
+  const grab = byId.get('tracerail').querySelector('.railgrab');
   for (const fn of grab._listeners.get('dblclick')) fn({});
   assert.equal(store['cascade.viewer.railw'] ?? ev(ctx, "localStorage.getItem('cascade.viewer.railw')"), '320');
   const split = ev(ctx, "nameSplit('pms_product_attribute_value').map((s)=>s.textContent).join('|')");
   assert.equal(split, 'pms_product_attribute_|value', 'the tail that tells two tables apart is the part that stays');
 });
 
-test('both chain tabs open on the engine\'s one default depth, and so does a saved file', async (t) => {
+test('the Trace place opens on the engine\'s one default depth, and so does a saved file', async (t) => {
   const { DEFAULT_WALK_DEPTH } = await import('../src/core/graph.mjs');
   const { SNAPSHOT_TABS } = await import('../src/viewer/snapshot.mjs');
   const { ctx, byId } = await bootBig(t);
   assert.equal(ev(ctx, 'WALK_DEPTH_DEFAULT'), DEFAULT_WALK_DEPTH, 'the page mirrors the engine');
-  assert.deepEqual(JSON.parse(ev(ctx, 'JSON.stringify(CHAIN_DEPTH_DEFAULT)')), { down: DEFAULT_WALK_DEPTH, up: DEFAULT_WALK_DEPTH });
-  for (const id of ['fdepth', 'idepth']) {
+  for (const kind of ['endpoint', 'screen', 'symbol', 'statement', 'table', 'column']) {
+    assert.equal(ev(ctx, `traceAutoDepth('${kind}')`), DEFAULT_WALK_DEPTH, `a ${kind} opens on the default`);
+  }
+  for (const id of ['tdepth']) {
     const opened = byId.get(id).querySelectorAll('option').find((o) => o.attrs.has('selected'));
     assert.equal(Number(opened.textContent), DEFAULT_WALK_DEPTH, `${id} opens on the default`);
   }

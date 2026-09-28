@@ -98,7 +98,7 @@ test('the summary tool says which rule made the boxes, and a declared package de
   assert.throws(() => callTool('summary', { limit: 99 }, { graph: pack(), basis, trust: {}, limits: [] }), (e) => e.code === 'bad-input');
 });
 
-test('the Overview opens the summary only when asked, then draws a box per group and lists a group\'s routes with Flow', async (t) => {
+test('the Overview opens the summary only when asked, then draws a box per group and lists a group\'s routes with a way into Trace', async (t) => {
   const { html, base } = await startViewer(t, ['gamma']);
   const page = await boot({ html, origin: base, answer: (url, opts) => fetch(base + url, opts) });
   const asked = () => page.calls.filter((c) => c.body && c.body.name === 'summary').length;
@@ -111,6 +111,7 @@ test('the Overview opens the summary only when asked, then draws a box per group
   assert.ok(boxes.length >= 2, 'a box per group and per family');
   boxes[0].onclick();
   const detail = page.byId.get('ovsummary').textContent;
-  assert.match(detail, /Flow/);
+  // Each route opens on Trace, walked down: the button says what it asks (RM67-U2b).
+  assert.match(detail, /What it uses/);
   assert.equal(asked(), 1, 'opening a box asks nothing more');
 });

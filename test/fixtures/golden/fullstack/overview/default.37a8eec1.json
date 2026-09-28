@@ -180,6 +180,7 @@
         "routeGrades": {
           "EXACT": 8
         },
+        "groups": 3,
         "statements": 5,
         "statementsReached": 4,
         "tables": 2,
