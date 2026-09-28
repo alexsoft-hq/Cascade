@@ -222,11 +222,17 @@ test('a component calling a method of the service it injects is a CALLS edge, SO
   const calls = edges('CALLS').filter((e) => e.evidence.rule === 'typed-field');
   const pairs = calls.map((e) => [e.from.split('#')[1], e.to.split('#')[1], e.grade, e.evidence.via]).sort();
   assert.deepEqual(pairs, [
+    ['AuditLog.submit', 'OrderService.save', 'SOUND_SET', 'injector'],
+    ['AuditShell.reload', 'ItemService.all', 'SOUND_SET', 'injector'],
     ['ItemList.load', 'ItemService.all', 'SOUND_SET', 'constructor-parameter'],
     ['OrderBadge.refresh', 'OrderService.feed', 'SOUND_SET', 'injector'],
     ['OrderEdit.submit', 'OrderService.save', 'SOUND_SET', 'injector'],
     ['OrderList.drop', 'OrderService.remove', 'SOUND_SET', 'injector'],
     ['OrderList.ngOnInit', 'OrderService.list', 'SOUND_SET', 'injector'],
+    ['SettingsGeneral.close', 'OrderService.remove', 'SOUND_SET', 'injector'],
+    ['SettingsMail.load', 'ItemService.all', 'SOUND_SET', 'injector'],
+    ['SettingsShell.ngOnInit', 'OrderService.list', 'SOUND_SET', 'injector'],
+    ['TeamList.refresh', 'OrderService.feed', 'SOUND_SET', 'injector'],
   ]);
 });
 
@@ -239,13 +245,14 @@ const screens = () => [...BRIDGED.g.nodes.values()].filter((n) => String(n.id).s
 test('paths compose across files: through a lazy list, a named list, a spread list and a path constant', () => {
   assert.deepEqual(screens().map((n) => n.path).sort(), [
     '/', '/account/password', '/account/profile', '/items', '/items/new', '/menu-home', '/orders', '/orders/:id/edit',
+    '/settings', '/settings/audit', '/settings/mail', '/settings/team',
   ]);
   assert.equal(screens().find((n) => n.path === '/orders').pack, 'angular-routes');
 });
 
 test('a group, a named outlet and a redirect are not screens, and each is counted', () => {
   const s = BRIDGED.stats.screens;
-  assert.equal(s.lists.groupings, 4, 'orders, items, account and legacy mount nothing of their own');
+  assert.equal(s.lists.groupings, 6, 'orders, items, account, settings, settings/team and legacy mount nothing of their own');
   assert.equal(s.lists.outlets, 1);
   assert.equal(screens().some((n) => n.path === '/side' || n.path === '/**' || n.path === '/legacy'), false);
 });
@@ -271,6 +278,61 @@ test('a screen renders its component EXACT and a decorated child component as a 
   ]);
   const node = BRIDGED.g.nodes.get('symbol:apps/shop/src/orders/list/order-list.ts#OrderList.ngOnInit');
   assert.equal(node.component, true, 'a class decorated as a component makes its .ts file a component');
+});
+
+// ---------------------------------------------------------------------------
+// An EMPTY path renders at its parent's screen
+//
+// `{path: '', component: Shell, children: [{path: '', component: General}]}`
+// is two components on one screen: the router renders the shell and, in its
+// outlet, the child whose path is ''. The two compose to the same path, and a
+// rule that kept only the first declaration of a path dropped the child, so
+// nothing the child does was on the screen at all. A child in another file (a
+// lazily loaded list whose first route is '') is the same thing written apart.
+// ---------------------------------------------------------------------------
+
+const rendersOf = (screen) => edges('RENDERS').filter((e) => e.from === screen)
+  .map((e) => [e.to.split('#')[1], e.grade]).sort();
+
+test('an empty-path child renders at its parent\'s screen, beside the parent, both EXACT', () => {
+  assert.deepEqual(rendersOf('screen:/settings'), [
+    ['SettingsGeneral.close', 'EXACT'],
+    ['SettingsShell.ngOnInit', 'EXACT'],
+  ]);
+  const node = screens().find((n) => n.path === '/settings');
+  assert.equal(node.component, 'apps/shop/src/settings/settings-shell.ts', 'the first declaration is still the screen\'s own');
+  assert.deepEqual(node.components, ['apps/shop/src/settings/settings-shell.ts', 'apps/shop/src/settings/settings-general.ts']);
+  assert.deepEqual(node.declaredAt.map((d) => d.line), [10, 14]);
+});
+
+test('the first route of a lazily loaded list is \'\' and renders inside the route that loads it', () => {
+  assert.deepEqual(rendersOf('screen:/settings/audit'), [
+    ['AuditLog.submit', 'EXACT'],
+    ['AuditShell.reload', 'EXACT'],
+  ]);
+});
+
+test('an empty-path child of a parent with no component, on the same line, is that path\'s own screen', () => {
+  // `{ path: 'team', children: [{ path: '', loadComponent: … }] }` on ONE line:
+  // the parent and the child share a line, so a parent known by its line alone
+  // was the child itself, and the child composed to `/` instead.
+  assert.deepEqual(rendersOf('screen:/settings/team'), [['TeamList.refresh', 'EXACT']]);
+  assert.equal(rendersOf('screen:/').some(([fn]) => fn === 'TeamList.refresh'), false);
+});
+
+test('a redirect to \'\' is no screen and adds nothing to the screen it lands on', () => {
+  assert.equal(screens().some((n) => n.path === '/settings/general'), false);
+  assert.equal(rendersOf('screen:/settings').length, 2);
+});
+
+test('the screens that reach a route include the one whose empty-path child calls it', () => {
+  // The question the viewer asked: which screens call this route. The child's
+  // call is on the screen its parent is on.
+  const target = 'endpoint:DELETE /api/orders/{id}';
+  const callers = new Set(edges('CALLS_HTTP').filter((e) => e.to === target).map((e) => e.from));
+  const viaCalls = new Set(edges('CALLS').filter((e) => callers.has(e.to)).map((e) => e.from));
+  const onScreens = edges('RENDERS').filter((e) => viaCalls.has(e.to) || callers.has(e.to)).map((e) => e.from);
+  assert.ok(onScreens.includes('screen:/settings'), `screens found: ${[...new Set(onScreens)].join(', ')}`);
 });
 
 test('the round trip, in one graph: screen to component to service to the route it posts to', () => {

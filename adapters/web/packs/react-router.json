@@ -6,10 +6,12 @@
     "childrenKey": "children",
     "indexKey": "index"
   },
+  "indexWhy": "An INDEX route (`{index: true, element}`, `<Route index element>`) has no path of its own: it is what its parent shows at the parent's own path. So it is read with the path '', which composes onto the parent's, and it renders on the parent's screen beside the parent.",
   "registrars": ["createBrowserRouter", "createHashRouter", "createMemoryRouter", "createRoutesFromElements"],
   "jsx": {
     "element": "Route",
     "pathAttr": "path",
+    "indexAttr": "index",
     "componentAttrs": ["element", "component", "Component"]
   }
 }

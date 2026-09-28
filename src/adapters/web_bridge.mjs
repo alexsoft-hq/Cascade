@@ -234,7 +234,7 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
     fileNames, files, matchedRoutePaths: calls.matchedRoutePaths, stats,
   });
   const registry = makeNameRegistry({ fileNames, files });
-  const { screenNodes, registryTargets, unresolvedSpecifiers } = buildRouterScreens({
+  const { screenNodes, registryTargets, unresolvedSpecifiers, nestedRenderers } = buildRouterScreens({
     routeRecords, screenEnabled: axis.screenEnabled, axis, registry, resolver, stats, fileNames, files,
   });
   countTemplates({
@@ -270,11 +270,7 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
   placeNavigations({ fileNames, files, screenNodes, stats, resolver });
   for (const e of pageEdges) edges.push(e);
   placeRendersEdges({
-    screenNodes,
-    registryTargets,
-    symbolsByFile,
-    files,
-    resolver,
+    screenNodes, registryTargets, nestedRenderers, symbolsByFile, files, resolver,
     templatesByFile: templates.templatesByFile,
     includeClosure: templates.includeClosure,
     nodesToAdd,

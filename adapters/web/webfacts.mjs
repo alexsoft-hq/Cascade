@@ -183,6 +183,14 @@
 // names the class it extends (`extends`), and `@Injectable({ useClass })`
 // prints a provider for the class it decorates.
 //
+// webfacts/20 SAYS WHERE ON ITS LINE A ROUTE IS (RM67, a2). A route record
+// carries its column (`col`) and its parent's (`parentCol`), and so does a
+// `routeRef`: `{ path: 'team', children: [{ path: '', component: T }] }` on one
+// line is two routes at one line, and a parent known by its line alone was the
+// child itself. An INDEX route (`{index: true, element}`, `<Route index
+// element>`) is read, with the path '' and `index: true`, for a pack that names
+// the key or the attribute: it is what its parent shows at the parent's path.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -193,7 +201,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/19';
+const VERSION = 'webfacts/20';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

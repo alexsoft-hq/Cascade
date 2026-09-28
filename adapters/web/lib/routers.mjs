@@ -45,12 +45,22 @@ function isPathRefNode(n) {
   return n.property && n.property.type === 'Identifier' && isPathRefNode(n.object);
 }
 
+/** Whether an object is an index route of a pack that has them: `index: true`. */
+function isIndexRoute(ro, node) {
+  const v = ro.indexKey ? propOf(node, ro.indexKey) : null;
+  return v !== null && v.type === 'BooleanLiteral' && v.value === true;
+}
+
 /** Whether one pack would read this object literal as a route declaration. */
 export function packSeesARoute(p, node) {
   const ro = p.routeObject || {};
   if (!ro.pathKey) return false;
   const pathValue = propOf(node, ro.pathKey);
-  if (pathValue === null) return false;
+  const hasIndex = isIndexRoute(ro, node);
+  // AN INDEX ROUTE HAS NO PATH (RM67): `{index: true, element}` is what its
+  // parent shows at the parent's own path, so a missing path is '' there and
+  // nowhere else.
+  if (pathValue === null) return hasIndex;
   // A pack that reads a path THROUGH a constant (RM67) takes a name where the
   // others take only text.
   if (pathValue.type !== 'StringLiteral' && !(p.pathRefs === true && isPathRefNode(pathValue))) return false;
@@ -58,8 +68,6 @@ export function packSeesARoute(p, node) {
   const hasChildren = ro.childrenKey ? propOf(node, ro.childrenKey) !== null : false;
   const hasLazyChildren = ro.lazyChildrenKey ? propOf(node, ro.lazyChildrenKey) !== null : false;
   const hasRedirect = ro.redirectKey ? propOf(node, ro.redirectKey) !== null : false;
-  const indexValue = ro.indexKey ? propOf(node, ro.indexKey) : null;
-  const hasIndex = indexValue !== null && indexValue.type === 'BooleanLiteral' && indexValue.value === true;
   return hasComponent || hasChildren || hasLazyChildren || hasRedirect || hasIndex;
 }
 
@@ -178,6 +186,7 @@ function claimingPack(ctx, node, env) {
  * specifier on it; one that leads nowhere says so.
  */
 function readRoutePath(ctx, pathValue, rec) {
+  if (pathValue === null) { rec.path = ''; rec.index = true; return; }
   if (pathValue.type === 'StringLiteral') { rec.path = pathValue.value; return; }
   const ref = pathRefOf(ctx, pathValue);
   if (typeof ref.value === 'string') {
@@ -220,7 +229,7 @@ function readRouteTitle(ro, node, rec) {
  * inline ones, as it always was; the named and the lazy ones are records of
  * their own and a field on the route, because only the bridge can find them.
  */
-function readRouteChildren(ctx, pack, node, env, line, rec) {
+function readRouteChildren(ctx, pack, node, env, at, rec) {
   const { routeHandled } = ctx;
   const ro = pack.routeObject || {};
   const children = ro.childrenKey ? propOf(node, ro.childrenKey) : null;
@@ -231,21 +240,35 @@ function readRouteChildren(ctx, pack, node, env, line, rec) {
     for (const el of children.elements) {
       if (el && el.type === 'ObjectExpression') {
         const before = routeHandled.size;
-        maybeRoute(ctx, el, inner, line);
+        maybeRoute(ctx, el, inner, at);
         if (routeHandled.size > before) childCount += 1;
-      } else if (pack.listRefs === true && emitRouteRef(ctx, el, { list: null, parent: line })) named += 1;
+      } else if (pack.listRefs === true && emitRouteRef(ctx, el, { list: null, parent: at })) named += 1;
     }
-  } else if (children && pack.listRefs === true && emitRouteRef(ctx, children, { list: null, parent: line })) named += 1;
+  } else if (children && pack.listRefs === true && emitRouteRef(ctx, children, { list: null, parent: at })) named += 1;
   const lazy = ro.lazyChildrenKey ? dynamicImportOf(propOf(node, ro.lazyChildrenKey)) : null;
   if (lazy !== null) rec.childrenFrom = { source: lazy.source, export: lazy.exported ?? 'default' };
   return { childCount, named, lazy: lazy !== null };
 }
 
 /**
- * Emit a route record for `node` when one of the packs recognizes it (see
- * `claimingPack`). Nothing here is hard-coded to a framework.
+ * WHERE A ROUTE IS, and where its parent is: the line AND the column (RM67). A
+ * parent known by its line alone is its own child when both are written on
+ * one line (`{ path: 'team', children: [{ path: '', component: T }] }`), and
+ * that child then composed onto nothing.
  */
-export function maybeRoute(ctx, node, env, parentLine) {
+function placeOf(ctx, rec, node, parent) {
+  rec.col = ctx.columnOf(node);
+  rec.parent = parent === null ? null : parent.line;
+  if (parent !== null) rec.parentCol = parent.col;
+  return { line: rec.line, col: rec.col };
+}
+
+/**
+ * Emit a route record for `node` when one of the packs recognizes it (see
+ * `claimingPack`). Nothing here is hard-coded to a framework. `parent` is the
+ * place of the route this one is written inside, or null.
+ */
+export function maybeRoute(ctx, node, env, parent) {
   const { lineOf, relFile, emit, routeHandled } = ctx;
   if (routeHandled.has(node)) return;
   const pack = claimingPack(ctx, node, env);
@@ -255,6 +278,7 @@ export function maybeRoute(ctx, node, env, parentLine) {
   routeHandled.add(node);
 
   const rec = { kind: 'route', file: relFile, line, pack: pack.pack };
+  const at = placeOf(ctx, rec, node, parent);
   readRoutePath(ctx, propOf(node, ro.pathKey), rec);
   const nameValue = ro.nameKey ? propOf(node, ro.nameKey) : null;
   if (nameValue && nameValue.type === 'StringLiteral') rec.name = nameValue.value;
@@ -266,12 +290,11 @@ export function maybeRoute(ctx, node, env, parentLine) {
   if (hidden && hidden.type === 'BooleanLiteral') rec.hidden = hidden.value;
   const outlet = ro.outletKey ? propOf(node, ro.outletKey) : null;
   if (outlet && outlet.type === 'StringLiteral') rec.outlet = outlet.value;
-  rec.parent = parentLine;
   // THE LIST THIS ROUTE IS IN, by the name the module binds it to, so that a
   // route in another file that names the list can find it (RM67).
-  if (parentLine === null && pack.listRefs === true && typeof env.routeList === 'string') rec.list = env.routeList;
+  if (parent === null && pack.listRefs === true && typeof env.routeList === 'string') rec.list = env.routeList;
 
-  const kids = readRouteChildren(ctx, pack, node, env, line, rec);
+  const kids = readRouteChildren(ctx, pack, node, env, at, rec);
   rec.children = kids.childCount;
   // A ROUTE THAT MOUNTS NOTHING, for a pack that says such a route is not a
   // screen: it is the path its children hang off, and that is all it is.
@@ -295,7 +318,8 @@ export function emitRouteRef(ctx, el, { list, parent, registrar = null }) {
   const id = spread ? el.argument : el;
   if (!id || id.type !== 'Identifier') return false;
   const line = lineOf(el);
-  const rec = { kind: 'routeRef', file: relFile, line, name: id.name, list, parent };
+  const rec = { kind: 'routeRef', file: relFile, line, name: id.name, list, parent: parent === null ? null : parent.line };
+  if (parent !== null) rec.parentCol = parent.col;
   if (spread) rec.spread = true;
   if (registrar !== null) rec.registrar = registrar;
   emit(rec, line);
@@ -374,8 +398,33 @@ function jsxAttr(element, name) {
   return null;
 }
 
+/**
+ * The path a JSX route element declares: its path attribute as text, or, for a
+ * pack that names an index attribute, '' on an index route (RM67), which is
+ * what its parent shows at the parent's own path. Null when it is neither.
+ */
+function jsxRoutePath(node, jsx) {
+  const pathAttr = jsxAttr(node, jsx.pathAttr);
+  if (pathAttr && pathAttr.type === 'StringLiteral') return { path: pathAttr.value, index: false };
+  if (pathAttr && pathAttr.type === 'JSXExpressionContainer' && pathAttr.expression.type === 'StringLiteral') {
+    return { path: pathAttr.expression.value, index: false };
+  }
+  if (pathAttr === null && typeof jsx.indexAttr === 'string' && jsxFlag(node, jsx.indexAttr)) return { path: '', index: true };
+  return null;
+}
+
+/** Whether a JSX attribute is set to true: written bare (`index`) or as `{true}`. */
+function jsxFlag(element, name) {
+  for (const a of element.openingElement?.attributes ?? []) {
+    if (a.type !== 'JSXAttribute' || !a.name || a.name.type !== 'JSXIdentifier' || a.name.name !== name) continue;
+    if (a.value === null) return true;
+    return a.value.type === 'JSXExpressionContainer' && a.value.expression.type === 'BooleanLiteral' && a.value.expression.value === true;
+  }
+  return false;
+}
+
 /** A `<Route path=… element=…>` element, and the routes written inside it. */
-export function visitJsx(ctx, node, env, parentLine) {
+export function visitJsx(ctx, node, env, parent) {
   const { packs, lineOf, relFile, emit } = ctx;
   // `<Link href="/auth/join">` is a navigation written as markup (RM59). It is
   // recorded beside whatever else this element is, because an element can be
@@ -388,15 +437,11 @@ export function visitJsx(ctx, node, env, parentLine) {
   for (const p of packs) {
     const jsx = p.jsx;
     if (!jsx || jsx.element !== tag) continue;
-    const pathAttr = jsxAttr(node, jsx.pathAttr);
-    let pathText = null;
-    if (pathAttr && pathAttr.type === 'StringLiteral') pathText = pathAttr.value;
-    else if (pathAttr && pathAttr.type === 'JSXExpressionContainer' && pathAttr.expression.type === 'StringLiteral') {
-      pathText = pathAttr.expression.value;
-    }
-    if (pathText === null) continue;
+    const read = jsxRoutePath(node, jsx);
+    if (read === null) continue;
     const line = lineOf(node);
-    const rec = { kind: 'route', file: relFile, line, pack: p.pack, path: pathText };
+    const rec = { kind: 'route', file: relFile, line, pack: p.pack, path: read.path, ...(read.index ? { index: true } : {}) };
+    const at = placeOf(ctx, rec, node, parent);
     for (const attr of jsx.componentAttrs || []) {
       const v = jsxAttr(node, attr);
       if (!v) continue;
@@ -406,13 +451,12 @@ export function visitJsx(ctx, node, env, parentLine) {
       if (src.local) rec.componentLocal = src.local;
       break;
     }
-    rec.parent = parentLine;
     let childCount = 0;
     for (const child of node.children || []) {
       if (child.type === 'JSXElement') {
         const t = child.openingElement && child.openingElement.name && child.openingElement.name.type === 'JSXIdentifier'
           ? child.openingElement.name.name : null;
-        if (t === jsx.element) { visitJsx(ctx, child, env, line); childCount += 1; continue; }
+        if (t === jsx.element) { visitJsx(ctx, child, env, at); childCount += 1; continue; }
       }
       ctx.visit(child, env);
     }

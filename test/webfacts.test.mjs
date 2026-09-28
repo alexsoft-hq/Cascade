@@ -55,7 +55,7 @@ function lineOf(relFile, re) {
 test('the header names the schema, the version, the roots and what it read', () => {
   assert.equal(HEADER.kind, 'header');
   assert.equal(HEADER.schema, 'cascade:webfacts:1');
-  assert.equal(HEADER.version, 'webfacts/19');
+  assert.equal(HEADER.version, 'webfacts/20');
   assert.equal(HEADER.root, FIXTURE);
   assert.deepEqual(HEADER.roots, ['src']);
   // `files` is the number of files that were read WITH THE PARSER. Every one of
@@ -347,6 +347,39 @@ test('react-router: a JSX <Route> tree is a route tree, with the same parent rul
   assert.equal(child.componentSource, '@/react/ChildPanel');
 });
 
+test('an INDEX route is a route with the path \'\', as an object and as a JSX element (RM67)', (t) => {
+  // `{index: true, element}` and `<Route index element>` have no path: each is
+  // what its parent shows at the parent's own path. Before, neither was read.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-index-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'App.jsx'), [
+    "import { Route, Routes, createBrowserRouter } from 'react-router-dom';",
+    "import Shell from './Shell';",
+    "import Home from './Home';",
+    'export const router = createBrowserRouter([',
+    "  { path: '/shop', element: <Shell />, children: [{ index: true, element: <Home /> }, { path: 'cart', element: <Home /> }] },",
+    ']);',
+    'export function App() {',
+    '  return (<Routes><Route path="/r" element={<Shell />}><Route index element={<Home />} /></Route></Routes>);',
+    '}',
+    '',
+  ].join('\n'));
+  const out = execFileSync(process.execPath, [WORKER, '--root', dir, dir]).toString('utf8');
+  const routes = out.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.kind === 'route');
+  const shop = routes.find((r) => r.path === '/shop');
+  const objIndex = routes.find((r) => r.index === true && r.line === 5);
+  assert.equal(objIndex.path, '');
+  assert.equal(objIndex.componentSource, './Home');
+  // Written on the parent's own line: the column is what tells them apart.
+  assert.deepEqual([objIndex.parent, objIndex.parentCol], [shop.line, shop.col]);
+  assert.notEqual(objIndex.col, shop.col);
+  const r = routes.find((x) => x.path === '/r');
+  const jsxIndex = routes.find((x) => x.index === true && x.line === 8);
+  assert.equal(jsxIndex.path, '');
+  assert.deepEqual([jsxIndex.parent, jsxIndex.parentCol], [r.line, r.col]);
+  assert.equal(r.children, 1);
+});
+
 test('a route path is recorded AS WRITTEN, relative children included', () => {
   const paths = BODY.filter((r) => r.kind === 'route').map((r) => r.path);
   assert.ok(paths.includes('things/list'), 'a relative child path must not be composed here');
@@ -418,7 +451,7 @@ test('a dynamic import() is an import record, and a call through an import bindi
 
 test('every count in the summary equals the records it claims to count', () => {
   assert.equal(SUMMARY.kind, 'summary');
-  assert.equal(SUMMARY.version, 'webfacts/19');
+  assert.equal(SUMMARY.version, 'webfacts/20');
   const n = (k) => BODY.filter((r) => r.kind === k).length;
   assert.equal(SUMMARY.files, n('file'));
   assert.equal(SUMMARY.parseErrors, n('parse_error'));

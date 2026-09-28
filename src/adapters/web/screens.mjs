@@ -76,6 +76,9 @@ export const SCREEN_UNRESOLVED_SHARE = 0.2;
  */
 export const SCREEN_RENDERS_BASIS = Object.freeze({
   own: 'the route declaration names this file as the screen\'s component, and this function is declared in that file. Nothing was matched by name',
+  // RM67. Two declarations, one path, one written under the other: the router
+  // draws the parent and, in its outlet, the child whose path adds nothing.
+  nested: 'another route composes to this same path on one nesting chain with the screen\'s own route (a parent, and the child whose empty path or index adds nothing to it), so the router draws both here, the child inside its parent, and that route names this file as its component; this function is declared in that file. Nothing was matched by name',
   child: 'the screen\'s component imports this file, directly or through other components, and this function is declared in it. Which of an imported component\'s functions a screen really runs is a run-time question, so the edge is a candidate',
   // RM47. A frontend written before modules resolves nothing by path: the
   // framework keeps a registry of names, and a name is how one thing finds
@@ -145,6 +148,71 @@ export function readRouteRecords({ fileNames, files, matchedRoutePaths, stats })
 const composeOnto = (base, p) => (p.startsWith('/') ? p : p === '' ? base : `${base}/${p}`);
 
 /**
+ * WHERE ONE DECLARATION IS, as a key: its line and, when the worker recorded
+ * it, its column (RM67). Two routes written on one line are two places.
+ */
+export const placeKey = (file, line, col) => `${file}|${line}|${col ?? ''}`;
+
+/**
+ * The routes one declaration is written under: a route of the same file it
+ * sits inside, a route it names as its parent, or a route in another file that
+ * loads or names the list it is in.
+ *
+ * @returns {Function} rec -> parent route records
+ */
+function makeParents(routeRecords, lists) {
+  const routeAt = new Map();
+  for (const r of routeRecords) {
+    const k = placeKey(r.file, r.line, r.col);
+    if (!routeAt.has(k)) routeAt.set(k, r);
+  }
+  // The first declaration in (file, line) order wins a name, the same rule two
+  // declarations of one path follow.
+  const routeByName = new Map();
+  for (const r of routeRecords) {
+    if (typeof r.name !== 'string' || r.name === '') continue;
+    if (!routeByName.has(r.name)) routeByName.set(r.name, r);
+  }
+  return (rec) => {
+    if (typeof rec.parentName === 'string' && rec.parentName !== '') {
+      const p = routeByName.get(rec.parentName);
+      return p ? [p] : [];
+    }
+    if (rec.parent != null) {
+      const p = routeAt.get(placeKey(rec.file, rec.parent, rec.parentCol));
+      return p && p !== rec ? [p] : [];
+    }
+    return lists.parentsOf(rec);
+  };
+}
+
+/**
+ * Whether one declaration is written under the other, at any depth: the test
+ * that says two declarations of one path are ONE screen drawn by both (a
+ * parent and the child its outlet shows at the parent's own path) rather than
+ * two declarations of which the router takes the first.
+ *
+ * @returns {Function} (a, b) -> boolean
+ */
+function makeNesting(routeRecords, lists) {
+  const parentsOf = makeParents(routeRecords, lists);
+  const memo = new Map();
+  const ancestorsOf = (rec) => {
+    if (memo.has(rec)) return memo.get(rec);
+    const out = new Set();
+    let frontier = [rec];
+    for (let i = 0; i < HOP_LIMIT && frontier.length > 0; i += 1) {
+      const next = [];
+      for (const r of frontier) for (const p of parentsOf(r)) if (!out.has(p) && p !== rec) { out.add(p); next.push(p); }
+      frontier = next;
+    }
+    memo.set(rec, out);
+    return out;
+  };
+  return (a, b) => ancestorsOf(b).has(a) || ancestorsOf(a).has(b);
+}
+
+/**
  * THE PATH IS COMPOSED, not read.
  *
  * The parent of a route declaration is a LINE in the same file (the worker
@@ -160,29 +228,7 @@ const composeOnto = (base, p) => (p.startsWith('/') ? p : p === '' ? base : `${b
  * and nothing here loads it. A path that is not known is not guessed.
  */
 function makeComposedPaths(routeRecords, lists, stats) {
-  const routeAt = new Map();
-  for (const r of routeRecords) {
-    const k = `${r.file}|${r.line}`;
-    if (!routeAt.has(k)) routeAt.set(k, r);
-  }
-  // The first declaration in (file, line) order wins a name, the same rule two
-  // declarations of one path follow.
-  const routeByName = new Map();
-  for (const r of routeRecords) {
-    if (typeof r.name !== 'string' || r.name === '') continue;
-    if (!routeByName.has(r.name)) routeByName.set(r.name, r);
-  }
-  const parentsOf = (rec) => {
-    if (typeof rec.parentName === 'string' && rec.parentName !== '') {
-      const p = routeByName.get(rec.parentName);
-      return p ? [p] : [];
-    }
-    if (rec.parent != null) {
-      const p = routeAt.get(`${rec.file}|${rec.parent}`);
-      return p ? [p] : [];
-    }
-    return lists.parentsOf(rec);
-  };
+  const parentsOf = makeParents(routeRecords, lists);
   const rawPaths = (rec, below) => {
     const own = lists.pathOf(rec);
     if (own === null) return [];
@@ -449,20 +495,20 @@ export function buildRouterScreens({
   if (!screenEnabled) return { screenNodes, registryTargets, unresolvedSpecifiers };
   const lists = makeRouteLists({ routeRecords, fileNames, files, resolver, stats: stats.screens.lists });
   const composedPaths = makeComposedPaths(routeRecords, lists, stats);
-  const ctx = { registry, resolver, stats, unresolvedSpecifiers };
+  const ctx = {
+    registry, resolver, stats, unresolvedSpecifiers,
+    nested: makeNesting(routeRecords, lists), drawnBy: new Map(), nestedRenderers: new Map(),
+  };
   for (const rec of routeRecords) {
     if (!mountsAScreen(rec, stats)) continue;
     for (const full of composedPaths(rec)) {
       const id = webScreenId(full);
       const existing = screenNodes.get(id);
       if (existing) {
-        // TWO DECLARATIONS, ONE PATH. The first in (file, line) order is the
-        // node; every declaration is listed, because which one a reader is
-        // looking at is a real question.
-        existing.declaredAt.push({ file: rec.file, line: rec.line });
-        stats.screens.duplicatePaths += 1;
+        samePathAgain(id, existing, rec, ctx);
         continue;
       }
+      ctx.drawnBy.set(id, [rec]);
       const { componentFile, registryHit } = componentFileOf(rec, ctx);
       const node = screenNodeOf(rec, full, componentFile, axis);
       if (rec.hidden === true) { node.hidden = true; stats.screens.hidden += 1; }
@@ -474,7 +520,37 @@ export function buildRouterScreens({
   }
   lists.finish();
   stats.screens.byKind.router = screenNodes.size;
-  return { screenNodes, registryTargets, unresolvedSpecifiers };
+  return { screenNodes, registryTargets, unresolvedSpecifiers, nestedRenderers: ctx.nestedRenderers };
+}
+
+/**
+ * A DECLARATION THAT COMPOSES TO A PATH A SCREEN ALREADY HAS. Every one is
+ * listed on the node, because which one a reader is looking at is a real
+ * question. What it MEANS depends on where it is written (RM67):
+ *   under or above every declaration drawing it       one screen drawn by all:
+ *       the parent and, in its outlet, the child whose path adds nothing
+ *       (`{path: '', component: Shell, children: [{path: '', component: Home}]}`),
+ *       so its component renders here too
+ *   anywhere else                                       a second declaration of
+ *       the same path; the first in (file, line) order is the node, as it always
+ *       was, and this one renders nothing here
+ */
+function samePathAgain(id, existing, rec, ctx) {
+  const { stats, drawnBy, nested, nestedRenderers } = ctx;
+  existing.declaredAt.push({ file: rec.file, line: rec.line });
+  const drawers = drawnBy.get(id) ?? [];
+  // ONE MATCHED CHAIN: the router draws one route per level, so a declaration
+  // joins only when it is nested with EVERY one drawing here. Two empty-path
+  // siblings under one parent are two candidates of which the first matches.
+  if (!drawers.every((d) => nested(d, rec))) { stats.screens.duplicatePaths += 1; return; }
+  drawers.push(rec);
+  stats.screens.nestedSamePath += 1;
+  const { componentFile, registryHit } = componentFileOf(rec, ctx);
+  if (!nestedRenderers.has(id)) nestedRenderers.set(id, []);
+  nestedRenderers.get(id).push({ componentFile, targets: registryHit === null ? null : registryHit.targets });
+  if (componentFile !== null) {
+    existing.components = [...new Set([...(existing.components ?? [existing.component].filter((c) => c !== null)), componentFile])];
+  }
 }
 
 /** The component files one component imports, directly, in a fixed order. */
@@ -563,17 +639,24 @@ function registryRenders(id, byRegistry, { symbolsByFile, edges, stats }) {
  * (EXACT), and every component that one IMPORTS, however deep, is a candidate
  * child (SOUND_SET, with the import chain on the edge).
  */
-function componentRenders(id, root, ctx) {
+function componentRenders(id, roots, ctx) {
   const { symbolsByFile, componentChildrenOf, edges, stats } = ctx;
-  for (const sym of symbolsByFile.get(root) ?? []) {
-    stats.screens.renders.EXACT += 1;
-    edges.push({
-      from: id, to: sym, type: 'RENDERS', grade: 'EXACT',
-      evidence: { rule: 'route-component', component: root, basis: SCREEN_RENDERS_BASIS.own },
-    });
-  }
-  const seen = new Set([root]);
-  let frontier = [[root]];
+  // THE FIRST ROOT IS THE SCREEN'S OWN COMPONENT; any other is a component
+  // declared at this same path on its nesting chain, the parent as often as
+  // the child (RM67). Each file is walked once.
+  roots.forEach((root, i) => {
+    for (const sym of symbolsByFile.get(root) ?? []) {
+      stats.screens.renders.EXACT += 1;
+      edges.push({
+        from: id, to: sym, type: 'RENDERS', grade: 'EXACT',
+        evidence: i === 0
+          ? { rule: 'route-component', component: root, basis: SCREEN_RENDERS_BASIS.own }
+          : { rule: 'route-nested-component', component: root, basis: SCREEN_RENDERS_BASIS.nested },
+      });
+    }
+  });
+  const seen = new Set(roots);
+  let frontier = roots.map((root) => [root]);
   for (let depth = 0; depth < RENDERS_DEPTH && frontier.length > 0; depth += 1) {
     const next = [];
     for (const via of frontier) {
@@ -605,7 +688,7 @@ function componentRenders(id, root, ctx) {
  */
 export function placeRendersEdges({
   screenNodes, registryTargets, symbolsByFile, files, resolver,
-  templatesByFile, includeClosure, nodesToAdd, edges, stats,
+  templatesByFile, includeClosure, nodesToAdd, edges, stats, nestedRenderers = new Map(),
 }) {
   const ctx = {
     symbolsByFile,
@@ -622,10 +705,24 @@ export function placeRendersEdges({
     // A page and a Nexacro form take the same road: what the screen runs is its
     // OWN file's scripts, plus whatever the files it pulls in do (RM48, RM56).
     if (node.source === 'view' || node.source === 'nexacro' || node.source === 'websquare') { pageRenders(id, node, ctx); continue; }
-    const byRegistry = registryTargets.get(id);
-    if (byRegistry !== undefined) { registryRenders(id, byRegistry, ctx); continue; }
-    if (node.component !== null) componentRenders(id, node.component, ctx);
+    routerRenders(id, node, registryTargets.get(id), nestedRenderers.get(id) ?? [], ctx);
   }
+}
+
+/**
+ * A ROUTER SCREEN's RENDERS: what its own declaration names, and what every
+ * declaration drawn at this same path under it names (RM67), each by the road
+ * its declaration resolved on: the name registry or a component file.
+ */
+function routerRenders(id, node, byRegistry, nested, ctx) {
+  const roots = [];
+  if (byRegistry !== undefined) registryRenders(id, byRegistry, ctx);
+  else if (node.component !== null) roots.push(node.component);
+  for (const n of nested) {
+    if (n.targets !== null) registryRenders(id, n.targets, ctx);
+    else if (n.componentFile !== null && !roots.includes(n.componentFile)) roots.push(n.componentFile);
+  }
+  if (roots.length > 0) componentRenders(id, roots, ctx);
 }
 
 /** The three "what did we fail to resolve" lists, in the order a reader reads them. */

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Graph } from '../src/core/graph.mjs';
 import {
   addWebFacts, webSymbolId, webEndpointId, routeMatches, httpClientPack, STRING_METHODS,
-  WEB_CALL_BASIS,
+  WEB_CALL_BASIS, SCREEN_RENDERS_BASIS,
 } from '../src/adapters/web_bridge.mjs';
 
 // The web bridge, driven by HAND-WRITTEN facts, in the style of
@@ -1510,6 +1510,63 @@ test('two declarations that compose to the SAME path are one node, and both are 
     { file: 'src/router/routes.js', line: 30 },
   ]);
   assert.equal(stats.screens.duplicatePaths, 1);
+  // Neither is written under the other, so the router takes the first and the
+  // second draws nothing here (RM67).
+  assert.equal(n.components, undefined);
+  assert.equal(stats.screens.nestedSamePath, 0);
+});
+
+// ---- an EMPTY path renders at its parent's screen (RM67, a2) ---------------
+
+test('an EMPTY-path child renders on its parent\'s screen beside the parent, and the node names both', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [...composeFacts(
+    route(5, { col: 2, path: '/panel', componentSource: '@/screens/panel/index.vue', children: 1 }),
+    route(8, { col: 6, path: '', componentSource: '@/screens/panel/rows.vue', parent: 5, parentCol: 2 }),
+  ), ...viewFile({ file: 'src/screens/panel/index.vue' })], SCREEN_ON);
+  const [n] = screensOf(g);
+  assert.equal(screensOf(g).length, 1);
+  assert.equal(n.component, 'src/screens/panel/index.vue');
+  assert.deepEqual(n.components, ['src/screens/panel/index.vue', 'src/screens/panel/rows.vue']);
+  assert.deepEqual(rendersOf(g).map((e) => [e.to, e.grade, e.evidence.rule]), [
+    ['symbol:src/screens/panel/index.vue#getList', 'EXACT', 'route-component'],
+    ['symbol:src/screens/panel/rows.vue#getList', 'EXACT', 'route-nested-component'],
+  ]);
+  assert.equal(rendersOf(g)[1].evidence.basis, SCREEN_RENDERS_BASIS.nested);
+  assert.equal(stats.screens.nestedSamePath, 1);
+  assert.equal(stats.screens.duplicatePaths, 0);
+});
+
+test('two EMPTY-path siblings under one parent: the router matches the first, and only it joins the screen', () => {
+  const g = graphWithRoutes();
+  const stats = addWebFacts(g, [...composeFacts(
+    route(5, { col: 2, path: '/panel', componentSource: '@/screens/panel/index.vue', children: 2 }),
+    route(8, { col: 6, path: '', componentSource: '@/screens/panel/rows.vue', parent: 5, parentCol: 2 }),
+    route(9, { col: 6, path: '', componentSource: '@/screens/panel/other.vue', parent: 5, parentCol: 2 }),
+  ), ...viewFile({ file: 'src/screens/panel/index.vue' }), ...viewFile({ file: 'src/screens/panel/other.vue' })], SCREEN_ON);
+  const [n] = screensOf(g);
+  assert.deepEqual(n.components, ['src/screens/panel/index.vue', 'src/screens/panel/rows.vue']);
+  assert.equal(rendersOf(g).some((e) => e.to.includes('other.vue')), false);
+  assert.deepEqual([stats.screens.nestedSamePath, stats.screens.duplicatePaths], [1, 1]);
+});
+
+test('a child written on its parent\'s line finds the parent by line AND column', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, composeFacts(
+    route(5, { col: 2, path: '/panel', componentSource: '@/screens/panel/index.vue', children: 1 }),
+    route(5, { col: 40, path: 'rows', componentSource: '@/screens/panel/rows.vue', parent: 5, parentCol: 2 }),
+  ), SCREEN_ON);
+  assert.deepEqual(screensOf(g).map((n) => n.path), ['/panel', '/panel/rows']);
+});
+
+test('an index route under a parent renders on the parent\'s screen, the same as an empty path', () => {
+  const g = graphWithRoutes();
+  addWebFacts(g, [...composeFacts(
+    route(5, { col: 2, path: '/panel', componentSource: '@/screens/panel/index.vue', children: 1 }),
+    route(6, { col: 4, path: '', index: true, componentSource: '@/screens/panel/rows.vue', parent: 5, parentCol: 2 }),
+  ), ...viewFile({ file: 'src/screens/panel/index.vue' })], SCREEN_ON);
+  assert.deepEqual(screensOf(g).map((n) => n.path), ['/panel']);
+  assert.deepEqual(rendersOf(g).map((e) => e.to.split('#')[0].split('/').pop()).sort(), ['index.vue', 'rows.vue']);
 });
 
 // ---- A: attributes and the profile keys -----------------------------------
@@ -1895,6 +1952,24 @@ test('a state with an abstract parent composes its path across FILES', () => {
     ...file('static/scripts/list/list.controller.js', ngReg(3, 'controller', 'RowCtrl'), ngCall(5, '/plain/list')),
   ], SCREEN_ON);
   assert.deepEqual(screensOf(g).map((s) => s.path), ['/plain/list']);
+});
+
+test('a state with an empty url under a state that mounts a component renders at the parent\'s path too', () => {
+  // ui-router draws the parent's template and, in its `ui-view`, the child's.
+  const g = graphWithRoutes();
+  addWebFacts(g, [
+    ...file('static/scripts/app.js',
+      ngRoute(4, { name: 'panel', path: '/plain/list', componentTag: 'panel-shell' }),
+      ngRoute(9, { name: 'panel.home', path: '', parentName: 'panel', componentTag: 'thing-list' })),
+    ...file('static/scripts/shell/shell.js', ngReg(3, 'component', 'panelShell', { controller: 'ShellCtrl' })),
+    ...file('static/scripts/shell/shell.controller.js', ngReg(3, 'controller', 'ShellCtrl'), ngCall(5, '/plain/list')),
+    ...file('static/scripts/thing/thing.component.js', ngReg(3, 'component', 'thingList', { controller: 'ThingListCtrl' })),
+    ...file('static/scripts/thing/thing.controller.js', ngReg(3, 'controller', 'ThingListCtrl'), ngCall(5, '/plain/list')),
+  ], SCREEN_ON);
+  assert.deepEqual(screensOf(g).map((s) => s.path), ['/plain/list']);
+  const files = [...new Set(rendersOf(g).map((e) => e.evidence.component))].sort();
+  // The functions are in the controllers the two registrations name.
+  assert.deepEqual(files, ['static/scripts/shell/shell.controller.js', 'static/scripts/thing/thing.controller.js']);
 });
 
 test('a DIRECTIVE with a controller is a mount point when no component holds the name', () => {

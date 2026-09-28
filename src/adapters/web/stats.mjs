@@ -83,6 +83,10 @@ function emptyScreenStats() {
     withComponent: 0,
     componentUnresolved: 0,
     duplicatePaths: 0,
+    // Declarations drawn at the path of a screen they are nested in or around
+    // (RM67): an empty-path child in its parent's outlet. Not duplicates: each
+    // renders its component on that one screen.
+    nestedSamePath: 0,
     hidden: 0,
     withParams: 0,
     // The specifiers that failed, most common first: the list a reader adds an

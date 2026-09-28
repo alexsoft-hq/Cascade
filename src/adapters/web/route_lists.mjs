@@ -36,13 +36,13 @@ function indexLists(routeRecords, fileNames, files) {
   for (const r of routeRecords) {
     if (r.parent == null && typeof r.list === 'string') slot(`${r.file}|${r.list}`).routes.push(r);
   }
-  const childRefs = new Map(); // `${file}|${parent line}` -> refs
+  const childRefs = new Map(); // the parent's place (line and column) -> refs
   const registered = [];
   for (const file of fileNames) {
     for (const ref of files.get(file).routeRefs ?? []) {
       if (typeof ref.registrar === 'string') registered.push(ref);
       else if (ref.parent != null) {
-        const k = `${file}|${ref.parent}`;
+        const k = `${file}|${ref.parent}|${ref.parentCol ?? ''}`;
         if (!childRefs.has(k)) childRefs.set(k, []);
         childRefs.get(k).push(ref);
       } else if (typeof ref.list === 'string') slot(`${file}|${ref.list}`).refs.push(ref);
@@ -108,7 +108,7 @@ function childListsOf(ctx, p) {
     if (k === null) ctx.miss('lazy', `${p.file}: ${p.childrenFrom.source}${p.childrenFrom.export && p.childrenFrom.export !== 'default' ? ` (${p.childrenFrom.export})` : ''}`);
     else keys.push(k);
   }
-  for (const ref of ctx.childRefs.get(`${p.file}|${p.line}`) ?? []) {
+  for (const ref of ctx.childRefs.get(`${p.file}|${p.line}|${p.col ?? ''}`) ?? []) {
     const k = followRef(ctx, p.file, ref);
     if (k !== null) keys.push(k);
   }

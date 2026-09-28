@@ -21,5 +21,6 @@ export const routes: Routes = [
     loadChildren: () => import('./legacy/legacy.module').then((m) => m.LegacyModule),
   },
   { path: appPaths.reports.path, component: HomePage },
+  { path: 'settings', loadChildren: () => import('./settings/settings.routes') },
   { path: '**', redirectTo: '' },
 ];
