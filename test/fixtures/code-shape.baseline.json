@@ -29,6 +29,7 @@
     "propOf",
     "summarizeArg",
     "summarizeObject",
+    "summarizeObject/1",
     "toPosix",
     "walkText"
    ]
@@ -68,6 +69,7 @@
     "nexacroObjects",
     "nexacroTransactionOf",
     "nexacroUrlKeyOf",
+    "noteForward",
     "platformSinkOf",
     "positionalRequestOf",
     "positionalRequestOf/1",
@@ -93,7 +95,10 @@
     "visitCall/3",
     "walk",
     "walk/1",
-    "whyUnresolved"
+    "whyUnresolved",
+    "withOverride",
+    "withPlace",
+    "withPlace/1"
    ]
   },
   "adapters/web/lib/emit.mjs": {
@@ -142,6 +147,24 @@
     "mine",
     "push",
     "submitRecord"
+   ]
+  },
+  "adapters/web/lib/forwards.mjs": {
+   "maxLines": 17,
+   "maxBranches": 11,
+   "longest": "methodOverrideOf",
+   "branchiest": "methodOverrideOf",
+   "functions": [
+    "handsInObject",
+    "handsOf",
+    "handsOf/1",
+    "methodOverrideOf",
+    "methodOverrideOf/1",
+    "paramAt",
+    "paramIndexOf",
+    "paramIndexOf/1",
+    "verbKeyAt",
+    "verbKeyAt/1"
    ]
   },
   "adapters/web/lib/imports.mjs": {
@@ -1740,12 +1763,13 @@
   },
   "src/adapters/web/calls.mjs": {
    "maxLines": 51,
-   "maxBranches": 27,
+   "maxBranches": 25,
    "longest": "makeCallTargetOf",
-   "branchiest": "wrapperStep",
+   "branchiest": "makeCalleeTarget",
    "functions": [
     "buildRouteIndex",
     "callEvidence",
+    "callerOverride",
     "classifyCallSites",
     "collectCallPairs",
     "consider",
@@ -1758,7 +1782,11 @@
     "fullUrlOf",
     "fullUrlOf/1",
     "functionsReachingHttp",
+    "handsOnTheUrl",
+    "handsOnTheUrl/1",
     "hasOwnUrl",
+    "hopToAWrapper",
+    "hopsWithoutACallRecord",
     "importEvidence",
     "importedFunctionOf",
     "indexMembers",
@@ -1791,6 +1819,7 @@
     "noteCaller",
     "noteFill",
     "noteFill/1",
+    "objectMember",
     "pageSinkOf",
     "placeCandidate",
     "placeCandidate/1",
@@ -1817,6 +1846,9 @@
     "withImportedConstants/1/1",
     "withoutHost",
     "withoutHost/1",
+    "wrapperKindOf",
+    "wrapperMethodOf",
+    "wrapperSink",
     "wrapperStep"
    ]
   },
@@ -2226,6 +2258,7 @@
     "saySilentWebRoots/3",
     "saySilentWebRoots/3/1",
     "sayTsLane",
+    "sayUrlNotHandedOn",
     "sayVendoredWebRoots",
     "sayVendoredWebRoots/1",
     "sayVendoredWebRoots/2",
