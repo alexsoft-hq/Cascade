@@ -52,8 +52,10 @@ function validateExample(example) {
 
 /**
  * The rule, ready to read a project: `readModel(project, {declared})` gives the
- * entity model (typeorm_model.mjs) with the naming decision it was built
- * under: the strategy the profile declares, else the one the options name.
+ * entity model (typeorm_model.mjs) with the decision it was built under: the
+ * naming strategy, entityPrefix and schema the profile declares
+ * (`{namingStrategy, entityPrefix, schema}`, null for one it does not), else
+ * what the options say.
  */
 function compile(rule) {
   const naming = compileNaming(rule.params);

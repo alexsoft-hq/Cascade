@@ -62,7 +62,8 @@ function finish(fx, op, entity) {
   if (op.wholeRow && !fx.hasSelect) fx.wholeRow = unknownArg || op.writesEntity ? 'may' : 'exact';
   // An entity query that selects some columns selects the primary key too (SelectQueryBuilder.buildEscapedEntityColumnSelects).
   if (op.wholeRow && fx.hasSelect) for (const p of entity.pk) fx.reads.add(p);
-  if (op.eager && fx.wholeRow && !fx.noEager) fx.eager = fx.wholeRow === 'may' || fx.eagerMay ? 'may' : 'exact';
+  // A find joins the eager relations whole whatever its select names (FindOptionsUtils.joinEagerRelations adds their alias).
+  if (op.eager && !fx.noEager) fx.eager = unknownArg || fx.eagerMay ? 'may' : 'exact';
   if (op.deleteDate) {
     if (entity.deleteDate) fx.writes.add(entity.deleteDate);
     else fx.unknownKeys.add('a delete date column');

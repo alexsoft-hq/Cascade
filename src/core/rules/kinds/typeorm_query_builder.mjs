@@ -11,9 +11,12 @@
 //
 // TypeORM builds the SQL when the query runs, so the order the steps are
 // written in does not decide which alias means what: aliases are read first.
-// A step written under a condition MAY run, so what it reads MAY be read. A
-// step this kind cannot read (a condition built with Brackets, a value not
-// written out, a method the pack does not name) is said in `notRead`.
+// A step written under a condition MAY run, so what it reads MAY be read, and
+// a select under one MAY replace the selection: what was selected before stays
+// a candidate. The rows a query returns are what is selected WHEN it runs, so a
+// builder run twice with two selections returns both. A step this kind cannot
+// read (a condition built with Brackets, a value not written out, a method the
+// pack does not name) is said in `notRead`.
 
 import { isPlainObject, namesErrors, unknownKeysAt } from './ts_names.mjs';
 import { columnsInText, columnsOfProperty } from './typeorm_builder_read.mjs';
@@ -47,12 +50,14 @@ function newState(start) {
   const aliases = new Map();
   if (start.view) aliases.set(start.alias ?? start.view.name, start.view);
   return {
-    aliases, main: start.view ?? null, statement: 'select', selection: start.view ? [{ view: start.view, whole: true }] : [],
-    reads: [], mayReads: [], writes: [], mayWrites: [], follows: [], tables: [], notRead: [], rows: null, counted: false,
+    aliases, main: start.view ?? null, statement: 'select', selection: start.view ? [{ view: start.view, whole: true, may: false }] : [],
+    reads: [], mayReads: [], writes: [], mayWrites: [], follows: [], tables: [], notRead: [], wholeRow: [], ran: false,
   };
 }
 
 const strArg = (v) => (v && v.k === 'str' ? v.v : null);
+/** Selection items, each marked as one that MAY be selected when `may`. */
+const mayBe = (items, may) => items.map((i) => ({ ...i, may: Boolean(i.may || may) }));
 const record = (st, hits, may, write = false) => { for (const h of hits) (write ? (may ? st.mayWrites : st.writes) : (may ? st.mayReads : st.reads)).push(h); };
 
 function readText(st, text, may, words) {
@@ -109,7 +114,7 @@ function registerTarget(st, s, ctx) {
   if (!view || st.main) return;
   st.main = view;
   st.aliases.set(strArg(s.args[1]) ?? view.name, view);
-  if (s.name !== 'update') st.selection = [{ view, whole: true }];
+  if (s.name !== 'update') st.selection = [{ view, whole: true, may: false }];
 }
 
 function aliasPass(st, steps, methods, ctx) {
@@ -123,16 +128,23 @@ function aliasPass(st, steps, methods, ctx) {
 function joinStep(st, s, role, words) {
   const a = role === 'join-map' ? s.args.slice(1) : s.args;
   const alias = strArg(a[1]);
-  if (role !== 'join' && alias && st.aliases.has(alias)) st.selection.push({ view: st.aliases.get(alias), whole: true });
+  if (role !== 'join' && alias && st.aliases.has(alias)) st.selection.push({ view: st.aliases.get(alias), whole: true, may: Boolean(s.cond) });
   if (strArg(a[2])) readText(st, strArg(a[2]), Boolean(s.cond), words);
+}
+
+/** select replaces the selection, addSelect adds to it; under a condition, select may leave what it replaces in place. */
+function selectStep(st, s, role, words) {
+  const may = Boolean(s.cond);
+  const named = selectionOf(st, s.args[0], words);
+  if (role === 'add-select') st.selection.push(...mayBe(named, may));
+  else st.selection = may ? [...mayBe(st.selection, true), ...mayBe(named, true)] : mayBe(named, false);
 }
 
 /** One step, read by the part its method plays. */
 function readStep(st, s, role, ctx) {
   const may = Boolean(s.cond);
   const words = ctx.sqlWords;
-  if (role === 'select') st.selection = selectionOf(st, s.args[0], words);
-  else if (role === 'add-select') st.selection.push(...selectionOf(st, s.args[0], words));
+  if (role === 'select' || role === 'add-select') selectStep(st, s, role, words);
   else if (role === 'condition' || role === 'order') {
     const a0 = s.args[0];
     if (strArg(a0) !== null) readText(st, a0.v, may, words);
@@ -146,8 +158,8 @@ function readStep(st, s, role, ctx) {
     if ((role === 'soft-delete' || role === 'restore') && st.main?.deleteDate) record(st, [{ view: st.main, column: st.main.deleteDate }], may, true);
     if (role === 'update' && s.args[1]) readObject(st, s.args[1], may, true, 'update');
   } else if (role === 'values') readValues(st, s.args[0], may);
-  else if (role === 'rows') st.rows = st.rows === 'exact' || !may ? 'exact' : 'may';
-  else if (role === 'count') st.counted = true;
+  else if (role === 'rows') returnRows(st, may);
+  else if (role === 'count') st.ran = true;
 }
 
 function readValues(st, v, may) {
@@ -157,16 +169,26 @@ function readValues(st, v, may) {
   st.notRead.push('values');
 }
 
-/** What a select that returns rows returns: every alias it selects whole, and the columns it names. */
-function finishRows(st) {
-  const wholeRow = [];
-  if (st.statement === 'select' && st.rows) {
-    for (const item of st.selection) {
-      if (item.whole) wholeRow.push({ view: item.view, grade: st.rows });
-      else record(st, [item], st.rows === 'may');
-    }
+/**
+ * One run of the query: a select returns what is selected at that step, every
+ * alias it selects whole and the columns it names, each MAY be when the item
+ * or the run may not happen.
+ */
+function returnRows(st, may) {
+  st.ran = true;
+  if (st.statement !== 'select') return;
+  for (const item of st.selection) {
+    const m = item.may || may;
+    if (item.whole) st.wholeRow.push({ view: item.view, grade: m ? 'may' : 'exact' });
+    else record(st, [item], m);
   }
-  return wholeRow;
+}
+
+/** Each alias returned whole, once, at the surest any run returned it. */
+function wholeRowOf(st) {
+  const best = new Map();
+  for (const w of st.wholeRow) if (!best.has(w.view) || w.grade === 'exact') best.set(w.view, w);
+  return [...best.values()];
 }
 
 /**
@@ -186,8 +208,10 @@ function compile(rule) {
       if (role === null) st.notRead.push(s.name);
       else readStep(st, s, role, { ...ctx, sqlWords });
     }
-    const wholeRow = finishRows(st);
-    return { statement: st.statement, main: st.main, reads: st.reads, mayReads: st.mayReads, writes: st.writes, mayWrites: st.mayWrites, wholeRow, follows: st.follows, tables: st.tables, notRead: [...new Set(st.notRead)], terminal: Boolean(st.rows || st.counted), rule: rule.id };
+    return {
+      statement: st.statement, main: st.main, reads: st.reads, mayReads: st.mayReads, writes: st.writes, mayWrites: st.mayWrites, wholeRow: wholeRowOf(st),
+      follows: st.follows, tables: st.tables, notRead: [...new Set(st.notRead)], terminal: st.ran, rule: rule.id,
+    };
   };
   const roleOf = (name) => (Object.hasOwn(methods, name) ? methods[name] : null);
   return { rule: rule.id, start: startMethod, effectsOf, roleOf };

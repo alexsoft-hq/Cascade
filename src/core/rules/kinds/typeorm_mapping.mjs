@@ -39,7 +39,7 @@ function entityDeclOf(decorator) {
   const [a0] = decorator.args;
   const opts = optionsArg(decorator.args);
   const given = a0 && a0.k === 'str' ? a0.v : strOf(opts.v.name);
-  const unread = opts.unread || (a0 && !['str', 'obj', 'none'].includes(a0.k)) || (opts.v.name && !strOf(opts.v.name));
+  const unread = opts.unread || (a0 && !['str', 'obj', 'none'].includes(a0.k)) || (opts.v.name && !strOf(opts.v.name)) || (opts.v.schema && !strOf(opts.v.schema));
   return { given, schema: strOf(opts.v.schema), unread: Boolean(unread) };
 }
 
@@ -60,12 +60,16 @@ function inverseOf(a1) {
   return r && r.k === 'member' ? r.v.split('.').slice(1).join('.') : null;
 }
 
-/** `@JoinColumn()`, `@JoinColumn({ name, referencedColumnName })` or a list of them: the entries, or null when not written out. */
+/** A name option: `nameUnread` when it is there and not a literal, so the name TypeORM uses is not the one a strategy derives. */
+const heldName = (v) => Boolean(v && v.k !== 'undefined' && !strOf(v));
+
+/** `@JoinColumn()`, `@JoinColumn({ name, referencedColumnName })` or a list of them: the entries, or `{unread}` when one is not written out. */
 function joinColumnsOf(d) {
   if (!d) return null;
   const a0 = d.args[0];
   if (!a0 || a0.k === 'none') return [];
-  const one = (o) => (o.k === 'obj' && !o.spread && !o.computed ? { name: strOf(o.v.name), referenced: strOf(o.v.referencedColumnName) } : undefined);
+  const one = (o) => (o.k === 'obj' && !o.spread && !o.computed && !heldName(o.v.referencedColumnName)
+    ? { name: strOf(o.v.name), nameUnread: heldName(o.v.name), referenced: strOf(o.v.referencedColumnName) } : undefined);
   const list = a0.k === 'arr' ? a0.v.map(one) : [one(a0)];
   return list.includes(undefined) ? { unread: true } : list;
 }
@@ -80,7 +84,10 @@ function joinTableOf(d) {
     const v = a0.v[many] ?? a0.v[single];
     return v ? joinColumnsOf({ args: [v] }) : [];
   };
-  return { name: strOf(a0.v.name), schema: strOf(a0.v.schema), joinColumns: cols('joinColumn', 'joinColumns'), inverseJoinColumns: cols('inverseJoinColumn', 'inverseJoinColumns') };
+  return {
+    name: strOf(a0.v.name), nameUnread: heldName(a0.v.name) || heldName(a0.v.schema), schema: strOf(a0.v.schema),
+    joinColumns: cols('joinColumn', 'joinColumns'), inverseJoinColumns: cols('inverseJoinColumn', 'inverseJoinColumns'),
+  };
 }
 
 /** One property's reading: a column, a relation, something not read, or nothing of TypeORM's. */
@@ -109,15 +116,17 @@ function propertyOf(field, decorators, cfg) {
   };
 }
 
-/** The properties TypeORM reads off a class: its own and every ancestor's in the project, nearest declaration first. */
+/** The properties TypeORM reads off a class: its own and every ancestor's in the project, the nearest decorated declaration of each. */
 function propertiesOf(project, cls, cfg) {
   const seen = new Set();
   const out = { columns: [], relations: [], notRead: [] };
   for (const c of project.lineage(cls)) {
     for (const field of c.fields.values()) {
       if (seen.has(field.name) || field.kind !== 'property') continue;
-      seen.add(field.name);
       const p = propertyOf(field, typeormDecorators(project, c.file, field.decorators, cfg.packages), cfg);
+      // A declaration with no TypeORM decorator (`declare email: string`) adds no metadata, and hides none a class it extends has.
+      if (!p) continue;
+      seen.add(field.name);
       if (p?.column) out.columns.push(p.column);
       else if (p?.relation) out.relations.push(p.relation);
       else if (p?.notRead) out.notRead.push({ property: field.name, reason: p.notRead });

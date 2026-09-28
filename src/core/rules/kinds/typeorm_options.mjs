@@ -1,28 +1,31 @@
-// typeorm_options.mjs — which naming strategy and table prefix a TypeORM application runs with, read from the options its source writes.
+// typeorm_options.mjs — which naming strategy, table prefix and schema a TypeORM application runs with, read from the options its source writes.
 //
-// TypeORM takes both from the DataSource options: `namingStrategy`, an
-// instance (DefaultNamingStrategy when the key is not there), and
-// `entityPrefix`. The options are found where the rule pack says an
-// application writes them: `TypeOrmModule.forRoot({...})`, the object a
-// `forRootAsync` factory or options class returns, `new DataSource({...})`.
+// TypeORM takes all three from the DataSource options: `namingStrategy`, an
+// instance (DefaultNamingStrategy when the key is not there), `entityPrefix`,
+// put before every table name, and `schema`, the schema of every entity that
+// names none of its own (EntityMetadata.build). The options are found where
+// the rule pack says an application writes them: `TypeOrmModule.forRoot({...})`,
+// the object a `forRootAsync` factory or options class returns, `new
+// DataSource({...})`.
 //
-// Each place is read or it is not. Options held in a variable, spread from
-// another object, read from ormconfig or the environment (`forRoot()` with no
-// argument), or built in a function body this engine does not read, may name
-// any strategy: then the names derived under the default are ASSUMED, and every
-// place that could not be read is said. So are two places that name different
-// strategies. Only when every place was read and all agree is the strategy
-// known.
-
+// Each fact is read or it is not, at every place. Options held in a variable,
+// spread from another object, read from ormconfig or the environment
+// (`forRoot()` with no argument), or built in a function body this engine does
+// not read, may set any of them: then that fact is not known, the names that
+// rest on it are graded HEURISTIC, and every place that could not be read is
+// said. So are two places that disagree. A fact is known when every place was
+// read and all agree, or when the profile declares it (`tsBackend.typeorm`).
 import { externalOf, isOneOf, isPlainObject, refsErrors, unknownKeysAt } from './ts_names.mjs';
 
-const OPTION_KEYS = Object.freeze(['calls', 'constructors', 'namingKey', 'prefixKey', 'factoryKey', 'classKeys', 'classMethod', 'handsOptionsTo']);
+const OPTION_KEYS = Object.freeze(['calls', 'constructors', 'namingKey', 'prefixKey', 'schemaKey', 'factoryKey', 'classKeys', 'classMethod', 'handsOptionsTo']);
+/** The three facts, and what the profile's `tsBackend.typeorm` block calls each. */
+export const FACTS = Object.freeze(['namingStrategy', 'entityPrefix', 'schema']);
 
 export function optionsErrors(o) {
   if (!isPlainObject(o)) return ['params.options must be an object'];
   const errors = unknownKeysAt(o, OPTION_KEYS, 'params.options');
   errors.push(...refsErrors(o.calls, 'params.options.calls', ['member']), ...refsErrors(o.constructors, 'params.options.constructors'));
-  for (const k of ['namingKey', 'prefixKey', 'factoryKey', 'classMethod', 'handsOptionsTo']) if (typeof o[k] !== 'string' || o[k] === '') errors.push(`params.options.${k} must be a key as the source writes it`);
+  for (const k of ['namingKey', 'prefixKey', 'schemaKey', 'factoryKey', 'classMethod', 'handsOptionsTo']) if (typeof o[k] !== 'string' || o[k] === '') errors.push(`params.options.${k} must be a key as the source writes it`);
   if (!Array.isArray(o.classKeys) || !o.classKeys.every((k) => typeof k === 'string' && k !== '')) errors.push('params.options.classKeys must list keys as the source writes them');
   return errors;
 }
@@ -91,65 +94,97 @@ function asyncOptionValues(project, file, value, opts) {
   return { values: method.returns };
 }
 
-/** What one options object says: `{strategy}` (a strategy's name, or `unknown:` and why) and `{prefix}` (a string, or null when not known). */
-function readOptionsObject(project, file, value, opts, strategies) {
-  if (!value || value.k === 'none') return { unread: 'it takes no options in the source, so they come from ormconfig or the environment at run time' };
-  if (value.k !== 'obj') return { unread: 'its options are held in a value this engine does not read' };
-  if (value.spread || value.computed) return { unread: 'its options spread another object, which may set the naming strategy' };
-  const ns = value.v[opts.namingKey];
-  let strategy = null;
-  if (!ns) strategy = null;
-  else if (ns.k === 'new') {
-    const ext = externalOf(project, file, ns.callee);
-    strategy = strategies.find((s) => ext && s.module === ext.module && s.export === ext.name)?.name;
-    if (!strategy) return { unread: `its ${opts.namingKey} is ${ns.callee}, a class this engine does not model` };
-  } else return { unread: `its ${opts.namingKey} is not a class written out where the options are` };
-  const p = value.v[opts.prefixKey];
-  if (p && p.k !== 'str') return { unread: `its ${opts.prefixKey} is not a literal` };
-  return { strategy, prefix: p ? p.v : '' };
+/** The strategy one options object names: `{value}` (null for none, which is the default) or `{unread}`. */
+function strategyOf(project, file, v, opts, strategies) {
+  const ns = v.v[opts.namingKey];
+  if (!ns || ns.k === 'undefined') return { value: null };
+  if (ns.k !== 'new') return { unread: `its ${opts.namingKey} is not a class written out where the options are` };
+  const ext = externalOf(project, file, ns.callee);
+  const hit = strategies.find((x) => ext && x.module === ext.module && x.export === ext.name);
+  return hit ? { value: hit.name } : { unread: `its ${opts.namingKey} is ${ns.callee}, a class this engine does not model` };
 }
 
+/** A string option: `{value}` ('' when the key is not there) or `{unread}`. */
+function literalOf(v, key) {
+  const x = v.v[key];
+  if (!x || x.k === 'undefined') return { value: '' };
+  return x.k === 'str' ? { value: x.v } : { unread: `its ${key} is not a literal` };
+}
+
+const allUnread = (why) => Object.fromEntries(FACTS.map((f) => [f, { unread: why }]));
+
+/** What one options object says of each fact. */
+function readOptionsObject(project, file, value, opts, strategies) {
+  if (!value || value.k === 'none') return allUnread('it takes no options in the source, so they come from ormconfig or the environment at run time');
+  if (value.k !== 'obj') return allUnread('its options are held in a value this engine does not read');
+  if (value.spread || value.computed) return allUnread('its options spread another object, which may set any of them');
+  return { namingStrategy: strategyOf(project, file, value, opts, strategies), entityPrefix: literalOf(value, opts.prefixKey), schema: literalOf(value, opts.schemaKey) };
+}
+
+/** What a place says of each fact: an options object, or every object a `forRootAsync` factory or options class may return. */
 function readSite(project, site, opts, strategies) {
   if (!site.async) return readOptionsObject(project, site.file, site.value, opts, strategies);
   const built = asyncOptionValues(project, site.file, site.value, opts);
-  if (built.unread) return built;
+  if (built.unread) return allUnread(built.unread);
+  if (built.values.some((v) => v.k === 'none')) return allUnread(`its ${opts.classMethod} may end without returning options`);
   const read = built.values.map((v) => readOptionsObject(project, site.file, v, opts, strategies));
-  return read.find((r) => r.unread) ?? read[0];
+  return Object.fromEntries(FACTS.map((f) => {
+    const values = [...new Set(read.map((r) => r[f].value))];
+    return [f, read.find((r) => r[f].unread)?.[f] ?? (values.length > 1 ? { unread: `it may return different ${f} values` } : read[0][f])];
+  }));
+}
+
+/** One fact across every place: `{value, known, why}`. */
+function factOf(sites, fact) {
+  const where = (s) => `${s.how} at ${s.file}:${s.line}`;
+  if (sites.length === 0) return { value: null, known: false, why: 'no TypeORM options were found in the source (TypeOrmModule.forRoot, forRootAsync, new DataSource)' };
+  const unread = sites.filter((s) => s.read[fact].unread);
+  if (unread.length > 0) return { value: null, known: false, why: unread.map((s) => `${where(s)}: ${s.read[fact].unread}`).join('; ') };
+  const values = [...new Set(sites.map((s) => s.read[fact].value))];
+  if (values.length > 1) return { value: null, known: false, why: `the options disagree on ${fact}: ${sites.map((s) => `${where(s)} says ${JSON.stringify(s.read[fact].value)}`).join('; ')}` };
+  return { value: values[0], known: true, why: `every options object says so (${sites.map(where).join('; ')})` };
 }
 
 /**
- * The strategy and prefix the application runs with, and how that is known:
- * `{strategy, known, prefix, sites, reason}`. `strategy` is the default's when
- * nothing names one; `known` is false when any place could not be read, when
- * two disagree, or when no place was found at all.
+ * What the application runs with, and how each part is known: `{strategy,
+ * known, reason}` for the naming strategy (the default's when nothing names
+ * one), `{prefix, prefixKnown, prefixWhy}` and `{schema, schemaKnown,
+ * schemaWhy}`, with every place read in `sites`.
  */
 export function readNaming(project, opts, naming) {
-  const sites = optionSites(project, opts).map((s) => ({ ...s, ...readSite(project, s, opts, naming.strategies) }));
-  const where = (s) => `${s.how} at ${s.file}:${s.line}`;
-  const said = sites.map((s) => ({ file: s.file, line: s.line, how: s.how, ...(s.unread ? { unread: s.unread } : { strategy: s.strategy ?? naming.defaultStrategy.name, prefix: s.prefix }) }));
-  const assumed = (reason) => ({ strategy: naming.defaultStrategy, known: false, prefix: null, sites: said, reason });
-  if (sites.length === 0) return assumed('no TypeORM options were found in the source (TypeOrmModule.forRoot, forRootAsync, new DataSource)');
-  const unread = sites.filter((s) => s.unread);
-  if (unread.length > 0) return assumed(unread.map((s) => `${where(s)}: ${s.unread}`).join('; '));
-  const names = [...new Set(said.map((s) => s.strategy))];
-  const prefixes = [...new Set(said.map((s) => s.prefix))];
-  if (names.length > 1 || prefixes.length > 1) return assumed(`the options disagree: ${said.map((s) => `${where(s)} names ${s.strategy}${s.prefix ? ` with prefix ${s.prefix}` : ''}`).join('; ')}`);
-  return { strategy: naming.strategies.find((s) => s.name === names[0]), known: true, prefix: prefixes[0], sites: said, reason: `every options object names ${names[0]} (${said.map(where).join('; ')})` };
+  const sites = optionSites(project, opts).map((s) => ({ ...s, read: readSite(project, s, opts, naming.strategies) }));
+  const [ns, prefix, schema] = FACTS.map((f) => factOf(sites, f));
+  const said = sites.map((s) => ({ file: s.file, line: s.line, how: s.how, ...Object.fromEntries(FACTS.map((f) => [f, s.read[f].unread ? { unread: s.read[f].unread } : s.read[f].value])) }));
+  return {
+    strategy: naming.strategies.find((x) => x.name === ns.value) ?? naming.defaultStrategy, known: ns.known, reason: ns.known ? `${ns.value ?? naming.defaultStrategy.name}: ${ns.why}` : ns.why,
+    prefix: prefix.value ?? '', prefixKnown: prefix.known, prefixWhy: prefix.why, schema: schema.value ?? '', schemaKnown: schema.known, schemaWhy: schema.why, sites: said,
+  };
 }
 
+/** The strategy a profile names: '' is none named, which is the default; null when it names one the pack does not. */
+const declaredStrategy = (naming, name) => (name === '' ? naming.defaultStrategy : naming.strategies.find((x) => x.name === name) ?? null);
+
 /**
- * The strategy the profile declares (`tsBackend.typeormNamingStrategy`), which
- * is used instead of what the options name: known, and said as the profile's.
- * The options are still read, for the table prefix where they are written, and
- * so a declaration that differs from a strategy they name is said.
+ * The facts the profile declares (`tsBackend.typeorm`: null is not declared,
+ * '' is declared none), used instead of what the options say: known, and said
+ * as the profile's. The options are still read for the rest, and a declaration
+ * that differs from what they say is said too (`differs`).
  */
 export function declaredNaming(project, opts, naming, declared) {
-  const strategy = naming.strategies.find((s) => s.name === declared);
   const read = readNaming(project, opts, naming);
-  if (!strategy) return { ...read, reason: `${read.reason}; the profile declares ${declared}, which is not a strategy the typeorm pack names` };
-  const differs = read.known && read.strategy.name !== strategy.name ? read.strategy.name : null;
-  return {
-    strategy, known: true, declared: true, prefix: read.known ? read.prefix : '', sites: read.sites, differs,
-    reason: `the profile declares tsBackend.typeormNamingStrategy ${declared}${differs ? `, which differs from ${differs} the options name` : ''}${read.known ? '' : `; an entityPrefix is taken as none, since the options are not all read (${read.reason})`}`,
-  };
+  const out = { ...read, declared: [], differs: [] };
+  const ns = declared.namingStrategy == null ? null : declaredStrategy(naming, declared.namingStrategy);
+  if (ns) {
+    if (read.known && read.strategy.name !== ns.name) out.differs.push(`namingStrategy ${ns.name}, where the options name ${read.strategy.name}`);
+    Object.assign(out, { strategy: ns, known: true, reason: `${ns.name}: the profile declares it (tsBackend.typeorm.namingStrategy)` });
+    out.declared.push('namingStrategy');
+  }
+  for (const [fact, key] of [['entityPrefix', 'prefix'], ['schema', 'schema']]) {
+    const v = declared[fact];
+    if (v == null) continue;
+    if (read[`${key}Known`] && read[key] !== v) out.differs.push(`${fact} ${JSON.stringify(v)}, where the options say ${JSON.stringify(read[key])}`);
+    Object.assign(out, { [key]: v, [`${key}Known`]: true, [`${key}Why`]: `the profile declares it (tsBackend.typeorm.${fact})` });
+    out.declared.push(fact);
+  }
+  return out;
 }

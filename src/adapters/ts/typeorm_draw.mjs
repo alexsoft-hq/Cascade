@@ -33,6 +33,23 @@ export function operationView(e) {
 
 const propertyColumn = (e, prop) => e.columns.find((c) => c.property === prop && !c.join) ?? null;
 
+/**
+ * The relations a find loads with its rows: those its options name, each
+ * joined and selected whole (unless a select narrows it, which is not read),
+ * with the eager relations of what each brings; and the entity's own eager
+ * relations, whatever its select names, as SelectQueryBuilder joins them.
+ */
+function drawRelations(se, e, fx) {
+  const grade = fx.optionsUnknown ? 'SOUND_SET' : 'EXACT';
+  // TypeORM 0.2 joins a named relation's eager relations even with loadEagerRelations: false; 0.3 does not.
+  const eager = fx.noEager ? 'SOUND_SET' : fx.eagerMay ? 'SOUND_SET' : grade;
+  for (const path of fx.follows) {
+    const narrowed = fx.hasSelect && fx.relations.has(path.split('.')[0]);
+    followPath(se, e, path, { grade, whole: !narrowed, eager, rule: 'typeorm-relations-option' });
+  }
+  if (fx.eager) followEager(se, e, { grade: fx.eager === 'may' ? 'SOUND_SET' : 'EXACT', rule: 'typeorm-eager-relation' });
+}
+
 /** What a Repository or EntityManager operation reads and writes, drawn. */
 export function drawOperation(se, e, fx, op) {
   const may = 'SOUND_SET';
@@ -45,9 +62,7 @@ export function drawOperation(se, e, fx, op) {
   for (const r of fx.writeRelations) for (const jc of joinColumns(r)) se.column(e, jc, 'WRITES', 'EXACT');
   for (const r of fx.mayWriteRelations) for (const jc of joinColumns(r)) se.column(e, jc, 'WRITES', may);
   if (fx.wholeRow) readWholeRow(se, e, fx.wholeRow === 'exact' ? 'EXACT' : may);
-  const rowGrade = fx.wholeRow === 'may' ? may : 'EXACT';
-  for (const path of fx.follows) followPath(se, e, path, { grade: rowGrade, whole: Boolean(fx.wholeRow), rule: 'typeorm-relations-option' });
-  if (fx.eager) followEager(se, e, { grade: fx.eager === 'may' ? may : 'EXACT', rule: 'typeorm-eager-relation' });
+  drawRelations(se, e, fx);
   for (const r of [...fx.relations].sort()) se.unresolved.push({ reason: 'relation-not-followed', detail: `${e.name}.${r} reaches another table this statement does not name` });
   for (const k of [...fx.unknownKeys].sort()) se.unresolved.push({ reason: 'argument-not-read', detail: `${op}(${k})` });
 }

@@ -7,11 +7,14 @@
 // .getMany()`) is read on, so an operation written on another call's result is
 // found where it is written; what comes after the operation is its `rest`.
 //
-// Three names are bound as the method runs: a transaction callback's parameter
-// is a manager, and a name that holds a repository or a manager
-// (`const repo = this.ds.getRepository(User)`) is one from the line it is
-// written on. A name this reading cannot type is not guessed at: the call is
-// not TypeORM's as far as this engine can tell.
+// Locals are bound where they are declared (the worker's `rootAt`, `holderAt`):
+// a transaction callback's parameter is a manager, and a local that holds a
+// repository or a manager (`const repo = this.ds.getRepository(User)`) is one
+// from the line it is written on. A local declared again in an inner block is
+// another local, and one written again anywhere it is in scope may hold
+// anything: a call on it is not read, and is said (`unreadLocal`). A name this
+// reading cannot type is not guessed at: the call is not TypeORM's as far as
+// this engine can tell.
 
 import { externalOf, isOneOf } from './ts_names.mjs';
 
@@ -89,8 +92,14 @@ function startOf(project, call, cls, segs, bindings, cfg) {
     const kind = KINDS.find((k) => isOneOf(ext, cfg.functions[k]));
     return { value: kind ? { kind, entity: kind === 'repository' ? entityRefOf(call.file, first.args[0]) : null, via: `${first.name}()` } : null, next: 1 };
   }
-  const b = bindings.find((x) => x.file === call.file && x.member === call.in && x.name === first.name && call.line >= x.from && call.line <= x.to);
-  return { value: b ? b.value : null, next: 1 };
+  return localStart(call, bindings);
+}
+
+/** The local the receiver starts at, by where it is declared: two locals spelled alike are two bindings. */
+function localStart(call, bindings) {
+  const b = call.rootAt ? bindings.get(`${call.file}|${call.rootAt}`) : null;
+  if (b && (b.reassigned || call.rootReassigned)) return { value: null, next: 1, unreadLocal: true };
+  return { value: b && b.line <= call.line ? b.value : null, next: 1 };
 }
 
 /** One part applied to the value so far: a new value, the operation, a transaction, or null when this reading cannot follow it. */
@@ -110,6 +119,7 @@ function step(value, seg, file, cfg) {
 export function readCall(project, call, cls, bindings, cfg) {
   const segs = segmentsOf(call);
   const start = startOf(project, call, cls, segs, bindings, cfg);
+  if (start.unreadLocal) return { unreadLocal: true };
   let value = start.value;
   if (!value) return null;
   for (let i = start.next; i < segs.length; i += 1) {

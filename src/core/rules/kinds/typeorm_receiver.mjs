@@ -48,27 +48,32 @@ function classOfCall(project, call) {
   return dot < 0 ? null : project.files.get(call.file)?.classes.get(call.in.slice(0, dot)) ?? null;
 }
 
-/** A transaction's callback parameter, bound as a manager over the lines of the callback. */
+/**
+ * A transaction's callback parameter, bound as a manager where it is declared:
+ * a call is on it when its receiver starts at that declaration, whatever else
+ * in the member is spelled the same.
+ */
 function transactionBinding(call, read) {
   const fn = read.transaction.args.find((a) => a.k === 'fn');
-  const param = fn ? fn.params[0] : null;
-  return param ? { file: call.file, member: call.in, name: param, from: fn.line, to: fn.endLine, value: { kind: 'manager', via: `the ${read.transaction.name} callback's ${param}` } } : null;
+  const at = fn?.paramsAt?.[0] ?? null;
+  return at ? { key: `${call.file}|${at}`, line: fn.line, reassigned: false, value: { kind: 'manager', via: `the ${read.transaction.name} callback's ${fn.params[0]}` } } : null;
 }
 
-/** A name that holds a repository or a manager, bound from its line to the end of the member. */
+/** A local that holds a repository or a manager, bound where it is declared; one written again anywhere it is in scope may hold anything at a call. */
 function holderBinding(call, read) {
-  const name = call.chain ? call.chainHolder : call.holder;
-  return name && read.value && !read.op ? { file: call.file, member: call.in, name, from: call.line, to: Infinity, value: read.value } : null;
+  const at = call.chain ? call.chainHolderAt : call.holderAt;
+  const reassigned = call.chain ? call.chainHolderReassigned : call.holderReassigned;
+  return at && read.value && !read.op ? { key: `${call.file}|${at}`, line: call.line, reassigned: Boolean(reassigned), value: read.value } : null;
 }
 
-/** Every binding a pass over the calls finds, given the ones found so far. */
+/** Every binding a pass over the calls finds, given the ones found so far, keyed by the file and the place of the declaration. */
 function bindingsOf(project, cfg, known) {
-  const out = [];
+  const out = new Map(known);
   for (const call of project.calls) {
     const read = readCall(project, call, classOfCall(project, call), known, cfg);
-    if (!read) continue;
+    if (!read || read.unreadLocal) continue;
     const b = read.transaction ? transactionBinding(call, read) : holderBinding(call, read);
-    if (b) out.push(b);
+    if (b && !out.has(b.key)) out.set(b.key, b);
   }
   return out;
 }
@@ -80,25 +85,29 @@ function siteEntity(read, call) {
   return { entity, argsFrom: entity ? 1 : 0 };
 }
 
+/** Every operation the calls make, over the bindings found, and the calls on a local written again. */
+function sitesUnder(project, cfg, bindings) {
+  const sites = [];
+  const unreadLocals = [];
+  for (const call of project.calls) {
+    const read = readCall(project, call, classOfCall(project, call), bindings, cfg);
+    if (read?.unreadLocal) unreadLocals.push(call);
+    if (!read || !read.op) continue;
+    sites.push({ call, op: read.op, receiver: read.value, ...siteEntity(read, call), args: read.args, rest: read.rest, index: read.index, line: read.line, segs: read.segs, cond: Boolean(call.cond) });
+  }
+  return { sites, bindings, unreadLocals };
+}
+
 /**
  * The rule, ready to read a project: `sitesOf(project)` gives every TypeORM
  * operation its calls make, in call order, each `{call, op, receiver, entity,
- * args, argsFrom, rest, index, line, cond}`.
+ * args, argsFrom, rest, index, line, cond}`, and `unreadLocals`, the calls on
+ * a local that held a repository or a manager and is written again.
  */
 function compile(rule) {
   const cfg = rule.params;
-  const sitesOf = (project) => {
-    // Twice: a name may hold a repository taken from a transaction's manager.
-    const first = bindingsOf(project, cfg, []);
-    const bindings = [...first, ...bindingsOf(project, cfg, first).filter((b) => !first.some((f) => f.file === b.file && f.member === b.member && f.name === b.name))];
-    const sites = [];
-    for (const call of project.calls) {
-      const read = readCall(project, call, classOfCall(project, call), bindings, cfg);
-      if (!read || !read.op) continue;
-      sites.push({ call, op: read.op, receiver: read.value, ...siteEntity(read, call), args: read.args, rest: read.rest, index: read.index, line: read.line, segs: read.segs, cond: Boolean(call.cond) });
-    }
-    return { sites, bindings };
-  };
+  // Twice: a local may hold a repository taken from a transaction's manager.
+  const sitesOf = (project) => sitesUnder(project, cfg, bindingsOf(project, cfg, bindingsOf(project, cfg, new Map())));
   return { rule: rule.id, sitesOf };
 }
 

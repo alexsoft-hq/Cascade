@@ -27,6 +27,7 @@ function newStats() {
     entities: 0, tables: 0, columns: 0, joinTables: 0, joins: 0, heuristicNames: 0, tablesStubbed: 0, columnsStubbed: 0,
     naming: null, notRead: [], sites: 0, statements: 0, builders: 0, byOperation: {},
     raw: 0, unknownOperation: 0, unreadEntity: 0, outsideMember: 0, unreadSamples: [], untypedReceiver: 0, untypedSamples: [],
+    reassignedReceiver: 0, reassignedSamples: [],
   };
 }
 
@@ -39,7 +40,9 @@ function addBuilder(g, a) {
   const { project, model, site, opts, stats } = a;
   const e = entityOfRef(project, model, site.entity);
   const { viewOf, ctx, alias } = builderContext(project, model, site, entityOfRef);
-  const fx = opts.builder.effectsOf({ view: e ? viewOf(e) : null, alias }, builderSteps(project, site, opts.builder.roleOf), ctx);
+  const held = builderSteps(project, site, opts.builder.roleOf);
+  const fx = opts.builder.effectsOf({ view: e ? viewOf(e) : null, alias }, held.steps, ctx);
+  if (held.unread) fx.notRead.push(held.unread);
   if (!fx.main) { stats.unreadEntity += 1; sample(stats, site, 'a query builder on no entity this engine read'); return; }
   const main = fx.main.entity;
   writeStatement(g, { ...a, e: main, fx, builder: true, draw: (se) => drawBuilder(se, fx, main) });
@@ -82,6 +85,25 @@ function countUntyped(project, model, opts, read, stats) {
   }
 }
 
+/**
+ * What the lane line, the axes and the diagnostics say of the options: each
+ * fact, where it came from, and `why`, the facts not known, in a sentence
+ * (null when every fact is known).
+ */
+function namingSaid(n) {
+  const declared = n.declared ?? [];
+  const unknown = [
+    ...(n.known ? [] : [`the naming strategy is not known (${n.reason})`]),
+    ...(n.prefixKnown ? [] : [`the entityPrefix is not known (${n.prefixWhy})`]),
+    ...(n.schemaKnown ? [] : [`the DataSource schema is not known (${n.schemaWhy})`]),
+  ];
+  return {
+    strategy: n.strategy.name, known: n.known, from: declared.includes('namingStrategy') ? 'profile' : n.known ? 'options' : 'assumed', reason: n.reason,
+    prefix: { value: n.prefix, known: n.prefixKnown, why: n.prefixWhy }, schema: { value: n.schema, known: n.schemaKnown, why: n.schemaWhy },
+    declared, differs: n.differs ?? [], why: unknown.length > 0 ? unknown.join('; ') : null, sites: n.sites,
+  };
+}
+
 /** The entities as a catalog in the graph, and what the lane line and the column axis say of them. */
 function addCatalog(g, model, opts, stats) {
   const nodes = catalogNodes(g, opts.identifierCase ?? 'exact', stats);
@@ -93,8 +115,7 @@ function addCatalog(g, model, opts, stats) {
   stats.tables = records.filter((r) => r.kind === 'table').length;
   stats.columns = records.filter((r) => r.kind === 'column').length;
   stats.heuristicNames = records.filter((r) => r.grade !== 'EXACT').length;
-  const n = model.naming;
-  stats.naming = { strategy: n.strategy.name, known: n.known, from: n.declared ? 'profile' : n.known ? 'options' : 'assumed', reason: n.reason, sites: n.sites, ...(n.differs ? { optionsName: n.differs } : {}) };
+  stats.naming = namingSaid(model.naming);
   stats.notRead = [...model.notRead, ...[...model.entities.values()].flatMap((e) => e.notRead.map((n) => ({ entity: e.name, file: e.file, ...n })))];
   return nodes;
 }
@@ -106,14 +127,16 @@ function addCatalog(g, model, opts, stats) {
  *
  * @param {import('../../core/graph.mjs').Graph} g
  * @param {object} project  readProject's answer
- * @param {{entity:object, receiver:object, operation:object, builder:object, schemaName?:(string|null), identifierCase?:string, namingStrategy?:(string|null)}} opts
- *        the compiled typeorm rules, and the naming strategy the profile declares
+ * @param {{entity:object, receiver:object, operation:object, builder:object, schemaName?:(string|null), identifierCase?:string, declared?:(object|null)}} opts
+ *        the compiled typeorm rules, and what the profile's `tsBackend.typeorm` declares
  */
 export function addTypeormStatements(g, project, opts) {
-  const model = opts.entity.readModel(project, { declared: opts.namingStrategy ?? null });
-  const { sites } = opts.receiver.sitesOf(project);
+  const model = opts.entity.readModel(project, { declared: opts.declared ?? null });
+  const { sites, unreadLocals } = opts.receiver.sitesOf(project);
   if (model.entities.size === 0 && sites.length === 0) return null;
   const stats = newStats();
+  stats.reassignedReceiver = unreadLocals.length;
+  stats.reassignedSamples = unreadLocals.slice(0, SAMPLES).map((c) => ({ file: c.file, line: c.line, callee: c.callee }));
   const nodes = addCatalog(g, model, opts, stats);
   const env = { nodes, schemaName: opts.schemaName ?? null, receiverRule: opts.receiver.rule };
   const ordinal = new Map();
@@ -124,24 +147,35 @@ export function addTypeormStatements(g, project, opts) {
   return stats;
 }
 
+/** Calls whose receiver this reading could not type: one on an untyped receiver, one on a local written again. */
+function receiverDiagnostics(stats) {
+  const where = (list) => list.map((s) => `${s.file}:${s.line} ${s.callee}`).join(', ');
+  const out = [];
+  if (stats.untypedReceiver > 0) {
+    out.push({ kind: 'TS_TYPEORM_RECEIVER_UNREAD', reason: `${stats.untypedReceiver} call(s) name a TypeORM operation and an entity on a receiver not known to be a repository or an entity manager, so no statement is made for them: ${where(stats.untypedSamples)}` });
+  }
+  if (stats.reassignedReceiver > 0) {
+    out.push({ kind: 'TS_TYPEORM_RECEIVER_UNREAD', reason: `${stats.reassignedReceiver} call(s) are on a local that held a TypeORM repository or entity manager and is assigned again, so what it holds at the call is not known and no statement is made for them: ${where(stats.reassignedSamples)}` });
+  }
+  return out;
+}
+
 /** What the TypeORM reading could not settle, said: an assumed naming strategy, calls not read, mapping not read. */
 export function typeormDiagnostics(stats) {
   if (!stats) return [];
   const out = [];
-  if (stats.naming?.optionsName) {
-    out.push({ kind: 'TS_TYPEORM_NAMING_DECLARED', reason: `the profile's tsBackend.typeormNamingStrategy ${stats.naming.strategy} differs from ${stats.naming.optionsName}, which the DataSource options name; the profile's is used` });
+  if (stats.naming?.differs.length > 0) {
+    out.push({ kind: 'TS_TYPEORM_NAMING_DECLARED', reason: `the profile's tsBackend.typeorm declares ${stats.naming.differs.join('; ')}; the profile's is used` });
   }
-  if (stats.entities > 0 && !stats.naming.known) {
-    out.push({ kind: 'TS_TYPEORM_NAMING_ASSUMED', reason: `${stats.heuristicNames} table and column name(s) of ${stats.entities} TypeORM entity(ies) are derived by ${stats.naming.strategy} naming, assumed, and graded HEURISTIC, because ${stats.naming.reason}. Names the decorators write are EXACT` });
+  if (stats.entities > 0 && stats.naming.why) {
+    out.push({ kind: 'TS_TYPEORM_NAMING_ASSUMED', reason: `${stats.heuristicNames} table and column name(s) of ${stats.entities} TypeORM entity(ies) are graded HEURISTIC, because ${stats.naming.why}. Declaring them in tsBackend.typeorm (namingStrategy, entityPrefix, schema) settles it` });
   }
   const unread = stats.raw + stats.unknownOperation + stats.unreadEntity;
   if (unread > 0) {
     const where = stats.unreadSamples.map((s) => `${s.file}:${s.line} ${s.call} (${s.why})`).join(', ');
     out.push({ kind: 'TS_TYPEORM_CALL_UNREAD', reason: `${unread} TypeORM call(s) make no statement: ${stats.raw} raw SQL, ${stats.unknownOperation} operation(s) the pack does not name, ${stats.unreadEntity} on no entity this engine read. For example ${where}` });
   }
-  if (stats.untypedReceiver > 0) {
-    out.push({ kind: 'TS_TYPEORM_RECEIVER_UNREAD', reason: `${stats.untypedReceiver} call(s) name a TypeORM operation and an entity on a receiver not known to be a repository or an entity manager, so no statement is made for them: ${stats.untypedSamples.map((s) => `${s.file}:${s.line} ${s.callee}`).join(', ')}` });
-  }
+  out.push(...receiverDiagnostics(stats));
   if (stats.notRead.length > 0) {
     out.push({ kind: 'TS_TYPEORM_MAPPING_UNREAD', reason: `part of the entity mapping is not read, and draws nothing: ${stats.notRead.map((n) => `${n.entity}${n.property ? `.${n.property}` : ''} (${n.reason})`).join(', ')}` });
   }

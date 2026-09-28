@@ -85,10 +85,13 @@ export function readFindOptions(v, entity, fx, roles) {
 }
 
 /**
- * TypeORM 0.2's test of find options against conditions
- * (FindOptionsUtils.isFindOneOptions): true, false, or null when a value's
- * kind is only known at run time. An object every key of which is a find
- * option and none a property of the entity can be nothing but options.
+ * Find options, or the conditions themselves: true, false, or null when a
+ * value's kind is only known at run time. TypeORM 0.2 tells them apart by the
+ * kind of value an option key holds (FindOptionsUtils.isFindOneOptions); 0.3
+ * takes options only. So an object every key of which is a find option and
+ * none a property of the entity is options in both (`{ select: { email: true }
+ * }`, a select object 0.3 writes and 0.2 would send as a condition on a
+ * column named select, which is no column).
  */
 export function looksLikeOptions(v, legacy, options, entity) {
   let unknown = false;
@@ -99,7 +102,7 @@ export function looksLikeOptions(v, legacy, options, entity) {
     if (RUNTIME.has(x.k)) unknown = true;
   }
   const keys = Object.keys(v.v);
-  if (unknown && keys.every((k) => Object.hasOwn(options, k) && !entity.fields.includes(k) && !entity.relations.includes(k))) return true;
+  if (keys.length > 0 && keys.every((k) => Object.hasOwn(options, k) && !entity.fields.includes(k) && !entity.relations.includes(k))) return true;
   return unknown ? null : false;
 }
 

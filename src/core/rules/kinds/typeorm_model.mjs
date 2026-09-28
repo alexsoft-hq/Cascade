@@ -14,22 +14,35 @@ function gradeOf(derived, decision, extra = []) {
   const why = [...extra];
   if (!derived.given && !decision.known) why.push(`derived by ${decision.strategy.name} naming, assumed: ${decision.reason}`);
   if (!derived.given && derived.varies) why.push(`the installed TypeORM decides it: ${derived.varies}`);
-  return why.length > 0 ? { grade: 'HEURISTIC', why: why.join('; ') } : { grade: 'EXACT', why: `derived by ${decision.strategy.name} naming, which the ${decision.declared ? 'profile declares' : 'options name'}` };
+  return why.length > 0 ? { grade: 'HEURISTIC', why: why.join('; ') } : { grade: 'EXACT', why: `derived by ${decision.strategy.name} naming, which the ${decision.declared?.includes('namingStrategy') ? 'profile declares' : 'options name'}` };
 }
 
 const prefixed = (decision, base) => (decision.prefix ? `${decision.prefix}${base}` : base);
 
+/**
+ * Why a table's real name may be another, whatever the decorator writes: the
+ * DataSource's entityPrefix goes before every table name, and its schema is
+ * the schema of every entity that names none (EntityMetadata.build).
+ */
+function tableDoubts(decision, ownSchema) {
+  const out = [];
+  if (!decision.prefixKnown) out.push(`the DataSource entityPrefix, which goes before every table name, is not known: ${decision.prefixWhy}`);
+  if (!ownSchema && !decision.schemaKnown) out.push(`the DataSource schema, the schema of an entity that names none, is not known: ${decision.schemaWhy}`);
+  return out;
+}
+
 function entityOf(raw, decision, naming) {
   const s = decision.strategy;
   const t = naming.table(s, raw.cls.name, raw.decl.given);
-  const tg = gradeOf(t, decision, raw.decl.unread ? ['the entity options are not written out, and may name another table'] : []);
+  const doubts = [...(raw.decl.unread ? ['the entity options are not written out, and may name another table'] : []), ...tableDoubts(decision, raw.decl.schema)];
+  const tg = gradeOf(t, decision, doubts);
   const columns = raw.columns.map((c) => {
     const n = naming.column(s, c.property, c.given);
     const g = gradeOf(n, decision, c.nameUnread ? ['the column options are not written out, and may name another column'] : []);
     return { property: c.property, column: n.name, grade: g.grade, why: g.why, pk: c.pk, deleteDate: c.deleteDate, select: c.select, line: c.line };
   });
   return {
-    key: raw.cls.key, name: raw.cls.name, file: raw.cls.file, line: raw.cls.line, schema: raw.decl.schema,
+    key: raw.cls.key, name: raw.cls.name, file: raw.cls.file, line: raw.cls.line, schema: raw.decl.schema ?? (decision.schema || null), ownSchema: raw.decl.schema,
     tableBase: t.name, table: prefixed(decision, t.name), tableGrade: tg.grade, tableWhy: tg.why,
     columns, relations: [], notRead: [...raw.notRead],
   };
@@ -53,15 +66,21 @@ function referencedColumns(target, joinColumns) {
   return named.map((j) => target.columns.find((c) => c.property === j.referenced) ?? null);
 }
 
+/** The name of the join column that references `rc`: the one the options write, else the strategy's, graded. */
+function joinColumnName(rel, rc, unread, decision, naming) {
+  const jc = unread ? null : (rel.joinColumns ?? []).find((j) => (!j.referenced || j.referenced === rc.property) && (j.name || j.nameUnread));
+  const n = jc?.name ? { name: jc.name, given: true } : naming.joinColumn(decision.strategy, rel.property, rc.property);
+  const held = unread || jc?.nameUnread ? ['the join column options are not written out, and may name another column'] : [];
+  return { n, g: gradeOf(n, decision, held) };
+}
+
 /** The join columns an owning @ManyToOne or @OneToOne adds to its entity. */
 function addJoinColumns(e, rel, target, decision, naming) {
   const unread = rel.joinColumns && rel.joinColumns.unread;
   const refs = referencedColumns(target, unread ? [] : rel.joinColumns);
   if (refs.includes(null)) { e.notRead.push({ property: rel.property, reason: 'a referencedColumnName that is not a column of the target' }); return []; }
   return refs.map((rc) => {
-    const jc = unread ? null : (rel.joinColumns ?? []).find((j) => (!j.referenced || j.referenced === rc.property) && j.name);
-    const n = jc ? { name: jc.name, given: true } : naming.joinColumn(decision.strategy, rel.property, rc.property);
-    const g = gradeOf(n, decision, unread ? ['the join column options are not written out, and may name another column'] : []);
+    const { n, g } = joinColumnName(rel, rc, unread, decision, naming);
     const existing = e.columns.find((c) => c.column === n.name);
     if (existing) return existing;
     const col = { property: rel.property, column: n.name, grade: g.grade, why: g.why, pk: false, deleteDate: false, select: true, join: rel.property, referenced: rc.column, line: rel.line };
@@ -72,11 +91,18 @@ function addJoinColumns(e, rel, target, decision, naming) {
 
 function junctionColumns(side, entity, refs, joinColumns, ctx) {
   return refs.map((rc) => {
-    const jc = (joinColumns ?? []).find((j) => (!j.referenced || j.referenced === rc.property) && j.name);
-    const n = jc ? { name: jc.name, given: true } : ctx.naming.joinTableColumn(ctx.decision.strategy, entity.tableBase, rc.column);
-    const g = gradeOf(n, ctx.decision);
-    return { column: n.name, grade: jc ? 'EXACT' : weakest(g.grade, entity.tableGrade, rc.grade), why: g.why, side, referenced: rc.column };
+    const jc = (joinColumns ?? []).find((j) => (!j.referenced || j.referenced === rc.property) && (j.name || j.nameUnread));
+    const n = jc?.name ? { name: jc.name, given: true } : ctx.naming.joinTableColumn(ctx.decision.strategy, entity.tableBase, rc.column);
+    const g = gradeOf(n, ctx.decision, jc?.nameUnread ? ['the join column name is held in a value this engine does not read'] : []);
+    return { column: n.name, grade: jc?.name ? g.grade : weakest(g.grade, entity.tableGrade, rc.grade), why: g.why, side, referenced: rc.column };
   });
+}
+
+/** Why a join table's name may be another: too long for some driver, held in a value, or a prefix or schema not known. */
+function joinTableDoubts(e, jt, n, decision, naming) {
+  const long = !n.given && n.name.length > naming.joinTableNameLimit ? [`it is longer than ${naming.joinTableNameLimit} characters, and a driver whose alias limit is shorter shortens it`] : [];
+  const held = jt.nameUnread ? ['the join table name or schema is held in a value this engine does not read'] : [];
+  return [...long, ...held, ...tableDoubts(decision, jt.schema ?? e.ownSchema)];
 }
 
 /** The join table an owning @ManyToMany with @JoinTable adds. */
@@ -84,8 +110,7 @@ function junctionOf(e, rel, target, decision, naming) {
   const jt = rel.joinTable;
   if (jt.unread) { e.notRead.push({ property: rel.property, reason: 'the join table options are not written out' }); return null; }
   const n = jt.name ? { name: jt.name, given: true } : naming.joinTable(decision.strategy, e.tableBase, rel.property, target.tableBase);
-  const long = !n.given && n.name.length > naming.joinTableNameLimit ? [`it is longer than ${naming.joinTableNameLimit} characters, and a driver whose alias limit is shorter shortens it`] : [];
-  const g = gradeOf(n, decision, long);
+  const g = gradeOf(n, decision, joinTableDoubts(e, jt, n, decision, naming));
   const ctx = { naming, decision };
   const ownerColumns = junctionColumns('owner', e, referencedColumns(e, jt.joinColumns), jt.joinColumns, ctx);
   const inverseColumns = junctionColumns('inverse', target, referencedColumns(target, jt.inverseJoinColumns), jt.inverseJoinColumns, ctx);
@@ -94,7 +119,7 @@ function junctionOf(e, rel, target, decision, naming) {
     if (clash) { oc.column = `${oc.column}_1`; clash.column = `${clash.column}_2`; }
   }
   return {
-    table: prefixed(decision, n.name), tableBase: n.name, schema: jt.schema ?? e.schema, grade: n.given ? 'EXACT' : weakest(g.grade, e.tableGrade, target.tableGrade),
+    table: prefixed(decision, n.name), tableBase: n.name, schema: jt.schema ?? e.schema, grade: n.given ? g.grade : weakest(g.grade, e.tableGrade, target.tableGrade),
     why: g.why, owner: e, target, property: rel.property, ownerColumns, inverseColumns,
   };
 }

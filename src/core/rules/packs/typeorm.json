@@ -6,8 +6,8 @@
     {
       "id": "typeorm.entities",
       "kind": "typeorm.entity",
-      "description": "A class decorated @Entity maps a table: the name @Entity('name') or @Entity({ name }) gives, else the one the naming strategy derives from the class name. Each property a column decorator marks is a column: the name its options give, else the one the strategy derives from the property. A @ManyToOne, or a @OneToOne with @JoinColumn, adds the join column that holds it; a @ManyToMany with @JoinTable adds the join table and its two columns. Columns a class inherits from a class it extends are its own, as TypeORM reads them. The strategy is the one the DataSource options name in namingStrategy, DefaultNamingStrategy when every options object the source writes names none, and an assumed DefaultNamingStrategy, graded HEURISTIC, when an options object is not written out in the source.",
-      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
+      "description": "A class decorated @Entity maps a table: the name @Entity('name') or @Entity({ name }) gives, else the one the naming strategy derives from the class name, after the DataSource's entityPrefix and in its schema when the entity names none. Each property a column decorator marks is a column: the name its options give, else the one the strategy derives from the property. A @ManyToOne, or a @OneToOne with @JoinColumn, adds the join column that holds it; a @ManyToMany with @JoinTable adds the join table and its two columns. Columns a class inherits from a class it extends are its own, as TypeORM reads them. The strategy is the one the DataSource options name in namingStrategy, DefaultNamingStrategy when every options object the source writes names none, and an assumed DefaultNamingStrategy, graded HEURISTIC, when an options object is not written out in the source.",
+      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. EntityMetadata.build puts the options' entityPrefix before every table name and gives an entity that names no schema the options' schema, so a table name is known only when both are. A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
       "params": {
         "packages": ["typeorm"],
         "entity": ["Entity"],
@@ -29,6 +29,7 @@
           "constructors": [{ "module": "typeorm", "export": "DataSource" }, { "module": "typeorm", "export": "Connection" }],
           "namingKey": "namingStrategy",
           "prefixKey": "entityPrefix",
+          "schemaKey": "schema",
           "factoryKey": "useFactory",
           "classKeys": ["useClass", "useExisting"],
           "classMethod": "createTypeOrmOptions",
@@ -75,6 +76,16 @@
           "source": "import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';\nimport { Module } from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\n@Module({ imports: [TypeOrmModule.forRoot({ type: 'mysql' })] })\nexport class AppModule {}\nexport abstract class Base {\n  @PrimaryGeneratedColumn() id: number;\n  @CreateDateColumn() createdAt: Date;\n}\n@Entity('tag')\nexport class Tag extends Base {\n  @Column() label: string;\n}\n",
           "expect": [{ "table": "tag", "entity": "Tag", "grade": "EXACT", "columns": ["createdAt", "id", "label"] }],
           "why": "the columns of a class it extends are the entity's own; the abstract class maps no table"
+        },
+        {
+          "source": "import { Entity, PrimaryColumn, DataSource } from 'typeorm';\nexport const ds = new DataSource({ type: 'postgres', schema: 'billing', entityPrefix: 'app_' });\n@Entity('users')\nexport class User {\n  @PrimaryColumn() id: number;\n}\n",
+          "expect": [{ "table": "billing.app_users", "entity": "User", "grade": "EXACT", "columns": ["id"] }],
+          "why": "the options' entityPrefix goes before the table name, and their schema is the schema of an entity that names none"
+        },
+        {
+          "source": "import { Entity, PrimaryColumn, DataSource } from 'typeorm';\nimport { prefix } from './config';\nexport const ds = new DataSource({ type: 'postgres', entityPrefix: prefix });\n@Entity('users')\nexport class User {\n  @PrimaryColumn() id: number;\n}\n",
+          "expect": [{ "table": "users", "entity": "User", "grade": "HEURISTIC", "columns": ["id"] }],
+          "why": "a prefix held in a value is not known, so even the name the decorator writes may not be the table's"
         }
       ]
     },
@@ -201,6 +212,11 @@
           "operation": "findOne", "args": ["id"], "fields": ["id", "email"],
           "expect": { "statement": "select", "wholeRow": "may", "runtimeOnly": ["arguments"] },
           "why": "a name may hold an id or find options with a select: every column MAY be returned, and none is claimed"
+        },
+        {
+          "operation": "find", "args": ["{ select: { email: true } }"], "fields": ["id", "email", "bio"],
+          "expect": { "statement": "select", "reads": ["email", "id"] },
+          "why": "a select object is find options (TypeORM 0.3), not a condition on a column named select: the unselected bio is not returned"
         },
         {
           "operation": "find", "args": ["{ followerId: userId }"], "fields": ["id", "followerId", "followingId"],

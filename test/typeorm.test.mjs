@@ -13,7 +13,7 @@ import { factsOfFile } from '../adapters/ts/tsfacts.mjs';
 import { declareAxes } from '../src/core/lanes.mjs';
 import { buildRegistry, RuleError } from '../src/core/rules/registry.mjs';
 import { normalizeProfile, validateProfile, ProfileError, PROFILE_KEY_CONSUMERS } from '../src/core/profile.mjs';
-import { typeormNamingDeclared } from '../src/cli/commands/analyze/lanes.mjs';
+import { typeormDeclared } from '../src/cli/commands/analyze/lanes.mjs';
 
 const recordsOf = (files) => files.flatMap(([name, source]) => factsOfFile(name, source));
 
@@ -126,17 +126,18 @@ test('every entity column is a catalog node, read or not, and a relation that ow
   assert.deepEqual(join.evidence.columns, ['users.roleId=role.id']);
 });
 
-test('forRoot() with no options leaves the strategy to run time: derived names are HEURISTIC, written ones EXACT, and the run says why', () => {
+test('forRoot() with no options leaves the strategy, the prefix and the schema to run time: no table name is EXACT, and the run says why', () => {
   const unread = ['app.module.ts', MODULE_KNOWN[1].replace("TypeOrmModule.forRoot({ type: 'postgres' })", 'TypeOrmModule.forRoot()')];
   const { g, stats } = bridge([unread, USER_ENTITY, ROLE_ENTITY, service(['  one(email: string) { return this.users.findOneBy({ email }); }'])]);
   assert.equal(stats.typeorm.naming.known, false);
   assert.match(stats.typeorm.naming.reason, /forRoot at app\.module\.ts:\d+: it takes no options in the source/);
   const sid = SID('one', 0);
-  assert.equal(gradeOf(g, sid, 'EXECUTES', 'table:users'), 'EXACT', '@Entity(\'users\') is written');
+  // @Entity('users') is written, but an entityPrefix or a DataSource schema the run does not know may change it (EntityMetadata.build).
+  assert.equal(gradeOf(g, sid, 'EXECUTES', 'table:users'), 'HEURISTIC');
   assert.equal(gradeOf(g, sid, 'READS', 'column:users.email'), 'HEURISTIC', 'a property name another strategy would change');
-  assert.equal(gradeOf(g, sid, 'READS', 'column:users.display_name'), 'EXACT', 'a column name the decorator writes');
+  assert.equal(g.edges.find((e) => e.type === 'DECLARES' && e.to === 'column:users.display_name').grade, 'HEURISTIC', 'its table may be another');
   const diag = stats.diagnostics.find((d) => d.kind === 'TS_TYPEORM_NAMING_ASSUMED');
-  assert.ok(diag, 'the assumption is said');
+  assert.match(diag.reason, /the naming strategy is not known.*the entityPrefix is not known.*the DataSource schema is not known/);
 });
 
 test('SnakeNamingStrategy named in the options is read, and what it derives is EXACT; a class this engine does not model is not', () => {
@@ -187,7 +188,8 @@ test('a repository call is a statement of its own, numbered among its method\'s 
   assert.equal(first.source, 'typeorm');
   assert.equal(gradeOf(g, 'symbol:users.service.ts#UsersService.m', 'IMPLEMENTS_STMT', SID('m', 0)), 'EXACT');
   const reads = edgesFrom(g, SID('m', 0), 'READS').map((e) => e.to).sort();
-  assert.deepEqual(reads, ['column:users.bio', 'column:users.email', 'column:users.id'], 'a partial select still returns the primary key');
+  // A partial select still returns the primary key, and the eager role is joined and selected whole with it.
+  assert.deepEqual(reads, ['column:role.id', 'column:role.title', 'column:users.bio', 'column:users.email', 'column:users.id', 'column:users.roleId']);
   const second = g.nodes.get(SID('m', 1));
   assert.equal(second.statementType, 'update');
   assert.equal(gradeOf(g, SID('m', 1), 'WRITES', 'column:users.bio'), 'EXACT');
@@ -301,14 +303,14 @@ test('a project with no entity and no TypeORM call is left as it was: no typeorm
 // ---------------------------------------------------------------------------
 
 test('the entities are a catalog: shipped with a note naming them when every name is written or follows a known rule, degraded when one was assumed', () => {
-  const typeorm = (heuristicNames, known) => ({ statements: 4, tables: 3, columns: 12, heuristicNames, naming: { strategy: 'default', known, reason: 'forRoot() takes no options' } });
+  const typeorm = (heuristicNames, known) => ({ statements: 4, tables: 3, columns: 12, heuristicNames, naming: { strategy: 'default', known, reason: 'forRoot() takes no options', why: known ? null : 'the naming strategy is not known (forRoot() takes no options)' } });
   const exact = declareAxes({ ddl: false, statements: false, code: true, ts: { typeorm: typeorm(0, true) } });
   assert.deepEqual(exact.catalog, { status: 'shipped', reason: null, sources: ['TypeORM entities (3 table(s), 12 column(s))'] });
   assert.equal(exact.statements.status, 'shipped');
   assert.equal(exact.column.status, 'shipped');
   const assumed = declareAxes({ ddl: false, statements: false, code: true, ts: { typeorm: typeorm(9, false) } });
   assert.equal(assumed.catalog.status, 'degraded');
-  assert.match(assumed.catalog.reason, /9 TypeORM table or column name\(s\).*default naming strategy was assumed, because forRoot\(\) takes no options/);
+  assert.match(assumed.catalog.reason, /9 TypeORM table or column name\(s\).*the naming strategy is not known \(forRoot\(\) takes no options\)/);
   assert.equal(assumed.column.status, 'degraded');
   assert.equal(assumed.column.reason, assumed.catalog.reason, 'one rule for both axes');
   const withDdl = declareAxes({ ddl: true, statements: false, code: true, ts: { typeorm: typeorm(9, false) } });
@@ -340,30 +342,36 @@ test('a typeorm pack with an unknown transform, an unknown argument part and an 
 // the strategy a profile declares
 // ---------------------------------------------------------------------------
 
-test('a strategy the profile declares is used where the options are not written out, and the derived names become EXACT', () => {
+test('what the profile declares is used where the options are not written out, and the names become EXACT only when all three are known', () => {
   const unread = ['app.module.ts', MODULE_KNOWN[1].replace("TypeOrmModule.forRoot({ type: 'postgres' })", 'TypeOrmModule.forRoot()')];
   const files = [unread, USER_ENTITY, ROLE_ENTITY, service(['  one(email: string) { return this.users.findOneBy({ email }); }'])];
-  const { g, stats } = bridge(files, { typeormNamingStrategy: 'default' });
-  assert.deepEqual([stats.typeorm.naming.known, stats.typeorm.naming.from, stats.typeorm.heuristicNames], [true, 'profile', 0]);
-  assert.equal(gradeOf(g, SID('one', 0), 'READS', 'column:users.email'), 'EXACT');
-  assert.equal(stats.diagnostics.some((d) => d.kind === 'TS_TYPEORM_NAMING_ASSUMED'), false);
-  const snake = bridge(files, { typeormNamingStrategy: 'snake' });
+  const all = bridge(files, { typeorm: { namingStrategy: 'default', entityPrefix: '', schema: '' } });
+  assert.deepEqual([all.stats.typeorm.naming.known, all.stats.typeorm.naming.from, all.stats.typeorm.heuristicNames], [true, 'profile', 0]);
+  assert.equal(gradeOf(all.g, SID('one', 0), 'READS', 'column:users.email'), 'EXACT');
+  assert.equal(all.stats.diagnostics.some((d) => d.kind === 'TS_TYPEORM_NAMING_ASSUMED'), false);
+  const strategyOnly = bridge(files, { typeorm: { namingStrategy: 'default' } });
+  assert.equal(strategyOnly.stats.typeorm.naming.known, true);
+  assert.equal(gradeOf(strategyOnly.g, SID('one', 0), 'EXECUTES', 'table:users'), 'HEURISTIC', 'the entityPrefix and the schema are still not known');
+  assert.match(strategyOnly.stats.diagnostics.find((d) => d.kind === 'TS_TYPEORM_NAMING_ASSUMED').reason, /the entityPrefix is not known/);
+  const snake = bridge(files, { typeorm: { namingStrategy: 'snake', entityPrefix: '', schema: '' } });
   assert.ok(snake.g.nodes.has('column:users.deleted_at'), 'the declared strategy names the columns');
 });
 
-test('a declared strategy that differs from the one the options name is used, and said', () => {
-  const { g, stats } = bridge([MODULE_KNOWN, USER_ENTITY, ROLE_ENTITY], { typeormNamingStrategy: 'snake' });
-  assert.equal(stats.typeorm.naming.optionsName, 'default');
-  assert.ok(g.nodes.has('column:users.role_id'));
+test('a declared part that differs from what the options say is used, and said', () => {
+  const { g, stats } = bridge([MODULE_KNOWN, USER_ENTITY, ROLE_ENTITY], { typeorm: { namingStrategy: 'snake', entityPrefix: 'app_' } });
+  assert.deepEqual(stats.typeorm.naming.differs, ['namingStrategy snake, where the options name default', 'entityPrefix "app_", where the options say ""']);
+  assert.ok(g.nodes.has('column:app_users.role_id'));
   assert.ok(stats.diagnostics.some((d) => d.kind === 'TS_TYPEORM_NAMING_DECLARED'));
 });
 
-test('tsBackend.typeormNamingStrategy is null or a strategy the typeorm pack names', () => {
-  assert.doesNotThrow(() => validateProfile(normalizeProfile({ tsBackend: { typeormNamingStrategy: 'snake' } })));
-  assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeormNamingStrategy: 7 } })), (e) => e instanceof ProfileError);
-  // Which names are strategies is the pack's, checked where the analysis reads the key.
-  assert.equal(typeormNamingDeclared('snake'), 'snake');
-  assert.equal(typeormNamingDeclared(null), null);
-  assert.throws(() => typeormNamingDeclared('SnakeNamingStrategy'), (e) => e instanceof ProfileError && /one of default, snake/.test(e.message));
-  assert.equal(PROFILE_KEY_CONSUMERS['tsBackend.typeormNamingStrategy'].status, 'consumed');
+test('tsBackend.typeorm is a block of namingStrategy, entityPrefix and schema, each null or a string, the strategy one the pack names', () => {
+  assert.doesNotThrow(() => validateProfile(normalizeProfile({ tsBackend: { typeorm: { namingStrategy: 'snake', entityPrefix: '' } } })));
+  assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeorm: { namingStrategy: 7 } } })), (e) => e instanceof ProfileError);
+  assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeorm: { prefix: 'x' } } })), (e) => e instanceof ProfileError && /unknown key "prefix"/.test(e.message));
+  assert.deepEqual(normalizeProfile({ tsBackend: { typeorm: { schema: 'billing' } } }).tsBackend.typeorm, { namingStrategy: null, entityPrefix: null, schema: 'billing' });
+  // Which names are strategies is the pack's, checked where the analysis reads the block.
+  assert.deepEqual(typeormDeclared({ namingStrategy: 'snake', entityPrefix: null, schema: '' }), { namingStrategy: 'snake', entityPrefix: null, schema: '' });
+  assert.equal(typeormDeclared({ namingStrategy: null, entityPrefix: null, schema: null }), null);
+  assert.throws(() => typeormDeclared({ namingStrategy: 'SnakeNamingStrategy' }), (e) => e instanceof ProfileError && /one of default, snake/.test(e.message));
+  for (const k of ['namingStrategy', 'entityPrefix', 'schema']) assert.equal(PROFILE_KEY_CONSUMERS[`tsBackend.typeorm.${k}`].status, 'consumed');
 });

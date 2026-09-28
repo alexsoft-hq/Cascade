@@ -42,7 +42,8 @@ const SCHEMA = 'cascade:tsfacts:1';
 //    name or a function parameter among its arguments is (`at`, `paramsAt`).
 // 5: a record that each file was read (`file`), interfaces (`interface`), and
 //    which local a `new` makes its object through (`rootAt`).
-export const VERSION = 'tsfacts/5';
+// 6: which local the result of a chain of calls is held in (`chainHolderAt`).
+export const VERSION = 'tsfacts/6';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -377,7 +378,7 @@ function noteChain(node, chains, holders, sc) {
   const hit = chainFrom(node, sc);
   if (!hit || chains.has(hit.base)) return;
   const holder = holders.get(node);
-  chains.set(hit.base, { steps: hit.steps, ...(holder ? { holder: holder.name } : {}) });
+  chains.set(hit.base, { steps: hit.steps, ...(holder ? { holder: holder.name, holderId: holder } : {}) });
 }
 
 /** The identifier a callee's member chain starts at (`x` of `x.user.findMany`), or null when it starts at anything else. */
@@ -389,7 +390,8 @@ function rootIdentifier(callee) {
 
 /**
  * One call. `rootAt` is where the local its receiver starts at is declared,
- * and `holderAt` where the local it is held in is, each with a flag when that
+ * `holderAt` where the local it is held in is, and `chainHolderAt` where the
+ * local the result of its chain is held in is, each with a flag when that
  * local is written again anywhere it is in scope: the same name in two blocks is
  * two locals, and a name assigned again may hold anything at the call.
  */
@@ -401,6 +403,7 @@ function callRecord(file, node, { here, callee, n, cond, holder, chain }, sc) {
     line: lineOf(node),
     ...localField(sc, rootIdentifier(node.callee), 'rootAt', 'rootReassigned'),
     ...localField(sc, holder, 'holderAt', 'holderReassigned'),
+    ...localField(sc, chain?.holderId, 'chainHolderAt', 'chainHolderReassigned'),
   };
 }
 

@@ -113,7 +113,7 @@ function rulesOf(opts) {
 function typeormOf(g, project, rules, opts) {
   if (!rules.typeorm) return null;
   return addTypeormStatements(g, project, {
-    ...rules.typeorm, schemaName: opts.schemaName ?? null, identifierCase: opts.identifierCase ?? 'exact', namingStrategy: opts.typeormNamingStrategy ?? null,
+    ...rules.typeorm, schemaName: opts.schemaName ?? null, identifierCase: opts.identifierCase ?? 'exact', declared: opts.typeorm ?? null,
   });
 }
 
@@ -160,9 +160,10 @@ function dispatchDiagnostics(g, calls) {
  * @param {import('../core/graph.mjs').Graph} g
  * @param {object[]} tsFacts  the tsfacts records of the files the run read
  * @param {{tsconfig?:{baseUrl?:(string|null), paths?:object}, prisma?:({schema:{models:Map}}|null), globalPrefix?:(string|null), globalPrefixExclude?:(string[]|null),
- *          schemaName?:(string|null), identifierCase?:string, catalogRecords?:object[], typeormNamingStrategy?:(string|null), registry?:object, appRoot?:string, publishedOf?:Function}} [opts]
+ *          schemaName?:(string|null), identifierCase?:string, catalogRecords?:object[], typeorm?:({namingStrategy?:(string|null), entityPrefix?:(string|null), schema?:(string|null)}|null),
+ *          registry?:object, appRoot?:string, publishedOf?:Function}} [opts]
  *        `catalogRecords` are the SQL catalog's records this run read, if any, for schema.prisma to be read against;
- *        `typeormNamingStrategy` is the profile's declaration, which the TypeORM options are then not read for;
+ *        `typeorm` is the profile's `tsBackend.typeorm` block: each part it declares is used instead of what the DataSource options say;
  *        `appRoot`, root-relative, tells the application's files from those its imports reached;
  *        `publishedOf(file)` says why the package holding a file may be published, null when it is not
  * @returns {object} stats, with every reason a route or a link was not made in `diagnostics`

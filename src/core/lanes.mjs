@@ -633,11 +633,9 @@ function typeormCatalogOf(ran) {
 }
 
 /** Why TypeORM names are HEURISTIC: an assumed naming strategy, or TypeORM versions that spell a name differently. */
-const typeormNamingWhy = (t) => (t.naming && !t.naming.known
-  ? `the ${t.naming.strategy} naming strategy was assumed, because ${t.naming.reason}`
-  : 'the installed TypeORM version decides how they are spelled');
+const typeormNamingWhy = (t) => t.naming?.why ?? 'the installed TypeORM version decides how they are spelled';
 
-const typeormAssumedReason = (t) => `${t.heuristicNames} TypeORM table or column name(s) the decorators do not write were derived by a rule this run could not confirm, and are graded HEURISTIC: ${typeormNamingWhy(t)}. A name the decorators write is EXACT`;
+const typeormAssumedReason = (t) => `${t.heuristicNames} TypeORM table or column name(s) rest on what this run could not confirm, and are graded HEURISTIC: ${typeormNamingWhy(t)}`;
 
 /**
  * The mappings that declared a catalog's tables and columns, when one did. It

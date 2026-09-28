@@ -3,7 +3,8 @@
 // `const qb = getRepository(Article).createQueryBuilder('article').leftJoin(...)`
 // then `if (tag) qb.andWhere('article.tagList LIKE :tag')` and `qb.getMany()`:
 // one builder, whose steps are the calls chained where it is made and every
-// call written on the name that holds it later in the same method. A step
+// call written later on the local that holds it (by where that local is
+// declared, so another local spelled `qb` is another builder). A step
 // written under a condition, in a loop or in a callback is marked, and what it
 // reads MAY be read. A chain stops at the step that runs the query: what is
 // called on the rows it returns is not the builder's.
@@ -16,26 +17,33 @@ function upToTerminal(steps, roleOf) {
   return i < 0 ? { steps, ran: false } : { steps: steps.slice(0, i + 1), ran: true };
 }
 
-/** Every call later in the method on the name the builder is held in, as steps. */
-function heldSteps(project, site, holder, roleOf) {
+/** Every call later in the file on the local the builder is held in, found by where that local is declared, as steps. */
+function heldSteps(project, site, at, roleOf) {
   const out = [];
   for (const c of project.calls) {
-    if (c === site.call || c.file !== site.call.file || c.in !== site.call.in || c.line < site.line) continue;
+    if (c === site.call || c.file !== site.call.file || c.rootAt !== at || c.line < site.line) continue;
     const parts = c.callee.split('.');
-    if (parts.length !== 2 || parts[0] !== holder) continue;
+    if (parts.length !== 2) continue;
     const own = [{ name: parts[1], args: c.args, cond: Boolean(c.cond) }, ...(c.chain ?? []).map((s) => ({ name: s.name, args: s.args, cond: Boolean(c.cond) }))];
     out.push(...upToTerminal(own, roleOf).steps);
   }
   return out;
 }
 
-/** The builder's steps: those chained on it, then those on the name that holds it, unless its chain already ran it. */
+/**
+ * The builder's steps: those chained on it, then those on the local that holds
+ * it, unless its chain already ran it. `unread` says why the steps may be
+ * short: a local written again may hold another builder at a later step.
+ */
 export function builderSteps(project, site, roleOf) {
   const chained = upToTerminal(site.rest.map((s) => ({ name: s.name, args: s.args ?? [], cond: false })), roleOf);
-  if (chained.ran) return chained.steps;
-  const holder = site.call.chain ? site.call.chainHolder : site.call.holder;
+  if (chained.ran) return { steps: chained.steps, unread: null };
+  const at = site.call.chain ? site.call.chainHolderAt : site.call.holderAt;
+  const reassigned = site.call.chain ? site.call.chainHolderReassigned : site.call.holderReassigned;
   const lastIsBuilder = site.call.chain ? true : site.index === site.segs.length - 1;
-  return holder && lastIsBuilder ? [...chained.steps, ...heldSteps(project, site, holder, roleOf)] : chained.steps;
+  if (!at || !lastIsBuilder) return { steps: chained.steps, unread: null };
+  if (reassigned) return { steps: chained.steps, unread: 'the builder is held in a local that is written again, so a later step may be on another builder' };
+  return { steps: [...chained.steps, ...heldSteps(project, site, at, roleOf)], unread: null };
 }
 
 /** Entity views, one per entity, as the builder rule reads them, and how an entity argument or a relation is found. */

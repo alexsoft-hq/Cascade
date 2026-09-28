@@ -64,10 +64,14 @@ export const PROFILE_DEFAULTS = deepFreeze({
   // The TypeScript backend this project runs (the `ts` lane): its root, the
   // schema.prisma it reads when that is not at `prisma/schema.prisma` above the
   // root, and the global prefix it is deployed under, with what that excludes,
-  // when the bootstrap reads them from configuration, and the naming strategy
-  // its TypeORM DataSource runs with, when the options are not written out.
-  // Paths manifest-relative; null is "not declared".
-  tsBackend: { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeormNamingStrategy: null },
+  // when the bootstrap reads them from configuration, and the naming strategy,
+  // table prefix and schema its TypeORM DataSource runs with, when the options
+  // are not written out. Paths manifest-relative; null is "not declared", and
+  // in the typeorm block "" is "declared none".
+  tsBackend: {
+    app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null,
+    typeorm: { namingStrategy: null, entityPrefix: null, schema: null },
+  },
   modelPacks: [],
   jpa: { namingStrategy: null },
   mybatisPlus: {
@@ -116,7 +120,7 @@ export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixe
  * had while the key is at its default. A key added to a digested block from
  * now on goes here.
  */
-export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeormNamingStrategy']);
+export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeorm']);
 
 /** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default, and without a key of KEYS_DIGESTED_WHEN_SET still at its own. */
 export function digestedProfile(profile) {
@@ -126,7 +130,7 @@ export function digestedProfile(profile) {
     if (Object.hasOwn(out, k) && JSON.stringify(out[k]) === JSON.stringify(PROFILE_DEFAULTS[k])) delete out[k];
   }
   for (const [block, key] of KEYS_DIGESTED_WHEN_SET.map((k) => k.split('.'))) {
-    if (!isObject(out[block]) || !Object.hasOwn(out[block], key) || out[block][key] !== PROFILE_DEFAULTS[block][key]) continue;
+    if (!isObject(out[block]) || !Object.hasOwn(out[block], key) || JSON.stringify(out[block][key]) !== JSON.stringify(PROFILE_DEFAULTS[block][key])) continue;
     const { [key]: _atDefault, ...rest } = out[block];
     out[block] = rest;
   }
@@ -320,9 +324,17 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
     status: 'consumed', where: 'src/adapters/ts/nest_app.mjs',
     note: 'the route patterns the global prefix excludes, in Nest\'s own pattern syntax (`health`, `users/:id`, `docs{/*rest}`), used INSTEAD of the bootstrap\'s `exclude` option. It is for an exclude list the bootstrap builds at run time (a template, a spread of a list): while one entry is unread, every route under the prefix is graded HEURISTIC, because an unread entry may name it',
   },
-  'tsBackend.typeormNamingStrategy': {
+  'tsBackend.typeorm.namingStrategy': {
     status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
-    note: 'the naming strategy the application\'s TypeORM DataSource runs with, by the name the typeorm rule pack gives it (`default` for DefaultNamingStrategy, `snake` for typeorm-naming-strategies\' SnakeNamingStrategy), used INSTEAD of what the DataSource options in the source name. It is for options the source does not write out (`TypeOrmModule.forRoot()` reads ormconfig or the environment, a factory this engine does not read): undeclared, the names TypeORM derives are graded HEURISTIC; declared, EXACT. An entityPrefix is still read from the options where they are written. A declared strategy that differs from the one the options name is used and said',
+    note: 'the naming strategy the application\'s TypeORM DataSource runs with, by the name the typeorm rule pack gives it (`default` for DefaultNamingStrategy, `snake` for typeorm-naming-strategies\' SnakeNamingStrategy; "" is none named, which is the default), used INSTEAD of what the DataSource options in the source name. It is for options the source does not write out (`TypeOrmModule.forRoot()` reads ormconfig or the environment, a factory this engine does not read): undeclared there, the names a strategy derives are graded HEURISTIC. A declaration that differs from what the options name is used and said',
+  },
+  'tsBackend.typeorm.entityPrefix': {
+    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    note: 'the entityPrefix the TypeORM DataSource puts before every table name ("" for none), used INSTEAD of what the options say. While it is neither declared nor read from options the source writes out, no table name is EXACT, the ones the decorators write included, since the prefix goes before them too',
+  },
+  'tsBackend.typeorm.schema': {
+    status: 'consumed', where: 'src/cli/commands/analyze/lanes.mjs',
+    note: 'the schema the TypeORM DataSource gives every entity that names none ("" for none), used INSTEAD of what the options say. A table is then keyed schema.table, as the SQL lane keys one. While it is neither declared nor read, the table of an entity that names no schema is not EXACT',
   },
   'jpa.namingStrategy': {
     status: 'consumed', where: 'src/adapters/jpa_bridge.mjs',
@@ -1126,15 +1138,21 @@ export function validateProfile(obj) {
 }
 
 /**
- * `tsBackend.typeormNamingStrategy`: null, or a name. Which names are strategies
- * is the typeorm rule pack's to say, and the analysis that reads the key checks
- * it there (src/cli/commands/analyze/lanes.mjs): the profile does not load the
- * rule packs, whose kinds read the profile's defaults.
+ * `tsBackend.typeorm`: an object of `namingStrategy`, `entityPrefix` and
+ * `schema`, each null (not declared) or a string ("" declares none). Which
+ * names are strategies is the typeorm rule pack's to say, and the analysis
+ * that reads the block checks it there (src/cli/commands/analyze/lanes.mjs):
+ * the profile does not load the rule packs, whose kinds read its defaults.
  */
 function validateTypeormNaming(obj) {
-  const v = isObject(obj.tsBackend) ? obj.tsBackend.typeormNamingStrategy : undefined;
-  if (v === undefined || v === null || (typeof v === 'string' && v !== '')) return;
-  throw new ProfileError(`profile.tsBackend.typeormNamingStrategy must be null or the name of a strategy the typeorm rule pack names, got ${JSON.stringify(v)}`);
+  const v = isObject(obj.tsBackend) ? obj.tsBackend.typeorm : undefined;
+  if (v === undefined) return;
+  if (!isObject(v)) throw new ProfileError(`profile.tsBackend.typeorm must be an object of namingStrategy, entityPrefix and schema, got ${JSON.stringify(v)}`);
+  const unknown = Object.keys(v).filter((k) => !['namingStrategy', 'entityPrefix', 'schema'].includes(k));
+  if (unknown.length > 0) throw new ProfileError(`profile.tsBackend.typeorm has an unknown key ${JSON.stringify(unknown[0])}: it takes namingStrategy, entityPrefix and schema`);
+  for (const [k, x] of Object.entries(v)) {
+    if (x !== null && typeof x !== 'string') throw new ProfileError(`profile.tsBackend.typeorm.${k} must be null (not declared) or a string ("" for none), got ${JSON.stringify(x)}`);
+  }
 }
 
 

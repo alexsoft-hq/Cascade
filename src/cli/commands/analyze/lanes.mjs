@@ -425,16 +425,23 @@ export function tsOptionsOf({ root, sel, profile, manifestDir }, sqlArgs, diagno
   const appRoot = path.relative(path.resolve(root), app).split(path.sep).join('/');
   return {
     ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null,
-    typeormNamingStrategy: typeormNamingDeclared(ts.typeormNamingStrategy), appRoot,
+    typeorm: typeormDeclared(ts.typeorm), appRoot,
   };
 }
 
-/** A declared TypeORM naming strategy, checked against the strategies the typeorm rule pack names. */
-export function typeormNamingDeclared(name) {
-  if (name == null) return null;
+/**
+ * What the profile's `tsBackend.typeorm` block declares, its naming strategy
+ * checked against the strategies the typeorm rule pack names ("" is none
+ * named, which the pack's default is). Null when it declares nothing.
+ */
+export function typeormDeclared(block) {
+  if (!block || Object.values(block).every((v) => v == null)) return null;
+  const name = block.namingStrategy ?? null;
   const known = builtinRegistry().ofKind('typeorm.entity').flatMap((e) => e.rule.params.strategies.map((s) => s.name));
-  if (known.includes(name)) return name;
-  throw new ProfileError(`profile.tsBackend.typeormNamingStrategy must be null or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(name)}`);
+  if (name !== null && name !== '' && !known.includes(name)) {
+    throw new ProfileError(`profile.tsBackend.typeorm.namingStrategy must be null, "" or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(name)}`);
+  }
+  return { namingStrategy: name, entityPrefix: block.entityPrefix ?? null, schema: block.schema ?? null };
 }
 
 export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, tsOpts = null }) {

@@ -86,13 +86,30 @@ export function followRelation(se, e, rel, how) {
   return rel.target;
 }
 
-/** A relation path the find options name (`articles.comments`), followed a relation at a time. */
+/**
+ * A relation path the find options name (`articles.comments`), followed a
+ * relation at a time, and the eager relations of each entity it brings:
+ * TypeORM joins them with it (0.2's FindOptionsUtils.applyRelationsRecursively,
+ * 0.3's buildEagerRelations). One level at `how.eager`; past it SOUND_SET,
+ * since 0.2 follows theirs as well and 0.3 stops at one.
+ */
 export function followPath(se, e, path, how) {
   let cur = e;
   for (const prop of path.split('.')) {
     const rel = cur.relations.find((r) => r.property === prop);
     cur = rel ? followRelation(se, cur, rel, how) : null;
     if (!cur) { if (!rel) se.unresolved.push({ reason: 'argument-not-read', detail: `relations: ${path}` }); return; }
+    if (how.eager) followEagerOnce(se, cur, how);
+  }
+}
+
+/** The eager relations of an entity a named relation brought: the first level at `how.eager`, the rest SOUND_SET. */
+function followEagerOnce(se, e, how) {
+  for (const rel of e.relations) {
+    if (!rel.eager || !rel.target) continue;
+    const grade = rel.eager === 'may' ? weakest(how.eager, 'SOUND_SET') : how.eager;
+    const target = followRelation(se, e, rel, { ...how, grade, whole: true, rule: 'typeorm-eager-relation' });
+    if (target) followEager(se, target, { ...how, grade: 'SOUND_SET', rule: 'typeorm-eager-relation' }, new Set([e.key, target.key]));
   }
 }
 
