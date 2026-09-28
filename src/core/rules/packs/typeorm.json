@@ -7,7 +7,7 @@
       "id": "typeorm.entities",
       "kind": "typeorm.entity",
       "description": "A class decorated @Entity maps a table: the name @Entity('name') or @Entity({ name }) gives, else the one the naming strategy derives from the class name, after the DataSource's entityPrefix and in its schema when the entity names none. Each property a column decorator marks is a column: the name its options give, else the one the strategy derives from the property. A @ManyToOne, or a @OneToOne with @JoinColumn, adds the join column that holds it; a @ManyToMany with @JoinTable adds the join table and its two columns. Columns a class inherits from a class it extends are its own, as TypeORM reads them. The strategy is the one the DataSource options name in namingStrategy, DefaultNamingStrategy when every options object the source writes names none, and an assumed DefaultNamingStrategy, graded HEURISTIC, when an options object is not written out in the source.",
-      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. EntityMetadata.build puts the options' entityPrefix before every table name and gives an entity that names no schema the options' schema, so a table name is known only when both are. A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
+      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. EntityMetadata.build puts the options' entityPrefix before every table name and gives an entity that names no schema the options' schema, so a table name is known only when both are; which of the schema and the entity's own database go before it is the driver's (tablePath, each driver's buildTableName in src/driver at 0.3.28: PostgresDriver the schema, MysqlDriver the database, SqlServerDriver both, AbstractSqliteDriver neither). A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
       "params": {
         "packages": ["typeorm"],
         "entity": ["Entity"],
@@ -30,10 +30,17 @@
           "namingKey": "namingStrategy",
           "prefixKey": "entityPrefix",
           "schemaKey": "schema",
+          "typeKey": "type",
           "factoryKey": "useFactory",
           "classKeys": ["useClass", "useExisting"],
           "classMethod": "createTypeOrmOptions",
           "handsOptionsTo": "dataSourceFactory"
+        },
+        "tablePath": {
+          "postgres": ["schema"], "aurora-postgres": ["schema"], "cockroachdb": ["schema"], "oracle": ["schema"], "sap": ["schema"],
+          "mysql": ["database"], "mariadb": ["database"], "aurora-mysql": ["database"], "spanner": ["database"],
+          "mssql": ["database", "schema"],
+          "sqlite": [], "better-sqlite3": [], "sqljs": [], "capacitor": [], "cordova": [], "react-native": [], "nativescript": [], "expo": []
         },
         "strategies": [
           { "name": "default", "module": "typeorm", "export": "DefaultNamingStrategy", "table": "snake", "column": "none", "joinColumn": "camel", "joinTable": "snake", "joinTableColumn": "camel" },
@@ -86,6 +93,14 @@
           "source": "import { Entity, PrimaryColumn, DataSource } from 'typeorm';\nimport { prefix } from './config';\nexport const ds = new DataSource({ type: 'postgres', entityPrefix: prefix });\n@Entity('users')\nexport class User {\n  @PrimaryColumn() id: number;\n}\n",
           "expect": [{ "table": "users", "entity": "User", "grade": "HEURISTIC", "columns": ["id"] }],
           "why": "a prefix held in a value is not known, so even the name the decorator writes may not be the table's"
+        },
+        {
+          "source": "import { Entity, PrimaryColumn, DataSource } from 'typeorm';\nconst PREFIX = 'app_';\nexport const ds = new DataSource({ type: 'mysql', schema: 'billing', entityPrefix: PREFIX });\n@Entity('users')\nexport class User {\n  @PrimaryColumn() id: number;\n}\n@Entity('orders', { database: 'shop' })\nexport class Order {\n  @PrimaryColumn() id: number;\n}\n",
+          "expect": [
+            { "table": "app_users", "entity": "User", "grade": "EXACT", "columns": ["id"] },
+            { "table": "shop.app_orders", "entity": "Order", "grade": "EXACT", "columns": ["id"] }
+          ],
+          "why": "a const literal in the same file is the prefix it holds; on MySQL the database, not the schema, goes before a table (MysqlDriver.buildTableName)"
         }
       ]
     },
@@ -140,13 +155,18 @@
           "source": "import { Repository } from './my-repository';\nexport class NotTypeorm {\n  constructor(private repo: Repository<User>) {}\n  a() { return this.repo.find(); }\n}\nclass User {}\n",
           "expect": [],
           "why": "a Repository of the project's own is not TypeORM's"
+        },
+        {
+          "source": "import { getRepository } from 'typeorm';\nexport function later(flag: boolean) {\n  let r;\n  r = getRepository(Tag);\n  const t = flag ? getRepository(Tag) : getRepository(Label);\n  return [r.count(), t.count()];\n}\nclass Tag {}\nclass Label {}\n",
+          "expect": [{ "call": "r.count", "receiver": "repository", "entity": "Tag" }],
+          "why": "a local declared with no value and given a repository once holds that one; a local a condition fills holds either, and a call on it is not read (the lane says so)"
         }
       ]
     },
     {
       "id": "typeorm.operations",
       "kind": "typeorm.operation",
-      "description": "What each Repository and EntityManager operation sends, and what part each argument plays. A find reads what its options name: where filters by the properties it names (an array of wheres is an OR), select returns the ones it names, order reads them, relations reaches the relations it names; with no select every column of the entity is returned, with the relations marked eager. An argument that is not written out MAY read any column of the entity. An update or insert writes the properties its values name; save and an insert of an object not written out MAY write any column. softDelete and restore write the entity's @DeleteDateColumn. An EntityManager takes the entity as its first argument.",
+      "description": "What each Repository and EntityManager operation sends, and what part each argument plays. count, exists and the aggregates join the eager relations in TypeORM 0.3 without selecting them (setFindOptions), so their tables and join columns MAY be read. A find reads what its options name: where filters by the properties it names (an array of wheres is an OR), select returns the ones it names, order reads them, relations reaches the relations it names; with no select every column of the entity is returned, with the relations marked eager. An argument that is not written out MAY read any column of the entity. An update or insert writes the properties its values name; save and an insert of an object not written out MAY write any column. softDelete and restore write the entity's @DeleteDateColumn. An EntityManager takes the entity as its first argument.",
       "why": "TypeORM's Repository and EntityManager API (src/repository/Repository.ts, src/entity-manager/EntityManager.ts, read at 0.2.34 and 0.3.28). In 0.2, find, findOne and count take either find options or the conditions themselves, and FindOptionsUtils.isFindOneOptions tells them apart by the keys an options object has and the kind of value each holds: legacyFindOptions is that test. findOne(id) finds by the primary key.",
       "params": {
         "operations": {
@@ -160,15 +180,15 @@
           "findOneByOrFail": { "statement": "select", "args": ["where"], "wholeRow": true, "eager": true },
           "findByIds": { "statement": "select", "args": ["ids", "find-options"], "wholeRow": true, "eager": true },
           "findOneById": { "statement": "select", "args": ["ids"], "wholeRow": true, "eager": true },
-          "count": { "statement": "select", "args": ["find-options"] },
-          "countBy": { "statement": "select", "args": ["where"] },
-          "exist": { "statement": "select", "args": ["find-options"] },
-          "exists": { "statement": "select", "args": ["find-options"] },
-          "existsBy": { "statement": "select", "args": ["where"] },
-          "sum": { "statement": "select", "args": ["property", "where"] },
-          "average": { "statement": "select", "args": ["property", "where"] },
-          "minimum": { "statement": "select", "args": ["property", "where"] },
-          "maximum": { "statement": "select", "args": ["property", "where"] },
+          "count": { "statement": "select", "args": ["find-options"], "eagerJoined": true },
+          "countBy": { "statement": "select", "args": ["where"], "eagerJoined": true },
+          "exist": { "statement": "select", "args": ["find-options"], "eagerJoined": true },
+          "exists": { "statement": "select", "args": ["find-options"], "eagerJoined": true },
+          "existsBy": { "statement": "select", "args": ["where"], "eagerJoined": true },
+          "sum": { "statement": "select", "args": ["property", "where"], "eagerJoined": true },
+          "average": { "statement": "select", "args": ["property", "where"], "eagerJoined": true },
+          "minimum": { "statement": "select", "args": ["property", "where"], "eagerJoined": true },
+          "maximum": { "statement": "select", "args": ["property", "where"], "eagerJoined": true },
           "preload": { "statement": "select", "args": ["entity"], "wholeRow": true },
           "save": { "statement": "upsert", "args": ["entity", "none"], "wholeRow": true, "writesEntity": true },
           "insert": { "statement": "insert", "args": ["values"] },
@@ -257,8 +277,8 @@
         },
         {
           "operation": "count", "args": ["{ where: { email } }", "extra"], "fields": ["id", "email"],
-          "expect": { "statement": "select", "reads": ["email"], "notRead": ["argument 2"] },
-          "why": "an argument the pack names no part for is said, never dropped"
+          "expect": { "statement": "select", "reads": ["email"], "notRead": ["argument 2"], "eagerJoined": true },
+          "why": "an argument the pack names no part for is said, never dropped; and TypeORM 0.3 joins the eager relations of a count (setFindOptions), so their tables MAY be read"
         },
         {
           "operation": "findOneBy", "args": ["{ role: { id: 1 }, name: 'x' }"], "fields": ["id", "name"], "relations": ["role"],
@@ -282,7 +302,7 @@
           "leftJoin": "join", "innerJoin": "join",
           "leftJoinAndSelect": "join-select", "innerJoinAndSelect": "join-select",
           "leftJoinAndMapOne": "join-map", "leftJoinAndMapMany": "join-map", "innerJoinAndMapOne": "join-map", "innerJoinAndMapMany": "join-map",
-          "from": "from", "into": "into",
+          "from": "from", "into": "into", "clone": "clone",
           "update": "update", "delete": "delete", "insert": "insert", "softDelete": "soft-delete", "restore": "restore",
           "set": "values", "values": "values",
           "skip": "none", "take": "none", "limit": "none", "offset": "none", "setParameter": "none", "setParameters": "none",

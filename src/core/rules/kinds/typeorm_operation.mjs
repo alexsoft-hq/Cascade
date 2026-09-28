@@ -24,10 +24,10 @@ const VALUE_KINDS = Object.freeze(['arr', 'obj', 'str', 'num', 'bool']);
 function operationErrors(name, op) {
   const where = `params.operations.${name}`;
   if (!NAME.test(name) || !isPlainObject(op)) return [`params.operations has ${JSON.stringify(name)}, which is not an operation`];
-  const errors = unknownKeysAt(op, ['statement', 'args', 'wholeRow', 'eager', 'writesEntity', 'deleteDate'], where);
+  const errors = unknownKeysAt(op, ['statement', 'args', 'wholeRow', 'eager', 'eagerJoined', 'writesEntity', 'deleteDate'], where);
   if (!STATEMENTS.includes(op.statement)) errors.push(`${where}.statement must be one of ${STATEMENTS.join(', ')}`);
   if (!Array.isArray(op.args) || !op.args.every((a) => ARG_ROLES.includes(a))) errors.push(`${where}.args must list parts from ${ARG_ROLES.join(', ')}`);
-  for (const k of ['wholeRow', 'eager', 'writesEntity', 'deleteDate']) if (op[k] !== undefined && typeof op[k] !== 'boolean') errors.push(`${where}.${k} must be true or false`);
+  for (const k of ['wholeRow', 'eager', 'eagerJoined', 'writesEntity', 'deleteDate']) if (op[k] !== undefined && typeof op[k] !== 'boolean') errors.push(`${where}.${k} must be true or false`);
   return errors;
 }
 
@@ -44,7 +44,7 @@ function validateParams(params) {
   return errors;
 }
 
-const EXPECT_KEYS = Object.freeze(['statement', 'reads', 'writes', 'mayReads', 'mayWrites', 'wholeRow', 'follows', 'relations', 'runtimeOnly', 'notRead']);
+const EXPECT_KEYS = Object.freeze(['statement', 'reads', 'writes', 'mayReads', 'mayWrites', 'wholeRow', 'follows', 'relations', 'runtimeOnly', 'notRead', 'eagerJoined']);
 
 function validateExample(example) {
   if (!isPlainObject(example)) return ['an example must be an object'];
@@ -59,16 +59,25 @@ function validateExample(example) {
 /** What the operation itself adds once its arguments are read: the whole row, the eager relations, the delete date column. */
 function finish(fx, op, entity) {
   const unknownArg = fx.optionsUnknown || fx.runtimeOnly.has('entity');
-  if (op.wholeRow && !fx.hasSelect) fx.wholeRow = unknownArg || op.writesEntity ? 'may' : 'exact';
-  // An entity query that selects some columns selects the primary key too (SelectQueryBuilder.buildEscapedEntityColumnSelects).
-  if (op.wholeRow && fx.hasSelect) for (const p of entity.pk) fx.reads.add(p);
+  if (op.wholeRow) rowOf(fx, op, entity, unknownArg);
   // A find joins the eager relations whole whatever its select names (FindOptionsUtils.joinEagerRelations adds their alias).
   if (op.eager && !fx.noEager) fx.eager = unknownArg || fx.eagerMay ? 'may' : 'exact';
-  if (op.deleteDate) {
-    if (entity.deleteDate) fx.writes.add(entity.deleteDate);
-    else fx.unknownKeys.add('a delete date column');
-  }
+  // count, exists and the aggregates go through setFindOptions in TypeORM 0.3, which joins the eager relations without selecting them; 0.2 does not.
+  if (op.eagerJoined && !fx.noEager) fx.eagerJoined = true;
+  if (op.deleteDate) writeDeleteDate(fx, entity);
   return fx;
+}
+
+/** The row an operation that returns one returns: whole with no select; with one, what it names and the primary key too (SelectQueryBuilder.buildEscapedEntityColumnSelects). */
+function rowOf(fx, op, entity, unknownArg) {
+  if (!fx.hasSelect) fx.wholeRow = unknownArg || op.writesEntity ? 'may' : 'exact';
+  else for (const p of entity.pk) fx.reads.add(p);
+}
+
+/** softDelete and restore write the delete date column the entity declares; one that declares none is said. */
+function writeDeleteDate(fx, entity) {
+  if (entity.deleteDate) fx.writes.add(entity.deleteDate);
+  else fx.unknownKeys.add('a delete date column');
 }
 
 /**
@@ -100,6 +109,7 @@ function shapeOf(fx) {
   return {
     statement: fx.statement, reads: sorted(fx.reads), writes: sorted(fx.writes), mayReads: sorted(fx.mayReads), mayWrites: sorted(fx.mayWrites),
     wholeRow: wholeRowOf(fx.wholeRow), follows: sorted(fx.follows), relations: sorted(fx.relations), runtimeOnly: sorted(fx.runtimeOnly), notRead: sorted(fx.unknownKeys),
+    eagerJoined: Boolean(fx.eagerJoined),
   };
 }
 
@@ -109,7 +119,7 @@ function runExamples(entries, env) {
     const entity = { fields: ex.fields, relations: ex.relations ?? [], pk: ex.pk ?? (ex.fields.includes('id') ? ['id'] : []), deleteDate: ex.deleteDate ?? null };
     const fx = entry.compiled.effectsOf(ex.operation, ex.args.map((a) => env.tsValue(a)), entity);
     const got = fx && shapeOf(fx);
-    const want = { reads: [], writes: [], mayReads: [], mayWrites: [], wholeRow: false, follows: [], relations: [], runtimeOnly: [], notRead: [], ...ex.expect };
+    const want = { reads: [], writes: [], mayReads: [], mayWrites: [], wholeRow: false, follows: [], relations: [], runtimeOnly: [], notRead: [], eagerJoined: false, ...ex.expect };
     const norm = (s) => JSON.stringify(Object.fromEntries(Object.entries(s).map(([k, v]) => [k, Array.isArray(v) ? [...v].sort() : v]).sort()));
     return { example: ex, passed: Boolean(got) && norm(got) === norm(want), got };
   })]));

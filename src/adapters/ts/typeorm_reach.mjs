@@ -119,7 +119,8 @@ export function followEager(se, e, how, seen = new Set([e.key]), depth = 0) {
   for (const rel of e.relations) {
     if (!rel.eager || !rel.target || seen.has(rel.target.key)) continue;
     const grade = rel.eager === 'may' ? weakest(how.grade, 'SOUND_SET') : how.grade;
-    const target = followRelation(se, e, rel, { ...how, grade, whole: true });
+    // A join that selects nothing (a count's) reads the relation's key and join column, not its row.
+    const target = followRelation(se, e, rel, { ...how, grade, whole: !how.joinOnly });
     if (target) followEager(se, target, { ...how, grade }, new Set([...seen, target.key]), depth + 1);
   }
 }

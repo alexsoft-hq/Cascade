@@ -162,11 +162,12 @@ function names(source, options = {}) {
 const tableGrade = (r, id) => r.graph.nodes.get(`table:${id}`)?.typeormNameGrade;
 
 test('typeorm unknown entityPrefix remains uncertain after declaring naming strategy', () => {
-  const explicit = names("const prefix='tenant_'; new DataSource({type:'postgres',entityPrefix:prefix}); @Entity('users') export class User { @PrimaryColumn() id:number; }");
-  const declared = names("const prefix='tenant_'; new DataSource({type:'postgres',entityPrefix:prefix}); @Entity() export class User { @PrimaryColumn() id:number; }", { typeorm: { namingStrategy: 'default' } });
-  // TypeORM names these tenant_users and tenant_user; neither unprefixed name is known.
+  // A prefix imported from another file is not a literal this file holds (a const in the same file is read: typeorm_review3).
+  const explicit = names("import { prefix } from './tenant'; new DataSource({type:'postgres',entityPrefix:prefix}); @Entity('users') export class User { @PrimaryColumn() id:number; }");
+  const declared = names("import { prefix } from './tenant'; new DataSource({type:'postgres',entityPrefix:prefix}); @Entity() export class User { @PrimaryColumn() id:number; }", { typeorm: { namingStrategy: 'default' } });
+  // TypeORM puts the prefix before users and user; neither unprefixed name is known.
   assert.deepEqual([tableGrade(explicit, 'users'), tableGrade(declared, 'user')], ['HEURISTIC', 'HEURISTIC']);
-  const settled = names("const prefix='tenant_'; new DataSource({type:'postgres',entityPrefix:prefix}); @Entity('users') export class User { @PrimaryColumn() id:number; }", { typeorm: { entityPrefix: 'tenant_' } });
+  const settled = names("import { prefix } from './tenant'; new DataSource({type:'postgres',entityPrefix:prefix}); @Entity('users') export class User { @PrimaryColumn() id:number; }", { typeorm: { entityPrefix: 'tenant_' } });
   assert.equal(tableGrade(settled, 'tenant_users'), 'EXACT', 'a declared prefix is applied, and the name is then known');
 });
 
@@ -175,8 +176,8 @@ test('typeorm datasource schema supplies entity schema when decorator omits it',
   assert.ok(r.graph.nodes.has('table:billing.users'), 'the DataSource schema is billing');
   const own = names("new DataSource({type:'postgres',schema:'billing'}); @Entity('users', { schema: 'audit' }) export class User { @PrimaryColumn() id:number; }");
   assert.ok(own.graph.nodes.has('table:audit.users'), 'the decorator\'s own schema wins');
-  const unread = names("const s='x'; new DataSource({type:'postgres',schema:s}); @Entity('users') export class User { @PrimaryColumn() id:number; }");
-  assert.equal(tableGrade(unread, 'users'), 'HEURISTIC', 'a schema held in a variable leaves the table\'s schema unknown');
+  const unread = names("import { s } from './env'; new DataSource({type:'postgres',schema:s}); @Entity('users') export class User { @PrimaryColumn() id:number; }");
+  assert.equal(tableGrade(unread, 'users'), 'HEURISTIC', 'a schema held in a value from another file leaves the table\'s schema unknown');
 });
 
 test('typeorm undecorated subclass declaration preserves inherited column metadata', () => {

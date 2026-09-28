@@ -15,11 +15,12 @@
 import { isPlainObject, namesErrors, unknownKeysAt } from './ts_names.mjs';
 import { namingErrors, compileNaming } from './typeorm_naming.mjs';
 import { optionsErrors, readNaming, declaredNaming } from './typeorm_options.mjs';
+import { tablePathErrors } from './typeorm_path.mjs';
 import { entityClasses } from './typeorm_mapping.mjs';
 import { buildModel, weakestOfEntity } from './typeorm_model.mjs';
 import { exampleProject } from './ts_example_project.mjs';
 
-const PARAM_KEYS = Object.freeze(['packages', 'entity', 'notRead', 'columns', 'relations', 'joinColumn', 'joinTable', 'eagerKey', 'options', 'strategies', 'defaultStrategy', 'snakeCase', 'joinTableNameLimit']);
+const PARAM_KEYS = Object.freeze(['packages', 'entity', 'notRead', 'columns', 'relations', 'joinColumn', 'joinTable', 'eagerKey', 'options', 'tablePath', 'strategies', 'defaultStrategy', 'snakeCase', 'joinTableNameLimit']);
 const COLUMN_ROLES = Object.freeze(['column', 'primary', 'delete-date']);
 const RELATION_KINDS = Object.freeze(['many-to-one', 'one-to-one', 'one-to-many', 'many-to-many']);
 
@@ -34,7 +35,7 @@ function validateParams(params) {
   errors.push(...namesErrors(params.packages, 'params.packages'), ...namesErrors(params.entity, 'params.entity'), ...namesErrors(params.notRead, 'params.notRead', { allowEmpty: true }));
   errors.push(...mapErrors(params.columns, 'params.columns', COLUMN_ROLES), ...mapErrors(params.relations, 'params.relations', RELATION_KINDS));
   for (const k of ['joinColumn', 'joinTable', 'eagerKey']) if (typeof params[k] !== 'string' || params[k] === '') errors.push(`params.${k} must be a name as the source writes it`);
-  return [...errors, ...optionsErrors(params.options), ...namingErrors(params)];
+  return [...errors, ...optionsErrors(params.options), ...tablePathErrors(params.tablePath), ...namingErrors(params)];
 }
 
 function validateExample(example) {
@@ -64,7 +65,7 @@ function compile(rule) {
     rule: rule.id,
     readModel: (project, { declared = null } = {}) => {
       const decision = declared ? declaredNaming(project, cfg.options, naming, declared) : readNaming(project, cfg.options, naming);
-      return { ...buildModel(project, entityClasses(project, cfg), decision, naming), rule: rule.id };
+      return { ...buildModel(project, entityClasses(project, cfg), decision, { ...naming, tablePath: cfg.tablePath }), rule: rule.id };
     },
   };
 }

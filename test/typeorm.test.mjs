@@ -196,7 +196,7 @@ test('a repository call is a statement of its own, numbered among its method\'s 
   assert.equal(gradeOf(g, SID('m', 1), 'READS', 'column:users.id'), 'EXACT');
 });
 
-test('a find returns the whole row and loads the eager relation with it; count does not, and loadEagerRelations: false stops it', () => {
+test('a find returns the whole row and loads the eager relation with it; count may join it (TypeORM 0.3) without its row, and loadEagerRelations: false stops it', () => {
   const { g } = bridge([MODULE_KNOWN, USER_ENTITY, ROLE_ENTITY, service([
     '  a() { return this.users.find(); }',
     '  b() { return this.users.count(); }',
@@ -205,7 +205,8 @@ test('a find returns the whole row and loads the eager relation with it; count d
   assert.equal(gradeOf(g, SID('a', 0), 'EXECUTES', 'table:role'), 'EXACT');
   assert.equal(gradeOf(g, SID('a', 0), 'READS', 'column:role.title'), 'EXACT');
   assert.equal(g.edges.find((e) => e.from === SID('a', 0) && e.to === 'table:role').evidence.rule, 'typeorm-eager-relation');
-  assert.equal(gradeOf(g, SID('b', 0), 'EXECUTES', 'table:role'), null);
+  assert.equal(gradeOf(g, SID('b', 0), 'EXECUTES', 'table:role'), 'SOUND_SET');
+  assert.equal(gradeOf(g, SID('b', 0), 'READS', 'column:role.title'), null);
   assert.equal(gradeOf(g, SID('c', 0), 'EXECUTES', 'table:role'), null);
   assert.equal(gradeOf(g, SID('c', 0), 'READS', 'column:users.bio'), 'EXACT');
 });

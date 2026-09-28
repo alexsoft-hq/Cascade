@@ -334,7 +334,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   'tsBackend.typeorm.schema': {
     status: 'consumed', where: 'src/cli/ts_inputs.mjs',
-    note: 'the schema the TypeORM DataSource gives every entity that names none ("" for none), used INSTEAD of what the options say. A table is then keyed schema.table, as the SQL lane keys one. While it is neither declared nor read, the table of an entity that names no schema is not EXACT',
+    note: 'the schema the TypeORM DataSource gives every entity that names none ("" for none), used INSTEAD of what the options say. Declared, it is what goes before the table name whatever the driver, and a table is keyed schema.table, as the SQL lane keys one; read from the options, it goes there only for a driver whose table path holds a schema (the typeorm pack\'s tablePath). While it is neither declared nor read, the table of an entity that names no schema is not EXACT',
   },
   'jpa.namingStrategy': {
     status: 'consumed', where: 'src/adapters/jpa_bridge.mjs',

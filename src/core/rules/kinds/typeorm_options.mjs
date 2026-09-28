@@ -17,15 +17,15 @@
 // read and all agree, or when the profile declares it (`tsBackend.typeorm`).
 import { externalOf, isOneOf, isPlainObject, refsErrors, unknownKeysAt } from './ts_names.mjs';
 
-const OPTION_KEYS = Object.freeze(['calls', 'constructors', 'namingKey', 'prefixKey', 'schemaKey', 'factoryKey', 'classKeys', 'classMethod', 'handsOptionsTo']);
-/** The three facts, and what the profile's `tsBackend.typeorm` block calls each. */
-export const FACTS = Object.freeze(['namingStrategy', 'entityPrefix', 'schema']);
+const OPTION_KEYS = Object.freeze(['calls', 'constructors', 'namingKey', 'prefixKey', 'schemaKey', 'typeKey', 'factoryKey', 'classKeys', 'classMethod', 'handsOptionsTo']);
+/** The facts, named as the profile's `tsBackend.typeorm` block names the first three; `type` is the driver, which decides what qualifies a table. */
+export const FACTS = Object.freeze(['namingStrategy', 'entityPrefix', 'schema', 'type']);
 
 export function optionsErrors(o) {
   if (!isPlainObject(o)) return ['params.options must be an object'];
   const errors = unknownKeysAt(o, OPTION_KEYS, 'params.options');
   errors.push(...refsErrors(o.calls, 'params.options.calls', ['member']), ...refsErrors(o.constructors, 'params.options.constructors'));
-  for (const k of ['namingKey', 'prefixKey', 'schemaKey', 'factoryKey', 'classMethod', 'handsOptionsTo']) if (typeof o[k] !== 'string' || o[k] === '') errors.push(`params.options.${k} must be a key as the source writes it`);
+  for (const k of ['namingKey', 'prefixKey', 'schemaKey', 'typeKey', 'factoryKey', 'classMethod', 'handsOptionsTo']) if (typeof o[k] !== 'string' || o[k] === '') errors.push(`params.options.${k} must be a key as the source writes it`);
   if (!Array.isArray(o.classKeys) || !o.classKeys.every((k) => typeof k === 'string' && k !== '')) errors.push('params.options.classKeys must list keys as the source writes them');
   return errors;
 }
@@ -96,7 +96,7 @@ function asyncOptionValues(project, file, value, opts) {
 
 /** The strategy one options object names: `{value}` (null for none, which is the default) or `{unread}`. */
 function strategyOf(project, file, v, opts, strategies) {
-  const ns = v.v[opts.namingKey];
+  const ns = constValue(project, file, v.v[opts.namingKey]);
   if (!ns || ns.k === 'undefined') return { value: null };
   if (ns.k !== 'new') return { unread: `its ${opts.namingKey} is not a class written out where the options are` };
   const ext = externalOf(project, file, ns.callee);
@@ -104,9 +104,24 @@ function strategyOf(project, file, v, opts, strategies) {
   return hit ? { value: hit.name } : { unread: `its ${opts.namingKey} is ${ns.callee}, a class this engine does not model` };
 }
 
+/**
+ * The value a name in `file` holds when it is a const the file declares with a
+ * literal (`const PREFIX = 'app_'`) or with a `new` (`const naming = new
+ * SnakeNamingStrategy()`), as the web lane reads a const URL; anything else as
+ * it is. A local is found by where it is declared, a module's const by its
+ * name; a local written again, or a module name held twice, is not resolved.
+ */
+function constValue(project, file, v) {
+  if (!v || v.k !== 'id' || v.reassigned) return v;
+  const lit = (project.consts ?? []).find((c) => c.file === file && (v.at ? c.at === v.at : !c.at && c.name === v.v));
+  if (lit) return lit.value;
+  const made = (project.news ?? []).filter((n) => n.file === file && (v.at ? n.holderAt === v.at && !n.holderReassigned : !n.holderAt && n.in === null && n.holder === v.v));
+  return made.length === 1 ? { k: 'new', callee: made[0].callee } : v;
+}
+
 /** A string option: `{value}` ('' when the key is not there) or `{unread}`. */
-function literalOf(v, key) {
-  const x = v.v[key];
+function literalOf(project, file, v, key) {
+  const x = constValue(project, file, v.v[key]);
   if (!x || x.k === 'undefined') return { value: '' };
   return x.k === 'str' ? { value: x.v } : { unread: `its ${key} is not a literal` };
 }
@@ -118,7 +133,8 @@ function readOptionsObject(project, file, value, opts, strategies) {
   if (!value || value.k === 'none') return allUnread('it takes no options in the source, so they come from ormconfig or the environment at run time');
   if (value.k !== 'obj') return allUnread('its options are held in a value this engine does not read');
   if (value.spread || value.computed) return allUnread('its options spread another object, which may set any of them');
-  return { namingStrategy: strategyOf(project, file, value, opts, strategies), entityPrefix: literalOf(value, opts.prefixKey), schema: literalOf(value, opts.schemaKey) };
+  const lit = (key) => literalOf(project, file, value, key);
+  return { namingStrategy: strategyOf(project, file, value, opts, strategies), entityPrefix: lit(opts.prefixKey), schema: lit(opts.schemaKey), type: lit(opts.typeKey) };
 }
 
 /** What a place says of each fact: an options object, or every object a `forRootAsync` factory or options class may return. */
@@ -148,16 +164,18 @@ function factOf(sites, fact) {
 /**
  * What the application runs with, and how each part is known: `{strategy,
  * known, reason}` for the naming strategy (the default's when nothing names
- * one), `{prefix, prefixKnown, prefixWhy}` and `{schema, schemaKnown,
- * schemaWhy}`, with every place read in `sites`.
+ * one), `{prefix, prefixKnown, prefixWhy}`, `{schema, schemaKnown, schemaWhy}`
+ * and the driver, `{type, typeKnown, typeWhy}`, with every place read in
+ * `sites`.
  */
 export function readNaming(project, opts, naming) {
   const sites = optionSites(project, opts).map((s) => ({ ...s, read: readSite(project, s, opts, naming.strategies) }));
-  const [ns, prefix, schema] = FACTS.map((f) => factOf(sites, f));
+  const [ns, prefix, schema, type] = FACTS.map((f) => factOf(sites, f));
   const said = sites.map((s) => ({ file: s.file, line: s.line, how: s.how, ...Object.fromEntries(FACTS.map((f) => [f, s.read[f].unread ? { unread: s.read[f].unread } : s.read[f].value])) }));
   return {
     strategy: naming.strategies.find((x) => x.name === ns.value) ?? naming.defaultStrategy, known: ns.known, reason: ns.known ? `${ns.value ?? naming.defaultStrategy.name}: ${ns.why}` : ns.why,
-    prefix: prefix.value ?? '', prefixKnown: prefix.known, prefixWhy: prefix.why, schema: schema.value ?? '', schemaKnown: schema.known, schemaWhy: schema.why, sites: said,
+    prefix: prefix.value ?? '', prefixKnown: prefix.known, prefixWhy: prefix.why, schema: schema.value ?? '', schemaKnown: schema.known, schemaWhy: schema.why,
+    type: type.value ?? '', typeKnown: type.known && Boolean(type.value), typeWhy: type.known && !type.value ? 'the options name no type' : type.why, sites: said,
   };
 }
 

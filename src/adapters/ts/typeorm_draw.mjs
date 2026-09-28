@@ -48,6 +48,7 @@ function drawRelations(se, e, fx) {
     followPath(se, e, path, { grade, whole: !narrowed, eager, rule: 'typeorm-relations-option' });
   }
   if (fx.eager) followEager(se, e, { grade: fx.eager === 'may' ? 'SOUND_SET' : 'EXACT', rule: 'typeorm-eager-relation' });
+  if (fx.eagerJoined) followEager(se, e, { grade: 'SOUND_SET', joinOnly: true, rule: 'typeorm-eager-relation' });
 }
 
 /** What a Repository or EntityManager operation reads and writes, drawn. */
@@ -70,7 +71,8 @@ export function drawOperation(se, e, fx, op) {
 /** What a query builder reads and writes, drawn: every table its aliases name, and the columns of each. */
 export function drawBuilder(se, fx, main) {
   const may = 'SOUND_SET';
-  const run = fx.terminal ? 'EXACT' : may;
+  // A builder that escapes may be run with steps not read here: all it reads is a candidate.
+  const run = fx.terminal && !fx.escaped ? 'EXACT' : may;
   if (main) se.table(main, ACCESS[fx.statement], run);
   for (const f of fx.follows) followRelation(se, f.view.entity, f.view.entity.relations.find((r) => r.property === f.property), { grade: f.may ? may : run, whole: false, rule: 'typeorm-join' });
   for (const t of fx.tables) se.table(t.view.entity, 'read', t.may ? may : run, { rule: 'typeorm-join' });
@@ -80,7 +82,13 @@ export function drawBuilder(se, fx, main) {
   for (const h of fx.writes) se.column(h.view.entity, col(h), 'WRITES', run);
   for (const h of fx.mayWrites) se.column(h.view.entity, col(h), 'WRITES', may);
   for (const w of fx.wholeRow) readWholeRow(se, w.view.entity, w.grade === 'exact' ? run : may);
+  builderGaps(se, fx);
+}
+
+/** What a builder's statement could not read, said on it. */
+function builderGaps(se, fx) {
   for (const n of fx.notRead) se.unresolved.push({ reason: 'builder-step-not-read', detail: n });
+  if (fx.escaped) se.unresolved.push({ reason: 'builder-escapes', detail: `${fx.escaped}, where steps this engine does not read may change what it reads` });
   if (!fx.terminal) se.unresolved.push({ reason: 'builder-not-run-here', detail: 'no step that runs the query is written where the builder is made, so whether it runs, and what it returns, is not known here' });
 }
 

@@ -22,7 +22,7 @@ import { isPlainObject, namesErrors, unknownKeysAt } from './ts_names.mjs';
 import { columnsInText, columnsOfProperty } from './typeorm_builder_read.mjs';
 import { exampleProject } from './ts_example_project.mjs';
 
-export const STEP_ROLES = Object.freeze(['select', 'add-select', 'condition', 'ids', 'order', 'join', 'join-select', 'join-map', 'from', 'into',
+export const STEP_ROLES = Object.freeze(['select', 'add-select', 'condition', 'ids', 'order', 'join', 'join-select', 'join-map', 'from', 'into', 'clone',
   'update', 'delete', 'insert', 'soft-delete', 'restore', 'values', 'rows', 'count', 'none']);
 const ALIAS_ROLES = new Set(['join', 'join-select', 'join-map', 'from', 'into', 'update']);
 const STATEMENT_OF = Object.freeze({ update: 'update', delete: 'delete', insert: 'insert', 'soft-delete': 'update', restore: 'update' });

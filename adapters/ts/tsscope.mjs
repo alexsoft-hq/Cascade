@@ -9,7 +9,9 @@
 // clause's parameter, a for loop's head) and answers, for an identifier, the
 // place of the declaration it refers to (`line:column`), and whether that local
 // is written again anywhere it is in scope: an assignment, `++`, a for-in or
-// for-of target, a second `var` of the same name.
+// for-of target, a second `var` of the same name. A local declared with no
+// value (`let r;`) and written exactly once is `once`: wherever it is read, it
+// holds that one value or none at all.
 //
 // Only a LOCAL is answered: a name declared in a function, a block or a clause.
 // A name declared at module level, or imported, has no answer, so a record that
@@ -42,16 +44,17 @@ function varScope(scope) {
   return s;
 }
 
-function declare(st, scope, id) {
+function declare(st, scope, id, initialized = true) {
   if (!id || !id.name) return;
   const prev = scope.names.get(id.name);
   if (prev) {
     // A second declaration of one name in one scope (`var x = a; var x = b`) writes it again.
     prev.reassigned = true;
+    prev.redeclared = true;
     st.declared.set(id, prev);
     return;
   }
-  const b = { at: place(id), local: scope.kind !== 'module', reassigned: false };
+  const b = { at: place(id), local: scope.kind !== 'module', reassigned: false, initialized, writes: 0, redeclared: false };
   scope.names.set(id.name, b);
   st.declared.set(id, b);
 }
@@ -83,7 +86,8 @@ function walkFunction(st, node, scope) {
 function walkDeclaration(st, node, scope) {
   if (node.type === 'VariableDeclaration') {
     const target = node.kind === 'var' ? varScope(scope) : scope;
-    for (const d of node.declarations) for (const id of patternIds(d.id)) declare(st, target, id);
+    // A for-in or for-of head is given a value by the loop, whatever it writes.
+    for (const d of node.declarations) for (const id of patternIds(d.id)) declare(st, target, id, Boolean(d.init) || st.loopHeads.has(node));
   } else if (node.type === 'ClassDeclaration' || node.type === 'TSEnumDeclaration') {
     declare(st, scope, node.id);
   }
@@ -111,6 +115,7 @@ function walk(st, node, scope) {
   if (!node || typeof node.type !== 'string') return;
   if (node.type === 'Identifier') { if (!st.declared.has(node)) st.scopes.set(node, scope); return; }
   if (isFunctionNode(node)) { walkFunction(st, node, scope); return; }
+  if ((node.type === 'ForInStatement' || node.type === 'ForOfStatement') && node.left.type === 'VariableDeclaration') st.loopHeads.add(node.left);
   walkDeclaration(st, node, scope);
   noteWrites(st, node, scope);
   const inner = scopeOpened(node, scope);
@@ -124,21 +129,21 @@ function walk(st, node, scope) {
  * The locals of one file's syntax tree.
  *
  * @param {object} ast  a Babel `File`
- * @returns {{local:(id:object) => ({at:string, reassigned:boolean}|null)}}
+ * @returns {{local:(id:object) => ({at:string, reassigned:boolean, once:boolean}|null)}}
  *          `local(id)`: for an identifier node of this tree, the local it refers
  *          to or declares, or null when it is not a local (module level,
  *          imported, or declared nowhere in the file)
  */
 export function readScopes(ast) {
-  const st = { declared: new Map(), scopes: new Map(), writes: [] };
+  const st = { declared: new Map(), scopes: new Map(), writes: [], loopHeads: new Set() };
   walk(st, ast.program, scopeIn(null, 'module'));
   for (const w of st.writes) {
     const b = st.declared.get(w.id) ?? resolve(w.scope, w.id.name);
-    if (b) b.reassigned = true;
+    if (b) { b.reassigned = true; b.writes += 1; }
   }
   const local = (id) => {
     const b = st.declared.get(id) ?? (st.scopes.has(id) ? resolve(st.scopes.get(id), id.name) : null);
-    return b && b.local && b.at ? { at: b.at, reassigned: b.reassigned } : null;
+    return b && b.local && b.at ? { at: b.at, reassigned: b.reassigned, once: !b.initialized && b.writes === 1 && !b.redeclared } : null;
   };
   return { local };
 }

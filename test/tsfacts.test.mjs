@@ -396,7 +396,9 @@ test('sourceFiles skips a directory it cannot read, instead of throwing', (t) =>
 });
 
 test('every file read says so first, even one of constants alone, so the bridge never takes it for a package', () => {
-  assert.deepEqual(factsOfFile('src/consts.ts', "export const DATE_FORMAT = 'yyyy-MM-dd';"), [{ kind: 'file', file: 'src/consts.ts' }]);
+  const records = factsOfFile('src/consts.ts', "export const DATE_FORMAT = 'yyyy-MM-dd';");
+  assert.deepEqual(records[0], { kind: 'file', file: 'src/consts.ts' });
+  assert.deepEqual(records.slice(1), [{ kind: 'const', file: 'src/consts.ts', name: 'DATE_FORMAT', value: { k: 'str', v: 'yyyy-MM-dd' }, line: 1 }], 'and the literal the const holds, which a reading of options resolves');
 });
 
 test('an interface is recorded with the interfaces it extends, and an abstract method, which has no body, is no method', () => {

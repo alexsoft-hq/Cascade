@@ -47,8 +47,8 @@ function addDeclaration(f, r) {
 function indexRecords(records) {
   const files = new Map();
   const at = (f) => { if (!files.has(f)) files.set(f, emptyFile()); return files.get(f); };
-  const calls = [];
-  const news = [];
+  // The records a later step reads as they come, in the order the worker wrote them.
+  const lists = { call: [], new: [], bind: [], const: [] };
   const pendingMembers = [];
   for (const r of records) {
     if (!r || typeof r.file !== 'string') continue;
@@ -56,17 +56,15 @@ function indexRecords(records) {
     switch (r.kind) {
       case 'import': f.imports.push(r); break;
       case 'export': f.exports.push(r); break;
-      case 'call': calls.push(r); break;
-      case 'new': news.push(r); break;
       case 'method': case 'ctorParam': case 'property': pendingMembers.push(r); break;
-      default: addDeclaration(f, r); break;
+      default: if (Object.hasOwn(lists, r.kind)) lists[r.kind].push(r); else addDeclaration(f, r); break;
     }
   }
   for (const r of pendingMembers) {
     const cls = files.get(r.file)?.classes.get(r.class);
     if (cls) addClassMember(cls, r);
   }
-  return { files, calls, news };
+  return { files, calls: lists.call, news: lists.new, binds: lists.bind, consts: lists.const };
 }
 
 /**
@@ -142,7 +140,7 @@ function exportedFrom(project, file, name, hops = 0) {
  * constants alone is not taken for a package.
  */
 export function readProject(records, tsconfig = {}) {
-  const { files, calls, news } = indexRecords(records);
+  const { files, calls, news, binds, consts } = indexRecords(records);
   const resolveModule = makeModuleResolver((f) => files.has(f), tsconfig);
 
   const exported = (file, name) => exportedFrom({ files, resolveModule }, file, name);
@@ -168,7 +166,7 @@ export function readProject(records, tsconfig = {}) {
   const { mixinOf, aliasOf } = namesOf(files, meaning);
   const step = { classOf, mixinOf };
   return {
-    files, calls, news, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), resolveModule, aliasOf,
+    files, calls, news, binds, consts, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), resolveModule, aliasOf,
     lineage: (cls) => lineageOf(step, cls).classes,
     // Where a class's chain of what it extends stops at a call this engine cannot follow, or null.
     openEnd: (cls) => lineageOf(step, cls).open,

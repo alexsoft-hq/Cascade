@@ -98,7 +98,8 @@ function startOf(project, call, cls, segs, bindings, cfg) {
 /** The local the receiver starts at, by where it is declared: two locals spelled alike are two bindings. */
 function localStart(call, bindings) {
   const b = call.rootAt ? bindings.get(`${call.file}|${call.rootAt}`) : null;
-  if (b && (b.reassigned || call.rootReassigned)) return { value: null, next: 1, unreadLocal: true };
+  if (b && (b.reassigned || (call.rootReassigned && !call.rootOnce))) return { value: null, next: 1, unreadLocal: 'is assigned again' };
+  if (b && b.branch) return { value: null, next: 1, unreadLocal: 'holds one of the values a condition chooses' };
   return { value: b && b.line <= call.line ? b.value : null, next: 1 };
 }
 
@@ -119,7 +120,7 @@ function step(value, seg, file, cfg) {
 export function readCall(project, call, cls, bindings, cfg) {
   const segs = segmentsOf(call);
   const start = startOf(project, call, cls, segs, bindings, cfg);
-  if (start.unreadLocal) return { unreadLocal: true };
+  if (start.unreadLocal) return { unreadLocal: start.unreadLocal };
   let value = start.value;
   if (!value) return null;
   for (let i = start.next; i < segs.length; i += 1) {

@@ -27,7 +27,7 @@ function newStats() {
     entities: 0, tables: 0, columns: 0, joinTables: 0, joins: 0, heuristicNames: 0, tablesStubbed: 0, columnsStubbed: 0,
     naming: null, notRead: [], sites: 0, statements: 0, builders: 0, byOperation: {},
     raw: 0, unknownOperation: 0, unreadEntity: 0, outsideMember: 0, unreadSamples: [], untypedReceiver: 0, untypedSamples: [],
-    reassignedReceiver: 0, reassignedSamples: [],
+    reassignedReceiver: 0, reassignedSamples: [], ddlTables: 0, ddlMisses: [],
   };
 }
 
@@ -42,7 +42,8 @@ function addBuilder(g, a) {
   const { viewOf, ctx, alias } = builderContext(project, model, site, entityOfRef);
   const held = builderSteps(project, site, opts.builder.roleOf);
   const fx = opts.builder.effectsOf({ view: e ? viewOf(e) : null, alias }, held.steps, ctx);
-  if (held.unread) fx.notRead.push(held.unread);
+  fx.notRead.push(...held.unread);
+  if (held.escaped) Object.assign(fx, { escaped: held.escaped, runtimeOnly: new Set(['builder']) });
   if (!fx.main) { stats.unreadEntity += 1; sample(stats, site, 'a query builder on no entity this engine read'); return; }
   const main = fx.main.entity;
   writeStatement(g, { ...a, e: main, fx, builder: true, draw: (se) => drawBuilder(se, fx, main) });
@@ -106,7 +107,7 @@ function namingSaid(n) {
 
 /** The entities as a catalog in the graph, and what the lane line and the column axis say of them. */
 function addCatalog(g, model, opts, stats) {
-  const nodes = catalogNodes(g, opts.identifierCase ?? 'exact', stats);
+  const nodes = catalogNodes(g, opts.identifierCase ?? 'exact', stats, opts.schemaName ?? null);
   const records = catalogRecordsOf(model, opts.schemaName ?? null);
   for (const r of records) nodes.ensure(r);
   stats.joins = addRelationJoins(g, model, nodes, opts.schemaName ?? null);
@@ -133,10 +134,11 @@ function addCatalog(g, model, opts, stats) {
 export function addTypeormStatements(g, project, opts) {
   const model = opts.entity.readModel(project, { declared: opts.declared ?? null });
   const { sites, unreadLocals } = opts.receiver.sitesOf(project);
-  if (model.entities.size === 0 && sites.length === 0) return null;
+  // An entity it could not read (a @TableInheritance, a @ChildEntity) is still something to say.
+  if (model.entities.size === 0 && sites.length === 0 && model.notRead.length === 0) return null;
   const stats = newStats();
   stats.reassignedReceiver = unreadLocals.length;
-  stats.reassignedSamples = unreadLocals.slice(0, SAMPLES).map((c) => ({ file: c.file, line: c.line, callee: c.callee }));
+  stats.reassignedSamples = unreadLocals.slice(0, SAMPLES).map(({ call, why }) => ({ file: call.file, line: call.line, callee: call.callee, why }));
   const nodes = addCatalog(g, model, opts, stats);
   const env = { nodes, schemaName: opts.schemaName ?? null, receiverRule: opts.receiver.rule };
   const ordinal = new Map();
@@ -155,7 +157,8 @@ function receiverDiagnostics(stats) {
     out.push({ kind: 'TS_TYPEORM_RECEIVER_UNREAD', reason: `${stats.untypedReceiver} call(s) name a TypeORM operation and an entity on a receiver not known to be a repository or an entity manager, so no statement is made for them: ${where(stats.untypedSamples)}` });
   }
   if (stats.reassignedReceiver > 0) {
-    out.push({ kind: 'TS_TYPEORM_RECEIVER_UNREAD', reason: `${stats.reassignedReceiver} call(s) are on a local that held a TypeORM repository or entity manager and is assigned again, so what it holds at the call is not known and no statement is made for them: ${where(stats.reassignedSamples)}` });
+    const why = stats.reassignedSamples.map((s) => `${s.file}:${s.line} ${s.callee} (the local ${s.why})`).join(', ');
+    out.push({ kind: 'TS_TYPEORM_RECEIVER_UNREAD', reason: `${stats.reassignedReceiver} call(s) are on a local that holds a TypeORM repository or entity manager but may hold another value at the call, so no statement is made for them: ${why}` });
   }
   return out;
 }
@@ -175,9 +178,20 @@ export function typeormDiagnostics(stats) {
     const where = stats.unreadSamples.map((s) => `${s.file}:${s.line} ${s.call} (${s.why})`).join(', ');
     out.push({ kind: 'TS_TYPEORM_CALL_UNREAD', reason: `${unread} TypeORM call(s) make no statement: ${stats.raw} raw SQL, ${stats.unknownOperation} operation(s) the pack does not name, ${stats.unreadEntity} on no entity this engine read. For example ${where}` });
   }
-  out.push(...receiverDiagnostics(stats));
+  return [...out, ...receiverDiagnostics(stats), ...catalogDiagnostics(stats)];
+}
+
+/** What the entities as a catalog left unsaid: mapping not read, and tables that meet none of the DDL this run read. */
+function catalogDiagnostics(stats) {
+  const out = [];
   if (stats.notRead.length > 0) {
     out.push({ kind: 'TS_TYPEORM_MAPPING_UNREAD', reason: `part of the entity mapping is not read, and draws nothing: ${stats.notRead.map((n) => `${n.entity}${n.property ? `.${n.property}` : ''} (${n.reason})`).join(', ')}` });
+  }
+  const misses = stats.ddlMisses;
+  if (misses.length > 0) {
+    const said = misses.slice(0, SAMPLES).map((m) => `${m.table} (${m.ddl.length > 0 ? `the DDL declares ${m.ddl.join(', ')}` : 'no DDL table of that name'})`).join(', ');
+    const hint = misses.some((m) => m.ddl.length > 0) ? '. A table the DDL declares with another schema, or with none, is another node: declaring schema.default as the schema TypeORM puts before these makes an unqualified DDL table of the same name the same table' : '';
+    out.push({ kind: 'TS_TYPEORM_TABLE_MISSES_DDL', reason: `${misses.length} TypeORM table(s) meet no table of the DDL this run read, so what reads them here is not found from the DDL's: ${said}${hint}` });
   }
   return out;
 }

@@ -59,22 +59,68 @@ function transactionBinding(call, read) {
   return at ? { key: `${call.file}|${at}`, line: fn.line, reassigned: false, value: { kind: 'manager', via: `the ${read.transaction.name} callback's ${fn.params[0]}` } } : null;
 }
 
-/** A local that holds a repository or a manager, bound where it is declared; one written again anywhere it is in scope may hold anything at a call. */
+/**
+ * A local that holds a repository or a manager, bound where it is declared.
+ * One written again anywhere it is in scope may hold anything at a call; one
+ * declared with no value and written once holds that value (`once`); one a
+ * condition's branch gives it may hold another value (`branch`).
+ */
 function holderBinding(call, read) {
   const at = call.chain ? call.chainHolderAt : call.holderAt;
-  const reassigned = call.chain ? call.chainHolderReassigned : call.holderReassigned;
-  return at && read.value && !read.op ? { key: `${call.file}|${at}`, line: call.line, reassigned: Boolean(reassigned), value: read.value } : null;
+  const once = call.chain ? call.chainHolderOnce : call.holderOnce;
+  const reassigned = (call.chain ? call.chainHolderReassigned : call.holderReassigned) && !once;
+  if (!at || !read.value || read.op) return null;
+  return { key: `${call.file}|${at}`, source: `${call.file}|${call.line}|${call.n}`, line: call.line, reassigned: Boolean(reassigned), branch: Boolean(call.holderBranch), value: read.value };
 }
 
-/** Every binding a pass over the calls finds, given the ones found so far, keyed by the file and the place of the declaration. */
+/**
+ * A local given a field, another local, or a condition's branches (the
+ * worker's `bind`): bound to what that value is, when this reading can type
+ * it, and never more sure than the local is written.
+ */
+function bindBinding(project, bind, known, cfg) {
+  if (!bind.at) return null;
+  const typed = bind.values.map((v) => valueRead(project, bind, v, known, cfg)).filter(Boolean);
+  if (typed.length === 0) return null;
+  return {
+    key: `${bind.file}|${bind.at}`, source: `${bind.file}|${bind.line}|bind`, line: bind.line,
+    reassigned: Boolean(bind.reassigned && !bind.once), branch: Boolean(bind.branch) || typed.length < bind.values.length, value: typed[0],
+  };
+}
+
+/** A value a local is given, as a call this reading can read: a member chain is one never called, another local one that starts there. */
+function callOfValue(bind, v) {
+  const base = { file: bind.file, in: bind.in, line: bind.line };
+  if (v.k === 'call' && v.callee) return { ...base, callee: v.callee, args: v.args };
+  if (v.k === 'member') return { ...base, callee: v.v, args: null };
+  return v.k === 'id' && v.at ? { ...base, callee: v.v, args: null, rootAt: v.at } : null;
+}
+
+/** What a value a local is given is; null when it is not a repository, a manager or a data source. */
+function valueRead(project, bind, v, known, cfg) {
+  const call = callOfValue(bind, v);
+  const read = call ? readCall(project, call, classOfCall(project, call), known, cfg) : null;
+  return read && !read.op && !read.transaction && !read.unreadLocal ? read.value ?? null : null;
+}
+
+/** Two bindings of one local from two places: the local holds one of them, which is the running program's to say. */
+function merged(prev, b) {
+  if (!prev) return b;
+  return prev.source === b.source ? prev : { ...prev, branch: true };
+}
+
+/** The binding one call makes: a transaction's callback parameter, or the local its value is held in. */
+function callBinding(project, call, known, cfg) {
+  const read = readCall(project, call, classOfCall(project, call), known, cfg);
+  if (!read || read.unreadLocal) return null;
+  return read.transaction ? transactionBinding(call, read) : holderBinding(call, read);
+}
+
+/** Every binding a pass over the calls and the binds finds, given the ones found so far, keyed by the file and the place of the declaration. */
 function bindingsOf(project, cfg, known) {
-  const out = new Map(known);
-  for (const call of project.calls) {
-    const read = readCall(project, call, classOfCall(project, call), known, cfg);
-    if (!read || read.unreadLocal) continue;
-    const b = read.transaction ? transactionBinding(call, read) : holderBinding(call, read);
-    if (b && !out.has(b.key)) out.set(b.key, b);
-  }
+  const out = new Map();
+  const found = [...project.calls.map((call) => callBinding(project, call, known, cfg)), ...(project.binds ?? []).map((bind) => bindBinding(project, bind, known, cfg))];
+  for (const b of found) if (b) out.set(b.key, merged(out.get(b.key), b));
   return out;
 }
 
@@ -91,7 +137,7 @@ function sitesUnder(project, cfg, bindings) {
   const unreadLocals = [];
   for (const call of project.calls) {
     const read = readCall(project, call, classOfCall(project, call), bindings, cfg);
-    if (read?.unreadLocal) unreadLocals.push(call);
+    if (read?.unreadLocal) unreadLocals.push({ call, why: read.unreadLocal });
     if (!read || !read.op) continue;
     sites.push({ call, op: read.op, receiver: read.value, ...siteEntity(read, call), args: read.args, rest: read.rest, index: read.index, line: read.line, segs: read.segs, cond: Boolean(call.cond) });
   }
@@ -106,8 +152,8 @@ function sitesUnder(project, cfg, bindings) {
  */
 function compile(rule) {
   const cfg = rule.params;
-  // Twice: a local may hold a repository taken from a transaction's manager.
-  const sitesOf = (project) => sitesUnder(project, cfg, bindingsOf(project, cfg, bindingsOf(project, cfg, new Map())));
+  // Three passes: a local may hold a repository taken from a transaction's manager, and another local may hold that one.
+  const sitesOf = (project) => sitesUnder(project, cfg, bindingsOf(project, cfg, bindingsOf(project, cfg, bindingsOf(project, cfg, new Map()))));
   return { rule: rule.id, sitesOf };
 }
 

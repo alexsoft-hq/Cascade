@@ -46,7 +46,12 @@ const SCHEMA = 'cascade:tsfacts:1';
 // 7: a property that holds a function (`fn`), the class a mixin function
 //    returns (`mixinOf`, `mixinParam`), a class that extends a call
 //    (`extendsCall`), and a module constant that names another value (`alias`).
-export const VERSION = 'tsfacts/7';
+// 8: a local written once after a declaration with no value (`...Once`), the
+//    call an assignment or a condition's branch hands to a local (`holder`,
+//    `holderBranch`), a local given a name or a member chain (`bind`), a const
+//    holding a literal (`const`), the local a `new` is held in, and the local
+//    a method returns.
+export const VERSION = 'tsfacts/8';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -151,7 +156,7 @@ export function valueOf(node, depth = 0, sc = null) {
     case 'NullLiteral': return { k: 'null' };
     case 'TemplateLiteral':
       return n.expressions.length === 0 ? { k: 'str', v: n.quasis.map((q) => q.value.cooked ?? '').join('') } : { k: 'tpl' };
-    case 'Identifier': return n.name === 'undefined' ? { k: 'undefined' } : { k: 'id', v: n.name, ...localField(sc, n, 'at', 'reassigned') };
+    case 'Identifier': return n.name === 'undefined' ? { k: 'undefined' } : { k: 'id', v: n.name, ...localField(sc, n, 'at', 'reassigned', 'once') };
     case 'MemberExpression':
     case 'OptionalMemberExpression': {
       const chain = chainOf(n);
@@ -187,10 +192,14 @@ function fnSummary(n, depth, sc) {
   return { k: 'fn', params: paramsOf(n).map((p) => p.name), ...(at.some(Boolean) ? { paramsAt: at } : {}), line: lineOf(n), endLine: endLineOf(n), ...returns };
 }
 
-/** `{[name]: place}` (and `{[flag]: true}` when it is written again) for an identifier that is a local, else nothing. */
-function localField(sc, id, name, flag) {
+/**
+ * `{[name]: place}` for an identifier that is a local, else nothing; with
+ * `{[flag]: true}` when it is written again, and `{[onceFlag]: true}` when that
+ * one write is all it is ever given (declared with no value, written once).
+ */
+function localField(sc, id, name, flag, onceFlag = null) {
   const b = sc && id ? sc.local(id) : null;
-  return b ? { [name]: b.at, ...(b.reassigned ? { [flag]: true } : {}) } : {};
+  return b ? { [name]: b.at, ...(b.reassigned ? { [flag]: true } : {}), ...(b.once && onceFlag ? { [onceFlag]: true } : {}) } : {};
 }
 
 /** A type annotation's name: `Foo` or `ns.Foo` for a type reference, null for anything else. */
@@ -229,10 +238,11 @@ function decoratorsOf(node) {
 const lineOf = (n) => (n.loc ? n.loc.start.line : null);
 const endLineOf = (n) => (n.loc ? n.loc.end.line : null);
 
-/** What one `return` hands back: a call by its callee and line, a name or member chain as written, an object literal whole, else only an expression. */
-function returnedValue(node) {
+/** What one `return` hands back: a call by its callee and line, a name (with the local it is) or member chain as written, an object literal whole, else only an expression. */
+function returnedValue(node, sc) {
   const n = unwrap(node);
   if (!n) return { k: 'none' };
+  if (n.type === 'Identifier' && sc) return valueOf(n, 0, sc);
   // An options factory (`createTypeOrmOptions() { return {...} }`) is read by its keys.
   if (n.type === 'ObjectExpression') return valueOf(n);
   if (n.type === 'CallExpression' || n.type === 'OptionalCallExpression') {
@@ -250,13 +260,13 @@ function returnedValue(node) {
  * returns a value, so a caller can tell "returns this, and only this" from a
  * guess.
  */
-function returnsOf(fn) {
+function returnsOf(fn, sc) {
   const body = fn.body;
   if (!body || body.type !== 'BlockStatement') return [];
   const out = [];
   const visit = (node) => {
     if (isFunctionNode(node) || node.type === 'ClassDeclaration' || node.type === 'ClassExpression') return;
-    if (node.type === 'ReturnStatement') out.push(returnedValue(node.argument));
+    if (node.type === 'ReturnStatement') out.push(returnedValue(node.argument, sc));
     eachChild(node, visit);
   };
   eachChild(body, visit);
@@ -314,7 +324,7 @@ function extendsCallOf(superClass) {
 }
 
 /** A class, and its members. `mixin` names the class a mixin function returns: `{name: 'Loud()', of: 'Loud', param}`. */
-function classRecords(file, node, exported, emit, mixin = null) {
+function classRecords(file, node, exported, emit, sc, mixin = null) {
   const name = mixin ? mixin.name : node.id ? node.id.name : 'default';
   emit({
     kind: 'class', file, name, exported, decorators: decoratorsOf(node),
@@ -326,10 +336,10 @@ function classRecords(file, node, exported, emit, mixin = null) {
     implements: (node.implements ?? []).map((i) => chainOf(i.expression)).filter(Boolean),
     line: lineOf(node), endLine: endLineOf(node),
   });
-  for (const m of node.body.body) memberRecords(file, name, m, emit);
+  for (const m of node.body.body) memberRecords(file, name, m, emit, sc);
 }
 
-function memberRecords(file, name, m, emit) {
+function memberRecords(file, name, m, emit, sc) {
   if (m.type === 'ClassMethod' && m.kind === 'constructor') {
     m.params.forEach((p, index) => {
       if (p.type !== 'TSParameterProperty') return;
@@ -337,7 +347,7 @@ function memberRecords(file, name, m, emit) {
       emit({ kind: 'ctorParam', file, class: name, index, name: id.name, type: typeNameOf(id.typeAnnotation), ...typeArgsField(id.typeAnnotation), decorators: decoratorsOf(p), line: lineOf(p) });
     });
   } else if (m.type === 'ClassMethod' && m.key && !m.computed) {
-    const returns = returnsOf(m);
+    const returns = returnsOf(m, sc);
     emit({
       kind: 'method', file, class: name, name: keyName(m), static: m.static === true, decorators: decoratorsOf(m),
       params: paramsOf(m), ...(returns.length > 0 ? { returns } : {}), line: lineOf(m), endLine: endLineOf(m),
@@ -414,16 +424,73 @@ function rootIdentifier(callee) {
  * local is written again anywhere it is in scope: the same name in two blocks is
  * two locals, and a name assigned again may hold anything at the call.
  */
-function callRecord(file, node, { here, callee, n, cond, holder, chain }, sc) {
+function callRecord(file, node, { here, callee, n, cond, holder, chain, branch }, sc) {
   return {
     kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), n,
     ...(holder ? { holder: holder.name } : {}), ...(cond ? { cond: true } : {}),
     ...(chain ? { chain: chain.steps, ...(chain.holder ? { chainHolder: chain.holder } : {}) } : {}),
     line: lineOf(node),
-    ...localField(sc, rootIdentifier(node.callee), 'rootAt', 'rootReassigned'),
-    ...localField(sc, holder, 'holderAt', 'holderReassigned'),
-    ...localField(sc, chain?.holderId, 'chainHolderAt', 'chainHolderReassigned'),
+    ...localField(sc, rootIdentifier(node.callee), 'rootAt', 'rootReassigned', 'rootOnce'),
+    ...localField(sc, holder, 'holderAt', 'holderReassigned', 'holderOnce'),
+    ...localField(sc, chain?.holderId, 'chainHolderAt', 'chainHolderReassigned', 'chainHolderOnce'),
+    ...(branch ? { holderBranch: true } : {}),
   };
+}
+
+/**
+ * The name a value is held in: a declaration's (`const r = …`) or an
+ * assignment's (`r = …`); each branch of a condition (`c ? a() : b()`) is held
+ * in it only if that branch runs.
+ */
+function noteHolders(node, holders, branchHeld) {
+  let id = null;
+  let value = null;
+  if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) [id, value] = [node.id, node.init];
+  else if (node.type === 'AssignmentExpression' && node.operator === '=' && node.left.type === 'Identifier') [id, value] = [node.left, node.right];
+  if (!id) return;
+  const v = unwrap(value);
+  if (v && v.type === 'ConditionalExpression') {
+    for (const b of [unwrap(v.consequent), unwrap(v.alternate)]) { holders.set(b, id); branchHeld.add(b); }
+    return;
+  }
+  holders.set(v, id);
+}
+
+const isValueCall = (n) => n && (n.type === 'CallExpression' || n.type === 'OptionalCallExpression' || n.type === 'NewExpression');
+
+/**
+ * A local given a name, a member chain or a condition's branches, not a call
+ * (a call says what holds it itself): `{kind: 'bind'}`, with where the local is
+ * declared, or `name: null` when a local's value goes somewhere else (`this.x =
+ * qb`). Only what a later reading can follow is told: a local's value, a chain
+ * off `this`, a branch that is a call.
+ */
+function bindRecord(file, here, node, cond, sc) {
+  let target = null;
+  let value = null;
+  if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) [target, value] = [node.id, node.init];
+  else if (node.type === 'AssignmentExpression' && node.operator === '=') [target, value] = [node.left, node.right];
+  const v = unwrap(value);
+  if (!v || isValueCall(v) || isFunctionNode(v)) return null;
+  const branch = v.type === 'ConditionalExpression';
+  const values = (branch ? [v.consequent, v.alternate] : [v]).map((x) => valueOf(x, 0, sc));
+  const local = target && target.type === 'Identifier' ? localField(sc, target, 'at', 'reassigned', 'once') : {};
+  const followed = (x) => (x.k === 'id' && x.at) || (local.at && ((x.k === 'member' && x.v.startsWith('this.')) || (branch && x.k === 'call')));
+  if (!values.some(followed)) return null;
+  return {
+    kind: 'bind', file, in: here, name: local.at ? target.name : null, values, ...(branch ? { branch: true } : {}), ...(cond ? { cond: true } : {}),
+    line: lineOf(v), ...local,
+  };
+}
+
+/** A `const` that holds a literal: its name, its value, and where it is declared when it is a local. */
+function constRecords(file, node, sc) {
+  if (node.type !== 'VariableDeclaration' || node.kind !== 'const') return [];
+  return node.declarations.flatMap((d) => {
+    if (d.id.type !== 'Identifier' || !d.init) return [];
+    const value = valueOf(d.init, 0, sc);
+    return ['str', 'num', 'bool'].includes(value.k) ? [{ kind: 'const', file, name: d.id.name, value, line: lineOf(d), ...localField(sc, d.id, 'at', 'reassigned') }] : [];
+  });
 }
 
 /**
@@ -449,10 +516,14 @@ function walkCalls(file, ast, emit, sc, mixins = new Map()) {
   const holders = new Map();
   // The first call of a chain -> the calls made on its result, read from the outermost call down.
   const chains = new Map();
+  // The calls held only if a condition's branch that makes them runs (`r = c ? a() : b()`).
+  const branchHeld = new Set();
   // `root` is the function that IS the member, so it is not taken for one nested in it.
   const visit = (node, where, root, cond) => {
     if (node.type === 'Decorator') return;
-    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) holders.set(unwrap(node.init), node.id);
+    noteHolders(node, holders, branchHeld);
+    const told = [bindRecord(file, where, node, cond, sc), ...constRecords(file, node, sc)].filter(Boolean);
+    for (const r of told) emit(r);
     if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
       // A mixin's class goes by the name its function gives it, as its records do.
       const cls = mixins.get(node) ?? (node.id ? node.id.name : 'default');
@@ -473,7 +544,7 @@ function walkCalls(file, ast, emit, sc, mixins = new Map()) {
       if (callee !== null) {
         const n = counters.get(here) ?? 0;
         counters.set(here, n + 1);
-        emit(callRecord(file, node, { here, callee, n, cond: mayNotRun, holder: holders.get(node), chain: chains.get(node) }, sc));
+        emit(callRecord(file, node, { here, callee, n, cond: mayNotRun, holder: holders.get(node), chain: chains.get(node), branch: branchHeld.has(node) }, sc));
       } else {
         noteChain(node, chains, holders, sc);
       }
@@ -485,7 +556,7 @@ function walkCalls(file, ast, emit, sc, mixins = new Map()) {
       if (callee !== null) {
         emit({
           kind: 'new', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), ...localField(sc, rootIdentifier(node.callee), 'rootAt', 'rootReassigned'),
-          ...(holder ? { holder: holder.name } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node),
+          ...(holder ? { holder: holder.name, ...localField(sc, holder, 'holderAt', 'holderReassigned', 'holderOnce') } : {}), ...(mayNotRun ? { cond: true } : {}), line: lineOf(node),
         });
       }
     }
@@ -540,12 +611,12 @@ function mixinClassOf(fn) {
 }
 
 /** A module function, and the class it returns when it is a mixin, named `<function>()`; the mixin's node into `mixins`. */
-function functionRecords(file, name, fn, exported, at, emit, mixins) {
+function functionRecords(file, name, fn, exported, at, emit, sc, mixins) {
   emit(functionRecord(file, name, fn, exported, at));
   const mixin = mixinClassOf(fn);
   if (!mixin) return;
   mixins.set(mixin.node, `${name}()`);
-  classRecords(file, mixin.node, false, emit, { name: `${name}()`, of: name, param: mixin.param });
+  classRecords(file, mixin.node, false, emit, sc, { name: `${name}()`, of: name, param: mixin.param });
 }
 
 /**
@@ -565,7 +636,7 @@ function aliasRecord(file, d, exported) {
   return { kind: 'alias', file, name: d.id.name, exported, values: leaves, line: lineOf(d) };
 }
 
-function declarationRecords(file, ast, emit, mixins = new Map()) {
+function declarationRecords(file, ast, emit, sc, mixins = new Map()) {
   for (const stmt of ast.program.body) {
     if (stmt.type === 'ImportDeclaration') { emit(importRecord(file, stmt)); continue; }
     if (stmt.type === 'ExportAllDeclaration' || (stmt.type === 'ExportNamedDeclaration' && !stmt.declaration)) {
@@ -575,13 +646,13 @@ function declarationRecords(file, ast, emit, mixins = new Map()) {
     const exported = stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration';
     const decl = exported ? stmt.declaration : stmt;
     if (!decl) continue;
-    if (decl.type === 'ClassDeclaration') classRecords(file, decl, exported, emit);
+    if (decl.type === 'ClassDeclaration') classRecords(file, decl, exported, emit, sc);
     else if (decl.type === 'TSInterfaceDeclaration') emit(interfaceRecord(file, decl, exported));
-    else if (decl.type === 'FunctionDeclaration' && decl.id) functionRecords(file, decl.id.name, decl, exported, decl, emit, mixins);
+    else if (decl.type === 'FunctionDeclaration' && decl.id) functionRecords(file, decl.id.name, decl, exported, decl, emit, sc, mixins);
     else if (decl.type === 'VariableDeclaration') {
       for (const d of decl.declarations) {
         if (d.id.type !== 'Identifier') continue;
-        if (isFunctionNode(unwrap(d.init))) functionRecords(file, d.id.name, unwrap(d.init), exported, d, emit, mixins);
+        if (isFunctionNode(unwrap(d.init))) functionRecords(file, d.id.name, unwrap(d.init), exported, d, emit, sc, mixins);
         else if (decl.kind === 'const') {
           const alias = aliasRecord(file, d, exported);
           if (alias) emit(alias);
@@ -608,9 +679,10 @@ export function factsOfFile(file, code) {
   // That the file was read, whatever it holds: a file of constants and types
   // alone is still a file of the project, not a package.
   emit({ kind: 'file', file });
+  const sc = readScopes(ast);
   const mixins = new Map();
-  declarationRecords(file, ast, emit, mixins);
-  walkCalls(file, ast, emit, readScopes(ast), mixins);
+  declarationRecords(file, ast, emit, sc, mixins);
+  walkCalls(file, ast, emit, sc, mixins);
   for (const e of ast.errors ?? []) out.push({ kind: 'parse_error', file, message: String(e.message).split('\n')[0], recovered: true });
   return out;
 }

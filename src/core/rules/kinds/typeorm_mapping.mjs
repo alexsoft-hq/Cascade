@@ -39,8 +39,9 @@ function entityDeclOf(decorator) {
   const [a0] = decorator.args;
   const opts = optionsArg(decorator.args);
   const given = a0 && a0.k === 'str' ? a0.v : strOf(opts.v.name);
-  const unread = opts.unread || (a0 && !['str', 'obj', 'none'].includes(a0.k)) || (opts.v.name && !strOf(opts.v.name)) || (opts.v.schema && !strOf(opts.v.schema));
-  return { given, schema: strOf(opts.v.schema), unread: Boolean(unread) };
+  const held = (k) => opts.v[k] && !strOf(opts.v[k]);
+  const unread = opts.unread || (a0 && !['str', 'obj', 'none'].includes(a0.k)) || held('name') || held('schema') || held('database');
+  return { given, schema: strOf(opts.v.schema), database: strOf(opts.v.database), unread: Boolean(unread) };
 }
 
 /** A relation's target class, as written: `() => User`, `type => User`, `User`, or the entity name as a string. */
@@ -85,7 +86,7 @@ function joinTableOf(d) {
     return v ? joinColumnsOf({ args: [v] }) : [];
   };
   return {
-    name: strOf(a0.v.name), nameUnread: heldName(a0.v.name) || heldName(a0.v.schema), schema: strOf(a0.v.schema),
+    name: strOf(a0.v.name), nameUnread: heldName(a0.v.name) || heldName(a0.v.schema) || heldName(a0.v.database), schema: strOf(a0.v.schema), database: strOf(a0.v.database),
     joinColumns: cols('joinColumn', 'joinColumns'), inverseJoinColumns: cols('inverseJoinColumn', 'inverseJoinColumns'),
   };
 }

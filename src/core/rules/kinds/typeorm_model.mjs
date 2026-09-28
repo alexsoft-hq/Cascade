@@ -7,6 +7,7 @@
 // key), then the join tables (they name both tables and both keys).
 
 import { weakest } from './typeorm_mapping.mjs';
+import { pathOf } from './typeorm_path.mjs';
 
 /** The grade and reason of a name: EXACT when the source wrote it, else what its derivation rests on. */
 function gradeOf(derived, decision, extra = []) {
@@ -20,29 +21,28 @@ function gradeOf(derived, decision, extra = []) {
 const prefixed = (decision, base) => (decision.prefix ? `${decision.prefix}${base}` : base);
 
 /**
- * Why a table's real name may be another, whatever the decorator writes: the
- * DataSource's entityPrefix goes before every table name, and its schema is
- * the schema of every entity that names none (EntityMetadata.build).
+ * A table's qualifier, and why its real name may be another whatever the
+ * decorator writes: the DataSource's entityPrefix goes before every table
+ * name, and what qualifies it is the driver's (typeorm_path.mjs).
  */
-function tableDoubts(decision, ownSchema) {
-  const out = [];
-  if (!decision.prefixKnown) out.push(`the DataSource entityPrefix, which goes before every table name, is not known: ${decision.prefixWhy}`);
-  if (!ownSchema && !decision.schemaKnown) out.push(`the DataSource schema, the schema of an entity that names none, is not known: ${decision.schemaWhy}`);
-  return out;
+function tablePlace(decision, naming, own) {
+  const path = pathOf(decision, naming.tablePath, own);
+  const prefix = decision.prefixKnown ? [] : [`the DataSource entityPrefix, which goes before every table name, is not known: ${decision.prefixWhy}`];
+  return { qualifier: path.qualifier || null, doubts: [...prefix, ...path.doubts] };
 }
 
 function entityOf(raw, decision, naming) {
   const s = decision.strategy;
   const t = naming.table(s, raw.cls.name, raw.decl.given);
-  const doubts = [...(raw.decl.unread ? ['the entity options are not written out, and may name another table'] : []), ...tableDoubts(decision, raw.decl.schema)];
-  const tg = gradeOf(t, decision, doubts);
+  const place = tablePlace(decision, naming, raw.decl);
+  const tg = gradeOf(t, decision, [...(raw.decl.unread ? ['the entity options are not written out, and may name another table'] : []), ...place.doubts]);
   const columns = raw.columns.map((c) => {
     const n = naming.column(s, c.property, c.given);
     const g = gradeOf(n, decision, c.nameUnread ? ['the column options are not written out, and may name another column'] : []);
     return { property: c.property, column: n.name, grade: g.grade, why: g.why, pk: c.pk, deleteDate: c.deleteDate, select: c.select, line: c.line };
   });
   return {
-    key: raw.cls.key, name: raw.cls.name, file: raw.cls.file, line: raw.cls.line, schema: raw.decl.schema ?? (decision.schema || null), ownSchema: raw.decl.schema,
+    key: raw.cls.key, name: raw.cls.name, file: raw.cls.file, line: raw.cls.line, schema: place.qualifier, own: { schema: raw.decl.schema, database: raw.decl.database },
     tableBase: t.name, table: prefixed(decision, t.name), tableGrade: tg.grade, tableWhy: tg.why,
     columns, relations: [], notRead: [...raw.notRead],
   };
@@ -102,8 +102,11 @@ function junctionColumns(side, entity, refs, joinColumns, ctx) {
 function joinTableDoubts(e, jt, n, decision, naming) {
   const long = !n.given && n.name.length > naming.joinTableNameLimit ? [`it is longer than ${naming.joinTableNameLimit} characters, and a driver whose alias limit is shorter shortens it`] : [];
   const held = jt.nameUnread ? ['the join table name or schema is held in a value this engine does not read'] : [];
-  return [...long, ...held, ...tableDoubts(decision, jt.schema ?? e.ownSchema)];
+  return [...long, ...held, ...tablePlace(decision, naming, junctionOwn(e, jt)).doubts];
 }
+
+/** What a join table writes itself, else its owner's (JunctionEntityMetadataBuilder: `joinTable.schema || relation.entityMetadata.schema`, the same for the database). */
+const junctionOwn = (e, jt) => ({ schema: jt.schema ?? e.own.schema, database: jt.database ?? e.own.database });
 
 /** The join table an owning @ManyToMany with @JoinTable adds. */
 function junctionOf(e, rel, target, decision, naming) {
@@ -119,7 +122,7 @@ function junctionOf(e, rel, target, decision, naming) {
     if (clash) { oc.column = `${oc.column}_1`; clash.column = `${clash.column}_2`; }
   }
   return {
-    table: prefixed(decision, n.name), tableBase: n.name, schema: jt.schema ?? e.schema, grade: n.given ? g.grade : weakest(g.grade, e.tableGrade, target.tableGrade),
+    table: prefixed(decision, n.name), tableBase: n.name, schema: tablePlace(decision, naming, junctionOwn(e, jt)).qualifier, grade: n.given ? g.grade : weakest(g.grade, e.tableGrade, target.tableGrade),
     why: g.why, owner: e, target, property: rel.property, ownerColumns, inverseColumns,
   };
 }
