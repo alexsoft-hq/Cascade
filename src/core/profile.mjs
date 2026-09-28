@@ -18,7 +18,6 @@
 import fs from 'node:fs';
 import { IDENTIFIER_CASES, identifierCaseForDialect } from './identifier_case.mjs';
 import { packagePatternError } from './package_pattern.mjs';
-import { builtinRegistry } from './rules/registry.mjs';
 
 /**
  * The template engines a `templateRoots` entry may name (RM48). `plain-html` is
@@ -1126,14 +1125,16 @@ export function validateProfile(obj) {
   return obj;
 }
 
-/** `tsBackend.typeormNamingStrategy`: null, or a strategy the typeorm rule pack names (read from the pack, so a strategy added there is one a profile may name). */
+/**
+ * `tsBackend.typeormNamingStrategy`: null, or a name. Which names are strategies
+ * is the typeorm rule pack's to say, and the analysis that reads the key checks
+ * it there (src/cli/commands/analyze/lanes.mjs): the profile does not load the
+ * rule packs, whose kinds read the profile's defaults.
+ */
 function validateTypeormNaming(obj) {
   const v = isObject(obj.tsBackend) ? obj.tsBackend.typeormNamingStrategy : undefined;
-  if (v === undefined || v === null) return;
-  const known = builtinRegistry().ofKind('typeorm.entity').flatMap((e) => e.rule.params.strategies.map((s) => s.name));
-  if (!known.includes(v)) {
-    throw new ProfileError(`profile.tsBackend.typeormNamingStrategy must be null or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(v)}`);
-  }
+  if (v === undefined || v === null || (typeof v === 'string' && v !== '')) return;
+  throw new ProfileError(`profile.tsBackend.typeormNamingStrategy must be null or the name of a strategy the typeorm rule pack names, got ${JSON.stringify(v)}`);
 }
 
 

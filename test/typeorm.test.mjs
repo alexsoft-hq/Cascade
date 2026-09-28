@@ -13,6 +13,7 @@ import { factsOfFile } from '../adapters/ts/tsfacts.mjs';
 import { declareAxes } from '../src/core/lanes.mjs';
 import { buildRegistry, RuleError } from '../src/core/rules/registry.mjs';
 import { normalizeProfile, validateProfile, ProfileError, PROFILE_KEY_CONSUMERS } from '../src/core/profile.mjs';
+import { typeormNamingDeclared } from '../src/cli/commands/analyze/lanes.mjs';
 
 const recordsOf = (files) => files.flatMap(([name, source]) => factsOfFile(name, source));
 
@@ -302,7 +303,7 @@ test('a project with no entity and no TypeORM call is left as it was: no typeorm
 test('the entities are a catalog: shipped with a note naming them when every name is written or follows a known rule, degraded when one was assumed', () => {
   const typeorm = (heuristicNames, known) => ({ statements: 4, tables: 3, columns: 12, heuristicNames, naming: { strategy: 'default', known, reason: 'forRoot() takes no options' } });
   const exact = declareAxes({ ddl: false, statements: false, code: true, ts: { typeorm: typeorm(0, true) } });
-  assert.deepEqual(exact.catalog, { status: 'shipped', reason: null, notes: ['3 table(s) and 12 column(s) declared by TypeORM entities, not read from the database'] });
+  assert.deepEqual(exact.catalog, { status: 'shipped', reason: null, sources: ['TypeORM entities (3 table(s), 12 column(s))'] });
   assert.equal(exact.statements.status, 'shipped');
   assert.equal(exact.column.status, 'shipped');
   const assumed = declareAxes({ ddl: false, statements: false, code: true, ts: { typeorm: typeorm(9, false) } });
@@ -359,6 +360,10 @@ test('a declared strategy that differs from the one the options name is used, an
 
 test('tsBackend.typeormNamingStrategy is null or a strategy the typeorm pack names', () => {
   assert.doesNotThrow(() => validateProfile(normalizeProfile({ tsBackend: { typeormNamingStrategy: 'snake' } })));
-  assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeormNamingStrategy: 'SnakeNamingStrategy' } })), (e) => e instanceof ProfileError && /one of default, snake/.test(e.message));
+  assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeormNamingStrategy: 7 } })), (e) => e instanceof ProfileError);
+  // Which names are strategies is the pack's, checked where the analysis reads the key.
+  assert.equal(typeormNamingDeclared('snake'), 'snake');
+  assert.equal(typeormNamingDeclared(null), null);
+  assert.throws(() => typeormNamingDeclared('SnakeNamingStrategy'), (e) => e instanceof ProfileError && /one of default, snake/.test(e.message));
   assert.equal(PROFILE_KEY_CONSUMERS['tsBackend.typeormNamingStrategy'].status, 'consumed');
 });

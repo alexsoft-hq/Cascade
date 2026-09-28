@@ -639,23 +639,30 @@ const typeormNamingWhy = (t) => (t.naming && !t.naming.known
 
 const typeormAssumedReason = (t) => `${t.heuristicNames} TypeORM table or column name(s) the decorators do not write were derived by a rule this run could not confirm, and are graded HEURISTIC: ${typeormNamingWhy(t)}. A name the decorators write is EXACT`;
 
-/** The notes that name where a catalog's tables and columns came from, when a mapping declared them, and where two sources disagree. */
-function catalogNotes(prisma, typeorm) {
-  const notes = [];
-  if (prisma) notes.push('tables and columns declared by schema.prisma');
-  if (typeorm) notes.push(`${typeorm.tables} table(s) and ${typeorm.columns} column(s) declared by TypeORM entities, not read from the database`);
-  if (prisma && prisma.disagreements > 0) {
-    notes.push(`schema.prisma and the SQL catalog this run read disagree in ${prisma.disagreements} place(s) (${Object.entries(prisma.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ')}). `
-      + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog');
-  }
-  return notes;
+/**
+ * The mappings that declared a catalog's tables and columns, when one did. It
+ * is where the names came from, not something an answer cannot see, so it is
+ * not a note: a note rides on every answer as a limit.
+ */
+function catalogSources(prisma, typeorm) {
+  const sources = [];
+  if (prisma) sources.push('schema.prisma');
+  if (typeorm) sources.push(`TypeORM entities (${typeorm.tables} table(s), ${typeorm.columns} column(s))`);
+  return sources;
+}
+
+/** Where schema.prisma and the SQL catalog disagree: something an answer should say, so a note. */
+function catalogNotes(prisma) {
+  if (!prisma || !(prisma.disagreements > 0)) return [];
+  return [`schema.prisma and the SQL catalog this run read disagree in ${prisma.disagreements} place(s) (${Object.entries(prisma.disagreementsByKind).sort().map(([k, n]) => `${n} ${k}`).join(', ')}). `
+    + 'The SQL catalog\'s tables and columns stand, and a column only schema.prisma declares is added as its own; the list is on meta.laneStats.ts.prisma.catalog'];
 }
 
 /**
  * THE CATALOG AXIS, one rule for every source: a DDL, a snapshot, schema.prisma
  * or the TypeORM entities. It ships when every table and column name they give
- * is written in the source or follows a rule this run knows applies, with a
- * note naming a mapping that declared them; it is degraded, with the reason,
+ * is written in the source or follows a rule this run knows applies, naming a
+ * mapping that declared them in `sources`; it is degraded, with the reason,
  * when a name had to be derived by a rule the run assumed. Where schema.prisma
  * and the SQL catalog disagree, a note says where to find the list.
  */
@@ -665,8 +672,9 @@ function catalogAxis(ran) {
   if (ran.ddl !== true && !prisma && !typeorm) {
     return { status: 'not-shipped', reason: 'no catalog was read here, because catalog.source is none, no snapshot was fetched, or --ddl was not given. A table or column is in this pack only where a statement named it' };
   }
-  const notes = catalogNotes(prisma, typeorm);
-  const noted = notes.length > 0 ? { notes } : {};
+  const sources = catalogSources(prisma, typeorm);
+  const notes = catalogNotes(prisma);
+  const noted = { ...(sources.length > 0 ? { sources } : {}), ...(notes.length > 0 ? { notes } : {}) };
   if (typeorm && typeorm.heuristicNames > 0) return { status: 'degraded', reason: typeormAssumedReason(typeorm), ...noted };
   return { status: 'shipped', reason: null, ...noted };
 }
@@ -726,7 +734,7 @@ function columnAxis({ hasCatalog, hasStatements, hasColumnFacts, jpaNamingDeclar
  *          ts?:{prisma?:{statements:number, catalog?:{tables:number, tablesCorroborated:number, disagreements:number}}|null,
  *               typeorm?:{statements:number, tables:number, columns:number, heuristicNames:number, naming:object}|null}|null}} ran
  * @param {{screenAxisRequested?:boolean, screenAxisReason?:string}} [opts]
- * @returns {Object} axis name -> {status, reason, notes?}
+ * @returns {Object} axis name -> {status, reason, sources?, notes?}
  */
 export function declareAxes(ran, opts = {}) {
   const hasCatalog = ran.ddl === true || prismaCatalogOf(ran) !== null;

@@ -19,6 +19,8 @@ import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
 import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
 import { assembleGraph } from '../../../core/assemble.mjs';
+import { ProfileError } from '../../../core/profile.mjs';
+import { builtinRegistry } from '../../../core/rules/registry.mjs';
 import { webFactsSummary } from '../../../core/facts_store.mjs';
 import { runLanesWithShards } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
@@ -417,7 +419,15 @@ export function tsOptionsOf({ root, sel, profile, manifestDir }, sqlArgs, diagno
   if (declaredSchema && !opts.prisma) {
     diagnostics.push({ kind: 'MISSING_INPUT', severity: 'warn', key: 'tsBackend.prismaSchema', reason: `tsBackend.prismaSchema names ${ts.prismaSchema}, which is not there, so no Prisma call is read` });
   }
-  return { ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null, typeormNamingStrategy: ts.typeormNamingStrategy ?? null };
+  return { ...opts, globalPrefix: ts.globalPrefix ?? null, globalPrefixExclude: ts.globalPrefixExclude ?? null, typeormNamingStrategy: typeormNamingDeclared(ts.typeormNamingStrategy) };
+}
+
+/** A declared TypeORM naming strategy, checked against the strategies the typeorm rule pack names. */
+export function typeormNamingDeclared(name) {
+  if (name == null) return null;
+  const known = builtinRegistry().ofKind('typeorm.entity').flatMap((e) => e.rule.params.strategies.map((s) => s.name));
+  if (known.includes(name)) return name;
+  throw new ProfileError(`profile.tsBackend.typeormNamingStrategy must be null or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(name)}`);
 }
 
 export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, tsOpts = null }) {

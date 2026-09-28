@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildRegistry, builtinRegistry, RuleError } from '../src/core/rules/registry.mjs';
 import { testRules } from '../src/core/rules/examples.mjs';
 import { KINDS } from '../src/core/rules/kinds/index.mjs';
@@ -288,4 +288,16 @@ test('cascade rules lists, shows and tests the engine\'s packs, and says so in J
   const missing = cli('show', 'no.such-rule');
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /no rule "no\.such-rule"/);
+});
+
+test('every kind module loads on its own, whichever module a process imports first', () => {
+  // The profile once imported the rule registry to check a key, and a kind
+  // imports the profile's defaults: a process that loaded a kind first then
+  // read that kind before it was initialized. Each kind is loaded first here,
+  // in its own process, so an import cycle through the registry fails a test.
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'core', 'rules', 'kinds');
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.mjs')).sort()) {
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(path.join(dir, f)).href)});`], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${f} does not load first: ${r.stderr}`);
+  }
 });
