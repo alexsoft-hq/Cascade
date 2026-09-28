@@ -35,6 +35,9 @@ $XDG_CACHE_HOME/
 *.env
 pg.env
 !*.example.env
+# A frontend's .env under test/fixtures is test INPUT (a build variable with no
+# secret in it), which the web lane's tests read; it is reviewed like code.
+!test/fixtures/**/.env
 
 # Optional local literals for the "no internal coordinates" gate
 # (test/gates.test.mjs). Never committed: it exists so a contributor can grep
