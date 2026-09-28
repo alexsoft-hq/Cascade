@@ -17,6 +17,7 @@
 
 import fs from 'node:fs';
 import { IDENTIFIER_CASES, identifierCaseForDialect } from './identifier_case.mjs';
+import { packagePatternError } from './package_pattern.mjs';
 
 /**
  * The template engines a `templateRoots` entry may name (RM48). `plain-html` is
@@ -36,6 +37,12 @@ export const PROFILE_DEFAULTS = deepFreeze({
   sqlDialects: {},
   sqlIdentifierCase: null,
   gatewayRoutes: {},
+  // The path prefixes configuration code puts before a controller's routes
+  // (Spring's setPathPrefixes / addPathPrefix), which no reading of the source
+  // can say: each entry is `{prefix, packages, annotation, from}`, and the
+  // first one a controller class passes is the one it is served under. Empty is
+  // the honest default: a project that sets none has none to declare.
+  pathPrefixes: [],
   // The logical names this deployable answers to (`spring.application.name`).
   // Empty is the honest default: a project that never says its name is matched
   // by its project id alone.
@@ -99,7 +106,7 @@ export const PROFILE_DEFAULTS = deepFreeze({
  * block is left out of the digest (`digestedProfile`); set to anything else,
  * it is in. A block added from now on goes here.
  */
-export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend']);
+export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixes']);
 
 /** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default. */
 export function digestedProfile(profile) {
@@ -237,6 +244,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   gatewayRoutes: {
     status: 'consumed', where: 'src/adapters/web_bridge.mjs',
     note: 'the web bridge applies it as the FIRST prefix rule: a front-end prefix it names is replaced by the back-end prefix before the call is matched, and the edge records prefix.from=declared. It is applied to the client\'s base url and to a call path that carries the prefix itself, so a frontend that writes the gateway prefix into every url is rewritten too. A key of "*" applies to every call. Declaring it is how a project stops the bridge guessing a prefix by counting matches. A value is either the back-end prefix as a string, or an object {to, service, from}: `to` is that same prefix, `service` is the deployable the gateway forwards to (it rides on the edge evidence as service/serviceLiteral, which is what lets src/mcp/federation.mjs pick one sibling out of several serving the same path) and `from` is the file it was read out of. `cascade init` writes the object form from spring.cloud.gateway routes it finds; a map that is already in the profile is the user\'s and is left alone. src/adapters/java_bridge.mjs applies the same map to an IMPERATIVE Java HTTP call (a WebClient/RestClient/RestTemplate url), which is the same rewrite from the other side of the wire; the "*" key is a front-end base url and is not applied there, because a Java call writes its url at the call site',
+  },
+  pathPrefixes: {
+    status: 'consumed', where: 'src/adapters/java/routes.mjs',
+    note: 'the path prefixes configuration code puts before a controller\'s routes: Spring\'s RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix, whose prefix is usually a property and whose predicate is a lambda, so no reading of the source can say either. Each entry is {prefix, packages, annotation, from}: `packages` is an Ant pattern over the controller class\'s package with "." between segments (`**.controller.admin.**`, as AntPathMatcher(".") reads it), `annotation` the simple name of an annotation the class itself carries (`RestController`), and `from` a note of where the value was read. Either test may be left out; an entry with neither applies to every controller. The Java lane serves a route behind the FIRST entry its class passes, as Spring does, before the route is keyed, and the endpoint says so (`pathPrefix`, with the first segment after it as `apiGroup`). A client\'s route (@FeignClient) is the address it calls and takes no prefix. When the Java facts show one of those calls and this list is empty, `cascade analyze` says so (SETTING_IN_CODE, from the spring-mvc rule pack)',
   },
   serviceNames: {
     status: 'consumed', where: 'src/mcp/federation.mjs',
@@ -664,6 +675,10 @@ function sayAboutRecordedKeys(profile, add) {
     add('RECORDED_NOT_ACTED', 'info', 'gatewayRoutes',
       'gatewayRoutes are declared and frameworkPacks declares neither web nor spring-mvc, so an unflagged run reads no frontend and no Java call for them to rewrite. Pass --web-src, or add "web" to frameworkPacks');
   }
+  if (Array.isArray(profile.pathPrefixes) && profile.pathPrefixes.length > 0 && !packsDeclared.includes('spring-mvc')) {
+    add('RECORDED_NOT_ACTED', 'info', 'pathPrefixes',
+      `pathPrefixes declares ${profile.pathPrefixes.length} prefix(es) and frameworkPacks does not declare spring-mvc, so an unflagged run reads no controller to put them on. Add "spring-mvc" to frameworkPacks, or pass --java-src`);
+  }
 
   // A web root with no web lane is a root nothing reads. Said out loud for the
   // same reason as the two above: the declaration is right and it changes
@@ -770,7 +785,9 @@ export function normalizeProfile(obj = {}) {
  *  - `catalog.source` present but not in {jdbc, file, none};
  *  - `build.tool` present but not in {gradle, maven, null};
  *  - `generatedSources.annotations` / `.pathGlobs` present but not an array of
- *    non-empty strings.
+ *    non-empty strings;
+ *  - `pathPrefixes` present and not a list of {prefix, packages, annotation,
+ *    from} entries the Java lane can apply.
  *
  * @param {Object} obj
  * @returns {Object} the same object (validated, not normalized)
@@ -1039,6 +1056,43 @@ if (isObject(obj.calibration)) {
 }
 
 
+/** The keys a `pathPrefixes` entry may have. Closed, because a misspelt test would put the prefix on every controller. */
+const PATH_PREFIX_KEYS = Object.freeze(['prefix', 'packages', 'annotation', 'from']);
+const JAVA_SIMPLE_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/** What is wrong with one `pathPrefixes` entry, as a sentence, or null. */
+function pathPrefixEntryError(entry) {
+  if (!isObject(entry)) return 'must be an object {prefix, packages, annotation, from}';
+  const unknown = Object.keys(entry).find((k) => !PATH_PREFIX_KEYS.includes(k));
+  if (unknown !== undefined) return `has the key "${unknown}", and an entry knows only ${PATH_PREFIX_KEYS.join(', ')}`;
+  if (typeof entry.prefix !== 'string' || entry.prefix === '' || /\s/.test(entry.prefix) || entry.prefix.includes('${')) {
+    return '.prefix must be the prefix as Spring puts it before a route ("/admin-api"), with any property it names already resolved';
+  }
+  const packagesError = entry.packages == null ? null : packagePatternError(entry.packages);
+  if (packagesError) return `.packages ${packagesError}`;
+  if (entry.annotation != null && !(typeof entry.annotation === 'string' && JAVA_SIMPLE_NAME.test(entry.annotation))) {
+    return '.annotation must be the simple name of an annotation the controller class itself carries ("RestController")';
+  }
+  if (entry.from != null && typeof entry.from !== 'string') return '.from must be null or a note of where this prefix was read';
+  return null;
+}
+
+/**
+ * THE DECLARED PATH PREFIXES. The Java lane applies each entry as given, before
+ * a route is keyed, so a shape it cannot apply is refused here, with the entry
+ * that is wrong and what it should be.
+ */
+function validatePathPrefixes(obj) {
+  if (!('pathPrefixes' in obj)) return;
+  if (!Array.isArray(obj.pathPrefixes)) {
+    throw new ProfileError('profile.pathPrefixes must be a list of {prefix, packages, annotation} entries: the path prefixes configuration code puts before a controller\'s routes');
+  }
+  obj.pathPrefixes.forEach((entry, i) => {
+    const error = pathPrefixEntryError(entry);
+    if (error) throw new ProfileError(`profile.pathPrefixes[${i}]${error.startsWith('.') ? '' : ' '}${error}`);
+  });
+}
+
 export function validateProfile(obj) {
   if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
     throw new ProfileError('validateProfile expects a profile object');
@@ -1047,6 +1101,7 @@ export function validateProfile(obj) {
   validateProfileLists(obj);
   validateProfileValues(obj);
   validateProfileBlocks(obj);
+  validatePathPrefixes(obj);
   return obj;
 }
 

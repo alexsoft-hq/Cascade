@@ -19,7 +19,8 @@
  * paths, no machine identity). Structured diagnostics + a summary go to stderr.
  *
  * Record kinds: header, parse_error, import, type, entity, repository, field,
- * endpoint, method, transactional, call, httpCall, mpEntity, mpMapper, mpService, mpWrapper. EVERY record but the header carries a
+ * endpoint, method, transactional, call, httpCall, mpEntity, mpMapper, mpService, mpWrapper,
+ * invocations. EVERY record but the header carries a
  * `file`, because the incremental core shards the stream by file: a record
  * without one would be silently dropped from the cache (src/core/facts_store.mjs
  * mirrors the sort keys and a test proves the mirror byte-for-byte).
@@ -96,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/15";
+    static final String VERSION = "javafacts/16";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -398,11 +399,63 @@ public class JavaFacts {
                     return super.visitVariable(v, p);
                 }
             }, null);
+            emitInvocations(cu);
             for (Tree decl : cu.getTypeDecls()) {
                 if (decl instanceof ClassTree) {
                     processType((ClassTree) decl, null);
                 }
             }
+        }
+
+        /**
+         * EVERY METHOD NAME THIS FILE INVOKES, with the line of its first call
+         * (javafacts/16). One record per file, one entry per name, in name order.
+         *
+         * What a call is FOR is not decided here. A rule pack names the calls
+         * that mean something (src/core/rules/packs/spring-mvc.json names
+         * setPathPrefixes and addPathPrefix, which set path prefixes in code),
+         * and the engine reads them from this record. The receiver is not
+         * asked about on purpose: those calls are made on a local
+         * (`mapping.setPathPrefixes(...)`), on a parameter
+         * (`configurer.addPathPrefix(...)`) or on a chain, which is exactly
+         * what the call scan skips.
+         * The whole unit is walked, so a call in a field initializer, a lambda
+         * or an anonymous class counts too. The line is the line of the NAME,
+         * so a call at the end of a chain points at itself.
+         */
+        void emitInvocations(CompilationUnitTree unit) {
+            final java.util.TreeMap<String, Integer> first = new java.util.TreeMap<>();
+            unit.accept(new TreeScanner<Void, Void>() {
+                @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
+                    Tree sel = inv.getMethodSelect();
+                    String name = null;
+                    if (sel instanceof MemberSelectTree) name = ((MemberSelectTree) sel).getIdentifier().toString();
+                    else if (sel instanceof IdentifierTree) name = ((IdentifierTree) sel).getName().toString();
+                    // `this(...)` and `super(...)` call a constructor, not a method.
+                    if (name != null && !"this".equals(name) && !"super".equals(name)) {
+                        int line = nameLineOf(sel);
+                        Integer prev = first.get(name);
+                        if (prev == null || (line > 0 && (prev == 0 || line < prev))) first.put(name, line);
+                    }
+                    return super.visitMethodInvocation(inv, p);
+                }
+            }, null);
+            if (first.isEmpty()) return;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", "invocations");
+            r.put("names", new ArrayList<Object>(first.keySet()));
+            r.put("lines", new ArrayList<Object>(first.values()));
+            r.put("file", rel);
+            sink.add("9invocations" + SEP + rel, r);
+        }
+
+        /** The 1-based line a method NAME is written on: where its select ends, else where it starts. */
+        int nameLineOf(Tree sel) {
+            try {
+                long end = srcPos.getEndPosition(cu, sel);
+                if (end > 0 && lineMap != null) return (int) lineMap.getLineNumber(end - 1);
+            } catch (Throwable ignored) { /* fall back to the start */ }
+            return lineOf(sel);
         }
 
         void processType(ClassTree ct, String enclosingFqn) {

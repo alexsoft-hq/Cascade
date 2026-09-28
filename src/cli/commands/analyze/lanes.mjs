@@ -450,6 +450,8 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
       // half of the same problem: a Java service that calls another service
       // through a declared gateway prefix has nowhere else to say so.
       gatewayRoutes: profile.gatewayRoutes ?? {},
+      // The path prefixes configuration code puts before a controller's routes.
+      pathPrefixes: profile.pathPrefixes ?? [],
       // The table id generators the Spring XMLs declare (RM62).
       idGenerators: discovery?.idGenerators ?? [],
     } : null,

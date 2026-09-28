@@ -75,6 +75,7 @@ import {
 import {
   classifyGeneratedTypes, duplicateFqnCensus, emptyJavaStats, pathGlobMatcher, UNRESOLVED_REASONS,
 } from './java/stats.mjs';
+import { makePathPrefixes } from './java/path_prefixes.mjs';
 
 export const JAVAFACTS_SCHEMA = 'cascade:javafacts:1';
 
@@ -203,7 +204,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
  * @param {object[]} javaFacts  parsed cascade:javafacts:1 records (header optional)
  * @param {{packagePrefixes?:string[],
  *          generatedSources?:{annotations?:string[], pathGlobs?:string[]},
- *          gatewayRoutes?:object}} [opts]
+ *          gatewayRoutes?:object, pathPrefixes?:object[]}} [opts]
  *        packagePrefixes: the profile's declared top-level packages — a symbol
  *        outside every one of them is marked `external:true`, and a call to one
  *        is counted as `externalCalls` rather than reported as "unresolved" (a
@@ -219,6 +220,10 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
  *        prefix lands on the route the other service really serves. The `*`
  *        key is a FRONT-END base url and means nothing here (a Java call writes
  *        its url at the call site), so it is not applied.
+ *        pathPrefixes: the profile's declared path prefixes (`pathPrefixes`),
+ *        each put before the routes of the controller classes it names, the
+ *        way Spring's setPathPrefixes / addPathPrefix do in code this lane
+ *        cannot read. Absent or empty changes nothing.
  * @returns {{endpoints:number, handles:number, calls:number, dispatch:number,
  *            implementsStmt:number, unresolvedCalls:number, externalCalls:number,
  *            externalSymbols:number, mapperMethods:number, mapperMethodsBound:number,
@@ -242,10 +247,8 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
   const generatedFqns = takeCensuses(stats, typeIndex, facts.endpoints, generatedSources);
 
   const ctx = {
-    g,
-    stats,
-    packagePrefixes,
-    gatewayRoutes,
+    // `addressOf` puts the profile's declared path prefixes before a served route.
+    g, stats, packagePrefixes, gatewayRoutes, addressOf: makePathPrefixes(opts.pathPrefixes, stats),
     ...facts,
     ...typeIndex,
     ...hierarchy,

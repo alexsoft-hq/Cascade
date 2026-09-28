@@ -79,8 +79,8 @@ test('every rule the engine carries holds every one of its examples, the Java on
   for (const r of results) assert.deepEqual(r.failures, [], `${r.id}: ${JSON.stringify(r.failures)}`);
   const notRun = results.filter((r) => r.notRun);
   if (!javaFacts) {
-    assert.ok(notRun.every((r) => r.kind === 'java.type-role' || r.kind === 'java.contract-link'), 'only a Java example ever waits for a JDK');
-    t.skip('no JDK found: the Java examples were not run (see docs/setup/java-lane.md)');
+    assert.ok(notRun.every((r) => r.kind.startsWith('java.')), 'only a Java example ever waits for a JDK');
+    t.skip('no JDK found: the Java kinds\' examples were not run (see docs/setup/java-lane.md)');
     return;
   }
   assert.deepEqual(notRun, [], 'with a JDK every example is run');
@@ -215,7 +215,7 @@ test('a pack with problems is refused with every problem, each named by its file
   has(/^bad\.json: names "id" must be "p\.<name>"/);
   has(/^bad\.json: p\.empty needs at least one example/);
   has(/^bad\.json: p\.graded gives a grade, but a sql\.dialect-path rule draws no edge to grade$/);
-  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.contract-link, java\.type-role, prisma\.operation, sql\.dialect-path, ts\.route-decorator, ts\.type-role, got "java\.nothing"$/);
+  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.type-role, prisma\.operation, sql\.dialect-path, ts\.route-decorator, ts\.type-role, got "java\.nothing"$/);
 });
 
 test('a dialect rule refuses words that are not plain words, one word naming two databases, and an example it does not declare', () => {

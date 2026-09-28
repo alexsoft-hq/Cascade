@@ -336,6 +336,9 @@ function markProvisional(graph, baseGraph) {
  *        imperative service-to-service call, and the overlay must apply it the
  *        same way the base pack did or an edited file would change what a call
  *        matches.
+ * @param {object[]} [a.pathPrefixes]  the profile's declared path prefixes: the
+ *        overlay puts them before a route as the base pack did, or an edited
+ *        controller would move to an address the base pack never had.
  * @param {{annotations?:string[], pathGlobs?:string[]}} [a.generatedSources]
  *        the profile's generated-source declaration — the overlay must classify
  *        machine-written code the same way the base pack did, or an edited file
@@ -374,7 +377,7 @@ export function overlayGraph(a) {
     webBaseShards = new Map(), webDirtyFacts = new Map(), webDropFiles = [], webConfigRecords = [],
     catalogRecords = [], lineageRecords = [],
     baseGraph, overlaySessionId, dirtyFiles = [], packagePrefixes = [], generatedSources = null,
-    gatewayRoutes = null,
+    gatewayRoutes = null, pathPrefixes = [],
     identifierCase = 'exact', bridges = null, web = null, javaLanesOf = null,
   } = a ?? {};
   if (!(baseShards instanceof Map)) throw new OverlayError('baseShards must be a Map of file -> records');
@@ -398,7 +401,7 @@ export function overlayGraph(a) {
   const { graph, javaStats, webStats } = assembleGraph({
     bridges, catalogRecords, lineageRecords: [...lineageRecords, ...(javaLanes.lineage ?? [])], javaFacts, webFacts, identifierCase,
     java: {
-      packagePrefixes,
+      packagePrefixes, pathPrefixes,
       ...(generatedSources ? { generatedSources } : {}),
       ...(gatewayRoutes ? { gatewayRoutes } : {}),
     },

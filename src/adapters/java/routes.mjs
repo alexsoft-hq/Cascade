@@ -6,7 +6,9 @@
 //                       that carries it: a route served here, a route called
 //                       over HTTP, or a contract somebody else implements
 //   the endpoint node   one node per "METHOD path", whatever how many
-//                       controllers declare it, with its primary handler
+//                       controllers declare it, with its primary handler; the
+//                       path is behind the prefix the profile's pathPrefixes
+//                       declares for the serving class (./path_prefixes.mjs)
 //   HANDLES             one edge per declaration, from the route to the method
 //   CALLS_HTTP          from a @FeignClient/@HttpExchange method (the route is
 //                       in the annotation) and from an imperative WebClient /
@@ -25,9 +27,11 @@
 
 import { routeMatches, normalizeUrlPath, gatewayRouteOf } from '../http_routes.mjs';
 import { classifyRouteHolder, cmp, endpointId, ownerOf, symbolId } from './types.mjs';
+import { apiGroupAfter, prefixEvidence } from './path_prefixes.mjs';
 
 /** What each ROUTE rule did, in one sentence, for `evidence.basis`. */
 export const ROUTE_RULE_BASIS = Object.freeze({
+  'route-path-prefix': 'the route is served behind a prefix the profile declares in pathPrefixes for this controller class: Spring puts it there from configuration code (setPathPrefixes, addPathPrefix) this lane does not read, and the declaration is the project\'s word for what that code does',
   'route-contract-impl': 'the mapping is on an interface/abstract declaration; the handler is the concrete @Controller that implements it, matched through `implements` by method name (and arity where the worker recorded one), not by compiler binding',
   'route-contract-only': 'the mapping is on an interface/abstract declaration that NO concrete controller in this pack implements: the route is declared here and served somewhere this analysis cannot see',
   'http-client': 'a @FeignClient/@HttpExchange method CALLS this route over HTTP; which deployable answers is not knowable from source, so the service name and url are recorded as written and the grade says only whether a route with this method+path exists in the pack',
@@ -86,65 +90,81 @@ export const ROUTE_RULE_BASIS = Object.freeze({
  * graph will carry. Nothing is written here; the two lists come back so the node
  * and the edges below are built from ONE reading of them.
  *
+ * A CLIENT's route is the address it calls, written in full at the call, so no
+ * declared prefix is put on it: the prefix belongs to the class that serves.
+ *
  * @returns {{routes:object[], clientCalls:object[]}}
  */
 export function classifyRoutes(ctx) {
-  const {
-    endpoints, typeAt, aritiesOfMember, implementorsOf, types, declares, lineOfMember, stats,
-  } = ctx;
-  const routes = [];       // {epId, httpMethod, path, handler, line, grade, evidence, contractOnly}
+  const { endpoints, typeAt } = ctx;
+  const routes = [];       // {epId, httpMethod, path, handler, line, grade, evidence, contractOnly, prefix}
   const clientCalls = [];  // {epId, httpMethod, path, from, client}
   for (const e of endpoints) {
     if (!e.handler) continue;
-    const epId = endpointId(e.httpMethod, e.path);
     const holder = typeAt(e.handlerType, e.file);
     const kind = classifyRouteHolder(holder);
     if (kind === 'client') {
-      clientCalls.push({ epId, httpMethod: e.httpMethod, path: e.path, from: e.handler, client: holder.client });
-      continue;
-    }
-    if (kind === 'handler') {
-      routes.push({ epId, httpMethod: e.httpMethod, path: e.path, handler: e.handler, line: e.line ?? null, grade: 'EXACT', evidence: null });
-      continue;
-    }
-    // A ROUTE CONTRACT. The mapping is on the declaration; the code that runs is
-    // the implementer's. Matched by name, and by ARITY when the worker recorded
-    // one for the contract method — which it does for an interface method and
-    // for any method that carries a mapping. `evidence.match` says which, so a
-    // reader is never left to assume the stronger of the two.
-    const name = e.handler.slice(e.handler.lastIndexOf('#') + 1);
-    const arities = aritiesOfMember.get(e.handler) ?? null;
-    const impls = [...(implementorsOf.get(e.handlerType) ?? new Set())]
-      .filter((sub) => classifyRouteHolder(types.get(sub)) === 'handler'
-        && (arities ? [...arities].some((n) => declares(sub, name, n)) : declares(sub, name, null)))
-      .sort(cmp);
-    stats.routeContracts += 1;
-    if (impls.length === 0) {
-      // Nobody in this pack implements it. The route is REAL — it is declared —
-      // so it is emitted with the contract method as its handler and SAYS SO,
-      // rather than being dropped or quietly attributed to a controller.
-      stats.contractOnlyRoutes += 1;
-      routes.push({
-        epId, httpMethod: e.httpMethod, path: e.path, handler: e.handler, line: e.line ?? null,
-        grade: 'EXACT', contractOnly: true,
-        evidence: { rule: 'route-contract-only', basis: ROUTE_RULE_BASIS['route-contract-only'], contract: e.handler, contractOnly: true },
-      });
-      continue;
-    }
-    for (const sub of impls) {
-      const member = `${sub}#${name}`;
-      routes.push({
-        epId, httpMethod: e.httpMethod, path: e.path, handler: member,
-        line: lineOfMember.get(member) ?? null,
-        grade: 'SOUND_SET',
-        evidence: {
-          rule: 'route-contract-impl', basis: ROUTE_RULE_BASIS['route-contract-impl'],
-          contract: e.handler, match: arities ? 'name+arity' : 'name',
-        },
-      });
+      clientCalls.push({ epId: endpointId(e.httpMethod, e.path), httpMethod: e.httpMethod, path: e.path, from: e.handler, client: holder.client });
+    } else if (kind === 'handler') {
+      routes.push(servedRoute(ctx, holder, { httpMethod: e.httpMethod, path: e.path, handler: e.handler, line: e.line ?? null, grade: 'EXACT' }, null));
+    } else {
+      contractRoutes(ctx, e, routes);
     }
   }
   return { routes, clientCalls };
+}
+
+/**
+ * A route this pack SERVES, at the address its class is served under: the path
+ * the mapping writes, behind the prefix the profile declares for that class
+ * (`pathPrefixes`). Without a declaration the address is the path, and the
+ * route is exactly what it always was.
+ */
+function servedRoute(ctx, holderType, fields, evidence) {
+  const { path, prefix } = ctx.addressOf ? ctx.addressOf(holderType, fields.path) : { path: fields.path, prefix: null };
+  const ev = prefix ? { ...(evidence ?? { rule: 'route-path-prefix', basis: ROUTE_RULE_BASIS['route-path-prefix'] }), prefix: prefixEvidence(prefix) } : evidence;
+  return { ...fields, epId: endpointId(fields.httpMethod, path), path, prefix, evidence: ev };
+}
+
+/**
+ * A ROUTE CONTRACT. The mapping is on the declaration; the code that runs is
+ * the implementer's. Matched by name, and by ARITY when the worker recorded one
+ * for the contract method, which it does for an interface method and for any
+ * method that carries a mapping. `evidence.match` says which, so a reader is
+ * never left to assume the stronger of the two. Each implementer is served
+ * under its OWN class's prefix, because that is the class Spring tests.
+ */
+function contractRoutes(ctx, e, routes) {
+  const { aritiesOfMember, implementorsOf, types, declares, lineOfMember, stats } = ctx;
+  const name = e.handler.slice(e.handler.lastIndexOf('#') + 1);
+  const arities = aritiesOfMember.get(e.handler) ?? null;
+  const impls = [...(implementorsOf.get(e.handlerType) ?? new Set())]
+    .filter((sub) => classifyRouteHolder(types.get(sub)) === 'handler'
+      && (arities ? [...arities].some((n) => declares(sub, name, n)) : declares(sub, name, null)))
+    .sort(cmp);
+  stats.routeContracts += 1;
+  if (impls.length === 0) {
+    // Nobody in this pack implements it. The route is REAL — it is declared —
+    // so it is emitted with the contract method as its handler and SAYS SO,
+    // rather than being dropped or quietly attributed to a controller. No class
+    // serves it here, so no declared prefix is tested against one.
+    stats.contractOnlyRoutes += 1;
+    routes.push({
+      epId: endpointId(e.httpMethod, e.path), httpMethod: e.httpMethod, path: e.path, handler: e.handler, line: e.line ?? null,
+      grade: 'EXACT', contractOnly: true, prefix: null,
+      evidence: { rule: 'route-contract-only', basis: ROUTE_RULE_BASIS['route-contract-only'], contract: e.handler, contractOnly: true },
+    });
+    return;
+  }
+  for (const sub of impls) {
+    const member = `${sub}#${name}`;
+    routes.push(servedRoute(ctx, types.get(sub), {
+      httpMethod: e.httpMethod, path: e.path, handler: member, line: lineOfMember.get(member) ?? null, grade: 'SOUND_SET',
+    }, {
+      rule: 'route-contract-impl', basis: ROUTE_RULE_BASIS['route-contract-impl'],
+      contract: e.handler, match: arities ? 'name+arity' : 'name',
+    }));
+  }
 }
 
 /**
@@ -158,10 +178,10 @@ export function classifyRoutes(ctx) {
  */
 export function placeEndpointNodes(ctx, routes) {
   const { g, fileOf } = ctx;
-  const byRoute = new Map(); // endpoint id -> {httpMethod, path, lineOf:Map<handler,line>, contractOnly}
+  const byRoute = new Map(); // endpoint id -> {httpMethod, path, lineOf:Map<handler,line>, prefixOf:Map<handler,entry>, contractOnly}
   for (const r of routes) {
     let rec = byRoute.get(r.epId);
-    if (!rec) { rec = { httpMethod: r.httpMethod, path: r.path, lineOf: new Map(), contractOnly: true }; byRoute.set(r.epId, rec); }
+    if (!rec) { rec = { httpMethod: r.httpMethod, path: r.path, lineOf: new Map(), prefixOf: new Map(), contractOnly: true }; byRoute.set(r.epId, rec); }
     if (r.contractOnly !== true) rec.contractOnly = false;
     const prev = rec.lineOf.get(r.handler);
     // Two mappings on ONE method (`@GetMapping({"", "/"})` under a class-level
@@ -169,6 +189,7 @@ export function placeEndpointNodes(ctx, routes) {
     // LOWEST line, chosen by value, so the node does not depend on which of them
     // arrived first either.
     if (prev === undefined || (r.line != null && (prev == null || r.line < prev))) rec.lineOf.set(r.handler, r.line ?? null);
+    if (r.prefix) rec.prefixOf.set(r.handler, r.prefix);
   }
   for (const [epId, rec] of byRoute) {
     const handlers = [...rec.lineOf.keys()].sort((a, b) => (symbolId(a) < symbolId(b) ? -1 : symbolId(a) > symbolId(b) ? 1 : 0));
@@ -181,9 +202,24 @@ export function placeEndpointNodes(ctx, routes) {
       // can then say "N routes are declared by an interface nobody implements
       // here" without a field on every endpoint in the pack.
       ...(rec.contractOnly ? { contractOnly: true } : {}),
+      ...declaredPrefixAttrs(rec.prefixOf.get(primary), rec.path),
     });
   }
   return byRoute;
+}
+
+/**
+ * What a route served behind a DECLARED prefix says about it on its node: the
+ * prefix and the declaration it came from, and the API group a reader means,
+ * which is the first segment after the prefix (every route of a product that
+ * starts with `/admin-api` would otherwise be one group). Nothing at all on a
+ * route no declaration touched, so a project that declares none has the nodes
+ * it always had.
+ */
+function declaredPrefixAttrs(entry, path) {
+  if (!entry) return {};
+  const group = apiGroupAfter(entry.value, path);
+  return { pathPrefix: prefixEvidence(entry), ...(group !== null ? { apiGroup: group } : {}) };
 }
 
 /** The HANDLES edges, one per declaration, in the order they were classified. */

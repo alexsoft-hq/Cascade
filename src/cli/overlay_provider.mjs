@@ -366,8 +366,10 @@ export function overlayState({
     baseGraph, overlaySessionId: session.overlaySessionId,
     dirtyFiles, packagePrefixes: selection.packagePrefixes ?? [],
     // From the LIVE profile, for the same reason `generatedSources` below is: a
-    // gateway prefix declared since the pack was built takes effect here first.
+    // gateway prefix or a path prefix declared since the pack was built takes
+    // effect here first.
     gatewayRoutes: profile?.gatewayRoutes ?? {},
+    pathPrefixes: profile?.pathPrefixes ?? [],
     // Same identity rule as the run that built the base pack — the overlay
     // declines above when the SQL arguments (which carry it) have moved.
     identifierCase: sqlArgs.identifierCase,

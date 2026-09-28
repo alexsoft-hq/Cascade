@@ -226,6 +226,9 @@ function padLine(line) {
   return '0'.repeat(Math.max(0, 8 - n.length)) + n;
 }
 
+/** A field the worker writes as the empty string in a key when the record has none. */
+const orEmpty = (v) => (v == null ? '' : v);
+
 export function javaRecordSortKey(rec) {
   if (!rec || typeof rec !== 'object') return null;
   switch (rec.kind) {
@@ -247,10 +250,12 @@ export function javaRecordSortKey(rec) {
     // The worker appends its own running counter here too (see the note above):
     // records that agree on everything before it are byte-identical JSON, so
     // their relative order cannot change the assembled bytes.
-    case 'mpWrapper': return `7mpwrapper${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${rec.var == null ? '' : rec.var}`;
+    case 'mpWrapper': return `7mpwrapper${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${orEmpty(rec.var)}`;
     // …and here (javafacts/8): two imperative HTTP calls that agree on the
     // caller, the line, the verb and the path are byte-identical JSON.
-    case 'httpCall': return `8httpcall${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${rec.httpMethod == null ? '' : rec.httpMethod}${SEP}${rec.path == null ? '' : rec.path}`;
+    case 'httpCall': return `8httpcall${SEP}${rec.from}${SEP}${padLine(rec.line)}${SEP}${orEmpty(rec.httpMethod)}${SEP}${orEmpty(rec.path)}`;
+    // One per file (javafacts/16): the method names the file invokes.
+    case 'invocations': return `9invocations${SEP}${rec.file}`;
     default: return null; // header, summary, and anything a newer worker adds
   }
 }

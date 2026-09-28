@@ -24,6 +24,8 @@ import {
   webWorkerStatsOf, whichLanesAssemble, wrapperFragmentLineage,
 } from './lanes.mjs';
 import { withPackLock } from '../../pack_history.mjs';
+import { codeSettingDiagnostics } from '../../../core/code_settings.mjs';
+import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
 import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection } from './inputs.mjs';
 
@@ -160,8 +162,9 @@ function factsOf(ctx, prepared, tmpDir) {
  * Java lanes' when Java ran, with the TypeScript lane's beside them when it
  * ran, whose reasons for a route or a link not made join the run's diagnostics.
  */
-function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf }, diagnostics) {
+function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts, graph }, diagnostics) {
   const laneStats = runJava ? sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) : null;
+  if (runJava) diagnostics.push(...unusedPrefixNotes(jstats), ...prefixNotOnCallsNotes(graph, jstats), ...codeSettingDiagnostics(javaFacts ?? [], profile));
   if (!tsStats) return laneStats;
   for (const d of tsStats.diagnostics) diagnostics.push({ kind: d.kind, severity: 'warn', key: 'tsBackend', reason: d.reason });
   return { ...laneStats, ts: sayTsLane(tsStats, tsOpts, { root, sel, relOf }) };
@@ -182,7 +185,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
     result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs,
     screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming, tsOpts,
   });
-  const laneStats = sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf }, diagnostics);
+  const laneStats = sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts: result.javaFacts, graph: g }, diagnostics);
   // ---- the web BRIDGE's own line (RM28) ---------------------------------
   // What the frontend's calls turned into: how many reached a route this pack
   // serves, at which grade, how many did not and why, and the prefix each

@@ -616,7 +616,9 @@ export function buildProfile(discovery, opts) {
   const { serviceNames, gatewayRoutes } = declareServiceIdentity(discovery, { existing, diagnostics });
   const { mappers } = declareMappers(discovery, { existing, dialect, root, manifestDir, diagnostics });
   const tsBackend = declareTsBackend(discovery, { existing, root, manifestDir, diagnostics });
-
+  // No discovery can read a path prefix configuration code sets, so a declared
+  // list is the user's word and survives a re-run, like tsBackend above.
+  const pathPrefixes = Array.isArray(existing?.pathPrefixes) && existing.pathPrefixes.length > 0 ? { pathPrefixes: existing.pathPrefixes } : {};
 
   const profile = normalizeProfile({
     build: { tool: discovery.buildTool ?? null },
@@ -631,6 +633,7 @@ export function buildProfile(discovery, opts) {
     ...(openapiDocuments.length > 0 ? { openapi: { documents: openapiDocuments } } : {}),
     ...mappers,
     ...tsBackend,
+    ...pathPrefixes,
     catalog,
   });
   validateProfile(profile);

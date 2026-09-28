@@ -387,6 +387,7 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
 export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   let laneStats = jstats;
   sayJavaLane(jstats);
+  sayPathPrefixes(jstats.pathPrefixes);
   sayIdGenerators(jstats.idGenerators);
   if (runJpa) {
     laneStats = { ...jstats, jpa: jpaStats };
@@ -397,6 +398,17 @@ export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
     sayMpLane(mpStats);
   }
   return laneStats;
+}
+
+/**
+ * THE PATH PREFIXES THE PROFILE DECLARES, and how many routes each was put
+ * before. Said only where some are declared: a project that declares none has
+ * routes at the addresses its mappings write, as it always did.
+ */
+function sayPathPrefixes(declared) {
+  if (!Array.isArray(declared) || declared.length === 0) return;
+  process.stderr.write(`Java lane: ${declared.length} declared path prefix(es) (pathPrefixes): `
+    + `${declared.map((p) => `${p.prefix} on ${p.routes} route(s)`).join(', ')}\n`);
 }
 
 /**

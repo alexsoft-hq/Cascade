@@ -1,0 +1,43 @@
+{
+  "pack": "spring-mvc",
+  "version": 1,
+  "description": "Spring MVC and WebFlux: what a project sets in configuration code that decides its routes, and the profile key that declares it instead.",
+  "rules": [
+    {
+      "id": "spring-mvc.path-prefixes",
+      "kind": "java.code-setting",
+      "description": "RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix (in Spring MVC and in WebFlux) serve the controllers a predicate picks under a path prefix. The predicate is a lambda over the controller class and the prefix is often read from a property, so no reading of the source can say either. A call to one of them means the routes this pack records may lack their prefix, and the profile's pathPrefixes key is where a project says what they are. A declared key is taken as the project's word; the call is only said when the key is empty.",
+      "why": "ruoyi-vue-pro serves every admin controller under /admin-api and every app controller under /app-api, from setPathPrefixes in YudaoWebAutoConfiguration with both values defaulted in WebProperties. Every route was recorded without its prefix, and nothing said why.",
+      "params": {
+        "setting": "pathPrefixes",
+        "effect": "the controllers it picks are served under a path prefix, and every route of theirs is recorded here without it",
+        "calls": [
+          { "on": "RequestMappingHandlerMapping", "method": "setPathPrefixes", "why": "the handler mapping itself, told a map of prefix to predicate: the form a project uses when it builds its own mapping" },
+          { "on": "PathMatchConfigurer", "method": "addPathPrefix", "why": "the public way, from WebMvcConfigurer.configurePathMatch or WebFluxConfigurer.configurePathMatching" }
+        ]
+      },
+      "examples": [
+        {
+          "source": "package p;\nimport org.springframework.boot.autoconfigure.web.servlet.WebMvcRegistrations;\nimport org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;\npublic class WebConfig {\n    public WebMvcRegistrations registrations() {\n        return new WebMvcRegistrations() {\n            @Override public RequestMappingHandlerMapping getRequestMappingHandlerMapping() {\n                RequestMappingHandlerMapping mapping = new RequestMappingHandlerMapping();\n                mapping.setPathPrefixes(prefixes());\n                return mapping;\n            }\n        };\n    }\n}\n",
+          "expect": [{ "method": "setPathPrefixes", "line": 9 }],
+          "why": "the shape ruoyi-vue-pro writes: a mapping built inside a WebMvcRegistrations and told its prefixes, on a local"
+        },
+        {
+          "source": "package p;\nimport org.springframework.web.bind.annotation.RestController;\nimport org.springframework.web.method.HandlerTypePredicate;\nimport org.springframework.web.servlet.config.annotation.PathMatchConfigurer;\nimport org.springframework.web.servlet.config.annotation.WebMvcConfigurer;\npublic class ApiConfig implements WebMvcConfigurer {\n    @Override public void configurePathMatch(PathMatchConfigurer configurer) {\n        configurer\n            .setUseTrailingSlashMatch(false)\n            .addPathPrefix(\"/api\", HandlerTypePredicate.forAnnotation(RestController.class));\n    }\n}\n",
+          "expect": [{ "method": "addPathPrefix", "line": 10 }],
+          "why": "at the end of a chain on a parameter, and the line is the one the name is written on"
+        },
+        {
+          "source": "package p;\nimport org.springframework.web.reactive.config.PathMatchConfigurer;\nimport org.springframework.web.reactive.config.WebFluxConfigurer;\npublic class FluxConfig implements WebFluxConfigurer {\n    @Override public void configurePathMatching(PathMatchConfigurer configurer) {\n        configurer.addPathPrefix(\"/v1\", c -> c.getPackageName().startsWith(\"com.acme.v1\"));\n        configurer.addPathPrefix(\"/v2\", c -> c.getPackageName().startsWith(\"com.acme.v2\"));\n    }\n}\n",
+          "expect": [{ "method": "addPathPrefix", "line": 6 }],
+          "why": "WebFlux has the same method; a file that calls it twice is said once, at its first call"
+        },
+        {
+          "source": "package p;\npublic class Paths {\n    private final StringBuilder sb = new StringBuilder();\n    String addPrefix(String p) { return sb.append(p).toString(); }\n    void setPathPrefixes(Object mapping) { addPrefix(\"/x\"); }\n}\n",
+          "expect": [],
+          "why": "a method declared with the name is not a call, and a name the rule does not list is not one either"
+        }
+      ]
+    }
+  ]
+}
