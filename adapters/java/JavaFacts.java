@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/17";
+    static final String VERSION = "javafacts/18";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -1339,16 +1339,60 @@ public class JavaFacts {
                     // null for `var`: the declared type is then the initializer's
                     o.put("t", typeSimpleName(v.getType()));
                     o.put("e", (v.getInitializer() == null) ? null : expr(v.getInitializer()));
+                } else if (s instanceof com.sun.source.tree.ExpressionStatementTree
+                        && isLocalAssignment(((com.sun.source.tree.ExpressionStatementTree) s).getExpression())) {
+                    // `prefix = "/actual";` (javafacts/18): a local holds a new
+                    // value from here on, so a later use reads this one.
+                    AssignmentTree as = (AssignmentTree) unwrap(((com.sun.source.tree.ExpressionStatementTree) s).getExpression());
+                    o.put("s", "assign");
+                    o.put("n", ((IdentifierTree) as.getVariable()).getName().toString());
+                    o.put("e", expr(as.getExpression()));
+                    putAssigned(o, as.getExpression());
                 } else if (s instanceof com.sun.source.tree.ExpressionStatementTree) {
                     o.put("s", "expr");
                     o.put("e", expr(((com.sun.source.tree.ExpressionStatementTree) s).getExpression()));
+                    putAssigned(o, s);
                 } else {
                     // an if, a loop, a try: what is built in it is not read
                     o.put("s", "other");
                     o.put("t", s.getKind().name());
+                    putAssigned(o, s);
                 }
+                if (s instanceof ReturnTree || s instanceof VariableTree) putAssigned(o, s);
                 o.put("l", lineOf(s));
                 return o;
+            }
+
+            /** Whether an expression is `name = value`, a plain assignment to a simple name. */
+            boolean isLocalAssignment(ExpressionTree e) {
+                ExpressionTree x = unwrap(e);
+                return x instanceof AssignmentTree && ((AssignmentTree) x).getVariable() instanceof IdentifierTree;
+            }
+
+            /**
+             * The simple names a statement assigns anywhere inside it, apart
+             * from the one plain assignment it is (javafacts/18): in a branch,
+             * with `+=`, with `++`, or nested in an expression. The reader does
+             * not follow those, so a local among them holds a value it cannot
+             * name from there on.
+             */
+            void putAssigned(Map<String, Object> o, Tree t) {
+                final java.util.TreeSet<String> names = new java.util.TreeSet<>();
+                t.accept(new TreeScanner<Void, Void>() {
+                    void target(ExpressionTree v) { if (v instanceof IdentifierTree) names.add(((IdentifierTree) v).getName().toString()); }
+                    @Override public Void visitAssignment(AssignmentTree a, Void p) { target(a.getVariable()); return super.visitAssignment(a, p); }
+                    @Override public Void visitCompoundAssignment(com.sun.source.tree.CompoundAssignmentTree a, Void p) { target(a.getVariable()); return super.visitCompoundAssignment(a, p); }
+                    @Override public Void visitUnary(com.sun.source.tree.UnaryTree u, Void p) {
+                        switch (u.getKind()) {
+                            case PREFIX_INCREMENT: case PREFIX_DECREMENT: case POSTFIX_INCREMENT: case POSTFIX_DECREMENT:
+                                target(u.getExpression());
+                                break;
+                            default:
+                        }
+                        return super.visitUnary(u, p);
+                    }
+                }, null);
+                if (!names.isEmpty()) o.put("a", new ArrayList<Object>(names));
             }
 
             List<Object> exprs(List<? extends ExpressionTree> es) {

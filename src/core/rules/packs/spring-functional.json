@@ -6,7 +6,7 @@
     {
       "id": "spring-functional.router-functions",
       "kind": "java.route-function",
-      "description": "A method declared to return a RouterFunction builds routes with calls. RouterFunctions.route() starts a builder; GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS on it add a route with a path pattern, an optional request predicate and a handler; route(predicate, handler) and andRoute add one whose path and verb the predicate names (RequestPredicates.GET(\"/x\"), path(\"/x\"), method(HttpMethod.GET), joined with and; accept, contentType and the like narrow a route and name no path). nest(predicate, routes), andNest and the builder's path(pattern, routes) put the routes inside them under the predicate's path, whether they are given as a router function, a Supplier of one (a helper returning Supplier<RouterFunction> is read where it is called) or a consumer of a fresh builder; and, andOther and add join another router function's routes; build, filter, before, after, onError and withAttribute leave them as they are. SpringdocRouteBuilder takes the same calls with an operation consumer last, whose operationId names the operation. A method annotated @Bean is registered by Spring, so its routes are served at the paths they compose; a route-building method of the same class that one calls with no argument is read there, under that caller's prefix; any other one is mounted by code elsewhere, and its paths are relative to a prefix this rule does not know. The handler is a method reference or a lambda that calls one method.",
+      "description": "A method declared to return a RouterFunction builds routes with calls. RouterFunctions.route() starts a builder; GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS on it add a route with a path pattern, an optional request predicate and a handler; route(predicate, handler) and andRoute add one whose path and verb the predicate names (RequestPredicates.GET(\"/x\"), path(\"/x\"), method(HttpMethod.GET), joined with and; accept, contentType and the like narrow a route and name no path). nest(predicate, routes), andNest and the builder's path(pattern, routes) put the routes inside them under the predicate's path, whether they are given as a router function, a Supplier of one (a helper returning Supplier<RouterFunction> is read where it is called) or a consumer of a fresh builder; and, andOther and add join another router function's routes; build makes a router function of what the builder holds at that point; filter, before, after, onError and withAttribute leave them as they are. A builder is one object whatever names hold it, so a route added through a second name is the builder's. A local is read at the value it holds where it is used; one assigned in a branch, with +=, or inside an expression is not read from there on. SpringdocRouteBuilder takes the same calls with an operation consumer last, whose operationId names the operation. A method annotated @Bean is registered by Spring, so its routes are served at the paths they compose; a route-building method of the same class that one calls with no argument is read there, under that caller's prefix; any other one is mounted by code elsewhere, and its paths are relative to a prefix this rule does not know. The handler is a method reference or a lambda that calls one method.",
       "why": "halo builds its custom API this way and with no mapping annotation: 75 methods return a RouterFunction, and before this rule not one of the 400 routes its OpenAPI documents declare had a handler; with it 167 do. The Spring PetClinic microservices gateway and the JeecgBoot cloud gateway serve their index page this way. The names are Spring Framework's own (org.springframework.web.reactive.function.server and org.springframework.web.servlet.function: RouterFunctions, RequestPredicates, RouterFunctions.Builder) and springdoc-openapi's (org.springdoc.webflux.core.fn.SpringdocRouteBuilder, org.springdoc.webmvc.core.fn.SpringdocRouteBuilder).",
       "params": {
         "returnTypes": ["RouterFunction"],
@@ -21,7 +21,8 @@
           { "names": ["andNest", "nest"], "does": "nest", "forms": ["predicate routes", "predicate routes operation"] },
           { "names": ["path"], "does": "nest", "forms": ["path routes", "path routes operation"] },
           { "names": ["and", "andOther", "add"], "does": "combine", "forms": ["routes"] },
-          { "names": ["build", "filter", "before", "after", "onError", "withAttribute", "withAttributes"], "does": "keep", "forms": "*" },
+          { "names": ["build"], "does": "build", "forms": [""] },
+          { "names": ["filter", "before", "after", "onError", "withAttribute", "withAttributes"], "does": "keep", "forms": "*" },
           { "names": ["resources"], "does": "resources", "forms": "*" },
           { "names": ["GET"], "verb": "GET", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
           { "names": ["HEAD"], "verb": "HEAD", "does": "route", "forms": ["path handler", "path predicate handler", "predicate handler", "handler", "path handler operation", "path predicate handler operation", "predicate handler operation", "handler operation"] },
@@ -110,6 +111,16 @@
             { "function": "NotificationEndpoint#endpoint", "mount": "unmounted", "verb": "GET", "path": "/userspaces/{username}/notifications", "handler": "this::listNotification", "operationId": "ListUserNotifications" }
           ],
           "why": "a helper that returns a Supplier of routes hands the nest its routes, and is read there, under the nest's path"
+        },
+        {
+          "source": "package com.example;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.web.reactive.function.server.RouterFunction;\nimport org.springframework.web.reactive.function.server.RouterFunctions;\nimport org.springframework.web.reactive.function.server.ServerResponse;\npublic class Later {\n  boolean legacy;\n  @Bean\n  RouterFunction<ServerResponse> routes() {\n    String prefix = \"/v1\";\n    prefix = \"/v2\";\n    var builder = RouterFunctions.route();\n    var same = builder;\n    same.path(prefix, b -> b.GET(\"/items\", this::list));\n    String other = \"/a\";\n    if (legacy) { other = \"/b\"; }\n    builder.GET(other, this::list);\n    return builder.build();\n  }\n}\n",
+          "expect": [
+            { "function": "Later#routes", "mount": "bean", "verb": "GET", "path": "/v2/items", "handler": "this::list" },
+            { "function": "Later#routes", "mount": "bean", "verb": "GET", "path": "<unknown>", "handler": "this::list" },
+            { "function": "Later#routes", "unread": "path-not-literal" },
+            { "function": "Later#routes", "unread": "statement-not-read" }
+          ],
+          "why": "the prefix is read where it is used, after it was assigned again; the route added through a second name is the builder's; a local an if may assign is not read, never read at the value it held before"
         }
       ]
     }

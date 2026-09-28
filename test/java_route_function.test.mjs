@@ -252,8 +252,8 @@ test('a route mounted by code elsewhere is placed only where a document declares
   const g = new Graph();
   const stats = addJavaFacts(g, f, { openapiDocuments: DOCUMENTS }).functionalRoutes;
   const list = handlesOf(g, 'endpoint:GET /apis/console/v1/posts');
-  assert.deepEqual(list.map((e) => [e.to, e.grade]), [['symbol:com.example.PostEndpoint#listPost', 'SOUND_SET']],
-    'this::listPost names the method outright, and the mount is still a document\'s word: SOUND_SET');
+  assert.deepEqual(list.map((e) => [e.to, e.grade]), [['symbol:com.example.PostEndpoint#listPost', 'HEURISTIC']],
+    'this::listPost names the method outright, and the mount is a document\'s operation id matched by convention: HEURISTIC');
   assert.equal(list[0].evidence.mount, 'operation-id');
   assert.equal(list[0].evidence.document, 'api-docs/console.json');
   assert.equal(list[0].evidence.relativePath, '/posts');

@@ -87,8 +87,10 @@ function apply(hit, node, recv, ctx) {
   switch (entry.does) {
     case 'start': return { t: 'builder', routes: [] };
     case 'keep': return kept;
+    // What the builder holds NOW, as a router function: a route added to the builder later is not in it.
+    case 'build': return { t: 'routes', routes: [...kept.routes] };
     case 'resources': ctx.notes.push({ code: 'resources', text: writtenOf(node), line: node.l ?? null }); return kept;
-    case 'route': return { t: kept.t, routes: [...kept.routes, routeOf(entry, roles, node, ctx)] };
+    case 'route': return added(kept, [routeOf(entry, roles, node, ctx)]);
     case 'combine': return withInner(kept, routesArg(roles.routes, ctx), (rs) => rs, node, ctx);
     case 'nest': {
       const prefix = prefixOf(roles, ctx);
@@ -98,10 +100,22 @@ function apply(hit, node, recv, ctx) {
   }
 }
 
+/**
+ * Routes added to a value. A builder is ONE object, however many names hold it
+ * (`alias = b; alias.GET(...); b.build()`), because each of its calls changes it
+ * and returns it: so it is changed in place. A router function is a value, and
+ * `and` makes a new one.
+ */
+function added(kept, routes) {
+  if (kept.t !== 'builder') return { t: kept.t, routes: [...kept.routes, ...routes] };
+  kept.routes.push(...routes);
+  return kept;
+}
+
 /** The receiver's routes and an inner value's; an inner value not read is said, and what was read stays. */
 function withInner(kept, inner, place, node, ctx) {
   if (inner.t === 'unknown') ctx.notes.push({ code: inner.code, text: inner.text, line: node.l ?? null });
-  return { t: kept.t, routes: [...kept.routes, ...place(inner.routes)] };
+  return added(kept, place(inner.routes));
 }
 
 /** Whether a call with no receiver, or a type name as one, is a static call. */
@@ -185,26 +199,46 @@ function chainRoot(node) {
 export function runBlock(stmts, ctx) {
   let value = null;
   for (const s of stmts ?? []) {
-    if (s.s === 'var') {
-      // The initializer is kept as written too: a local may hold a path or a predicate, not only routes.
-      ctx.scope.set(s.n, { type: s.t ?? null, node: s.e ?? null, value: s.e ? evalValue(s.e, ctx) : unknown('value-in-variable', s.n) });
-    } else if (s.s === 'expr') {
-      const root = chainRoot(s.e);
-      const bound = root && root.k === 'id' ? ctx.scope.get(root.v) : null;
-      if (bound && bound.value?.t === 'builder') {
-        const v = evalValue(s.e, ctx);
-        if (v.t === 'builder') bound.value = v;
-        else ctx.notes.push({ code: v.code ?? 'statement-not-read', text: v.text ?? writtenOf(s.e), line: s.l ?? null });
-      } else {
-        ctx.notes.push({ code: 'statement-not-read', text: writtenOf(s.e), line: s.l ?? null });
-      }
-    } else if (s.s === 'return' && value === null) {
-      value = evalValue(s.e, ctx);
-    } else if (s.s === 'other') {
-      ctx.notes.push({ code: 'statement-not-read', text: `a ${String(s.t).toLowerCase().replace(/_/g, ' ')} statement`, line: s.l ?? null });
-    }
+    forgetAssigned(s, ctx);
+    if (s.s === 'return') value ??= evalValue(s.e, ctx);
+    else runStatement(s, ctx);
   }
   return { value: value ?? unknown('value-not-read', 'nothing is returned') };
+}
+
+/** One statement that is not a return: a local bound or assigned, a call on a builder, or something said as not read. */
+function runStatement(s, ctx) {
+  const said = (text) => ctx.notes.push({ code: 'statement-not-read', text, line: s.l ?? null });
+  if (s.s === 'var' || (s.s === 'assign' && ctx.scope.has(s.n))) {
+    // The initializer is kept as written too: a local may hold a path or a
+    // predicate, not only routes. An assignment replaces both, so a later use
+    // reads the value the local holds THERE.
+    const type = s.s === 'var' ? s.t ?? null : ctx.scope.get(s.n).type ?? null;
+    ctx.scope.set(s.n, { type, node: s.e ?? null, value: s.e ? evalValue(s.e, ctx) : unknown('value-in-variable', s.n) });
+  } else if (s.s === 'assign') {
+    said(`${s.n} = ${writtenOf(s.e)}`);
+  } else if (s.s === 'expr') {
+    const root = chainRoot(s.e);
+    const bound = root && root.k === 'id' ? ctx.scope.get(root.v) : null;
+    if (!(bound && bound.value?.t === 'builder')) return said(writtenOf(s.e));
+    const v = evalValue(s.e, ctx);
+    if (v.t !== 'builder') ctx.notes.push({ code: v.code ?? 'statement-not-read', text: v.text ?? writtenOf(s.e), line: s.l ?? null });
+  } else if (s.s === 'other') {
+    said(`a ${String(s.t).toLowerCase().replace(/_/g, ' ')} statement`);
+  }
+  return undefined;
+}
+
+/**
+ * A local a statement assigns where this reader does not follow (in a branch,
+ * with `+=`, inside an expression) holds a value it cannot name from there on:
+ * a path read from it is not read, never read at the value it held before.
+ */
+function forgetAssigned(s, ctx) {
+  for (const name of s.a ?? []) {
+    const prev = ctx.scope.get(name);
+    if (prev) ctx.scope.set(name, { type: prev.type ?? null, node: null, value: unknown('value-in-variable', name) });
+  }
 }
 
 /** One route-building method, read: the value it returns, with its own parameters bound by name. */

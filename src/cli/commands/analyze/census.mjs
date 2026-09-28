@@ -409,8 +409,8 @@ export function sayTsLane(ts, opts, { root, sel, relOf }) {
 export function sayFunctionalRoutes(fr) {
   if (!fr || fr.functions === 0) return;
   process.stderr.write(`Java lane: ${fr.functions} method(s) build functional routes, ${fr.routes} route(s) read: `
-    + `${fr.served} HANDLES edge(s) (${fr.handles.EXACT} exact, ${fr.handles.SOUND_SET} candidate), `
-    + `${fr.mountedByOperationId} route(s) placed where an OpenAPI document declares their operation id, `
+    + `${fr.served} HANDLES edge(s) (${fr.handles.EXACT} exact, ${fr.handles.SOUND_SET} candidate, ${fr.handles.HEURISTIC} guessed), `
+    + `${fr.mountedByOperationId} route(s) placed where an OpenAPI document declares their operation id (a guess: no line of the source mounts them), `
     + `${fr.servedWithoutHandler} served with a handler this lane could not name; not placed: ${fr.unmounted} mounted by code elsewhere, `
     + `${fr.pathUnread} with a path not read; ${fr.staticResources} static resource route(s)\n`);
   for (const s of fr.samples.slice(0, 5)) process.stderr.write(`  [warn] JAVA_ROUTE_NOT_READ ${s.function}:${s.line ?? '?'} ${s.code}: ${s.text}\n`);

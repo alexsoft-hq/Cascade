@@ -201,18 +201,22 @@ export function readOperationId(node, ctx) {
   if (!node || node.k !== 'lambda' || node.p.length !== 1) return null;
   const [param] = node.p;
   const chains = node.e ? [node.e] : (node.b ?? []).filter((s) => s.s === 'expr').map((s) => s.e);
-  for (const chain of chains) {
+  // The builder keeps the id it was given LAST: the last statement, and in a
+  // chain the outermost call. A last call whose argument is not a literal
+  // leaves the id not known, never the one an earlier call named.
+  for (const chain of chains.slice().reverse()) {
     const found = operationIdIn(chain, param, ctx.vocab.operationId);
-    if (found !== null) return found;
+    if (found !== undefined) return found;
   }
   return null;
 }
 
+/** The id the outermost operation-id call of one chain on `param` names: a string, null when it is not a literal, undefined when none is called. */
 function operationIdIn(chain, param, names) {
-  let found = null;
+  let last;
   for (let n = chain; n && n.k === 'call'; n = n.r) {
-    if (names.has(n.n) && n.a.length === 1 && n.a[0].k === 'str' && typeof n.a[0].v === 'string') found = n.a[0].v;
-    if (n.r && n.r.k === 'id') return n.r.v === param ? found : null;
+    if (last === undefined && names.has(n.n)) last = n.a.length === 1 && n.a[0].k === 'str' && typeof n.a[0].v === 'string' ? n.a[0].v : null;
+    if (n.r && n.r.k === 'id') return n.r.v === param ? last : undefined;
   }
-  return null;
+  return undefined;
 }

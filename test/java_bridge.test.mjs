@@ -449,7 +449,7 @@ test('addJavaFacts: header records and unknown record kinds are ignored without 
     // RM67: no method returns a RouterFunction, so no functional route was read.
     functionalRoutes: {
       functions: 0, routes: 0, served: 0, servedWithoutHandler: 0, mountedByOperationId: 0, unmounted: 0,
-      pathUnread: 0, handlerUnread: 0, handlerUnresolved: 0, handles: { EXACT: 0, SOUND_SET: 0 },
+      pathUnread: 0, handlerUnread: 0, handlerUnresolved: 0, handles: { EXACT: 0, SOUND_SET: 0, HEURISTIC: 0 },
       staticResources: 0, notRead: {}, operationIdDisagreements: 0, samples: [], disagreements: [],
     },
   });

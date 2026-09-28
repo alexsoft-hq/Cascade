@@ -23,7 +23,7 @@ import { cmp, endpointId, findDeclaringAncestor } from './types.mjs';
 /** What each way of placing a functional route rests on, in one sentence, for `evidence.basis`. */
 export const FUNCTIONAL_BASIS = Object.freeze({
   bean: 'a method annotated as a bean returns this RouterFunction, so the framework serves its routes at the paths its calls compose; the handler is the method its reference or its one-call lambda names',
-  'operation-id': 'the method that builds this route is mounted by code elsewhere, so its prefix is not in its file; the project\'s OpenAPI document declares the operation id the route names, with this verb, at a path that ends with the route\'s own',
+  'operation-id': 'the method that builds this route is mounted by code elsewhere, so its prefix is not in its file; the project\'s OpenAPI document declares the operation id the route names, with this verb, at a path that ends with the route\'s own. No line of the source mounts it there: the match is a convention, so the link is a guess',
 });
 
 /** How many unread parts and disagreements the lane stats name. The counts are always whole. */
@@ -32,7 +32,7 @@ const SAMPLE_LIMIT = 20;
 function emptyStats() {
   return {
     functions: 0, routes: 0, served: 0, servedWithoutHandler: 0, mountedByOperationId: 0, unmounted: 0,
-    pathUnread: 0, handlerUnread: 0, handlerUnresolved: 0, handles: { EXACT: 0, SOUND_SET: 0 },
+    pathUnread: 0, handlerUnread: 0, handlerUnresolved: 0, handles: { EXACT: 0, SOUND_SET: 0, HEURISTIC: 0 },
     staticResources: 0, notRead: {}, operationIdDisagreements: 0, samples: [], disagreements: [],
   };
 }
@@ -54,14 +54,53 @@ function typeNamed(ctx, owner, written) {
   return base ? [base, ...rest].join('.') : null;
 }
 
-/** The members an object of this declared type runs for `method`: the type's own, or each implementor's. */
-function membersOfType(ctx, fqn, method) {
-  const t = ctx.types.get(fqn);
-  if (t && t.typeKind === 'interface') {
-    const impls = [...(ctx.implementorsOf.get(fqn) ?? [])].filter((s) => ctx.declares(s, method, null)).sort(cmp);
-    if (impls.length > 0) return impls.map((s) => `${s}#${method}`);
+/** Every type below `fqn` in the tree: its implementors, their subclasses, and so on down. */
+function descendantsOf(ctx, fqn) {
+  const seen = new Set();
+  const queue = [fqn];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    for (const sub of [...(ctx.implementorsOf.get(cur) ?? []), ...(ctx.subclassesOf.get(cur) ?? [])]) {
+      if (!seen.has(sub) && sub !== fqn) { seen.add(sub); queue.push(sub); }
+    }
   }
-  return [`${fqn}#${method}`];
+  return [...seen];
+}
+
+/** The method an object of exactly this class runs: its own, or the one it inherits; null for an interface or a type not read. */
+function runsAs(ctx, fqn, method) {
+  const t = ctx.types.get(fqn);
+  if (!t || t.typeKind === 'interface') return null;
+  if (ctx.declares(fqn, method, null)) return `${fqn}#${method}`;
+  const up = findDeclaringAncestor(fqn, method, null, { types: ctx.types, superOf: ctx.superOf, declares: ctx.declares });
+  return up ? `${up.declaredBy}#${method}` : null;
+}
+
+/**
+ * The methods an object of this declared type may run for `method`: what the
+ * type itself runs, and what each type below it runs, overrides included. The
+ * object may be any of them, so the set holds every one (`Base b = new
+ * Derived()` reaches `Derived#h`). A type this run did not read may run its own.
+ */
+function membersOfType(ctx, fqn, method) {
+  const out = new Set();
+  if (!ctx.types.has(fqn)) out.add(`${fqn}#${method}`);
+  for (const t of [fqn, ...descendantsOf(ctx, fqn)]) {
+    const m = runsAs(ctx, t, method);
+    if (m) out.add(m);
+  }
+  return out.size > 0 ? [...out].sort(cmp) : [`${fqn}#${method}`];
+}
+
+/**
+ * `this::m`: `this` is this class or a subclass of it, so the reference is EXACT
+ * only when nothing in the tree overrides the method, and otherwise every
+ * method the object may run.
+ */
+function thisHandler(ctx, owner, h) {
+  const members = membersOfType(ctx, owner, h.method);
+  const own = members.length === 1 && members[0] === `${owner}#${h.method}` && ctx.declares(owner, h.method, null);
+  return { members, grade: own ? 'EXACT' : 'SOUND_SET', via: h.via };
 }
 
 /**
@@ -75,8 +114,8 @@ function membersOfType(ctx, fqn, method) {
  */
 export function resolveHandler(ctx, owner, h) {
   const idx = { types: ctx.types, superOf: ctx.superOf, declares: ctx.declares };
-  if (h.via === 'this' || h.via === 'super') {
-    if (h.via === 'this' && ctx.declares(owner, h.method, null)) return { members: [`${owner}#${h.method}`], grade: 'EXACT', via: h.via };
+  if (h.via === 'this') return thisHandler(ctx, owner, h);
+  if (h.via === 'super') {
     const up = findDeclaringAncestor(owner, h.method, null, idx);
     return { members: [`${up ? up.declaredBy : owner}#${h.method}`], grade: 'SOUND_SET', via: h.via };
   }
@@ -171,6 +210,14 @@ function evidenceOf(fn, r, where, resolved) {
 }
 
 /** One route read: a declaration to place, a node with no handler, or a reason it is not placed. */
+/**
+ * How sure a placed route's HANDLES is. A bean's routes are where the source
+ * says, so the handler's own reading decides. A mount the source does not state
+ * is a document's operation id matched by convention: HEURISTIC, below the
+ * conservative floor, whatever the handler (RM67 review 2).
+ */
+const gradeOf = (where, resolved) => (where.mount === 'bean' ? resolved.grade : 'HEURISTIC');
+
 function placeRoute(ctx, fn, r, declared, out) {
   const { stats } = out;
   stats.routes += 1;
@@ -190,7 +237,7 @@ function placeRoute(ctx, fn, r, declared, out) {
     out.noHandler.push({ epId, httpMethod: r.verb, path: where.path, file: fn.file, line: r.line, operationId: r.operationId ?? null });
     return;
   }
-  const grade = where.mount === 'bean' ? resolved.grade : 'SOUND_SET';
+  const grade = gradeOf(where, resolved);
   for (const member of resolved.members) {
     out.routes.push({
       epId, httpMethod: r.verb, path: where.path, handler: member, line: ctx.declaredLineOf.get(member) ?? null,
