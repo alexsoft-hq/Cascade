@@ -277,7 +277,7 @@ export function looksLikeSpringBeansXml(text) {
 }
 
 /** The attributes of one start tag, as a map. Values are XML-unescaped. */
-function attributesOf(tagText) {
+export function attributesOf(tagText) {
   const out = new Map();
   const re = /([\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
   let m;
@@ -301,7 +301,8 @@ function unescapeXml(s) {
  * `<bean>` elements so an INNER bean does not end its parent early.
  *
  * @param {string} text
- * @returns {{className:string, id:(string|null), name:(string|null), props:Map<string,string>, line:number}[]}
+ * @returns {{className:string, id:(string|null), name:(string|null), props:Map<string,string>, line:number,
+ *            body:string, bodyLine:number}[]} `body` is the text inside the bean, from line `bodyLine`
  */
 export function springBeansOf(text) {
   // A COMMENTED-OUT BEAN IS NOT A BEAN. Measured on nexacro-sample-egov, whose
@@ -321,9 +322,9 @@ export function springBeansOf(text) {
     for (const [k, v] of attrs) {
       if (k.startsWith('p:')) props.set(k.slice(2).replace(/-ref$/, ''), v);
     }
+    // The bean's own body, up to the `</bean>` that closes IT, kept for a reader of what else it sets.
+    const inner = m[2] === '/' ? '' : bodyOfBean(body, open.lastIndex);
     if (m[2] !== '/') {
-      // The bean's own body, up to the `</bean>` that closes IT.
-      const inner = bodyOfBean(body, open.lastIndex);
       for (const p of inner.matchAll(/<(?:\w+:)?property\b([^>]*?)(?:\/>|>)/g)) {
         const pa = attributesOf(p[1]);
         const name = pa.get('name');
@@ -343,7 +344,8 @@ export function springBeansOf(text) {
     // `name` is the other way a bean is named, and the one eGovFrame writes: its
     // first alias is the name a `@Resource(name = …)` asks the container for.
     const alias = (attrs.get('name') ?? '').split(/[,;\s]+/).find((a) => a !== '') ?? null;
-    out.push({ className, id: attrs.get('id') ?? null, name: alias, props, line: lineAt(body, m.index) });
+    const line = lineAt(body, m.index);
+    out.push({ className, id: attrs.get('id') ?? null, name: alias, props, line, body: inner, bodyLine: line + (m[0].match(/\n/g)?.length ?? 0) });
   }
   return out;
 }
@@ -600,7 +602,8 @@ const ACTIVATION_KEY_RE = /^spring\.(?:config\.activate\.on-profile|profiles)$/;
  *
  * @param {{path:string, text:string}[]} files
  * @param {Object[]|null} [diagnostics]
- * @returns {{strategy:(string|null), className:string, file:string, line:number}[]} sorted by file, then line
+ * @returns {{strategy:(string|null), className:string, file:string, line:number, conditional:boolean, via:('boot'|'passthrough')}[]}
+ *          sorted by file, then line
  */
 export function findJpaNamingStrategies(files, diagnostics = null) {
   const out = [];
@@ -615,7 +618,9 @@ export function findJpaNamingStrategies(files, diagnostics = null) {
         diag(diagnostics, 'info', 'JPA_NAMING_STRATEGY_UNMODELLED', file.path,
           `${e.key} on line ${e.line} is ${JSON.stringify(e.value)}, a naming strategy this engine does not model, so the names it derives stay HEURISTIC`);
       }
-      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line, conditional: conditional(e.doc) });
+      // Which key it came by: Boot's own reaches only the factory Boot builds, Hibernate's passed through reaches any Boot hands its properties to.
+      const via = e.key === PASSTHROUGH_NAMING_KEY ? 'passthrough' : 'boot';
+      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line, conditional: conditional(e.doc), via });
     }
   }
   return out.sort((a, b) => cmp(a.file, b.file) || a.line - b.line);

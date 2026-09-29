@@ -1186,6 +1186,7 @@
   "diag.title.GATEWAY_ROUTES_KEPT": "프로필에 선언된 게이트웨이 경로를 그대로 둠",
   "diag.title.GATE_STRICT": "봉인된 기준선이 있어야 하는 보정 게이트",
   "diag.title.JPA_NAMING_FROM_CONFIGURATION": "프로젝트 설정에서 읽은 JPA 이름 규칙",
+  "diag.title.JPA_NAMING_FROM_FACTORY": "팩토리를 만드는 방식이 정한 JPA 이름 규칙",
   "diag.title.JPA_NAMING_UNREADABLE": "이 엔진이 적용하지 못하는 JPA 이름 규칙",
   "diag.title.MAPPER_ALTERNATIVES_KEPT": "프로필에 선언된 매퍼 벤더 선택을 그대로 둠",
   "diag.title.MAPPER_VENDOR_CHOSEN": "매퍼마다 한 벤더의 사본을 고름",

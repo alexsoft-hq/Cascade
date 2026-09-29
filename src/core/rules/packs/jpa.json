@@ -20,6 +20,15 @@
           { "type": "org.hibernate.boot.spi.MetadataSourcesContributor", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/MetadataSourcesContributor.java: contribute(MetadataSources)" },
           { "type": "org.hibernate.boot.spi.MetadataBuilderFactory", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/MetadataBuilderFactory.java: builds the MetadataBuilder itself" },
           { "type": "org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer", "source": "spring-boot-autoconfigure 3.x, HibernatePropertiesCustomizer.java: customize(Map) sets any Hibernate property, an integrator provider among them" }
+        ],
+        "serviceFiles": [
+          { "file": "META-INF/services/org.hibernate.integrator.spi.Integrator", "source": "hibernate-core 6.6 IntegratorServiceImpl.java:42, 7.1:40: loadJavaServices(Integrator.class)" },
+          { "file": "META-INF/services/org.hibernate.boot.spi.MetadataBuilderContributor", "source": "hibernate-core 6.6 EntityManagerFactoryBuilderImpl.java:418, 7.1:399" },
+          { "file": "META-INF/services/org.hibernate.boot.spi.AdditionalMappingContributor", "source": "hibernate-core 6.6 MetadataBuildingProcess.java:382, 7.1:501" },
+          { "file": "META-INF/services/org.hibernate.boot.spi.MetadataContributor", "source": "hibernate-core 6.6 MetadataBuildingProcess.java:329; gone in 7" },
+          { "file": "META-INF/services/org.hibernate.boot.spi.MetadataBuilderInitializer", "source": "hibernate-core 6.6 MetadataBuilderImpl.java:157, 7.1:156" },
+          { "file": "META-INF/services/org.hibernate.boot.spi.MetadataSourcesContributor", "source": "hibernate-core 6.6 MetadataBuilderImpl.java:147, 7.1:146" },
+          { "file": "META-INF/services/org.hibernate.boot.spi.MetadataBuilderFactory", "source": "hibernate-core 6.6 MetadataSources.java:175, 7.1:208" }
         ]
       },
       "examples": [
@@ -39,9 +48,15 @@
           "why": "a Hibernate meta-annotation makes Hibernate run the annotation's binder, which may change the column"
         },
         {
-          "source": "package p;\nimport java.lang.annotation.*;\nimport javax.persistence.*;\n@Retention(RetentionPolicy.RUNTIME) @interface Cloneable {}\n@Entity class PerfTest { @Id Long id; @Cloneable String testName; }\nclass Wiring implements org.hibernate.integrator.spi.Integrator {}\n",
+          "source": "package p;\nimport java.lang.annotation.*;\nimport javax.persistence.*;\n/* a marker */ @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME) @interface Cloneable {}\n@Entity class PerfTest { @Id Long id; @Cloneable String testName; }\nclass Wiring implements org.hibernate.integrator.spi.Integrator {}\n",
           "expect": [],
           "why": "an Integrator is handed the whole mapping at boot and may read any annotation"
+        },
+        {
+          "source": "package p;\nimport java.lang.annotation.*;\nimport javax.persistence.*;\n/* a marker */ @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME) @interface Cloneable {}\n@Entity class PerfTest { @Id Long id; @Cloneable String testName; }\n",
+          "services": ["src/main/resources/META-INF/services/org.hibernate.integrator.spi.Integrator"],
+          "expect": [],
+          "why": "an Integrator the tree registers in a ServiceLoader file, perhaps a class from a jar: Hibernate loads it the same way"
         },
         {
           "source": "package p;\nimport javax.persistence.*;\nimport com.lib.Marker;\n@Entity class Doc { @Id Long id; @Marker String body; }\n",
@@ -52,6 +67,355 @@
           "source": "package p;\nimport java.lang.annotation.*;\nimport com.lib.*;\nimport javax.persistence.*;\n@Target(ElementType.FIELD) @interface Flag {}\n@Entity class Doc { @Id Long id; @Flag String body; }\n",
           "expect": [],
           "why": "Target may be com.lib's, a package imported whole that the rule does not list"
+        }
+      ]
+    },
+    {
+      "id": "jpa.entity-manager-factories",
+      "kind": "jpa.entity-manager-factory",
+      "description": "Spring Boot builds the EntityManagerFactory itself and gives it its naming (CamelCaseToUnderscoresNamingStrategy, SpringImplicitNamingStrategy) unless the project defines one: then Boot backs off, and a factory the project builds by hand runs Hibernate's own naming (PhysicalNamingStrategyStandardImpl, which keeps a name as written, and ImplicitNamingStrategyJpaCompliantImpl, which names a default join table after the two tables). A factory built by hand is a `new` of one of factoryTypes or builderTypes, a Spring XML bean of one, or a @Bean method that returns one of factoryTypes and takes no builder. A @Bean method that takes one of builderTypes as a parameter and constructs no factory itself is built from Boot's builder, which carries Boot's naming from Spring Boot 3.4 on and only spring.jpa.properties before. A naming setting in code is a key of namingProperties put into a map by a class that declares @Bean methods, or set on a factory bean in XML (a <prop>, an <entry>, or a bean property of namingSetters); its value names a strategy when it states a class of strategyClasses. A type the file does not place among these is not a factory, and a setting whose value is not stated is said without a strategy.",
+      "why": "ngrinder builds its LocalContainerEntityManagerFactoryBean with new in DatabaseConfig and sets no naming, so Hibernate keeps @Column(name = \"hostName\") as hostName, as its DDL has it; the engine assumed Spring Boot's default and drew host_name. egov-msa-edu builds its factories from Boot's EntityManagerFactoryBuilder under Spring Boot 3.5, and its DDL has created_by: Boot's naming reaches a builder-made factory there.",
+      "params": {
+        "factoryTypes": [
+          {
+            "type": "org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean",
+            "source": "spring-orm 5.3.39 and 6.1.14 LocalContainerEntityManagerFactoryBean.java:90/89, in the 7.0.8 jar; Spring Boot backs off for it (JpaBaseConfiguration @ConditionalOnMissingBean, 2.7.18:130, 3.3.5:131, spring-boot-jpa 4.0.0:140)"
+          },
+          {
+            "type": "org.springframework.orm.jpa.LocalEntityManagerFactoryBean",
+            "source": "spring-orm 5.3.39 LocalEntityManagerFactoryBean.java:62, 6.1.14:58, in the 7.0.8 jar: a FactoryBean of EntityManagerFactory, which Boot backs off for"
+          },
+          {
+            "type": "org.springframework.orm.jpa.AbstractEntityManagerFactoryBean",
+            "source": "spring-orm 5.3.39 and 6.1.14 AbstractEntityManagerFactoryBean.java:92: what a @Bean method may declare it returns"
+          },
+          {
+            "type": "jakarta.persistence.EntityManagerFactory",
+            "source": "the type Boot's @ConditionalOnMissingBean names (Boot 3 and 4): a @Bean of it is the project's own factory"
+          },
+          {
+            "type": "javax.persistence.EntityManagerFactory",
+            "source": "the same, Spring Boot 2"
+          },
+          {
+            "type": "org.hibernate.SessionFactory",
+            "source": "hibernate-core 6.6 SessionFactory.java:139 extends EntityManagerFactory, so a @Bean of it is an EntityManagerFactory bean"
+          },
+          {
+            "type": "org.springframework.orm.hibernate5.LocalSessionFactoryBean",
+            "source": "spring-orm 5.3.39 and 6.1.14 hibernate5/LocalSessionFactoryBean.java:81"
+          },
+          {
+            "type": "org.springframework.orm.hibernate5.LocalSessionFactoryBuilder",
+            "source": "spring-orm 6.1.14 hibernate5/LocalSessionFactoryBuilder.java:102, extends org.hibernate.cfg.Configuration"
+          },
+          {
+            "type": "org.springframework.orm.jpa.hibernate.LocalSessionFactoryBean",
+            "source": "spring-orm 7.0.8 jar: the Hibernate factory bean moved out of orm.hibernate5"
+          },
+          {
+            "type": "org.springframework.orm.jpa.hibernate.LocalSessionFactoryBuilder",
+            "source": "spring-orm 7.0.8 jar, extends org.hibernate.cfg.Configuration"
+          },
+          {
+            "type": "org.springframework.orm.hibernate4.LocalSessionFactoryBean",
+            "source": "spring-orm 3.2.18 and 4.3.30 hibernate4/: Hibernate 4 runs EJB3NamingStrategy by default (hibernate-core 4.3.11 LegacyNamingStrategyDelegator.java:48-49), the same names as identity and JPA-compliant"
+          },
+          {
+            "type": "org.springframework.orm.hibernate4.LocalSessionFactoryBuilder",
+            "source": "spring-orm 3.2.18 and 4.3.30 hibernate4/LocalSessionFactoryBuilder.java"
+          },
+          {
+            "type": "org.springframework.orm.hibernate3.LocalSessionFactoryBean",
+            "source": "spring-orm 3.2.18 and 4.3.30 hibernate3/LocalSessionFactoryBean.java"
+          },
+          {
+            "type": "org.springframework.orm.hibernate3.annotation.AnnotationSessionFactoryBean",
+            "source": "spring-orm 3.2.18 and 4.3.30 hibernate3/annotation/AnnotationSessionFactoryBean.java"
+          }
+        ],
+        "builderTypes": [
+          {
+            "type": "org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder",
+            "source": "spring-boot 2.7.18 and 3.3.5 EntityManagerFactoryBuilder.java; its map goes into the factory (3.3.5:258). Auto-configured with spring.jpa.properties only up to 3.3 (JpaBaseConfiguration 2.7.18:122-123, 3.3.13:123-124) and with Boot's vendor properties, naming included, from 3.4.0 (:123-135)"
+          },
+          {
+            "type": "org.springframework.boot.jpa.EntityManagerFactoryBuilder",
+            "source": "spring-boot-jpa 4.0.0 EntityManagerFactoryBuilder.java; auto-configured with the vendor properties (JpaBaseConfiguration.java:124-136)"
+          }
+        ],
+        "namingProperties": [
+          {
+            "key": "hibernate.physical_naming_strategy",
+            "dimension": "physical",
+            "constants": [
+              "org.hibernate.cfg.MappingSettings.PHYSICAL_NAMING_STRATEGY",
+              "org.hibernate.cfg.AvailableSettings.PHYSICAL_NAMING_STRATEGY",
+              "org.hibernate.cfg.Environment.PHYSICAL_NAMING_STRATEGY"
+            ],
+            "source": "hibernate-core 6.6 MappingSettings.java:381, 7.1:405; AvailableSettings extends MappingSettings (6.6:31-34) and Environment implements AvailableSettings (6.6:134, 7.1:133)"
+          },
+          {
+            "key": "hibernate.implicit_naming_strategy",
+            "dimension": "implicit",
+            "constants": [
+              "org.hibernate.cfg.MappingSettings.IMPLICIT_NAMING_STRATEGY",
+              "org.hibernate.cfg.AvailableSettings.IMPLICIT_NAMING_STRATEGY",
+              "org.hibernate.cfg.Environment.IMPLICIT_NAMING_STRATEGY"
+            ],
+            "source": "hibernate-core 6.6 MappingSettings.java:369, 7.1:393"
+          }
+        ],
+        "namingSetters": [
+          {
+            "name": "physicalNamingStrategy",
+            "dimension": "physical",
+            "source": "spring-orm 6.1.14 hibernate5/LocalSessionFactoryBean.java:281 setPhysicalNamingStrategy, the bean property an XML <property> sets"
+          },
+          {
+            "name": "implicitNamingStrategy",
+            "dimension": "implicit",
+            "source": "spring-orm 6.1.14 hibernate5/LocalSessionFactoryBean.java:273 setImplicitNamingStrategy"
+          }
+        ],
+        "strategyClasses": [
+          {
+            "type": "org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl",
+            "dimension": "physical",
+            "strategy": "identity",
+            "source": "hibernate-core 6.6 and 7.1: the name as written; Hibernate's own default (MetadataBuilderImpl 6.6:737-741)"
+          },
+          {
+            "type": "org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy",
+            "dimension": "physical",
+            "strategy": "spring-snake-case",
+            "source": "hibernate-core 5.5 to 7.1; Spring Boot 3's default (HibernateProperties 3.3.5:152-153)"
+          },
+          {
+            "type": "org.hibernate.boot.model.naming.PhysicalNamingStrategySnakeCaseImpl",
+            "dimension": "physical",
+            "strategy": "snake-case-hibernate7",
+            "source": "hibernate-core 7.1; Spring Boot 4's default (spring-boot-hibernate 4.0.0 HibernateProperties.java:156-157)"
+          },
+          {
+            "type": "org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy",
+            "dimension": "physical",
+            "strategy": "snake-case-hibernate6",
+            "source": "spring-boot 2.7.18 SpringPhysicalNamingStrategy.java"
+          },
+          {
+            "type": "org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy",
+            "dimension": "implicit",
+            "strategy": "spring",
+            "source": "spring-boot 2.7.18 and 3.3.5: overrides only determineJoinTableName, the owning table and the attribute"
+          },
+          {
+            "type": "org.springframework.boot.hibernate.SpringImplicitNamingStrategy",
+            "dimension": "implicit",
+            "strategy": "spring",
+            "source": "spring-boot-hibernate 4.0.0"
+          },
+          {
+            "type": "org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl",
+            "dimension": "implicit",
+            "strategy": "jpa-compliant",
+            "source": "hibernate-core 6.6 ImplicitNamingStrategyJpaCompliantImpl.java:64-74: a join table is the owning table and the other table; Hibernate's own default, also by the names default and jpa (StrategySelectorBuilder 6.6:232-242)"
+          }
+        ]
+      },
+      "examples": [
+        {
+          "source": "package p;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;\npublic class DatabaseConfig {\n    @Bean(name = \"emf\")\n    public LocalContainerEntityManagerFactoryBean emf() {\n        LocalContainerEntityManagerFactoryBean emf = new LocalContainerEntityManagerFactoryBean();\n        emf.setPersistenceUnitName(\"ngrinder\");\n        return emf;\n    }\n}\n",
+          "expect": [
+            "hand-built new org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean:7"
+          ],
+          "why": "ngrinder's DatabaseConfig: a @Bean that builds its factory with new, said once at the new"
+        },
+        {
+          "source": "package p;\nimport javax.sql.DataSource;\nimport org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;\npublic class BoardJpaConfig {\n    @Bean(name = \"entityManagerFactory\")\n    LocalContainerEntityManagerFactoryBean entityManagerFactory(EntityManagerFactoryBuilder builder, DataSource dataSource) {\n        return builder.dataSource(dataSource).packages(\"p.domain\").persistenceUnit(\"default\").build();\n    }\n}\n",
+          "expect": [
+            "builder-made bean p.BoardJpaConfig#entityManagerFactory:7"
+          ],
+          "why": "egov-msa-edu's board service: the factory is built from the builder Spring Boot hands out"
+        },
+        {
+          "source": "package p;\nimport jakarta.persistence.EntityManagerFactory;\nimport jakarta.persistence.Persistence;\nimport org.springframework.context.annotation.Bean;\npublic class UnitConfig {\n    @Bean\n    public EntityManagerFactory entityManagerFactory() {\n        return Persistence.createEntityManagerFactory(\"unit\");\n    }\n}\n",
+          "expect": [
+            "hand-built bean p.UnitConfig#entityManagerFactory:6"
+          ],
+          "why": "a @Bean of the EntityManagerFactory type that takes no builder: Boot backs off for it, and its naming is not Boot's"
+        },
+        {
+          "source": "package p;\nimport java.util.Properties;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;\npublic class ShopConfig {\n    @Bean\n    public LocalContainerEntityManagerFactoryBean entityManagerFactory() {\n        LocalContainerEntityManagerFactoryBean factory = new LocalContainerEntityManagerFactoryBean();\n        factory.setJpaProperties(additionalProperties());\n        return factory;\n    }\n    Properties additionalProperties() {\n        Properties p = new Properties();\n        p.setProperty(\"hibernate.physical_naming_strategy\", \"org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy\");\n        return p;\n    }\n}\n",
+          "expect": [
+            "hand-built new org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean:8",
+            "naming physical spring-snake-case:14"
+          ],
+          "why": "a naming key put by a helper of the configuration class, with a class Hibernate ships as its value"
+        },
+        {
+          "source": "package p;\nimport java.util.Map;\nimport org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl;\nimport org.hibernate.cfg.AvailableSettings;\nimport org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;\nimport org.springframework.context.annotation.Bean;\npublic class NamingConfig {\n    @Bean\n    HibernatePropertiesCustomizer naming() {\n        return (Map<String, Object> props) -> props.put(AvailableSettings.IMPLICIT_NAMING_STRATEGY, ImplicitNamingStrategyJpaCompliantImpl.class.getName());\n    }\n}\n",
+          "expect": [
+            "naming implicit jpa-compliant:10"
+          ],
+          "why": "the key written as Hibernate's constant and the value as a class's name, in a customizer a @Bean returns"
+        },
+        {
+          "xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<beans xmlns=\"http://www.springframework.org/schema/beans\">\n  <bean id=\"entityManagerFactory\" class=\"org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean\">\n    <property name=\"dataSource\" ref=\"dataSource\"/>\n    <property name=\"jpaProperties\">\n      <props>\n        <prop key=\"hibernate.physical_naming_strategy\">egovframework.com.cmm.EgovNamingStrategy</prop>\n      </props>\n    </property>\n  </bean>\n</beans>\n",
+          "expect": [
+            "hand-built xml org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean:3",
+            "naming physical ?:7"
+          ],
+          "why": "the eGovFrame spelling: a factory bean in a Spring XML, with a naming class of the project's own, which names no strategy this engine models"
+        },
+        {
+          "xml": "<beans xmlns=\"http://www.springframework.org/schema/beans\">\n  <bean id=\"sessionFactory\" class=\"org.springframework.orm.hibernate5.LocalSessionFactoryBean\">\n    <property name=\"physicalNamingStrategy\">\n      <bean class=\"org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl\"/>\n    </property>\n  </bean>\n</beans>\n",
+          "expect": [
+            "hand-built xml org.springframework.orm.hibernate5.LocalSessionFactoryBean:2",
+            "naming physical identity:3"
+          ],
+          "why": "a Hibernate session factory bean told its physical strategy through the bean property"
+        },
+        {
+          "source": "package p;\nimport org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;\nimport org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;\npublic class SecondDataSource {\n    EntityManagerFactoryBuilder builder(java.util.Map<String, ?> props) {\n        return new EntityManagerFactoryBuilder(new HibernateJpaVendorAdapter(), props, null);\n    }\n}\n",
+          "expect": [
+            "hand-built new org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder:6"
+          ],
+          "why": "a builder the project constructs itself carries only the properties it is given, not Boot's naming"
+        },
+        {
+          "source": "package p;\nimport com.acme.orm.LocalContainerEntityManagerFactoryBean;\npublic class Holder {\n    Object make() { return new LocalContainerEntityManagerFactoryBean(); }\n}\n",
+          "expect": [],
+          "why": "a type of the same simple name from another package is not Spring's"
+        }
+      ]
+    },
+    {
+      "id": "jpa.naming-set-in-code",
+      "kind": "java.code-setting",
+      "description": "A Hibernate factory is told its naming strategy in code by a setter: setPhysicalNamingStrategy and setImplicitNamingStrategy on Spring's LocalSessionFactoryBean and LocalSessionFactoryBuilder and on Hibernate's Configuration, applyPhysicalNamingStrategy and applyImplicitNamingStrategy on Hibernate's MetadataBuilder, and setNamingStrategy on the Hibernate 3 and 4 factory beans. The strategy object is an argument this engine does not read, so the names it derives rest on an assumed strategy, and the profile's jpa.namingStrategy is where a project says which it is. A call is this setting when its receiver is declared as a type that declares the method, or as a type of the tree that extends one.",
+      "why": "A factory the project builds by hand does not take Spring Boot's naming, and one that is given its strategy by a setter names its tables by that strategy. Before this rule nothing said so.",
+      "params": {
+        "setting": "jpa.namingStrategy",
+        "effect": "the factory it is called on names tables and columns by the strategy it is given, and the names this pack derives rest on an assumed one",
+        "calls": [
+          {
+            "on": "LocalSessionFactoryBean",
+            "method": "setPhysicalNamingStrategy",
+            "types": [
+              "org.springframework.orm.hibernate5.LocalSessionFactoryBean",
+              "org.springframework.orm.jpa.hibernate.LocalSessionFactoryBean"
+            ],
+            "why": "spring-orm 6.1.14 hibernate5/LocalSessionFactoryBean.java:281; the 7.0.8 class in orm.jpa.hibernate declares it too"
+          },
+          {
+            "on": "LocalSessionFactoryBean",
+            "method": "setImplicitNamingStrategy",
+            "types": [
+              "org.springframework.orm.hibernate5.LocalSessionFactoryBean",
+              "org.springframework.orm.jpa.hibernate.LocalSessionFactoryBean"
+            ],
+            "why": "spring-orm 6.1.14 hibernate5/LocalSessionFactoryBean.java:273"
+          },
+          {
+            "on": "LocalSessionFactoryBuilder",
+            "method": "setPhysicalNamingStrategy",
+            "types": [
+              "org.springframework.orm.hibernate5.LocalSessionFactoryBuilder",
+              "org.springframework.orm.jpa.hibernate.LocalSessionFactoryBuilder"
+            ],
+            "why": "inherited from org.hibernate.cfg.Configuration (hibernate-core 6.6 Configuration.java:366), named here because the builder is the type a project declares"
+          },
+          {
+            "on": "LocalSessionFactoryBuilder",
+            "method": "setImplicitNamingStrategy",
+            "types": [
+              "org.springframework.orm.hibernate5.LocalSessionFactoryBuilder",
+              "org.springframework.orm.jpa.hibernate.LocalSessionFactoryBuilder"
+            ],
+            "why": "inherited from Configuration (6.6:349)"
+          },
+          {
+            "on": "Configuration",
+            "method": "setPhysicalNamingStrategy",
+            "types": [
+              "org.hibernate.cfg.Configuration"
+            ],
+            "why": "hibernate-core 6.6 Configuration.java:366"
+          },
+          {
+            "on": "Configuration",
+            "method": "setImplicitNamingStrategy",
+            "types": [
+              "org.hibernate.cfg.Configuration"
+            ],
+            "why": "hibernate-core 6.6 Configuration.java:349"
+          },
+          {
+            "on": "MetadataBuilder",
+            "method": "applyPhysicalNamingStrategy",
+            "types": [
+              "org.hibernate.boot.MetadataBuilder"
+            ],
+            "why": "hibernate-core 6.6 MetadataBuilder.java:95"
+          },
+          {
+            "on": "MetadataBuilder",
+            "method": "applyImplicitNamingStrategy",
+            "types": [
+              "org.hibernate.boot.MetadataBuilder"
+            ],
+            "why": "hibernate-core 6.6 MetadataBuilder.java:81"
+          },
+          {
+            "on": "LocalSessionFactoryBean",
+            "method": "setNamingStrategy",
+            "types": [
+              "org.springframework.orm.hibernate3.LocalSessionFactoryBean",
+              "org.springframework.orm.hibernate4.LocalSessionFactoryBean"
+            ],
+            "why": "spring-orm 4.3.30 hibernate3/LocalSessionFactoryBean.java:400 and hibernate4/LocalSessionFactoryBean.java:226: Hibernate 3 and 4's one naming strategy"
+          }
+        ]
+      },
+      "examples": [
+        {
+          "source": "package p;\nimport org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl;\nimport org.springframework.orm.hibernate5.LocalSessionFactoryBean;\npublic class SessionConfig {\n    public LocalSessionFactoryBean sessionFactory() {\n        LocalSessionFactoryBean factory = new LocalSessionFactoryBean();\n        factory.setPhysicalNamingStrategy(new PhysicalNamingStrategyStandardImpl());\n        return factory;\n    }\n}\n",
+          "expect": [
+            {
+              "method": "setPhysicalNamingStrategy",
+              "line": 7,
+              "proof": "receiver"
+            }
+          ],
+          "why": "Spring's Hibernate factory bean told its physical strategy, on a local declared as the bean"
+        },
+        {
+          "source": "package p;\nimport javax.sql.DataSource;\nimport org.springframework.orm.hibernate5.LocalSessionFactoryBuilder;\npublic class Legacy {\n    Object build(DataSource ds) {\n        LocalSessionFactoryBuilder b = new LocalSessionFactoryBuilder(ds);\n        b.setImplicitNamingStrategy(null);\n        return b.buildSessionFactory();\n    }\n}\n",
+          "expect": [
+            {
+              "method": "setImplicitNamingStrategy",
+              "line": 7,
+              "proof": "receiver"
+            }
+          ],
+          "why": "the builder inherits the setter from Hibernate's Configuration; the method is listed under both"
+        },
+        {
+          "source": "package p;\nimport org.hibernate.boot.MetadataBuilder;\npublic class Boot {\n    void configure(MetadataBuilder builder) {\n        builder.applyImplicitNamingStrategy(null);\n    }\n}\n",
+          "expect": [
+            {
+              "method": "applyImplicitNamingStrategy",
+              "line": 5,
+              "proof": "receiver"
+            }
+          ],
+          "why": "Hibernate's own bootstrap API"
+        },
+        {
+          "source": "package p;\nclass Settings { void setPhysicalNamingStrategy(Object s) {} }\nclass Use { void go(Settings s) { s.setPhysicalNamingStrategy(null); } }\n",
+          "expect": [],
+          "why": "a project's own setter with the name, on its own type, is not Hibernate's"
         }
       ]
     }

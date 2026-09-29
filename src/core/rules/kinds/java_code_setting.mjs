@@ -30,7 +30,7 @@
 // the profile leaves the key undeclared (src/core/code_settings.mjs); a
 // declared key is the project's word and the call is not argued with.
 
-import { PROFILE_DEFAULTS } from '../../profile.mjs';
+import { PROFILE_DEFAULTS, readKeyPath } from '../../profile.mjs';
 
 const JAVA_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const JAVA_TYPE = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
@@ -53,8 +53,8 @@ function callErrors(calls) {
     if (!isObj(c)) return [`params.calls[${i}] must be an object {on, method, types}`];
     const errors = unknownKeys(c, ['on', 'method', 'types', 'why']).map((k) => `params.calls[${i}] has an unknown key "${k}"`);
     if (typeof c.method !== 'string' || !JAVA_NAME.test(c.method)) errors.push(`params.calls[${i}].method must be a Java method name`);
-    else if (seen.has(c.method)) errors.push(`params.calls[${i}].method "${c.method}" is listed twice`);
-    else seen.add(c.method);
+    else if (seen.has(`${c.method} ${c.on}`)) errors.push(`params.calls[${i}].method "${c.method}" is listed twice on ${c.on}`);
+    else seen.add(`${c.method} ${c.on}`);
     errors.push(...declaringTypeErrors(c, i));
     if (c.why !== undefined && !isText(c.why)) errors.push(`params.calls[${i}].why must be text`);
     return errors;
@@ -65,7 +65,7 @@ function callErrors(calls) {
 function validateParams(params) {
   if (!isObj(params)) return ['params must be an object'];
   const errors = unknownKeys(params, ['setting', 'effect', 'calls']).map((k) => `params has an unknown key "${k}"`);
-  if (typeof params.setting !== 'string' || !Object.hasOwn(PROFILE_DEFAULTS, params.setting)) {
+  if (typeof params.setting !== 'string' || readKeyPath(PROFILE_DEFAULTS, params.setting) === undefined) {
     errors.push(`params.setting must be a key of the profile, got ${JSON.stringify(params.setting)}`);
   }
   if (!isText(params.effect)) errors.push('params.effect must say, in a clause, what the call sets and what that leaves out of the pack');
@@ -87,9 +87,10 @@ function validateExample(example) {
   return errors;
 }
 
-/** The rule, ready to read `invocations` records. */
+/** The rule, ready to read `invocations` records: each method name with every type that declares it. */
 function compile(rule) {
-  const calls = new Map(rule.params.calls.map((c) => [c.method, { on: c.on, types: c.types }]));
+  const calls = new Map();
+  for (const c of rule.params.calls) calls.set(c.method, [...(calls.get(c.method) ?? []), { on: c.on, types: c.types }]);
   return { rule: rule.id, setting: rule.params.setting, effect: rule.params.effect, calls };
 }
 
@@ -223,16 +224,25 @@ function siteOf(record, i, call, sc) {
   return best;
 }
 
+/** The best-proved site of one name over every type the rule says declares it, with the type that proved it. */
+function bestSite(record, i, calls, sc) {
+  let best = null;
+  for (const call of calls) {
+    const site = siteOf(record, i, call, sc);
+    if (site && beats(site, best)) best = { ...site, on: call.on };
+  }
+  return best;
+}
+
 /** What one `invocations` record holds that one compiled rule names, as proved as its receivers allow. */
 function foundIn(record, compiled, sc) {
   const names = Array.isArray(record.names) ? record.names : [];
   return names.flatMap((method, i) => {
-    const call = compiled.calls.get(method);
-    const site = call ? siteOf(record, i, call, sc) : null;
+    const site = bestSite(record, i, compiled.calls.get(method) ?? [], sc);
     if (!site) return [];
     return [{
       rule: compiled.rule, setting: compiled.setting, effect: compiled.effect,
-      method, on: call.on, file: record.file ?? null, line: site.line, proof: site.proof,
+      method, on: site.on, file: record.file ?? null, line: site.line, proof: site.proof,
     }];
   });
 }

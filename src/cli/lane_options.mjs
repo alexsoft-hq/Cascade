@@ -109,11 +109,16 @@ export function mybatisPlusOptions(profile, sqlArgs) {
   };
 }
 
-/** The JPA bridge's options: the profile's naming strategy, else the one the project's configuration names. */
-export function jpaOptions(profile, sqlArgs, jpaNaming) {
+/**
+ * The JPA bridge's options: the profile's naming strategy, what the project's
+ * configuration names (the bridge decides whether it reaches the factory the
+ * project builds), and the factory beans and service files the tree's resources declare.
+ */
+export function jpaOptions(profile, sqlArgs, jpaNaming, inputs = {}) {
+  const configured = jpaNaming && ['configuration', 'unreadable'].includes(jpaNaming.from) ? jpaNaming : null;
   return {
-    namingStrategy: jpaNaming ? jpaNaming.strategy : profile.jpa?.namingStrategy ?? null,
-    schema: sqlArgs.defaultSchema,
-    identifierCase: sqlArgs.identifierCase,
+    namingStrategy: profile.jpa?.namingStrategy ?? null, configuredNaming: configured,
+    xmlFactories: inputs.xmlFactories ?? [], serviceFiles: inputs.serviceFiles ?? [], resourcesRead: inputs.resourcesRead !== false,
+    schema: sqlArgs.defaultSchema, identifierCase: sqlArgs.identifierCase,
   };
 }

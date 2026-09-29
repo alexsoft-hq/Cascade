@@ -335,7 +335,7 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
     },
   });
   const javaLanesOf = overlayJavaLanes({
-    profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy,
+    profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy, baseJpa: baseJpaInputsOf(pack),
     catalogRecords: lanes.catalogRecords, statementRecords: lanes.statementRecords,
   });
   const ts = overlayTsLane({ idx, store, rootAbs, absOf, profile, profileDir, sqlArgs, catalogRecords: lanes.catalogRecords, changed });
@@ -350,14 +350,14 @@ export function runLanes({ idx, dirty, sqlArgs, rootAbs, absOf, stale, jdkBox, m
  * cache, or analyzed now through a store that writes nothing to disk: an
  * uncommitted edit never becomes a cached fact.
  */
-function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy, catalogRecords, statementRecords }) {
+function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, run, runpy, needPy, baseJpa, catalogRecords, statementRecords }) {
   const prof = profile ?? {};
   const javaRootsAbs = (selection.javaRoots ?? []).map((r) => path.resolve(rootAbs, r));
   const lineageCtx = { store, index: idx, catalog: catalogRecords, sqlArgs, runners: run, force: false, diagnostics: [] };
   return (javaFacts) => {
     if (javaRootsAbs.length === 0) return { jpa: null, mybatisPlus: null, lineage: [] };
     const { runJpa, runMp } = whichJavaLanes(prof, javaFacts, javaRootsAbs);
-    const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs))) : null;
+    const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs)), baseJpa) : null;
     const statements = annotationStatementsOf({ javaFacts, statementRecords, runpy, requirePython: needPy, mybatisArgs: sqlArgs.mybatisArgs });
     const lineage = lineageOfStatements({ statements, ...lineageCtx }).lineageRecords;
     if (!runMp) return { jpa, mybatisPlus: null, lineage };
@@ -365,6 +365,19 @@ function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, ru
     const fragments = wrapperFragmentLineageOf({ javaFacts, mpOpts, ...lineageCtx });
     return { jpa, mybatisPlus: { ...mpOpts, fragmentLineage: fragments.lineageRecords }, lineage };
   };
+}
+
+/**
+ * WHAT THE BASE PACK'S JPA BRIDGE WAS HANDED FROM DISCOVERY (RM67-J6): the
+ * EntityManagerFactory beans the tree's Spring XML declares and its
+ * META-INF/services files, read back from the record the bridge kept. An
+ * overlay does not walk the resources again; a pack that kept no record read
+ * none, and the bridge says so.
+ */
+export function baseJpaInputsOf(pack) {
+  const inputs = pack?.meta?.laneStats?.jpa?.naming?.inputs ?? null;
+  if (!inputs) return { xmlFactories: [], serviceFiles: [], resourcesRead: false };
+  return { xmlFactories: inputs.xmlFactories ?? [], serviceFiles: inputs.serviceFiles ?? [], resourcesRead: inputs.resourcesRead !== false };
 }
 
 /**

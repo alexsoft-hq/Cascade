@@ -45,6 +45,7 @@ import { readJpql } from '../core/jpql_lite.mjs';
 import { tableKey, columnKey, statementKey, graphSpellingIndex } from './sql_bridge.mjs';
 import { foldIdentifier } from '../core/identifier_case.mjs';
 import { builtinRegistry } from '../core/rules/registry.mjs';
+import { namingOf } from './jpa_naming.mjs';
 
 /**
  * The naming strategies this bridge can apply. `spring-snake-case` is Spring
@@ -200,7 +201,9 @@ function sayAssumedNames(names, stats) {
   stats.writtenNamesAssumed = [...names.assumed.values()].reduce((n, m) => n + m.size, 0);
   for (const who of [...names.assumed.keys()].sort(cmp)) {
     const pairs = [...names.assumed.get(who).entries()].sort((a, b) => cmp(a[0], b[0])).map(([w, n]) => `${w} as ${n}`);
-    note(stats, 'written-name-assumed', `${who} writes names that the naming strategies spell differently (${pairs.join(', ')}). Hibernate passes a written name through the physical naming strategy as it does a derived one, and no jpa.namingStrategy is declared, so each is the assumed default naming's spelling, graded HEURISTIC`);
+    // Spring Boot's own factory says nothing more; any other says what the assumption rests on.
+    const why = names.evidence === 'assumed-spring-default' && names.kind === 'none' ? '' : ` (${names.derivedBy})`;
+    note(stats, 'written-name-assumed', `${who} writes names that the naming strategies spell differently (${pairs.join(', ')}). Hibernate passes a written name through the physical naming strategy as it does a derived one, and no jpa.namingStrategy is declared, so each is the assumed default naming's spelling${why}, graded HEURISTIC`);
   }
 }
 
@@ -1243,8 +1246,9 @@ function replaceKeyPart(e, a, part, cols) {
  *
  * THE DEFAULTS. Spring Boot's SpringImplicitNamingStrategy names the table after
  * the owning table's physical name and the attribute (`owners` + `_` +
- * `specialTags`, then the physical strategy: `owners_special_tags`); every
- * strategy the profile can declare is Spring Boot's. The two columns are JPA's
+ * `specialTags`, then the physical strategy: `owners_special_tags`); a factory
+ * the project builds by hand runs Hibernate's own, which names it after both
+ * tables (`defaultJoinTable`). The two columns are JPA's
  * (2.10.4, 2.10.5): the owning side's is the inverse attribute's name, or the
  * owning entity's name when nothing maps the association back, then `_` and its
  * key; the other side's is the attribute's name, `_`, the target's key.
@@ -1252,7 +1256,7 @@ function replaceKeyPart(e, a, part, cols) {
 function joinTableOf(e, a, target, { strategy, derivedGrade, names }) {
   const jt = a.joinTable;
   const named = !!(jt && jt.name);
-  const derivedTable = derivedName(`${e.table}_${a.name}`, strategy, derivedGrade);
+  const derivedTable = defaultJoinTable(e, a, target, { strategy, derivedGrade, names });
   // Written names go through the physical strategy too (`explicitName`).
   const written = named ? explicitName(jt.name, names, a.declaredBy ?? e.fqn) : null;
   const table = written ? written.name : derivedTable.name;
@@ -1275,6 +1279,22 @@ function joinTableOf(e, a, target, { strategy, derivedGrade, names }) {
     left,
     right,
   };
+}
+
+/**
+ * THE JOIN TABLE THE IMPLICIT STRATEGY NAMES, then the physical one: Spring
+ * Boot's (SpringImplicitNamingStrategy) is the owning table and the attribute,
+ * Hibernate's own (ImplicitNamingStrategyJpaCompliantImpl) the owning table and
+ * the other one, both from their physical names. A name the two spell
+ * differently is HEURISTIC when the implicit strategy rests on a setting made
+ * in code rather than on how the factory is built.
+ */
+function defaultJoinTable(e, a, target, { strategy, derivedGrade, names }) {
+  const byAttribute = `${e.table}_${a.name}`;
+  const byTables = `${e.table}_${target.table}`;
+  const d = derivedName(names.implicit === 'jpa-compliant' ? byTables : byAttribute, strategy, derivedGrade);
+  const differ = derivedName(byAttribute, strategy, 'EXACT').name !== derivedName(byTables, strategy, 'EXACT').name;
+  return names.implicitSure === false && differ ? { ...d, grade: 'HEURISTIC' } : d;
 }
 
 /** 4. REPOSITORIES -> STATEMENTS: what each declared method runs. */
@@ -1341,16 +1361,19 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
   if (!g || !g.nodes || !Array.isArray(g.edges)) throw new JpaBridgeError('g must be a Graph');
   if (!Array.isArray(javaFacts)) throw new JpaBridgeError('javaFacts must be an array');
 
-  const declared = opts.namingStrategy != null;
-  const strategy = declared ? opts.namingStrategy : ASSUMED_NAMING_STRATEGY;
-  if (!NAMING_STRATEGIES.includes(strategy)) {
+  if (opts.namingStrategy != null && !NAMING_STRATEGIES.includes(opts.namingStrategy)) {
     throw new JpaBridgeError(`unknown jpa.namingStrategy ${JSON.stringify(opts.namingStrategy)}. Expected one of ${NAMING_STRATEGIES.join(', ')}`);
   }
+  // The profile's strategy, else the configuration's where it reaches the
+  // factory the project builds, else one set in code, else the default of that
+  // factory (src/adapters/jpa_naming.mjs).
+  const { plan, naming: namingStats } = namingOf(javaFacts, opts);
+  const { declared, strategy } = plan;
   // A name the ENGINE derived is HEURISTIC unless the project declared the rule
   // it was derived by. A name the SOURCE wrote down goes through the rule too,
   // and is EXACT where every rule spells it alike (`explicitName`).
   const derivedGrade = declared ? 'EXACT' : 'HEURISTIC';
-  const namingEvidence = declared ? 'declared' : 'assumed-spring-default';
+  const namingEvidence = plan.evidence;
   const schema = opts.schema ?? null;
 
   const { resolveType, types: treeTypes } = buildTypeIndex(javaFacts);
@@ -1377,6 +1400,9 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     statements: 0, statementsByType: { derived: 0, jpql: 0, native: 0, builtin: 0 },
     implementsStmt: 0, unresolvedStatements: 0, unresolved: [],
     builtins: 0, namingStrategy: strategy, namingStrategyDeclared: declared,
+    // How the project builds its EntityManagerFactory, and what that made of the
+    // naming: the sentence the jpa axis says, and what the run says about it.
+    naming: namingStats,
     // Associations a statement's fetch plan reached and did NOT follow, because
     // they are LAZY. Each one is a read that happens when something asks for it
     // later, which is a moment this lane cannot see (see `applyFetchPlan`).
@@ -1386,12 +1412,20 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     inertAnnotations: [],
   };
   if (entityRecords.size === 0 && repositories.length === 0) return stats;
+  // A run that named every lane by a flag walked no resources: an XML factory or a ServiceLoader file is then not seen.
+  // The profile states the physical strategy only; an implicit one set in code still names a default join table.
+  if (namingStats.implicitNote) note(stats, 'implicit-naming-set-in-code', namingStats.implicitNote);
+  if (opts.resourcesRead === false) note(stats, 'jpa-resources-unread', 'the tree\'s Spring XML and META-INF/services files were not read, so an EntityManagerFactory declared as an XML bean, and a Hibernate extension registered for ServiceLoader, are not seen here');
 
   // How a written name is read: the strategy, whether it is declared, and the
   // identifier rule two spellings are compared under (see `explicitName`).
-  const names = { strategy, declared, identifierCase: opts.identifierCase ?? 'exact', assumed: new Map() };
+  const names = {
+    strategy, declared, identifierCase: opts.identifierCase ?? 'exact', assumed: new Map(),
+    implicit: plan.implicit, implicitSure: plan.implicitSure,
+    kind: plan.kind, evidence: plan.evidence, derivedBy: namingStats.derivedBy,
+  };
   const naming = { strategy, derivedGrade, namingEvidence, stats, names };
-  const inert = inertReader(javaFacts, typeRecords, opts.inertRules ?? builtinRegistry().ofKind('jpa.inert-annotation'), stats);
+  const inert = inertReader(javaFacts, typeRecords, opts.inertRules ?? builtinRegistry().ofKind('jpa.inert-annotation'), stats, opts.serviceFiles);
   const entities = entityTables(entityRecords, { ...naming, resolveType });
   attributesThroughSuperclasses(entities, entityRecords, { resolveType, classAnnotations, treeTypes, inert, ...naming });
   const nodes = tableColumnAndJoinNodes(g, entities, {
@@ -1419,11 +1453,12 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
  * declaring class is where its names are read (javafacts/23 records how each
  * annotation is written).
  */
-function inertReader(javaFacts, typeRecords, rules, stats) {
-  const readers = rules.map((r) => r.compiled(javaFacts));
+function inertReader(javaFacts, typeRecords, rules, stats, serviceFiles = []) {
+  const readers = rules.map((r) => r.compiled(javaFacts, serviceFiles ?? []));
   // A class handed to Hibernate at boot may read any annotation: said once, since it is why none is inert.
-  for (const read of readers.filter((x) => x.implementers.length > 0 && x.candidates.length > 0)) {
-    note(stats, 'inert-annotations-blocked', `${read.implementers.join(', ')} implement(s) a Hibernate boot extension point (rule ${read.rule}), which may read any annotation, so the annotations the tree declares (${read.candidates.join(', ')}) are not known to leave a column alone`);
+  for (const read of readers.filter((x) => (x.implementers.length > 0 || (x.registered ?? []).length > 0) && x.candidates.length > 0)) {
+    const who = [...read.implementers.map((c) => `${c} implements`), ...(read.registered ?? []).map((f) => `${f} registers`)].join(', ');
+    note(stats, 'inert-annotations-blocked', `${who} a Hibernate boot extension point (rule ${read.rule}), which may read any annotation, so the annotations the tree declares (${read.candidates.join(', ')}) are not known to leave a column alone`);
   }
   return (a, i) => {
     const t = typeRecords.get(`${a.declaredBy} ${a.declaredFile}`) ?? typeRecords.get(a.declaredBy);

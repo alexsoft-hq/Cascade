@@ -153,22 +153,30 @@ export function serviceNamesOf(profile, discovery = null) {
  * profile decide: neither is a declaration this engine can apply. A configuration that names a class this engine does not model, or files
  * that name different strategies, declare nothing this engine can apply, and the
  * names it derives stay HEURISTIC.
- * @returns {{strategy:(string|null), from:('profile'|'configuration'|'unreadable'|'none'), files:string[], classNames:string[]}}
+ * `vias` says which keys named it (`boot`, `passthrough`): how far it reaches
+ * depends on who builds the factory (src/adapters/jpa_naming.mjs).
+ * @returns {{strategy:(string|null), from:('profile'|'configuration'|'unreadable'|'none'), files:string[], classNames:string[], vias:string[]}}
  */
 export function jpaNamingOf(profile, configured = []) {
   const declared = profile?.jpa?.namingStrategy ?? null;
-  if (declared != null) return { strategy: declared, from: 'profile', files: [], classNames: [] };
+  if (declared != null) return { strategy: declared, from: 'profile', files: [], classNames: [], vias: [] };
   const found = Array.isArray(configured) ? configured : [];
-  if (found.length === 0) return { strategy: null, from: 'none', files: [], classNames: [] };
+  if (found.length === 0) return { strategy: null, from: 'none', files: [], classNames: [], vias: [] };
   const files = [...new Set(found.map((f) => f.file))].sort();
   const classNames = [...new Set(found.map((f) => f.className))].sort();
+  const vias = [...new Set(found.map((f) => f.via ?? 'boot'))].sort();
   // What applies whatever profile is active decides, and a profile-only
   // declaration must agree with it: which profile runs is not in the tree.
   const always = [...new Set(found.filter((f) => !f.conditional).map((f) => f.strategy))];
   const everything = [...new Set(found.map((f) => f.strategy))];
   const one = always.length === 1 && always[0] !== null && everything.length === 1;
-  return { strategy: one ? always[0] : null, from: one ? 'configuration' : 'unreadable', files, classNames };
+  return { strategy: one ? always[0] : null, from: one ? 'configuration' : 'unreadable', files, classNames, vias };
 }
+
+/** A written name the strategies spell differently, and what the assumed one makes of it. */
+const writtenExample = (jpa) => (jpa.namingStrategy === 'identity'
+  ? 'createdBy, which the assumed naming keeps as written where Spring Boot\'s default would make it created_by'
+  : 'createdBy, which Spring Boot\'s default makes created_by');
 
 /** The axes a pack declares, in the order `overview` lists them. */
 export const AXES = Object.freeze(['catalog', 'statements', 'column', 'jpa', 'mybatisPlus', 'code', 'web', 'screen']);
@@ -805,10 +813,11 @@ export function declareAxes(ran, opts = {}) {
         : {
           status: 'degraded',
           reason: `we mapped ${jpa.entities} entity(ies) and ${jpa.repositories ?? 0} repository(ies), but the profile declares no jpa.namingStrategy. `
-            + 'Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot\'s default '
-            + '(CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. '
+            // What spelled it rests on how the project builds its factory (RM67-J6).
+            + `Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with ${jpa.naming?.derivedBy ?? 'Spring Boot\'s default (CamelCase to snake_case)'} `
+            + 'and graded it HEURISTIC, which means a rule guessed it. '
             // A written name goes through the strategy too (RM67-J5); said only where one did.
-            + ((jpa.writtenNamesAssumed ?? 0) > 0 ? `So are ${jpa.writtenNamesAssumed} name(s) the mapping writes that the strategies spell differently, such as createdBy, which Spring Boot's default makes created_by. ` : '')
+            + ((jpa.writtenNamesAssumed ?? 0) > 0 ? `So are ${jpa.writtenNamesAssumed} name(s) the mapping writes that the strategies spell differently, such as ${writtenExample(jpa)}. ` : '')
             + 'Declare the strategy and those mappings become EXACT',
         },
     // MyBatis-Plus: the CRUD nobody wrote. SHIPPED when the bridge ran and found

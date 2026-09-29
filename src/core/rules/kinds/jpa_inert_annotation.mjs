@@ -40,17 +40,35 @@ function pointErrors(points) {
 
 function validateParams(params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return ['params must be an object'];
-  const errors = unknownKeys(params, ['metaAnnotationPackages', 'extensionPoints']).map((k) => `params has an unknown key "${k}"`);
+  const errors = unknownKeys(params, ['metaAnnotationPackages', 'extensionPoints', 'serviceFiles']).map((k) => `params has an unknown key "${k}"`);
   const pkgs = params.metaAnnotationPackages;
   if (!Array.isArray(pkgs) || pkgs.length === 0) errors.push('params.metaAnnotationPackages must be a non-empty list');
   else for (const p of pkgs) if (typeof p !== 'string' || !PACKAGE.test(p)) errors.push(`params.metaAnnotationPackages has ${JSON.stringify(p)}, which is not a package name`);
-  return [...errors, ...pointErrors(params.extensionPoints)];
+  return [...errors, ...pointErrors(params.extensionPoints), ...serviceFileErrors(params.serviceFiles)];
 }
+
+/** The ServiceLoader files a rule lists, each `META-INF/services/<interface>` with where Hibernate loads it; the list may be left out. */
+function serviceFileErrors(files) {
+  if (files === undefined) return [];
+  if (!Array.isArray(files)) return ['params.serviceFiles must be a list'];
+  return files.flatMap((f, i) => {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) return [`params.serviceFiles[${i}] must be an object`];
+    const errors = unknownKeys(f, ['file', 'source']).map((k) => `params.serviceFiles[${i}] has an unknown key "${k}"`);
+    if (typeof f.file !== 'string' || !/^META-INF\/services\/[A-Za-z_$][\w.$]*$/.test(f.file)) errors.push(`params.serviceFiles[${i}].file must be META-INF/services/ and an interface's full name`);
+    if (!isText(f.source)) errors.push(`params.serviceFiles[${i}].source must say where Hibernate loads it`);
+    return errors;
+  });
+}
+
+/** An example's `services`, when it gives them: the META-INF/services files its tree holds. */
+const servicesErrors = (services) => (services === undefined || (Array.isArray(services) && services.every(isText))
+  ? [] : ['an example\'s "services" must list the META-INF/services files its tree holds']);
 
 function validateExample(example) {
   if (!example || typeof example !== 'object' || Array.isArray(example)) return ['an example must be an object'];
-  const errors = unknownKeys(example, ['source', 'expect', 'why']).map((k) => `an example has an unknown key "${k}"`);
+  const errors = unknownKeys(example, ['source', 'services', 'expect', 'why']).map((k) => `an example has an unknown key "${k}"`);
   if (!isText(example.source)) errors.push('an example needs a Java "source"');
+  errors.push(...servicesErrors(example.services));
   if (!Array.isArray(example.expect) || !example.expect.every(isText)) errors.push('an example needs "expect", the list of "<class>.<attribute> @<annotation>" it makes inert (empty for none)');
   return errors;
 }
@@ -73,32 +91,45 @@ function mayBePoint(t, sup, point, names) {
 }
 
 /**
- * What one rule reads from a tree: the classes that implement an extension
- * point, and the annotation types that are inert (none when any class does).
- * `inertOf(type, simple, written)` is the inert annotation type a name on an
- * attribute of that type record means, or null.
+ * The service files a tree holds that register one of the rule's extension
+ * points: `META-INF/services/<interface>`, which Hibernate's ClassLoaderService
+ * reads through Java's ServiceLoader (loadJavaServices). Each as its path.
  */
-export function readInertAnnotations(javaFacts, rule) {
+function registrationsOf(serviceFiles, rule) {
+  const listed = new Set((rule.params.serviceFiles ?? []).map((f) => f.file));
+  return (serviceFiles ?? []).filter((f) => f && listed.has(`META-INF/services/${f.service}`)).map((f) => f.path).sort();
+}
+
+/**
+ * What one rule reads from a tree: the classes that implement an extension
+ * point, the service files that register one, and the annotation types that
+ * are inert (none when any class or file does). `inertOf(type, simple,
+ * written)` is the inert annotation type a name on an attribute of that type
+ * record means, or null. `serviceFiles` is what discovery found under
+ * META-INF/services (`{path, service}` each). The candidates are the annotation
+ * types that pass (a) and (b); (c) then decides whether any is inert.
+ */
+export function readInertAnnotations(javaFacts, rule, serviceFiles = []) {
   const packages = new Set(rule.params.metaAnnotationPackages);
   const points = rule.params.extensionPoints.map((p) => p.type);
   const names = javaNames(javaFacts);
   const types = javaFacts.filter((r) => r && r.kind === 'type');
   const implementers = types.filter((t) => supertypesOf(t).some((sup) => points.some((p) => mayBePoint(t, sup, p, names))))
     .map((t) => t.fqn).sort();
-  // The annotation types that pass (a) and (b); (c) then decides whether any is inert.
+  const registered = registrationsOf(serviceFiles, rule);
   const candidates = types.filter((t) => t.annotationType === true && onlyListedMeta(t, packages, names)).map((t) => t.fqn).sort();
-  const inert = new Set(implementers.length > 0 ? [] : candidates);
+  const inert = new Set(implementers.length > 0 || registered.length > 0 ? [] : candidates);
   const inertOf = (t, simple, written = null) => {
     if (!t || inert.size === 0) return null;
     const m = meaningOf(t, { simple, written }, names);
     return m?.fqn && inert.has(m.fqn) ? m.fqn : null;
   };
-  return { rule: rule.id, implementers, candidates, inert: [...inert].sort(), inertOf };
+  return { rule: rule.id, implementers, registered, candidates, inert: [...inert].sort(), inertOf };
 }
 
-/** The rule, ready to read a tree: a function from the Java worker's records to what `readInertAnnotations` gives. */
+/** The rule, ready to read a tree: a function from the Java worker's records and the service files to what `readInertAnnotations` gives. */
 function compile(rule) {
-  return (javaFacts) => readInertAnnotations(javaFacts, rule);
+  return (javaFacts, serviceFiles = []) => readInertAnnotations(javaFacts, rule, serviceFiles);
 }
 
 /** Every "<class>.<attribute> @<annotation>" an example's entity records carry that the rule makes inert. */
@@ -127,7 +158,8 @@ function runExamples(entries, env) {
   return {
     results: new Map(entries.map((entry) => [entry.id, entry.rule.examples.map((ex, i) => {
       const own = facts.filter((r) => r.file === `${entry.id}/example${i}.java`);
-      const got = inertUsages(own, entry.compiled(own));
+      const services = (ex.services ?? []).map((p) => ({ path: p, service: p.slice(p.lastIndexOf('/') + 1) }));
+      const got = inertUsages(own, entry.compiled(own, services));
       return { example: ex, passed: JSON.stringify(got) === JSON.stringify([...ex.expect].sort()), got };
     })])),
   };

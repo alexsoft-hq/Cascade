@@ -49,6 +49,21 @@ function withJpaNaming(diagnostics, naming) {
 }
 
 /**
+ * What the JPA bridge made of the naming once it saw how the project builds
+ * its EntityManagerFactory (src/adapters/jpa_naming.mjs): the configuration's
+ * strategy said as declared when it no longer is, and Spring Boot's default
+ * said as assumed where another one is, give way to what the bridge says.
+ * Changed in place, since the run's list is the one it prints and keeps.
+ */
+function withFactoryNaming(diagnostics, naming) {
+  const stale = (d) => d.key === 'jpa.namingStrategy'
+    && ((d.kind === 'JPA_NAMING_FROM_CONFIGURATION' && naming.config !== 'declared')
+      || (d.kind === 'PROFILE_DEFAULT_ASSUMED' && (naming.kind !== 'none' || naming.evidence !== 'assumed-spring-default')));
+  const kept = diagnostics.filter((d) => !stale(d));
+  diagnostics.splice(0, diagnostics.length, ...kept, ...(naming.diagnostics ?? []));
+}
+
+/**
  * EVERYTHING THIS RUN DECIDES BEFORE A WORKER STARTS, and the census that says
  * so. The order is the order a reader needs it in: which project, which tree,
  * which convention, which lanes, over what, and by what identity rule.
@@ -170,6 +185,7 @@ function factsOf(ctx, prepared, tmpDir) {
 function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp, openapiStats }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts, graph }, diagnostics) {
   const laneStats = runJava ? sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) : null;
   if (runJava) diagnostics.push(...unusedPrefixNotes(jstats), ...prefixNotOnCallsNotes(graph, jstats), ...codeSettingDiagnostics(javaFacts ?? [], profile), ...documentGuessNotes(jstats, openapiStats));
+  if (runJpa && jpaStats?.naming) withFactoryNaming(diagnostics, jpaStats.naming);
   if (!tsStats) return laneStats;
   for (const d of [...tsStats.diagnostics, ...symbolsSharedWithOtherLanes(graph)]) diagnostics.push({ kind: d.kind, severity: 'warn', key: 'tsBackend', reason: d.reason });
   return { ...laneStats, ts: sayTsLane(tsStats, tsOpts, { root, sel, relOf }) };

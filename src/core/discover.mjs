@@ -27,6 +27,7 @@ import { SQL_DIALECT_ALIASES } from './profile.mjs';
 import { portRecordsOfJava, serverPortsOfFile, serverPortsOfJava } from './server_ports.mjs';
 import { isDeploymentFile, serverPortsOfDeployment } from './server_ports_deploy.mjs';
 import { builtinRegistry, RuleError } from './rules/registry.mjs';
+import { xmlFactoriesIn } from './rules/kinds/jpa_entity_manager_factory.mjs';
 import { nestAppsOf, noteNestPackage, noteTypeScriptBackendFile, prismaProvidersOf } from './discover_nest.mjs';
 
 // Directories that never carry first-party source. Skipped wholesale, so a
@@ -897,6 +898,8 @@ function classifyXmlFile(d, f) {
       xmlViewResolvers.push(...findXmlViewResolvers([{ path: relFile, text }]));
       // …and, in the same documents, the table id generators a service asks for a key (RM62).
       idGenerators.push(...findIdGenerators([{ path: relFile, text }]));
+      // …and the EntityManagerFactory beans the jpa rules name, with the naming each is given (RM67-J6).
+      d.jpaFactories.push(...builtinRegistry().ofKind('jpa.entity-manager-factory').flatMap((r) => xmlFactoriesIn([{ path: relFile, text }], r.rule)));
     }
     return true;
   }
@@ -1123,10 +1126,28 @@ function classifyFile(d, f) {
   if (classifyJavaFile(d, f)) return;
   if (classifyKotlinFile(d, f)) return;
   if (classifyXmlFile(d, f)) return;
+  if (classifyServiceFile(d, f)) return;
   if (classifyOpenApiDocument(d, f)) return;
   if (classifySpringConfig(d, f)) return;
   if (classifySqlFile(d, f)) return;
   if (classifyPackageManifest(d, f)) return;
+}
+
+/**
+ * A `META-INF/services/<interface>` file outside the tests: Java's ServiceLoader
+ * hands every class it lists to whoever asks for that interface, which is how
+ * Hibernate finds an Integrator. Only the file is noted; which interfaces
+ * matter is a rule pack's (src/core/rules/packs/jpa.json).
+ * @returns {boolean} true when this file's classification is FINISHED here
+ */
+function classifyServiceFile(d, f) {
+  const relFile = f.rel(f.absFile);
+  const at = relFile.lastIndexOf('META-INF/services/');
+  if (at < 0 || (at > 0 && relFile[at - 1] !== '/') || isTestPath(relFile)) return false;
+  const name = relFile.slice(at + 'META-INF/services/'.length);
+  if (name === '' || name.includes('/')) return false;
+  d.serviceFiles.push({ path: relFile, service: name });
+  return true;
 }
 
 /**
@@ -1424,6 +1445,9 @@ function discoveryCollections() {
     viewResolvers: [],
     xmlViewResolvers: [], // …and the same settings written as Spring BEANS (RM55)
     idGenerators: [], // eGovFrame table id generators declared as beans (RM62)
+    // …and the EntityManagerFactory beans, and every META-INF/services file: an implementation Java's ServiceLoader finds (RM67-J6).
+    jpaFactories: [],
+    serviceFiles: [],
     // Every OpenAPI / Swagger document in the tree, with the version it declares.
     openapiDocuments: [],
     ddlPaths: [],
@@ -1548,6 +1572,9 @@ function discoveryAnswer(root, d, { w, maxFiles, javaRoots, javaTestRoots, repos
     // root came from a declared prefix or from where the files sit.
     viewResolvers: [...viewResolvers, ...xmlViewResolvers]
       .sort((a, b) => (a.engine < b.engine ? -1 : a.engine > b.engine ? 1 : a.file < b.file ? -1 : 1)),
+    // The EntityManagerFactory beans a Spring XML declares, and the ServiceLoader files, by file (RM67-J6).
+    jpaFactories: d.jpaFactories.slice().sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line)),
+    serviceFiles: d.serviceFiles.slice().sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
     // The table id generators (RM62), sorted by bean name then file.
     idGenerators: idGenerators.slice().sort((a, b) => (a.bean < b.bean ? -1 : a.bean > b.bean ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line)),
     // Sorted by path, like every other list here: a walk's order must not decide

@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/23";
+    static final String VERSION = "javafacts/24";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -404,6 +404,7 @@ public class JavaFacts {
                 }
             }, null);
             emitInvocations(cu);
+            emitConstructions(cu);
             for (Tree decl : cu.getTypeDecls()) {
                 if (decl instanceof ClassTree) {
                     processType((ClassTree) decl, null);
@@ -468,6 +469,36 @@ public class JavaFacts {
             r.put("receivers", receivers);
             r.put("file", rel);
             sink.add("9invocations" + SEP + rel, r);
+        }
+
+        /**
+         * EVERY TYPE THIS FILE CONSTRUCTS with `new`, as written, with the line
+         * of its first construction (javafacts/24). One record per file, one
+         * entry per name, in name order. Which of them is an EntityManagerFactory
+         * the project builds by hand is a rule pack's question
+         * (src/core/rules/packs/jpa.json); this only says what `new` names.
+         */
+        void emitConstructions(CompilationUnitTree unit) {
+            final java.util.TreeMap<String, Integer> seen = new java.util.TreeMap<>();
+            unit.accept(new TreeScanner<Void, Void>() {
+                @Override public Void visitNewClass(NewClassTree nc, Void p) {
+                    String w = writtenName(nc.getIdentifier());
+                    if (w != null) {
+                        int line = lineOf(nc);
+                        Integer prev = seen.get(w);
+                        if (prev == null || (line > 0 && (prev == 0 || line < prev))) seen.put(w, line);
+                    }
+                    return super.visitNewClass(nc, p);
+                }
+            }, null);
+            if (seen.isEmpty()) return;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", "constructions");
+            r.put("names", new ArrayList<Object>(seen.keySet()));
+            r.put("lines", new ArrayList<Object>(seen.values()));
+            r.put("package", pkg);
+            r.put("file", rel);
+            sink.add("9constructions" + SEP + rel, r);
         }
 
         /** The 1-based line a method NAME is written on: where its select ends, else where it starts. */
@@ -811,6 +842,9 @@ public class JavaFacts {
             // decided here (javafacts/13): the rule pack src/core/rules/packs/
             // mybatis-plus.json reads it from the `type` record's supertypes.
             emitMpEntity(ct, fqn, typeAnns, annotations, ext);
+            // The property keys a class that declares a @Bean method puts
+            // (javafacts/24): where a factory and the properties it is given are made.
+            if (declaresBeanMethod(ct)) emitPropertyKeys(fqn, ct);
 
             // --- pass 1: instance fields (class/interface-typed) ---------------
             Map<String, String> fields = new LinkedHashMap<>();
@@ -1008,6 +1042,7 @@ public class JavaFacts {
                     // same method overrides it, are all decided downstream.
                     emitMapperAnnotationSql(fqn, mname, m);
                     emitRouteFunction(fqn, mname, m, viewConstants);
+                    if (annotationNames(m.getModifiers().getAnnotations()).contains("Bean")) emitBeanMethod(fqn, mname, m);
 
                     if (m.getBody() != null) {
                         scanCalls(fqn, mname, fields, ext, viewConstants, m);
@@ -1542,6 +1577,122 @@ public class JavaFacts {
         // by src/core/rules/kinds/java_route_function.mjs). A tree past its
         // budget, or a string past its length, is marked cut rather than
         // recorded in part, so a reader can say what it did not see.
+        /**
+         * ONE `@Bean` METHOD (javafacts/24): its return type and parameter types
+         * as written, and the types its own body constructs with `new`. Whether
+         * the bean is an EntityManagerFactory, built by hand or from Spring Boot's
+         * builder, is the jpa rule pack's question; this records what it reads.
+         */
+        void emitBeanMethod(String fqn, String mname, MethodTree m) {
+            List<Object> params = new ArrayList<>();
+            for (VariableTree v : m.getParameters()) params.add(writtenName(v.getType()));
+            final java.util.LinkedHashSet<String> constructs = new java.util.LinkedHashSet<>();
+            if (m.getBody() != null) {
+                m.getBody().accept(new TreeScanner<Void, Void>() {
+                    @Override public Void visitNewClass(NewClassTree nc, Void p) {
+                        String w = writtenName(nc.getIdentifier());
+                        if (w != null) constructs.add(w);
+                        return super.visitNewClass(nc, p);
+                    }
+                }, null);
+            }
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", "beanMethod");
+            r.put("owner", fqn);
+            r.put("name", mname);
+            r.put("returns", writtenName(m.getReturnType()));
+            r.put("params", params);
+            r.put("constructs", new ArrayList<Object>(constructs));
+            r.put("line", lineOf(m));
+            r.put("file", rel);
+            sink.add("5beanMethod" + SEP + fqn + "#" + mname + SEP + lineOf(m), r);
+        }
+
+        /** Whether a class declares a method annotated @Bean. */
+        boolean declaresBeanMethod(ClassTree ct) {
+            for (Tree member : ct.getMembers()) {
+                if (member instanceof MethodTree
+                        && annotationNames(((MethodTree) member).getModifiers().getAnnotations()).contains("Bean")) return true;
+            }
+            return false;
+        }
+
+        /**
+         * THE PROPERTY KEYS A CONFIGURATION CLASS PUTS (javafacts/24): every
+         * `put`, `putIfAbsent` or `setProperty` call with two arguments in the
+         * class's own methods (lambdas and anonymous classes in them too) whose
+         * key is a string literal or a name, with the value as far as its form
+         * says it: a literal, `X.class` (or its name), `new X()`, or a name.
+         * Which key is a Hibernate naming setting is the jpa rule pack's.
+         */
+        void emitPropertyKeys(String fqn, ClassTree ct) {
+            final List<Object> keys = new ArrayList<>();
+            for (Tree member : ct.getMembers()) {
+                if (!(member instanceof MethodTree)) continue;
+                final String method = ((MethodTree) member).getName().toString();
+                member.accept(new TreeScanner<Void, Void>() {
+                    @Override public Void visitMethodInvocation(MethodInvocationTree inv, Void p) {
+                        Map<String, Object> k = propertyKeyOf(inv, method);
+                        if (k != null) keys.add(k);
+                        return super.visitMethodInvocation(inv, p);
+                    }
+                }, null);
+            }
+            if (keys.isEmpty()) return;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", "propertyKeys");
+            r.put("owner", fqn);
+            r.put("keys", keys);
+            r.put("file", rel);
+            sink.add("9propertyKeys" + SEP + fqn, r);
+        }
+
+        /** One `put(key, value)`-shaped call as a record, or null when it is not one or its key is neither a literal nor a name. */
+        Map<String, Object> propertyKeyOf(MethodInvocationTree inv, String method) {
+            Tree sel = inv.getMethodSelect();
+            String name = sel instanceof MemberSelectTree ? ((MemberSelectTree) sel).getIdentifier().toString()
+                    : sel instanceof IdentifierTree ? ((IdentifierTree) sel).getName().toString() : null;
+            if (!("put".equals(name) || "putIfAbsent".equals(name) || "setProperty".equals(name))) return null;
+            if (inv.getArguments().size() != 2) return null;
+            String[] key = valueForm(inv.getArguments().get(0));
+            if (key == null || !("literal".equals(key[0]) || "name".equals(key[0]))) return null;
+            String[] value = valueForm(inv.getArguments().get(1));
+            Map<String, Object> k = new LinkedHashMap<>();
+            k.put("method", method);
+            k.put("key", key[1]);
+            k.put("keyForm", key[0]);
+            k.put("value", value == null ? null : value[1]);
+            k.put("valueForm", value == null ? null : value[0]);
+            k.put("line", lineOf(inv));
+            return k;
+        }
+
+        /** An argument's form and text: a string literal, `X.class` or its name, `new X()`, a name; null for anything else. */
+        String[] valueForm(ExpressionTree arg) {
+            if (arg instanceof LiteralTree) {
+                Object v = ((LiteralTree) arg).getValue();
+                return v instanceof String ? new String[] { "literal", (String) v } : null;
+            }
+            if (arg instanceof NewClassTree) {
+                NewClassTree nc = (NewClassTree) arg;
+                String w = nc.getClassBody() == null ? writtenName(nc.getIdentifier()) : null;
+                return w == null ? null : new String[] { "new", w };
+            }
+            ExpressionTree e = arg;
+            // `X.class.getName()` and its kin name the class `X.class` does.
+            if (e instanceof MethodInvocationTree && ((MethodInvocationTree) e).getArguments().isEmpty()
+                    && ((MethodInvocationTree) e).getMethodSelect() instanceof MemberSelectTree) {
+                e = ((MemberSelectTree) ((MethodInvocationTree) e).getMethodSelect()).getExpression();
+            }
+            if (e instanceof MemberSelectTree && "class".equals(((MemberSelectTree) e).getIdentifier().toString())) {
+                String w = writtenName(((MemberSelectTree) e).getExpression());
+                return w == null ? null : new String[] { "class", w };
+            }
+            if (e != arg) return null;
+            if (arg instanceof MemberSelectTree || arg instanceof IdentifierTree) return new String[] { "name", arg.toString() };
+            return null;
+        }
+
         void emitRouteFunction(String fqn, String mname, MethodTree m, Map<String, String> classConstants) {
             if (m.getBody() == null) return;
             String ret = typeSimpleName(m.getReturnType());

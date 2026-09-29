@@ -420,8 +420,11 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     identifierCase: sqlArgs.identifierCase,
     // The same list the working-tree overlay builds (src/core/assemble.mjs).
     java: runJava ? javaLaneOptions(profile, { idGenerators: discovery?.idGenerators ?? [] }) : null,
-    // The profile's strategy, else the one the project's configuration names (index.mjs).
-    jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming) : null,
+    // The profile's strategy, what the project's configuration names (index.mjs),
+    // and the factory beans and service files discovery found in the resources.
+    jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming, {
+      xmlFactories: discovery?.jpaFactories ?? [], serviceFiles: discovery?.serviceFiles ?? [], resourcesRead: !!discovery,
+    }) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,
     // The TypeScript backend, with the options the working-tree overlay builds
     // too (src/cli/ts_inputs.mjs tsLaneOptions, which index.mjs called).

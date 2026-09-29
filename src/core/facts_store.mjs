@@ -280,6 +280,12 @@ const NEWER_SORT_KEYS = Object.freeze({
   local: (rec) => `2local${SEP}${rec.id}`,
   composedMapping: (rec) => `2composed${SEP}${rec.fqn}`,
   mappingCandidate: (rec) => `4mapcand${SEP}${rec.handler}${SEP}${rec.annotation}`,
+  // javafacts/24: what an EntityManagerFactory is built from. The types a file
+  // constructs, one per file; a @Bean method, by its class, name and line; the
+  // property keys a class with @Bean methods puts, one per class.
+  constructions: (rec) => `9constructions${SEP}${rec.file}`,
+  beanMethod: (rec) => `5beanMethod${SEP}${rec.owner}#${rec.name}${SEP}${rec.line}`,
+  propertyKeys: (rec) => `9propertyKeys${SEP}${rec.owner}`,
 });
 
 /** A newer kind's key, or null for a record that is not shard content (header, summary, a kind nobody keys). */
