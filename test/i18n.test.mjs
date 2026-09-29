@@ -526,3 +526,12 @@ test('and no copy of it is left in the page', () => {
   assert.equal(PAGE.includes('const VIEWER_STRINGS ='), false, 'a second catalogue is a catalogue that will drift');
   assert.equal(PAGE.includes('function makeT('), false);
 });
+
+test('interpolate: {n|one|other} writes the word for the count, so English never reads "route(s)"', () => {
+  assert.equal(interpolate('{n} {n|route|routes}', { n: 1 }), '1 route');
+  assert.equal(interpolate('{n} {n|route|routes}', { n: 0 }), '0 routes');
+  assert.equal(interpolate('{n} {n|route|routes} {n|reaches|reach} it', { n: 2 }), '2 routes reach it');
+  assert.equal(interpolate('{n} {n|route|routes}', { n: '1' }), '1 route', 'a count passed as text counts too');
+  assert.equal(interpolate('{n|route|routes}', {}), '{n|route|routes}', 'a missing count stays visible, as a missing parameter does');
+  assert.equal(interpolate('GET /product/{id}', {}), 'GET /product/{id}');
+});

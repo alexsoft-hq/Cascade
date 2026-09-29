@@ -47,11 +47,15 @@
  * @returns {string}
  */
 export function interpolate(text, params) {
-  return String(text).replace(/\{(\w+)\}/g, (whole, name) => (
-    params && typeof params === 'object' && Object.hasOwn(params, name) && params[name] != null
-      ? String(params[name])
-      : whole
-  ));
+  const has = (name) => params && typeof params === 'object' && Object.hasOwn(params, name) && params[name] != null;
+  // `{n|route|routes}` is the word for the count `n`, so an English line reads
+  // "1 route" and "2 routes" rather than "route(s)". Only the word is written;
+  // the number is its own `{n}`.
+  return String(text).replace(/\{(\w+)(?:\|([^|{}]*)\|([^|{}]*))?\}/g, (whole, name, one, other) => {
+    if (!has(name)) return whole;
+    if (one === undefined) return String(params[name]);
+    return Number(params[name]) === 1 ? one : other;
+  });
 }
 
 /**
