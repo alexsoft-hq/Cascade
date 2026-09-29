@@ -49,8 +49,8 @@
 
 import {
   buildDerivedEndpoints, buildLayers, buildTables, collectPageRows, collectRows,
-  collectSenders, countDepthBoundary, countLinkGrades, countOther, emptyReasonFor, makeNodeFacts,
-  makePathReader, readWalkOptions, runBfs, sortLanes,
+  collectSenders, countDepthBoundary, countLinkGrades, countOther, emptyReasonFor, handlerRecords, makeNodeFacts,
+  makePathReader, readWalkOptions, routeRecords, runBfs, screenRecords, sortLanes,
 } from './chain_steps.mjs';
 
 // The three names this module has always exported beside `chainWalk`, from where
@@ -84,17 +84,17 @@ export function chainWalk(graph, opts = {}) {
   countDepthBoundary(graph, w, best, cut);
 
   // What a row needs: its path, its line, and the facts the graph (not the walk) holds.
-  const h = { best, cut, expanded, ...makePathReader(graph, w, best), ...makeNodeFacts(graph, w, best) };
+  const h = { best, cut, expanded, screenAgg: screenRecords(graph, w, best, root), ...makePathReader(graph, w, best), ...makeNodeFacts(graph, w, best) };
 
   // ---- the lanes ---------------------------------------------------------
   const rows = collectRows(graph, w, h);
   const { agg, tables } = buildTables(graph, w, h, rows.reachedStatements);
-  const { epAgg, derivedEndpoints } = buildDerivedEndpoints(graph, w, h, rows.handlers);
   // Walking up, the endpoints lane is DERIVED from the handlers the walk
   // reached; walking down from the frontend, it is WALKED. One lane, two ways
   // of arriving at it, because a route above a handler is not a step of the
   // request and a route a screen calls is.
-  const endpoints = w.up ? derivedEndpoints : rows.walkedEndpoints;
+  const epAgg = routeRecords(graph, w, h, handlerRecords(graph, w, best));
+  const endpoints = w.up ? buildDerivedEndpoints(graph, w, h, epAgg) : rows.walkedEndpoints;
   const { services, webFunctions, screens, statements, walkedEndpoints } = rows;
   sortLanes({ services, webFunctions, screens, statements, tables, endpoints });
 
@@ -137,5 +137,36 @@ export function chainWalk(graph, opts = {}) {
     emptyReason,
     endLane,
     senders: collectSenders(graph, w, best), // every method that sends a reached statement itself
+  };
+}
+
+/**
+ * WHAT REACHES A NODE, as the impact tools ask it: the routes and the screens
+ * above `start`, each with the grade, hops and HTTP hops of its record, and
+ * the walk's cut. It is the walk up `chainWalk` runs, the same BFS and the same
+ * two records its endpoints and screens lanes are read from, without the rows:
+ * one question, one walk (RM67-J4, design 3), so endpoint_impact, screen_impact
+ * and the overlay's blast radius can never name a route or a screen Trace does
+ * not, or grade it otherwise. The node cap is the same guard, and the caller
+ * says when it bit (`cut.nodeCap`).
+ *
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {string} start  a column, table, statement, symbol or endpoint node id
+ * @param {{mode?:string, maxDepth?:number|null, maxNodes?:number}} [opts]
+ * @returns {{endpoints:{id:string, grade:string, hops:number, http:number}[],
+ *            screens:{id:string, grade:string, hops:number, http:number, page:boolean}[], cut:object}}
+ *          both sorted by id
+ */
+export function walkUp(graph, start, opts = {}) {
+  const w = readWalkOptions(graph, { ...opts, start, direction: 'up' });
+  const { best, cut, root, expanded } = runBfs(graph, w);
+  countDepthBoundary(graph, w, best, cut);
+  const epAgg = routeRecords(graph, w, { best, cut, expanded }, handlerRecords(graph, w, best));
+  const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return {
+    endpoints: [...epAgg.values()].map((a) => ({ id: a.id, grade: a.grade, hops: a.hops, http: a.http })).sort(byId),
+    screens: [...screenRecords(graph, w, best, root).values()]
+      .map((s) => ({ id: s.id, grade: s.grade, hops: s.hops, http: s.http, page: s.page !== null })).sort(byId),
+    cut,
   };
 }

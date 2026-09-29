@@ -7,6 +7,7 @@
 
 import { DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
 import { buildSummary, JOIN_TABLES, SUMMARY_LIMIT } from '../core/summary.mjs';
+import { nodeCapSaid } from '../core/walks.mjs';
 import { NO_STATE_TRUST_LEVEL } from '../core/trust.mjs';
 import { makeResponse } from './contract.mjs';
 import { ToolError } from './tools.mjs';
@@ -47,7 +48,9 @@ function readArgs(args, graph) {
   const mode = args.mode ?? 'conservative';
   if (!MODES.includes(mode)) throw new ToolError('bad-input', `mode must be ${MODES.join(', ')}`);
   const depth = args.depth ?? DEFAULT_WALK_DEPTH;
-  if (depth !== null && (!Number.isInteger(depth) || depth < 1 || depth > 12)) throw new ToolError('bad-input', 'depth must be a whole number from 1 to 12, or left out for no cap');
+  // The same range every other walk takes a depth in (flow, map, coupling): one
+  // depth means one reach in every tool that is asked it (RM67-J4, K-7).
+  if (depth !== null && (!Number.isInteger(depth) || depth < 1 || depth > 8)) throw new ToolError('bad-input', 'depth must be a whole number from 1 to 8, or left out for no cap');
   const limit = args.limit ?? SUMMARY_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_MAX) throw new ToolError('bad-input', `limit must be a whole number from 1 to ${LIMIT_MAX}`);
   return { mode, depth, limit, through: readThrough(graph, args) };
@@ -68,10 +71,8 @@ function readThrough(graph, args) {
   return id;
 }
 
-export function summary(graph, args, ctx) {
-  const { mode, depth, limit, through } = readArgs(args || {}, graph);
-  const packageDepth = ctx.profile?.moduleAttribution?.packageDepth ?? null;
-  const s = buildSummary(graph, { mode, depth, limit, packageDepth, through });
+/** The sentences this answer owes beyond the lane's: its two rules, a lopsided grouping, and a walk the node cap cut (RM67-J4, K-3). */
+function ownLimits(s) {
   const own = [
     { scope: 'summary:groups', reason: groupLimit(s.rule.groups) },
     { scope: 'summary:families', reason: familyLimit(s.rule.tables) },
@@ -79,6 +80,16 @@ export function summary(graph, args, ctx) {
   if (s.lopsided) {
     own.push({ scope: 'summary:lopsided', reason: `one group, ${s.lopsided.group}, holds ${s.lopsided.share}% of the routes, so this picture says little about how the code is divided` });
   }
+  const capped = nodeCapSaid(s.walk, 'route');
+  if (capped) own.push({ scope: 'summary:walk', reason: `${capped}. A family or a line a cut walk would have reached is missing here, not absent` });
+  return own;
+}
+
+export function summary(graph, args, ctx) {
+  const { mode, depth, limit, through } = readArgs(args || {}, graph);
+  const packageDepth = ctx.profile?.moduleAttribution?.packageDepth ?? null;
+  const s = buildSummary(graph, { mode, depth, limit, packageDepth, through });
+  const own = ownLimits(s);
   const answer = { mode, depth, limit, ...s };
   const empty = {};
   for (const k of ['groups', 'families', 'links']) if (answer[k].length === 0) empty[k] = s.totals.endpoints === 0 ? 'not-shipped' : 'none';

@@ -19,8 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildDerivedEndpoints, buildLayers, buildTables, collectRows, countDepthBoundary,
-  countLinkGrades, countOther, emptyReasonFor, frontendCallsOf, makeNodeFacts, makePathReader,
-  nodeLabel, readWalkOptions, runBfs, sortLanes, weakestOf, ChainError,
+  countLinkGrades, countOther, emptyReasonFor, frontendCallsOf, handlerRecords, makeNodeFacts, makePathReader,
+  nodeLabel, readWalkOptions, routeRecords, runBfs, sortLanes, weakestOf, ChainError,
 } from '../src/core/chain_steps.mjs';
 import { chainWalk } from '../src/core/chain.mjs';
 import {
@@ -143,7 +143,7 @@ test('chain steps: every reached node lands in exactly one lane, and a mapper me
   assert.equal(rows.statements[0].link.from, nodeId('symbol', 'com.x.OwnerService#find'),
     'a folded node is not a drawn row, so the line lands on the service above it');
   assert.equal(rows.reachedStatements.length, 1);
-  assert.equal(rows.handlers.length, 0, 'walking down, nothing is a handler row');
+  assert.equal(handlerRecords(g, w, best).length, 0, 'walking down, no route is derived from a handler');
 });
 
 test('chain steps: the tables lane aggregates the statements, with distinct columns per table', () => {
@@ -173,9 +173,11 @@ test('chain steps: walking up, the endpoints lane is DERIVED from the handlers, 
   const w = readWalkOptions(g, { start: nodeId('column', 'owners.id'), direction: 'up' });
   const { best, cut, expanded } = runBfs(g, w);
   const h = { best, cut, expanded, ...makePathReader(g, w, best), ...makeNodeFacts(g, w, best) };
-  const rows = collectRows(g, w, h);
-  assert.deepEqual(rows.handlers.map((x) => strip(x.id)), ['com.x.OwnerController#list']);
-  const { derivedEndpoints, epAgg } = buildDerivedEndpoints(g, w, h, rows.handlers);
+  const handlers = handlerRecords(g, w, best);
+  assert.deepEqual(handlers.map((x) => strip(x.id)), ['com.x.OwnerController#list']);
+  // One record per route, which Trace draws as a row and the impact tools read as is.
+  const epAgg = routeRecords(g, w, h, handlers);
+  const derivedEndpoints = buildDerivedEndpoints(g, w, h, epAgg);
   assert.equal(derivedEndpoints.length, 1);
   assert.equal(derivedEndpoints[0].path, '/owners');
   assert.equal(derivedEndpoints[0].handler, 'com.x.OwnerController#list');

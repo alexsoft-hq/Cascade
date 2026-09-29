@@ -22,8 +22,23 @@
 //
 // Pure: graph in, plain result out — no contract, no paging, no DOM.
 
-import { chainWalk, frontendCallsOf } from './chain.mjs';
-import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, isWalkDepth } from './graph.mjs';
+import { chainWalk, frontendCallsOf, walkUp } from './chain.mjs';
+import { GRADE_SETS, DEFAULT_WALK_DEPTH, WALK_NODE_CAP, isWalkDepth } from './graph.mjs';
+
+/**
+ * WHAT A CENSUS COUNTED SHORT (RM67-J4, K-3): a sentence when some of its walks
+ * stopped at the node cap, null when none did. A census that hit the cap and
+ * said "none" or "0" would read as an absence; every answer built on
+ * `walkEndpoints` or `walkScreens` says this instead.
+ *
+ * @param {{nodeCapStarts?:number}|null} walk  a census's `walk` block
+ * @param {string} what  what one walk starts from: "route" or "screen"
+ * @returns {string|null}
+ */
+export function nodeCapSaid(walk, what) {
+  if (!walk || !(walk.nodeCapStarts > 0)) return null;
+  return `node cap reached in ${walk.nodeCapStarts} ${what} walk(s): each stopped after recording ${WALK_NODE_CAP} nodes, so what those ${what}s reach is counted only in part, and a count here that rests on them is a lower bound, not an absence`;
+}
 
 // Re-exported from here because this is the module a reader looks in for the
 // endpoint helpers; it LIVES in chain.mjs because the chain walk needs it and
@@ -171,6 +186,29 @@ export function handlerStartsOf(graph, endpointId, mode) {
   return graph.outEdges(endpointId).filter((e) => e.type === 'HANDLES' && allow.has(e.grade))
     .map((e) => ({ id: e.to, grade: e.grade }))
     .sort((a, b) => cmp(a.id, b.id) || RANK[b.grade] - RANK[a.grade]);
+}
+
+/**
+ * HOW SURE A ROUTE'S ADDRESS IS, apart from which code answers it (RM67-J4).
+ * A route's HANDLES edge grades the code below the route; a lane that could not
+ * settle the ADDRESS itself (a global prefix with an exclude list it could not
+ * read) says so on that edge's evidence, as `address: {grade, why}`. The route
+ * is at its address as surely as its surest declaration puts it there, so one
+ * link that states no doubt settles it and the answer is null.
+ *
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {string} endpointId
+ * @returns {{grade:string, why:string}|null}
+ */
+export function routeAddressOf(graph, endpointId) {
+  let best = null;
+  for (const e of graph.outEdges(endpointId)) {
+    if (e.type !== 'HANDLES') continue;
+    const a = graph.edgeAt(e.idx)?.evidence?.address;
+    if (!a || !Object.hasOwn(RANK, a.grade)) return null;
+    if (best === null || RANK[a.grade] > RANK[best.grade]) best = { grade: a.grade, why: String(a.why ?? '') };
+  }
+  return best;
 }
 
 /**
@@ -477,14 +515,49 @@ export function walkScreens(graph, opts = {}) {
 }
 
 /**
- * The SCREENS a change to this node would be felt on, with the weakest grade on
- * the path that reaches them (RM30 §C).
- *
- * The same backward reach `endpointsAffectingColumn` runs, read one lane
- * further out: column ← statement ← … ← handler ← route ← api function ←
- * component function ← screen. A HAR edge is RUNTIME_ONLY and below every
- * mode's floor, so a screen is here because the CODE says so, never because a
+ * The ROUTES and the SCREENS a change to this node would be felt on, each with
+ * the weakest grade on the path that reaches it, and what the walk cut (RM30 §C,
+ * RM67-J4). The impact tools' one question, answered by the walk Trace draws
+ * (`walkUp` in core/chain.mjs): column ← statement ← … ← handler ← route ← api
+ * function ← component function ← screen, and a server-rendered page one step
+ * off every method that renders it. A HAR edge is RUNTIME_ONLY and below every
+ * mode's floor, so a row is here because the CODE says so, never because a
  * recording did.
+ *
+ * A route row's `viaHttp` says it is affected only across an internal HTTP hop,
+ * through another deployable. A screen's own call onto a route is not such a
+ * hop, so a screen says it past the first; a page rendered by a reached method
+ * made no call of its own, so it says it past none.
+ *
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {string} targetNodeId  a column, table, statement, symbol or endpoint
+ * @param {{mode?:string}} [opts]
+ * @returns {{endpoints:{endpoint:string, httpMethod:(string|null), path:(string|null), pathGrade:string,
+ *              viaHttp?:boolean, httpHops?:number}[],
+ *            screens:{screen:string, path:string|null, label:string|null, pathGrade:string,
+ *              viaHttp?:boolean, httpHops?:number}[], cut:object}}
+ */
+export function affectedBy(graph, targetNodeId, opts = {}) {
+  const w = walkUp(graph, targetNodeId, { mode: opts.mode ?? 'conservative' });
+  const endpoints = w.endpoints.map((e) => {
+    const n = graph.nodes.get(e.id) ?? {};
+    return {
+      endpoint: e.id, httpMethod: n.httpMethod, path: n.path, pathGrade: e.grade,
+      ...(e.http > 0 ? { viaHttp: true, httpHops: e.http } : {}),
+    };
+  });
+  const screens = w.screens.map((s) => {
+    const n = graph.nodes.get(s.id) ?? {};
+    return {
+      screen: s.id, path: n.path ?? null, label: n.label ?? null, pathGrade: s.grade,
+      ...(s.http > (s.page ? 0 : 1) ? { viaHttp: true, httpHops: s.http } : {}),
+    };
+  });
+  return { endpoints, screens, cut: w.cut };
+}
+
+/**
+ * The SCREENS a change to this node would be felt on: `affectedBy`'s screens.
  *
  * @param {import('./graph.mjs').Graph} graph
  * @param {string} targetNodeId  a column, table, statement, symbol or endpoint
@@ -493,42 +566,17 @@ export function walkScreens(graph, opts = {}) {
  *            viaHttp?:boolean, httpHops?:number}[]}
  */
 export function screensAffecting(graph, targetNodeId, opts = {}) {
-  const reached = graph.impactOf(targetNodeId, { mode: opts.mode ?? 'conservative', edgeTypes: FLOW_EDGE_TYPES });
-  const found = new Map(); // screen id -> {pathGrade, http}
-  const consider = (id, info) => {
-    const prev = found.get(id);
-    if (prev === undefined || RANK[info.pathGrade] > RANK[prev.pathGrade]) found.set(id, info);
-  };
-  for (const [id, info] of reached) {
-    const n = graph.nodes.get(id);
-    if (!n) continue;
-    if (n.kind === 'screen') { consider(id, info); continue; }
-    // A SERVER-RENDERED PAGE HANGS OFF ITS HANDLER (RM48), the one direction a
-    // backward walk cannot take on its own: `symbol --RENDERS_PAGE--> screen`
-    // points AWAY from the column, so the walk arrives at the handler and stops.
-    // One forward step off every handler it reached is what turns "this method
-    // reads the column" into "this page shows it". The page's own form and
-    // links are already on the backward path and come out above.
-    if (n.kind !== 'symbol') continue;
-    for (const e of graph.outEdges(id)) {
-      if (e.type !== 'RENDERS_PAGE') continue;
-      const page = graph.nodes.get(e.to);
-      if (!page || page.kind !== 'screen') continue;
-      consider(e.to, { pathGrade: weakest(info.pathGrade, e.grade), http: info.http ?? 0 });
-    }
-  }
-  const out = [];
-  for (const [id, info] of found) {
-    const n = graph.nodes.get(id);
-    out.push({
-      screen: id,
-      path: n.path ?? null,
-      label: n.label ?? null,
-      pathGrade: info.pathGrade,
-      ...((info.http ?? 0) > 1 ? { viaHttp: true, httpHops: info.http } : {}),
-    });
-  }
-  return out.sort((a, b) => cmp(a.screen, b.screen));
+  return affectedBy(graph, targetNodeId, opts).screens;
+}
+
+/**
+ * The ROUTES a change to this node would be felt on: `affectedBy`'s endpoints.
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {string} targetNodeId
+ * @param {{mode?:string}} [opts]
+ */
+export function endpointsAffecting(graph, targetNodeId, opts = {}) {
+  return affectedBy(graph, targetNodeId, opts).endpoints;
 }
 
 

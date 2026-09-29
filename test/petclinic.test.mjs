@@ -27,6 +27,7 @@ import { callTool } from '../src/mcp/catalog.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
+import { walkAgreement } from '../src/core/walk_agreement.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
@@ -291,6 +292,16 @@ test('spring-petclinic: the JPA lane, end to end', { timeout: 900000 }, (t) => {
   assert.match(pack.meta.axes.jpa.reason, /jpa\.namingStrategy/);
   assert.equal(pack.meta.laneStats.parseErrors, 0, 'the fixture parses cleanly');
   assert.ok(pack.meta.laneStats.parsedFiles > 20, `parsedFiles=${pack.meta.laneStats.parsedFiles}`);
+
+  // -----------------------------------------------------------------------
+  // 8. ONE QUESTION, ONE ANSWER (RM67-J4): for every column and table, the
+  //    impact tools, Trace up and the census name the same routes and screens
+  //    at the same grades, in every mode.
+  // -----------------------------------------------------------------------
+  for (const mode of ['strict', 'conservative', 'heuristic']) {
+    const agree = walkAgreement(graph, { mode });
+    assert.equal(agree.disagreements, 0, `${mode}: ${JSON.stringify(agree.examples)}`);
+  }
 });
 
 test('spring-petclinic: the naming strategy its configuration declares turns the derived mappings EXACT', { timeout: 900000 }, (t) => {

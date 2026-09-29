@@ -45,6 +45,21 @@ import { nodeId } from '../../core/graph.mjs';
  *            lineOfMember:Map<string,number>, aritiesOfMember:Map<string,Set<number>>,
  *            callsFrom:Map<string,object[]>}}
  */
+/**
+ * One endpoint record as the route step reads it. What the mapping wrote and
+ * the file could not read rides along only where there was some (javafacts/22):
+ * a path in parts, the method names that are no HTTP method, the request
+ * conditions that narrow it.
+ */
+function endpointFact(r) {
+  return {
+    httpMethod: r.httpMethod, path: r.path, handler: r.handler, handlerType: r.handlerType ?? ownerOf(r.handler ?? ''), line: r.line ?? null, file: r.file ?? null,
+    ...(Array.isArray(r.pathParts) ? { pathParts: r.pathParts, pathWritten: r.pathWritten ?? null } : {}),
+    ...(Array.isArray(r.methodUnread) ? { methodUnread: r.methodUnread } : {}),
+    ...(Array.isArray(r.conditions) ? { conditions: r.conditions } : {}),
+  };
+}
+
 export function indexJavaFacts(javaFacts) {
   const methods = [];                      // {fqn, owner, line}
   const calls = [];                        // {from, method, toTypeSimple}
@@ -91,7 +106,7 @@ export function indexJavaFacts(javaFacts) {
         line: Number.isInteger(r.line) ? r.line : null,
         file: typeof r.file === 'string' ? r.file : null,
       }); break;
-      case 'endpoint': endpoints.push({ httpMethod: r.httpMethod, path: r.path, handler: r.handler, handlerType: r.handlerType ?? ownerOf(r.handler ?? ''), line: r.line ?? null, file: r.file ?? null }); break;
+      case 'endpoint': endpoints.push(endpointFact(r)); break;
       case 'transactional': transactionals.push({ method: r.method, scope: r.scope ?? null, line: r.line ?? null }); break;
       case 'httpCall': httpCallFacts.push(r); break;
       case 'field': {
@@ -386,6 +401,8 @@ function indexedType(r) {
     implementsArgs: list(r.implementsArgs),
     annotations: list(r.annotations),
     extendsSimple: r.extends ?? null,
+    // …as written, which names a superclass this run did not read (javafacts/22 reads it).
+    extendsWritten: r.extendsWritten ?? null,
     extendsArgs: list(r.extendsArgs),
     typeParams: list(r.typeParams),
     typeParamBounds: list(r.typeParamBounds),
@@ -394,6 +411,10 @@ function indexedType(r) {
     declaredMethodLines: list(r.declaredMethodLines),
     // An interface's methods that have a body (javafacts/20), as "name/arity".
     defaultMethods: list(r.defaultMethods),
+    // The string constants it declares with a value its file states, and an
+    // interface's abstract methods (javafacts/22); null where not recorded.
+    constants: r.constants && typeof r.constants === 'object' ? r.constants : null,
+    abstractMethods: Array.isArray(r.abstractMethods) ? r.abstractMethods : null,
     modelAttributeMethods: list(r.modelAttributeMethods),
     // The name Spring knows this class by, when its stereotype annotation gave
     // it one (javafacts/11). Null is not "no name": Spring then decapitalises
@@ -517,7 +538,8 @@ export function buildTypeIndex(javaFacts) {
 
   for (const r of javaFacts ?? []) {
     if (!r || typeof r !== 'object') continue;
-    if (r.kind === 'anonymous') anonymousTypes.set(r.id, r);
+    // …and the classes a method body declares (javafacts/22), read the same way.
+    if (r.kind === 'anonymous' || r.kind === 'local') anonymousTypes.set(r.id, r);
     else if (r.kind === 'type') {
       types.set(r.fqn, indexedType(r));
       // TWO FILES CAN DECLARE THE SAME FQN. Not a mistake and not rare: jeecg-boot

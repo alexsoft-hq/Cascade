@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/21";
+    static final String VERSION = "javafacts/22";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -490,9 +490,16 @@ public class JavaFacts {
          */
         void emitAnonymous(final String fqn, ClassTree ct) {
             final int[] n = { 0 };
+            final Map<String, Integer> locals = new HashMap<>();
             for (Tree member : ct.getMembers()) {
                 if (member instanceof ClassTree) continue;
                 member.accept(new TreeScanner<Void, Void>() {
+                    // A class a method body declares (javafacts/22) is a class of its
+                    // own, written in this file; an anonymous class body is not one.
+                    @Override public Void visitClass(ClassTree local, Void p) {
+                        if (!local.getSimpleName().toString().isEmpty()) emitLocal(fqn, local, locals);
+                        return super.visitClass(local, p);
+                    }
                     @Override public Void visitNewClass(NewClassTree nc, Void p) {
                         ClassTree body = nc.getClassBody();
                         if (body != null) {
@@ -514,6 +521,143 @@ public class JavaFacts {
                     }
                 }, null);
             }
+        }
+
+        /**
+         * One route a mapping annotation declares. A path, a method list or a
+         * request condition this file does not state rides on the record as
+         * written (javafacts/22), and is absent where the file states them all,
+         * so such a record is byte for byte what it always was.
+         */
+        void emitEndpoint(String handler, String fqn, Mapping mp, PathRead path, String pathKey, MethodTree m) {
+            Map<String, Object> ep = new LinkedHashMap<>();
+            ep.put("kind", "endpoint");
+            ep.put("httpMethod", mp.httpMethod);
+            ep.put("path", path.known() ? path.text : null);
+            ep.put("handler", handler);
+            ep.put("handlerType", fqn);
+            ep.put("line", lineOf(m));
+            ep.put("file", rel);
+            if (!path.known()) {
+                ep.put("pathParts", path.parts);
+                ep.put("pathWritten", path.written);
+            }
+            if (mp.methodUnread != null) ep.put("methodUnread", mp.methodUnread);
+            if (mp.conditions != null && !mp.conditions.isEmpty()) ep.put("conditions", mp.conditions);
+            sink.endpoints++;
+            sink.add("4endpoint" + SEP + handler + SEP + mp.httpMethod + SEP + pathKey, ep);
+        }
+
+        /** Packages whose annotations are never a mapping this tree composes: the JDK's and the frameworks' own. */
+        final String[] FOREIGN_ANNOTATION_PACKAGES = { "java.", "javax.", "jakarta.", "org.springframework.", "io.swagger.", "lombok." };
+        /** The annotations java.lang declares, which a file uses with no import. */
+        final java.util.Set<String> LANG_ANNOTATIONS = new java.util.HashSet<>(java.util.Arrays.asList(
+                "Override", "Deprecated", "SuppressWarnings", "SafeVarargs", "FunctionalInterface"));
+
+        /**
+         * Whether an annotation this worker does not know may be a mapping
+         * annotation the tree composes (javafacts/22): anything but the JDK's and
+         * the frameworks' own, which this file names by its imports.
+         */
+        boolean mayComposeMapping(String simple, String written) {
+            if (LANG_ANNOTATIONS.contains(written)) return false;
+            String q = written.contains(".") ? written : imports.get(simple);
+            if (q == null) return true;
+            for (String p : FOREIGN_ANNOTATION_PACKAGES) if (q.startsWith(p)) return false;
+            return true;
+        }
+
+        /**
+         * A METHOD OF A CONTROLLER WITH NO MAPPING THIS WORKER KNOWS, and an
+         * annotation it does not know (javafacts/22): `@AnonymousPostMapping("/login")`
+         * is a route when the tree declares that annotation with a meta
+         * @RequestMapping, which is another file's fact. What this file states
+         * is recorded (the annotation, its value and path, the class's paths and
+         * methods) and the bridge reads it against the annotation's own record.
+         */
+        void emitMappingCandidates(String fqn, String mname, MethodTree m, List<PathRead> bases, Verbs classVerbs,
+                                   Map<String, String> own, String ownSimple) {
+            for (AnnotationTree a : m.getModifiers().getAnnotations()) {
+                String simple = typeSimpleName(a.getAnnotationType());
+                String written = writtenName(a.getAnnotationType());
+                if (simple == null || written == null || !mayComposeMapping(simple, written)) continue;
+                Map<String, Object> rec = new LinkedHashMap<>();
+                rec.put("kind", "mappingCandidate");
+                rec.put("handler", fqn + "#" + mname);
+                rec.put("owner", fqn);
+                rec.put("annotation", written);
+                rec.put("value", readsJson(annAttr(a, "value"), own, ownSimple));
+                rec.put("path", readsJson(namedAttr(a, "path"), own, ownSimple));
+                List<Object> b = new ArrayList<>();
+                for (PathRead p : bases) b.add(readJson(p));
+                rec.put("bases", b);
+                rec.put("classMethods", classVerbs == null ? null : verbsJson(classVerbs));
+                rec.put("line", lineOf(m));
+                rec.put("file", rel);
+                sink.add("4mapcand" + SEP + fqn + "#" + mname + SEP + written, rec);
+            }
+        }
+
+        /**
+         * AN ANNOTATION TYPE THAT IS A MAPPING (javafacts/22): an @interface
+         * meta-annotated with @RequestMapping or one of its shortcuts. Its methods
+         * and path are the meta annotation's; an attribute it declares with
+         * @AliasFor to that annotation's `value` or `path` is where a use of it
+         * writes the path. EVIDENCE ONLY: which method uses it is another file's.
+         */
+        void emitComposedMapping(String fqn, ClassTree ct, List<AnnotationTree> anns) {
+            for (AnnotationTree a : anns) {
+                String meta = typeSimpleName(a.getAnnotationType());
+                Verbs v = verbsOfMapping(meta, a);
+                if (v == null) continue;
+                Map<String, Object> rec = new LinkedHashMap<>();
+                rec.put("kind", "composedMapping");
+                rec.put("fqn", fqn);
+                rec.put("meta", meta);
+                rec.put("methods", verbsJson(v));
+                rec.put("paths", readsJson(annAttr(a, "value") != null ? annAttr(a, "value") : annAttr(a, "path"), null, null));
+                rec.put("aliases", aliasesOf(ct, meta));
+                rec.put("line", lineOf(ct));
+                rec.put("file", rel);
+                sink.add("2composed" + SEP + fqn, rec);
+                return;
+            }
+        }
+
+        /**
+         * One `local` record per class a method body of this type declares
+         * (javafacts/22): the types it extends and implements, as written, and the
+         * methods it declares. `Svc make(){ class Local implements Svc {...} }` is
+         * an implementor of Svc like any other, so a handler through a Svc may run
+         * its methods. The id is this type's name, `$`, the order among the local
+         * classes of that name, and the name, as javac numbers them.
+         */
+        void emitLocal(String fqn, ClassTree local, Map<String, Integer> locals) {
+            String nm = local.getSimpleName().toString();
+            int k = locals.merge(nm, 1, Integer::sum);
+            String id = fqn + "$" + k + nm;
+            List<String> sup = new ArrayList<>();
+            List<String> supWritten = new ArrayList<>();
+            if (local.getExtendsClause() != null) {
+                sup.add(typeSimpleName(local.getExtendsClause()));
+                supWritten.add(writtenName(local.getExtendsClause()));
+            }
+            for (Tree t : local.getImplementsClause()) {
+                sup.add(typeSimpleName(t));
+                supWritten.add(writtenName(t));
+            }
+            Map<String, Object> rec = new LinkedHashMap<>();
+            rec.put("kind", "local");
+            rec.put("id", id);
+            rec.put("owner", fqn);
+            rec.put("name", nm);
+            rec.put("supertypes", sup);
+            rec.put("supertypesWritten", supWritten);
+            rec.put("declaredMethods", declaredMethodsOf(local));
+            rec.put("declaredMethodLines", declaredMethodLinesOf(local));
+            rec.put("line", lineOf(local));
+            rec.put("file", rel);
+            sink.add("2local" + SEP + id, rec);
         }
 
         void processType(ClassTree ct, String enclosingFqn) {
@@ -606,10 +750,19 @@ public class JavaFacts {
             // src/adapters/java/calls.mjs, which can see whether any OTHER class
             // in the tree claims the same name.
             typeRec.put("beanName", beanNameOf(annotationsOf(ct.getModifiers().getAnnotations())));
+            // The `static final String` constants this type declares with a value
+            // its own file states (javafacts/22): a mapping path in another file may
+            // name one, and the bridge reads it here. Absent when it declares none.
+            Map<String, String> ownConstants = stringConstantsOf(ct);
+            if (!ownConstants.isEmpty()) typeRec.put("constants", ownConstants);
+            // An interface's abstract methods (javafacts/22): with exactly one, a
+            // lambda or a method reference anywhere may be an object of it.
+            if (ct.getKind() == Tree.Kind.INTERFACE) typeRec.put("abstractMethods", abstractMethodsOf(ct));
             typeRec.put("file", rel);
             sink.types++;
             sink.add("2type" + SEP + fqn, typeRec);
             emitAnonymous(fqn, ct);
+            if (ct.getKind() == Tree.Kind.ANNOTATION_TYPE) emitComposedMapping(fqn, ct, annotationsOf(ct.getModifiers().getAnnotations()));
 
             // Imports belong to the file; attribute them to each top-level type
             // so the bridge can resolve simple->FQN by the call's owning type.
@@ -708,11 +861,15 @@ public class JavaFacts {
             // and Spring joins it in FRONT of any class-level @RequestMapping. Path
             // assembly lives in ONE place — here — so the bridge never has to
             // re-join two halves of a route.
-            // …once for each path a class-level array names (javafacts/20).
-            List<String> basePaths = new ArrayList<>();
-            for (String classPath : classLevelBasePaths(annotationsOf(ct.getModifiers().getAnnotations()))) {
-                basePaths.add(joinPathParts(clientPathOf(annotationsOf(ct.getModifiers().getAnnotations())), classPath));
+            // …once for each path a class-level array names (javafacts/20), read
+            // against the class's own constants (javafacts/22): a path written as
+            // a constant of another type keeps its parts for the bridge to read.
+            List<AnnotationTree> ctAnns = annotationsOf(ct.getModifiers().getAnnotations());
+            List<PathRead> basePaths = new ArrayList<>();
+            for (PathRead classPath : classLevelBasePaths(ctAnns, ownConstants, name)) {
+                basePaths.add(withClientPath(clientPathOf(ctAnns), classPath));
             }
+            Verbs classVerbs = classLevelVerbs(ctAnns);
             // @Transactional at class level applies to every method (a transaction
             // boundary); method-level overrides/adds. Recorded so the graph can
             // show a transaction's read/write footprint.
@@ -771,6 +928,10 @@ public class JavaFacts {
             boolean rendersViews = ctAnnNames.contains("Controller")
                     && !ctAnnNames.contains("RestController")
                     && !ctAnnNames.contains("ResponseBody");
+            // A CLASS THAT SERVES ROUTES, whose methods may carry a mapping annotation
+            // the tree composes (javafacts/22): only there is an annotation this
+            // worker does not know recorded for the bridge to read.
+            boolean routeHolder = !isInterface && (ctAnnNames.contains("Controller") || ctAnnNames.contains("RestController"));
 
             // --- pass 2: methods (endpoints, method records, calls) ------------
             for (Tree member : ct.getMembers()) {
@@ -799,29 +960,23 @@ public class JavaFacts {
                         sink.add("6tx" + SEP + txm, tr);
                     }
 
-                    List<Mapping> mappings = methodMappings(m);
+                    List<Mapping> mappings = methodMappings(m, ownConstants, name, classVerbs);
                     if (mappings != null) {
                         isHandler = true;
                         String handler = fqn + "#" + mname;
                         // A route for each class path, method and path the
                         // annotations name; two spellings of one route are one.
                         java.util.Set<String> seenRoutes = new java.util.HashSet<>();
-                        for (String basePath : basePaths) {
+                        for (PathRead basePath : basePaths) {
                             for (Mapping mp : mappings) {
-                                String path = joinPath(basePath, mp.path);
-                                if (!seenRoutes.add(mp.httpMethod + " " + path)) continue;
-                                Map<String, Object> ep = new LinkedHashMap<>();
-                                ep.put("kind", "endpoint");
-                                ep.put("httpMethod", mp.httpMethod);
-                                ep.put("path", path);
-                                ep.put("handler", handler);
-                                ep.put("handlerType", fqn);
-                                ep.put("line", lineOf(m));
-                                ep.put("file", rel);
-                                sink.endpoints++;
-                                sink.add("4endpoint" + SEP + handler + SEP + mp.httpMethod + SEP + path, ep);
+                                PathRead path = joinReads(basePath, mp.path);
+                                String pathKey = path.known() ? path.text : "?" + path.written;
+                                if (!seenRoutes.add(mp.httpMethod + " " + pathKey + " " + path.parts)) continue;
+                                emitEndpoint(handler, fqn, mp, path, pathKey, m);
                             }
                         }
+                    } else if (routeHolder) {
+                        emitMappingCandidates(fqn, mname, m, basePaths, classVerbs, ownConstants, name);
                     }
 
                     // method records: interface methods (mapper bindings) + handlers.
@@ -2571,38 +2726,338 @@ public class JavaFacts {
     // ---- mapping detection ----------------------------------------------------
     static final class Mapping {
         final String httpMethod;
-        final String path;
-        Mapping(String httpMethod, String path) { this.httpMethod = httpMethod; this.path = path; }
+        final PathRead path;
+        // The names a `method` attribute wrote that are no HTTP method (javafacts/22):
+        // this mapping answers some method this worker did not read, on the ANY route.
+        final List<String> methodUnread;
+        // The request conditions (javafacts/22) that narrow the mapping to some requests.
+        final List<String> conditions;
+        Mapping(String httpMethod, PathRead path, List<String> methodUnread, List<String> conditions) {
+            this.httpMethod = httpMethod; this.path = path; this.methodUnread = methodUnread; this.conditions = conditions;
+        }
+    }
+
+    /** The HTTP methods Spring's RequestMethod names; a `method` element that is none of them is not read as one. */
+    static final java.util.Set<String> REQUEST_METHODS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"));
+    /** The attributes that narrow a mapping to the requests that carry them: one route, split by them. */
+    static final String[] REQUEST_CONDITIONS = { "params", "headers", "consumes", "produces" };
+
+    /**
+     * The methods a mapping annotation names (javafacts/22). `read` is what the
+     * source states; `unread` is each element that is no HTTP method, as written
+     * (`VERBS`, a constant this file cannot read). Both empty is a mapping that
+     * names no method, which Spring serves for every one.
+     */
+    static final class Verbs {
+        final java.util.LinkedHashSet<String> read = new java.util.LinkedHashSet<>();
+        final List<String> unread = new ArrayList<>();
+        /** Spring's rule (RequestMethodsRequestCondition.combine): the class's methods and the method's, as one union. */
+        Verbs with(Verbs classLevel) {
+            if (classLevel == null) return this;
+            Verbs out = new Verbs();
+            out.read.addAll(classLevel.read);
+            out.read.addAll(read);
+            out.unread.addAll(classLevel.unread);
+            for (String u : unread) if (!out.unread.contains(u)) out.unread.add(u);
+            return out;
+        }
+    }
+
+    /** The methods a mapping annotation of this simple name states; null when it is no mapping annotation. */
+    static Verbs verbsOfMapping(String simple, AnnotationTree a) {
+        Verbs v = new Verbs();
+        switch (simple == null ? "" : simple) {
+            case "GetMapping":    v.read.add("GET"); return v;
+            case "PostMapping":   v.read.add("POST"); return v;
+            case "PutMapping":    v.read.add("PUT"); return v;
+            case "DeleteMapping": v.read.add("DELETE"); return v;
+            case "PatchMapping":  v.read.add("PATCH"); return v;
+            case "RequestMapping": return requestVerbs(a);
+            default: return null;
+        }
+    }
+
+    /**
+     * The methods a @RequestMapping's `method` attribute names, one or an array,
+     * in the order written. `RequestMethod.POST` and a static-imported `POST` are
+     * POST; any other name is no HTTP method and is kept as written (J-10).
+     */
+    static Verbs requestVerbs(AnnotationTree a) {
+        Verbs v = new Verbs();
+        ExpressionTree e = unwrap(annAttr(a, "method"));
+        List<ExpressionTree> elems = new ArrayList<>();
+        if (e instanceof NewArrayTree) {
+            if (((NewArrayTree) e).getInitializers() != null) elems.addAll(((NewArrayTree) e).getInitializers());
+        } else if (e != null) {
+            elems.add(e);
+        }
+        for (ExpressionTree it : elems) {
+            String name = firstMemberName(unwrap(it));
+            if (name != null && REQUEST_METHODS.contains(name)) v.read.add(name);
+            else if (!v.unread.contains(String.valueOf(it))) v.unread.add(String.valueOf(it));
+        }
+        return v;
+    }
+
+    /** The request conditions a mapping annotation writes and does not leave empty, in a fixed order. */
+    static List<String> conditionsOf(AnnotationTree a) {
+        List<String> out = new ArrayList<>();
+        for (String c : REQUEST_CONDITIONS) {
+            ExpressionTree e = unwrap(annAttr(a, c));
+            if (e == null) continue;
+            if (e instanceof NewArrayTree && (((NewArrayTree) e).getInitializers() == null || ((NewArrayTree) e).getInitializers().isEmpty())) continue;
+            if (e instanceof LiteralTree && "".equals(((LiteralTree) e).getValue())) continue;
+            out.add(c);
+        }
+        return out;
     }
 
     /**
      * Every route a method's mapping annotation declares (javafacts/20): one per
      * method it names and per path it names. `method = {PUT, POST}` serves the
      * handler for both, and `value = {"/a", "/b"}` at both, so reading only the
-     * first of either list dropped routes Spring serves. Null when the method
-     * carries no mapping annotation.
+     * first of either list dropped routes Spring serves. The class-level
+     * mapping's methods join the method's own (javafacts/22), and a path is read
+     * against the class's own constants. Null when the method carries no
+     * mapping annotation.
      */
-    static List<Mapping> methodMappings(MethodTree m) {
+    static List<Mapping> methodMappings(MethodTree m, Map<String, String> own, String ownSimple, Verbs classVerbs) {
         for (AnnotationTree a : m.getModifiers().getAnnotations()) {
-            String simple = typeSimpleName(a.getAnnotationType());
-            if (simple == null) continue;
-            List<String> verbs = new ArrayList<>();
-            switch (simple) {
-                case "GetMapping":    verbs.add("GET"); break;
-                case "PostMapping":   verbs.add("POST"); break;
-                case "PutMapping":    verbs.add("PUT"); break;
-                case "DeleteMapping": verbs.add("DELETE"); break;
-                case "PatchMapping":  verbs.add("PATCH"); break;
-                case "RequestMapping": verbs.addAll(requestMethodsOf(a)); break;
-                default: continue; // not a mapping annotation
-            }
-            List<Mapping> out = new ArrayList<>();
-            for (String verb : verbs) {
-                for (String p : annPaths(a)) out.add(new Mapping(verb, p));
-            }
-            return out;
+            Verbs verbs = verbsOfMapping(typeSimpleName(a.getAnnotationType()), a);
+            if (verbs == null) continue; // not a mapping annotation
+            return mappingsOf(verbs.with(classVerbs), annPathReads(a, own, ownSimple), conditionsOf(a));
         }
         return null;
+    }
+
+    /**
+     * The routes one mapping serves: each method it states at each path, and,
+     * when it names a method this worker could not read, the ANY route with the
+     * names it could not read on it. No method at all is ANY, as Spring serves it.
+     */
+    static List<Mapping> mappingsOf(Verbs verbs, List<PathRead> paths, List<String> conditions) {
+        List<Mapping> out = new ArrayList<>();
+        List<String> read = new ArrayList<>(verbs.read);
+        if (read.isEmpty() && verbs.unread.isEmpty()) read.add("ANY");
+        for (String verb : read) for (PathRead p : paths) out.add(new Mapping(verb, p, null, conditions));
+        if (!verbs.unread.isEmpty()) for (PathRead p : paths) out.add(new Mapping("ANY", p, verbs.unread, conditions));
+        return out;
+    }
+
+    /**
+     * ONE PATH A MAPPING NAMES (javafacts/22). `text` is the path when this file
+     * states it: a literal, a `static final String` of the class itself, or a
+     * concatenation of those. Otherwise `parts` is what the path is written in,
+     * for the bridge to read against the rest of the tree (a constant of
+     * another type is another file's fact): `{lit}` a string this file states,
+     * `{ref}` a constant of another type or a name this file does not declare,
+     * `{unread}` anything else, each as written. Both null: no path at all.
+     */
+    static final class PathRead {
+        final String text;
+        final List<Object> parts;
+        final String written;
+        PathRead(String text, List<Object> parts, String written) { this.text = text; this.parts = parts; this.written = written; }
+        boolean known() { return parts == null; }
+        /** The parts this path contributes to a longer one. */
+        List<Object> asParts() {
+            if (parts != null) return parts;
+            List<Object> out = new ArrayList<>();
+            if (text != null) out.add(pathPart("lit", text));
+            return out;
+        }
+    }
+
+    static Map<String, Object> pathPart(String kind, String value) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put(kind, value);
+        return p;
+    }
+
+    /** The paths an annotation's value/path attribute names, positional or named, one or an array, each once. */
+    static List<PathRead> annPathReads(AnnotationTree a, Map<String, String> own, String ownSimple) {
+        ExpressionTree e = annAttr(a, "value");
+        if (e == null) e = annAttr(a, "path");
+        e = unwrap(e);
+        List<ExpressionTree> elems = new ArrayList<>();
+        if (e instanceof NewArrayTree) {
+            if (((NewArrayTree) e).getInitializers() != null) elems.addAll(((NewArrayTree) e).getInitializers());
+        } else if (e != null) {
+            elems.add(e);
+        }
+        List<PathRead> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (ExpressionTree it : elems) {
+            PathRead r = readPath(it, own, ownSimple);
+            if (seen.add(r.known() ? "t" + r.text : "p" + r.parts)) out.add(r);
+        }
+        if (out.isEmpty()) out.add(new PathRead(null, null, null));
+        return out;
+    }
+
+    /** One path expression, read as far as this file allows. */
+    static PathRead readPath(ExpressionTree e, Map<String, String> own, String ownSimple) {
+        List<Object> parts = new ArrayList<>();
+        addPathParts(e, own, ownSimple, parts, 0);
+        StringBuilder text = new StringBuilder();
+        for (Object p : parts) {
+            @SuppressWarnings("unchecked") Map<String, Object> m = (Map<String, Object>) p;
+            if (!m.containsKey("lit")) return new PathRead(null, mergeLits(parts), String.valueOf(unwrap(e)));
+            text.append(m.get("lit"));
+        }
+        return new PathRead(text.toString(), null, null);
+    }
+
+    /** The parts a string expression is written in, a literal or an own constant already read. */
+    static void addPathParts(ExpressionTree raw, Map<String, String> own, String ownSimple, List<Object> out, int depth) {
+        ExpressionTree e = unwrap(raw);
+        if (e instanceof LiteralTree && ((LiteralTree) e).getValue() instanceof String) {
+            out.add(pathPart("lit", (String) ((LiteralTree) e).getValue()));
+        } else if (depth < 16 && e instanceof BinaryTree && e.getKind() == Tree.Kind.PLUS) {
+            addPathParts(((BinaryTree) e).getLeftOperand(), own, ownSimple, out, depth + 1);
+            addPathParts(((BinaryTree) e).getRightOperand(), own, ownSimple, out, depth + 1);
+        } else if (e instanceof IdentifierTree) {
+            String n = ((IdentifierTree) e).getName().toString();
+            out.add(own != null && own.containsKey(n) ? pathPart("lit", own.get(n)) : pathPart("ref", n));
+        } else if (e instanceof MemberSelectTree) {
+            MemberSelectTree ms = (MemberSelectTree) e;
+            String n = ms.getIdentifier().toString();
+            boolean mine = ownSimple != null && own != null && ownSimple.equals(String.valueOf(ms.getExpression())) && own.containsKey(n);
+            out.add(mine ? pathPart("lit", own.get(n)) : pathPart("ref", String.valueOf(e)));
+        } else {
+            out.add(pathPart("unread", String.valueOf(e)));
+        }
+    }
+
+    /** Adjacent literals as one, so the parts say only what is not known. */
+    static List<Object> mergeLits(List<Object> parts) {
+        List<Object> out = new ArrayList<>();
+        for (Object p : parts) {
+            @SuppressWarnings("unchecked") Map<String, Object> m = (Map<String, Object>) p;
+            Object last = out.isEmpty() ? null : out.get(out.size() - 1);
+            @SuppressWarnings("unchecked") Map<String, Object> lm = (Map<String, Object>) last;
+            if (lm != null && lm.containsKey("lit") && m.containsKey("lit")) {
+                out.set(out.size() - 1, pathPart("lit", String.valueOf(lm.get("lit")) + m.get("lit")));
+            } else {
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
+    /** A class path and a method path, joined: text when both are known, else the parts of both. */
+    static PathRead joinReads(PathRead base, PathRead own) {
+        if (base.known() && own.known()) return new PathRead(joinPath(base.text, own.text), null, null);
+        List<Object> parts = new ArrayList<>(base.asParts());
+        parts.add(pathPart("lit", "/"));
+        parts.addAll(own.asParts());
+        String written = base.written == null ? own.written : (own.written == null ? base.written : base.written + " and " + own.written);
+        return new PathRead(null, mergeLits(parts), written);
+    }
+
+
+    /** One path as a record states it: its text, null for none, or its parts and what was written. */
+    static Object readJson(PathRead p) {
+        if (p.known()) return p.text;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("parts", p.parts);
+        out.put("written", p.written);
+        return out;
+    }
+
+    /** Each path an attribute value names, as `readJson` states it; null when the attribute is not written. */
+    static List<Object> readsJson(ExpressionTree e, Map<String, String> own, String ownSimple) {
+        if (e == null) return null;
+        ExpressionTree u = unwrap(e);
+        List<ExpressionTree> elems = new ArrayList<>();
+        if (u instanceof NewArrayTree) {
+            if (((NewArrayTree) u).getInitializers() != null) elems.addAll(((NewArrayTree) u).getInitializers());
+        } else {
+            elems.add(u);
+        }
+        List<Object> out = new ArrayList<>();
+        for (ExpressionTree it : elems) out.add(readJson(readPath(it, own, ownSimple)));
+        return out;
+    }
+
+    /** The methods a mapping names, as a record states them. */
+    static Map<String, Object> verbsJson(Verbs v) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("read", new ArrayList<>(v.read));
+        out.put("unread", v.unread);
+        return out;
+    }
+
+    /**
+     * The attributes of an annotation type that are @AliasFor the meta mapping
+     * annotation's own (javafacts/22), by name: `String[] value()` with
+     * `@AliasFor(annotation = RequestMapping.class)` is RequestMapping's value,
+     * and `attribute = "path"` names another. An alias inside the type itself
+     * (no `annotation`) is not the meta annotation's.
+     */
+    static Map<String, Object> aliasesOf(ClassTree ct, String meta) {
+        Map<String, Object> out = new java.util.TreeMap<>();
+        for (Tree member : ct.getMembers()) {
+            if (!(member instanceof MethodTree)) continue;
+            MethodTree m = (MethodTree) member;
+            AnnotationTree alias = annNamed(annotationsOf(m.getModifiers().getAnnotations()), "AliasFor");
+            if (alias == null) continue;
+            ExpressionTree target = unwrap(namedAttr(alias, "annotation"));
+            if (target == null) continue;
+            String t = String.valueOf(target);
+            if (t.endsWith(".class")) t = t.substring(0, t.length() - ".class".length());
+            if (!t.equals(meta) && !t.endsWith("." + meta)) continue;
+            String attr = firstString(namedAttr(alias, "attribute"));
+            if (attr == null) attr = firstString(annAttr(alias, "value"));
+            out.put(m.getName().toString(), attr != null ? attr : m.getName().toString());
+        }
+        return out;
+    }
+
+    /** A NAMED attribute of an annotation, never the positional one. */
+    static ExpressionTree namedAttr(AnnotationTree a, String name) {
+        for (ExpressionTree arg : a.getArguments()) {
+            if (!(arg instanceof AssignmentTree)) continue;
+            AssignmentTree as = (AssignmentTree) arg;
+            if (as.getVariable() instanceof IdentifierTree && ((IdentifierTree) as.getVariable()).getName().toString().equals(name)) return as.getExpression();
+        }
+        return null;
+    }
+
+    /**
+     * The `static final String` constants a type declares with a value this file
+     * states (javafacts/22): a literal, or a concatenation of literals and
+     * constants of the type itself. An interface's fields are such constants
+     * with no modifier written. A mapping path elsewhere may name one.
+     */
+    static Map<String, String> stringConstantsOf(ClassTree ct) {
+        boolean iface = ct.getKind() == Tree.Kind.INTERFACE || ct.getKind() == Tree.Kind.ANNOTATION_TYPE;
+        Map<String, ExpressionTree> pending = new LinkedHashMap<>();
+        for (Tree member : ct.getMembers()) {
+            if (!(member instanceof VariableTree)) continue;
+            VariableTree v = (VariableTree) member;
+            java.util.Set<Modifier> flags = v.getModifiers().getFlags();
+            if (!iface && (!flags.contains(Modifier.STATIC) || !flags.contains(Modifier.FINAL))) continue;
+            if (!"String".equals(typeSimpleName(v.getType())) || v.getInitializer() == null) continue;
+            pending.put(v.getName().toString(), v.getInitializer());
+        }
+        Map<String, String> out = new java.util.TreeMap<>();
+        // A constant may be built from another the type declares later: read
+        // until a pass reads nothing new.
+        for (int pass = 0; pass < 8 && !pending.isEmpty(); pass++) {
+            boolean grew = false;
+            for (java.util.Iterator<Map.Entry<String, ExpressionTree>> it = pending.entrySet().iterator(); it.hasNext();) {
+                Map.Entry<String, ExpressionTree> c = it.next();
+                PathRead r = readPath(c.getValue(), out, ct.getSimpleName().toString());
+                if (!r.known() || r.text.length() > ROUTE_STRING_LIMIT) continue;
+                out.put(c.getKey(), r.text);
+                it.remove();
+                grew = true;
+            }
+            if (!grew) break;
+        }
+        return out;
     }
 
     /** Annotations that make a type a DECLARATIVE HTTP CLIENT rather than a route holder. */
@@ -2878,6 +3333,25 @@ public class JavaFacts {
         return new ArrayList<>(out);
     }
 
+    /**
+     * An interface's abstract methods, as "name/arity" (javafacts/22): no body,
+     * no default, not static, not private, and not one of the public methods
+     * every object has (which a lambda does not implement).
+     */
+    static List<String> abstractMethodsOf(ClassTree ct) {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (Tree member : ct.getMembers()) {
+            if (!(member instanceof MethodTree)) continue;
+            MethodTree m = (MethodTree) member;
+            java.util.Set<Modifier> flags = m.getModifiers().getFlags();
+            if (m.getBody() != null || flags.contains(Modifier.DEFAULT) || flags.contains(Modifier.STATIC) || flags.contains(Modifier.PRIVATE)) continue;
+            String key = m.getName() + "/" + m.getParameters().size();
+            if (key.equals("equals/1") || key.equals("hashCode/0") || key.equals("toString/0")) continue;
+            out.add(key);
+        }
+        return new ArrayList<>(out);
+    }
+
     static List<String> declaredMethodsOf(ClassTree ct) {
         return new ArrayList<>(declaredMethodKeys(ct));
     }
@@ -2904,64 +3378,38 @@ public class JavaFacts {
 
     /**
      * The paths a class-level mapping puts in front of its methods' routes: each
-     * one a `value`/`path` array names (javafacts/20). A single null when the
-     * class names none, so the method's own path stands alone.
+     * one a `value`/`path` array names (javafacts/20), read against the class's
+     * own constants (javafacts/22). A single "no path" when the class names
+     * none, so the method's own path stands alone.
      */
-    static List<String> classLevelBasePaths(List<AnnotationTree> anns) {
+    static List<PathRead> classLevelBasePaths(List<AnnotationTree> anns, Map<String, String> own, String ownSimple) {
         for (AnnotationTree a : anns) {
-            String simple = typeSimpleName(a.getAnnotationType());
-            if (simple == null) continue;
-            switch (simple) {
-                case "RequestMapping":
-                case "GetMapping":
-                case "PostMapping":
-                case "PutMapping":
-                case "DeleteMapping":
-                case "PatchMapping":
-                    List<String> ps = annPaths(a);
-                    if (ps.get(0) != null) return ps;
-                    break;
-                default:
-            }
+            if (verbsOfMapping(typeSimpleName(a.getAnnotationType()), a) == null) continue;
+            List<PathRead> ps = annPathReads(a, own, ownSimple);
+            if (ps.get(0).text != null || ps.get(0).parts != null) return ps;
         }
-        List<String> none = new ArrayList<>();
-        none.add(null);
+        List<PathRead> none = new ArrayList<>();
+        none.add(new PathRead(null, null, null));
         return none;
     }
 
     /**
-     * The paths an annotation's value/path attribute names, positional or named,
-     * one string or an array of them, first spelling first, each once. A single
-     * null when it names no literal path, which is how a mapping with no path
-     * has always been read.
+     * The methods a class-level @RequestMapping names (javafacts/22), which
+     * Spring joins to every method-level mapping of the class. Null when the
+     * class names none.
      */
-    static List<String> annPaths(AnnotationTree a) {
-        ExpressionTree e = annAttr(a, "value");
-        if (e == null) e = annAttr(a, "path");
-        List<String> out = new ArrayList<>(new java.util.LinkedHashSet<>(stringValues(unwrap(e))));
-        if (out.isEmpty()) out.add(null);
-        return out;
+    static Verbs classLevelVerbs(List<AnnotationTree> anns) {
+        AnnotationTree a = annNamed(anns, "RequestMapping");
+        if (a == null) return null;
+        Verbs v = requestVerbs(a);
+        return v.read.isEmpty() && v.unread.isEmpty() ? null : v;
     }
 
-    /**
-     * The HTTP methods a @RequestMapping's `method` attribute names, one or an
-     * array of them, each once in the order written (javafacts/20); ANY when it
-     * names none, which is what Spring serves then.
-     */
-    static List<String> requestMethodsOf(AnnotationTree a) {
-        ExpressionTree e = unwrap(annAttr(a, "method"));
-        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
-        if (e instanceof NewArrayTree && ((NewArrayTree) e).getInitializers() != null) {
-            for (ExpressionTree it : ((NewArrayTree) e).getInitializers()) {
-                String m = firstMemberName(it);
-                if (m != null) out.add(m);
-            }
-        } else {
-            String m = firstMemberName(e);
-            if (m != null) out.add(m);
-        }
-        if (out.isEmpty()) out.add("ANY");
-        return new ArrayList<>(out);
+    /** The client prefix and the class path, one path in front of every route of the class. */
+    static PathRead withClientPath(String client, PathRead classPath) {
+        if (classPath.known()) return new PathRead(joinPathParts(client, classPath.text), null, null);
+        if (client == null || client.trim().isEmpty()) return classPath;
+        return joinReads(new PathRead(client, null, null), classPath);
     }
 
     // Return the expression for a named attribute, or the positional value for "value".

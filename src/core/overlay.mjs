@@ -26,6 +26,7 @@ import { spliceFacts, assembleJavaFacts, assembleWebFacts } from './facts_store.
 import { withTypeRoles } from './java_roles.mjs';
 import { underAny, isWebPackageConfigFile, webInputOf } from './invalidate.mjs';
 import { assembleGraph, javaLaneOptions, openapiLaneOptions } from './assemble.mjs';
+import { endpointsAffecting } from './walks.mjs';
 
 const GRADE_RANK = { UNRESOLVED: 0, RUNTIME_ONLY: 1, HEURISTIC: 2, SOUND_SET: 3, EXACT: 4 };
 
@@ -157,15 +158,13 @@ export function changeImpact(graph, changedFiles, opts = {}) {
 // (measured on mall, one edited service file: 103 columns claimed vs 88 the
 // reached statements actually read or write).
 function endpointsFrom(graph, id, mode) {
-  const out = [];
-  const reached = graph.impactOf(id, { mode, edgeTypes: FLOW_EDGE_TYPES }); // backward: who depends on id
-  for (const [rid, info] of reached) {
-    // `http` is how many INTERNAL HTTP HOPS the winning path crossed: an edit
-    // whose only route upstream is in another deployable must say so, or the
-    // reader deploys one module and believes the blast radius is covered.
-    if (graph.nodes.get(rid)?.kind === 'endpoint') out.push([rid, info.pathGrade, info.http ?? 0]);
-  }
-  return out;
+  // The walk up endpoint_impact and Trace run (walks.mjs endpointsAffecting),
+  // so an edit's upstream routes are the ones Trace draws above the edited
+  // method (RM67-J4). `httpHops` is how many INTERNAL HTTP HOPS the winning
+  // path crossed: an edit whose only route upstream is in another deployable
+  // must say so, or the reader deploys one module and believes the blast
+  // radius is covered.
+  return endpointsAffecting(graph, id, { mode }).map((e) => [e.endpoint, e.pathGrade, e.httpHops ?? 0]);
 }
 // The endpoints an edited node REACHES going forward. For a frontend function
 // that is the route it calls: a `.vue` that calls an api module which calls

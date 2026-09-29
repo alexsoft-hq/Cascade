@@ -48,6 +48,49 @@ function hasWebAxis(graph) {
 }
 
 
+// Walking UP, an endpoint is a ROUTE, not code: the walk stops at the handler
+// method and the endpoints lane is read from that method's HANDLES in-edges
+// directly, exactly as the tables lane is read from a reached statement's
+// EXECUTES edges when walking down. Stepping onto the route node instead would
+// put a non-code node in `walked`, in a layer, and in `other`.
+//
+// THE INTERNAL HTTP HOP (§1.1). A request can leave one deployable and arrive
+// at another over HTTP: a @FeignClient method --CALLS_HTTP--> the route, and
+// that route --HANDLES--> the controller that answers it. Walking DOWN, both
+// steps are ordinary flow edges and the walk already crosses them. Walking UP
+// it could not, because HANDLES is excluded: the endpoints lane is DERIVED
+// from a reached handler's own HANDLES edges rather than walked onto. That rule
+// is right for the route a request ENTERED by, and wrong for a route it passed
+// THROUGH, which is a real step of the same request and the one thing standing
+// between a column and the caller in the module upstream. So the HANDLES step
+// is taken upwards on EXACTLY the routes that are a hop: an endpoint with at
+// least one CALLS_HTTP in-edge. Every other route stays derived, and a handler
+// at the depth cap still claims no cut.
+//
+// THE GENERATED RULE. A node the profile's `generatedSources` declaration
+// marked `generated:true` (src/adapters/java_bridge.mjs) is walked normally
+// when a real caller reaches it: a generated method really can be the next
+// step of a real chain, and dropping it would lose a path. What is NOT walked
+// is the step from one generated node to ANOTHER: that is the machine-written
+// interior (mall's 8 307 `GeneratedCriteria`→`addCriterion` edges), which no
+// question is ever about and which a walk can spend its whole node budget
+// inside. Every skip is COUNTED (`cut.generated`) and the caller says so, so
+// an empty band is never mistaken for an absence. `walkGenerated: true` turns
+// the rule off, for a caller that really does want the interior. A project
+// that declares no generatedSources has no node with the flag, so the rule
+// costs one boolean test per step and fires never.
+//
+// A PAGE STARTS WITH THE REQUEST THAT RENDERED IT (RM67-J4). A server-rendered
+// page shows what the handler that rendered it read, so a walk DOWN from a page
+// takes the page's RENDERS_PAGE in-edges as steps too, onto the methods that
+// render it, beside its RENDERS edges onto its own templates. Only from the
+// start: RENDERS_PAGE is still no flow edge (src/core/graph.mjs), so a walk
+// that reaches a handler never follows it onto a page and on to the page's
+// links. Walking up, the same edge is one step off every reached method
+// (`pagesRendered`), so a page is affected by a column exactly when a walk
+// down from it reaches that column, and the census, Trace and screen_impact
+// name the same pages.
+
 /**
  * THE ONE PLACE THE DIRECTION IS SPELLED OUT: which adjacency the walk reads,
  * which end of an edge it steps onto, and which grades it is allowed to cross.
@@ -65,28 +108,8 @@ export function readWalkOptions(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   const maxDepth = opts.maxDepth === undefined ? DEFAULT_WALK_DEPTH : opts.maxDepth; // none: the node cap guards
   const maxNodes = opts.maxNodes ?? WALK_NODE_CAP;
-  // Walking UP, an endpoint is a ROUTE, not code: the walk stops at the handler
-  // method and the endpoints lane is read from that method's HANDLES in-edges
-  // directly — exactly as the tables lane is read from a reached statement's
-  // EXECUTES edges when walking down. Stepping onto the route node instead
-  // would put a non-code node in `walked`, in a layer, and in `other`.
   const baseTypes = opts.edgeTypes ?? FLOW_EDGE_TYPES;
   const follow = new Set(up ? baseTypes.filter((t) => t !== 'HANDLES') : baseTypes);
-  // THE INTERNAL HTTP HOP (§1.1). A request can leave one deployable and arrive
-  // at another over HTTP: a @FeignClient method --CALLS_HTTP--> the route, and
-  // that route --HANDLES--> the controller that answers it. Walking DOWN, both
-  // steps are ordinary flow edges and the walk already crosses them.
-  //
-  // Walking UP it could not, because HANDLES is excluded above: an endpoint is a
-  // ROUTE, not code, and the endpoints lane is DERIVED from a reached handler's
-  // own HANDLES edges rather than walked onto. That rule is right for the route
-  // a request ENTERED by — and wrong for a route it passed THROUGH, which is a
-  // real step of the same request and the one thing standing between a column
-  // and the caller in the module upstream.
-  //
-  // So the HANDLES step is taken upwards on EXACTLY the routes that are a hop:
-  // an endpoint with at least one CALLS_HTTP in-edge. Every other route stays
-  // derived, and a handler at the depth cap still claims no cut.
   const crossesHttp = follow.has('CALLS_HTTP');
   const isHttpHop = (endpointNodeId) => graph.inEdges(endpointNodeId).some((e) => e.type === 'CALLS_HTTP');
   const allow = GRADE_SETS[mode];
@@ -94,35 +117,20 @@ export function readWalkOptions(graph, opts = {}) {
   if (typeof start !== 'string' || !graph.nodes.has(start)) {
     throw new ChainError(`start node not in graph: ${start}`);
   }
-
-  // The one place the direction is spelled out: which adjacency the walk reads,
-  // and which end of an edge it steps onto. Everything below is written once
-  // and works both ways.
   const adjOf = (id) => (up ? graph.inEdges(id) : graph.outEdges(id));
   const stepTo = (edge) => (up ? edge.from : edge.to);
   // The node a row hangs off in the DRAWING: the end of the edge nearer the
   // start. Walking down that is the caller (`from`); walking up it is the
-  // callee (`to`) — the same edge, read from the other side.
-  const prevNodeOf = (e) => (up ? e.to : e.from);
-
-  // THE GENERATED RULE. A node the profile's `generatedSources` declaration
-  // marked `generated:true` (src/adapters/java_bridge.mjs) is walked normally
-  // when a real caller reaches it — a generated method really can be the next
-  // step of a real chain, and dropping it would lose a path. What is NOT walked
-  // is the step from one generated node to ANOTHER: that is the machine-written
-  // interior (mall's 8 307 `GeneratedCriteria`→`addCriterion` edges), which no
-  // question is ever about and which a walk can spend its whole node budget
-  // inside. Every skip is COUNTED (`cut.generated`) and the caller says so, so
-  // an empty band is never mistaken for an absence.
-  //
-  // `walkGenerated: true` turns the rule off, for a caller that really does want
-  // the interior. A project that declares no generatedSources has no node with
-  // the flag, so the rule costs one boolean test per step and fires never.
+  // callee (`to`), the same edge read from the other side. A page's
+  // RENDERS_PAGE edge is read against its direction, from the page it starts.
+  const prevNodeOf = (e) => (up || e.type === 'RENDERS_PAGE' ? e.to : e.from);
   const walkGenerated = opts.walkGenerated === true;
   const isGenerated = (id) => graph.nodes.get(id)?.generated === true;
+  // The page a walk down starts at hands it the methods that render it.
+  const pageSteps = !up && kindOf(start) === 'screen' ? graph.inEdges(start).filter((e) => e.type === 'RENDERS_PAGE') : [];
   return {
     start, direction, up, mode, maxDepth, hopCap: hopCapOf(maxDepth), maxNodes, follow, crossesHttp, isHttpHop,
-    allow, adjOf, stepTo, prevNodeOf, walkGenerated, isGenerated, entryGrade: entryGradeOf(opts),
+    allow, adjOf, stepTo, prevNodeOf, walkGenerated, isGenerated, entryGrade: entryGradeOf(opts), pageSteps,
   };
 }
 
@@ -148,10 +156,7 @@ function entryGradeOf(opts) {
  * @returns {{best:Map<string,object>, cut:object, root:object}}
  */
 export function runBfs(graph, w) {
-  const {
-    start, hopCap, maxNodes, follow, crossesHttp, isHttpHop, allow,
-    adjOf, stepTo, walkGenerated, isGenerated, up, entryGrade,
-  } = w;
+  const { start, hopCap, maxNodes, adjOf, walkGenerated, isGenerated, entryGrade, pageSteps } = w;
   // `byModeGrades` splits `byMode` by the grade that kept each edge out, because
   // a wider mode walks a HEURISTIC edge and no mode walks an UNRESOLVED one.
   const cut = { depth: 0, nodeCap: false, byMode: 0, byModeGrades: {}, generated: 0 };
@@ -168,29 +173,15 @@ export function runBfs(graph, w) {
   while (queue.length) {
     const cur = queue.shift();
     if (cur.rec.hops >= hopCap) continue;
-    const adj = adjOf(cur.id);
+    const adj = cur.rec === root && pageSteps.length > 0 ? [...adjOf(cur.id), ...pageSteps] : adjOf(cur.id);
     const countMode = !modeCounted.has(cur.id);
     if (countMode) modeCounted.add(cur.id);
     // Only a generated node can start a generated→generated step, so the flag
     // of the node we are ON decides whether the next one is even looked up.
     const curGenerated = !walkGenerated && cur.rec.generated === true;
     for (const edge of adj) {
-      // Walking up, HANDLES is followed only off a route that is an HTTP HOP
-      // (see `isHttpHop` above); every other route stays a derived lane.
-      if (up && edge.type === 'HANDLES') {
-        if (!crossesHttp || !isHttpHop(edge.from)) continue;
-      } else if (!follow.has(edge.type)) continue; // not an execution step — silently out of scope
-      if (!allow.has(edge.grade)) {
-        // Skipped ONLY because of the grade floor — the caller reports this as
-        // "the mode did not look", never as "there is nothing there".
-        if (countMode) { cut.byMode += 1; cut.byModeGrades[edge.grade] = (cut.byModeGrades[edge.grade] ?? 0) + 1; }
-        continue;
-      }
-      const next = stepTo(edge);
-      if (curGenerated && isGenerated(next)) {
-        if (countMode) cut.generated += 1;
-        continue;
-      }
+      const next = stepOf(w, edge, { countMode, curGenerated, cut });
+      if (next === null) continue;
       const pathGrade = weaker(cur.rec.pathGrade, edge.grade);
       const hops = cur.rec.hops + 1;
       const prev = best.get(next);
@@ -216,6 +207,33 @@ export function runBfs(graph, w) {
   // own edges afterwards counts what the floor kept out only where the walk
   // never did, so an edge is counted once however the node was reached.
   return { best, cut, root, expanded: modeCounted };
+}
+
+/**
+ * Where one adjacency entry takes the walk, or null when it is no step of it.
+ * What the floor or the generated rule kept out is counted on `cut`, once per
+ * expanded node; an edge that is no execution step at all is silently out of
+ * scope, because nothing was withheld.
+ */
+function stepOf(w, edge, { countMode, curGenerated, cut }) {
+  // Walking up, HANDLES is followed only off a route that is an HTTP HOP
+  // (see `isHttpHop`); every other route stays a derived lane. A RENDERS_PAGE
+  // entry is a step only as one of the start page's own (`pageSteps`).
+  if (w.up && edge.type === 'HANDLES') {
+    if (!w.crossesHttp || !w.isHttpHop(edge.from)) return null;
+  } else if (edge.type === 'RENDERS_PAGE' ? !w.pageSteps.includes(edge) : !w.follow.has(edge.type)) return null;
+  if (!w.allow.has(edge.grade)) {
+    // Skipped ONLY because of the grade floor: the caller reports this as
+    // "the mode did not look", never as "there is nothing there".
+    if (countMode) { cut.byMode += 1; cut.byModeGrades[edge.grade] = (cut.byModeGrades[edge.grade] ?? 0) + 1; }
+    return null;
+  }
+  const next = edge.type === 'RENDERS_PAGE' ? edge.from : w.stepTo(edge);
+  if (curGenerated && w.isGenerated(next)) {
+    if (countMode) cut.generated += 1;
+    return null;
+  }
+  return next;
 }
 
 
@@ -560,25 +578,19 @@ function endpointRow(graph, h, id, n, rec) {
  */
 export function collectRows(graph, w, h) {
   const { start, up } = w;
-  const { best, isMapperMethod, isHandlerSymbol, webLanes } = h;
+  const { best, isMapperMethod, webLanes } = h;
   const services = [];
   const webFunctions = [];
-  const screens = [];
   const walkedEndpoints = [];   // {id, hops, grade, http} — the DOWN endpoints lane
-  const handlers = [];          // {id, hops, grade, http} — the endpoints lane aggregates over these
   const reachedStatements = []; // {id, hops, grade, http} — pre-cut, tables aggregate over ALL of them
   const statements = [];
   for (const [id, rec] of best) {
     const n = graph.nodes.get(id) ?? { id, kind: kindOf(id) };
     if (id === start) continue;
-    if (n.kind === 'screen') {
-      if (!(up && webLanes)) continue; // counted in `other` below, never dropped
-      screens.push(screenRow(h, id, n, rec));
-    } else if (n.kind === 'symbol') {
+    if (n.kind === 'symbol') {
       if (isMapperMethod(id)) continue;
       const hit = symbolRow(w, h, id, n, rec);
       if (hit.lane === 'webFunctions') { webFunctions.push(hit.row); continue; }
-      if (up && hit.row.handler) handlers.push({ id, hops: rec.hops, grade: hit.grade, http: rec.http });
       services.push(hit.row);
     } else if (n.kind === 'statement') {
       const hit = statementRow(graph, w, h, id, n, rec);
@@ -588,14 +600,91 @@ export function collectRows(graph, w, h) {
       walkedEndpoints.push(endpointRow(graph, h, id, n, rec));
     }
   }
-  // Walking up FROM a handler method: that method is hop 0 — the start, never a
-  // row — but the routes above it are still the honest answer to "which
-  // endpoints reach this?". They sit at hop 1, graded EXACT because nothing on
-  // the (empty) path weakened the definitional HANDLES edge.
-  if (up && kindOf(start) === 'symbol' && isHandlerSymbol(start)) {
-    handlers.push({ id: start, hops: 0, grade: w.entryGrade, http: 0 });
+  // Walking up, the screens are what the walk reached and the pages a reached
+  // method renders (screenRecords); a screen reached any other way is counted in
+  // `other`, never dropped.
+  const screens = up && webLanes ? [...(h.screenAgg ?? new Map()).values()].map((s) => screenRowOf(graph, h, s)) : [];
+  return { services, webFunctions, screens, walkedEndpoints, reachedStatements, statements };
+}
+
+/**
+ * THE METHODS A ROUTE IS DERIVED FROM, walking up: every reached method a
+ * route's HANDLES edge names, and the start when it is one. A method that sends
+ * its SQL itself is folded into its statement's row and is still one of them:
+ * a controller that calls Prisma in its own body is the handler of its route
+ * (RM67-J4, K-2), and dropping it here left its route out of Trace while
+ * endpoint_impact named it.
+ *
+ * @returns {{id:string, hops:number, grade:string, http:number}[]}
+ */
+export function handlerRecords(graph, w, best) {
+  if (!w.up) return [];
+  const isHandler = (id) => graph.inEdges(id).some((e) => e.type === 'HANDLES');
+  const out = [];
+  for (const [id, rec] of best) {
+    if (id === w.start || kindOf(id) !== 'symbol' || !isHandler(id)) continue;
+    out.push({ id, hops: rec.hops, grade: rec.pathGrade, http: rec.http });
   }
-  return { services, webFunctions, screens, walkedEndpoints, handlers, reachedStatements, statements };
+  // Walking up FROM a handler method: that method is hop 0, the start and never
+  // a row, but the routes above it are still the honest answer to "which
+  // endpoints reach this?", at hop 1 and graded by the link that brought the
+  // walk to it.
+  if (kindOf(w.start) === 'symbol' && isHandler(w.start)) out.push({ id: w.start, hops: 0, grade: w.entryGrade, http: 0 });
+  return out;
+}
+
+/**
+ * THE SCREENS A WALK UP ENDS AT, one record each: a screen the walk reached
+ * (a frontend function it renders calls a reached route), and a server-rendered
+ * page a reached method renders, one step off its RENDERS_PAGE edge (RM48,
+ * RM67-J4). The same record decides the Trace row and the impact tools' row,
+ * so the two never name different screens. A page reached both ways keeps the
+ * stronger grade, then the fewer hops.
+ *
+ * @returns {Map<string,{id:string, hops:number, grade:string, http:number, page:(object|null), rec:object}>}
+ */
+export function screenRecords(graph, w, best, root) {
+  const out = new Map();
+  if (!w.up) return out;
+  const keep = (id, s) => {
+    const prev = out.get(id);
+    if (!prev || RANK[s.grade] > RANK[prev.grade] || (RANK[s.grade] === RANK[prev.grade] && s.hops < prev.hops)) out.set(id, s);
+  };
+  for (const [id, rec] of best) {
+    if (id !== w.start && kindOf(id) === 'screen') keep(id, { id, hops: rec.hops, grade: rec.pathGrade, http: rec.http, page: null, rec });
+  }
+  for (const [id, rec] of [[w.start, root], ...best]) {
+    if (kindOf(id) !== 'symbol') continue;
+    for (const e of graph.outEdges(id)) {
+      if (e.type !== 'RENDERS_PAGE' || kindOf(e.to) !== 'screen' || !w.allow.has(e.grade)) continue;
+      keep(e.to, { id: e.to, hops: rec.hops + 1, grade: weaker(rec.pathGrade, e.grade), http: rec.http, page: { from: id, idx: e.idx, grade: e.grade }, rec });
+    }
+  }
+  return out;
+}
+
+/** A screens-lane row walking up: the screen as the walk reached it, or the page a reached method renders. */
+function screenRowOf(graph, h, s) {
+  const n = graph.nodes.get(s.id) ?? { id: s.id, kind: 'screen' };
+  if (!s.page) return screenRow(h, s.id, n, s.rec);
+  const e = graph.edgeAt(s.page.idx);
+  return {
+    id: strip(s.id),
+    short: n.label ?? strip(s.id),
+    title: n.title ?? null,
+    name: n.name ?? null,
+    group: n.group ?? null,
+    component: n.component ?? null,
+    template: n.template ?? null,
+    engine: n.engine ?? null,
+    hops: s.hops,
+    grade: s.grade,
+    link: {
+      from: s.page.from, fromShort: nodeLabel(graph.nodes.get(s.page.from), s.page.from), type: 'RENDERS_PAGE', grade: s.page.grade,
+      basis: (e && e.evidence && e.evidence.basis) || null, receiver: null, iface: null,
+    },
+    walkedPath: [...h.pathTo(s.page.from), { from: s.page.from, to: s.id, type: 'RENDERS_PAGE', grade: s.page.grade, evidence: (e && e.evidence) || null }],
+  };
 }
 
 
@@ -697,19 +786,18 @@ function sqlEdgesAdmitted(graph, w, h, st) {
 
 /**
  * ENDPOINTS — derived from the reached handler methods' HANDLES in-edges the way
- * tables are derived from a statement's EXECUTES edges.
+ * tables are derived from a statement's EXECUTES edges. The one record per
+ * route that both the Trace row and the impact tools' row are read from.
  *
- * @returns {{epAgg:Map<string,object>, derivedEndpoints:object[]}}
+ * @returns {Map<string,object>} endpoint node id -> {id, node, hops, grade, via, viaEdge, viaGrade, http}
  */
-export function buildDerivedEndpoints(graph, w, h, handlers) {
-  const { up } = w;
-  const { pathTo } = h;
+export function routeRecords(graph, w, h, handlers) {
   // Endpoints: DERIVED from the reached handler methods' HANDLES in-edges, the
   // way tables are derived from a statement's EXECUTES edges walking down. The
   // route is not a walked node (it is not code), so it sits in no layer of its
   // own; a route above a handler that sat AT the depth cap lands in `beyond`.
   const epAgg = new Map(); // endpoint node id -> accumulator
-  if (up) {
+  if (w.up) {
     for (const handler of handlers) {
       for (const e of graph.inEdges(handler.id)) {
         if (e.type !== 'HANDLES') continue;
@@ -739,7 +827,20 @@ export function buildDerivedEndpoints(graph, w, h, handlers) {
       }
     }
   }
-  const derivedEndpoints = [...epAgg.values()].map((a) => {
+  return epAgg;
+}
+
+/**
+ * The endpoints lane walking up: one row per route record. A row carries the
+ * line it is drawn with (`link`), from the nearest drawn row: its handler's,
+ * or the statement's when the handler sends that statement itself and is
+ * folded into its row.
+ *
+ * @returns {object[]}
+ */
+export function buildDerivedEndpoints(graph, w, h, epAgg) {
+  const { pathTo, drawLink } = h;
+  return [...epAgg.values()].map((a) => {
     // The row's own evidence: its handler's walked path, plus the HANDLES edge
     // that derived this route from it — so a grade on this row can be read back
     // to the steps that produced it, like every other row.
@@ -764,10 +865,10 @@ export function buildDerivedEndpoints(graph, w, h, handlers) {
       line: a.node.line ?? null,
       ...(a.http > 0 ? { viaHttp: true, httpHops: a.http } : {}),
       ...(frontend > 0 ? { frontendCalls: frontend } : {}),
+      link: drawLink(walkedPath, null),
       walkedPath,
     };
   });
-  return { epAgg, derivedEndpoints };
 }
 
 
@@ -790,7 +891,10 @@ export function collectSenders(graph, w, best) {
   for (const id of best.keys()) {
     if (kindOf(id) !== 'statement') continue;
     for (const e of graph.inEdges(id)) {
-      if (e.type !== 'IMPLEMENTS_STMT' || !(best.has(e.from) || e.from === w.start)) continue;
+      // A send this mode's floor does not admit is not one this walk took: a
+      // method a rule only guessed sends the statement is no service of a
+      // conservative census (RM67-J4, K-5).
+      if (e.type !== 'IMPLEMENTS_STMT' || !w.allow.has(e.grade) || !(best.has(e.from) || e.from === w.start)) continue;
       if (graph.edgeAt(e.idx)?.evidence?.line != null) out.add(e.from);
     }
   }
@@ -948,7 +1052,8 @@ export function collectPageRows(graph, w, h, root) {
   // links stay the next request rather than this one's reach.
   const pageRows = [];
   if (!up) {
-    const placed = new Set();
+    // A page the walk STARTED at is the entry, never a row of its own picture.
+    const placed = new Set([start]);
     const sources = [[start, root], ...best];
     for (const [id, rec] of sources) {
       if (kindOf(id) !== 'symbol') continue;

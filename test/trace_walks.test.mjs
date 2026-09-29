@@ -38,7 +38,12 @@ const STMT = nodeId('statement', 'com.x.M.selectRows');
 const TABLE = nodeId('table', 'rows');
 const COL = nodeId('column', 'rows.status');
 
-function pack({ handles = 'EXACT', web = true, screens = true } = {}) {
+function pack({ handles = 'EXACT', web = true, screens = true, address = null } = {}) {
+  // A route whose ADDRESS its lane could not settle says so on its HANDLES edge,
+  // and the web bridge grades a call matched to it by that (calls.mjs): the
+  // fixture places both the way the two bridges would.
+  const handlesEvidence = handles === 'EXACT' ? {} : { rule: 'nestjs.routes', ...(address ? { address: { grade: address, why: 'the global prefix excludes a route pattern this engine cannot read' } } : {}) };
+  const callGrade = (g) => (address && ['EXACT', 'SOUND_SET'].includes(g) ? address : g);
   const facts = [
     { fact: 'node', id: EP, path: '/rows', httpMethod: 'GET', handler: 'com.x.C#list' },
     { fact: 'node', id: CTRL, owner: 'com.x.C', file: 'C.java', line: 4 },
@@ -47,7 +52,7 @@ function pack({ handles = 'EXACT', web = true, screens = true } = {}) {
     { fact: 'node', id: STMT, statementType: 'select', file: 'M.xml', line: 2 },
     { fact: 'node', id: TABLE },
     { fact: 'node', id: COL },
-    { fact: 'edge', from: EP, to: CTRL, type: 'HANDLES', grade: handles, evidence: handles === 'EXACT' ? {} : { rule: 'nestjs.routes' } },
+    { fact: 'edge', from: EP, to: CTRL, type: 'HANDLES', grade: handles, evidence: handlesEvidence },
     { fact: 'edge', from: CTRL, to: SVC, type: 'MAY_CALL', grade: 'SOUND_SET' },
     { fact: 'edge', from: SVC, to: MAPPER, type: 'MAY_CALL', grade: 'SOUND_SET' },
     { fact: 'edge', from: MAPPER, to: STMT, type: 'IMPLEMENTS_STMT', grade: 'EXACT' },
@@ -61,8 +66,8 @@ function pack({ handles = 'EXACT', web = true, screens = true } = {}) {
       { fact: 'node', id: OVIEW, file: 'src/screens/other.vue', line: 4, lane: 'web', component: true },
       { fact: 'node', id: API, file: 'src/api/rows.js', line: 3, lane: 'web' },
       { fact: 'edge', from: VIEW, to: API, type: 'CALLS', grade: 'EXACT' },
-      { fact: 'edge', from: API, to: EP, type: 'CALLS_HTTP', grade: 'SOUND_SET' },
-      { fact: 'edge', from: OVIEW, to: EP, type: 'CALLS_HTTP', grade: 'HEURISTIC' },
+      { fact: 'edge', from: API, to: EP, type: 'CALLS_HTTP', grade: callGrade('SOUND_SET') },
+      { fact: 'edge', from: OVIEW, to: EP, type: 'CALLS_HTTP', grade: callGrade('HEURISTIC') },
     );
     if (screens) {
       facts.push(
@@ -122,15 +127,28 @@ test('up from a route: the depth cap is the same cap, and what is past it is cou
 });
 
 test('up from a route whose own address is a guess: every caller is graded by it, and a mode that does not admit it walks none', () => {
-  const guessed = up(pack({ handles: 'HEURISTIC' }), { endpoint: 'GET /rows', mode: 'heuristic' });
+  const guessed = up(pack({ handles: 'HEURISTIC', address: 'HEURISTIC' }), { endpoint: 'GET /rows', mode: 'heuristic' });
   assert.ok(guessed.webFunctions.length > 0);
   for (const r of [...guessed.webFunctions, ...guessed.screens]) assert.equal(r.grade, 'HEURISTIC', `${r.id} is matched through a guessed address`);
-  assert.match(guessed.walk.note, /own address rests on a link graded HEURISTIC by nestjs\.routes/);
-  const stopped = up(pack({ handles: 'HEURISTIC' }), { endpoint: 'GET /rows' });
+  assert.match(guessed.walk.note, /own address is graded HEURISTIC: the global prefix excludes/);
+  const stopped = up(pack({ handles: 'HEURISTIC', address: 'HEURISTIC' }), { endpoint: 'GET /rows' });
   assert.deepEqual([stopped.webFunctions, stopped.screens], [[], []]);
-  assert.equal(stopped.walk.cut.byMode, 1, 'the route\'s own link is what the floor kept out');
-  assert.match(stopped.walk.note, /no caller of it is walked/);
+  assert.equal(stopped.walk.cut.byMode, 2, 'the calls onto the route are what the floor kept out: each carries the address\'s doubt');
   assert.match(stopped.walk.note, /try mode=heuristic/);
+});
+
+test('route_up_and_screen_down_grade_the_same_screen_route_link_alike: a guessed HANDLER grades the code below the route, never its callers (RM67-J4, K-4)', () => {
+  // A handler only a rule paired with the route, and an address the source
+  // wrote: the screen's call onto the route is its own SOUND_SET link, walking
+  // up from the route, down from the screen and in the screen census alike.
+  const g = pack({ handles: 'HEURISTIC' });
+  const route = up(g, { endpoint: 'GET /rows' });
+  assert.deepEqual(route.screens.map((r) => [r.id, r.grade]), [['/rows', 'SOUND_SET']]);
+  assert.doesNotMatch(route.walk.note ?? '', /own address/, 'nothing about the address to say, and the handler is not the callers\' link');
+  const down = flow(g, { screen: '/rows' }, ctx(g)).answer;
+  assert.deepEqual(down.endpoints.map((e) => [e.id, e.grade]), [['GET /rows', 'SOUND_SET']]);
+  const census = callTool('browse', { kind: 'screen' }, ctx(g)).answer.items.find((s) => s.screen === '/rows');
+  assert.equal(census.endpoints, 1);
 });
 
 test('up from a route on a pack with no frontend: the frontend lanes say not-shipped, and a limit says why', () => {

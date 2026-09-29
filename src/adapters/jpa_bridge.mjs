@@ -419,23 +419,24 @@ function joinedHomes(e, entities, entityRecords, resolveType) {
 /**
  * A JOINED subclass's table carries the primary key that joins it to its
  * parent's: the column `@PrimaryKeyJoinColumn` names, or by default the parent
- * key's own name, as sure as that name is.
+ * key's own columns, each as sure as its name is. A parent key that is an
+ * assumed default (`placeKey`) stays one here.
  */
 function joinedKeys(entities) {
   const keyOf = (x, depth = 0) => {
-    if (x.inheritance !== 'JOINED' || !x.parent || depth > entities.size) return { column: x.pkColumn ?? 'id', grade: x.pkGrade ?? 'EXACT' };
+    if (x.inheritance !== 'JOINED' || !x.parent || depth > entities.size) return x.pkColumns;
     const declared = x.record.primaryKeyJoinColumn;
-    return declared ? { column: declared, grade: 'EXACT' } : keyOf(x.parent, depth + 1);
+    const up = keyOf(x.parent, depth + 1);
+    return declared && up.length === 1 ? [{ column: declared, grade: 'EXACT', ...(up[0].assumed ? { assumed: true } : {}) }] : up;
   };
   for (const e of entities.values()) {
     if (e.inheritance !== 'JOINED' || !e.parent) continue;
-    const key = keyOf(e);
-    e.joinedKey = { column: key.column, grade: weakest(e.tableGrade, key.grade) };
+    e.joinedKey = keyOf(e).map((c) => ({ ...c, grade: weakest(e.tableGrade, c.grade) }));
   }
   for (const e of entities.values()) {
     if (!e.joinedKey) continue;
-    e.pkColumn = e.joinedKey.column;
-    e.inboundColumns.push({ column: e.joinedKey.column, grade: e.joinedKey.grade });
+    Object.assign(e, { pkColumns: e.joinedKey, pkColumn: e.joinedKey[0].column, assumedKey: null });
+    for (const c of e.joinedKey) e.inboundColumns.push({ column: c.column, grade: c.grade });
   }
 }
 
@@ -506,17 +507,123 @@ const attributesOf = (fqn, seen = new Set()) => {
   return [...byName.values()];
 };
 
+const said = new Set();
 for (const e of entities.values()) {
   const attrs = attributesOf(e.fqn);
   const homes = e.inheritance === 'JOINED' && e.parent ? joinedHomes(e, entities, entityRecords, resolveType) : null;
-  const entityUnread = (ctx.classAnnotations?.get(e.fqn) ?? []).filter((n) => UNREAD_ENTITY_MAPPINGS.includes(n));
-  if (entityUnread.length > 0) {
-    note(ctx.stats, 'jpa-mapping-unread', `${e.fqn} is mapped with @${entityUnread.join(', @')}, which this lane does not read, so any of its columns may be named or placed otherwise`);
-  }
+  const entityUnread = entityMappingsUnread(e, ctx);
   e.attributes = new Map();
-  for (const a of attrs) readAttribute(e, a, { strategy, derivedGrade, namingEvidence, homes, entityUnread, stats: ctx.stats });
+  for (const a of attrs) readAttribute(e, a, { strategy, derivedGrade, namingEvidence, homes, entityUnread, stats: ctx.stats, said });
+  placeKey(e, { ...ctx, entityRecords });
 }
 joinedKeys(entities);
+placeDiscriminators(entities, ctx);
+}
+
+/**
+ * The class annotations of one entity that leave its columns unknown: the
+ * mappings this lane does not read, and any name it does not know (design 1).
+ * Both are said; a class mapping that changes only what a statement loads or
+ * writes is said apart, and leaves the columns as read.
+ */
+function entityMappingsUnread(e, ctx) {
+  const anns = ctx.classAnnotations?.get(e.fqn) ?? [];
+  const unread = anns.filter((n) => UNREAD_ENTITY_MAPPINGS.includes(n)
+    || (!KNOWN_ENTITY_ANNOTATIONS.has(n) && !REACH_ENTITY_MAPPINGS.includes(n)));
+  if (unread.length > 0) {
+    note(ctx.stats, 'jpa-mapping-unread', `${e.fqn} is mapped with @${unread.join(', @')}, which this lane does not read, so any of its columns may be named or placed otherwise`);
+  }
+  const reach = anns.filter((n) => REACH_ENTITY_MAPPINGS.includes(n));
+  if (reach.length > 0) {
+    note(ctx.stats, 'jpa-reach-unread', `${e.fqn} carries @${reach.join(', @')}, which this lane does not read, so what a statement on it loads or writes may differ from this pack`);
+  }
+  return unread;
+}
+
+/**
+ * THE PRIMARY KEY'S COLUMNS, as the tree declares them: the one @Id, every @Id
+ * an @IdClass key is made of, or the columns of the @EmbeddedId's embeddable.
+ * Every foreign key, join table column and joined subclass key that points at
+ * the entity is named after these, one column per key column (JPA 2.10.x).
+ *
+ * A KEY THE TREE DOES NOT DECLARE (an @Id in a superclass outside it, such as a
+ * library's AbstractPersistable) is JPA's usual `id` by assumption, and nothing
+ * more: every column that rests on it is HEURISTIC, and the root of the
+ * hierarchy says so once (design 4). Its column is part of the row, as the
+ * superclass's @Id would be.
+ */
+function placeKey(e, ctx) {
+  const ids = [...e.attributes.values()].filter((a) => a.id === true);
+  const embeddedId = ids.length === 1 && ids[0].embedded === true ? ids[0] : null;
+  const columns = embeddedId
+    ? embeddedKeyColumns(embeddedId, ctx)
+    : ids.filter((a) => a.column).map((a) => ({ column: a.column, grade: a.grade }));
+  if (embeddedId && columns.length > 0) embeddedId.columns = columns;
+  if (columns.length > 0) {
+    Object.assign(e, { pkColumns: columns, pkColumn: columns[0].column, assumedKey: null });
+    return;
+  }
+  const assumed = [{ column: derivedName('id', ctx.strategy, 'HEURISTIC').name, grade: 'HEURISTIC', assumed: true }];
+  Object.assign(e, { pkColumns: assumed, pkColumn: assumed[0].column, assumedKey: assumed });
+  if (!e.parent) {
+    note(ctx.stats, 'primary-key-assumed', `${e.fqn} declares no primary key this lane read (${embeddedId ? `the @EmbeddedId type ${embeddedId.typeSimple ?? '?'} is not read` : 'the @Id may be in a superclass outside the tree'}), so its key column is the assumed default \`${assumed[0].column}\`, and every foreign key, join table column and subclass key named after it is graded HEURISTIC`);
+  }
+}
+
+/** The key columns an @EmbeddedId's embeddable maps, each as sure as its own name and the id attribute's reading. */
+function embeddedKeyColumns(a, ctx) {
+  const fqn = a.typeSimple ? ctx.resolveType(a.declaredBy, a.typeSimple) : null;
+  const rec = fqn ? ctx.entityRecords.get(fqn) : null;
+  if (!rec || rec.embeddable !== true) return [];
+  const out = [];
+  for (const k of rec.attributes ?? []) {
+    if (k.transient === true || k.relation || k.embedded === true) continue;
+    const m = mapAttribute(k, ctx);
+    const guessed = a.mappingGuessed === true || unreadMappings(k).length > 0 || unknownMappings(k).length > 0;
+    if (m.column) out.push({ column: m.column, grade: guessed ? 'HEURISTIC' : m.grade });
+  }
+  return out;
+}
+
+/**
+ * THE DISCRIMINATOR OF A SINGLE_TABLE HIERARCHY. Every row of the root's table
+ * says which class it is, in a column every insert writes and every query on a
+ * subclass filters by. A column the root declares with @DiscriminatorColumn is
+ * one whose name this lane does not read, so it is said; one it does not declare
+ * is JPA's DTYPE by the naming strategy, an assumed default, drawn HEURISTIC and
+ * said.
+ */
+function placeDiscriminators(entities, ctx) {
+  for (const e of entities.values()) {
+    if (e.parent || e.subclasses.length === 0) continue;
+    if ((ctx.classAnnotations?.get(e.fqn) ?? []).includes('DiscriminatorColumn')) {
+      note(ctx.stats, 'jpa-column-not-drawn', `${e.fqn} declares @DiscriminatorColumn, whose name this lane does not read, so the discriminator column every statement on its hierarchy reads or writes is not drawn`);
+      continue;
+    }
+    if (e.inheritance !== 'SINGLE_TABLE') continue;
+    const name = derivedName('DTYPE', ctx.strategy, 'HEURISTIC').name;
+    e.discriminator = { column: name, grade: 'HEURISTIC' };
+    note(ctx.stats, 'discriminator-assumed', `${e.fqn} keeps its subclasses in one table (SINGLE_TABLE) and declares no @DiscriminatorColumn, so the discriminator column is the assumed default \`${name}\` (JPA's DTYPE by the naming strategy), graded HEURISTIC`);
+  }
+}
+
+/** The discriminator column one entity's row carries, when its hierarchy has one this lane drew. */
+function discriminatorOf(entity) {
+  const root = rootOf(entity);
+  if (!root.discriminator || root.inheritance !== 'SINGLE_TABLE') return null;
+  return { table: root.table, column: root.discriminator.column, grade: weakest(root.tableGrade, root.discriminator.grade) };
+}
+
+/** Every column an attribute owns on its table: one, or one per key column (a composite key, a foreign key toward one). */
+const attrColumns = (a) => (Array.isArray(a.columns) ? a.columns : (a.column ? [{ column: a.column, grade: a.grade }] : []));
+
+/** HEURISTIC when an entity's key is an assumed default, EXACT otherwise: what a join on that key rests on. */
+const keyAssumedGrade = (x) => ((x.pkColumns ?? []).some((c) => c.assumed === true) ? 'HEURISTIC' : 'EXACT');
+
+/** The column pairs a join is made on, as its evidence writes them: `a.x=b.y`, one per key column. */
+function joinPairs(ta, left, tb, right) {
+  const n = Math.max(left.length, right.length, 1);
+  return Array.from({ length: n }, (_, i) => `${ta}.${left[i]?.column ?? '?'}=${tb}.${right[i]?.column ?? '?'}`);
 }
 
 /**
@@ -532,6 +639,63 @@ const UNREAD_ATTRIBUTE_MAPPINGS = Object.freeze(['JoinColumns', 'JoinFormula', '
   'AttributeOverride', 'AttributeOverrides', 'AssociationOverride', 'AssociationOverrides']);
 const UNREAD_ENTITY_MAPPINGS = Object.freeze(['SecondaryTable', 'SecondaryTables', 'AttributeOverride', 'AttributeOverrides', 'AssociationOverride', 'AssociationOverrides']);
 
+/**
+ * "IT CHANGES NOTHING ABOUT THE COLUMNS" IS SAID ONLY OF A NAME THIS BRIDGE
+ * KNOWS (RM67 review 4, design 1). Every annotation on an attribute is one of:
+ * read by this bridge; known to name and place no column (a constraint, a
+ * serializer, documentation, a generator, auditing); a mapping that adds a
+ * column of the row this lane does not draw; a mapping that changes what a
+ * statement loads or writes rather than which column; or unread. An unread one
+ * is said, and the column it sits on is a guess, because a name nobody listed
+ * may be one that renames it. The lists hold simple names, as the worker records
+ * them (javafacts/21).
+ */
+const KNOWN_ATTRIBUTE_ANNOTATIONS = new Set([
+  // read here
+  'Column', 'Id', 'EmbeddedId', 'Embedded', 'Transient', 'JoinColumn', 'JoinTable', 'ManyToOne', 'OneToMany',
+  'OneToOne', 'ManyToMany', 'ElementCollection', 'MapsId', 'MapKey', 'OrderBy',
+  // the value of the column, not its name or its place
+  'Basic', 'Lob', 'Version', 'Enumerated', 'Temporal', 'Convert', 'Access', 'GeneratedValue', 'SequenceGenerator',
+  'TableGenerator', 'GenericGenerator', 'MapKeyEnumerated', 'MapKeyTemporal', 'MapKeyClass', 'Type', 'JdbcTypeCode',
+  'JdbcType', 'ColumnDefault', 'ColumnTransformer', 'CreationTimestamp', 'UpdateTimestamp', 'Generated', 'NaturalId',
+  'Nationalized', 'Check', 'Comment', 'Cache', 'BatchSize', 'OptimisticLock', 'NotAudited', 'SortNatural', 'SortComparator',
+  'CreatedDate', 'LastModifiedDate', 'CreatedBy', 'LastModifiedBy',
+  // constraints, serializers, documentation, source generation
+  'NotNull', 'NotBlank', 'NotEmpty', 'Size', 'Pattern', 'Email', 'Min', 'Max', 'DecimalMin', 'DecimalMax', 'Digits',
+  'Positive', 'PositiveOrZero', 'Negative', 'NegativeOrZero', 'Past', 'PastOrPresent', 'Future', 'FutureOrPresent',
+  'AssertTrue', 'AssertFalse', 'Null', 'Valid', 'Length', 'Range', 'URL',
+  'JsonIgnore', 'JsonProperty', 'JsonFormat', 'JsonIgnoreProperties', 'JsonBackReference', 'JsonManagedReference',
+  'JsonInclude', 'JsonSerialize', 'JsonDeserialize', 'JsonView', 'JsonAlias', 'JsonUnwrapped', 'JsonIdentityReference',
+  'JsonRawValue', 'JsonPropertyDescription', 'JSONField', 'Expose', 'SerializedName', 'DateTimeFormat', 'NumberFormat',
+  'ApiModelProperty', 'Schema', 'Hidden', 'Deprecated', 'Override', 'SuppressWarnings',
+  'Getter', 'Setter', 'Exclude', 'Include', 'Default', 'NonNull', 'Singular', 'With',
+]);
+/** Mappings that add a column of the row this lane does not draw: an order column, a map key, the columns of an @Any. */
+const UNDRAWN_COLUMN_MAPPINGS = Object.freeze(['OrderColumn', 'IndexColumn', 'MapKeyColumn', 'MapKeyJoinColumn', 'MapKeyJoinColumns',
+  'CollectionId', 'Any', 'ManyToAny']);
+/** Mappings that change what a statement loads or writes through an attribute, not which column: a fetch mode, a filter, SQL written by hand. */
+const REACH_ATTRIBUTE_MAPPINGS = Object.freeze(['Fetch', 'LazyCollection', 'LazyToOne', 'LazyGroup', 'Cascade', 'OnDelete', 'Where',
+  'SQLRestriction', 'WhereJoinTable', 'SQLJoinTableRestriction', 'Filter', 'Filters', 'FilterJoinTable', 'FilterJoinTables',
+  'NotFound', 'Loader', 'SQLInsert', 'SQLUpdate', 'SQLDelete', 'SQLDeleteAll', 'Persister', 'Audited']);
+
+/** The same judgment for the annotations on an entity's own class. */
+const KNOWN_ENTITY_ANNOTATIONS = new Set([
+  'Entity', 'Table', 'Inheritance', 'PrimaryKeyJoinColumn', 'NamedEntityGraph', 'NamedEntityGraphs', 'IdClass',
+  'DiscriminatorColumn', 'DiscriminatorValue', 'Access', 'EntityListeners', 'Cacheable', 'Cache', 'TableGenerator',
+  'TableGenerators', 'SequenceGenerator', 'SequenceGenerators', 'GenericGenerator', 'Immutable', 'DynamicInsert',
+  'DynamicUpdate', 'SelectBeforeUpdate', 'BatchSize', 'Proxy', 'OptimisticLocking', 'Check', 'Comment', 'Indexed',
+  'Getter', 'Setter', 'Data', 'Builder', 'SuperBuilder', 'NoArgsConstructor', 'AllArgsConstructor', 'RequiredArgsConstructor',
+  'EqualsAndHashCode', 'ToString', 'Accessors', 'Value', 'FieldNameConstants', 'With', 'Slf4j', 'Log4j2',
+  'JsonIgnoreProperties', 'JsonInclude', 'JsonNaming', 'JsonTypeInfo', 'JsonSubTypes', 'JsonAutoDetect', 'JsonPropertyOrder',
+  'JsonFilter', 'JsonIdentityInfo', 'JsonRootName', 'JsonSerialize', 'JsonDeserialize', 'ApiModel', 'Schema',
+  'Deprecated', 'SuppressWarnings',
+]);
+/** Class mappings that change what a statement on the entity loads or writes: a filter, a named query, SQL written by hand, an audit table. */
+const REACH_ENTITY_MAPPINGS = Object.freeze(['Where', 'SQLRestriction', 'Filter', 'Filters', 'FilterDef', 'FilterDefs', 'Loader',
+  'SQLInsert', 'SQLUpdate', 'SQLDelete', 'SQLDeleteAll', 'NamedQuery', 'NamedQueries', 'NamedNativeQuery', 'NamedNativeQueries',
+  'SqlResultSetMapping', 'SqlResultSetMappings', 'Subselect', 'Synchronize', 'Audited', 'DiscriminatorFormula', 'SoftDelete',
+  'Persister', 'Polymorphism']);
+
 /** The annotations on one attribute that this bridge does not read (javafacts/21 records them all). */
 function unreadMappings(a) {
   const names = Array.isArray(a.annotations) ? a.annotations : [];
@@ -540,20 +704,62 @@ function unreadMappings(a) {
   return out;
 }
 
+/** The annotations on one attribute that no list above names: unknown, so not known to leave the column alone. */
+function unknownMappings(a) {
+  const names = Array.isArray(a.annotations) ? a.annotations : [];
+  return names.filter((n) => !KNOWN_ATTRIBUTE_ANNOTATIONS.has(n) && !UNREAD_ATTRIBUTE_MAPPINGS.includes(n)
+    && !UNDRAWN_COLUMN_MAPPINGS.includes(n) && !REACH_ATTRIBUTE_MAPPINGS.includes(n));
+}
+
 /** One attribute of one entity: its column, the table that holds it, and what this lane did not read about it. */
 function readAttribute(e, a, ctx) {
   const { homes, entityUnread, stats } = ctx;
   const unread = unreadMappings(a);
+  const unknown = unknownMappings(a);
   const read = mapAttribute(a, ctx);
-  const mapped = unread.length > 0 || entityUnread.length > 0 ? { ...read, grade: 'HEURISTIC' } : read;
+  const guessed = unread.length > 0 || unknown.length > 0 || entityUnread.length > 0;
+  const mapped = guessed ? { ...read, grade: 'HEURISTIC', mappingGuessed: true } : read;
   const home = homes ? homes.get(a.declaredBy) : null;
   e.attributes.set(a.name, { ...a, ...mapped, ...(home && home !== e ? { home } : {}) });
-  if (a.id === true && mapped.column) Object.assign(e, { pkColumn: mapped.column, pkGrade: mapped.grade });
   if (a.elementCollection === true) {
     note(stats, 'element-collection-not-read', `${e.fqn}.${a.name} is an @ElementCollection: its values live in a table of their own, which this lane does not read, so no statement here reaches it`);
   }
   if (unread.length > 0) {
     note(stats, 'jpa-mapping-unread', `${e.fqn}.${a.name} is mapped with @${unread.join(', @')}, which this lane does not read, so the column it names is a guess`);
+  }
+  sayAttribute(stats, a, unknown, ctx.said);
+}
+
+/**
+ * What one attribute's mapping leaves out of the pack, said once for the class
+ * that declares it (a mapped superclass's field is every entity's): a name this
+ * lane does not know, a column it adds that is not drawn, a map keyed by a
+ * column JPA names by default, an embedded value, and what a statement loads or
+ * writes otherwise through it.
+ */
+function sayAttribute(stats, a, unknown, said) {
+  const names = Array.isArray(a.annotations) ? a.annotations : [];
+  const who = `${a.declaredBy}.${a.name}`;
+  const once = (reason, detail) => {
+    if (said.has(`${reason}|${who}`)) return;
+    said.add(`${reason}|${who}`);
+    note(stats, reason, detail);
+  };
+  if (unknown.length > 0) {
+    once('jpa-annotation-unknown', `${who} carries @${unknown.join(', @')}, which this lane does not know, so whether it names or places the column otherwise is not known and the column it maps is a guess`);
+  }
+  const undrawn = names.filter((n) => UNDRAWN_COLUMN_MAPPINGS.includes(n));
+  const toMany = a.relation === 'oneToMany' || a.relation === 'manyToMany';
+  if (toMany && a.typeSimple === 'Map' && !names.some((n) => n === 'MapKey' || n.startsWith('MapKeyColumn') || n.startsWith('MapKeyJoinColumn'))) undrawn.push('(a Map keyed by the column JPA names by default)');
+  if (undrawn.length > 0) {
+    once('jpa-column-not-drawn', `${who} is mapped with ${undrawn.map((n) => (n.startsWith('(') ? n : `@${n}`)).join(', ')}, which adds a column of the row that this lane does not draw, so a statement that reads or writes this association touches a column this pack does not name`);
+  }
+  if (a.embedded === true && a.id !== true) {
+    once('embedded-not-read', `${who} is @Embedded: the columns of its embeddable live on this table and this lane does not draw them, so a statement that reads or writes the row touches columns this pack does not name`);
+  }
+  const reach = names.filter((n) => REACH_ATTRIBUTE_MAPPINGS.includes(n));
+  if (reach.length > 0) {
+    once('jpa-reach-unread', `${who} carries @${reach.join(', @')}, which this lane does not read, so what a statement loads or writes through it may differ from this pack`);
   }
 }
 
@@ -614,11 +820,16 @@ for (const e of entities.values()) {
   }
   if (e.sharesRootTable !== true) stats.tables += 1;
   for (const a of e.attributes.values()) {
-    if (!a.column) continue;
     const home = homeOf(e, a);
-    ensureColumn(home.table, a.column, weakest(home.tableGrade, a.grade));
-    stats.columns += 1;
+    for (const c of attrColumns(a)) {
+      ensureColumn(home.table, c.column, weakest(home.tableGrade, c.grade));
+      stats.columns += 1;
+    }
   }
+  // A key or a discriminator the mapping does not declare is still a column of
+  // the row, as sure as the default it was named by.
+  for (const c of e.assumedKey ?? []) ensureColumn(e.table, c.column, weakest(e.tableGrade, c.grade));
+  if (e.discriminator) ensureColumn(e.table, e.discriminator.column, weakest(e.tableGrade, e.discriminator.grade));
 }
 
 // Associations -> the physical column that carries them, plus a JOINS edge.
@@ -629,8 +840,9 @@ for (const edge of g.edges) if (edge.type === 'JOINS') joinSeen.add(`${edge.from
 const writers = { tableIdOf, ensureTable, ensureColumn, joinSeen };
 for (const e of entities.values()) {
   if (e.joinedKey) {
-    ensureColumn(e.table, e.joinedKey.column, e.joinedKey.grade);
-    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(e.parent.table), `${e.table}.${e.joinedKey.column}=${e.parent.table}.${e.parent.pkColumn ?? 'id'}`, weakest(e.joinedKey.grade, e.parent.tableGrade), stats);
+    for (const c of e.joinedKey) ensureColumn(e.table, c.column, c.grade);
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(e.parent.table), joinPairs(e.table, e.joinedKey, e.parent.table, e.parent.pkColumns),
+      weakest(e.parent.tableGrade, keyAssumedGrade(e.parent), ...e.joinedKey.map((c) => c.grade)), stats);
   }
   for (const a of e.attributes.values()) {
     if (!a.relation || a.transient === true) continue;
@@ -672,9 +884,11 @@ function linkAssociation(g, e, a, target, ctx) {
     linkJoinTable(g, e, a, target, ctx);
   } else if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
     if (a.mappedBy) return; // the OTHER side owns the column
-    const { col, colGrade } = ownedForeignKey(a, target, { strategy, pairGrade });
-    ensureColumn(e.table, col, colGrade);
-    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), `${e.table}.${col}=${target.table}.${target.pkColumn ?? 'id'}`, colGrade, stats);
+    const { cols, colGrade } = ownedForeignKey(a, target, { strategy, pairGrade });
+    for (const c of cols) ensureColumn(e.table, c.column, c.grade);
+    // The join names the target's key: an assumed one makes the join a guess too.
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), joinPairs(e.table, cols, target.table, target.pkColumns),
+      weakest(colGrade, keyAssumedGrade(target)), stats);
   } else if (a.relation === 'oneToMany') {
     // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
     // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
@@ -684,11 +898,13 @@ function linkAssociation(g, e, a, target, ctx) {
       ensureColumn(target.table, col, pairGrade);
       if (!target.inboundColumns.some((c) => c.column === col)) target.inboundColumns.push({ column: col, grade: pairGrade });
     }
-    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), col ? `${e.table}.${e.pkColumn ?? 'id'}=${target.table}.${col}` : `${e.table}~${target.table}`, pairGrade, stats);
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table),
+      col ? joinPairs(e.table, e.pkColumns, target.table, [{ column: col }]) : `${e.table}~${target.table}`,
+      col ? weakest(pairGrade, keyAssumedGrade(e)) : pairGrade, stats);
   }
 }
 
-/** The join table one owning association crosses, its two columns, and the two JOINS edges to it. */
+/** The join table one owning association crosses, its columns, and the two JOINS edges to it. */
 function linkJoinTable(g, e, a, target, ctx) {
   const { strategy, derivedGrade, stats, tableIdOf, ensureTable, ensureColumn, joinSeen } = ctx;
   const jt = joinTableOf(e, a, target, { strategy, derivedGrade });
@@ -698,25 +914,37 @@ function linkJoinTable(g, e, a, target, ctx) {
   a.joinTableResolved = jt;
   ensureTable(jt.table, { joinTableFor: [e.fqn, target.fqn] });
   for (const c of jt.columns) ensureColumn(c.table, c.column, c.grade);
-  addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(jt.table), `${e.table}.${e.pkColumn ?? 'id'}=${jt.table}.${jt.columns[0].column}`, jt.columns[0].grade, stats);
-  addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(jt.table), `${target.table}.${target.pkColumn ?? 'id'}=${jt.table}.${jt.columns[1].column}`, jt.columns[1].grade, stats);
+  addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(jt.table), joinPairs(e.table, e.pkColumns, jt.table, jt.left),
+    weakest(keyAssumedGrade(e), ...jt.left.map((c) => c.grade)), stats);
+  addJoin(g, joinSeen, tableIdOf(target.table), tableIdOf(jt.table), joinPairs(target.table, target.pkColumns, jt.table, jt.right),
+    weakest(keyAssumedGrade(target), ...jt.right.map((c) => c.grade)), stats);
 }
 
 /**
  * The foreign key a @ManyToOne / @OneToOne owns on its own table: the column it
- * declares, or `<attribute>_<target pk>` by the strategy. The resolved name and
- * grade are recorded back on the attribute, so the column is part of the row
- * every statement reads and writes.
+ * declares, or `<attribute>_<key column>` by the strategy, one per column of the
+ * target's key (JPA 2.10.x: a composite key is referenced by every one of its
+ * columns, and `owner_id` is a column no such table has). Each derived name is
+ * as sure as the key column it is named after. The resolved names and grade are
+ * recorded back on the attribute, so the columns are part of the row every
+ * statement reads and writes.
  */
 function ownedForeignKey(a, target, { strategy, pairGrade }) {
-  const derivedFk = !a.column;
-  const fk = derivedName(`${a.name}_${target.pkColumn ?? 'id'}`, strategy, pairGrade);
-  const col = a.column ?? fk.name;
-  const colGrade = derivedFk ? weakest(pairGrade, fk.grade) : pairGrade;
-  a.column = col;
-  if (!a.grade) a.grade = colGrade;
-  else if (derivedFk && fk.grade !== pairGrade) a.grade = weakest(a.grade, fk.grade);
-  return { col, colGrade };
+  if (a.column) return { cols: [{ column: a.column, grade: pairGrade }], colGrade: pairGrade };
+  const own = a.grade;
+  const cols = [];
+  const attrCols = [];
+  for (const k of target.pkColumns) {
+    const fk = derivedName(`${a.name}_${k.column}`, strategy, pairGrade);
+    // The name's own doubt: a spelling the Hibernate version decides, or a key it is named after that is a guess.
+    const nameGrade = weakest(fk.grade === pairGrade ? 'EXACT' : fk.grade, k.grade);
+    cols.push({ column: fk.name, grade: weakest(pairGrade, fk.grade, k.grade) });
+    attrCols.push({ column: fk.name, grade: own ? weakest(own, nameGrade) : weakest(pairGrade, nameGrade) });
+  }
+  a.column = cols[0].column;
+  a.grade = weakest(...attrCols.map((c) => c.grade));
+  if (cols.length > 1) a.columns = attrCols;
+  return { cols, colGrade: weakest(...cols.map((c) => c.grade)) };
 }
 
 /**
@@ -740,16 +968,22 @@ function joinTableOf(e, a, target, { strategy, derivedGrade }) {
   const table = named ? jt.name : derivedTable.name;
   const nameGrade = named ? 'EXACT' : weakest(e.tableGrade, derivedTable.grade);
   const inverse = [...(target.attributes?.values() ?? [])].find((t) => t.mappedBy === a.name);
-  const side = (declaredName, logical) => (declaredName ? { name: declaredName, grade: 'EXACT' } : derivedName(logical, strategy, derivedGrade));
-  const left = side(jt?.joinColumns?.[0], `${inverse ? inverse.name : e.entityName}_${e.pkColumn ?? 'id'}`);
-  const right = side(jt?.inverseJoinColumns?.[0], `${a.name}_${target.pkColumn ?? 'id'}`);
+  // One column per key column on each side, each named after its key column and as sure as it.
+  const side = (declaredName, logical, k) => {
+    if (declaredName) return { name: declaredName, grade: 'EXACT' };
+    const d = derivedName(logical, strategy, derivedGrade);
+    return { name: d.name, grade: weakest(d.grade, k.grade) };
+  };
+  const left = e.pkColumns.map((k, i) => side(jt?.joinColumns?.[i], `${inverse ? inverse.name : e.entityName}_${k.column}`, k))
+    .map((c) => ({ table, column: c.name, grade: weakest(e.tableGrade, nameGrade, c.grade) }));
+  const right = target.pkColumns.map((k, i) => side(jt?.inverseJoinColumns?.[i], `${a.name}_${k.column}`, k))
+    .map((c) => ({ table, column: c.name, grade: weakest(target.tableGrade, nameGrade, c.grade) }));
   return {
     table,
     grade: weakest(e.tableGrade, target.tableGrade, nameGrade),
-    columns: [
-      { table, column: left.name, grade: weakest(e.tableGrade, nameGrade, left.grade) },
-      { table, column: right.name, grade: weakest(target.tableGrade, nameGrade, right.grade) },
-    ],
+    columns: [...left, ...right],
+    left,
+    right,
   };
 }
 
@@ -992,7 +1226,14 @@ function readQueryRefs(type, q, ctx, sink) {
       sink.unresolved.push({ reason: 'jpql-unreadable', detail: String(q.text ?? '').slice(0, 200) });
       return none;
     }
-    return resolveJpqlRefs(read, ctx, sink);
+    const refs = resolveJpqlRefs(read, ctx, sink);
+    // A FROM on a SINGLE_TABLE subclass is filtered by the hierarchy's discriminator.
+    for (const root of read.roots) {
+      const target = jpqlEntityOf(root.entity, ctx);
+      const d = target && target.parent ? discriminatorOf(target) : null;
+      if (d) sink.reads.push(d);
+    }
+    return refs;
   }
   const parsed = parseDerivedQuery(ctx.method.name);
   if (!parsed.ok) {
@@ -1035,7 +1276,7 @@ function resolveDerivedRefs(parsed, ctx, sink) {
   const touched = [];
   // Each table's own grade, the one its access is marked with: a column whose
   // name is derived is a guess on its own READS edge, not on the table.
-  const tableGrades = new Map([[entity.table, entity.tableGrade]]);
+  const tableGrades = new Map(rowTables(entity).map((t) => [t.table, t.tableGrade]));
   const props = [...parsed.parts.map((p) => p.property), ...parsed.orderBy.map((o) => o.property)];
   if (props.length === 0 && access === 'select') {
     // `findAll`, `findAllByOrderBy…` with no predicate: the query reads the whole
@@ -1051,12 +1292,12 @@ function resolveDerivedRefs(parsed, ctx, sink) {
     const last = r.path[r.path.length - 1];
     const owner = entities.get(last.entity);
     const attr = owner ? owner.attributes.get(last.property) : null;
-    if (!owner || !attr || !attr.column) {
+    if (!owner || !attr || attrColumns(attr).length === 0) {
       sink.unresolved.push({ reason: 'property-has-no-column', detail: `${prop} resolves to ${last.entity}.${last.property}, which owns no column` });
       continue;
     }
     const home = homeOf(owner, attr);
-    touched.push({ table: home.table, column: attr.column, grade: weakest(home.tableGrade, attr.grade) });
+    for (const c of attrColumns(attr)) touched.push({ table: home.table, column: c.column, grade: weakest(home.tableGrade, c.grade) });
     if (!tableGrades.has(home.table)) tableGrades.set(home.table, home.tableGrade);
     // A nested path is a join: every hop's owning table is read on the way.
     for (const hop of r.path.slice(0, -1)) {
@@ -1065,6 +1306,9 @@ function resolveDerivedRefs(parsed, ctx, sink) {
     }
   }
 
+  // A query on a SINGLE_TABLE subclass is filtered by the hierarchy's discriminator.
+  const discriminator = entity.parent ? discriminatorOf(entity) : null;
+  if (discriminator) touched.push(discriminator);
   // A predicate column is READ even by a DELETE (the WHERE clause reads it);
   // the TABLE access is what says the row goes away. Same split lineage.py makes.
   for (const t of touched) {
@@ -1162,12 +1406,12 @@ function resolveJpqlRefs(read, ctx, sink) {
       const last = i === ref.path.length - 1;
       if (last) {
         const attr = cur.attributes.get(seg);
-        if (!attr || !attr.column) {
+        if (!attr || attrColumns(attr).length === 0) {
           sink.unresolved.push({ reason: 'jpql-path-has-no-column', detail: `${ref.alias}.${ref.path.join('.')} owns no column` });
           return;
         }
         const home = homeOf(cur, attr);
-        sink[bucket].push({ table: home.table, column: attr.column, grade: weakest(home.tableGrade, attr.grade) });
+        sink[bucket].push(...attrColumns(attr).map((c) => ({ table: home.table, column: c.column, grade: weakest(home.tableGrade, c.grade) })));
         mark(sink.tableAccess, home.table, bucket === 'writes' ? 'write' : 'read', home.tableGrade);
         return;
       }
@@ -1362,10 +1606,12 @@ function addBuiltinStatement(g, ctx) {
     applyCascade(entity, ctx, sink, 'delete');
   } else if (family === 'findById') {
     evidenceNote = 'a by-id lookup reads the row through its primary key';
-    if (entity.pkColumn) {
-      sink.reads.push({ table: entity.table, column: entity.pkColumn, grade: entity.tableGrade });
-    } else {
-      sink.unresolved.push({ reason: 'no-primary-key', detail: `${entity.fqn} declares no @Id, so the by-id lookup names no column` });
+    // Every key column, at the table's grade as it always was; a key the tree
+    // does not declare at all is an assumed default, and HEURISTIC.
+    const keyGrade = weakest(entity.tableGrade, keyAssumedGrade(entity));
+    for (const k of entity.pkColumns) sink.reads.push({ table: entity.table, column: k.column, grade: keyGrade });
+    if (keyAssumedGrade(entity) !== 'EXACT') {
+      sink.unresolved.push({ reason: 'primary-key-assumed', detail: `${entity.fqn} declares no primary key this lane read, so the by-id lookup reads the assumed default \`${entity.pkColumn}\`` });
     }
     markRow(sink.tableAccess, entity, 'read', entity.tableGrade);
     limits = applyFetchPlan(entity, ctx, [], sink);
@@ -1512,21 +1758,29 @@ function emitStatement(g, a) {
 // helpers
 // ---------------------------------------------------------------------------
 
-/** Every mapped column of an entity, with its weakest-link grade. */
+/**
+ * Every mapped column of an entity's row, with its weakest-link grade: its
+ * attributes' (a composite key or a foreign key toward one owns one per key
+ * column), the foreign keys other mappings put on its table, and the columns
+ * the row carries that no attribute declares, an assumed key and a
+ * discriminator, each as sure as the default it was named by.
+ */
 function columnsOf(entity) {
   const out = [];
   const seen = new Set();
+  const add = (table, column, grade) => {
+    if (seen.has(`${table}.${column}`)) return;
+    seen.add(`${table}.${column}`);
+    out.push({ table, column, grade });
+  };
   for (const a of entity.attributes.values()) {
     const home = homeOf(entity, a);
-    if (!a.column || seen.has(`${home.table}.${a.column}`)) continue;
-    seen.add(`${home.table}.${a.column}`);
-    out.push({ table: home.table, column: a.column, grade: weakest(home.tableGrade, a.grade) });
+    for (const c of attrColumns(a)) add(home.table, c.column, weakest(home.tableGrade, c.grade));
   }
-  for (const c of entity.inboundColumns ?? []) {
-    if (seen.has(`${entity.table}.${c.column}`)) continue;
-    seen.add(`${entity.table}.${c.column}`);
-    out.push({ table: entity.table, column: c.column, grade: c.grade });
-  }
+  for (const c of entity.inboundColumns ?? []) add(entity.table, c.column, c.grade);
+  for (const t of rowTables(entity)) for (const c of t.assumedKey ?? []) add(t.table, c.column, weakest(t.tableGrade, c.grade));
+  const d = discriminatorOf(entity);
+  if (d) add(d.table, d.column, d.grade);
   return out;
 }
 
@@ -1563,7 +1817,7 @@ function addJoin(g, seen, aId, bId, columns, grade, stats) {
   const key = `${from}|${to}`;
   if (seen.has(key) || seen.has(`${to}|${from}`)) return;
   seen.add(key);
-  g.addEdge({ from, to, type: 'JOINS', grade, evidence: { via: 'jpa-association', columns: [columns] } });
+  g.addEdge({ from, to, type: 'JOINS', grade, evidence: { via: 'jpa-association', columns: Array.isArray(columns) ? columns : [columns] } });
   stats.joins += 1;
 }
 

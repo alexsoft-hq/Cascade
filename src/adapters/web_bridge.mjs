@@ -151,9 +151,9 @@ function readTheFrontend(records, opts, stats) {
  * one instance before any of them can be graded.
  */
 function placeTheCalls(g, read, {
-  gatewayRoutes, ports, stats, nodesToAdd, edges,
+  gatewayRoutes, ports, stats, nodesToAdd, edges, unreadPrefix,
 }) {
-  const { exactPaths, templatePaths, matchUrl } = buildRouteIndex(g);
+  const { exactPaths, templatePaths, matchUrl } = buildRouteIndex(g, { unreadPrefix: typeof unreadPrefix === 'string' ? unreadPrefix : null });
   const callsPerInstance = new Map();
   const { prefixOf, gatewayKeys } = makePrefixes({
     instanceOf: read.instanceOf,
@@ -295,6 +295,8 @@ function placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls }) {
  *        (I-5); `enabled` is the gate, and with it false no screen is built.
  *        codeLength is `moduleAttribution.codeLength`, the number of leading
  *        characters of a screen code that name its group.
+ *        unreadRoutePrefix says why the routes' recorded addresses may lack a
+ *        path prefix set in code (src/core/assemble.mjs), or is null.
  * @returns {object} the lane statistics (§F of the round brief)
  */
 export function addWebFacts(g, webFacts, opts = {}) {
@@ -307,7 +309,7 @@ export function addWebFacts(g, webFacts, opts = {}) {
   const ports = readPorts(opts, stats);
   recordPackages(opts, stats);
   const calls = placeTheCalls(g, read, {
-    gatewayRoutes, ports, stats, nodesToAdd, edges,
+    gatewayRoutes, ports, stats, nodesToAdd, edges, unreadPrefix: opts.unreadRoutePrefix,
   });
   placeTheScreens(g, read, { opts, stats, nodesToAdd, edges, calls });
 

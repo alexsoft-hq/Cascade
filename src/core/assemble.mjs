@@ -47,6 +47,38 @@
 // Pure: records in, graph out. No filesystem, no workers, no process.
 
 import { Graph } from './graph.mjs';
+import { builtinRegistry } from './rules/registry.mjs';
+import { codeSettingsIn } from './rules/kinds/java_code_setting.mjs';
+
+/**
+ * WHY THE ROUTES' ADDRESSES MAY LACK A PREFIX, for the web bridge's matcher: a
+ * call that sets controllers' path prefix in code (a `java.code-setting` rule
+ * for `pathPrefixes`), seen while the Java lane was given none. Every route the
+ * lane recorded may then be served under a prefix it does not show, so a call
+ * that only a catch-all matches may be a more specific route's (RM67-J4). Null
+ * with no Java lane, a declared list, or no such call; the same condition
+ * `cascade analyze` says as SETTING_IN_CODE.
+ */
+function unreadRoutePrefix(java, javaFacts) {
+  if (!java || (java.pathPrefixes ?? []).length > 0) return null;
+  const found = codeSettingsIn(javaFacts, builtinRegistry().ofKind('java.code-setting')).filter((f) => f.setting === 'pathPrefixes');
+  if (found.length === 0) return null;
+  const f = found[0];
+  return `${f.file ?? '(unknown file)'}${f.line ? `:${f.line}` : ''} calls ${f.on}.${f.method}, which serves controllers under a path prefix this engine does not read and the profile does not declare (pathPrefixes), so a more specific route of this pack may answer this address instead of the catch-all`;
+}
+
+/**
+ * The web bridge's options with what this file adds from the Java stream: the
+ * view names each handler returns (the server-rendered screen, RM48), and why
+ * the routes' addresses may lack a prefix (unreadRoutePrefix).
+ */
+function webOptionsOf(web, java, javaFacts) {
+  return {
+    ...web,
+    views: web.views ?? javaFacts.filter((r) => r && typeof r === 'object' && r.kind === 'view'),
+    unreadRoutePrefix: unreadRoutePrefix(java, javaFacts),
+  };
+}
 
 /**
  * One lane's bridge: null when no options were given for it, else what it
@@ -198,10 +230,7 @@ export function assembleGraph(a) {
   // templates, and the web bridge is the only place that has both. Taken out
   // of the Java stream rather than asked of the caller, so `analyze` and the
   // working-tree overlay cannot pass different sets.
-  const webStats = runBridge(bridges, 'addWebFacts', 'web', graph, webFacts, web && {
-    ...web,
-    views: web.views ?? javaFacts.filter((r) => r && typeof r === 'object' && r.kind === 'view'),
-  });
+  const webStats = runBridge(bridges, 'addWebFacts', 'web', graph, webFacts, web && webOptionsOf(web, java, javaFacts));
   const runtimeStats = runBridge(bridges, 'addRuntimeFacts', 'runtime', graph, otelTraces, runtime);
   return { graph, javaStats, jpaStats, mpStats, tsStats, openapiStats, webStats, runtimeStats };
 }

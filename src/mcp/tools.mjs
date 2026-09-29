@@ -15,7 +15,7 @@
 // when the code axis (Java lane) lands, the same tools gain candidate grades and
 // the response contract already carries them.
 
-import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH, depthSaid, sqlEdgesOf } from '../core/graph.mjs';
+import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH, WALK_NODE_CAP, depthSaid, sqlEdgesOf } from '../core/graph.mjs';
 import { changeImpact } from '../core/overlay.mjs';
 import { chainWalk, nodeLabel } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
@@ -25,10 +25,9 @@ import { axisRemedies, diagnosticRemedy, routeRemedy } from '../core/remedies.mj
 import { tableFamilies } from '../core/summary.mjs';
 import {
   handlersOf, handlerStartsOf, walkEndpoints, walkScreens, groupOfEndpoint, frontendCallsOf,
-  screensAffecting, observedCall,
+  screensAffecting, observedCall, affectedBy, routeAddressOf, nodeCapSaid,
 } from '../core/walks.mjs';
 import { resolveSchemaName } from '../core/name_resolve.mjs';
-import { endpointsAffectingColumn } from '../adapters/java_bridge.mjs';
 import { makeResponse } from './contract.mjs';
 import { makeFederator, packOutboundCalls, routeRef, serversOf } from './federation.mjs';
 import { NO_STATE_TRUST_LEVEL } from '../core/trust.mjs';
@@ -167,7 +166,10 @@ export function endpoint_impact(graph, args, ctx) {
   if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
   const colId = col.id;
 
-  const eps = endpointsAffectingColumn(graph, colId, { mode });
+  // The walk Trace draws up from the column (walks.mjs affectedBy): one
+  // question, one walk, so this list and Trace's endpoints lane are the same rows.
+  const reach = affectedBy(graph, colId, { mode });
+  const eps = reach.endpoints;
   // `viaHttp` rides through: a route reached only across an internal HTTP hop is
   // affected through another deployable, and the row says so (SPEC §1.1).
   const items = eps.map((e) => {
@@ -227,9 +229,25 @@ export function endpoint_impact(graph, args, ctx) {
     answer,
     basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['column', 'endpoint']),
-    limits: [...(ctx.limits ?? []), ...col.limits, ...fed.limits()],
+    limits: [...(ctx.limits ?? []), ...col.limits, ...fed.limits(), ...upWalkCutLimits('endpoint_impact', reach.cut)],
     truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
+}
+
+/** The node cap a census's route walks and screen walks hit, as limits (RM67-J4, K-3). */
+function censusCapLimits(scope, routeWalk, screenWalk) {
+  return [nodeCapSaid(routeWalk, 'route'), nodeCapSaid(screenWalk, 'screen')].filter(Boolean).map((reason) => ({ scope, reason }));
+}
+
+/**
+ * What the walk up behind an impact answer did not look at, said where it
+ * changes the rows: the node cap. The same cap stops Trace, so the two answers
+ * are still the same rows, and both say it (RM67-J4, K-3).
+ */
+function upWalkCutLimits(scope, walkCut) {
+  return walkCut.nodeCap
+    ? [{ scope, reason: `node cap reached: the walk up from here recorded ${WALK_NODE_CAP} nodes and stopped, so the list above is a lower bound, and what lies past the cap is unknown, not absent` }]
+    : [];
 }
 
 // ---- the screen axis: one census, shared by every view that counts on it ----
@@ -352,15 +370,13 @@ export function screen_impact(graph, args, ctx) {
     if (!graph.nodes.has(targetId)) return notFound(ctx, kind, args[kind]);
   }
 
-  // The routes this change is felt on, so a screen row can name the ones IT
-  // goes through rather than every route it happens to call.
-  const affectedEndpoints = new Set();
-  for (const [id] of graph.impactOf(targetId, { mode, edgeTypes: FLOW_EDGE_TYPES })) {
-    if (graph.nodes.get(id)?.kind === 'endpoint') affectedEndpoints.add(id);
-  }
-  const items = screensAffecting(graph, targetId, { mode }).map((s) => {
-    const forward = graph.reach(s.screen, { direction: 'out', mode, edgeTypes: FLOW_EDGE_TYPES });
-    const through = [...forward.keys()].filter((id) => affectedEndpoints.has(id)).sort();
+  // ONE walk up (walks.mjs affectedBy), the one Trace draws: the screens this
+  // change is felt on, and the routes, so a screen row can name the ones IT goes
+  // through rather than every route it happens to call.
+  const reach = affectedBy(graph, targetId, { mode });
+  const routeGradeOf = new Map(reach.endpoints.map((e) => [e.endpoint, e.pathGrade]));
+  const items = reach.screens.map((s) => {
+    const through = routesThrough(graph, s.screen, routeGradeOf, mode);
     return {
       screen: s.path ?? strip(s.screen),
       label: s.label,
@@ -378,15 +394,10 @@ export function screen_impact(graph, args, ctx) {
   const fed = makeFederator(ctx, args);
   if (fed.wanted) {
     const routes = [];
-    for (const id of [...affectedEndpoints].sort()) {
+    for (const [id, grade] of [...routeGradeOf].sort(([a], [b]) => cmpStr(a, b))) {
       const n = graph.nodes.get(id);
       if (!n || n.outbound === true) continue;
-      const info = [...graph.impactOf(targetId, { mode, edgeTypes: FLOW_EDGE_TYPES })]
-        .find(([nid]) => nid === id);
-      routes.push(routeRef({
-        id: strip(id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
-        grade: info ? info[1].pathGrade : 'SOUND_SET',
-      }, { grade: info ? info[1].pathGrade : 'SOUND_SET' }));
+      routes.push(routeRef({ id: strip(id), httpMethod: n.httpMethod ?? null, path: n.path ?? null, grade }, { grade }));
     }
     items.push(...fed.crossUpScreens(routes, { mode }));
   }
@@ -409,9 +420,24 @@ export function screen_impact(graph, args, ctx) {
     answer,
     basis: basisWith(ctx, fed),
     trust: trustFor(ctx, ['screen', 'column']),
-    limits: [...(ctx.limits ?? []), ...entryLimits, screenWalkLimit(), ...fed.limits()],
+    limits: [...(ctx.limits ?? []), ...entryLimits, screenWalkLimit(), ...fed.limits(), ...upWalkCutLimits('screen_impact', reach.cut)],
     truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
+}
+
+/**
+ * The affected routes one screen goes through: the ones its own forward reach
+ * calls, and for a server-rendered page the routes whose handlers render it,
+ * which is how a page is affected at all when its handler reads the column.
+ */
+function routesThrough(graph, screenId, affected, mode) {
+  const out = new Set();
+  for (const [id] of graph.reach(screenId, { direction: 'out', mode, edgeTypes: FLOW_EDGE_TYPES })) if (affected.has(id)) out.add(id);
+  for (const e of graph.inEdges(screenId)) {
+    if (e.type !== 'RENDERS_PAGE') continue;
+    for (const h of graph.inEdges(e.from)) if (h.type === 'HANDLES' && affected.has(h.from)) out.add(h.from);
+  }
+  return [...out].sort();
 }
 
 /**
@@ -1758,36 +1784,35 @@ function flowEndpointEntry(graph, args, ctx, mode) {
  * render them, and any client in this pack. It is the walk every other target
  * gets, with the same mode floor, depth, weakest-link grading and cut counts.
  *
- * THE ROUTE'S OWN ADDRESS IS THE FIRST LINK. A caller is matched to this route
- * by its address, and that address is only as sure as the route's link to the
- * code that declares it (its HANDLES edge). So the strongest such link this
- * mode admits caps every row, as the same link caps a walk down from the route.
- * A route this mode admits no such link for is where the picture stops: no
- * caller is walked, the links are counted as the floor's, and the note says so.
+ * A CALLER IS GRADED BY ITS OWN LINK (RM67-J4, K-4). What calls this route is
+ * matched to it by the address the source writes, so each caller's grade is
+ * the weakest link on its own path up to the route, exactly as a walk down from
+ * the screen, the screen census and screen_impact grade the same link. The
+ * route's link to its handler grades the code BELOW the route, never the
+ * callers above it: a handler reached through an interface-typed field is a
+ * candidate set, and the address the source wrote is still the address. A
+ * route whose ADDRESS its lane could not settle (an unread exclude of a global
+ * prefix) carries that on the call's own link, where every walk reads it, and
+ * the note names it.
  */
 function flowRouteTarget(graph, args, ctx, mode) {
   const epId = nodeId('endpoint', String(args.endpoint));
   const ep = graph.nodes.get(epId);
   if (!ep) return { missing: notFound(ctx, 'endpoint', args.endpoint) };
-  const links = graph.outEdges(epId).filter((e) => e.type === 'HANDLES');
-  const admitted = links.filter((e) => GRADE_SETS[mode].has(e.grade));
-  const best = admitted.reduce((b, e) => (b === null || gradeRank(e.grade) > gradeRank(b.grade) ? e : b), null);
-  const stop = links.length > 0 && best === null;
+  const best = handlerStartsOf(graph, epId, mode)[0] ?? null;
   const { handlerShort } = endpointHandler(graph, ep);
   const entry = {
     kind: 'endpoint', id: strip(epId), httpMethod: ep.httpMethod ?? null, path: ep.path ?? null,
-    handler: best ? strip(best.to) : (ep.handler ?? null), handlerShort,
+    handler: best ? strip(best.id) : (ep.handler ?? null), handlerShort,
     handlers: handlersOf(graph, epId).length,
     ...routeGradeFields(graph, epId),
     file: ep.file ?? null, line: ep.line ?? null, start: epId,
   };
-  const rule = best ? (graph.edgeAt(best.idx)?.evidence?.rule ?? null) : null;
-  const handlerNote = stop
-    ? `this route's own address rests on a link below the floor of mode=${mode} (${linkGradesOf(graph, epId)}), so no caller of it is walked. Ask with a mode that admits that grade`
-    : (best && best.grade !== 'EXACT'
-      ? `this route's own address rests on a link graded ${best.grade}${rule ? ` by ${rule}` : ''}, and a caller is matched to the route by that address, so no caller is graded above ${best.grade}`
-      : null);
-  return { start: epId, entryGrade: best ? best.grade : 'EXACT', entry, handlerNote, stopLinks: stop ? links : null, missing: null };
+  const address = routeAddressOf(graph, epId);
+  const handlerNote = address
+    ? `this route's own address is graded ${address.grade}: ${address.why}. A caller is matched to the route by that address, so its own link to the route carries that grade, here as in every walk`
+    : null;
+  return { start: epId, entryGrade: 'EXACT', entry, handlerNote, missing: null };
 }
 
 /**
@@ -1807,14 +1832,6 @@ function routeTargetLanes(graph, ctx, w) {
     w.emptyReason.screens = why;
   }
   w.laneNames = lanes;
-}
-
-/** A route whose own address this mode does not admit: its links are what the floor kept out. */
-function routeFloorCut(w, links) {
-  for (const e of links) {
-    w.cut.byMode += 1;
-    w.cut.byModeGrades[e.grade] = (w.cut.byModeGrades[e.grade] ?? 0) + 1;
-  }
 }
 
 /** The HANDLES edge a picture starts through: its grade, and the rule that gave it when a rule did. */
@@ -2090,15 +2107,12 @@ export function flow(graph, args, ctx) {
 
   const found = flowEntry(graph, args, ctx, { entryKind, up, mode });
   if (found.missing) return found.missing;
-  const { start, entry, entryLimits, handlerNote, entryGrade = 'EXACT', stopLinks = null } = found;
+  const { start, entry, entryLimits, handlerNote, entryGrade = 'EXACT' } = found;
 
-  // A route whose own address this mode does not admit is walked no further
-  // (flowRouteTarget): depth 0, and its links counted as the floor's.
-  const w = chainWalk(graph, { start, direction, mode, maxDepth: stopLinks ? 0 : depth, entryGrade });
-  if (stopLinks) routeFloorCut(w, stopLinks);
+  const w = chainWalk(graph, { start, direction, mode, maxDepth: depth, entryGrade });
   const routeTarget = up && entryKind === 'endpoint';
   if (routeTarget) routeTargetLanes(graph, ctx, w);
-  const entryRoute = routeTarget && !stopLinks
+  const entryRoute = routeTarget
     ? { id: entry.id, httpMethod: entry.httpMethod, path: entry.path, hops: 0, grade: entryGrade } : null;
   const { fed, federated, crossedRows } = flowCrossings(graph, args, ctx, { w, start, up, mode, depth, entryGrade, entryRoute });
 
@@ -2189,14 +2203,13 @@ function federatedReach(graph, fed, opts) {
   const screens = new Set();
   const endpoints = new Set();
   for (const id of [...callers].sort(cmpStr)) {
-    for (const [nid] of graph.impactOf(id, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES })) {
-      const n = graph.nodes.get(nid);
-      if (!n) continue;
-      if (n.kind === 'screen') screens.add(nid);
-      // A route this project only CALLS is not one of its own, here as
-      // everywhere else in the reach census.
-      else if (n.kind === 'endpoint' && n.outbound !== true) endpoints.add(nid);
-    }
+    // The walk up every impact answer runs (walks.mjs affectedBy), so a page a
+    // calling handler renders counts as the pages of screen_impact do.
+    const reach = affectedBy(graph, id, { mode: opts.mode });
+    for (const s of reach.screens) screens.add(s.screen);
+    // A route this project only CALLS is not one of its own, here as
+    // everywhere else in the reach census.
+    for (const e of reach.endpoints) if (graph.nodes.get(e.endpoint)?.outbound !== true) endpoints.add(e.endpoint);
   }
   return { screens: screens.size, endpoints: endpoints.size };
 }
@@ -2320,10 +2333,12 @@ function endpointHandler(graph, n) {
 }
 
 /**
- * HOW SURE A ROUTE'S OWN ADDRESS IS: the grade of its HANDLES edge, the
+ * HOW SURE A ROUTE'S LINK TO ITS CODE IS: the grade of its HANDLES edge, the
  * strongest where two handlers declare it, with the reason its lane wrote.
  * Null for a route with no handler. A walk starts at the handler, so without
- * this a route whose address is a guess reads as sure as any other.
+ * this a route whose handler is a guess reads as sure as any other. It grades
+ * what is below the route; a doubt about the route's ADDRESS is its own
+ * (walks.mjs routeAddressOf), carried on the calls matched to it.
  */
 function routeGrade(graph, epId) {
   let best = null;
@@ -2538,7 +2553,7 @@ function browseCensus(graph) {
     if (n.kind === 'endpoint' && !endpoints.has(n.id)) continue;
     counts[n.kind] += 1;
   }
-  const census = { endpoints, stmtEps, tableEps, colEps, counts };
+  const census = { endpoints, stmtEps, tableEps, colEps, counts, walk: w.walk };
   BROWSE_CENSUS.set(graph, census);
   return census;
 }
@@ -2642,10 +2657,11 @@ export function browse(graph, args, ctx) {
 
   const limits = [...(ctx.limits ?? []), ...entryLimits, {
     scope: 'browse',
-    reason: `\`endpoints\` on a row counts the endpoints whose walk (mode=${BROWSE_CENSUS_MODE}, ${depthSaid(BROWSE_CENSUS_DEPTH)}) reaches a statement that touches it. It is the same forward walk \`flow\` draws and \`map\` and \`coupling\` count on, so what a deeper or wider walk would add is unknown, not absent`,
+    reason: `\`endpoints\` on a row counts the endpoints whose walk (mode=${BROWSE_CENSUS_MODE}, ${depthSaid(BROWSE_CENSUS_DEPTH)}) reaches a statement that touches it. It is the same forward walk \`flow\` draws and \`map\` and \`coupling\` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them`,
   }];
   if (kind === 'endpoint' || kind === 'table') limits.push(groupingLimit('browse', ctx));
   if (kind === 'screen' || reach) limits.push(screenWalkLimit());
+  limits.push(...censusCapLimits('browse', census.walk, kind === 'screen' || reach ? screenCensus(graph).walk : null));
   const trunc = [truncField('items', shown.length, matched.length, offset, browseOrder(kind, sort))];
   return makeResponse({
     answer, basis: ctx.basis,
@@ -2675,11 +2691,12 @@ function browseTableRows(graph, census, opts) {
     let columns = 0;
     for (const e of graph.outEdges(n.id)) if (e.type === 'DECLARES') columns += 1;
     // A statement is a reader or a writer of this table by the access ITS
-    // EXECUTES edge carries; a delete is a write (it changes the rows).
+    // EXECUTES edge carries; a delete is a write (it changes the rows). Counted
+    // in the census's mode, as `endpoints` beside it is (RM67-J4, K-6).
     const read = new Set();
     const write = new Set();
     for (const e of graph.inEdges(n.id)) {
-      if (e.type !== 'EXECUTES') continue;
+      if (e.type !== 'EXECUTES' || !GRADE_SETS[BROWSE_CENSUS_MODE].has(e.grade)) continue;
       const access = graph.edgeAt(e.idx)?.evidence?.access;
       (access === 'write' || access === 'delete' ? write : read).add(e.from);
     }
@@ -2713,9 +2730,11 @@ function browseColumnRows(graph, census, opts) {
   for (const n of graph.nodes.values()) {
     if (n.kind !== 'column') continue;
     if (prefix !== null && !n.id.startsWith(prefix)) continue;
+    // In the census's mode, as `endpoints` beside them (RM67-J4, K-6).
     let reads = 0;
     let writes = 0;
     for (const e of graph.inEdges(n.id)) {
+      if (!GRADE_SETS[BROWSE_CENSUS_MODE].has(e.grade)) continue;
       if (e.type === 'READS') reads += 1;
       else if (e.type === 'WRITES') writes += 1;
     }

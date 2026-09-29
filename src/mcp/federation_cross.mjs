@@ -32,7 +32,7 @@ import { chainWalk } from '../core/chain.mjs';
 import { FLOW_EDGE_TYPES } from '../core/graph.mjs';
 import { normalizeUrlPath, routeMatches } from '../adapters/http_routes.mjs';
 import { buildMap } from '../core/map.mjs';
-import { screensAffecting } from '../core/walks.mjs';
+import { endpointsAffecting, screensAffecting } from '../core/walks.mjs';
 import {
   cmp, methodMatch, methodOf, outboundCallsOf, packOutboundCalls, pathOf, serversOf,
   strip, weaker, RANK,
@@ -265,17 +265,21 @@ export function crossUpEndpoints(f, routes, opts) {
           visited.add(key);
           recordCrossing({ project: hit.project, id: callerId }, hit.call,
             { project: servedBy, endpoint: route.id }, grade, hit.ambiguous);
-          for (const [id, info] of sib.graph.impactOf(callerId, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES })) {
+          // The walk up endpoint_impact and Trace run in this project, run
+          // over there (walks.mjs endpointsAffecting): one engine for the
+          // question on both sides of the crossing.
+          for (const e of endpointsAffecting(sib.graph, callerId, { mode: opts.mode })) {
+            const id = e.endpoint;
             const n = sib.graph.nodes.get(id);
-            if (!n || n.kind !== 'endpoint' || n.outbound === true) continue;
+            if (!n || n.outbound === true) continue;
             const rowKey = `${hit.project} ${id}`;
             if (seen.has(rowKey)) continue;
             seen.add(rowKey);
-            const rowGrade = weaker(grade, info.pathGrade);
+            const rowGrade = weaker(grade, e.pathGrade);
             out.push({
               id: strip(id), httpMethod: n.httpMethod ?? null, path: n.path ?? null,
               grade: rowGrade, project: hit.project, viaHttp: true,
-              httpHops: (info.http ?? 0) + 1, federated: true,
+              httpHops: (e.httpHops ?? 0) + 1, federated: true,
             });
             next.push({ id, method: methodOf(n), path: pathOf(n), grade: rowGrade });
           }
@@ -370,10 +374,10 @@ export function crossUpScreens(f, routes, opts) {
           // so a screen two deployables away is still reached.
           if (walked.has(key)) continue;
           walked.add(key);
-          for (const [id, info] of sib.graph.impactOf(callerId, { mode: opts.mode, edgeTypes: FLOW_EDGE_TYPES })) {
-            const n = sib.graph.nodes.get(id);
-            if (!n || n.kind !== 'endpoint' || n.outbound === true) continue;
-            next.push({ id, method: methodOf(n), path: pathOf(n), grade: weaker(grade, info.pathGrade) });
+          for (const e of endpointsAffecting(sib.graph, callerId, { mode: opts.mode })) {
+            const n = sib.graph.nodes.get(e.endpoint);
+            if (!n || n.outbound === true) continue;
+            next.push({ id: e.endpoint, method: methodOf(n), path: pathOf(n), grade: weaker(grade, e.pathGrade) });
           }
         }
         if (next.length) step(next, hit.project, budget - 1);

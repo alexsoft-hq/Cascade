@@ -217,12 +217,15 @@ test('a bean\'s routes: EXACT where the source names the class and the method, a
   assert.deepEqual(list.map((e) => [e.to, e.grade]), [['symbol:com.example.OwnerRoutes#list', 'EXACT']]);
   assert.equal(g.nodes.get('endpoint:GET /owners').operationId, 'listOwners');
   assert.equal(g.nodes.get('symbol:com.example.OwnerRoutes#list').line, lineOfText('OwnerRoutes.java', 'Mono<ServerResponse> list('));
-  // An interface's method runs in whichever implementor the field holds: every one of them, at SOUND_SET.
+  // An interface's method runs in whichever implementor the field holds: every one of them. PetHandler has
+  // one abstract method, so a lambda anywhere may be the object too, and the set is not closed (RM67 review 4).
   const pets = handlesOf(g, 'endpoint:GET /pets');
-  assert.deepEqual(pets.map((e) => [e.to, e.grade]).sort(), [['symbol:com.example.CatHandler#all', 'SOUND_SET'], ['symbol:com.example.DogHandler#all', 'SOUND_SET']]);
+  assert.deepEqual(pets.map((e) => [e.to, e.grade]).sort(), [['symbol:com.example.CatHandler#all', 'HEURISTIC'], ['symbol:com.example.DogHandler#all', 'HEURISTIC']]);
   assert.equal(pets[0].evidence.candidates, 2);
+  assert.equal(pets[0].evidence.openSet.code, 'functional-interface');
   assert.equal(stats.functionalRoutes.handles.EXACT, 1);
-  assert.equal(stats.functionalRoutes.handles.SOUND_SET, 3);
+  assert.equal(stats.functionalRoutes.handles.SOUND_SET, 1);
+  assert.equal(stats.functionalRoutes.handles.HEURISTIC, 2);
 });
 
 test('what is not read is said: a lambda doing more than one call keeps its route and names no handler, a path in a field is no route', (t) => {

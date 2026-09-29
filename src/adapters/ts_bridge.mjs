@@ -37,7 +37,9 @@ const HANDLES_BASIS = 'a controller the application registers declares this rout
 
 /**
  * The route as an endpoint, and its handler. A route whose address rests on an
- * exclude this engine could not read says so, at the grade that says it.
+ * exclude this engine could not read says so, at the grade that says it, and
+ * names it as the ADDRESS's doubt (`address`): a call the web lane matches to
+ * the route carries it on its own link, so every walk grades a caller alike.
  *
  * `apiGroup` is the first segment of the route's own path, below the global
  * prefix, the version and the module path: `/api/v1/users/{id}` is `users`.
@@ -54,10 +56,13 @@ function addRoute(g, r) {
   } else if (existing.handler && existing.handler !== handler) {
     existing.handlers = [...new Set([...(existing.handlers ?? [existing.handler]), handler])].sort();
   }
-  g.addEdge({
-    from: epId, to: handler, type: 'HANDLES', grade: r.grade ?? 'EXACT',
-    evidence: { rule: r.rule, basis: r.uncertain ? `${HANDLES_BASIS}; ${r.uncertain}` : HANDLES_BASIS },
-  });
+  g.addEdge({ from: epId, to: handler, type: 'HANDLES', grade: r.grade ?? 'EXACT', evidence: handlesEvidence(r) });
+}
+
+/** What a route's HANDLES edge rests on, and its ADDRESS's doubt when the lane has one (core/walks.mjs routeAddressOf). */
+function handlesEvidence(r) {
+  if (!r.uncertain) return { rule: r.rule, basis: HANDLES_BASIS };
+  return { rule: r.rule, basis: `${HANDLES_BASIS}; ${r.uncertain}`, address: { grade: r.grade, why: r.uncertain } };
 }
 
 /** Where schema.prisma and the SQL catalog this run read disagree, said once with its counts and a few of them. */

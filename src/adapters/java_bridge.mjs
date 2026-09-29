@@ -53,7 +53,8 @@
 // no importer and no test had to change. Nothing under `src/adapters/java/`
 // imports this file back.
 
-import { Graph, FLOW_EDGE_TYPES } from '../core/graph.mjs';
+import { Graph } from '../core/graph.mjs';
+import { endpointsAffecting } from '../core/walks.mjs';
 import {
   buildHierarchyIndex, buildTypeIndex, classifyRouteHolder, endpointId, indexJavaFacts,
   isProjectPackage, looksLikeTypeName, ownerOf, packageOfType, symbolId,
@@ -267,7 +268,7 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
   };
 
   // ---- the routes this pack serves, and the ones it calls -----------------
-  const { routes, clientCalls } = withFunctionalRoutes(ctx, classifyRoutes(ctx), javaFacts, opts); // …and Spring's functional endpoints
+  const { routes, clientCalls } = withFunctionalRoutes(ctx, classifyRoutes(ctx, javaFacts), javaFacts, opts); // …and Spring's functional endpoints
   const byRoute = placeEndpointNodes(ctx, routes);
   placeHandlesEdges(ctx, routes);
   placeDeclarativeCalls(ctx, clientCalls, byRoute);
@@ -302,34 +303,21 @@ function takeCensuses(stats, typeIndex, endpoints, generatedSources) {
  * The HTTP endpoints from which a column is reachable (backward impact over the
  * stitched chain). Returns endpoints with the weakest-link path grade.
  *
- * FLOW edges only: without the filter the walk would step column ← DECLARES ←
- * table ← EXECUTES ← statement and report every endpoint whose SQL touches the
- * TABLE as if it touched this column (measured on mall: 339 of 669 columns came
- * back with endpoints they do not have, 1253 phantom entries in all).
+ * It is the walk Trace draws up from the column (src/core/walks.mjs
+ * `endpointsAffecting`), so the two cannot name different routes (RM67-J4). It
+ * follows FLOW edges only: stepping column ← DECLARES ← table ← EXECUTES ←
+ * statement would report every endpoint whose SQL touches the TABLE as if it
+ * touched this column (measured on mall: 339 of 669 columns came back with
+ * endpoints they do not have, 1253 phantom entries in all). A route reached
+ * only ACROSS an internal HTTP hop is affected through ANOTHER DEPLOYABLE, and
+ * says so (`viaHttp`).
  * @param {Graph} g
  * @param {string} columnNodeId
  * @param {{mode?:string}} [opts]
  * @returns {{endpoint:string, httpMethod:string, path:string, pathGrade:string}[]}
  */
 export function endpointsAffectingColumn(g, columnNodeId, opts = {}) {
-  const reached = g.impactOf(columnNodeId, { mode: opts.mode ?? 'conservative', edgeTypes: FLOW_EDGE_TYPES });
-  const out = [];
-  for (const [id, info] of reached) {
-    const node = g.nodes.get(id);
-    if (node && node.kind === 'endpoint') {
-      out.push({
-        endpoint: id,
-        httpMethod: node.httpMethod,
-        path: node.path,
-        pathGrade: info.pathGrade,
-        // A route reached only ACROSS an internal HTTP hop is affected through
-        // ANOTHER DEPLOYABLE. Disclosed, never folded in silently.
-        ...(info.http > 0 ? { viaHttp: true, httpHops: info.http } : {}),
-      });
-    }
-  }
-  out.sort((a, b) => (a.endpoint < b.endpoint ? -1 : a.endpoint > b.endpoint ? 1 : 0));
-  return out;
+  return endpointsAffecting(g, columnNodeId, opts);
 }
 
 export class JavaBridgeError extends Error {

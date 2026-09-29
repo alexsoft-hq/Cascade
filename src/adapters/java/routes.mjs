@@ -28,6 +28,7 @@
 import { routeMatches, normalizeUrlPath, gatewayRouteOf } from '../http_routes.mjs';
 import { classifyRouteHolder, cmp, endpointId, ownerOf, symbolId } from './types.mjs';
 import { apiGroupAfter, prefixEvidence } from './path_prefixes.mjs';
+import { readMappings, mappingReading, splitByConditions } from './mapping_reads.mjs';
 
 /** What each ROUTE rule did, in one sentence, for `evidence.basis`. */
 export const ROUTE_RULE_BASIS = Object.freeze({
@@ -93,24 +94,31 @@ export const ROUTE_RULE_BASIS = Object.freeze({
  * A CLIENT's route is the address it calls, written in full at the call, so no
  * declared prefix is put on it: the prefix belongs to the class that serves.
  *
+ * The records are the worker's with what one file could not settle read
+ * against the tree first (./mapping_reads.mjs): a path written with another
+ * type's constant, a mapping annotation the tree composes. A route whose path
+ * stays unread is not among them, and the lane stats say so.
+ *
  * @returns {{routes:object[], clientCalls:object[]}}
  */
-export function classifyRoutes(ctx) {
-  const { endpoints, typeAt } = ctx;
+export function classifyRoutes(ctx, javaFacts = []) {
+  const { typeAt } = ctx;
   const routes = [];       // {epId, httpMethod, path, handler, line, grade, evidence, contractOnly, prefix}
   const clientCalls = [];  // {epId, httpMethod, path, from, client}
-  for (const e of endpoints) {
+  for (const e of readMappings(ctx, javaFacts)) {
     if (!e.handler) continue;
     const holder = typeAt(e.handlerType, e.file);
     const kind = classifyRouteHolder(holder);
     if (kind === 'client') {
       clientCalls.push({ epId: endpointId(e.httpMethod, e.path), httpMethod: e.httpMethod, path: e.path, from: e.handler, client: holder.client });
     } else if (kind === 'handler') {
-      routes.push(servedRoute(ctx, holder, { httpMethod: e.httpMethod, path: e.path, handler: e.handler, line: e.line ?? null, grade: 'EXACT' }, null));
+      const { grade, evidence } = mappingReading(e);
+      routes.push(servedRoute(ctx, holder, { httpMethod: e.httpMethod, path: e.path, handler: e.handler, line: e.line ?? null, grade, conditions: e.conditions ?? null }, evidence));
     } else {
       contractRoutes(ctx, e, routes);
     }
   }
+  splitByConditions(routes, ctx.stats);
   return { routes, clientCalls };
 }
 

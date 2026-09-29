@@ -68,8 +68,8 @@ test('functional_route_handler_sound_set_includes_interface_default', (t) => {
   assert.deepEqual(handles('GET /dflt'), [['symbol:p.D#h', 'SOUND_SET'], ['symbol:p.Svc#h', 'SOUND_SET']],
     'C inherits the default, so an object of type Svc may run Svc#h as well as D\'s override');
   assert.deepEqual(handles('GET /dflt3'), [['symbol:p.Mix3#h3', 'SOUND_SET']], 'this::h3 runs the default the class inherits');
-  assert.deepEqual(handles('GET /iext'), [['symbol:p.I2Impl#h', 'SOUND_SET']],
-    'an abstract interface method has no body to run: only the implementor, through the sub-interface');
+  assert.deepEqual(handles('GET /iext'), [['symbol:p.I2Impl#h', 'HEURISTIC']],
+    'an abstract interface method has no body to run: only the implementor, through the sub-interface; I1 has one abstract method, so a lambda may be the object too (RM67 review 4)');
 });
 
 test('functional_route_handler_through_class_reaches_the_interface_default_it_inherits', (t) => {

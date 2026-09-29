@@ -20,6 +20,7 @@
           "label": "things/list",
           "grade": "SOUND_SET",
           "endpoints": [
+            "GET /page/things",
             "GET /things/list"
           ],
           "observed": false

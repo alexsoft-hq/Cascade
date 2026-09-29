@@ -241,7 +241,7 @@ export function javaRecordSortKey(rec) {
     case 'mpMapper': return `2mpmapper${SEP}${rec.fqn}`;
     case 'mpService': return `2mpservice${SEP}${rec.fqn}${SEP}${rec.base}`;
     case 'field': return `3field${SEP}${rec.owner}${SEP}${rec.name}`;
-    case 'endpoint': return `4endpoint${SEP}${rec.handler}${SEP}${rec.httpMethod}${SEP}${rec.path}`;
+    case 'endpoint': return endpointSortKey(rec);
     case 'view': return `4view${SEP}${rec.owner}${SEP}${rec.method}${SEP}${rec.paramCount}`;
     case 'method': return `5method${SEP}${rec.fqn}${SEP}${rec.paramCount}`;
     case 'mapperAnnotationSql': return `5mapsql${SEP}${rec.ownerFqn}${SEP}${rec.method}${SEP}${rec.verb}`;
@@ -260,6 +260,11 @@ export function javaRecordSortKey(rec) {
   }
 }
 
+/** An endpoint record's key; a path the file does not state (javafacts/22) is keyed by what was written, as the worker keys it. */
+function endpointSortKey(rec) {
+  return `4endpoint${SEP}${rec.handler}${SEP}${rec.httpMethod}${SEP}${rec.path ?? `?${rec.pathWritten}`}`;
+}
+
 /**
  * The keys of the record kinds the worker added after the switch above was
  * full, one function each, in the worker's own spelling.
@@ -270,6 +275,11 @@ const NEWER_SORT_KEYS = Object.freeze({
   routeFunction: (rec) => `5routefn${SEP}${rec.owner}${SEP}${rec.method}${SEP}${rec.paramCount}${SEP}${padLine(rec.line)}`,
   // javafacts/20: an anonymous class, by the id its owner and its order give it.
   anonymous: (rec) => `2anon${SEP}${rec.id}`,
+  // javafacts/22: a class a method body declares, an annotation type that is a
+  // mapping, and a controller method's annotation this worker does not know.
+  local: (rec) => `2local${SEP}${rec.id}`,
+  composedMapping: (rec) => `2composed${SEP}${rec.fqn}`,
+  mappingCandidate: (rec) => `4mapcand${SEP}${rec.handler}${SEP}${rec.annotation}`,
 });
 
 /** A newer kind's key, or null for a record that is not shard content (header, summary, a kind nobody keys). */

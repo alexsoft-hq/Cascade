@@ -614,11 +614,15 @@ test('chainWalk up: the handler is a service row flagged `handler`, and the endp
   assert.equal(handler.grade, 'SOUND_SET');
   assert.equal(w.services.filter((s) => s.handler).length, 1);
   assert.equal(w.services.find((s) => s.id === 'com.x.PServiceImpl#load').handler, false);
-  assert.deepEqual(w.endpoints.map(({ walkedPath, ...rest }) => rest), [{
+  assert.deepEqual(w.endpoints.map(({ walkedPath, link, ...rest }) => rest), [{
     id: 'GET /p/{id}', httpMethod: 'GET', path: '/p/{id}',
     handler: 'com.x.PController#get', handlerShort: 'PController#get',
     hops: 6, grade: 'SOUND_SET', file: 'src/PController.java', line: 30,
   }]);
+  // The line into the route comes from the row its handler is drawn as, and is
+  // that one step: the route's HANDLES edge.
+  assert.deepEqual([w.endpoints[0].link.from, w.endpoints[0].link.type, w.endpoints[0].link.grade],
+    [nodeId('symbol', 'com.x.PController#get'), 'HANDLES', 'EXACT']);
   assert.equal(w.endpoints[0].hops, handler.hops + 1, 'the route sits one hop above its handler');
   assert.equal(w.endpoints[0].grade, weakestOf(handler.path), 'and carries the weakest link on the handler\'s path');
   // the route is not a walked node: it is in no layer, and adds nothing to walked

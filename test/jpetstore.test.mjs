@@ -37,6 +37,7 @@ import { computeTrust } from '../src/core/trust.mjs';
 import { findJdk } from '../scripts/ci-java-smoke.mjs';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 import { CATALOG_WORKER_VERSION } from '../src/core/worker_versions.mjs';
+import { walkAgreement } from '../src/core/walk_agreement.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
@@ -355,6 +356,18 @@ test('mybatis/jpetstore-6: the SQL lane end to end, and the partial-pack contrac
     [['ItemMapper.getItem', 'read', 'EXACT'], ['ItemMapper.getItemListByProduct', 'read', 'EXACT']],
   );
   assert.equal(ci.answer.empty, undefined, 'nothing about this column is empty any more');
+
+  // -----------------------------------------------------------------------
+  // ONE QUESTION, ONE ANSWER (RM67-J4). Sixteen server-rendered pages: for
+  // every column and table, the impact tools, Trace up and the census name the
+  // same routes and the same pages at the same grades. Before, 49 of the 86
+  // columns had pages screen_impact named and Trace and the census did not.
+  // -----------------------------------------------------------------------
+  for (const mode of ['conservative', 'heuristic']) {
+    const agree = walkAgreement(graph, { mode });
+    assert.equal(agree.disagreements, 0, `${mode}: ${JSON.stringify(agree.examples)}`);
+  }
+  assert.ok(ask('screen_impact', { column: 'item.listprice' }).answer.screens.length > 0, 'the pages whose handlers read it');
 });
 
 test('mybatis/jpetstore-6: FIXED — one identity per table, whatever the SQL spells', { timeout: 900000 }, (t) => {

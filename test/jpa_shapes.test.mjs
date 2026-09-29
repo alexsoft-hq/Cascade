@@ -141,7 +141,9 @@ test('jpa_single_table_subclass_uses_root_table: a subclass with no strategy wri
   addJpaFacts(g, hierarchy(null), DECLARED);
   assert.equal(g.nodes.has(tableId('dog')), false, 'SINGLE_TABLE is the default: no table of its own');
   assert.ok(g.nodes.has(colId('animals', 'breed')));
-  assert.deepEqual(readsOf(g, stmtId('DogRepository', 'findByBreed')), ['animals.breed:EXACT']);
+  // A subclass query is filtered by the hierarchy's discriminator, JPA's DTYPE
+  // by default: an assumed default, so HEURISTIC (RM67 review 4, J-6).
+  assert.deepEqual(readsOf(g, stmtId('DogRepository', 'findByBreed')), ['animals.breed:EXACT', 'animals.dtype:HEURISTIC']);
   assert.deepEqual(tablesOf(g, stmtId('DogRepository', 'findByName')), ['animals:read']);
   // A @Table on a subclass of a single-table hierarchy is ignored by Hibernate, which warns about it.
   const g2 = G();

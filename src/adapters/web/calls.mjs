@@ -27,6 +27,7 @@ import { isComponentFile, memberIndex, webEndpointId, webSymbolId } from './symb
 import { TEMPLATE_PREFIX } from './prefix.mjs';
 import { UNSETTLED_BECAUSE, walkChain } from './chain.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
+import { routeAddressOf } from '../../core/walks.mjs';
 import {
   declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost, otherPortOf,
 } from './base_url.mjs';
@@ -106,22 +107,39 @@ export function routeServesMethod(routeMethod, callMethod) {
   return callMethod == null || callMethod === 'ANY' || route === 'ANY' || route === callMethod;
 }
 
+/** A route that serves whatever lies below its prefix (`/admin-api/ai/**`). */
+const isCatchAll = (routePath) => routePath.endsWith('/**');
+
 /**
  * B6: the routes this pack SERVES, indexed the two ways a call is matched
- * against them — exactly, and by template.
+ * against them — exactly, and by template. A route carries how sure its own
+ * ADDRESS is when its lane could not settle it (core/walks.mjs routeAddressOf),
+ * so a call matched to it is graded by that too.
+ *
+ * A CATCH-ALL IS THE ANSWER ONLY WHERE NOTHING MORE SPECIFIC CAN BE (RM67-J4).
+ * Spring serves a `/**` route only when no more specific route matches. The
+ * pack shows that no route it recorded does; it cannot show it when a path
+ * prefix set in code was not read (`unreadPrefix`), because every route may
+ * then be served under a prefix the pack does not record. So a call whose match
+ * lands on catch-alls alone is looked up again with its leading segments
+ * dropped, the shortest drop first, and a route that matches then is a
+ * candidate too (`shifted`); the whole set is a guess then (`unsettled`), since
+ * which one Spring serves rests on the prefix nobody declared. With no such
+ * route in the pack, the catch-all stays the only candidate there can be.
  *
  * @param {import('../../core/graph.mjs').Graph} g
+ * @param {{unreadPrefix?:(string|null)}} [opts]  why the recorded addresses may lack a prefix
  * @returns {{exactPaths:Set<string>, templatePaths:string[], matchUrl:Function}}
  */
-export function buildRouteIndex(g) {
+export function buildRouteIndex(g, opts = {}) {
   const exactPaths = new Set();
   const templatePaths = [];
-  const routesByPath = new Map(); // normalized path -> [{id, httpMethod, path}]
+  const routesByPath = new Map(); // normalized path -> [{id, httpMethod, path, address}]
   for (const n of g.nodes.values()) {
     if (n.kind !== 'endpoint' || n.outbound === true || typeof n.path !== 'string') continue;
     const p = normalizeUrl(n.path);
     if (!routesByPath.has(p)) routesByPath.set(p, []);
-    routesByPath.get(p).push({ id: n.id, httpMethod: n.httpMethod ?? 'ANY', path: p });
+    routesByPath.get(p).push({ id: n.id, httpMethod: n.httpMethod ?? 'ANY', path: p, address: routeAddressOf(g, n.id) });
     exactPaths.add(p);
     templatePaths.push(p);
   }
@@ -129,8 +147,7 @@ export function buildRouteIndex(g) {
   const allRoutes = [...routesByPath.keys()].sort();
 
   const methodOk = (route, method) => routeServesMethod(route.httpMethod, method);
-  const matchUrl = (full, method) => {
-    const p = normalizeUrl(full);
+  const plainMatch = (p, method) => {
     const exact = (routesByPath.get(p) ?? []).filter((r) => methodOk(r, method));
     if (exact.length > 0) return { how: 'exact', routes: exact };
     const hits = [];
@@ -141,7 +158,29 @@ export function buildRouteIndex(g) {
     }
     return hits.length > 0 ? { how: 'template', routes: hits } : { how: null, routes: [] };
   };
+  const matchUrl = (full, method) => {
+    const p = normalizeUrl(full);
+    const found = plainMatch(p, method);
+    if (!opts.unreadPrefix || found.how !== 'template' || !found.routes.every((r) => isCatchAll(r.path))) return found;
+    return { ...found, ...shiftedMatch(p, method, plainMatch, opts.unreadPrefix) };
+  };
   return { exactPaths, templatePaths, matchUrl };
+}
+
+/**
+ * The routes a call matches once its leading segments are taken off, the
+ * shortest drop first, catch-alls left out: what a path prefix nobody declared
+ * could make the more specific route Spring serves instead. Empty when no drop
+ * finds one, which leaves the catch-all the only candidate there can be.
+ */
+function shiftedMatch(p, method, plainMatch, why) {
+  const segs = p.split('/').slice(1);
+  for (let k = 1; k < segs.length; k += 1) {
+    const m = plainMatch(`/${segs.slice(k).join('/')}`, method);
+    const routes = m.routes.filter((r) => !isCatchAll(r.path));
+    if (routes.length > 0) return { unsettled: why, shifted: { dropped: `/${segs.slice(0, k).join('/')}`, how: m.how, routes } };
+  }
+  return {};
 }
 
 /**
@@ -1289,18 +1328,34 @@ function placeCandidate(cand, site, ctx) {
     unmatched.set(key, (unmatched.get(key) ?? 0) + 1);
     return { how: null, routes: 0, grade: null, missed: true };
   }
-  const many = found.routes.length > 1;
-  for (const r of found.routes.slice().sort((a, b) => cmp(a.id, b.id))) {
+  const placed = placeRouteEdges(found, { fromId, grade, evidence, edges, matchedRoutePaths });
+  return { how: found.how, routes: placed.routes, grade: placed.grade };
+}
+
+/**
+ * One CALLS_HTTP edge per route a candidate matched, each graded by the call
+ * and by what the route itself cannot settle: its own address (a lane's doubt,
+ * `address`), and a catch-all a more specific route may shadow under a prefix
+ * set in code (`catchAll`, with the routes that drop finds, `prefixShift`).
+ *
+ * @returns {{routes:number, grade:string}} how many edges, and the weakest grade placed
+ */
+function placeRouteEdges(found, { fromId, grade, evidence, edges, matchedRoutePaths }) {
+  const shifted = found.shifted ? found.shifted.routes.map((r) => ({ r, shift: true })) : [];
+  const all = [...found.routes.map((r) => ({ r, shift: false })), ...shifted].sort((a, b) => cmp(a.r.id, b.r.id));
+  let weakest = grade;
+  for (const { r, shift } of all) {
     matchedRoutePaths.add(r.path);
-    edges.push({
-      from: fromId,
-      to: r.id,
-      type: 'CALLS_HTTP',
-      grade,
-      evidence: many ? { ...evidence, candidates: found.routes.length } : evidence,
-    });
+    let g = found.unsettled ? 'HEURISTIC' : grade;
+    if (r.address && GRADE_RANK[r.address.grade] < GRADE_RANK[g]) g = r.address.grade;
+    if (GRADE_RANK[g] < GRADE_RANK[weakest]) weakest = g;
+    const ev = { ...evidence, ...(all.length > 1 ? { candidates: all.length } : {}) };
+    if (r.address) ev.address = r.address.why;
+    if (found.unsettled && !shift) ev.catchAll = { unsettled: found.unsettled };
+    if (shift) Object.assign(ev, { match: `${found.shifted.how}-shifted`, prefixShift: { dropped: found.shifted.dropped, unsettled: found.unsettled } });
+    edges.push({ from: fromId, to: r.id, type: 'CALLS_HTTP', grade: g, evidence: ev });
   }
-  return { how: found.how, routes: found.routes.length, grade };
+  return { routes: all.length, grade: weakest };
 }
 
 /** What ONE call site, all its candidates folded together, counts as. */

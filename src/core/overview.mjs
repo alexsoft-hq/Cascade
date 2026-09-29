@@ -709,10 +709,18 @@ function budgetGaps(o, say) {
       note: `${walk.generated} step(s) from one generated symbol to another were not walked, because that is the machine-written interior. A generated symbol a real caller reaches is still walked and still counted above`,
     });
   }
-  if (walk.nodeCapStarts > 0) {
+  // The screen census is cut by the same cap and said in the same gap, so a
+  // `reachingATable` short of the truth never reads as screens that reach
+  // nothing (RM67-J4, K-3).
+  const screensCut = o.screensBlock?.walk?.nodeCapStarts ?? 0;
+  if (walk.nodeCapStarts > 0 || screensCut > 0) {
+    const parts = [
+      walk.nodeCapStarts > 0 ? `${walk.nodeCapStarts} handler walk(s)` : null,
+      screensCut > 0 ? `${screensCut} screen walk(s)` : null,
+    ].filter(Boolean).join(' and ');
     say({
-      kind: 'node-cap', count: walk.nodeCapStarts,
-      note: `${walk.nodeCapStarts} handler walk(s) hit the per-walk node cap. The chain under them is bigger than one walk, so we counted only part of what those routes reach`,
+      kind: 'node-cap', count: walk.nodeCapStarts + screensCut,
+      note: `${parts} hit the per-walk node cap. The chain under them is bigger than one walk, so we counted only part of what those routes and screens reach, and a count here that rests on them is a lower bound`,
     });
   }
   if (depthCapped > 0) {

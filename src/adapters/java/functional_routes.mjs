@@ -57,14 +57,19 @@ function typeNamed(ctx, owner, written) {
 const nameOf = (entry) => String(entry).slice(0, String(entry).lastIndexOf('/'));
 const anonymousIndex = new WeakMap();
 
-/** The anonymous classes of the tree by the type each extends or implements, read once per bridge run. */
+/**
+ * The anonymous classes of the tree, and the classes a method body declares
+ * (javafacts/22), by each type they extend or implement, read once per bridge run.
+ */
 function anonymousBySupertype(ctx) {
   let idx = anonymousIndex.get(ctx);
   if (idx) return idx;
   idx = new Map();
   for (const a of [...(ctx.anonymousTypes?.values() ?? [])].sort((x, y) => cmp(x.id, y.id))) {
-    const sup = ctx.resolveType(a.owner, a.supertype);
-    if (sup) idx.set(sup, [...(idx.get(sup) ?? []), a.id]);
+    for (const written of Array.isArray(a.supertypes) ? a.supertypes : [a.supertype]) {
+      const sup = ctx.resolveType(a.owner, written);
+      if (sup && !(idx.get(sup) ?? []).includes(a.id)) idx.set(sup, [...(idx.get(sup) ?? []), a.id]);
+    }
   }
   anonymousIndex.set(ctx, idx);
   return idx;
@@ -108,12 +113,30 @@ function interfaceDefaults(ctx, fqn, method) {
 }
 
 /**
+ * The superclass this run did not read that a class of the tree stands on, or
+ * null: the class, or one above it, extends a type with no record here.
+ */
+function superclassNotRead(ctx, fqn) {
+  for (let c = fqn, i = 0; c && i < 32; i += 1) {
+    const t = ctx.types.get(c);
+    if (!t || !t.extendsSimple) return null;
+    const sup = ctx.superOf.get(c);
+    if (!sup || !ctx.types.has(sup)) return sup ?? t.extendsWritten ?? t.extendsSimple;
+    c = sup;
+  }
+  return null;
+}
+
+/**
  * The methods an object of exactly this type runs: its own, the one a class
  * above it declares, or an interface's default body. An interface runs its own
  * default, which an implementor outside the tree may keep; an anonymous class
- * adds only what it declares, since what it inherits its supertype gives.
+ * adds only what it declares, since what it inherits its supertype gives. A
+ * class that stands on a superclass this run did not read may run that
+ * superclass's method, which wins over any default: it is a candidate, and the
+ * gap is said in `gaps` (RM67 review 4, J-12).
  */
-function runsAs(ctx, fqn, method) {
+function runsAs(ctx, fqn, method, gaps = []) {
   const anon = ctx.anonymousTypes?.get(fqn);
   if (anon) return (anon.declaredMethods ?? []).some((e) => nameOf(e) === method) ? [`${fqn}#${method}`] : [];
   const t = ctx.types.get(fqn);
@@ -121,7 +144,11 @@ function runsAs(ctx, fqn, method) {
   if (t.typeKind === 'interface') return (t.defaultMethods ?? []).some((e) => nameOf(e) === method) ? [`${fqn}#${method}`] : [];
   if (ctx.declares(fqn, method, null)) return [`${fqn}#${method}`];
   const up = findDeclaringAncestor(fqn, method, null, { types: ctx.types, superOf: ctx.superOf, declares: ctx.declares });
-  return up ? [`${up.declaredBy}#${method}`] : interfaceDefaults(ctx, fqn, method);
+  if (up) return [`${up.declaredBy}#${method}`];
+  const outside = superclassNotRead(ctx, fqn);
+  if (outside === null) return interfaceDefaults(ctx, fqn, method);
+  gaps.push({ code: 'superclass-not-read', text: `${fqn} extends ${outside}, which this run did not read, so ${method} may be that class's` });
+  return [`${outside}#${method}`, ...interfaceDefaults(ctx, fqn, method)];
 }
 
 /**
@@ -131,11 +158,56 @@ function runsAs(ctx, fqn, method) {
  * of them, so the set holds every one (`Base b = new Derived()` reaches
  * `Derived#h`). A type this run did not read may run its own.
  */
-function membersOfType(ctx, fqn, method) {
+function membersOfType(ctx, fqn, method, gaps = []) {
   const out = new Set();
-  if (!ctx.types.has(fqn)) out.add(`${fqn}#${method}`);
-  for (const t of [fqn, ...descendantsOf(ctx, fqn)]) for (const m of runsAs(ctx, t, method)) out.add(m);
+  if (!ctx.types.has(fqn)) {
+    out.add(`${fqn}#${method}`);
+    gaps.push({ code: 'type-not-read', text: `${fqn} is a type this run did not read, so any class may be an object of it` });
+  }
+  for (const t of [fqn, ...descendantsOf(ctx, fqn)]) for (const m of runsAs(ctx, t, method, gaps)) out.add(m);
   return out.size > 0 ? [...out].sort(cmp) : [`${fqn}#${method}`];
+}
+
+/**
+ * Whether a lambda or a method reference may be an object of this type: an
+ * interface with exactly one abstract method, counted over it and every
+ * interface above it (a default below takes one away), or one whose count a
+ * super-interface this run did not read may complete. A class never is.
+ */
+function mayBeALambda(ctx, fqn) {
+  const t = ctx.types.get(fqn);
+  if (!t || t.typeKind !== 'interface') return false;
+  if (t.annotations.includes('FunctionalInterface')) return true;
+  const abstract = new Set();
+  const defaults = new Set();
+  let unknown = false;
+  const seen = new Set();
+  for (const queue = [fqn]; queue.length > 0;) {
+    const cur = queue.shift();
+    const x = ctx.types.get(cur);
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    if (!x || x.abstractMethods === null) { unknown = true; continue; }
+    for (const m of x.abstractMethods) abstract.add(m);
+    for (const m of x.defaultMethods) defaults.add(m);
+    for (const s of x.implementsSimple) { const r = ctx.resolveType(cur, s); if (r) queue.push(r); else unknown = true; }
+  }
+  const live = [...abstract].filter((m) => !defaults.has(m)).length;
+  return live === 1 || (unknown && live === 0);
+}
+
+/**
+ * A handler reached through an object of a declared type: every method the
+ * object may run, a candidate set that is closed only where the tree shows
+ * every member (design 2). A type this run did not read, a superclass it did
+ * not read, and an interface a lambda may implement each leave a member the
+ * set cannot name: the set is then HEURISTIC, and the first gap is said.
+ */
+function declaredTypeHandler(ctx, fqn, method, via) {
+  const gaps = [];
+  const members = membersOfType(ctx, fqn, method, gaps);
+  if (mayBeALambda(ctx, fqn)) gaps.push({ code: 'functional-interface', text: `${fqn} has one abstract method, so a lambda or a method reference anywhere may be the object, and its body is not a method of the tree` });
+  return { members, grade: gaps.length > 0 ? 'HEURISTIC' : 'SOUND_SET', via, ...(gaps.length > 0 ? { openSet: gaps[0] } : {}) };
 }
 
 /** Where a candidate method is declared: a type's declaration line, or the one its anonymous class records. */
@@ -154,8 +226,10 @@ function lineOfCandidate(ctx, member) {
  * method the object may run.
  */
 function thisHandler(ctx, owner, h) {
-  const members = membersOfType(ctx, owner, h.method);
+  const gaps = [];
+  const members = membersOfType(ctx, owner, h.method, gaps);
   const own = members.length === 1 && members[0] === `${owner}#${h.method}` && ctx.declares(owner, h.method, null);
+  if (gaps.length > 0) return { members, grade: 'HEURISTIC', via: h.via, openSet: gaps[0] };
   return { members, grade: own ? 'EXACT' : 'SOUND_SET', via: h.via };
 }
 
@@ -179,7 +253,7 @@ export function resolveHandler(ctx, owner, h) {
   const declared = h.via === 'param' || h.via === 'local' ? h.type : fieldType;
   if (declared) {
     const fqn = typeNamed(ctx, owner, declared);
-    return fqn ? { members: membersOfType(ctx, fqn, h.method), grade: 'SOUND_SET', via: fieldType ? 'field' : h.via } : null;
+    return fqn ? declaredTypeHandler(ctx, fqn, h.method, fieldType ? 'field' : h.via) : null;
   }
   // No binding of that name here: it is a type, and the reference a static method of it.
   const fqn = h.via === 'name' || h.via === 'type' ? typeNamed(ctx, owner, h.name) : null;
@@ -259,6 +333,8 @@ function evidenceOf(fn, r, where, resolved) {
     handler: handlerWords(r.handler), handlerVia: resolved.via,
     ...(r.handler.lambda ? { lambda: true } : {}),
     ...(resolved.members.length > 1 ? { candidates: resolved.members.length } : {}),
+    // A candidate set the tree cannot close (RM67 review 4): what it leaves out.
+    ...(resolved.openSet ? { openSet: resolved.openSet } : {}),
     ...(r.operationId ? { operationId: r.operationId } : {}),
     ...(where.mount === 'operation-id' ? { document: where.document, relativePath: where.relativePath } : {}),
     ...(r.underNest ? { pattern: 'none, so the route answers the path of the nest it is in' } : {}),

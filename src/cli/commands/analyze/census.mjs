@@ -419,6 +419,22 @@ export function sayFunctionalRoutes(fr) {
   }
 }
 
+/**
+ * WHAT A MAPPING ANNOTATION SAID THAT ONE FILE COULD NOT SETTLE (RM67 review 4):
+ * a path written with another type's constant, a composed mapping annotation of
+ * the tree, a method name that is no HTTP method, one route's handlers split by
+ * a request condition. Said only where there was some, with what stayed unread.
+ */
+export function sayMappingAnnotations(m) {
+  if (!m) return;
+  const any = m.pathsFromConstants + m.pathsUnread + m.composedRoutes + m.composedNotRead + m.methodsUnread + m.conditionSplits;
+  if (any === 0) return;
+  process.stderr.write(`Java lane: mapping annotations: ${m.pathsFromConstants} path(s) read through a constant, ${m.composedRoutes} route(s) from a composed mapping annotation, `
+    + `${m.conditionSplits} route(s) whose handlers a request condition splits (graded SOUND_SET), ${m.methodsUnread} naming a method that is no HTTP method (on ANY, graded HEURISTIC); `
+    + `not placed: ${m.pathsUnread} with a path not read, ${m.composedNotRead} annotation(s) this run did not read on a controller method with no mapping\n`);
+  for (const s of m.samples.slice(0, 5)) process.stderr.write(`  [warn] JAVA_MAPPING_NOT_READ ${s.handler}:${s.line ?? '?'} ${s.code}: ${s.text}\n`);
+}
+
 /** The TypeORM part of the lane line: said only when the application has an entity or a TypeORM call. */
 function typeormSaid(t) {
   if (!t) return '';
@@ -435,6 +451,7 @@ export function sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) {
   sayJavaLane(jstats);
   sayPathPrefixes(jstats.pathPrefixes);
   sayFunctionalRoutes(jstats.functionalRoutes);
+  sayMappingAnnotations(jstats.mappingAnnotations);
   sayIdGenerators(jstats.idGenerators);
   if (runJpa) {
     laneStats = { ...jstats, jpa: jpaStats };
