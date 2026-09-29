@@ -281,16 +281,33 @@ function railFolds(k, b, tt){
       (tt.gatesNotShown||[]).length ? row('rail.row.gates', 'trust.gatesNotShown', tt.gatesNotShown.join(', ')) : null,
     ].filter(Boolean)) ];
 }
-// One limit: its scope chip, then a one-line lead cut from the engine's own
-// reason, folding to that reason in full. A reason short enough to be its own
-// lead is simply printed — a fold over nothing is a click that buys nothing.
+// One limit: a TITLE in the reader's words, and under its fold the scope and
+// the engine's own sentence, word for word (RM67-U2f). A scope the page has no
+// words for keeps what the rail always showed: the scope, then a lead cut from
+// the sentence, and a sentence short enough to be its own lead is simply
+// printed, since a fold over nothing is a click that buys nothing.
 function railLimit(key, l){
   const reason = l.reason || JSON.stringify(l);
   const scope = l.scope ? el('span',{className:'scope',textContent:l.scope+'  '}) : null;
+  const row=(cls, kids)=> el('div',{className:cls, title:l.scope||''}, kids);
+  const folded=(lead, body)=> row('raillim', [fold(key, lead, ()=> [el('div',{className:'comment'}, body)], null, true)]);
+  const title = limitTitle(l);
+  if(title) return folded([el('span',{className:'limtitle',textContent:title})], [scope, reason].filter(Boolean));
   const lead = leadOf(reason);
-  if(lead===reason) return el('div',{className:'raillim plain'}, [scope, reason].filter(Boolean));
-  return el('div',{className:'raillim'},[
-    fold(key, [scope, lead].filter(Boolean), ()=> [el('div',{className:'comment'},[reason])], null, true) ]);
+  if(lead===reason) return row('raillim plain', [scope, reason].filter(Boolean));
+  return folded([scope, lead].filter(Boolean), [reason]);
+}
+/**
+ * A limit's title in the reader's language, or null for a scope the page has
+ * no words for. src/viewer/limit_titles.mjs names the keys, most specific
+ * first; the first the catalogue has is the one said.
+ */
+function limitTitle(l){
+  const c=limitTitleKeys(l).find((x)=> Object.hasOwn(VIEWER_STRINGS.en, x.key));
+  if(!c) return null;
+  if(!c.axis) return t(c.key);
+  const name='ov.axis.name.'+c.axis;
+  return t(c.key, { axis: Object.hasOwn(VIEWER_STRINGS.en, name) ? t(name) : c.axis });
 }
 // ---- A FLOOD OF ONE DIAGNOSTIC IS ONE ROW (RM67) ----------------------------
 // A cache directory that moved leaves one SHARD_UNUSABLE per file (866 on one
@@ -357,9 +374,11 @@ function diagGroupBody(key, g, withTodo=true){
 }
 /** One kind's limits as one folded row: the kind, how many, and how many different things they say. */
 function diagGroupRow(key, g){
-  const lead=[ el('span',{className:'scope',textContent:'diagnostic:'+g.kind+'  '}), t('diag.group.lead',{n:g.count}),
+  const lead=[ el('span',{className:'limtitle',textContent:diagTitle(g.kind)}), '  '+t('diag.group.lead',{n:g.count}),
     g.causes.length>1 ? '  '+t('diag.group.causes',{k:g.causes.length}) : '' ];
-  return el('div',{className:'raillim diaggrp'},[ fold(key, lead, ()=> diagGroupBody(key, g), null, true) ]);
+  // The code the engine gave the kind stands over its sentences, as a single limit's scope does (RM67-U2f).
+  const code=()=> [el('div',{className:'comment'},[el('span',{className:'scope',textContent:'diagnostic:'+g.kind})]), ...diagGroupBody(key, g)];
+  return el('div',{className:'raillim diaggrp', title:'diagnostic:'+g.kind},[ fold(key, lead, code, null, true) ]);
 }
 /**
  * Every limit as a row, with the diagnostics among them grouped: the rail and

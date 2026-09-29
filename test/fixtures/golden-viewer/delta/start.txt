@@ -195,11 +195,17 @@
               <path d="M900,310 C450,310 450,310 0,310" data-family="rows" data-grade="SOUND_SET" data-group="rows" fill="none" opacity="0.85" stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="2">
                 <title>1 route(s) → 1 table(s), weakest grade SOUND_SET</title>
               </path>
-              <text class="sumlbl" text-anchor="middle" x="450" y="306">1 → 1 tables</text>
               <path d="M900,310 C450,310 450,310 0,310" data-family="rows" data-grade="SOUND_SET" data-group="save" fill="none" opacity="0.85" stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="2">
                 <title>1 route(s) → 1 table(s), weakest grade SOUND_SET</title>
               </path>
-              <text class="sumlbl" text-anchor="middle" x="554.2875" y="306">1 → 1 tables</text>
+              <g class="sumlblg">
+                <rect class="sumlblbg" height="16" rx="3" width="90.40000000000002" x="404.8" y="302"></rect>
+                <text class="sumlbl" dominant-baseline="central" text-anchor="middle" x="450" y="310">1 → 1 tables</text>
+              </g>
+              <g class="sumlblg">
+                <rect class="sumlblbg" height="16" rx="3" width="90.40000000000002" x="579.2415999999998" y="301.99999999999994"></rect>
+                <text class="sumlbl" dominant-baseline="central" text-anchor="middle" x="624.4415999999999" y="309.99999999999994">1 → 1 tables</text>
+              </g>
             </svg>
           </div>
           <div class="flowside">

@@ -120,7 +120,7 @@ const VIEWER_JS_PREFIX = '/viewer/js/';
 // keywords, which is exactly the transform the copies were. There is nothing
 // left to drift.
 const VIEWER_LIB_PREFIX = '/viewer/lib/';
-const VIEWER_LIB_MODULES = Object.freeze(['i18n', 'graphlayout', 'chainlayout', 'source']);
+const VIEWER_LIB_MODULES = Object.freeze(['i18n', 'limit_titles', 'graphlayout', 'chainlayout', 'source']);
 
 /**
  * One ES module as a classic script: the same text, minus the `export `

@@ -265,7 +265,7 @@ test('the map comes before the shares on Start, and a line says what it carries'
   const spots = JSON.parse(ev(ctx, `(()=>{ const fit=summaryLabelFit({width:600}, []);
     const line=(u)=> [100+1000*u, 100];
     return JSON.stringify([0,1,2,3,4,5].map(()=> fit('1 → 2 tables', line))); })()`));
-  assert.deepEqual(spots.slice(0, 5).map((p) => p[0]), [600, 450, 750, 350, 850], 'each on its own curve, at the next free point');
+  assert.deepEqual(spots.slice(0, 5).map((p) => p[0]), [600, 480, 720, 360, 840], 'each on its own curve, at the next free point (RM67-U2f: finer points, a ground as wide as the words)');
   assert.equal(spots[5], null, 'no free point: no label');
 });
 

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { makeT, interpolate, richText, VIEWER_STRINGS } from '../src/viewer/i18n.mjs';
 import { TRUST_LEVELS } from '../src/core/trust.mjs';
 import { handleViewerLib } from '../src/mcp/http.mjs';
+import { limitTitleKeys, limitTopic, LIMIT_TOPICS, LIMIT_AXIS_KEYS } from '../src/viewer/limit_titles.mjs';
+import { axisLimits, AXES, AXIS_STATUS } from '../src/core/lanes.mjs';
 
 // The viewer's i18n shell (SPEC §17.11, §15 M9). What is under test here is the
 // SHELL, not the translation: that English is the default and the fallback,
@@ -23,10 +25,11 @@ const HTML = fs.readFileSync(path.join(ROOT, 'viewer', 'index.html'), 'utf8');
 const JS_DIR = path.join(ROOT, 'viewer', 'js');
 // The SVG pictures of an answer (src/viewer/chain_svg.mjs, the whole chain, and
 // src/viewer/summary_card.mjs, the card) write the page's own words too, from the
-// same catalogue, so they are read as part of the page.
+// same catalogue, so they are read as part of the page; and so does
+// src/viewer/limit_titles.mjs, which names the key a limit's title comes from.
 const PAGE = [HTML, ...fs.readdirSync(JS_DIR).sort()
   .map((f) => fs.readFileSync(path.join(JS_DIR, f), 'utf8')),
-...['chain_svg.mjs', 'summary_card.mjs'].map((f) => fs.readFileSync(path.join(ROOT, 'src', 'viewer', f), 'utf8'))].join('\n');
+...['chain_svg.mjs', 'summary_card.mjs', 'limit_titles.mjs'].map((f) => fs.readFileSync(path.join(ROOT, 'src', 'viewer', f), 'utf8'))].join('\n');
 const CATALOG = { en: VIEWER_STRINGS.en, ko: KO };
 
 /**
@@ -307,6 +310,97 @@ test('every diagnostic and every gap the engine can emit has a title, and every 
     assert.equal(en.includes(kind), false, `diag.title.${kind} (en) still carries the code`);
     assert.equal(/[.]$/.test(en), false, `diag.title.${kind} (en) is a sentence, not a title`);
   }
+});
+
+// EVERY LIMIT SCOPE THE ENGINE CAN EMIT (RM67-U2f), read out of the engine's
+// source the way the diagnostic kinds are. A limit is built as an object literal
+// `{ scope: '<scope>', reason: ... }`, or by a helper whose first parameter is
+// the scope and which is called with a literal (`groupingLimit('map', ctx)`), or
+// with a name after a colon (`scope: \`axis:${axis}\``), which makes a family.
+// `basis.scope: 'server'` carries no reason and is not a limit.
+const LIMIT_HELPERS = [...ENGINE_SRC.matchAll(/\bfunction (\w+)\(scope\b/g)].map((m) => m[1]);
+const LIMIT_SCOPES = [...new Set([
+  ...[...ENGINE_SRC.matchAll(/\bscope: '([^']+)',\s*reason\b/g)].map((m) => m[1]),
+  ...LIMIT_HELPERS.flatMap((h) => [...ENGINE_SRC.matchAll(new RegExp(`\\b${h}\\('([^']+)'`, 'g'))].map((m) => m[1])),
+])].sort();
+const LIMIT_FAMILIES = [...new Set([...ENGINE_SRC.matchAll(/\bscope: `([a-z-]+):\$\{/g)].map((m) => m[1]))].sort();
+/** The title the page shows over a limit: the first key its catalogue has. */
+const limitTitleOf = (limit) => limitTitleKeys(limit).find((c) => Object.hasOwn(VIEWER_STRINGS.en, c.key)) ?? null;
+/** A sentence no topic starts with, so a scope's own title is what answers. */
+const PLAIN = 'a sentence no topic starts with';
+
+test('every limit scope the engine can emit has a title, in both catalogues', () => {
+  // The scan must see every tool, the overlay and the summary, or it holds nothing.
+  for (const s of ['map', 'flow', 'coupling', 'overlay', 'summary:groups', 'summary:walk', 'pack-diff:repository', 'endpoint_impact', 'browse', 'identifier-case']) {
+    assert.ok(LIMIT_SCOPES.includes(s), `${s} was not found by the scan: ${LIMIT_SCOPES.join(', ')}`);
+  }
+  assert.equal(LIMIT_SCOPES.includes('server'), false, 'basis.scope is not a limit');
+  assert.deepEqual(LIMIT_FAMILIES, ['axis', 'diagnostic', 'runtime-only-columns']);
+  const hangul = /[가-힣]/;
+  const missing = [];
+  // An axis name may stay a Latin word in Korean ("SQL"); a title is a phrase, and is translated.
+  const need = (key, what, phrase = true) => {
+    if (typeof VIEWER_STRINGS.en[key] !== 'string') missing.push(`${key} (en) for ${what}`);
+    if (typeof KO[key] !== 'string' || (phrase && !hangul.test(KO[key]))) missing.push(`${key} (ko) for ${what}`);
+  };
+  for (const scope of LIMIT_SCOPES) need(`limit.scope.${scope}`, scope);
+  // A family other than axis and diagnostic is titled by what comes before its colon.
+  for (const f of LIMIT_FAMILIES.filter((x) => x !== 'axis' && x !== 'diagnostic')) need(`limit.scope.${f}`, `${f}:<name>`);
+  for (const topic of Object.keys(LIMIT_TOPICS)) need(`limit.topic.${topic}`, `the topic ${topic}`);
+  need(LIMIT_AXIS_KEYS.note, 'an axis note');
+  for (const axis of AXES) need(`ov.axis.name.${axis}`, `axis:${axis}`, false);
+  assert.deepEqual(missing, [], 'a limit the page has no words for is shown as its scope and the engine\'s English; give it a title in both languages');
+  // What the page shows: every scope answers with its own title.
+  for (const scope of LIMIT_SCOPES) {
+    assert.equal(limitTitleOf({ scope, reason: PLAIN }).key, `limit.scope.${scope}`, scope);
+  }
+  assert.equal(limitTitleOf({ scope: 'runtime-only-columns:pms_product', reason: PLAIN }).key, 'limit.scope.runtime-only-columns');
+  // A title is a phrase a reader scans: short, no full stop, not the scope said again.
+  const titles = [...LIMIT_SCOPES.map((s) => `limit.scope.${s}`), ...Object.keys(LIMIT_TOPICS).map((x) => `limit.topic.${x}`), LIMIT_AXIS_KEYS.note];
+  for (const k of titles) {
+    for (const [lang, cat] of [['en', VIEWER_STRINGS.en], ['ko', KO]]) {
+      assert.ok(cat[k].length <= 60, `${lang}/${k} is too long for a title: ${cat[k]}`);
+      assert.equal(/[.]$/.test(cat[k]), false, `${lang}/${k} is a sentence, not a title`);
+    }
+    assert.notEqual(VIEWER_STRINGS.en[k], k.replace(/^limit\.(?:scope|topic)\./, ''), `${k} (en) is the scope said again`);
+  }
+});
+
+test('an axis limit is titled by what the axis says of itself, a diagnostic and a gap by their own titles', () => {
+  // The real emitter, every axis and every status it can report, with a note on each.
+  for (const axis of AXES) {
+    for (const status of AXIS_STATUS) {
+      const lim = axisLimits({ [axis]: { status, reason: 'why', notes: ['a note'] } });
+      const want = status === 'shipped' ? ['note'] : [status, 'note'];
+      assert.deepEqual(lim.map((l) => limitTitleOf(l)), want.map((w) => ({ key: LIMIT_AXIS_KEYS[w], axis })), `${axis} ${status}`);
+    }
+  }
+  // An axis note that opens like a topic takes the topic's words (the web lane's calls with no client).
+  assert.equal(limitTitleOf({ scope: 'axis:web', reason: '3 of 151 frontend call site(s) were traced to no client, so each' }).key, 'limit.topic.web-no-client');
+  assert.equal(limitTitleOf({ scope: 'diagnostic:SHARD_UNUSABLE', reason: PLAIN }).key, 'diag.title.SHARD_UNUSABLE');
+  for (const kind of GAP_LABEL_KINDS) {
+    assert.equal(limitTitleOf({ scope: 'overview', reason: `${kind} (12): what it means` }).key, `ov.gap.${kind}.label`, kind);
+  }
+  assert.equal(limitTitleOf({ scope: 'overview', reason: `unresolved-calls (unknown): x` }).key, 'ov.gap.unresolved-calls.label');
+});
+
+test('every topic opens a sentence the engine really writes', () => {
+  // Held against the source, placeholders and all: `depth cap ${depth} reached`
+  // is what /^depth cap \d+ reached/ has to find. A sentence the engine rewords
+  // would otherwise lose its title with nobody told.
+  const src = ENGINE_SRC.replace(/\\`/g, '`');
+  const dead = [];
+  for (const [topic, openings] of Object.entries(LIMIT_TOPICS)) {
+    for (const re of openings) {
+      const body = re.source.replace(/^\^/, '').replace(/\\d\+/g, () => '(?:\\d+|\\$\\{[^}]+\\})');
+      if (!new RegExp(`[\`']${body}`).test(src)) dead.push(`${topic}: ${re}`);
+    }
+  }
+  assert.deepEqual(dead, [], 'these openings start no sentence in src/: the engine reworded one, so say its new opening here');
+  assert.equal(limitTopic('depth cap 8 reached at 3 call(s), so deeper calls'), 'depth-cap');
+  assert.equal(limitTopic('node cap reached. The chain from here is bigger'), 'walk-cap');
+  assert.equal(limitTopic('node cap 400 reached, so 3 tables not drawn'), 'draw-cap');
+  assert.equal(limitTopic(PLAIN), null);
 });
 
 // The masthead's quiet layer (RM36). The verdict words themselves are the

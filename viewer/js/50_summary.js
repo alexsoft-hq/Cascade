@@ -27,7 +27,11 @@ const SUM_OTHERS = '(others)';
 const SUM_ROWS = 20;      // rows an open box lists before "show all"
 const SUM_MEMBERS = 8;    // members a path lists beside the picture before its fold
 const SUM_LABELS = 12;    // lines the whole map labels with their counts; more are a knot
-const SUM_LABEL_AT = [0.5, 0.35, 0.65, 0.25, 0.75];   // where along a line its count may sit, tried in turn
+// Where along a line its count may sit, tried in turn: the middle, then out towards the boxes.
+const SUM_LABEL_AT = [0.5, 0.38, 0.62, 0.26, 0.74, 0.44, 0.56, 0.32, 0.68, 0.2, 0.8];
+const SUM_LABEL_H = 16;    // a count's ground: its height,
+const SUM_LABEL_PAD = 5;   // the room either side of its words,
+const SUM_LABEL_GAP = 3;   // and the least room between two grounds
 const SUM_MODE_KEY = { strict:'mode.strict', conservative:'mode.conservative', heuristic:'mode.heuristic' };
 const SUM_MODE_GRADE = { strict:'EXACT', conservative:'SOUND_SET', heuristic:'HEURISTIC' };
 // WHAT A BOX ON THE LEFT IS CALLED (RM67-U2d), by the rule the answer names.
@@ -280,26 +284,71 @@ function drawSummaryLinks(a, picture, svg, boxes){
   svg.setAttribute('width', pr.width); svg.setAttribute('height', pr.height);
   // A LINE SAYS WHAT IT CARRIES (RM67-U2e), where the lines are few enough to
   // read: a box opened, or a map of a dozen lines. Sixty labels would be a knot.
-  const lines=summaryLines(a, boxes), labels=!!SUM.sel || lines.length<=SUM_LABELS;
-  const placed=[], fit=summaryLabelFit(pr, placed);
-  svg.replaceChildren(...lines.flatMap((l)=> summaryPath(l, pr, labels && fit)));
+  // Every line is drawn before any count, so no line runs over one (RM67-U2f).
+  const lines=summaryLines(a, boxes), drawn=lines.map((l)=> summaryPath(l, pr)).filter(Boolean);
+  svg.replaceChildren(...drawn.map((d)=> d.path));
+  if(SUM.sel || lines.length<=SUM_LABELS) summaryLabels(svg, drawn, summaryLabelFit(pr, [], summaryLane(picture, pr)));
+}
+/** The band between the two columns, where a count covers no box; null with no layout to measure. */
+function summaryLane(picture, pr){
+  const gap=picture.querySelector ? picture.querySelector('.sumgap') : null;
+  const r=gap ? gap.getBoundingClientRect() : null;
+  return (r && r.width>0) ? { l:r.left-pr.left, r:r.right-pr.left } : null;
 }
 /**
- * Where a line's count goes: on its own curve, at the first of a few points
- * along it where it does not cover a count already placed; nowhere when every
- * point would (the count stays on the line's title). With no layout to measure
- * (a picture not on screen yet) every count is placed at the middle.
+ * WHERE A LINE'S COUNT GOES (RM67-U2f): on its own curve, at the first of the
+ * points along it where its ground stays inside the band between the columns
+ * and inside the picture, and clears every count already placed; nowhere when
+ * none does (the count stays on the line's title). With no layout to measure (a
+ * picture not on screen yet) every count is placed at the middle.
  */
-function summaryLabelFit(pr, placed){
-  return (text, curve)=>{
+function summaryLabelFit(pr, placed, lane){
+  return (text, curve, node)=>{
+    const w=summaryLabelWidth(text, node);
     for(const at of SUM_LABEL_AT){
-      const [x, y]=curve(at), w=text.length*6.8+8, box={ l:x-w/2, r:x+w/2, t:y-16, b:y };
-      if(pr.width && placed.some((o)=> box.l<o.r && o.l<box.r && box.t<o.b && o.t<box.b)) continue;
+      const [x, y]=curve(at), box={ l:x-w/2, r:x+w/2, t:y-SUM_LABEL_H/2, b:y+SUM_LABEL_H/2 };
+      if(!summaryLabelFree(box, pr, placed, lane)) continue;
       placed.push(box);
       return [x, y];
     }
     return null;
   };
+}
+/** A count's ground may stand here: in the band, in the picture, and clear of every other count. */
+function summaryLabelFree(box, pr, placed, lane){
+  if(!pr.width) return true;
+  return summaryInLane(box, lane) && summaryInPicture(box, pr) && !placed.some((o)=> summaryLabelHits(box, o));
+}
+const summaryInLane=(box, lane)=> !lane || (box.l>=lane.l+2 && box.r<=lane.r-2);
+const summaryInPicture=(box, pr)=> box.t>=0 && (!pr.height || box.b<=pr.height);
+/** Two grounds closer than the least room between them. */
+const summaryLabelHits=(a, b)=> a.l<b.r+SUM_LABEL_GAP && b.l<a.r+SUM_LABEL_GAP && a.t<b.b+SUM_LABEL_GAP && b.t<a.b+SUM_LABEL_GAP;
+/**
+ * How wide a count's ground is: its words as the browser drew them, or, with
+ * nothing drawn to measure, counted (a Hangul letter is about twice as wide as a
+ * Latin one in this face), plus the room either side.
+ */
+function summaryLabelWidth(text, node){
+  const drawn=(node && typeof node.getComputedTextLength==='function') ? node.getComputedTextLength() : 0;
+  const counted=[...String(text)].reduce((w, c)=> w+(/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/.test(c) ? 11 : 6.7), 0);
+  return (drawn>0 ? drawn : counted)+2*SUM_LABEL_PAD;
+}
+/** Each line's count, the heaviest line's first, on a ground of its own above every line. */
+function summaryLabels(svg, drawn, fit){
+  for(const d of [...drawn].sort((a, b)=> b.weight-a.weight)){
+    if(!d.label) continue;
+    const text=svgEl('text',{ class:'sumlbl', 'text-anchor':'middle', 'dominant-baseline':'central' });
+    text.textContent=d.label;
+    const g=svgEl('g',{ class:'sumlblg' });
+    g.append(text); svg.append(g);   // in the picture, so the browser can measure the words
+    const at=fit(d.label, d.curve, text);
+    if(at) summaryGround(g, text, at, summaryLabelWidth(d.label, text)); else g.remove();
+  }
+}
+/** A count at its point, on a ground as wide as its words. */
+function summaryGround(g, text, [x, y], w){
+  text.setAttribute('x', x); text.setAttribute('y', y);
+  g.replaceChildren(svgEl('rect',{ class:'sumlblbg', x:x-w/2, y:y-SUM_LABEL_H/2, width:w, height:SUM_LABEL_H, rx:3 }), text);
 }
 /** The lines on screen: every link, the open box's own, or the paths through the picked node. */
 function summaryLines(a, boxes){
@@ -320,8 +369,9 @@ function summaryThroughLines(th, boxes){
     weight:l.endpoints.length, group:l.group, family:th.family, tip:t('summary.through.table.title',{n:l.endpoints.length, grade:l.grade, ...summaryNouns()}),
     label:t('summary.through.routes',{n:l.endpoints.length}) }));
 }
-function summaryPath(l, pr, labels){
-  if(!l.from || !l.to) return [];
+/** One line as a path, with what its count needs: the words, the line's weight and its curve. */
+function summaryPath(l, pr){
+  if(!l.from || !l.to) return null;
   const f=summaryAnchor(l.from), g=summaryAnchor(l.to);
   const x1=f.right-pr.left, y1=f.mid-pr.top, x2=g.left-pr.left, y2=g.mid-pr.top, dx=(x2-x1)/2;
   const p=svgEl('path',{ d:'M'+x1+','+y1+' C'+(x1+dx)+','+y1+' '+(x2-dx)+','+y2+' '+x2+','+y2, fill:'none',
@@ -331,19 +381,11 @@ function summaryPath(l, pr, labels){
   const tip=svgEl('title');
   tip.textContent=l.tip;
   p.append(tip);
-  return summaryLabelled(p, l.label, labels, [x1, y1, x2, y2]);
+  return { path:p, label:l.label, weight:l.weight,
+    curve:(u)=> [summaryBez(u, x1, x1+dx, x2-dx, x2), summaryBez(u, y1, y1, y2, y2)] };
 }
 // A point on a cubic Bezier: u along the curve, a..d one coordinate of its four points.
 const summaryBez=(u, a, b, c, d)=> ((1-u)**3)*a+3*((1-u)**2)*u*b+3*(1-u)*u*u*c+(u**3)*d;
-/** A line, and its count on a halo of the ground, so it reads over the lines behind it. */
-function summaryLabelled(p, text, fit, [x1, y1, x2, y2]){
-  const dx=(x2-x1)/2;
-  const at=(fit && text) ? fit(text, (u)=> [summaryBez(u, x1, x1+dx, x2-dx, x2), summaryBez(u, y1, y1, y2, y2)]) : null;
-  if(!at) return [p];
-  const e=svgEl('text',{ class:'sumlbl', x:at[0], y:at[1]-4, 'text-anchor':'middle' });
-  e.textContent=text;
-  return [p, e];
-}
 /** Where a line meets an element: its edges, and its middle kept inside a list that scrolls. */
 function summaryAnchor(node){
   const r=node.getBoundingClientRect();
