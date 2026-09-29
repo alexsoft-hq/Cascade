@@ -218,7 +218,7 @@
                     <i class="brlbl">writes</i>
                     1
                   </span>
-                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative with no depth cap">
                     <i class="brlbl">API</i>
                     1
                   </span>
@@ -242,7 +242,7 @@
                     <i class="brlbl">writes</i>
                     1
                   </span>
-                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative with no depth cap">
                     <i class="brlbl">API</i>
                     2
                   </span>
@@ -268,7 +268,7 @@
                     <i class="brlbl">writes</i>
                     0
                   </span>
-                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative with no depth cap">
                     <i class="brlbl">API</i>
                     0
                   </span>
@@ -293,7 +293,7 @@
                     <i class="brlbl">writes</i>
                     0
                   </span>
-                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative, depth 8">
+                  <span class="brstat" title="how many endpoints reach this, following calls at mode=conservative with no depth cap">
                     <i class="brlbl">API</i>
                     1
                   </span>

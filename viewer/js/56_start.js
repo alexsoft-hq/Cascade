@@ -23,7 +23,7 @@
 // tables, routes and screens as places to start. Every number is the one
 // `overview` answer's; the map is the `summary` tool's (50_summary.js).
 
-// `mode` is the mode the map, the shares and the busiest lists are looking in
+// `mode` is the mode the map, the shares and the table and API rankings look in
 // when the reader moved the map's control off the landing answer's (null: that
 // one), and `byMode` the overview answers asked for it (RM67-U2e).
 const START = { target:null, mode:null, byMode:new Map(), seq:0 };
@@ -121,6 +121,12 @@ function renderStartNumbers(){
  * the page opened in: two numbers for one thing, side by side. Now the control
  * moves all three, asking the overview once in that mode. The gaps and
  * Analysis status stay in the landing answer's mode, and say it.
+ *
+ * THE SCREENS RANKING IS THE ONE LIST IT DOES NOT MOVE (RM67-U2h). Its rows are
+ * a `browse kind=screen` answer, walked in one census mode, and no answer
+ * carries per-screen rows in another mode (the overview's screen block is
+ * counts). So the ranking says its own mode under its title, and the lines that
+ * name what moves say "the table and API rankings", not "the busiest lists".
  */
 async function startSetMode(mode){
   if(!OV.resp || !Object.hasOwn(MODE_ADMITS, mode)) return;

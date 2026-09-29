@@ -165,7 +165,7 @@ function answerShowRow(v, key){
  * conservative stops at every one of them, and the page opened on five cards
  * reading 0%, which reads as an analysis that failed. Now the first thing on
  * Start is the cause in one line, the engine's fix for it, and the wider mode
- * as a button that moves the map, the shares and the busiest lists together
+ * as a button that moves the map, the shares and the table and API rankings together
  * (startSetMode). Looking in another mode, the line says so, and the way back.
  */
 function renderStartLead(a){

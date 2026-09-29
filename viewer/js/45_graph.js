@@ -472,17 +472,18 @@ function renderGraphCounts(r, a, shownNodes, shownLinks){
   // Kept so a language switch can write this line again from the answer that is
   // already on screen, without asking the server for it a second time.
   GRAPHV.counts={r, a, shownNodes, shownLinks};
-  const say=(key,params)=> el('span',{}, richNodes(t(key,params)));
+  // One item per count, as on the map (renderMapCounts).
   const hidden=[...GRAPHV.hidden];
-  const kids=[ say('gcount.nodes',{n:shownNodes}), '\u00a0\u00a0', say('gcount.links',{n:shownLinks}) ];
-  if(shownNodes!==a.nodes.length || shownLinks!==a.edges.length)
-    kids.push('\u00a0\u00a0'+t('gcount.ofanswer',{nodes:a.nodes.length, links:a.edges.length})
-      +(hidden.length?(' — '+t('gcount.hidden',{kinds:hidden.join(', ')})):''));
-  kids.push('\u00a0\u00a0'+t('gcount.hops',{hops:a.hops, dir:a.direction}));
+  const kids=[ countItem('gcount.nodes',{n:shownNodes}), countItem('gcount.links',{n:shownLinks}) ];
+  if(shownNodes!==a.nodes.length || shownLinks!==a.edges.length){
+    kids.push(countItem('gcount.ofanswer',{nodes:a.nodes.length, links:a.edges.length}));
+    if(hidden.length) kids.push(countItem('gcount.hidden',{kinds:hidden.join(', ')}));
+  }
+  kids.push(countItem('gcount.hops',{hops:a.hops, dir:a.direction}));
   // The cut is the server's, and its REASON stays in the server's own words.
   const cap=(r.limits||[]).find(l=>l.scope==='neighborhood');
-  if(cap) kids.push(el('span',{className:'tag warn', style:'margin-left:8px', title:cap.reason, textContent:t('gcount.nodecap')}));
-  byId('gcounts').replaceChildren(...kids);
+  if(cap) kids.push(el('span',{className:'gci tag warn', title:cap.reason, textContent:t('gcount.nodecap')}));
+  byId('gcounts').replaceChildren(el('div',{className:'gcrow'}, kids));
 }
 function graphNodeOf(a, id){
   return a.nodes.find(n=>n.id===id) || {id, kind:id.slice(0, id.indexOf(':')), label:id, comment:null};
@@ -2602,60 +2603,78 @@ function renderMapChips(){
   }
   byId('gchips').replaceChildren(...chips);
 }
+// THE COUNT LINE, ONE ITEM PER COUNT (RM67-U2h). It ran its numbers together
+// ("49 / 76 tables touched 44 / 54 screens reach a route"), and the eye could not
+// tell where one count ended. Each count is now one item that reads alone, kept
+// whole and set a clear gap from the next. Each is one catalogue sentence with
+// its number in bold, so a translation can put the number where its own grammar
+// wants it, instead of having the page glue an English word onto a digit.
+const countItem=(key,params,more)=> el('span',{className:'gci'}, [...richNodes(t(key,params)), ...(more||[])]);
+// The map's line is two rows: what the ANSWER holds, then what the PICTURE drew.
 function renderMapCounts(){
   const r=GMAP.resp, s=r.answer.summary;
-  // Each count is one catalogue sentence with its number in bold — so a
-  // translation can put the number where its own grammar wants it, instead of
-  // having the page glue an English word onto a digit.
-  const say=(key,params)=> el('span',{}, richNodes(t(key,params)));
-  const kids=[say('gcount.groups',{n:s.shown.groups}),'\u00a0\u00a0',
-    say('gcount.endpoints',{n:s.shown.endpoints}),'\u00a0\u00a0',
-    say('gcount.tables',{n:s.tablesTouched, total:s.tables})];
-  if(s.statements!=null) kids.push('\u00a0\u00a0',say('gcount.statements',{n:s.shown.statements}));
+  byId('gcounts').replaceChildren(
+    el('div',{className:'gcrow'}, mapCensusItems(s)),
+    el('div',{className:'gcrow'}, mapDrawnItems(r, s)));
+}
+function mapCensusItems(s){
+  const kids=[countItem('gcount.groups',{n:s.shown.groups}),
+    countItem('gcount.endpoints',{n:s.shown.endpoints}),
+    countItem('gcount.tables',{n:s.tablesTouched, total:s.tables})];
+  if(s.statements!=null) kids.push(countItem('gcount.statements',{n:s.shown.statements}));
   // Two numbers, because they answer two questions: how many screens this
   // picture drew, and how many the pack has. A screen that reaches no route is
   // not on the map, and the difference is said rather than left as a silence.
-  if(s.screens!=null) kids.push('\u00a0\u00a0',say('gcount.screens',{n:s.screens, total:s.screensTotal}));
+  if(s.screens!=null) kids.push(countItem('gcount.screens',{n:s.screens, total:s.screensTotal}));
+  return kids;
+}
+function mapDrawnItems(r, s){
+  const kids=[];
   // WHAT THE PICTURE FOLDED AWAY. The census above counts the answer; this
-  // counts the drawing — the two differ exactly by the endpoints standing
+  // counts the drawing. The two differ exactly by the endpoints standing
   // inside their group node, and a reader must be told which they are reading.
   const drawnEps=GMAP.nodes.reduce((n,x)=> n+(x.kind==='endpoint'?1:0), 0);
   const folded=Math.max(0, GMAP.endpointsTotal-drawnEps);
   if(GMAP.endpointsTotal){
-    kids.push('\u00a0\u00a0', drawnEps
-      ? say('gcount.unfolded',{n:drawnEps, g:GMAP.open.size, n2:folded})
-      : say('gcount.folded',{n:folded}));
+    kids.push(drawnEps
+      ? countItem('gcount.unfolded',{n:drawnEps, g:GMAP.open.size, n2:folded})
+      : countItem('gcount.folded',{n:folded}));
   }
   // WHAT CAME FROM SOMEWHERE ELSE. Counted off the answer, so the line says the
   // same thing whether the layer is drawn or hidden, and it says which it is.
   const fed=s.federated;
   if(fed && fed.nodes>0){
-    kids.push('\u00a0\u00a0', say('gcount.federated',{n:fed.nodes, k:fed.projects.length}));
-    if(!GMAP.fed) kids.push(' '+t('gcount.federated.off'));
+    kids.push(countItem('gcount.federated',{n:fed.nodes, k:fed.projects.length}, GMAP.fed ? [] : [' '+t('gcount.federated.off')]));
   }
-  kids.push('\u00a0\u00a0',say('gcount.links',{n:GMAP.links.length}));
+  kids.push(countItem('gcount.links',{n:GMAP.links.length}, mapLinkKinds()));
+  const hidden=[...GMAP.hidden];
+  if(hidden.length) kids.push(countItem('gcount.hidden',{kinds:hidden.join(', ')}));
+  const cap=mapNodeCapTag(r, s);
+  if(cap) kids.push(cap);
+  if(GMAP.drawn) kids.push(el('span',{className:'gci count',
+    title:t('gcount.drawnin.title'), textContent:t('gcount.drawnin',{rend:GMAP.drawn.toUpperCase()})}));
+  return kids;
+}
+/** The drawn lines by kind, after their count: " (calls 86, aggregate 114, joins 27)". */
+function mapLinkKinds(){
   const byKind={};
   for(const l of GMAP.links) byKind[l.data.kind]=(byKind[l.data.kind]||0)+1;
-  const parts=[];
-  for(const k of ['calls','aggregate','member','touches','executes','joins']) if(byKind[k]) parts.push(byKind[k]+' '+t(LINK_KIND_KEY[k]));
-  if(parts.length) kids.push(' ('+parts.join('\u00a0\u00a0')+')');
-  const hidden=[...GMAP.hidden];
-  if(hidden.length) kids.push(' — '+t('gcount.hidden',{kinds:hidden.join(', ')}));
-  // The node cap is the server's, in the server's own words; the numbers here
-  // are what SURVIVED it, per kind.
+  const parts=['calls','aggregate','member','touches','executes','joins'].filter((k)=> byKind[k])
+    .map((k)=> t('gcount.bykind',{n:byKind[k], kind:t(LINK_KIND_KEY[k])}));
+  return parts.length ? [' ('+parts.join(', ')+')'] : [];
+}
+// The node cap is the server's, in the server's own words; the numbers here
+// are what SURVIVED it, per kind.
+function mapNodeCapTag(r, s){
   const cut=[];
   if(s.shown.endpoints<s.endpoints) cut.push('endpoints '+s.shown.endpoints+' / '+s.endpoints);
   if(s.shown.tables<s.tablesTouched) cut.push('tables '+s.shown.tables+' / '+s.tablesTouched);
   if(s.statements!=null && s.shown.statements<s.statements) cut.push('statements '+s.shown.statements+' / '+s.statements);
   if(s.screens!=null && s.shown.screens<s.screens) cut.push('screens '+s.shown.screens+' / '+s.screens);
-  if(cut.length){
-    const why=(r.limits||[]).find(l=>/node cap/.test(l.reason||''));
-    kids.push(el('span',{className:'tag warn', style:'margin-left:8px',
-      title:(why&&why.reason)||t('graph.nodecap.title'), textContent:'node cap: '+cut.join('\u00a0\u00a0')}));
-  }
-  if(GMAP.drawn) kids.push('\u00a0\u00a0', el('span',{className:'count',
-    title:t('gcount.drawnin.title'), textContent:t('gcount.drawnin',{rend:GMAP.drawn.toUpperCase()})}));
-  byId('gcounts').replaceChildren(...kids);
+  if(!cut.length) return null;
+  const why=(r.limits||[]).find(l=>/node cap/.test(l.reason||''));
+  return el('span',{className:'gci tag warn',
+    title:(why&&why.reason)||t('graph.nodecap.title'), textContent:'node cap: '+cut.join(', ')});
 }
 function renderMapSide(){
   refreshShowAll();

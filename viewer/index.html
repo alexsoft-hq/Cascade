@@ -1379,6 +1379,11 @@
   button.chip.off { color:var(--t3); border-color:var(--hair); text-decoration:line-through; }
   .gcount { font-size:11.5px; color:var(--t2); margin:0 0 9px; }
   .gcount b { color:var(--t1); font-weight:600; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  /* One item per count (RM67-U2h): an item never breaks inside itself, and a
+     clear gap sits between two, so "49 of 76 tables touched" cannot run into
+     the count after it. The map's line is two rows: the answer, then the picture. */
+  .gcount .gcrow { display:flex; flex-wrap:wrap; justify-content:flex-end; column-gap:16px; row-gap:1px; }
+  .gcount .gci { white-space:nowrap; }
   .isogrid { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
   button.isochip { padding:1px 7px; font:400 11px var(--mono); border-radius:2px;
     display:inline-flex; align-items:center; gap:5px; max-width:100%; }

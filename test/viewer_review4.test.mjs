@@ -226,24 +226,24 @@ test('where every route stops at itself, Start says so first, once, with the fix
   assert.equal(start[0].id, 'slead', 'the cause comes before the search box and the 0% cards');
 });
 
-test('one mode for what Start counts: the map\'s control moves the map, the shares and the busiest lists, and each says it', async (t) => {
+test('one mode for what Start counts: the map\'s control moves the map, the shares and the table and API rankings, and each says it', async (t) => {
   const { ctx, byId, asked } = await boot(t, { hash: '#p=gamma&tab=start', rewrite: { overview: floored } });
   const mode = () => byId.get('skpimode').textContent;
-  assert.equal(mode(), 'The shares and the busiest lists below are counted in conservative, depth not capped.');
+  assert.equal(mode(), 'The shares and the table and API rankings below are counted in conservative, depth not capped.');
   assert.equal(byId.get('ovcards').querySelectorAll('.kpinum')[0].textContent, '0%');
   byId.get('slead').querySelectorAll('button').at(-1).onclick();
   await settle(ctx, 12);
   assert.ok(asked.some((a) => a.name === 'overview' && a.args.mode === 'heuristic'), 'the overview is asked in that mode');
   assert.equal(ev(ctx, 'SUM.mode'), 'heuristic', 'the map moved with it');
-  assert.equal(mode(), 'The shares and the busiest lists below are counted in heuristic, depth not capped.');
+  assert.equal(mode(), 'The shares and the table and API rankings below are counted in heuristic, depth not capped.');
   assert.notEqual(byId.get('ovcards').querySelectorAll('.kpinum')[0].textContent, '0%');
   for (const h of byId.get('shubs').querySelectorAll('.hubmode').slice(0, 2)) assert.equal(h.textContent, 'counted in heuristic');
-  assert.match(byId.get('slead').textContent, /counted in heuristic now\. The gaps and Analysis status stay in conservative\./);
+  assert.match(byId.get('slead').textContent, /counted in heuristic now\. The screens ranking has one mode only, written under its title\. The gaps and Analysis status stay in conservative\./);
   byId.get('slead').querySelector('button').onclick();
   await settle(ctx, 12);
   assert.equal(ev(ctx, 'START.mode'), null);
   assert.equal(ev(ctx, 'SUM.mode'), 'conservative');
-  assert.equal(mode(), 'The shares and the busiest lists below are counted in conservative, depth not capped.');
+  assert.equal(mode(), 'The shares and the table and API rankings below are counted in conservative, depth not capped.');
 });
 
 test('the map comes before the shares on Start, and a line says what it carries', async (t) => {

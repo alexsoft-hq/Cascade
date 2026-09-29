@@ -228,7 +228,7 @@
         <div class="panel">error: unknown-key: nothing recorded for summary</div>
       </div>
       <div id="skpimode" class="skpimode">
-        <span>The shares and the busiest lists below are counted in conservative, depth not capped.</span>
+        <span>The shares and the table and API rankings below are counted in conservative, depth not capped.</span>
       </div>
       <div id="ovcards" class="ovkpis">
         <div class="kpi" aria-label="endpoints that reach SQL: 100%, 10 / 10" style="color: #22D3EE">

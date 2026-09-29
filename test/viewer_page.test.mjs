@@ -2463,7 +2463,7 @@ test('the rail is a browse ANSWER, never a count the page did: every number on i
   // ...and each one says what it counts.
   const titles = rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat').map((c) => c.title);
   assert.match(titles[0], /how many SQL statements touch this/);
-  assert.match(titles[1], /mode=conservative, depth 8/);
+  assert.match(titles[1], /mode=conservative with no depth cap/);
 });
 
 // ---------------------------------------------------------------------------

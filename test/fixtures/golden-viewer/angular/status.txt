@@ -826,7 +826,7 @@
                 </span>
               </button>
               <span class="raillbl" style="margin: 0 1px">cut short:</span>
-              <span class="railchip" title="order: tables desc, statements desc, endpoint asc">hubs.endpoints 10/13</span>
+              <span class="railchip" title="hubs.endpoints  order: tables desc, statements desc, endpoint asc">busiest APIs 10 of 13</span>
             </div>
             <div class="foldbody"></div>
             <div class="railfolds">

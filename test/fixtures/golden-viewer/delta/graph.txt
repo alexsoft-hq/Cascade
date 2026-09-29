@@ -256,32 +256,36 @@
           </div>
           <div class="gover gover-br">
             <div id="gcounts" class="gcount">
-              <span>
-                <b>1</b>
-                groups
-              </span>
-              <span>
-                <b>2</b>
-                endpoints
-              </span>
-              <span>
-                <b>1</b>
-                / 1 table touched
-              </span>
-              <span>
-                <b>1</b>
-                / 2 screens reaches a route
-              </span>
-              <span>
-                <b>2</b>
-                endpoints folded in
-              </span>
-              <span>
-                <b>2</b>
-                lines drawn
-              </span>
-              (1 calls 1 aggregate)
-              <span class="count" title="which renderer drew this picture">drawn in 2D</span>
+              <div class="gcrow">
+                <span class="gci">
+                  <b>1</b>
+                  group
+                </span>
+                <span class="gci">
+                  <b>2</b>
+                  endpoints
+                </span>
+                <span class="gci">
+                  <b>1</b>
+                  of 1 table touched
+                </span>
+                <span class="gci">
+                  <b>1</b>
+                  of 2 screens reaches a route
+                </span>
+              </div>
+              <div class="gcrow">
+                <span class="gci">
+                  <b>2</b>
+                  endpoints folded into their groups
+                </span>
+                <span class="gci">
+                  <b>2</b>
+                  lines drawn
+                  (calls 1, aggregate 1)
+                </span>
+                <span class="gci count" title="which renderer drew this picture">drawn in 2D</span>
+              </div>
             </div>
           </div>
         </div>

@@ -189,14 +189,16 @@ function leadOf(text){
 
 // THE EVIDENCE RAIL. The same block sits beside every answer on every tab, in
 // the same place: what this answer RESTS ON, in four sections — basis, trust,
-// limits, truncated. Only the HEADING is the page's own words. The field labels
-// under it name the engine's own contract fields and stay in the engine's
-// language beside the engine's values: a translated field name would be a field
-// this page invented, and no reader could check it against the answer.
+// limits, truncated. THE PAGE'S WORDS FIRST, THE ENGINE'S IN THE TITLE
+// (RM67-U2e, U2h): a chip or a row says in the reader's language what it is,
+// and its title names the contract field it came from (`hubs.tables`,
+// `basis.freshness.verdict`), so a reader can still check it against the
+// answer. The engine's VALUES (a trust level, a verdict, an order) are printed
+// as they came, never translated.
 //
 // COLLAPSED it is one line of chips — the trust level, the freshness verdict,
-// how many limits there are, and every field the answer truncated with its own
-// shown/total. Those are the COUNTS, and they never fold: what folds is the
+// how many limits there are, and every list the answer cut with its own
+// shown and total. Those are the COUNTS, and they never fold: what folds is the
 // sentences. `scope` names which answer this rail is beside, so two rails on
 // two tabs remember their own open blocks.
 //
@@ -224,12 +226,12 @@ function honesty(resp, scope) {
     chips.append(head); bodies.push(body);
     const whole=railProjectLimits(resp); if(whole) chips.append(whole);
   }
-  // A truncation is a count, so it stays outside every fold: one chip per field
-  // the answer cut, carrying that field's own name and its shown/total.
+  // A truncation is a count, so it stays outside every fold: one chip per list
+  // the answer cut, said in the page's words with its shown and total.
   const cut=(tr.fields||[]).filter((f)=>f.nextOffset!=null);
   if(tr.any && cut.length){
     chips.append(el('span',{className:'raillbl', style:'margin:0 1px', textContent:t('rail.truncated')}));
-    for(const f of cut) chips.append(chip(f.field+' '+f.shown+'/'+f.total, 'order: '+f.order));
+    for(const f of cut) chips.append(railCutChip(f));
   }
   const folds=el('div',{className:'railfolds'}, railFolds(k, b, tt));
   // THE GRADE LEGEND lives here now, in the header of the block that is about
@@ -258,6 +260,19 @@ function railFreshSay(verdict){
   const fs=MAST_FRESH[verdict];
   if(fs && fs.say) return t(fs.say);
   return verdict==='unknown' ? t('status.fresh.unknown') : t('rail.fresh', { verdict });
+}
+/**
+ * One list the answer cut (RM67-U2h): what it is in the reader's words, and how
+ * much of it is here ("busiest tables 10 of 49"). The title keeps the engine's
+ * field path and its order. A path the catalogue has no label for is printed as
+ * it arrived; test/viewer_cut_labels.test.mjs holds every path a tool can emit
+ * to having one.
+ */
+function railCutChip(f){
+  const key='rail.cut.'+f.field;
+  const what=Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : f.field;
+  return el('span',{className:'railchip', title:f.field+'  order: '+f.order,
+    textContent:t('rail.cutof', { what, shown:f.shown, total:f.total })});
 }
 /** The project's own count of limits, beside an answer's, so the two never read as one number. */
 function railProjectLimits(resp){
