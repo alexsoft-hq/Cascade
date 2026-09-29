@@ -2936,9 +2936,9 @@
    ]
   },
   "src/cli/commands/analyze/index.mjs": {
-   "maxLines": 72,
-   "maxBranches": 12,
-   "longest": "graphOf",
+   "maxLines": 65,
+   "maxBranches": 7,
+   "longest": "prepare",
    "branchiest": "graphOf",
    "functions": [
     "certify",
@@ -2949,7 +2949,8 @@
     "factsOf",
     "graphOf",
     "graphOf/1",
-    "graphOf/2",
+    "pinMoved",
+    "pinMoved/1",
     "prepare",
     "run",
     "runpy",
@@ -3071,9 +3072,9 @@
   },
   "src/cli/commands/analyze/write.mjs": {
    "maxLines": 72,
-   "maxBranches": 14,
+   "maxBranches": 13,
    "longest": "runGate",
-   "branchiest": "buildPack",
+   "branchiest": "runGate",
    "functions": [
     "afterPack",
     "analysisRecord",
@@ -3088,6 +3089,8 @@
     "optOutsOf",
     "optOutsOf/1",
     "optOutsOf/2",
+    "packLaneStats",
+    "packLaneStats/1",
     "portablePath",
     "portableSelection",
     "prismaCatalogMeta",
@@ -4021,6 +4024,25 @@
     "digest12",
     "ser",
     "sha256"
+   ]
+  },
+  "src/core/catalog_read.mjs": {
+   "maxLines": 13,
+   "maxBranches": 11,
+   "longest": "addTo",
+   "branchiest": "catalogReadStats",
+   "functions": [
+    "addTo",
+    "byTableOrder",
+    "catalogDiagnostics",
+    "catalogDiagnostics/1",
+    "catalogReadStats",
+    "catalogReadStats/1",
+    "codeBlock",
+    "codeEntry",
+    "namedTables",
+    "plainSentence",
+    "reasonOf"
    ]
   },
   "src/core/chain.mjs": {
@@ -5146,6 +5168,12 @@
     "buildOverview/6",
     "buildOverview/7",
     "buildOverview/8",
+    "catalogGaps",
+    "catalogGaps/1",
+    "catalogGaps/2",
+    "catalogGaps/3",
+    "catalogTablesSaid",
+    "catalogTablesSaid/1",
     "censusEdges",
     "censusNodes",
     "cmp",
@@ -5168,6 +5196,7 @@
     "laneBlocks/3",
     "laneGaps",
     "named",
+    "note",
     "reachGaps",
     "restGaps",
     "restGaps/1",
@@ -7696,6 +7725,7 @@
     "footprint",
     "gradeRank",
     "groupOf",
+    "grouped",
     "groupingLimit",
     "handlesLinkOf",
     "handlesLinkOf/1",
@@ -8237,7 +8267,10 @@
     "diagGroups/1/1",
     "diagGroups/1/2",
     "diagGroups/1/3",
+    "diagSentences",
+    "diagSentences/1",
     "diagTitle",
+    "diagWeight",
     "el",
     "emptyNote",
     "emptyText",
@@ -8285,7 +8318,9 @@
     "t",
     "vside",
     "vsvg",
-    "vwrap"
+    "vwrap",
+    "weigh",
+    "weigh/1"
    ]
   },
   "viewer/js/20_api.js": {
