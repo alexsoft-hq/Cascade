@@ -781,3 +781,17 @@ test('readSourceFor on disk: a node id that names a path is not a way in: only a
   assert.equal(res.ok, false);
   assert.match(res.note, /^node not in pack/);
 });
+
+test('readSourceFor: a route no analyzed code answers (a call the frontend makes outward) says there is no handler, and never throws', () => {
+  const g = new Graph();
+  const eid = nodeId('endpoint', 'ANY /login');
+  g.addNode({ id: eid, path: '/login', httpMethod: 'ANY', outbound: true, source: 'web' });
+  const { io, calls } = makeIo({});
+
+  const res = readSourceFor(g, REPO_ROOT, eid, io);
+
+  assert.deepEqual(calls, [], 'nothing is read for a route with no handler');
+  assert.equal(res.ok, false);
+  assert.equal(res.kind, 'endpoint');
+  assert.match(res.note, /no handler/);
+});

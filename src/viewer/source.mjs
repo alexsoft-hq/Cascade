@@ -137,6 +137,10 @@ export function readSourceFor(graph, repoRoot, nodeId, io) {
   if (node.kind === 'symbol' || node.kind === 'endpoint') {
     // an endpoint previews its handler method
     const memberFqn = node.kind === 'endpoint' ? node.handler : idKey(nodeId);
+    // A route only the frontend calls (outbound) has no handler in the pack.
+    if (typeof memberFqn !== 'string' || memberFqn === '') {
+      return miss(node.kind, 'no handler in the analyzed code answers this route, so there is no source to show', null, 'java');
+    }
     const owner = ownerOf(memberFqn);
     const method = memberFqn.includes('#') ? memberFqn.slice(memberFqn.lastIndexOf('#') + 1) : null;
     const file = node.file || fileOfOwner(graph, owner);
