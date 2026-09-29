@@ -315,7 +315,7 @@
                     <div class="stval">
                       <div class="remedy">
                         Run
-                        <code>cascade init --root <the project that serves them></code>
+                        <code>cascade init --root <other-project-dir></code>
                         .
                       </div>
                     </div>

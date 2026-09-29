@@ -62,7 +62,7 @@ const JAVA_SRC = Object.freeze({ action: 'flag', flag: '--java-src', example: '-
 export const GAP_REMEDIES = Object.freeze({
   'no-catalog': CATALOG_FETCH,
   'not-shipped': JAVA_SRC,
-  'http-calls-leaving-pack': { action: 'run', command: 'cascade init --root <the project that serves them>' },
+  'http-calls-leaving-pack': { action: 'run', command: 'cascade init --root <other-project-dir>' },
   'unresolved-calls': { action: 'flag', flag: '--java-src', example: '--java-src <module>/src/main/java', when: ['unresolvedCallsByReason', 'project-type-outside-roots'] },
   'mode-floor': { action: 'mode', mode: WIDER },
   'contract-links': {
@@ -83,7 +83,7 @@ export const DIAGNOSTIC_REMEDIES = Object.freeze({
   TS_TYPEORM_NAMING_ASSUMED: { action: 'declare', key: 'tsBackend.typeorm' },
   TS_APPS_FOUND: { action: 'declare', key: 'tsBackend.app' },
   JPA_NAMING_UNREADABLE: { action: 'declare', key: 'jpa.namingStrategy' },
-  DISCOVERY_CAPPED: { action: 'flag', flag: '--ts-src', example: '--ts-src <the application root>' },
+  DISCOVERY_CAPPED: { action: 'flag', flag: '--ts-src', example: '--ts-src <app-root-dir>' },
   SETTING_IN_CODE: { action: 'declare', key: null },
   PREFIX_NOT_ON_CALLS: { action: 'declare', key: null },
   ROUTE_MOUNT_FROM_DOCUMENT: { action: 'declare', key: 'openapi.generatedFromCode', routes: true },

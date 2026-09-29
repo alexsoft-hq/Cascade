@@ -359,7 +359,7 @@
           "class": "input",
           "remedy": {
             "action": "run",
-            "command": "cascade init --root <the project that serves them>"
+            "command": "cascade init --root <other-project-dir>"
           }
         },
         {
