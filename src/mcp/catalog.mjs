@@ -91,9 +91,12 @@ export const TOOLS = Object.freeze({
       + 'endpoints}; kind=endpoint {endpoint, httpMethod, path, group, handlerShort, handlers, '
       + 'statements, tables}; kind=symbol {symbol, owner, short, file, line, transactional, '
       + 'mapperMethod, external}. `endpoints` on a row is how many HTTP endpoints reach it, '
-      + 'from ONE per-pack walk at mode=conservative with no hop cap, which is the same forward walk '
+      + 'from ONE per-pack walk in `mode` (strict|conservative|heuristic, default conservative) with '
+      + 'no hop cap, which is the same forward walk '
       + '`flow` draws and `map` and `coupling` count on, so a wider or deeper walk could reach '
-      + 'more and `limits` says so. `screens` on a table or a column row is the same number '
+      + 'more and `limits` says so. Every other count on a row is counted in that mode too, so '
+      + 'a list asked in the mode of the answer beside it counts what that answer walks. '
+      + '`screens` on a table or a column row is the same number '
       + 'one lane further out, from the `walkScreens` census `browse kind=screen` lists and '
       + 'the overview counts; it is ABSENT (not 0) on a pack with no screen axis. '
       + 'kind=symbol REQUIRES query (2 characters or more), because '
@@ -115,6 +118,7 @@ export const TOOLS = Object.freeze({
       type: 'object',
       properties: {
         kind: { type: 'string', enum: ['table', 'column', 'statement', 'endpoint', 'symbol', 'screen'] },
+        mode: { type: 'string', enum: ['strict', 'conservative', 'heuristic'], description: 'which grades the census walk follows; every count on every row is walked in it (default conservative)' },
         query: { type: 'string', description: 'case-insensitive substring; required (2+ chars) for kind=symbol' },
         table: { type: 'string', description: 'kind=column only: list just this table\'s columns' },
         sort: { type: 'string', description: 'a field of the row; the default is the busiest-first one for the kind' },

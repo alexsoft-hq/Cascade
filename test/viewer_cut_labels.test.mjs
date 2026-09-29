@@ -8,8 +8,9 @@
 //   2. the map's count line ran its numbers together ("49 / 76 tables touched
 //      44 / 54 screens reach a route"). Each count is now its own item;
 //   3. two lines said what the code does not do: Start's mode line named every
-//      ranking, and the screens ranking does not follow the mode; the rail's
-//      API and screen counts said "depth 8", a cap that is gone.
+//      ranking, and the screens ranking did not follow the mode (it does since
+//      RM67-U2i, and the line names every ranking again); the rail's API and
+//      screen counts said "depth 8", a cap that is gone.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -304,20 +305,23 @@ test('the map\'s count line is one item per count, the answer\'s counts in one r
 // 3. the lines that said what the code does not do
 // ---------------------------------------------------------------------------
 
-test('the screens ranking keeps its own mode when the map\'s control moves, and the line says which lists move', async (t) => {
+test('every ranking follows the map\'s control, the screens too, and the lines say so', async (t) => {
+  // RM67-U2h made these lines name the table and API rankings only, because
+  // the screens ranking was one browse answer in one mode. Since RM67-U2i
+  // browse counts in the mode it is asked in, so the screens follow as well.
   const { ctx, byId } = await boot(t, { project: 'delta' });
   const modes = () => byId.get('shubs').querySelectorAll('.hubmode').map((h) => h.textContent);
   ev(ctx, "startSetMode('heuristic')");
   await settle(ctx, 12);
-  assert.deepEqual(modes(), ['counted in heuristic', 'counted in heuristic', 'counted in conservative'],
-    'tables and APIs follow the control; the screens come from one census and say which');
-  assert.equal(byId.get('skpimode').textContent, 'The shares and the table and API rankings below are counted in heuristic, depth not capped.');
+  assert.deepEqual(modes(), ['counted in heuristic', 'counted in heuristic', 'counted in heuristic'],
+    'the tables, the APIs and the screens follow the control');
+  assert.equal(byId.get('skpimode').textContent, 'The shares and the busiest lists below are counted in heuristic, depth not capped.');
   assert.equal(byId.get('slead').querySelector('.startleadsay').textContent,
-    'The map, the shares and the table and API rankings are counted in heuristic now. The screens ranking has one mode only, written under its title. The gaps and Analysis status stay in conservative.');
+    'The map, the shares and the busiest lists are counted in heuristic now. The gaps and Analysis status stay in conservative.');
   await setLang(ctx, 'ko');
-  assert.deepEqual(modes(), ['heuristic 모드 기준', 'heuristic 모드 기준', 'conservative 모드 기준']);
+  assert.deepEqual(modes(), ['heuristic 모드 기준', 'heuristic 모드 기준', 'heuristic 모드 기준']);
   assert.equal(byId.get('slead').querySelector('.startleadsay').textContent,
-    '지금 지도, 비율, 테이블과 API 순위는 heuristic 모드 기준입니다. 화면 순위는 한 모드로만 세고, 그 모드를 제목 아래에 적어 둡니다. 누락 목록과 분석 상태는 conservative 모드 그대로입니다.');
+    '지금 지도, 비율, 순위는 heuristic 모드 기준입니다. 누락 목록과 분석 상태는 conservative 모드 그대로입니다.');
 });
 
 test('the list\'s API and screen counts say the walk they come from: the census the answer names, with no depth cap', async (t) => {

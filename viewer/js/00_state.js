@@ -272,7 +272,9 @@ const RAIL_TAB_SORT = { trace: { table:'endpoints' } };
 const RAILDEF = {
   trace: { kinds:['endpoint','screen','table','column','statement','symbol'], kind:'table',
     railId:'tracerail', listId:'tlist', countId:'tcount', modeId:'tcountmode', moreId:'tmore', sortId:'tsort',
-    chipsId:'tkinds', drawerId:'tdrawer', closeId:'tclose', inputId:'tentry', lead:'rail.lead.trace' },
+    chipsId:'tkinds', drawerId:'tdrawer', closeId:'tclose', inputId:'tentry', lead:'rail.lead.trace',
+    // The control whose mode the list is counted in: Trace's own (RM67-U2i).
+    modeCtl:'tmode' },
 };
 const RAILTABS = Object.keys(RAILDEF);
 const RAIL = {};
@@ -282,11 +284,13 @@ let RAILOPEN = null;   // which tab's drawer is over the content, under 1100px
 
 function railFresh(tab){
   const d = RAILDEF[tab];
-  return { kind:d.kind, sort:railDefaultSort(tab, d.kind), resp:null, counts:null,
+  return { kind:d.kind, sort:railDefaultSort(tab, d.kind), resp:null, counts:null, mode:null,
     rows:[], hays:[], shown:[], rowEls:[], q:'', typed:'', cur:-1, sel:null, selKind:null,
     seq:0, timer:null, more:false, loading:false, needQuery:false, error:null,
+    // `cols` is one table's columns per mode and table (railColKey), `mode` the one
+    // the list on screen was asked in.
     closedGroups:new Set(), openTables:new Set(), cols:new Map(),
-    // One `browse` answer per kind this tab has already asked for, so going
+    // One `browse` answer per kind and mode this tab has already asked for, so going
     // back to a list costs nothing. `Show all` puts the rail on the kind the
     // tab OPENED on, and that must not put a request on the wire for a list
     // the reader has already been shown.

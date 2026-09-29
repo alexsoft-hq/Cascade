@@ -9,7 +9,8 @@
 //   census   the whole-pack census that browse, the overview and the map count
 //            on, a walk DOWN from every route and every screen (`walkEndpoints`,
 //            `walkScreens`), read back onto the columns and tables its
-//            statements touch
+//            statements touch (`censusReach`, in the mode asked; browse's rows
+//            are held to it in each mode by test/helpers/browse_census.mjs)
 // The first two share one walk by construction; the census is a different walk
 // in the other direction and agrees only if the two rule sets are mirrors. This
 // module runs all three over every column and table of a graph and names every
@@ -47,6 +48,28 @@ function censusByTarget(graph, rows, mode) {
   return out;
 }
 
+/**
+ * The whole-pack census in one mode, read back onto the schema: for every
+ * column and table, the routes and the screens whose walk down reaches a
+ * statement that touches it, each at the strongest grade it is reached at.
+ * The impact tools are held to it below, and `browse` counts its table and
+ * column rows on it in the same mode (test/browse_modes.test.mjs holds the two
+ * to one number per row). `capped` says a walk stopped at the node cap.
+ *
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {'strict'|'conservative'|'heuristic'} [mode]
+ * @returns {{endpoints:Map<string,Map<string,string>>, screens:Map<string,Map<string,string>>, capped:boolean}}
+ */
+export function censusReach(graph, mode = 'conservative') {
+  const eps = walkEndpoints(graph, { mode });
+  const scr = walkScreens(graph, { mode });
+  return {
+    endpoints: censusByTarget(graph, eps.endpoints, mode),
+    screens: censusByTarget(graph, scr.screens, mode),
+    capped: eps.walk.nodeCapStarts + scr.walk.nodeCapStarts > 0,
+  };
+}
+
 /** Every difference between two answers to one question, as the rows one has and the other lacks or grades otherwise. */
 function differences(a, b) {
   const out = [];
@@ -67,11 +90,7 @@ function differences(a, b) {
 export function walkAgreement(graph, opts = {}) {
   const mode = opts.mode ?? 'conservative';
   const limit = opts.limit ?? 20;
-  const eps = walkEndpoints(graph, { mode });
-  const scr = walkScreens(graph, { mode });
-  const censusCapped = eps.walk.nodeCapStarts + scr.walk.nodeCapStarts > 0;
-  const censusEps = censusByTarget(graph, eps.endpoints, mode);
-  const censusScr = censusByTarget(graph, scr.screens, mode);
+  const census = censusReach(graph, mode);
   const report = { mode, targets: 0, capped: 0, disagreements: 0, examples: [] };
   const say = (target, what, rows) => {
     if (rows.length === 0) return;
@@ -83,13 +102,13 @@ export function walkAgreement(graph, opts = {}) {
     report.targets += 1;
     const impact = affectedBy(graph, n.id, { mode });
     const trace = chainWalk(graph, { start: n.id, direction: 'up', mode });
-    if (impact.cut.nodeCap || trace.cut.nodeCap || censusCapped) { report.capped += 1; continue; }
+    if (impact.cut.nodeCap || trace.cut.nodeCap || census.capped) { report.capped += 1; continue; }
     const im = { ep: new Map(impact.endpoints.map((e) => [e.endpoint, e.pathGrade])), sc: new Map(impact.screens.map((s) => [s.screen, s.pathGrade])) };
     const tr = { ep: new Map(trace.endpoints.map((e) => [`endpoint:${e.id}`, e.grade])), sc: new Map(trace.screens.map((s) => [`screen:${s.id}`, s.grade])) };
     say(n.id, 'endpoints: impact vs trace', differences(im.ep, tr.ep));
     say(n.id, 'screens: impact vs trace', differences(im.sc, tr.sc));
-    say(n.id, 'endpoints: impact vs census', differences(im.ep, censusEps.get(n.id) ?? new Map()));
-    say(n.id, 'screens: impact vs census', differences(im.sc, censusScr.get(n.id) ?? new Map()));
+    say(n.id, 'endpoints: impact vs census', differences(im.ep, census.endpoints.get(n.id) ?? new Map()));
+    say(n.id, 'screens: impact vs census', differences(im.sc, census.screens.get(n.id) ?? new Map()));
   }
   return report;
 }

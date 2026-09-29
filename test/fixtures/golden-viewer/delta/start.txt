@@ -155,7 +155,7 @@
         <div class="sumtop">
           <div class="sumtitle">
             <h2>The map: which code reaches which tables</h2>
-            <select id="summode" onchange title="which links the walks follow: this moves the map, the shares and the table and API rankings below it together" value="conservative">
+            <select id="summode" onchange title="which links the walks follow: this moves the map, the shares and the busiest lists below it together" value="conservative">
               <option value="strict">strict: proven links only (EXACT)</option>
               <option value="conservative">conservative: proven links + candidate sets (SOUND_SET)</option>
               <option value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
@@ -282,7 +282,7 @@
         </div>
       </div>
       <div id="skpimode" class="skpimode">
-        <span>The shares and the table and API rankings below are counted in conservative, depth not capped.</span>
+        <span>The shares and the busiest lists below are counted in conservative, depth not capped.</span>
       </div>
       <div id="ovcards" class="ovkpis">
         <div class="kpi" aria-label="endpoints that reach SQL: 100%, 2 / 2" style="color: #22D3EE">

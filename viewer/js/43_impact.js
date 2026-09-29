@@ -8,16 +8,25 @@
 // their way around and a linter can read.
 
 // ---- the Impact tree: one table, its own columns, ONE request ---------------
+// A table's columns are counted in the list's mode and kept under it (RM67-U2i):
+// an answer that lands after the mode moved is kept for that mode and never
+// drawn in this one.
+const railColKey = (tab, id) => (railMode(tab) || '') + '|' + id;
 async function railToggleTable(tab, id){
   const R = RAIL[tab];
   if (R.openTables.has(id)) { R.openTables.delete(id); railRenderRows(tab); return; }
   R.openTables.add(id);
-  if (R.cols.has(id)) { railRenderRows(tab); return; }   // asked once, kept
-  R.cols.set(id, null);                                  // null means "on its way"
+  if (R.cols.has(railColKey(tab, id))) { railRenderRows(tab); return; }   // asked once in this mode, kept
+  await railAskColumns(tab, id);
+}
+/** Ask for one table's columns in the list's mode, and keep them under it. */
+async function railAskColumns(tab, id){
+  const R = RAIL[tab], key = railColKey(tab, id);
+  R.cols.set(key, null);                                 // null means "on its way"
   railRenderRows(tab);
-  const got = await railFetchColumns(id);
-  if (!got) { R.cols.delete(id); return; }
-  R.cols.set(id, got);
+  const got = await railFetchColumns(tab, id);
+  if (!got) { R.cols.delete(key); return; }
+  R.cols.set(key, got);
   railRenderRows(tab);
 }
 /**
@@ -28,9 +37,9 @@ async function railToggleTable(tab, id){
  * by anything". It is kept as a failure, with the server's own sentence and a
  * way to ask again.
  */
-async function railFetchColumns(id){
+async function railFetchColumns(tab, id){
   try {
-    const r = await api('browse', { kind:'column', table:id, limit:RAIL_PAGE });
+    const r = await api('browse', { kind:'column', table:id, limit:RAIL_PAGE, mode:railMode(tab) });
     return { items:r.answer.items || [], empty:r.answer.empty || null };
   } catch(e){ return stale(e) ? null : { error:e }; }
 }
@@ -43,12 +52,12 @@ function railColumnsFailed(tab, id, e){
 /** Ask for a table's columns again, after a lookup that failed. */
 function railRetryTable(tab, id){
   const R = RAIL[tab];
-  R.cols.delete(id);
+  R.cols.delete(railColKey(tab, id));
   R.openTables.delete(id);
   railToggleTable(tab, id);
 }
 function railChildren(tab, id){
-  const R = RAIL[tab], got = R.cols.get(id);
+  const R = RAIL[tab], got = R.cols.get(railColKey(tab, id));
   if (got == null) return el('div', { className:'brchildren' }, [el('div', { className:'empty', textContent:t('rail.tree.loading') })]);
   if (got.error) return el('div', { className:'brchildren' }, [railColumnsFailed(tab, id, got.error)]);
   const cols = got.items;

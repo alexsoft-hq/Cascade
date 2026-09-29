@@ -2203,7 +2203,7 @@ test('Trace OPENS on the pack: one browse request, rows on screen, nothing to ty
   const { ctx, byId, calls } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
 
   // The tables, the ones the most endpoints reach first, from ONE request.
-  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'table', limit: 200, sort: 'endpoints' } }]);
+  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'table', limit: 200, mode: 'conservative', sort: 'endpoints' } }]);
   assert.deepEqual(toolCalls(calls, 'flow'), [], 'opening Trace draws no chain: there is nothing to draw yet');
   assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title), ['gamma_order', 'gamma_item', 'gamma_audit']);
   assert.equal(byId.get('tcount').textContent, '3 shown of 3');
@@ -2217,7 +2217,7 @@ test('Trace OPENS on the pack: one browse request, rows on screen, nothing to ty
   calls.length = 0;
   kindChip(byId, 'Endpoints').onclick();
   await settle(ctx, 8);
-  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'endpoint', limit: 200, sort: 'tables' } }]);
+  assert.deepEqual(toolCalls(calls, 'browse'), [{ name: 'browse', args: { kind: 'endpoint', limit: 200, mode: 'conservative', sort: 'tables' } }]);
   assert.deepEqual(toolCalls(calls, 'flow'), [], 'a list is not a chain: nothing is drawn yet');
   assert.deepEqual(rowsOf(byId, 'tlist').map((r) => r.title),
     ['POST /order/save', 'GET /order/{id}', 'GET /admin/ping']);
@@ -2341,7 +2341,7 @@ test('the caret on the Trace list opens a table into its own columns, with ONE r
   caret.click();
   await settle(ctx, 8);
   assert.deepEqual(toolCalls(calls, 'browse'),
-    [{ name: 'browse', args: { kind: 'column', table: 'gamma_order', limit: 200 } }]);
+    [{ name: 'browse', args: { kind: 'column', table: 'gamma_order', limit: 200, mode: 'conservative' } }]);
   const kids = byId.get('tlist').querySelectorAll('.brchild');
   assert.deepEqual(kids.map((k) => k.title), ['gamma_order.total', 'gamma_order.id'],
     'the columns of that table, most written first');
@@ -3247,7 +3247,7 @@ test('Start grows a fifth dial and a screens list, both from an answer', async (
 
   // The list is ONE browse request, and a click walks the chain from that screen.
   const browses = toolCalls(calls, 'browse').filter((c) => c.args.kind === 'screen');
-  assert.deepEqual(browses, [{ name: 'browse', args: { kind: 'screen', sort: 'tables', limit: 5 } }]);
+  assert.deepEqual(browses, [{ name: 'browse', args: { kind: 'screen', sort: 'tables', limit: 5, mode: 'conservative' } }]);
   const panel = byId.get('shubs').querySelectorAll('.panel')
     .find((x) => x.textContent.includes('Screens, by how many tables they reach'));
   assert.ok(panel, 'the panel is on Start');
@@ -3280,7 +3280,7 @@ test('Trace lists screens from ONE browse request, and Details on a screen draws
   kindChip(byId, 'Screens').onclick();
   await settle(ctx, 12);
   assert.deepEqual(toolCalls(calls, 'browse'),
-    [{ name: 'browse', args: { kind: 'screen', limit: 200, sort: 'endpoints' } }]);
+    [{ name: 'browse', args: { kind: 'screen', limit: 200, mode: 'conservative', sort: 'endpoints' } }]);
   const rows = rowsOf(byId, 'tlist');
   assert.deepEqual(rows.map((r) => r.title), ['/rows', '/quiet']);
   // The row: the label, the title under it, `api` / `tbl` and the `seen` mark.
@@ -3327,7 +3327,7 @@ test('Trace lists either end of the round trip, and remembers which one per proj
   kindChip(byId, 'Screens').onclick();
   await settle(ctx, 12);
   assert.deepEqual(toolCalls(calls, 'browse'),
-    [{ name: 'browse', args: { kind: 'screen', limit: 200, sort: 'endpoints' } }]);
+    [{ name: 'browse', args: { kind: 'screen', limit: 200, mode: 'conservative', sort: 'endpoints' } }]);
   // The screens are bucketed under their own group, with the group's counts.
   assert.deepEqual(byId.get('tlist').querySelectorAll('.brgname').map((g) => g.textContent),
     ['▾ rows', '▾ quiet']);

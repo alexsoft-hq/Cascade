@@ -256,20 +256,35 @@ function upWalkCutLimits(scope, walkCut) {
 //
 // `walkScreens` is the mirror of `walkEndpoints`, one lane further out, and it
 // costs the same: one forward chain walk per screen. So it is run ONCE per pack
-// and kept on the graph object, exactly as the browse census is, and every view
-// that wants "how many routes does this screen reach?" reads the same numbers.
+// and mode and kept on the graph object, exactly as the browse census is, and
+// every view that wants "how many routes does this screen reach?" in one mode
+// reads the same numbers. Conservative is the mode of a caller that names none.
 const SCREEN_CENSUS = new WeakMap();
 const SCREEN_CENSUS_MODE = 'conservative';
 const SCREEN_CENSUS_DEPTH = DEFAULT_WALK_DEPTH;
 
 /**
- * The per-pack screen census, computed once and kept on the graph.
- * @param {import('../core/graph.mjs').Graph} graph
+ * One memo per graph AND mode. A census walked in one mode is never another
+ * mode's answer, so the mode is part of the key, not a detail of the value.
  */
-function screenCensus(graph) {
-  const cached = SCREEN_CENSUS.get(graph);
-  if (cached) return cached;
-  const w = walkScreens(graph, { mode: SCREEN_CENSUS_MODE, depth: SCREEN_CENSUS_DEPTH });
+function perMode(memo, graph, mode, build) {
+  let byMode = memo.get(graph);
+  if (!byMode) memo.set(graph, byMode = new Map());
+  let got = byMode.get(mode);
+  if (!got) byMode.set(mode, got = build());
+  return got;
+}
+
+/**
+ * The per-pack screen census in one mode, computed once and kept on the graph.
+ * @param {import('../core/graph.mjs').Graph} graph
+ * @param {'strict'|'conservative'|'heuristic'} [mode]
+ */
+function screenCensus(graph, mode = SCREEN_CENSUS_MODE) {
+  return perMode(SCREEN_CENSUS, graph, mode, () => screenCensusWalk(graph, mode));
+}
+function screenCensusWalk(graph, mode) {
+  const w = walkScreens(graph, { mode, depth: SCREEN_CENSUS_DEPTH });
   const rows = w.screens.map((s) => ({
     id: s.id,
     path: s.path,
@@ -287,9 +302,7 @@ function screenCensus(graph) {
     statements: new Set(s.statements.map((x) => x.id)),
     tables: new Set(s.tables.map((t) => t.id)),
   }));
-  const census = { rows, walk: w.walk };
-  SCREEN_CENSUS.set(graph, census);
-  return census;
+  return { rows, walk: w.walk };
 }
 
 /**
@@ -305,33 +318,32 @@ function screenCensus(graph) {
  * two readings of one walk rather than two different questions.
  *
  * @param {import('../core/graph.mjs').Graph} graph
+ * @param {'strict'|'conservative'|'heuristic'} [mode]  the census's, and the floor its statements' links are read at
  * @returns {{tables:Map<string,Set<string>>, columns:Map<string,Set<string>>}}
  */
 const SCREEN_REACH = new WeakMap();
-function screenReach(graph) {
-  const cached = SCREEN_REACH.get(graph);
-  if (cached) return cached;
-  const tables = new Map();
-  const columns = new Map();
-  const add = (m, k, v) => { let s = m.get(k); if (!s) m.set(k, s = new Set()); s.add(v); };
-  for (const r of screenCensus(graph).rows) {
-    for (const tid of r.tables) add(tables, tid, r.id);
-    for (const sid of r.statements) {
-      for (const e of sqlEdgesOf(graph, sid, SCREEN_CENSUS_MODE)) {
-        if (e.type === 'READS' || e.type === 'WRITES') add(columns, e.to, r.id);
+function screenReach(graph, mode = SCREEN_CENSUS_MODE) {
+  return perMode(SCREEN_REACH, graph, mode, () => {
+    const tables = new Map();
+    const columns = new Map();
+    const add = (m, k, v) => { let s = m.get(k); if (!s) m.set(k, s = new Set()); s.add(v); };
+    for (const r of screenCensus(graph, mode).rows) {
+      for (const tid of r.tables) add(tables, tid, r.id);
+      for (const sid of r.statements) {
+        for (const e of sqlEdgesOf(graph, sid, mode)) {
+          if (e.type === 'READS' || e.type === 'WRITES') add(columns, e.to, r.id);
+        }
       }
     }
-  }
-  const out = { tables, columns };
-  SCREEN_REACH.set(graph, out);
-  return out;
+    return { tables, columns };
+  });
 }
 
-/** The one sentence every screen-census answer owes its reader. */
-function screenWalkLimit() {
+/** The one sentence every screen-census answer owes its reader, in the mode that census was walked in. */
+function screenWalkLimit(mode = SCREEN_CENSUS_MODE) {
   return {
     scope: 'screen',
-    reason: `a screen reaches a route because a walk (mode=${SCREEN_CENSUS_MODE}, ${depthSaid(SCREEN_CENSUS_DEPTH)}) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk \`flow\` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (\`observed\`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one`,
+    reason: `a screen reaches a route because a walk (mode=${mode}, ${depthSaid(SCREEN_CENSUS_DEPTH)}) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk \`flow\` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (\`observed\`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one`,
   };
 }
 
@@ -2420,8 +2432,9 @@ function flowList(graph, args, ctx) {
 /**
  * flow list mode, the OTHER entry picker: the screens a chain can be walked
  * from, with the component each one mounts and how many routes it reaches. The
- * census is the shared per-pack one (`walkScreens` through `screenCensus`), so
- * this list and `browse kind=screen` cannot disagree about a number.
+ * census is the shared per-pack one (`walkScreens` through `screenCensus`) in
+ * conservative, so this list and `browse kind=screen` asked in that mode (its
+ * default) cannot disagree about a number.
  */
 function flowScreenList(graph, p, ctx) {
   const census = screenCensus(graph);
@@ -2518,30 +2531,35 @@ export function search(graph, args, ctx) {
 // THE ONE CENSUS. Three of those numbers ("how many endpoints reach this
 // table / this column / this statement") are the same per-endpoint forward walk
 // `overview`, `map` and `coupling` run, and running it per request would pay
-// for it once per keystroke. It is run ONCE per pack and memoised on the graph
-// object, then INVERTED: endpoint -> statements becomes statement -> endpoints,
-// and from each statement's own SQL edges, table -> endpoints and
-// column -> endpoints. The walk is fixed at mode=conservative, depth 8 (the
-// whole-pack default), and every answer says so in `limits`: a row's `endpoints`
-// is what THAT walk reaches, and what a wider one would add is unknown, not
-// absent.
+// for it once per keystroke. It is run ONCE per pack and mode and memoised on
+// the graph object, then INVERTED: endpoint -> statements becomes statement ->
+// endpoints, and from each statement's own SQL edges, table -> endpoints and
+// column -> endpoints. The walk is in the mode the caller asks for
+// (conservative when it names none), with no hop cap, and every answer says
+// which in `census` and in `limits`: a row's `endpoints` is what THAT walk
+// reaches, and what a wider one would add is unknown, not absent. One mode per
+// page question: Start's rankings follow the map's mode control and Trace's
+// list its own, so a list and the answer beside it are one walk (RM67-U2i).
 
 const BROWSE_CENSUS = new WeakMap();
-const BROWSE_CENSUS_MODE = 'conservative';
+// The mode of a caller that names none: the one browse counted in before it took a mode.
+const BROWSE_DEFAULT_MODE = 'conservative';
 const BROWSE_CENSUS_DEPTH = DEFAULT_WALK_DEPTH;
 const EMPTY_SET = Object.freeze(new Set());
 
 /**
- * The per-pack census, computed once and kept on the graph.
+ * The per-pack census in one mode, computed once and kept on the graph.
  * @param {import('../core/graph.mjs').Graph} graph
- * @returns {{endpoints:Map<string,{statements:Set<string>,tables:Set<string>}>,
+ * @param {'strict'|'conservative'|'heuristic'} mode
+ * @returns {{mode:string, endpoints:Map<string,{statements:Set<string>,tables:Set<string>}>,
  *            stmtEps:Map<string,Set<string>>, tableEps:Map<string,Set<string>>,
  *            colEps:Map<string,Set<string>>, counts:Object}}
  */
-function browseCensus(graph) {
-  const cached = BROWSE_CENSUS.get(graph);
-  if (cached) return cached;
-  const w = walkEndpoints(graph, { mode: BROWSE_CENSUS_MODE, depth: BROWSE_CENSUS_DEPTH });
+function browseCensus(graph, mode) {
+  return perMode(BROWSE_CENSUS, graph, mode, () => browseCensusWalk(graph, mode));
+}
+function browseCensusWalk(graph, mode) {
+  const w = walkEndpoints(graph, { mode, depth: BROWSE_CENSUS_DEPTH });
   const endpoints = new Map();
   const stmtEps = new Map();
   const tableEps = new Map();
@@ -2552,7 +2570,7 @@ function browseCensus(graph) {
     const tables = new Set();
     for (const sid of statements) {
       add(stmtEps, sid, ep.id);
-      for (const e of sqlEdgesOf(graph, sid, BROWSE_CENSUS_MODE)) {
+      for (const e of sqlEdgesOf(graph, sid, mode)) {
         if (e.type === 'EXECUTES') { tables.add(e.to); add(tableEps, e.to, ep.id); }
         else if (e.type === 'READS' || e.type === 'WRITES') add(colEps, e.to, ep.id);
       }
@@ -2569,9 +2587,7 @@ function browseCensus(graph) {
     if (n.kind === 'endpoint' && !endpoints.has(n.id)) continue;
     counts[n.kind] += 1;
   }
-  const census = { endpoints, stmtEps, tableEps, colEps, counts, walk: w.walk };
-  BROWSE_CENSUS.set(graph, census);
-  return census;
+  return { mode, endpoints, stmtEps, tableEps, colEps, counts, walk: w.walk };
 }
 
 const BROWSE_KINDS = Object.freeze(['table', 'column', 'statement', 'endpoint', 'symbol', 'screen']);
@@ -2618,7 +2634,7 @@ function browseOrder(kind, sort) {
  * browse — one kind of thing in this pack, as rows a reader can pick from.
  *
  * @param {import('../core/graph.mjs').Graph} graph
- * @param {{kind:string, query?:string, table?:string, sort?:string, limit?:number, offset?:number}} args
+ * @param {{kind:string, mode?:string, query?:string, table?:string, sort?:string, limit?:number, offset?:number}} args
  * @param {Object} ctx
  */
 export function browse(graph, args, ctx) {
@@ -2627,7 +2643,11 @@ export function browse(graph, args, ctx) {
   if (!BROWSE_KINDS.includes(kind)) {
     throw new ToolError('bad-input', `kind must be one of ${BROWSE_KINDS.join(', ')}`);
   }
-  const q = args.query == null || args.query === '' ? null : String(args.query).toLowerCase();
+  // The mode every count on every row is walked in. None named is the mode it
+  // always counted in, so a caller that never passes one gets the same answer.
+  const mode = reachMode(args.mode == null || args.mode === '' ? BROWSE_DEFAULT_MODE : String(args.mode));
+  if (!mode) throw new ToolError('bad-input', `mode must be one of ${Object.keys(REACH_MODE).join(', ')}`);
+  const q =args.query == null || args.query === '' ? null : String(args.query).toLowerCase();
   // A pack carries tens of thousands of methods (mall: 10784), and a list of all
   // of them is not a list anybody reads. So this kind alone demands a query.
   if (kind === 'symbol' && (q === null || q.length < 2)) {
@@ -2649,7 +2669,7 @@ export function browse(graph, args, ctx) {
     entryLimits = r.limits;
   }
 
-  const census = browseCensus(graph);
+  const census = browseCensus(graph, mode);
   const packageDepth = packageDepthOf(ctx);
   const groupCache = new Map();
   const groupOf = (epId) => {
@@ -2658,11 +2678,11 @@ export function browse(graph, args, ctx) {
     return g;
   };
   // WHICH SCREENS a table or a column is felt on, from the same `walkScreens`
-  // census `browse kind=screen` lists. Absent on a pack with no screen axis,
-  // because `screens: 0` there would read as "no screen touches this table",
-  // when the truth is that no frontend was ever analyzed.
+  // census `browse kind=screen` lists, in the same mode. Absent on a pack with
+  // no screen axis, because `screens: 0` there would read as "no screen touches
+  // this table", when the truth is that no frontend was ever analyzed.
   const reach = (kind === 'table' || kind === 'column') && axisStatus(graph, ctx, 'screen') !== 'not-shipped'
-    ? screenReach(graph) : null;
+    ? screenReach(graph, mode) : null;
   const built = browseRows(graph, kind, census, { tableKey, groupOf, reach });
   const matched = (q ? built.filter((x) => x.hay.includes(q)) : built).map((x) => x.row);
   matched.sort(browseCmp(kind, sort));
@@ -2673,23 +2693,29 @@ export function browse(graph, args, ctx) {
   // to say which mode each was counted in.
   const answer = {
     kind, sort, items: shown, total: matched.length, counts: { ...census.counts },
-    census: { mode: BROWSE_CENSUS_MODE, depth: BROWSE_CENSUS_DEPTH },
+    census: { mode, depth: BROWSE_CENSUS_DEPTH },
   };
   if (shown.length === 0) answer.empty = { items: matched.length > 0 ? 'not-in-this-axis' : browseNoneReason(graph, ctx, kind) };
 
-  const limits = [...(ctx.limits ?? []), ...entryLimits, {
-    scope: 'browse',
-    reason: `\`endpoints\` on a row counts the endpoints whose walk (mode=${BROWSE_CENSUS_MODE}, ${depthSaid(BROWSE_CENSUS_DEPTH)}) reaches a statement that touches it. It is the same forward walk \`flow\` draws and \`map\` and \`coupling\` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them`,
-  }];
-  if (kind === 'endpoint' || kind === 'table') limits.push(groupingLimit('browse', ctx));
-  if (kind === 'screen' || reach) limits.push(screenWalkLimit());
-  limits.push(...censusCapLimits('browse', census.walk, kind === 'screen' || reach ? screenCensus(graph).walk : null));
   const trunc = [truncField('items', shown.length, matched.length, offset, browseOrder(kind, sort))];
   return makeResponse({
     answer, basis: ctx.basis,
     trust: trustFor(ctx, ['browse']),
-    limits, truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
+    limits: browseLimits(graph, ctx, { kind, census, screens: kind === 'screen' || reach !== null, entryLimits }),
+    truncated: { any: trunc.some((t) => t.nextOffset != null), fields: trunc },
   });
+}
+
+/** What every browse answer says about the walk its counts come from, in the mode it was walked in. */
+function browseLimits(graph, ctx, { kind, census, screens, entryLimits }) {
+  const limits = [...(ctx.limits ?? []), ...entryLimits, {
+    scope: 'browse',
+    reason: `\`endpoints\` on a row counts the endpoints whose walk (mode=${census.mode}, ${depthSaid(BROWSE_CENSUS_DEPTH)}) reaches a statement that touches it. It is the same forward walk \`flow\` draws and \`map\` and \`coupling\` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them`,
+  }];
+  if (kind === 'endpoint' || kind === 'table') limits.push(groupingLimit('browse', ctx));
+  if (screens) limits.push(screenWalkLimit(census.mode));
+  limits.push(...censusCapLimits('browse', census.walk, screens ? screenCensus(graph, census.mode).walk : null));
+  return limits;
 }
 
 /** Why a kind lists nothing: a lane that never ran, or a lane that found none. */
@@ -2718,7 +2744,7 @@ function browseTableRows(graph, census, opts) {
     const read = new Set();
     const write = new Set();
     for (const e of graph.inEdges(n.id)) {
-      if (e.type !== 'EXECUTES' || !GRADE_SETS[BROWSE_CENSUS_MODE].has(e.grade)) continue;
+      if (e.type !== 'EXECUTES' || !GRADE_SETS[census.mode].has(e.grade)) continue;
       const access = graph.edgeAt(e.idx)?.evidence?.access;
       (access === 'write' || access === 'delete' ? write : read).add(e.from);
     }
@@ -2756,7 +2782,7 @@ function browseColumnRows(graph, census, opts) {
     let reads = 0;
     let writes = 0;
     for (const e of graph.inEdges(n.id)) {
-      if (!GRADE_SETS[BROWSE_CENSUS_MODE].has(e.grade)) continue;
+      if (!GRADE_SETS[census.mode].has(e.grade)) continue;
       if (e.type === 'READS') reads += 1;
       else if (e.type === 'WRITES') writes += 1;
     }
@@ -2779,7 +2805,7 @@ function browseStatementRows(graph, census) {
     if (n.kind !== 'statement') continue;
     // In the census mode, as its `endpoints` beside it are counted.
     const tables = new Set();
-    for (const e of sqlEdgesOf(graph, n.id, BROWSE_CENSUS_MODE)) if (e.type === 'EXECUTES') tables.add(e.to);
+    for (const e of sqlEdgesOf(graph, n.id, census.mode)) if (e.type === 'EXECUTES') tables.add(e.to);
     const row = {
       statement: strip(n.id), type: n.statementType ?? null, tables: tables.size,
       // The statement's own two honesty flags, carried from the lanes: text
@@ -2795,9 +2821,9 @@ function browseStatementRows(graph, census) {
 }
 
 /** One row per SCREEN, router-declared, server-rendered or seen only in a recording. */
-function browseScreenRows(graph) {
+function browseScreenRows(graph, mode) {
   const out = [];
-  for (const r of screenCensus(graph).rows) {
+  for (const r of screenCensus(graph, mode).rows) {
     const row = {
       screen: r.path ?? strip(r.id),
       path: r.path,
@@ -2862,7 +2888,7 @@ function browseRows(graph, kind, census, opts) {
   if (kind === 'table') return browseTableRows(graph, census, opts);
   if (kind === 'column') return browseColumnRows(graph, census, opts);
   if (kind === 'statement') return browseStatementRows(graph, census);
-  if (kind === 'screen') return browseScreenRows(graph);
+  if (kind === 'screen') return browseScreenRows(graph, census.mode);
   if (kind === 'endpoint') return browseEndpointRows(graph, census, opts);
   return browseSymbolRows(graph);
 }

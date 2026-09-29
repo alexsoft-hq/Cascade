@@ -707,9 +707,20 @@ function railHay(kind, row){
 }
 
 // ---- asking, once per tab ---------------------------------------------------
-async function railLoad(tab, append){
+/** The mode this tab's list is counted in: the one on the tab's own control, or the server's default where it has none. */
+function railMode(tab){
+  const ctl = RAILDEF[tab].modeCtl ? byId(RAILDEF[tab].modeCtl) : null;
+  return (ctl && ctl.value) || undefined;
+}
+/**
+ * Ask for this tab's list, in the mode its place asks in (RM67-U2i), so the
+ * list's counts and the answer beside them are one walk. `keep` asks for as
+ * many rows as the list holds now (up to the server's 500), else one page.
+ */
+async function railLoad(tab, append, keep){
   const R = RAIL[tab];
-  const args = { kind:R.kind, limit:RAIL_PAGE };
+  const args = { kind:R.kind, limit:keep ? Math.min(500, Math.max(RAIL_PAGE, keep)) : RAIL_PAGE, mode:railMode(tab) };
+  R.mode = args.mode;
   if (R.sort) args.sort = R.sort;
   if (append) args.offset = R.rows.length;
   if (R.kind === 'symbol') {
@@ -767,22 +778,49 @@ function railSetKind(tab, kind){
   R.rows = []; R.hays = []; R.shown = []; R.resp = null; R.more = false;
   railLoad(tab, false);
 }
-/** Put the list on screen aside, under the kind it is a list of. */
+/** A list kept aside is one kind counted in one mode: another mode's counts are another list. */
+const railStashKey = (kind, mode) => kind + '|' + (mode || '');
+/** The mode the list on screen was counted in, as its answer names it. */
+const railAnswerMode = (R) => (R.resp && R.resp.answer.census && R.resp.answer.census.mode) || undefined;
+/**
+ * Put the list on screen aside, under the kind it is a list of and the mode it
+ * was counted in: the answer's own, since a list in another mode may be on its way.
+ */
 function railStash(tab){
   const R = RAIL[tab];
   if (!R.resp && !R.needQuery) return;
-  R.byKind.set(R.kind, { resp:R.resp, rows:R.rows, hays:R.hays, more:R.more,
+  const mode = railAnswerMode(R) || R.mode;
+  R.byKind.set(railStashKey(R.kind, mode), { resp:R.resp, rows:R.rows, hays:R.hays, more:R.more,
     sort:R.sort, needQuery:R.needQuery });
 }
-/** Take one back. False when this rail has never asked for that kind. */
+/** Take one back, in the mode the list is asked in now. False when this rail has never asked for that kind in it. */
 function railUnstash(tab, kind){
   const R = RAIL[tab];
-  const kept = R.byKind.get(kind);
+  const kept = R.byKind.get(railStashKey(kind, railMode(tab)));
   if (!kept) return false;
+  R.mode = railMode(tab);
   R.resp = kept.resp; R.rows = kept.rows; R.hays = kept.hays;
   R.more = kept.more; R.sort = kept.sort; R.needQuery = kept.needQuery;
   R.error = null; R.loading = false;
   return true;
+}
+/**
+ * THE LIST FOLLOWS THE MODE ITS PLACE ASKS IN (RM67-U2i). Trace's list used to
+ * count in conservative beside an answer walked in the mode on Trace's own
+ * control: two walks, two numbers on one screen. A new mode now asks the list
+ * again in it. The picked row stays picked, the rows the reader paged in are
+ * asked for again, a list already shown in that mode comes back from memory
+ * (and an answer still on its way in the old one is dropped), and an open
+ * table asks for its columns in the new mode.
+ */
+function railFollowMode(tab){
+  const R = RAIL[tab], want = railMode(tab);
+  if (!want || R.mode == null || R.mode === want) return;
+  const keep = R.rows.length;
+  railStash(tab);
+  if (railUnstash(tab, R.kind)) { R.seq++; railRender(tab); railIdle(tab); }
+  else railLoad(tab, false, keep);
+  for (const id of R.openTables) if (!R.cols.has(railColKey(tab, id))) railAskColumns(tab, id);
 }
 
 // ---- drawing it -------------------------------------------------------------
@@ -1015,7 +1053,7 @@ function railRowNodes(tab, kind, row, kids, child){
     ]),
     // THE NUMBERS ON THEIR OWN LINE (RM67-U2e), spelled out, so the name has the
     // whole width and keeps the tail that tells two rows apart.
-    el('div', { className:'brmeta' }, [ el('span', { className:'brstats' }, railStats(kind, row)), railSub(kind, row) ]),
+    el('div', { className:'brmeta' }, [ el('span', { className:'brstats' }, railStats(kind, row, child ? railMode(tab) : railAnswerMode(R))), railSub(kind, row) ]),
   ]);
   btn.setAttribute('role', 'option');
   btn.setAttribute('aria-selected', picked ? 'true' : 'false');
@@ -1042,28 +1080,30 @@ function railRowNodes(tab, kind, row, kids, child){
  * the reader's language, on a line of their own under the name, and the
  * sentence is still in the chip's title.
  */
-function railStat(label, n, key, cls){
-  return el('span', { className:'brstat' + (cls ? ' ' + cls : ''), title:t(key) },
+function railStat(label, n, key, cls, vars){
+  return el('span', { className:'brstat' + (cls ? ' ' + cls : ''), title:t(key, vars) },
     [el('i', { className:'brlbl', textContent:label }), String(n)]);
 }
 function railFlag(text, title){
   return el('span', { className:'brflag', title, textContent:text });
 }
-function railStats(kind, row){
+/** The numbers on one row; `mode` is the one its answer was counted in, said in the titles of the counts a walk made. */
+function railStats(kind, row, mode){
+  const v = { mode: mode || '?' };
   // `scr` is on a row only when the ANSWER carries it. On a pack with no
   // frontend the field is absent, and a `scr 0` there would read as "no screen
   // touches this table" when the truth is that no frontend was analyzed.
   if (kind === 'table') return [
     railStat(t('rail.stat.sql'), row.statementsRead + row.statementsWrite, 'rail.stat.statements.title'),
-    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title'),
-    row.screens != null ? railStat(t('rail.stat.scr'), row.screens, 'rail.stat.screens.title') : null,
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title', '', v),
+    row.screens != null ? railStat(t('rail.stat.scr'), row.screens, 'rail.stat.screens.title', '', v) : null,
   ].filter(Boolean);
   if (kind === 'column') return [
     row.pk ? railFlag('pk', t('rail.stat.pk.title')) : null,
     railStat(t('rail.stat.r'), row.reads, 'rail.stat.reads.title', 'read'),
     railStat(t('rail.stat.w'), row.writes, 'rail.stat.writes.title', 'write'),
-    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title'),
-    row.screens != null ? railStat(t('rail.stat.scr'), row.screens, 'rail.stat.screens.title') : null,
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title', '', v),
+    row.screens != null ? railStat(t('rail.stat.scr'), row.screens, 'rail.stat.screens.title', '', v) : null,
   ].filter(Boolean);
   if (kind === 'screen') return [
     // A PAGE, not a router screen (RM48): a reader scanning the list has to be
@@ -1077,7 +1117,7 @@ function railStats(kind, row){
     row.hasStringSubst ? railFlag('${}', t('rail.stat.subst.title')) : null,
     row.hasUnresolved ? railFlag('?', t('rail.stat.unresolved.title')) : null,
     railStat(t('rail.stat.tbl'), row.tables, 'rail.stat.tables.title'),
-    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title'),
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title', '', v),
   ].filter(Boolean);
   if (kind === 'endpoint') return [
     // A route whose own address is a guess says so on its row (RM67), where
@@ -1227,7 +1267,7 @@ function railIdle(tab){
     picks.length ? el('ul', { className:'brpicks' }, picks.map((row) => el('li', {}, [
       el('button', { className:'brpick', title:railId(R.kind, row), onclick: () => railPick(tab, R.kind, row) }, [
         el('span', { className:'brid', textContent:railLabel(R.kind, row) }),
-        el('span', { className:'brstats' }, railStats(R.kind, row)),
+        el('span', { className:'brstats' }, railStats(R.kind, row, railAnswerMode(R))),
       ]),
     ]))) : null,
   ]);

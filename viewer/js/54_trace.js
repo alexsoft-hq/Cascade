@@ -141,6 +141,9 @@ function traceSetTarget(target, dir){
 }
 /** Draw the question on the controls: the picture, or the details. */
 function traceAsk(){
+  // A question asked in another mode (the control, a "look in heuristic"
+  // button) takes the list with it: one mode, one walk, on one screen.
+  railFollowMode('trace');
   renderTraceChrome();
   if(TRACE.dir === 'detail') return traceDetail();
   return drawChain(TRACEV);
@@ -252,7 +255,7 @@ function traceReadHash(h){
  * asked for.
  */
 function traceRestore(h){
-  if(h.mode && Object.hasOwn(MODE_ADMITS, h.mode)) byId('tmode').value = h.mode;
+  if(h.mode && Object.hasOwn(MODE_ADMITS, h.mode)){ byId('tmode').value = h.mode; railFollowMode('trace'); }
   const at = h.pick ? h.pick.indexOf(':') : -1;
   const kind = at > 0 ? h.pick.slice(0, at) : null;
   const depth = Number(h.depth);
@@ -444,7 +447,7 @@ function traceFromSnapshot(snap){
 // ---- wiring --------------------------------------------------------------------------
 /** The controls only this place has: the mode and depth re-ask; a chosen depth is kept. */
 function traceWire(){
-  byId('tmode').onchange = ()=>{ if(TRACE.target) traceAsk(); };
+  byId('tmode').onchange = ()=>{ railFollowMode('trace'); if(TRACE.target) traceAsk(); };
   byId('tdepth').onchange = ()=>{ TRACE.depthSet = true; if(TRACE.target) traceAsk(); };
   byId('tedits').onclick = ()=> traceShowEdits();
 }

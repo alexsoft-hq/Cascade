@@ -1,0 +1,426 @@
+{
+ "table": {
+  "answer": {
+   "kind": "table",
+   "sort": "statements",
+   "items": [
+    {
+     "table": "t",
+     "comment": null,
+     "columns": 1,
+     "statementsRead": 1,
+     "statementsWrite": 1,
+     "endpoints": 2,
+     "groups": 2,
+     "screens": 1
+    },
+    {
+     "table": "u",
+     "comment": null,
+     "columns": 1,
+     "statementsRead": 0,
+     "statementsWrite": 0,
+     "endpoints": 0,
+     "groups": 0,
+     "screens": 0
+    }
+   ],
+   "total": 2,
+   "counts": {
+    "table": 2,
+    "column": 2,
+    "statement": 3,
+    "endpoint": 3,
+    "symbol": 8,
+    "screen": 2
+   },
+   "census": {
+    "mode": "conservative",
+    "depth": null
+   }
+  },
+  "basis": {
+   "project": "t",
+   "buildDigest": "d",
+   "builtAt": "x",
+   "freshness": {
+    "verdict": "unknown"
+   }
+  },
+  "trust": {
+   "trustLevel": "UNCERTIFIED",
+   "axes": [
+    "browse"
+   ],
+   "gatesNotShown": [],
+   "knownGaps": []
+  },
+  "limits": [
+   {
+    "scope": "browse",
+    "reason": "`endpoints` on a row counts the endpoints whose walk (mode=conservative, no depth cap) reaches a statement that touches it. It is the same forward walk `flow` draws and `map` and `coupling` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them"
+   },
+   {
+    "scope": "browse",
+    "reason": "a group is the first segment of an API path, read below the prefix the application is deployed under where its lane knows one (a global prefix, a version, a module path). It is a naming habit, not a module boundary anyone declared"
+   },
+   {
+    "scope": "screen",
+    "reason": "a screen reaches a route because a walk (mode=conservative, no depth cap) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk `flow` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (`observed`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one"
+   }
+  ],
+  "truncated": {
+   "any": false,
+   "fields": [
+    {
+     "field": "items",
+     "shown": 2,
+     "total": 2,
+     "order": "statements desc, table asc",
+     "nextOffset": null
+    }
+   ]
+  }
+ },
+ "column": {
+  "answer": {
+   "kind": "column",
+   "sort": "writes",
+   "items": [
+    {
+     "column": "t.c",
+     "table": "t",
+     "type": null,
+     "pk": false,
+     "comment": null,
+     "reads": 1,
+     "writes": 1,
+     "endpoints": 2,
+     "screens": 1
+    },
+    {
+     "column": "u.x",
+     "table": "u",
+     "type": null,
+     "pk": false,
+     "comment": null,
+     "reads": 0,
+     "writes": 0,
+     "endpoints": 0,
+     "screens": 0
+    }
+   ],
+   "total": 2,
+   "counts": {
+    "table": 2,
+    "column": 2,
+    "statement": 3,
+    "endpoint": 3,
+    "symbol": 8,
+    "screen": 2
+   },
+   "census": {
+    "mode": "conservative",
+    "depth": null
+   }
+  },
+  "basis": {
+   "project": "t",
+   "buildDigest": "d",
+   "builtAt": "x",
+   "freshness": {
+    "verdict": "unknown"
+   }
+  },
+  "trust": {
+   "trustLevel": "UNCERTIFIED",
+   "axes": [
+    "browse"
+   ],
+   "gatesNotShown": [],
+   "knownGaps": []
+  },
+  "limits": [
+   {
+    "scope": "browse",
+    "reason": "`endpoints` on a row counts the endpoints whose walk (mode=conservative, no depth cap) reaches a statement that touches it. It is the same forward walk `flow` draws and `map` and `coupling` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them"
+   },
+   {
+    "scope": "screen",
+    "reason": "a screen reaches a route because a walk (mode=conservative, no depth cap) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk `flow` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (`observed`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one"
+   }
+  ],
+  "truncated": {
+   "any": false,
+   "fields": [
+    {
+     "field": "items",
+     "shown": 2,
+     "total": 2,
+     "order": "writes desc, column asc",
+     "nextOffset": null
+    }
+   ]
+  }
+ },
+ "statement": {
+  "answer": {
+   "kind": "statement",
+   "sort": "tables",
+   "items": [
+    {
+     "statement": "p.M.find",
+     "type": "select",
+     "tables": 1,
+     "hasUnresolved": false,
+     "hasStringSubst": false,
+     "file": "M.xml",
+     "line": 3,
+     "endpoints": 1
+    },
+    {
+     "statement": "p.M.save",
+     "type": "update",
+     "tables": 1,
+     "hasUnresolved": false,
+     "hasStringSubst": false,
+     "file": "M.xml",
+     "line": 3,
+     "endpoints": 1
+    },
+    {
+     "statement": "p.M.guess",
+     "type": "select",
+     "tables": 0,
+     "hasUnresolved": false,
+     "hasStringSubst": false,
+     "file": "M.xml",
+     "line": 3,
+     "endpoints": 0
+    }
+   ],
+   "total": 3,
+   "counts": {
+    "table": 2,
+    "column": 2,
+    "statement": 3,
+    "endpoint": 3,
+    "symbol": 8,
+    "screen": 2
+   },
+   "census": {
+    "mode": "conservative",
+    "depth": null
+   }
+  },
+  "basis": {
+   "project": "t",
+   "buildDigest": "d",
+   "builtAt": "x",
+   "freshness": {
+    "verdict": "unknown"
+   }
+  },
+  "trust": {
+   "trustLevel": "UNCERTIFIED",
+   "axes": [
+    "browse"
+   ],
+   "gatesNotShown": [],
+   "knownGaps": []
+  },
+  "limits": [
+   {
+    "scope": "browse",
+    "reason": "`endpoints` on a row counts the endpoints whose walk (mode=conservative, no depth cap) reaches a statement that touches it. It is the same forward walk `flow` draws and `map` and `coupling` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them"
+   }
+  ],
+  "truncated": {
+   "any": false,
+   "fields": [
+    {
+     "field": "items",
+     "shown": 3,
+     "total": 3,
+     "order": "tables desc, statement asc",
+     "nextOffset": null
+    }
+   ]
+  }
+ },
+ "endpoint": {
+  "answer": {
+   "kind": "endpoint",
+   "sort": "tables",
+   "items": [
+    {
+     "endpoint": "GET /a",
+     "httpMethod": "GET",
+     "path": "/a",
+     "group": "a",
+     "handlerShort": "A#a",
+     "handlers": 1,
+     "grade": "EXACT",
+     "statements": 1,
+     "tables": 1
+    },
+    {
+     "endpoint": "GET /b",
+     "httpMethod": "GET",
+     "path": "/b",
+     "group": "b",
+     "handlerShort": "B#b",
+     "handlers": 1,
+     "grade": "EXACT",
+     "statements": 1,
+     "tables": 1
+    },
+    {
+     "endpoint": "GET /h",
+     "httpMethod": "GET",
+     "path": "/h",
+     "group": "h",
+     "handlerShort": "H#h",
+     "handlers": 1,
+     "grade": "HEURISTIC",
+     "statements": 0,
+     "tables": 0
+    }
+   ],
+   "total": 3,
+   "counts": {
+    "table": 2,
+    "column": 2,
+    "statement": 3,
+    "endpoint": 3,
+    "symbol": 8,
+    "screen": 2
+   },
+   "census": {
+    "mode": "conservative",
+    "depth": null
+   }
+  },
+  "basis": {
+   "project": "t",
+   "buildDigest": "d",
+   "builtAt": "x",
+   "freshness": {
+    "verdict": "unknown"
+   }
+  },
+  "trust": {
+   "trustLevel": "UNCERTIFIED",
+   "axes": [
+    "browse"
+   ],
+   "gatesNotShown": [],
+   "knownGaps": []
+  },
+  "limits": [
+   {
+    "scope": "browse",
+    "reason": "`endpoints` on a row counts the endpoints whose walk (mode=conservative, no depth cap) reaches a statement that touches it. It is the same forward walk `flow` draws and `map` and `coupling` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them"
+   },
+   {
+    "scope": "browse",
+    "reason": "a group is the first segment of an API path, read below the prefix the application is deployed under where its lane knows one (a global prefix, a version, a module path). It is a naming habit, not a module boundary anyone declared"
+   }
+  ],
+  "truncated": {
+   "any": false,
+   "fields": [
+    {
+     "field": "items",
+     "shown": 3,
+     "total": 3,
+     "order": "tables desc, endpoint asc",
+     "nextOffset": null
+    }
+   ]
+  }
+ },
+ "screen": {
+  "answer": {
+   "kind": "screen",
+   "sort": "endpoints",
+   "items": [
+    {
+     "screen": "/s1",
+     "path": "/s1",
+     "label": "/s1",
+     "title": null,
+     "group": "s",
+     "component": "web/f1.vue",
+     "source": "router",
+     "endpoints": 1,
+     "tables": 1,
+     "observed": false
+    },
+    {
+     "screen": "/s2",
+     "path": "/s2",
+     "label": "/s2",
+     "title": null,
+     "group": "s",
+     "component": "web/f2.vue",
+     "source": "router",
+     "endpoints": 0,
+     "tables": 0,
+     "observed": false
+    }
+   ],
+   "total": 2,
+   "counts": {
+    "table": 2,
+    "column": 2,
+    "statement": 3,
+    "endpoint": 3,
+    "symbol": 8,
+    "screen": 2
+   },
+   "census": {
+    "mode": "conservative",
+    "depth": null
+   }
+  },
+  "basis": {
+   "project": "t",
+   "buildDigest": "d",
+   "builtAt": "x",
+   "freshness": {
+    "verdict": "unknown"
+   }
+  },
+  "trust": {
+   "trustLevel": "UNCERTIFIED",
+   "axes": [
+    "browse"
+   ],
+   "gatesNotShown": [],
+   "knownGaps": []
+  },
+  "limits": [
+   {
+    "scope": "browse",
+    "reason": "`endpoints` on a row counts the endpoints whose walk (mode=conservative, no depth cap) reaches a statement that touches it. It is the same forward walk `flow` draws and `map` and `coupling` count on, so what a deeper or wider walk would add is unknown, not absent. A row's statement counts (reads, writes, statementsRead, statementsWrite) are counted in the same mode, so a statement whose link to the table or column only a rule guessed is in none of them"
+   },
+   {
+    "scope": "screen",
+    "reason": "a screen reaches a route because a walk (mode=conservative, no depth cap) goes from its RENDERS functions through the frontend's own calls to that route. It is the same forward walk `flow` draws, so what a deeper or wider walk would add is unknown, not absent. A recording (`observed`) is shown beside these numbers and never counted inside them: a RUNTIME_ONLY edge is below every mode's floor and no walk follows one"
+   }
+  ],
+  "truncated": {
+   "any": false,
+   "fields": [
+    {
+     "field": "items",
+     "shown": 2,
+     "total": 2,
+     "order": "endpoints desc, screen asc",
+     "nextOffset": null
+    }
+   ]
+  }
+ }
+}

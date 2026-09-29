@@ -26,6 +26,7 @@ import { walkAgreement } from '../src/core/walk_agreement.mjs';
 import { loadPack } from '../src/core/pack.mjs';
 import { assembleGraph } from '../src/core/assemble.mjs';
 import { addWebFacts, webEndpointId, webSymbolId } from '../src/adapters/web_bridge.mjs';
+import { browseCensusDiff } from './helpers/browse_census.mjs';
 
 const ctxOf = (g) => ({ graph: g, basis: { project: 't', buildDigest: 'd', builtAt: 'x', freshness: { verdict: 'unknown' } }, trust: { trustLevel: 'UNCERTIFIED' }, limits: [], pack: { digest: 'd' } });
 const ask = (g, name, args) => { const r = callTool(name, args, ctxOf(g)); assertContract(r); return r; };
@@ -357,13 +358,27 @@ test('a call onto a route whose address its lane could not settle carries that d
 // the check, on a real pack
 // ---------------------------------------------------------------------------
 
+test('walk_agreement: the census the impact tools are held to is the one browse counts its rows on, in every mode (RM67-U2i)', () => {
+  for (const mode of ['strict', 'conservative', 'heuristic']) {
+    for (const [name, g] of [['ssr', ssrGraph()], ['sender', senderGraph()]]) {
+      const d = browseCensusDiff(g, mode);
+      assert.ok(d.rows >= 2, `${name}: ${d.rows} rows`);
+      assert.deepEqual(d.differences, [], `${name} ${mode}`);
+    }
+  }
+});
+
 test('walk_agreement: the impact tools, Trace and the census give one answer on every column and table of the mall pack', (t) => {
   const file = process.env.CASCADE_MALL_PACK;
   if (!file || !fs.existsSync(file)) { t.skip('no mall pack: set CASCADE_MALL_PACK to run the check on a real pack'); return; }
   const g = loadPack(JSON.parse(fs.readFileSync(file, 'utf8')));
-  for (const mode of ['conservative', 'heuristic']) {
+  for (const mode of ['strict', 'conservative', 'heuristic']) {
     const r = walkAgreement(g, { mode });
     assert.ok(r.targets > 100, `${r.targets} targets`);
     assert.equal(r.disagreements, 0, `${mode}: ${JSON.stringify(r.examples)}`);
+    // …and browse's rows are that census, in the same mode.
+    const d = browseCensusDiff(g, mode);
+    assert.equal(d.rows, r.targets, 'every table and column is a browse row');
+    assert.deepEqual(d.differences.slice(0, 5), [], `${mode}: ${d.differences.length} rows differ`);
   }
 });

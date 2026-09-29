@@ -23,10 +23,12 @@
 // tables, routes and screens as places to start. Every number is the one
 // `overview` answer's; the map is the `summary` tool's (50_summary.js).
 
-// `mode` is the mode the map, the shares and the table and API rankings look in
-// when the reader moved the map's control off the landing answer's (null: that
-// one), and `byMode` the overview answers asked for it (RM67-U2e).
-const START = { target:null, mode:null, byMode:new Map(), seq:0 };
+// `mode` is the mode the map, the shares and every ranking look in when the
+// reader moved the map's control off the landing answer's (null: that one),
+// `byMode` the overview answers asked for it (RM67-U2e), and `screens` the
+// screens rankings asked for it (RM67-U2i; null while one is on its way). The
+// landing mode's screens ranking is OV.screens.
+const START = { target:null, mode:null, byMode:new Map(), screens:new Map(), seq:0 };
 // The typeahead's own state, shaped like a chain view's so the one typeahead
 // (42_flow.js chainSuggest, chainCommit) serves this box too.
 const STARTV = { name:'start', direction:'start', entryId:'sentry', sugId:'ssug',
@@ -113,26 +115,24 @@ function renderStartNumbers(){
   const a=r.answer;
   setKids(byId('skpimode'), el('span',{textContent:t('start.kpi.mode',{ mode:a.mode, depth:depthText(a.depth) })}));
   byId('ovcards').replaceChildren(...ovKpis(a));
-  setKids(byId('shubs'), ovHubBars(r, a), ovHubEndpoints(r, a), ovHubScreens(a));
+  const screens=START.mode ? (START.screens.get(START.mode) || null) : OV.screens;
+  setKids(byId('shubs'), ovHubBars(r, a), ovHubEndpoints(r, a), ovHubScreens(a, screens));
 }
 /**
  * ONE MODE FOR WHAT START COUNTS (RM67-U2e). The map's control used to move the
  * map alone, and the shares and the busiest lists under it stayed in the mode
  * the page opened in: two numbers for one thing, side by side. Now the control
- * moves all three, asking the overview once in that mode. The gaps and
- * Analysis status stay in the landing answer's mode, and say it.
- *
- * THE SCREENS RANKING IS THE ONE LIST IT DOES NOT MOVE (RM67-U2h). Its rows are
- * a `browse kind=screen` answer, walked in one census mode, and no answer
- * carries per-screen rows in another mode (the overview's screen block is
- * counts). So the ranking says its own mode under its title, and the lines that
- * name what moves say "the table and API rankings", not "the busiest lists".
+ * moves all of them, asking the overview once in that mode, and the screens
+ * ranking once too, since `browse` counts in the mode it is asked in
+ * (RM67-U2i). The gaps and Analysis status stay in the landing answer's mode,
+ * and say it.
  */
 async function startSetMode(mode){
   if(!OV.resp || !Object.hasOwn(MODE_ADMITS, mode)) return;
   START.mode=mode===OV.resp.answer.mode ? null : mode;
   summarySetMode(mode);
   renderStartLead(OV.resp.answer);
+  startAskScreens(mode);
   if(!START.mode || START.byMode.has(mode)){ renderStartNumbers(); return; }
   const mine=++START.seq;
   let r;
@@ -142,6 +142,22 @@ async function startSetMode(mode){
   START.byMode.set(mode, r);
   renderStartNumbers();
 }
+/**
+ * The screens ranking in a mode other than the landing one: one `browse
+ * kind=screen` answer, asked once per mode and drawn when it lands, if Start
+ * still looks in that mode. A lookup that failed is forgotten, so the next
+ * visit to that mode asks again.
+ */
+async function startAskScreens(mode){
+  if(!START.mode || SNAP || !OV.resp.answer.screens || START.screens.has(mode)) return;
+  START.screens.set(mode, null);
+  let b;
+  try{ b=await api('browse', { kind:'screen', sort:'tables', limit:OV_HUB_TOP, mode }); }
+  catch(e){ START.screens.delete(mode); return; }
+  if(START.screens.get(mode)!==null) return;   // the project was left while it was on its way
+  START.screens.set(mode, b);
+  if(START.mode===mode) renderStartNumbers();
+}
 /** Start on screen: the map is asked for once the landing answer is in. */
 function startOnScreen(){
   renderStartAsk();
@@ -150,7 +166,7 @@ function startOnScreen(){
 /** The project is being left: its target, its lists and its map with it. */
 function startReset(){
   START.target=null; STARTV.pick=null;
-  START.mode=null; START.byMode.clear(); START.seq++;
+  START.mode=null; START.byMode.clear(); START.screens.clear(); START.seq++;
   const input=byId('sentry'); if(input) input.value='';
   closeSug(STARTV);
   for(const id of ['slead','sscope','sgaps','skpimode','ovcards','shubs']) byId(id).replaceChildren();

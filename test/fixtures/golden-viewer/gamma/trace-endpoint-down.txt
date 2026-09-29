@@ -194,7 +194,7 @@
               <span id="tcount" class="brcount">
                 3 shown of 3
               </span>
-              <span id="tcountmode" class="brcount brmode" data-t-title="rail.count.mode.title" title="the numbers on these rows come from one walk of the whole project in this mode. Trace counts in the mode on its own control, so the two can differ.">counted in conservative</span>
+              <span id="tcountmode" class="brcount brmode" data-t-title="rail.count.mode.title" title="the numbers on these rows come from one walk of the whole project in this mode, the one on Trace's own control, so they count what the answer beside them walks.">counted in conservative</span>
               <button id="tclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
                 &#x2715;
               </button>

@@ -226,24 +226,88 @@ test('where every route stops at itself, Start says so first, once, with the fix
   assert.equal(start[0].id, 'slead', 'the cause comes before the search box and the 0% cards');
 });
 
-test('one mode for what Start counts: the map\'s control moves the map, the shares and the table and API rankings, and each says it', async (t) => {
+test('one mode for what Start counts: the map\'s control moves the map, the shares and every ranking, and each says it', async (t) => {
   const { ctx, byId, asked } = await boot(t, { hash: '#p=gamma&tab=start', rewrite: { overview: floored } });
   const mode = () => byId.get('skpimode').textContent;
-  assert.equal(mode(), 'The shares and the table and API rankings below are counted in conservative, depth not capped.');
+  assert.equal(mode(), 'The shares and the busiest lists below are counted in conservative, depth not capped.');
   assert.equal(byId.get('ovcards').querySelectorAll('.kpinum')[0].textContent, '0%');
   byId.get('slead').querySelectorAll('button').at(-1).onclick();
   await settle(ctx, 12);
   assert.ok(asked.some((a) => a.name === 'overview' && a.args.mode === 'heuristic'), 'the overview is asked in that mode');
   assert.equal(ev(ctx, 'SUM.mode'), 'heuristic', 'the map moved with it');
-  assert.equal(mode(), 'The shares and the table and API rankings below are counted in heuristic, depth not capped.');
+  assert.equal(mode(), 'The shares and the busiest lists below are counted in heuristic, depth not capped.');
   assert.notEqual(byId.get('ovcards').querySelectorAll('.kpinum')[0].textContent, '0%');
   for (const h of byId.get('shubs').querySelectorAll('.hubmode').slice(0, 2)) assert.equal(h.textContent, 'counted in heuristic');
-  assert.match(byId.get('slead').textContent, /counted in heuristic now\. The screens ranking has one mode only, written under its title\. The gaps and Analysis status stay in conservative\./);
+  assert.match(byId.get('slead').textContent, /counted in heuristic now\. The gaps and Analysis status stay in conservative\./);
   byId.get('slead').querySelector('button').onclick();
   await settle(ctx, 12);
   assert.equal(ev(ctx, 'START.mode'), null);
   assert.equal(ev(ctx, 'SUM.mode'), 'conservative');
-  assert.equal(mode(), 'The shares and the table and API rankings below are counted in conservative, depth not capped.');
+  assert.equal(mode(), 'The shares and the busiest lists below are counted in conservative, depth not capped.');
+});
+
+test('the screens ranking follows the map\'s mode too: one browse kind=screen per mode, asked in it, and it says so (RM67-U2i)', async (t) => {
+  const { ctx, byId, asked } = await boot(t, { hash: '#p=delta&tab=start' });
+  const screensAsked = () => asked.filter((a) => a.name === 'browse' && a.args.kind === 'screen').map((a) => a.args.mode);
+  const panel = () => byId.get('shubs').querySelectorAll('.panel').find((p) => /Screens, by how many tables they reach|닿는 테이블이 많은 화면/.test(p.textContent));
+  const modes = () => byId.get('shubs').querySelectorAll('.hubmode').map((h) => h.textContent);
+  assert.deepEqual(screensAsked(), ['conservative'], 'the landing ranking is asked in the overview\'s own mode');
+  assert.equal(panel().querySelector('.hubmode').textContent, 'counted in conservative');
+  ev(ctx, "startSetMode('heuristic')");
+  await settle(ctx, 12);
+  assert.deepEqual(screensAsked(), ['conservative', 'heuristic']);
+  assert.deepEqual(modes(), ['counted in heuristic', 'counted in heuristic', 'counted in heuristic'], 'the tables, the APIs and the screens');
+  assert.equal(ev(ctx, "START.screens.get('heuristic').answer.census.mode"), 'heuristic', 'the rows drawn are the answer walked in that mode');
+  assert.equal(byId.get('slead').querySelector('.startleadsay').textContent,
+    'The map, the shares and the busiest lists are counted in heuristic now. The gaps and Analysis status stay in conservative.');
+  ev(ctx, "setLang('ko')");
+  await settle(ctx, 6);
+  assert.equal(byId.get('slead').querySelector('.startleadsay').textContent,
+    '지금 지도, 비율, 순위는 heuristic 모드 기준입니다. 누락 목록과 분석 상태는 conservative 모드 그대로입니다.');
+  assert.equal(panel().querySelector('.hubmode').textContent, 'heuristic 모드 기준');
+  // Back, and there again: each mode's ranking is asked once and kept.
+  ev(ctx, "startSetMode('conservative')");
+  await settle(ctx, 8);
+  assert.equal(panel().querySelector('.hubmode').textContent, 'conservative 모드 기준');
+  ev(ctx, "startSetMode('heuristic')");
+  await settle(ctx, 8);
+  assert.deepEqual(screensAsked(), ['conservative', 'heuristic'], 'nothing asked twice');
+  assert.equal(panel().querySelector('.hubmode').textContent, 'heuristic 모드 기준');
+});
+
+test('Trace\'s list is counted in the mode on Trace\'s control, asked again when it moves, with the pick kept (RM67-U2i)', async (t) => {
+  const { ctx, byId, asked } = await boot(t);
+  const lists = () => asked.filter((a) => a.name === 'browse').map((a) => [a.args.kind, a.args.table ?? null, a.args.mode]);
+  assert.deepEqual(lists(), [['table', null, 'conservative']]);
+  ev(ctx, "openTrace({kind:'table', id:'gamma_order'}, 'up')");
+  await settle(ctx, 12);
+  ev(ctx, "byId('tmode').value='heuristic'; byId('tmode').onchange()");
+  await settle(ctx, 12);
+  assert.deepEqual(lists().at(-1), ['table', null, 'heuristic'], 'the list is asked again in the new mode');
+  assert.ok(asked.some((a) => a.name === 'flow' && a.args.mode === 'heuristic'), 'as the answer beside it is');
+  assert.equal(byId.get('tcountmode').textContent, 'counted in heuristic');
+  const on = byId.get('tlist').querySelectorAll('.brrow.on');
+  assert.deepEqual(on.map((b) => b.title), ['gamma_order'], 'the picked row stays picked');
+  assert.equal(on[0].querySelectorAll('.brstat')[1].title, 'how many endpoints reach this, following calls at mode=heuristic with no depth cap');
+  // A table opened now asks its columns in the list's mode.
+  byId.get('tlist').querySelectorAll('.brcaret')[0].click();
+  await settle(ctx, 8);
+  assert.deepEqual(lists().at(-1), ['column', 'gamma_order', 'heuristic']);
+  // Back to conservative: the list comes back from memory, and the open table asks its columns in that mode.
+  const before = lists().length;
+  ev(ctx, "byId('tmode').value='conservative'; byId('tmode').onchange()");
+  await settle(ctx, 12);
+  assert.deepEqual(lists().slice(before), [['column', 'gamma_order', 'conservative']]);
+  assert.equal(byId.get('tcountmode').textContent, 'counted in conservative');
+  assert.equal(byId.get('tlist').querySelectorAll('.brchild').length, 2, 'the open table stays open, with its columns in this mode');
+});
+
+test('a link that names a mode opens Trace\'s list in it (RM67-U2i)', async (t) => {
+  const { ctx, byId } = await boot(t, { hash: '#p=gamma&tab=trace&pick=table%3Agamma_order&dir=up&mode=heuristic' });
+  await settle(ctx, 12);
+  assert.equal(ev(ctx, "byId('tmode').value"), 'heuristic');
+  assert.equal(ev(ctx, 'RAIL.trace.resp.answer.census.mode'), 'heuristic');
+  assert.equal(byId.get('tcountmode').textContent, 'counted in heuristic');
 });
 
 test('the map comes before the shares on Start, and a line says what it carries', async (t) => {

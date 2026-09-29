@@ -31,12 +31,14 @@ async function loadOverview(){
   // ask about: the busiest screens, from the same `browse kind=screen` list the
   // Explore rail draws. The overview answer carries the screen CENSUS but no
   // per-screen rows, and the page must not invent them. Drawn when it lands, so
-  // nothing on this tab waits for it.
+  // nothing on this tab waits for it. Asked in the overview's own mode, as the
+  // other rankings are counted; another mode on the map's control asks again
+  // in that one (startAskScreens).
   // A snapshot shows no Start place, so it carries no screen list for it.
   if(!r.answer.screens || SNAP) return;
   const mine=STATE.seq, forProject=STATE.project;
   let b;
-  try { b=await api('browse',{kind:'screen', sort:'tables', limit:OV_HUB_TOP}); }
+  try { b=await api('browse',{kind:'screen', sort:'tables', limit:OV_HUB_TOP, mode:r.answer.mode}); }
   catch(e){ return; }
   if(mine!==STATE.seq || forProject!==STATE.project || OV.resp!==r) return;
   OV.screens=b;
@@ -541,25 +543,25 @@ function ovHubPanel(title, total, rows, heads, mkRow, key, empty, sub){
   return el('div',{className:'panel'},kids);
 }
 /**
- * THE MODE A LIST WAS COUNTED IN, under its heading (RM67-U2e). The busiest
- * lists follow the mode of the map's control through the overview asked in it;
- * the screens come from a census walked in one mode only, and say which.
+ * THE MODE A LIST WAS COUNTED IN, under its heading (RM67-U2e). Every ranking
+ * follows the mode of the map's control: the tables and APIs through the
+ * overview asked in it, the screens through `browse kind=screen` asked in it
+ * (RM67-U2i). Each says the mode its own answer names.
  */
 const ovHubMode=(mode)=> mode ? el('div',{className:'count hubmode',textContent:t('ov.hub.mode',{ mode })}) : null;
 /** A name in a ranking, cut from the middle so the part that tells two apart stays (a route's last segments). */
 const ovHubName=(id, title, go)=> el('a',{className:'id clickable psplit', title:id+'\n'+title, onclick:go}, pathLabel(id));
 // THE OTHER END OF THE ROUND TRIP, listed the way the API hubs are. The rows
-// are one `browse kind=screen sort=tables` answer, and a click walks the chain
-// down from that screen. Nothing is drawn where the axis is not shipped: the
-// section says so in one line instead, because an empty list would read as "this
-// frontend reaches no table".
-function ovHubScreens(a){
+// are one `browse kind=screen sort=tables` answer `b`, asked in the mode Start
+// looks in, and a click walks the chain down from that screen. Nothing is drawn
+// where the axis is not shipped: the section says so in one line instead,
+// because an empty list would read as "this frontend reaches no table".
+function ovHubScreens(a, b){
   const kids=[ el('h2',{},[t('ov.hubscreens.title')]) ];
   if(!a.screens){
     kids.push(el('div',{className:'empty',textContent:t('ov.hubscreens.none')}));
     return el('div',{className:'panel'},kids);
   }
-  const b=OV.screens;
   const rows=(b && b.answer.items) || [];
   const total=b ? b.answer.total : null;
   kids[0]=el('h2',{},[t('ov.hubscreens.title')+' ',

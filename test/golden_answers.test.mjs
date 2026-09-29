@@ -46,6 +46,7 @@ import { skipWithoutSqlLane } from './helpers/lane_prereqs.mjs';
 import { ENGINE_ROOT, FIXTURES, TREES, commit, scrubberFor } from '../scripts/golden-trees.mjs';
 import { loadPack } from '../src/core/pack.mjs';
 import { walkAgreement } from '../src/core/walk_agreement.mjs';
+import { browseCensusDiff } from './helpers/browse_census.mjs';
 
 const CLI = path.join(ENGINE_ROOT, 'bin', 'cascade.mjs');
 const GOLDEN_ROOT = path.join(FIXTURES, 'golden');
@@ -94,11 +95,13 @@ async function record(t, name, build, analyzeFlags, out) {
   const log = analyze(['--root', repo, '--out', pack, ...analyzeFlags(repo)], base, home, path.join(base, 'analyze.log'));
   // ONE QUESTION, ONE ANSWER (RM67-J4). On every fixture tree, for every column
   // and table and in every mode, the impact tools, Trace up and the census name
-  // the same routes and screens at the same grades (src/core/walk_agreement.mjs).
+  // the same routes and screens at the same grades (src/core/walk_agreement.mjs),
+  // and browse's table and column rows count that census in that mode (RM67-U2i).
   const graph = loadPack(JSON.parse(fs.readFileSync(path.join(pack, 'pack.json'), 'utf8')));
   for (const mode of ['strict', 'conservative', 'heuristic']) {
     const agree = walkAgreement(graph, { mode });
     assert.equal(agree.disagreements, 0, `${name} ${mode}: ${JSON.stringify(agree.examples)}`);
+    assert.deepEqual(browseCensusDiff(graph, mode).differences, [], `${name} ${mode}: browse and the census part`);
   }
   // WHILE RE-RECORDING, say what the run actually did. A golden recorded from a
   // tree whose Java lane silently did not run is a net with a hole in it, and
