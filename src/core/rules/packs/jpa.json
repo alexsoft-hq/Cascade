@@ -1,0 +1,59 @@
+{
+  "pack": "jpa",
+  "version": 1,
+  "description": "What JPA and Hibernate read from a project's own Java besides the mapping annotations: which annotations the project declares cannot change how an attribute is mapped.",
+  "rules": [
+    {
+      "id": "jpa.inert-annotations",
+      "kind": "jpa.inert-annotation",
+      "description": "An annotation on an entity attribute changes nothing about its column when the project declares it, its declaration carries only annotations from java.lang.annotation, and no class of the project implements a Hibernate boot extension point. Hibernate reads a project's own annotation only through a meta-annotation on its declaration or through code handed to it at boot, so the column keeps the grade its mapping gives it.",
+      "why": "ngrinder marks 27 PerfTest fields with its own @Cloneable (@Target, @Retention and @Documented only), and every one of those columns was graded a guess because the JPA lane did not know the name.",
+      "params": {
+        "metaAnnotationPackages": ["java.lang.annotation"],
+        "extensionPoints": [
+          { "type": "org.hibernate.integrator.spi.Integrator", "source": "hibernate-core 6.6 and 7.1, org/hibernate/integrator/spi/Integrator.java: integrate(Metadata, BootstrapContext, SessionFactoryImplementor) is handed the whole mapping" },
+          { "type": "org.hibernate.jpa.boot.spi.IntegratorProvider", "source": "hibernate-core 6.6 and 7.1, org/hibernate/jpa/boot/spi/IntegratorProvider.java: hands Hibernate the Integrators above through hibernate.integrator_provider" },
+          { "type": "org.hibernate.boot.spi.MetadataBuilderContributor", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/MetadataBuilderContributor.java: contribute(MetadataBuilder)" },
+          { "type": "org.hibernate.boot.spi.AdditionalMappingContributor", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/AdditionalMappingContributor.java: contributes mappings at boot" },
+          { "type": "org.hibernate.boot.spi.MetadataContributor", "source": "hibernate-core 6.6, org/hibernate/boot/spi/MetadataContributor.java: contribute(InFlightMetadataCollector, IndexView); gone in 7" },
+          { "type": "org.hibernate.boot.spi.MetadataBuilderInitializer", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/MetadataBuilderInitializer.java: contribute(MetadataBuilder, StandardServiceRegistry)" },
+          { "type": "org.hibernate.boot.spi.MetadataSourcesContributor", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/MetadataSourcesContributor.java: contribute(MetadataSources)" },
+          { "type": "org.hibernate.boot.spi.MetadataBuilderFactory", "source": "hibernate-core 6.6 and 7.1, org/hibernate/boot/spi/MetadataBuilderFactory.java: builds the MetadataBuilder itself" },
+          { "type": "org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer", "source": "spring-boot-autoconfigure 3.x, HibernatePropertiesCustomizer.java: customize(Map) sets any Hibernate property, an integrator provider among them" }
+        ]
+      },
+      "examples": [
+        {
+          "source": "package p;\nimport java.lang.annotation.Documented;\nimport java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.annotation.RetentionPolicy;\nimport java.lang.annotation.Target;\nimport javax.persistence.*;\n@Target({ ElementType.FIELD }) @Retention(RetentionPolicy.RUNTIME) @Documented @interface Cloneable {}\n@Entity class PerfTest { @Id Long id; @Cloneable @Column(name = \"test_name\") String testName; }\n",
+          "expect": ["p.PerfTest.testName @p.Cloneable"],
+          "why": "ngrinder's marker: declared in the tree, java.lang.annotation only"
+        },
+        {
+          "source": "package p;\nimport java.lang.annotation.*;\nimport javax.persistence.*;\n/** a marker */ @java.lang.annotation.Retention(RetentionPolicy.RUNTIME) @interface Audited2 {}\n@Entity class Doc { @Id Long id; @Audited2 String body; }\n",
+          "expect": ["p.Doc.body @p.Audited2"],
+          "why": "a meta-annotation imported with its package, or written in full, is still java.lang.annotation's"
+        },
+        {
+          "source": "package p;\nimport java.lang.annotation.*;\nimport javax.persistence.*;\nimport org.hibernate.annotations.AttributeBinderType;\n@Retention(RetentionPolicy.RUNTIME) @AttributeBinderType(binder = TrackedBinder.class) @interface Tracked {}\n@Entity class Doc { @Id Long id; @Tracked String body; }\n",
+          "expect": [],
+          "why": "a Hibernate meta-annotation makes Hibernate run the annotation's binder, which may change the column"
+        },
+        {
+          "source": "package p;\nimport java.lang.annotation.*;\nimport javax.persistence.*;\n@Retention(RetentionPolicy.RUNTIME) @interface Cloneable {}\n@Entity class PerfTest { @Id Long id; @Cloneable String testName; }\nclass Wiring implements org.hibernate.integrator.spi.Integrator {}\n",
+          "expect": [],
+          "why": "an Integrator is handed the whole mapping at boot and may read any annotation"
+        },
+        {
+          "source": "package p;\nimport javax.persistence.*;\nimport com.lib.Marker;\n@Entity class Doc { @Id Long id; @Marker String body; }\n",
+          "expect": [],
+          "why": "an annotation from a jar: its declaration is not in the tree"
+        },
+        {
+          "source": "package p;\nimport java.lang.annotation.*;\nimport com.lib.*;\nimport javax.persistence.*;\n@Target(ElementType.FIELD) @interface Flag {}\n@Entity class Doc { @Id Long id; @Flag String body; }\n",
+          "expect": [],
+          "why": "Target may be com.lib's, a package imported whole that the rule does not list"
+        }
+      ]
+    }
+  ]
+}

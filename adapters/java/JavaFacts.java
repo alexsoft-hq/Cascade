@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/22";
+    static final String VERSION = "javafacts/23";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -758,6 +758,13 @@ public class JavaFacts {
             // An interface's abstract methods (javafacts/22): with exactly one, a
             // lambda or a method reference anywhere may be an object of it.
             if (ct.getKind() == Tree.Kind.INTERFACE) typeRec.put("abstractMethods", abstractMethodsOf(ct));
+            // An annotation type the tree declares (javafacts/23), with its own
+            // annotations as written: whether it can change a JPA mapping rests on
+            // which package each of them is from, which the bridge reads.
+            if (ct.getKind() == Tree.Kind.ANNOTATION_TYPE) {
+                typeRec.put("annotationType", true);
+                typeRec.put("annotationsWritten", annotationsWritten(ct.getModifiers().getAnnotations()));
+            }
             typeRec.put("file", rel);
             sink.types++;
             sink.add("2type" + SEP + fqn, typeRec);
@@ -1132,6 +1139,25 @@ public class JavaFacts {
             at.put("targetEntity", (rel != null) ? classLiteralSimpleName(annAttr(rel, "targetEntity")) : null);
             at.put("cascade", (rel != null) ? memberNames(annAttr(rel, "cascade")) : new ArrayList<String>());
             at.put("joinColumn", (join != null) ? firstString(annAttr(join, "name")) : null);
+            // Every join column the attribute writes, each with the column it
+            // references (javafacts/23): one @JoinColumn, or each one inside
+            // @JoinColumns. A composite foreign key is named column by column.
+            AnnotationTree joins = annNamed(anns, "JoinColumns");
+            List<Object> joinCols = new ArrayList<>();
+            if (join != null) joinCols.add(joinColumnOf(join));
+            else if (joins != null) collectJoinColumns(annAttr(joins, "value"), joinCols);
+            at.put("joinColumns", joinCols);
+            // `@MapsId("postsId")` names the id attribute this association maps;
+            // an empty one is "" (the whole id), and no @MapsId is null.
+            AnnotationTree mapsId = annNamed(anns, "MapsId");
+            if (mapsId != null) {
+                String v = firstString(annAttr(mapsId, "value"));
+                at.put("mapsId", v == null ? "" : v);
+            } else {
+                at.put("mapsId", null);
+            }
+            // What @AttributeOverride(s) on the attribute rename, by attribute path.
+            at.put("attributeOverrides", attributeOverridesOf(anns));
             if (joinTable != null) {
                 Map<String, Object> jt = new LinkedHashMap<>();
                 jt.put("name", firstString(annAttr(joinTable, "name")));
@@ -1148,6 +1174,9 @@ public class JavaFacts {
             // Every annotation's name, as written (javafacts/21): the bridge says
             // which ones it does not read, rather than reading past them.
             at.put("annotations", names);
+            // …and each one's type as the source writes it (javafacts/23), so an
+            // annotation the tree declares is found the way javac finds it.
+            at.put("annotationsWritten", annotationsWritten(anns));
             return at;
         }
 
@@ -3879,6 +3908,53 @@ public class JavaFacts {
         }
     }
 
+    /** One @JoinColumn: the name it writes and the column it references, each null when not written. */
+    static Map<String, Object> joinColumnOf(AnnotationTree jc) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("name", firstString(annAttr(jc, "name")));
+        c.put("referencedColumnName", firstString(annAttr(jc, "referencedColumnName")));
+        return c;
+    }
+
+    /** Each @JoinColumn of a @JoinColumns value, in the order written. */
+    static void collectJoinColumns(ExpressionTree e, List<Object> out) {
+        if (e == null) return;
+        if (e instanceof AnnotationTree) out.add(joinColumnOf((AnnotationTree) e));
+        else if (e instanceof NewArrayTree) {
+            List<? extends ExpressionTree> inits = ((NewArrayTree) e).getInitializers();
+            if (inits != null) for (ExpressionTree it : inits) collectJoinColumns(it, out);
+        }
+    }
+
+    /**
+     * Each @AttributeOverride on an attribute, alone or inside
+     * @AttributeOverrides: the attribute path it names (dotted for a nested one)
+     * and the column name its @Column writes (null when it writes none).
+     */
+    static List<Object> attributeOverridesOf(List<AnnotationTree> anns) {
+        List<Object> out = new ArrayList<>();
+        AnnotationTree one = annNamed(anns, "AttributeOverride");
+        if (one != null) collectAttributeOverrides(one, out);
+        AnnotationTree many = annNamed(anns, "AttributeOverrides");
+        if (many != null) collectAttributeOverrides(annAttr(many, "value"), out);
+        return out;
+    }
+
+    static void collectAttributeOverrides(ExpressionTree e, List<Object> out) {
+        if (e == null) return;
+        if (e instanceof AnnotationTree) {
+            AnnotationTree ao = (AnnotationTree) e;
+            ExpressionTree col = annAttr(ao, "column");
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("name", firstString(annAttr(ao, "name")));
+            o.put("column", (col instanceof AnnotationTree) ? firstString(annAttr((AnnotationTree) col, "name")) : null);
+            out.add(o);
+        } else if (e instanceof NewArrayTree) {
+            List<? extends ExpressionTree> inits = ((NewArrayTree) e).getInitializers();
+            if (inits != null) for (ExpressionTree it : inits) collectAttributeOverrides(it, out);
+        }
+    }
+
     /** A boolean literal annotation attribute (`nativeQuery = true`), or null. */
     static Boolean boolOf(ExpressionTree e) {
         if (e instanceof LiteralTree) {
@@ -3911,6 +3987,16 @@ public class JavaFacts {
         for (AnnotationTree a : anns) {
             String s = typeSimpleName(a.getAnnotationType());
             if (s != null) out.add(s);
+        }
+        return out;
+    }
+
+    /** Each annotation's type as the source writes it (`a.b.C` or `C`), aligned with `annotationNames`. */
+    static List<String> annotationsWritten(List<? extends AnnotationTree> anns) {
+        List<String> out = new ArrayList<>();
+        for (AnnotationTree a : anns) {
+            if (typeSimpleName(a.getAnnotationType()) == null) continue;
+            out.add(writtenName(a.getAnnotationType()));
         }
         return out;
     }

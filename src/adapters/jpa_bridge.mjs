@@ -12,6 +12,9 @@
 //   Owner -> owners by the strategy the PROFILE declares -> EXACT, declared.
 //   Owner -> owners because the profile declares nothing and Spring Boot's
 //            default is CamelCase -> snake_case                -> HEURISTIC.
+//   @Column(name="createdBy") -> created_by: Hibernate hands a written name to
+//            the physical strategy too, so it is EXACT only where every
+//            strategy spells it alike or one is declared (`explicitName`).
 //
 // I-1 (MUST): a HEURISTIC mapping is NEVER promoted, and in particular a
 // catalog hit does not promote it. That the guessed table name happens to exist
@@ -40,6 +43,8 @@ import { buildTypeIndex } from './java_bridge.mjs';
 import { parseDerivedQuery, resolvePropertyPath } from '../core/derived_query.mjs';
 import { readJpql } from '../core/jpql_lite.mjs';
 import { tableKey, columnKey, statementKey, graphSpellingIndex } from './sql_bridge.mjs';
+import { foldIdentifier } from '../core/identifier_case.mjs';
+import { builtinRegistry } from '../core/rules/registry.mjs';
 
 /**
  * The naming strategies this bridge can apply. `spring-snake-case` is Spring
@@ -156,6 +161,47 @@ function derivedName(logical, strategy, derivedGrade) {
   if (strategy === 'snake-case-hibernate7') return { name: n.hibernate7, grade: derivedGrade };
   if (strategy === 'snake-case-hibernate6') return { name: n.name, grade: derivedGrade };
   return { name: n.name, grade: n.versionDependent ? 'HEURISTIC' : derivedGrade };
+}
+
+/**
+ * A NAME THE SOURCE WRITES, as the database has it. Hibernate hands every
+ * logical name to the PHYSICAL naming strategy, a written one as much as a
+ * derived one (AnnotatedColumn.processColumnName, Namespace.createTable); only
+ * the implicit strategy is skipped. So Spring Boot's default turns
+ * `@JoinColumn(name = "createdBy")` into `created_by`.
+ *
+ * The name is EXACT where every strategy spells it alike (compared under the
+ * run's identifier rule, so `PERF_TEST` and `perf_test` are one name where
+ * identifiers fold), and then keeps the source's spelling. With a strategy
+ * declared it is that strategy's spelling, graded as a derived name is. Else it
+ * is the assumed default's spelling, HEURISTIC, and the class says so once.
+ * @param {string} written
+ * @param {{strategy:string, declared:boolean, identifierCase:string, assumed:Map}} names
+ * @param {string} who  the class that writes it, for the sentence
+ * @returns {{name:string, grade:string}}
+ */
+function explicitName(written, names, who) {
+  const w = String(written);
+  const same = (x) => foldIdentifier(x, names.identifierCase) === foldIdentifier(w, names.identifierCase);
+  if (names.declared) {
+    const d = derivedName(w, names.strategy, 'EXACT');
+    return { name: same(d.name) ? w : d.name, grade: d.grade };
+  }
+  if (NAMING_STRATEGIES.every((s) => same(derivedName(w, s, 'EXACT').name))) return { name: w, grade: 'EXACT' };
+  const name = derivedName(w, names.strategy, 'HEURISTIC').name;
+  const said = names.assumed.get(who) ?? new Map();
+  said.set(w, name);
+  names.assumed.set(who, said);
+  return { name, grade: 'HEURISTIC' };
+}
+
+/** The classes whose written names rest on the assumed naming strategy, said once each. */
+function sayAssumedNames(names, stats) {
+  stats.writtenNamesAssumed = [...names.assumed.values()].reduce((n, m) => n + m.size, 0);
+  for (const who of [...names.assumed.keys()].sort(cmp)) {
+    const pairs = [...names.assumed.get(who).entries()].sort((a, b) => cmp(a[0], b[0])).map(([w, n]) => `${w} as ${n}`);
+    note(stats, 'written-name-assumed', `${who} writes names that the naming strategies spell differently (${pairs.join(', ')}). Hibernate passes a written name through the physical naming strategy as it does a derived one, and no jpa.namingStrategy is declared, so each is the assumed default naming's spelling, graded HEURISTIC`);
+  }
 }
 
 /**
@@ -291,11 +337,12 @@ function sqlVerbOf(sql) {
  *            builtins:number, namingStrategy:string, namingStrategyDeclared:boolean}}
  */
 /**
- * 1. ENTITIES -> TABLES. A name the SOURCE wrote down is EXACT; a name this
- * engine DERIVED is EXACT only where the project declared the naming strategy it
- * was derived by, and HEURISTIC otherwise.
+ * 1. ENTITIES -> TABLES. A name this engine DERIVED is EXACT only where the
+ * project declared the naming strategy it was derived by, and HEURISTIC
+ * otherwise; a name the SOURCE wrote down goes through the same strategy
+ * (`explicitName`).
  */
-function entityTables(entityRecords, { strategy, derivedGrade, namingEvidence, stats, resolveType }) {
+function entityTables(entityRecords, { strategy, derivedGrade, namingEvidence, stats, resolveType, names }) {
 // ---- 1. entities -> tables ----------------------------------------------
 /** @type {Map<string, {fqn, table, tableId, grade, attributes:Map, pkColumn}>} */
 const entities = new Map();
@@ -308,12 +355,12 @@ for (const [fqn, rec] of entityRecords) {
   // derived from that name, not from the class's (javafacts/21).
   const entityName = typeof rec.entityName === 'string' && rec.entityName.length > 0 ? rec.entityName : simple;
   const explicit = typeof rec.tableName === 'string' && rec.tableName.length > 0;
-  const derived = derivedName(entityName, strategy, derivedGrade);
-  const table = explicit ? rec.tableName : derived.name;
+  // A written name goes through the physical strategy too (`explicitName`).
+  const named = explicit ? explicitName(rec.tableName, names, fqn) : derivedName(entityName, strategy, derivedGrade);
   entities.set(fqn, {
     fqn, simple, entityName, record: rec,
-    table,
-    tableGrade: explicit ? 'EXACT' : derived.grade,
+    table: named.name,
+    tableGrade: named.grade,
     tableEvidence: explicit ? 'declared' : namingEvidence,
     attributes: null, // filled below, once the superclass chain is walked
     pkColumn: null,
@@ -422,12 +469,14 @@ function joinedHomes(e, entities, entityRecords, resolveType) {
  * key's own columns, each as sure as its name is. A parent key that is an
  * assumed default (`placeKey`) stays one here.
  */
-function joinedKeys(entities) {
+function joinedKeys(entities, names) {
   const keyOf = (x, depth = 0) => {
     if (x.inheritance !== 'JOINED' || !x.parent || depth > entities.size) return x.pkColumns;
     const declared = x.record.primaryKeyJoinColumn;
     const up = keyOf(x.parent, depth + 1);
-    return declared && up.length === 1 ? [{ column: declared, grade: 'EXACT', ...(up[0].assumed ? { assumed: true } : {}) }] : up;
+    // A written name goes through the physical strategy too (`explicitName`).
+    const n = declared && up.length === 1 ? explicitName(declared, names, x.fqn) : null;
+    return n ? [{ column: n.name, grade: n.grade, ...(up[0].assumed ? { assumed: true } : {}) }] : up;
   };
   for (const e of entities.values()) {
     if (e.inheritance !== 'JOINED' || !e.parent) continue;
@@ -499,7 +548,7 @@ const attributesOf = (fqn, seen = new Set()) => {
   if (!rec) return [];
   const superFqn = rec.superclass ? resolveType(fqn, rec.superclass) : null;
   const inherited = superFqn && entityRecords.has(superFqn) ? attributesOf(superFqn, seen) : [];
-  const own = (Array.isArray(rec.attributes) ? rec.attributes : []).map((a) => ({ ...a, declaredBy: fqn }));
+  const own = (Array.isArray(rec.attributes) ? rec.attributes : []).map((a) => ({ ...a, declaredBy: fqn, declaredFile: rec.file ?? null }));
   // Base-most first, and a subclass attribute of the same name REPLACES the
   // inherited one (Java's own shadowing rule).
   const byName = new Map();
@@ -508,15 +557,19 @@ const attributesOf = (fqn, seen = new Set()) => {
 };
 
 const said = new Set();
+const read = { strategy, derivedGrade, namingEvidence, names: ctx.names, inert: ctx.inert, resolveType, entityRecords, treeTypes: ctx.treeTypes, stats: ctx.stats, said };
 for (const e of entities.values()) {
   const attrs = attributesOf(e.fqn);
   const homes = e.inheritance === 'JOINED' && e.parent ? joinedHomes(e, entities, entityRecords, resolveType) : null;
   const entityUnread = entityMappingsUnread(e, ctx);
   e.attributes = new Map();
-  for (const a of attrs) readAttribute(e, a, { strategy, derivedGrade, namingEvidence, homes, entityUnread, stats: ctx.stats, said });
-  placeKey(e, { ...ctx, entityRecords });
+  for (const a of attrs) readAttribute(e, a, { ...read, homes, entityUnread });
+  placeKey(e, { ...ctx, ...read, entityRecords });
 }
-joinedKeys(entities);
+// A key an @MapsId association maps is named by that association (`placeMapsId`),
+// once every entity's own key is placed.
+for (const e of entities.values()) placeMapsId(e, entities, { ...ctx, ...read });
+joinedKeys(entities, ctx.names);
 placeDiscriminators(entities, ctx);
 }
 
@@ -557,7 +610,7 @@ function placeKey(e, ctx) {
   const embeddedId = ids.length === 1 && ids[0].embedded === true ? ids[0] : null;
   const columns = embeddedId
     ? embeddedKeyColumns(embeddedId, ctx)
-    : ids.filter((a) => a.column).map((a) => ({ column: a.column, grade: a.grade }));
+    : ids.filter((a) => a.column).map((a) => ({ column: a.column, grade: a.grade, part: a.name }));
   if (embeddedId && columns.length > 0) embeddedId.columns = columns;
   if (columns.length > 0) {
     Object.assign(e, { pkColumns: columns, pkColumn: columns[0].column, assumedKey: null });
@@ -572,17 +625,105 @@ function placeKey(e, ctx) {
 
 /** The key columns an @EmbeddedId's embeddable maps, each as sure as its own name and the id attribute's reading. */
 function embeddedKeyColumns(a, ctx) {
-  const fqn = a.typeSimple ? ctx.resolveType(a.declaredBy, a.typeSimple) : null;
+  const embeddable = embeddableOf(a, ctx);
+  if (!embeddable) return [];
+  // A key that may have more columns than were read is a guess: every foreign key toward it is named after it.
+  const read = embeddableColumns(a, embeddable, ctx, 'so the key may have more columns than this pack names, and the ones it names are graded HEURISTIC');
+  const guessed = a.mappingGuessed === true || read.gaps.length > 0;
+  return read.columns.map((c) => (guessed ? { ...c, grade: 'HEURISTIC' } : c));
+}
+
+/** The @Embeddable an attribute embeds, by @Embedded / @EmbeddedId or by its type alone (JPA embeds either way); null for none the tree holds. */
+function embeddableOf(a, ctx) {
+  if (a.transient === true || a.relation || a.elementCollection === true || !a.typeSimple) return null;
+  const fqn = ctx.resolveType(a.declaredBy, a.typeSimple);
   const rec = fqn ? ctx.entityRecords.get(fqn) : null;
-  if (!rec || rec.embeddable !== true) return [];
-  const out = [];
-  for (const k of rec.attributes ?? []) {
-    if (k.transient === true || k.relation || k.embedded === true) continue;
-    const m = mapAttribute(k, ctx);
-    const guessed = a.mappingGuessed === true || unreadMappings(k).length > 0 || unknownMappings(k).length > 0;
-    if (m.column) out.push({ column: m.column, grade: guessed ? 'HEURISTIC' : m.grade });
+  return rec && rec.embeddable === true ? { fqn, rec } : null;
+}
+
+/** An embedded value's columns, on the row of the entity that embeds it. */
+function embeddedValue(a, embeddable, ctx) {
+  // A column it does not read is said; the ones it names are as sure as their names.
+  const { columns } = embeddableColumns(a, embeddable, ctx, 'so a statement that reads or writes the row touches columns this pack does not name');
+  return {
+    targetSimple: null, joinColumn: null, joinTable: null, evidence: ctx.namingEvidence,
+    column: columns[0]?.column ?? null, columns, grade: weakest(...columns.map((c) => c.grade)),
+  };
+}
+
+/**
+ * THE COLUMNS AN EMBEDDED VALUE MAPS: each attribute of its embeddable, and of
+ * an embeddable inside that one, by the name its own mapping gives it and no
+ * path prefix (JPA's default), unless an @AttributeOverride on the embedding
+ * attribute names its path (`geo.lat` for a nested one; the outer one wins).
+ * `part` is the top attribute a column is under, which @MapsId names. What
+ * cannot be read (an association inside it, a type the tree does not hold) is a
+ * gap: said once, never an invented column; `consequence` says what it costs
+ * (a key with a gap is a guess, a value's named columns are not).
+ * @returns {{columns:{column:string, grade:string, part:string}[], gaps:string[]}}
+ */
+function embeddableColumns(a, embeddable, ctx, consequence) {
+  const out = { columns: [], gaps: [] };
+  const overrides = new Map();
+  addOverrides(overrides, a.attributeOverrides, '');
+  walkEmbeddable(embeddable, '', overrides, ctx, out, new Set());
+  const key = `embeddable-not-read|${a.declaredBy}.${a.name}`;
+  if (out.gaps.length > 0 && !ctx.said?.has(key)) {
+    ctx.said?.add(key);
+    note(ctx.stats, 'embeddable-not-read', `${a.declaredBy}.${a.name} embeds ${embeddable.fqn}, and this lane cannot read ${out.gaps.join('; ')}, ${consequence}`);
   }
   return out;
+}
+
+/** The @AttributeOverride names an attribute writes, under the path it sits at; one already there (an outer one) wins. */
+function addOverrides(map, list, prefix) {
+  for (const o of list ?? []) if (o && o.name && o.column && !map.has(prefix + o.name)) map.set(prefix + o.name, o.column);
+}
+
+function walkEmbeddable(embeddable, prefix, overrides, ctx, out, seen) {
+  if (seen.has(embeddable.fqn)) { out.gaps.push(`${embeddable.fqn}, which embeds itself`); return; }
+  seen.add(embeddable.fqn);
+  for (const raw of embeddable.rec.attributes ?? []) {
+    const k = { ...raw, declaredBy: embeddable.fqn, declaredFile: embeddable.rec.file ?? null };
+    if (k.transient === true) continue;
+    const path = prefix + k.name;
+    if (k.relation || k.elementCollection === true) { out.gaps.push(`${embeddable.fqn}.${k.name} (an association or a collection inside an embeddable)`); continue; }
+    const nested = nestedEmbeddable(k, ctx);
+    if (nested === UNKNOWN_TYPE) { out.gaps.push(`${embeddable.fqn}.${k.name} (its type ${k.typeSimple ?? '?'} is not in the tree, so whether it is an embeddable is not known)`); continue; }
+    if (nested) {
+      addOverrides(overrides, k.attributeOverrides, `${path}.`);
+      walkEmbeddable(nested, `${path}.`, overrides, ctx, out, seen);
+      continue;
+    }
+    const over = overrides.get(path);
+    const m = over ? explicitName(over, ctx.names, k.declaredBy) : mapAttribute(k, ctx);
+    const guessed = unreadMappings(k).length > 0 || unknownMappings(k, ctx).length > 0;
+    out.columns.push({ column: over ? m.name : m.column, grade: guessed ? 'HEURISTIC' : m.grade, part: path.split('.')[0] });
+  }
+  seen.delete(embeddable.fqn);
+}
+
+/** A type an embeddable's attribute may have that is not an embeddable the tree holds. */
+const UNKNOWN_TYPE = Symbol('unknown-type');
+
+/**
+ * The types JPA maps as one basic column (JPA 2.8, and the java.time ones
+ * Hibernate maps), by simple name: a name a file brings in with a package it
+ * imports whole is not placed by the type index, and is still one of these.
+ */
+const BASIC_TYPES = new Set(['String', 'Integer', 'Long', 'Short', 'Byte', 'Boolean', 'Character', 'Double', 'Float',
+  'BigDecimal', 'BigInteger', 'Date', 'Calendar', 'Timestamp', 'Time', 'LocalDate', 'LocalDateTime', 'LocalTime', 'Instant',
+  'OffsetDateTime', 'OffsetTime', 'ZonedDateTime', 'Duration', 'Period', 'UUID', 'Year', 'YearMonth', 'MonthDay', 'ZoneId',
+  'ZoneOffset', 'Locale', 'Currency', 'TimeZone', 'URL', 'Class', 'Blob', 'Clob', 'NClob', 'Serializable']);
+
+/** What an attribute inside an embeddable is: an embeddable the tree holds, a basic value (null), or UNKNOWN_TYPE. */
+function nestedEmbeddable(k, ctx) {
+  const fqn = k.typeSimple ? ctx.resolveType(k.declaredBy, k.typeSimple) : null;
+  const rec = fqn ? ctx.entityRecords.get(fqn) : null;
+  if (rec && rec.embeddable === true) return { fqn, rec };
+  if (k.embedded === true) return UNKNOWN_TYPE;
+  if (!k.typeSimple || BASIC_TYPES.has(k.typeSimple)) return null;
+  return fqn && (fqn.startsWith('java.') || ctx.treeTypes?.has(fqn)) ? null : UNKNOWN_TYPE;
 }
 
 /**
@@ -628,15 +769,17 @@ function joinPairs(ta, left, tb, right) {
 
 /**
  * Mapping annotations this bridge does not read, and that name or place a
- * column otherwise than the simplest reading would: a composite key
- * (`@JoinColumns`), a formula, an override of an inherited or embedded column,
- * a secondary table. The grade rests on finding the right column, so an
- * attribute that carries one keeps its reading, graded HEURISTIC, and the pack
- * says so. `@MapsId` counts only without a `@JoinColumn`: with one, the column
- * is named outright.
+ * column otherwise than the simplest reading would: a formula, an override of
+ * an inherited column or of an embedded one it does not expand, a secondary
+ * table. The grade rests on finding the right column, so an attribute that
+ * carries one keeps its reading, graded HEURISTIC, and the pack says so.
+ * `@JoinColumns` and `@MapsId` on a to-one are read (`foreignKeyPairs`,
+ * `placeMapsId`).
  */
-const UNREAD_ATTRIBUTE_MAPPINGS = Object.freeze(['JoinColumns', 'JoinFormula', 'Formula', 'JoinColumnOrFormula', 'JoinColumnsOrFormulas',
+const UNREAD_ATTRIBUTE_MAPPINGS = Object.freeze(['JoinFormula', 'Formula', 'JoinColumnOrFormula', 'JoinColumnsOrFormulas',
   'AttributeOverride', 'AttributeOverrides', 'AssociationOverride', 'AssociationOverrides']);
+/** The overrides this lane reads on an attribute whose embeddable it expands, by attribute path. */
+const EMBEDDING_OVERRIDES = Object.freeze(['AttributeOverride', 'AttributeOverrides']);
 const UNREAD_ENTITY_MAPPINGS = Object.freeze(['SecondaryTable', 'SecondaryTables', 'AttributeOverride', 'AttributeOverrides', 'AssociationOverride', 'AssociationOverrides']);
 
 /**
@@ -652,7 +795,7 @@ const UNREAD_ENTITY_MAPPINGS = Object.freeze(['SecondaryTable', 'SecondaryTables
  */
 const KNOWN_ATTRIBUTE_ANNOTATIONS = new Set([
   // read here
-  'Column', 'Id', 'EmbeddedId', 'Embedded', 'Transient', 'JoinColumn', 'JoinTable', 'ManyToOne', 'OneToMany',
+  'Column', 'Id', 'EmbeddedId', 'Embedded', 'Transient', 'JoinColumn', 'JoinColumns', 'JoinTable', 'ManyToOne', 'OneToMany',
   'OneToOne', 'ManyToMany', 'ElementCollection', 'MapsId', 'MapKey', 'OrderBy',
   // the value of the column, not its name or its place
   'Basic', 'Lob', 'Version', 'Enumerated', 'Temporal', 'Convert', 'Access', 'GeneratedValue', 'SequenceGenerator',
@@ -696,29 +839,43 @@ const REACH_ENTITY_MAPPINGS = Object.freeze(['Where', 'SQLRestriction', 'Filter'
   'SqlResultSetMapping', 'SqlResultSetMappings', 'Subselect', 'Synchronize', 'Audited', 'DiscriminatorFormula', 'SoftDelete',
   'Persister', 'Polymorphism']);
 
-/** The annotations on one attribute that this bridge does not read (javafacts/21 records them all). */
-function unreadMappings(a) {
+/**
+ * The annotations on one attribute that this bridge does not read (javafacts/21
+ * records them all). An override is read on an attribute whose embeddable is
+ * expanded (`embeddableColumns`), and @JoinColumns on a to-one, not elsewhere.
+ */
+function unreadMappings(a, embedding = false) {
   const names = Array.isArray(a.annotations) ? a.annotations : [];
-  const out = names.filter((n) => UNREAD_ATTRIBUTE_MAPPINGS.includes(n));
-  if (names.includes('MapsId') && !a.joinColumn) out.push('MapsId');
-  return out;
+  const toMany = a.relation === 'oneToMany' || a.relation === 'manyToMany';
+  // Read only where the worker could read them: a @JoinColumns whose columns it
+  // listed, on a to-one; an @MapsId whose value it recorded, or one with the
+  // column named outright.
+  const joinsUnread = names.includes('JoinColumns') && (toMany || !(a.joinColumns?.length > 0));
+  const mapsIdUnread = names.includes('MapsId') && typeof a.mapsId !== 'string' && !a.joinColumn;
+  return [...names.filter((n) => UNREAD_ATTRIBUTE_MAPPINGS.includes(n) && !(embedding && EMBEDDING_OVERRIDES.includes(n))),
+    ...(joinsUnread ? ['JoinColumns'] : []), ...(mapsIdUnread ? ['MapsId'] : [])];
 }
 
-/** The annotations on one attribute that no list above names: unknown, so not known to leave the column alone. */
-function unknownMappings(a) {
+/**
+ * The annotations on one attribute that no list above names: unknown, so not
+ * known to leave the column alone. An annotation the tree declares that cannot
+ * change a mapping (`ctx.inert`, rule kind jpa.inert-annotation) is not unknown.
+ */
+function unknownMappings(a, ctx) {
   const names = Array.isArray(a.annotations) ? a.annotations : [];
-  return names.filter((n) => !KNOWN_ATTRIBUTE_ANNOTATIONS.has(n) && !UNREAD_ATTRIBUTE_MAPPINGS.includes(n)
-    && !UNDRAWN_COLUMN_MAPPINGS.includes(n) && !REACH_ATTRIBUTE_MAPPINGS.includes(n));
+  return names.filter((n, i) => !KNOWN_ATTRIBUTE_ANNOTATIONS.has(n) && !UNREAD_ATTRIBUTE_MAPPINGS.includes(n)
+    && !UNDRAWN_COLUMN_MAPPINGS.includes(n) && !REACH_ATTRIBUTE_MAPPINGS.includes(n) && !ctx?.inert?.(a, i));
 }
 
 /** One attribute of one entity: its column, the table that holds it, and what this lane did not read about it. */
 function readAttribute(e, a, ctx) {
   const { homes, entityUnread, stats } = ctx;
-  const unread = unreadMappings(a);
-  const unknown = unknownMappings(a);
-  const read = mapAttribute(a, ctx);
+  const embeddable = embeddableOf(a, ctx);
+  const unread = unreadMappings(a, embeddable !== null);
+  const unknown = unknownMappings(a, ctx);
+  const read = embeddable && a.id !== true ? embeddedValue(a, embeddable, ctx) : mapAttribute(a, ctx);
   const guessed = unread.length > 0 || unknown.length > 0 || entityUnread.length > 0;
-  const mapped = guessed ? { ...read, grade: 'HEURISTIC', mappingGuessed: true } : read;
+  const mapped = guessed ? { ...read, grade: 'HEURISTIC', mappingGuessed: true, ...(read.columns ? { columns: read.columns.map((c) => ({ ...c, grade: 'HEURISTIC' })) } : {}) } : read;
   const home = homes ? homes.get(a.declaredBy) : null;
   e.attributes.set(a.name, { ...a, ...mapped, ...(home && home !== e ? { home } : {}) });
   if (a.elementCollection === true) {
@@ -727,7 +884,8 @@ function readAttribute(e, a, ctx) {
   if (unread.length > 0) {
     note(stats, 'jpa-mapping-unread', `${e.fqn}.${a.name} is mapped with @${unread.join(', @')}, which this lane does not read, so the column it names is a guess`);
   }
-  sayAttribute(stats, a, unknown, ctx.said);
+  // An embedded value whose embeddable was expanded is drawn; only one the tree does not hold is said.
+  sayAttribute(stats, embeddable ? { ...a, embedded: false } : a, unknown, ctx.said);
 }
 
 /**
@@ -851,7 +1009,7 @@ for (const e of entities.values()) {
       note(stats, 'association-target-unknown', `${e.fqn}.${a.name}: ${a.targetSimple ?? '?'} is not an @Entity this pack saw`);
       continue;
     }
-    linkAssociation(g, homeOf(e, a), a, target, { strategy, derivedGrade, stats, ...writers });
+    linkAssociation(g, homeOf(e, a), a, target, { strategy, derivedGrade, stats, names: ctx.names, ...writers });
   }
 }
 
@@ -884,11 +1042,12 @@ function linkAssociation(g, e, a, target, ctx) {
     linkJoinTable(g, e, a, target, ctx);
   } else if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
     if (a.mappedBy) return; // the OTHER side owns the column
-    const { cols, colGrade } = ownedForeignKey(a, target, { strategy, pairGrade });
+    const { cols, colGrade, refs, joinGrade } = ownedForeignKey(a, target, { strategy, pairGrade, e, ctx });
     for (const c of cols) ensureColumn(e.table, c.column, c.grade);
-    // The join names the target's key: an assumed one makes the join a guess too.
-    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), joinPairs(e.table, cols, target.table, target.pkColumns),
-      weakest(colGrade, keyAssumedGrade(target)), stats);
+    // The join names the target's key, or the columns its join columns reference:
+    // an assumed key, or a pairing by position, makes the join a guess too.
+    addJoin(g, joinSeen, tableIdOf(e.table), tableIdOf(target.table), joinPairs(e.table, cols, target.table, refs ?? target.pkColumns),
+      refs ? weakest(colGrade, joinGrade) : weakest(colGrade, keyAssumedGrade(target)), stats);
   } else if (a.relation === 'oneToMany') {
     // A unidirectional @OneToMany with a @JoinColumn puts the foreign key on
     // the TARGET table (that is what `pets.owner_id` is); with `mappedBy` the
@@ -907,7 +1066,7 @@ function linkAssociation(g, e, a, target, ctx) {
 /** The join table one owning association crosses, its columns, and the two JOINS edges to it. */
 function linkJoinTable(g, e, a, target, ctx) {
   const { strategy, derivedGrade, stats, tableIdOf, ensureTable, ensureColumn, joinSeen } = ctx;
-  const jt = joinTableOf(e, a, target, { strategy, derivedGrade });
+  const jt = joinTableOf(e, a, target, { strategy, derivedGrade, names: ctx.names });
   // Kept on the attribute so a statement that FOLLOWS this association later
   // reaches the same three names, graded the same way, instead of a second
   // reading of the mapping that could differ from this one.
@@ -929,7 +1088,14 @@ function linkJoinTable(g, e, a, target, ctx) {
  * recorded back on the attribute, so the columns are part of the row every
  * statement reads and writes.
  */
-function ownedForeignKey(a, target, { strategy, pairGrade }) {
+function ownedForeignKey(a, target, { strategy, pairGrade, e, ctx }) {
+  if (a.mapsIdPairs) return pairedForeignKey(a, e, target, a.mapsIdPairs, a.mapsIdPairs.cols);
+  const written = a.joinColumns ?? [];
+  // One @JoinColumn that names no referenced column is read as it always was;
+  // @JoinColumns, or a referencedColumnName, is paired column by column.
+  const pairs = written.length > 1 || (written.length === 1 && !a.column && written[0]?.name) || written.some((c) => c && c.referencedColumnName)
+    ? foreignKeyPairs(a, e, target, ctx) : null;
+  if (pairs) return pairedForeignKey(a, e, target, pairs, pairs.names);
   if (a.column) return { cols: [{ column: a.column, grade: pairGrade }], colGrade: pairGrade };
   const own = a.grade;
   const cols = [];
@@ -948,6 +1114,128 @@ function ownedForeignKey(a, target, { strategy, pairGrade }) {
 }
 
 /**
+ * A foreign key whose columns were paired one by one (`foreignKeyPairs`, or an
+ * @MapsId's): each column as sure as its name and the two tables, recorded back
+ * on the attribute, and the columns of the other side each one references.
+ */
+function pairedForeignKey(a, e, target, pairs, named) {
+  const guessed = a.mappingGuessed === true ? 'HEURISTIC' : 'EXACT';
+  const base = weakest(e.tableGrade, target.tableGrade, guessed);
+  const cols = named.map((n) => ({ column: n.column, grade: weakest(base, n.grade) }));
+  const attrCols = named.map((n) => ({ column: n.column, grade: weakest(guessed, n.grade) }));
+  a.column = attrCols[0].column;
+  a.grade = weakest(...attrCols.map((c) => c.grade));
+  if (attrCols.length > 1) a.columns = attrCols;
+  // The join rests on the pairing, and on the key when that is what is referenced.
+  const joinGrade = weakest(pairs.pairing, ...pairs.refs.map((r) => (r.assumed ? 'HEURISTIC' : (r.byName ? r.grade : 'EXACT'))));
+  return { cols, colGrade: weakest(...cols.map((c) => c.grade)), refs: pairs.refs, joinGrade };
+}
+
+/**
+ * THE COLUMNS A TO-ONE WRITES, each paired with the column it references: every
+ * @JoinColumn, alone or in @JoinColumns, named through the physical strategy
+ * (`explicitName`). A referencedColumnName is the name of a column of the
+ * target (its logical name, spelled by the same strategy); with none written,
+ * one column references a one-column key, which is JPA's default, and more are
+ * paired with the key by position, which is a guess and said. A join column
+ * that writes no name of its own is `<attribute>_<referenced column>`.
+ * @returns {{names:{column:string, grade:string}[], refs:object[], pairing:string}|null}
+ */
+function foreignKeyPairs(a, e, target, ctx) {
+  const written = (a.joinColumns ?? []).filter((c) => c && typeof c === 'object');
+  if (written.length === 0) return null;
+  const who = a.declaredBy ?? e.fqn;
+  const { refs, pairing } = referencedColumns(a, written, target, ctx, who);
+  const names = written.map((c, i) => {
+    const n = c.name ? explicitName(c.name, ctx.names, who) : derivedName(`${a.name}_${refs[i]?.column ?? '?'}`, ctx.strategy, ctx.derivedGrade);
+    return { column: n.name, grade: n.grade };
+  });
+  return { names, refs, pairing };
+}
+
+/** The columns of `target` a to-one's join columns reference, in their order, and how sure that pairing is. */
+function referencedColumns(a, written, target, ctx, who) {
+  const key = target.pkColumns ?? [];
+  if (written.every((c) => c.referencedColumnName)) {
+    const fold = (s) => foldIdentifier(s, ctx.names.identifierCase);
+    const known = [...key, ...columnsOf(target)];
+    let pairing = 'EXACT';
+    const refs = written.map((c) => {
+      const n = explicitName(c.referencedColumnName, ctx.names, who);
+      const hit = known.find((k) => fold(k.column) === fold(n.name));
+      if (hit) return { column: hit.column, grade: weakest(hit.grade, n.grade), byName: true, ...(hit.assumed ? { assumed: true } : {}) };
+      pairing = 'HEURISTIC';
+      note(ctx.stats, 'referenced-column-unknown', `${who}.${a.name} references ${target.fqn}'s column ${c.referencedColumnName}, which no mapping of it this lane read names, so the join is a guess`);
+      return { column: n.name, grade: 'HEURISTIC', byName: true };
+    });
+    return { refs, pairing };
+  }
+  if (written.length === 1 && key.length === 1) return { refs: [key[0]], pairing: 'EXACT' };
+  note(ctx.stats, 'join-columns-paired-by-position', `${who}.${a.name} writes ${written.length} join column(s) with no referencedColumnName toward the ${key.length}-column key of ${target.fqn}, so each is paired with a key column by position, which is a guess`);
+  return { refs: written.map((_, i) => key[i] ?? { column: '?', grade: 'HEURISTIC', assumed: true }), pairing: 'HEURISTIC' };
+}
+
+/**
+ * @MAPSID: an association that maps the primary key, or the part of it the
+ * value names. Hibernate names those key columns after the association's join
+ * columns (ColumnsBuilder.overrideColumnFromMapperOrMapsIdProperty, and
+ * CopyIdentifierComponentSecondPass for a composite part): the written ones
+ * through the physical strategy, else `<association>_<referenced key column>`.
+ * The key and the association then share one set of columns, and the
+ * association adds none. Where the id attribute alone would name them
+ * otherwise, a written join column still names them, and that is said; a
+ * default one is a guess, graded HEURISTIC and said.
+ */
+function placeMapsId(e, entities, ctx) {
+  for (const a of e.attributes.values()) {
+    if (typeof a.mapsId !== 'string' || a.mappedBy || !(a.relation === 'manyToOne' || a.relation === 'oneToOne')) continue;
+    const target = a.targetSimple ? entities.get(ctx.resolveType(e.fqn, a.targetSimple) ?? '') : null;
+    const part = e.assumedKey ? [] : e.pkColumns.filter((c) => a.mapsId === '' || c.part === a.mapsId);
+    if (!target || part.length === 0) {
+      note(ctx.stats, 'maps-id-unread', `${e.fqn}.${a.name} is @MapsId(${JSON.stringify(a.mapsId)}), and ${target ? `no key attribute of ${e.fqn} it names was read` : `${a.targetSimple ?? '?'} is not an @Entity this pack saw`}, so the columns it maps are a guess`);
+      Object.assign(a, { grade: 'HEURISTIC', mappingGuessed: true });
+      continue;
+    }
+    const pairs = mapsIdPairs(a, e, target, part, ctx);
+    replaceKeyPart(e, a, part, pairs.cols);
+    Object.assign(a, { column: pairs.cols[0].column, grade: weakest(...pairs.cols.map((c) => c.grade)), mapsIdPairs: pairs });
+    if (pairs.cols.length > 1) a.columns = pairs.cols;
+  }
+}
+
+/** The key columns an @MapsId association names, the target columns they reference, and how sure each is. */
+function mapsIdPairs(a, e, target, part, ctx) {
+  const written = foreignKeyPairs(a, e, target, ctx);
+  const named = written ? written.names : target.pkColumns.map((k) => {
+    const d = derivedName(`${a.name}_${k.column}`, ctx.strategy, ctx.derivedGrade);
+    return { column: d.name, grade: weakest(d.grade, k.grade) };
+  });
+  const fold = (s) => foldIdentifier(s, ctx.names.identifierCase);
+  const spell = (list) => list.map((c) => fold(c.column)).sort().join(',');
+  const agree = spell(named) === spell(part);
+  if (!agree) {
+    const how = written ? 'its join columns name them, as Hibernate and JPA 2.4.1 do' : 'Hibernate names them after the association, which is a guess here';
+    note(ctx.stats, 'maps-id-names-key', `${e.fqn}.${a.name} is @MapsId${a.mapsId ? `("${a.mapsId}")` : ''}: the key columns it maps are ${named.map((c) => c.column).join(', ')}, where the id attribute alone would name ${part.map((c) => c.column).join(', ')}; ${how}`);
+  }
+  const guessed = a.mappingGuessed === true || (!agree && !written) ? 'HEURISTIC' : 'EXACT';
+  const cols = named.map((n, i) => ({ column: n.column, grade: weakest(guessed, n.grade), part: (part[i] ?? part[0]).part }));
+  return { cols, refs: written ? written.refs : target.pkColumns, pairing: written ? written.pairing : 'EXACT' };
+}
+
+/** The key with the part an @MapsId maps named by it, on the entity and on its id attribute(s). */
+function replaceKeyPart(e, a, part, cols) {
+  const at = e.pkColumns.indexOf(part[0]);
+  const rest = e.pkColumns.filter((c) => !part.includes(c));
+  const next = [...rest.slice(0, at), ...cols, ...rest.slice(at)];
+  Object.assign(e, { pkColumns: next, pkColumn: next[0].column });
+  for (const id of e.attributes.values()) {
+    if (id.id !== true) continue;
+    if (id.embedded === true) id.columns = next;
+    else if (a.mapsId === '' || id.name === a.mapsId) Object.assign(id, { column: cols[0].column, grade: cols[0].grade });
+  }
+}
+
+/**
  * The physical JOIN TABLE an association crosses, and how sure each of its three
  * names is. The table name, the owning column and the inverse column are three
  * separate declarations, and any one of them may be left to the naming strategy,
@@ -961,16 +1249,18 @@ function ownedForeignKey(a, target, { strategy, pairGrade }) {
  * owning entity's name when nothing maps the association back, then `_` and its
  * key; the other side's is the attribute's name, `_`, the target's key.
  */
-function joinTableOf(e, a, target, { strategy, derivedGrade }) {
+function joinTableOf(e, a, target, { strategy, derivedGrade, names }) {
   const jt = a.joinTable;
   const named = !!(jt && jt.name);
   const derivedTable = derivedName(`${e.table}_${a.name}`, strategy, derivedGrade);
-  const table = named ? jt.name : derivedTable.name;
-  const nameGrade = named ? 'EXACT' : weakest(e.tableGrade, derivedTable.grade);
+  // Written names go through the physical strategy too (`explicitName`).
+  const written = named ? explicitName(jt.name, names, a.declaredBy ?? e.fqn) : null;
+  const table = written ? written.name : derivedTable.name;
+  const nameGrade = written ? written.grade : weakest(e.tableGrade, derivedTable.grade);
   const inverse = [...(target.attributes?.values() ?? [])].find((t) => t.mappedBy === a.name);
   // One column per key column on each side, each named after its key column and as sure as it.
   const side = (declaredName, logical, k) => {
-    if (declaredName) return { name: declaredName, grade: 'EXACT' };
+    if (declaredName) return explicitName(declaredName, names, a.declaredBy ?? e.fqn);
     const d = derivedName(logical, strategy, derivedGrade);
     return { name: d.name, grade: weakest(d.grade, k.grade) };
   };
@@ -1057,14 +1347,16 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     throw new JpaBridgeError(`unknown jpa.namingStrategy ${JSON.stringify(opts.namingStrategy)}. Expected one of ${NAMING_STRATEGIES.join(', ')}`);
   }
   // A name the ENGINE derived is HEURISTIC unless the project declared the rule
-  // it was derived by. A name the SOURCE wrote down is EXACT either way.
+  // it was derived by. A name the SOURCE wrote down goes through the rule too,
+  // and is EXACT where every rule spells it alike (`explicitName`).
   const derivedGrade = declared ? 'EXACT' : 'HEURISTIC';
   const namingEvidence = declared ? 'declared' : 'assumed-spring-default';
   const schema = opts.schema ?? null;
 
-  const { resolveType } = buildTypeIndex(javaFacts);
+  const { resolveType, types: treeTypes } = buildTypeIndex(javaFacts);
   const entityRecords = new Map();   // fqn -> record
   const classAnnotations = new Map(); // fqn -> the annotations its class carries
+  const typeRecords = new Map();      // "fqn file" and fqn -> the type record, for reading a name in its file
   const repositories = [];
   const calls = [];
   for (const r of javaFacts) {
@@ -1072,7 +1364,11 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     if (r.kind === 'entity') entityRecords.set(r.fqn, r);
     else if (r.kind === 'repository') repositories.push(r);
     else if (r.kind === 'call') calls.push(r);
-    else if (r.kind === 'type' && Array.isArray(r.annotations)) classAnnotations.set(r.fqn, r.annotations);
+    else if (r.kind === 'type') {
+      if (Array.isArray(r.annotations)) classAnnotations.set(r.fqn, r.annotations);
+      typeRecords.set(`${r.fqn} ${r.file}`, r);
+      if (!typeRecords.has(r.fqn)) typeRecords.set(r.fqn, r);
+    }
   }
 
   const stats = {
@@ -1085,26 +1381,59 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
     // they are LAZY. Each one is a read that happens when something asks for it
     // later, which is a moment this lane cannot see (see `applyFetchPlan`).
     lazyAssociationsNotFollowed: 0,
+    // The annotation types the tree declares that cannot change a mapping
+    // (rule kind jpa.inert-annotation), as they were met on an attribute.
+    inertAnnotations: [],
   };
   if (entityRecords.size === 0 && repositories.length === 0) return stats;
 
-  const naming = { strategy, derivedGrade, namingEvidence, stats };
+  // How a written name is read: the strategy, whether it is declared, and the
+  // identifier rule two spellings are compared under (see `explicitName`).
+  const names = { strategy, declared, identifierCase: opts.identifierCase ?? 'exact', assumed: new Map() };
+  const naming = { strategy, derivedGrade, namingEvidence, stats, names };
+  const inert = inertReader(javaFacts, typeRecords, opts.inertRules ?? builtinRegistry().ofKind('jpa.inert-annotation'), stats);
   const entities = entityTables(entityRecords, { ...naming, resolveType });
-  attributesThroughSuperclasses(entities, entityRecords, { resolveType, classAnnotations, ...naming });
+  attributesThroughSuperclasses(entities, entityRecords, { resolveType, classAnnotations, treeTypes, inert, ...naming });
   const nodes = tableColumnAndJoinNodes(g, entities, {
-    opts, schema, resolveType, strategy, derivedGrade, stats,
+    opts, schema, resolveType, strategy, derivedGrade, stats, names,
   });
   // What a STATEMENT needs to follow a fetch plan: the entity model, the naming
   // rules the join tables are derived by, the two node writers, and the named
   // fetch plans the entities declare.
   const stmtCtx = {
-    ...nodes, resolveType, stats, strategy, derivedGrade,
+    ...nodes, resolveType, stats, strategy, derivedGrade, names,
     namedGraphs: namedEntityGraphs(entityRecords),
   };
   const repoByFqn = repositoryStatements(g, entities, repositories, stmtCtx);
   builtinStatements(g, entities, repoByFqn, calls, stmtCtx);
+  sayAssumedNames(names, stats);
+  stats.inertAnnotations = [...new Set(stats.inertAnnotations)].sort(cmp);
 
   return stats;
+}
+
+/**
+ * Which annotation on an attribute is one the tree declares and that cannot
+ * change a mapping, by the `jpa.inert-annotation` rules: `(a, i)` is the inert
+ * type the i-th annotation of attribute `a` means, or null. The attribute's
+ * declaring class is where its names are read (javafacts/23 records how each
+ * annotation is written).
+ */
+function inertReader(javaFacts, typeRecords, rules, stats) {
+  const readers = rules.map((r) => r.compiled(javaFacts));
+  // A class handed to Hibernate at boot may read any annotation: said once, since it is why none is inert.
+  for (const read of readers.filter((x) => x.implementers.length > 0 && x.candidates.length > 0)) {
+    note(stats, 'inert-annotations-blocked', `${read.implementers.join(', ')} implement(s) a Hibernate boot extension point (rule ${read.rule}), which may read any annotation, so the annotations the tree declares (${read.candidates.join(', ')}) are not known to leave a column alone`);
+  }
+  return (a, i) => {
+    const t = typeRecords.get(`${a.declaredBy} ${a.declaredFile}`) ?? typeRecords.get(a.declaredBy);
+    const written = (a.annotationsWritten ?? [])[i] ?? null;
+    for (const read of readers) {
+      const fqn = read.inertOf(t, a.annotations[i], written);
+      if (fqn) { stats.inertAnnotations.push(fqn); return fqn; }
+    }
+    return null;
+  };
 }
 
 /**
@@ -1133,7 +1462,7 @@ function namedEntityGraphs(entityRecords) {
  * `column: null` means "this attribute owns no column on this table" — a
  * @Transient field, a collection, or the inverse side of an association.
  */
-function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
+function mapAttribute(a, { strategy, derivedGrade, namingEvidence, names }) {
   // `targetEntity = Pet.class` is the mapping saying the other side outright, so
   // it wins over the field's own type — which for a raw `List pets` says nothing.
   // A to-many's other side is its ELEMENT type, the last type argument: a
@@ -1144,13 +1473,15 @@ function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
   const targetSimple = a.targetEntity ?? elementType ?? a.typeSimple ?? null;
   const explicitColumn = typeof a.column === 'string' && a.column.length > 0;
   const explicitJoin = typeof a.joinColumn === 'string' && a.joinColumn.length > 0;
-  // A @JoinTable(name=…, joinColumns=@JoinColumn(name=…)) declares the physical
-  // names just as explicitly as a @JoinColumn does — the strategy is not
-  // consulted, so the mapping is EXACT whether or not the profile declares one.
+  // A @JoinTable(name=…, joinColumns=@JoinColumn(name=…)) writes its names as
+  // a @JoinColumn does; each goes through the strategy (`joinTableOf`).
   const explicitJoinTable = !!(a.joinTable && a.joinTable.name);
+  // Written names, as the physical strategy spells them (`explicitName`).
+  const join = explicitJoin ? explicitName(a.joinColumn, names, a.declaredBy) : null;
+  const col = explicitColumn ? explicitName(a.column, names, a.declaredBy) : null;
   const base = {
     targetSimple,
-    joinColumn: explicitJoin ? a.joinColumn : null,
+    joinColumn: join ? join.name : null,
     joinTable: a.joinTable ?? null,
     evidence: explicitColumn || explicitJoin || explicitJoinTable ? 'declared' : namingEvidence,
   };
@@ -1161,18 +1492,14 @@ function mapAttribute(a, { strategy, derivedGrade, namingEvidence }) {
     // The inverse side names no column and no join table of its own: the side
     // it is mapped by owns them, and grades them there. Nothing is derived here.
     if (a.mappedBy) return { ...base, column: null, grade: 'EXACT', reason: 'mappedBy: the other side owns the column' };
-    return { ...base, column: null, grade: explicitJoin || explicitJoinTable ? 'EXACT' : derivedGrade };
+    return { ...base, column: null, grade: join ? join.grade : (explicitJoinTable ? 'EXACT' : derivedGrade) };
   }
   if (a.relation === 'manyToOne' || a.relation === 'oneToOne') {
     if (a.mappedBy) return { ...base, column: null, grade: 'EXACT', reason: 'mappedBy: the other side owns the column' };
-    return { ...base, column: explicitJoin ? a.joinColumn : null, grade: explicitJoin ? 'EXACT' : derivedGrade };
+    return { ...base, column: join ? join.name : null, grade: join ? join.grade : derivedGrade };
   }
-  const derived = derivedName(a.name, strategy, derivedGrade);
-  return {
-    ...base,
-    column: explicitColumn ? a.column : derived.name,
-    grade: explicitColumn ? 'EXACT' : derived.grade,
-  };
+  const named = col ?? derivedName(a.name, strategy, derivedGrade);
+  return { ...base, column: named.name, grade: named.grade };
 }
 
 // ---------------------------------------------------------------------------

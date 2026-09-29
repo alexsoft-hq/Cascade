@@ -806,7 +806,10 @@ export function declareAxes(ran, opts = {}) {
           status: 'degraded',
           reason: `we mapped ${jpa.entities} entity(ies) and ${jpa.repositories ?? 0} repository(ies), but the profile declares no jpa.namingStrategy. `
             + 'Where the mapping did not spell a table or column out with @Table/@Column, we DERIVED the name with Spring Boot\'s default '
-            + '(CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. Declare the strategy and those mappings become EXACT',
+            + '(CamelCase to snake_case) and graded it HEURISTIC, which means a rule guessed it. '
+            // A written name goes through the strategy too (RM67-J5); said only where one did.
+            + ((jpa.writtenNamesAssumed ?? 0) > 0 ? `So are ${jpa.writtenNamesAssumed} name(s) the mapping writes that the strategies spell differently, such as createdBy, which Spring Boot's default makes created_by. ` : '')
+            + 'Declare the strategy and those mappings become EXACT',
         },
     // MyBatis-Plus: the CRUD nobody wrote. SHIPPED when the bridge ran and found
     // entities; DEGRADED when it ran without a declared naming strategy, because
