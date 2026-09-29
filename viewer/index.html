@@ -693,8 +693,12 @@
      with its own shown/total. Those are the counts that were already on this
      page, and they stay outside every fold — only the SENTENCES fold. */
   .railchips { display:flex; flex-wrap:wrap; gap:5px; align-items:center; margin-bottom:2px; }
-  .railchip { font:400 11px/1.5 var(--mono); padding:1px 6px; border:1px solid var(--frame);
+  /* A chip is the page's words (a cut list, the freshness, the limits) in the
+     text face; only the engine's own word, the trust level, keeps the mono one.
+     Hangul set in the mono face read spaced out (RM67-U2h). */
+  .railchip { font:400 11px/1.5 var(--sans); padding:1px 6px; border:1px solid var(--frame);
     border-radius:2px; color:var(--t1); background:none; max-width:100%; }
+  .railchip.raileng { font-family:var(--mono); }
   .railchip { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   button.railchip { display:inline-flex; width:auto; gap:5px; cursor:pointer;
     border:1px solid var(--frame); padding:1px 6px; }

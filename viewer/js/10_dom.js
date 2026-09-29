@@ -208,14 +208,14 @@ function leadOf(text){
 function honesty(resp, scope) {
   const k = 'rail.'+(scope||'x');
   const b = resp.basis||{}, tt = resp.trust||{}, tr = resp.truncated||{};
-  const chip=(text,title)=> el('span',{className:'railchip', title:title||'', textContent:text});
+  const chip=(text,title,cls)=> el('span',{className:'railchip'+(cls?' '+cls:''), title:title||'', textContent:text});
   // GLANCE. The trust level and the freshness verdict are the engine's own
   // words: the level is printed as it arrived, after the page's gloss of it,
   // and the verdict rides in the title under the page's words for it (RM67-U2e).
   const verdict=(b.freshness&&b.freshness.verdict)||'unknown';
   const chips=el('div',{className:'railchips'},[
     el('span',{className:'raillbl', textContent:railTrustSay(tt)}),
-    chip(tt.trustLevel||t('rail.trust.unknown'), trustWhy(tt)),
+    chip(tt.trustLevel||t('rail.trust.unknown'), trustWhy(tt), 'raileng'),
     chip(railFreshSay(verdict), t('mast.freshness')+' '+verdict+'  basis.freshness.verdict'),
   ]);
   const bodies=[];
