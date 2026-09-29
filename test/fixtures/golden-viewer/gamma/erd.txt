@@ -39,8 +39,8 @@
         <b>not collected</b>
       </button>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
-        api groups
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
+        api groups by path
         <b>2</b>
       </span>
       <span class="crrule"></span>
@@ -148,11 +148,21 @@
           <b>3</b>
           joined to nothing
         </span>
-        <span title="the part of a table name before the first underscore. It is a naming habit, not a boundary we found in the code.">name prefixes:</span>
+        <span title="tables whose names start with the same words, read the way the map on Start reads them. It is a naming habit, not a boundary we found in the code.">table families:</span>
         <span>
           <span class="erdswatch" style="background: #73c1b8"></span>
-          gamma
-          <span class="count">3</span>
+          audit
+          <span class="count">1</span>
+        </span>
+        <span>
+          <span class="erdswatch" style="background: #6bc1de"></span>
+          item
+          <span class="count">1</span>
+        </span>
+        <span>
+          <span class="erdswatch" style="background: #b4b4e5"></span>
+          order
+          <span class="count">1</span>
         </span>
       </div>
       <div class="erdgrid">

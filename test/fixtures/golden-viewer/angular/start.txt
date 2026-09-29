@@ -36,8 +36,8 @@
         <b>6</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
-        api groups
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
+        api groups by path
         <b>6</b>
       </span>
       <span class="crrule"></span>
@@ -201,33 +201,69 @@
                 <span>API calls to other services</span>
                 <span class="ovnum">6</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                Run
+                <code>cascade init --root <the project that serves them></code>
+                .
+              </div>
             </li>
             <li>
               <button class="sgap warn" onclick type="button">
                 <span>SQL: not collected</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                Analyze again with
+                <code>--mappers <dir></code>
+                .
+              </div>
             </li>
             <li>
               <button class="sgap warn" onclick type="button">
                 <span>calls we could not follow</span>
                 <span class="ovnum">0</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                No fix the engine knows of. It can only say what it could not read.
+              </div>
             </li>
             <li>
               <button class="sgap warn" onclick type="button">
                 <span>screens with no component found</span>
                 <span class="ovnum">1</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                No fix the engine knows of. It can only say what it could not read.
+              </div>
             </li>
             <li>
               <button class="sgap warn" onclick type="button">
                 <span>columns: only partly read</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                Declare
+                <code>jpa.namingStrategy</code>
+                in the profile, for example
+                <code>"spring-snake-case"</code>
+                .
+              </div>
             </li>
             <li>
               <button class="sgap warn" onclick type="button">
                 <span>JPA mappings: only partly read</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                Declare
+                <code>jpa.namingStrategy</code>
+                in the profile, for example
+                <code>"spring-snake-case"</code>
+                .
+              </div>
             </li>
           </ul>
           <button class="mini" onclick style="margin-top: 8px" type="button">All 8 on Analysis status</button>
@@ -255,7 +291,15 @@
             <b>4 / 5</b>
             1 nothing calls
           </div>
-          <button class="kpilimit" onclick title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty" type="button">not collected in this analysis</button>
+          <div class="kpilimitwrap">
+            <button class="kpilimit" onclick title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty" type="button">not collected in this analysis</button>
+            <div class="remedy">
+              <span class="remlbl">What to do:</span>
+              Analyze again with
+              <code>--mappers <dir></code>
+              .
+            </div>
+          </div>
         </div>
         <div class="kpi" aria-label="tables reached: 100%, 2 / 2" style="color: #34D399">
           <div class="kpilbl">tables reached</div>
@@ -278,7 +322,17 @@
             <b>4 / 6</b>
             2 nothing reaches
           </div>
-          <button class="kpilimit" onclick title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT" type="button">a lower bound: a column counts only where the SQL names it</button>
+          <div class="kpilimitwrap">
+            <button class="kpilimit" onclick title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT" type="button">a lower bound: a column counts only where the SQL names it</button>
+            <div class="remedy">
+              <span class="remlbl">What to do:</span>
+              Declare
+              <code>jpa.namingStrategy</code>
+              in the profile, for example
+              <code>"spring-snake-case"</code>
+              .
+            </div>
+          </div>
         </div>
         <div class="kpi" aria-label="screens that reach a table: 33%, 2 / 6" style="color: #F9A8D4">
           <div class="kpilbl">screens that reach a table</div>

@@ -1,4 +1,4 @@
-// 50_summary.js — the map on Start: groups of routes by where their code sits, and the table families they reach.
+// 50_summary.js — the map on Start: routes in boxes named by the rule that made them, and the table families they reach.
 //
 // ONE of the page's scripts, and they share ONE global scope: the numbers in the
 // file names are the order the browser runs them in (see the tags at the foot of
@@ -28,6 +28,20 @@ const SUM_ROWS = 20;      // rows an open box lists before "show all"
 const SUM_MEMBERS = 8;    // members a path lists beside the picture before its fold
 const SUM_MODE_KEY = { strict:'mode.strict', conservative:'mode.conservative', heuristic:'mode.heuristic' };
 const SUM_MODE_GRADE = { strict:'EXACT', conservative:'SOUND_SET', heuristic:'HEURISTIC' };
+// WHAT A BOX ON THE LEFT IS CALLED (RM67-U2d), by the rule the answer names.
+// The header counts API groups by path; a box grouped by where the handler
+// code sits is a code area, one the profile declares a module, and a box cut
+// from the path below a shared prefix a path area. None is a bare "group", so
+// two numbers on one page never share one word. A path rule with no shared
+// prefix to go below is the header's own API groups.
+const SUM_NOUN = { 'code-path':['summary.noun.area','summary.nouns.area'], declared:['summary.noun.module','summary.nouns.module'],
+  lane:['summary.noun.api','summary.nouns.api'], path:['summary.noun.path','summary.nouns.path'] };
+/** The name of the boxes on the left in the answer on screen, as `{noun, nouns}` for a string to take. */
+function summaryNouns(){
+  const g=(SUM.resp && SUM.resp.answer.rule.groups) || {};
+  const [one, many]=(g.kind==='path' && (!g.commonPath || g.commonPath==='/')) ? SUM_NOUN.lane : (SUM_NOUN[g.kind] || SUM_NOUN.path);
+  return { noun:t(one), nouns:t(many) };
+}
 
 /** Start came on screen: ask for the map once, or draw the one in memory. */
 function summaryOnScreen(){
@@ -149,7 +163,7 @@ function summaryRuleSay(kind, prefix, n){
 /** The way back, a step at a time: the whole map, the open box, the picked node. */
 function summaryCrumbs(){
   const crumbs=[{ text:t('summary.crumb.all'), go: SUM.sel ? ()=> summarySelect(null) : null }];
-  if(SUM.sel) crumbs.push({ text:t(SUM.sel[0]==='g' ? 'summary.crumb.group' : 'summary.crumb.family', {name:SUM.sel.slice(2)}),
+  if(SUM.sel) crumbs.push({ text:t(SUM.sel[0]==='g' ? 'summary.crumb.group' : 'summary.crumb.family', {name:SUM.sel.slice(2), ...summaryNouns()}),
     go: SUM.node ? ()=> summaryPickNode(null) : null });
   if(SUM.node) crumbs.push({ text:SUM.node.slice(SUM.node.indexOf(':')+1), go:null });
   const nav=el('nav',{className:'sumcrumbs'});
@@ -175,7 +189,21 @@ function summaryEmptyNote(a){
   const grades=Object.keys(by).filter((g)=> by[g]>0).join(', ');
   return el('div',{className:'sumempty'},[
     el('span',{textContent: w.byMode>0 ? t('summary.none.floor',{mode:a.mode, n:ovNum(w.byMode), grades}) : t('summary.none.tables',{mode:a.mode})}),
-    wider ? el('button',{type:'button', className:'mini', textContent:t('chain.empty.switch',{mode:wider}), onclick:()=> summarySetMode(wider)}) : null ]);
+    wider ? el('button',{type:'button', className:'mini', textContent:t('chain.empty.switch',{mode:wider}), onclick:()=> summarySetMode(wider)}) : null,
+    summaryRouteFix(a.mode, by) ]);
+}
+/** Do the routes' own addresses carry a grade this map's walks left out? */
+const summaryGuessCut=(by, rg)=> Object.keys(by).some((g)=> by[g]>0 && rg[g]>0);
+/**
+ * WHEN THE ROUTES THEMSELVES ARE GUESSES at a grade this map left out, the
+ * notice says so in the overview's own count and carries the engine's fix for
+ * them (RM67-U2d): on ghostfolio every route stops at itself, and the reason is
+ * one profile key a reader can declare.
+ */
+function summaryRouteFix(mode, by){
+  const a=OV.resp ? OV.resp.answer : null, guessed=a ? ovRoutesGuessed({ mode, reach:a.reach }) : null;
+  if(!guessed || !summaryGuessCut(by, a.reach.routeGrades || {})) return null;
+  return el('div',{className:'sumroutefix'},[ el('span',{textContent:guessed}), remedyLine(a.routeRemedy) ]);
 }
 
 // ---- the boxes ---------------------------------------------------------------
@@ -194,11 +222,13 @@ function summaryLit(a){
 function summaryGroupBoxes(a, boxes, lit){
   const out=a.groups.map((g)=> summaryBox(boxes, lit, 'g', g.name, t('summary.group.sub',{routes:g.endpoints.length, tables:g.tables}), g.endpoints));
   if(a.otherGroups.groups) out.push(summaryBox(boxes, lit, 'g', SUM_OTHERS,
-    t('summary.others.groups',{n:a.otherGroups.groups, routes:a.otherGroups.endpoints.length}), a.otherGroups.endpoints, 'sumothers'));
+    t('summary.others.groups',{n:a.otherGroups.groups, routes:a.otherGroups.endpoints.length, ...summaryNouns()}), a.otherGroups.endpoints, 'sumothers'));
   return out;
 }
 function summaryFamilyBoxes(a, boxes, lit){
-  const out=a.families.map((f)=> summaryBox(boxes, lit, 'f', f.name, t('summary.family.sub',{tables:f.tables.length}), f.tables));
+  // A family says how many routes reach it, which is what the families are kept by.
+  const out=a.families.map((f)=> summaryBox(boxes, lit, 'f', f.name,
+    t(f.routes!=null ? 'summary.family.sub.routes' : 'summary.family.sub',{tables:f.tables.length, routes:f.routes}), f.tables));
   if(a.otherFamilies.families) out.push(summaryBox(boxes, lit, 'f', SUM_OTHERS,
     t('summary.others.families',{n:a.otherFamilies.families, tables:a.otherFamilies.tables.length}), a.otherFamilies.tables, 'sumothers'));
   return out;
@@ -258,7 +288,7 @@ function summaryThroughLines(th, boxes){
   if(th.node.startsWith('endpoint:')) return th.links.map((l)=> ({ from:row, to:boxes.get('f:'+l.family), grade:l.grade,
     weight:l.tables.length, group:th.group, family:l.family, tip:t('summary.through.route.title',{n:l.tables.length, grade:l.grade}) }));
   return th.links.map((l)=> ({ from:boxes.get('g:'+l.group), to:row, grade:l.grade,
-    weight:l.endpoints.length, group:l.group, family:th.family, tip:t('summary.through.table.title',{n:l.endpoints.length, grade:l.grade}) }));
+    weight:l.endpoints.length, group:l.group, family:th.family, tip:t('summary.through.table.title',{n:l.endpoints.length, grade:l.grade, ...summaryNouns()}) }));
 }
 function summaryPath(l, pr){
   if(!l.from || !l.to) return null;
@@ -288,7 +318,7 @@ function summaryDetail(a){
   if(SUM.node) return summaryNodeCard();
   if(SUM.sel) return summaryBoxCard(a);
   return el('div',{className:'panel'},[ el('div',{className:'comment',textContent:t('summary.pick')}),
-    el('div',{className:'count',style:'margin-top:6px',textContent:t('summary.totals',{routes:ovNum(a.totals.endpoints),
+    el('div',{className:'count',style:'margin-top:6px',textContent:t('summary.totals',{...summaryNouns(), routes:ovNum(a.totals.endpoints),
       groups:ovNum(a.totals.groups), families:ovNum(a.totals.families), tables:ovNum(a.totals.tablesReached)})}) ]);
 }
 /** An open box: the boxes across from it that its lines reach, each a way to open that one. */
@@ -297,8 +327,8 @@ function summaryBoxCard(a){
   const links=a.links.filter((l)=> (g ? l.group : l.family)===name);
   const other=(l)=> (g ? l.family : l.group);
   return el('div',{className:'panel sumdetail'},[
-    el('h2',{textContent:t(g ? 'summary.crumb.group' : 'summary.crumb.family', {name})}),
-    el('div',{className:'comment',textContent:t(g ? 'summary.box.group.lead' : 'summary.box.family.lead')}),
+    el('h2',{textContent:t(g ? 'summary.crumb.group' : 'summary.crumb.family', {name, ...summaryNouns()})}),
+    el('div',{className:'comment',textContent:t(g ? 'summary.box.group.lead' : 'summary.box.family.lead', summaryNouns())}),
     el('ul',{className:'list'}, links.length ? links.map((l)=> el('li',{},[
       el('a',{className:'id clickable', textContent:other(l), onclick:()=> summarySelect((g ? 'f:' : 'g:')+other(l))}),
       el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
@@ -318,7 +348,7 @@ function summaryNodeCard(){
 function summaryThroughList(th, kind){
   const route=kind==='endpoint';
   if(!th.links.length) return el('div',{className:'empty',textContent:t(route ? 'summary.through.none.route' : 'summary.through.none.table',{mode:SUM.mode})});
-  return el('div',{className:'sumpaths'},[ el('div',{className:'comment',textContent:t(route ? 'summary.through.route.lead' : 'summary.through.table.lead',{mode:SUM.mode})}),
+  return el('div',{className:'sumpaths'},[ el('div',{className:'comment',textContent:t(route ? 'summary.through.route.lead' : 'summary.through.table.lead',{mode:SUM.mode, ...summaryNouns()})}),
     ...th.links.map((l)=> el('div',{className:'sumpath'},[
       el('div',{className:'sumpathhead'},[ el('span',{className:'sumname',textContent:route ? l.family : l.group}), badge(l.grade),
         el('span',{className:'count',textContent:t(route ? 'summary.through.tables' : 'summary.through.routes',{n:(route ? l.tables : l.endpoints).length})}) ]),

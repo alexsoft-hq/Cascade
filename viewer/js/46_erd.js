@@ -66,17 +66,31 @@ const erdTints=()=> themeGlows()
       .map((k)=> mixHex(cssVar(k), cssVar('--t2'), ERD_TINT_MIX))
   : [];
 /**
- * Which colour each family is drawn in. In the drawing theme every table is one
- * ink, and this returns it whatever the prefix; in the signal theme the five
- * largest named families take a tint each and everything else stays ink.
- * @returns {(name:string)=>string}
+ * Which colour each table is drawn in, by its family (`familyOf`, the answer's
+ * when it names one). In the drawing theme every table is one ink, whatever the
+ * family; in the signal theme the five largest named families take a tint each
+ * and everything else stays ink. `.ofFamily` is the same colour by family, for
+ * the legend's swatches.
+ * @returns {((name:string)=>string) & {ofFamily:(family:string|null)=>string}}
  */
-function erdFamilyColor(fams){
-  const tints=erdTints();
-  if(!tints.length) return ()=> erdInk();
+function erdFamilyColor(fams, familyOf=nameFamily){
   const named=(fams||[]).filter((f)=>f.family!==null).slice(0, ERD_FAMILY_TINTS).map((f)=>f.family);
-  const byFamily=familyPalette(named, tints);
-  return (name)=> byFamily.get(nameFamily(name)) || erdInk();
+  const byFamily=familyPalette(named, erdTints());
+  const ofFamily=(family)=> byFamily.get(family) || erdInk();
+  return Object.assign((name)=> ofFamily(familyOf(name)), { ofFamily });
+}
+/** A table's family now: the answer's once the ERD is drawn, the name prefix before. */
+const erdFamilyNow=(id)=> (ERD.familyOf || nameFamily)(id);
+/**
+ * EACH TABLE'S FAMILY, by the one rule the map on Start reads (RM67-U2d): the
+ * answer carries it per table, so the ERD and the map never put a table in two
+ * families. An answer from a server that carries none falls back to the name
+ * prefix before the first underscore, as the ERD always read it.
+ * @returns {(name:string)=>(string|null)}
+ */
+function erdFamilyOf(a){
+  const m=new Map((a.tables || []).filter((x)=> Object.hasOwn(x, 'family')).map((x)=> [x.table, x.family]));
+  return (name)=> (m.has(name) ? m.get(name) : nameFamily(name));
 }
 // How loud a relationship line is: quiet at rest, full inside a spotlight, and
 // ERD_DIM for everything the spotlight left out (nodes and lines alike).
@@ -180,13 +194,13 @@ function renderErdGraph(a){
   const W=wrap.clientWidth||900, H=wrap.clientHeight||620;
   ERD.answer=a; ERD.W=W; ERD.H=H;
   const deg=erdDegrees(a);
-  // Grouping by the name prefix before the first underscore. It is a naming
-  // convention, not a boundary the engine found, and the legend says so.
-  const fams=familyCounts(a.tables.map(t=>t.table));
+  // Grouping by table family, the one rule the map on Start reads names with.
+  // It is a naming convention, not a boundary the engine found, and the legend says so.
+  ERD.familyOf=erdFamilyOf(a); const fams=familyCounts(a.tables.map(t=>t.table), ERD.familyOf);
   // The prefix groups the legend, and - in the signal theme only - tints the
   // rectangles that share it. `famColor` is the ONE place that decides, so the
   // legend, the nodes and the isolated strip can never disagree.
-  const famColor=erdFamilyColor(fams);
+  const famColor=erdFamilyColor(fams, ERD.familyOf);
   ERD.famColor=famColor;
   // A table no witnessed join touches cannot be laid out by joins: it goes to
   // the strip under the canvas rather than being dropped on the floor.
@@ -662,9 +676,9 @@ function renderErdLegend(a, fams, drawn, isolated, topWitness){
     kids.push(el('span',{title:t('erdleg.prefixes.title'), textContent:t('erdleg.prefixes')}));
     // In the signal theme the biggest families are TINTED on the sheet, so the
     // row that names them carries the swatch: a colour with no key is decoration.
-    const famColor=ERD.famColor || (()=>erdInk());
+    const ofFamily=(ERD.famColor && ERD.famColor.ofFamily) || (()=>erdInk());
     for(const f of fams){
-      const col=f.family===null ? erdInk() : famColor(f.family+'_');
+      const col=f.family===null ? erdInk() : ofFamily(f.family);
       kids.push(el('span',{},[
         col!==erdInk() ? el('span',{className:'erdswatch', style:'background:'+col}) : null,
         (f.family===null?t('erdleg.noprefix'):f.family)+' ',
@@ -776,14 +790,14 @@ async function renderErdSideTable(id){
   if(picked && picked.project){ await renderErdSideFedTable(picked); return; }
   const rels=a.relationships.filter(r=>r.from===id||r.to===id).map(r=>{ const out=r.from===id; return {other:out?r.to:r.from, card:out?r.cardinality:r.cardinality.split(':').reverse().join(':'), columns:r.columns, statements:r.statements}; }).sort((x,y)=>x.other<y.other?-1:1);
   const t0=a.tables.find(t=>t.table===id);
-  const fam=nameFamily(id);
+  const fam=erdFamilyNow(id);
   const header=el('div',{className:'srchead',style:'margin-bottom:8px'},[
     el('span',{className:'grow'},[
       kindGlyph('table', 12),
       el('span',{className:'id',style:'font-weight:500',textContent:id}) ]),
     el('button',{textContent:t('erd.side.clear'),onclick:()=>erdClearFn&&erdClearFn()}) ]);
   const relPanel=el('div',{className:'panel'},[ header,
-    el('div',{className:'comment',textContent:[ fam?('prefix '+fam):null, t0&&t0.comment?('“'+t0.comment+'”'):null,
+    el('div',{className:'comment',textContent:[ fam?t('erd.side.family',{name:fam}):null, t0&&t0.comment?('“'+t0.comment+'”'):null,
       rels.length+' relationship(s)' ].filter(Boolean).join('\u00a0\u00a0')}),
     el('div',{style:'margin-top:7px;display:flex;gap:6px;flex-wrap:wrap'},[
       el('button',{className:'mini',textContent:'Table',title:t('btn.table.title'),

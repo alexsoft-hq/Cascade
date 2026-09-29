@@ -22,6 +22,7 @@
 
 import { walkEndpoints, walkScreens, multiHandlerRoutes, handlersOf } from './walks.mjs';
 import { GRADE_SETS, FLOW_EDGE_TYPES, DEFAULT_WALK_DEPTH, depthSaid, isWalkDepth, sqlEdgesOf } from './graph.mjs';
+import { gapRemedy } from './remedies.mjs';
 
 // The lattice order, strongest first — the order grades are reported in, so the
 // census reads the way the policy lattice does rather than by whichever grade
@@ -449,7 +450,9 @@ function buildGaps(o) {
   // be attributed to a table), SELECT * cannot be expanded, and a column answer
   // holds what the SQL spelled out rather than the whole truth. `count` is the
   // tables that came from statements alone, because that number IS the size of
-  const say = (gap) => gaps.push({ ...gap, class: gapClassOf(gap.kind) });
+  // what is standing in for a schema. Each gap also carries the one thing to do
+  // about it, or null where the engine knows none (src/core/remedies.mjs).
+  const say = (gap) => gaps.push({ ...gap, class: gapClassOf(gap.kind), remedy: gapRemedy(gap.kind, o) });
   schemaGaps(o, say);
   routeGaps(o, say);
   laneGaps(o, say);

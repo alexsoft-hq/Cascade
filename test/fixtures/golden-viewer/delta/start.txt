@@ -39,8 +39,8 @@
         <b>2</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
-        api groups
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
+        api groups by path
         <b>1</b>
       </span>
       <span class="crrule"></span>
@@ -178,6 +178,10 @@
               <button class="sgap warn" onclick type="button">
                 <span>calls we could not follow</span>
               </button>
+              <div class="remedy">
+                <span class="remlbl">What to do:</span>
+                No fix the engine knows of. It can only say what it could not read.
+              </div>
             </li>
           </ul>
           <button class="mini" onclick style="margin-top: 8px" type="button">All 3 on Analysis status</button>
@@ -250,7 +254,7 @@
               <option value="heuristic">heuristic: proven links + candidate sets + guesses (HEURISTIC)</option>
             </select>
           </div>
-          <div class="panelsub">Groups are route path segments below /rows. Families are tables whose names start with the same word, below delta.</div>
+          <div class="panelsub">Path areas are route path segments below /rows. The API groups the header counts stop at the first segment. Families are tables whose names start with the same word, below delta.</div>
         </div>
         <nav class="sumcrumbs" aria-label="where you are on the map">
           <span class="sumcrumb here">Whole map</span>
@@ -276,7 +280,7 @@
               <div class="sumbox">
                 <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
                   <span class="sumname">rows</span>
-                  <span class="count">1 table(s)</span>
+                  <span class="count">1 table(s), 2 route(s) reach it</span>
                 </button>
               </div>
             </div>
@@ -292,7 +296,7 @@
           <div class="flowside">
             <div class="panel">
               <div class="comment">Open a box to see what it holds. Pick a route or a table in it to see only its paths, and go into Trace from any of them.</div>
-              <div class="count" style="margin-top: 6px">2 routes in 2 groups reach 1 tables in 1 families.</div>
+              <div class="count" style="margin-top: 6px">2 routes in 2 path areas reach 1 tables in 1 families.</div>
             </div>
             <div class="rail">
               <div class="railhead">

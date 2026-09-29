@@ -118,6 +118,8 @@ const OV_KPI = [
 /** The pack's own word for one axis, or null for a pack that declared none. */
 const ovAxisStatus=(a, axis)=> (a.axes && a.axes[axis] && a.axes[axis].status) || null;
 const ovAxisReason=(a, axis)=> (a.axes && a.axes[axis] && a.axes[axis].reason) || '';
+/** The engine's one thing to do about an axis that is not whole: null where it knows none, undefined from a server that gives none. */
+const ovAxisRemedy=(a, axis)=> (a.axisRemedies ? (a.axisRemedies[axis] ?? null) : undefined);
 // Which sentence says what an axis that is not whole does to a share. The
 // schema and the columns have their own, because those two are what a reader
 // takes "100% of tables" to be about; any other axis says it plainly.
@@ -132,10 +134,10 @@ function ovKpiLimit(k, a){
   const status=ovAxisStatus(a, k.axis);
   if(status==='not-shipped' || status==='degraded'){
     const key=OV_KPI_AXIS_LIMIT[k.axis] || (status==='degraded' ? 'kpi.limit.degraded' : 'kpi.limit.notshipped');
-    return { text:t(key), title:ovAxisReason(a, k.axis), open:'ov.axis.'+k.axis };
+    return { text:t(key), title:ovAxisReason(a, k.axis), open:'ov.axis.'+k.axis, remedy:ovAxisRemedy(a, k.axis) };
   }
   const guessed=k.kind==='endpoint' ? ovRoutesGuessed(a) : null;
-  return guessed ? { text:guessed, title:t('kpi.limit.routes.title'), open:null } : null;
+  return guessed ? { text:guessed, title:t('kpi.limit.routes.title'), open:null, remedy:a.routeRemedy } : null;
 }
 /**
  * The routes whose own address is a guess, from the overview's own count, in
@@ -155,11 +157,16 @@ function ovCatalogSources(a){
   const src=(a.axes && a.axes.catalog && a.axes.catalog.sources) || [];
   return src.length ? t('kpi.sources',{sources:src.join(', ')}) : null;
 }
-/** The limit as a line of the card: a button that goes to the blind spot that explains it. */
+/**
+ * The limit as a line of the card: a button that goes to the blind spot that
+ * explains it, and under it the engine's one thing to do about it (RM67-U2d).
+ */
 function ovKpiLimitLine(lim){
   if(!lim) return null;
-  return el('button',{type:'button', className:'kpilimit', title:lim.title, textContent:lim.text,
+  const go=el('button',{type:'button', className:'kpilimit', title:lim.title, textContent:lim.text,
     onclick:()=> ovGoToGaps(lim.open)});
+  const fix=remedyLine(lim.remedy);
+  return fix ? el('div',{className:'kpilimitwrap'},[go, fix]) : go;
 }
 function ovKpis(a){
   return OV_KPI.filter((k)=>k.has(a)).map((k)=> ovKpiCard(k, a));
@@ -189,7 +196,7 @@ function ovKpiUncollected(k, a){
   return el('div',{className:'kpi kpioff', style:'color:'+kindColor(k.kind)},[
     el('div',{className:'kpilbl',textContent:t(k.lbl)}),
     el('div',{className:'kpinum kpinone',textContent:t('kpi.notcollected')}),
-    ovKpiLimitLine({ text:t('kpi.limit.why'), title:ovAxisReason(a, k.axis), open:'ov.axis.'+k.axis }),
+    ovKpiLimitLine({ text:t('kpi.limit.why'), title:ovAxisReason(a, k.axis), open:'ov.axis.'+k.axis, remedy:ovAxisRemedy(a, k.axis) }),
   ]);
 }
 /**
@@ -646,6 +653,16 @@ function crailLane(a, kind, key, count){
     : (kind==='service' ? t('crail.services.title') : (axis==='catalog' ? (ovCatalogSources(a) || '') : ''));
   return el('span',{className:'crlane', title}, [t(key)+' ', el('b',{textContent:ovNum(count)+(partial?' ~':'')})]);
 }
+/**
+ * The API group lane, named for the rule its count follows (RM67-U2d): the
+ * first segment of the path, or the modules the profile declares. The map on
+ * Start may group by where the code sits instead, and names its own boxes.
+ */
+function crailGroupLane(a, key, groups){
+  const rule=a.groupRule || {}, declared=rule.kind==='declared';
+  return el('span',{className:'crlane'+(groups==null?' hollow':''), title:t(declared ? 'crail.modules.title' : 'crail.groups.title', {n:rule.packageDepth})},
+    [ t(declared ? 'crail.modules' : key)+' ', el('b',{textContent: groups==null ? '—' : ovNum(groups)}) ]);
+}
 function renderCascadeRail(){
   const box=byId('crail');
   const a=OV.resp && OV.resp.answer;
@@ -660,11 +677,7 @@ function renderCascadeRail(){
   const kids=[];
   CRAIL.forEach(([kind,key],i)=>{
     if(i) kids.push(el('span',{className:'crrule'}));
-    if(kind==='group'){
-      kids.push(el('span',{className:'crlane'+(groups==null?' hollow':''), title:t('crail.groups.title')},
-        [ t(key)+' ', el('b',{textContent: groups==null ? '—' : ovNum(groups)}) ]));
-      return;
-    }
+    if(kind==='group'){ kids.push(crailGroupLane(a, key, groups)); return; }
     kids.push(crailLane(a, kind, key, crailCount(a, kind, census)));
   });
   box.replaceChildren(...kids);

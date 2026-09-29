@@ -302,11 +302,12 @@ test('the map is asked once Start is on screen, and never by a page that opened 
   assert.equal(calls(slow.asked, 'summary').length, 1, 'one question in flight, answered once');
   assert.ok(ev(slow.ctx, 'SUM.resp'), 'and drawn when it lands');
   // It says what the boxes are grouped by, and a rule with no shared prefix
-  // to name is said without one, never "below -".
+  // to name is said without one, never "below -". Since RM67-U2d each rule's
+  // boxes have their own name (test/viewer_names_and_remedies.test.mjs).
   const rule = onTrace.byId.get('ovsummary').querySelector('.panelsub').textContent;
-  assert.match(rule, /^Groups are/);
+  assert.match(rule, /^API groups are/);
   const bare = ev(onTrace.ctx, "summaryRuleLine({rule:{groups:{kind:'code-path', commonPrefix:''}, tables:{kind:'name-words', commonPrefix:''}}})");
-  assert.equal(bare, 'Groups are where the handler code sits, not modules anyone declared. Families are tables whose names start with the same word.');
+  assert.equal(bare, 'Code areas are where the handler code sits. They are not modules anyone declared, nor the API groups the header counts by path. Families are tables whose names start with the same word.');
 });
 
 test('a box opens in place and keeps only its own lines; a route in it shows only the paths through it; the breadcrumb goes back', async (t) => {
@@ -336,7 +337,7 @@ test('a box opens in place and keeps only its own lines; a route in it shows onl
   assert.deepEqual([th.args.endpoint, th.args.mode], ['GET /order/{id}', 'conservative']);
   assert.deepEqual(lines(byId).map((l) => `${l.group}>${l.family}`), ['order>order'], 'GET /order/{id} reaches the order family only');
   const crumbs = byId.get('ovsummary').querySelector('.sumcrumbs');
-  assert.deepEqual(crumbs.querySelectorAll('.sumcrumb').map((c) => c.textContent), ['Whole map', 'group order', 'GET /order/{id}']);
+  assert.deepEqual(crumbs.querySelectorAll('.sumcrumb').map((c) => c.textContent), ['Whole map', 'API group order', 'GET /order/{id}']);
   // Every way into Trace from the picked route, beside the picture.
   const side = byId.get('ovsummary').querySelector('.sumdetail');
   assert.deepEqual(side.querySelector('.sumgo').querySelectorAll('button').map((b) => b.textContent), ['What it uses', 'Where it is used', 'Details']);

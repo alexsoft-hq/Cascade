@@ -446,7 +446,7 @@ const GMAP={ where:'graph', mounted:null,
 // and the family colouring the legend, the nodes and the isolated strip all read
 // from — derived once per draw, so the three can never disagree about what
 // colour a family is.
-const ERD={ api:null, famColor:null, sideSeq:0, answer:null, iso:[], cols:new Map(),
+const ERD={ api:null, famColor:null, familyOf:null, sideSeq:0, answer:null, iso:[], cols:new Map(),
   // THE CONNECTED PROJECTS (RM45): one cluster per registered project a request
   // from this one reaches. `fedColor` is the ONE place a project's hue is
   // decided, so the frames, the markers and the legend cannot disagree.

@@ -60,6 +60,29 @@
           "reason": "we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here."
         }
       },
+      "axisRemedies": {
+        "statements": {
+          "action": "flag",
+          "flag": "--mappers",
+          "example": "--mappers <dir>"
+        },
+        "jpa": {
+          "action": "declare",
+          "key": "jpa.namingStrategy",
+          "example": "\"spring-snake-case\""
+        },
+        "mybatisPlus": null,
+        "column": {
+          "action": "declare",
+          "key": "jpa.namingStrategy",
+          "example": "\"spring-snake-case\""
+        },
+        "screen": null
+      },
+      "routeRemedy": null,
+      "groupRule": {
+        "kind": "path"
+      },
       "nodes": [
         {
           "kind": "symbol",
@@ -317,31 +340,42 @@
           "kind": "unresolved-calls",
           "count": 0,
           "note": "we couldn't tell what 0 method calls point to, so they aren't in the graph. Any chain that needed one of them is shorter than it really is",
-          "class": "unresolved"
+          "class": "unresolved",
+          "remedy": null
         },
         {
           "kind": "http-calls-leaving-pack",
           "count": 4,
           "note": "4 HTTP call target(s) leave this pack. 0 HTTP client call(s) in the code name a route no controller here serves, so what they reach is outside this analysis. The node census counts them as endpoints; the reach figures below count only the 8 route(s) this pack serves. 5 of those target(s) are named by the FRONTEND (4 matched no route here, 1 name another host), which is as often a prefix nobody declared as a real external service: check the web axis reason before reading them as external",
-          "class": "input"
+          "class": "input",
+          "remedy": {
+            "action": "run",
+            "command": "cascade init --root <the project that serves them>"
+          }
         },
         {
           "kind": "screen-components-unresolved",
           "count": 5,
           "note": "5 of 7 route declaration(s) name a component this lane could not resolve to a file it read. Those screens are in the pack with no RENDERS edge, so nothing hangs off them: what they show is unknown, not empty. The failing specifiers are on laneStats.web.screens.unresolvedSpecifiers, and an alias or a source root is usually what is missing",
-          "class": "unresolved"
+          "class": "unresolved",
+          "remedy": null
         },
         {
           "kind": "statements-not-reached",
           "count": 1,
           "note": "1 of 5 statement(s) are not reached from the endpoints we analysed, and they are usually generated mapper methods nothing calls. That is NOT a claim that they are dead code: a caller outside this pack, such as a scheduled job, another service or reflection, would not be visible here",
-          "class": "unreached"
+          "class": "unreached",
+          "remedy": null
         },
         {
           "kind": "mode-floor",
           "count": 5,
           "note": "walked at mode=conservative, no depth cap: 5 flow edge(s) sit below this mode's grade floor, so we did not follow them. mode=strict would refuse 24 more: where a controller reaches its service only through a MAY_CALL edge, which means the call may happen but we could not prove it, a strict walk from a handler reaches nothing at all",
-          "class": "query"
+          "class": "query",
+          "remedy": {
+            "action": "mode",
+            "mode": "heuristic"
+          }
         }
       ],
       "diagnostics": [],

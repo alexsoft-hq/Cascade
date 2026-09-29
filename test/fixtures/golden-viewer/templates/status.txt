@@ -36,8 +36,8 @@
         <b>1</b>
       </span>
       <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is a naming habit, not a module anyone declared. The overview counts them by the rule the map groups them by.">
-        api groups
+      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
+        api groups by path
         <b>4</b>
       </span>
       <span class="crrule"></span>
@@ -308,7 +308,11 @@
                   <div class="stline">
                     <span class="stlbl">what to do</span>
                     <div class="stval">
-                      <span>Register the project that serves them. If they are this project's own, declare the prefix it is deployed under.</span>
+                      <div class="remedy">
+                        Run
+                        <code>cascade init --root <the project that serves them></code>
+                        .
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -346,7 +350,9 @@
                   <div class="stline">
                     <span class="stlbl">what to do</span>
                     <div class="stval">
-                      <span>The cause splits them by reason. A module that was not passed in is the part you can fix.</span>
+                      <div class="remedy">
+                        No fix the engine knows of. It can only say what it could not read.
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -384,7 +390,11 @@
                   <div class="stline">
                     <span class="stlbl">what to do</span>
                     <div class="stval">
-                      <span>On Trace, walk again in the wider mode the answer names. It says what that adds.</span>
+                      <div class="remedy">
+                        Ask again in mode
+                        <code>heuristic</code>
+                        .
+                      </div>
                     </div>
                   </div>
                 </div>

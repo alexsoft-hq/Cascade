@@ -363,6 +363,18 @@
   button.sgap.warn { border-color:var(--warn); color:var(--warn); }
   button.sgap:hover { color:var(--t1); border-color:var(--t1); }
   .sgapguess { margin-top:6px; }
+  .sgapguesswrap { display:grid; gap:4px; }
+  /* THE ENGINE'S ONE THING TO DO (RM67-U2d), under the gap, the card's limit or
+     the map's notice it answers: plain ink, not amber, because it is the way out
+     of the boundary and not the boundary itself. The key, flag or command is
+     code a reader copies. */
+  .remedy { font-size:12px; line-height:1.45; color:var(--t1); padding:1px 9px 2px; overflow-wrap:anywhere; }
+  .remedy .remlbl { color:var(--t2); }
+  .remedy code { font-family:var(--mono); font-size:11.5px; }
+  .stval .remedy { padding:0; font-size:inherit; }
+  .kpi .remedy { padding:3px 0 0; }
+  .sumempty .sumroutefix { flex-basis:100%; display:grid; gap:2px; }
+  .sumempty .remedy { padding:0; }
   .ovpanels3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
   @media (max-width:1100px){ .ovpanels3 { grid-template-columns:minmax(0,1fr); } }
   .ovpanels3 .panel { margin-bottom:0; min-width:0; }

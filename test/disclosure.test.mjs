@@ -82,7 +82,8 @@ test('the calls a lane could not place are counted from every lane that counts t
 
 test('the overview relays what the run could not read, warn and error only, and each one is a limit too', () => {
   const r = ask('overview', {});
-  assert.deepEqual(r.answer.diagnostics, [{ kind: 'TS_PREFIX_EXCLUDE_UNREAD', severity: 'warn', key: 'tsBackend', reason: 'Declare the list as tsBackend.globalPrefixExclude in the profile to read it' }]);
+  assert.deepEqual(r.answer.diagnostics, [{ kind: 'TS_PREFIX_EXCLUDE_UNREAD', severity: 'warn', key: 'tsBackend', reason: 'Declare the list as tsBackend.globalPrefixExclude in the profile to read it',
+    remedy: { action: 'declare', key: 'tsBackend.globalPrefixExclude', example: '["health", "docs{/*rest}"]' } }]);
   assert.ok(r.limits.some((l) => l.scope === 'diagnostic:TS_PREFIX_EXCLUDE_UNREAD'));
   assert.equal(ask('overview', {}, { ...META, diagnostics: [] }).answer.empty.diagnostics, 'none');
   assert.equal(ask('overview', {}, { ...META, diagnostics: undefined }).answer.empty.diagnostics, 'not-shipped', 'a pack that kept no diagnostics said nothing');

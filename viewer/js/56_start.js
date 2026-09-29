@@ -173,7 +173,8 @@ function startAxisChip(a, axis, key){
  * An input the run did not have, something it could not read, an axis read in
  * part, a lane's diagnostic: each of these changes what an answer says, where a
  * walk's own bound or a table nothing reaches does not. Those are listed here,
- * most first, each a way to its row on Analysis status.
+ * most first, each a way to its row on Analysis status, and each with the
+ * engine's one thing to do about it under it (RM67-U2d), where the reader is.
  */
 const startChangesAnswers=(it)=> it.cls==='input' || it.cls==='unresolved';
 function renderStartGaps(a){
@@ -181,11 +182,13 @@ function renderStartGaps(a){
   const guessed=ovRoutesGuessed(a);
   const rows=mine.slice(0, START_GAPS).map((it)=> el('li',{},[
     el('button',{type:'button', className:'sgap warn', onclick:()=> ovGoToGaps(it.key)},[
-      el('span',{textContent:it.label}), it.count!=null ? el('span',{className:'ovnum',textContent:ovNum(it.count)}) : null ]) ]));
+      el('span',{textContent:it.label}), it.count!=null ? el('span',{className:'ovnum',textContent:ovNum(it.count)}) : null ]),
+    remedyLine(it.remedy) ]));
   setKids(byId('sgaps'),
     el('h2',{},[ t('start.gaps.title')+' ', el('span',{className:'count',textContent:'('+mine.length+')'})]),
     el('div',{className:'panelsub',textContent:t(mine.length ? 'start.gaps.lead' : 'start.gaps.none')}),
-    guessed ? el('button',{type:'button', className:'sgap warn sgapguess', onclick:()=> ovGoToGaps('ov.gap.mode-floor')}, [guessed]) : null,
+    guessed ? el('div',{className:'sgapguesswrap'},[ el('button',{type:'button', className:'sgap warn sgapguess', onclick:()=> ovGoToGaps('ov.gap.mode-floor')}, [guessed]),
+      remedyLine(a.routeRemedy) ]) : null,
     rows.length ? el('ul',{className:'sgaps'}, rows) : null,
     mine.length>START_GAPS ? el('div',{className:'count',textContent:t('start.gaps.more',{ n:mine.length-START_GAPS })}) : null,
     el('button',{type:'button', className:'mini', style:'margin-top:8px', textContent:t('start.gaps.all',{ n:all.length }),

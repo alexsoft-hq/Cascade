@@ -40,7 +40,7 @@ function familyLimit(rule) {
     : `a table family is the tables whose names start with the same letters${under}, because most names here are one word and most of them start with the same letters`;
   const j = rule.joinTables;
   const joins = j ? `. ${j.tables} table(s) named as a join table by ${j.rules.join(', ')} go with the tables they join where those sit in one family, and into ${JOIN_TABLES} where they do not` : '';
-  return `${how}${joins}. It is a naming pattern, not a schema`;
+  return `${how}${joins}. The names are read over every table of the pack, so a table is in the same family on the ERD and in every mode. It is a naming pattern, not a schema`;
 }
 
 function readArgs(args, graph) {
@@ -85,7 +85,7 @@ export function summary(graph, args, ctx) {
   if (Object.keys(empty).length) answer.empty = empty;
   const fields = [
     { field: 'groups', shown: s.groups.length, total: s.totals.groups, order: 'routes desc, name asc', nextOffset: null },
-    { field: 'families', shown: s.families.length, total: s.totals.families, order: 'tables desc, name asc', nextOffset: null },
+    { field: 'families', shown: s.families.length, total: s.totals.families, order: 'routes desc, tables desc, name asc', nextOffset: null },
   ];
   return makeResponse({
     answer,

@@ -23,9 +23,11 @@
 //   path        a pack with no handler, or whose handlers all sit in one package:
 //               the route's first path segment.
 //
-// Table families follow the same descent over the words of the table names
-// (`t_ds_task` under a shared `t_ds` is `task`; `SymbolProfile` is `symbol`):
-// a word ends at an underscore, a hyphen or a change of case, however the
+// Table families follow the same descent over the words of the names of every
+// table in the pack (`tableFamilies`, which the ERD reads too), not only the
+// ones a walk reached, so a table has one family in every picture and mode
+// (`t_ds_task` under a shared `t_ds` is `task`; `SymbolProfile` is `symbol`).
+// A word ends at an underscore, a hyphen or a change of case, however the
 // project writes its names. Where most names are one word and most of them
 // start with the same letters, the letters are read instead (eGovFrame's
 // `COMTNxxx`, `COMTHxxx`). A table a rule pack names as one a framework made
@@ -272,6 +274,23 @@ function joinTablesOf(graph, tableIds, rules) {
   return out;
 }
 
+/**
+ * THE FAMILY OF EVERY TABLE IN THE PACK (RM67-U2d), by the one family rule,
+ * read over every table and not only the ones a walk reached. The map on Start
+ * and the ERD both read it, so a table is in the same family in either picture,
+ * and switching the map's mode does not rename a family. Read at the default
+ * width, so a caller's `limit` folds boxes and never moves a table.
+ *
+ * @param {import('./graph.mjs').Graph} graph
+ * @param {{joinRules?:object[]}} [opts]  the `table.join-table` rules (the engine's own packs when left out)
+ */
+export function tableFamilies(graph, { joinRules = builtinRegistry().ofKind('table.join-table') } = {}) {
+  const all = [];
+  for (const n of graph.nodes.values()) if (n.kind === 'table') all.push(n.id);
+  all.sort(cmp);
+  return familyRule(all, { joinTables: joinTablesOf(graph, all, joinRules) });
+}
+
 /** Every table one route reaches, with the weakest grade on the way to each. */
 function tablesOfEndpoint(graph, ep, stmtTables, mode) {
   const out = new Map();
@@ -286,9 +305,9 @@ function tablesOfEndpoint(graph, ep, stmtTables, mode) {
   return out;
 }
 
-/** Rows ranked by size then name, the first `limit` kept and the rest folded into one. */
-function foldRanked(rows, size, limit) {
-  const ranked = [...rows].sort((a, b) => size(b) - size(a) || cmp(a.name, b.name));
+/** Rows ranked by each measure in turn, most first, then by name; the first `limit` kept and the rest folded into one. */
+function foldRanked(rows, measures, limit) {
+  const ranked = [...rows].sort((a, b) => measures.reduce((d, m) => d || m(b) - m(a), 0) || cmp(a.name, b.name));
   return { kept: ranked.slice(0, limit), folded: ranked.slice(limit) };
 }
 
@@ -306,9 +325,7 @@ export function buildSummary(graph, opts = {}) {
   const { rule, groupOf } = groupRule(graph, endpoints, opts.packageDepth ?? null, limit);
   const stmtTables = new Map();
   const reach = endpoints.map((ep) => [ep, tablesOfEndpoint(graph, ep, stmtTables, opts.mode ?? 'conservative')]);
-  const allTables = [...new Set(reach.flatMap(([, t]) => [...t.keys()]))].sort(cmp);
-  const joinTables = joinTablesOf(graph, allTables, opts.joinRules ?? builtinRegistry().ofKind('table.join-table'));
-  const fam = familyRule(allTables, { limit, joinTables });
+  const fam = tableFamilies(graph, opts.joinRules ? { joinRules: opts.joinRules } : {});
   const groups = new Map();
   const families = new Map();
   const pairs = new Map();
@@ -319,8 +336,9 @@ export function buildSummary(graph, opts = {}) {
     for (const [tableId, grade] of tables) {
       groups.get(g).tables.add(tableId);
       const f = fam.familyOf.get(tableId);
-      if (!families.has(f)) families.set(f, { name: f, tables: new Set() });
+      if (!families.has(f)) families.set(f, { name: f, tables: new Set(), endpoints: new Set() });
       families.get(f).tables.add(tableId);
+      families.get(f).endpoints.add(ep.id);
       const key = `${g}\n${f}`;
       if (!pairs.has(key)) pairs.set(key, { group: g, family: f, tables: new Set(), endpoints: new Set(), grade: null });
       const pair = pairs.get(key);
@@ -364,7 +382,8 @@ export function summaryThrough(node, { reach, groupOf, familyOf, answer }) {
     return { node, group: hit ? boxOf(groups, groupOf.get(node)) : null, links: throughLinks(links, 'family', 'tables') };
   }
   for (const [ep, tables] of reach) if (tables.has(node)) add(boxOf(groups, groupOf.get(ep.id)), 'group', ep.id, tables.get(node));
-  return { node, family: familyOf.has(node) ? boxOf(families, familyOf.get(node)) : null, links: throughLinks(links, 'group', 'endpoints') };
+  // Every table has a family now; one no route reaches is in no box on the map.
+  return { node, family: links.size > 0 ? boxOf(families, familyOf.get(node)) : null, links: throughLinks(links, 'group', 'endpoints') };
 }
 
 /** The links of one node, by box name, each with its members sorted under their own name. */
@@ -374,10 +393,16 @@ function throughLinks(links, key, field) {
     .sort((a, b) => cmp(a[key], b[key]));
 }
 
-/** The kept boxes, the folded ones as one box a side, and the links between them. */
+/**
+ * The kept boxes, the folded ones as one box a side, and the links between them.
+ * A group is kept for the routes it holds; a family for the routes that reach
+ * it, then its size: one table the code touches from many routes matters more
+ * than a big family few reach, and a fold by size alone put ghostfolio's user
+ * and tag away (RM67-U2d).
+ */
 function summaryAnswer({ groups, families, pairs, rule, limit, endpoints, walk }) {
-  const g = foldRanked([...groups.values()], (x) => x.endpoints.length, limit);
-  const f = foldRanked([...families.values()], (x) => x.tables.size, limit);
+  const g = foldRanked([...groups.values()], [(x) => x.endpoints.length], limit);
+  const f = foldRanked([...families.values()], [(x) => x.endpoints.size, (x) => x.tables.size], limit);
   const keptGroups = new Set(g.kept.map((x) => x.name));
   const keptFamilies = new Set(f.kept.map((x) => x.name));
   const links = new Map();
@@ -392,7 +417,7 @@ function summaryAnswer({ groups, families, pairs, rule, limit, endpoints, walk }
     l.grade = weakest(l.grade, p.grade);
   }
   const groupRow = (x) => ({ name: x.name, endpoints: [...x.endpoints].sort(cmp), tables: x.tables.size });
-  const familyRow = (x) => ({ name: x.name, tables: [...x.tables].sort(cmp) });
+  const familyRow = (x) => ({ name: x.name, tables: [...x.tables].sort(cmp), routes: x.endpoints.size });
   const foldedGroups = g.folded.map(groupRow);
   const foldedFamilies = f.folded.map(familyRow);
   const biggest = g.kept[0];

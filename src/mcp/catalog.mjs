@@ -49,7 +49,14 @@ export const TOOLS = Object.freeze({
       + '({project, sites, routes}) and `unmatchedRoutes` lists the ones nobody registered '
       + 'serves, each with the `service` the caller named for it when it named one, which is '
       + 'the project to register. `sites` counts the METHODS in this pack that make the call, so one route '
-      + 'called from two services is one route and two sites.',
+      + 'called from two services is one route and two sites. Every entry of `gaps` and `diagnostics` '
+      + 'carries `remedy`, the one thing to do when the engine knows it: {action:"declare", key, example} '
+      + 'a profile key with a short example value, {action:"flag", flag, example} a `cascade analyze` flag, '
+      + '{action:"run", command} or {action:"mode", mode}; null says the engine knows no single fix. '
+      + '`axisRemedies` does the same for each axis that is not whole, and `routeRemedy` for the routes '
+      + 'whose own address is a guess. `groupRule` says what `reach.groups` counts: {kind:"path"}, the '
+      + 'first segment of a route below its deployment prefix, or {kind:"declared", packageDepth}, the modules '
+      + 'the profile declares.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -292,7 +299,9 @@ export const TOOLS = Object.freeze({
       'An ERD recovered from the joins the mapper SQL makes, because this schema has no '
       + 'foreign keys. With table=<name> you get that table\'s join neighborhood (within '
       + 'hops) WITH its columns; without it, the whole-schema overview: tables, column counts '
-      + 'and every relationship. Each relationship carries the join columns and how many '
+      + 'and every relationship. Each table carries its `family`, by the one rule `summary` reads '
+      + 'table names with (`familyRule` says it), so a table is in the same family on both. '
+      + 'Each relationship carries the join columns and how many '
       + 'statements make that join, graded EXACT because the join is literal in the SQL. '
       + '`limit` caps the tables drawn (default 400, max 5000). Past it we keep the '
       + 'most-joined tables and always the focus table, `truncated.tables.total` is the true '
@@ -485,7 +494,9 @@ export const TOOLS = Object.freeze({
       + 'tables. READ `limits`: unless the profile declares moduleAttribution.packageDepth, a group is '
       + 'read from the package tree (below the package every handler shares) and a family from the '
       + 'words of the table names, which are patterns and not declared modules; a join table a rule '
-      + 'pack names (Prisma\'s `_OrderToTag`) goes with the tables it joins. The boxes past `limit` are folded '
+      + 'pack names (Prisma\'s `_OrderToTag`) goes with the tables it joins. Families are read over every table '
+      + 'of the pack, so `erd` puts a table in the same one. Groups are kept by how many routes they hold, families '
+      + 'by how many routes reach them and then by size; the boxes past `limit` are folded '
       + 'into `otherGroups` and `otherFamilies`, and their links into an `(others)` box, so nothing '
       + 'the walk reached is dropped. Name one `endpoint` or one `table` and `answer.through` also '
       + 'carries the paths through it: a route\'s families with the tables it reaches in each, or a '

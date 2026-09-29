@@ -13,15 +13,22 @@
         {
           "table": "thing",
           "comment": "one row per thing",
-          "columnCount": 3
+          "columnCount": 3,
+          "family": "thing"
         },
         {
           "table": "thing_tag",
           "comment": "a label on a thing",
-          "columnCount": 3
+          "columnCount": 3,
+          "family": "tag"
         }
       ],
       "relationships": [],
+      "familyRule": {
+        "kind": "name-words",
+        "separator": "_",
+        "commonPrefix": "thing"
+      },
       "federation": {
         "available": false,
         "reason": "single-project",

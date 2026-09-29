@@ -93,7 +93,8 @@ test('snake_case families stay as they were: mall\'s module prefixes and jeecg-b
 test('the pinned mall pack keeps its five families, pms oms sms cms ums, with every table it had', { skip: skipUnlessMall() }, () => {
   const s = buildSummary(mallGraph(), { limit: 30 });
   assert.deepEqual(s.rule.tables, { kind: 'name-words', separator: '_', commonPrefix: '' });
-  assert.deepEqual(s.families.map((f) => [f.name, f.tables.length]), [['ums', 13], ['pms', 12], ['sms', 12], ['oms', 8], ['cms', 4]]);
+  // The five and their tables; the order is how many routes reach each (RM67-U2d), not what this test is about.
+  assert.deepEqual(s.families.map((f) => [f.name, f.tables.length]).sort(), [['cms', 4], ['oms', 8], ['pms', 12], ['sms', 12], ['ums', 13]]);
 });
 
 /**

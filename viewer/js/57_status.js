@@ -30,6 +30,30 @@ const STATUS_AXIS_TOUCH = { catalog:'status.axis.touch.catalog', statements:'sta
 // them is said in its class's (`gap.touch.class.<class>`, `gap.todo.class.<class>`).
 const STATUS_WORDS = { touch:'gap.touch.', todo:'gap.todo.' };
 
+// What each kind of remedy says (RM67-U2d): the page's words around the
+// engine's key, flag, command or mode, which are shown as code a reader copies.
+const REMEDY_SAY = { declare:'remedy.declare', flag:'remedy.flag', run:'remedy.run', mode:'remedy.mode' };
+
+/**
+ * THE ENGINE'S ONE THING TO DO, as a line (src/core/remedies.mjs): a profile key
+ * with a short example, a flag, a command or a mode, or, where the engine knows
+ * no fix, that it knows none. An answer that carries no remedy at all (a server
+ * from before remedies) gets no line: the page never writes a fix of its own.
+ */
+function remedyLine(rem, label=true){
+  if(rem===undefined) return null;
+  const code=(x)=> (x==null ? x : '`'+x+'`');
+  const text=(rem && REMEDY_SAY[rem.action])
+    ? t(REMEDY_SAY[rem.action], { key:code(rem.key), example:code(rem.example), command:code(rem.command), mode:code(rem.mode) })
+    : t('remedy.none');
+  return el('div',{className:'remedy'},[ label ? el('span',{className:'remlbl',textContent:t('remedy.label')+': '}) : null, ...richNodes(text) ]);
+}
+/** The remedy the engine gave one kind of diagnostic: the first one's, or undefined from a server that gives none. */
+function statusDiagRemedy(a, kind){
+  const d=(a.diagnostics || []).find((x)=> x.kind===kind);
+  return (d && Object.hasOwn(d, 'remedy')) ? d.remedy : undefined;
+}
+
 /** Where a row of this place lives in the document, so a link elsewhere can go to it. */
 const statusRowId=(key)=> 'st-'+String(key).replace(/[^\w-]/g, '-');
 
@@ -132,14 +156,14 @@ function statusAxisRow(a, axis, key){
 function statusItems(a){
   const gaps=a.gaps || [];
   const said=new Set(gaps.map((g)=> g.kind));
-  const items=gaps.map((g)=> ({ src:'gap', kind:g.kind, key:'ov.gap.'+g.kind, cls:g.class || 'info', label:ovGapLabel(g.kind), count:g.count, note:g.note }));
+  const items=gaps.map((g)=> ({ src:'gap', kind:g.kind, key:'ov.gap.'+g.kind, cls:g.class || 'info', label:ovGapLabel(g.kind), count:g.count, note:g.note, remedy:g.remedy }));
   for(const [axis, nameKey] of statusAxesShown(a)){
     const st=ovAxisStatus(a, axis);
     if((st!=='not-shipped' && st!=='degraded') || said.has(OV_AXIS_GAP[axis])) continue;
     items.push({ src:'axis', kind:axis, key:'ov.axis.'+axis, cls:st==='not-shipped' ? 'input' : 'unresolved',
-      label:t(st==='not-shipped' ? 'ov.axis.notshipped' : 'ov.axis.degraded', {axis:t(nameKey)}), count:null, note:ovAxisReason(a, axis) });
+      label:t(st==='not-shipped' ? 'ov.axis.notshipped' : 'ov.axis.degraded', {axis:t(nameKey)}), count:null, note:ovAxisReason(a, axis), remedy:ovAxisRemedy(a, axis) });
   }
-  for(const g of diagGroups(a.diagnostics || [])) items.push({ src:'diag', kind:g.kind, key:'ov.diag.'+g.kind, cls:'unresolved', label:t('status.diag.label',{kind:g.kind}), count:g.count });
+  for(const g of diagGroups(a.diagnostics || [])) items.push({ src:'diag', kind:g.kind, key:'ov.diag.'+g.kind, cls:'unresolved', label:t('status.diag.label',{kind:g.kind}), count:g.count, remedy:statusDiagRemedy(a, g.kind) });
   const order=OV_GAP_GROUPS.map(([cls])=> cls);
   return items.map((it, i)=> [it, i]).sort((x, y)=> (order.indexOf(x[0].cls)-order.indexOf(y[0].cls)) || (x[1]-y[1])).map(([it])=> it);
 }
@@ -165,7 +189,17 @@ function statusItemRow(a, it){
       it.count!=null ? el('span',{className:'ovnum',textContent:ovNum(it.count)}) : null, el('span',{className:'ovdiag',title:t('status.kind.title'),textContent:it.kind}) ]),
     statusLine('status.cause', [ lead===note ? el('span',{textContent:note}) : fold(it.key, [lead], ()=> [el('div',{className:'comment'},[note])]) ]),
     statusLine('status.touches', [ statusWords(it, 'touch'), ovGapChips(a, it.kind) ]),
-    statusLine('status.todo', [ statusWords(it, 'todo') ]) ]);
+    statusLine('status.todo', [ statusTodo(it) ]) ]);
+}
+/**
+ * What to do about one blind spot: the engine's remedy where it gave one, and
+ * where it knows none for a gap that changes answers, that it knows none. A
+ * walk's own bound or a place nothing reaches keeps the page's words on how to
+ * look, and so does an answer from a server that gives no remedy.
+ */
+function statusTodo(it){
+  const engine=it.remedy!==undefined && (it.remedy!==null || startChangesAnswers(it));
+  return engine ? remedyLine(it.remedy, false) : statusWords(it, 'todo');
 }
 function statusLine(labelKey, kids){
   return el('div',{className:'stline'},[ el('span',{className:'stlbl',textContent:t(labelKey)}), el('div',{className:'stval'}, kids.filter(Boolean)) ]);
@@ -192,5 +226,15 @@ function statusDiagPanel(a){
       el('div',{className:'stitemhead'},[ el('b',{className:'ovdiag',textContent:g.kind}), el('span',{className:'ovnum',textContent:ovNum(g.count)}),
         g.causes.length>1 ? el('span',{className:'count',textContent:t('diag.group.causes',{k:g.causes.length})}) : null ]),
       ...diagGroupBody('ov.diag.'+g.kind, g),
-      Object.hasOwn(VIEWER_STRINGS.en, 'diag.todo.'+g.kind) ? null : statusLine('status.todo', [el('span',{textContent:t('diag.todo.any')})]) ].filter(Boolean))) ]);
+      statusDiagTodo(a, g) ].filter(Boolean))) ]);
+}
+/**
+ * A kind of diagnostic's what to do: the engine's remedy when it gave one, that
+ * it knows none where the page has no words of its own for the kind, and the
+ * page's general line from a server that gives no remedy.
+ */
+function statusDiagTodo(a, g){
+  const rem=statusDiagRemedy(a, g.kind), own=Object.hasOwn(VIEWER_STRINGS.en, 'diag.todo.'+g.kind);
+  if(rem || (rem===null && !own)) return statusLine('status.todo', [remedyLine(rem, false)]);
+  return own ? null : statusLine('status.todo', [el('span',{textContent:t('diag.todo.any')})]);
 }

@@ -144,12 +144,15 @@ export function nameFamily(name) {
 /**
  * The families present in `names`, biggest first (ties alphabetically). Names
  * with no family are counted together under `family:null` and always come last.
+ * `familyOf` names each one's family: the engine's, where the answer carries
+ * it (the one rule the map on Start reads), and the name prefix otherwise.
  * @param {string[]} names
+ * @param {(name:string)=>(string|null)} [familyOf]
  * @returns {{family:string|null,count:number}[]}
  */
-export function familyCounts(names) {
+export function familyCounts(names, familyOf = nameFamily) {
   const m = new Map();
-  for (const n of names || []) { const f = nameFamily(n); m.set(f, (m.get(f) || 0) + 1); }
+  for (const n of names || []) { const f = familyOf(n); m.set(f, (m.get(f) || 0) + 1); }
   const rows = [...m.entries()].map(([family, count]) => ({ family, count }));
   rows.sort((a, b) => {
     if ((a.family === null) !== (b.family === null)) return a.family === null ? 1 : -1;

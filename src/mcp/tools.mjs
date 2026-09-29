@@ -21,6 +21,8 @@ import { chainWalk, nodeLabel } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
 import { buildMap, LAYERS as MAP_LAYERS, DEFAULT_LIMIT as MAP_LIMIT_DEFAULT } from '../core/map.mjs';
 import { buildOverview } from '../core/overview.mjs';
+import { axisRemedies, diagnosticRemedy, routeRemedy } from '../core/remedies.mjs';
+import { tableFamilies } from '../core/summary.mjs';
 import {
   handlersOf, handlerStartsOf, walkEndpoints, walkScreens, groupOfEndpoint, frontendCallsOf,
   screensAffecting, observedCall,
@@ -802,8 +804,8 @@ function erdTableSet(graph, ctx, args, { hops, limit }) {
   return { tset, focusKey, focusLimits, tablesTotal, tablesCut: tablesTotal - tset.size };
 }
 
-/** The rows and the lines: each table with its column count, and each join once. */
-function erdShape(graph, tset, withCols) {
+/** The rows and the lines: each table with its column count and family, and each join once. */
+function erdShape(graph, tset, withCols, familyOf) {
   const colsByTable = new Map();
   const countByTable = new Map();
   for (const e of graph.edges) {
@@ -817,7 +819,7 @@ function erdShape(graph, tset, withCols) {
   }
   const tables = [...tset].map((id) => {
     const n = graph.nodes.get(id) || {};
-    const t = { table: strip(id), comment: n.comment ?? null, columnCount: countByTable.get(id) || 0 };
+    const t = { table: strip(id), comment: n.comment ?? null, columnCount: countByTable.get(id) || 0, family: familyOf.get(id) ?? null };
     if (withCols) t.columns = colsByTable.get(id) || [];
     return t;
   }).sort((a, b) => (a.table < b.table ? -1 : a.table > b.table ? 1 : 0));
@@ -853,8 +855,10 @@ export function erd(graph, args, ctx) {
   const hops = clamp(args.hops, 1, 4, 1);
   const limit = clamp(args.limit, 1, ERD_LIMIT_MAX, ERD_LIMIT_DEFAULT);
   const { tset, focusKey, focusLimits, tablesTotal, tablesCut } = erdTableSet(graph, ctx, args, { hops, limit });
-  const { tables, relationships } = erdShape(graph, tset, !!focusKey);
-  const answer = { focus: focusKey, hops: focusKey ? hops : null, limit, tables, relationships };
+  // Each table's family by the one family rule the map on Start reads (core/summary.mjs), so the two never disagree.
+  const fam = tableFamilies(graph);
+  const { tables, relationships } = erdShape(graph, tset, !!focusKey, fam.familyOf);
+  const answer = { focus: focusKey, hops: focusKey ? hops : null, limit, tables, relationships, familyRule: fam.rule };
 
   // THE CONNECTED PROJECTS (RM45). This pack's ERD is untouched. What is added
   // is one CLUSTER per registered project this project's requests reach: that
@@ -1505,7 +1509,7 @@ function overviewEmpty(answer, meta) {
 function packDiagnostics(meta) {
   return (Array.isArray(meta?.diagnostics) ? meta.diagnostics : [])
     .filter((d) => d && (d.severity === 'warn' || d.severity === 'error'))
-    .map((d) => ({ kind: d.kind, severity: d.severity, key: d.key ?? null, reason: d.reason }));
+    .map((d) => ({ kind: d.kind, severity: d.severity, key: d.key ?? null, reason: d.reason, remedy: diagnosticRemedy(d) }));
 }
 
 /**
@@ -1544,6 +1548,7 @@ export function overview(graph, args, ctx) {
     axes: (meta && meta.axes) || null,
   });
   const cut = (list) => list.slice(0, OVERVIEW_CAP);
+  const diagnostics = packDiagnostics(meta);
   const fed = makeFederator(ctx, args);
   const viaFederation = federatedReach(graph, fed, { mode, depth });
 
@@ -1556,6 +1561,12 @@ export function overview(graph, args, ctx) {
     // before axes were declared — the reader then falls back to `gaps`, which
     // is inferred from the graph shape.
     axes: (meta && meta.axes) || {},
+    // The one thing to do about each axis that is not whole, null where none is known (core/remedies.mjs).
+    axisRemedies: axisRemedies(meta && meta.axes),
+    // The fix for the routes whose own address is a guess (`reach.routeGrades`), when one is known.
+    routeRemedy: routeRemedy(o.reach.routeGrades, o.mode, diagnostics),
+    // Which rule `reach.groups` follows, so a reader can name what it counts.
+    groupRule: packageDepthOf(ctx) == null ? { kind: 'path' } : { kind: 'declared', packageDepth: packageDepthOf(ctx) },
     // Complete by construction (see OVERVIEW_CAP) — never cut.
     nodes: o.nodes,
     edges: o.edges,
@@ -1588,7 +1599,7 @@ export function overview(graph, args, ctx) {
     ...(o.openapi ? { openapi: o.openapi } : {}),
     hubs: { tables: cut(o.hubs.tables), endpoints: cut(o.hubs.endpoints) },
     gaps: o.gaps,
-    diagnostics: packDiagnostics(meta),
+    diagnostics,
     // HOW MUCH OF THIS PACK LEAVES IT (RM44): the calls that go to a route this
     // project does not serve, and how many of those another registered project
     // answers. Counted here so the page states it rather than re-deriving it.
