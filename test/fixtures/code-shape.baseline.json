@@ -4034,6 +4034,11 @@
    "functions": [
     "addTo",
     "byTableOrder",
+    "catalogAxisCauses",
+    "catalogAxisCauses/1",
+    "catalogAxisCauses/2",
+    "catalogAxisCauses/2/1",
+    "catalogAxisCauses/2/2",
     "catalogDiagnostics",
     "catalogDiagnostics/1",
     "catalogReadStats",
@@ -4042,6 +4047,7 @@
     "codeEntry",
     "namedTables",
     "plainSentence",
+    "reason",
     "reasonOf"
    ]
   },
@@ -4883,6 +4889,8 @@
     "axisLimits",
     "baseUrlGuesses",
     "catalogAxis",
+    "catalogAxis/1",
+    "catalogAxis/2",
     "catalogNotes",
     "catalogNotes/1",
     "catalogSources",
@@ -5549,6 +5557,8 @@
     "causedOnlyBy",
     "causedOnlyBy/1",
     "diagnosticRemedy",
+    "fixFor",
+    "fixFor/1",
     "gapRemedy",
     "holds",
     "holds/1",
