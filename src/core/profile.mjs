@@ -84,7 +84,12 @@ export const PROFILE_DEFAULTS = deepFreeze({
     logicDeleteValue: null, logicNotDeleteValue: null,
   },
   generatedSources: { annotations: [], pathGlobs: [] },
-  openapi: { documents: [] },
+  // The OpenAPI documents this project publishes, and which of them a person
+  // says are in step with this code, one direction each: `generatedFromCode` a
+  // build writes from the code as it is now (springdoc), `generatesCode` the
+  // code's interfaces are generated from (openapi-generator). Empty is the
+  // honest default: nothing in the tree says a document is current.
+  openapi: { documents: [], generatedFromCode: [], generatesCode: [] },
   runtimeEvidence: { har: [], otel: [] },
   // `ddl` is the DDL this project's catalog is read from, manifest-relative, in
   // the order written. It exists beside `connectionFrom` because a repository
@@ -125,7 +130,7 @@ export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixe
  * had while the key is at its default. A key added to a digested block from
  * now on goes here.
  */
-export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeorm', 'tsBackend.typeorm.type']);
+export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeorm', 'tsBackend.typeorm.type', 'openapi.generatedFromCode', 'openapi.generatesCode']);
 
 /** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default, and without a key of KEYS_DIGESTED_WHEN_SET still at its own. */
 export function digestedProfile(profile) {
@@ -389,6 +394,14 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   'openapi.documents': {
     status: 'consumed', where: 'src/adapters/openapi_bridge.mjs',
     note: 'the OpenAPI / Swagger documents this project publishes, manifest-relative, read when `analyze` runs without --openapi. Every (method, path) they declare becomes an endpoint node with the same id the Java lane would give it: a route the code also serves is corroborated (declaredBy on the node), a route nothing serves is added with no handler edge, and both drift lists are on laneStats.openapi',
+  },
+  'openapi.generatedFromCode': {
+    status: 'consumed', where: 'src/adapters/java/functional_routes.mjs',
+    note: 'the OpenAPI documents a build writes from this code as it is now (springdoc, a task that asks the running application), manifest-relative, as openapi.documents names them. The source cannot say a document is current, so a Spring functional route whose mount code elsewhere composes, placed where a document declares the operation id it names, is graded HEURISTIC. On a document declared here it is graded as its handler is read (EXACT where the source names the method, SOUND_SET through a declared type), and its evidence names the declaration. An entry that names no document the run reads settles nothing and is said (OPENAPI_DECLARATION_UNUSED); a route placed through a document not declared here is said too (ROUTE_MOUNT_FROM_DOCUMENT)',
+  },
+  'openapi.generatesCode': {
+    status: 'consumed', where: 'src/adapters/contract_links.mjs',
+    note: 'the OpenAPI documents this code\'s interfaces are generated from at every build (openapi-generator writing the *Api interfaces a controller implements), manifest-relative. The source tree holds neither the interface nor the generator\'s configuration, so a contract link (a method paired with an operation by the generator\'s naming) is graded HEURISTIC. On a document declared here the link is EXACT, the method its class declares, when the name of the interface the class implements does not depend on how the build groups operations (by tag or by path, a generator setting this engine does not read); otherwise it stays HEURISTIC and its evidence says why. Either way its evidence names the declaration. An entry that names no document the run reads is said (OPENAPI_DECLARATION_UNUSED); links on a document not declared here are said too (CONTRACT_FROM_DOCUMENT)',
   },
   'runtimeEvidence.har': {
     status: 'consumed', where: 'src/adapters/har_bridge.mjs',
@@ -1014,13 +1027,6 @@ if (isObject(obj.mybatisPlus)) {
   }
 }
 
-if (isObject(obj.openapi) && 'documents' in obj.openapi) {
-  const v = obj.openapi.documents;
-  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0)) {
-    throw new ProfileError('profile.openapi.documents must be an array of non-empty paths, relative to the manifest directory');
-  }
-}
-
 for (const k of ['har', 'otel']) {
   if (!isObject(obj.runtimeEvidence) || !(k in obj.runtimeEvidence)) continue;
   const v = obj.runtimeEvidence[k];
@@ -1157,7 +1163,35 @@ export function validateProfile(obj) {
   validatePathPrefixes(obj);
   validateTypeormNaming(obj);
   validateServers(obj);
+  validateOpenapi(obj);
   return obj;
+}
+
+/** What each list of the `openapi` block holds, for the sentence that refuses one. */
+const OPENAPI_LISTS = Object.freeze({
+  documents: 'the OpenAPI documents this project publishes',
+  generatedFromCode: 'the OpenAPI documents a build writes from this code as it is now',
+  generatesCode: 'the OpenAPI documents this code\'s interfaces are generated from',
+});
+
+/**
+ * THE OPENAPI BLOCK: three lists of manifest-relative paths. A document named
+ * both ways is refused: it is written from this code or its interfaces are
+ * generated from it, and the two settle different links. Which document a
+ * declaration names is the run's to say, where the documents are read.
+ */
+function validateOpenapi(obj) {
+  if (!isObject(obj.openapi)) return;
+  for (const [k, what] of Object.entries(OPENAPI_LISTS)) {
+    const v = obj.openapi[k];
+    if (v !== undefined && (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || x.length === 0))) {
+      throw new ProfileError(`profile.openapi.${k} must be an array of non-empty paths, relative to the manifest directory: ${what}`);
+    }
+  }
+  const both = (obj.openapi.generatedFromCode ?? []).find((f) => (obj.openapi.generatesCode ?? []).includes(f));
+  if (both !== undefined) {
+    throw new ProfileError(`profile.openapi: ${JSON.stringify(both)} is in both openapi.generatedFromCode and openapi.generatesCode, and a document is either written from this code or what its interfaces are generated from`);
+  }
 }
 
 /** The keys a `servers` entry may have. Closed, because a misspelt `port` would state nothing and look like it did. */

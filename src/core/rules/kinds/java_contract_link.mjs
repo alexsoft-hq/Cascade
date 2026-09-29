@@ -21,6 +21,15 @@
 //
 // It is a guess, and graded as one: the interface that would state the pairing
 // is not read, so all that joins the two is the generator's naming convention.
+// A person can say what the tree does not, that the build generates this code's
+// interfaces from the document (the profile's openapi.generatesCode), and the
+// bridge then grades a link by what is left (src/adapters/contract_links.mjs).
+// What is left is the scheme: the generator groups operations by tag or by path,
+// a setting not read. So each link carries the schemes that put its operation
+// into the interface (`namedBy`) and the ones that give that interface's name to
+// any operation of the documents (`nameFrom`): a build that wrote the interface
+// used one of the second, and the link holds under every one of them only when
+// the first covers the second.
 // An operationId the interface's name fits on two different routes (two
 // documents, each with its own base path) is said and not linked, and so is a
 // method named like an operationId whose operation the interface's name does
@@ -95,12 +104,32 @@ function pathGroup(resource) {
   return base === '' ? 'default' : base;
 }
 
+/** The interface names the generator could give an operation, per scheme a rule names. */
+function namesByScheme(op, from, suffix) {
+  const out = new Map();
+  if (from.includes('tag')) out.set('tag', new Set((op.tags.length > 0 ? op.tags : ['default']).map((tag) => apiName(tagGroup(tag), suffix))));
+  if (from.includes('path')) out.set('path', new Set([apiName(pathGroup(op.resource), suffix)]));
+  return out;
+}
+
 /** Every interface name the generator could give an operation, under the schemes a rule names. */
 function interfaceNamesOf(op, from, suffix) {
-  const names = new Set();
-  if (from.includes('tag')) for (const tag of (op.tags.length > 0 ? op.tags : ['default'])) names.add(apiName(tagGroup(tag), suffix));
-  if (from.includes('path')) names.add(apiName(pathGroup(op.resource), suffix));
-  return names;
+  return new Set([...namesByScheme(op, from, suffix).values()].flatMap((names) => [...names]));
+}
+
+/** Which schemes give each interface name to some operation of the documents: a build that wrote an interface so named used one of them. */
+function schemesNaming(compiled, operations) {
+  const out = new Map();
+  for (const op of operations) {
+    for (const [scheme, names] of compiled.namesBy(op)) for (const n of names) out.set(n, (out.get(n) ?? new Set()).add(scheme));
+  }
+  return out;
+}
+
+/** The schemes under which every one of these operations is generated into the interface of this name. */
+function schemesGiving(compiled, ops, name) {
+  const per = ops.map((op) => compiled.namesBy(op));
+  return [...per[0].keys()].filter((scheme) => per.every((m) => m.get(scheme)?.has(name))).sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +198,7 @@ function compile(rule) {
   return {
     rule: rule.id, grade: rule.grade ?? 'HEURISTIC', suffix, generator: rule.params.generator.name,
     interfaceNames: (op) => interfaceNamesOf(op, from, suffix),
+    namesBy: (op) => namesByScheme(op, from, suffix),
     // The class's own annotations, as the worker records them (simple names).
     // One it inherits or a meta-annotation is not read: a missing link, never a guessed one.
     serves: (t) => (t.annotations ?? []).some((a) => served.has(a)),
@@ -234,6 +264,7 @@ function verdictOf(compiled, t, iface, method, ops) {
     return { link: {
       rule: compiled.rule, grade: compiled.grade, handler, endpoint: endpoints[0], operationId: method,
       documents: [...new Set(fit.map((op) => op.document))].sort(), interface: face, generator: compiled.generator,
+      namedBy: schemesGiving(compiled, fit, iface.simple), nameFrom: [...(compiled.schemesOf.get(iface.simple) ?? [])].sort(),
     } };
   }
   const reason = endpoints.length > 1 ? 'ambiguous' : 'interface-name';
@@ -272,6 +303,13 @@ function verdictsOfClass(t, names, byOperationId, rules) {
 
 const rank = { EXACT: 4, SOUND_SET: 3, HEURISTIC: 2, RUNTIME_ONLY: 1, UNRESOLVED: 0 };
 
+/** The operations by operationId, each list in the order the documents gave them. */
+function byOperationIdOf(operations) {
+  const out = new Map();
+  for (const op of operations) out.set(op.operationId, [...(out.get(op.operationId) ?? []), op]);
+  return out;
+}
+
 /**
  * The links every `java.contract-link` rule gives, and the methods it names
  * without linking them, over a whole project.
@@ -288,13 +326,13 @@ const rank = { EXACT: 4, SOUND_SET: 3, HEURISTIC: 2, RUNTIME_ONLY: 1, UNRESOLVED
 export function deriveContractLinks(javaFacts, operations, rules) {
   if (rules.length === 0 || operations.length === 0) return { links: [], unlinked: [] };
   const names = javaNames(javaFacts);
-  const byOperationId = new Map();
-  for (const op of operations) byOperationId.set(op.operationId, [...(byOperationId.get(op.operationId) ?? []), op]);
+  const byOperationId = byOperationIdOf(operations);
+  const read = rules.map((r) => ({ ...r, compiled: { ...r.compiled, schemesOf: schemesNaming(r.compiled, operations) } }));
   const links = new Map();
   const unlinked = [];
   for (const t of javaFacts) {
     if (t?.kind !== 'type' || t.typeKind !== 'class' || t.abstract === true) continue;
-    for (const v of verdictsOfClass(t, names, byOperationId, rules)) {
+    for (const v of verdictsOfClass(t, names, byOperationId, read)) {
       if (v.unlinked) { unlinked.push(v.unlinked); continue; }
       const key = `${v.link.endpoint} ${v.link.handler}`;
       const prev = links.get(key);

@@ -17,7 +17,7 @@ import { ENGINE_ROOT, SCRATCH, listMapperXml, noSqlPython, sqlPython } from '../
 import { webPackagesRead } from '../../lanes_run.mjs';
 import { tsLaneOptions } from '../../ts_inputs.mjs';
 import {
-  sayDdlChoice, sayHarLane, sayIdentity, sayJavaLanes, sayLaneLine, sayMapperCensus,
+  documentGuessNotes, sayDdlChoice, sayHarLane, sayIdentity, sayJavaLanes, sayLaneLine, sayMapperCensus,
   sayNoSchemaFetched, sayOpenApiLane, sayResult, sayRuntimeEvidence, sayScreenAxisAndTemplates,
   sayTsLane, sayVendoredWebRoots, sayWebBridge,
 } from './census.mjs';
@@ -166,9 +166,9 @@ function factsOf(ctx, prepared, tmpDir) {
  * Java lanes' when Java ran, with the TypeScript lane's beside them when it
  * ran, whose reasons for a route or a link not made join the run's diagnostics.
  */
-function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts, graph }, diagnostics) {
+function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp, openapiStats }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts, graph }, diagnostics) {
   const laneStats = runJava ? sayJavaLanes({ jstats, jpaStats, mpStats, runJpa, runMp }) : null;
-  if (runJava) diagnostics.push(...unusedPrefixNotes(jstats), ...prefixNotOnCallsNotes(graph, jstats), ...codeSettingDiagnostics(javaFacts ?? [], profile));
+  if (runJava) diagnostics.push(...unusedPrefixNotes(jstats), ...prefixNotOnCallsNotes(graph, jstats), ...codeSettingDiagnostics(javaFacts ?? [], profile), ...documentGuessNotes(jstats, openapiStats));
   if (!tsStats) return laneStats;
   for (const d of [...tsStats.diagnostics, ...symbolsSharedWithOtherLanes(graph)]) diagnostics.push({ kind: d.kind, severity: 'warn', key: 'tsBackend', reason: d.reason });
   return { ...laneStats, ts: sayTsLane(tsStats, tsOpts, { root, sel, relOf }) };
@@ -179,7 +179,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
     root, profile, discovery, sel, ddls, snapshot, mappers, javaSrc, webSrc,
     openapiFiles, harFiles, otelFiles, screenGate, sqlArgs, resolved, base, relOf, diagnostics, manifest, jpaNaming,
   } = prepared;
-  const openapiDocs = readOpenApiDocs(ctx, { openapiFiles, root, diagnostics });
+  const openapiDocs = readOpenApiDocs(ctx, { openapiFiles, root, diagnostics, profile, manifestDir: resolved.dotCascade });
   const { webFacts, webWorkerStats } = webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root, relOf });
   const tsOpts = tsLaneOptions({ rootAbs: path.resolve(root), appRootAbs: sel.tsSrc[0], profile, profileDir: resolved.dotCascade, sqlArgs, catalogRecords: catalog }, diagnostics);
   const {
@@ -189,7 +189,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
     result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs,
     screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming, tsOpts,
   });
-  const laneStats = sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts: result.javaFacts, graph: g }, diagnostics);
+  const laneStats = sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp, openapiStats }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts: result.javaFacts, graph: g }, diagnostics);
   // ---- the web BRIDGE's own line (RM28) ---------------------------------
   // What the frontend's calls turned into: how many reached a route this pack
   // serves, at which grade, how many did not and why, and the prefix each

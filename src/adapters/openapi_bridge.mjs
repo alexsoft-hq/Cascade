@@ -432,6 +432,21 @@ export function readOpenApiDocument(text, opts = {}) {
   return out;
 }
 
+/**
+ * The documents read, each one the profile says is in step with this code
+ * carrying the key that says so (`declaration`: `openapi.generatedFromCode` or
+ * `openapi.generatesCode`), copied rather than changed. The source cannot say
+ * a document is current; a person can, and the two readings that rest on a
+ * document (src/adapters/java/functional_routes.mjs, ./contract_links.mjs)
+ * grade by it.
+ *
+ * @param {object[]} documents  as `readOpenApiDocument` returns them
+ * @param {Map<string,string>} declarations  a document's path -> the key (src/core/lanes.mjs openapiDeclarationsOf)
+ */
+export function withDeclarations(documents, declarations) {
+  return (documents ?? []).map((d) => (declarations?.has(d.path) ? { ...d, declaration: declarations.get(d.path) } : d));
+}
+
 // ---------------------------------------------------------------------------
 // The bridge
 // ---------------------------------------------------------------------------

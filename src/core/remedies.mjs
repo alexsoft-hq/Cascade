@@ -36,6 +36,8 @@ export const REMEDY_EXAMPLES = Object.freeze({
   pathPrefixes: '[{ "prefix": "/admin-api", "packages": "**.controller.admin.**" }]',
   gatewayRoutes: '{ "/dev-api": "" }',
   servers: '{ "mall-admin": { "port": 8080 } }',
+  'openapi.generatedFromCode': '["../docs/openapi.json"]',
+  'openapi.generatesCode': '["../src/main/resources/openapi.yml"]',
 });
 
 /** The narrowest to the widest: a wider mode admits every grade a narrower one does. */
@@ -49,7 +51,11 @@ const JAVA_SRC = Object.freeze({ action: 'flag', flag: '--java-src', example: '-
 /**
  * Per gap kind. `when` names a laneStats count that must be above zero for the
  * remedy to hold: of the calls a lane could not place, only the ones into a
- * package no source root holds are fixed by passing that root.
+ * package no source root holds are fixed by passing that root. `otherwise` is
+ * the remedy when that count is not: a contract link on a document no
+ * declaration covers is settled by declaring it, and one a declaration could
+ * not settle (its interface's name depends on a setting not read) is walked
+ * only in the mode that admits it.
  */
 export const GAP_REMEDIES = Object.freeze({
   'no-catalog': CATALOG_FETCH,
@@ -57,7 +63,10 @@ export const GAP_REMEDIES = Object.freeze({
   'http-calls-leaving-pack': { action: 'run', command: 'cascade init --root <the project that serves them>' },
   'unresolved-calls': { action: 'flag', flag: '--java-src', example: '--java-src <module>/src/main/java', when: ['unresolvedCallsByReason', 'project-type-outside-roots'] },
   'mode-floor': { action: 'mode', mode: WIDER },
-  'contract-links': { action: 'mode', mode: 'HEURISTIC' },
+  'contract-links': {
+    action: 'declare', key: 'openapi.generatesCode', when: ['openapi', 'contractLinks', 'undeclared'],
+    otherwise: { action: 'mode', mode: 'HEURISTIC' },
+  },
 });
 
 /**
@@ -74,6 +83,8 @@ export const DIAGNOSTIC_REMEDIES = Object.freeze({
   DISCOVERY_CAPPED: { action: 'flag', flag: '--ts-src', example: '--ts-src <the application root>' },
   SETTING_IN_CODE: { action: 'declare', key: null },
   PREFIX_NOT_ON_CALLS: { action: 'declare', key: null },
+  ROUTE_MOUNT_FROM_DOCUMENT: { action: 'declare', key: 'openapi.generatedFromCode', routes: true },
+  CONTRACT_FROM_DOCUMENT: { action: 'declare', key: 'openapi.generatesCode', routes: true },
 });
 
 /**
@@ -131,7 +142,8 @@ function holds(when, laneStats) {
  */
 export function gapRemedy(kind, o = {}) {
   const entry = GAP_REMEDIES[kind];
-  return entry && holds(entry.when, o.laneStats) ? resolve(entry, { mode: o.mode }) : null;
+  if (!entry) return null;
+  return holds(entry.when, o.laneStats) ? resolve(entry, { mode: o.mode }) : resolve(entry.otherwise, { mode: o.mode });
 }
 
 /** THE REMEDY OF ONE DIAGNOSTIC, or null. */

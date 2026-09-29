@@ -28,7 +28,7 @@ import { buildChangeset, changedFiles } from '../core/changeset.mjs';
 import { createFactsStore, nodeFactsIo, validateIndex } from '../core/facts_store.mjs';
 import { INCREMENTAL_ENGINE_VERSION } from '../core/incremental.mjs';
 import { underAny } from '../core/invalidate.mjs';
-import { jpaNamingOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
+import { jpaNamingOf, openapiDeclarationsOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
 import { overlayGraph, classifyDirtyFiles, classifyTsDirtyFiles, ddlFilesOf } from '../core/overlay.mjs';
 import { assertOverlayable, runOverlayLanes, runOverlayTsLane, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
 import { overlaySession } from '../core/overlay_session.mjs';
@@ -44,7 +44,7 @@ import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
 import { catalogLaneInputs, jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
-import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
+import { readOpenApiDocument, withDeclarations } from '../adapters/openapi_bridge.mjs';
 import { javaLaneOptions, webLaneOptions } from '../core/assemble.mjs';
 import { isTestPath } from '../core/discover.mjs';
 import { serverPortsOfFile, serverPortsOfJava } from '../core/server_ports.mjs';
@@ -57,12 +57,14 @@ import { baseInputsNow, manifestDirOf, sqlArgsOf, webRepositoryChanges } from '.
  * routes and contract links an overlay without them would drop, and through it
  * to the Java bridge, which places a functional route whose prefix is composed
  * elsewhere where a document declares its operation id. A document gone from
- * the tree is not read, as `analyze` would not read it.
+ * the tree is not read, as `analyze` would not read it. Each carries the
+ * profile's word on it, as `analyze` stamps it (src/core/lanes.mjs
+ * openapiDeclarationsOf), so a link a declaration settled stays settled.
  */
-export function openApiDocumentsOf(pack, rootAbs) {
+export function openApiDocumentsOf(pack, rootAbs, declarations = new Map()) {
   const docs = pack?.meta?.laneStats?.openapi?.documents ?? [];
-  return docs.map((d) => d.path).filter((rel) => typeof rel === 'string' && fs.existsSync(path.resolve(rootAbs, rel)))
-    .map((rel) => readOpenApiDocument(fs.readFileSync(path.resolve(rootAbs, rel), 'utf8'), { path: rel }));
+  return withDeclarations(docs.map((d) => d.path).filter((rel) => typeof rel === 'string' && fs.existsSync(path.resolve(rootAbs, rel)))
+    .map((rel) => readOpenApiDocument(fs.readFileSync(path.resolve(rootAbs, rel), 'utf8'), { path: rel })), declarations);
 }
 
 /**
@@ -644,7 +646,8 @@ export function layOverlay({ packDir, pack, baseGraph, profile, idx, session, en
   const webInputs = baseWebInputsOf(pack, rootAbs);
   const limits = [...now.limits, ...unreadInputLimits(pack), ...webInputLimits(pack, entries, verdict.dirty, webInputs, rootAbs), ...tsInputLimits(idx, profile, profileDir)];
   return overlayState({
-    lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, openapiDocuments: openApiDocumentsOf(pack, rootAbs), limits, webInputs,
+    lanes, dirty: verdict.dirty, dirtyFiles, session, baseGraph, profile, limits, webInputs,
+    openapiDocuments: openApiDocumentsOf(pack, rootAbs, openapiDeclarationsOf(profile, { root: rootAbs, manifestDir: profileDir })),
     selection: idx.selection ?? {}, sqlArgs: verdict.sqlArgs, webRootsAbs, templateRootsAbs, javaLanesOf, ts,
   });
 }

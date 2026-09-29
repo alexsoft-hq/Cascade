@@ -183,6 +183,7 @@ test('existing_exact_handles_does_not_become_contract_gap: a route the code alre
   assert.deepEqual(stats.contractLinks, {
     links: 0, endpoints: [], byRule: { [RULE]: { links: 0, unlinked: 0, alreadyHandled: 1 } }, unlinked: [],
     alreadyHandled: [{ endpoint: 'endpoint:GET /owners', handler: 'p.web.OwnerController#listOwners', rule: RULE }],
+    undeclared: 0,
   });
   const ctx = { ...walkCtx(g), pack: { digest: 'd', laneStats: { openapi: stats } } };
   for (const mode of ['conservative', 'heuristic']) {
@@ -214,6 +215,7 @@ test('the bridge draws a HEURISTIC HANDLES edge naming the rule, the operationId
   assert.deepEqual(stats.contractLinks, {
     links: 2, endpoints: ['endpoint:DELETE /petclinic/api/owners/{ownerId}', 'endpoint:GET /petclinic/api/owners'],
     byRule: { [RULE]: { links: 2, unlinked: 0, alreadyHandled: 0 } }, unlinked: [], alreadyHandled: [],
+    undeclared: 2,
   });
   assert.equal(stats.onlyInDocument, 2, 'the drift census is the code\'s own mappings, and a guess does not move it');
 });

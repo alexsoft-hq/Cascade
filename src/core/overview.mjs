@@ -738,20 +738,34 @@ function budgetGaps(o, say) {
  * Said next to the census, because a heuristic walk counts those routes and a
  * conservative one does not, and the difference is the rule, not the code. The
  * drift census above still counts them as declared and not served: no mapping
- * in the source serves them.
+ * in the source serves them. A route whose every link rests on a document the
+ * profile declares generates this code, and holds however the build groups
+ * operations, is handled by the method its class declares: no guess, so it is
+ * not counted, only named beside the ones that are.
  */
 function contractGaps(o, say) {
   const c = o.laneStats?.openapi?.contractLinks ?? null;
+  if (!c) return;
   // Only the links a rule DREW are its: a pairing whose route the code already
   // maps to the same method added nothing, and is no guess of this pack's.
-  if (!c || (c.endpoints.length === 0 && c.unlinked.length === 0)) return;
+  const settled = new Set(c.declared?.endpoints ?? []);
+  const guessed = c.endpoints.filter((e) => !settled.has(e));
+  if (guessed.length === 0 && c.unlinked.length === 0) return;
   const rules = Object.keys(c.byRule).filter((id) => (c.byRule[id].links ?? 0) > 0).join(', ');
   const unlinked = c.unlinked.length > 0
-    ? ` ${c.unlinked.length} ${c.endpoints.length > 0 ? 'more ' : ''}method(s) implement such an interface and are named like an operationId, and were left unlinked: an operationId on two routes, or an interface the operation would not be generated into`
+    ? ` ${c.unlinked.length} ${guessed.length > 0 ? 'more ' : ''}method(s) implement such an interface and are named like an operationId, and were left unlinked: an operationId on two routes, or an interface the operation would not be generated into`
     : '';
-  const linked = c.endpoints.length === 0 ? '' : `${c.endpoints.length} declared route(s) have a handler only because ${rules} paired them by a code generator's naming: the interface that would state it is not in the source tree, so it is never read here. `
+  const linked = guessed.length === 0 ? '' : `${guessed.length} declared route(s) have a handler only because ${rules} paired them by a code generator's naming: the interface that would state it is not in the source tree, so it is never read here. `
+    + declaredSaid(c, settled.size)
     + `Those links are HEURISTIC, so a walk at mode=${o.mode} ${GRADE_SETS[o.mode]?.has('HEURISTIC') ? 'follows them' : 'does not follow them: ask with mode=heuristic to walk into that code'}.`;
-  say({ kind: 'contract-links', count: c.endpoints.length, note: `${linked}${linked ? unlinked : unlinked.trim()}` });
+  say({ kind: 'contract-links', count: guessed.length, note: `${linked}${linked ? unlinked : unlinked.trim()}` });
+}
+
+/** What the profile's openapi.generatesCode settled beside the guessed links, and what it could not. */
+function declaredSaid(c, settled) {
+  const unsettled = c.declared?.unsettled?.length ?? 0;
+  return (settled > 0 ? `${settled} more are graded as the method they name: the profile declares that the build generates this code's interfaces from the document (openapi.generatesCode). ` : '')
+    + (unsettled > 0 ? `${unsettled} of the guessed rest on that declaration too, and the name of the interface they are paired through depends on how the build groups operations, a generator setting not read. ` : '');
 }
 
 /**

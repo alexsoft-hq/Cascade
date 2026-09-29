@@ -14,7 +14,15 @@
 // the document declares to the method, graded as the rule grades it (HEURISTIC:
 // the interface that would state the pairing is not in the source tree, so it is
 // never read), with the rule, the operationId, the documents and the interface in
-// its evidence. The route node stays the document's. A method the rules name
+// its evidence. On a document the profile declares this code's interfaces are
+// generated from (openapi.generatesCode) the interface is the one the build
+// writes from it, so the link is the method its class declares, EXACT, when the
+// interface's name holds under every scheme the generator groups operations by;
+// where it does not, the grouping is a setting not read and the link stays the
+// rule's guess. Either way the evidence names the declaration. The route node
+// stays the document's, at the address the document gives it: where a
+// deployment serves that base path (a context path, the class's own mapping) is
+// not read, and a declaration does not settle it. A method the rules name
 // without linking it (two routes for one operationId, an interface the operation
 // would not be generated into) draws no edge and is counted and named in the
 // census instead. A link whose route the code already maps to the same method
@@ -28,22 +36,52 @@ import { javaSymbolWriter } from './java_bridge.mjs';
 /** What every contract link rests on, in one sentence, for `evidence.basis`. */
 export const CONTRACT_LINK_BASIS = 'a document declares this operation, and this method\'s class is one the framework serves and implements an interface that is not in the source tree, named as the generator names the operation\'s group: the pairing is the generator\'s naming (the interface named for the operation\'s group, the method for its operationId), a convention and not a fact of the source. Neither that interface nor any generator configuration is read here';
 
+/** What a link rests on when the profile declares its document generates this code, and the interface's name holds whatever the grouping. */
+export const CONTRACT_LINK_DECLARED_BASIS = 'a document declares this operation, and this method\'s class is one the framework serves and implements an interface that is not in the source tree, named as the generator names the operation\'s group. The profile declares that the build generates this code\'s interfaces from the document (openapi.generatesCode), and every way the generator groups operations that gives an interface this name puts the operation into it, so the interface holds the operation\'s method and the link is the method this class declares';
+
+/** The profile's word that the build generates this code's interfaces from a document (src/core/lanes.mjs openapiDeclarationsOf). */
+const GENERATES_CODE = 'openapi.generatesCode';
+
+/** Why a link on a declared document is still a guess: the interface's name depends on how the build groups operations. */
+function namingDoubt(l) {
+  const simple = l.interface.slice(l.interface.lastIndexOf('.') + 1);
+  const by = l.namedBy.length > 0 ? `from its ${l.namedBy.join(' and ')}` : 'by no one scheme in every document that declares it';
+  const other = l.nameFrom.filter((s) => !l.namedBy.includes(s));
+  return `the operation gets the name ${simple} ${by}, and other operations get it from their ${other.join(' and ')}: `
+    + 'which one the build names interfaces by is a setting of the generator this engine does not read';
+}
+
+/**
+ * How sure one link is: the rule's grade, a naming convention; on a document the
+ * profile declares generates this code, the method its class declares (EXACT)
+ * when every scheme that gives some operation the interface's name puts this
+ * operation into it (the kind's `nameFrom` and `namedBy`), else still the rule's.
+ */
+function howSure(l, generating) {
+  const document = l.documents.find((d) => generating.has(d));
+  if (!document) return { grade: l.grade, evidence: {} };
+  const declared = { key: GENERATES_CODE, document };
+  if (l.nameFrom.every((s) => l.namedBy.includes(s))) return { grade: 'EXACT', settled: true, evidence: { basis: CONTRACT_LINK_DECLARED_BASIS, declared } };
+  return { grade: l.grade, evidence: { declared, naming: namingDoubt(l) } };
+}
+
 /** The evidence one link's edge carries. */
-const linkEvidence = (l) => ({
+const linkEvidence = (l, how) => ({
   rule: l.rule, basis: CONTRACT_LINK_BASIS, operationId: l.operationId, documents: l.documents,
-  interface: l.interface, generator: l.generator, match: 'operationId',
+  interface: l.interface, generator: l.generator, match: 'operationId', ...how.evidence,
 });
 
-/** Draw each link that is not already the code's own edge: the links placed, and the ones the code already had. */
-function placeLinks(g, links, writer) {
+/** Draw each link that is not already the code's own edge: the links placed, graded, and the ones the code already had. */
+function placeLinks(g, links, writer, generating) {
   const placed = [];
   const handled = [];
   for (const l of links) {
     if (!g.nodes.has(l.endpoint)) continue;
     const to = writer(l.handler);
     if (g.outEdges(l.endpoint).some((e) => e.type === 'HANDLES' && e.to === to)) { handled.push(l); continue; }
-    g.addEdge({ from: l.endpoint, to, type: 'HANDLES', grade: l.grade, evidence: linkEvidence(l) });
-    placed.push(l);
+    const how = howSure(l, generating);
+    g.addEdge({ from: l.endpoint, to, type: 'HANDLES', grade: how.grade, evidence: linkEvidence(l, how) });
+    placed.push({ ...l, grade: how.grade, declared: how.evidence.declared ?? null, settled: how.settled === true });
   }
   return { placed, handled };
 }
@@ -79,12 +117,37 @@ export function addContractLinks(g, documents, { javaFacts, java = {}, registry 
   if (!Array.isArray(javaFacts) || javaFacts.length === 0) return null;
   const { links, unlinked } = deriveContractLinks(javaFacts, operationsOf(documents), rules);
   if (links.length === 0 && unlinked.length === 0) return null;
-  const { placed, handled } = placeLinks(g, links, javaSymbolWriter(g, javaFacts, java ?? {}));
+  const generating = new Set(documents.filter((d) => d.declaration === GENERATES_CODE).map((d) => d.path));
+  return censusOf(placeLinks(g, links, javaSymbolWriter(g, javaFacts, java ?? {}), generating), unlinked);
+}
+
+/** What the links drew, per rule, and what a declaration settled. */
+function censusOf({ placed, handled }, unlinked) {
   return {
     links: placed.length,
     endpoints: [...new Set(placed.map((l) => l.endpoint))].sort(),
     byRule: byRuleOf(placed, unlinked, handled),
     unlinked,
     alreadyHandled: handled.map((l) => ({ endpoint: l.endpoint, handler: l.handler, rule: l.rule })),
+    ...declaredCensus(placed),
   };
+}
+
+/**
+ * The links that rest on no declaration (`undeclared`), and, when some rest on
+ * one, what it settled: the links graded as their method, the routes all of
+ * whose links it settled, and the links it could not settle.
+ */
+function declaredCensus(placed) {
+  const declared = placed.filter((l) => l.declared);
+  const out = { undeclared: placed.length - declared.length };
+  if (declared.length === 0) return out;
+  const guessed = new Set(placed.filter((l) => !l.settled).map((l) => l.endpoint));
+  const settled = declared.filter((l) => l.settled);
+  out.declared = {
+    key: GENERATES_CODE, links: settled.length,
+    endpoints: [...new Set(settled.map((l) => l.endpoint))].filter((e) => !guessed.has(e)).sort(),
+    unsettled: declared.filter((l) => !l.settled).map((l) => ({ endpoint: l.endpoint, handler: l.handler, interface: l.interface })),
+  };
+  return out;
 }

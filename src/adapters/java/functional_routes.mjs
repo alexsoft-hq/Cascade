@@ -6,7 +6,9 @@
 // gives (./routes.mjs), with the same endpoint id every lane uses:
 //   where a route is served  a @Bean's routes where they say; a route no code in
 //                            its file mounts, only where the project's OpenAPI
-//                            document declares the operation it names
+//                            document declares the operation it names, a guess
+//                            unless the profile declares that document written
+//                            from this code as it is now (openapi.generatedFromCode)
 //   which method runs        the handler reference, resolved with the whole
 //                            tree of types: this class, a field's or a
 //                            parameter's declared type, a type name
@@ -24,14 +26,18 @@ import { cmp, endpointId, findDeclaringAncestor } from './types.mjs';
 export const FUNCTIONAL_BASIS = Object.freeze({
   bean: 'a method annotated as a bean returns this RouterFunction, so the framework serves its routes at the paths its calls compose; the handler is the method its reference or its one-call lambda names',
   'operation-id': 'the method that builds this route is mounted by code elsewhere, so its prefix is not in its file; the project\'s OpenAPI document declares the operation id the route names, with this verb, at a path that ends with the route\'s own. No line of the source mounts it there: the match is a convention, so the link is a guess',
+  'operation-id-declared': 'the method that builds this route is mounted by code elsewhere, so its prefix is not in its file; the project\'s OpenAPI document declares the operation id the route names, with this verb, at a path that ends with the route\'s own, and the profile declares that document generated from this code as it is now (openapi.generatedFromCode). So the document says where this code serves the route, and the link is as sure as its handler is read',
 });
+
+/** The profile's word that a document is written from this code as it is now (src/core/lanes.mjs openapiDeclarationsOf). */
+const GENERATED_FROM_CODE = 'openapi.generatedFromCode';
 
 /** How many unread parts and disagreements the lane stats name. The counts are always whole. */
 const SAMPLE_LIMIT = 20;
 
 function emptyStats() {
   return {
-    functions: 0, routes: 0, served: 0, servedWithoutHandler: 0, mountedByOperationId: 0, unmounted: 0,
+    functions: 0, routes: 0, served: 0, servedWithoutHandler: 0, mountedByOperationId: 0, mountedByDeclaredDocument: 0, unmounted: 0,
     pathUnread: 0, handlerUnread: 0, handlerUnresolved: 0, handles: { EXACT: 0, SOUND_SET: 0, HEURISTIC: 0 },
     staticResources: 0, notRead: {}, operationIdDisagreements: 0, samples: [], disagreements: [],
   };
@@ -261,7 +267,12 @@ export function resolveHandler(ctx, owner, h) {
   return { members: [`${fqn}#${h.method}`], grade: ctx.declares(fqn, h.method, null) ? 'EXACT' : 'SOUND_SET', via: 'type' };
 }
 
-/** The operations the OpenAPI documents declare, by operation id and by endpoint. */
+/**
+ * The operations the OpenAPI documents declare, by operation id and by
+ * endpoint. Each keeps the first document that declares it and, when one of
+ * the documents that declare it there is written from this code as it is now,
+ * that one (`current`).
+ */
 export function declaredOperations(documents) {
   const byOp = new Map();
   const byEp = new Map();
@@ -269,13 +280,21 @@ export function declaredOperations(documents) {
     for (const p of d.paths ?? []) {
       if (typeof p.operationId !== 'string' || p.operationId === '') continue;
       const key = `${p.method} ${p.path}`;
-      if (!byOp.has(p.operationId)) byOp.set(p.operationId, new Map());
-      if (!byOp.get(p.operationId).has(key)) byOp.get(p.operationId).set(key, { method: p.method, path: p.path, document: d.path ?? null });
+      indexOperation(byOp, d, p, key);
       if (!byEp.has(key)) byEp.set(key, new Set());
       byEp.get(key).add(p.operationId);
     }
   }
   return { byOp, byEp };
+}
+
+/** One document's operation, kept once per route, with the first document written from this code that declares it there. */
+function indexOperation(byOp, d, p, key) {
+  if (!byOp.has(p.operationId)) byOp.set(p.operationId, new Map());
+  const at = byOp.get(p.operationId);
+  if (!at.has(key)) at.set(key, { method: p.method, path: p.path, document: d.path ?? null, current: null });
+  const op = at.get(key);
+  if (op.current === null && d.declaration === GENERATED_FROM_CODE) op.current = d.path ?? null;
 }
 
 /**
@@ -295,7 +314,7 @@ function mountByOperationId(declared, verb, rel, operationId) {
   if (op.method !== verb || !(op.path === rel || (rel !== '/' && op.path.endsWith(rel)))) {
     return { why: 'operation-id-elsewhere', disagree: op };
   }
-  return { path: op.path, document: op.document };
+  return { path: op.path, document: op.document, current: op.current };
 }
 
 /** What the documents say about a route the code serves at a path it composes itself, when they disagree. */
@@ -317,7 +336,8 @@ function placementOf(fn, r, declared, stats) {
   }
   const m = mountByOperationId(declared, r.verb, path, r.operationId);
   if (m.disagree) recordDisagreement(stats, { endpoint: `${r.verb} ${path}`, operationId: r.operationId, document: r.operationId, documentAt: `${m.disagree.method} ${m.disagree.path}` });
-  return m.path ? { path: m.path, mount: 'operation-id', document: m.document, relativePath: path } : { why: m.why, relativePath: path };
+  if (!m.path) return { why: m.why, relativePath: path };
+  return { path: m.path, mount: 'operation-id', document: m.document, relativePath: path, ...(m.current ? { current: m.current } : {}) };
 }
 
 function recordDisagreement(stats, d) {
@@ -328,7 +348,7 @@ function recordDisagreement(stats, d) {
 /** The evidence one functional route's HANDLES edge carries. */
 function evidenceOf(fn, r, where, resolved) {
   return {
-    rule: r.rule, basis: FUNCTIONAL_BASIS[where.mount], mount: where.mount,
+    rule: r.rule, basis: FUNCTIONAL_BASIS[where.current ? 'operation-id-declared' : where.mount], mount: where.mount,
     routeFunction: fn.function, declaredAt: { file: fn.file, line: r.line },
     handler: handlerWords(r.handler), handlerVia: resolved.via,
     ...(r.handler.lambda ? { lambda: true } : {}),
@@ -337,19 +357,29 @@ function evidenceOf(fn, r, where, resolved) {
     ...(resolved.openSet ? { openSet: resolved.openSet } : {}),
     ...(r.operationId ? { operationId: r.operationId } : {}),
     ...(where.mount === 'operation-id' ? { document: where.document, relativePath: where.relativePath } : {}),
+    ...(where.current ? { declared: { key: GENERATED_FROM_CODE, document: where.current } } : {}),
     ...(r.underNest ? { pattern: 'none, so the route answers the path of the nest it is in' } : {}),
   };
 }
 
-/** One route read: a declaration to place, a node with no handler, or a reason it is not placed. */
 /**
  * How sure a placed route's HANDLES is. A bean's routes are where the source
  * says, so the handler's own reading decides. A mount the source does not state
  * is a document's operation id matched by convention: HEURISTIC, below the
- * conservative floor, whatever the handler (RM67 review 2).
+ * conservative floor, whatever the handler (RM67 review 2), unless the profile
+ * declares the document written from this code as it is now: then the document
+ * says where the code serves it, and the handler's reading decides again.
  */
-const gradeOf = (where, resolved) => (where.mount === 'bean' ? resolved.grade : 'HEURISTIC');
+const gradeOf = (where, resolved) => (where.mount === 'bean' || where.current ? resolved.grade : 'HEURISTIC');
 
+/** A route placed by a document's operation id is counted, and apart, one on a document declared written from this code. */
+function countMount(stats, where) {
+  if (where.mount !== 'operation-id') return;
+  stats.mountedByOperationId += 1;
+  if (where.current) stats.mountedByDeclaredDocument += 1;
+}
+
+/** One route read: a declaration to place, a node with no handler, or a reason it is not placed. */
 function placeRoute(ctx, fn, r, declared, out) {
   const { stats } = out;
   stats.routes += 1;
@@ -361,7 +391,7 @@ function placeRoute(ctx, fn, r, declared, out) {
     sample(stats, { function: fn.function, line: r.line, code: where.why, text: `${r.verb} ${where.relativePath}${r.operationId ? `, operation ${r.operationId}` : ''}` });
     return;
   }
-  if (where.mount === 'operation-id') stats.mountedByOperationId += 1;
+  countMount(stats, where);
   const epId = endpointId(r.verb, where.path);
   const resolved = r.handler ? resolveHandler(ctx, fn.owner, r.handler) : null;
   if (!resolved) {

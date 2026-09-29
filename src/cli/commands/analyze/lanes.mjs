@@ -15,11 +15,12 @@ import path from 'node:path';
 import { nativeQueryStatements } from '../../../adapters/jpa_bridge.mjs';
 import { idGeneratorStatements } from '../../../adapters/java/idgnr.mjs';
 import { wrapperFragmentStatements } from '../../../adapters/mp_bridge.mjs';
-import { readOpenApiDocument } from '../../../adapters/openapi_bridge.mjs';
+import { readOpenApiDocument, withDeclarations } from '../../../adapters/openapi_bridge.mjs';
 import { readOtelTrace } from '../../../adapters/runtime_bridge.mjs';
 import { addWebFacts } from '../../../adapters/web_bridge.mjs';
 import { assembleGraph, javaLaneOptions, openapiLaneOptions, webLaneOptions } from '../../../core/assemble.mjs';
 import { serverPortsOf } from '../../../core/server_ports.mjs';
+import { openapiDeclarationsOf } from '../../../core/lanes.mjs';
 import { webFactsSummary } from '../../../core/facts_store.mjs';
 import { runLanesWithShards } from '../../../core/incremental.mjs';
 import { MODE_COLD } from '../../../core/invalidate.mjs';
@@ -296,9 +297,11 @@ export function wrapperFragmentLineage({ runMp, profile, sqlArgs, result, store,
  * input like any other: bytes on disk this run turns into facts. It is NOT
  * sharded and not cached — a document is one file, parsed in milliseconds, and
  * a cache that could hand back a stale contract would be the one thing a drift
- * readout must never do.
+ * readout must never do. Each comes back with the profile's word on it, when
+ * the profile says it is in step with this code (`openapi.generatedFromCode`,
+ * `openapi.generatesCode`); a declaration that names no document read is said.
  */
-export function readOpenApiDocs({ die }, { openapiFiles, root, diagnostics }) {
+export function readOpenApiDocs({ die }, { openapiFiles, root, diagnostics, profile = null, manifestDir = null }) {
   const openapiDocs = [];
   for (const file of openapiFiles) {
     const rel = path.relative(root, file).split(path.sep).join('/');
@@ -320,7 +323,19 @@ export function readOpenApiDocs({ die }, { openapiFiles, root, diagnostics }) {
         + `${doc.basePath ? `, base path ${doc.basePath}` : ''}): ${doc.paths.length} route(s) declared\n`);
     }
   }
-  return openapiDocs;
+  const declarations = openapiDeclarationsOf(profile, { root, manifestDir });
+  diagnostics.push(...unusedDeclarations(openapiDocs, profile, { root, manifestDir }));
+  return withDeclarations(openapiDocs, declarations);
+}
+
+/** A declaration in the profile that names no document this run reads: it settles nothing, and a person should know. */
+function unusedDeclarations(docs, profile, where) {
+  const read = new Set(docs.map((d) => d.path));
+  const names = (k, f) => [...openapiDeclarationsOf({ openapi: { [k]: [f] } }, where).keys()].some((rel) => read.has(rel));
+  return ['generatedFromCode', 'generatesCode'].flatMap((k) => (profile?.openapi?.[k] ?? []).filter((f) => !names(k, f)).map((f) => ({
+    kind: 'OPENAPI_DECLARATION_UNUSED', severity: 'warn', key: `openapi.${k}`,
+    reason: `${JSON.stringify(f)} names no OpenAPI document this run reads, so it settles nothing: name the document from the manifest directory, as openapi.documents does`,
+  })));
 }
 
 /**

@@ -410,13 +410,45 @@ export function sayFunctionalRoutes(fr) {
   if (!fr || fr.functions === 0) return;
   process.stderr.write(`Java lane: ${fr.functions} method(s) build functional routes, ${fr.routes} route(s) read: `
     + `${fr.served} HANDLES edge(s) (${fr.handles.EXACT} exact, ${fr.handles.SOUND_SET} candidate, ${fr.handles.HEURISTIC} guessed), `
-    + `${fr.mountedByOperationId} route(s) placed where an OpenAPI document declares their operation id (a guess: no line of the source mounts them), `
+    + `${fr.mountedByOperationId} route(s) placed where an OpenAPI document declares their operation id ${mountedPhrase(fr)}, `
     + `${fr.servedWithoutHandler} served with a handler this lane could not name; not placed: ${fr.unmounted} mounted by code elsewhere, `
     + `${fr.pathUnread} with a path not read; ${fr.staticResources} static resource route(s)\n`);
   for (const s of fr.samples.slice(0, 5)) process.stderr.write(`  [warn] JAVA_ROUTE_NOT_READ ${s.function}:${s.line ?? '?'} ${s.code}: ${s.text}\n`);
   for (const d of fr.disagreements.slice(0, 5)) {
     process.stderr.write(`  [warn] OPERATION_ID_DISAGREES ${d.endpoint}: the code names the operation ${d.operationId}, a document has ${d.document} at ${d.documentAt}\n`);
   }
+}
+
+/** How the routes a document's operation id placed are graded: a guess, unless the profile declares the document generated from this code. */
+function mountedPhrase(fr) {
+  const declared = fr.mountedByDeclaredDocument ?? 0;
+  const guessed = fr.mountedByOperationId - declared;
+  if (declared === 0) return '(a guess: no line of the source mounts them)';
+  return `(${declared} in a document the profile declares generated from this code, graded as their handler${guessed > 0 ? `; ${guessed} a guess: no line of the source mounts them` : ''})`;
+}
+
+/**
+ * THE ROUTES THAT REST ON A DOCUMENT NOTHING SAYS IS CURRENT, with the key that
+ * settles them (RM67-O5): a functional route placed by a document's operation
+ * id, and a contract link on a document not declared to generate this code.
+ * Both are graded HEURISTIC, and the profile can say what the source cannot.
+ */
+export function documentGuessNotes(jstats, openapiStats) {
+  const fr = jstats?.functionalRoutes;
+  const mounted = fr ? fr.mountedByOperationId - (fr.mountedByDeclaredDocument ?? 0) : 0;
+  const linked = openapiStats?.contractLinks?.undeclared ?? 0;
+  return [
+    ...(mounted > 0 ? [{
+      kind: 'ROUTE_MOUNT_FROM_DOCUMENT', severity: 'warn', key: 'openapi.generatedFromCode',
+      reason: `${mounted} functional route(s) are served where an OpenAPI document declares their operation id, and no line of the source mounts them there. `
+        + 'Nothing here says the document is current, so the HANDLES edges under them are graded HEURISTIC. If a build writes the document from this code (springdoc), declare it in openapi.generatedFromCode in the profile',
+    }] : []),
+    ...(linked > 0 ? [{
+      kind: 'CONTRACT_FROM_DOCUMENT', severity: 'warn', key: 'openapi.generatesCode',
+      reason: `${linked} HANDLES edge(s) pair a route with a method by a code generator's naming, through an interface the source tree does not hold. `
+        + 'Nothing here says the build generates that interface from the document, so each is graded HEURISTIC. If it does (openapi-generator), declare the document in openapi.generatesCode in the profile',
+    }] : []),
+  ];
 }
 
 /**
@@ -767,7 +799,7 @@ function sayContractLinks(c) {
   const rules = Object.entries(c.byRule).filter(([, r]) => r.links > 0).map(([id, r]) => `${id} ${r.links}`).join(', ');
   if (c.endpoints.length > 0) {
     process.stderr.write(`OpenAPI lane: ${c.endpoints.length} declared route(s) given a handler through an interface named for the operation and not in the source tree (${rules}), `
-      + 'graded HEURISTIC: neither that interface nor any generator configuration is read, so the pairing rests on the generator\'s naming\n');
+      + `${contractGrading(c)}\n`);
   }
   const handled = (c.alreadyHandled ?? []).length;
   if (handled > 0) {
@@ -779,6 +811,16 @@ function sayContractLinks(c) {
       : `the operation ${u.operationId} would be generated into ${(u.names ?? []).join(' or ')}, not ${u.interface}`;
     process.stderr.write(`  [warn] CONTRACT_NOT_LINKED ${u.handler}: ${why}\n`);
   }
+}
+
+/** How the contract links are graded: HEURISTIC on the generator's naming, or, on a document the profile declares generates this code, as the method they name. */
+function contractGrading(c) {
+  const guessed = 'graded HEURISTIC: neither that interface nor any generator configuration is read, so the pairing rests on the generator\'s naming';
+  const d = c.declared;
+  if (!d) return guessed;
+  return `${d.links} link(s) graded EXACT, on a document the profile declares generates this code (openapi.generatesCode)`
+    + (d.unsettled.length > 0 ? `, ${d.unsettled.length} left HEURISTIC because the interface's name depends on how the build groups operations, a generator setting not read` : '')
+    + (c.undeclared > 0 ? `; ${c.undeclared} ${guessed}` : '');
 }
 
 /** The TypeScript files this run read or reused, and how many of them its imports reached outside the application. */

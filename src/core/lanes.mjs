@@ -517,6 +517,27 @@ otel = [...new Set(otel)].sort();
 }
 
 /**
+ * THE DOCUMENTS THE PROFILE SAYS ARE IN STEP WITH THIS CODE: each path of
+ * `openapi.generatedFromCode` and `openapi.generatesCode`, resolved as
+ * `openapi.documents` is and named from the root, as a document read here is
+ * named (src/cli/commands/analyze/lanes.mjs), with the key that declares it.
+ * `analyze` and the working-tree overlay stamp the documents they read with it.
+ *
+ * @param {object} profile  a normalized profile
+ * @param {{root:string, manifestDir?:(string|null)}} where
+ * @returns {Map<string,string>}  a document's path from the root -> the key
+ */
+export function openapiDeclarationsOf(profile, { root, manifestDir = null }) {
+  const out = new Map();
+  for (const key of ['generatedFromCode', 'generatesCode']) {
+    for (const f of (profile?.openapi?.[key] ?? []).filter(nonEmpty)) {
+      out.set(path.relative(root, path.resolve(manifestDir ?? root, f)).split(path.sep).join('/'), `openapi.${key}`);
+    }
+  }
+  return out;
+}
+
+/**
  * Decide what each lane runs over.
  *
  * Explicit flags win over everything. Where a flag is absent, the input is
