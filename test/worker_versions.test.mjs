@@ -33,9 +33,9 @@ test('workerVersions() names exactly the five workers the facts index records', 
   }
 });
 
-test('the drift check covers every worker source, the web one included', () => {
+test('the drift check covers every worker source, the web and TypeScript ones included', () => {
   const names = WORKER_VERSION_SOURCES.map((s) => s.name).sort();
-  assert.deepEqual(names, ['catalog', 'catalog-live', 'java', 'lineage', 'mybatis', 'web']);
+  assert.deepEqual(names, ['catalog', 'catalog-live', 'java', 'lineage', 'mybatis', 'ts', 'web']);
   // ...and the regex really is anchored to the worker's own declaration, so a
   // constant that moves without the mirror moving is caught rather than matched
   // loosely somewhere else in the file.

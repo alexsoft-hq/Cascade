@@ -19,7 +19,7 @@ export const JAVA_WORKER_VERSION = 'javafacts/22';
  * every TypeScript shard's key, so a new worker makes each shard miss and be
  * read again, and a project with no TypeScript backend is not sent cold by it.
  */
-export const TS_WORKER_VERSION = 'tsfacts/8';
+export const TS_WORKER_VERSION = 'tsfacts/9';
 /** mybatis_extract.py — `EXTRACTOR_VERSION`. */
 export const MYBATIS_WORKER_VERSION = 'mybatis-extract/2';
 /** lineage.py — `LINEAGE_VERSION`. */
@@ -69,4 +69,5 @@ export const WORKER_VERSION_SOURCES = Object.freeze([
   { name: 'catalog', file: 'adapters/sql/catalog_ddl.py', re: /^CATALOG_VERSION\s*=\s*"([^"]+)"/m, expected: CATALOG_WORKER_VERSION },
   { name: 'catalog-live', file: 'adapters/sql/catalog_live.py', re: /^CATALOG_VERSION\s*=\s*"([^"]+)"/m, expected: CATALOG_LIVE_WORKER_VERSION },
   { name: 'web', file: 'adapters/web/webfacts.mjs', re: /^const VERSION = '([^']+)'/m, expected: WEB_WORKER_VERSION },
+  { name: 'ts', file: 'adapters/ts/tsfacts.mjs', re: /^export const VERSION = '([^']+)'/m, expected: TS_WORKER_VERSION },
 ]);
