@@ -14,7 +14,8 @@ time-, machine-, or absolute-path-derived enters the output (basename only).
 
 Robustness (SPEC §17.8): non-CREATE-TABLE statements are skipped silently, but
 a table or column that cannot be read emits a structured diagnostic to stderr
-and processing continues — a table is never dropped without a trace.
+(and, run from the command line, into the header's ``diagnostics``) and
+processing continues — a table is never dropped without a trace.
 
 Several files (SPEC RM20 §3): a schema is often split — one file per service,
 or a base schema plus an ordered migration sequence. The files are folded IN THE
@@ -97,7 +98,11 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        (H2's MODE=MySQL) is read by that mode's grammar; statements a script
 #        writes with no semicolons are read one by one; H2's DROP COLUMN (c, d)
 #        drops each. A file with none of these parses to the records /10 wrote.
-CATALOG_VERSION = "catalog-ddl/11"
+#   /12 - the header carries the diagnostics the run said, the list stderr carries,
+#        so a catalog read back from its cache still says what it could not read;
+#        a RENAME that cannot be read is ``alter_unreadable``. The tables, columns
+#        and routines are the records /11 wrote.
+CATALOG_VERSION = "catalog-ddl/12"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -1172,7 +1177,7 @@ def _apply_create(stmt, ctx):
         # disagreement is reported.
         _diag(diagnostics, "warn", "DUPLICATE_TABLE_DECLARATION", table_name,
               "%s is declared in %s (as %s) and again in %s; the first declaration is kept, "
-              "nothing is merged — pass only one of the two files, or the one that "
+              "nothing is merged; pass only one of the two files, or the one that "
               "describes the live schema"
               % (table_name, existing.declared_in, existing.name, source))
         return
@@ -1325,7 +1330,8 @@ def _rename_tables(text, ctx):
     body = re.sub(r"^\s*TABLE\s+", "", str(text), flags=re.IGNORECASE)
     pairs = _RENAME_TABLE_RE.findall(body)
     if not pairs:
-        ctx.say("warn", "alter_clause_unsupported", None,
+        # Unreadable, not a clause the catalog does not hold: it may rename a table.
+        ctx.say("warn", "alter_unreadable", None,
                 "%s: RENAME statement could not be read (%r); ignored" % (ctx.source, text))
     for old, new in pairs:
         _rename_table(ctx, old, new)
@@ -2308,6 +2314,10 @@ def main(argv=None):
 
     # Stamp the source basenames only (determinism §2.1 — no absolute path).
     records[0]["source"] = "ddl:" + ",".join(name for name, _ in files)
+    # What this run could not read or had to assume, as it said it on stderr: the
+    # pack carries it from here, and a catalog read back from its cache has it
+    # too. The header is outside what a lineage key is computed from.
+    records[0]["diagnostics"] = diagnostics
 
     out = sys.stdout
     try:

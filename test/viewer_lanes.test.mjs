@@ -214,6 +214,41 @@ test('a flood of one diagnostic is one blind spot with its count, and inside it 
   assert.match(text, /Nothing is lost/);
 });
 
+/** What the schema reader said of a SQL Server schema read as MySQL, grouped by the engine: one entry per kind, with its count (RM67-C5). */
+const catalogSaid = () => [
+  { kind: 'CATALOG_CREATE_TABLE_UNREAD', severity: 'warn', key: 'catalog', count: 49,
+    examples: ['s.sql: CREATE TABLE t00 at line 10', 's.sql: CREATE TABLE t01 at line 11', 's.sql: CREATE TABLE t02 at line 12', 's.sql: CREATE TABLE t03 at line 13', 's.sql: CREATE TABLE t04 at line 14'],
+    reason: '49 CREATE TABLE statement(s) were read only as part of another statement, so their tables are not in the catalog (t00, t01, t02, and 46 more). The first, as the schema reader said it: s.sql: CREATE TABLE t00 at line 10', remedy: null },
+  { kind: 'CATALOG_RULE_ASSUMED', severity: 'warn', key: 'sqlDialects', count: 1, examples: ['s.sql: MODIFY a.c by MySQL\'s rule'],
+    reason: '1 conclusion(s) rest on a rule of a database this run assumed, because sqlDialects.main is not declared (a). The first, as the schema reader said it: s.sql: MODIFY a.c by MySQL\'s rule',
+    remedy: { action: 'declare', key: 'sqlDialects', example: '{ "main": "postgres" }' } },
+];
+
+test('a diagnostic the engine grouped keeps its count and its first sentences, titled in both languages', async (t) => {
+  const { ctx, body } = await bootBig(t);
+  ev(ctx, `activateTab('status'); OV.resp.answer.diagnostics = ${JSON.stringify(catalogSaid())}; renderOverview();`);
+  await settle(ctx, 4);
+  const row = body.querySelector('#stdiags').querySelectorAll('.stitem').find((r) => r.id === 'st-ov-diag-CATALOG_CREATE_TABLE_UNREAD');
+  assert.ok(row);
+  assert.equal(row.querySelector('.stitemhead .ovnum').textContent, '49', 'the count it stands for, not the one entry that carries it');
+  assert.equal(row.querySelector('.stitemhead b').textContent, 'CREATE TABLE read only as part of another statement');
+  const g = JSON.parse(ev(ctx, `JSON.stringify(diagGroups(${JSON.stringify(catalogSaid())}).map((x)=>[x.kind, x.count, x.causes.map((c)=>c.count)]))`));
+  assert.deepEqual(g, [['CATALOG_CREATE_TABLE_UNREAD', 49, [49]], ['CATALOG_RULE_ASSUMED', 1, [1]]]);
+  const text = ev(ctx, `(()=>{ const g=diagGroups(${JSON.stringify(catalogSaid())})[0]; const d=document.createElement('div'); d.append(...diagGroupBody('t', g).filter(Boolean)); return d.textContent; })()`);
+  assert.match(text, /49/);
+  assert.match(text, /the first 5, in full/);
+  for (let i = 0; i < 5; i++) assert.match(text, new RegExp(`CREATE TABLE t0${i} at line 1${i}`), 'every first sentence the engine kept');
+  assert.match(text, /and 44 more like these/);
+  // The remedy the engine gave, beside the one kind that has one.
+  const assumed = body.querySelector('#stdiags').querySelectorAll('.stitem').find((r) => r.id === 'st-ov-diag-CATALOG_RULE_ASSUMED');
+  assert.match(assumed.textContent, /sqlDialects/);
+  assert.match(assumed.textContent, /"main": "postgres"/);
+  ev(ctx, "setLang('ko')");
+  await settle(ctx, 6);
+  const ko = body.querySelector('#stdiags').querySelectorAll('.stitem').find((r) => r.id === 'st-ov-diag-CATALOG_CREATE_TABLE_UNREAD');
+  assert.equal(ko.querySelector('.stitemhead b').textContent, '다른 문에 섞여 읽힌 CREATE TABLE');
+});
+
 test('the list beside the picture can be made wider, is remembered, and cuts a name in the middle', async (t) => {
   const { ctx, byId, store } = await bootBig(t);
   assert.ok(byId.get('tracerail').querySelector('.railgrab'), 'the list has a grip');

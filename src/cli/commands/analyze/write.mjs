@@ -69,11 +69,21 @@ function prismaCatalogMeta(laneStats) {
 }
 
 /**
+ * The lanes' own tallies: the backend lanes' block with every other lane's
+ * beside it under its name, each only when that lane ran (the catalog's when its
+ * reader kept a list). Null when none did, as a pack with no tally always was.
+ */
+function packLaneStats(laneStats, blocks) {
+  const ran = Object.entries(blocks).filter(([, b]) => b);
+  return ran.length > 0 ? { ...(laneStats ?? {}), ...Object.fromEntries(ran) } : laneStats;
+}
+
+/**
  * THE PACK, projected out of the graph with everything this run learned about
  * itself attached. `builtAt` is returned beside it because the gate, the
  * receipt and the registry all have to stamp the SAME moment.
  */
-export function buildPack(g, { projectId, lanes, base, ddl, ddls, snapshot, snapshotProvenance, snapshotSha256, sqlArgs, axes, laneStats, webStats, openapiStats, harStats, runtimeStats, diagnostics, profileFile, st, baseCommit }) {
+export function buildPack(g, { projectId, lanes, base, ddl, ddls, snapshot, snapshotProvenance, snapshotSha256, sqlArgs, axes, laneStats, webStats, openapiStats, harStats, runtimeStats, catalogStats = null, diagnostics, profileFile, st, baseCommit }) {
   const builtAt = new Date().toISOString();
   const pack = projectPack(g, {
     project: projectId, builtAt, lanes, base,
@@ -117,15 +127,7 @@ export function buildPack(g, { projectId, lanes, base, ddl, ddls, snapshot, snap
         }
         : prismaCatalogMeta(laneStats),
     axes,
-    laneStats: (webStats || openapiStats || harStats || runtimeStats)
-      ? {
-        ...(laneStats ?? {}),
-        ...(webStats ? { web: webStats } : {}),
-        ...(openapiStats ? { openapi: openapiStats } : {}),
-        ...(harStats ? { har: harStats } : {}),
-        ...(runtimeStats ? { otel: runtimeStats } : {}),
-      }
-      : laneStats,
+    laneStats: packLaneStats(laneStats, { web: webStats, openapi: openapiStats, har: harStats, otel: runtimeStats, catalog: catalogStats }),
     diagnostics,
     profile: profileFile,
     // Filled in below, once the calibration gate has judged this run. It is

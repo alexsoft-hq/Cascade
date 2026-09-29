@@ -260,6 +260,55 @@ test('every blind spot the overview can emit has a plain label in both catalogue
   }
 });
 
+// EVERY DIAGNOSTIC KIND THE ENGINE CAN EMIT (RM67-C5), read out of the engine's
+// source, the way the gap kinds above are: every diagnostic is built as an
+// object literal with `kind: 'SOME_KIND'`, or through the profile validator's
+// `add('SOME_KIND', '<severity>', ...)`, and nothing else in the engine spells a
+// kind that way. A list typed here would go stale the day a lane adds one.
+function engineSources(dir, acc = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) engineSources(p, acc);
+    else if (e.name.endsWith('.mjs')) acc.push(fs.readFileSync(p, 'utf8'));
+  }
+  return acc;
+}
+const ENGINE_SRC = engineSources(path.join(ROOT, 'src')).join('\n');
+const DIAGNOSTIC_KINDS = [...new Set([
+  ...[...ENGINE_SRC.matchAll(/\bkind: '([A-Z][A-Z0-9_]+)'/g)].map((m) => m[1]),
+  ...[...ENGINE_SRC.matchAll(/\badd\('([A-Z][A-Z0-9_]+)', '(?:info|warn|error)'/g)].map((m) => m[1]),
+])].sort();
+
+test('every diagnostic and every gap the engine can emit has a title, and every gap its cause, in both catalogues', () => {
+  // The scan must see the whole engine, or it holds nothing: the kinds of every
+  // lane, the profile validator's, and the schema reader's.
+  assert.ok(DIAGNOSTIC_KINDS.length >= 80, `expected every lane's diagnostics, found ${DIAGNOSTIC_KINDS.length}`);
+  for (const k of ['SHARD_UNUSABLE', 'TS_PREFIX_UNREAD', 'PROFILE_DEFAULT_ASSUMED', 'CATALOG_CREATE_TABLE_UNREAD', 'CATALOG_RULE_ASSUMED']) {
+    assert.ok(DIAGNOSTIC_KINDS.includes(k), `${k} was not found by the scan`);
+  }
+  const missing = [];
+  const hangul = /[가-힣]/;
+  for (const kind of DIAGNOSTIC_KINDS) {
+    const k = `diag.title.${kind}`;
+    if (typeof VIEWER_STRINGS.en[k] !== 'string') missing.push(`${k} (en)`);
+    if (typeof KO[k] !== 'string' || !hangul.test(KO[k])) missing.push(`${k} (ko)`);
+  }
+  for (const kind of GAP_LABEL_KINDS) {
+    for (const k of [`ov.gap.${kind}.label`, `gap.cause.${kind}`]) {
+      if (typeof VIEWER_STRINGS.en[k] !== 'string') missing.push(`${k} (en)`);
+      if (typeof KO[k] !== 'string' || !hangul.test(KO[k])) missing.push(`${k} (ko)`);
+    }
+  }
+  assert.deepEqual(missing, [], 'a kind the page has no words for is shown as "analyzer warning: CODE"; give it a title in both languages');
+  // A title is a phrase a reader scans, not the code said again.
+  for (const kind of DIAGNOSTIC_KINDS) {
+    const en = VIEWER_STRINGS.en[`diag.title.${kind}`];
+    assert.ok(en.length <= 60, `diag.title.${kind} (en) is too long for a title: ${en}`);
+    assert.equal(en.includes(kind), false, `diag.title.${kind} (en) still carries the code`);
+    assert.equal(/[.]$/.test(en), false, `diag.title.${kind} (en) is a sentence, not a title`);
+  }
+});
+
 // The masthead's quiet layer (RM36). The verdict words themselves are the
 // engine's and are never keyed; these are the sentences that say what they mean.
 test('the masthead\'s plain-language layer is keyed and translated, in both languages', () => {

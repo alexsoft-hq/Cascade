@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/11")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/12")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/11",
+            "catalog-ddl/12",
         )
 
 
@@ -1556,6 +1556,85 @@ class Review4ClauseTests(unittest.TestCase):
         cols, diagnostics = _fold_db([("s.sql", "CREATE TABLE t (id INT NOT NULL, c INT, d INT, PRIMARY KEY (id));\n"
                                                 "ALTER TABLE t DROP COLUMN (c, d);")], "", "h2", "fold-upper")
         self.assertEqual(sorted(cols), [("t", "id")], diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# WHAT THE READER SAID TRAVELS WITH WHAT IT READ (catalog-ddl/12). The
+# diagnostics went to stderr only, so a pack never held them, and a cached
+# catalog, read back without running this reader, had none to give. The header
+# carries them now, the same list stderr carries, in the order they were said.
+# ---------------------------------------------------------------------------
+
+def _run_main(argv_tail, text):
+    import contextlib
+    import io
+    import shutil
+    import tempfile
+    where = tempfile.mkdtemp()
+    name = os.path.join(where, "schema.sql")
+    with open(name, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = catalog_ddl.main(argv_tail + [name])
+    finally:
+        shutil.rmtree(where)
+    recs = [json.loads(line) for line in out.getvalue().splitlines()]
+    said = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]
+    return rc, recs, [d for d in said if d.get("code") != "summary"]
+
+
+class HeaderDiagnosticsTests(unittest.TestCase):
+    MISSING = ("CREATE TABLE a (id INT NOT NULL, c INT, PRIMARY KEY (id));\n"
+               "ALTER TABLE a MODIFY c BIGINT;\n"
+               "ALTER TABLE nowhere ADD COLUMN x INT;\n")
+
+    def test_the_header_carries_every_diagnostic_stderr_carries_in_the_same_order(self):
+        rc, recs, said = _run_main(["--database-assumed"], self.MISSING)
+        self.assertEqual(rc, 0)
+        self.assertEqual(recs[0]["kind"], "header")
+        self.assertEqual(recs[0]["diagnostics"], said)
+        self.assertEqual([d["code"] for d in said], ["alter_rule_assumed", "alter_unknown_table"])
+
+    def test_a_file_the_reader_reads_whole_says_so_with_an_empty_list(self):
+        _, recs, said = _run_main([], BASIC_DDL)
+        self.assertEqual(said, [])
+        self.assertEqual(recs[0]["diagnostics"], [])
+
+    def test_the_header_is_the_same_bytes_run_after_run(self):
+        self.assertEqual(_run_main([], MALFORMED_DDL)[1][0], _run_main([], MALFORMED_DDL)[1][0])
+
+    def test_what_the_reader_said_does_not_change_what_it_read(self):
+        # The body records are what a lineage key is computed from: the header
+        # grows, the tables and columns do not move.
+        _, recs, _ = _run_main(["--database-assumed"], self.MISSING)
+        direct = catalog_ddl.parse_ddl_catalog_files([("x.sql", self.MISSING)], database_assumed=True)
+        self.assertEqual([r for r in recs if r["kind"] != "header"], [r for r in direct if r["kind"] != "header"])
+        self.assertNotIn("diagnostics", direct[0], "no list was handed in, so there is none to carry")
+
+    def test_a_rename_that_cannot_be_read_is_an_unreadable_statement_not_a_clause_the_catalog_does_not_hold(self):
+        # alter_clause_unsupported says a clause changes nothing the catalog
+        # holds; a RENAME that was not read may have renamed a table.
+        _, diagnostics = _fold_files([("s.sql", "CREATE TABLE a (id INT);\nRENAME TABLE a b;\n")], "mysql")
+        self.assertEqual([d["code"] for d in diagnostics], ["alter_unreadable"])
+        self.assertIn("RENAME statement could not be read", diagnostics[0]["message"])
+
+    def test_every_clause_not_held_names_its_table(self):
+        # The pack counts alter_clause_unsupported into no gap, which holds only
+        # while every one of them is about a clause on a table this reader has.
+        _, diagnostics = _fold_files([("s.sql", "CREATE TABLE a (id INT PRIMARY KEY, c INT);\n"
+                                                "ALTER TABLE a ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES b (id);\n"
+                                                "ALTER TABLE a ALTER COLUMN c SET DEFAULT 1;\n")], "postgres")
+        held = [d for d in diagnostics if d["code"] == "alter_clause_unsupported"]
+        self.assertTrue(held, diagnostics)
+        self.assertTrue(all(d["table"] == "a" for d in held), held)
+
+    def test_a_table_declared_twice_is_said_in_plain_punctuation(self):
+        _, diagnostics = _fold_files([("a.sql", "CREATE TABLE t (id INT);"), ("b.sql", "CREATE TABLE t (id INT);")], "mysql")
+        said = _codes(diagnostics, "DUPLICATE_TABLE_DECLARATION")
+        self.assertEqual(len(said), 1)
+        self.assertNotIn(chr(0x2014), said[0])
 
 
 if __name__ == "__main__":

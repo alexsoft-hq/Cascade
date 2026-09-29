@@ -47,7 +47,8 @@ const DUPLICATE_TYPES_NAMED = 3;
  * A kind this table does not name is `info`, so a new gap is shown, not lost.
  */
 const GAP_CLASS = Object.freeze({
-  'no-catalog': 'input', 'not-shipped': 'input', 'http-calls-leaving-pack': 'input',
+  'no-catalog': 'input', 'not-shipped': 'input', 'http-calls-leaving-pack': 'input', 'catalog-rules-assumed': 'input',
+  'catalog-tables-unread': 'unresolved', 'catalog-read-in-part': 'unresolved',
   'unresolved-calls': 'unresolved', 'external-symbols': 'unresolved', 'screen-components-unresolved': 'unresolved',
   'screens-from-server': 'unresolved', 'jpa-statements-unresolved': 'unresolved', 'mp-columns-runtime-only': 'unresolved',
   'mode-floor': 'query', 'depth-cap': 'query', 'node-cap': 'query', 'generated-walk-skip': 'query',
@@ -454,6 +455,7 @@ function buildGaps(o) {
   // about it, or null where the engine knows none (src/core/remedies.mjs).
   const say = (gap) => gaps.push({ ...gap, class: gapClassOf(gap.kind), remedy: gapRemedy(gap.kind, o) });
   schemaGaps(o, say);
+  catalogGaps(o, say);
   routeGaps(o, say);
   laneGaps(o, say);
   contractGaps(o, say);
@@ -523,6 +525,49 @@ function schemaGaps(o, say) {
       kind: 'external-symbols', count: external,
       note: `${external} symbol(s) have no source file here. They are library or framework types we only saw referenced, so a chain that runs into one stops there`,
     });
+  }
+}
+
+/**
+ * WHAT THE SCHEMA READER COULD NOT READ, by what it costs (RM67-C5): tables the
+ * catalog does not hold, conclusions that rest on a database nobody declared,
+ * and statements not applied as the files wrote them. Each reader code counts
+ * into one of these or into none (src/core/catalog_read.mjs), and the note names
+ * the kinds, so a reader can go from the gap to the diagnostics that make it.
+ */
+const CATALOG_GAPS = Object.freeze([
+  {
+    kind: 'catalog-tables-unread',
+    note: (n, named, by) => `${n} table(s) the schema files declare are not in the catalog, or only in part, because the reader could not read their CREATE TABLE${named}. `
+      + `A statement or a mapping that names one still reaches a table of that name, with only the columns it names and no comment or key from the schema (${by})`,
+  },
+  {
+    kind: 'catalog-rules-assumed',
+    note: (n, named, by) => `${n} conclusion(s) about the schema rest on a rule of a database this run assumed, because sqlDialects.main is not declared${named}. `
+      + `Each is what that database would do, which may not be what the database these files are for does (${by})`,
+  },
+  {
+    kind: 'catalog-read-in-part',
+    note: (n, named, by) => `${n} place(s) in the schema files were not read or applied as the files wrote them, so the tables there may not hold the state the files leave${named}. `
+      + `Each diagnostic names the file and what it could not apply (${by})`,
+  },
+]);
+
+/** The first three tables a gap's codes named: ": a, b" when that is all of them, ", among them a, b, c" when not. */
+function catalogTablesSaid(codes, n) {
+  const names = [...new Set(codes.flatMap((c) => c.tables ?? []))].slice(0, 3);
+  if (names.length === 0) return '';
+  return names.length >= n ? `: ${names.join(', ')}` : `, among them ${names.join(', ')}`;
+}
+
+/** The catalog's gaps, from laneStats.catalog: none for a pack whose reader kept no list, which is not "none lost". */
+function catalogGaps(o, say) {
+  const codes = o.laneStats?.catalog?.codes;
+  if (!Array.isArray(codes)) return;
+  for (const g of CATALOG_GAPS) {
+    const mine = codes.filter((c) => c.gap === g.kind && Number.isInteger(c.count));
+    const n = mine.reduce((s, c) => s + c.count, 0);
+    if (n > 0) say({ kind: g.kind, count: n, note: g.note(n, catalogTablesSaid(mine, n), mine.map((c) => `${c.kind} ${c.count}`).join(', ')) });
   }
 }
 

@@ -38,6 +38,8 @@ export const REMEDY_EXAMPLES = Object.freeze({
   servers: '{ "mall-admin": { "port": 8080 } }',
   'openapi.generatedFromCode': '["../docs/openapi.json"]',
   'openapi.generatesCode': '["../src/main/resources/openapi.yml"]',
+  // The whole map, not `sqlDialects.main`: a key of the profile is what the validator takes, and main is the one key it routes.
+  sqlDialects: '{ "main": "postgres" }',
 });
 
 /** The narrowest to the widest: a wider mode admits every grade a narrower one does. */
@@ -67,6 +69,7 @@ export const GAP_REMEDIES = Object.freeze({
     action: 'declare', key: 'openapi.generatesCode', when: ['openapi', 'contractLinks', 'undeclared'],
     otherwise: { action: 'mode', mode: 'HEURISTIC' },
   },
+  'catalog-rules-assumed': { action: 'declare', key: 'sqlDialects' },
 });
 
 /**
@@ -85,6 +88,8 @@ export const DIAGNOSTIC_REMEDIES = Object.freeze({
   PREFIX_NOT_ON_CALLS: { action: 'declare', key: null },
   ROUTE_MOUNT_FROM_DOCUMENT: { action: 'declare', key: 'openapi.generatedFromCode', routes: true },
   CONTRACT_FROM_DOCUMENT: { action: 'declare', key: 'openapi.generatesCode', routes: true },
+  CATALOG_RULE_ASSUMED: { action: 'declare', key: 'sqlDialects' },
+  CATALOG_COLUMN_UNNAMED: { action: 'declare', key: 'sqlDialects' },
 });
 
 /**

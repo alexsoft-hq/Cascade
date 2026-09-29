@@ -1537,7 +1537,12 @@ function overviewEmpty(answer, meta) {
 function packDiagnostics(meta) {
   return (Array.isArray(meta?.diagnostics) ? meta.diagnostics : [])
     .filter((d) => d && (d.severity === 'warn' || d.severity === 'error'))
-    .map((d) => ({ kind: d.kind, severity: d.severity, key: d.key ?? null, reason: d.reason, remedy: diagnosticRemedy(d) }));
+    .map((d) => ({ kind: d.kind, severity: d.severity, key: d.key ?? null, reason: d.reason, ...grouped(d), remedy: diagnosticRemedy(d) }));
+}
+
+/** How many one grouped diagnostic stands for, and its first sentences, when its lane grouped them (the catalog reader's). */
+function grouped(d) {
+  return Number.isInteger(d.count) ? { count: d.count, ...(Array.isArray(d.examples) ? { examples: d.examples } : {}) } : {};
 }
 
 /**

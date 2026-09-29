@@ -309,8 +309,16 @@ function diagCause(reason){
     .replace(/…(?:[\s,]*…)+/g,'…');
 }
 /**
+ * How many one diagnostic stands for: one, or the `count` the engine gave an
+ * entry it grouped itself (the schema reader's, one entry per code with its
+ * first sentences in `examples`, because one schema can give hundreds).
+ */
+const diagWeight=(d)=> (d && Number.isInteger(d.count) && d.count>0) ? d.count : 1;
+/** The sentences a group can show in full: an entry's own first ones, or its reason. */
+const diagSentences=(items)=> items.flatMap((d)=> (Array.isArray(d.examples) && d.examples.length) ? d.examples : [d.reason]).slice(0, DIAG_EXAMPLES);
+/**
  * Diagnostics grouped by kind, and inside a kind by what they say, biggest first.
- * @param {{kind:string, reason:string}[]} list
+ * @param {{kind:string, reason:string, count?:number, examples?:string[]}[]} list
  * @returns {{kind:string, count:number, causes:{cause:string, count:number, items:object[]}[]}[]}
  */
 function diagGroups(list){
@@ -322,9 +330,10 @@ function diagGroups(list){
     if(!causes.has(c)) causes.set(c, []);
     causes.get(c).push(d);
   }
+  const weigh=(items)=> items.reduce((n, d)=> n+diagWeight(d), 0);
   return [...byKind].map(([kind, causes])=>({ kind,
-    count:[...causes.values()].reduce((n, x)=> n+x.length, 0),
-    causes:[...causes].map(([cause, items])=>({ cause, count:items.length, items })).sort((a, b)=> b.count-a.count) }));
+    count:[...causes.values()].reduce((n, x)=> n+weigh(x), 0),
+    causes:[...causes].map(([cause, items])=>({ cause, count:weigh(items), items })).sort((a, b)=> b.count-a.count) }));
 }
 /**
  * A DIAGNOSTIC KIND IN THE PAGE'S WORDS (RM67-U2e): "unread setting: API prefix
@@ -339,11 +348,11 @@ function diagTitle(kind){
 /** What one kind's rows say, each with its count, the first few in full, and what to do. */
 function diagGroupBody(key, g, withTodo=true){
   const todoKey='diag.todo.'+g.kind;
-  return [ ...g.causes.map((c, i)=> el('div',{className:'diagcause'},[
-      el('div',{className:'comment'},[ el('span',{className:'ovnum',textContent:String(c.count)}), '  ', c.count===1 ? c.items[0].reason : c.cause ]),
-      c.count>1 ? fold(key+'.'+i, [t('diag.examples',{n:Math.min(DIAG_EXAMPLES, c.count)})], ()=> [
-        ...c.items.slice(0, DIAG_EXAMPLES).map((d)=> el('div',{className:'comment'},[d.reason])),
-        c.count>DIAG_EXAMPLES ? el('div',{className:'count',textContent:t('diag.examples.more',{n:c.count-DIAG_EXAMPLES})}) : null ], null, true) : null ])),
+  return [ ...g.causes.map((c, i)=> { const shown=diagSentences(c.items); return el('div',{className:'diagcause'},[
+      el('div',{className:'comment'},[ el('span',{className:'ovnum',textContent:String(c.count)}), '  ', c.items.length===1 ? c.items[0].reason : c.cause ]),
+      c.count>1 ? fold(key+'.'+i, [t('diag.examples',{n:shown.length})], ()=> [
+        ...shown.map((x)=> el('div',{className:'comment'},[x])),
+        c.count>shown.length ? el('div',{className:'count',textContent:t('diag.examples.more',{n:c.count-shown.length})}) : null ], null, true) : null ]); }),
     (withTodo && Object.hasOwn(VIEWER_STRINGS.en, todoKey)) ? el('div',{className:'comment diagtodo'},[t(todoKey)]) : null ];
 }
 /** One kind's limits as one folded row: the kind, how many, and how many different things they say. */

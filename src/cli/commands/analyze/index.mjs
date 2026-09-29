@@ -27,6 +27,7 @@ import {
 } from './lanes.mjs';
 import { withPackLock } from '../../pack_history.mjs';
 import { codeSettingDiagnostics } from '../../../core/code_settings.mjs';
+import { catalogDiagnostics, catalogReadStats } from '../../../core/catalog_read.mjs';
 import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
 import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
@@ -227,24 +228,31 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
     },
     { screenAxisRequested: screenGate.enabled, screenAxisReason: screenGate.reason },
   );
-  // §6.1: the manifest PIN is advisory in this engine — it analyzes the
-  // working tree. When the two disagree, the pack records the commit it
-  // ACTUALLY read and says so, rather than pretending the pin was analyzed.
-  if (manifest && base) {
-    const pinned = manifest.repositories.find((r) => path.resolve(r.absPath) === path.resolve(root))
-      ?? manifest.repositories[0];
-    if (pinned && pinned.commit !== base.commit) {
-      diagnostics.push({
-        kind: 'PIN_MOVED', severity: 'warn', key: 'manifest.repositories',
-        reason: `manifest pins ${pinned.key} at ${pinned.commit} but HEAD is ${base.commit}. This pack records HEAD, the commit it actually read. Re-run \`cascade init --force\` to move the pin`,
-      });
-    }
-  }
+  // What the schema reader could not read or had to assume, from the catalog's
+  // header, so a catalog read back from its cache says it too (RM67-C5).
+  const catalogRead = catalogReadStats(catalog);
+  diagnostics.push(...pinMoved(manifest, base, root), ...catalogDiagnostics(catalogRead));
   for (const d of diagnostics) process.stderr.write(`  [${d.severity}] ${d.kind} ${d.key}: ${d.reason}\n`);
 
   return {
-    g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats,
+    g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats, catalogRead,
   };
+}
+
+/**
+ * §6.1: the manifest PIN is advisory in this engine — it analyzes the working
+ * tree. When the two disagree, the pack records the commit it ACTUALLY read and
+ * says so, rather than pretending the pin was analyzed.
+ */
+function pinMoved(manifest, base, root) {
+  if (!manifest || !base) return [];
+  const pinned = manifest.repositories.find((r) => path.resolve(r.absPath) === path.resolve(root))
+    ?? manifest.repositories[0];
+  if (!pinned || pinned.commit === base.commit) return [];
+  return [{
+    kind: 'PIN_MOVED', severity: 'warn', key: 'manifest.repositories',
+    reason: `manifest pins ${pinned.key} at ${pinned.commit} but HEAD is ${base.commit}. This pack records HEAD, the commit it actually read. Re-run \`cascade init --force\` to move the pin`,
+  }];
 }
 
 /** A refusal raised while the project's lock is held, carried out of it. */
@@ -276,13 +284,13 @@ function certify(ctx, prepared, facts) {
     mappers, webSrc, otelFiles, serviceNames, sqlArgs, selectionRel, base, baseCommit, projectId, plan,
     diagnostics, relOf,
   } = prepared;
-  const { g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats } = facts;
+  const { g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats, catalogRead } = facts;
   const st = result.stats;
   // What the working-tree overlay checks is still what this run read, beside the fact index (src/cli/overlay_inputs.mjs).
   result.index.overlayInputs = overlayInputsRecord({ rootAbs: selectionRel.root, webRoots: selectionRel.webRoots, manifestDir: resolved.dotCascade ?? null });
   const { pack, builtAt } = buildPack(g, {
     projectId, lanes, base, ddl, ddls, snapshot, snapshotProvenance, snapshotSha256, sqlArgs, axes,
-    laneStats, webStats, openapiStats, harStats, runtimeStats, diagnostics, profileFile, st, baseCommit,
+    laneStats, webStats, openapiStats, harStats, runtimeStats, catalogStats: catalogRead, diagnostics, profileFile, st, baseCommit,
   });
   // ONE LOCK FROM THE GATE TO THE RECEIPT. The gate judges this run against the
   // sealed baseline, and the baseline is what another run of the project re-seals:
