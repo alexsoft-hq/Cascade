@@ -188,13 +188,17 @@ export const AXIS_STATUS = Object.freeze(['shipped', 'degraded', 'not-shipped'])
  * `database` is that name too (`h2`, `tibero`, `mariadb`), for the same reason:
  * the DDL reader reads an ALTER by the rules of the database the files are for,
  * and a database parsed with another's grammar does not follow that one's rules.
+ * `databaseAssumed` says nobody declared it: MySQL is then a default, and the DDL
+ * reader says so wherever a conclusion rests on one of its rules (review 4,
+ * design 4).
  *
  * @param {Object} profile  a normalized profile
- * @returns {{dialect:string, database:string, identifierCase:string, defaultSchema:(string|null),
- *            schemaProperties:string[], lineageArgs:string[], mybatisArgs:string[]}}
+ * @returns {{dialect:string, database:string, databaseAssumed:boolean, identifierCase:string,
+ *            defaultSchema:(string|null), schemaProperties:string[], lineageArgs:string[], mybatisArgs:string[]}}
  */
 export function sqlLaneArgs(profile) {
   const dialect = sqlDialectOf(profile);
+  const databaseAssumed = profile?.sqlDialects?.main == null;
   const database = profile?.sqlDialects?.main ?? DEFAULT_SQL_DIALECT;
   const identifierCase = sqlIdentifierCaseOf(profile);
   const schema = (profile && profile.schema) || {};
@@ -208,7 +212,7 @@ export function sqlLaneArgs(profile) {
   if (defaultSchema) mybatisArgs.push('--default-schema', defaultSchema);
   for (const p of schemaProperties) mybatisArgs.push('--schema-property', p);
 
-  return { dialect, database, identifierCase, defaultSchema, schemaProperties, lineageArgs, mybatisArgs };
+  return { dialect, database, databaseAssumed, identifierCase, defaultSchema, schemaProperties, lineageArgs, mybatisArgs };
 }
 
 /**

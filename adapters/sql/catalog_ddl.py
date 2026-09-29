@@ -89,7 +89,15 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        without a word. MySQL's ALTER TABLE ... COMMENT sets the table comment,
 #        and H2's ALTER COLUMN c <definition> is read as MODIFY is. A file every
 #        statement of which the grammar reads parses to the records /9 wrote.
-CATALOG_VERSION = "catalog-ddl/10"
+#   /11 - what is set aside is recognized by its whole shape (review 4): a column
+#        named key or index is a column, a tail word that is no table option this
+#        reader knows (INHERITS) is not set aside, and MySQL's ``KEY idx (c)`` that
+#        a grammar reads as a column named KEY is not a column. INHERITS gives the
+#        parent's columns; a CREATE TABLE a database reads in a compatibility mode
+#        (H2's MODE=MySQL) is read by that mode's grammar; statements a script
+#        writes with no semicolons are read one by one; H2's DROP COLUMN (c, d)
+#        drops each. A file with none of these parses to the records /10 wrote.
+CATALOG_VERSION = "catalog-ddl/11"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -310,6 +318,15 @@ _RENAME_TABLE_RE = re.compile(
 #                   not say, NOT NULL or a comment, is gone (MySQL; MariaDB: "you
 #                   should specify all attributes for the new column"). False: it
 #                   changes only what it says (Oracle).
+#   modes           the other databases' SQL the database reads in a compatibility
+#                   mode, as (the mode's name, the grammar that reads that SQL). H2's
+#                   manual, "Compatibility": MODE=MySQL, PostgreSQL, Oracle,
+#                   MSSQLServer (and DB2, Derby, which sqlglot has no grammar for);
+#                   HSQLDB's guide, "Compatibility With Other DBMS": sql.syntax_mys,
+#                   syntax_pgs, syntax_ora, syntax_mss. A CREATE TABLE the database's
+#                   own grammar cannot read is read as a mode reads it, and said so:
+#                   the file of a project that runs H2 in MODE=MySQL is MySQL's SQL.
+#                   A mode is none of the database's other rules.
 # Oracle numbers the names it gives an unnamed key (SYS_C...), so such a key's
 # name is not known there either.
 _DATABASE_RULES = (
@@ -321,6 +338,11 @@ _DATABASE_RULES = (
      "dropKeyColumnDropsKey": False},
     {"names": ("oracle", "oracle-11g", "oracle-19c"), "database": "Oracle", "dropKeyColumnDropsKey": True,
      "modifyRedefines": False},
+    {"names": ("h2",), "database": "H2",
+     "modes": (("MySQL", "mysql"), ("PostgreSQL", "postgres"), ("Oracle", "oracle"), ("MSSQLServer", "tsql"))},
+    {"names": ("hsqldb",), "database": "HSQLDB",
+     "modes": (("sql.syntax_mys", "mysql"), ("sql.syntax_pgs", "postgres"), ("sql.syntax_ora", "oracle"),
+               ("sql.syntax_mss", "tsql"))},
 )
 
 
@@ -350,12 +372,14 @@ class _Table(object):
 class _Fold(object):
     """What folding the files carries from one statement to the next. ``dialect`` is
     the grammar the files are parsed with, ``database`` the database they are for,
-    whose rules an ALTER is read by (the grammar's own name when none is given)."""
+    whose rules an ALTER is read by (the grammar's own name when none is given).
+    ``assumed``: the project did not declare the database, so it is a default, and
+    a conclusion that rests on one of its rules says so (review 4, design 4)."""
 
     __slots__ = ("tables", "schema", "diagnostics", "identifier_case", "dialect", "database", "rules",
-                 "source", "tail")
+                 "source", "tail", "accounted", "assumed")
 
-    def __init__(self, schema, diagnostics, identifier_case, dialect, database=None):
+    def __init__(self, schema, diagnostics, identifier_case, dialect, database=None, assumed=False):
         self.tables = {}    # folded table name -> _Table (the record keeps the name as written)
         self.schema = schema
         self.diagnostics = diagnostics
@@ -365,6 +389,8 @@ class _Fold(object):
         self.rules = _rules_of(self.database)
         self.source = None
         self.tail = ""      # what the grammar split off the ALTER being read, as written
+        self.accounted = []  # each CREATE TABLE of the file being read that a statement declared
+        self.assumed = assumed
 
     def rule(self, key):
         return self.rules.get(key)
@@ -380,16 +406,23 @@ class _Fold(object):
     def say(self, level, code, table, message):
         _diag(self.diagnostics, level, code, table, message)
 
+    def assumed_rule(self, table, what, rule):
+        """A conclusion that rests on a rule of a database nobody declared: said, with what to declare."""
+        if self.assumed:
+            self.say("warn", "alter_rule_assumed", table,
+                     "%s: %s, by %s's rule that %s. %s is assumed because sqlDialects.main is not declared; declare "
+                     "it if these files are for another database" % (self.source, what, self.label, rule, self.label))
 
-def _parse_statements(sql_text, diagnostics, source, dialect="mysql"):
+
+def _parse_statements(sql_text, diagnostics, source, dialect="mysql", fold=None):
     """Every statement of one file: read whole, then whole with the backslash rule turned round,
     then one statement at a time when neither reading can tokenize it."""
     try:
-        return _parse_whole(sql_text, diagnostics, source, dialect)
+        return _parse_whole(sql_text, diagnostics, source, dialect, fold)
     except TokenError as e:
         error = e
     try:
-        statements = _parse_whole(sql_text, diagnostics, source, _escapes_turned(dialect))
+        statements = _parse_whole(sql_text, diagnostics, source, _escapes_turned(dialect), fold)
     except TokenError:
         return _parse_each_statement(sql_text, diagnostics, source, dialect, error)
     _diag(
@@ -431,19 +464,22 @@ def _escapes_turned(dialect):
     return _ESCAPES_TURNED[key]
 
 
-def _parse_whole(sql_text, diagnostics, source, dialect):
+def _parse_whole(sql_text, diagnostics, source, dialect, fold=None):
     """sqlglot.parse with the same salvage path the single-file reader had. A file
     that stops the parse is first read again with its CREATE TABLE statements that
     cannot be read as written set aside where the catalog holds nothing, so an
-    export's ``NOT NULL ENABLE`` does not cost its table."""
+    export's ``NOT NULL ENABLE`` does not cost its table; one the database reads in
+    a compatibility mode is read by that mode's grammar and put back in its place."""
     try:
         return sqlglot.parse(sql_text, read=dialect)
     except ParseError as e:
         error = e
-    set_aside = _set_aside_in_file(sql_text, dialect, diagnostics, source)
-    if set_aside is not None:
+    found = _set_aside_in_file(sql_text, dialect, diagnostics, source, fold)
+    placed = {}
+    if found is not None:
+        set_aside, placed = found
         try:
-            return sqlglot.parse(set_aside, read=dialect)
+            return _put_back(sqlglot.parse(set_aside, read=dialect), placed)
         except ParseError as e:
             error, sql_text = e, set_aside
     _diag(
@@ -454,7 +490,23 @@ def _parse_whole(sql_text, diagnostics, source, dialect):
         "full parse of %s failed, salvaging with error_level=IGNORE: %s"
         % (source, str(error).replace("\n", " ")),
     )
-    return sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+    return _put_back(sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE), placed)
+
+
+# The statement that holds the place of a CREATE TABLE read by a compatibility
+# mode's grammar while the rest of the file is parsed by the database's own.
+_PLACE_HOLDER = "cascade_read_in_mode_%d"
+
+
+def _put_back(statements, placed):
+    """Each place holder replaced by the table it holds the place of."""
+    if not placed:
+        return statements
+    out = []
+    for stmt in statements:
+        name = stmt.this.this.name if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema) else None
+        out.append(placed.get(name, stmt))
+    return out
 
 
 # A data statement fills a table and never declares one, so the catalog has no use for it.
@@ -699,12 +751,62 @@ def _set_aside_states(tokens, s, e, top, aside):
             n += 1
 
 
+# WHAT A CREATE TABLE WRITES AFTER ITS COLUMN LIST THAT CHANGES NOTHING THE CATALOG
+# HOLDS: where and how the table is stored, and its defaults for rows to come.
+# Each word maps to True when a value follows it (``ENGINE = InnoDB``, ``TABLESPACE
+# users``), False when it stands alone; a parenthesized group after a word is its
+# own (``STORAGE (...)``, ``WITH (fillfactor=70)``). A tail with a word not here is
+# kept as written: ``INHERITS (parent)`` adds columns, ``AS SELECT`` declares them.
+#   MySQL, MariaDB   CREATE TABLE's table_options and partition_options
+#   Oracle           physical_properties, table_properties, and an export's segment clauses
+#   PostgreSQL       WITH (...), WITHOUT OIDS, USING method, TABLESPACE, ON COMMIT, PARTITION BY
+#   SQL Server       ON filegroup, TEXTIMAGE_ON, FILESTREAM_ON
+_TABLE_OPTIONS = {
+    "ENGINE": True, "TYPE": True, "AUTO_INCREMENT": True, "AVG_ROW_LENGTH": True, "CHECKSUM": True,
+    "COMPRESSION": True, "CONNECTION": True, "DIRECTORY": True, "DATA": False, "DELAY_KEY_WRITE": True,
+    "ENCRYPTION": True, "INSERT_METHOD": True, "KEY_BLOCK_SIZE": True, "MAX_ROWS": True, "MIN_ROWS": True,
+    "PACK_KEYS": True, "PASSWORD": True, "ROW_FORMAT": True, "STATS_AUTO_RECALC": True, "STATS_PERSISTENT": True,
+    "STATS_SAMPLE_PAGES": True, "PAGE_CHECKSUM": True, "TRANSACTIONAL": True, "SECONDARY_ENGINE": True,
+    "AUTOEXTEND_SIZE": True, "TABLESPACE": True, "STORAGE": False, "DISK": False, "MEMORY": False, "UNION": False,
+    "DEFAULT": False, "CHARSET": True, "CHARACTER SET": True, "CHARACTER": False, "SET": True, "COLLATE": True,
+    "COMMENT": True, "PARTITION": False, "PARTITIONS": True, "SUBPARTITION": False, "SUBPARTITIONS": True,
+    "BY": False, "RANGE": False, "LIST": False, "HASH": False, "LINEAR": False, "KEY": False, "COLUMNS": False,
+    "PCTFREE": True, "PCTUSED": True, "INITRANS": True, "MAXTRANS": True, "LOGGING": False, "NOLOGGING": False,
+    "COMPRESS": False, "NOCOMPRESS": False, "CACHE": False, "NOCACHE": False, "PARALLEL": False,
+    "NOPARALLEL": False, "MONITORING": False, "NOMONITORING": False, "ENABLE": False, "DISABLE": False,
+    "ROW": False, "MOVEMENT": False, "SEGMENT": False, "CREATION": True, "ORGANIZATION": True,
+    "ROWDEPENDENCIES": False, "NOROWDEPENDENCIES": False, "RESULT_CACHE": False, "INMEMORY": False, "NO": False,
+    "ON": True, "COMMIT": False, "PRESERVE": False, "DELETE": False, "ROWS": False, "DROP": False,
+    "WITH": False, "WITHOUT": False, "OIDS": False, "USING": True, "TEXTIMAGE_ON": True, "FILESTREAM_ON": True,
+}
+
+
+def _tail_is_options(tokens, top):
+    """Every word at the top of the tail is an option of _TABLE_OPTIONS or the value one takes."""
+    value = False
+    for i in top:
+        kind, word = tokens[i].token_type, _word(tokens[i])
+        if value or kind in (TokenType.NUMBER, TokenType.STRING, TokenType.IDENTIFIER, TokenType.COMMA):
+            value = kind == TokenType.EQ
+            continue
+        if kind == TokenType.EQ:
+            value = True
+            continue
+        if word not in _TABLE_OPTIONS:
+            return False
+        value = _TABLE_OPTIONS[word]
+    return True
+
+
 def _set_aside_tail(tokens, closing, last, aside, sql):
     """The physical attributes after the column list, all but a MySQL table comment.
-    False, and nothing set aside, when a statement word starts a line in it: that is
-    the next statement, not this table's attributes."""
+    None, and nothing set aside, when a statement word starts a line in it: that is
+    the next statement, not this table's attributes. False, and nothing set aside,
+    when it holds a word that is not a table option this reader knows."""
     top = _top_depth(tokens, closing + 1, last)
     if any(_word(tokens[i]) in _STATEMENT_WORDS and "\n" in sql[tokens[i - 1].end + 1:tokens[i].start] for i in top):
+        return None
+    if not _tail_is_options(tokens, top):
         return False
     keep = set()
     for n, i in enumerate(top):
@@ -726,17 +828,73 @@ def _set_aside_tail(tokens, closing, last, aside, sql):
     return True
 
 
+# A table constraint the catalog holds nothing of, recognized by its whole shape,
+# never by its first word: ``key text PRIMARY KEY`` is a column named key, and
+# ``KEY idx (c)`` is an index. Each shape is its head (after ``CONSTRAINT name``),
+# how many words may come between the head and its parenthesized list (an index's
+# name, ``USING btree``, PostgreSQL's ``NULLS NOT DISTINCT``), whether that list
+# names columns (``key varchar(10)`` lists a number, so it is a column), and the
+# word that must follow the list. An element of no shape here is not set aside.
+_CONSTRAINT_SHAPES = (
+    {"head": ("FOREIGN KEY",), "between": 1, "columns": True, "then": "REFERENCES"},
+    {"head": ("CHECK",), "between": 0, "columns": False},
+    {"head": ("UNIQUE",), "between": 5, "columns": True},
+    {"head": ("KEY", "INDEX"), "between": 3, "columns": True},
+    {"head": ("FULLTEXT", "SPATIAL"), "between": 2, "columns": True},
+    {"head": ("EXCLUDE",), "between": 2, "columns": False},
+)
+_NOT_NAMES = (TokenType.NUMBER, TokenType.STRING, TokenType.L_PAREN, TokenType.R_PAREN, TokenType.COMMA,
+              TokenType.SEMICOLON, TokenType.DOT, TokenType.EQ)
+
+
+def _name_like(token):
+    """A token that can be a name: a quoted one, or a single bare word."""
+    if token.token_type == TokenType.IDENTIFIER:
+        return True
+    return token.token_type not in _NOT_NAMES and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$#]*", token.text) is not None
+
+
+def _closing(tokens, opening, last):
+    depth = 0
+    for j in range(opening, last + 1):
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(tokens[j].token_type, 0)
+        if depth == 0:
+            return j
+    return None
+
+
+def _lists_columns(tokens, opening, closing):
+    """``(a, b(10) DESC, (expr))``: each item a column, or an expression in parentheses of its own."""
+    items = _elements(tokens, opening, closing)
+    return bool(items) and all(_name_like(tokens[s]) or tokens[s].token_type == TokenType.L_PAREN for s, _ in items)
+
+
+def _constraint_head(tokens, s, e):
+    """The head of the table constraint the element at s..e is, by its whole shape; None when it has none of them."""
+    i = s + 2 if _word(tokens[s]) == "CONSTRAINT" else s
+    shape = next((sh for sh in _CONSTRAINT_SHAPES if i <= e and _word(tokens[i]) in sh["head"]), None)
+    if shape is None:
+        return None
+    j = i + 1
+    while j <= e and tokens[j].token_type != TokenType.L_PAREN and _name_like(tokens[j]) and j - i <= shape["between"]:
+        j += 1
+    close = _closing(tokens, j, e) if j <= e and tokens[j].token_type == TokenType.L_PAREN else None
+    if close is None or (shape["columns"] and not _lists_columns(tokens, j, close)):
+        return None
+    if shape.get("then") and (close + 1 > e or _word(tokens[close + 1]) != shape["then"]):
+        return None
+    return _word(tokens[i])
+
+
 def _set_aside_constraint(tokens, s, e, elements, aside):
     """A table constraint the catalog holds nothing of (an index, a unique key, a
     check, a foreign key: all but the primary key), set aside whole with the comma
     before it, or after it when it is the list's first. True when it was."""
-    words = [_word(tokens[i]) for i in _top_depth(tokens, s, e)[:3]]
-    if words and words[0] == "CONSTRAINT":
-        words = words[2:]
-    if not words or words[0] not in ("FOREIGN KEY", "UNIQUE", "CHECK", "INDEX", "KEY", "FULLTEXT", "SPATIAL"):
+    head = _constraint_head(tokens, s, e)
+    if head is None:
         return False
     first = elements.index((s, e)) == 0
-    aside.drop(s, e + 1 if first and len(elements) > 1 else e, words[0])
+    aside.drop(s, e + 1 if first and len(elements) > 1 else e, head)
     if not first:
         aside.drop(s - 1, s - 1)
     return True
@@ -764,7 +922,7 @@ def _set_aside_create(sql, dialect, stage):
         if not _set_aside_disabled(tokens, s, e, top, sql, aside):
             _set_aside_states(tokens, s, e, top, aside)
     if stage >= 1 and layout["close"] + 1 < len(tokens):
-        if not _set_aside_tail(tokens, layout["close"], len(tokens) - 1, aside, sql):
+        if _set_aside_tail(tokens, layout["close"], len(tokens) - 1, aside, sql) is None:
             return None
     aside.dropped = sorted(aside.dropped)
     return aside, tokens
@@ -855,39 +1013,89 @@ def _statement_spans(tokens):
     return [(s, e) for s, e in spans if s <= e]
 
 
-def _set_aside_in_file(sql_text, dialect, diagnostics, source):
+def _set_aside_in_file(sql_text, dialect, diagnostics, source, fold=None):
     """A file whose parse stopped: each CREATE TABLE that cannot be read as written,
-    read again with what the catalog does not hold set aside. The file's text with
-    those set aside, or None when no statement needed it."""
+    read again with what the catalog does not hold set aside, or as a compatibility
+    mode of the database reads it. (the file's text with those set aside or held in
+    place, the tables read in a mode by their place holders' names), or None when no
+    statement needed it."""
     try:
         tokens = Dialect.get_or_raise(dialect).tokenize(sql_text)
     except (TokenError, ParseError, ValueError):
         return None
-    edits, asides = [], []
+    edits, placed = [], {}
     for first, last in _statement_spans(tokens):
         stmt = sql_text[tokens[first].start:tokens[last].end + 1]
         if _word(tokens[first]) != "CREATE" or not _CREATE_TABLE_TEXT_RE.match(stmt[len(tokens[first].text):]):
             continue
         if _reads_as_table(stmt, dialect) is not None:
             continue
-        read = _read_set_aside(stmt, dialect)
-        if read is None:
+        text = _salvage_create(stmt, dialect, diagnostics, source, fold, placed)
+        if text is None:
             _create_unreadable(stmt, diagnostics, source, "the file is read with errors ignored and the table "
                                                           "is missing or read in part")
             continue
-        edits.append((tokens[first].start, tokens[last].end + 1, read[2]))
-        asides.append(read[1])
+        edits.append((tokens[first].start, tokens[last].end + 1, text))
     if not edits:
         return None
-    for aside in asides:
-        _say_set_aside(aside, diagnostics, source)
     out, cursor = [], 0
     for start, end, text in edits:
         out.append(sql_text[cursor:start])
         out.append(text)
         cursor = end
     out.append(sql_text[cursor:])
-    return "".join(out)
+    return "".join(out), placed
+
+
+def _salvage_create(stmt, dialect, diagnostics, source, fold, placed):
+    """One CREATE TABLE the grammar cannot read as written: the text to parse in its place, said. With what
+    the catalog does not hold set aside; else a place holder for the table a compatibility mode reads;
+    else None."""
+    read = _read_set_aside(stmt, dialect)
+    if read is not None:
+        _say_set_aside(read[1], diagnostics, source)
+        return read[2]
+    in_mode = _read_in_modes(stmt, fold)
+    if in_mode is None:
+        return None
+    _say_read_in_mode(in_mode, diagnostics, source, fold)
+    name = _PLACE_HOLDER % len(placed)
+    placed[name] = in_mode[0]
+    # The place holder keeps the statement's line breaks, so every line after it keeps its number.
+    return "CREATE TABLE %s (x INT)%s" % (name, "\n" * stmt.count("\n"))
+
+
+def _read_in_modes(sql, fold):
+    """A CREATE TABLE the database's own grammar cannot read, read by the grammar of each compatibility mode
+    the database has: (parsed, what was set aside, the modes that read it) when every mode that reads it reads
+    the same columns and key. None when the database has no mode, none reads it, or two read it apart."""
+    readings = []
+    for mode, grammar in (fold.rule("modes") or ()) if fold is not None else ():
+        parsed, aside = _reads_as_table(sql, grammar), None
+        if parsed is None:
+            read = _read_set_aside(sql, grammar)
+            parsed, aside = (read[0], read[1]) if read is not None else (None, None)
+        if parsed is not None and all(c.name and not _index_read_as_column(c)
+                                      for c in parsed.this.expressions if isinstance(c, exp.ColumnDef)):
+            readings.append((mode, parsed, aside))
+    if not readings or len({_columns_and_key(r[1]) for r in readings}) > 1:
+        return None
+    return readings[0][1], readings[0][2], [r[0] for r in readings]
+
+
+def _columns_and_key(create):
+    cols = create.this.expressions
+    return (tuple(c.name for c in cols if isinstance(c, exp.ColumnDef)), tuple(sorted(_primary_key_columns(cols))))
+
+
+def _say_read_in_mode(in_mode, diagnostics, source, fold):
+    parsed, aside, modes = in_mode
+    name = parsed.this.this.name
+    _diag(diagnostics, "info", "create_read_in_mode", name,
+          "%s: CREATE TABLE %s is not written in %s's own SQL; it is read as %s reads it in its %s mode"
+          % (source, name, fold.label, fold.label, " or ".join(modes)))
+    if aside is not None:
+        _say_set_aside(aside, diagnostics, source)
 
 
 _STATEMENT_WORDS = ("CREATE", "ALTER", "DROP", "INSERT", "UPDATE", "DELETE", "SET", "GRANT", "COMMIT")
@@ -919,19 +1127,19 @@ def _apply_create_text(sql, ctx):
     cut first, so no table is set aside as another's attributes."""
     pieces = _line_statements(sql, ctx.dialect)
     if len(pieces) > 1:
-        for piece in pieces:
-            parsed = _parse_quietly(piece, ctx)
-            if parsed is not None:
-                _apply_statement(parsed, ctx)
-            elif _CREATE_TABLE_TEXT_RE.match(piece[len("CREATE"):]) and piece[:6].upper() == "CREATE":
-                _create_unreadable(piece, ctx.diagnostics, ctx.source, "its table is not in the catalog")
+        _apply_pieces(pieces, ctx)
         return
     read = _read_set_aside(sql, ctx.dialect)
-    if read is None:
+    if read is not None:
+        _say_set_aside(read[1], ctx.diagnostics, ctx.source)
+        _apply_create(read[0], ctx)
+        return
+    in_mode = _read_in_modes(sql, ctx)
+    if in_mode is None:
         _create_unreadable(sql, ctx.diagnostics, ctx.source, "its table is not in the catalog")
         return
-    _say_set_aside(read[1], ctx.diagnostics, ctx.source)
-    _apply_create(read[0], ctx)
+    _say_read_in_mode(in_mode, ctx.diagnostics, ctx.source, ctx)
+    _apply_create(in_mode[0], ctx)
 
 
 def _apply_create(stmt, ctx):
@@ -955,6 +1163,7 @@ def _apply_create(stmt, ctx):
         return
 
     key = _fold(table_name, ctx.identifier_case)
+    ctx.accounted.append(table_name)
     existing = ctx.tables.get(key)
     if existing is not None:
         # NEVER merged: two declarations of one table are two different schemas,
@@ -969,11 +1178,16 @@ def _apply_create(stmt, ctx):
         return
 
     tbl = _Table(table_name, _table_comment(stmt), source)
+    inherited = _inherit_columns(tbl, stmt, ctx)
     pk_cols = _primary_key_columns(col_defs)
+    misread = []
     for col_def in col_defs:
         if not isinstance(col_def, exp.ColumnDef):
             continue  # PRIMARY KEY / INDEX / etc. are not columns
         if _unnamed(col_def, table_name, source, diagnostics):
+            continue
+        if _index_read_as_column(col_def):
+            misread.append("%s %s" % (col_def.name, col_def.args["kind"].sql(dialect=ctx.dialect or None)))
             continue
         try:
             rec = _column_record(col_def, ctx.schema, table_name)
@@ -982,11 +1196,65 @@ def _apply_create(stmt, ctx):
                   "a column of %s in %s could not be read: %s"
                   % (table_name, source, str(e).replace("\n", " ")))
             continue
-        tbl.columns[rec["column"]] = rec
+        _add_own_column(tbl, rec, ctx, inherited)
+    if misread:
+        _diag(diagnostics, "info", "create_clause_not_held", table_name,
+              "%s: CREATE TABLE %s is read without what the catalog does not hold: %s, an index written as MySQL "
+              "writes one, which the grammar reads as a column" % (source, table_name, ", ".join(misread)))
     tbl.pk = set(pk_cols)
     _name_primary_key(tbl, _primary_key_name(col_defs), ctx)
     _key_columns_not_null(tbl)
     ctx.tables[key] = tbl
+
+
+# MySQL's words for an index written inside the column list (``KEY idx (c)``). A
+# grammar that does not know that form reads it as a column named KEY whose type
+# is ``idx(c)``: a type whose parameters are names is no type a column has.
+_INDEX_WORDS = ("KEY", "INDEX", "FULLTEXT", "SPATIAL")
+
+
+def _index_read_as_column(col_def):
+    """A column the grammar made of MySQL's ``KEY name (columns)``: named KEY or INDEX as a bare word, of a
+    type of its own making whose parameters are all names."""
+    ident, kind = col_def.this, col_def.args.get("kind")
+    if not isinstance(ident, exp.Identifier) or ident.args.get("quoted") or ident.name.upper() not in _INDEX_WORDS:
+        return False
+    if not isinstance(kind, exp.DataType) or kind.this != exp.DataType.Type.USERDEFINED or not kind.expressions:
+        return False
+    return all(isinstance(p, exp.DataTypeParam) and isinstance(p.this, (exp.Var, exp.Column, exp.Identifier))
+               for p in kind.expressions)
+
+
+def _inherit_columns(tbl, stmt, ctx):
+    """PostgreSQL's ``INHERITS (p, ...)``: the table holds each parent's columns before its own, NOT NULL
+    with them; a primary key and a comment are not inherited. The names of the columns inherited."""
+    props = stmt.args.get("properties")
+    parents = [t for p in (props.expressions if props else []) if isinstance(p, exp.InheritsProperty)
+               for t in p.expressions]
+    inherited = set()
+    for parent in parents:
+        found = ctx.tables.get(_fold(parent.name, ctx.identifier_case))
+        if found is None:
+            ctx.say("warn", "create_parent_unknown", tbl.name,
+                    "%s: CREATE TABLE %s inherits %s, which no file declared before it, so the columns it inherits "
+                    "are not in the catalog" % (ctx.source, tbl.name, parent.name))
+            continue
+        for rec in found.columns.values():
+            _add_own_column(tbl, dict(rec, table=tbl.name, comment=None), ctx, inherited)
+            inherited.add(_column_key(tbl, rec["column"], ctx))
+    return inherited
+
+
+def _add_own_column(tbl, rec, ctx, inherited):
+    """A column the CREATE declares. One it also inherits is that one column, where the parent put it, NOT NULL
+    when either says so."""
+    key = next((k for k in inherited if ctx.same(k, rec["column"])), None)
+    if key is None:
+        tbl.columns[rec["column"]] = rec
+        return
+    old = tbl.columns[key]
+    tbl.columns[key] = dict(old, type=rec["type"] or old["type"], nullable=old["nullable"] and rec["nullable"],
+                            comment=rec.get("comment") if rec.get("comment") is not None else old.get("comment"))
 
 
 def _column_is_pk(col_def):
@@ -1176,7 +1444,12 @@ def _drop_constraint(tbl, name, ctx, what):
                 "%s: %s on %s may drop its primary key (%s), whose name is not known here; the key is kept"
                 % (ctx.source, what, tbl.name, ", ".join(sorted(tbl.pk))))
         return
-    if not ctx.same(name or "", tbl.pk_name):
+    hit = ctx.same(name or "", tbl.pk_name)
+    if ctx.rule("pkNameAlways") or tbl.pk_name_said:
+        ctx.assumed_rule(tbl.name, "%s on %s is read as %s its primary key (%s), named %s" % (
+            what, tbl.name, "dropping" if hit else "leaving", ", ".join(sorted(tbl.pk)), tbl.pk_name),
+            "a primary key is named %s" % (ctx.rule("pkNameAlways") or ctx.rule("pkNameUnnamed")))
+    if not hit:
         _not_held(tbl, what, ctx)
         return
     if tbl.pk_name_said:
@@ -1200,6 +1473,10 @@ def _drop_column(tbl, name, ctx, if_exists=False):
                 "%s drops %s.%s, one column of the primary key (%s). Whether %s then drops the whole key or "
                 "keeps the rest is not known here; the rest is kept"
                 % (ctx.source, tbl.name, key, ", ".join(sorted(tbl.pk)), ctx.label))
+    elif len(tbl.pk) > 1:
+        ctx.assumed_rule(tbl.name, "dropping %s.%s, one column of the primary key (%s), is read as %s" % (
+            tbl.name, key, ", ".join(sorted(tbl.pk)), "dropping the whole key" if drops_key else "keeping the rest"),
+            "dropping a column of a key %s" % ("drops the key" if drops_key else "leaves the rest of it"))
     if drops_key:
         _drop_primary_key(tbl)
     else:
@@ -1258,7 +1535,12 @@ def _drop(tbl, action, ctx):
     kind = str(action.args.get("kind") or "").upper()
     name = action.this.name if action.this is not None else None
     what = ("DROP %s %s" % (kind, name)) if kind else _clause_text(action, ctx)
-    if kind == "COLUMN":
+    listed = action.this.expressions if action.this is not None and not name else []
+    if kind == "COLUMN" and listed:
+        # H2's DROP COLUMN (c, d): each column dropped.
+        for column in listed:
+            _drop_column(tbl, column.name, ctx, bool(action.args.get("exists")))
+    elif kind == "COLUMN":
         _drop_column(tbl, name, ctx, bool(action.args.get("exists")))
     elif kind in ("CONSTRAINT", "INDEX", "KEY"):
         _drop_constraint(tbl, name, ctx, what)
@@ -1296,11 +1578,15 @@ def _restated(tbl, old_key, col_def, rec, ctx):
     """The column after MODIFY, by the database's rule: restated whole, or changed
     only where the clause speaks. With no rule, what it leaves out is kept and said."""
     redefines = ctx.rule("modifyRedefines")
+    unsaid = _unsaid(tbl.columns[old_key], col_def, rec)
+    if redefines is not None and unsaid:
+        ctx.assumed_rule(tbl.name, "MODIFY %s.%s leaves out its %s, which is read as %s" % (
+            tbl.name, old_key, " and ".join(unsaid), "gone" if redefines else "kept"),
+            "MODIFY %s" % ("restates the whole column" if redefines else "changes only what it says"))
     if redefines:
         return rec
     kept = _changed_only(tbl.columns[old_key], col_def, rec)
-    unsaid = _unsaid(tbl.columns[old_key], col_def, rec) if redefines is None else []
-    if unsaid:
+    if redefines is None and unsaid:
         ctx.say("warn", "alter_modify_unsaid_unknown", tbl.name,
                 "%s modifies %s.%s and leaves out its %s. Whether %s keeps what MODIFY leaves out or drops it "
                 "is not known here; it is kept" % (ctx.source, tbl.name, old_key, " and ".join(unsaid), ctx.label))
@@ -1455,7 +1741,8 @@ def _restate_specs(tbl, m, text, ctx):
         col_def = _column_spec(spec, ctx)
         kind = col_def.args.get("kind") if col_def is not None else None
         if col_def is None or (isinstance(kind, exp.DataType) and kind.this == exp.DataType.Type.NULL):
-            _unreadable(tbl.name, "MODIFY " + spec, ctx)
+            # The clause as the file writes it: H2's ALTER COLUMN c <definition> is read here too.
+            _unreadable(tbl.name, text, ctx)
             continue
         _restate_column(tbl, col_def, None, ctx)
 
@@ -1774,6 +2061,9 @@ def _apply_statement(stmt, ctx):
     elif isinstance(stmt, exp.Command):
         word = str(stmt.name or "").upper()
         body = _command_text(stmt)[len(word):].strip()
+        if word != "CREATE" and _holds_create_table(_command_text(stmt), ctx):
+            # A script with no semicolons, kept as the text of its first statement.
+            return _apply_pieces(_line_statements(_command_text(stmt), ctx.dialect), ctx)
         if word == "RENAME":
             return _rename_tables(body, ctx)
         if word == "ALTER" and re.match(r"TABLE\b", body, re.IGNORECASE):
@@ -1784,12 +2074,103 @@ def _apply_statement(stmt, ctx):
         if word == "CREATE" and _CREATE_TABLE_TEXT_RE.match(body):
             # A table the grammar kept as text is read again or named, never dropped.
             _apply_create_text("CREATE " + body, ctx)
-    # everything else (INSERT/UPDATE/CREATE INDEX/…) is skipped silently
+    # everything else (INSERT/UPDATE/CREATE INDEX/…) is skipped: a CREATE TABLE
+    # the grammar folded into one of them is named after the file (_say_unread_tables)
     return 0
 
 
+def _is_create_table_text(text):
+    return text[:6].upper() == "CREATE" and _CREATE_TABLE_TEXT_RE.match(text[6:]) is not None
+
+
+def _holds_create_table(text, ctx):
+    """Text of one statement that holds a CREATE TABLE starting a line of its own after it."""
+    return "\n" in text and any(_is_create_table_text(p) for p in _line_statements(text, ctx.dialect)[1:])
+
+
+def _apply_pieces(pieces, ctx):
+    """Statements with no semicolon between them, as an HSQLDB script writes one per line: each folded in on
+    its own, a CREATE TABLE among them read or named. How many table alterations they carried."""
+    alters = 0
+    for piece in pieces:
+        parsed = _parse_quietly(piece, ctx)
+        if _is_create_table_text(piece) and _reads_as_table(piece, ctx.dialect) is None:
+            _apply_create_text(piece, ctx)
+        elif parsed is not None:
+            alters += _apply_statement(parsed, ctx)
+    return alters
+
+
+# Every way a statement starts a table, as text: counted before the file's tokens
+# are, which is needed only when the text holds more than the reader accounted for.
+_CREATE_TABLE_ANY_RE = re.compile(r"\bCREATE\s+(?:(?:OR\s+REPLACE|GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED|CACHED|MEMORY"
+                                  r"|TEXT)\s+)*TABLE\b", re.IGNORECASE)
+
+
+def _bare(name):
+    return re.split(r"\.", name or "")[-1].strip("`\"[] ").lower()
+
+
+def _declared_tables(sql_text, dialect):
+    """(name, line) of each CREATE TABLE in the file's tokens, outside parentheses; None when the file cannot be
+    tokenized, as its unreadable statements are then named where they are cut."""
+    tokens = None
+    for grammar in (dialect, _escapes_turned(dialect)):
+        try:
+            tokens = Dialect.get_or_raise(grammar).tokenize(sql_text)
+            break
+        except (TokenError, ParseError, ValueError):
+            continue
+    if tokens is None:
+        return None
+    out, depth = [], 0
+    for n, t in enumerate(tokens):
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(t.token_type, 0)
+        if depth != 0 or _word(t) != "CREATE":
+            continue
+        layout = _create_layout(tokens[n:])
+        if layout is not None or _create_names_table(tokens, n):
+            out.append((layout["table"] if layout is not None else _table_after(tokens, n), t.line))
+    return out
+
+
+def _create_names_table(tokens, n):
+    i = n + 1
+    while i < len(tokens) and _word(tokens[i]) in _CREATE_PREFIX_WORDS:
+        i += 1
+    return i < len(tokens) and _word(tokens[i]) == "TABLE"
+
+
+def _table_after(tokens, n):
+    """The name a ``CREATE ... TABLE [IF NOT EXISTS] name`` with no column list gives (``AS SELECT``, ``LIKE``)."""
+    i = n + 1
+    while i < len(tokens) and _word(tokens[i]) in _CREATE_PREFIX_WORDS + ("TABLE", "IF", "NOT", "EXISTS"):
+        i += 1
+    while i + 2 < len(tokens) and tokens[i + 1].token_type == TokenType.DOT:
+        i += 2
+    return tokens[i].text if i < len(tokens) else "(no name)"
+
+
+def _say_unread_tables(sql_text, accounted, ctx):
+    """Every CREATE TABLE a file writes is read or named. One no statement the grammar read declares (folded
+    into the statement before it, where a semicolon is missing) is named here."""
+    if ctx.diagnostics is None or len(_CREATE_TABLE_ANY_RE.findall(sql_text)) <= len(accounted):
+        return
+    declared = _declared_tables(sql_text, ctx.dialect)
+    left = {}
+    for name in accounted:
+        left[_bare(name)] = left.get(_bare(name), 0) + 1
+    for name, line in declared or []:
+        if left.get(_bare(name), 0) > 0:
+            left[_bare(name)] -= 1
+            continue
+        ctx.say("warn", "create_table_unread", name,
+                "%s: CREATE TABLE %s at line %d is not a statement the grammar read on its own (it is read as part "
+                "of another), so its table is not in the catalog" % (ctx.source, name, line))
+
+
 def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_case="exact", dialect="mysql",
-                            database=None):
+                            database=None, database_assumed=False):
     """Fold several DDL files, IN THE ORDER GIVEN, into catalog records.
 
     ``files`` — a sequence of ``(source_label, sql_text)``. The label appears in
@@ -1803,22 +2184,27 @@ def parse_ddl_catalog_files(files, schema=None, diagnostics=None, identifier_cas
     ``dialect`` is the grammar the files are parsed with (``""`` is sqlglot's
     standard one); ``database`` the database they are for, whose rules an ALTER is
     read by, as the profile names it (``h2``, ``tibero``). None takes the grammar's.
+    ``database_assumed``: nobody declared that database; it is a default, and a
+    conclusion that rests on one of its rules says so.
 
     Returns the same record list shape as :func:`parse_ddl_catalog`: one header,
     then every table sorted by name with its columns in declaration order.
     """
-    ctx = _Fold(schema, diagnostics, identifier_case, dialect, database)
+    ctx = _Fold(schema, diagnostics, identifier_case, dialect, database, database_assumed)
     per_file = []
     routines = []
     for source, sql_text in files:
         ctx.source = source
         before = len(ctx.tables)
         routines.extend(extract_routines(sql_text, source))
-        statements = _parse_statements(sql_text, diagnostics, source, dialect)
-        alters = 0
+        statements = _parse_statements(sql_text, diagnostics, source, dialect, ctx)
+        alters, ctx.accounted = 0, []
         for stmt in statements:
             if stmt is not None:
                 alters += _apply_statement(stmt, ctx)
+        named = [d["table"] for d in (diagnostics or [])
+                 if d["code"] == "create_table_unreadable" and d["message"].startswith(source + ":")]
+        _say_unread_tables(sql_text, ctx.accounted + named, ctx)
         per_file.append({"source": source, "tablesAfter": len(ctx.tables),
                          "tablesAdded": len(ctx.tables) - before, "alters": alters})
 
@@ -1897,6 +2283,9 @@ def main(argv=None):
     parser.add_argument("--database", default=None,
                         help="the database the files are for, as the profile names it (h2, tibero); "
                              "its rules decide what an ALTER leaves unsaid (default: the grammar's)")
+    parser.add_argument("--database-assumed", action="store_true", dest="database_assumed",
+                        help="the database is a default nobody declared (sqlDialects.main): a conclusion that "
+                             "rests on one of its rules says so")
     parser.add_argument("--identifier-case", default="exact", choices=list(_IDENTIFIER_CASES),
                         dest="identifier_case",
                         help="what makes two table names the SAME table when "
@@ -1915,7 +2304,7 @@ def main(argv=None):
     diagnostics = []
     records = parse_ddl_catalog_files(files, schema=args.schema, diagnostics=diagnostics,
                                       identifier_case=args.identifier_case, dialect=args.dialect,
-                                      database=args.database)
+                                      database=args.database, database_assumed=args.database_assumed)
 
     # Stamp the source basenames only (determinism §2.1 — no absolute path).
     records[0]["source"] = "ddl:" + ",".join(name for name, _ in files)

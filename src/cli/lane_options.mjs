@@ -30,7 +30,7 @@ import { jsonl, parseJsonl } from './env.mjs';
  * rides in the key's args rather than in the index's worker map).
  *
  * @param {{ddls:{rel:string, abs:string}[], snapshot?:({rel:string, abs:string}|null),
- *          sqlArgs:{dialect:string, database?:string, identifierCase:string}}} a
+ *          sqlArgs:{dialect:string, database?:string, databaseAssumed?:boolean, identifierCase:string}}} a
  *        the DDL files in the order they are applied; the snapshot only when
  *        there is no DDL, which is when `selectLanes` picks one
  * @returns {{files:{rel:string, abs:string}[], shardArgs:string[], fromSnapshot:boolean,
@@ -56,7 +56,8 @@ function snapshotCatalog(snapshot) {
  * the reader took its own default, MySQL, and read the file with MySQL's grammar
  * and rules. The database the profile names goes with it when it is not the
  * grammar's own, because an ALTER is read by that database's rules. Both are in
- * the shard key, since both change what the reader writes.
+ * the shard key, since both change what the reader writes. A database nobody
+ * declared is said to be assumed, so the reader says where its rules decide.
  */
 function ddlCatalog(ddls, sqlArgs) {
   const { flags, key } = readerFlags(sqlArgs);
@@ -68,11 +69,12 @@ function ddlCatalog(ddls, sqlArgs) {
 }
 
 /** The reader's grammar and database flags, each only when it is not the default, and what each adds to the shard key. */
-function readerFlags({ dialect, database = dialect }) {
+function readerFlags({ dialect, database = dialect, databaseAssumed = false }) {
   const flags = [];
   const key = [];
   if (dialect != null && dialect !== 'mysql') { flags.push('--dialect', dialect); key.push(`dialect=${dialect}`); }
   if (database !== dialect) { flags.push('--database', database); key.push(`database=${database}`); }
+  if (databaseAssumed) { flags.push('--database-assumed'); key.push('database=assumed'); }
   return { flags, key };
 }
 

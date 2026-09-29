@@ -210,7 +210,7 @@ const optOutsOf = (flags) => OPT_OUT_FLAGS.filter(([key]) => flags[key]).map(([,
  * a `-rejected` directory and leaving the certified one where it was (§7.2 — a
  * failed run never mixes with the good snapshot).
  */
-export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt, evidenceFiles = [] }) {
+export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt, evidenceFiles = [], fronts = [] }) {
   const { calibrated, stateDir, calibrationDir, goldenDir, baselineFile, gateStateFile, receiptFile } = stateFiles(resolved, out);
 
   const sqlStats = sqlLaneTallies(lineage);
@@ -221,7 +221,7 @@ export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineag
   const evidence = evidenceFiles.map(([kind, f]) => `${kind}:${sha256File(f)}`);
   const pin = pinOf({
     commit: base?.commit ?? null, dirty: base?.dirty === true,
-    selection: selectionRel, optOuts, profileDigest, catalogDigest, evidence,
+    selection: selectionRel, optOuts, profileDigest, catalogDigest, evidence, fronts,
   });
   const enginePrintNow = runningEnginePrint();
 

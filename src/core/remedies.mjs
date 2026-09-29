@@ -29,7 +29,8 @@ export const REMEDY_EXAMPLES = Object.freeze({
   'tsBackend.globalPrefixExclude': '["health", "docs{/*rest}"]',
   'tsBackend.globalPrefix': '"api"',
   'tsBackend.app': '"apps/api/src"',
-  'tsBackend.typeorm': '{ "namingStrategy": "snake", "entityPrefix": "", "schema": "" }',
+  // The driver is in it (review 4, S-2): a catalog degraded because the driver is not known is fixed here too.
+  'tsBackend.typeorm': '{ "namingStrategy": "snake", "entityPrefix": "", "type": "postgres" }',
   'jpa.namingStrategy': '"spring-snake-case"',
   'mybatisPlus.namingStrategy': '"underscore"',
   pathPrefixes: '[{ "prefix": "/admin-api", "packages": "**.controller.admin.**" }]',

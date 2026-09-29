@@ -68,6 +68,10 @@ test('every key a remedy declares is a profile key, and its example is a value t
     assert.doesNotThrow(() => validateProfile(normalizeProfile(atPath(key, value))), `the example for ${key} is not a value the profile takes`);
     assert.ok(REMEDY_EXAMPLES[key].length <= 70, `${key}: an example is short, one line beside a gap`);
   }
+  // Review 4, S-2: a TypeORM catalog is degraded as much by a driver the run could not read as by a
+  // naming strategy, and the example beside it shows the key for the driver too.
+  assert.equal(AXIS_REMEDIES['catalog:degraded'].key, 'tsBackend.typeorm');
+  assert.equal(typeof JSON.parse(REMEDY_EXAMPLES['tsBackend.typeorm']).type, 'string');
 });
 
 test('every flag a remedy names is one `cascade analyze` has, and every command is a real subcommand with that flag', () => {

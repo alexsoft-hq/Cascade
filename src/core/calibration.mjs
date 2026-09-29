@@ -269,7 +269,9 @@ export function enginePrint(input) {
  * @param {{commit:(string|null), dirty:boolean,
  *          selection:{ddl:(string|null), mapperDirs:string[], javaRoots:string[], sqlArgs?:string[]},
  *          optOuts?:string[], profileDigest:string, catalogDigest:(string|null),
- *          evidence?:string[]}} input  `evidence`: `<kind>:<sha256>` of every trace and recording read
+ *          evidence?:string[], fronts?:{root:string, commit:(string|null)}[]}} input  `evidence`:
+ *          `<kind>:<sha256>` of every trace and recording read; `fronts`: each frontend in a
+ *          repository other than the analyzed root's, at the commit the run read it
  * @returns {{commit:(string|null), dirty:boolean, inputsDigest:string}}
  */
 export function pinOf(input) {
@@ -293,6 +295,13 @@ export function pinOf(input) {
     // there is one, so the pin of every pack built without evidence is the one
     // it already had.
     ...(Array.isArray(input.evidence) && input.evidence.length > 0 ? { evidence: [...input.evidence].sort() } : {}),
+    // A FRONTEND IN A REPOSITORY OF ITS OWN (review 4, O-2): the backend's commit
+    // does not say which frontend was read, so a frontend at another commit is
+    // another target, a REPIN, not the same one measured twice. Written only when
+    // there is one, so every other pack keeps its pin.
+    ...(Array.isArray(input.fronts) && input.fronts.length > 0
+      ? { fronts: input.fronts.map((f) => ({ root: f.root, commit: f.commit ?? null })).sort((a, b) => (a.root < b.root ? -1 : 1)) }
+      : {}),
   }));
   return {
     commit: typeof input.commit === 'string' && input.commit.length > 0 ? input.commit : null,

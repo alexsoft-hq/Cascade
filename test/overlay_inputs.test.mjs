@@ -22,6 +22,7 @@ import { callTool } from '../src/mcp/catalog.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 import { packMeta } from '../src/cli/serve.mjs';
 import { overlaySession } from '../src/core/overlay_session.mjs';
+import { projectPack } from '../src/core/pack.mjs';
 import { backend, FIXTURES, ENGINE_ROOT } from '../scripts/golden-trees.mjs';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 import {
@@ -112,6 +113,32 @@ test('overlay_java_edit_adding_property_source_says_ports_not_reread', { timeout
   assert.deepEqual(layOver(p, [{ path: SERVICE, status: 'M' }]).state.limits, []);
 });
 
+test('overlay_property_source_file_edit_says_ports_not_reread: a file a @PropertySource loads that now sets the port is said', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const p = analyzedProject(t, 'ps-file', {
+    build: (base, repo) => {
+      backend(repo);
+      write(repo, 'src/main/resources/application.yml', 'server:\n  port: 8081\n');
+      write(repo, 'src/main/resources/extra.properties', 'app.greeting=hello\n');
+      const service = path.join(repo, SERVICE);
+      fs.writeFileSync(service, fs.readFileSync(service, 'utf8').replace('@Service', '@PropertySource("classpath:extra.properties")\n@Service'));
+      fs.cpSync(path.join(FIXTURES, 'web-smoke'), path.join(repo, 'front'), { recursive: true });
+      commitAll(repo);
+    },
+    flags: (base, repo) => ['--web-src', path.join(repo, 'front', 'src'), '--no-mappers'],
+  });
+  const extra = 'src/main/resources/extra.properties';
+  fs.appendFileSync(path.join(p.repo, extra), 'server.port=9090\n');
+  const { state } = layOver(p, [{ path: extra, status: 'M' }]);
+  assert.equal(state.applied, true, state.reason);
+  const said = state.limits.find((l) => l.reason.includes(extra));
+  assert.ok(said, `a limit names the file: ${JSON.stringify(state.limits)}`);
+  assert.match(said.reason, /does not read them again/);
+  // A file that says nothing of the port says nothing here either.
+  fs.writeFileSync(path.join(p.repo, extra), 'app.greeting=bonjour\n');
+  assert.deepEqual(layOver(p, [{ path: extra, status: 'M' }]).state.limits, []);
+});
+
 // ---------------------------------------------------------------------------
 // R12: the mapper alternatives, a frontend repository, the profile
 // ---------------------------------------------------------------------------
@@ -170,6 +197,123 @@ test('overlay_frontend_repo_commit_after_pack_is_stale: a frontend repository th
   assert.equal(after.applied, false);
   assert.equal(after.state, 'stale-commit', 'a moved frontend is the same verdict as a moved backend: behind');
   assert.match(after.reason, /the frontend repository at \.\.\/front/);
+});
+
+/** A frontend in a repository of its own beside the analyzed root, with orders.js edited and not committed. */
+function dirtyOutsideFront(base, repo) {
+  backend(repo);
+  commitAll(repo);
+  const front = path.join(base, 'front');
+  fs.cpSync(path.join(FIXTURES, 'web-smoke'), front, { recursive: true });
+  commitAll(front);
+  const orders = path.join(front, 'src', 'api', 'orders.js');
+  fs.writeFileSync(orders, fs.readFileSync(orders, 'utf8').replace("'/orders/' + id", "'/things/' + id"));
+}
+
+const ORDERS = '../front/src/api/orders.js';
+const callsFromOrders = (edges) => edges.filter((e) => e.type === 'CALLS_HTTP' && e.from.includes('orders.js')).map((e) => e.to);
+
+test('outside_frontend_dirty_at_analyze_is_recorded_and_its_revert_is_seen: the edit the pack read is its base, and undoing it is an edit', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const p = analyzedProject(t, 'front-dirty', {
+    build: dirtyOutsideFront,
+    flags: (base) => ['--web-src', path.join(base, 'front', 'src'), '--no-mappers'],
+  });
+  const pack = JSON.parse(fs.readFileSync(path.join(p.packDir, 'pack.json'), 'utf8'));
+  // Recorded: the pack read a working tree, not a commit, and says which file.
+  assert.equal(pack.meta.base.dirty, true, 'a pack that read an uncommitted frontend edit is provisional');
+  assert.deepEqual(pack.meta.base.dirtyFiles, [ORDERS]);
+  assert.ok(callsFromOrders(pack.edges).some((to) => to.includes('/things/')), `the pack read the edit: ${callsFromOrders(pack.edges)}`);
+  const baseline = JSON.parse(fs.readFileSync(path.join(p.repo, '.cascade', 'calibration', 'baseline.json'), 'utf8'));
+  assert.equal(baseline.pin.dirty, true, 'the pin says the tree was dirty');
+  // The edit undone: not "clean". The file the pack read dirty is read again, as a backend file is.
+  git(path.join(p.base, 'front'), 'checkout', '--', '.');
+  const s = providerOf(p).call();
+  assert.notEqual(s.state, 'clean', 'the working tree no longer holds what the pack read');
+  assert.equal(s.applied, true, s.reason);
+  assert.ok(s.dirtyFiles.includes(ORDERS), `the reverted file is re-read: ${s.dirtyFiles}`);
+  const laid = callsFromOrders(projectPack(s.graph, {}).edges);
+  assert.ok(laid.includes('endpoint:GET /orders/{id}') && !laid.some((to) => to.includes('/things/')), `the answer is the reverted call: ${laid}`);
+  // An incremental analyze reads the file again, and a cold one of the reverted tree is another target
+  // for the gate, not the same one measured twice.
+  for (const mode of ['--incremental', '--cold']) {
+    p.run(['analyze', '--root', p.repo, '--project', 'ovl-front-dirty', mode, '--web-src', path.join(p.base, 'front', 'src'), '--no-mappers']);
+    const after = JSON.parse(fs.readFileSync(path.join(p.packDir, 'pack.json'), 'utf8'));
+    assert.equal(after.meta.base.dirty, false, mode);
+    assert.ok(!callsFromOrders(after.edges).some((to) => to.includes('/things/')), `${mode}: the reverted call is gone`);
+  }
+});
+
+test('overlay_frontend_repo_nested_in_root_is_behind_or_said: a frontend repository inside the analyzed root is read as one of its own', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const p = analyzedProject(t, 'front-nested', {
+    build: (base, repo) => {
+      backend(repo);
+      write(repo, '.gitignore', 'front/\n');
+      commitAll(repo);
+      fs.cpSync(path.join(FIXTURES, 'web-smoke'), path.join(repo, 'front'), { recursive: true });
+      commitAll(path.join(repo, 'front'));
+    },
+    flags: (base, repo) => ['--web-src', path.join(repo, 'front', 'src'), '--no-mappers'],
+  });
+  const front = path.join(p.repo, 'front');
+  const orders = path.join(front, 'src', 'api', 'orders.js');
+  fs.writeFileSync(orders, fs.readFileSync(orders, 'utf8').replace("'/orders/' + id", "'/things/' + id"));
+  // An edit there, not committed: seen, as an edit in a frontend beside the root is.
+  const edited = providerOf(p).call();
+  assert.equal(edited.applied, true, edited.reason);
+  assert.ok(edited.dirtyFiles.includes('front/src/api/orders.js'), `the nested edit is read: ${edited.dirtyFiles}`);
+  // Committed there: the frontend moved on, and the overlay is behind, as for a moved backend.
+  git(front, 'commit', '-qam', 'the nested frontend moves on');
+  const moved = providerOf(p).call();
+  assert.equal(moved.applied, false);
+  assert.equal(moved.state, 'stale-commit', moved.reason);
+  assert.match(moved.reason, /the frontend repository at front\/src/);
+});
+
+test('cli_impact_over_declined_overlay_says_the_decline: the command line says why the overlay was not laid, not that nothing changed', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const p = analyzedProject(t, 'cli-declined', { build: (base, repo) => { backend(repo); commitAll(repo); }, flags: () => ['--no-mappers'] });
+  const file = path.join(p.repo, '.cascade', 'profile.json');
+  const profile = JSON.parse(fs.readFileSync(file, 'utf8'));
+  profile.pathPrefixes = [{ prefix: '/api', packages: 'com.example.**', annotation: 'RestController' }];
+  fs.writeFileSync(file, JSON.stringify(profile, null, 2));
+  let said = '';
+  try { p.run(['impact', '--root', p.repo]); } catch (e) { said = e.message; }
+  assert.match(said, /declined/, said.slice(-600));
+  assert.match(said, /is not the one this pack was built with/);
+  assert.doesNotMatch(said, /no changed files/);
+});
+
+test('cli_impact_names_route_the_edit_removed: a route the edit took away is printed, as the tool answer carries it', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const p = analyzedProject(t, 'cli-removed', { build: (base, repo) => { backend(repo); commitAll(repo); }, flags: () => ['--no-mappers'] });
+  const file = path.join(p.repo, 'src/main/java/com/example/web/OrderController.java');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('@GetMapping("/{id}")', '@GetMapping("/one/{id}")'));
+  const out = p.run(['impact', '--root', p.repo]);
+  assert.match(out, /routes the edit removed \(1\):\n {2}endpoint:GET \/orders\/\{id\}/, out);
+});
+
+test('frontend_repo_commit_repins_instead_of_rejecting: a frontend repository at another commit is another target for the gate', { timeout: 600000 }, (t) => {
+  if (!preflight(t)) return;
+  const p = analyzedProject(t, 'front-repin', {
+    build: (base, repo) => {
+      backend(repo);
+      commitAll(repo);
+      fs.cpSync(path.join(FIXTURES, 'web-smoke'), path.join(base, 'front'), { recursive: true });
+      commitAll(path.join(base, 'front'));
+    },
+    flags: (base) => ['--web-src', path.join(base, 'front', 'src'), '--no-mappers'],
+  });
+  const front = path.join(p.base, 'front');
+  const orders = path.join(front, 'src', 'api', 'orders.js');
+  fs.writeFileSync(orders, fs.readFileSync(orders, 'utf8').replace("'/orders/' + id", "'/things/' + id"));
+  git(front, 'commit', '-qam', 'the frontend moves on');
+  // Refused before: same backend commit, same pin, different measurements, read as nondeterminism.
+  p.run(['analyze', '--root', p.repo, '--project', 'ovl-front-repin', '--web-src', path.join(front, 'src'), '--no-mappers']);
+  const gate = JSON.parse(fs.readFileSync(path.join(p.repo, '.cascade', 'calibration', 'gate-state.json'), 'utf8'));
+  assert.notEqual(gate.mode, 'NO_CHANGE', 'a frontend at another commit is another pin');
+  assert.notEqual(gate.verdict, 'RED', JSON.stringify(gate.findings ?? []).slice(0, 400));
 });
 
 test('overlay_profile_changed_since_pack_is_declined_or_limited: a profile edited since the pack declines, with an edit and without one', { timeout: 600000 }, (t) => {

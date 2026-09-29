@@ -52,6 +52,9 @@ function printOverlayLine({ baseOnly, o, ov, verbose }) {
   process.stdout.write(`overlay ${shortSessionId(o.overlaySessionId)} (fresh): re-parsed ${c.parsed} file(s), `
     + `dropped ${c.dropped}, provisional ${c.provisional} node(s) / ${o.provisionalEdges} edge(s)\n`);
   process.stdout.write(`timings ms: load-base ${t.loadBase} + java ${t.java} + web ${t.web} + sql ${t.sql} + ts ${t.ts} + graph ${t.build} = ${t.total}\n`);
+  // A route the edit took away has no node left to be matched by, so the tool answer carries it apart.
+  const removed = o.removedIds?.endpoints ?? [];
+  if (removed.length > 0) process.stdout.write(`routes the edit removed (${removed.length}):\n${removed.map((id) => `  ${id}`).join('\n')}\n`);
   if (!verbose) return;
   process.stdout.write(`  reused ${ov.reusedShards} cached java shard(s); dirty documents: ${Object.entries(o.docVersions).map(([f, h]) => `${f}@${h ? h.slice(0, 8) : 'absent'}`).join(', ')}\n`);
   process.stdout.write(`  parsed: ${[...o.parsedFiles, ...o.parsedTsFiles].join(', ') || '(none)'}\n`);
@@ -82,6 +85,21 @@ function printAnswer(resp) {
   process.stdout.write(`\n(${resp.basis.freshness.verdict}) ${a.note}\n`);
 }
 
+/**
+ * The files the answer is about: those named, else the overlay's dirty ones, else
+ * git's. With none, the refusal says why: an overlay not laid lists no dirty file,
+ * and that is its reason, not "nothing changed" (review 4, O-4).
+ */
+function filesToAsk({ die }, { filesArg, ov, pack, dir }) {
+  const files = filesArg.length ? filesArg : (ov ? ov.dirtyFiles : gitChangedFiles(pack.meta?.base, ownStateOf(pack.meta?.base, dir)));
+  if (files.length) return files;
+  if (ov && !ov.applied && ov.state !== 'clean') {
+    die(`overlay NOT applied (${ov.state}): ${ov.reason}\n`
+      + '  (pass --file <path> to ask about files anyway, or `cascade impact --mode base-only` for the pack\'s own answer)');
+  }
+  return die('no changed files. Pass --file <path> [--file …], or edit the repo the pack was built from');
+}
+
 // `cli` rather than `ctx`, because the tool context built below is called `ctx`
 // and they are different things: this one is the command line, that one is a
 // loaded project.
@@ -100,8 +118,7 @@ export function run(cli) {
   const verbose = flag('verbose');
 
   const { overlayProvider, ov } = overlayFor(cli, { baseOnly, dir, pack, graph, profile: impactProfile });
-  const files = filesArg.length ? filesArg : (ov ? ov.dirtyFiles : gitChangedFiles(pack.meta?.base, ownStateOf(pack.meta?.base, dir)));
-  if (!files.length) die('no changed files. Pass --file <path> [--file …], or edit the repo the pack was built from');
+  const files = filesToAsk(cli, { filesArg, ov, pack, dir });
   const ctx = {
     graph,
     basis: {

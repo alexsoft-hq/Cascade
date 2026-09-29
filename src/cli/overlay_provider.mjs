@@ -47,9 +47,9 @@ import { safeHash, sha256File } from './state.mjs';
 import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
 import { javaLaneOptions, webLaneOptions } from '../core/assemble.mjs';
 import { isTestPath } from '../core/discover.mjs';
-import { serverPortsOfJava } from '../core/server_ports.mjs';
+import { serverPortsOfFile, serverPortsOfJava } from '../core/server_ports.mjs';
 import { looksLikeSpringConfigFile } from '../core/springconfig.mjs';
-import { baseInputsNow, manifestDirOf, sqlArgsOf } from './overlay_inputs.mjs';
+import { baseInputsNow, manifestDirOf, sqlArgsOf, webRepositoryChanges } from './overlay_inputs.mjs';
 
 /**
  * The OpenAPI documents the base pack read, as they are on disk now (RM67).
@@ -89,41 +89,27 @@ export function readIndex(indexFile, stale) {
 }
 
 /**
- * A FRONTEND OUTSIDE THE ANALYZED ROOT is scanned WHERE IT IS, and it has to
- * be: `--web-src ../front/src` is the common case, and the diff of the backend's
- * root cannot reach it.
+ * A FRONTEND THE DIFF OF THE ANALYZED ROOT CANNOT REACH is scanned WHERE IT IS,
+ * and it has to be: `--web-src ../front/src` is the common case, and a frontend
+ * that is a repository of its own nested in the root is another (review 4, O-3).
  *
  *  - a file git has never seen is only listed for the directory the command
  *    RUNS IN, so `ls-files --others` at the analyzed root cannot see a new
- *    `.vue` beside it. That is true whether the frontend is a repository of its
- *    own or another directory of this one, so this scan runs for both, from the
- *    web root;
+ *    `.vue` beside it;
  *  - a TRACKED change in a SEPARATE repository needs its own diff as well: a
  *    diff of the backend's root reports nothing about another repository, and
  *    there is no commit the two share, so that root is diffed against ITS OWN
- *    HEAD. In the same repository the diff above already covered it.
+ *    HEAD.
  *
- * Without this an edited or new file over there would be invisible and the
- * overlay would answer from the base shards while calling itself fresh, and the
- * session id would not move when the frontend did.
+ * `analyze` records the same files as the pack's dirty ones
+ * (src/cli/overlay_inputs.mjs, one reading for both). Without this an edited or
+ * new file over there would be invisible and the overlay would answer from the
+ * base shards while calling itself fresh, and the session id would not move when
+ * the frontend did.
  */
-function addOutOfRootWebChanges(byPath, { rootAbs, gitTop, webRootsRel }) {
-  for (const rel of webRootsRel) {
-    if (!rel.startsWith('../')) continue;
-    const dirAbs = path.resolve(rootAbs, rel);
-    if (!fs.existsSync(dirAbs)) continue;
-    const topRaw = ((gitText(dirAbs, ['rev-parse', '--show-toplevel']) ?? '').trim()) || null;
-    if (!topRaw) continue;
-    const top = realPath(topRaw);
-    const toRel = (repoRelPath) => path.relative(rootAbs, path.resolve(top, repoRelPath)).split(path.sep).join('/');
-    const names = [
-      ...splitZ(gitText(dirAbs, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z'])),
-      ...(top === gitTop ? [] : splitZ(gitText(dirAbs, ['diff', '--name-only', '-z', 'HEAD', '--']))),
-    ].map(toRel);
-    for (const p of names) {
-      if (!underAny(p, [rel])) continue;
-      if (!byPath.has(p)) byPath.set(p, fs.existsSync(path.resolve(rootAbs, p)) ? 'M' : 'D');
-    }
+function addOutOfRootWebChanges(byPath, { rootAbs, webRootsRel }) {
+  for (const p of webRepositoryChanges({ rootAbs, webRoots: webRootsRel })) {
+    if (!byPath.has(p)) byPath.set(p, fs.existsSync(path.resolve(rootAbs, p)) ? 'M' : 'D');
   }
 }
 
@@ -176,7 +162,7 @@ export function dirtyEntries({ idx, pack, packDir, rootAbs, stale }) {
   for (const p of pack.meta?.base?.dirtyFiles ?? []) {
     if (!byPath.has(p)) byPath.set(p, fs.existsSync(path.resolve(rootAbs, p)) ? 'M' : 'D');
   }
-  addOutOfRootWebChanges(byPath, { rootAbs, gitTop, webRootsRel });
+  addOutOfRootWebChanges(byPath, { rootAbs, webRootsRel });
   return {
     headCommit,
     baseCommit,
@@ -465,19 +451,27 @@ export function webInputLimits(pack, entries, dirty, inputs, rootAbs = null) {
 /**
  * The edited files the ports were read from, or could now be: a Spring
  * configuration, a file the base pack read a port from, a source the base pack
- * named as the reason a port is unknown, and a Java source that now loads
+ * named as the reason a port is unknown, a Java source that now loads
  * configuration (`@PropertySource`) or sets the port in code, as analyze reads
- * one (src/core/server_ports_java.mjs), comments left out.
+ * one (src/core/server_ports_java.mjs), comments left out, and any other
+ * configuration file that now says something of the port: a `@PropertySource`
+ * may load it under any name, and the base pack recorded only the files that
+ * said something then (review 4, O-5).
  */
 function portInputsEdited(entries, dirty, serverPorts, rootAbs) {
   const read = new Set(serverPorts.files ?? []);
   const java = new Set(dirty?.java ?? []);
+  const now = (rel) => fs.readFileSync(path.resolve(rootAbs, rel), 'utf8');
   const setsPortNow = (rel) => {
     if (!rootAbs || !java.has(rel)) return false;
-    try { return serverPortsOfJava(rel, fs.readFileSync(path.resolve(rootAbs, rel), 'utf8')) !== null; } catch { return false; }
+    try { return serverPortsOfJava(rel, now(rel)) !== null; } catch { return false; }
+  };
+  const statesPortNow = (rel) => {
+    if (!rootAbs || !/\.(?:properties|ya?ml)$/i.test(rel) || isTestPath(rel)) return false;
+    try { const one = serverPortsOfFile({ path: rel, text: now(rel) }); return one.ports.length + one.unreadable.length > 0 || one.external !== false; } catch { return false; }
   };
   return entries.map((e) => e.path).filter((f) => (looksLikeSpringConfigFile(f) && !isTestPath(f))
-    || read.has(f) || (serverPorts.why ?? '').includes(f) || setsPortNow(f));
+    || read.has(f) || (serverPorts.why ?? '').includes(f) || setsPortNow(f) || statesPortNow(f));
 }
 
 /**

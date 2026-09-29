@@ -11,7 +11,10 @@
 //   the catalog        the key of the catalog shard the run wrote, computed from
 //                      the files as they are now; another key declines
 //   a frontend repo    the commit the run read it at, recorded beside the fact
-//                      index; one that moved on is behind, as a moved backend is
+//                      index; one that moved on is behind, as a moved backend is.
+//                      A file there that differed from that commit when the run
+//                      read it is one of the pack's dirty files, so the overlay
+//                      reads it again, and sees it when the edit is undone
 //
 // and what they are now goes into the overlay session id, so a server that
 // memoizes an overlay does not answer from one built over the old inputs.
@@ -26,7 +29,8 @@ import { catalogShardKey } from '../core/facts_store.mjs';
 import { sqlLaneArgs } from '../core/lanes.mjs';
 import { normalizeProfile } from '../core/profile.mjs';
 import { workerVersions } from '../core/worker_versions.mjs';
-import { gitText, realPath } from './env.mjs';
+import { underAny } from '../core/invalidate.mjs';
+import { gitText, realPath, splitZ } from './env.mjs';
 import { safeHash } from './state.mjs';
 
 /** A repository's HEAD, or null when the directory is in none. */
@@ -43,26 +47,67 @@ function topOf(dirAbs) {
 }
 
 /**
+ * The frontend roots a diff of the analyzed root cannot see: those outside it
+ * (`--web-src ../front/src`), and those inside it that are a repository of
+ * their own (review 4, O-3), each with the top of the repository it is in,
+ * null when it is in none. A root in the analyzed root's own repository is not
+ * one of them unless it lies outside the root.
+ */
+function webRootsOfTheirOwn(rootAbs, webRoots) {
+  const rootTop = topOf(rootAbs);
+  const out = [];
+  for (const rel of webRoots ?? []) {
+    const outside = rel.startsWith('../');
+    const top = topOf(path.resolve(rootAbs, rel));
+    if (!outside && (top === null || top === rootTop)) continue;
+    out.push({ rel, top, ownRepository: top !== null && top !== rootTop });
+  }
+  return out;
+}
+
+/**
  * WHAT `analyze` RECORDS beside the fact index for the overlay: the directory
  * the profile's relative paths are resolved against (the project's `.cascade`,
  * as the run resolved `mappers.alternatives` and `tsBackend.prismaSchema`), and
- * for each frontend root outside the analyzed root that is in a repository of
- * its own, the commit the run read it at (null when it is in none).
+ * for each frontend root in a repository other than the analyzed root's (outside
+ * the root, or nested in it), the commit the run read it at (null when it is in
+ * none).
  *
  * @param {{rootAbs:string, webRoots:string[], manifestDir:(string|null)}} a
  *        webRoots as the selection records them, relative to the root
  */
 export function overlayInputsRecord({ rootAbs, webRoots, manifestDir }) {
-  const rootTop = topOf(rootAbs);
-  const webRepositories = [];
-  for (const rel of webRoots ?? []) {
-    if (!rel.startsWith('../')) continue;
-    const dirAbs = path.resolve(rootAbs, rel);
-    const top = topOf(dirAbs);
-    if (top !== null && top === rootTop) continue;
-    webRepositories.push({ root: rel, commit: top === null ? null : headOf(dirAbs) });
-  }
+  const webRepositories = webRootsOfTheirOwn(rootAbs, webRoots)
+    .filter((r) => r.top === null || r.ownRepository)
+    .map((r) => ({ root: r.rel, commit: r.top === null ? null : headOf(path.resolve(rootAbs, r.rel)) }));
   return { manifestDir: manifestDir ?? null, ...(webRepositories.length > 0 ? { webRepositories } : {}) };
+}
+
+/**
+ * THE FILES UNDER THOSE FRONTEND ROOTS THAT DIFFER FROM THE HEAD OF THE
+ * REPOSITORY THEY ARE IN (edited, deleted, or new), as paths relative to the
+ * analyzed root (`../front/src/api/orders.js`). A diff of the analyzed root
+ * cannot report them: another repository shares no commit with it, and a file
+ * git has never seen is listed only for the directory the command runs in.
+ * `analyze` records them as the pack's dirty files (the pack read a working
+ * tree, not a commit), and the overlay reads them as edited.
+ *
+ * @param {{rootAbs:string, webRoots:string[]}} a  webRoots relative to the root
+ * @returns {string[]} sorted
+ */
+export function webRepositoryChanges({ rootAbs, webRoots }) {
+  const out = new Set();
+  for (const { rel, top } of webRootsOfTheirOwn(rootAbs, webRoots)) {
+    if (top === null) continue;
+    const dirAbs = path.resolve(rootAbs, rel);
+    const toRel = (repoRelPath) => path.relative(rootAbs, path.resolve(top, repoRelPath)).split(path.sep).join('/');
+    const names = [
+      ...splitZ(gitText(dirAbs, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z'])),
+      ...splitZ(gitText(dirAbs, ['diff', '--name-only', '-z', 'HEAD', '--'])),
+    ].map(toRel);
+    for (const p of names) if (underAny(p, [rel])) out.add(p);
+  }
+  return [...out].sort();
 }
 
 /**

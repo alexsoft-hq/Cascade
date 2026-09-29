@@ -71,9 +71,15 @@ test('the catalog reads a file with the dialect the lineage reads it with, and n
   // A database read with another's grammar names itself, so it borrows none of that database's rules.
   assert.deepEqual(catalogArgs('mariadb').args, ['--database', 'mariadb', '--identifier-case', 'fold-lower', '/x/s.sql']);
   assert.deepEqual(catalogArgs('tibero').args.slice(0, 4), ['--dialect', 'oracle', '--database', 'tibero']);
-  // MySQL, the reader's own default, is read from the arguments it always was.
-  assert.deepEqual(catalogArgs(null).args, ['--identifier-case', 'fold-lower', '/x/s.sql']);
+  // A declared MySQL, the reader's own default, is read from the arguments it always was.
+  assert.deepEqual(catalogArgs('mysql').args, ['--identifier-case', 'fold-lower', '/x/s.sql']);
   assert.deepEqual(catalogArgs('mysql').shardArgs, ['identifier-case=fold-lower']);
+  // Undeclared, MySQL is a default: the reader is told so, and says so wherever one of its rules decides
+  // (review 4, design 4). The shard key holds it, since what the reader writes changes with it.
+  assert.deepEqual(catalogArgs(null).args, ['--database-assumed', '--identifier-case', 'fold-lower', '/x/s.sql']);
+  assert.deepEqual(catalogArgs(null).shardArgs, ['identifier-case=fold-lower', 'database=assumed']);
+  assert.equal(sqlLaneArgs(normalizeProfile({})).databaseAssumed, true);
+  assert.equal(sqlLaneArgs(normalizeProfile({ sqlDialects: { main: 'mysql' } })).databaseAssumed, false);
   assert.deepEqual(catalogArgs('postgres').shardArgs, ['identifier-case=fold-lower', 'dialect=postgres']);
 });
 

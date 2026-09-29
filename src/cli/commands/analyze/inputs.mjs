@@ -25,6 +25,7 @@ import { loadManifest } from '../../../core/manifest.mjs';
 import { profileDiagnostics, sqlDialectOf } from '../../../core/profile.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
 import { DISCOVER_IO, catalogPathsOf, gitText, projectIdFrom, realPath, splitZ } from '../../env.mjs';
+import { webRepositoryChanges } from '../../overlay_inputs.mjs';
 import { analyzeRoot, expandDdlPatterns } from '../../lanes_run.mjs';
 import { sha256File } from '../../state.mjs';
 
@@ -344,6 +345,10 @@ export function dirtyInputsOf({ rootAbs, gitTop, headCommit, toRootRel, untracke
   const changed = [...new Set([
     ...splitZ(gitText(rootAbs, ['diff', '--name-only', '-z', 'HEAD', '--'])).map(toRootRel),
     ...untrackedRel,
+    // A frontend in a repository of its own, or outside the root: the diff above
+    // cannot see it, and a pack that read an uncommitted edit there read a
+    // working tree all the same (review 4, O-1).
+    ...webRepositoryChanges({ rootAbs, webRoots: selectionRel.webRoots }),
   ])].filter((f) => f !== null);
   const dirtyFiles = changed.filter(isAnalysisInput).sort();
   const base = headCommit

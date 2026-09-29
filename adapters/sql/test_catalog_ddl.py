@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/10")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/11")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/10",
+            "catalog-ddl/11",
         )
 
 
@@ -1317,6 +1317,245 @@ class AlterTableOptionTests(unittest.TestCase):
         self.assertEqual(cols[("t", "d")]["type"], "BIGINT")
         self.assertFalse(cols[("t", "d")]["nullable"])
         self.assertEqual(len(_codes(diagnostics, "alter_modify_unsaid_unknown")), 1, diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# REVIEW 4 (catalog-ddl/11). What the reader sets aside, and what it takes for a
+# column, is decided by shapes it recognizes, never by a first word: a column
+# named ``key`` is a column, and ``KEY idx (c)`` is an index whatever grammar
+# read it. A CREATE TABLE in the file is read or named, whatever statement the
+# grammar folded it into. A table a database reads in a compatibility mode is
+# read the way that mode reads it, and said so.
+# ---------------------------------------------------------------------------
+
+def _tables(files, dialect, database=None, identifier_case="fold-upper", **kw):
+    diagnostics = []
+    recs = catalog_ddl.parse_ddl_catalog_files(files, diagnostics=diagnostics, identifier_case=identifier_case,
+                                               dialect=dialect, database=database, **kw)
+    tables = sorted(r["table"] for r in recs if r["kind"] == "table")
+    cols = {(r["table"], r["column"]): r for r in recs if r["kind"] == "column"}
+    return tables, cols, diagnostics
+
+
+def _columns_of(cols, table):
+    return [c for (t, c) in cols if t == table]
+
+
+class Review4SetAsideTests(unittest.TestCase):
+    def test_create_set_aside_keeps_a_column_named_like_a_constraint_word(self):
+        # Review 4, D-2: the set-aside took the element's first word for a constraint, and a column
+        # named key went, with the primary key it carried.
+        cases = (
+            ("postgres", "postgres", "CREATE TABLE settings (key text PRIMARY KEY, value text NOT NULL, "
+                                     "CONSTRAINT ck CHECK (length(value) > 0) NO INHERIT);",
+             "settings", ["key", "value"], ["key"]),
+            ("", "hsqldb", "CREATE MEMORY TABLE PUBLIC.CONFIG(KEY VARCHAR(100) NOT NULL PRIMARY KEY,VALUE VARCHAR(200),"
+                           "CONSTRAINT CK CHECK(VALUE IS NOT NULL) NOCHECK)",
+             "CONFIG", ["KEY", "VALUE"], ["KEY"]),
+            ("postgres", "postgres", "CREATE TABLE t (index int, c int, CONSTRAINT ck CHECK (c > 0) NO INHERIT);",
+             "t", ["index", "c"], []),
+            ("oracle", "oracle", "CREATE TABLE T (ID NUMBER NOT NULL ENABLE, KEY VARCHAR2(10), J CLOB, CONSTRAINT CK_J "
+                                 "CHECK (J IS JSON) ENABLE, CONSTRAINT PK_T PRIMARY KEY (ID) ENABLE);",
+             "T", ["ID", "KEY", "J"], ["ID"]),
+            ("", "h2", "CREATE TABLE T (ID INT NOT NULL, KEY VARCHAR(10), CONSTRAINT CK CHECK (ID > 0) NOCHECK, "
+                       "PRIMARY KEY (ID));",
+             "T", ["ID", "KEY"], ["ID"]),
+        )
+        for dialect, database, sql, table, columns, pk in cases:
+            tables, cols, diagnostics = _tables([("s.sql", sql)], dialect, database)
+            self.assertEqual(tables, [table], (sql, diagnostics))
+            self.assertEqual(_columns_of(cols, table), columns, (sql, diagnostics))
+            self.assertEqual(_pk(cols, table), pk, sql)
+            said = " ".join(_codes(diagnostics, "create_clause_not_held"))
+            if "ENABLE" not in sql:
+                self.assertIn("CHECK", said, sql)
+            self.assertNotIn("KEY", said.replace("PRIMARY KEY", ""), sql)
+            self.assertNotIn("INDEX", said, sql)
+
+    def test_an_element_that_is_neither_a_column_nor_a_constraint_this_reader_knows_is_not_set_aside(self):
+        # A shape the reader does not recognize is kept, and the table is named rather than read without it.
+        sql = "CREATE TABLE t (a INT, PERIOD FOR valid (s, e) WHATEVER, CONSTRAINT ck CHECK (a > 0) NO INHERIT);"
+        tables, _, diagnostics = _tables([("s.sql", sql)], "postgres", "postgres", "fold-lower")
+        self.assertEqual(tables, [], diagnostics)
+        self.assertEqual(len(_codes(diagnostics, "create_table_unreadable")), 1, diagnostics)
+
+    def test_mysql_index_shapes_are_still_set_aside(self):
+        sql = ("CREATE TABLE t (id INT NOT NULL, c INT, d TEXT, PRIMARY KEY (id), KEY idx_c (c) INVISIBLE, "
+               "INDEX (c, id), FULLTEXT KEY ft (d) WITH PARSER ngram, UNIQUE KEY uk (c) USING BTREE, "
+               "CONSTRAINT fk FOREIGN KEY (c) REFERENCES u (id) MATCH FULL ON DELETE CASCADE) ENGINE=InnoDB;")
+        tables, cols, diagnostics = _tables([("s.sql", sql)], "mysql", "mysql", "fold-lower")
+        self.assertEqual(tables, ["t"], diagnostics)
+        self.assertEqual(_columns_of(cols, "t"), ["id", "c", "d"])
+        self.assertEqual(_pk(cols, "t"), ["id"])
+
+
+class Review4CompatibilityModeTests(unittest.TestCase):
+    # dolphinscheduler-dao/src/main/resources/sql/dolphinscheduler_h2.sql, lines 349-360 and 271-289,
+    # abridged: the file H2 runs in MODE=MySQL (the jdbc url beside it says so).
+    SERIAL = ("CREATE TABLE `t_ds_serial_command` (\n"
+              "   `id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'primary key',\n"
+              "   `workflow_instance_id` bigint(20) NOT NULL COMMENT 'workflow instance id',\n"
+              "   `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n"
+              "   PRIMARY KEY (`id`),\n"
+              "   KEY `idx_workflow_instance_id` (`workflow_instance_id`)\n"
+              ") ENGINE = InnoDB\n  DEFAULT CHARSET = utf8;\n")
+    ALERT = ("CREATE TABLE t_ds_alert\n(\n    id            int(11) NOT NULL AUTO_INCREMENT,\n"
+             "    sign           char(40) NOT NULL DEFAULT '',\n    PRIMARY KEY (id),\n    KEY            idx_sign (sign)\n);\n")
+
+    def test_h2_catalog_reads_or_names_mysql_mode_create_table(self):
+        # Review 4, D-1: read with H2's own grammar, the MySQL-mode table was lost.
+        tables, cols, diagnostics = _tables([("ds_h2.sql", self.ALERT + self.SERIAL)], "", "h2", "fold-upper")
+        self.assertEqual(tables, ["t_ds_alert", "t_ds_serial_command"], diagnostics)
+        self.assertEqual(_columns_of(cols, "t_ds_serial_command"), ["id", "workflow_instance_id", "update_time"])
+        self.assertEqual(_pk(cols, "t_ds_serial_command"), ["id"])
+        self.assertEqual(cols[("t_ds_serial_command", "id")]["comment"], "primary key")
+        said = _codes(diagnostics, "create_read_in_mode")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("MySQL", said[0])
+        self.assertIn("t_ds_serial_command", said[0])
+        self.assertEqual(_codes(diagnostics, "create_table_unreadable"), [])
+
+    def test_an_index_the_grammar_reads_as_a_column_is_not_a_column(self):
+        # H2's own grammar reads MySQL's KEY idx_sign (sign) as a column named KEY of type idx_sign(sign).
+        tables, cols, diagnostics = _tables([("ds_h2.sql", self.ALERT)], "", "h2", "fold-upper")
+        self.assertEqual(_columns_of(cols, "t_ds_alert"), ["id", "sign"], diagnostics)
+        said = " ".join(_codes(diagnostics, "create_clause_not_held"))
+        self.assertIn("KEY", said)
+        # A column named KEY with a type is a column.
+        _, cols, _ = _tables([("s.sql", "CREATE TABLE t (KEY VARCHAR(10), VALUE INT)")], "", "h2", "fold-upper")
+        self.assertEqual(_columns_of(cols, "t"), ["KEY", "VALUE"])
+
+    def test_a_database_with_no_mode_names_what_its_grammar_cannot_read(self):
+        # PostgreSQL has no MySQL mode: the backquoted table is named, not read by another grammar.
+        tables, _, diagnostics = _tables([("s.sql", "CREATE TABLE a (x INT);\n" + self.SERIAL)], "postgres", "postgres",
+                                         "fold-lower")
+        self.assertEqual(tables, ["a"], diagnostics)
+        self.assertEqual(_codes(diagnostics, "create_read_in_mode"), [])
+        self.assertEqual(len(_codes(diagnostics, "create_table_unreadable")), 1, diagnostics)
+
+
+class Review4EveryCreateTableTests(unittest.TestCase):
+    HS = ("SET DATABASE UNIQUE NAME HSQLDB8A1B2C3D4E\n"
+          "SET DATABASE SQL SYNTAX ORA FALSE\n"
+          "CREATE USER SA PASSWORD DIGEST 'd41d8cd98f00b204e9800998ecf8427e'\n"
+          "CREATE SCHEMA PUBLIC AUTHORIZATION DBA\n"
+          "CREATE MEMORY TABLE PUBLIC.OWNERS(ID INTEGER GENERATED BY DEFAULT AS IDENTITY(START WITH 1) NOT NULL "
+          "PRIMARY KEY,FIRST_NAME VARCHAR(30),NOTE VARCHAR(40) DEFAULT 'x\nUPDATE y')\n"
+          "ALTER TABLE PUBLIC.OWNERS ALTER COLUMN ID RESTART WITH 11\n"
+          "CREATE MEMORY TABLE PUBLIC.PETS(ID INTEGER NOT NULL PRIMARY KEY,NAME VARCHAR(30),OWNER_ID INTEGER,"
+          "CONSTRAINT FK_PETS_OWNERS FOREIGN KEY(OWNER_ID) REFERENCES PUBLIC.OWNERS(ID))\n"
+          "CREATE INDEX IDX ON PUBLIC.PETS(NAME)\n"
+          "SET TABLE PUBLIC.PETS INDEX '1 0'\n"
+          "GRANT DBA TO SA\n"
+          "SET SCHEMA PUBLIC\n"
+          "INSERT INTO OWNERS VALUES(1,'George','x')\n")
+
+    def test_hsqldb_script_with_leading_set_statements_is_read_or_named(self):
+        # Review 4, D-3: the grammar keeps the whole script as the text of its first SET, and both tables went.
+        tables, cols, diagnostics = _tables([("app.script", self.HS)], "", "hsqldb", "fold-upper")
+        self.assertEqual(tables, ["OWNERS", "PETS"], diagnostics)
+        self.assertEqual(_columns_of(cols, "OWNERS"), ["ID", "FIRST_NAME", "NOTE"])
+        self.assertEqual(_pk(cols, "PETS"), ["ID"])
+
+    def test_a_create_table_folded_into_another_statement_is_named(self):
+        # Whatever a grammar folds a CREATE TABLE into, the table is read or named: never gone without a word.
+        for sql, dialect in (("CREATE TABLE a (x INT);\nSET @x = 1\nCREATE TABLE b (y INT);\n", "mysql"),
+                             ("CREATE TABLE a (x INT);\nCREATE INDEX i ON a (x)\nCREATE TABLE b (y INT);\n", "mysql"),
+                             ("CREATE TABLE a (x INT);\nCREATE VIEW v AS SELECT 1\nCREATE TABLE b (y INT);\n", "postgres"),
+                             ("CREATE TABLE a (x INT);\nSELECT 1\nCREATE TABLE b (y INT);\n", "mysql")):
+            tables, _, diagnostics = _tables([("s.sql", sql)], dialect, dialect, "fold-lower")
+            named = [d["table"] for d in diagnostics if d["code"] in ("create_table_unreadable", "create_table_unread")]
+            self.assertEqual(sorted(set(tables) | set(named)), ["a", "b"], (sql, diagnostics))
+            if "b" not in tables:
+                self.assertIn("line 3", " ".join(_codes(diagnostics, "create_table_unread")), sql)
+        # A CREATE TABLE in a comment or a string declares nothing, and nothing is said of it.
+        sql = "-- CREATE TABLE c (z INT)\nCREATE TABLE a (x VARCHAR(40) DEFAULT 'CREATE TABLE d (w INT)');\n"
+        _, _, diagnostics = _tables([("s.sql", sql)], "mysql", "mysql", "fold-lower")
+        self.assertEqual(_codes(diagnostics, "create_table_unread"), [])
+
+
+class Review4InheritsTests(unittest.TestCase):
+    def test_postgres_inherits_columns_are_read_or_said(self):
+        # Review 4, D-4: a child table holds its parents' columns, before its own.
+        for child in ("CREATE TABLE child (c int) INHERITS (parent);",
+                      "CREATE TABLE child (c int, CONSTRAINT ck CHECK (c > 0) NO INHERIT) INHERITS (parent);"):
+            tables, cols, diagnostics = _tables([("m.sql", "CREATE TABLE parent (a int NOT NULL PRIMARY KEY, b int);\n"
+                                                           + child)], "postgres", "postgres", "fold-lower")
+            self.assertEqual(tables, ["child", "parent"], diagnostics)
+            self.assertEqual(_columns_of(cols, "child"), ["a", "b", "c"], (child, diagnostics))
+            self.assertFalse(cols[("child", "a")]["nullable"], "NOT NULL is inherited")
+            self.assertEqual(_pk(cols, "child"), [], "a primary key is not inherited")
+            self.assertNotIn("INHERITS", " ".join(_codes(diagnostics, "create_clause_not_held")), child)
+        # A column the child restates is one column, where the parent put it.
+        _, cols, _ = _tables([("m.sql", "CREATE TABLE p (a int, b int);\nCREATE TABLE c (b int NOT NULL, d int) "
+                                        "INHERITS (p);")], "postgres", "postgres", "fold-lower")
+        self.assertEqual(_columns_of(cols, "c"), ["a", "b", "d"])
+        self.assertFalse(cols[("c", "b")]["nullable"])
+        # A parent no file declared: the child's own columns, and the gap said.
+        tables, cols, diagnostics = _tables([("m.sql", "CREATE TABLE c (d int) INHERITS (elsewhere);")], "postgres",
+                                            "postgres", "fold-lower")
+        self.assertEqual(_columns_of(cols, "c"), ["d"])
+        self.assertEqual(len(_codes(diagnostics, "create_parent_unknown")), 1, diagnostics)
+
+
+class Review4AssumedDatabaseTests(unittest.TestCase):
+    BASE = "CREATE TABLE t (id INT NOT NULL, c INT NOT NULL, d INT NOT NULL, PRIMARY KEY (id), KEY k (d));\n"
+
+    def test_an_undeclared_database_reads_by_the_assumed_rule_and_says_so(self):
+        # Design 4: MySQL is the default when sqlDialects.main is not declared. What rests on one of its
+        # rules is still read that way, and said to rest on an assumption.
+        cols, diagnostics = _fold_db([("s.sql", self.BASE + "ALTER TABLE t MODIFY c BIGINT;")], "mysql", "mysql")
+        self.assertTrue(cols[("t", "c")]["nullable"])
+        self.assertEqual(_codes(diagnostics, "alter_rule_assumed"), [], "declared, MySQL's rule is known")
+        _, cols, diagnostics = _tables([("s.sql", self.BASE + "ALTER TABLE t MODIFY c BIGINT;")], "mysql", "mysql",
+                                       "fold-lower", database_assumed=True)
+        self.assertTrue(cols[("t", "c")]["nullable"])
+        said = _codes(diagnostics, "alter_rule_assumed")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("sqlDialects.main", said[0])
+        _, cols, diagnostics = _tables([("s.sql", self.BASE + "ALTER TABLE t DROP INDEX `PRIMARY`;")], "mysql", "mysql",
+                                       "fold-lower", database_assumed=True)
+        self.assertEqual(_pk(cols, "t"), [])
+        self.assertEqual(len(_codes(diagnostics, "alter_rule_assumed")), 1, diagnostics)
+        # A drop that leaves the key rests on the key's assumed name too.
+        _, cols, diagnostics = _tables([("s.sql", self.BASE + "ALTER TABLE t DROP INDEX k;")], "mysql", "mysql",
+                                       "fold-lower", database_assumed=True)
+        self.assertEqual(_pk(cols, "t"), ["id"])
+        self.assertEqual(len(_codes(diagnostics, "alter_rule_assumed")), 1, diagnostics)
+        # A statement no rule decides says nothing more.
+        _, _, diagnostics = _tables([("s.sql", self.BASE + "ALTER TABLE t MODIFY c BIGINT NOT NULL;")], "mysql",
+                                    "mysql", "fold-lower", database_assumed=True)
+        self.assertEqual(_codes(diagnostics, "alter_rule_assumed"), [])
+
+    def test_the_command_line_says_the_database_is_assumed(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False) as fh:
+            fh.write(self.BASE + "ALTER TABLE t MODIFY c BIGINT;")
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(catalog_ddl.main(["--database-assumed", fh.name]), 0)
+        finally:
+            os.unlink(fh.name)
+        self.assertIn("alter_rule_assumed", err.getvalue())
+
+
+class Review4ClauseTests(unittest.TestCase):
+    def test_a_clause_that_cannot_be_read_is_quoted_as_written(self):
+        # Review 4, D-6: the diagnostic quoted a MODIFY the file never wrote.
+        _, diagnostics = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY, c INT);\n"
+                                                "ALTER TABLE t ALTER COLUMN c RESET (n_distinct);")], "postgres")
+        said = " ".join(_codes(diagnostics, "alter_unreadable") + _codes(diagnostics, "alter_clause_unsupported"))
+        self.assertIn("RESET", said, diagnostics)
+        self.assertNotIn("MODIFY", said)
+
+    def test_h2_drop_column_of_a_list_drops_each(self):
+        # Review 4: H2's DROP COLUMN (c, d).
+        cols, diagnostics = _fold_db([("s.sql", "CREATE TABLE t (id INT NOT NULL, c INT, d INT, PRIMARY KEY (id));\n"
+                                                "ALTER TABLE t DROP COLUMN (c, d);")], "", "h2", "fold-upper")
+        self.assertEqual(sorted(cols), [("t", "id")], diagnostics)
 
 
 if __name__ == "__main__":

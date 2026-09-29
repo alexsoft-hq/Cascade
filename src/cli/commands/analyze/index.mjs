@@ -294,6 +294,7 @@ function certify(ctx, prepared, facts) {
     const gated = runGate(lockedCtx, {
       g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt,
       evidenceFiles: [...prepared.harFiles.map((f) => ['har', f]), ...prepared.otelFiles.map((f) => ['otel', f])],
+      fronts: result.index.overlayInputs.webRepositories ?? [],
     });
     return writeArtifacts({ ...gated, g, pack, result, out, profile, builtAt, projectId, serviceNames, otelFiles, relOf, locked: true });
   });
