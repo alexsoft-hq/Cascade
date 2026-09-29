@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+from functools import lru_cache
 import sys
 
 import sqlglot
@@ -109,7 +110,16 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        on a column that is not there is ``alter_if_exists_absent`` (info). A file
 #        /12 read gives the same tables, columns and routines; only the header's
 #        diagnostics differ.
-CATALOG_VERSION = "catalog-ddl/13"
+#   /14 - a comment (a block comment, a line comment, and, where the dialect reads
+#        one, a ``#`` line comment) counts as whitespace wherever this reader looks
+#        for a CREATE TABLE head as TEXT, not the grammar's tokens: between CREATE
+#        and TABLE, a table kind word (HSQLDB's CACHED/MEMORY/TEXT), TABLE and the
+#        name, and around IF NOT EXISTS. A ``CREATE /* note */ TABLE`` folded into
+#        the statement before it (no semicolon between them) used to pass every one
+#        of these readers unread and unnamed; it is now read or named like any
+#        other. A file with no such comment in a CREATE TABLE head parses to the
+#        records /13 wrote.
+CATALOG_VERSION = "catalog-ddl/14"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -661,6 +671,30 @@ def _put_back(statements, placed):
     return out
 
 
+# A comment stands wherever a dialect's grammar reads whitespace: MySQL's tokenizer
+# folds ``CREATE /* note */ TABLE`` away to CREATE, TABLE before its parser ever
+# sees the two keywords (proven: sqlglot attaches the comment to the CREATE token
+# and never emits it as a token of its own). A reader that looks for a CREATE TABLE
+# head in the file's TEXT, not the grammar's tokens, has to read a comment as
+# whitespace the same way, or the head passes it by unread. ``_gap`` builds that
+# regex fragment for one dialect: a block comment, a line comment to the end of its
+# line, and (only where the dialect's own grammar reads one) a line comment
+# starting with ``#``.
+@lru_cache(maxsize=None)
+def _gap(dialect, required):
+    """One run of whitespace and comments, as ``dialect`` reads them: ``\\s+`` with
+    comments allowed inside it (``required``), or the same with zero runs allowed."""
+    marks = Dialect.get_or_raise(dialect).tokenizer_class.COMMENTS
+    alts = [r"\s"]
+    for mark in marks:
+        if isinstance(mark, tuple):
+            start, end = mark
+            alts.append(r"%s[\s\S]*?%s" % (re.escape(start), re.escape(end)))
+        else:
+            alts.append(r"%s[^\n]*" % re.escape(mark))
+    return r"(?:%s)%s" % ("|".join(alts), "+" if required else "*")
+
+
 # A data statement fills a table and never declares one, so the catalog has no use for it.
 _DATA_STATEMENT_RE = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|COPY)\b", re.IGNORECASE)
 # A line ends a statement when it ends in a semicolon, with any comments after it: block
@@ -668,12 +702,31 @@ _DATA_STATEMENT_RE = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|COPY
 # "; --" at the end of a line is cut there too, and the piece after the cut is then read, or
 # named as unreadable, on its own.
 _STATEMENT_END_RE = re.compile(r";\s*(?:/\*.*?\*/\s*)*(?:(?:--|#).*)?$")
+
+
+def _create_table_head(dialect):
+    """``CREATE TABLE [IF NOT EXISTS] name``, a comment counted as whitespace between
+    every pair of its tokens, as this dialect's grammar reads a comment."""
+    g1 = _gap(dialect, True)
+    return r"CREATE%sTABLE%s(?:IF%sNOT%sEXISTS%s)?([^\s(]+)" % (g1, g1, g1, g1, g1)
+
+
 # A line inside a skipped data statement that would start a table declaration: the sign that a
 # statement boundary was missed and a table is about to be skipped with the data.
-_CREATE_TABLE_LINE_RE = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", re.IGNORECASE | re.MULTILINE)
+@lru_cache(maxsize=None)
+def _create_table_line_re(dialect):
+    return re.compile(r"^\s*" + _create_table_head(dialect), re.IGNORECASE | re.MULTILINE)
+
+
 # The comment lines and blank lines a dump writes above a statement.
 _LEADING_COMMENTS_RE = re.compile(r"\A(?:\s*(?:(?:--|#)[^\n]*(?:\n|\Z)|/\*.*?\*/))*\s*", re.DOTALL)
-_CREATE_TABLE_NAME_RE = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", re.IGNORECASE)
+
+
+@lru_cache(maxsize=None)
+def _create_table_name_re(dialect):
+    return re.compile(r"^\s*" + _create_table_head(dialect), re.IGNORECASE)
+
+
 # How many unreadable statements a diagnostic names before it only counts the rest.
 _UNREADABLE_NAMED = 10
 
@@ -697,10 +750,10 @@ def _code_of(chunk):
     return _LEADING_COMMENTS_RE.sub("", chunk, count=1)
 
 
-def _statement_label(chunk):
+def _statement_label(chunk, dialect):
     """What a diagnostic calls a statement it could not read: the table it declares, or how it starts."""
     code = _code_of(chunk)
-    m = _CREATE_TABLE_NAME_RE.match(code)
+    m = _create_table_name_re(dialect).match(code)
     if m:
         return "CREATE TABLE %s" % m.group(1)
     return " ".join(code.split())[:40]
@@ -720,12 +773,12 @@ def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
         if _DATA_STATEMENT_RE.match(_code_of(chunk)):
             # Skipped unread, but never silently with a table inside it.
             unreadable.extend("CREATE TABLE %s (inside a skipped data statement)" % m.group(1)
-                              for m in _CREATE_TABLE_LINE_RE.finditer(chunk))
+                              for m in _create_table_line_re(dialect).finditer(chunk))
             continue
         try:
             statements.extend(_grammar_parse(chunk, dialect, error_level=sqlglot.ErrorLevel.IGNORE))
         except (ParseError, TokenError):
-            unreadable.append(_statement_label(chunk))
+            unreadable.append(_statement_label(chunk, dialect))
     named = ", ".join(unreadable[:_UNREADABLE_NAMED])
     more = len(unreadable) - _UNREADABLE_NAMED
     _diag(
@@ -762,9 +815,23 @@ _TABLE_KIND_WORDS = ("CACHED", "MEMORY", "TEXT")
 _CREATE_PREFIX_WORDS = ("OR", "REPLACE", "GLOBAL", "LOCAL", "TEMPORARY", "TEMP", "UNLOGGED") + _TABLE_KIND_WORDS
 _TABLE_CONSTRAINT_WORDS = ("CONSTRAINT", "PRIMARY KEY", "UNIQUE", "CHECK", "FOREIGN KEY")
 _COLUMN_CONSTRAINT_WORDS = ("NULL", "PRIMARY KEY", "UNIQUE", "CHECK", "REFERENCES")
-_CREATE_TABLE_TEXT_RE = re.compile(r"^\s*(?:(?:OR\s+REPLACE|GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED|CACHED|MEMORY|TEXT)\s+)*"
-                                   r"TABLE\b", re.IGNORECASE)
-_CREATE_NAME_RE = re.compile(r"\bTABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(;]+)", re.IGNORECASE)
+
+
+@lru_cache(maxsize=None)
+def _create_table_text_re(dialect):
+    """Text right after the ``CREATE`` keyword: any kind words, then ``TABLE``, a
+    comment counted as whitespace between every pair of tokens."""
+    g0, g1 = _gap(dialect, False), _gap(dialect, True)
+    return re.compile(r"^%s(?:(?:OR%sREPLACE|GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED|CACHED|MEMORY|TEXT)%s)*"
+                       r"TABLE\b" % (g0, g1, g1), re.IGNORECASE)
+
+
+@lru_cache(maxsize=None)
+def _create_name_re(dialect):
+    """``TABLE [IF NOT EXISTS] name``, searched anywhere in the text, a comment
+    counted as whitespace between every pair of tokens."""
+    g1 = _gap(dialect, True)
+    return re.compile(r"\bTABLE%s(?:IF%sNOT%sEXISTS%s)?([^\s(;]+)" % (g1, g1, g1, g1), re.IGNORECASE)
 
 
 def _word(token):
@@ -1141,8 +1208,8 @@ def _say_set_aside(aside, diagnostics, source):
               % (source, aside.table, _short(text)))
 
 
-def _create_unreadable(sql, diagnostics, source, outcome):
-    m = _CREATE_NAME_RE.search(sql)
+def _create_unreadable(sql, dialect, diagnostics, source, outcome):
+    m = _create_name_re(dialect).search(sql)
     name = m.group(1) if m else "(no name)"
     # Named once: a file whose parse stopped names it, and the salvage after may
     # hand the same statement back as text.
@@ -1178,13 +1245,13 @@ def _set_aside_in_file(sql_text, dialect, diagnostics, source, fold=None):
     edits, placed = [], {}
     for first, last in _statement_spans(tokens):
         stmt = sql_text[tokens[first].start:tokens[last].end + 1]
-        if _word(tokens[first]) != "CREATE" or not _CREATE_TABLE_TEXT_RE.match(stmt[len(tokens[first].text):]):
+        if _word(tokens[first]) != "CREATE" or not _create_table_text_re(dialect).match(stmt[len(tokens[first].text):]):
             continue
         if _reads_as_table(stmt, dialect) is not None:
             continue
         text = _salvage_create(stmt, dialect, diagnostics, source, fold, placed)
         if text is None:
-            _create_unreadable(stmt, diagnostics, source, "the file is read with errors ignored and the table "
+            _create_unreadable(stmt, dialect, diagnostics, source, "the file is read with errors ignored and the table "
                                                           "is missing or read in part")
             continue
         edits.append((tokens[first].start, tokens[last].end + 1, text))
@@ -1288,7 +1355,7 @@ def _apply_create_text(sql, ctx):
         return
     in_mode = _read_in_modes(sql, ctx)
     if in_mode is None:
-        _create_unreadable(sql, ctx.diagnostics, ctx.source, "its table is not in the catalog")
+        _create_unreadable(sql, ctx.dialect, ctx.diagnostics, ctx.source, "its table is not in the catalog")
         return
     _say_read_in_mode(in_mode, ctx.diagnostics, ctx.source, ctx)
     _apply_create(in_mode[0], ctx)
@@ -2228,7 +2295,7 @@ def _apply_statement(stmt, ctx):
             return 1
         if word == "ALTER" and re.match(r"TYPE\b", body, re.IGNORECASE):
             _rename_type(body, ctx)
-        if word == "CREATE" and _CREATE_TABLE_TEXT_RE.match(body):
+        if word == "CREATE" and _create_table_text_re(ctx.dialect).match(body):
             # A table the grammar kept as text is read again or named, never dropped.
             _apply_create_text("CREATE " + body, ctx)
     # everything else (INSERT/UPDATE/CREATE INDEX/…) is skipped: a CREATE TABLE
@@ -2236,13 +2303,13 @@ def _apply_statement(stmt, ctx):
     return 0
 
 
-def _is_create_table_text(text):
-    return text[:6].upper() == "CREATE" and _CREATE_TABLE_TEXT_RE.match(text[6:]) is not None
+def _is_create_table_text(text, dialect):
+    return text[:6].upper() == "CREATE" and _create_table_text_re(dialect).match(text[6:]) is not None
 
 
 def _holds_create_table(text, ctx):
     """Text of one statement that holds a CREATE TABLE starting a line of its own after it."""
-    return "\n" in text and any(_is_create_table_text(p) for p in _line_statements(text, ctx.dialect)[1:])
+    return "\n" in text and any(_is_create_table_text(p, ctx.dialect) for p in _line_statements(text, ctx.dialect)[1:])
 
 
 def _apply_pieces(pieces, ctx):
@@ -2251,7 +2318,7 @@ def _apply_pieces(pieces, ctx):
     alters = 0
     for piece in pieces:
         parsed = _parse_quietly(piece, ctx)
-        if _is_create_table_text(piece) and _reads_as_table(piece, ctx.dialect) is None:
+        if _is_create_table_text(piece, ctx.dialect) and _reads_as_table(piece, ctx.dialect) is None:
             _apply_create_text(piece, ctx)
         elif parsed is not None:
             alters += _apply_statement(parsed, ctx)
@@ -2260,8 +2327,11 @@ def _apply_pieces(pieces, ctx):
 
 # Every way a statement starts a table, as text: counted before the file's tokens
 # are, which is needed only when the text holds more than the reader accounted for.
-_CREATE_TABLE_ANY_RE = re.compile(r"\bCREATE\s+(?:(?:OR\s+REPLACE|GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED|CACHED|MEMORY"
-                                  r"|TEXT)\s+)*TABLE\b", re.IGNORECASE)
+@lru_cache(maxsize=None)
+def _create_table_any_re(dialect):
+    g1 = _gap(dialect, True)
+    return re.compile(r"\bCREATE%s(?:(?:OR%sREPLACE|GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED|CACHED|MEMORY"
+                       r"|TEXT)%s)*TABLE\b" % (g1, g1, g1), re.IGNORECASE)
 
 
 def _bare(name):
@@ -2311,7 +2381,7 @@ def _table_after(tokens, n):
 def _say_unread_tables(sql_text, accounted, ctx):
     """Every CREATE TABLE a file writes is read or named. One no statement the grammar read declares (folded
     into the statement before it, where a semicolon is missing) is named here."""
-    if ctx.diagnostics is None or len(_CREATE_TABLE_ANY_RE.findall(sql_text)) <= len(accounted):
+    if ctx.diagnostics is None or len(_create_table_any_re(ctx.dialect).findall(sql_text)) <= len(accounted):
         return
     declared = _declared_tables(sql_text, ctx.dialect)
     left = {}

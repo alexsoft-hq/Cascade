@@ -16,6 +16,7 @@
 // JSDoc on `normalizeProfile`.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { IDENTIFIER_CASES, identifierCaseForDialect } from './identifier_case.mjs';
 import { packagePatternError } from './package_pattern.mjs';
 
@@ -289,7 +290,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   servers: {
     status: 'consumed', where: 'src/core/server_ports.mjs',
-    note: 'the port an application listens on, stated by a person for what the source does not state (no server.port, so Spring Boot\'s default 8080; a placeholder a deployment fills; configuration read from elsewhere). A map from the directory that holds the application (the one with its src/main/resources, manifest-relative, "." for the top of the tree; its resources directory is taken too) to {port, from}: `port` 1 to 65535, `from` a note of where it was read. The declared port is used INSTEAD of what the tree says about that application, and is a STATED port: the web lane settles a call on this machine to it, where a port that rests on the default or is not known leaves such a call HEURISTIC (url.guess port-default / port-unknown). One the tree states differently is used and said on the ports line; an entry that names no application this run read is not applied, and is said there too (laneStats.web.ports.unused)',
+    note: 'the port an application listens on, stated by a person for what the source does not state (no server.port, so Spring Boot\'s default 8080; a placeholder a deployment fills; configuration read from elsewhere). A map from the directory that holds the application (the one with its src/main/resources, root-relative, not manifest-relative: the same directory discovery itself names, "." for the top of the tree; its resources directory is taken too) to {port, from}: `port` 1 to 65535, `from` a note of where it was read. The declared port is used INSTEAD of what the tree says about that application, and is a STATED port: the web lane settles a call on this machine to it, where a port that rests on the default or is not known leaves such a call HEURISTIC (url.guess port-default / port-unknown). One the tree states differently is used and said on the ports line; an entry that names no application this run read is not applied, and is said there too (laneStats.web.ports.unused)',
   },
   serviceNames: {
     status: 'consumed', where: 'src/mcp/federation.mjs',
@@ -421,7 +422,7 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   'catalog.connectionFrom': {
     status: 'consumed', where: 'src/core/lanes.mjs',
-    note: 'with catalog.source=file this is the DDL path: a string, or an ARRAY of paths applied IN THE ORDER WRITTEN when the schema is split across files, resolved relative to the manifest directory; with source=jdbc/none it is the connection-info file `cascade catalog discover` found (recorded for the human, never dialled by itself), and a fetch that a --candidate chose writes the candidate path here',
+    note: 'with catalog.source=file this is the DDL path: a string, or an ARRAY of paths applied IN THE ORDER WRITTEN when the schema is split across files, manifest-relative; with source=jdbc/none it is the connection-info file `cascade catalog discover` found (recorded for the human, never dialled by itself), and a fetch that a --candidate chose writes the candidate path here',
   },
   'catalog.ddl': {
     status: 'consumed', where: 'src/core/lanes.mjs',
@@ -1175,6 +1176,20 @@ const OPENAPI_LISTS = Object.freeze({
 });
 
 /**
+ * Two `openapi.generatedFromCode`/`generatesCode` entries as the run that reads
+ * them resolves a path: manifest-relative (src/core/lanes.mjs
+ * `openapiDeclarationsOf` resolves each against the manifest directory before
+ * comparing), `.` and `..` segments collapsed, one separator. Two spellings of
+ * the same document, `./a.json`, `a.json` and `docs/../a.json`, all normalize
+ * here to the same string; there is no manifest directory to resolve against
+ * at this point, but none is needed: normalizing is enough to tell whether two
+ * spellings would resolve to the one path, wherever that path actually is.
+ */
+function openapiCanonicalPath(f) {
+  return path.normalize(f).split(path.sep).join('/');
+}
+
+/**
  * THE OPENAPI BLOCK: three lists of manifest-relative paths. A document named
  * both ways is refused: it is written from this code or its interfaces are
  * generated from it, and the two settle different links. Which document a
@@ -1188,9 +1203,16 @@ function validateOpenapi(obj) {
       throw new ProfileError(`profile.openapi.${k} must be an array of non-empty paths, relative to the manifest directory: ${what}`);
     }
   }
-  const both = (obj.openapi.generatedFromCode ?? []).find((f) => (obj.openapi.generatesCode ?? []).includes(f));
+  const generates = new Map((obj.openapi.generatesCode ?? []).map((f) => [openapiCanonicalPath(f), f]));
+  const both = (obj.openapi.generatedFromCode ?? [])
+    .map((fromCode) => [fromCode, generates.get(openapiCanonicalPath(fromCode))])
+    .find(([, generatesSpelling]) => generatesSpelling !== undefined);
   if (both !== undefined) {
-    throw new ProfileError(`profile.openapi: ${JSON.stringify(both)} is in both openapi.generatedFromCode and openapi.generatesCode, and a document is either written from this code or what its interfaces are generated from`);
+    const [fromCode, generatesSpelling] = both;
+    const named = fromCode === generatesSpelling
+      ? `${JSON.stringify(fromCode)} is in both openapi.generatedFromCode and openapi.generatesCode`
+      : `${JSON.stringify(fromCode)} (openapi.generatedFromCode) and ${JSON.stringify(generatesSpelling)} (openapi.generatesCode) name the same document`;
+    throw new ProfileError(`profile.openapi: ${named}, and a document is either written from this code or what its interfaces are generated from`);
   }
 }
 
@@ -1200,7 +1222,7 @@ const SERVER_KEYS = Object.freeze(['port', 'from']);
 /** What is wrong with one `servers` entry, as a sentence, or null. */
 function serverEntryError(dir, entry) {
   if (dir === '' || dir.startsWith('/') || dir.includes('${') || dir.split('/').includes('..')) {
-    return ' names the directory that holds the application, relative to the manifest ("mall-admin", "." for the top of the tree)';
+    return ' names the directory that holds the application, relative to the analysis root, not the manifest directory ("mall-admin", "." for the top of the tree)';
   }
   if (!isObject(entry)) return ' must be an object {port, from}';
   const unknown = Object.keys(entry).find((k) => !SERVER_KEYS.includes(k));

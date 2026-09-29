@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/13")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/14")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/13",
+            "catalog-ddl/14",
         )
 
 
@@ -1475,6 +1475,44 @@ class Review4EveryCreateTableTests(unittest.TestCase):
         sql = "-- CREATE TABLE c (z INT)\nCREATE TABLE a (x VARCHAR(40) DEFAULT 'CREATE TABLE d (w INT)');\n"
         _, _, diagnostics = _tables([("s.sql", sql)], "mysql", "mysql", "fold-lower")
         self.assertEqual(_codes(diagnostics, "create_table_unread"), [])
+
+    # D5 (RM67): a comment folded between CREATE and TABLE, as
+    # ``CREATE /* note */ TABLE t (...)``, used to pass every reader that looks for a
+    # CREATE TABLE head by matching whitespace only, so the table went missing with
+    # no diagnostic at all: neither read nor named. A comment is whitespace to the
+    # grammar's own tokenizer (it never becomes a token), so it must be whitespace
+    # to these readers too, wherever a comment can sit in the head.
+    _GAPS = (" /* note */ ", " -- why\n ", " /* a */ /* b */ ")
+
+    def test_a_comment_anywhere_in_the_head_is_read_not_dropped(self):
+        # HSQLDB's CACHED/MEMORY/TEXT tables are read by this reader's own text
+        # fallback, not sqlglot's grammar (it does not know the kind word), so a
+        # comment in their head exercises the fallback's own CREATE TABLE matching.
+        heads = ("CREATE%sMEMORY TABLE t", "CREATE MEMORY%sTABLE t", "CREATE MEMORY TABLE%st",
+                 "CREATE MEMORY TABLE IF%sNOT%sEXISTS%st")
+        for gap in self._GAPS:
+            for head in heads:
+                sql = head % ((gap,) * head.count("%s")) + " (a INT NOT NULL PRIMARY KEY);"
+                tables, cols, diagnostics = _tables([("s.sql", sql)], "", "hsqldb", "fold-upper")
+                self.assertEqual(tables, ["t"], (head, gap, diagnostics))
+                self.assertEqual(_pk(cols, "t"), ["a"], (head, gap))
+
+    def test_a_commented_head_folded_into_another_statement_is_read_or_named(self):
+        # Every dialect this reader has, each with a comment style it reads: MySQL
+        # alone reads a ``#`` comment. Folded (no semicolon) so the grammar keeps the
+        # CREATE TABLE as text, the same shape as test_a_create_table_folded_into_
+        # another_statement_is_named above, a comment now sitting before TABLE.
+        cases = (
+            ("mysql", "CREATE TABLE a (x INT);\nSET @x = 1\nCREATE%sTABLE b (y INT);\n", " /* c */ "),
+            ("mysql", "CREATE TABLE a (x INT);\nSET @x = 1\nCREATE%sTABLE b (y INT);\n", " # why\n "),
+            ("postgres", "CREATE TABLE a (x INT);\nCREATE VIEW v AS SELECT 1\nCREATE%sTABLE b (y INT);\n", " -- why\n "),
+            ("oracle", "CREATE TABLE a (x INT);\nCREATE INDEX i ON a (x)\nCREATE%sTABLE b (y INT);\n", " /* c */ "),
+        )
+        for dialect, template, gap in cases:
+            sql = template % gap
+            tables, _, diagnostics = _tables([("s.sql", sql)], dialect, dialect, "fold-lower")
+            named = [d["table"] for d in diagnostics if d["code"] in ("create_table_unreadable", "create_table_unread")]
+            self.assertEqual(sorted(set(tables) | set(named)), ["a", "b"], (sql, diagnostics))
 
 
 class Review4InheritsTests(unittest.TestCase):

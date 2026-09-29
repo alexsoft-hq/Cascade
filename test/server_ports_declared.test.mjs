@@ -93,6 +93,10 @@ test('servers: a map from an application\'s directory to the port it listens on,
     [{ servers: { '${APP}': { port: 8080 } } }, /names the directory that holds the application/],
     [{ servers: { '': { port: 8080 } } }, /names the directory that holds the application/],
     [{ servers: { '/abs/admin': { port: 8080 } } }, /names the directory that holds the application/],
+    // RM67-F5: this key names an application directory the SAME way discovery does,
+    // relative to --root, never to the manifest directory (.cascade/) the profile
+    // itself sits in, unlike every openapi/catalog/webRoots path in this file.
+    [{ servers: { '${APP}': { port: 8080 } } }, /relative to the analysis root, not the manifest directory/],
   ]) {
     assert.throws(() => validateProfile(normalizeProfile(bad)), (e) => e.name === 'ProfileError' && why.test(e.message), JSON.stringify(bad));
   }
@@ -103,6 +107,10 @@ test('servers: at its default the profile digest is what it was before the key e
   assert.equal(Object.hasOwn(digestedProfile(normalizeProfile({})), 'servers'), false);
   assert.deepEqual(digestedProfile(normalizeProfile({ servers: { a: { port: 1 } } })).servers, { a: { port: 1 } });
   assert.equal(PROFILE_KEY_CONSUMERS.servers.status, 'consumed');
+  // RM67-F5: the note used to call this key "manifest-relative", like openapi/catalog/
+  // webRoots, but server_ports.mjs compares it with root-relative discovery paths and
+  // never resolves it against the manifest directory at all.
+  assert.match(PROFILE_KEY_CONSUMERS.servers.note, /root-relative, not manifest-relative/);
 });
 
 // ---------------------------------------------------------------------------

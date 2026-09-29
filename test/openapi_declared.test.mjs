@@ -62,9 +62,18 @@ test('openapi.generatedFromCode and openapi.generatesCode: lists of documents, e
     [{ openapi: { generatesCode: [''] } }, /profile\.openapi\.generatesCode must be an array of non-empty paths/],
     [{ openapi: { generatesCode: [3] } }, /profile\.openapi\.generatesCode must be an array of non-empty paths/],
     [{ openapi: { generatedFromCode: ['../a.yml'], generatesCode: ['../a.yml'] } }, /"\.\.\/a\.yml" is in both openapi\.generatedFromCode and openapi\.generatesCode/],
+    // Two spellings of the one path, compared the way lanes.mjs resolves them (RM67-F5): a
+    // leading "./", and ".." folded back on itself, used to pass because only an exact
+    // string match was refused, and the document then counted as only one of the two.
+    [{ openapi: { generatedFromCode: ['./a.json'], generatesCode: ['a.json'] } }, /"\.\/a\.json" \(openapi\.generatedFromCode\) and "a\.json" \(openapi\.generatesCode\) name the same document/],
+    [{ openapi: { generatedFromCode: ['a.json'], generatesCode: ['docs/../a.json'] } }, /"a\.json" \(openapi\.generatedFromCode\) and "docs\/\.\.\/a\.json" \(openapi\.generatesCode\) name the same document/],
   ]) {
     assert.throws(() => validateProfile(normalizeProfile(bad)), (e) => e.name === 'ProfileError' && why.test(e.message), JSON.stringify(bad));
   }
+  // Two different documents that merely sit near each other are not refused.
+  assert.doesNotThrow(() => validateProfile(normalizeProfile(
+    { openapi: { generatedFromCode: ['docs/../a.json'], generatesCode: ['./docs/a.json'] } },
+  )));
 });
 
 test('at their default the profile digest is what it was before the keys existed, and each is a consumed key', () => {
