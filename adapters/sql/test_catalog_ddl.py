@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/9")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/10")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/9",
+            "catalog-ddl/10",
         )
 
 
@@ -1135,6 +1135,188 @@ class Review3ClauseTests(unittest.TestCase):
         self.assertEqual(len(said), 1, diagnostics)
         self.assertIn("SET STATISTICS 100", said[0])
         self.assertNotIn("DEFAULT", said[0])
+
+
+
+# ---------------------------------------------------------------------------
+# A CREATE TABLE THE GRAMMAR CANNOT READ AS WRITTEN (catalog-ddl/10). An Oracle
+# export writes how each constraint is checked and built (ENABLE, USING INDEX ...)
+# and the table's physical attributes (PCTFREE, STORAGE, TABLESPACE ...). sqlglot
+# either stops at them (a parse error) or keeps the whole statement as text, and
+# the table was then gone without a word. What the catalog does not hold is set
+# aside and said; a table that still cannot be read is named.
+# ---------------------------------------------------------------------------
+
+_ORACLE_EXPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "oracle_export")
+
+
+def _export(name):
+    with open(os.path.join(_ORACLE_EXPORT, name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _fold_export(files, dialect="oracle", database=None, identifier_case="fold-upper"):
+    diagnostics = []
+    recs = catalog_ddl.parse_ddl_catalog_files(files, diagnostics=diagnostics, identifier_case=identifier_case,
+                                               dialect=dialect, database=database)
+    tables = [r["table"] for r in recs if r["kind"] == "table"]
+    cols = {(r["table"], r["column"]): r for r in recs if r["kind"] == "column"}
+    return tables, cols, diagnostics
+
+
+class UnreadCreateTableTests(unittest.TestCase):
+    def test_a_create_table_the_grammar_keeps_as_text_is_named_never_dropped_silently(self):
+        # PostgreSQL's typed table has no column list this reader could read.
+        tables, _, diagnostics = _fold_export([("m.sql", "CREATE TABLE t OF some_type;\nCREATE TABLE u (a INT);")],
+                                              "postgres", identifier_case="fold-lower")
+        self.assertEqual(tables, ["u"])
+        said = _codes(diagnostics, "create_table_unreadable")
+        self.assertEqual(len(said), 1, diagnostics)
+        self.assertIn("CREATE TABLE t", said[0])
+
+    def test_physical_attributes_after_the_column_list_are_set_aside_in_every_dialect(self):
+        cases = (
+            ("mysql", "CREATE TABLE t (a INT NOT NULL, PRIMARY KEY (a)) TABLESPACE ts STORAGE DISK;"),
+            ("postgres", "CREATE TABLE t (a INT NOT NULL PRIMARY KEY) WITH (fillfactor=70) TABLESPACE ts;"),
+            ("oracle", "CREATE TABLE T (A NUMBER NOT NULL PRIMARY KEY) ORGANIZATION INDEX;"),
+            ("", "CREATE CACHED TABLE T (A INT NOT NULL PRIMARY KEY);"),
+            ("", "CREATE MEMORY TABLE PUBLIC.T (A INT NOT NULL PRIMARY KEY);"),
+        )
+        for dialect, sql in cases:
+            tables, cols, diagnostics = _fold_export([("s.sql", sql)], dialect)
+            self.assertEqual(len(tables), 1, (sql, diagnostics))
+            self.assertEqual([c for (t, c), r in cols.items() if r["pk"]], [tables[0] == "t" and "a" or "A"], sql)
+            self.assertEqual(len(_codes(diagnostics, "create_clause_not_held")), 1, (sql, diagnostics))
+
+    def test_a_constraint_the_catalog_holds_nothing_of_is_set_aside_last(self):
+        # egovframe common components, script/ddl/mysql/com_DDL_mysql.sql: MySQL names a
+        # foreign key after FOREIGN KEY, and sqlglot stops there. 54 of its 182 tables were lost.
+        egov = ("CREATE TABLE COMTNROLES_HIERARCHY\n(\n\tPARNTS_ROLE VARCHAR(30) NOT NULL,\n\tCHLDRN_ROLE VARCHAR(30) NOT NULL,\n"
+                "\t PRIMARY KEY (PARNTS_ROLE,CHLDRN_ROLE),\n\tFOREIGN KEY COMTNROLES_HIERARCHY_FK1 (PARNTS_ROLE) "
+                "REFERENCES COMTNROLEINFO(ROLE_CODE)\n\t\tON DELETE CASCADE\n);\n")
+        # jeecg-boot db/jeecgboot-mysql-5.7.sql:3061, its comments put in English: an index
+        # with a comment of its own, which the salvage used to take for the table's.
+        jeecg = ("CREATE TABLE `jimu_report_share`  (\n  `id` varchar(32) NOT NULL COMMENT 'primary key',\n"
+                 "  `report_id` varchar(32) NULL DEFAULT NULL COMMENT 'report designer id',\n"
+                 "  PRIMARY KEY (`id`) USING BTREE,\n  UNIQUE INDEX `uniq_jrs_report_id`(`report_id`) USING BTREE "
+                 "COMMENT 'unique index on the report'\n"
+                 ") ENGINE = InnoDB COMMENT = 'report preview shares' ROW_FORMAT = DYNAMIC;\n")
+        for sql, table, pk in ((egov, "COMTNROLES_HIERARCHY", ["CHLDRN_ROLE", "PARNTS_ROLE"]), (jeecg, "jimu_report_share", ["id"])):
+            diagnostics = []
+            recs = catalog_ddl.parse_ddl_catalog_files([("s.sql", sql)], diagnostics=diagnostics, dialect="mysql")
+            self.assertEqual([r["table"] for r in recs if r["kind"] == "table"], [table], diagnostics)
+            self.assertEqual(sorted(r["column"] for r in recs if r["kind"] == "column" and r["pk"]), pk)
+            said = _codes(diagnostics, "create_clause_not_held")
+            self.assertEqual(len(said), 1, diagnostics)
+            self.assertIn("FOREIGN KEY" if table.startswith("COMTN") else "UNIQUE", said[0])
+        self.assertEqual([r["comment"] for r in recs if r["kind"] == "table"], ["report preview shares"])
+
+    def test_an_hsqldb_script_with_a_statement_per_line_keeps_every_table(self):
+        # egovframe common components, src/test/resources/egovframework/crypto/testdb.sql, lines 1-6:
+        # no semicolons, so the grammar keeps it all as one text; the second table is not the first's attributes.
+        script = ("-- Base Tables\n"
+                  "CREATE MEMORY TABLE SAMPLE(ID VARCHAR(16) NOT NULL PRIMARY KEY,NAME VARCHAR(50),DESCRIPTION VARCHAR(100),"
+                  "USE_YN CHAR(1),REG_USER VARCHAR(10))\n"
+                  "CREATE MEMORY TABLE IDS(TABLE_NAME VARCHAR(16) NOT NULL PRIMARY KEY,NEXT_ID DECIMAL(30) NOT NULL)\n\n"
+                  "SET SCHEMA PUBLIC\n"
+                  "INSERT INTO SAMPLE VALUES('SAMPLE-00001','Runtime Environment','Foundation Layer','Y','eGov')\n")
+        tables, cols, diagnostics = _fold_export([("testdb.sql", script)], "")
+        self.assertEqual(sorted(tables), ["IDS", "SAMPLE"], diagnostics)
+        self.assertEqual(_pk(cols, "IDS"), ["TABLE_NAME"])
+        self.assertNotIn("INSERT", " ".join(_codes(diagnostics, "create_clause_not_held")))
+
+    def test_a_table_that_cannot_be_read_is_named_once(self):
+        # A type the grammar does not know is not set aside: the catalog holds types.
+        sql = "CREATE TABLE a (x INT);\nCREATE TABLE b (x CHARACTER VARYING VARYING(10), CONSTRAINT q CHECK (x > 0) ENABLE);\n"
+        diagnostics = []
+        catalog_ddl.parse_ddl_catalog_files([("s.sql", sql)], diagnostics=diagnostics, dialect="oracle")
+        self.assertEqual([d["table"] for d in diagnostics if d["code"] == "create_table_unreadable"], ["b"])
+
+    def test_a_mysql_table_comment_after_the_list_is_kept(self):
+        recs = catalog_ddl.parse_ddl_catalog_files(
+            [("s.sql", "CREATE TABLE t (a INT) TABLESPACE ts STORAGE DISK COMMENT='orders';")], dialect="mysql")
+        self.assertEqual([r["comment"] for r in recs if r["kind"] == "table"], ["orders"])
+
+
+class OracleExportTests(unittest.TestCase):
+    def test_dbms_metadata_output_is_read_whole(self):
+        tables, cols, diagnostics = _fold_export([("export.sql", _export("dbms_metadata.sql"))])
+        self.assertEqual(sorted(tables), ["DEPT", "PAYROLL_EMPS", "PAYROLL_TIMECARDS", "TIMECARDS"], diagnostics)
+        self.assertEqual([c for (t, c) in cols if t == "TIMECARDS"], ["EMPLOYEE_ID", "WEEK", "JOB_ID", "HOURS_WORKED"])
+        # NOT NULL ENABLE is NOT NULL; PRIMARY KEY (...) ENABLE is the key.
+        self.assertFalse(cols[("PAYROLL_EMPS", "LASTNAME")]["nullable"])
+        self.assertTrue(cols[("PAYROLL_EMPS", "MI")]["nullable"])
+        self.assertEqual(_pk(cols, "PAYROLL_EMPS"), ["BADGE_NO"])
+        # CONSTRAINT "PK_DEPT" PRIMARY KEY (...) USING INDEX ... ENABLE is the key too.
+        self.assertEqual(_pk(cols, "DEPT"), ["DEPTNO"])
+        self.assertEqual(cols[("DEPT", "DNAME")]["type"], "VARCHAR(14)")
+        said = " ".join(_codes(diagnostics, "create_clause_not_held"))
+        for word in ("ENABLE", "USING INDEX", "PCTFREE", "TABLESPACE"):
+            self.assertIn(word, said)
+        self.assertEqual(_codes(diagnostics, "create_table_unreadable") + _codes(diagnostics, "parse_error"), [])
+
+    def test_the_reviewers_not_null_enable_and_the_alter_after_it(self):
+        # Review 3, case Y10: the CREATE stopped the parse, and the ALTER after it found no table.
+        y10 = 'CREATE TABLE "T" ("ID" NUMBER NOT NULL ENABLE, "D" VARCHAR2(10));\nALTER TABLE "T" MODIFY ("D" NOT NULL ENABLE);'
+        tables, cols, diagnostics = _fold_export([("f.sql", y10)])
+        self.assertEqual(tables, ["T"], diagnostics)
+        self.assertFalse(cols[("T", "ID")]["nullable"])
+        self.assertFalse(cols[("T", "D")]["nullable"])
+        self.assertEqual(_codes(diagnostics, "alter_unknown_table"), [])
+
+    def test_navicat_export_is_read_with_its_key_and_its_checks(self):
+        tables, cols, diagnostics = _fold_export([("quartz.sql", _export("navicat_quartz.sql"))])
+        self.assertEqual(tables, ["QRTZ_JOB_DETAILS"], diagnostics)
+        self.assertEqual(len([c for (t, c) in cols]), 10)
+        self.assertEqual(cols[("QRTZ_JOB_DETAILS", "SCHED_NAME")]["type"], "VARCHAR(120)", "as sqlglot writes VARCHAR2(120 BYTE)")
+        self.assertTrue(cols[("QRTZ_JOB_DETAILS", "DESCRIPTION")]["nullable"])
+        self.assertFalse(cols[("QRTZ_JOB_DETAILS", "IS_DURABLE")]["nullable"])
+        self.assertEqual(_pk(cols, "QRTZ_JOB_DETAILS"), ["JOB_GROUP", "JOB_NAME", "SCHED_NAME"])
+        # Each CHECK (... IS NOT NULL) NOT DEFERRABLE ... VALIDATE is read as a check, which holds nothing here.
+        self.assertEqual(_codes(diagnostics, "alter_unreadable"), [])
+        self.assertEqual(len(_codes(diagnostics, "alter_clause_unsupported")), 8)
+
+    def test_a_disabled_constraint_is_not_read_and_is_said(self):
+        sql = ('CREATE TABLE "T" ("A" NUMBER CONSTRAINT "NN_A" NOT NULL DISABLE, "B" NUMBER NOT NULL ENABLE,\n'
+               ' CONSTRAINT "PK_T" PRIMARY KEY ("A") DISABLE) ;')
+        tables, cols, diagnostics = _fold_export([("s.sql", sql)])
+        self.assertEqual(tables, ["T"], diagnostics)
+        self.assertTrue(cols[("T", "A")]["nullable"], "a disabled NOT NULL is not enforced")
+        self.assertFalse(cols[("T", "B")]["nullable"])
+        self.assertEqual(_pk(cols, "T"), [], "a disabled key is not enforced")
+        self.assertEqual(len(_codes(diagnostics, "create_constraint_disabled")), 2, diagnostics)
+
+    def test_a_file_that_reads_as_written_is_read_as_before(self):
+        # Nothing is set aside where nothing needs to be.
+        for sql, dialect in ((BASIC_DDL, "mysql"), ('CREATE TABLE "T" ("A" NUMBER, CONSTRAINT "PK" PRIMARY KEY ("A"));', "oracle")):
+            diagnostics = []
+            catalog_ddl.parse_ddl_catalog_files([("s.sql", sql)], diagnostics=diagnostics, dialect=dialect)
+            self.assertEqual(_codes(diagnostics, "create_clause_not_held"), [], sql)
+
+
+class AlterTableOptionTests(unittest.TestCase):
+    def test_mysql_alter_table_comment_sets_the_table_comment(self):
+        base = "CREATE TABLE t (id INT NOT NULL, PRIMARY KEY (id)) COMMENT='old';\n"
+        for alter in ("ALTER TABLE t COMMENT = 'new one';", "ALTER TABLE t COMMENT 'new one', ENGINE=InnoDB;"):
+            diagnostics = []
+            recs = catalog_ddl.parse_ddl_catalog_files([("s.sql", base + alter)], diagnostics=diagnostics, dialect="mysql")
+            self.assertEqual([r["comment"] for r in recs if r["kind"] == "table"], ["new one"], (alter, diagnostics))
+            self.assertEqual(_codes(diagnostics, "alter_unreadable"), [], alter)
+
+    def test_h2_alter_column_definition_changes_what_it_says(self):
+        base = "CREATE TABLE t (id INT NOT NULL, c INT, d INT NOT NULL, PRIMARY KEY (id));\n"
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t ALTER COLUMN c BIGINT NOT NULL;")], "", "h2",
+                                     "fold-upper")
+        self.assertEqual(cols[("t", "c")]["type"], "BIGINT")
+        self.assertFalse(cols[("t", "c")]["nullable"])
+        self.assertEqual(_codes(diagnostics, "alter_unreadable"), [])
+        # H2's manual does not say what the column definition form does with what it leaves out: kept, and said.
+        # (A bare ``ALTER COLUMN d BIGINT`` parses as ``SET DATA TYPE`` does, and is read as that type change.)
+        cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t ALTER COLUMN d BIGINT DEFAULT 0;")], "", "h2",
+                                     "fold-upper")
+        self.assertEqual(cols[("t", "d")]["type"], "BIGINT")
+        self.assertFalse(cols[("t", "d")]["nullable"])
+        self.assertEqual(len(_codes(diagnostics, "alter_modify_unsaid_unknown")), 1, diagnostics)
 
 
 if __name__ == "__main__":

@@ -81,7 +81,15 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        Oracle's ``DROP (c)`` and the ``USING INDEX ... ENABLE`` an export writes
 #        after a key, H2's ``ALTER COLUMN c RENAME TO d``, MariaDB's ``MODIFY COLUMN
 #        IF EXISTS``, and the clauses sqlglot keeps as one piece of text.
-CATALOG_VERSION = "catalog-ddl/9"
+#   /10 - a CREATE TABLE the grammar cannot read as written (an Oracle export's
+#        ``NOT NULL ENABLE``, ``USING INDEX ... ENABLE`` and PCTFREE/STORAGE/
+#        TABLESPACE, HSQLDB's CACHED and MEMORY tables) is read again with what
+#        the catalog does not hold set aside and said; a disabled constraint is
+#        not read; one that still cannot be read is named, where it was dropped
+#        without a word. MySQL's ALTER TABLE ... COMMENT sets the table comment,
+#        and H2's ALTER COLUMN c <definition> is read as MODIFY is. A file every
+#        statement of which the grammar reads parses to the records /9 wrote.
+CATALOG_VERSION = "catalog-ddl/10"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -424,19 +432,29 @@ def _escapes_turned(dialect):
 
 
 def _parse_whole(sql_text, diagnostics, source, dialect):
-    """sqlglot.parse with the same salvage path the single-file reader had."""
+    """sqlglot.parse with the same salvage path the single-file reader had. A file
+    that stops the parse is first read again with its CREATE TABLE statements that
+    cannot be read as written set aside where the catalog holds nothing, so an
+    export's ``NOT NULL ENABLE`` does not cost its table."""
     try:
         return sqlglot.parse(sql_text, read=dialect)
     except ParseError as e:
-        _diag(
-            diagnostics,
-            "warn",
-            "parse_error",
-            None,
-            "full parse of %s failed, salvaging with error_level=IGNORE: %s"
-            % (source, str(e).replace("\n", " ")),
-        )
-        return sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+        error = e
+    set_aside = _set_aside_in_file(sql_text, dialect, diagnostics, source)
+    if set_aside is not None:
+        try:
+            return sqlglot.parse(set_aside, read=dialect)
+        except ParseError as e:
+            error, sql_text = e, set_aside
+    _diag(
+        diagnostics,
+        "warn",
+        "parse_error",
+        None,
+        "full parse of %s failed, salvaging with error_level=IGNORE: %s"
+        % (source, str(error).replace("\n", " ")),
+    )
+    return sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE)
 
 
 # A data statement fills a table and never declares one, so the catalog has no use for it.
@@ -517,6 +535,403 @@ def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
            (" and %d more" % more) if more > 0 else ""),
     )
     return statements
+
+
+# ---------------------------------------------------------------------------
+# A CREATE TABLE the grammar cannot read as written. An Oracle export writes how
+# each constraint is checked and built, and the table's physical attributes after
+# its column list; HSQLDB writes CACHED or MEMORY before TABLE. A grammar either
+# stops at them or keeps the whole statement as text, and the table was then gone
+# without a word. What the catalog does not hold is set aside, said, and the
+# statement read again; one that still cannot be read is named. A statement the
+# grammar reads as written is never touched.
+# ---------------------------------------------------------------------------
+
+# How a constraint is checked, never what it holds: Oracle's constraint state
+# ("ENABLE | DISABLE, VALIDATE | NOVALIDATE, RELY | NORELY, [NOT] DEFERRABLE,
+# INITIALLY IMMEDIATE | DEFERRED"). DISABLE is not among them: a disabled
+# constraint is not enforced, so it is set aside whole and not read.
+_CONSTRAINT_STATE_WORDS = ("ENABLE", "VALIDATE", "NOVALIDATE", "RELY", "NORELY", "DEFERRABLE")
+# Kinds of table a grammar may not know, written between CREATE and TABLE: HSQLDB's
+# CACHED, MEMORY and TEXT tables. The columns are the same whatever the kind.
+_TABLE_KIND_WORDS = ("CACHED", "MEMORY", "TEXT")
+_CREATE_PREFIX_WORDS = ("OR", "REPLACE", "GLOBAL", "LOCAL", "TEMPORARY", "TEMP", "UNLOGGED") + _TABLE_KIND_WORDS
+_TABLE_CONSTRAINT_WORDS = ("CONSTRAINT", "PRIMARY KEY", "UNIQUE", "CHECK", "FOREIGN KEY")
+_COLUMN_CONSTRAINT_WORDS = ("NULL", "PRIMARY KEY", "UNIQUE", "CHECK", "REFERENCES")
+_CREATE_TABLE_TEXT_RE = re.compile(r"^\s*(?:(?:OR\s+REPLACE|GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED|CACHED|MEMORY|TEXT)\s+)*"
+                                   r"TABLE\b", re.IGNORECASE)
+_CREATE_NAME_RE = re.compile(r"\bTABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(;]+)", re.IGNORECASE)
+
+
+def _word(token):
+    """A keyword as written, upper case with single spaces; None for a quoted name or a string."""
+    if token.token_type in (TokenType.IDENTIFIER, TokenType.STRING):
+        return None
+    return " ".join(token.text.split()).upper()
+
+
+class _SetAside(object):
+    """What reading one CREATE TABLE sets aside: the tokens, what each run was, and
+    the constraints found disabled."""
+
+    __slots__ = ("table", "dropped", "words", "disabled")
+
+    def __init__(self, table):
+        self.table = table
+        self.dropped = set()     # token indices
+        self.words = []          # what was set aside, as a sentence names it
+        self.disabled = []       # each disabled constraint, as written
+
+    def drop(self, i, j, word=None):
+        self.dropped.update(range(i, j + 1))
+        if word:
+            self.words.append(word)
+
+
+def _create_layout(tokens):
+    """``CREATE [kind] TABLE [IF NOT EXISTS] name (list) tail`` as token indices:
+    the kind words, the table's name, and the list's two parentheses. None when
+    the statement has no column list this reader could read."""
+    i, kinds = 1, []
+    while i < len(tokens) and _word(tokens[i]) in _CREATE_PREFIX_WORDS:
+        if _word(tokens[i]) in _TABLE_KIND_WORDS:
+            kinds.append(i)
+        i += 1
+    if i >= len(tokens) or _word(tokens[i]) != "TABLE":
+        return None
+    i += 1
+    while i < len(tokens) and _word(tokens[i]) in ("IF", "NOT", "EXISTS"):
+        i += 1
+    while i + 2 < len(tokens) and tokens[i + 1].token_type == TokenType.DOT:
+        i += 2
+    if i + 1 >= len(tokens) or tokens[i + 1].token_type != TokenType.L_PAREN:
+        return None
+    depth = 0
+    for j in range(i + 1, len(tokens)):
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(tokens[j].token_type, 0)
+        if depth == 0:
+            return {"kinds": kinds, "table": tokens[i].text, "open": i + 1, "close": j}
+    return None
+
+
+def _elements(tokens, opening, closing):
+    """The columns and table constraints of a list, as (first, last) token indices."""
+    spans, depth, first = [], 0, opening + 1
+    for j in range(opening + 1, closing):
+        kind = tokens[j].token_type
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(kind, 0)
+        if kind == TokenType.COMMA and depth == 0:
+            spans.append((first, j - 1))
+            first = j + 1
+    spans.append((first, closing - 1))
+    return [(s, e) for s, e in spans if s <= e]
+
+
+def _top_depth(tokens, s, e):
+    """The indices between s and e that are not inside parentheses of their own."""
+    depth, out = 0, []
+    for i in range(s, e + 1):
+        kind = tokens[i].token_type
+        if kind == TokenType.R_PAREN:
+            depth -= 1
+        if depth == 0 and kind not in (TokenType.L_PAREN, TokenType.R_PAREN):
+            out.append(i)
+        if kind == TokenType.L_PAREN:
+            depth += 1
+    return out
+
+
+def _constraint_start(tokens, top, i):
+    """Where the column constraint that ``DISABLE`` at i closes begins: the nearest
+    constraint word before it, with its ``CONSTRAINT name`` when it has one."""
+    before = [k for k in top if k < i]
+    for n in range(len(before) - 1, 0, -1):
+        k = before[n]
+        if _word(tokens[k]) not in _COLUMN_CONSTRAINT_WORDS:
+            continue
+        if _word(tokens[k]) == "NULL" and n > 0 and _word(tokens[before[n - 1]]) == "NOT":
+            n, k = n - 1, before[n - 1]
+        if n >= 2 and _word(tokens[before[n - 2]]) == "CONSTRAINT":
+            k = before[n - 2]
+        return k
+    return i
+
+
+def _set_aside_disabled(tokens, s, e, top, text, aside):
+    """A disabled constraint is not read: a table constraint goes whole, a column's
+    constraint from its first word to DISABLE. True when the element went whole."""
+    disabled = [i for i in top if _word(tokens[i]) == "DISABLE" and i > s]
+    if not disabled:
+        return False
+    if _word(tokens[s]) in _TABLE_CONSTRAINT_WORDS:
+        aside.disabled.append(text[tokens[s].start:tokens[e].end + 1])
+        aside.drop(s, e)
+        return True
+    for i in disabled:
+        start = _constraint_start(tokens, top, i)
+        aside.disabled.append(text[tokens[start].start:tokens[i].end + 1])
+        aside.drop(start, i)
+    return False
+
+
+def _set_aside_states(tokens, s, e, top, aside):
+    """How each constraint of one column or table constraint is checked and built."""
+    n = 0
+    while n < len(top):
+        i = top[n]
+        word = _word(tokens[i])
+        nxt = _word(tokens[top[n + 1]]) if n + 1 < len(top) else None
+        if i == s or i in aside.dropped:
+            n += 1
+        elif word == "USING" and nxt == "INDEX":
+            aside.drop(i, e, "USING INDEX")     # the index's name or build, to the element's end
+            return
+        elif word == "EXCEPTIONS" and nxt == "INTO":
+            aside.drop(i, top[min(n + 2, len(top) - 1)], "EXCEPTIONS INTO")
+            n += 3
+        elif (word == "NOT" and nxt == "DEFERRABLE") or (word == "INITIALLY" and nxt in ("IMMEDIATE", "DEFERRED")):
+            aside.drop(i, top[n + 1], "%s %s" % (word, nxt))
+            n += 2
+        elif word in _CONSTRAINT_STATE_WORDS:
+            aside.drop(i, i, word)
+            n += 1
+        else:
+            n += 1
+
+
+def _set_aside_tail(tokens, closing, last, aside, sql):
+    """The physical attributes after the column list, all but a MySQL table comment.
+    False, and nothing set aside, when a statement word starts a line in it: that is
+    the next statement, not this table's attributes."""
+    top = _top_depth(tokens, closing + 1, last)
+    if any(_word(tokens[i]) in _STATEMENT_WORDS and "\n" in sql[tokens[i - 1].end + 1:tokens[i].start] for i in top):
+        return False
+    keep = set()
+    for n, i in enumerate(top):
+        if _word(tokens[i]) == "COMMENT":
+            rest = [k for k in top[n + 1:n + 3]]
+            string = next((k for k in rest if tokens[k].token_type == TokenType.STRING), None)
+            if string is not None:
+                keep.update(range(i, string + 1))
+    words = []
+    for i in range(closing + 1, last + 1):
+        if i in keep:
+            continue
+        aside.dropped.add(i)
+        word = _word(tokens[i]) if i in top else None
+        if word and word.replace("_", "").isalpha() and word not in words:
+            words.append(word)
+    if words:
+        aside.words.append("after the column list: %s" % " ".join(words[:12]))
+    return True
+
+
+def _set_aside_constraint(tokens, s, e, elements, aside):
+    """A table constraint the catalog holds nothing of (an index, a unique key, a
+    check, a foreign key: all but the primary key), set aside whole with the comma
+    before it, or after it when it is the list's first. True when it was."""
+    words = [_word(tokens[i]) for i in _top_depth(tokens, s, e)[:3]]
+    if words and words[0] == "CONSTRAINT":
+        words = words[2:]
+    if not words or words[0] not in ("FOREIGN KEY", "UNIQUE", "CHECK", "INDEX", "KEY", "FULLTEXT", "SPATIAL"):
+        return False
+    first = elements.index((s, e)) == 0
+    aside.drop(s, e + 1 if first and len(elements) > 1 else e, words[0])
+    if not first:
+        aside.drop(s - 1, s - 1)
+    return True
+
+
+def _set_aside_create(sql, dialect, stage):
+    """What reading one CREATE TABLE sets aside at a stage: 0, how its constraints
+    are checked and built; 1, and what follows its column list; 2, and each table
+    constraint the catalog holds nothing of. None when it has no column list."""
+    try:
+        tokens = [t for t in Dialect.get_or_raise(dialect).tokenize(sql) if t.token_type != TokenType.SEMICOLON]
+    except (TokenError, ParseError, ValueError):
+        return None
+    layout = _create_layout(tokens) if tokens else None
+    if layout is None:
+        return None
+    aside = _SetAside(layout["table"])
+    for i in layout["kinds"]:
+        aside.drop(i, i, _word(tokens[i]))
+    elements = _elements(tokens, layout["open"], layout["close"])
+    for s, e in elements:
+        top = _top_depth(tokens, s, e)
+        if stage >= 2 and _set_aside_constraint(tokens, s, e, elements, aside):
+            continue
+        if not _set_aside_disabled(tokens, s, e, top, sql, aside):
+            _set_aside_states(tokens, s, e, top, aside)
+    if stage >= 1 and layout["close"] + 1 < len(tokens):
+        if not _set_aside_tail(tokens, layout["close"], len(tokens) - 1, aside, sql):
+            return None
+    aside.dropped = sorted(aside.dropped)
+    return aside, tokens
+
+
+def _without(sql, tokens, dropped):
+    """``sql`` with the dropped tokens blanked, line breaks kept, so every line keeps its number."""
+    out, cursor = [], 0
+    for i in dropped:
+        start, end = tokens[i].start, tokens[i].end + 1
+        out.append(sql[cursor:start])
+        out.append(re.sub(r"[^\n]", " ", sql[start:end]))
+        cursor = end
+    out.append(sql[cursor:])
+    return "".join(out)
+
+
+def _quiet_parse(sql, dialect):
+    """One statement, parsed with sqlglot's fall-back warning held back."""
+    logger = logging.getLogger("sqlglot")
+    level = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        parsed = [p for p in sqlglot.parse(sql, read=dialect) if p is not None]
+    except (ParseError, TokenError):
+        return None
+    finally:
+        logger.setLevel(level)
+    return parsed[0] if len(parsed) == 1 else None
+
+
+def _reads_as_table(sql, dialect):
+    parsed = _quiet_parse(sql, dialect)
+    return parsed if isinstance(parsed, exp.Create) and isinstance(parsed.this, exp.Schema) else None
+
+
+def _read_set_aside(sql, dialect):
+    """The statement read again with as little set aside as reads it: its constraint
+    states, then what follows its column list, then the table constraints the
+    catalog holds nothing of. (parsed, what was set aside, the text read), or None."""
+    for stage in (0, 1, 2):
+        found = _set_aside_create(sql, dialect, stage)
+        if found is None:
+            return None
+        aside, tokens = found
+        text = _without(sql, tokens, aside.dropped)
+        parsed = _reads_as_table(text, dialect) if aside.dropped else None
+        if parsed is not None:
+            return parsed, aside, text
+    return None
+
+
+def _say_set_aside(aside, diagnostics, source):
+    counts = {}
+    for w in aside.words:
+        counts[w] = counts.get(w, 0) + 1
+    if counts:
+        listed = ", ".join(w if n == 1 else "%s (%d times)" % (w, n) for w, n in counts.items())
+        _diag(diagnostics, "info", "create_clause_not_held", aside.table,
+              "%s: CREATE TABLE %s is read without what the catalog does not hold: %s" % (source, aside.table, listed))
+    for text in aside.disabled:
+        _diag(diagnostics, "info", "create_constraint_disabled", aside.table,
+              "%s: CREATE TABLE %s declares %s. A disabled constraint is not enforced, so it is not read"
+              % (source, aside.table, _short(text)))
+
+
+def _create_unreadable(sql, diagnostics, source, outcome):
+    m = _CREATE_NAME_RE.search(sql)
+    name = m.group(1) if m else "(no name)"
+    # Named once: a file whose parse stopped names it, and the salvage after may
+    # hand the same statement back as text.
+    if any(d["code"] == "create_table_unreadable" and d["table"] == name and d["message"].startswith(source + ":")
+           for d in diagnostics or []):
+        return
+    _diag(diagnostics, "warn", "create_table_unreadable", name,
+          "%s: CREATE TABLE %s could not be read, so %s: %s" % (source, name, outcome, _short(sql)))
+
+
+def _statement_spans(tokens):
+    """The statements of a file as (first, last) token indices, cut at semicolons outside parentheses."""
+    spans, depth, first = [], 0, 0
+    for j, t in enumerate(tokens):
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(t.token_type, 0)
+        if t.token_type == TokenType.SEMICOLON and depth <= 0:
+            spans.append((first, j - 1))
+            first, depth = j + 1, 0
+    spans.append((first, len(tokens) - 1))
+    return [(s, e) for s, e in spans if s <= e]
+
+
+def _set_aside_in_file(sql_text, dialect, diagnostics, source):
+    """A file whose parse stopped: each CREATE TABLE that cannot be read as written,
+    read again with what the catalog does not hold set aside. The file's text with
+    those set aside, or None when no statement needed it."""
+    try:
+        tokens = Dialect.get_or_raise(dialect).tokenize(sql_text)
+    except (TokenError, ParseError, ValueError):
+        return None
+    edits, asides = [], []
+    for first, last in _statement_spans(tokens):
+        stmt = sql_text[tokens[first].start:tokens[last].end + 1]
+        if _word(tokens[first]) != "CREATE" or not _CREATE_TABLE_TEXT_RE.match(stmt[len(tokens[first].text):]):
+            continue
+        if _reads_as_table(stmt, dialect) is not None:
+            continue
+        read = _read_set_aside(stmt, dialect)
+        if read is None:
+            _create_unreadable(stmt, diagnostics, source, "the file is read with errors ignored and the table "
+                                                          "is missing or read in part")
+            continue
+        edits.append((tokens[first].start, tokens[last].end + 1, read[2]))
+        asides.append(read[1])
+    if not edits:
+        return None
+    for aside in asides:
+        _say_set_aside(aside, diagnostics, source)
+    out, cursor = [], 0
+    for start, end, text in edits:
+        out.append(sql_text[cursor:start])
+        out.append(text)
+        cursor = end
+    out.append(sql_text[cursor:])
+    return "".join(out)
+
+
+_STATEMENT_WORDS = ("CREATE", "ALTER", "DROP", "INSERT", "UPDATE", "DELETE", "SET", "GRANT", "COMMIT")
+
+
+def _line_statements(sql, dialect):
+    """Text that holds several statements with no semicolon between them, as an
+    HSQLDB script writes one per line: cut where a statement word starts a line
+    outside parentheses. One piece when there is nothing to cut."""
+    try:
+        tokens = Dialect.get_or_raise(dialect).tokenize(sql)
+    except (TokenError, ParseError, ValueError):
+        return [sql]
+    cuts, depth = [], 0
+    for n, t in enumerate(tokens):
+        if t.token_type == TokenType.R_PAREN:
+            depth -= 1
+        elif t.token_type == TokenType.L_PAREN:
+            depth += 1
+        elif n > 0 and depth == 0 and _word(t) in _STATEMENT_WORDS and "\n" in sql[tokens[n - 1].end + 1:t.start]:
+            cuts.append(t.start)
+    bounds = [0] + cuts + [len(sql)]
+    return [sql[a:b].strip() for a, b in zip(bounds, bounds[1:]) if sql[a:b].strip()]
+
+
+def _apply_create_text(sql, ctx):
+    """A CREATE TABLE the grammar kept as text: read again with what the catalog
+    does not hold set aside, or named. Text that runs on into more statements is
+    cut first, so no table is set aside as another's attributes."""
+    pieces = _line_statements(sql, ctx.dialect)
+    if len(pieces) > 1:
+        for piece in pieces:
+            parsed = _parse_quietly(piece, ctx)
+            if parsed is not None:
+                _apply_statement(parsed, ctx)
+            elif _CREATE_TABLE_TEXT_RE.match(piece[len("CREATE"):]) and piece[:6].upper() == "CREATE":
+                _create_unreadable(piece, ctx.diagnostics, ctx.source, "its table is not in the catalog")
+        return
+    read = _read_set_aside(sql, ctx.dialect)
+    if read is None:
+        _create_unreadable(sql, ctx.diagnostics, ctx.source, "its table is not in the catalog")
+        return
+    _say_set_aside(read[1], ctx.diagnostics, ctx.source)
+    _apply_create(read[0], ctx)
 
 
 def _apply_create(stmt, ctx):
@@ -1018,16 +1433,7 @@ def _top_level(text, ctx):
 def _parse_quietly(sql, ctx):
     """One statement, parsed with sqlglot's fall-back warning held back: the parse of
     the whole file warned about this statement once already."""
-    logger = logging.getLogger("sqlglot")
-    level = logger.level
-    logger.setLevel(logging.ERROR)
-    try:
-        parsed = [p for p in sqlglot.parse(sql, read=ctx.dialect) if p is not None]
-    except (ParseError, TokenError):
-        return None
-    finally:
-        logger.setLevel(level)
-    return parsed[0] if len(parsed) == 1 else None
+    return _quiet_parse(sql, ctx.dialect)
 
 
 def _column_spec(spec, ctx):
@@ -1068,6 +1474,16 @@ def _set_null_text(tbl, m, text, ctx):
         _unknown_column(tbl, "alters", _unquote(m.group(1)), ctx)
         return
     _set_nullable(tbl, key, not m.group(2), ctx)
+
+
+def _table_comment_text(tbl, m, text, ctx):
+    """``COMMENT = '...'``: the table's comment is this string now."""
+    said = _parse_quietly("SELECT %s" % m.group(1), ctx)
+    literal = said.expressions[0] if isinstance(said, exp.Select) and len(said.expressions) == 1 else None
+    if not isinstance(literal, exp.Literal) or not literal.is_string:
+        _unreadable(tbl.name, text, ctx)
+        return
+    tbl.comment = literal.name
 
 
 def _drop_listed_text(tbl, m, text, ctx):
@@ -1114,13 +1530,22 @@ _CLAUSE_READERS = (
      lambda tbl, m, text, ctx: _not_held(tbl, _short(text), ctx)),
     (re.compile(r"^MODIFY\s*\((.*)\)\s*$", _CLAUSE_FLAGS), _restate_specs),
     (re.compile(r"^MODIFY\s+(?:COLUMN\s+)?(.+)$", _CLAUSE_FLAGS), _restate_specs),
+    # H2 and HSQLDB restate a column after its name: ``ALTER COLUMN c BIGINT NOT
+    # NULL``. Read as MODIFY is, by the database's rule for what it leaves out.
+    (re.compile(r"^ALTER\s+(?:COLUMN\s+)?(%s\s+(?!(?:SET|DROP|RENAME|RESTART|SELECTIVITY|TYPE|ADD)\b)\S.*)$" % _NAME,
+                _CLAUSE_FLAGS),
+     _restate_specs),
     (re.compile(r"^RENAME\s+CONSTRAINT\s+(%s)\s+TO\s+(%s)\s*$" % (_NAME, _NAME), _CLAUSE_FLAGS),
      _rename_constraint_text),
+    # MySQL's table comment, which the catalog holds.
+    (re.compile(r"^COMMENT\s*(?:=\s*)?('(?:[^'\\]|''|\\.)*')\s*$", _CLAUSE_FLAGS), _table_comment_text),
     # Clauses that touch no column, type, nullability or key: ownership, triggers,
-    # row security, clustering, storage, and how MySQL runs the ALTER itself.
+    # row security, clustering, storage, and MySQL's table options and how it runs
+    # the ALTER itself.
     (re.compile(r"^(?:OWNER\s+TO|ENABLE|DISABLE|CLUSTER\s+ON|SET\s+WITHOUT\s+CLUSTER|REPLICA\s+IDENTITY|"
                 r"SET\s+TABLESPACE|VALIDATE\s+CONSTRAINT|(?:NO\s+)?FORCE\s+ROW\s+LEVEL\s+SECURITY)\b"
-                r"|^(?:ALGORITHM|LOCK)\s*=", _CLAUSE_FLAGS),
+                r"|^(?:ALGORITHM|LOCK|ENGINE|AUTO_INCREMENT|ROW_FORMAT|(?:DEFAULT\s+)?(?:CHARSET|CHARACTER\s+SET)|"
+                r"(?:DEFAULT\s+)?COLLATE)\s*=?", _CLAUSE_FLAGS),
      lambda tbl, m, text, ctx: _not_held(tbl, _short(text), ctx)),
 )
 
@@ -1212,8 +1637,11 @@ def _apply_alter(stmt, ctx):
             _unreadable(tbl.name, _clause_text(action, ctx), ctx)
         else:
             apply(tbl, action, ctx)
-    # What the grammar split off and no clause took back is read on its own.
+    # What the grammar split off and no clause took back is read on its own; an
+    # ALTER that is all options (``ENGINE=InnoDB``) has no clause to take it back.
     tail, ctx.tail = ctx.tail, outer
+    if tail and tbl is None and not stmt.args.get("actions"):
+        tbl = _altered_table(table_name, ctx)
     if tail and tbl is not None:
         _read_clause(tbl, tail, ctx)
 
@@ -1252,11 +1680,25 @@ def _apply_alter_table_text(body, ctx):
             return
 
 
+_STATE_ONLY_RE = re.compile(
+    r"(?:\s+(?:ENABLE|VALIDATE|NOVALIDATE|RELY|NORELY|(?:NOT\s+)?DEFERRABLE|INITIALLY\s+(?:IMMEDIATE|DEFERRED)))+\s*$",
+    re.IGNORECASE)
+
+
+def _is_alter_table(parsed):
+    return isinstance(parsed, exp.Alter) and str(parsed.args.get("kind") or "").upper() == "TABLE"
+
+
 def _apply_clause(head, table_name, clause, ctx):
     """One clause, read as an ALTER TABLE of its own: by sqlglot when it can, else as
     text. False when no file declared the table."""
     parsed = _parse_quietly("ALTER %s %s" % (head, clause), ctx)
-    if isinstance(parsed, exp.Alter) and str(parsed.args.get("kind") or "").upper() == "TABLE":
+    bare = _STATE_ONLY_RE.sub("", clause).strip()
+    if not _is_alter_table(parsed) and bare != clause.strip():
+        # How a constraint is checked (``NOT DEFERRABLE ... VALIDATE``) is not what
+        # it is: read without it, a CHECK is a check.
+        parsed = _parse_quietly("ALTER %s %s" % (head, bare), ctx)
+    if _is_alter_table(parsed):
         _apply_alter(parsed, ctx)
         return True
     tbl = _altered_table(table_name, ctx)
@@ -1339,6 +1781,9 @@ def _apply_statement(stmt, ctx):
             return 1
         if word == "ALTER" and re.match(r"TYPE\b", body, re.IGNORECASE):
             _rename_type(body, ctx)
+        if word == "CREATE" and _CREATE_TABLE_TEXT_RE.match(body):
+            # A table the grammar kept as text is read again or named, never dropped.
+            _apply_create_text("CREATE " + body, ctx)
     # everything else (INSERT/UPDATE/CREATE INDEX/…) is skipped silently
     return 0
 
