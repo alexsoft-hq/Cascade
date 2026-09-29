@@ -13,7 +13,7 @@ import { builtinRegistry } from '../../core/rules/registry.mjs';
 import { rulesCatalog } from '../../core/rules/catalog.mjs';
 import { exampleVerdicts } from '../rule_examples.mjs';
 import { serveHttp } from '../../mcp/http.mjs';
-import { readSourceFor } from '../../viewer/source.mjs';
+import { readSourceFor, sourceRootsOf } from '../../viewer/source.mjs';
 import { exportSnapshot, projectMeta } from '../snapshot_export.mjs';
 import { ENGINE_ROOT } from '../env.mjs';
 
@@ -103,9 +103,21 @@ function sourcePreview({ projectId, ctx }, nodeId, opts) {
     e.code = 'unknown-key';
     throw e;
   }
-  return readSourceFor(ctx.graph, repoRoot, nodeId, {
+  return readSourceFor(ctx.graph, repoRoot, nodeId, diskSourceIo(ctx.packJson.meta, opts));
+}
+
+/**
+ * What the source pane reads a pack's files with: the disk, and only under the
+ * roots the pack records as analyzed (the project root, and a frontend passed
+ * with --web-src beside it among them), with every link followed before a file
+ * is opened.
+ */
+export function diskSourceIo(meta, opts) {
+  return {
     readFile: (f) => fs.readFileSync(f, 'utf8'),
-    ddlPath: ctx.packJson.meta?.ddl,
+    realPath: (f) => fs.realpathSync.native(f),
+    roots: sourceRootsOf(meta),
+    ddlPath: meta?.ddl,
     whole: !!(opts && opts.whole),
-  });
+  };
 }

@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Graph, nodeId } from '../src/core/graph.mjs';
-import { readSourceFor, extractXmlStatement, extractJavaMethod, extractCreateTable, extractWebFunction, webLang, WEB_FALLBACK_LINES, WHOLE_FILE_CAP } from '../src/viewer/source.mjs';
+import { readSourceFor, sourceRootsOf, extractXmlStatement, extractJavaMethod, extractCreateTable, extractWebFunction, webLang, WEB_FALLBACK_LINES, WHOLE_FILE_CAP } from '../src/viewer/source.mjs';
+import { diskSourceIo } from '../src/cli/commands/view.mjs';
 
 // Every extractor answers with the 1-based line range it cut, because the page
 // draws a gutter of REAL file lines beside the code and marks those lines. This
@@ -180,13 +183,15 @@ const REPO_ROOT = path.resolve('/repo'); // an absolute root in this platform's 
 // Injected readFile: keyed by absolute path, records every path it was asked
 // to read so tests can assert both WHAT was read and (for the escape guard)
 // that nothing was read at all.
-function makeIo(filesByAbsPath, ddlPath) {
+// `realPath` is the identity here: these paths are not on disk, so there is no
+// link to follow. The links are tested against a real tree further down.
+function makeIo(filesByAbsPath, ddlPath, roots) {
   const calls = [];
   const readFile = (abs) => {
     calls.push(abs);
     return Object.prototype.hasOwnProperty.call(filesByAbsPath, abs) ? filesByAbsPath[abs] : null;
   };
-  return { io: { readFile, ddlPath }, calls };
+  return { io: { readFile, realPath: (p) => p, ddlPath, ...(roots ? { roots } : {}) }, calls };
 }
 
 test('readSourceFor: statement node -> ok, lang xml, snippet is the extracted element; reads the resolved absolute path', () => {
@@ -533,4 +538,246 @@ test('readSourceFor: a screen with no component says which kind of nothing it is
   const b = readSourceFor(g, REPO_ROOT, seen, io);
   assert.equal(b.ok, false);
   assert.match(b.note, /seen in a recording and declared in no source/);
+});
+
+// ---------------------------------------------------------------------------
+// WHERE THE PANE MAY READ (RM67): the project root and every source root the
+// run recorded as analyzed, and nothing else. A frontend passed with
+// --web-src ../front lives beside the project, so its files are recorded as
+// `../front/...` and must be read; every other way out must not be.
+// ---------------------------------------------------------------------------
+
+const FRONT = path.resolve('/front');
+const SECRET = path.resolve('/outside/secret.txt');
+
+test('sourceRootsOf: the project root and every source root the run recorded, absolute, and no flag taken for a path', () => {
+  const meta = {
+    base: { repoPath: REPO_ROOT },
+    ddl: path.resolve(REPO_ROOT, 'db/schema.sql'),
+    analysis: { selection: {
+      javaRoots: ['app/src/main/java'],
+      mapperDirs: ['app/src/main/resources/mapper'],
+      webRoots: [FRONT],
+      tsRoots: ['api/src'],
+      templateRoots: [{ root: 'app/src/main/resources/templates', engine: 'thymeleaf', suffix: '.html' }],
+      ddls: ['db/schema.sql'],
+      sqlArgs: ['--dialect', 'mysql'],
+      packagePrefixes: ['com.x'],
+    } },
+  };
+  assert.deepEqual(sourceRootsOf(meta).sort(), [
+    REPO_ROOT,
+    path.resolve(REPO_ROOT, 'app/src/main/java'),
+    path.resolve(REPO_ROOT, 'app/src/main/resources/mapper'),
+    FRONT,
+    path.resolve(REPO_ROOT, 'api/src'),
+    path.resolve(REPO_ROOT, 'app/src/main/resources/templates'),
+    path.resolve(REPO_ROOT, 'db/schema.sql'),
+  ].sort());
+});
+
+test('sourceRootsOf: a pack from before the selection was recorded reads its project root and its DDL; one with no repository path reads nothing', () => {
+  assert.deepEqual(sourceRootsOf({ base: { repoPath: REPO_ROOT } }), [REPO_ROOT]);
+  const ddl = path.resolve('/db/schema.sql');
+  assert.deepEqual(sourceRootsOf({ base: { repoPath: REPO_ROOT }, ddl }).sort(), [REPO_ROOT, ddl].sort());
+  assert.deepEqual(sourceRootsOf({ base: { repoPath: null }, analysis: { selection: { webRoots: [FRONT] } } }), []);
+  assert.deepEqual(sourceRootsOf(null), []);
+});
+
+test('readSourceFor: a frontend analyzed beside the project (--web-src ../front) is read from its own root', () => {
+  const g = new Graph();
+  const fn = nodeId('symbol', '../front/src/api/rows.js#listRows');
+  g.addNode({ id: fn, file: '../front/src/api/rows.js', line: 3, lane: 'web' });
+  const screen = nodeId('screen', '/rows');
+  g.addNode({ id: screen, path: '/rows', component: '../front/src/views/rows.vue', lane: 'web', source: 'router' });
+  const js = path.resolve(FRONT, 'src/api/rows.js');
+  const vue = path.resolve(FRONT, 'src/views/rows.vue');
+  const { io, calls } = makeIo({ [js]: ROWS_JS, [vue]: ROWS_VUE }, undefined, [REPO_ROOT, FRONT]);
+
+  const a = readSourceFor(g, REPO_ROOT, fn, io);
+  assert.deepEqual([a.ok, a.file, a.abs, a.lang], [true, '../front/src/api/rows.js', js, 'js']);
+  assert.deepEqual({ from: a.from, to: a.to }, { from: 3, to: 8 });
+  const b = readSourceFor(g, REPO_ROOT, screen, io);
+  assert.deepEqual([b.ok, b.file, b.abs, b.mark], [true, '../front/src/views/rows.vue', vue, 5]);
+  assert.deepEqual(calls, [js, vue]);
+});
+
+// Every kind of node the pane reads a file for goes through the same door.
+const FILE_NODES = [
+  ['a web function', (file) => ({ id: nodeId('symbol', 'x.js#f'), file, line: 1, lane: 'web' })],
+  ['a screen', (file) => ({ id: nodeId('screen', '/x'), path: '/x', component: file, lane: 'web', source: 'router' })],
+  ['a statement', (file) => ({ id: nodeId('statement', 'ns.x'), file })],
+  ['a Java method', (file) => ({ id: nodeId('symbol', 'com.x.X#f'), file, owner: 'com.x.X', line: 1 })],
+];
+
+test('readSourceFor: nothing outside the recorded roots is read, however the path is spelled', () => {
+  const spellings = [
+    ['a parent escape', '../outside/secret.txt'],
+    ['an escape through a recorded root', '../front/../outside/secret.txt'],
+    ['a sibling that shares a root\'s prefix', '../front-evil/src/x.js'],
+    ['an absolute path', SECRET],
+    ['an escape from deep inside', 'src/../../outside/secret.txt'],
+  ];
+  for (const [kind, make] of FILE_NODES) {
+    for (const [how, file] of spellings) {
+      const g = new Graph();
+      const node = make(file);
+      g.addNode(node);
+      const { io, calls } = makeIo({ [SECRET]: 'TOP SECRET', [path.resolve(REPO_ROOT, file)]: 'TOP SECRET' }, undefined, [REPO_ROOT, FRONT]);
+      const res = readSourceFor(g, REPO_ROOT, node.id, io);
+      assert.equal(res.ok, false, `${kind}, ${how}`);
+      assert.deepEqual(calls, [], `${kind}, ${how}: nothing is read`);
+      assert.equal(res.abs, null);
+      assert.match(res.note, /^refused .+: it is not under a source root this pack analyzed$/, `${kind}, ${how}`);
+    }
+  }
+});
+
+test('readSourceFor: a percent-encoded dot is a name, never decoded into an escape', () => {
+  const g = new Graph();
+  const file = '%2e%2e/%2e%2e/outside/secret.txt';
+  g.addNode({ id: nodeId('symbol', 'x.js#f'), file, line: 1, lane: 'web' });
+  const literal = path.resolve(REPO_ROOT, file);
+  const { io, calls } = makeIo({ [SECRET]: 'TOP SECRET' }, undefined, [REPO_ROOT, FRONT]);
+  const res = readSourceFor(g, REPO_ROOT, nodeId('symbol', 'x.js#f'), io);
+  assert.equal(res.ok, false);
+  assert.ok(literal.startsWith(REPO_ROOT + path.sep), 'the literal name sits inside the project');
+  assert.deepEqual(calls, [literal], 'the name as written, which is not there, and never the decoded one');
+  assert.equal(res.note, 'cannot read ' + file);
+});
+
+test('readSourceFor: a caller that cannot follow links is refused outright rather than served unconfined', () => {
+  const g = new Graph();
+  g.addNode({ id: nodeId('symbol', 'x.js#f'), file: 'x.js', line: 1, lane: 'web' });
+  assert.throws(() => readSourceFor(g, REPO_ROOT, nodeId('symbol', 'x.js#f'), { readFile: () => 'x' }), /realPath/);
+});
+
+test('readSourceFor: the DDL is read only where the pack recorded it', () => {
+  const g = new Graph();
+  const tid = nodeId('table', 'pms_product');
+  g.addNode({ id: tid });
+  const ddl = path.resolve('/outside/schema.sql');
+  const refused = makeIo({ [ddl]: DDL }, ddl, [REPO_ROOT]);
+  const res = readSourceFor(g, REPO_ROOT, tid, refused.io);
+  assert.equal(res.ok, false);
+  assert.deepEqual(refused.calls, []);
+  assert.match(res.note, /^refused .+: it is not under a source root this pack analyzed$/);
+  const recorded = makeIo({ [ddl]: DDL }, ddl, [REPO_ROOT, ddl]);
+  const ok = readSourceFor(g, REPO_ROOT, tid, recorded.io);
+  assert.deepEqual([ok.ok, ok.abs, ok.snippet], [true, ddl, DDL]);
+});
+
+// ---- the same door, on a real tree with real links ---------------------------
+
+/**
+ * A project, a frontend beside it, and a folder outside both, on disk. The
+ * project root is recorded as the run was pointed at it; a root outside the
+ * repository is recorded by its real path, and a file by its path from the
+ * project root to its real path, which is how analyze records them.
+ */
+function besideTree(t) {
+  // Real, so every link in this tree is one the test made.
+  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-src-')));
+  t.after(() => fs.rmSync(top, { recursive: true, force: true }));
+  const put = (rel, text) => {
+    const f = path.join(top, rel);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, text);
+  };
+  put('repo/src/api/rows.js', ROWS_JS);
+  put('front/src/api/rows.js', ROWS_JS);
+  put('front/src/views/rows.vue', ROWS_VUE);
+  put('outside/secret.js', 'export function stolen() {\n  return "TOP SECRET"\n}\n');
+  fs.symlinkSync(path.join(top, 'outside/secret.js'), path.join(top, 'repo/src/api/leak.js'));
+  fs.symlinkSync(path.join(top, 'outside'), path.join(top, 'front/src/linked'));
+  fs.symlinkSync(path.join(top, 'repo/src/api/rows.js'), path.join(top, 'front/src/api/shared.js'));
+  const repo = path.join(top, 'repo');
+  const front = fs.realpathSync(path.join(top, 'front'));
+  const meta = { base: { repoPath: repo }, analysis: { selection: { javaRoots: [], webRoots: [front] } } };
+  // As a lane records a file: from the project root to the file's real path.
+  const recorded = (abs) => path.relative(repo, fs.realpathSync(abs)).split(path.sep).join('/');
+  // As a pack could name a link it walked through, without following it.
+  const walked = (abs) => path.relative(repo, abs).split(path.sep).join('/');
+  return { top, repo, front, meta, recorded, walked };
+}
+
+const webFn = (g, file, line = 3) => {
+  const id = nodeId('symbol', `${file}#f`);
+  g.addNode({ id, file, line, lane: 'web' });
+  return id;
+};
+
+test('readSourceFor on disk: the frontend beside the project is read, its screen too', (t) => {
+  const { top, repo, meta, recorded } = besideTree(t);
+  const g = new Graph();
+  const fn = webFn(g, recorded(path.join(top, 'front/src/api/rows.js')));
+  const screen = nodeId('screen', '/rows');
+  g.addNode({ id: screen, path: '/rows', component: recorded(path.join(top, 'front/src/views/rows.vue')), lane: 'web', source: 'router' });
+  const a = readSourceFor(g, repo, fn, diskSourceIo(meta));
+  assert.equal(a.ok, true, a.note);
+  assert.ok(a.snippet.startsWith('export function listRows'));
+  const b = readSourceFor(g, repo, screen, diskSourceIo(meta, { whole: true }));
+  assert.equal(b.ok, true, b.note);
+  assert.equal(b.text, ROWS_VUE);
+});
+
+test('readSourceFor on disk: a project root recorded through a link still reads the frontend recorded by its real path', (t) => {
+  // macOS's temporary folder is such a link (/var -> /private/var): the run
+  // records the project root as it was pointed at, a root outside the
+  // repository by its real path, and a file from the one to the other.
+  const { top, front } = besideTree(t);
+  fs.symlinkSync(top, path.join(top, 'alias'));
+  const repo = path.join(top, 'alias', 'repo');
+  const meta = { base: { repoPath: repo }, analysis: { selection: { webRoots: [front] } } };
+  const g = new Graph();
+  const fn = webFn(g, path.relative(repo, path.join(front, 'src/api/rows.js')).split(path.sep).join('/'));
+  const res = readSourceFor(g, repo, fn, diskSourceIo(meta));
+  assert.equal(res.ok, true, res.note);
+  assert.ok(res.snippet.startsWith('export function listRows'));
+  // ...and the project's own file, by the linked spelling.
+  const own = webFn(g, 'src/api/rows.js');
+  assert.equal(readSourceFor(g, repo, own, diskSourceIo(meta)).ok, true);
+});
+
+test('readSourceFor on disk: a link out of a recorded root is refused, a file link and a folder link alike', (t) => {
+  const { top, repo, meta, walked } = besideTree(t);
+  for (const link of ['repo/src/api/leak.js', 'front/src/linked/secret.js']) {
+    const g = new Graph();
+    const fn = webFn(g, walked(path.join(top, link)), 1);
+    const res = readSourceFor(g, repo, fn, diskSourceIo(meta, { whole: true }));
+    assert.equal(res.ok, false, link);
+    assert.equal(res.abs, null);
+    assert.ok(!JSON.stringify(res).includes('TOP SECRET'), `${link}: the target's text never comes back`);
+    assert.match(res.note, /^refused .+: it is a link to a file outside the source roots this pack analyzed$/, link);
+  }
+});
+
+test('readSourceFor on disk: a link from one recorded root into another is read', (t) => {
+  const { top, repo, meta, walked } = besideTree(t);
+  const g = new Graph();
+  const fn = webFn(g, walked(path.join(top, 'front/src/api/shared.js')));
+  const res = readSourceFor(g, repo, fn, diskSourceIo(meta));
+  assert.equal(res.ok, true, res.note);
+  assert.ok(res.snippet.startsWith('export function listRows'));
+});
+
+test('readSourceFor on disk: a root an old pack recorded that is gone is said, and nothing under it is read', (t) => {
+  const { top, repo, front, meta } = besideTree(t);
+  const gone = path.join(top, 'gone-front');
+  const old = { ...meta, analysis: { selection: { webRoots: [front, gone] } } };
+  const g = new Graph();
+  const fn = webFn(g, path.relative(repo, path.join(gone, 'src/api/rows.js')).split(path.sep).join('/'));
+  const res = readSourceFor(g, repo, fn, diskSourceIo(old));
+  assert.equal(res.ok, false);
+  assert.match(res.note, /^cannot read .+: the source root it was analyzed under, .+gone-front, no longer exists$/);
+  // The frontend that IS still there reads as before.
+  const here = webFn(g, path.relative(repo, path.join(front, 'src/api/rows.js')).split(path.sep).join('/'));
+  assert.equal(readSourceFor(g, repo, here, diskSourceIo(old)).ok, true);
+});
+
+test('readSourceFor on disk: a node id that names a path is not a way in: only a node the pack holds is read', (t) => {
+  const { repo, meta } = besideTree(t);
+  const res = readSourceFor(new Graph(), repo, 'symbol:../outside/secret.js#stolen', diskSourceIo(meta));
+  assert.equal(res.ok, false);
+  assert.match(res.note, /^node not in pack/);
 });

@@ -13,6 +13,7 @@ import { createProjectHost } from '../src/mcp/projects.mjs';
 import { toolList } from '../src/mcp/catalog.mjs';
 import { serveHttp } from '../src/mcp/http.mjs';
 import { readSourceFor } from '../src/viewer/source.mjs';
+import { diskSourceIo } from '../src/cli/commands/view.mjs';
 import { computeTrust } from '../src/core/trust.mjs';
 
 // M9 end to end (SPEC §5, §15 M9): the CENTRAL viewer over a real socket, with
@@ -116,7 +117,7 @@ async function startViewer(t, entries) {
           e.code = 'unknown-key';
           throw e;
         }
-        return readSourceFor(ctx.graph, repoRoot, nodeId, { readFile: (f) => fs.readFileSync(f, 'utf8') });
+        return readSourceFor(ctx.graph, repoRoot, nodeId, diskSourceIo(ctx.packJson.meta));
       },
     },
   });

@@ -25,6 +25,7 @@ import { toolList } from '../../src/mcp/catalog.mjs';
 import { serveHttp } from '../../src/mcp/http.mjs';
 import { computeTrust } from '../../src/core/trust.mjs';
 import { readSourceFor } from '../../src/viewer/source.mjs';
+import { diskSourceIo } from '../../src/cli/commands/view.mjs';
 import { exportSnapshot } from '../../src/cli/snapshot_export.mjs';
 import { listHistory, loadHistoryPack } from '../../src/cli/pack_history.mjs';
 import { ENGINE_ROOT } from './viewer_page.mjs';
@@ -327,10 +328,7 @@ export async function startViewer(t, ids = ['alpha', 'beta']) {
       // The same closure bin/cascade.mjs installs, over the working tree above.
       source: (nodeId, project, opts) => {
         const { projectId } = host.resolveProjectArg(project ? { project } : {});
-        return readSourceFor(host.ctxFor(projectId).graph, repo, nodeId, {
-          readFile: (f) => fs.readFileSync(f, 'utf8'),
-          whole: !!(opts && opts.whole),
-        });
+        return readSourceFor(host.ctxFor(projectId).graph, repo, nodeId, diskSourceIo({ base: { repoPath: repo } }, opts));
       },
     },
   });

@@ -24,8 +24,14 @@
 // The RANGE IS THE SAME in both modes: the whole-file view is the snippet's own
 // lines with the rest of the file around them, never a different answer.
 //
-// Pure except for an injected `readFile(absPath)->string`; path access is
-// confined to `repoRoot` (a resolved-path prefix check defeats `..` escapes).
+// Pure except for an injected `readFile(absPath)->string` and
+// `realPath(absPath)->string`. WHERE IT MAY READ (RM67): the project root and
+// every source root the run recorded as analyzed (`sourceRootsOf`), because a
+// frontend passed with `--web-src ../front` lives beside the project and its
+// files are recorded as `../front/...`. Nothing else: a path must resolve under
+// one of those roots as written (so `..` and an absolute path are refused
+// before the disk is touched), and again once every link in it is followed (so
+// a link out of a root is refused too).
 
 import path from 'node:path';
 
@@ -35,11 +41,41 @@ import path from 'node:path';
 // silently complete-looking.
 export const WHOLE_FILE_CAP = 1024 * 1024;
 
+// The selection keys that name source roots or files a run read. Every other
+// key of the selection (`sqlArgs`, `packagePrefixes`) is not a path.
+const ROOT_KEYS = Object.freeze(['javaRoots', 'mapperDirs', 'webRoots', 'tsRoots', 'ddls']);
+
+/**
+ * Every root a pack records as analyzed, absolute: the project root, each
+ * source root in `meta.analysis.selection` (relative to the project root when
+ * it is inside the repository, absolute outside it) and the DDL the viewer
+ * opens. A pack from before the selection was recorded gives its project root
+ * and its DDL; a pack with no repository path gives none.
+ *
+ * @param {object|null} meta  pack.meta
+ * @returns {string[]}
+ */
+export function sourceRootsOf(meta) {
+  const repo = meta?.base?.repoPath;
+  if (typeof repo !== 'string' || repo === '') return [];
+  const sel = meta.analysis?.selection ?? {};
+  const named = [
+    ...ROOT_KEYS.flatMap((k) => (Array.isArray(sel[k]) ? sel[k] : [])),
+    ...(Array.isArray(sel.templateRoots) ? sel.templateRoots.map((t) => t?.root) : []),
+    meta.ddl,
+  ];
+  const roots = [path.resolve(repo)];
+  for (const r of named) if (typeof r === 'string' && r !== '') roots.push(path.resolve(repo, r));
+  return [...new Set(roots)];
+}
+
 /**
  * @param {import('../core/graph.mjs').Graph} graph
  * @param {string} repoRoot  absolute path of the repo the pack was built from
  * @param {string} nodeId
- * @param {{readFile:(abs:string)=>string, ddlPath?:string, whole?:boolean}} io
+ * @param {{readFile:(abs:string)=>string, realPath:(abs:string)=>string, roots?:string[],
+ *          ddlPath?:string, whole?:boolean}} io  `roots`: where a file may be read
+ *          from besides `repoRoot` (`sourceRootsOf`); `realPath` follows links
  * @returns {{kind:string, ok:boolean, file:string|null, abs:string|null, lang:string,
  *            snippet?:string, text?:string, from:number|null, to:number|null,
  *            fileLines:number|null, mark?:number, note?:string}}
@@ -47,28 +83,22 @@ export const WHOLE_FILE_CAP = 1024 * 1024;
 export function readSourceFor(graph, repoRoot, nodeId, io) {
   const node = graph.nodes.get(nodeId);
   if (!node) return miss('unknown', 'node not in pack: ' + nodeId);
-  let lastAbs = null;
-  const read = (rel) => {
-    lastAbs = null;
-    if (!rel) return null;
-    const abs = path.resolve(repoRoot, rel);
-    if (abs !== repoRoot && !abs.startsWith(repoRoot + path.sep)) return null; // no escape
-    try { const text = io.readFile(abs); lastAbs = abs; return text; } catch { return null; }
-  };
+  const src = confinedReader(repoRoot, io);
+  const read = src.read;
 
   if (node.kind === 'statement') {
     const text = read(node.file);
-    if (text == null) return miss('statement', node.file ? 'cannot read ' + node.file : 'no source file recorded for this statement', node.file, 'xml');
+    if (text == null) return miss('statement', node.file ? src.why(node.file) : 'no source file recorded for this statement', node.file, 'xml');
     const id = lastSeg(idKey(nodeId));
     const cut = extractXmlStatement(text, id);
     if (cut == null) {
       // The id is not in the file the graph named. Show the head of the file
       // and say so, rather than an empty pane.
       const head = text.length > 4000 ? text.slice(0, 4000) + '\n…' : text;
-      return body('statement', node.file, lastAbs, 'xml', text, { snippet: head, from: 1, to: lineCount(head) },
+      return body('statement', node.file, src.abs, 'xml', text, { snippet: head, from: 1, to: lineCount(head) },
         io, `could not locate id="${id}": showing the file`);
     }
-    return body('statement', node.file, lastAbs, 'xml', text, cut, io);
+    return body('statement', node.file, src.abs, 'xml', text, cut, io);
   }
 
   // THE FRONTEND SIDE (RM31). A web function is not a Java method: it lives in
@@ -82,9 +112,9 @@ export function readSourceFor(graph, repoRoot, nodeId, io) {
     const file = node.file || idKey(nodeId).split('#')[0];
     const text = read(file);
     const lang = webLang(file, text);
-    if (text == null) return miss('symbol', file ? 'cannot read ' + file : 'no source file recorded', file, lang);
+    if (text == null) return miss('symbol', file ? src.why(file) : 'no source file recorded', file, lang);
     const cut = extractWebFunction(text, node.line, scriptEnd(text, file));
-    return body('symbol', file, lastAbs, lang, text, cut, io, cut.note);
+    return body('symbol', file, src.abs, lang, text, cut, io, cut.note);
   }
 
   // A SCREEN IS A FILE, NOT A FUNCTION. What a route declares is the component
@@ -100,8 +130,8 @@ export function readSourceFor(graph, repoRoot, nodeId, io) {
     }
     const text = read(file);
     const lang = webLang(file, text);
-    if (text == null) return miss('screen', 'cannot read ' + file, file, lang);
-    return body('screen', file, lastAbs, lang, text, wholeFileCut(text, file), io);
+    if (text == null) return miss('screen', src.why(file), file, lang);
+    return body('screen', file, src.abs, lang, text, wholeFileCut(text, file), io);
   }
 
   if (node.kind === 'symbol' || node.kind === 'endpoint') {
@@ -111,21 +141,20 @@ export function readSourceFor(graph, repoRoot, nodeId, io) {
     const method = memberFqn.includes('#') ? memberFqn.slice(memberFqn.lastIndexOf('#') + 1) : null;
     const file = node.file || fileOfOwner(graph, owner);
     const text = read(file);
-    if (text == null) return miss(node.kind, file ? 'cannot read ' + file : 'no source file recorded', file, 'java');
+    if (text == null) return miss(node.kind, file ? src.why(file) : 'no source file recorded', file, 'java');
     const cut = extractJavaMethod(text, method, node.line);
-    return body(node.kind, file, lastAbs, 'java', text, cut, io, cut.note);
+    return body(node.kind, file, src.abs, 'java', text, cut, io, cut.note);
   }
 
   if ((node.kind === 'table' || node.kind === 'column') && io.ddlPath) {
-    const abs = path.resolve(io.ddlPath);
-    let text = null; try { text = io.readFile(abs); } catch { /* */ }
+    const text = read(io.ddlPath);
     if (text != null) {
       const table = node.kind === 'table' ? idKey(nodeId) : idKey(nodeId).split('.').slice(0, -1).join('.');
       const bare = table.includes('.') ? table.split('.').pop() : table;
       const cut = extractCreateTable(text, bare);
-      if (cut) return body(node.kind, path.relative(repoRoot, abs) || io.ddlPath, abs, 'sql', text, cut, io);
+      if (cut) return body(node.kind, path.relative(repoRoot, src.abs) || io.ddlPath, src.abs, 'sql', text, cut, io);
     }
-    return miss(node.kind, 'no CREATE TABLE found in the DDL', io.ddlPath, 'sql');
+    return miss(node.kind, src.note ?? 'no CREATE TABLE found in the DDL', io.ddlPath, 'sql');
   }
 
   return miss(node.kind, `no source preview for a ${node.kind} node`);
@@ -152,6 +181,54 @@ function body(kind, file, abs, lang, fileText, cut, io, note) {
   } else out.text = fileText;
   return out;
 }
+
+/**
+ * THE ONE DOOR every read goes through (RM67). A path is read only when it lies
+ * under a recorded root twice over: as written, resolved against the project
+ * root, which refuses `..` and an absolute path before the disk is touched; and
+ * as the disk has it, every link followed, which refuses a link out of a root.
+ * A root that no longer exists holds nothing, and a file under it says so
+ * rather than reading as merely missing. `abs` and `note` keep what the last
+ * read opened, or why it did not, for the answer to carry.
+ */
+function confinedReader(repoRoot, io) {
+  if (typeof io?.realPath !== 'function') {
+    throw new TypeError('readSourceFor needs io.realPath: a read is confined by real paths, and without it a link out of a root would be followed');
+  }
+  const roots = rootsFor(repoRoot, io.roots, io.realPath);
+  const out = { abs: null, note: null };
+  const refuse = (note) => { out.note = note; return null; };
+  out.read = (rel) => {
+    out.abs = null;
+    out.note = null;
+    if (!rel) return null;
+    const abs = path.resolve(repoRoot, rel);
+    const homes = roots.filter((r) => within(abs, r.lexical) || (r.real !== null && within(abs, r.real)));
+    if (homes.length === 0) return refuse(`refused ${rel}: it is not under a source root this pack analyzed`);
+    if (homes.every((r) => r.real === null)) {
+      return refuse(`cannot read ${rel}: the source root it was analyzed under, ${homes[0].lexical}, no longer exists`);
+    }
+    const real = realOrNull(io.realPath, abs);
+    if (real === null) return null;
+    if (!roots.some((r) => r.real !== null && within(real, r.real))) {
+      return refuse(`refused ${rel}: it is a link to a file outside the source roots this pack analyzed`);
+    }
+    // The real path is what was checked, so it is what is opened.
+    try { const text = io.readFile(real); out.abs = abs; return text; } catch { return null; }
+  };
+  out.why = (file) => out.note ?? 'cannot read ' + file;
+  return out;
+}
+
+/** Each root as written and as the disk has it now; `real` is null for a root that is gone. */
+function rootsFor(repoRoot, listed, realPath) {
+  const named = [repoRoot, ...(Array.isArray(listed) ? listed : [])];
+  return [...new Set(named.map((r) => path.resolve(repoRoot, r)))]
+    .map((lexical) => ({ lexical, real: realOrNull(realPath, lexical) }));
+}
+function realOrNull(realPath, p) { try { return realPath(p); } catch { return null; } }
+/** Whether `p` is `root` or lies under it: a sibling that merely shares its prefix does not. */
+function within(p, root) { return p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep); }
 
 function miss(kind, note, file = null, lang = 'text') {
   return { kind, ok: false, file, abs: null, lang, snippet: '', from: null, to: null, fileLines: null, note };
