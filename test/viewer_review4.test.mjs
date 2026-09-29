@@ -404,15 +404,37 @@ test('a flow statement row made by an ORM names its model and operation, and the
 
 test('the target asked about is brought into view in the list, however it was picked', async (t) => {
   const { ctx, byId } = await boot(t);
-  const rows = byId.get('tlist').querySelectorAll('button.brrow');
+  const list = byId.get('tlist');
+  const rows = list.querySelectorAll('button.brrow');
   assert.ok(rows.length >= 2);
-  const seen = [];
-  for (const r of rows) r.scrollIntoView = () => seen.push(r.title);
-  const last = rows.at(-1).title;
-  ev(ctx, `openTrace({kind:'table', id:${JSON.stringify(last)}}, 'up')`);
+  // The stub page gives every element one box; put the target below the list.
+  list.getBoundingClientRect = () => ({ top: 0, bottom: 100, height: 100 });
+  rows.at(-1).getBoundingClientRect = () => ({ top: 200, bottom: 240, height: 40 });
+  list.scrollTop = 0;
+  ev(ctx, `openTrace({kind:'table', id:${JSON.stringify(rows.at(-1).title)}}, 'up')`);
   await settle(ctx, 12);
-  assert.deepEqual(seen, [last], 'the row of the target, and only it');
+  assert.equal(list.scrollTop, 170, 'the list scrolled the row into its middle');
   assert.equal(rows.at(-1).classList.contains('on'), true);
+});
+
+test('a target picked from outside the list goes to the middle of the list, only the list scrolls, and a row already in view does not move it', async (t) => {
+  const { ctx, byId } = await boot(t);
+  const list = byId.get('tlist');
+  const rows = list.querySelectorAll('button.brrow');
+  const moved = [];
+  for (const r of rows) r.scrollIntoView = () => moved.push(r.title);
+  list.getBoundingClientRect = () => ({ top: 100, bottom: 500, height: 400 });
+  const last = rows.at(-1), first = rows[0];
+  last.getBoundingClientRect = () => ({ top: 520, bottom: 560, height: 40 });
+  first.getBoundingClientRect = () => ({ top: 110, bottom: 150, height: 40 });
+  list.scrollTop = 0;
+  ev(ctx, `openTrace({kind:'table', id:${JSON.stringify(last.title)}}, 'up')`);
+  await settle(ctx, 12);
+  assert.equal(list.scrollTop, 240, 'out of view: brought to the middle, never to the bottom edge');
+  assert.deepEqual(moved, [], 'never scrollIntoView, which would move the page and its toolbar too');
+  ev(ctx, `openTrace({kind:'table', id:${JSON.stringify(first.title)}}, 'up')`);
+  await settle(ctx, 12);
+  assert.equal(list.scrollTop, 240, 'already whole in view: the list stays where the reader has it');
 });
 
 test('a direction says which way it goes, in both languages, and the two target-less questions live in Options', async (t) => {

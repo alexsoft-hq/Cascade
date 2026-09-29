@@ -947,10 +947,7 @@ function railRenderRows(tab){
   // A picked row forty rows down is a row the reader cannot see. Bring it into
   // the list's own scroll, WITHOUT taking the focus: a restored pick should be
   // where the reader left it, not somewhere they have to hunt for.
-  if (R.sel !== null && R.cur >= 0 && R.rowEls[R.cur]) {
-    const node = R.rowEls[R.cur].el;
-    if (node.scrollIntoView) node.scrollIntoView({ block:'nearest' });
-  }
+  if (R.sel !== null && R.cur >= 0 && R.rowEls[R.cur]) railBringIntoView(list, R.rowEls[R.cur].el);
   refreshShowAll();
 }
 /**
@@ -1141,7 +1138,20 @@ function railMarkSel(tab){
   }
   // The target the page is asking about is in view in its list, whichever way
   // it was picked (RM67-U2e: a column picked on Start left the list at its top).
-  if (picked && picked.scrollIntoView) picked.scrollIntoView({ block:'nearest' });
+  railBringIntoView(byId(RAILDEF[tab].listId), picked);
+}
+/**
+ * A row picked from OUTSIDE the list (Start, a link) goes to the middle of the
+ * list, so the rows around it show and it never sits on the list's bottom edge
+ * against the footer. A row already whole in view stays where the reader has it:
+ * a click in the list does not make the list jump. Only the list scrolls;
+ * scrollIntoView would move the page too, and the toolbar with it.
+ */
+function railBringIntoView(list, row){
+  if (!list || !row || !list.getBoundingClientRect || !row.getBoundingClientRect) return;
+  const l = list.getBoundingClientRect(), r = row.getBoundingClientRect();
+  if (!(l.height > 0) || (r.top >= l.top && r.bottom <= l.bottom)) return;
+  list.scrollTop = (list.scrollTop || 0) + (r.top - l.top) - (l.height - r.height) / 2;
 }
 
 // ---- the keyboard -----------------------------------------------------------

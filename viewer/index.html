@@ -1129,8 +1129,10 @@
   .brfilter { display:flex; gap:6px; align-items:center; }
   .brfilter input[type=text] { min-width:0; font-size:13px; padding:6px 9px; }
   .brfilter button { padding:6px 9px; font-size:12px; flex:none; }
-  .brsort { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  .brsort select { flex:0 1 auto; min-width:0; font-size:12px; padding:3px 6px; }
+  /* The sort control keeps its own width (it read "endp" at 1440px) and the two
+     counts wrap under it when the rail is too narrow for all three. */
+  .brsort { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 8px; }
+  .brsort select { flex:none; max-width:100%; font-size:12px; padding:3px 6px; }
   .brcount { font-size:12px; color:var(--t3); font-variant-numeric:tabular-nums; white-space:nowrap; }
   /* The count line grows a second sentence on ONE list: the endpoints the
      masthead counts and this rail does not, because they are routes the pack
