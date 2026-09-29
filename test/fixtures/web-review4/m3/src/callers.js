@@ -1,0 +1,14 @@
+import { w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13 } from './wrappers';
+export const d1 = () => w1({ url: '/items' }, 'DELETE');
+export const d2 = () => w2({ url: '/items' }, { method: 'POST' });
+export const d3 = () => w3({ url: '/items' }, 'method');
+export const d4 = () => w4({ url: '/items', x: 1 });
+export const d5 = () => w5({ url: '/items' });
+export const d6 = () => w6({ url: '/items' });
+export const d7 = () => w7({ url: '/items' });
+export const d8 = () => w8({ url: '/items' });
+export const d9 = () => w9({ url: '/items' });
+export const d10 = () => w10({ url: '/items' });
+export const d11 = () => w11({ url: '/items' });
+export const d12 = () => w12({ url: '/items' });
+export const d13 = () => w13({ url: '/items' });

@@ -1,0 +1,15 @@
+import { e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, r1, r2, r3 } from './hops';
+export const x1 = () => e1({ url: '/items' });
+export const x2 = () => e2({ url: '/items' });
+export const x3 = () => e3({ url: '/items' });
+export const x4 = () => e4({ url: '/items' });
+export const x5 = () => e5({ url: '/items' });
+export const x6 = () => e6({ url: '/items' });
+export const x7 = () => e7({ url: '/items' });
+export const x8 = () => e8({ url: '/items' }, true);
+export const x9 = () => e9({ url: '/items' });
+export const x10 = () => e10({ url: '/items' });
+export const x11 = () => e11({ url: '/items' });
+export const y1 = () => r1({ url: '/items' });
+export const y2 = () => r2({ url: '/items' });
+export const y3 = () => r3({ url: '/items' });

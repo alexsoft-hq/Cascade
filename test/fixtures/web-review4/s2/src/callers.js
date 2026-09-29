@@ -1,0 +1,18 @@
+import { h1,h10,h11,h12,h13,h14,h15,h16,h17,h2,h3,h4,h5,h6,h7,h8,h9 } from './hops';
+export const a1 = () => h1({ url: '/items' });
+export const a2 = () => h2({ url: '/items' });
+export const a3 = () => h3({ url: '/items' });
+export const a4 = () => h4({ url: '/items' });
+export const a5 = () => h5({ url: '/items' });
+export const a6 = () => h6({ url: '/items' });
+export const a7 = () => h7({ url: '/items' });
+export const a8 = () => h8({ url: '/items' });
+export const a9 = () => h9({ url: '/items' });
+export const a10 = () => h10({ url: '/items' });
+export const a11 = () => h11({ url: '/items' });
+export const a12 = () => h12({ url: '/items' });
+export const a13 = () => h13({ url: '/items' });
+export const a14 = () => h14({ url: '/items' });
+export const a15 = () => h15({ url: '/items' });
+export const a16 = () => h16({ url: '/items' });
+export const a17 = () => h17({ url: '/items' });

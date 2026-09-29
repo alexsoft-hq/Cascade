@@ -1003,6 +1003,13 @@ function baseUrlGuesses(web) {
   }
   const alias = where('assumed-alias');
   if (alias !== '') out.push(`${alias} were read through an import alias this engine assumed: declare the alias`);
+  // A port on this machine no file states (review 4, W-7).
+  const assumedPort = where('port-default');
+  if (assumedPort !== '') {
+    out.push(`${assumedPort} name a port on this machine while this pack's port rests on Spring Boot's default 8080: set server.port in the application's configuration`);
+  }
+  const unknownPort = where('port-unknown');
+  if (unknownPort !== '') out.push(`${unknownPort} name a port on this machine no application of this pack states: state server.port where the ports line says it is not known`);
   return out;
 }
 

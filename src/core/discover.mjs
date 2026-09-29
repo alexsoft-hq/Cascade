@@ -25,6 +25,7 @@ import {
 } from './springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from './profile.mjs';
 import { portRecordsOfJava, serverPortsOfFile, serverPortsOfJava } from './server_ports.mjs';
+import { isDeploymentFile, serverPortsOfDeployment } from './server_ports_deploy.mjs';
 import { builtinRegistry, RuleError } from './rules/registry.mjs';
 import { nestAppsOf, noteNestPackage, noteTypeScriptBackendFile, prismaProvidersOf } from './discover_nest.mjs';
 
@@ -824,6 +825,10 @@ function classifyKotlinFile(d, f) {
       kind: 'UNSUPPORTED_TECHNOLOGY', severity: 'info', path: rel(absFile),
       reason: 'Kotlin source: the engine ships no Kotlin lane, so this file contributes nothing to the graph',
     });
+    // …but it can set the application's port as Java can (review 4, W-10).
+    const text = isTestPath(rel(absFile)) ? null : d.read(absFile);
+    const loaded = text === null ? null : serverPortsOfJava(rel(absFile), text);
+    if (loaded !== null) d.serverPorts.push(...portRecordsOfJava(loaded, d.readQuietly, serverPortsOfFile));
     return true;
   }
 
@@ -1089,6 +1094,19 @@ function classifyPackageManifest(d, f) {
 }
 
 /**
+ * A Dockerfile or a compose file that starts an application on a port of its
+ * own (src/core/server_ports_deploy.mjs, review 4, W-9). NOTED, like an index
+ * page: a compose file is still whatever else it is.
+ */
+function noteDeploymentPorts(d, f) {
+  const relFile = f.rel(f.absFile);
+  if (!isDeploymentFile(f.name) || isTestPath(relFile)) return;
+  const text = d.read(f.absFile);
+  const one = text === null ? null : serverPortsOfDeployment({ path: relFile, text });
+  if (one !== null) d.serverPorts.push(one);
+}
+
+/**
  * ONE FILE, ONE ANSWER. The classifiers run in this order and the first that
  * says it is finished ends the question — which is the rule the old chain of
  * `if … return;` branches spelled out by falling through. The first two never
@@ -1097,6 +1115,7 @@ function classifyPackageManifest(d, f) {
  */
 function classifyFile(d, f) {
   noteTypeScriptBackendFile(d, f);
+  noteDeploymentPorts(d, f);
   if (classifyIndexPage(d, f)) return;
   if (classifyTemplateFile(d, f)) return;
   if (classifyNexacroFile(d, f)) return;

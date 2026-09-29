@@ -191,6 +191,17 @@
 // element>`) is read, with the path '' and `index: true`, for a pack that names
 // the key or the attribute: it is what its parent shows at the parent's path.
 //
+// webfacts/21 READS A HOP BY DEFAULT-DENY (RM67, review 4). What a function
+// does with an object is asked of every place a name is read (`lib/uses.mjs`):
+// a read only in shapes known to leave it as it was, a write where the key is
+// named, and a hand everywhere else (a container, a pattern, a store, a method
+// called on it), so `written` and `handed` now cover shapes the old list
+// missed, and a write only sets a value (`sets`) when nothing else can reach
+// that key. A copy that puts a key back from the parameter (`{ ...option, url:
+// option.url }`) carries it, and one that builds it from the parameter says it
+// wrote it (`written` on the hand). A spread of an object that is not a
+// parameter is a set of every method and base URL key (`from: 'spread'`).
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -201,7 +212,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/20';
+const VERSION = 'webfacts/21';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

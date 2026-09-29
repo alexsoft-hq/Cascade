@@ -18,7 +18,7 @@
 // written; the bridge knows which keys the client at the end of the chain reads.
 
 import { bare, keyName } from './ast.mjs';
-import { originOf } from './origins.mjs';
+import { originOf, valueOrigin } from './origins.mjs';
 
 /** The method keys a request's object is read for, whatever the client (the worker's own `methodOf` reads the same two). */
 const METHOD_KEYS = ['method', 'type'];
@@ -52,24 +52,47 @@ function laterSpreads(objectNode, at, key, env) {
   return { by: [...new Set(by)].sort((x, y) => x - y), ...(other ? { other: true } : {}) };
 }
 
+/** A spread of something other than one of the function's parameters (`...defaults`, `...this.opts`, `...o.config`). */
+function spreadOfOther(p, env) {
+  if (p.type !== 'SpreadElement') return false;
+  const a = bare(p.argument);
+  const o = a && a.type === 'Identifier' ? originOf(env, a.name) : null;
+  return o === null || o.key !== undefined;
+}
+
 /**
  * THE SETS OF ONE CALL: every key of `keys` an object literal among its first
  * three arguments writes, and the `extra` ones a member write put in an object
  * it passes on (lib/writes.mjs, which always runs, and so is never replaced by
- * a spread).
+ * a spread). A spread of an object that is not one of the function's
+ * parameters may carry any of the keys (review 4, W-4: `{ ...defaults, ...o }`
+ * with `defaults.method` set), so it is a set of each, whose value is not
+ * known (`from: 'spread'`).
  * @returns {{key:string, arg:number, value:(string|null), from:string, by?:number[], other?:true}[]}
  */
 export function setsOf(node, env, keys, extra = []) {
   const out = [];
   (node.arguments ?? []).slice(0, 3).forEach((a, arg) => {
     const n = bare(a);
-    if (!n || n.type !== 'ObjectExpression') return;
-    n.properties.forEach((p, i) => {
-      const key = p.type === 'ObjectProperty' ? keyName(p) : null;
-      if (key === null || !keys.includes(key)) return;
-      out.push({ key, arg, value: stringOf(p.value), from: 'config', ...laterSpreads(n, i, key, env) });
-    });
+    if (n && n.type === 'ObjectExpression') n.properties.forEach((p, i) => out.push(...setsAt(n, i, arg, env, keys)));
   });
   for (const e of extra) if (keys.includes(e.key)) out.push(e);
   return out;
+}
+
+/**
+ * The sets one property of an object argument makes: its own key, or every
+ * key when it spreads something unread. A value that is one of the function's
+ * parameters, or one key of one (`method: m`, `method: o.method`), says which
+ * (`param`, `part`), so the walk can put there what the caller handed in
+ * (review 4, W-11).
+ */
+function setsAt(n, i, arg, env, keys) {
+  const p = n.properties[i];
+  if (spreadOfOther(p, env)) return keys.map((key) => ({ key, arg, value: null, from: 'spread', ...laterSpreads(n, i, key, env) }));
+  const key = p.type === 'ObjectProperty' ? keyName(p) : null;
+  if (key === null || !keys.includes(key)) return [];
+  const o = valueOrigin(p.value, env);
+  const handed = o !== null && !o.minus && !o.written ? { param: o.param, ...(o.key !== undefined ? { part: o.key } : {}) } : {};
+  return [{ key, arg, value: stringOf(p.value), from: 'config', ...handed, ...laterSpreads(n, i, key, env) }];
 }

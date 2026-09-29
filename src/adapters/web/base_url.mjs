@@ -52,6 +52,8 @@ export const WEB_BASE_GUESS = Object.freeze({
   fallback: 'the value is the literal an environment value falls back to (`X || \'lit\'`), and no .env file this build tool reads sets X. The literal runs only where NOTHING sets X, and a shell, a CI job or a container can, so every edge built on it is HEURISTIC',
   'deployment-host': 'every build names a host that is not this machine, and which code answers there is not in the source. Its path is read as this pack\'s prefix only because this frontend was analyzed with this backend, which is a guess, so every edge built on it is HEURISTIC',
   'assumed-alias': 'the base URL was read from a module reached through an import alias this engine ASSUMED (`@` as `src`), so every edge built on it is HEURISTIC, the same as a call through that alias',
+  'port-default': 'the address is this machine on a port no file of this pack states, and this pack\'s port rests on Spring Boot\'s default (8080), which whatever starts the application may change. That this pack answers it is an assumed default, so every edge built on it is HEURISTIC',
+  'port-unknown': 'the address is this machine on a port no file of this pack states, and the port of at least one of its applications is not known, so whether this pack answers it is not settled, and every edge built on it is HEURISTIC',
 });
 
 /** `localhost:8080` -> `localhost`, `[::1]:3000` -> `[::1]`, `user@host` -> `host`, lower case. */
@@ -104,6 +106,33 @@ export function otherPortOf(host, ports) {
     host, called, served: ports.ports,
     reason: `${host} is this machine on port ${called}, and this pack listens on ${ports.ports.join(', ')} (${where}), so another service answers it`,
   };
+}
+
+/**
+ * THIS MACHINE, ON A PORT NO FILE STATES (review 4, W-7): an address on this
+ * machine whose written port no configuration or deployment file of this pack
+ * states, while an application's port rests on Spring Boot's default or is
+ * not known. That this pack answers it is then not settled, and not stated:
+ * `port-default` when it rests on the default, `port-unknown` when a port is
+ * not known. Null when the host is not this machine, writes no port, names a
+ * stated one, or every port is stated (then `otherPortOf` decides).
+ * @returns {('port-default'|'port-unknown'|null)}
+ */
+export function unsettledPortOf(host, ports) {
+  if (!ports || !isLocalHost(host)) return null;
+  const called = portOf(host);
+  if (called === null || (ports.stated ?? []).includes(called)) return null;
+  if (ports.known === true && ports.defaulted !== true) return null;
+  return ports.known === true ? 'port-default' : 'port-unknown';
+}
+
+/** The port guess a value's builds rest on: the first build on this machine whose port no file states. */
+export function portGuessOf(outcomes, ports) {
+  for (const o of outcomes) {
+    const guess = o.where === 'local' ? unsettledPortOf(o.host, ports) : null;
+    if (guess !== null) return guess;
+  }
+  return null;
 }
 
 /**
@@ -421,7 +450,7 @@ export function fillFromExpression(cfg, summary, ports = null) {
     ...(modes ? { modes } : {}),
     text: absolute ? shown.raw.replace(/\/+$/, '') : shown.path,
     from: outcomes.some((o) => o.from === 'fallback') ? 'fallback' : 'env-file',
-    guess: away === null ? guessOf(outcomes) : null,
+    guess: away === null ? (guessOf(outcomes) ?? portGuessOf(outcomes, ports)) : null,
     reads: readsOf(outcomes),
     ...(away ? { away } : {}),
   };

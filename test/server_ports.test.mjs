@@ -111,7 +111,9 @@ test('imported_server_port_prevents_false_outbound', async (t) => {
   ], { serverPorts: ports });
   const e = g.edges.find((x) => x.type === 'CALLS_HTTP');
   assert.equal(e.to, id);
-  assert.equal(e.grade, 'SOUND_SET');
+  // Review 4, W-7: nor is it this pack's on the strength of a port nobody states.
+  assert.equal(e.grade, 'HEURISTIC');
+  assert.equal(e.evidence.url.guess, 'port-unknown');
   assert.equal(e.evidence.away, undefined);
 });
 
@@ -200,7 +202,8 @@ test('server_port_set_in_code_prevents_false_outbound', async (t) => {
     });
     assert.equal(ports.known, false, code);
     assert.match(ports.why, /src\/main\/resources: .*(setPort|setDefaultProperties)/, ports.why);
-    assert.deepEqual(await landing('http://localhost:9090/things', ports), [true, 'SOUND_SET', null], code);
+    // Not another service's, and not settled as this pack's either (review 4, W-7).
+    assert.deepEqual(await landing('http://localhost:9090/things', ports), [true, 'HEURISTIC', null], code);
   }
 });
 
@@ -244,8 +247,9 @@ test('a library module whose @PropertySource loads a file of the tree that sets 
   assert.deepEqual([grade, away.called, away.served], ['UNRESOLVED', 9090, [8080]]);
 });
 
-test('a port that rests on Spring Boot\'s default decides nothing: a call on another port stays this pack\'s', async (t) => {
+test('a port that rests on Spring Boot\'s default decides nothing: a call on another port stays this pack\'s, as a guess', async (t) => {
   const ports = await portsOfTree(t, { 'src/main/resources/application.properties': 'spring.application.name=x\n' });
   assert.deepEqual([ports.known, ports.ports, ports.defaulted], [true, [SERVER_PORT.defaultPort], true]);
-  assert.deepEqual(await landing('http://localhost:9090/things', ports), [true, 'SOUND_SET', null]);
+  // Review 4, W-7 (design 4): that this pack answers rests on the assumed default, so it is HEURISTIC.
+  assert.deepEqual(await landing('http://localhost:9090/things', ports), [true, 'HEURISTIC', null]);
 });

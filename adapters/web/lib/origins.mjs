@@ -20,6 +20,7 @@
 
 import { bare, eachChild, keyName, patternNames } from './ast.mjs';
 import { paramIndexOf, paramOwnerOf } from './forwards.mjs';
+import { readsOf } from './reads.mjs';
 import { writesIn, writtenOf } from './writes.mjs';
 
 /** The keys an object pattern names, the names it binds to one key each, and its rest. */
@@ -117,10 +118,38 @@ export function noteOrigins(node, decl, env) {
   if (decl.id.type === 'Identifier' && init.type === 'Identifier') set(decl.id.name, { from: init.name });
   else if (decl.id.type === 'Identifier' && init.type === 'ObjectExpression') {
     const copy = spreadCopyOf(init);
-    if (copy !== null) set(decl.id.name, { from: copy.from, minus: copy.over });
+    if (copy !== null) set(decl.id.name, { from: copy.from, ...overOf(init, copy.from, env) });
   } else if (decl.id.type === 'ObjectPattern' && init.type === 'Identifier') {
     originsOfPattern(decl.id, { from: init.name }, set);
   }
+}
+
+/** `url: option.url` in a copy of `option`: the value the spread already carried, put back under its own key. */
+function sameValueBack(value, key, src, env) {
+  const v = valueOrigin(value, env);
+  return src !== null && v !== null && src.key === undefined && v.param === src.param && v.key === key && !(src.minus ?? []).includes(key);
+}
+
+/**
+ * WHAT A COPY'S KEYS WRITTEN AFTER ITS SPREAD DO to what it carries (review 4,
+ * W-2). The same value put back (`{ ...option, url: option.url }`) carries the
+ * key. A value that reads the parameters in a way the syntax does not settle
+ * (`` url: `${option.url}` ``, `option.url || ''`, lib/reads.mjs) is WRITTEN
+ * there, so a hop through the copy is not settled. One that reads nothing of
+ * them is another value, and the copy no longer carries the caller's.
+ */
+function overOf(objectNode, from, env) {
+  const src = originOf(env, from);
+  const minus = [];
+  const written = [];
+  const at = objectNode.properties.findIndex((p) => p.type === 'SpreadElement');
+  for (const p of objectNode.properties.slice(at + 1)) {
+    const key = keyName(p);
+    if (p.type === 'ObjectProperty' && sameValueBack(p.value, key, src, env)) continue;
+    const r = p.type === 'ObjectProperty' ? readsOf({ arguments: [p.value] }, env) : null;
+    (r && (r.params.length > 0 || r.partial || r.open) ? written : minus).push(key);
+  }
+  return { minus: [...new Set(minus)].sort(), ...(written.length > 0 ? { written: [...new Set(written)].sort() } : {}) };
 }
 
 /** Whether `scope` is one the function's body opened, from where the call is up to its parameters. */
@@ -133,8 +162,9 @@ export function insideFunction(scope, from, paramScope) {
 function compose(base, o) {
   if (o.key === undefined && o.minus === undefined) return base;
   if (base.key !== undefined) return null;
-  if (o.key !== undefined) return (base.minus ?? []).includes(o.key) ? null : { param: base.param, key: o.key };
-  return { param: base.param, minus: [...new Set([...(base.minus ?? []), ...o.minus])].sort() };
+  if (o.key !== undefined) return [...(base.minus ?? []), ...(base.written ?? [])].includes(o.key) ? null : { param: base.param, key: o.key };
+  const written = [...new Set([...(base.written ?? []), ...(o.written ?? [])])].sort();
+  return { param: base.param, minus: [...new Set([...(base.minus ?? []), ...o.minus])].sort(), ...(written.length > 0 ? { written } : {}) };
 }
 
 /**
@@ -165,6 +195,7 @@ function handFrom(origin, arg, as, key = null) {
   }
   return {
     param: origin.param, arg, as, ...(key === null ? {} : { key }), ...(origin.minus ? { minus: origin.minus } : {}),
+    ...(origin.written ? { written: origin.written } : {}),
   };
 }
 
@@ -175,12 +206,12 @@ function memberOrigin(node, env) {
   if (n.computed || !n.property || n.property.type !== 'Identifier') return null;
   const obj = bare(n.object);
   const o = obj && obj.type === 'Identifier' ? originOf(env, obj.name) : null;
-  if (o === null || o.key !== undefined || (o.minus ?? []).includes(n.property.name)) return null;
+  if (o === null || o.key !== undefined || [...(o.minus ?? []), ...(o.written ?? [])].includes(n.property.name)) return null;
   return { param: o.param, key: n.property.name };
 }
 
 /** A value written as a name or as `name.key`, and its origin. */
-function valueOrigin(node, env) {
+export function valueOrigin(node, env) {
   const n = bare(node);
   if (n && n.type === 'Identifier') return originOf(env, n.name);
   return memberOrigin(n, env);
@@ -216,7 +247,7 @@ function handsInObject(objectNode, arg, env, push) {
       const over = keysAfter(objectNode, i);
       if (o === null || o.key !== undefined || over === null) return;
       const minus = [...new Set([...(o.minus ?? []), ...over])].sort();
-      push(handFrom({ param: o.param, ...(minus.length > 0 ? { minus } : {}) }, arg, 'spread'), p.argument, p);
+      push(handFrom({ ...o, minus: minus.length > 0 ? minus : undefined }, arg, 'spread'), p.argument, p);
     } else if (p.type === 'ObjectProperty' && keyName(p) !== null) {
       push(handFrom(valueOrigin(p.value, env), arg, 'key', keyName(p)), p.value, p);
     }
@@ -231,7 +262,8 @@ function handsInObject(objectNode, arg, env, push) {
  */
 function withWrites(h, env, source, node, sets) {
   const w = writtenOf(env.func, originNames(env, sourceName(source)), node);
-  if (w.written.length > 0) h.written = w.written;
+  const written = [...new Set([...(h.written ?? []), ...w.written])].sort();
+  if (written.length > 0) h.written = written;
   if (w.handed) h.handed = true;
   if (h.as !== 'argument' && h.as !== 'spread') return h;
   for (const [key, value] of w.sets) if (!(h.minus ?? []).includes(key)) sets.push({ key, arg: h.arg, value, from: 'written' });

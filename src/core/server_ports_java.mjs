@@ -1,4 +1,5 @@
-// server_ports_java.mjs — what a Java source says about its application's port.
+// server_ports_java.mjs — what a Java or Kotlin source says about its
+// application's port (discovery reads a `.kt` file for this and nothing else).
 //
 // WHY. The port an application listens on is written in its configuration
 // files (src/core/server_ports.mjs), and CODE can say otherwise (review 3, R8
@@ -29,6 +30,12 @@ import path from 'node:path';
  * matched against the source with its comments taken out; `withAny` names
  * types one of which the source must also mention. The first that matches
  * gives the reason, so the most specific comes first.
+ *
+ * The key itself is read by default-deny (review 4, W-10): a string that names
+ * `server.port` sets it wherever it stands (a map entry past the first, a
+ * constant handed on later, a command-line argument), unless what is written
+ * right before it is one of the shapes that only READ a property
+ * (`readBefore`: `env.getProperty("server.port")`).
  */
 export const PORT_SET_IN_CODE = Object.freeze([
   {
@@ -45,10 +52,21 @@ export const PORT_SET_IN_CODE = Object.freeze([
     text: /\.setDefaultProperties\s*\(/,
   },
   {
-    what: 'server.port set in code as a property (a map entry, a system property, a builder argument)',
-    text: /\b(?:put|putIfAbsent|setProperty|of|entry|property|withProperty)\s*\(\s*"server\.port"|"(?:--)?server\.port=/,
+    what: 'server.port named in code other than to read it (a map entry, a system property, a builder argument, a constant)',
+    text: /"(?:--|-D)?server\.port(?:=[^"]*)?"/,
+    readBefore: /\b(?:getProperty|getRequiredProperty|containsProperty)\s*\(\s*$/,
   },
 ]);
+
+/** Whether a rule hits the code: a match of its text, with a type it names, and not in a shape that only reads. */
+function hits(rule, code) {
+  if (rule.withAny && !rule.withAny.some((t) => code.includes(t))) return false;
+  if (!rule.readBefore) return rule.text.test(code);
+  for (const m of code.matchAll(new RegExp(rule.text.source, 'g'))) {
+    if (!rule.readBefore.test(code.slice(Math.max(0, m.index - 80), m.index))) return true;
+  }
+  return false;
+}
 
 /** A Java or Kotlin source with its comments blanked out, and its string and character literals kept. */
 export function withoutComments(text) {
@@ -133,7 +151,7 @@ export function portRecordsOfJava(rec, readTree, readConfig) {
  */
 export function serverPortsOfJava(filePath, text) {
   const code = withoutComments(text);
-  const rule = PORT_SET_IN_CODE.find((r) => r.text.test(code) && (!r.withAny || r.withAny.some((t) => code.includes(t))));
+  const rule = PORT_SET_IN_CODE.find((r) => hits(r, code));
   const specs = propertySources(code);
   if (!rule && specs.length === 0) return null;
   const unfollowed = specs.filter((s) => resourceOf(s) === null);

@@ -97,13 +97,35 @@ function notePartial(state, o) {
   state.partial.set(k, o.key !== undefined ? { param: o.param, key: o.key } : { param: o.param, minus: o.minus });
 }
 
+/**
+ * JavaScript's own globals, which hold no object a function could have stored
+ * its parameter in. Any other name nobody in the file declares is a global the
+ * page shares (`window.lastCfg = option`), and may hold one.
+ */
+const LANGUAGE_GLOBALS = new Set([
+  'Object', 'Array', 'JSON', 'Math', 'Date', 'String', 'Number', 'Boolean', 'Symbol', 'Promise', 'Reflect',
+  'Error', 'RegExp', 'Map', 'Set', 'undefined', 'NaN', 'Infinity', 'encodeURIComponent', 'decodeURIComponent',
+  'encodeURI', 'decodeURI', 'parseInt', 'parseFloat', 'isNaN', 'console',
+]);
+
+/**
+ * A name the function's own scopes do not declare (review 4): a module's `let`
+ * or `var`, or a global the page shares, may hold what the function stored
+ * there; a module's `const`, an import and the language's own globals hold
+ * nothing it was given. Null when it settles nothing.
+ */
+function outsideRead(where, name) {
+  if (where === null) return LANGUAGE_GLOBALS.has(name) ? null : { why: 'unbound', name };
+  return where.mutable.has(name) ? { why: 'reassigned', name } : null;
+}
+
 /** One name read: a parameter, a settled part of one, or a local followed to what it was made from. */
 function readName(state, name, scope, depth) {
   const { env } = state;
   const fn = env.func;
   if (name === 'arguments') { state.open = { why: 'arguments' }; return; }
   const where = scope.find(name);
-  if (!where || where.isModule) return;
+  if (!where || where.isModule) { state.open = outsideRead(where, name); return; }
   // The body's own declarations share the parameters' scope, and a block's
   // sit between it and the call.
   if (where !== fn.paramScope && !insideFunction(where, env.scope, fn.paramScope)) return;

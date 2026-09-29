@@ -34,7 +34,7 @@ import {
 } from './shared.mjs';
 import { sortKey } from './symbols.mjs';
 import {
-  awayOf, buildModesOf, guessOf, readBase, readsOf, unsetModesOf,
+  awayOf, buildModesOf, guessOf, portGuessOf, readBase, readsOf, unsetModesOf,
 } from './base_url.mjs';
 
 // Where it has always been exported from, so every importer still finds it.
@@ -232,7 +232,7 @@ function baseUrlValue(ctx, summary, pkg, assumed = false) {
   const away = awayOf(mine, ctx.ports);
   // Read through an alias this engine assumed, the value is only as good as
   // that guess, whatever it holds.
-  const guess = away ? null : (guessOf(mine) ?? (assumed ? 'assumed-alias' : null));
+  const guess = away ? null : (guessOf(mine) ?? portGuessOf(mine, ctx.ports) ?? (assumed ? 'assumed-alias' : null));
   // ABSOLUTE only when every build that gives this path spells a host: a dev
   // proxy never sees an absolute address, and one relative build still goes
   // through it.

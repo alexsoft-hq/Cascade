@@ -1,0 +1,11 @@
+import axios from 'axios';
+const service = axios;
+export const r1 = (option) => service({ ...option, url: option.url });
+export const r2 = (option) => service({ url: option.url, ...option });
+export const r3 = (option) => { const { url } = option; return service({ ...option, url }); };
+export const r4 = (option) => service({ url: option.url, method: option.method, data: option.data });
+export const r5 = (option) => { const cfg = { ...option, url: option.url }; return service(cfg); };
+export const r6 = (option) => { const cfg = { url: option.url }; return service(cfg); };
+export const r7 = (option) => service({ ...option, url: option.url || '' });
+export const r8 = (option) => { const cfg = Object.assign({}, option); return service(cfg); };
+export const r9 = (option) => { const cfg = { ...option, url: `${option.url}` }; return service(cfg); };

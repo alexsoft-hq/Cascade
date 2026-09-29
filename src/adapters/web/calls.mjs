@@ -29,7 +29,7 @@ import { UNSETTLED_BECAUSE, walkChain } from './chain.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
 import { routeAddressOf } from '../../core/walks.mjs';
 import {
-  declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost, otherPortOf,
+  declaredValueOf, envNamesOf, envReadOfSpelling, fillFromExpression, isLocalHost, otherPortOf, unsettledPortOf,
 } from './base_url.mjs';
 
 /**
@@ -901,6 +901,9 @@ function isStringMethod(callee) {
     && STRING_METHODS.has(callee.path[callee.path.length - 1]);
 }
 
+/** What a walk says of a call whose URL was never read: it reaches the client, with nothing known of what it sends. */
+const UNREAD_URL = Object.freeze({ reached: true, why: null, methods: [{ value: null, from: 'absent' }] });
+
 /** A sink with nothing to trace: one call, one url, one contract. */
 const flatSink = (kind, module) => ({ sink: { kind, module, instance: null, chain: [], depth: 0 }, target: null });
 
@@ -983,9 +986,11 @@ function sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps }) {
   if (target !== null && target.kind === 'member' && wrappers.has(target.key)) {
     const via = walkThrough(wrappers, target.key, c, deps.clientKeys, stats);
     // A URL the chain drops is not what the request it makes asks for: no edge.
-    if (!via.reached) { stats.calls.urlNotHandedOn += 1; return null; }
+    // One this lane never read cannot be said to be dropped (review 4, W-6): the
+    // call reached the client, and is counted where an unread URL is.
+    if (!via.reached && Array.isArray(resolved) && resolved.length > 0) { stats.calls.urlNotHandedOn += 1; return null; }
     stats.calls.traced += 1;
-    return { sink: wrapperSink(wrappers, target.key, via), target };
+    return { sink: wrapperSink(wrappers, target.key, via.reached ? via : UNREAD_URL), target };
   }
   return untracedSink(c, { resolved, absolute, target, stats });
 }
@@ -1059,7 +1064,7 @@ function countAddressless(c, stats) {
  * in, the host and query taken off text that changed, a page's context path
  * read.
  */
-function readCallUrl(file, pkg, c, { ctxVars, constantOf, fill }) {
+function readCallUrl(file, pkg, c, { ctxVars, constantOf, fill, ports }) {
   // A HOLE ANOTHER MODULE'S CONSTANT EXPLAINS (RM58), filled before anything
   // else reads the template: what this call asks for is decided on the text
   // with the constants in it. A URL that IS such a constant rather than a
@@ -1082,7 +1087,8 @@ function readCallUrl(file, pkg, c, { ctxVars, constantOf, fill }) {
     absolute,
     substituted: [...(c.url.substituted ?? []), ...imported.substituted],
     assumed: imported.assumed === true,
-    guess: imported.guess ?? null,
+    // Its own address on this machine, on a port no file states (review 4, W-7).
+    guess: imported.guess ?? (absolute && absolute.base !== true ? unsettledPortOf(absolute.host, ports) : null),
     modes: imported.modes ?? null,
   };
 }
@@ -1118,7 +1124,7 @@ export function classifyCallSites({
     }
     for (const c of f.calls) {
       if (!c.url) { countAddressless(c, stats); continue; }
-      const u = readCallUrl(file, pkg, c, { ctxVars, constantOf, fill });
+      const u = readCallUrl(file, pkg, c, { ctxVars, constantOf, fill, ports: deps.ports ?? null });
       const { resolved, absolute, substituted } = u;
       const found = sinkOf(file, c, { resolved, absolute, isTemplate, pkg, deps });
       if (found === null) continue;

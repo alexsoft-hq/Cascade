@@ -400,8 +400,10 @@ export function baseWebInputsOf(pack, rootAbs) {
     .filter((rel) => typeof rel === 'string' && fs.existsSync(path.resolve(rootAbs, rel)))
     .map((rel) => ({ path: rel }));
   const p = web?.ports && typeof web.ports === 'object' ? web.ports : null;
+  // A pack from before `stated` was recorded states every port it did not take from the default.
   const serverPorts = p && {
-    known: p.known === true, ports: p.ports ?? [], files: p.files ?? [], defaulted: p.defaulted === true, why: p.why ?? null,
+    known: p.known === true, ports: p.ports ?? [], stated: p.stated ?? (p.defaulted === true ? [] : p.ports ?? []),
+    files: p.files ?? [], defaulted: p.defaulted === true, why: p.why ?? null,
   };
   return { packages, serverPorts, recorded };
 }

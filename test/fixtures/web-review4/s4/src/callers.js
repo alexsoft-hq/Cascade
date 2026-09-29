@@ -1,0 +1,10 @@
+import { r1, r2, r3, r4, r5, r6, r7, r8, r9 } from './hops';
+export const f1 = () => r1({ url: '/items' });
+export const f2 = () => r2({ url: '/items' });
+export const f3 = () => r3({ url: '/items' });
+export const f4 = () => r4({ url: '/items' });
+export const f5 = () => r5({ url: '/items' });
+export const f6 = () => r6({ url: '/items' });
+export const f7 = () => r7({ url: '/items' });
+export const f8 = () => r8({ url: '/items' });
+export const f9 = () => r9({ url: '/items' });

@@ -336,7 +336,7 @@ function readPorts(opts, stats) {
   const ports = opts.serverPorts && typeof opts.serverPorts === 'object' ? opts.serverPorts : null;
   if (!ports) return null;
   stats.ports = {
-    known: ports.known === true, ports: ports.ports ?? [], files: ports.files ?? [],
+    known: ports.known === true, ports: ports.ports ?? [], stated: ports.stated ?? [], files: ports.files ?? [],
     defaulted: ports.defaulted === true, why: ports.why ?? null, otherPortCalls: 0,
   };
   return ports;

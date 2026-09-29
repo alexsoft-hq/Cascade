@@ -11,11 +11,13 @@
 // because each profile is one way the same application runs. Where no document
 // that applies with no profile sets it, the application also listens on Spring
 // Boot's documented default (below). An APPLICATION is the resources directory
-// its configuration sits in: two modules are two applications.
+// its configuration sits in: two modules are two applications. A deployment
+// file in the tree that starts it on another port is one more way it runs
+// (src/core/server_ports_deploy.mjs).
 //
 // WHAT MAKES IT UNKNOWN, and then nothing is decided by port at all:
-//   - a `server.port` that is a placeholder (`${PORT:8080}`) or not a number: a
-//     deployment sets it, so no file here states it
+//   - a `server.port` that is a placeholder (`${PORT:8080}`), not a number, or
+//     0 (a port the application picks when it starts): no file here states it
 //   - an application that takes its configuration from outside the tree (a
 //     config server, Nacos, Consul, ZooKeeper): its port is in that server
 //   - no Spring application read at all
@@ -28,6 +30,7 @@
 
 import path from 'node:path';
 import { springConfigEntries, conditionalDocuments, relaxedKey } from './springconfig.mjs';
+import { portNumber, withDeployments } from './server_ports_deploy.mjs';
 
 /** Spring Boot's own key, and the port it listens on when nothing sets it. */
 export const SERVER_PORT = Object.freeze({
@@ -94,7 +97,9 @@ export function serverPortsOfFile(file) {
     }
     if (key !== SERVER_PORT.key) continue;
     const raw = String(e.value).trim();
-    if (/^\d{1,5}$/.test(raw)) out.ports.push({ port: Number(raw), line: e.line, conditional: conditional(e.doc) });
+    // 0 is a port the application picks when it starts (review 4, W-8): no file states it.
+    const port = portNumber(raw);
+    if (port !== null) out.ports.push({ port, line: e.line, conditional: conditional(e.doc) });
     else out.unreadable.push({ raw, line: e.line });
   }
   return out;
@@ -113,40 +118,50 @@ function portsOfApplication(app, files) {
   }
   const declared = files.flatMap((f) => f.ports);
   const ports = new Set(declared.map((p) => p.port));
+  const stated = [...ports].sort((a, b) => a - b);
   // With no profile active, a document that sets nothing leaves Spring's default.
   if (!declared.some((p) => !p.conditional)) ports.add(SERVER_PORT.defaultPort);
   return {
-    app, ports: [...ports].sort((a, b) => a - b),
+    app, ports: [...ports].sort((a, b) => a - b), stated,
     files: [...new Set(files.filter((f) => f.ports.length > 0).map((f) => f.file))].sort(),
     defaulted: !declared.some((p) => !p.conditional),
   };
 }
 
-/**
- * THE PORTS THIS PACK LISTENS ON: known only when every application's are.
- * The ports read are listed either way, those of the applications whose port
- * is known; `defaulted` says one of them rests on Spring Boot's default.
- *
- * @param {object[]} records  serverPortsOfFile results, one per configuration file
- * @returns {{known:boolean, ports:number[], files:string[], why:(string|null),
- *            applications:object[]}}
- */
-export function serverPortsOf(records) {
+/** The records by the application they are for, a deployment file's read as each one's it applies to. */
+function byApplication(records) {
   const byApp = new Map();
-  for (const r of records ?? []) {
+  for (const r of withDeployments(records ?? [])) {
     if (!r || typeof r.app !== 'string') continue;
     if (!byApp.has(r.app)) byApp.set(r.app, []);
     byApp.get(r.app).push(r);
   }
+  return byApp;
+}
+
+/**
+ * THE PORTS THIS PACK LISTENS ON: known only when every application's are.
+ * The ports read are listed either way, those of the applications whose port
+ * is known; `defaulted` says one of them rests on Spring Boot's default, and
+ * `stated` holds the ports a file states, without that default: a call on a
+ * port only the default gives is not settled (review 4, W-7).
+ *
+ * @param {object[]} records  serverPortsOfFile results, one per configuration file
+ * @returns {{known:boolean, ports:number[], stated:number[], files:string[], why:(string|null),
+ *            applications:object[]}}
+ */
+export function serverPortsOf(records) {
+  const byApp = byApplication(records);
   const applications = [...byApp.keys()].sort(cmp).map((app) => portsOfApplication(app, byApp.get(app)));
   if (applications.length === 0) {
-    return { known: false, ports: [], files: [], why: 'no Spring application configuration was read', applications };
+    return { known: false, ports: [], stated: [], files: [], why: 'no Spring application configuration was read', applications };
   }
   const known = applications.filter((a) => a.ports !== null);
   const unknown = applications.filter((a) => a.ports === null);
   return {
     known: unknown.length === 0,
     ports: [...new Set(known.flatMap((a) => a.ports))].sort((a, b) => a - b),
+    stated: [...new Set(known.flatMap((a) => a.stated))].sort((a, b) => a - b),
     files: [...new Set(known.flatMap((a) => a.files))].sort(cmp),
     defaulted: known.some((a) => a.defaulted),
     why: unknown.length === 0 ? null : unknown.map((a) => `${a.app}: ${a.why}`).join('; '),

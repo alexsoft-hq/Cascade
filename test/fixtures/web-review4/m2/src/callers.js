@@ -1,0 +1,18 @@
+import { v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15 } from './wrappers';
+export const c1 = () => v1({ url: '/items' });
+export const c2 = () => v2({ url: '/items' });
+export const c3 = () => v3({ url: '/items' });
+export const c3b = () => v3({ url: '/items' }, 'DELETE');
+export const c4 = () => v4({ url: '/items', method: 'POST' });
+export const c4b = () => v4({ url: '/items' });
+export const c5 = () => v5({ url: '/items' });
+export const c6 = () => v6({ url: '/items' });
+export const c7 = () => v7('/items', {});
+export const c8 = () => v8({ url: '/items' });
+export const c9 = () => v9({ url: '/items' });
+export const c10 = () => v10({ url: '/items' });
+export const c11 = () => v11({ url: '/items' });
+export const c12 = () => v12({ url: '/items', method: 'DELETE' });
+export const c13 = () => v13({ url: '/items' });
+export const c14 = () => v14({ url: '/items' });
+export const c15 = () => v15({ url: '/items' });

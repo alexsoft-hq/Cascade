@@ -141,7 +141,11 @@ test('a_hop_the_source_does_not_settle_is_heuristic_and_says_why', () => {
   };
   for (const [fn, want] of Object.entries(cases)) {
     const e = from(fn);
-    assert.deepEqual(e.map((x) => [x.to, x.grade]), [[ITEMS, 'HEURISTIC']], fn);
+    // Review 4, W-5: a hop that does not settle the object may have written a
+    // method into it too, so the method is not known and every one at the path
+    // is a candidate, never the library's GET alone.
+    assert.ok(e.some((x) => x.to === ITEMS) && e.every((x) => x.grade === 'HEURISTIC'), `${fn}: ${JSON.stringify(e.map((x) => [x.to, x.grade]))}`);
+    assert.ok(e.every((x) => x.evidence.method.value === null), fn);
     const u = e[0].evidence.sink.unsettled;
     assert.ok(u, `${fn}: ${JSON.stringify(e[0].evidence.sink)}`);
     assert.deepEqual({ hop: u.hop, why: u.why, ...(u.name ? { name: u.name } : {}) }, want, fn);
@@ -151,7 +155,7 @@ test('a_hop_the_source_does_not_settle_is_heuristic_and_says_why', () => {
   // A step this lane reads only as the call it returns, whose arguments it did
   // not record: not settled either, and the step is named without a line.
   const back = from('viaReturn');
-  assert.deepEqual(back.map((x) => [x.to, x.grade]), [[ITEMS, 'HEURISTIC']]);
+  assert.ok(back.some((x) => x.to === ITEMS) && back.every((x) => x.grade === 'HEURISTIC' && x.evidence.method.value === null));
   const { reason, ...rest } = back[0].evidence.sink.unsettled;
   assert.deepEqual(rest, { hop: 'src/hops.ts#throughReturn', why: 'unrecorded' });
   assert.equal(typeof reason, 'string');

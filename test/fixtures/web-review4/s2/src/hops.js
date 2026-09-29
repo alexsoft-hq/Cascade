@@ -1,0 +1,20 @@
+import axios from 'axios';
+const service = axios;
+export const h1 = (option) => { const cfg = { ...option }; [1].forEach(() => { cfg.url = '/other'; }); return service(cfg); };
+export const h2 = (option) => { const cfg = { ...option }; const c2 = cfg; c2.url = '/other'; return service(cfg); };
+export const h3 = (option) => { const cfg = { ...option }; ({ u: cfg.url } = { u: '/other' }); return service(cfg); };
+export const h4 = (option) => { const cfg = { ...option }; Reflect.set(cfg, 'url', '/other'); return service(cfg); };
+export const h5 = (option) => { const cfg = { ...option }; fix(cfg); return service(cfg); };
+function fix(c) { c.url = '/other'; }
+export const h6 = (option) => { const cfg = { ...option }; const set = () => { cfg.url = '/other'; }; set(); return service(cfg); };
+export const h7 = (option) => { let c2; c2 = option; c2.url = '/other'; return service(option); };
+export const h8 = (option) => { const cfg = { ...option }; cfg['url'] = '/other'; return service(cfg); };
+export const h9 = (option) => { const cfg = { ...option }; const k = 'url'; cfg[k] = '/other'; return service(cfg); };
+export const h10 = (option) => { const { url, ...rest } = option; return service({ ...rest, url: url.replace('/items', '/other') }); };
+export const h11 = (option) => { const cfg = { ...option }; Object.defineProperty(cfg, 'url', { value: '/other' }); return service(cfg); };
+export const h12 = (option) => { const holder = { cfg: { ...option } }; holder.cfg.url = '/other'; return service(holder.cfg); };
+export const h13 = (option) => { const cfg = { ...option }; for (const k of ['url']) cfg[k] = '/other'; return service(cfg); };
+export const h14 = (option) => { const cfg = { ...option }; Object.assign(cfg, { url: '/other' }); return service(cfg); };
+export const h15 = (option) => { const arr = [option]; arr[0].url = '/other'; return service(option); };
+export const h16 = (option) => { const cfg = { ...option, url: option.url }; cfg.url += '/x'; return service(cfg); };
+export const h17 = (option) => service({ ...option, url: '/other' + '' });

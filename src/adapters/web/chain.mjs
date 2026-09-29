@@ -73,19 +73,27 @@ function carriedFrom(c, names, valueOf) {
   let maybe = false;
   const url = c.url && c.url.at && typeof c.url.at.key !== 'string' ? c.url.at.arg : null;
   (Array.isArray(c.args) ? c.args : []).forEach((a, i) => {
-    if (!a || typeof a !== 'object' || i === url) return;
-    const k = a.kind === 'object' ? names.find((n) => a.keys && a.keys[n] !== undefined) : undefined;
-    if (k !== undefined) {
-      places.push({ param: i, key: k });
-      const v = valueOf(a.keys[k]);
-      if (v === null || a.spread === true) maybe = true; else values.add(v);
-    } else if ((a.kind === 'object' && a.spread === true) || CARRIERS.has(a.kind)) {
-      places.push({ param: i, key: names[0] });
-      maybe = true;
-    }
+    const got = a && typeof a === 'object' && i !== url ? placeOfArgument(a, i, names, valueOf) : null;
+    if (got === null) return;
+    places.push(got.place);
+    if (got.value === null) maybe = true; else values.add(got.value);
   });
   if (places.length === 0) return null;
   return maybe || values.size !== 1 ? { value: null, from: 'absent', places } : { value: [...values][0], from: 'config', places };
+}
+
+/**
+ * Where ONE argument of the caller may hold a method or a base URL, and what
+ * it is (null when not stated): under a key its object writes, anywhere in a
+ * name or a spread, or the argument itself when it is one written out
+ * (`req('/items', 'DELETE')`), which a step may put under the key (review 4, W-11).
+ */
+function placeOfArgument(a, i, names, valueOf) {
+  const k = a.kind === 'object' ? names.find((n) => a.keys && a.keys[n] !== undefined) : undefined;
+  if (k !== undefined) return { place: { param: i, key: k }, value: a.spread === true ? null : valueOf(a.keys[k]) };
+  if ((a.kind === 'object' && a.spread === true) || CARRIERS.has(a.kind)) return { place: { param: i, key: names[0] }, value: null };
+  const own = a.kind === 'string' ? valueOf(a) : null;
+  return own === null ? null : { place: { param: i, key: null }, value: own };
 }
 
 /** The key a hand's carry rests on, and whether the function wrote it or handed the object elsewhere. */
@@ -156,6 +164,9 @@ function follow(place, call) {
   return why === null ? null : { to: '?', why };
 }
 
+/** What a method or a base URL holds once a step may have changed it without saying to what. */
+const unknownItem = () => ({ value: null, from: 'absent', places: '?' });
+
 /** A method or a base URL moved through one step: every place it sits, followed. */
 function moveItem(item, call, key) {
   if (item === null || item.places === '?') return { item, why: null };
@@ -163,10 +174,56 @@ function moveItem(item, call, key) {
   for (const p of item.places) {
     const r = follow(p, call);
     if (r === null) continue;
-    if (r.to === '?') return { item: { ...item, places: '?' }, why: { ...r.why, key } };
+    // A step that does not settle what it hands on may have changed this key too (review 4, W-5).
+    if (r.to === '?') return { item: unknownItem(), why: { ...r.why, key } };
     places.push(r.to);
   }
   return { item: places.length > 0 ? { ...item, places } : null, why: null };
+}
+
+/**
+ * Why a step may put a method or a base URL (`names`, said as `key`) into what
+ * it hands on without the code saying which (review 4, W-1 and W-5), or null:
+ * a hand whose object it hands to another call, or writes under one of them
+ * or under a key it cannot name, or a URL it passes through something it
+ * computes. Then what arrives is not known, even when nothing was carried in:
+ * no method is the library's default unless nothing on the way may have
+ * written one.
+ */
+function mayWrite(call, names, url, { label: key, at }) {
+  for (const h of call.hands ?? []) {
+    // The caller's URL handed on whole is text: no method or base URL is in it.
+    if (at !== '?' && at.key === null && h.param === at.param) continue;
+    if (h.handed) return { why: 'handed', key };
+    if ((h.written ?? []).some((k) => k === '*' || names.includes(k))) return { why: 'written', key };
+  }
+  return url.to === '?' && url.why !== null && url.why.why !== 'written' ? url.why : null;
+}
+
+/**
+ * What a default written before a spread becomes: `unknown` when what is
+ * spread is not settled, `replaced` by what came in at that spread, or `kept`.
+ */
+function underDefault(before, moved, x) {
+  if (x.other || (moved !== null && moved.places === '?' && moved.value === null)) return 'unknown';
+  const over = before && before.places !== '?' ? before.places.some((p) => (x.by ?? []).includes(p.param)) : before !== null;
+  if (!over) return 'kept';
+  return before.value === null ? 'unknown' : 'replaced';
+}
+
+/**
+ * A key a step writes after everything it spreads: the string it writes, or,
+ * when it writes what it was handed at one parameter (`method: m`, `method:
+ * o.method`), what the caller put there, if the walk carried it that far and
+ * the step settles the object (review 4, W-11). Anything else is not stated.
+ */
+function definiteSet(before, moved, x, value, places) {
+  if (value !== null) return { value, from: 'wrapper-verb', places };
+  const settled = moved === null || moved.places !== '?';
+  const here = x.param !== undefined && settled && before !== null && before.places !== '?'
+    && before.places.some((p) => p.param === x.param && (p.key ?? null) === (x.part ?? null));
+  if (here && before.value !== null) return { value: before.value, from: before.from, places };
+  return { value: null, from: 'absent', written: x.from === 'spread' ? 'spread' : 'variable', places };
 }
 
 /**
@@ -175,6 +232,8 @@ function moveItem(item, call, key) {
  * one of its parameters, it is a default what was handed in at that parameter
  * replaces; with anything else spread after it, what goes on is not settled.
  * At the client call, the verb its method name says (`axios.get`) is the method.
+ * A spread of an object this lane does not read is a set whose value is not
+ * known (review 4, W-4): it may carry the key.
  */
 function applySets(before, moved, call, names, valueOf, verb) {
   if (verb) return { value: verb, from: 'library-verb', places: '?' };
@@ -183,11 +242,20 @@ function applySets(before, moved, call, names, valueOf, verb) {
   const x = sets[sets.length - 1];
   const value = x.value === null ? null : valueOf(x.value);
   const places = [{ param: x.arg, key: x.key }];
-  if (!x.by && !x.other) return value === null ? { value: null, from: 'absent', written: 'variable', places } : { value, from: 'wrapper-verb', places };
-  const over = before && before.places !== '?' ? before.places.some((p) => (x.by ?? []).includes(p.param)) : before !== null;
-  if (x.other || (over && before.value === null)) return { value: null, from: 'absent', ...(value ? { wrapperDefault: value } : {}), places };
-  if (over) return { value: before.value, from: before.from, places };
+  if (!x.by && !x.other) return definiteSet(before, moved, x, value, places);
+  const under = underDefault(before, moved, x);
+  if (under === 'unknown') return { value: null, from: 'absent', ...(value ? { wrapperDefault: value } : {}), places };
+  if (under === 'replaced') return { value: before.value, from: before.from, places };
   return value === null ? { value: null, from: 'absent', places } : { value, from: 'wrapper-default', places };
+}
+
+/** One item through one step: moved by the hands, made unknown by a write the step does not settle, then written over by its sets. */
+function itemOver(item, call, url, spec) {
+  const moved = moveItem(item, call, spec.label);
+  const unsure = mayWrite(call, spec.names, url, spec);
+  const out = applySets(item, unsure ? unknownItem() : moved.item, call, spec.names, spec.valueOf, spec.verb);
+  // The reason goes on the edge only while the step's own sets leave the item unknown.
+  return { item: out, why: moved.why ?? (unsure && out !== null && out.value === null ? unsure : null) };
 }
 
 /** One way through one step: every item moved and written, or null when the URL was dropped. */
@@ -195,28 +263,24 @@ function stepOver(s, step, hop, keys) {
   const call = hop.call;
   const at = { hop: step.key, ...(call && Number.isInteger(call.line) ? { line: call.line } : {}) };
   if (call === null || (!call.reads && !Array.isArray(call.hands))) {
-    const unknown = (item) => (item === null ? null : { ...item, places: '?' });
-    return { url: '?', why: s.why ?? { ...at, why: 'unrecorded' }, method: unknown(s.method), base: unknown(s.base) };
+    return { url: '?', why: s.why ?? { ...at, why: 'unrecorded' }, method: unknownItem(), base: keys.base ? unknownItem() : null };
   }
   let url = { to: '?', why: null };
   if (s.url !== '?') url = follow(s.url, call);
   if (url === null) return null;
-  const method = moveItem(s.method, call, 'method');
-  const base = moveItem(s.base, call, keys.base);
+  const method = itemOver(s.method, call, url, { label: 'method', names: keys.method, valueOf: verbOf, verb: step.last ? hop.verb : null, at: s.url });
+  const base = keys.base ? itemOver(s.base, call, url, { label: keys.base, names: [keys.base], valueOf: textOf, verb: null, at: s.url }) : { item: null, why: null };
   const why = s.why ?? [url.why && { key: s.url.key ?? 'url', ...url.why }, method.why, base.why].find(Boolean) ?? null;
-  return {
-    url: url.to,
-    why: why && !why.hop ? { ...at, ...why } : why,
-    method: applySets(s.method, method.item, call, keys.method, verbOf, step.last ? hop.verb : null),
-    base: keys.base ? applySets(s.base, base.item, call, [keys.base], textOf, null) : null,
-  };
+  return { url: url.to, why: why && !why.hop ? { ...at, ...why } : why, method: method.item, base: base.item };
 }
 
 /** What the client reads of an item that arrived: only one sitting in the object it takes its options from. */
-function arrived(item, url, keys) {
+function arrived(item, url, keys, names) {
   if (item === null || item.places === '?' || url === '?') return item;
   const options = url.key !== null ? url.param : (keys.optionsArg ?? url.param + 1);
-  return item.places.some((p) => p.param === options) ? item : null;
+  // Under one of the keys the client reads it from: a value a step put under
+  // another key, or an argument that IS a verb, is not what it reads.
+  return item.places.some((p) => p.param === options && names.includes(p.key)) ? item : null;
 }
 
 /** Every way through, reduced to what the request may carry. */
@@ -225,9 +289,9 @@ function finish(states, keys) {
   const methods = [];
   const bases = new Set();
   for (const s of states) {
-    const m = arrived(s.method, s.url, keys);
+    const m = arrived(s.method, s.url, keys, keys.method);
     if (!methods.some((x) => JSON.stringify(x) === JSON.stringify(m))) methods.push(m);
-    const b = arrived(s.base, s.url, keys);
+    const b = arrived(s.base, s.url, keys, [keys.base]);
     bases.add(b === null ? null : (b.value ?? '?'));
   }
   const unknownMethod = methods.find((m) => m !== null && m.value === null);
