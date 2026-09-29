@@ -102,7 +102,14 @@ CATALOG_SCHEMA = "cascade:catalog-snapshot:1"
 #        so a catalog read back from its cache still says what it could not read;
 #        a RENAME that cannot be read is ``alter_unreadable``. The tables, columns
 #        and routines are the records /11 wrote.
-CATALOG_VERSION = "catalog-ddl/12"
+#   /13 - a statement the grammar library fails on with an error of its own (an
+#        AttributeError on SQL Server's ``ON [PRIMARY]`` read as MySQL) is read as
+#        text or named, where it ended the run; a parse that stopped only where no
+#        ALTER or RENAME is says so as ``parse_error_not_held`` (info), and IF EXISTS
+#        on a column that is not there is ``alter_if_exists_absent`` (info). A file
+#        /12 read gives the same tables, columns and routines; only the header's
+#        diagnostics differ.
+CATALOG_VERSION = "catalog-ddl/13"
 
 # WHAT MAKES TWO SPELLINGS ONE TABLE (SPEC §8.1). The same identity rule the
 # lineage worker matches statements with, applied where two files are folded:
@@ -136,6 +143,43 @@ _INT_DISPLAY_WIDTH_TYPES = {
     exp.DataType.Type.USMALLINT,
     exp.DataType.Type.UTINYINT,
 }
+
+
+# ---------------------------------------------------------------------------
+# THE GRAMMAR LIBRARY, called in one way. sqlglot can fail on a statement with an
+# error of its own rather than a ParseError: MySQL's grammar reading SQL Server's
+# ``CREATE TABLE [dbo].[b] (...) ON [PRIMARY]`` raises AttributeError from deep in
+# its parser, and that ended the whole run with a stack trace. Every parse and
+# tokenize goes through these two, so such a failure is the parse or token error
+# it is: a statement not read, which every caller already names.
+# ---------------------------------------------------------------------------
+
+class _GrammarFailed(ParseError):
+    """The grammar library failing on text in a way of its own, as a parse error."""
+
+
+class _GrammarFailedTokens(TokenError):
+    """The same, while the text was cut into tokens."""
+
+
+def _grammar_parse(sql, read, **opts):
+    """sqlglot.parse, with the library's own failure raised as a ParseError."""
+    try:
+        return sqlglot.parse(sql, read=read, **opts)
+    except (ParseError, TokenError):
+        raise
+    except Exception as e:  # noqa: BLE001 - whatever the library raises on this text is its failing to read it
+        raise _GrammarFailed("the grammar failed on this text (%s: %s)" % (type(e).__name__, e)) from e
+
+
+def _tokenize(dialect, sql):
+    """The dialect's tokens of ``sql``, with the library's own failure raised as a TokenError."""
+    try:
+        return Dialect.get_or_raise(dialect).tokenize(sql)
+    except (ParseError, TokenError, ValueError):
+        raise
+    except Exception as e:  # noqa: BLE001 - as above
+        raise _GrammarFailedTokens("the grammar failed on this text (%s: %s)" % (type(e).__name__, e)) from e
 
 
 def _diag(diagnostics, level, code, table, message):
@@ -476,7 +520,7 @@ def _parse_whole(sql_text, diagnostics, source, dialect, fold=None):
     export's ``NOT NULL ENABLE`` does not cost its table; one the database reads in
     a compatibility mode is read by that mode's grammar and put back in its place."""
     try:
-        return sqlglot.parse(sql_text, read=dialect)
+        return _grammar_parse(sql_text, dialect)
     except ParseError as e:
         error = e
     found = _set_aside_in_file(sql_text, dialect, diagnostics, source, fold)
@@ -484,18 +528,121 @@ def _parse_whole(sql_text, diagnostics, source, dialect, fold=None):
     if found is not None:
         set_aside, placed = found
         try:
-            return _put_back(sqlglot.parse(set_aside, read=dialect), placed)
+            return _put_back(_grammar_parse(set_aside, dialect), placed)
         except ParseError as e:
             error, sql_text = e, set_aside
-    _diag(
-        diagnostics,
-        "warn",
-        "parse_error",
-        None,
-        "full parse of %s failed, salvaging with error_level=IGNORE: %s"
-        % (source, str(error).replace("\n", " ")),
-    )
-    return _put_back(sqlglot.parse(sql_text, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE), placed)
+    statements, stop = _read_errors_ignored(sql_text, dialect, error)
+    _say_parse_stop(diagnostics, source, error, stop)
+    return _put_back(statements, placed)
+
+
+# ---------------------------------------------------------------------------
+# A FILE READ WITH ERRORS IGNORED, and what that cost. sqlglot cuts a file into
+# statements at its semicolons and parses each; with errors ignored it reads past
+# what it cannot, keeping where it stopped. A statement it fails on outright (the
+# AttributeError above) is kept as its text, the way the grammar keeps a statement
+# it has no parser for, so the reader reads it again or names it like any other.
+#
+# What the stop cost the catalog is known from where it stopped: a CREATE TABLE is
+# read or named on its own (the set-aside pass, _say_unread_tables), and the only
+# other statements this reader applies are ALTER and RENAME. A stop in a statement
+# that holds neither is a note, not a table read in part.
+# ---------------------------------------------------------------------------
+
+_CHANGING_WORDS = ("ALTER", "RENAME")
+
+
+class _Stop(object):
+    """Where a parse with errors ignored could not read as written: the statements (sqlglot's chunks) that hold
+    a place it stopped at or that it failed on, why it failed on each of those, and whether every place it
+    stopped at was found in a statement."""
+
+    __slots__ = ("chunks", "unread", "failed", "placed")
+
+    def __init__(self, chunks, unread, failed, placed):
+        self.chunks, self.unread, self.failed, self.placed = chunks, unread, failed, placed
+
+
+def _chunks(tokens):
+    """The statements as sqlglot cuts a file before it parses one: the tokens between two semicolons."""
+    chunks = [[]]
+    for t in tokens:
+        if t.token_type == TokenType.SEMICOLON:
+            chunks.append([])
+        else:
+            chunks[-1].append(t)
+    return [c for c in chunks if c]
+
+
+def _as_text(chunk, sql_text):
+    """A statement as the grammar keeps one it has no parser for: its first word, and the rest as text."""
+    first = chunk[0].end + 1
+    return exp.Command(this=sql_text[chunk[0].start:first], expression=sql_text[first:chunk[-1].end + 1])
+
+
+def _read_each_chunk(grammar, chunks, sql_text):
+    """Each statement parsed on its own with errors ignored: (statements, where it stopped, {chunk: why})."""
+    statements, stops, failed = [], [], {}
+    for n, chunk in enumerate(chunks):
+        parser = grammar.parser(error_level=sqlglot.ErrorLevel.IGNORE)
+        try:
+            statements.extend(parser.parse(chunk, sql_text))
+            stops.extend(parser.errors)
+        except Exception as e:  # noqa: BLE001 - the grammar's own failure on this one statement
+            statements.append(_as_text(chunk, sql_text))
+            failed[n] = type(e).__name__
+    return statements, stops, failed
+
+
+def _read_errors_ignored(sql_text, dialect, error):
+    """The file read with errors ignored, as sqlglot.parse reads it, and a _Stop for what it could not read as
+    written. ``error`` is the error the parse that did not ignore them stopped at: a check that only such a parse
+    makes (a keyword a clause must have) is a place too."""
+    grammar = Dialect.get_or_raise(dialect)
+    tokens = _tokenize(dialect, sql_text)
+    chunks = _chunks(tokens)
+    parser = grammar.parser(error_level=sqlglot.ErrorLevel.IGNORE)
+    try:
+        statements, stops, failed = parser.parse(tokens, sql_text), list(parser.errors), {}
+    except Exception:  # noqa: BLE001 - one statement the grammar fails on: read them one at a time to find it
+        statements, stops, failed = _read_each_chunk(grammar, chunks, sql_text)
+    where = {(t.line, t.col): n for n, chunk in enumerate(chunks) for t in chunk}
+    places = [(i.get("line"), i.get("col")) for e in [error] + stops for i in (getattr(e, "errors", None) or [])]
+    unread = set(failed) | {where[p] for p in places if p in where}
+    placed = all(p in where for p in places) and bool(places or failed)
+    return statements, _Stop(chunks, sorted(unread), failed, placed)
+
+
+def _changing_line(chunk):
+    """The line of the first ALTER or RENAME a statement holds outside parentheses, or None."""
+    depth = 0
+    for t in chunk:
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(t.token_type, 0)
+        if depth == 0 and _word(t) in _CHANGING_WORDS:
+            return t.line
+    return None
+
+
+def _say_parse_stop(diagnostics, source, error, stop):
+    """The file's note for a parse that stopped: a warning when what it could not read may change a table, or
+    where it stopped is not known; a note when it holds no ALTER or RENAME, so it may have cost nothing."""
+    head = "full parse of %s failed, salvaging with error_level=IGNORE: %s" % (source, str(error).replace("\n", " "))
+    if stop.failed:
+        first = min(stop.failed)
+        head += ("; the grammar failed on %d statement(s) outright (%s, the first at line %d), which are read as text"
+                 % (len(stop.failed), stop.failed[first], stop.chunks[first][0].line))
+    changing = [line for line in (_changing_line(stop.chunks[n]) for n in stop.unread) if line is not None]
+    if changing:
+        _diag(diagnostics, "warn", "parse_error", None,
+              "%s. There is an ALTER or a RENAME at line %d among what it could not read as written, so a change "
+              "it makes to a table may be missing" % (head, changing[0]))
+    elif not stop.placed:
+        _diag(diagnostics, "warn", "parse_error", None, head)
+    else:
+        _diag(diagnostics, "info", "parse_error_not_held", None,
+              "%s. The %d statement(s) it could not read as written, the first at line %d, declare and change no "
+              "table, except a CREATE TABLE named on its own, so the catalog may have lost nothing by them"
+              % (head, len(stop.unread), stop.chunks[stop.unread[0]][0].line))
 
 
 # The statement that holds the place of a CREATE TABLE read by a compatibility
@@ -576,7 +723,7 @@ def _parse_each_statement(sql_text, diagnostics, source, dialect, error):
                               for m in _CREATE_TABLE_LINE_RE.finditer(chunk))
             continue
         try:
-            statements.extend(sqlglot.parse(chunk, read=dialect, error_level=sqlglot.ErrorLevel.IGNORE))
+            statements.extend(_grammar_parse(chunk, dialect, error_level=sqlglot.ErrorLevel.IGNORE))
         except (ParseError, TokenError):
             unreadable.append(_statement_label(chunk))
     named = ", ".join(unreadable[:_UNREADABLE_NAMED])
@@ -910,7 +1057,7 @@ def _set_aside_create(sql, dialect, stage):
     are checked and built; 1, and what follows its column list; 2, and each table
     constraint the catalog holds nothing of. None when it has no column list."""
     try:
-        tokens = [t for t in Dialect.get_or_raise(dialect).tokenize(sql) if t.token_type != TokenType.SEMICOLON]
+        tokens = [t for t in _tokenize(dialect, sql) if t.token_type != TokenType.SEMICOLON]
     except (TokenError, ParseError, ValueError):
         return None
     layout = _create_layout(tokens) if tokens else None
@@ -951,7 +1098,7 @@ def _quiet_parse(sql, dialect):
     level = logger.level
     logger.setLevel(logging.ERROR)
     try:
-        parsed = [p for p in sqlglot.parse(sql, read=dialect) if p is not None]
+        parsed = [p for p in _grammar_parse(sql, dialect) if p is not None]
     except (ParseError, TokenError):
         return None
     finally:
@@ -1025,7 +1172,7 @@ def _set_aside_in_file(sql_text, dialect, diagnostics, source, fold=None):
     place, the tables read in a mode by their place holders' names), or None when no
     statement needed it."""
     try:
-        tokens = Dialect.get_or_raise(dialect).tokenize(sql_text)
+        tokens = _tokenize(dialect, sql_text)
     except (TokenError, ParseError, ValueError):
         return None
     edits, placed = [], {}
@@ -1111,7 +1258,7 @@ def _line_statements(sql, dialect):
     HSQLDB script writes one per line: cut where a statement word starts a line
     outside parentheses. One piece when there is nothing to cut."""
     try:
-        tokens = Dialect.get_or_raise(dialect).tokenize(sql)
+        tokens = _tokenize(dialect, sql)
     except (TokenError, ParseError, ValueError):
         return [sql]
     cuts, depth = [], 0
@@ -1378,7 +1525,11 @@ def _unreadable(table_name, text, ctx):
 
 def _unknown_column(tbl, verb, name, ctx, outcome="ignored", if_exists=False):
     if if_exists:
-        name, outcome = "%s IF EXISTS" % name, "nothing changes, as the database changes nothing"
+        # The database changes nothing either: a note of its own, not a table read in part.
+        ctx.say("info", "alter_if_exists_absent", tbl.name,
+                "%s %s %s.%s IF EXISTS, which is not there; nothing changes, as the database changes nothing"
+                % (ctx.source, verb, tbl.name, name))
+        return
     ctx.say("warn", "alter_unknown_column", tbl.name,
             "%s %s %s.%s, which is not there; %s" % (ctx.source, verb, tbl.name, name, outcome))
 
@@ -1705,7 +1856,7 @@ def _unquote(name):
 def _top_level(text, ctx):
     """``text`` cut at its commas outside brackets and strings, as the dialect tokenizes it."""
     try:
-        tokens = Dialect.get_or_raise(ctx.dialect).tokenize(text)
+        tokens = _tokenize(ctx.dialect, text)
     except (TokenError, ParseError, ValueError):
         return None
     pieces, depth, first = [], 0, 0
@@ -1943,7 +2094,7 @@ def _split_alter_table(body, ctx):
     """``TABLE [IF EXISTS] [ONLY] <name> <clause>, <clause> ...`` as the text up to the
     name, the table's name, and the clauses."""
     try:
-        tokens = Dialect.get_or_raise(ctx.dialect).tokenize(body)
+        tokens = _tokenize(ctx.dialect, body)
     except (TokenError, ParseError, ValueError):
         return None
     i = 1
@@ -2123,7 +2274,7 @@ def _declared_tables(sql_text, dialect):
     tokens = None
     for grammar in (dialect, _escapes_turned(dialect)):
         try:
-            tokens = Dialect.get_or_raise(grammar).tokenize(sql_text)
+            tokens = _tokenize(grammar, sql_text)
             break
         except (TokenError, ParseError, ValueError):
             continue

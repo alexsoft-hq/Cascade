@@ -21,6 +21,8 @@ import { buildOverview } from '../src/core/overview.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
 import { packMeta } from '../src/cli/serve.mjs';
 import { CATALOG_CODES, catalogReadStats, catalogDiagnostics, plainSentence } from '../src/core/catalog_read.mjs';
+import { declareAxes } from '../src/core/lanes.mjs';
+import { axisRemedies } from '../src/core/remedies.mjs';
 import { sqlLaneVenv } from './helpers/lane_prereqs.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -223,6 +225,52 @@ test('the overview answer carries each kind once, with its count, its first sent
 });
 
 // ---------------------------------------------------------------------------
+// the catalog axis, and its remedy per cause (RM67-C6)
+// ---------------------------------------------------------------------------
+
+test('a catalog that lost tables or assumed rules is degraded, with the reason and each cause', () => {
+  const lost = declareAxes({ ddl: true, statements: true, code: true, catalogRead: catalogReadStats([header(sqlServerRead())]) });
+  assert.equal(lost.catalog.status, 'degraded', 'ruoyi-vue-pro\'s SQL Server schema: 0 of 60 tables read, and it said shipped');
+  assert.deepEqual(lost.catalog.causes, ['tables-unread', 'rules-assumed']);
+  assert.match(lost.catalog.reason, /^60 table\(s\) the schema files declare are not in the catalog, or are in it only in part, because the schema reader could not read their CREATE TABLE/);
+  assert.match(lost.catalog.reason, /1 conclusion\(s\) about the schema rest on a rule of a database this run assumed, because sqlDialects\.main is not declared/);
+  assert.equal(/[—·]/.test(lost.catalog.reason), false);
+  // What costs no table and assumes no rule leaves the axis whole: a table read in part is a gap, not a lost table.
+  const inPart = catalogReadStats([header([said('warn', 'DUPLICATE_TABLE_DECLARATION', 't', 't is declared twice'),
+    said('warn', 'alter_clause_unsupported', 't', 'x'), said('info', 'parse_error_not_held', null, 'y')])]);
+  assert.deepEqual(declareAxes({ ddl: true, statements: true, code: true, catalogRead: inPart }).catalog, { status: 'shipped', reason: null });
+  assert.deepEqual(declareAxes({ ddl: true, statements: true, code: true, catalogRead: null }).catalog, { status: 'shipped', reason: null },
+    'a snapshot, or a reader that kept no list, says nothing this run can see');
+  const rules = declareAxes({ ddl: true, statements: true, code: true, catalogRead: catalogReadStats([header([sqlServerRead().at(-3)])]) });
+  assert.deepEqual([rules.catalog.status, rules.catalog.causes], ['degraded', ['rules-assumed']]);
+});
+
+test('the catalog axis names the remedy of the cause at hand, and none where the causes differ or none is known', () => {
+  const axis = (causes) => axisRemedies({ catalog: { status: 'degraded', reason: 'r', causes } }).catalog;
+  assert.equal(axis(['tables-unread']), null, 'no single fix is known for a table the grammar could not read');
+  assert.deepEqual(axis(['rules-assumed']), { action: 'declare', key: 'sqlDialects', example: '{ "main": "postgres" }' });
+  assert.equal(axis(['typeorm-names-heuristic']).key, 'tsBackend.typeorm');
+  assert.equal(axis(['tables-unread', 'rules-assumed']), null, 'two causes, no one fix');
+  assert.equal(axis(['typeorm-names-heuristic', 'rules-assumed']), null);
+  assert.equal(axis([]), null, 'a degraded catalog that names no cause gets no guess');
+  // The column axis follows the catalog's fix only where the catalog has one.
+  const both = axisRemedies({ catalog: { status: 'degraded', reason: 'r', causes: ['rules-assumed'] }, column: { status: 'degraded', reason: 'r' } });
+  assert.deepEqual(both.column, both.catalog);
+});
+
+test('what changes nothing is a note: IF EXISTS on a column that is not there, and a parse that stopped only where no table changes', () => {
+  assert.equal(CATALOG_CODES.alter_if_exists_absent.gap, null);
+  assert.equal(CATALOG_CODES.parse_error_not_held.gap, null);
+  assert.equal(CATALOG_CODES.parse_error.gap, 'catalog-read-in-part', 'a stop where an ALTER or a RENAME was is still a gap');
+  const s = catalogReadStats([header([
+    said('info', 'alter_if_exists_absent', 't', 'm.sql drops t.zz IF EXISTS, which is not there; nothing changes, as the database changes nothing'),
+    said('info', 'parse_error_not_held', null, 'full parse of schema.sql failed, salvaging with error_level=IGNORE: x. The 2 statement(s) it could not read as written, the first at line 1, declare and change no table, except a CREATE TABLE named on its own, so the catalog may have lost nothing by them'),
+  ])]);
+  assert.deepEqual(s.gaps, {}, 'neither counts as a table read in part');
+  assert.deepEqual(s.codes.map((c) => c.kind), ['CATALOG_FILE_PART_NOT_HELD', 'CATALOG_IF_EXISTS_ABSENT']);
+});
+
+// ---------------------------------------------------------------------------
 // no digest moves
 // ---------------------------------------------------------------------------
 
@@ -281,4 +329,25 @@ test('a catalog read back from its cache still says what its reader could not re
   assert.equal(warm.pack.digest, cold.pack.digest);
   assert.match(warm.stderr, /\[warn\] CATALOG_CREATE_TABLE_UNREADABLE catalog: 2 CREATE TABLE statement\(s\) could not be read, so their tables are not in the catalog or are in it only in part \(b, d\)\./,
     'the run says it on a warm run too, where the reader did not run');
+  // RM67-C6: the axis says it too, on both runs, and the overview names no fix for two causes at once.
+  assert.deepEqual([cold.pack.meta.axes.catalog.status, cold.pack.meta.axes.catalog.causes], ['degraded', ['tables-unread', 'rules-assumed']]);
+  assert.deepEqual(warm.pack.meta.axes.catalog, cold.pack.meta.axes.catalog);
+});
+
+test('a statement the grammar library fails on is named, and the run goes on to its pack', (t) => {
+  // RM67-C6: MySQL's grammar raises AttributeError on SQL Server's ON [PRIMARY]; `cascade analyze` exited 1 with a stack trace.
+  if (!sqlLaneVenv().ok) { t.skip('no SQL lane interpreter: build one with `node bin/cascade.mjs setup`'); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-c6-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'schema.sql'), 'CREATE TABLE a (id INT NOT NULL, PRIMARY KEY (id));\nCREATE TABLE [dbo].[b] ([id] bigint NOT NULL) ON [PRIMARY];\n');
+  const { pack, stderr } = analyzeOnce(repo, path.join(dir, 'out'), dir);
+  assert.equal(/Traceback/.test(stderr), false, stderr);
+  assert.ok(pack.nodes.some((n) => n.id === 'table:a' && !n.stub), 'the table the grammar read is in the catalog');
+  const cat = pack.meta.laneStats.catalog;
+  assert.deepEqual(cat.codes.find((c) => c.code === 'create_table_unreadable').tables, ['[dbo].[b]']);
+  // The sentence names the AttributeError (adapters/sql/test_catalog_ddl.py holds it whole); the pack keeps its first 300 characters.
+  assert.deepEqual(cat.codes.filter((c) => c.code.startsWith('parse_error')).map((c) => [c.code, c.level, c.gap]), [['parse_error_not_held', 'info', null]]);
+  assert.equal(pack.meta.axes.catalog.status, 'degraded');
 });

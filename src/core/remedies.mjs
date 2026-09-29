@@ -98,11 +98,17 @@ export const DIAGNOSTIC_REMEDIES = Object.freeze({
  * `onlyCauses` holds a fix only when every cause the axis names (`causes`) is
  * one of these: a web axis degraded by nothing but a port on this machine no
  * file states is made whole by declaring that port, and one degraded by
- * anything else has no single fix.
+ * anything else has no single fix. A list is one fix per cause, the first whose
+ * causes hold (RM67-C6): a catalog degraded by an assumed database is fixed by
+ * declaring it, one degraded by TypeORM names by the TypeORM settings, one that
+ * lost tables by nothing the engine knows, and one with two causes by no one fix.
  */
 export const AXIS_REMEDIES = Object.freeze({
   'catalog:not-shipped': CATALOG_FETCH,
-  'catalog:degraded': { action: 'declare', key: 'tsBackend.typeorm' },
+  'catalog:degraded': [
+    { action: 'declare', key: 'tsBackend.typeorm', onlyCauses: ['typeorm-names-heuristic'] },
+    { action: 'declare', key: 'sqlDialects', onlyCauses: ['rules-assumed'] },
+  ],
   'statements:not-shipped': { action: 'flag', flag: '--mappers', example: '--mappers <dir>' },
   'code:not-shipped': JAVA_SRC,
   'web:not-shipped': { action: 'flag', flag: '--web-src', example: '--web-src <dir>' },
@@ -163,6 +169,12 @@ function causedOnlyBy(entry, axis) {
   return causes.length > 0 && causes.every((c) => entry.onlyCauses.includes(c));
 }
 
+/** An axis state's fix: the first alternative whose causes hold for this axis, resolved; null when none does. */
+function fixFor(entry, axis) {
+  const found = [].concat(entry ?? []).find((e) => causedOnlyBy(e, axis));
+  return found ? resolve(found) : null;
+}
+
 /**
  * A remedy per axis that is not whole (degraded or not-shipped), null where the
  * engine knows none. A whole axis has no entry.
@@ -172,7 +184,7 @@ export function axisRemedies(axes) {
   const out = {};
   const statusOf = (axis) => axes && axes[axis] && axes[axis].status;
   const broken = (axis) => ['degraded', 'not-shipped'].includes(statusOf(axis));
-  const own = (axis) => (causedOnlyBy(AXIS_REMEDIES[`${axis}:${statusOf(axis)}`], axes[axis]) ? resolve(AXIS_REMEDIES[`${axis}:${statusOf(axis)}`]) : null);
+  const own = (axis) => fixFor(AXIS_REMEDIES[`${axis}:${statusOf(axis)}`], axes[axis]);
   for (const axis of Object.keys(axes || {}).filter(broken)) {
     const entry = AXIS_REMEDIES[`${axis}:${statusOf(axis)}`];
     const from = entry && entry.follows ? entry.follows.find((x) => broken(x) && own(x)) : null;

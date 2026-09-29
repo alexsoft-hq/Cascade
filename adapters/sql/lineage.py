@@ -210,7 +210,7 @@ def build_schema_index(catalog_records, identifier_case=EXACT, diagnostics=None)
         collisions.append({"kind": what, "key": key, "kept": kept,
                            "dropped": dropped})
         _diag(diagnostics, "warn", "folded_identifier_collision",
-              "%s %r and %r both fold to %r under identifier case %r — the "
+              "%s %r and %r both fold to %r under identifier case %r; the "
               "first declaration is kept and the second is NOT merged into it"
               % (what, kept, dropped, key, identifier_case),
               table=kept)

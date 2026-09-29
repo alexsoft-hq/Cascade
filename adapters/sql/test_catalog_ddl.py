@@ -272,10 +272,10 @@ class NamedConstraintPrimaryKeyTests(unittest.TestCase):
     def test_the_worker_version_says_which_generation_produced_this(self):
         # A shard key folds this string in, so a /2 shard can never be reused
         # for a /3 answer (SPEC §17.7).
-        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/12")
+        self.assertEqual(catalog_ddl.CATALOG_VERSION, "catalog-ddl/13")
         self.assertEqual(
             catalog_ddl.parse_ddl_catalog(self.HSQLDB_DDL)[0]["version"],
-            "catalog-ddl/12",
+            "catalog-ddl/13",
         )
 
 
@@ -407,10 +407,13 @@ class RobustnessTests(unittest.TestCase):
         self.assertGreaterEqual(len(diagnostics), 1)
         for d in diagnostics:
             self.assertEqual(set(d.keys()), {"level", "code", "table", "message"})
-            self.assertEqual(d["level"], "warn")
+            self.assertEqual(d["level"], "info" if d["code"] == "parse_error_not_held" else "warn")
 
+        # The parse stopped at a CREATE TABLE with no name, which is named on its own (unnamed_table), and at
+        # garbage that changes no table: a note (RM67-C6), not a table read in part.
         codes = {d["code"] for d in diagnostics}
-        self.assertIn("parse_error", codes)
+        self.assertIn("parse_error_not_held", codes)
+        self.assertIn("unnamed_table", codes)
 
 
 class UntokenizableFileTests(unittest.TestCase):
@@ -1126,7 +1129,7 @@ class Review3ClauseTests(unittest.TestCase):
         cols, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t MODIFY COLUMN IF EXISTS zz BIGINT;")],
                                      "mysql", "mariadb")
         self.assertEqual(sorted(cols), [("t", "c"), ("t", "id")], "IF EXISTS adds nothing that is not there")
-        self.assertIn("IF EXISTS", " ".join(_codes(diagnostics, "alter_unknown_column")))
+        self.assertIn("IF EXISTS", " ".join(_codes(diagnostics, "alter_if_exists_absent")))
 
     def test_a_column_option_the_grammar_splits_off_is_named_as_written(self):
         cols, diagnostics = _fold_files([("m.sql", "CREATE TABLE t (id INT PRIMARY KEY, c INT);\n"
@@ -1635,6 +1638,138 @@ class HeaderDiagnosticsTests(unittest.TestCase):
         said = _codes(diagnostics, "DUPLICATE_TABLE_DECLARATION")
         self.assertEqual(len(said), 1)
         self.assertNotIn(chr(0x2014), said[0])
+
+
+def _grammar_fails_on(marker):
+    """sqlglot's parser failing on every statement that names ``marker`` the way it fails on MySQL's reading of
+    SQL Server's ``ON [PRIMARY]``: an AttributeError from inside it, not a ParseError. Every place the reader
+    parses goes through this one method, so every one of them meets it."""
+    from unittest import mock
+    from sqlglot.parser import Parser
+    original = Parser.parse
+
+    def parse(self, raw_tokens, sql=None):
+        if any(t.text.lower() == marker for t in raw_tokens):
+            raise AttributeError("'NoneType' object has no attribute 'name'")
+        return original(self, raw_tokens, sql)
+    return mock.patch.object(Parser, "parse", parse)
+
+
+class GrammarFailureTests(unittest.TestCase):
+    """A statement the grammar library fails on is a statement not read, never the end of the run."""
+
+    SQLSERVER = ("CREATE TABLE a (id INT NOT NULL, PRIMARY KEY (id));\n"
+                 "CREATE TABLE [dbo].[b] ([id] bigint NOT NULL) ON [PRIMARY];\n"
+                 "CREATE TABLE c (id INT NOT NULL);\n")
+
+    def test_sql_server_on_primary_read_as_mysql_is_named_and_the_rest_is_read(self):
+        # sqlglot raises AttributeError on this statement with errors ignored; the whole run used to end there.
+        tables, _, diagnostics = _tables([("s.sql", self.SQLSERVER)], "mysql", "mysql", "fold-lower")
+        self.assertEqual(tables, ["a", "c"], diagnostics)
+        self.assertEqual([d["table"] for d in diagnostics if d["code"] == "create_table_unreadable"], ["[dbo].[b]"])
+        parse = [d for d in diagnostics if d["code"].startswith("parse_error")]
+        self.assertEqual(len(parse), 1, diagnostics)
+        self.assertIn("the grammar failed on 1 statement(s) outright (AttributeError, the first at line 2)",
+                      parse[0]["message"])
+
+    def test_the_command_line_reads_it_and_exits_zero(self):
+        rc, recs, said = _run_main(["--database-assumed"], self.SQLSERVER)
+        self.assertEqual(rc, 0)
+        self.assertEqual(sorted(r["table"] for r in recs if r["kind"] == "table"), ["a", "c"])
+        self.assertEqual(recs[0]["diagnostics"], said)
+
+    def test_every_place_the_reader_parses_goes_on_past_a_statement_the_grammar_fails_on(self):
+        base = "CREATE TABLE a (id INT NOT NULL, c INT, PRIMARY KEY (id));\n"
+        with _grammar_fails_on("boom"):
+            # A CREATE TABLE: named, the table it declares is not in the catalog.
+            tables, _, diagnostics = _tables([("s.sql", base + "CREATE TABLE b (boom INT);\nCREATE TABLE d (x INT);\n")],
+                                             "mysql", "mysql", "fold-lower")
+            self.assertEqual(tables, ["a", "d"], diagnostics)
+            self.assertEqual([d["table"] for d in diagnostics if d["code"] == "create_table_unreadable"], ["b"])
+            # An ALTER: read again as text, and named when that cannot read it either.
+            tables, cols, diagnostics = _tables([("s.sql", base + "ALTER TABLE a ADD boom INT;\nCREATE TABLE d (x INT);\n")],
+                                                "mysql", "mysql", "fold-lower")
+            self.assertEqual(tables, ["a", "d"], diagnostics)
+            self.assertEqual(len(_codes(diagnostics, "alter_unreadable")), 1, diagnostics)
+            self.assertEqual(_codes(diagnostics, "parse_error_not_held"), [], "an ALTER may change a table")
+            self.assertIn("ALTER", " ".join(_codes(diagnostics, "parse_error")))
+            # A RENAME: read as text, as every RENAME the grammar keeps as text is.
+            tables, _, diagnostics = _tables([("s.sql", base + "RENAME TABLE a TO boom;\n")], "mysql", "mysql", "fold-lower")
+            self.assertEqual(tables, ["boom"], diagnostics)
+            # A statement that declares and changes no table: said, and it costs the catalog nothing.
+            tables, _, diagnostics = _tables([("s.sql", base + "INSERT INTO a VALUES (boom);\n")], "mysql", "mysql",
+                                             "fold-lower")
+            self.assertEqual(tables, ["a"], diagnostics)
+            self.assertEqual([(d["level"], d["code"]) for d in diagnostics], [("info", "parse_error_not_held")])
+            # A file the tokenizer cannot read whole, read one statement at a time: that one is named too.
+            tables, _, diagnostics = _tables([("s.sql", base + "CREATE TABLE b (boom INT);\nSELECT 'never closed\n")],
+                                             "mysql", "mysql", "fold-lower")
+            self.assertEqual(tables, ["a"], diagnostics)
+            self.assertIn("CREATE TABLE b", " ".join(_codes(diagnostics, "token_error")))
+
+
+    def test_a_stop_the_reader_cannot_place_stays_a_warning(self):
+        # The parse that stops at errors fails with no place, and the one that reads past them finds nothing:
+        # where it stopped is not known, so it is not known to cost nothing.
+        from unittest import mock
+        import sqlglot
+        from sqlglot.parser import Parser
+        original = Parser.parse
+
+        def parse(self, raw_tokens, sql=None):
+            if self.error_level != sqlglot.ErrorLevel.IGNORE and any(t.text.lower() == "boom" for t in raw_tokens):
+                raise AttributeError("'NoneType' object has no attribute 'name'")
+            return original(self, raw_tokens, sql)
+        with mock.patch.object(Parser, "parse", parse):
+            tables, _, diagnostics = _tables([("s.sql", "CREATE TABLE a (id INT);\nINSERT INTO a VALUES (boom);\n")],
+                                             "mysql", "mysql", "fold-lower")
+        self.assertEqual(tables, ["a"])
+        self.assertEqual([(d["level"], d["code"]) for d in diagnostics], [("warn", "parse_error")], diagnostics)
+
+
+class OverReportTests(unittest.TestCase):
+    """What changes nothing is not said as a table read in part."""
+
+    def test_if_exists_on_a_column_that_is_not_there_is_a_note_with_its_own_code(self):
+        base = "CREATE TABLE t (id INT NOT NULL, c INT, PRIMARY KEY (id));\n"
+        for alter, dialect, database in (("ALTER TABLE t DROP COLUMN IF EXISTS zz;", "postgres", "postgres"),
+                                         ("ALTER TABLE t MODIFY COLUMN IF EXISTS zz BIGINT;", "mysql", "mariadb")):
+            cols, diagnostics = _fold_db([("s.sql", base + alter)], dialect, database)
+            self.assertEqual(sorted(cols), [("t", "c"), ("t", "id")], alter)
+            self.assertEqual([(d["level"], d["code"], d["table"]) for d in diagnostics],
+                             [("info", "alter_if_exists_absent", "t")], alter)
+            self.assertIn("zz IF EXISTS, which is not there; nothing changes", diagnostics[0]["message"])
+        # Without IF EXISTS the database would refuse it: still a warning of its own code.
+        _, diagnostics = _fold_db([("s.sql", base + "ALTER TABLE t DROP COLUMN zz;")], "postgres", "postgres")
+        self.assertEqual([(d["level"], d["code"]) for d in diagnostics], [("warn", "alter_unknown_column")])
+
+    def test_a_parse_that_stopped_only_on_statements_the_catalog_holds_nothing_of_is_a_note(self):
+        # spring-petclinic's H2 schema: DROP TABLE t IF EXISTS stops the standard grammar, and costs nothing.
+        h2 = "DROP TABLE vets IF EXISTS;\nDROP TABLE pets IF EXISTS;\nCREATE TABLE vets (id INTEGER PRIMARY KEY);\n"
+        tables, _, diagnostics = _tables([("schema.sql", h2)], "", "h2", "fold-upper")
+        self.assertEqual(tables, ["vets"])
+        self.assertEqual([(d["level"], d["code"]) for d in diagnostics], [("info", "parse_error_not_held")])
+        said = diagnostics[0]["message"]
+        self.assertTrue(said.startswith("full parse of schema.sql failed, salvaging with error_level=IGNORE: "), said)
+        self.assertIn("2 statement(s) it could not read as written, the first at line 1, declare and change no table",
+                      said)
+        self.assertIn("so the catalog may have lost nothing by them", said)
+        # A script cut by GO: the tables in it are named on their own, and nothing else in it changes one.
+        go = "DROP TABLE IF EXISTS a\nGO\nCREATE TABLE a (id int)\nGO\nEXEC sp_addextendedproperty 'x'\nGO\n"
+        tables, _, diagnostics = _tables([("s.sql", go)], "mysql", "mysql", "fold-lower")
+        self.assertEqual([d["code"] for d in diagnostics], ["parse_error_not_held", "create_table_unread"], diagnostics)
+
+    def test_a_parse_that_stopped_on_an_alter_may_have_lost_what_it_changes_and_says_so(self):
+        base = "CREATE TABLE a (id INT NOT NULL, c INT, PRIMARY KEY (id));\n"
+        tables, cols, diagnostics = _tables([("s.sql", base + "ALTER TABLE a ADD d INT ON [PRIMARY];\n")], "mysql",
+                                            "mysql", "fold-lower")
+        parse = [d for d in diagnostics if d["code"].startswith("parse_error")]
+        self.assertEqual([(d["level"], d["code"]) for d in parse], [("warn", "parse_error")], diagnostics)
+        self.assertIn("an ALTER or a RENAME at line 2 among what it could not read as written", parse[0]["message"])
+        # A GO script with an ALTER in it: the ALTER is not read, and that is not said anywhere else.
+        go = "DROP TABLE IF EXISTS a\nGO\nALTER TABLE a ADD d INT\nGO\n"
+        _, _, diagnostics = _tables([("s.sql", base + go)], "mysql", "mysql", "fold-lower")
+        self.assertEqual([d["code"] for d in diagnostics if d["code"].startswith("parse_error")], ["parse_error"])
 
 
 if __name__ == "__main__":

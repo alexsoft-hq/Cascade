@@ -1111,6 +1111,8 @@
   "diag.title.CATALOG_CREATE_TABLE_UNREADABLE": "스키마에서 읽지 못한 CREATE TABLE",
   "diag.title.CATALOG_FILE_NOT_PARSED": "오류를 건너뛰며 읽은 스키마 파일",
   "diag.title.CATALOG_FILE_NOT_TOKENIZED": "통째로 읽지 못해 다른 방식으로 읽은 스키마 파일",
+  "diag.title.CATALOG_FILE_PART_NOT_HELD": "건너뛰었지만 카탈로그와 상관없는 스키마 부분",
+  "diag.title.CATALOG_IF_EXISTS_ABSENT": "없는 컬럼에 붙은 IF EXISTS 변경",
   "diag.title.CATALOG_MODIFY_UNSAID_UNKNOWN": "MODIFY가 컬럼 일부를 적지 않음",
   "diag.title.CATALOG_OTHER_NOTE": "스키마를 읽으며 남긴 다른 메모",
   "diag.title.CATALOG_PARENT_TABLE_UNKNOWN": "선언되지 않은 테이블을 상속한 테이블",

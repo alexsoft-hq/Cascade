@@ -217,20 +217,21 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
 
   sayOpenApiLane(openapiStats);
 
+  // What the schema reader could not read or had to assume, from the catalog's
+  // header, so a catalog read back from its cache says it too (RM67-C5), and
+  // the catalog axis is degraded by it (RM67-C6).
+  const catalogRead = catalogReadStats(catalog);
   const axes = declareAxes(
     {
       ddl: ddls.length > 0 || !!snapshot, statements: mappers.length > 0, code: javaSrc.length > 0 || !!tsStats,
       // The Java bridge's own stats, so a SHIPPED code axis can still declare
       // the one gap in it a reader can act on (RM35 §G: a wildcard import
       // naming a package of this project that no analyzed root holds).
-      java: jstats,
+      java: jstats, catalogRead,
       jpa: jpaStats, mybatisPlus: mpStats, ts: tsStats, web: webStats, openapi: openapiStats, har: harStats,
     },
     { screenAxisRequested: screenGate.enabled, screenAxisReason: screenGate.reason },
   );
-  // What the schema reader could not read or had to assume, from the catalog's
-  // header, so a catalog read back from its cache says it too (RM67-C5).
-  const catalogRead = catalogReadStats(catalog);
   diagnostics.push(...pinMoved(manifest, base, root), ...catalogDiagnostics(catalogRead));
   for (const d of diagnostics) process.stderr.write(`  [${d.severity}] ${d.kind} ${d.key}: ${d.reason}\n`);
 

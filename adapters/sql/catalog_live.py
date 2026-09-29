@@ -249,7 +249,7 @@ def fetch_catalog(cursor_factory, dialect, schema, stamp_schema=None,
     if dialect not in DIALECTS:
         raise CatalogLiveError(
             "bad-input",
-            "unknown dialect %r — expected one of %s" % (dialect, ", ".join(DIALECTS)),
+            "unknown dialect %r; expected one of %s" % (dialect, ", ".join(DIALECTS)),
         )
     cur = cursor_factory()
     if dialect == "mysql":
@@ -442,8 +442,8 @@ def connect(dialect, host, port, database, user, password, diagnostics=None):
         raise CatalogLiveError(
             "db-driver-missing",
             "the %s driver is not installed: %s. Install it with "
-            "`pip install %s` (the live catalog drivers are OPTIONAL — see "
-            "adapters/sql/requirements.txt)" % (dialect, e, pip_name),
+            "`pip install %s` (the live catalog drivers are optional, and "
+            "adapters/sql/requirements.txt lists them)" % (dialect, e, pip_name),
         )
 
     try:
@@ -542,7 +542,7 @@ def main(argv=None):
         sys.stderr.write(_emit({
             "level": "error", "code": "bad-input",
             "message": "the environment variable %s holds no password. The "
-                       "password is read from the environment ONLY — never from "
+                       "password is read from the environment only, never from "
                        "the command line, where `ps` would show it." % args.password_env,
         }) + "\n")
         return 2

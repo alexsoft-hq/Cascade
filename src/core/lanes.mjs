@@ -30,6 +30,7 @@
 import path from 'node:path';
 import { sqlDialectOf, sqlIdentifierCaseOf, DEFAULT_SQL_DIALECT } from './profile.mjs';
 import { ddlDialectTokenOf, SCREEN_PACKS } from './discover.mjs';
+import { catalogAxisCauses } from './catalog_read.mjs';
 
 /**
  * THE SCREEN AXIS SWITCH, in three states. PURE.
@@ -690,9 +691,12 @@ function catalogNotes(prisma) {
  * THE CATALOG AXIS, one rule for every source: a DDL, a snapshot, schema.prisma
  * or the TypeORM entities. It ships when every table and column name they give
  * is written in the source or follows a rule this run knows applies, naming a
- * mapping that declared them in `sources`; it is degraded, with the reason,
- * when a name had to be derived by a rule the run assumed. Where schema.prisma
- * and the SQL catalog disagree, a note says where to find the list.
+ * mapping that declared them in `sources`; it is degraded, with the reason and
+ * each cause, when a name had to be derived by a rule the run assumed, or when
+ * the schema reader lost tables or read by a database it assumed (RM67-C6:
+ * ruoyi-vue-pro's SQL Server schema read as MySQL gave 0 of 60 tables and the
+ * axis said shipped). Where schema.prisma and the SQL catalog disagree, a note
+ * says where to find the list.
  */
 function catalogAxis(ran) {
   const prisma = prismaCatalogOf(ran);
@@ -703,8 +707,12 @@ function catalogAxis(ran) {
   const sources = catalogSources(prisma, typeorm);
   const notes = catalogNotes(prisma);
   const noted = { ...(sources.length > 0 ? { sources } : {}), ...(notes.length > 0 ? { notes } : {}) };
-  if (typeorm && typeorm.heuristicNames > 0) return { status: 'degraded', reason: typeormAssumedReason(typeorm), ...noted };
-  return { status: 'shipped', reason: null, ...noted };
+  const causes = [
+    ...(typeorm && typeorm.heuristicNames > 0 ? [{ cause: 'typeorm-names-heuristic', reason: typeormAssumedReason(typeorm) }] : []),
+    ...catalogAxisCauses(ran.catalogRead),
+  ];
+  if (causes.length === 0) return { status: 'shipped', reason: null, ...noted };
+  return { status: 'degraded', reason: causes.map((c) => c.reason).join('. '), causes: causes.map((c) => c.cause), ...noted };
 }
 
 /**

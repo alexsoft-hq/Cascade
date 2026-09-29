@@ -222,15 +222,21 @@ function stripPyComments(src) {
   let i = 0;
   const n = src.length;
   let lineHasCode = false;
+  // Open brackets, and a line ended by a backslash: a string that starts the
+  // next line then CONTINUES a statement (the second half of an implicitly
+  // joined message), and it is printed like the first.
+  let depth = 0;
+  let continued = false;
   while (i < n) {
     const c = src[i];
-    if (c === '\n') { out += c; lineHasCode = false; i++; continue; }
+    if (c === '\\' && src[i + 1] === '\n') { out += '\\\n'; continued = true; lineHasCode = false; i += 2; continue; }
+    if (c === '\n') { out += c; lineHasCode = false; continued = false; i++; continue; }
     if (c === '#') { while (i < n && src[i] !== '\n') i++; continue; }
     if (c === '"' || c === "'") {
       const q = src.slice(i, i + 3) === c.repeat(3) ? c.repeat(3) : c;
       // A string that OPENS a statement is a docstring: prose about the code,
       // not something the code prints.
-      const docstring = !lineHasCode;
+      const docstring = !lineHasCode && depth === 0 && !continued;
       let body = q;
       i += q.length;
       while (i < n) {
@@ -244,6 +250,8 @@ function stripPyComments(src) {
       continue;
     }
     out += c;
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth = Math.max(0, depth - 1);
     if (!/\s/.test(c)) lineHasCode = true;
     i++;
   }
@@ -386,6 +394,25 @@ test('the web worker is English, carries no NUL byte, and the vendored parser is
   // The parser is present and is NOT one of the files above.
   assert.ok(fs.existsSync(path.join(dir, 'vendor', 'babel-parser.cjs')),
     'the vendored parser must be here; the exclusion is only meaningful because there is something to exclude');
+});
+
+test('a Python string that continues a statement is checked; only a docstring and a comment are skipped', () => {
+  // RM67-C6: the second half of an implicitly joined message starts its own
+  // line, and was taken for a docstring, so its em dash went unseen.
+  const src = [
+    'def f(x):',
+    '    """A docstring \u2014 prose about the code."""',
+    '    # a comment \u2014 about it',
+    '    raise ValueError("first half, "',
+    '                     "second half \u2014 printed")',
+    '    y = {"k":',
+    '         "a value \u2014 printed"}',
+    '    z = "one " \\',
+    '        "two \u2014 printed"',
+    '    """A string statement \u2014 not printed."""',
+  ].join('\n');
+  const kept = stripPyComments(src).split('\n');
+  assert.deepEqual(kept.map((l, i) => (l.includes('\u2014') ? i + 1 : null)).filter(Boolean), [5, 7, 9]);
 });
 
 test('the dash allowlist stays honest: every entry is still in its file', () => {

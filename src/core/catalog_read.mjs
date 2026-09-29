@@ -71,7 +71,7 @@ export const CATALOG_CODES = Object.freeze({
   },
   parse_error: {
     kind: 'CATALOG_FILE_NOT_PARSED', gap: 'catalog-read-in-part', key: 'catalog',
-    what: 'file(s) failed to parse as a whole, and were read with errors ignored',
+    what: 'file(s) failed to parse as a whole, and were read with errors ignored; what they could not read holds an ALTER or a RENAME, or the reader could not tell where it stopped',
   },
   alter_unreadable: {
     kind: 'CATALOG_ALTER_UNREADABLE', gap: 'catalog-read-in-part', key: 'catalog',
@@ -108,6 +108,16 @@ export const CATALOG_CODES = Object.freeze({
   alter_clause_unsupported: {
     kind: 'CATALOG_CLAUSE_NOT_HELD', gap: null, key: 'catalog',
     what: 'ALTER clause(s) change nothing the catalog holds (an index, a foreign key, a default), and were not applied',
+  },
+  // RM67-C6: a parse that stopped only in statements that declare and change no
+  // table, and IF EXISTS on a column that is not there, cost the catalog nothing.
+  parse_error_not_held: {
+    kind: 'CATALOG_FILE_PART_NOT_HELD', gap: null, key: 'catalog',
+    what: 'file(s) failed to parse as a whole and were read with errors ignored, but what they could not read declares and changes no table, except a CREATE TABLE named on its own, so the catalog may have lost nothing by it',
+  },
+  alter_if_exists_absent: {
+    kind: 'CATALOG_IF_EXISTS_ABSENT', gap: null, key: 'catalog',
+    what: 'ALTER clause(s) with IF EXISTS name a column the table does not have as read here, so nothing changes, as in the database',
   },
   create_clause_not_held: {
     kind: 'CATALOG_CREATE_CLAUSE_NOT_HELD', gap: null, key: 'catalog',
@@ -208,6 +218,32 @@ export function namedTables(c, shown = 3) {
   if (first.length === 0) return '';
   const more = (c.tablesNamed ?? first.length) - first.length;
   return more > 0 ? `${first.join(', ')}, and ${more} more` : first.join(', ');
+}
+
+/**
+ * WHAT DEGRADES THE CATALOG AXIS (RM67-C6): tables the reader lost, and rules of
+ * a database it assumed. A table read in part is a gap of the overview and
+ * leaves the axis whole; the causes are what src/core/remedies.mjs keys a fix on.
+ */
+const AXIS_CAUSES = Object.freeze([
+  {
+    cause: 'tables-unread', gap: 'catalog-tables-unread',
+    reason: (n, named) => `${n} table(s) the schema files declare are not in the catalog, or are in it only in part, because the schema reader could not read their CREATE TABLE${named}. `
+      + 'A statement that names one still reaches a table of that name, with only the columns it names; the list is on meta.laneStats.catalog',
+  },
+  {
+    cause: 'rules-assumed', gap: 'catalog-rules-assumed',
+    reason: (n) => `${n} conclusion(s) about the schema rest on a rule of a database this run assumed, because sqlDialects.main is not declared`,
+  },
+]);
+
+/** The causes the catalog axis is degraded by, each with its sentence; none when the reader lost nothing, or kept no list. */
+export function catalogAxisCauses(stats) {
+  const gaps = stats?.gaps ?? {};
+  return AXIS_CAUSES.filter((c) => (gaps[c.gap] ?? 0) > 0).map((c) => {
+    const names = [...new Set(stats.codes.filter((x) => x.gap === c.gap).flatMap((x) => x.tables ?? []))].slice(0, 3);
+    return { cause: c.cause, reason: c.reason(gaps[c.gap], names.length > 0 ? `, among them ${names.join(', ')}` : '') };
+  });
 }
 
 /** One code's sentence: how many, what one means, which tables, and the first as the reader said it. */

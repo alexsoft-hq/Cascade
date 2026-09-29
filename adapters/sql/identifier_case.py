@@ -120,7 +120,7 @@ def fold_identifier(name, case):
     """
     if case not in IDENTIFIER_CASES:
         raise IdentifierCaseError(
-            "unknown identifier case %r — expected one of %s"
+            "unknown identifier case %r; expected one of %s"
             % (case, ", ".join(IDENTIFIER_CASES))
         )
     if name is None or case == EXACT:
@@ -139,7 +139,7 @@ def sqlglot_dialect(dialect, case):
     """
     if case not in IDENTIFIER_CASES:
         raise IdentifierCaseError(
-            "unknown identifier case %r — expected one of %s"
+            "unknown identifier case %r; expected one of %s"
             % (case, ", ".join(IDENTIFIER_CASES))
         )
     return "%s,normalization_strategy=%s" % (

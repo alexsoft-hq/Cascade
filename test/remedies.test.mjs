@@ -57,7 +57,7 @@ function atPath(keyPath, value) {
 // ---------------------------------------------------------------------------
 
 test('every key a remedy declares is a profile key, and its example is a value the profile validator accepts', () => {
-  const declared = [...Object.values(GAP_REMEDIES), ...Object.values(DIAGNOSTIC_REMEDIES), ...Object.values(AXIS_REMEDIES)]
+  const declared = [...Object.values(GAP_REMEDIES), ...Object.values(DIAGNOSTIC_REMEDIES), ...Object.values(AXIS_REMEDIES).flat()]
     .filter((r) => r.action === 'declare' && typeof r.key === 'string').map((r) => r.key);
   assert.ok(declared.includes('tsBackend.globalPrefixExclude'));
   for (const key of new Set([...declared, ...Object.keys(REMEDY_EXAMPLES)])) {
@@ -70,13 +70,13 @@ test('every key a remedy declares is a profile key, and its example is a value t
   }
   // Review 4, S-2: a TypeORM catalog is degraded as much by a driver the run could not read as by a
   // naming strategy, and the example beside it shows the key for the driver too.
-  assert.equal(AXIS_REMEDIES['catalog:degraded'].key, 'tsBackend.typeorm');
+  assert.equal(AXIS_REMEDIES['catalog:degraded'].find((r) => r.onlyCauses.includes('typeorm-names-heuristic')).key, 'tsBackend.typeorm');
   assert.equal(typeof JSON.parse(REMEDY_EXAMPLES['tsBackend.typeorm']).type, 'string');
 });
 
 test('every flag a remedy names is one `cascade analyze` has, and every command is a real subcommand with that flag', () => {
   const analyze = commandUsage('analyze');
-  const all = [...Object.values(GAP_REMEDIES), ...Object.values(DIAGNOSTIC_REMEDIES), ...Object.values(AXIS_REMEDIES)];
+  const all = [...Object.values(GAP_REMEDIES), ...Object.values(DIAGNOSTIC_REMEDIES), ...Object.values(AXIS_REMEDIES).flat()];
   for (const r of all.filter((x) => x.action === 'flag')) {
     assert.ok(analyze.includes(`${r.flag} `), `cascade analyze has no ${r.flag}`);
     assert.ok(r.example.startsWith(`${r.flag} `), `${r.flag}: the example shows the flag with its argument`);

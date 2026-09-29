@@ -1437,6 +1437,8 @@ export const VIEWER_STRINGS = {
     'diag.title.CATALOG_CREATE_TABLE_UNREADABLE': 'CREATE TABLE statements the schema reader could not read',
     'diag.title.CATALOG_FILE_NOT_PARSED': 'a schema file read with its errors skipped',
     'diag.title.CATALOG_FILE_NOT_TOKENIZED': 'a schema file that could not be read whole',
+    'diag.title.CATALOG_FILE_PART_NOT_HELD': 'schema file parts skipped, none the catalog holds',
+    'diag.title.CATALOG_IF_EXISTS_ABSENT': 'IF EXISTS changes to a column that is not there',
     'diag.title.CATALOG_MODIFY_UNSAID_UNKNOWN': 'MODIFY leaves part of a column unsaid',
     'diag.title.CATALOG_OTHER_NOTE': 'another note from the schema reader',
     'diag.title.CATALOG_PARENT_TABLE_UNKNOWN': 'a table inherits from one no file declared',
