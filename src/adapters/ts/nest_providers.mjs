@@ -29,6 +29,7 @@
 // `nestjs.providers`).
 
 import { fieldOf } from './project.mjs';
+import { itemsOf } from '../../core/rules/kinds/ts_names.mjs';
 import { frameworkName, isPackageModule, moduleClassOf, viewsOf } from './nest_routes.mjs';
 
 const MAX_MODULES = 2000;
@@ -100,11 +101,16 @@ function dynamicModules(d) {
   return { objs, gaps };
 }
 
-/** A module's imports into the walk: what to walk next, which dynamic modules to read, and each gap. */
+/**
+ * A module's imports into the walk: what to walk next, which dynamic modules
+ * to read, and each gap. A list it spreads that is written out
+ * (`...(on ? [A] : [])`) may load what it holds, which is walked too.
+ */
 function takeImports(project, at, file, list, sink) {
   if (!list) return;
-  if (list.k !== 'arr' || list.spread) sink.gaps.push(`${at}: its imports are not a list this engine can read whole`);
-  for (const v of list.k === 'arr' ? list.v : []) {
+  const { items, whole } = itemsOf(list);
+  if (!whole) sink.gaps.push(`${at}: its imports are not a list this engine can read whole`);
+  for (const v of items) {
     const r = importsOf(project, file, v);
     sink.modules.push(...(r.modules ?? []));
     sink.dynamic.push(...(r.dynamic ?? []));
@@ -113,7 +119,20 @@ function takeImports(project, at, file, list, sink) {
   }
 }
 
-/** One dynamic module into the walk: its imports taken, the objects it returns kept for their providers. */
+/**
+ * The module class a dynamic module names (`{ module: Real, ... }`): Nest
+ * reads that class's own @Module as well as what the object adds, so it is
+ * walked like an import. A `module` this engine cannot name is a gap.
+ */
+function takeModuleKey(project, o, cls, sink) {
+  const v = o.value.v.module;
+  if (!v) return;
+  const named = v.k === 'id' ? project.classOf(o.file, v.v) : null;
+  if (!named) sink.gaps.push(`${o.at}: returns a module whose module class this engine cannot name`);
+  else if (named.key !== cls.key) sink.modules.push(named);
+}
+
+/** One dynamic module into the walk: its imports taken, the class it names walked, the objects it returns kept for their providers. */
 function takeDynamic(project, d, sink, seen) {
   const key = `${d.cls.key}.${d.method}`;
   if (seen.has(key)) return;
@@ -123,6 +142,7 @@ function takeDynamic(project, d, sink, seen) {
   for (const o of objs) {
     sink.objs.push(o);
     if (o.value.spread || o.value.computed) sink.gaps.push(`${o.at}: returns a module this engine cannot read whole`);
+    takeModuleKey(project, o, d.cls, sink);
     takeImports(project, o.at, o.file, o.value.v.imports, sink);
   }
 }
@@ -132,13 +152,15 @@ const holdsDynamicModules = (cls) => [...cls.methods.values()].some((m) => m.sta
 
 /**
  * One module's own declaration into the walk. A class loaded as a module that
- * no @Module this engine reads decorates (a project's own wrapper of it) binds
- * what it likes, unless it only holds the dynamic modules its static methods
- * return, which are read from what those return.
+ * no @Module this engine reads decorates binds what it likes, unless it has no
+ * decorator at all and only holds the dynamic modules its static methods
+ * return, which are read from what those return. A decorator this engine does
+ * not read (a project's own wrapper of @Module) may bind anything, whether the
+ * class is imported whole or through a static method.
  */
 function takeModule(project, mod, decl, sink) {
   if (!decl) {
-    if (!holdsDynamicModules(mod)) sink.gaps.push(`${mod.key}: loaded as a module, and no module decorator this engine reads is on it`);
+    if (!holdsDynamicModules(mod) || (mod.decorators ?? []).length > 0) sink.gaps.push(`${mod.key}: loaded as a module, and no module decorator this engine reads is on it`);
   } else if (!decl.readable) sink.gaps.push(`${mod.key}: its module options are not read`);
   else takeImports(project, mod.key, mod.file, decl.imports, sink);
 }
@@ -270,7 +292,8 @@ function settle(acc, type, unread) {
   const partial = b ? [...b.classes.values()] : [];
   const where = acc.handed.get(type.key);
   if (where) return { reason: `${where}, and a package's module may bind it`, rebound: true, partial };
-  if (acc.gaps.length > 0) return { reason: `${acc.gaps[0]}${acc.gaps.length > 1 ? `, and ${acc.gaps.length - 1} more` : ''}, so one may bind the type`, rebound, partial };
+  // A module or a provider not read may bind the type to anything, a class listed alone included.
+  if (acc.gaps.length > 0) return { reason: `${acc.gaps[0]}${acc.gaps.length > 1 ? `, and ${acc.gaps.length - 1} more` : ''}, so one may bind the type`, rebound, partial, gap: true };
   if (!b) return { reason: 'no module binds the type', rebound, partial };
   if (b.notRead.length > 0) {
     unread.set(type.key, b.notRead);
@@ -344,7 +367,9 @@ export function providerBindings(project, rules, app, subtypesOf) {
     if (why) return { ...why, rebound: byTree.rebound, partial: byTree.partial ?? byTree.classes };
     const byLoaded = loaded && loaded.managed.has(holder.key) ? settle(loaded, type, unread) : null;
     if (byLoaded?.classes) return { ...byLoaded, by: 'loaded' };
-    return byTree.classes ? { ...byTree, by: 'tree' } : byTree;
+    if (byTree.classes) return { ...byTree, by: 'tree' };
+    // The modules the application loads, read whole, leave out any gap elsewhere in the tree.
+    return byLoaded && !byLoaded.gap ? byLoaded : byTree;
   };
   const diagnostics = () => [...unread.entries()].sort().map(([key, how]) => ({
     kind: 'TS_BINDING_NOT_READ',

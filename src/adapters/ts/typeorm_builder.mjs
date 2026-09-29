@@ -10,40 +10,41 @@
 // called on the rows it returns is not the builder's; and at `clone`, whose
 // steps build another builder, which is not read here.
 //
-// A builder whose local goes anywhere else (handed to a call, held in another
-// local or a field, returned) may be given steps this reading does not see, a
+// A builder is read as not going anywhere else only where every use of its
+// local is one this reading recognizes: a call on it whose value is thrown
+// away, or ends in a step that runs the query or makes another builder. The
+// worker records every other use (adapters/ts/tsuses.mjs): handed to a call or
+// a `new`, put in an object or a list, a branch of a condition, held in
+// another local by a step that returns the builder (`const q2 = qb.where()`),
+// returned. Such a builder may be given steps this reading does not see, a
 // select that narrows the rows or a where that replaces the filter: what it
 // reads is then a candidate set that may be short, and it is said
 // (`escaped`).
 
 const strArg = (v) => (v && v.k === 'str' ? v.v : null);
+/** The steps whose value is no longer the builder: one that runs the query, and one that makes another builder. */
+const ENDS = new Set(['rows', 'count', 'clone']);
 
-/** Steps up to and with the first that runs the query, or up to a clone, whose steps are another builder's; `ran` says whether one ran it. */
+/** Steps up to and with the first that runs the query, or up to one that makes another builder (clone, subQuery); `ran` says whether one ran it. */
 function upToTerminal(steps, roleOf) {
-  const i = steps.findIndex((s) => ['rows', 'count', 'clone'].includes(roleOf(s.name)));
+  const i = steps.findIndex((s) => ENDS.has(roleOf(s.name)));
   if (i < 0) return { steps, ran: false };
-  return roleOf(steps[i].name) === 'clone' ? { steps: steps.slice(0, i), ran: false, cloned: true } : { steps: steps.slice(0, i + 1), ran: true };
+  return roleOf(steps[i].name) === 'clone' ? { steps: steps.slice(0, i), ran: false, cloned: steps[i].name } : { steps: steps.slice(0, i + 1), ran: true };
 }
 
-/** Whether a value written in the source is, or holds, the local declared at `at`. */
-function mentions(v, at) {
-  if (!v || typeof v !== 'object') return false;
-  if (v.k === 'id') return v.at === at;
-  const inner = v.k === 'obj' ? Object.values(v.v) : v.k === 'arr' ? v.v : v.k === 'call' ? v.args ?? [] : [];
-  return inner.some((x) => mentions(x, at));
-}
-
-/** Where a builder's local goes besides the calls made on it, said; null when nowhere. */
-function escapeOf(project, site, at) {
+/** Why a builder's local may be given steps this reading does not see, or null: the first use of it that is not a step. */
+function escapeOf(project, site, at, roleOf) {
   const file = site.call.file;
-  const handed = project.calls.find((c) => c.file === file && [c.args, ...(c.chain ?? []).map((st) => st.args)].some((args) => args.some((a) => mentions(a, at))));
-  if (handed) return `it is handed to ${handed.callee} at line ${handed.line}`;
-  const held = (project.binds ?? []).find((b) => b.file === file && b.values.some((v) => mentions(v, at)));
-  if (held) return held.name ? `it is held in ${held.name} as well, at line ${held.line}` : `it is stored where this engine does not follow it, at line ${held.line}`;
-  const [cls, member] = String(site.call.in).split('.');
-  const returns = project.files.get(file)?.classes.get(cls)?.methods.get(member)?.returns ?? [];
-  return returns.some((v) => mentions(v, at)) ? 'it is returned to the caller' : null;
+  for (const u of project.uses ?? []) {
+    if (u.file !== file || u.at !== at || u.how === 'write') continue;
+    if (u.how === 'value' && u.steps.some((s) => ENDS.has(roleOf(s)))) continue;
+    return u.how === 'value' ? `${u.steps.join('().')}() at line ${u.line} hands the builder on` : `it is used at line ${u.line} as something other than the receiver of a step`;
+  }
+  return null;
 }
+
+/** A write of the builder's local that gives it something other than a step on itself, or than the builder where it is made, or null. */
+const otherWrite = (project, site, at) => (project.uses ?? []).find((u) => u.file === site.call.file && u.at === at && u.how === 'write' && !u.self && u.line !== site.line) ?? null;
 
 /** Every call later in the file on the local the builder is held in, found by where that local is declared, as steps. */
 function heldSteps(project, site, at, roleOf) {
@@ -55,12 +56,12 @@ function heldSteps(project, site, at, roleOf) {
     const own = [{ name: parts[1], args: c.args, cond: Boolean(c.cond) }, ...(c.chain ?? []).map((s) => ({ name: s.name, args: s.args, cond: Boolean(c.cond) }))];
     const kept = upToTerminal(own, roleOf);
     out.push(...kept.steps);
-    if (kept.cloned) out.cloned = true;
+    if (kept.cloned) out.cloned = kept.cloned;
   }
   return out;
 }
 
-const CLONED = 'a copy made with clone is another builder, whose steps are not read here';
+const cloned = (name) => `${name} makes another builder, whose steps are not read here`;
 
 /** The local a builder is held in, when the builder is what it holds: made last in the call, or at the end of its chain. */
 function holderOf(site) {
@@ -71,18 +72,22 @@ function holderOf(site) {
 
 /**
  * The builder's steps: those chained on it, then those on the local that holds
- * it, unless its chain already ran it. `unread` lists why the steps may be
- * short, and `escaped` says where else the builder goes.
+ * it, unless its chain already ran it. A local written again holds the one
+ * builder when every write gives it a step on itself (`q = q.andWhere(...)`);
+ * one given anything else may hold another builder at a later step, which is
+ * said as an escape. `unread` lists why the steps may be short, and `escaped`
+ * says where else the builder goes.
  */
 export function builderSteps(project, site, roleOf) {
   const chained = upToTerminal(site.rest.map((s) => ({ name: s.name, args: s.args ?? [], cond: false })), roleOf);
-  const unread = chained.cloned ? [CLONED] : [];
+  const unread = chained.cloned ? [cloned(chained.cloned)] : [];
   if (chained.ran || chained.cloned) return { steps: chained.steps, unread, escaped: null };
   const { at, reassigned } = holderOf(site);
   if (!at) return { steps: chained.steps, unread, escaped: null };
-  if (reassigned) return { steps: chained.steps, unread: ['the builder is held in a local that is written again, so a later step may be on another builder'], escaped: null };
+  const other = reassigned ? otherWrite(project, site, at) : null;
+  if (other) return { steps: chained.steps, unread: [], escaped: `the local that holds it is given another value at line ${other.line}, so a later step may be on another builder` };
   const held = heldSteps(project, site, at, roleOf);
-  return { steps: [...chained.steps, ...held], unread: held.cloned ? [CLONED] : [], escaped: escapeOf(project, site, at) };
+  return { steps: [...chained.steps, ...held], unread: held.cloned ? [cloned(held.cloned)] : [], escaped: escapeOf(project, site, at, roleOf) };
 }
 
 /** Entity views, one per entity, as the builder rule reads them, and how an entity argument or a relation is found. */

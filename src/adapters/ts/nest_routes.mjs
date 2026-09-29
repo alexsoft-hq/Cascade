@@ -129,6 +129,18 @@ function walkImports(project, compiled, mod, decl, ctx) {
 }
 
 /**
+ * One entry of a module's `controllers`: the class it names, registered, or
+ * why it is not one this engine reads (a package's, one from a file the run did
+ * not read, a value), said, since its routes are then not served here.
+ */
+function registerController(project, mod, v, { controllers, diagnostics }) {
+  const cls = v.k === 'id' ? project.classOf(mod.file, v.v) : null;
+  if (cls) { controllers.set(cls.key, { cls, module: mod.key }); return; }
+  const what = v.k === 'id' ? `the controller ${v.v} is not a class this engine reads (a package's, or one in a file it did not read)` : `a controller entry of kind ${v.k} is not a class this engine can name`;
+  diagnostics.push({ kind: 'TS_CONTROLLER_UNREAD', reason: `${mod.key}: ${what}, so its routes are not served here` });
+}
+
+/**
  * Every controller the modules reachable from `root` register, each with the
  * module that declares it, the module paths `RouterModule.register` gives, and
  * what could not be read on the way. A module whose options this engine cannot
@@ -152,10 +164,7 @@ function registeredControllers(project, compiled, viewOf, root, diagnostics) {
     }
     if (!walkImports(project, compiled, mod, decl, { queue, modulePaths, diagnostics })) modulePathsRead = false;
     if (decl.controllers.spread) diagnostics.push({ kind: 'TS_MODULE_UNREAD', reason: `${mod.key}: its controllers spread a list, so the controllers in it are not served here` });
-    for (const v of decl.controllers.v) {
-      const cls = v.k === 'id' ? project.classOf(mod.file, v.v) : null;
-      if (cls) controllers.set(cls.key, { cls, module: mod.key });
-    }
+    for (const v of decl.controllers.v) registerController(project, mod, v, { controllers, diagnostics });
   }
   return { controllers: [...controllers.values()], modulePaths, modulePathsRead };
 }

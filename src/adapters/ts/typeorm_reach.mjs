@@ -56,14 +56,20 @@ function junctionOf(rel) {
   return inv ? inv.junction : null;
 }
 
+/** A @ManyToMany's two joins: the join table and its columns, and the keys they reference on both sides, whichever side it is followed from. */
+function readJunction(se, e, rel, grade, evidence) {
+  const j = junctionOf(rel);
+  if (!j) return false;
+  se.table(j, 'read', grade, evidence);
+  for (const c of [...j.ownerColumns, ...j.inverseColumns]) se.column(j, c, 'READS', grade, evidence);
+  const [here, there] = j.owner === e ? [j.ownerColumns, j.inverseColumns] : [j.inverseColumns, j.ownerColumns];
+  for (const c of here) se.column(e, byColumn(e, c.referenced), 'READS', grade, evidence);
+  for (const c of there) se.column(rel.target, byColumn(rel.target, c.referenced), 'READS', grade, evidence);
+  return true;
+}
+
 function readJoin(se, e, rel, grade, evidence) {
-  if (rel.kind === 'many-to-many') {
-    const j = junctionOf(rel);
-    if (!j) return false;
-    se.table(j, 'read', grade, evidence);
-    for (const c of [...j.ownerColumns, ...j.inverseColumns]) se.column(j, c, 'READS', grade, evidence);
-    return true;
-  }
+  if (rel.kind === 'many-to-many') return readJunction(se, e, rel, grade, evidence);
   if (rel.owner) {
     for (const jc of rel.joinColumns) { se.column(e, jc, 'READS', grade, evidence); se.column(rel.target, byColumn(rel.target, jc.referenced), 'READS', grade, evidence); }
     return rel.joinColumns.length > 0;
@@ -83,6 +89,9 @@ export function followRelation(se, e, rel, how) {
   }
   se.table(rel.target, 'read', how.grade, evidence);
   if (how.whole) readWholeRow(se, rel.target, how.grade, evidence);
+  // The join's own condition reads the delete date column of an entity that has one, unless the query asks for deleted rows.
+  const deleted = how.filtered ? rel.target.columns.find((c) => c.deleteDate) : null;
+  if (deleted) se.column(rel.target, deleted, 'READS', how.filtered === 'may' ? weakest(how.grade, 'SOUND_SET') : how.grade, { ...evidence, rule: 'typeorm-soft-delete' });
   return rel.target;
 }
 

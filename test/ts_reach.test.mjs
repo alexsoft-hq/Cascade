@@ -140,7 +140,7 @@ test('a file no import reaches any more is not read, and its entry leaves the in
 // the real resolver
 // ---------------------------------------------------------------------------
 
-test('tsReachResolver follows a tsconfig path to a shared library, never into node_modules, a test file, or out of the analyzed root', (t) => {
+test('tsReachResolver follows a tsconfig path to a shared library, never into node_modules or out of the analyzed root, and into a test file only when it is imported', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reach-'));
   const sibling = `../${path.basename(root)}-sibling`;
   t.after(() => {
@@ -161,10 +161,13 @@ test('tsReachResolver follows a tsconfig path to a shared library, never into no
   const from = 'apps/api/src/main.ts';
   assert.equal(resolve(from, '@lib/helper'), 'libs/common/src/helper.ts');
   assert.equal(resolve(from, '@lib/types'), 'libs/common/src/types/index.ts');
-  assert.equal(resolve(from, '@lib/fixture.spec'), null, 'a test file is not read');
+  // A test file a file of the application imports runs with it; one a barrel only re-exports does not.
+  assert.equal(resolve(from, '@lib/fixture.spec', 'export'), null, 'a test file a barrel re-exports is not read');
+  assert.equal(resolve(from, '@lib/fixture.spec'), 'libs/common/src/fixture.spec.ts', 'a test file the application imports is its own');
   assert.equal(resolve(from, '@vendor/x'), null, 'node_modules is a package\'s, whatever a path names it');
   assert.equal(resolve(from, '@out/y'), null, 'nothing outside the analyzed root');
-  assert.equal(resolve(from, './test/helper'), null, 'under the application\'s root only a listed file is known');
+  assert.equal(resolve(from, './test/helper', 'export'), null, 'under the application\'s root only a listed file is known, or test support it imports');
+  assert.equal(resolve(from, './test/helper'), 'apps/api/src/test/helper.ts');
   assert.equal(resolve(from, 'lodash'), null);
 });
 
@@ -184,7 +187,7 @@ test('ts_reach_does_not_follow_symlink_out_of_root: a link inside the root to a 
   assert.equal(resolve('apps/api/src/main.ts', '@in/y'), 'libs/inside/y.ts', 'a link that stays inside the root is followed');
 });
 
-test('test support a shared library holds is not read: which paths are test support is the typescript pack\'s', (t) => {
+test('test support a shared library holds is not read unless the application imports it: which paths are test support is the typescript pack\'s', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-reach-mocks-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const put = (rel, text = '') => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
@@ -197,13 +200,20 @@ test('test support a shared library holds is not read: which paths are test supp
   put('libs/common/src/__mocks__/repo.ts');
   put('libs/common/src/testing/helpers.ts');
   const app = path.join(root, 'apps/api/src');
-  const resolve = tsReachResolver({ rootAbs: root, appRootAbs: app, listed: ['apps/api/src/main.ts'] });
+  const leftOut = new Map();
+  const resolve = tsReachResolver({ rootAbs: root, appRootAbs: app, listed: ['apps/api/src/main.ts'], leftOut });
   const from = 'apps/api/src/main.ts';
   assert.equal(resolve(from, '@lib/repo'), 'libs/common/src/repo.ts');
-  assert.equal(resolve(from, '@lib/repo.mock'), null);
-  assert.equal(resolve(from, '@lib/__mocks__/repo'), null);
-  assert.equal(resolve(from, '@lib/testing/helpers'), null);
-  assert.deepEqual(tsLaneRunners(root, app).tsList([app]), ['apps/api/src/main.ts'], 'the application\'s own test support is left out as well');
+  // A barrel's re-export of its mocks does not make them the application's: they are left out, and said.
+  assert.equal(resolve(from, '@lib/repo.mock', 'export'), null);
+  assert.equal(resolve(from, '@lib/__mocks__/repo', 'export'), null);
+  assert.equal(resolve(from, '@lib/testing/helpers', 'export'), null);
+  assert.deepEqual([...leftOut], [['libs/common/src/repo.mock.ts', 'test-support'], ['libs/common/src/__mocks__/repo.ts', 'test-support'], ['libs/common/src/testing/helpers.ts', 'test-support']]);
+  // An import is the application running it.
+  assert.equal(resolve(from, '@lib/testing/helpers'), 'libs/common/src/testing/helpers.ts');
+  const runners = tsLaneRunners(root, app);
+  assert.deepEqual(runners.tsList([app]), ['apps/api/src/main.ts'], 'the application\'s own test support is left out of the list as well');
+  assert.deepEqual(runners.tsLeftOut(), [{ file: 'apps/api/src/__mocks__/repo.ts', why: 'test-support' }, { file: 'apps/api/src/users.service.mock.ts', why: 'test-support' }], 'and named');
   const rule = builtinRegistry().ofKind('ts.test-support')[0];
   assert.equal(rule.id, 'typescript.test-support');
   assert.equal(rule.compiled.isTestSupport('libs/common/src/testing/helpers.ts'), true);

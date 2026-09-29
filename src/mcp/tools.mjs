@@ -135,19 +135,21 @@ function runtimeColumnLimits(graph, colId) {
     if (e.type === 'DECLARES') { tableId = e.from; break; }
   }
   if (!tableId) return [];
-  const stmts = [];
+  const stmts = new Map();
   for (const e of graph.inEdges(tableId)) {
     if (e.type !== 'EXECUTES') continue;
     const n = graph.nodes.get(e.from);
-    if (n && n.columnsRuntimeOnly === true) stmts.push(e.from.slice('statement:'.length));
+    if (n && n.columnsRuntimeOnly === true) stmts.set(e.from.slice('statement:'.length), n.columnsRuntimeOnlyReason ?? null);
   }
-  if (stmts.length === 0) return [];
-  stmts.sort();
+  if (stmts.size === 0) return [];
+  const ids = [...stmts.keys()].sort();
   const table = tableId.slice('table:'.length);
+  // Each statement says what only the running program knows; the first one's words stand for the kind.
+  const why = stmts.get(ids[0]) ?? 'the columns come from a value no source line states';
   return [{
     scope: `runtime-only-columns:${table}`,
-    reason: `${stmts.length} statement(s) touch ${table} with columns decided at RUN TIME. A MyBatis-Plus condition wrapper built from request parameters names no column any source line states, so we emit no column edge for those rather than guess one. `
-      + `The list above is therefore a LOWER BOUND for this column, and the real answer is that list or bigger: ${stmts.slice(0, 5).join(', ')}${stmts.length > 5 ? `, … (${stmts.length - 5} more)` : ''}`,
+    reason: `${ids.length} statement(s) touch ${table} with columns decided at RUN TIME (${ids[0]}: ${why}), so no column edge is drawn for what only the running program names rather than a guessed one. `
+      + `The list above is therefore a LOWER BOUND for this column, and the real answer is that list or bigger: ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? `, … (${ids.length - 5} more)` : ''}`,
   }];
 }
 

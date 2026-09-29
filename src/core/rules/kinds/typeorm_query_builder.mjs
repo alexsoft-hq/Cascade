@@ -27,7 +27,7 @@ import { columnsInText, columnsOfProperty } from './typeorm_builder_read.mjs';
 import { exampleProject } from './ts_example_project.mjs';
 
 export const STEP_ROLES = Object.freeze(['select', 'add-select', 'condition', 'ids', 'order', 'join', 'join-select', 'join-map', 'from', 'into', 'clone',
-  'update', 'delete', 'insert', 'soft-delete', 'restore', 'values', 'rows', 'count', 'none']);
+  'update', 'delete', 'insert', 'soft-delete', 'restore', 'values', 'with-deleted', 'rows', 'count', 'none']);
 const ALIAS_ROLES = new Set(['join', 'join-select', 'join-map', 'from', 'into', 'update']);
 const STATEMENT_OF = Object.freeze({ update: 'update', delete: 'delete', insert: 'insert', 'soft-delete': 'update', restore: 'update' });
 
@@ -152,11 +152,40 @@ function autoStep(st, send, may) {
   }
 }
 
+/**
+ * Since 0.2.34 an update sets a date or version column on its own only when
+ * its values do not name it (0.3.28 UpdateQueryBuilder.createUpdateExpression),
+ * and before that always: a column the values name is theirs to write, and
+ * whether the old version is read is the installed version's, a candidate; so
+ * is one they may name (values not written out, a set under a condition).
+ */
+function settleAuto(st) {
+  softDeleteFilter(st);
+  if (st.statement !== 'update') return;
+  const named = (list, h) => list.some((w) => w.view === h.view && w.column === h.column);
+  st.autoReads = st.autoReads.map((h) => (named(st.writes, h) || named(st.mayWrites, h) ? { ...h, may: true } : h));
+  st.autoWrites = st.autoWrites.filter((h) => !named(st.writes, h));
+}
+
 function joinStep(st, s, role, words) {
   const a = role === 'join-map' ? s.args.slice(1) : s.args;
   const alias = strArg(a[1]);
   if (role !== 'join' && alias && st.aliases.has(alias)) st.selection.push({ view: st.aliases.get(alias), whole: true, may: Boolean(s.cond) });
   if (strArg(a[2])) readText(st, strArg(a[2]), Boolean(s.cond), words);
+  // The join's condition reads the delete date of an entity that has one, unless withDeleted came before it (SelectQueryBuilder.join).
+  const joined = alias ? st.aliases.get(alias) : null;
+  if (joined?.deleteDate && st.withDeleted !== true) record(st, [{ view: joined, column: joined.deleteDate }], Boolean(s.cond) || st.withDeleted === 'may');
+}
+
+/**
+ * A select filters out the rows the main entity's delete date column marks
+ * unless withDeleted asks for them (0.3.28 QueryBuilder.createWhereExpression):
+ * the column is read, a candidate when withDeleted may have run.
+ */
+function softDeleteFilter(st) {
+  const col = st.main?.deleteDate;
+  if (st.statement !== 'select' || !col || st.withDeleted === true) return;
+  record(st, [{ view: st.main, column: col }], st.withDeleted === 'may');
 }
 
 /** select replaces the selection, addSelect adds to it; under a condition, select may leave what it replaces in place. */
@@ -190,6 +219,12 @@ function readStep(st, s, role, ctx) {
   else if (role === 'join' || role === 'join-select' || role === 'join-map') joinStep(st, s, role, words);
   else if (STATEMENT_OF[role]) statementStep(st, s, role, may);
   else if (role === 'values') readValues(st, s.args[0], may);
+  else runStep(st, role, may);
+}
+
+/** A step that runs the query, or asks for soft-deleted rows (under a condition, it may). */
+function runStep(st, role, may) {
+  if (role === 'with-deleted') st.withDeleted = may && st.withDeleted !== true ? 'may' : true;
   else if (role === 'rows') returnRows(st, may);
   else if (role === 'count') st.ran = true;
 }
@@ -223,6 +258,16 @@ function wholeRowOf(st) {
   return [...best.values()];
 }
 
+/** Every step, read by the part its method plays, then what the statement does on its own. */
+function readSteps(st, steps, methods, ctx) {
+  for (const s of steps) {
+    const role = Object.hasOwn(methods, s.name) ? methods[s.name] : null;
+    if (role === null) st.notRead.push(s.name);
+    else readStep(st, s, role, ctx);
+  }
+  settleAuto(st);
+}
+
 /**
  * The rule, ready to read a builder: `effectsOf(start, steps, ctx)`, `start`
  * `{view, alias}` for the entity the builder was made on (view null when it
@@ -235,11 +280,7 @@ function compile(rule) {
   const effectsOf = (start, steps, ctx) => {
     const st = newState(start);
     aliasPass(st, steps, methods, ctx);
-    for (const s of steps) {
-      const role = Object.hasOwn(methods, s.name) ? methods[s.name] : null;
-      if (role === null) st.notRead.push(s.name);
-      else readStep(st, s, role, { ...ctx, sqlWords });
-    }
+    readSteps(st, steps, methods, { ...ctx, sqlWords });
     return {
       statement: st.statement, main: st.main, reads: st.reads, mayReads: st.mayReads, writes: st.writes, mayWrites: st.mayWrites, wholeRow: wholeRowOf(st),
       follows: st.follows, tables: st.tables, notRead: [...new Set(st.notRead)], terminal: st.ran, rule: rule.id, autoWrites: st.autoWrites, autoReads: st.autoReads,

@@ -80,13 +80,26 @@ function classesUnder(children, key) {
   return [...seen.values()].filter((t) => t.kind === 'class').sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
+/** How an open end is said: what the chain stops at. */
+const openSaid = (o) => (o.end.name ? `${o.end.callee}, which this engine cannot take for a class` : `${o.end.callee}(...), a class this engine does not read`);
+
+/**
+ * Whether a class whose chain stops where this engine cannot follow it
+ * declares `name` itself, or a class of its chain below that point does: then
+ * it may be one more class of any type's set, running its own `name`. One that
+ * does not runs what the class it cannot follow gives it, which is a class of
+ * the tree, and in the set already, or not the project's.
+ */
+const declaresBelow = (project, o, name) => Boolean(name) && Boolean(runsOn(project, o.cls, name));
+
 /**
  * The project's subtypes: `subtypesOf(key)` is every class of the project that
  * extends or implements the class or interface `key`, directly or through
  * another, in key order. Interfaces are walked through, never returned: they
- * have no code to run. `subtypesOf.openFor(key)` says why a class this engine
- * cannot read may be one more: a class whose extends is a call it cannot
- * follow, handed the type or one of its subtypes; null when none is.
+ * have no code to run. `subtypesOf.openFor(key, name)` says why a class this
+ * engine cannot read may be one more: a class whose extends is a call it
+ * cannot follow, handed the type or one of its subtypes, or any class whose
+ * chain it cannot follow that declares `name`; null when none is.
  */
 export function subtypeIndex(project) {
   const { children, open } = childrenOf(project);
@@ -95,22 +108,37 @@ export function subtypeIndex(project) {
     if (!memo.has(key)) memo.set(key, classesUnder(children, key));
     return memo.get(key);
   };
-  subtypesOf.openFor = (key) => {
+  subtypesOf.openFor = (key, name = null) => {
     const under = new Set([key, ...subtypesOf(key).map((c) => c.key)]);
-    const hit = open.find((o) => [...o.handed].some((k) => under.has(k)));
-    return hit ? `${hit.cls.key} extends ${hit.end.callee}(...), a class this engine does not read, which may override the method` : null;
+    const hit = open.find((o) => [...o.handed].some((k) => under.has(k)) || (!under.has(o.cls.key) && declaresBelow(project, o, name)));
+    return hit ? `${hit.cls.key} extends ${openSaid(hit)}, which may override the method` : null;
   };
   return subtypesOf;
 }
 
-/** What `this.name()` runs on an object of each of `classes`: once per declaring class, in key order. */
+/** What `this.name()` runs on an object of each of `classes`: once per declaring class, in key order; a class that may replace it is left for `gapAmong`. */
 export function methodsRunBy(project, classes, name) {
   const hits = new Map();
   for (const c of classes) {
     const hit = runsOn(project, c, name);
-    if (hit) hits.set(hit.cls.key, hit);
+    if (hit && !hit.replaced) hits.set(hit.cls.key, hit);
   }
   return [...hits.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([, hit]) => hit);
+}
+
+/**
+ * Why one of `classes` may run a `name` this engine does not link, or null: a
+ * member that may replace it, or a `name` it declares nowhere in the chain
+ * this engine follows, which stops at something it cannot take for a class.
+ */
+export function gapAmong(project, classes, name) {
+  for (const c of classes) {
+    const hit = runsOn(project, c, name);
+    if (hit?.replaced) return hit.replaced;
+    const end = hit ? null : project.openEnd(c);
+    if (end) return `${c.key} may inherit ${name} from ${openSaid({ end })}`;
+  }
+  return null;
 }
 
 /**
@@ -120,12 +148,16 @@ export function methodsRunBy(project, classes, name) {
  * extends or implements it, a property holding a function among them. When
  * `all` is `own` alone and no class this engine cannot read may extend the
  * type, no subtype changes the answer: `plain`. `open` says why the set may
- * be short.
+ * be short: a class it cannot read, or a member it cannot link.
  */
 export function typeTargets(project, subtypesOf, type, name) {
-  const own = type.kind === 'class' ? runsOn(project, type, name) : null;
   const classes = type.kind === 'class' ? [type, ...subtypesOf(type.key)] : subtypesOf(type.key);
+  const ran = type.kind === 'class' ? runsOn(project, type, name) : null;
+  const own = ran && !ran.replaced ? ran : null;
   const all = methodsRunBy(project, classes, name);
-  const open = subtypesOf.openFor ? subtypesOf.openFor(type.key) : null;
+  const open = openOf(project, subtypesOf, type, { classes, name });
   return { own, all, open, plain: Boolean(own) && !open && all.length === 1 && all[0].cls.key === own.cls.key };
 }
+
+/** Why a type's set for `name` may be short: a class this engine cannot read that may extend it, or a member of the set it cannot link. */
+const openOf = (project, subtypesOf, type, { classes, name }) => (subtypesOf.openFor ? subtypesOf.openFor(type.key, name) : null) ?? gapAmong(project, classes, name);

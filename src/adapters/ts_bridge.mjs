@@ -175,7 +175,7 @@ function dispatchDiagnostics(g, calls) {
  */
 export function addTsFacts(g, tsFacts, opts = {}) {
   const rules = rulesOf(opts);
-  const project = readProject(tsFacts, opts.tsconfig ?? {});
+  const { project, leftOut } = projectOf(tsFacts, opts);
   const symbols = addSymbols(g, project);
   const routed = routesOf(project, rules, opts);
   for (const r of routed.routes) addRoute(g, r);
@@ -184,8 +184,45 @@ export function addTsFacts(g, tsFacts, opts = {}) {
   return {
     files: project.files.size, ...linked.reached, symbols, routes: routed.routes.length, heuristicRoutes: routed.routes.filter((r) => r.grade === 'HEURISTIC').length,
     controllers: routed.controllers, unregisteredControllers: routed.unregistered, calls: linked.calls, prisma, ...(typeorm ? { typeorm } : {}),
-    diagnostics: [...routed.diagnostics, ...linked.diagnostics, ...prismaDiagnostics(prisma), ...typeormDiagnostics(typeorm)],
+    diagnostics: [...leftOutDiagnostics(project, leftOut), ...routed.diagnostics, ...linked.diagnostics, ...prismaDiagnostics(prisma), ...typeormDiagnostics(typeorm)],
   };
+}
+
+/** The project the records describe, and the files the run found and did not read (its `leftOut` records), which are not packages. */
+function projectOf(tsFacts, opts) {
+  const leftOut = tsFacts.filter((r) => r?.kind === 'leftOut');
+  const project = readProject(tsFacts.filter((r) => r?.kind !== 'leftOut'), opts.tsconfig ?? {}, { leftOut: new Set(leftOut.map((r) => r.file)) });
+  return { project, leftOut };
+}
+
+/** Each file a read file imports or re-exports that the run did not read, as `importer -> file`. */
+function importsOfLeftOut(project, files) {
+  const out = [];
+  for (const [file, f] of project.files) {
+    for (const r of [...f.imports, ...f.exports]) {
+      const target = r.source ? project.resolveModule(file, r.source) : null;
+      if (target && files.has(target)) out.push(`${file} -> ${target}`);
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
+/**
+ * The files the run found and did not read, said with how many and which: test
+ * support no read file imports, and files whose bytes are outside the
+ * analyzed root. Those a read file imports or re-exports come first: what they
+ * declare (a controller a module registers, a class a call reaches) is not
+ * known here.
+ */
+function leftOutDiagnostics(project, leftOut) {
+  if (leftOut.length === 0) return [];
+  const count = (why) => leftOut.filter((l) => l.why === why).length;
+  const named = importsOfLeftOut(project, new Set(leftOut.map((l) => l.file)));
+  const samples = named.length > 0 ? `; read files name ${named.length} of them: ${named.slice(0, 5).join(', ')}` : `, for example ${leftOut.slice(0, 3).map((l) => l.file).join(', ')}`;
+  return [{
+    kind: 'TS_FILES_LEFT_OUT',
+    reason: `${leftOut.length} TypeScript file(s) found are not read: ${count('test-support')} test support (typescript.test-support) no read file imports, ${count('outside-root')} whose bytes are outside the analyzed root${samples}. What they declare is not in this pack`,
+  }];
 }
 
 /**

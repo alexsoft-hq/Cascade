@@ -159,7 +159,16 @@ export function buildModel(project, raw, decision, naming) {
     e.relations.push(...r.relations.filter((rel) => rel.kind === 'many-to-many').map((rel) => relationOf(project, e, rel, ctx)));
   }
   const junctions = [...entities.values()].flatMap((e) => e.relations.map((r) => r.junction).filter(Boolean));
-  return { entities, junctions, notRead: raw.notRead, naming: decision };
+  return { entities, junctions, notRead: raw.notRead, naming: decision, driverDoubt: driverDoubtOf(decision, naming, raw, entities) };
+}
+
+/** Why the driver leaves a table's name in doubt, from the first table it does: the DataSource type not known, or not one the pack names. */
+function driverDoubtOf(decision, naming, raw, entities) {
+  const owns = raw.entities.flatMap((r) => {
+    const e = entities.get(r.cls.key);
+    return [e.own, ...r.relations.filter((rel) => rel.joinTable && !rel.joinTable.unread).map((rel) => junctionOwn(e, rel.joinTable))];
+  });
+  return owns.map((own) => pathOf(decision, naming.tablePath, own).driver).find(Boolean) ?? null;
 }
 
 /** The entity of a property path's relation, or null. */

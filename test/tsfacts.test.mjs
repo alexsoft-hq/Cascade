@@ -286,7 +286,10 @@ test('valueOfSource collapses a template literal with no interpolation to a plai
 });
 
 test('valueOfSource marks an array\'s spread and an object\'s spread and computed key, without guessing what they add', () => {
-  assert.deepEqual(valueOfSource('[1, ...x]'), { k: 'arr', v: [{ k: 'num', v: 1 }], spread: true });
+  // What a spread puts in the list is kept as it is written (`spreads`): a name, which no reader can list.
+  assert.deepEqual(valueOfSource('[1, ...x]'), { k: 'arr', v: [{ k: 'num', v: 1 }], spread: true, spreads: [{ k: 'id', v: 'x' }] });
+  // A list written out, or one of two a condition picks, is each kept whole.
+  assert.deepEqual(valueOfSource('[...(on ? [A] : [])]'), { k: 'arr', v: [], spread: true, spreads: [{ k: 'arr', v: [{ k: 'id', v: 'A' }] }, { k: 'arr', v: [] }] });
   assert.deepEqual(valueOfSource('({a: 1, ...x, [y]: 2})'), { k: 'obj', v: { a: { k: 'num', v: 1 } }, spread: true, computed: true });
 });
 
@@ -345,7 +348,7 @@ test('a file that mostly parses gives its records plus a recovered parse_error f
 // sourceFiles
 // ---------------------------------------------------------------------------
 
-test('sourceFiles skips node_modules, dist, build, coverage, .git, .nx, .angular and tmp, test directories and dot-directories, and skips .spec/.test/.e2e-spec and .d.ts files', (t) => {
+test('sourceFiles skips node_modules, dist, build, coverage, .git, .nx, .angular and tmp, dot-directories and .d.ts files, and lists tests: which are a test\'s is the typescript pack\'s', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-tsfacts-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const write = (rel, content = 'export const x = 1;') => {
@@ -373,7 +376,8 @@ test('sourceFiles skips node_modules, dist, build, coverage, .git, .nx, .angular
   write('d.e2e-spec.ts');
   write('e.d.ts');
   const files = sourceFiles([root]).map((f) => path.relative(root, f).split(path.sep).join('/'));
-  assert.deepEqual(files, ['a.ts', 'sub/keep.ts']);
+  // Test files are listed like any other: the run asks ts.test-support, and says what it leaves out.
+  assert.deepEqual(files, ['__tests__/skip.ts', 'a.ts', 'b.spec.ts', 'c.test.ts', 'd.e2e-spec.ts', 'e2e/skip.ts', 'sub/keep.ts', 'test/skip.ts', 'tests/skip.ts']);
 });
 
 test('sourceFiles skips a directory it cannot read, instead of throwing', (t) => {

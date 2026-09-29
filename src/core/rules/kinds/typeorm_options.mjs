@@ -109,13 +109,15 @@ function strategyOf(project, file, v, opts, strategies) {
  * literal (`const PREFIX = 'app_'`) or with a `new` (`const naming = new
  * SnakeNamingStrategy()`), as the web lane reads a const URL; anything else as
  * it is. A local is found by where it is declared, a module's const by its
- * name; a local written again, or a module name held twice, is not resolved.
+ * name; a local or a module name written again, or a module name held twice,
+ * is not resolved.
  */
 function constValue(project, file, v) {
   if (!v || v.k !== 'id' || v.reassigned) return v;
   const lit = (project.consts ?? []).find((c) => c.file === file && (v.at ? c.at === v.at : !c.at && c.name === v.v));
   if (lit) return lit.value;
-  const made = (project.news ?? []).filter((n) => n.file === file && (v.at ? n.holderAt === v.at && !n.holderReassigned : !n.holderAt && n.in === null && n.holder === v.v));
+  // A module-level name written again (`let naming = new X(); naming = undefined`) may hold anything when the options are made.
+  const made = (project.news ?? []).filter((n) => n.file === file && (v.at ? n.holderAt === v.at && !n.holderReassigned : !n.holderAt && n.in === null && n.holder === v.v && !n.holderModuleWritten));
   return made.length === 1 ? { k: 'new', callee: made[0].callee } : v;
 }
 
@@ -123,7 +125,14 @@ function constValue(project, file, v) {
 function literalOf(project, file, v, key) {
   const x = constValue(project, file, v.v[key]);
   if (!x || x.k === 'undefined') return { value: '' };
-  return x.k === 'str' ? { value: x.v } : { unread: `its ${key} is not a literal` };
+  return x.k === 'str' ? { value: x.v } : { unread: `its ${key} is ${notLiteral(project, file, x)}` };
+}
+
+/** Why a value is not read as a literal, in words: a name another file declares, one this file does not settle, or an expression. */
+function notLiteral(project, file, x) {
+  if (x.k !== 'id') return 'not a literal';
+  const imported = (project.files.get(file)?.imports ?? []).some((i) => i.default === x.v || i.names.some((n) => n.local === x.v));
+  return imported ? `${x.v}, a value another file declares, which this reading does not follow` : `${x.v}, a name this file does not settle to a literal`;
 }
 
 const allUnread = (why) => Object.fromEntries(FACTS.map((f) => [f, { unread: why }]));
@@ -197,7 +206,7 @@ export function declaredNaming(project, opts, naming, declared) {
     Object.assign(out, { strategy: ns, known: true, reason: `${ns.name}: the profile declares it (tsBackend.typeorm.namingStrategy)` });
     out.declared.push('namingStrategy');
   }
-  for (const [fact, key] of [['entityPrefix', 'prefix'], ['schema', 'schema']]) {
+  for (const [fact, key] of [['entityPrefix', 'prefix'], ['schema', 'schema'], ['type', 'type']]) {
     const v = declared[fact];
     if (v == null) continue;
     if (read[`${key}Known`] && read[key] !== v) out.differs.push(`${fact} ${JSON.stringify(v)}, where the options say ${JSON.stringify(read[key])}`);

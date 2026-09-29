@@ -91,16 +91,21 @@ function countUntyped(project, model, opts, read, stats) {
  * fact, where it came from, and `why`, the facts not known, in a sentence
  * (null when every fact is known).
  */
-function namingSaid(n) {
+/** Each fact of the options not known, in a sentence; the driver only where it left a table's name in doubt. */
+const unknownFacts = (n, driverDoubt) => [
+  ...(n.known ? [] : [`the naming strategy is not known (${n.reason})`]),
+  ...(n.prefixKnown ? [] : [`the entityPrefix is not known (${n.prefixWhy})`]),
+  ...(n.schemaKnown ? [] : [`the DataSource schema is not known (${n.schemaWhy})`]),
+  ...(driverDoubt ? [driverDoubt] : []),
+];
+
+function namingSaid(n, driverDoubt = null) {
   const declared = n.declared ?? [];
-  const unknown = [
-    ...(n.known ? [] : [`the naming strategy is not known (${n.reason})`]),
-    ...(n.prefixKnown ? [] : [`the entityPrefix is not known (${n.prefixWhy})`]),
-    ...(n.schemaKnown ? [] : [`the DataSource schema is not known (${n.schemaWhy})`]),
-  ];
+  const unknown = unknownFacts(n, driverDoubt);
   return {
     strategy: n.strategy.name, known: n.known, from: declared.includes('namingStrategy') ? 'profile' : n.known ? 'options' : 'assumed', reason: n.reason,
     prefix: { value: n.prefix, known: n.prefixKnown, why: n.prefixWhy }, schema: { value: n.schema, known: n.schemaKnown, why: n.schemaWhy },
+    type: { value: n.type, known: Boolean(n.typeKnown), doubted: Boolean(driverDoubt), why: driverDoubt ?? n.typeWhy },
     declared, differs: n.differs ?? [], why: unknown.length > 0 ? unknown.join('; ') : null, sites: n.sites,
   };
 }
@@ -116,7 +121,7 @@ function addCatalog(g, model, opts, stats) {
   stats.tables = records.filter((r) => r.kind === 'table').length;
   stats.columns = records.filter((r) => r.kind === 'column').length;
   stats.heuristicNames = records.filter((r) => r.grade !== 'EXACT').length;
-  stats.naming = namingSaid(model.naming);
+  stats.naming = namingSaid(model.naming, model.driverDoubt);
   stats.notRead = [...model.notRead, ...[...model.entities.values()].flatMap((e) => e.notRead.map((n) => ({ entity: e.name, file: e.file, ...n })))];
   return nodes;
 }
@@ -171,7 +176,7 @@ export function typeormDiagnostics(stats) {
     out.push({ kind: 'TS_TYPEORM_NAMING_DECLARED', reason: `the profile's tsBackend.typeorm declares ${stats.naming.differs.join('; ')}; the profile's is used` });
   }
   if (stats.entities > 0 && stats.naming.why) {
-    out.push({ kind: 'TS_TYPEORM_NAMING_ASSUMED', reason: `${stats.heuristicNames} table and column name(s) of ${stats.entities} TypeORM entity(ies) are graded HEURISTIC, because ${stats.naming.why}. Declaring them in tsBackend.typeorm (namingStrategy, entityPrefix, schema) settles it` });
+    out.push({ kind: 'TS_TYPEORM_NAMING_ASSUMED', reason: `${stats.heuristicNames} table and column name(s) of ${stats.entities} TypeORM entity(ies) are graded HEURISTIC, because ${stats.naming.why}. Declaring them in tsBackend.typeorm (namingStrategy, entityPrefix, schema, type) settles it` });
   }
   const unread = stats.raw + stats.unknownOperation + stats.unreadEntity;
   if (unread > 0) {

@@ -35,9 +35,16 @@ function addClassMember(cls, r) {
   if (r.kind === 'property' && r.fn && !r.static) cls.fnProps.set(r.name, r);
 }
 
+/** A member written on a class's objects (`this.x = …`) or on its prototype, by name (null: any name), into the class. */
+function addWrite(cls, w) {
+  if (!cls) return;
+  if (!cls.writes.has(w.name)) cls.writes.set(w.name, []);
+  cls.writes.get(w.name).push(w);
+}
+
 /** A class, an interface, a module function or a constant naming another value, into its file; any other record is not one. */
 function addDeclaration(f, r) {
-  if (r.kind === 'class') f.classes.set(r.name, { ...r, key: classKey(r.file, r.name), methods: new Map(), fields: new Map(), fnProps: new Map() });
+  if (r.kind === 'class') f.classes.set(r.name, { ...r, key: classKey(r.file, r.name), methods: new Map(), fields: new Map(), fnProps: new Map(), writes: new Map() });
   else if (r.kind === 'interface') f.interfaces.set(r.name, { ...r, key: classKey(r.file, r.name) });
   else if (r.kind === 'function') f.functions.set(r.name, r);
   else if (r.kind === 'alias') f.aliases.set(r.name, r);
@@ -48,7 +55,7 @@ function indexRecords(records) {
   const files = new Map();
   const at = (f) => { if (!files.has(f)) files.set(f, emptyFile()); return files.get(f); };
   // The records a later step reads as they come, in the order the worker wrote them.
-  const lists = { call: [], new: [], bind: [], const: [] };
+  const lists = { call: [], new: [], bind: [], const: [], write: [], use: [] };
   const pendingMembers = [];
   for (const r of records) {
     if (!r || typeof r.file !== 'string') continue;
@@ -64,7 +71,7 @@ function indexRecords(records) {
     const cls = files.get(r.file)?.classes.get(r.class);
     if (cls) addClassMember(cls, r);
   }
-  return { files, calls: lists.call, news: lists.new, binds: lists.bind, consts: lists.const };
+  return { files, calls: lists.call, news: lists.new, binds: lists.bind, consts: lists.const, writes: lists.write, uses: lists.use };
 }
 
 /**
@@ -126,6 +133,26 @@ function exportedFrom(project, file, name, hops = 0) {
 }
 
 /**
+ * The import a name written in a file comes through, and the name its module
+ * exports it as: a named import, a default one, or `ns.Name` through `import *
+ * as ns`. Null when the file imports no such name.
+ */
+function importNamed(f, name) {
+  if (!f) return null;
+  const dot = name.indexOf('.');
+  if (dot > 0) {
+    const ns = f.imports.find((i) => i.namespace === name.slice(0, dot));
+    return ns && name.indexOf('.', dot + 1) < 0 ? { imp: ns, as: name.slice(dot + 1) } : null;
+  }
+  for (const imp of f.imports) {
+    const named = imp.names.find((n) => n.local === name);
+    const as = named ? named.imported : imp.default === name ? 'default' : null;
+    if (as !== null) return { imp, as };
+  }
+  return null;
+}
+
+/**
  * THE PROJECT: its files, classes, calls and `new`s, and the questions every
  * later step asks of it.
  *
@@ -137,38 +164,42 @@ function exportedFrom(project, file, name, hops = 0) {
  * - `lineage(cls)`: the class and each class it extends in the project, nearest first.
  *
  * A file is the project's when a record says it was read, so a file of
- * constants alone is not taken for a package.
+ * constants alone is not taken for a package. A file the run left out
+ * (`leftOut`: test support no read file imports, a link out of the root) is
+ * not a package either: a name imported from it means nothing here, like a
+ * constant of a file of the project, and `importsFromProject(file, name)`
+ * tells either from a global the file never imports.
+ *
+ * @param {object[]} records
+ * @param {{baseUrl?:(string|null), paths?:object}} [tsconfig]
+ * @param {{leftOut?:Set<string>}} [opts]  root-relative files the run did not read
  */
-export function readProject(records, tsconfig = {}) {
-  const { files, calls, news, binds, consts } = indexRecords(records);
-  const resolveModule = makeModuleResolver((f) => files.has(f), tsconfig);
-
+export function readProject(records, tsconfig = {}, { leftOut = new Set() } = {}) {
+  const { files, calls, news, binds, consts, writes, uses } = indexRecords(records);
+  const resolveModule = makeModuleResolver((f) => files.has(f) || leftOut.has(f), tsconfig);
   const exported = (file, name) => exportedFrom({ files, resolveModule }, file, name);
-
+  const importOf = (file, name) => importNamed(files.get(file), name);
   const meaning = (file, name) => {
     const f = files.get(file);
     if (!f || typeof name !== 'string') return null;
     if (declares(f, name)) return { file, name };
-    for (const imp of f.imports) {
-      const named = imp.names.find((n) => n.local === name);
-      const imported = named ? named.imported : imp.default === name ? 'default' : null;
-      if (imported === null) continue;
-      const target = resolveModule(file, imp.source);
-      return target ? exported(target, imported) : { external: imp.source, name: imported };
-    }
-    return null;
+    const hit = importOf(file, name);
+    if (!hit) return null;
+    const target = resolveModule(file, hit.imp.source);
+    return target ? exported(target, hit.as) : { external: hit.imp.source, name: hit.as };
   };
-
+  const importsFromProject = (file, name) => { const hit = importOf(file, name); return Boolean(hit && resolveModule(file, hit.imp.source)); };
   const classOf = (file, name) => {
     const m = meaning(file, name);
     return m && !m.external ? files.get(m.file)?.classes.get(m.name) ?? null : null;
   };
   const { mixinOf, aliasOf } = namesOf(files, meaning);
-  const step = { classOf, mixinOf };
+  for (const w of writes) addWrite(w.on === 'this' ? files.get(w.file)?.classes.get(w.class) : classOf(w.file, w.of), w);
+  const step = { classOf, mixinOf, meaning, aliasOf, importsFromProject };
   return {
-    files, calls, news, binds, consts, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), resolveModule, aliasOf,
+    files, calls, news, binds, consts, uses, meaning, classOf, typeOf: (file, name) => typeIn(files, meaning(file, name)), resolveModule, aliasOf,
     lineage: (cls) => lineageOf(step, cls).classes,
-    // Where a class's chain of what it extends stops at a call this engine cannot follow, or null.
+    // Where a class's chain of what it extends stops at something this engine cannot follow to a class, or null.
     openEnd: (cls) => lineageOf(step, cls).open,
   };
 }
@@ -193,17 +224,40 @@ function namesOf(files, meaning) {
 }
 
 /**
+ * The class a name `cur` extends means: a class of the project, one a constant
+ * names alone (`const Base2 = Base`), or none when it is a package's or a
+ * global the file does not declare (`Error`). `open` when it may be a class of
+ * the project this engine cannot name: a value the file gives the name
+ * (`const B = makeBase()`, `bound`), a constant that names one of several,
+ * something of the project that is not a class, or a name from a file the run
+ * did not read.
+ */
+function namedParent({ classOf, meaning, aliasOf, importsFromProject }, cur, file, name, bound) {
+  const cls = classOf(file, name);
+  if (cls) return { cls };
+  const alias = aliasOf(file, name);
+  const one = alias && alias.values.length === 1 && alias.values[0].k === 'id' ? classOf(alias.file, alias.values[0].v) : null;
+  if (one) return { cls: one };
+  const m = meaning(file, name);
+  if (m?.external || (!m && !bound && !importsFromProject(file, name))) return { cls: null };
+  return { cls: null, open: { cls: cur, callee: name, args: [], file, name: true } };
+}
+
+/**
  * What `cur` extends: a class it names, the class a mixin it calls returns
  * (`extends Loud(Base)`, handing Base on to it), or what a mixin's class was
- * handed. `open` when it is a call this engine cannot follow.
+ * handed. `open` when it is something this engine cannot follow to a class: a
+ * call it cannot follow, an expression (`extends (on ? A : B)`), or a name
+ * `namedParent` cannot settle.
  */
-function parentOf({ classOf, mixinOf }, cur, handed) {
-  if (cur.extends) return { cls: classOf(cur.file, cur.extends) };
+function parentOf(step, cur, handed) {
+  if (cur.extends) return namedParent(step, cur, cur.file, cur.extends, Boolean(cur.extendsBound));
+  if (cur.extendsExpr) return { cls: null, open: { cls: cur, callee: 'an expression', args: [], file: cur.file } };
   const call = cur.extendsCall ?? (cur.mixinParam !== undefined && handed ? handed.args[cur.mixinParam] : null);
   const file = cur.extendsCall ? cur.file : handed?.file;
   if (!call) return { cls: null };
-  if (call.k === 'id') return { cls: classOf(file, call.v) };
-  const mixin = call.callee ? mixinOf(file, call.callee) : null;
+  if (call.k === 'id') return namedParent(step, cur, file, call.v, Boolean(call.at));
+  const mixin = call.callee ? step.mixinOf(file, call.callee) : null;
   return mixin ? { cls: mixin, handed: { file, args: call.args ?? [] } } : { cls: null, open: { cls: cur, callee: call.callee ?? 'an expression', args: call.args ?? [], file } };
 }
 
@@ -228,12 +282,36 @@ function typeIn(files, m) {
 }
 
 /**
+ * Why a class of the chain may give its objects a `name` this engine does not
+ * link, or null: a member written with a value it does not read as a method
+ * (`step = this.fast.bind(this)`, `this.step = () => 2` in a constructor, a
+ * constructor parameter of that name), one written on the prototype, a write
+ * that may name any member (`Object.assign(this, …)`), or a member whose name
+ * is computed. `this.step = this.step.bind(this)` runs the same method and is
+ * none of these.
+ */
+export function replacedBy(c, name) {
+  if (c.computedMembers) return `${c.key} has a member whose name is computed, which may be ${name}`;
+  const field = c.fields?.get(name);
+  if (field && !field.static && !field.fn && !field.bindsSelf) return `${c.key}.${name} is ${field.kind === 'ctorParam' ? 'a constructor parameter property' : 'a property'} whose value this engine does not read as a method`;
+  const w = [...(c.writes?.get(name) ?? []), ...(c.writes?.get(null) ?? [])].find((x) => !x.bindsSelf);
+  if (!w) return null;
+  const on = w.on === 'this' ? 'its objects' : 'its prototype';
+  return `${w.file}:${w.line} writes ${w.name === null ? 'members it does not name' : name} on ${on} of ${c.key}, with a value this engine does not link`;
+}
+
+/**
  * What `this.name()` runs on an object of `cls`: a property of the chain that
  * holds a function (the most derived one: each is set on the object, over any
- * method), else the nearest method; with the class that declares it.
+ * method), else the nearest method; with the class that declares it. `{cls,
+ * replaced}` with why when a class of the chain may replace it with something
+ * this engine does not link.
  */
 export function runsOn(project, cls, name) {
-  for (const c of project.lineage(cls)) if (c.fnProps?.has(name)) return { cls: c, method: c.fnProps.get(name) };
+  const lineage = project.lineage(cls);
+  const replaced = lineage.map((c) => replacedBy(c, name)).find(Boolean);
+  if (replaced) return { cls, replaced };
+  for (const c of lineage) if (c.fnProps?.has(name)) return { cls: c, method: c.fnProps.get(name) };
   return methodOf(project, cls, name);
 }
 

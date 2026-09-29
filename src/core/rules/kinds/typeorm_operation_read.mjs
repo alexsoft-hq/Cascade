@@ -9,7 +9,7 @@
 // the running program knows. Nothing is dropped silently.
 
 export const ARG_ROLES = Object.freeze(['find-options', 'find-options-or-id', 'where', 'ids', 'criteria', 'values', 'entity', 'property', 'property-write', 'conflict', 'none']);
-export const OPTION_ROLES = Object.freeze(['project', 'filter', 'read', 'relations', 'eager', 'not-read', 'none']);
+export const OPTION_ROLES = Object.freeze(['project', 'filter', 'read', 'relations', 'eager', 'with-deleted', 'not-read', 'none']);
 /** The statements TypeORM builds a write with, each by its own query builder, and how one sets a column of its own accord. */
 export const SENDS = Object.freeze(['insert', 'update', 'soft-delete', 'restore']);
 export const AUTO_HOW = Object.freeze(['set', 'increment']);
@@ -84,8 +84,15 @@ export function readFindOptions(v, entity, fx, roles) {
     else if (role === 'filter') readWhere(x, 'where', entity, fx);
     else if (role === 'read') readOrder(x, entity, fx);
     else if (role === 'relations') readRelations(x, entity, fx);
-    else if (role === 'eager') { if (x.k === 'bool') fx.noEager = x.v === false; else fx.eagerMay = true; }
+    else readFlag(role, x, fx);
   }
+}
+
+/** An option that turns something TypeORM does on its own off: eager relations, or the delete date filter. Not written out, it may. */
+function readFlag(role, x, fx) {
+  if (role === 'eager') { if (x.k === 'bool') fx.noEager = x.v === false; else fx.eagerMay = true; }
+  // A find that asks for soft-deleted rows leaves out the delete date filter; one that may ask, may.
+  else if (role === 'with-deleted') fx.withDeleted = x.k === 'bool' ? x.v : 'may';
 }
 
 /**

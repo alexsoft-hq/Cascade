@@ -189,7 +189,8 @@ test('a repository call is a statement of its own, numbered among its method\'s 
   assert.equal(gradeOf(g, 'symbol:users.service.ts#UsersService.m', 'IMPLEMENTS_STMT', SID('m', 0)), 'EXACT');
   const reads = edgesFrom(g, SID('m', 0), 'READS').map((e) => e.to).sort();
   // A partial select still returns the primary key, and the eager role is joined and selected whole with it.
-  assert.deepEqual(reads, ['column:role.id', 'column:role.title', 'column:users.bio', 'column:users.email', 'column:users.id', 'column:users.roleId']);
+  // The select filters out soft-deleted rows (deletedAt IS NULL), as QueryBuilder.createWhereExpression adds for an entity with a delete date column.
+  assert.deepEqual(reads, ['column:role.id', 'column:role.title', 'column:users.bio', 'column:users.deletedAt', 'column:users.email', 'column:users.id', 'column:users.roleId']);
   const second = g.nodes.get(SID('m', 1));
   assert.equal(second.statementType, 'update');
   assert.equal(gradeOf(g, SID('m', 1), 'WRITES', 'column:users.bio'), 'EXACT');
@@ -365,14 +366,14 @@ test('a declared part that differs from what the options say is used, and said',
   assert.ok(stats.diagnostics.some((d) => d.kind === 'TS_TYPEORM_NAMING_DECLARED'));
 });
 
-test('tsBackend.typeorm is a block of namingStrategy, entityPrefix and schema, each null or a string, the strategy one the pack names', () => {
+test('tsBackend.typeorm is a block of namingStrategy, entityPrefix, schema and type, each null or a string, the strategy one the pack names', () => {
   assert.doesNotThrow(() => validateProfile(normalizeProfile({ tsBackend: { typeorm: { namingStrategy: 'snake', entityPrefix: '' } } })));
   assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeorm: { namingStrategy: 7 } } })), (e) => e instanceof ProfileError);
   assert.throws(() => validateProfile(normalizeProfile({ tsBackend: { typeorm: { prefix: 'x' } } })), (e) => e instanceof ProfileError && /unknown key "prefix"/.test(e.message));
-  assert.deepEqual(normalizeProfile({ tsBackend: { typeorm: { schema: 'billing' } } }).tsBackend.typeorm, { namingStrategy: null, entityPrefix: null, schema: 'billing' });
+  assert.deepEqual(normalizeProfile({ tsBackend: { typeorm: { schema: 'billing' } } }).tsBackend.typeorm, { namingStrategy: null, entityPrefix: null, schema: 'billing', type: null });
   // Which names are strategies is the pack's, checked where the analysis reads the block.
-  assert.deepEqual(typeormDeclared({ namingStrategy: 'snake', entityPrefix: null, schema: '' }), { namingStrategy: 'snake', entityPrefix: null, schema: '' });
+  assert.deepEqual(typeormDeclared({ namingStrategy: 'snake', entityPrefix: null, schema: '' }), { namingStrategy: 'snake', entityPrefix: null, schema: '', type: null });
   assert.equal(typeormDeclared({ namingStrategy: null, entityPrefix: null, schema: null }), null);
   assert.throws(() => typeormDeclared({ namingStrategy: 'SnakeNamingStrategy' }), (e) => e instanceof ProfileError && /one of default, snake/.test(e.message));
-  for (const k of ['namingStrategy', 'entityPrefix', 'schema']) assert.equal(PROFILE_KEY_CONSUMERS[`tsBackend.typeorm.${k}`].status, 'consumed');
+  for (const k of ['namingStrategy', 'entityPrefix', 'schema', 'type']) assert.equal(PROFILE_KEY_CONSUMERS[`tsBackend.typeorm.${k}`].status, 'consumed');
 });

@@ -439,7 +439,8 @@ export function sayMappingAnnotations(m) {
 function typeormSaid(t) {
   if (!t) return '';
   const how = { profile: 'declared in the profile', options: 'read from the options', assumed: 'assumed' };
-  const unknown = t.naming ? ['prefix', 'schema'].filter((k) => t.naming[k] && !t.naming[k].known).map((k) => (k === 'prefix' ? 'entityPrefix' : 'schema')) : [];
+  // The driver is said only where it left a table's name in doubt.
+  const unknown = t.naming ? ['prefix', 'schema', 'type'].filter((k) => t.naming[k] && (k === 'type' ? t.naming.type.doubted : !t.naming[k].known)).map((k) => (k === 'prefix' ? 'entityPrefix' : k)) : [];
   const naming = t.naming ? `, ${t.naming.strategy} naming ${how[t.naming.from]}${unknown.length > 0 ? `, ${unknown.join(' and ')} not known` : ''}${t.heuristicNames > 0 ? ` (${t.heuristicNames} name(s) HEURISTIC)` : ''}` : '';
   const unread = t.raw + t.unknownOperation + t.unreadEntity;
   return `; TypeORM: ${t.statements} statement(s) from ${t.sites} call(s) (${t.builders} query builder(s))${unread > 0 ? `, ${unread} not read` : ''}, `

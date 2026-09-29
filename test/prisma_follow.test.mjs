@@ -329,7 +329,7 @@ test('nested_disconnect_false_emits_no_relation_edges', () => {
     '    await this.prisma.badge.update({ where: { id }, data: { team: { disconnect: false } }, select: { id: true } });',
     '    await this.prisma.member.update({ where: { id }, data: { team: { disconnect: false } }, select: { id: true } });',
   ]);
-  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT Badge [write]', 'READS EXACT Badge.id'], 'on a one-to-one, Prisma returns before building any query');
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT Badge [read]', 'READS EXACT Badge.id'], 'on a one-to-one, Prisma returns before building any query, and the data sets no field of Badge: it finds the row and writes nothing');
   assert.ok(edgesOf(sid(1)).includes('WRITES EXACT Member.teamId via Member.team'), 'on the to-one side of a one-to-many, Prisma\'s engine disconnects whatever the boolean says');
 });
 
@@ -341,7 +341,7 @@ test('nested_create_empty_emits_no_relation_writes', () => {
   ]);
   assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email']);
   assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id', 'WRITES EXACT User.email'], 'a many-to-many disconnect of nothing returns before any query');
-  assert.deepEqual(edgesOf(sid(2)), ['EXECUTES EXACT Team [write]', 'READS EXACT Team.id']);
+  assert.deepEqual(edgesOf(sid(2)), ['EXECUTES EXACT Team [read]', 'READS EXACT Team.id']);
 });
 
 // Measured on Prisma 6.19.0 over SQLite (.oss-work/rm67/y2/runtime-result.jsonl):
@@ -355,11 +355,11 @@ test('nested_empty_delete_and_one_to_many_disconnect_preserve_child_reads', () =
     '    await this.prisma.team.update({ where: { id }, data: { members: { disconnect: [] } }, select: { id: true } });',
   ]);
   assert.deepEqual(edgesOf(sid(0)), [
-    'EXECUTES EXACT Post [read] via User.posts', 'EXECUTES EXACT User [write]',
+    'EXECUTES EXACT Post [read] via User.posts', 'EXECUTES EXACT User [read]',
     'READS EXACT Post.authorId via User.posts', 'READS EXACT Post.id via User.posts', 'READS EXACT User.id',
   ], 'the children are still looked up, and nothing of Post is written or deleted');
   assert.deepEqual(edgesOf(sid(1)), [
-    'EXECUTES EXACT Member [read] via Team.members', 'EXECUTES EXACT Team [write]',
+    'EXECUTES EXACT Member [read] via Team.members', 'EXECUTES EXACT Team [read]',
     'READS EXACT Member.id via Team.members', 'READS EXACT Member.teamId via Team.members', 'READS EXACT Team.id',
   ]);
 });
@@ -368,7 +368,7 @@ test('an empty delete on a many-to-many still looks the rows up through the impl
   // Measured (.oss-work/rm67/y2/measured-y2.jsonl): SELECT _TagToUser.B, _TagToUser.A ...; SELECT Tag.id ... WHERE (1=0 AND ...).
   const { edgesOf, sid } = run(['    await this.prisma.user.update({ where: { id }, data: { tags: { delete: [] } }, select: { id: true } });']);
   assert.deepEqual(edgesOf(sid(0)), [
-    'EXECUTES EXACT Tag [read] via User.tags', 'EXECUTES EXACT User [write]', 'EXECUTES EXACT _TagToUser [read] via User.tags',
+    'EXECUTES EXACT Tag [read] via User.tags', 'EXECUTES EXACT User [read]', 'EXECUTES EXACT _TagToUser [read] via User.tags',
     'READS EXACT Tag.id via User.tags', 'READS EXACT User.id', 'READS EXACT _TagToUser.A via User.tags', 'READS EXACT _TagToUser.B via User.tags',
   ]);
 });
@@ -379,8 +379,8 @@ test('nested_createMany_empty_data_emits_no_post_write_existing_defect', () => {
     '    await this.prisma.user.update({ where: { id }, data: { posts: { createMany: { data: [], skipDuplicates: true } } }, select: { id: true } });',
     '    await this.prisma.user.update({ where: { id }, data: { posts: { createMany: { data: rows } } }, select: { id: true } });',
   ]);
-  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id']);
-  assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [write]', 'READS EXACT User.id']);
+  assert.deepEqual(edgesOf(sid(0)), ['EXECUTES EXACT User [read]', 'READS EXACT User.id']);
+  assert.deepEqual(edgesOf(sid(1)), ['EXECUTES EXACT User [read]', 'READS EXACT User.id']);
   assert.ok(edgesOf(sid(2)).includes('EXECUTES EXACT Post [write] via User.posts'), 'data held in a variable may hold rows');
 });
 

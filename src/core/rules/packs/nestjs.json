@@ -104,6 +104,11 @@
           "source": "import { Injectable } from '@nestjs/common';\n@Injectable()\nexport class NotAModule {}\n",
           "expect": [],
           "why": "only a module's providers bind anything"
+        },
+        {
+          "source": "import { Module } from '@nestjs/common';\nimport { A } from './a';\ndeclare const on: boolean;\n@Module({ providers: [...(on ? [A] : [])] })\nexport class OptionalModule {}\n",
+          "expect": [{"module": "OptionalModule", "token": "A", "useClass": "A"}],
+          "why": "a list spread under a condition and written out may bind what it holds, so it is read; one held in a name may bind anything"
         }
       ]
     }

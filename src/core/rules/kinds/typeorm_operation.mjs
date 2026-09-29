@@ -76,7 +76,21 @@ function finish(fx, op, entity) {
   if (op.eagerJoined && !fx.noEager) fx.eagerJoined = true;
   if (op.deleteDate) writeDeleteDate(fx, entity);
   autoWrites(fx, op, entity);
+  softDeleteFilter(fx, op, entity);
   return fx;
+}
+
+/**
+ * A select on an entity with a delete date column filters out the rows it
+ * marks (`deletedAt IS NULL`) unless the find asks for them with withDeleted
+ * (0.3.28 QueryBuilder.createWhereExpression): the column is read. Options not
+ * written out may ask, so it is then a candidate. `filtered` tells the joins
+ * the find makes the same thing.
+ */
+function softDeleteFilter(fx, op, entity) {
+  if (op.statement !== 'select' || fx.withDeleted === true) return;
+  fx.filtered = fx.withDeleted === 'may' || fx.optionsUnknown ? 'may' : 'exact';
+  if (entity.deleteDate) (fx.filtered === 'may' ? fx.mayReads : fx.reads).add(entity.deleteDate);
 }
 
 /**
@@ -91,18 +105,34 @@ function setIn(c, send) {
   return { send, how, sure: !(send === 'insert' && c.insertable === 'may') };
 }
 
-/** The columns the statements an operation sends set on their own; a version set to itself plus one is read as well. */
+/**
+ * The columns the statements an operation sends set on their own; a version
+ * set to itself plus one is read as well. Since 0.2.34 an update adds one only
+ * when the values it is handed do not name the column (0.3.28
+ * UpdateQueryBuilder.createUpdateExpression), and before that always: values
+ * that name it write it themselves, and whether the old one is read is the
+ * installed version's, so the read is a candidate; so it is when the values
+ * are not written out, which may name it.
+ */
 function autoWrites(fx, op, entity) {
   const sends = op.sends ?? [];
   for (const c of entity.auto ?? []) {
     const written = sends.map((s) => setIn(c, s)).filter(Boolean);
-    if (written.length === 0) continue;
-    (written.length === sends.length && written.every((w) => w.sure) ? fx.autoWrites : fx.mayAutoWrites).add(c.property);
-    const plusOne = written.filter((w) => w.how === 'increment');
-    if (plusOne.length > 0) (plusOne.length === sends.length ? fx.autoReads : fx.mayAutoReads).add(c.property);
-    fx.autoWhy.set(c.property, `the ${c.role} column, which TypeORM sets itself in the ${written.map((w) => w.send).join(' and the ')} it sends`);
+    // An entity save hands over is compared with the row first, so whether it names the column is the running program's.
+    if (written.length > 0) autoColumn(fx, c, { written, sends, named: !op.writesEntity && fx.writes.has(c.property) });
   }
 }
+
+/** One column the statements set on their own: written unless the values name it, and a version read, a candidate where it may not be. */
+function autoColumn(fx, c, { written, sends, named }) {
+  if (!named) (written.length === sends.length && written.every((w) => w.sure) ? fx.autoWrites : fx.mayAutoWrites).add(c.property);
+  const plusOne = written.filter((w) => w.how === 'increment');
+  const sure = plusOne.length === sends.length && !named && !fx.runtimeOnly.has('values');
+  if (plusOne.length > 0) (sure ? fx.autoReads : fx.mayAutoReads).add(c.property);
+  fx.autoWhy.set(c.property, named ? NAMED_WHY(c.role) : `the ${c.role} column, which TypeORM sets itself in the ${written.map((w) => w.send).join(' and the ')} it sends`);
+}
+
+const NAMED_WHY = (role) => `the ${role} column the values name: TypeORM from 0.2.34 adds one to it only when they do not, and before that always, so whether the old value is read is the installed version's`;
 
 /** The row an operation that returns one returns: whole with no select; with one, what it names and the primary key too (SelectQueryBuilder.buildEscapedEntityColumnSelects). */
 function rowOf(fx, op, entity, unknownArg) {

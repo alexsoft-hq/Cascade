@@ -22,7 +22,7 @@
 
 import { nodeId } from '../../core/graph.mjs';
 import { fieldOf, methodOf } from './project.mjs';
-import { methodsRunBy, typeTargets } from './dispatch.mjs';
+import { gapAmong, methodsRunBy, typeTargets } from './dispatch.mjs';
 
 export const methodSymbolId = (file, cls, method) => nodeId('symbol', `${file}#${cls}.${method}`);
 export const functionSymbolId = (file, name) => nodeId('symbol', `${file}#${name}`);
@@ -78,31 +78,42 @@ const bindingSaid = (bound, all) => (bound.classes
 /**
  * Whether a call through a type no class of the project changes stays as it
  * always was: the modules bind the type to itself, or nothing binds it to
- * anything else and no decorator of the parameter says otherwise.
+ * anything else, no decorator of the parameter says otherwise, and no module
+ * this engine could not read may bind it (`gap`).
  */
 const staysPlain = (bound, type) => !bound
-  || (bound.classes ? bound.classes.length === 1 && bound.classes[0].key === type.key : !bound.rebound && !bound.decorator);
+  || (bound.classes ? bound.classes.length === 1 && bound.classes[0].key === type.key : !bound.rebound && !bound.decorator && !bound.gap);
+
+/**
+ * Why a set may be short, or null. What the modules settle is the class Nest
+ * makes, so a class outside the tree cannot be it, and only a member one of
+ * them may be given another way is a gap; otherwise a class this engine
+ * cannot read, or one of a published package's users, may be one more.
+ */
+const shortBecause = (ctx, t, { type, name, bound, said }) => said.incomplete
+  ?? (bound?.classes ? gapAmong(ctx.project, bound.classes, name) : t.open ?? ctx.published(type.file));
 
 /**
  * A call through a value of `type`: the type's own method as it always was
  * when no class of the project changes the answer and no module binds the
  * type to another object, else every method the value may run, each edge
  * carrying the set. `narrowed` is what the modules' bindings make of the set,
- * when one is asked. The set is SOUND_SET when it is complete: `this` is
- * always an instance of a class of the tree unless the type's package may be
- * published or a class this engine cannot read may extend it, and a field
- * holds what the bindings settle. Otherwise it is HEURISTIC, and the edge says
- * why it may be short.
+ * when one is asked; without it, the call is on `this`, whose class a user of
+ * a published package may extend. The set is SOUND_SET when it is complete:
+ * `this` is always an instance of a class of the tree unless the type's
+ * package may be published or a class this engine cannot read may extend it,
+ * and a field holds what the bindings settle. Otherwise it is HEURISTIC, and
+ * the edge says why it may be short.
  */
 function throughType(ctx, type, name, rules, narrowed = null) {
   const t = typeTargets(ctx.project, ctx.subtypesOf, type, name);
   const bound = narrowed ? narrowed() : null;
-  if (t.plain && staysPlain(bound, type)) return { to: [idOf(t.own)], rule: rules[0] };
+  if (t.plain && staysPlain(bound, type) && (narrowed || !ctx.published(type.file))) return { to: [idOf(t.own)], rule: rules[0] };
   // A set the modules do not settle keeps every class they were read to bind, beside the hierarchy.
   const set = bound?.classes ? methodsRunBy(ctx.project, bound.classes, name) : withPartial(ctx.project, t.all, bound?.partial ?? [], name);
   if (set.length === 0) return null;
   const said = bound ? bindingSaid(bound, t.all.length) : {};
-  const incomplete = said.incomplete ?? t.open ?? ctx.published(type.file);
+  const incomplete = shortBecause(ctx, t, { type, name, bound, said });
   const dispatch = { type: type.key, candidates: set.length, ...said, ...(incomplete ? { incomplete } : {}) };
   return { to: set.map(idOf), rule: rules[1], dispatch, grade: incomplete ? 'HEURISTIC' : 'SOUND_SET', narrowed: Boolean(bound?.classes) };
 }
@@ -123,17 +134,26 @@ function fieldCall(ctx, caller, fieldName, name) {
   return throughType(ctx, type, name, ['ts-injected-field', 'ts-field-dispatch'], narrowed);
 }
 
+/**
+ * `f()`: the function a name of the file means. A name the file that declares
+ * it writes again (`let f = …; f = other`) may hold another function when the
+ * call runs, so the one it was declared with is only a guess.
+ */
+function functionTarget(project, call, name) {
+  const m = project.meaning(call.file, name);
+  const fn = m && !m.external ? project.files.get(m.file)?.functions.get(m.name) : null;
+  if (!fn) return null;
+  const to = [functionSymbolId(m.file, m.name)];
+  return fn.reassigned ? { to, rule: 'ts-function', grade: 'HEURISTIC', incomplete: `${m.file} writes ${m.name} again, so the call may run another function` } : { to, rule: 'ts-function' };
+}
+
 /** What one call reaches, as `{to: [ids], rule, dispatch?}`, or null. */
 function targetOf(ctx, call, caller) {
   const { project } = ctx;
   const parts = call.callee.split('.');
   if (parts[0] === 'this' && parts.length === 2) return caller.cls ? throughType(ctx, caller.cls, parts[1], ['ts-this-method', 'ts-this-dispatch']) : null;
   if (parts[0] === 'this' && parts.length === 3) return caller.cls ? fieldCall(ctx, caller, parts[1], parts[2]) : null;
-  if (parts.length === 1) {
-    const m = project.meaning(call.file, parts[0]);
-    const fn = m && !m.external ? project.files.get(m.file)?.functions.get(m.name) : null;
-    return fn ? { to: [functionSymbolId(m.file, m.name)], rule: 'ts-function' } : null;
-  }
+  if (parts.length === 1) return functionTarget(project, call, parts[0]);
   if (parts.length === 2) {
     const to = methodTarget(project, project.classOf(call.file, parts[0]), parts[1]);
     return to && { ...to, rule: 'ts-static-method' };
@@ -170,7 +190,9 @@ function linkCall(g, call, caller, target, seen) {
     if (seen.has(key)) continue;
     seen.add(key);
     // An evidence object of its own for each edge, so nothing said of one edge is said of its siblings.
-    const evidence = { rule: target.rule, basis: CALL_BASIS[target.rule], line: call.line, ...(target.dispatch ? { dispatch: { ...target.dispatch } } : {}) };
+    const evidence = {
+      rule: target.rule, basis: CALL_BASIS[target.rule], line: call.line, ...(target.dispatch ? { dispatch: { ...target.dispatch } } : {}), ...(target.incomplete ? { incomplete: target.incomplete } : {}),
+    };
     g.addEdge({ from: caller.id, to, type: 'MAY_CALL', grade: target.grade ?? 'SOUND_SET', evidence });
     edges += 1;
   }

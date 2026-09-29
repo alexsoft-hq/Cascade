@@ -44,7 +44,7 @@ function varScope(scope) {
   return s;
 }
 
-function declare(st, scope, id, initialized = true) {
+function declare(st, scope, id, initialized = true, kind = 'let') {
   if (!id || !id.name) return;
   const prev = scope.names.get(id.name);
   if (prev) {
@@ -54,7 +54,7 @@ function declare(st, scope, id, initialized = true) {
     st.declared.set(id, prev);
     return;
   }
-  const b = { at: place(id), local: scope.kind !== 'module', reassigned: false, initialized, writes: 0, redeclared: false };
+  const b = { at: place(id), local: scope.kind !== 'module', reassigned: false, initialized, writes: 0, redeclared: false, kind };
   scope.names.set(id.name, b);
   st.declared.set(id, b);
 }
@@ -70,12 +70,12 @@ function resolve(scope, name) {
 /** A function: its own name (an expression's, in a scope of its own), its parameters, and its body, all in one function scope. */
 function walkFunction(st, node, scope) {
   let outer = scope;
-  if (node.type === 'FunctionDeclaration') declare(st, scope, node.id);
-  else if (node.id && node.type === 'FunctionExpression') { outer = scopeIn(scope, 'block'); declare(st, outer, node.id); }
+  if (node.type === 'FunctionDeclaration') declare(st, scope, node.id, true, 'function');
+  else if (node.id && node.type === 'FunctionExpression') { outer = scopeIn(scope, 'block'); declare(st, outer, node.id, true, 'function'); }
   if (node.computed && node.key) walk(st, node.key, scope);
   for (const d of node.decorators ?? []) walk(st, d, scope);
   const fn = scopeIn(outer, 'function');
-  for (const p of node.params) for (const id of patternIds(p)) declare(st, fn, id);
+  for (const p of node.params) for (const id of patternIds(p)) declare(st, fn, id, true, 'param');
   for (const p of node.params) walk(st, p, fn);
   const body = node.body;
   if (body && body.type === 'BlockStatement') for (const s of body.body) walk(st, s, fn);
@@ -87,9 +87,9 @@ function walkDeclaration(st, node, scope) {
   if (node.type === 'VariableDeclaration') {
     const target = node.kind === 'var' ? varScope(scope) : scope;
     // A for-in or for-of head is given a value by the loop, whatever it writes.
-    for (const d of node.declarations) for (const id of patternIds(d.id)) declare(st, target, id, Boolean(d.init) || st.loopHeads.has(node));
+    for (const d of node.declarations) for (const id of patternIds(d.id)) declare(st, target, id, Boolean(d.init) || st.loopHeads.has(node), node.kind);
   } else if (node.type === 'ClassDeclaration' || node.type === 'TSEnumDeclaration') {
-    declare(st, scope, node.id);
+    declare(st, scope, node.id, true, node.type === 'ClassDeclaration' ? 'class' : 'enum');
   }
 }
 
@@ -119,8 +119,8 @@ function walk(st, node, scope) {
   walkDeclaration(st, node, scope);
   noteWrites(st, node, scope);
   const inner = scopeOpened(node, scope);
-  if (node.type === 'CatchClause') for (const id of patternIds(node.param)) declare(st, inner, id);
-  if (node.type === 'ClassExpression' && node.id) declare(st, inner, node.id);
+  if (node.type === 'CatchClause') for (const id of patternIds(node.param)) declare(st, inner, id, true, 'param');
+  if (node.type === 'ClassExpression' && node.id) declare(st, inner, node.id, true, 'class');
   // A type says nothing about which value a name is.
   eachChild(node, (c, key) => { if (key !== 'typeAnnotation' && key !== 'returnType' && key !== 'typeParameters') walk(st, c, inner); });
 }
@@ -129,10 +129,15 @@ function walk(st, node, scope) {
  * The locals of one file's syntax tree.
  *
  * @param {object} ast  a Babel `File`
- * @returns {{local:(id:object) => ({at:string, reassigned:boolean, once:boolean}|null)}}
+ * @returns {{local:(id:object) => ({at:string, reassigned:boolean, once:boolean}|null),
+ *            binding:(id:object) => ({local:boolean, reassigned:boolean, kind:string}|null)}}
  *          `local(id)`: for an identifier node of this tree, the local it refers
  *          to or declares, or null when it is not a local (module level,
- *          imported, or declared nowhere in the file)
+ *          imported, or declared nowhere in the file). `binding(id)`: the
+ *          declaration it refers to at any level, module level included, with
+ *          how it is declared (`const`, `let`, `var`, `function`, `class`,
+ *          `enum`, `param`) and whether it is written again; null when the file
+ *          declares it nowhere (an import, or a global)
  */
 export function readScopes(ast) {
   const st = { declared: new Map(), scopes: new Map(), writes: [], loopHeads: new Set() };
@@ -145,5 +150,9 @@ export function readScopes(ast) {
     const b = st.declared.get(id) ?? (st.scopes.has(id) ? resolve(st.scopes.get(id), id.name) : null);
     return b && b.local && b.at ? { at: b.at, reassigned: b.reassigned, once: !b.initialized && b.writes === 1 && !b.redeclared } : null;
   };
-  return { local };
+  const binding = (id) => {
+    const b = st.declared.get(id) ?? (st.scopes.has(id) ? resolve(st.scopes.get(id), id.name) : null);
+    return b ? { local: b.local, reassigned: b.reassigned, kind: b.kind } : null;
+  };
+  return { local, binding };
 }

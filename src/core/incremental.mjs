@@ -229,7 +229,7 @@ function reachedFrom(batch, shards, resolve, seen) {
   for (const file of batch) {
     for (const r of shards.get(file) ?? []) {
       if ((r.kind !== 'import' && r.kind !== 'export') || typeof r.source !== 'string') continue;
-      const target = resolve(file, r.source);
+      const target = resolve(file, r.source, r.kind);
       if (target && !seen.has(target)) {
         seen.add(target);
         next.add(target);
@@ -294,7 +294,17 @@ export function runTsLaneWithShards({ index = null, store, roots, run, hash, abs
   }
   const stats = { reusedTs: counts.reused, reparsedTs: counts.reparsed.length };
   if (seen.size > listed.length) stats.reachedTs = seen.size - listed.length;
-  return { tsFacts: assembleTsFacts(shards), tsFiles, reparsed: counts.reparsed.sort(), stats };
+  return { tsFacts: [...assembleTsFacts(shards), ...leftOutRecords(run, seen)], tsFiles, reparsed: counts.reparsed.sort(), stats };
+}
+
+/**
+ * The files the run found and did not read (test support the application does
+ * not import, a link out of the root), each a `leftOut` record for the bridge
+ * to say and to tell from a package. Decided on every run, never cached.
+ */
+function leftOutRecords(run, seen) {
+  if (typeof run.tsLeftOut !== 'function') return [];
+  return run.tsLeftOut().filter((l) => !seen.has(l.file)).map((l) => ({ kind: 'leftOut', file: l.file, why: l.why }));
 }
 
 /**

@@ -80,7 +80,7 @@ test('--no-ts switches the lane off even when the profile declares it', () => {
 // ---------------------------------------------------------------------------
 
 test('tsBackend defaults to nothing declared, and a wrong shape is refused with the key', () => {
-  assert.deepEqual(normalizeProfile({}).tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeorm: { namingStrategy: null, entityPrefix: null, schema: null } });
+  assert.deepEqual(normalizeProfile({}).tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeorm: { namingStrategy: null, entityPrefix: null, schema: null, type: null } });
   assert.throws(() => validateProfile({ tsBackend: { app: '' } }), (e) => e instanceof ProfileError && /tsBackend\.app/.test(e.message));
   assert.throws(() => validateProfile({ tsBackend: { prismaSchema: 3 } }), /tsBackend\.prismaSchema/);
   assert.throws(() => validateProfile({ tsBackend: { globalPrefix: false } }), /tsBackend\.globalPrefix/);
@@ -151,7 +151,7 @@ test('init writes the one application it finds, the nestjs pack, and the dialect
   const { profile } = buildProfile(initDiscovery({ nestApps: [APP], prismaSchemas: [{ path: 'prisma/schema.prisma', provider: 'postgresql' }] }),
     { root: '/p/app', manifestDir: '/p/app/.cascade' });
   assert.ok(profile.frameworkPacks.includes('nestjs'));
-  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeorm: { namingStrategy: null, entityPrefix: null, schema: null } });
+  assert.deepEqual(profile.tsBackend, { app: '../apps/api/src', prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeorm: { namingStrategy: null, entityPrefix: null, schema: null, type: null } });
   assert.equal(profile.sqlDialects.main, 'postgresql');
 });
 
@@ -167,7 +167,7 @@ test('init writes no application when it finds two, and says which it found', ()
 test('an application the profile already names is kept whole, prefix and all', () => {
   const existing = { tsBackend: { app: '../server', prismaSchema: null, globalPrefix: 'api', globalPrefixExclude: ['health'] } };
   const { profile, diagnostics } = buildProfile(initDiscovery({ nestApps: [APP] }), { root: '/p/app', manifestDir: '/p/app/.cascade', existing });
-  assert.deepEqual(profile.tsBackend, { ...existing.tsBackend, typeorm: { namingStrategy: null, entityPrefix: null, schema: null } }, 'kept, with a key it did not set at its default');
+  assert.deepEqual(profile.tsBackend, { ...existing.tsBackend, typeorm: { namingStrategy: null, entityPrefix: null, schema: null, type: null } }, 'kept, with a key it did not set at its default');
   assert.ok(diagnostics.some((d) => d.kind === 'TS_BACKEND_KEPT'));
 });
 
@@ -212,7 +212,7 @@ test('the TypeScript worker is part of the engine print, so a change to it is an
 test('a project that never sets tsBackend keeps the profile digest it had before the block existed; setting it moves the digest', () => {
   const javaOnly = normalizeProfile({ frameworkPacks: ['spring-mvc'], sqlDialects: { main: 'mysql' } });
   const { tsBackend, ...withoutBlock } = javaOnly;
-  assert.deepEqual(tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeorm: { namingStrategy: null, entityPrefix: null, schema: null } });
+  assert.deepEqual(tsBackend, { app: null, prismaSchema: null, globalPrefix: null, globalPrefixExclude: null, typeorm: { namingStrategy: null, entityPrefix: null, schema: null, type: null } });
   assert.equal(profileDigestOf(javaOnly), profileDigestOf(withoutBlock), 'the block at its default is not part of the target');
   assert.notEqual(profileDigestOf(normalizeProfile({ tsBackend: { app: '../api' } })), profileDigestOf(normalizeProfile({})));
 });
@@ -220,7 +220,7 @@ test('a project that never sets tsBackend keeps the profile digest it had before
 test('a project that set tsBackend before the typeorm block existed keeps its profile digest; declaring a part of it moves it', () => {
   const nest = normalizeProfile({ frameworkPacks: ['nestjs'], tsBackend: { app: 'src', globalPrefix: 'api' } });
   const { typeorm, ...before } = nest.tsBackend;
-  assert.deepEqual(typeorm, { namingStrategy: null, entityPrefix: null, schema: null });
+  assert.deepEqual(typeorm, { namingStrategy: null, entityPrefix: null, schema: null, type: null });
   assert.equal(profileDigestOf(nest), sha256(canonicalJson(digestedProfile({ ...nest, tsBackend: before }))), 'the digest the block had before the key');
   const declared = normalizeProfile({ frameworkPacks: ['nestjs'], tsBackend: { app: 'src', globalPrefix: 'api', typeorm: { entityPrefix: '' } } });
   assert.notEqual(profileDigestOf(declared), profileDigestOf(nest), 'a declared part is part of the target');

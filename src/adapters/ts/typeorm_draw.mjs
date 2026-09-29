@@ -56,12 +56,14 @@ function drawRelations(se, e, fx) {
   const grade = fx.optionsUnknown ? 'SOUND_SET' : 'EXACT';
   // TypeORM 0.2 joins a named relation's eager relations even with loadEagerRelations: false; 0.3 does not.
   const eager = fx.noEager ? 'SOUND_SET' : fx.eagerMay ? 'SOUND_SET' : grade;
+  // A join of an entity with a delete date column filters on it as the main select does.
+  const filtered = fx.filtered ?? null;
   for (const path of fx.follows) {
     const narrowed = fx.hasSelect && fx.relations.has(path.split('.')[0]);
-    followPath(se, e, path, { grade, whole: !narrowed, eager, rule: 'typeorm-relations-option' });
+    followPath(se, e, path, { grade, whole: !narrowed, eager, rule: 'typeorm-relations-option', filtered });
   }
-  if (fx.eager) followEager(se, e, { grade: fx.eager === 'may' ? 'SOUND_SET' : 'EXACT', rule: 'typeorm-eager-relation' });
-  if (fx.eagerJoined) followEager(se, e, { grade: 'SOUND_SET', joinOnly: true, rule: 'typeorm-eager-relation' });
+  if (fx.eager) followEager(se, e, { grade: fx.eager === 'may' ? 'SOUND_SET' : 'EXACT', rule: 'typeorm-eager-relation', filtered });
+  if (fx.eagerJoined) followEager(se, e, { grade: 'SOUND_SET', joinOnly: true, rule: 'typeorm-eager-relation', filtered });
 }
 
 /** What a Repository or EntityManager operation reads and writes, drawn. */

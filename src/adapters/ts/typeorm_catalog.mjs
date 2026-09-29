@@ -25,15 +25,18 @@ export function catalogRecordsOf(model, schemaName) {
   for (const e of model.entities.values()) {
     const schema = schemaOf(e.schema);
     out.push({ kind: 'table', schema, table: e.table, comment: null, grade: e.tableGrade, why: e.tableWhy, mappedFrom: `${e.file}#${e.name}` });
-    for (const c of e.columns) out.push({ kind: 'column', schema, table: e.table, column: c.column, type: null, pk: c.pk, comment: null, grade: weakest(e.tableGrade, c.grade), why: c.why, property: `${e.name}.${c.property}` });
+    for (const c of e.columns) out.push({ kind: 'column', schema, table: e.table, column: c.column, type: null, pk: c.pk, comment: null, grade: weakest(e.tableGrade, c.grade), why: whyIn(c, e.tableGrade, e.tableWhy), property: `${e.name}.${c.property}` });
   }
   for (const j of model.junctions) {
     const schema = schemaOf(j.schema);
     out.push({ kind: 'table', schema, table: j.table, comment: null, grade: j.grade, why: j.why, joinTableFor: `${j.owner.name}.${j.property}` });
-    for (const c of [...j.ownerColumns, ...j.inverseColumns]) out.push({ kind: 'column', schema, table: j.table, column: c.column, type: null, pk: true, comment: null, grade: weakest(j.grade, c.grade), why: c.why });
+    for (const c of [...j.ownerColumns, ...j.inverseColumns]) out.push({ kind: 'column', schema, table: j.table, column: c.column, type: null, pk: true, comment: null, grade: weakest(j.grade, c.grade), why: whyIn(c, j.grade, j.why) });
   }
   return out;
 }
+
+/** Why a column's name has the grade it has in its table: its own reason, or the table's when the table's name is the less sure. */
+const whyIn = (c, tableGrade, tableWhy) => (weakest(tableGrade, c.grade) === c.grade ? c.why : `the table it is in is not settled: ${tableWhy}`);
 
 /** The tables a DDL (or a snapshot) put in the graph before the entities are read, by their name without a schema, folded as the run folds. */
 function ddlTablesByName(g, identifierCase) {

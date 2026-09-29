@@ -185,35 +185,71 @@ function testSupport() {
   return (rel) => rules.some((r) => r.compiled.isTestSupport(rel));
 }
 
+/** Why a file the run found is not read: test support the application does not import, or bytes outside the analyzed root. */
+const LEFT_OUT = Object.freeze({ test: 'test-support', outside: 'outside-root' });
+
 /**
  * Where an import of the application leads while the run decides which files
  * to read: the bridge's own resolution (src/adapters/ts/project.mjs) over the
  * same tsconfig, so the file read for an import is the file the bridge takes it
  * to mean. Under the application's root a file is one the worker listed; outside
- * it, a source file whose bytes are inside the analyzed root, that a walk would
- * read and that is not test support (never node_modules, a spec or a mock, or a
- * path or a link that leaves the root).
+ * it, a source file whose bytes are inside the analyzed root and that a walk
+ * would read (never node_modules, or a path or a link that leaves the root).
  *
- * @param {{rootAbs:string, appRootAbs:string, listed:string[]}} a  `listed` root-relative
- * @returns {(fromFile:string, spec:string) => (string|null)} the root-relative file, or null for a package
+ * Test support (the typescript pack's ts.test-support) is read when a file the
+ * run reads IMPORTS it: the application runs what it imports, whatever the
+ * directory is called (a `testing` feature). A re-export alone (a barrel's
+ * `export * from './x.mock'`) does not make it the application's. A file the
+ * resolution would have named and that is not read goes into `leftOut` with
+ * why, so the bridge says it and does not take it for a package.
+ *
+ * @param {{rootAbs:string, appRootAbs:string, listed:string[], leftOut?:Map<string,string>}} a  `listed` root-relative
+ * @returns {(fromFile:string, spec:string, kind?:string) => (string|null)} the root-relative file, or null for a package;
+ *          `kind` is the record the specifier is written in, 'import' or 'export'
  */
-export function tsReachResolver({ rootAbs, appRootAbs, listed }) {
+export function tsReachResolver({ rootAbs, appRootAbs, listed, leftOut = new Map() }) {
   const tsconfig = readTsconfigPaths(rootAbs, appRootAbs);
+  const paths = { baseUrl: tsconfig.baseUrl, paths: tsconfig.paths };
+  const known = new Set(listed);
+  const inside = fileInsideRoot(rootAbs);
+  const readable = readableOutside(rootAbs, appRootAbs, inside);
+  const forImport = makeModuleResolver((f) => known.has(f) || readable(f, false) || readable(f, true), paths);
+  const forExport = makeModuleResolver((f) => known.has(f) || readable(f, false), paths);
+  const there = makeModuleResolver((f) => isReadablePath(f) && fileThere(rootAbs, f), paths);
+  return (fromFile, spec, kind = 'import') => {
+    const hit = (kind === 'export' ? forExport : forImport)(fromFile, spec);
+    const missed = hit ? null : there(fromFile, spec);
+    if (missed && !known.has(missed)) leftOut.set(missed, inside(missed) ? LEFT_OUT.test : LEFT_OUT.outside);
+    return hit;
+  };
+}
+
+/**
+ * Whether a file not listed may be read: `(file, test)`, a source file whose
+ * bytes are inside the root that is test support (`test`), or that is not and
+ * lies outside the application's root (a shared library's).
+ */
+function readableOutside(rootAbs, appRootAbs, inside) {
   const app = toPosix(path.relative(rootAbs, appRootAbs));
   const inApp = (f) => app === '' || f === app || f.startsWith(`${app}/`);
-  const known = new Set(listed);
-  const [inside, isTest] = [fileInsideRoot(rootAbs), testSupport()];
-  const isKnown = (f) => known.has(f) || (!inApp(f) && isReadablePath(f) && !isTest(f) && inside(f));
-  return makeModuleResolver(isKnown, { baseUrl: tsconfig.baseUrl, paths: tsconfig.paths });
+  const isTest = testSupport();
+  return (f, test) => isReadablePath(f) && inside(f) && (test ? isTest(f) : !isTest(f) && !inApp(f));
+}
+
+/** Whether a root-relative path is a file, through any link. */
+function fileThere(rootAbs, rel) {
+  try { return fs.statSync(path.join(rootAbs, rel)).isFile(); } catch { return false; }
 }
 
 /**
  * THE TYPESCRIPT LANE'S WORKER INVOCATIONS, for `cascade analyze` and the
  * working-tree overlay alike (src/core/incremental.mjs runTsLaneWithShards is
  * handed them): the files a run over the application's root reads (none that
- * is test support or whose bytes are outside the root), the resolution its
- * imports are followed by, and those files read. `onRead` sees each batch
- * before the worker is handed it.
+ * is test support or whose bytes are outside the root, unless the application
+ * imports it: see tsReachResolver), the resolution its imports are followed
+ * by, and those files read. `tsLeftOut()` names each file found and not listed,
+ * with why, so the run says it rather than dropping it. `onRead` sees each
+ * batch before the worker is handed it.
  *
  * @param {string} rootAbs  the analyzed root
  * @param {(string|null)} appRootAbs  the application's root, null with none
@@ -222,9 +258,16 @@ export function tsReachResolver({ rootAbs, appRootAbs, listed }) {
 export function tsLaneRunners(rootAbs, appRootAbs, { onRead = () => {} } = {}) {
   // The application's own files are read under the same two rules as a shared library's.
   const [inside, isTest] = [fileInsideRoot(rootAbs), testSupport()];
+  const leftOut = new Map();
+  const listable = (f) => {
+    const why = !inside(f) ? LEFT_OUT.outside : isTest(f) ? LEFT_OUT.test : null;
+    if (why) leftOut.set(f, why);
+    return !why;
+  };
   return {
-    tsList: (roots) => runTsLane(rootAbs, roots, { list: true }).filter((r) => r.kind === 'sourceFile' && !isTest(r.file) && inside(r.file)).map((r) => r.file),
-    tsResolver: (listed) => (appRootAbs ? tsReachResolver({ rootAbs, appRootAbs, listed }) : null),
+    tsList: (roots) => runTsLane(rootAbs, roots, { list: true }).filter((r) => r.kind === 'sourceFile' && listable(r.file)).map((r) => r.file),
+    tsResolver: (listed) => (appRootAbs ? tsReachResolver({ rootAbs, appRootAbs, listed, leftOut }) : null),
+    tsLeftOut: () => [...leftOut].map(([file, why]) => ({ file, why })).sort((a, b) => (a.file < b.file ? -1 : 1)),
     ts: (targets) => {
       onRead(targets);
       return runTsLane(rootAbs, targets);
@@ -244,7 +287,7 @@ export function typeormDeclared(block) {
   if (name !== null && name !== '' && !known.includes(name)) {
     throw new ProfileError(`profile.tsBackend.typeorm.namingStrategy must be null, "" or one of ${known.join(', ')} (the strategies the typeorm rule pack names), got ${JSON.stringify(name)}`);
   }
-  return { namingStrategy: name, entityPrefix: block.entityPrefix ?? null, schema: block.schema ?? null };
+  return { namingStrategy: name, entityPrefix: block.entityPrefix ?? null, schema: block.schema ?? null, type: block.type ?? null };
 }
 
 /**

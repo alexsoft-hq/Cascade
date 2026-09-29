@@ -19,6 +19,19 @@ export function externalOf(project, file, written) {
   return m && m.external ? { module: m.external, name: m.name } : null;
 }
 
+/**
+ * The items a list written in the source holds, with those of each list it
+ * spreads when that list is written out too (`...(on ? [A] : [])` may hold
+ * A): `whole` is false when a spread is anything else (a name, a call), which
+ * may hold anything.
+ */
+export function itemsOf(list, depth = 0) {
+  if (!list || list.k !== 'arr' || depth > 8) return { items: [], whole: false };
+  const inner = (list.spreads ?? []).map((leaf) => itemsOf(leaf, depth + 1));
+  const whole = (!list.spread || Array.isArray(list.spreads)) && inner.every((x) => x.whole);
+  return { items: [...list.v, ...inner.flatMap((x) => x.items)], whole };
+}
+
 /** Whether a package export is one of the refs a rule lists. */
 export const isOneOf = (ext, refs) => Boolean(ext && refs.some((r) => r.module === ext.module && r.export === ext.name));
 

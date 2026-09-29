@@ -7,7 +7,7 @@
       "id": "typeorm.entities",
       "kind": "typeorm.entity",
       "description": "A class decorated @Entity maps a table: the name @Entity('name') or @Entity({ name }) gives, else the one the naming strategy derives from the class name, after the DataSource's entityPrefix and in its schema when the entity names none. Each property a column decorator marks is a column: the name its options give, else the one the strategy derives from the property. A @ManyToOne, or a @OneToOne with @JoinColumn, adds the join column that holds it; a @ManyToMany with @JoinTable adds the join table and its two columns. A @CreateDateColumn, @UpdateDateColumn and @VersionColumn are columns TypeORM also sets on its own (autoColumns): an insert lists all three, the version as 1 and the dates as their default, unless the column's insert option is false; an update, a soft delete and a restore set the update date to the current time and the version to itself plus one. Columns a class inherits from a class it extends are its own, as TypeORM reads them. The strategy is the one the DataSource options name in namingStrategy, DefaultNamingStrategy when every options object the source writes names none, and an assumed DefaultNamingStrategy, graded HEURISTIC, when an options object is not written out in the source.",
-      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. EntityMetadata.build puts the options' entityPrefix before every table name and gives an entity that names no schema the options' schema, so a table name is known only when both are; which of the schema and the entity's own database go before it is the driver's (tablePath, each driver's buildTableName in src/driver at 0.3.28: PostgresDriver the schema, MysqlDriver the database, SqlServerDriver both, AbstractSqliteDriver neither). A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. The columns TypeORM sets on its own are the same from 0.2.24 to 0.3.28: UpdateQueryBuilder.createUpdateExpression adds the version plus one and the update date (0.2.24 always, since 0.2.34 unless the values name it); SoftDeleteQueryBuilder.createUpdateExpression adds both beside the delete date; InsertQueryBuilder.getInsertedColumns lists every column whose insert option is not false, or the columns into names, and createValuesExpression writes the version as 1 and DEFAULT for a date, whose default ColumnMetadata sets to the driver's current time. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
+      "why": "TypeORM's own mapping (typeorm/typeorm, src/metadata/EntityMetadata.ts build(), src/metadata-builder/RelationJoinColumnBuilder.ts and JunctionEntityMetadataBuilder.ts, read at 0.2.24, 0.2.34 and 0.3.28). DefaultNamingStrategy (src/naming-strategy/DefaultNamingStrategy.ts): tableName is the given name, else snakeCase(class name); columnName is the given name, else the property name; joinColumnName is camelCase(relation + '_' + referenced property); joinTableName is snakeCase(owner table + '_' + property + '_' + inverse table); joinTableColumnName is camelCase(table + '_' + referenced column). SnakeNamingStrategy (typeorm-naming-strategies 4.1.0, src/snake-naming.strategy.ts) runs snakeCase over every one of them. snakeCase itself changed twice (src/util/StringUtils.ts): 0.2.0 to 0.2.34 used one pattern, 0.2.35 to 0.2.37 two, 0.2.38 on counts a digit as lower case. EntityMetadata.build puts the options' entityPrefix before every table name and gives an entity that names no schema the options' schema, so a table name is known only when both are; which of the schema and the entity's own database go before it is the driver's (tablePath, each driver's buildTableName in src/driver at 0.3.28: PostgresDriver the schema, MysqlDriver the database, SqlServerDriver both, AbstractSqliteDriver neither, and SqliteDriver, BetterSqlite3Driver and ReactNativeDriver a handle they make for a database file an entity names, which tablePath writes `attached`). A name the versions spell differently is graded HEURISTIC, since the project's installed version decides it. The columns TypeORM sets on its own are the same from 0.2.24 to 0.3.28: UpdateQueryBuilder.createUpdateExpression adds the version plus one and the update date (0.2.24 always, since 0.2.34 unless the values name it); SoftDeleteQueryBuilder.createUpdateExpression adds both beside the delete date; InsertQueryBuilder.getInsertedColumns lists every column whose insert option is not false, or the columns into names, and createValuesExpression writes the version as 1 and DEFAULT for a date, whose default ColumnMetadata sets to the driver's current time. Since 0.3, a driver shortens a join table name longer than its alias limit; Oracle's is the smallest (29, src/driver/oracle/OracleDriver.ts maxAliasLength), so a derived join table name past it is graded HEURISTIC.",
       "params": {
         "packages": ["typeorm"],
         "entity": ["Entity"],
@@ -46,7 +46,7 @@
           "postgres": ["schema"], "aurora-postgres": ["schema"], "cockroachdb": ["schema"], "oracle": ["schema"], "sap": ["schema"],
           "mysql": ["database"], "mariadb": ["database"], "aurora-mysql": ["database"], "spanner": ["database"],
           "mssql": ["database", "schema"],
-          "sqlite": [], "better-sqlite3": [], "sqljs": [], "capacitor": [], "cordova": [], "react-native": [], "nativescript": [], "expo": []
+          "sqlite": ["attached"], "better-sqlite3": ["attached"], "sqljs": [], "capacitor": [], "cordova": [], "react-native": ["attached"], "nativescript": [], "expo": []
         },
         "strategies": [
           { "name": "default", "module": "typeorm", "export": "DefaultNamingStrategy", "table": "snake", "column": "none", "joinColumn": "camel", "joinTable": "snake", "joinTableColumn": "camel" },
@@ -107,6 +107,11 @@
             { "table": "shop.app_orders", "entity": "Order", "grade": "EXACT", "columns": ["id"] }
           ],
           "why": "a const literal in the same file is the prefix it holds; on MySQL the database, not the schema, goes before a table (MysqlDriver.buildTableName)"
+        },
+        {
+          "source": "import { Entity, PrimaryColumn, DataSource } from 'typeorm';\nexport const ds = new DataSource({ type: 'sqlite', database: 'main.db' });\n@Entity('users')\nexport class User {\n  @PrimaryColumn() id: number;\n}\n@Entity('logs', { database: 'logs.db' })\nexport class Log {\n  @PrimaryColumn() id: number;\n}\n",
+          "expect": [{"table": "users", "entity": "User", "grade": "EXACT", "columns": ["id"]}, {"table": "logs", "entity": "Log", "grade": "HEURISTIC", "columns": ["id"]}],
+          "why": "SQLite attaches the database file an entity names under a handle it makes from the path (SqliteDriver.buildTableName), which goes before the table name and is not made here"
         }
       ]
     },
@@ -172,7 +177,7 @@
     {
       "id": "typeorm.operations",
       "kind": "typeorm.operation",
-      "description": "What each Repository and EntityManager operation sends, and what part each argument plays. count, exists and the aggregates join the eager relations in TypeORM 0.3 without selecting them (setFindOptions), so their tables and join columns MAY be read. A find reads what its options name: where filters by the properties it names (an array of wheres is an OR), select returns the ones it names, order reads them, relations reaches the relations it names; with no select every column of the entity is returned, with the relations marked eager. An argument that is not written out MAY read any column of the entity. An update or insert writes the properties its values name; save and an insert of an object not written out MAY write any column. softDelete and restore write the entity's @DeleteDateColumn. Each write sends one of TypeORM's statements (sends), which set the entity's date and version columns on their own (the entities rule's autoColumns): a column every statement an operation may send sets is written, one only some set MAY be, as save inserts or updates as the row it finds decides. An EntityManager takes the entity as its first argument.",
+      "description": "What each Repository and EntityManager operation sends, and what part each argument plays. count, exists and the aggregates join the eager relations in TypeORM 0.3 without selecting them (setFindOptions), so their tables and join columns MAY be read. A find reads what its options name: where filters by the properties it names (an array of wheres is an OR), select returns the ones it names, order reads them, relations reaches the relations it names; with no select every column of the entity is returned, with the relations marked eager. An argument that is not written out MAY read any column of the entity. An update or insert writes the properties its values name; save and an insert of an object not written out MAY write any column. softDelete and restore write the entity's @DeleteDateColumn. Each write sends one of TypeORM's statements (sends), which set the entity's date and version columns on their own (the entities rule's autoColumns): a column every statement an operation may send sets is written, one only some set MAY be, as save inserts or updates as the row it finds decides. An EntityManager takes the entity as its first argument. A select on an entity with a delete date column reads it: TypeORM filters out the rows it marks unless the find asks for them (withDeleted).",
       "why": "TypeORM's Repository and EntityManager API (src/repository/Repository.ts, src/entity-manager/EntityManager.ts, read at 0.2.34 and 0.3.28). In 0.2, find, findOne and count take either find options or the conditions themselves, and FindOptionsUtils.isFindOneOptions tells them apart by the keys an options object has and the kind of value each holds: legacyFindOptions is that test. findOne(id) finds by the primary key. Every write goes through a query builder: insert and upsert through InsertQueryBuilder, update, increment and decrement through UpdateQueryBuilder, softDelete, softRemove, restore and recover through SoftDeleteQueryBuilder, and save through SubjectExecutor, which inserts a row it does not find (executeInsertOperations) and updates one it does (executeUpdateOperations), each with the builder of that statement.",
       "params": {
         "operations": {
@@ -215,7 +220,7 @@
         "findOptions": {
           "select": "project", "where": "filter", "order": "read", "relations": "relations", "join": "not-read",
           "loadEagerRelations": "eager", "loadRelationIds": "not-read", "relationLoadStrategy": "none",
-          "withDeleted": "none", "skip": "none", "take": "none", "cache": "none", "lock": "none", "comment": "none", "transaction": "none"
+          "withDeleted": "with-deleted", "skip": "none", "take": "none", "cache": "none", "lock": "none", "comment": "none", "transaction": "none"
         },
         "legacyFindOptions": {
           "select": ["arr"], "where": ["obj", "str"], "relations": ["arr"], "join": ["obj"], "order": ["obj"],
@@ -302,13 +307,37 @@
           "operation": "findOneBy", "args": ["{ role: { id: 1 }, name: 'x' }"], "fields": ["id", "name"], "relations": ["role"],
           "expect": { "statement": "select", "reads": ["name"], "wholeRow": true, "relations": ["role"] },
           "why": "a where on a relation reaches another table, and says so"
+        },
+        {
+          "operation": "find",
+          "args": ["{ where: { email } }"],
+          "fields": ["id", "email", "deletedAt"],
+          "deleteDate": "deletedAt",
+          "expect": {"statement": "select", "reads": ["email", "deletedAt"], "wholeRow": true},
+          "why": "a select on an entity with a delete date column filters out the rows it marks (deletedAt IS NULL, QueryBuilder.createWhereExpression), so it reads that column"
+        },
+        {
+          "operation": "find",
+          "args": ["{ where: { email }, withDeleted: true }"],
+          "fields": ["id", "email", "deletedAt"],
+          "deleteDate": "deletedAt",
+          "expect": {"statement": "select", "reads": ["email"], "wholeRow": true},
+          "why": "withDeleted asks for the soft-deleted rows as well, so no filter is added"
+        },
+        {
+          "operation": "update",
+          "args": ["{ id: 1 }", "{ title: 'x', version: 5 }"],
+          "fields": ["id", "title", "version"],
+          "auto": {"version": {"update": "increment"}},
+          "expect": {"statement": "update", "reads": ["id"], "writes": ["title", "version"], "mayReads": ["version"]},
+          "why": "values that name the version write it; since 0.2.34 no one is added to the old one, before that it was, so the read is a candidate"
         }
       ]
     },
     {
       "id": "typeorm.query-builder",
       "kind": "typeorm.query-builder",
-      "description": "What a query builder reads and writes, step by step. createQueryBuilder('alias') names the entity by an alias; a condition written as text names columns as alias.property, read against the entity each alias stands for; select narrows what is returned, a join adds the table of the relation it names, update, delete and insert make it that statement, set and values write what they name, and update, insert, softDelete and restore set the entity's date and version columns on their own as the entities rule's autoColumns say (an insert those into's column list names, when it has one), and getMany, getOne and the raw getters return every column of the entity unless select narrowed it. A step whose text names something this rule cannot place is said, not guessed. A step written under a condition MAY run: what it reads is graded SOUND_SET.",
+      "description": "What a query builder reads and writes, step by step. createQueryBuilder('alias') names the entity by an alias; a condition written as text names columns as alias.property, read against the entity each alias stands for; select narrows what is returned, a join adds the table of the relation it names, update, delete and insert make it that statement, set and values write what they name, and update, insert, softDelete and restore set the entity's date and version columns on their own as the entities rule's autoColumns say (an insert those into's column list names, when it has one), and getMany, getOne and the raw getters return every column of the entity unless select narrowed it. A step whose text names something this rule cannot place is said, not guessed. A step written under a condition MAY run: what it reads is graded SOUND_SET. clone and subQuery make another builder, whose steps are not this one's. A select on an entity with a delete date column reads it, as a join of one does: TypeORM filters out the rows it marks unless withDeleted came first.",
       "why": "TypeORM's SelectQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder and InsertQueryBuilder (src/query-builder/). A property path alias.property in a condition is replaced with the column the metadata maps, and a bare name is passed to the database as written.",
       "params": {
         "start": "createQueryBuilder",
@@ -320,11 +349,11 @@
           "leftJoin": "join", "innerJoin": "join",
           "leftJoinAndSelect": "join-select", "innerJoinAndSelect": "join-select",
           "leftJoinAndMapOne": "join-map", "leftJoinAndMapMany": "join-map", "innerJoinAndMapOne": "join-map", "innerJoinAndMapMany": "join-map",
-          "from": "from", "into": "into", "clone": "clone",
+          "from": "from", "into": "into", "clone": "clone", "subQuery": "clone",
           "update": "update", "delete": "delete", "insert": "insert", "softDelete": "soft-delete", "restore": "restore",
           "set": "values", "values": "values",
           "skip": "none", "take": "none", "limit": "none", "offset": "none", "setParameter": "none", "setParameters": "none",
-          "cache": "none", "withDeleted": "none", "setLock": "none", "useTransaction": "none", "printSql": "none",
+          "cache": "none", "withDeleted": "with-deleted", "setLock": "none", "useTransaction": "none", "printSql": "none",
           "orIgnore": "none", "orUpdate": "none", "returning": "none", "distinct": "none", "comment": "none",
           "getOne": "rows", "getOneOrFail": "rows", "getMany": "rows", "getManyAndCount": "rows", "getRawOne": "rows",
           "getRawMany": "rows", "getRawAndEntities": "rows", "stream": "rows", "execute": "rows",

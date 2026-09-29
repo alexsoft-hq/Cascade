@@ -170,6 +170,21 @@ function lookupEdges(c, rel, { named, linked }, g, evidence) {
 }
 
 /**
+ * What a call does to its own model's table. An update writes the row only
+ * when its data sets a field of it: one whose data holds relation writes alone
+ * (`{ posts: { connect: [...] } }`) finds the row, then writes the other
+ * tables, and sends no UPDATE of this one (measured on Prisma 6.19 with
+ * SQLite). A link held in this table, which such a write may set, is written
+ * where the relation is followed. Data not written out may set a field or not:
+ * the write is a candidate.
+ */
+function ownAccess(fx) {
+  if (fx.statement !== 'update' || fx.writes.size > 0) return { access: ACCESS[fx.statement], sure: true };
+  const unknown = fx.runtimeOnly.has('write') || fx.runtimeOnly.has('arguments');
+  return unknown ? { access: 'write', sure: false } : { access: 'read', sure: true };
+}
+
+/**
  * The EXECUTES, READS and WRITES edges of one statement, its own model's and
  * every relation's it follows, and what it could not follow.
  *
@@ -184,7 +199,8 @@ export function statementEdges(g, sid, a) {
   const c = collector();
   const unresolved = [];
   const evidence = { via: 'prisma', operation: a.operation };
-  c.table(a.catalog.tableId(a.model), ACCESS[a.fx.statement], a.grade, evidence);
+  const own = ownAccess(a.fx);
+  c.table(a.catalog.tableId(a.model), own.access, own.sure ? a.grade : weakest(a.grade, 'SOUND_SET'), evidence);
   modelColumns(c, a.catalog, a.model, a.fx, a.grade, evidence);
   followAll(c, a, a.model, a.fx, a.grade, unresolved);
   c.emit(g, sid);

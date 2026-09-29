@@ -14,6 +14,8 @@
 // (src/adapters/ts/nest_providers.mjs). It draws no edge itself, so a rule of
 // this kind carries no grade.
 
+import { itemsOf } from './ts_names.mjs';
+
 const NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const KEYS = Object.freeze(['module', 'list', 'token', 'useClass', 'notRead', 'injectByToken', 'harmless', 'consumed']);
 const unknownKeys = (obj, allowed) => Object.keys(obj).filter((k) => !allowed.includes(k));
@@ -84,11 +86,12 @@ function entryOf(params, v) {
  */
 /** How a providers list is read out of a module's options object: whether it spreads another, and each entry. */
 function listReader(params) {
-  // A list held in a variable, or one that spreads another, may bind anything.
+  // A list held in a variable, or one that spreads another it does not write out, may bind anything;
+  // a list it spreads that is written out (`...(on ? [A] : [])`) may bind what it holds.
   return (opts) => {
     const list = opts?.v[params.list];
-    const items = list && list.k === 'arr' ? list.v : [];
-    return { spread: Boolean(list && (list.k !== 'arr' || list.spread)), entries: items.map((v) => entryOf(params, v)) };
+    const { items, whole } = itemsOf(list);
+    return { spread: Boolean(list) && !whole, entries: items.map((v) => entryOf(params, v)) };
   };
 }
 
