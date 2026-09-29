@@ -67,10 +67,12 @@ endpoint_impact { "column": "pms_product.price" }
 
 | Relation | Grade | Why |
 |---|---|---|
-| `endpoint → handler` (HANDLES) | **EXACT** | a Spring mapping annotation on a **concrete controller** method *is* its handler — definitional |
+| `endpoint → handler` (HANDLES) | **EXACT** | a Spring mapping annotation on a **concrete controller** method *is* its handler — definitional. So is a path written with a constant the tree states, and a mapping annotation the project declares itself ([below](#a-path-written-with-a-constant-and-a-mapping-annotation-the-project-writes)) |
+| `endpoint → handler` (HANDLES), handlers a request condition splits | **SOUND_SET** | two or more handlers declare one route and one of them narrows it by `params`, `headers`, `consumes` or `produces`: Spring picks one per request, by what the request carries |
+| `endpoint → handler` (HANDLES), a `method` that is no HTTP method | **HEURISTIC** | the mapping's `method` names something that is not a verb (a constant this lane does not read), so the route is placed on `ANY`, which may be wider than the truth |
 | `endpoint → implementer` (HANDLES) | **SOUND_SET** | a mapping on an interface/abstract *declaration* is a route **contract**; the handler is the implementer matched through `implements` by name (and arity) — a resolution, not a definition |
-| `endpoint → handler` (HANDLES), a functional route | **EXACT** or **SOUND_SET** | a route built with calls in a method that returns a `RouterFunction`: EXACT where the source names the class and the method and nothing overrides it, SOUND_SET through a declared type, HEURISTIC where only an OpenAPI document places the route ([below](#routes-built-with-calls-functional-endpoints)) |
-| `endpoint → handler` (HANDLES), a contract-first controller | **HEURISTIC** | a controller implements an interface a code generator writes at build time; only the generator's naming pairs the method with the document's route ([below](#a-controller-that-implements-a-generated-interface)) |
+| `endpoint → handler` (HANDLES), a functional route | **EXACT**, **SOUND_SET** or **HEURISTIC** | a route built with calls in a method that returns a `RouterFunction`: EXACT where the source names the class and the method and nothing overrides it, SOUND_SET through a declared type whose every member the tree shows, HEURISTIC through a type the tree cannot close, and where only an OpenAPI document places the route and the profile does not say the document is generated from this code ([below](#routes-built-with-calls-functional-endpoints)) |
+| `endpoint → handler` (HANDLES), a contract-first controller | **HEURISTIC**, or **EXACT** when declared | a controller implements an interface a code generator writes at build time; only the generator's naming pairs the method with the document's route, unless the profile says the build generates the interfaces from that document (`openapi.generatesCode`) ([below](#a-controller-that-implements-a-generated-interface)) |
 | `clientMethod → endpoint` (CALLS_HTTP) | **SOUND_SET** | an HTTP client call reaches a route this pack also serves — the internal HTTP hop. Two ways of writing one: a `@FeignClient`/`@HttpExchange` method, and an imperative `WebClient`/`RestClient`/`RestTemplate` call |
 | `clientMethod → endpoint` (CALLS_HTTP) | **UNRESOLVED** | …or one it does not serve: the target is outside the pack, so no walk follows the edge and it is counted instead (`httpCallsUnresolved`) |
 | `mapperMethod → statement` (IMPLEMENTS_STMT) | **EXACT** | a MyBatis statement id *is* the mapper interface FQN + method — definitional |
@@ -363,12 +365,71 @@ A mapping annotation can name more than one HTTP method or more than one path:
 `method = {RequestMethod.PUT, RequestMethod.POST}`,
 `@GetMapping({"/list-all-simple", "simple-list"})`, or a list of paths on the
 class's own `@RequestMapping`. Spring serves the handler at every one of them,
-so the Java worker (`javafacts/20`) records one route for each class path,
-method and path the annotations name, and two spellings of one route are one.
-Each is a route the source states, so it is classified as above and its
-`HANDLES` edge is EXACT like any other mapping's. The worker used to read only
-the first entry of each list, which left routes Spring serves off the graph and
-a frontend call to one of them with nothing to land on.
+so the Java worker records one route for each class path, method and path the
+annotations name, and two spellings of one route are one. Each is a route the
+source states, so it is classified as above and its `HANDLES` edge is EXACT
+like any other mapping's. The worker used to read only the first entry of each
+list, which left routes Spring serves off the graph and a frontend call to one
+of them with nothing to land on.
+
+A `method` on the class's own `@RequestMapping` joins the method's: the handler
+answers the verbs of both. A `method` element that is not an HTTP method (a
+constant this lane does not read) leaves the verb unknown, so the route is
+placed on `ANY` and its `HANDLES` edge is HEURISTIC, with what was written in
+`evidence.methodUnread` (rule `route-method-not-read`). The verbs it does name
+are routes of their own, as before.
+
+### A path written with a constant, and a mapping annotation the project writes
+
+Two ways of writing a mapping leave something one file cannot settle, and the
+lane reads both against the whole tree (`src/adapters/java/mapping_reads.mjs`,
+`javafacts/22`):
+
+- **A path written with a constant.** `@PostMapping(RpcConstants.RPC_API_PREFIX
+  + "/iot/device/auth")` names a constant of another type. The worker reads a
+  literal and a `static final String` of the same class; a constant of another
+  class it hands on in parts, and the bridge reads it from that type's own
+  record, or a type above it, when the tree gives it one value. The route is
+  then EXACT, rule `route-path-constant`, with what was written in
+  `evidence.written`. A path that stays unread is no route: nothing is placed
+  at an address the source does not state. It is said instead
+  (`path-not-literal`). ruoyi-vue-pro's five `IoTDeviceApiImpl` methods moved
+  from `POST /` to `POST /rpc-api/iot/...` this way.
+- **A mapping annotation the project declares.** eladmin writes
+  `@AnonymousPostMapping("/login")`, an annotation of its own that carries
+  `@RequestMapping(method = POST)`. A controller method with an annotation the
+  worker does not know, whose type the tree declares with a meta
+  `@RequestMapping` or one of its shortcuts, serves a route: the meta
+  annotation's methods, and the path the annotation's own `value` or `path`
+  gives when `@AliasFor` points it at the meta mapping's (else the meta
+  mapping's own path). Its `HANDLES` edge is EXACT, rule
+  `route-composed-mapping`, with the annotation in `evidence.annotation`. An
+  attribute the annotation does not alias is not what Spring reads, so it is
+  said (`composed-mapping-attribute-not-aliased`), and an annotation this run
+  did not read on a method with no mapping is said too
+  (`mapping-annotation-not-read`). eladmin gains `POST /auth/login` and five
+  more routes.
+
+**One route, handlers a condition splits.** Two or more methods can declare one
+route when one of them narrows it with `params`, `headers`, `consumes` or
+`produces`. Spring runs the one whose condition the request meets, which is a
+choice made per request. So each of their `HANDLES` edges is SOUND_SET, with the
+conditions and the number of candidates on the evidence (rule
+`route-condition-split`). Two declarations with no condition keep the grade
+they had: two modules that each serve a route are two deployables, not one
+choice.
+
+`meta.laneStats.mappingAnnotations` counts all of this (`pathsFromConstants`,
+`pathsUnread`, `composedRoutes`, `composedNotRead`, `methodsUnread`,
+`conditionSplits`) with up to 20 samples, and `cascade analyze` prints one line
+and the first five samples as `JAVA_MAPPING_NOT_READ`:
+
+```
+Java lane: mapping annotations: <n> path(s) read through a constant, <n> route(s) from a composed mapping annotation, ...
+  [warn] JAVA_MAPPING_NOT_READ <handler>:<line> path-not-literal: <what was written>
+```
+
+The line is printed only when one of the counts is not zero.
 
 Measured: jeecg-boot serves 47 more routes (40 handlers mapped with
 `method = {PUT, POST}` now answer POST too, and `OpenApiController#call` all
@@ -455,6 +516,16 @@ Java lane: 2 declared path prefix(es) (pathPrefixes): /admin-api on 3101 route(s
   is a floor, and it says apart how many of those calls were traced to no
   client.
 
+While `SETTING_IN_CODE` stands, a frontend call that only `/**` catch-all routes
+match may be meant for a concrete route behind the prefix nobody declared.
+Where dropping the call's leading segments finds one, the web lane makes that
+route a HEURISTIC candidate too, and the catch-all edge HEURISTIC
+(`catchAll`, `prefixShift`; see
+[the web lane](web-lane.md#matching-a-call-to-a-route)). On ruoyi-vue-pro, 2,388
+of the 2,400 calls onto `DefaultController`'s catch-alls moved from SOUND_SET
+to HEURISTIC and gained 2,390 candidates on the concrete controllers.
+Declaring the key settles them.
+
 The key needs `spring-mvc` in `frameworkPacks` (or a `--java-src` run);
 otherwise `RECORDED_NOT_ACTED` says an unflagged run reads no controller to put
 the prefixes on. It is left
@@ -498,7 +569,11 @@ a pack entry.
   names, with its verb, at a path that ends with the route's own. The route
   then has the document's full path, its HANDLES edge is HEURISTIC (no mount
   the source states puts it there, only a document that may be stale), and the
-  evidence names the document. Two routes of the code that name one operation
+  evidence names the document. When the profile says the build writes that
+  document from this code as it is now (`openapi.generatedFromCode`, springdoc
+  does this), the document says where the code serves the route, and the link
+  is graded as its handler is read below; the evidence names the declaration
+  (`declared: {key, document}`). Two routes of the code that name one operation
   are placed by neither. The operation id is the one the builder was given
   last. A later statement that may set it where this reader does not follow
   (under an `if`, in a loop, inside another call's argument) leaves it not
@@ -516,10 +591,18 @@ a pack entry.
   default body where a class and the classes above it declare none (the default
   it inherits runs, not a method the class never declares), the interface's own
   default, which an implementor outside the tree may keep, and every anonymous
-  class the tree writes from the type (`new Handler() { ... }`) that overrides
-  the method. The worker records which interface methods have a body and one
-  record per anonymous class (`javafacts/20`). A lambda that calls one method
+  class the tree writes from the type (`new Handler() { ... }`), and every class
+  a method body declares from it, that overrides the method. The worker records
+  which interface methods have a body, one record per anonymous class and one
+  per class a method declares (`javafacts/22`). A lambda that calls one method
   names that method.
+- **A set the tree cannot close is a guess.** The set is SOUND_SET only where
+  the tree shows every object the type may hold. Where it cannot, the link is
+  HEURISTIC and `evidence.openSet` names the gap: the type is an interface with
+  one abstract method, so any lambda or method reference anywhere may be the
+  object (`functional-interface`); the type was not read (`type-not-read`); or a
+  class of the set inherits the method from a superclass this run did not read
+  (`superclass-not-read`).
 - **What is not read is said.** A handler this lane cannot name (a lambda that
   does more than call one method, a handler held in a variable) leaves the
   route as an endpoint node with `handlerUnread: true` and no HANDLES edge. A
@@ -539,7 +622,12 @@ its OpenAPI documents declare had a handler before; now 167 do, among 176
 routes with a handler. 12 of those links are EXACT and 164 are HEURISTIC, every
 one of them placed by operation id, so the default `conservative` mode walks 12
 routes to a handler and `heuristic` walks all 176. None reaches a SQL
-statement, because halo stores its data through its own extension store. The gateways of jeecg-boot and
+statement, because halo stores its data through its own extension store.
+halo's documents are what springdoc writes from its code. Declared as such
+(`openapi.generatedFromCode`, five documents), 168 of the links are EXACT and 8
+SOUND_SET, so every route with a handler is walked at `conservative`. Without
+the key, `cascade analyze` names the routes that rest on an undeclared document
+(`ROUTE_MOUNT_FROM_DOCUMENT`), and the overview's fix for them is this key. The gateways of jeecg-boot and
 spring-petclinic-microservices each serve one route this way, `GET /`,
 from an inline lambda, so each is a node with `handlerUnread` and no HANDLES
 edge.
@@ -565,6 +653,22 @@ are linked (the 37th, `/oops`, has no implementer in the source), each on a
 method the source marks `@Override`. Endpoints reaching SQL go from 0 of 38 to
 13 of 38 at `mode=heuristic`, and stay at 0 at `conservative`, as a HEURISTIC
 link should.
+
+**Saying the build generates the interfaces.** What the tree cannot show is
+that the build really generates this code's interfaces from that document. The
+profile can say it: `openapi.generatesCode` lists the documents the build
+generates from. A link on one of them is EXACT, the method its class declares,
+when the interface's name does not depend on a setting of the generator this
+engine does not read: openapi-generator groups operations by tag or by path,
+and the link holds only if every scheme that gives some operation the
+interface's name puts this operation into it. Each link records both
+(`namedBy`, `nameFrom`); a link that depends on the scheme stays HEURISTIC and
+its evidence says which grouping it depends on (`naming`). The evidence names
+the declaration (`declared: {key, document}`). On spring-petclinic-rest,
+declaring its document makes all 37 `HANDLES` edges EXACT, and 13 routes reach
+SQL at `conservative`. Without the key, `cascade analyze` names the links that
+rest on an undeclared document (`CONTRACT_FROM_DOCUMENT`) and the overview's
+`contract-links` gap says to declare it.
 
 ### An imperative client call is an HTTP hop too
 
@@ -755,7 +859,10 @@ as SQL.
 | `@Column(name="visit_date")` | that column | **EXACT** |
 | a field with no `@Column` | the column the naming strategy gives | as above |
 | `@Id` | the primary-key column | **EXACT** |
-| `@ManyToOne`/`@OneToOne` + `@JoinColumn(name=…)` | that foreign-key column, plus a `JOINS` edge | weakest of the two entity mappings |
+| no `@Id` the tree declares (it may sit in a superclass outside the tree), or an `@EmbeddedId` whose type was not read | the assumed default key `id`, by the naming strategy | **HEURISTIC**, and so is every foreign key, join table column, subclass key and `JOINS` edge named after it. Said once as `primary-key-assumed`, and on a by-id lookup that reads it |
+| `@EmbeddedId` | the embeddable's columns are the key columns | as a column |
+| `@ManyToOne`/`@OneToOne` + `@JoinColumn(name=…)` | that foreign-key column, plus a `JOINS` edge | weakest of the two entity mappings and of the target's key |
+| `@ManyToOne`/`@OneToOne` with no `@JoinColumn` | one foreign-key column per key column of the target, named `<attribute>_<key column>`, so a composite key gives several | as above |
 | `@OneToMany(@JoinColumn)` | the foreign key on the **target** table, plus a `JOINS` edge | as above |
 | `@ManyToMany`, and a `@OneToMany` with neither `@JoinColumn` nor `mappedBy` | a join table and its two columns, plus two `JOINS` edges. `@JoinTable` names them; what it leaves unnamed is named as Spring Boot and JPA name it: the table is the owning table's name, `_`, the attribute (`owners` and `specialTags` give `owners_special_tags`), one column is the inverse attribute's name (or the owning entity's name when nothing maps the association back), `_`, the owner's key, and the other is the attribute's name, `_`, the target's key | a written name **EXACT**; a derived one by the naming strategy, as above |
 | an inverse `@OneToMany`/`@ManyToMany(mappedBy = …)` | no column and no join table of its own: the owning side maps them | **EXACT** |
@@ -790,7 +897,7 @@ lane reads it the way JPA applies it:
 
 | The root's strategy | Where a subclass's rows and columns are |
 |---|---|
-| `SINGLE_TABLE`, or no `@Inheritance` at all (JPA's default) | the root's table. The subclass has no table of its own, and a `@Table` on it is ignored, as Hibernate ignores it |
+| `SINGLE_TABLE`, or no `@Inheritance` at all (JPA's default) | the root's table. The subclass has no table of its own, and a `@Table` on it is ignored, as Hibernate ignores it. The root's table also holds the column that tells the rows apart: with no `@DiscriminatorColumn` it is JPA's `DTYPE` by the naming strategy (`dtype` under spring-snake-case), drawn **HEURISTIC** (`discriminator-assumed`), read by every query on a subclass and written by every save. A declared `@DiscriminatorColumn` is not read and not drawn (`jpa-column-not-drawn`) |
 | `JOINED` | each class's own table holds the columns that class declares, and an inherited column stays on its parent's table. The subclass's table carries the key that joins it to its parent's (the column `@PrimaryKeyJoinColumn` names, else the parent key's name), with a `JOINS` edge between the two, and a statement on the subclass reads or writes every table its row spans |
 | `TABLE_PER_CLASS` | the subclass's own table, with every column, inherited ones too |
 | anything else | not read. The run says so (`inheritance-strategy-unread`), and the subclass's table is **HEURISTIC** |
@@ -936,7 +1043,9 @@ the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
 
 ### What it does NOT resolve
 
-- `@Embedded` / `@Embeddable` attributes produce no column (recorded, not guessed).
+- An `@Embedded` attribute produces no column, and the run says so
+  (`embedded-not-read`). An `@EmbeddedId`'s embeddable is read: its columns are
+  the key.
 - An `@ElementCollection` keeps its values in a table of its own, which this
   lane does not read. The attribute is no column of its owner, no statement
   here reaches that table, and the run says so (`element-collection-not-read`).
@@ -948,16 +1057,32 @@ the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
   covers every column of the entity. Such a column keeps its plain reading,
   graded **HEURISTIC**, and the run names the annotation it did not read
   (`jpa-mapping-unread`).
+- An annotation that adds a column this lane does not draw is said, and the
+  grades stay: `@OrderColumn`, `@IndexColumn`, `@MapKeyColumn`,
+  `@MapKeyJoinColumn(s)`, `@CollectionId`, `@Any`, `@ManyToAny`, and a to-many
+  `Map` with no map-key annotation (`jpa-column-not-drawn`).
+- An annotation on an attribute that this lane does not know at all is said
+  (`jpa-annotation-unknown`), and the attribute's column is **HEURISTIC**: what
+  it does to the column is not known. The lane keeps a list of the annotations
+  it knows change nothing it draws.
+- Hibernate annotations that may change what a statement reaches are said and
+  not followed (`jpa-reach-unread`): `@Fetch`, `@Where`, `@SQLRestriction`,
+  `@Cascade` and their kin.
 - `@Convert` is not modelled.
-- Hibernate's own `@Fetch` and `@BatchSize` are not read: they change how a fetch
-  is issued, not whether it happens.
+- Hibernate's `@BatchSize` is not read: it changes how a fetch is issued, not
+  whether it happens.
 - A named query (`@Query(name = "…")`, `@NamedQuery`) is not read.
 - `flush()` gets no statement of its own: it writes what the other statements in
   the transaction already made pending.
 - A derived name or a JPQL fragment the reader cannot attribute to a column
   leaves the statement **in the graph** with `hasUnresolved: true` and the reason
-  on the node — never dropped, never silently empty. `overview` counts them
-  (`jpa.unresolvedStatements`) and `cascade analyze` prints them.
+  on the node — never dropped, never silently empty. So does a statement on a
+  mapping this lane does not read: a query on an entity with subclasses
+  (`polymorphic-subclasses-not-read`) and a by-id lookup on an assumed key
+  (`primary-key-assumed`). `overview` counts them
+  (`jpa.unresolvedStatements`) and `cascade analyze` prints them. A mapping's
+  own reasons are on no node: they are in `meta.laneStats.jpa.unresolved` with
+  `statement: null`, printed as `JPA_UNRESOLVED (mapping)`.
 
 ## MyBatis-Plus
 
@@ -1105,6 +1230,12 @@ fixture behind this path is the synthetic project in
   that the flag column is read as a filter, not which value it is compared with.
 
 ### The profile keys
+
+These are the MyBatis-Plus keys. `jpa.namingStrategy` is above, `pathPrefixes`
+in *A prefix set in configuration code*, the `openapi` keys in *Routes built
+with calls* and *A controller that implements a generated interface*, and every
+key a profile can hold, with an example of each, in
+[concepts.md](../concepts.md#9-the-profile-key-by-key).
 
 ```json
 {

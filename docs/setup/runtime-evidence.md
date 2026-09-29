@@ -346,6 +346,8 @@ Beside the census the run prints (step 4 above), in the answers:
 
 Paths are relative to the manifest directory. `runtimeEvidence.otel` is read when
 `analyze` runs **without** `--otel`, and the flag wins when both are present.
+Every key a profile can hold, with an example of each, is listed in
+[concepts.md](../concepts.md#9-the-profile-key-by-key).
 
 ## What this lane does not do
 

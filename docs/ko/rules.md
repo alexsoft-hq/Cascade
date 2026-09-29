@@ -24,6 +24,8 @@ status**(분석 상태)의 둘째 보기인 **Rules**(룰)입니다. 이 프로�
 룰이 만든 연결 수가 나옵니다. 룰이 만든 연결은 근거에 그 룰 이름을 남깁니다
 (`evidence.rule`, 이유 한 문장은 `evidence.basis`). 그래서 **Trace**(추적)가 그리는
 경로에서, 어느 방향이든, 어느 룰이 그 단계를 만들었는지 볼 수 있습니다.
+`web.wrapper-hop` 룰은 호출을 만드는 것이 아니라 호출이 지나는 단계 하나를 읽습니다.
+그래서 그 이름은 단계가 있는 자리, `evidence.sink.hop.rule` 에 남습니다.
 
 ## 위치
 
@@ -43,6 +45,7 @@ status**(분석 상태)의 둘째 보기인 **Rules**(룰)입니다. 이 프로�
 | `nestjs` | 라우트를 만드는 NestJS 데코레이터와 부트스트랩 호출, 모듈의 `providers`가 묶는 것, 생성자 매개변수의 데코레이터가 무엇으로 채우는지 | `ts.route-decorator`, `ts.provider-binding` |
 | `prisma` | Prisma 클라이언트 타입, 클라이언트 호출마다 읽고 쓰는 것, 암묵적 다대다 관계에 Prisma 가 만드는 테이블 | `ts.type-role`, `prisma.operation`, `table.join-table` |
 | `typeorm` | TypeORM 엔티티와 naming strategy(이름 규칙), 호출을 받는 객체, repository 연산과 query builder | `typeorm.entity`, `typeorm.receiver`, `typeorm.operation`, `typeorm.query-builder` |
+| `vben-admin` | vue-vben-admin 의 HTTP 클라이언트 클래스. 모든 호출이 지나는 단계가 어느 메서드인지, 그 단계가 URL, 메서드, base URL 에 무엇을 하는지 | `web.wrapper-hop` |
 
 ## 형식
 
@@ -72,15 +75,16 @@ status**(분석 상태)의 둘째 보기인 **Rules**(룰)입니다. 이 프로�
 | `java.contract-link` | OpenAPI 브리지에서, 문서의 라우트가 그래프에 올라간 뒤 | 클래스 자신의 애너테이션과 implements 절, 파일의 import로 본 각 이름의 뜻, 클래스가 선언한 메서드, 그리고 문서마다 따로 읽은 operation(메서드, 경로, 적힌 그대로의 경로, operationId, tag) | 코드 생성기가 빌드 때 문서로 만드는 인터페이스를 클래스가 구현할 때, 어느 메서드가 어느 선언된 라우트를 처리하는지. 그 인터페이스는 소스 트리에 없습니다. 연결 하나가 HANDLES 엣지 하나입니다 | HEURISTIC |
 | `sql.dialect-path` | 트리를 발견할 때 | 파일 경로 | 경로의 온전한 단어로 DDL·매퍼 파일이 어느 DB용인지. 경로에 단어가 있는 첫 항목이 이기므로, 룰은 선호하는 항목을 먼저 적습니다 | 없음. 분류만 합니다 |
 | `ts.route-decorator` | TS 레인 브리지에서 | TS 워커가 기록한 클래스·메서드의 데코레이터 | 어느 클래스가 컨트롤러이고 어느 메서드가 라우트인지, 그 경로와 버전. 어느 클래스가 모듈이고 무엇을 import하며 어떤 컨트롤러를 등록하는지. 부트스트랩이 부르는 이름(`NestFactory.create`, `setGlobalPrefix`, `enableVersioning`, `RouterModule.register`)도 여기 있습니다. 컨트롤러가 실제로 서비스되는지는 브리지가 모듈 그래프를 따라가서 정합니다 | EXACT |
-| `ts.provider-binding` | TS 레인 브리지에서 | 모듈의 `providers` 목록. `@Module` 옵션에 있든, 모듈의 static 메서드가 돌려주는 객체(`X.forRoot()`)에 있든 읽습니다 | 모듈이 타입에 어느 클래스를 묶는지. 클래스만 적으면 자기 자신을, `{ provide: T, useClass: C }`는 T에 C를 묶습니다. 읽지 않는 바인딩(`useFactory`, `useValue`, `useExisting`)과 아예 읽을 수 없는 항목(spread, 계산된 키)도 가려냅니다. 생성자 매개변수의 데코레이터가 무엇으로 채우는지도 정합니다. `injectByToken`은 토큰으로 채우고, `harmless`는 아무것도 바꾸지 않고, 그 밖의 데코레이터는 모르는 것입니다. 패키지 모듈의 옵션에서 패키지가 읽기만 하는 키(`consumed`)도 적습니다. 거기 적힌 타입은 패키지에 넘긴 것으로 치지 않습니다. 어느 모듈을 셀지, 그게 호출에 어떤 영향을 주는지는 브리지가 정합니다 | 없음. 엣지를 긋지 않습니다 |
-| `ts.test-support` | TS 레인이 읽을 파일을 고를 때 | 분석 루트 아래 파일 경로 | 그 파일이 테스트 지원 파일(spec, mock, stub, 테스트만 돌리는 도우미)인지. 폴더는 이름 전체로, 파일은 이름 끝으로 맞춥니다. 레인은 그런 파일을 뺍니다. 애플리케이션 루트 안이든 공유 라이브러리 안이든 같습니다 | 없음. 분류만 합니다 |
+| `ts.provider-binding` | TS 레인 브리지에서 | 모듈의 `providers` 목록. `@Module` 옵션에 있든, 모듈의 static 메서드가 돌려주는 객체(`X.forRoot()`)에 있든 읽습니다 | 모듈이 타입에 어느 클래스를 묶는지. 클래스만 적으면 자기 자신을, `{ provide: T, useClass: C }`는 T에 C를 묶습니다. 읽지 않는 바인딩(`useFactory`, `useValue`, `useExisting`)과 아예 읽을 수 없는 항목(적어 둔 목록이 아닌 것의 spread, 계산된 키)도 가려냅니다. 조건에 따라 펼치되 목록을 적어 둔 것(`...(on ? [A] : [])`)은 그 안의 것을 묶습니다. 생성자 매개변수의 데코레이터가 무엇으로 채우는지도 정합니다. `injectByToken`은 토큰으로 채우고, `harmless`는 아무것도 바꾸지 않고, 그 밖의 데코레이터는 모르는 것입니다. 패키지 모듈의 옵션에서 패키지가 읽기만 하는 키(`consumed`)도 적습니다. 거기 적힌 타입은 패키지에 넘긴 것으로 치지 않습니다. 어느 모듈을 셀지, 그게 호출에 어떤 영향을 주는지는 브리지가 정합니다 | 없음. 엣지를 긋지 않습니다 |
+| `ts.test-support` | TS 레인이 읽을 파일을 고를 때 | 분석 루트 아래 파일 경로 | 그 파일이 테스트 지원 파일(spec, mock, stub, 테스트만 돌리는 도우미)인지. 폴더는 이름 전체로, 파일은 이름 끝으로 맞춥니다. 레인은 읽는 파일이 import 하지 않는 한 그런 파일을 뺍니다. 애플리케이션 루트 안이든 공유 라이브러리 안이든 같고, 뺀 것은 알립니다(`TS_FILES_LEFT_OUT`) | 없음. 분류만 합니다 |
 | `ts.type-role` | TS 레인 브리지에서 | 타입을 가져온 패키지와 export 이름 | 그 타입이 맡는 역할(Prisma 클라이언트). 그 타입을 상속한 프로젝트 클래스도 같은 역할을 맡습니다 | EXACT |
 | `prisma.operation` | TS 레인 브리지에서 | Prisma 호출의 연산과 인자의 키 하나하나 | 보내는 문장(select, insert, update, upsert, delete), 읽고 쓰는 필드, 행 전체를 돌려주는지. 호출이 적은 relation(연관 관계)은 닿는 모델까지 따라갑니다. `include`·`select` 안, relation 필터, `_count`, 중첩 쓰기(nested write)가 여기 해당합니다. null로 거르는 relation은 연결만 확인하고, 아무것도 바꾸지 않는 값을 받은 중첩 쓰기는 Prisma가 그래도 보내는 것만 그립니다(팩의 `idle` 항목). 바꾸기 전에 행을 먼저 찾아야 하는 중첩 쓰기는 그 테이블과 키를 먼저 읽습니다(`lookup`). `extensions`에는 클라이언트로 클라이언트를 만드는 호출(`$extends`)과, 호출이 보내는 것을 바꿀 수 있는 확장 부분이 적혀 있습니다. 따라가지 못한 것(넘겨받지 않은 모델로 가는 relation, 모르는 키, 변수에 담긴 인자)은 그렇다고 남깁니다 | EXACT |
 | `table.join-table` | 요약 지도가 닿은 테이블을 계열로 나눌 때 | 테이블 이름과 카탈로그가 선언한 컬럼 | 프레임워크가 두 테이블을 잇기 위해서만 만든 테이블인지. 이름이 `params.prefix` 로 시작하고, 룰이 `params.columns` 를 적었으면 컬럼이 정확히 그것이어야 합니다. 요약은 그런 테이블을 이름으로 묶지 않고, 그래프가 잇는 테이블 쪽에 둡니다 | 없음. 분류만 합니다 |
-| `typeorm.entity` | TS 레인 브리지에서 | TypeORM 데코레이터가 붙은 클래스, 그 속성이 선언한 컬럼과 relation, 상속한 클래스, 애플리케이션이 어디에 적었든 DataSource 옵션 | 어느 클래스가 엔티티인지, 그리고 매핑하는 테이블·컬럼·조인 테이블. 이름은 옵션이 정한 naming strategy, 테이블 prefix, schema대로 짓습니다. 전략으로 만든 이름은 전략을 알고, 모든 TypeORM 버전이 같은 철자로 쓸 때만 EXACT입니다. 테이블 이름은 소스에 적힌 것까지 포함해서, prefix를 알고 schema를 적지 않은 엔티티라면 schema도 알 때만 EXACT입니다. 아니면 이유와 함께 HEURISTIC입니다. 테이블 이름 앞에 schema와 엔티티 자신의 database 중 무엇이 붙는지는 드라이버가 정합니다(`tablePath`). 팩이 모르는 드라이버면 이름은 HEURISTIC이고, 옵션에 드라이버가 적혀 있지 않을 때도 앞에 무언가 붙을 수 있는 테이블이면 HEURISTIC입니다. TypeORM이 스스로 채우는 컬럼(`autoColumns`: 생성 날짜, 수정 날짜, 버전)도 여기서 정합니다 | 없음. 엣지를 긋지 않고, 이름마다 등급이 따로 붙습니다 |
+| `typeorm.entity` | TS 레인 브리지에서 | TypeORM 데코레이터가 붙은 클래스, 그 속성이 선언한 컬럼과 relation, 상속한 클래스, 애플리케이션이 어디에 적었든 DataSource 옵션 | 어느 클래스가 엔티티인지, 그리고 매핑하는 테이블·컬럼·조인 테이블. 이름은 옵션이 정한 naming strategy, 테이블 prefix, schema대로 짓습니다. 전략으로 만든 이름은 전략을 알고, 모든 TypeORM 버전이 같은 철자로 쓸 때만 EXACT입니다. 테이블 이름은 소스에 적힌 것까지 포함해서, prefix를 알고 schema를 적지 않은 엔티티라면 schema도 알 때만 EXACT입니다. 아니면 이유와 함께 HEURISTIC입니다. 테이블 이름 앞에 schema와 엔티티 자신의 database 중 무엇이 붙는지는 드라이버가 정합니다(`tablePath`). 팩이 모르는 드라이버면 이름은 HEURISTIC이고, 옵션에 드라이버가 적혀 있지 않을 때도 앞에 무언가 붙을 수 있는 테이블이면 HEURISTIC입니다. 프로필이 드라이버를 선언하면(`tsBackend.typeorm.type`) 그렇지 않습니다. SQLite 드라이버가 붙이는 데이터베이스(`attached`)에 있는 테이블은 이름이 HEURISTIC입니다. TypeORM이 스스로 채우는 컬럼(`autoColumns`: 생성 날짜, 수정 날짜, 버전)도 여기서 정합니다 | 없음. 엣지를 긋지 않고, 이름마다 등급이 따로 붙습니다 |
 | `typeorm.receiver` | TS 레인 브리지에서 | 클래스의 필드와 그 타입·주입 데코레이터, 호출 사슬이 거치는 함수와 멤버, 트랜잭션 콜백의 매개변수 | TypeORM 호출을 받는 객체가 무엇인지(엔티티의 repository, entity manager, data source), 그리고 어느 엔티티를 가리키는지. 선언한 뒤 한 번 받았거나, 그런 객체를 담은 필드를 받은 지역 변수는 그 객체를 담습니다. 조건이 값을 고르는 지역 변수는 다른 값을 담을 수 있어서, 그 변수로 부른 호출은 읽지 않습니다 | 없음. 분류만 합니다 |
-| `typeorm.operation` | TS 레인 브리지에서 | repository·entity manager 연산의 이름과 인자, 부분 하나하나 | 보내는 문장, 거르고 돌려주고 정렬하고 쓰는 컬럼, eager로 표시된 relation까지 행 전체를 돌려주는지, 그리고 소스에 적히지 않은 인자라서 실행 때만 알 수 있는 것. count, exists, 집계 연산은 eager relation을 행 없이 조인하므로(TypeORM 0.3) 그 테이블과 조인 컬럼은 SOUND_SET입니다. 쓰기는 TypeORM의 문장 중 하나를 보내고(`sends`), 그 문장이 날짜·버전 컬럼을 스스로 채웁니다. 보낼 수 있는 문장 모두가 채우는 컬럼은 쓰는 것이고, 일부만 채우는 컬럼은 SOUND_SET입니다 | EXACT |
-| `typeorm.query-builder` | TS 레인 브리지에서 | `createQueryBuilder` 사슬과 그걸 담은 이름에 뒤이어 부른 호출, 단계 하나하나와 조건의 텍스트 | 쿼리가 쓰는 alias, 조건 안의 `alias.property`가 가리키는 컬럼, join이 더하는 테이블, `select`가 좁힌 것, 그리고 select·update·delete·insert 중 무엇인지와 그 문장이 스스로 채우는 날짜·버전 컬럼. 조건문 안에 적힌 단계는 실행될 수도 있는(MAY) 것이라, 거기서 읽는 것은 SOUND_SET입니다. `clone`은 builder를 하나 더 만들고, 그 단계는 읽지 않습니다 | EXACT |
+| `typeorm.operation` | TS 레인 브리지에서 | repository·entity manager 연산의 이름과 인자, 부분 하나하나 | 보내는 문장, 거르고 돌려주고 정렬하고 쓰는 컬럼, eager로 표시된 relation까지 행 전체를 돌려주는지, 그리고 소스에 적히지 않은 인자라서 실행 때만 알 수 있는 것. count, exists, 집계 연산은 eager relation을 행 없이 조인하므로(TypeORM 0.3) 그 테이블과 조인 컬럼은 SOUND_SET입니다. 쓰기는 TypeORM의 문장 중 하나를 보내고(`sends`), 그 문장이 날짜·버전 컬럼을 스스로 채웁니다. 보낼 수 있는 문장 모두가 채우는 컬럼은 쓰는 것이고, 일부만 채우는 컬럼은 SOUND_SET입니다. 값이 그 컬럼을 직접 적으면 값이 쓰고, 옛 버전을 읽는 것은 SOUND_SET입니다(TypeORM 0.2.34 부터는 값이 적은 버전에 아무것도 더하지 않고, 그 전에는 1을 더했습니다). 삭제 날짜 컬럼이 있는 엔티티를 고르는 select 는 그 컬럼을 읽습니다. find 가 지운 행도 달라고 하면(`withDeleted`) 읽지 않습니다 | EXACT |
+| `typeorm.query-builder` | TS 레인 브리지에서 | `createQueryBuilder` 사슬과 그걸 담은 이름에 뒤이어 부른 호출, 단계 하나하나와 조건의 텍스트 | 쿼리가 쓰는 alias, 조건 안의 `alias.property`가 가리키는 컬럼, join이 더하는 테이블, `select`가 좁힌 것, 그리고 select·update·delete·insert 중 무엇인지와 그 문장이 스스로 채우는 날짜·버전 컬럼. 조건문 안에 적힌 단계는 실행될 수도 있는(MAY) 것이라, 거기서 읽는 것은 SOUND_SET입니다. `clone`과 `subQuery`는 builder를 하나 더 만들고, 그 단계는 읽지 않습니다. builder 는 그 지역 변수를 쓰는 곳이 모두 값을 버리는 단계이거나 쿼리를 실행하는 단계로 끝나는 사슬일 때만 통째로 읽습니다. 다른 쓰임(넘기기, 다른 이름에 담기, 클로저에 잡히기, 돌려주기)이 있으면 읽는 것이 SOUND_SET 입니다(`builder-escapes`). 삭제 날짜 컬럼이 있는 엔티티의 select 나 join 은 `withDeleted` 가 먼저 오지 않으면 그 컬럼을 읽습니다 | EXACT |
+| `web.wrapper-hop` | web 레인 브리지에서, 래퍼 사슬을 추적하고 걸을 때 | web 워커가 기록한 클래스(선언한 메서드, 채우는 필드와 그 필드를 만드는 것), 그 단계 자신의 클라이언트 호출, 그리고 호출마다 호출자가 단계에 넘기는 것(객체 인자가 쓰는 모든 키, `params` 를 객체로 썼는지) | 프레임워크 클라이언트 클래스의 어느 메서드가 룰이 말하는 래퍼 단계인지, 그리고 그 단계가 넘기는 요청의 키마다 무엇을 하는지. `keep`, `set`(단계가 자기 값을 적음. 정해지지 않음), `prefix`(`by` 에 적은 요청 옵션이 정하는 접두사 뒤로), `append`(요청의 키 값이 텍스트면 URL 뒤에 붙임), `query`(쿼리 문자열을 더함), 그리고 URL 이 아닌 키에는 `change`(라우트와 상관없는 키. 걷기가 따라가지 않음)입니다. 룰이 이름을 대지 않은 단계는 코드대로 읽습니다 | 없음. 엣지를 긋지 않습니다. 그 단계를 지나는 호출은 다른 래퍼처럼 매기고, 가장 높아야 SOUND_SET 입니다 |
 
 ### 전체 이름으로 적은 상위 타입
 
@@ -218,6 +222,9 @@ Spring 빌더, 그리고 springdoc의 `SpringdocRouteBuilder`를 읽습니다.
 - 그런 라우트는 OpenAPI 문서가 그 라우트의 operation id를 같은 메서드로, 라우트 자신의
   경로로 끝나는 경로에 선언한 곳에만 놓습니다. 이때 HANDLES 엣지는 HEURISTIC입니다.
   소스가 밝힌 마운트가 아니라, 낡았을 수도 있는 문서만이 그 자리를 주기 때문입니다.
+  프로필이 그 문서를 지금 코드로 쓴 문서라고 선언하면(`openapi.generatedFromCode`),
+  문서가 코드가 그 라우트를 서빙하는 자리를 말해 주므로 엣지는 핸들러를 읽은 만큼
+  등급을 받습니다.
   operation id는 빌더가 마지막으로 받은 값입니다. 마지막 값이 리터럴이 아니면 모르는
   것으로 둡니다. 코드의 두 라우트가 같은 operation을 가리키거나,
   문서가 같은 operation id를 두 라우트에 선언했으면 어느 쪽도 놓지 않습니다.
@@ -274,6 +281,17 @@ Spring 빌더, 그리고 springdoc의 `SpringdocRouteBuilder`를 읽습니다.
 인터페이스도 생성기 설정도 읽지 않으니, 둘을 잇는 건 이름 규칙뿐이기 때문입니다.
 근거에는 룰, operationId, 문서, 인터페이스가 남습니다.
 
+빌드가 정말 그 문서로 인터페이스를 만든다는 것은 트리가 보여 줄 수 없습니다. 그것은
+프로필이 말합니다: `openapi.generatesCode`. 여기 선언한 문서 위의 링크는, 생성기가
+operation 을 묶는 방식에 인터페이스 이름이 기대지 않을 때 브리지가 EXACT 로 매깁니다.
+클래스가 선언한 그 메서드입니다. 종류는 링크마다 두 집합을 적습니다. 이 operation 을 그
+인터페이스에 넣는 묶음 방식(`tag`, `path`)이 `namedBy`, 문서의 어떤 operation 에든 그
+인터페이스 이름을 주는 방식이 `nameFrom` 입니다. 앞의 것이 뒤의 것을 다 덮을 때만,
+빌드가 어느 방식을 쓰든 링크가 성립합니다. 그렇지 않으면 HEURISTIC 으로 남고, 근거가
+어느 묶음 방식에 기대는지 말합니다(`naming`). 어느 쪽이든 근거에 선언을 적습니다
+(`declared: {key, document}`). 반대 방향으로 선언한 문서(`openapi.generatedFromCode`)는
+어떤 링크도 정하지 않습니다.
+
 아깝게 빗나간 것은 잇지 않고 알립니다(`CONTRACT_NOT_LINKED`). 인터페이스 이름이 맞는
 operationId가 서로 다른 두 라우트에 있는 경우(base path가 다른 문서 둘)와, operationId와
 이름이 같은 메서드인데 그 operation이 다른 인터페이스로 생성될 경우입니다. 두 문서가
@@ -284,15 +302,94 @@ operationId가 서로 다른 두 라우트에 있는 경우(base path가 다른 
 따로 셉니다.
 
 `analyze`는 룰이 핸들러를 준 라우트 수를 출력하고, `laneStats.openapi.contractLinks`에
-그 목록과 잇지 않은 메서드가 남습니다. overview는 이 라우트들을 `contract-links` 공백
-항목으로 알립니다. drift 집계는 여전히 이 라우트를 "선언됐지만 서빙되지 않음"으로
+그 목록과 잇지 않은 메서드, 선언에 기대지 않는 링크 수(`undeclared`)가 남습니다.
+overview 의 `contract-links` 공백 항목은 추측인 링크만 셉니다. 선언에 기대지 않는 링크가
+있는 동안에는 `openapi.generatesCode` 를 선언하라고 하고, `analyze` 도
+`CONTRACT_FROM_DOCUMENT` 로 그렇게 말합니다. drift 집계는 여전히 이 라우트를 "선언됐지만 서빙되지 않음"으로
 셉니다. 소스의 어떤 매핑도 이 라우트를 서빙하지 않기 때문입니다.
 
 탐색은 라우트에서 핸들러로 가는 연결도 경로의 한 칸으로 봅니다. pack 전체를 보는 화면은
 모드가 받아들이는 핸들러에서만 출발하고, 닿은 것의 등급을 그 연결 등급보다 높게
 매기지 않습니다. `flow`도 같습니다. 그래서 이 라우트들은 `mode=heuristic`에서는 SQL까지
 닿고, 기본값인 `conservative`에서는 닿지 않습니다. conservative에서는 탐색이 라우트에서
-멈추고 그 이유를 말합니다.
+멈추고 그 이유를 말합니다. 선언으로 EXACT 가 되면 conservative 에서도 닿습니다.
+
+### 프레임워크가 가진 래퍼 단계
+
+web 레인은 래퍼 단계의 코드가 URL, 메서드, base URL 을 호출자가 준 그대로 넘긴다고
+보여 줄 때만 그 단계를 정합니다([web 레인 설정](setup/web-lane.md)). 프레임워크의
+클라이언트 클래스는 요청을 지역 변수에 담아 훅이 그 변수에 다시 대입하게 할 수
+있습니다. 그런 단계는 위의 읽기로 정할 수 없고, 그게 맞습니다. 그런데 그 단계가 무엇을
+하는지는 프레임워크 자신의 소스가 말해 줍니다. vue-vben-admin 의
+`VAxios.request(config, options)` 는 요청을 복사하고, 템플릿의 `beforeRequestHook` 이
+다시 돌려주게 하고, `requestOptions` 를 적고, `supportFormData` 가 본문을 바꾸게 한 뒤,
+자기가 가진 axios 인스턴스에 넘깁니다.
+
+`web.wrapper-hop` 룰은 그런 단계를 이름이 아니라 클래스의 모양으로 찾고, 그 단계가
+키마다 무엇을 하는지 적습니다. `vben-admin` 팩의 룰은 이렇습니다.
+
+```json
+"params": {
+  "client": { "module": "axios", "factory": "create" },
+  "class": { "methods": ["getTransform", "setupInterceptors", "supportFormData", "uploadFile", "get", "post", "put", "delete", "request"] },
+  "hop": { "method": "request", "config": 0, "options": 1 },
+  "keys": {
+    "url": [
+      { "does": "prefix", "by": ["apiUrl", "urlPrefix", "joinPrefix"] },
+      { "does": "append", "from": "params", "when": "text" },
+      { "does": "query", "by": ["joinTime", "joinParamsToUrl"] }
+    ],
+    "method": [{ "does": "keep" }],
+    "baseURL": [{ "does": "keep" }],
+    ...
+  },
+  "framework": { "name": "...", "declares": "...", "source": "..." }
+}
+```
+
+- `client`, `class`, `hop` 이 모양입니다. 클라이언트의 팩토리(`axios` 의 `axios.create`)로
+  만든 필드가 있고, `class.methods` 에 적은 메서드를 모두 선언한 클래스입니다.
+  `hop.method` 가 그 단계이고, `hop.config` 는 요청이 들어오는 매개변수, `hop.options` 는
+  호출 자신의 옵션이 들어오는 매개변수입니다. 단계 함수는 둘 다 받아야 합니다. 클래스
+  이름은 읽지 않습니다. 단계의 클라이언트 호출은 클래스가 가진 인스턴스를 거쳐야
+  합니다. 걷기는 그 호출이 단계가 다시 대입하는 지역 변수를 넘기고, 호출자의 URL 이
+  `hop.config` 의 객체 안에 들어올 때만 룰대로 읽습니다. 다른 모양은 코드대로 읽습니다.
+- `keys` 는 단계가 키마다 무엇을 하는지 효과 하나에 한 단어로 적습니다. URL 은 `keep`,
+  `set`, `prefix`, `append`, `query` 를, 다른 키는 `keep`, `set`, `change` 를 받습니다.
+  `keep` 은 키를 그대로 넘깁니다. `set` 은 단계 자신의 값을 적으므로 정해지지 않습니다.
+  `prefix` 는 `by` 에 적은 요청 옵션이 정하는 접두사 뒤로 URL 을 넘깁니다. `append` 는
+  요청이 `from` 아래 들고 있는 값이 텍스트면 URL 경로 뒤에 붙입니다. `query` 는 쿼리
+  문자열을 더하므로 경로는 그대로입니다. `change` 는 라우트와 상관없는 키(본문, 헤더)를
+  바꾸는 것이고, 걷기는 따라가지 않습니다. `keep` 과 `set` 은 다른 효과와 함께 쓸 수
+  없습니다. `url` 과 `method` 는 꼭 적어야 합니다.
+- `framework` 는 어느 프레임워크인지, 룰이 그 단계의 어떤 동작에 기대는지, 누구든 어디서
+  확인할 수 있는지 적습니다. 셋 다 필요합니다.
+
+룰이 정하지 못하는 것은 엣지에 적고, 엣지는 HEURISTIC 으로 남습니다. 호출 자신의 옵션이
+`prefix` 키 중 하나를 적거나 적을 수 있으면 `evidence.sink.unsettled.why: "hop-option"`
+입니다. 옵션을 알면 함께 적습니다. 그 키를 하나도 적지 않은 객체 리터럴은 아무것도 바꾸지
+않고, 이름이나 spread 는 담고 있을 수 있습니다. `append` 키 아래로 텍스트를 넘길 수 있는
+호출은 `"hop-append"` 입니다. 객체나 배열로 쓴 `params` 는 텍스트가 아니고, 이름은
+텍스트일 수 있습니다.
+
+`prefix` 단계가 URL 앞에 붙이는 접두사는 클라이언트 클래스를 만들 때 받는 요청 옵션이
+정하고, 이 레인은 그것을 읽지 않습니다. 그래서 그런 단계를 지나는 호출은 클라이언트
+자신의 base URL 과 빈 접두사 중에서 매칭 개수로 접두사를 고릅니다
+(`evidence.prefix.from: "auto"`. `evidence.prefix.hop` 이 룰과 옵션 키를 적습니다).
+web 축은 `degraded` 가 되고 그렇다고 말합니다. 그 접두사는 `gatewayRoutes` 의 키
+`"*"` 로만 선언합니다. 선언하면 룰이 정한 호출은 SOUND_SET 입니다.
+
+엣지는 룰과 단계를 적습니다(`evidence.sink.hop`). 접두사 집계(`laneStats.web.prefix`)는
+단계가 보는 클라이언트를 클라이언트 옆에 적고, `laneStats.web.calls.throughNamedStep` 은
+룰마다 이름을 댄 단계를 지난 호출 수와 그중 정해진 수를 셉니다. `analyze` 는 룰마다 한
+줄을 출력합니다. 두 룰이 한 단계를 가리키면 실행을 멈춥니다. 예제는 작은 프런트엔드이고,
+실제 web 워커가 읽고 web 레인이 그 룰 하나만으로 걷습니다.
+
+`vben-admin` 팩은 jeecg-boot 가 가진 프레임워크 사본
+(`jeecgboot-vue3/src/utils/http/axios`)을 보고 썼습니다. 단계가 돌리는 훅은 프레임워크
+템플릿의 것으로, 프로젝트 자신의 `src/utils/http/axios/index.ts` 에 적혀 있습니다.
+`beforeRequestHook` 이 URL 에 접두사, 텍스트 params, 쿼리 문자열보다 더 많은 일을 하는
+프로젝트는 이 룰이 말하는 것이 아닙니다.
 
 ### TypeScript 백엔드의 종류
 
@@ -333,6 +430,9 @@ NestJS, Prisma, TypeORM 팩(`nestjs.json`, `prisma.json`, `typeorm.json`)에는 
   끝(`.spec.ts`, `.mock.ts`, `.stub.ts`, `.stories.ts` 등)이 있습니다. 레인은 그런
   파일을 뺍니다. 애플리케이션 루트 안이든 공유 라이브러리 안이든 같습니다. mock
   클래스를 애플리케이션 코드로 읽으면, 호출이 닿을 클래스가 하나 더 생기기 때문입니다.
+  다만 레인이 읽는 파일이 import 하면 애플리케이션의 것으로 읽습니다. 애플리케이션은
+  import 한 것을 실행하기 때문이고, `testing` 기능 모듈도 그렇습니다. barrel 이 다시
+  export 만 하는 파일은 계속 뺍니다. 뺀 것은 알립니다(`TS_FILES_LEFT_OUT`).
 - `typeorm` 팩은 종류마다 룰이 하나씩입니다. `typeorm.entities`에는 엔티티·컬럼·
   relation 데코레이터, 읽지 않는 데코레이터(`@ChildEntity`, `@ViewEntity`,
   `@TableInheritance`, `@Tree`), 애플리케이션이 DataSource 옵션을 적는 곳
@@ -343,7 +443,10 @@ NestJS, Prisma, TypeORM 팩(`nestjs.json`, `prisma.json`, `typeorm.json`)에는 
   있습니다. 프로필의 `tsBackend.typeorm.namingStrategy`에는 이 둘 중 하나를 적습니다.
   `tablePath`에는 드라이버 `type`마다 테이블 이름 앞에 무엇이 붙는지 적습니다.
   스키마(PostgreSQL, CockroachDB, Oracle, SAP), database(MySQL, MariaDB, Spanner),
-  둘 다(SQL Server), 아무것도 없음(SQLite와 그 위에 만든 드라이버)입니다.
+  둘 다(SQL Server), 엔티티가 가리키는 데이터베이스 파일에 드라이버가 붙이는 이름
+  (`attached`: `sqlite`, `better-sqlite3`, `react-native`), 아무것도 없음(`sqljs`,
+  `capacitor`, `cordova`, `nativescript`, `expo`)입니다. 프로필의
+  `tsBackend.typeorm.type` 에는 이 드라이버 중 하나를 적습니다.
   `autoColumns`에는 어느 문장이 생성 날짜, 수정 날짜, 버전을 스스로 채우는지 적고,
   `insertKey`는 컬럼을 insert에서 빼는 컬럼 옵션입니다.
   `typeorm.receivers`에는 repository, entity manager, data source를 주는 타입, 주입
@@ -351,8 +454,10 @@ NestJS, Prisma, TypeORM 팩(`nestjs.json`, `prisma.json`, `typeorm.json`)에는 
   보내는 문장, 인자 부분마다의 역할, 그리고 TypeORM 0.2에서 find의 옵션과 조건을
   구별하는 방법이 있습니다. `eagerJoined`는 eager relation을 고르지 않고 조인하는
   연산(count, exists, 집계)을 표시하고, `sends`는 쓰기가 거치는 문장을 적습니다(`save`는
-  insert 아니면 update). `typeorm.query-builder`에는 builder 메서드마다의 역할(`clone`은
-  builder를 하나 더 만듭니다)과, 조건 안에서 컬럼이 아니라 SQL 단어인 것들이 있습니다.
+  insert 아니면 update). find 옵션 `withDeleted` 는 `with-deleted` 역할입니다.
+  `typeorm.query-builder`에는 builder 메서드마다의 역할(`clone`과 `subQuery`는 builder를
+  하나 더 만들고, `withDeleted` 는 `with-deleted` 입니다)과, 조건 안에서 컬럼이 아니라
+  SQL 단어인 것들이 있습니다.
 
 자세한 내용은 [TS 레인 설정](setup/ts-lane.md)에 있습니다.
 

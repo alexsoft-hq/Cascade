@@ -14,7 +14,7 @@ What it does not know, it does not state as known. A route whose address the
 source holds in a variable is not made; a route whose address holds only if an
 exclude this lane cannot read does not name it is made and graded HEURISTIC; a
 Prisma or TypeORM argument this lane cannot read is named on the statement.
-Every such gap is a diagnostic that says why.
+Every such gap is said: as a diagnostic on the run, or on the edge's evidence.
 
 ## What it needs
 
@@ -111,6 +111,7 @@ leave it unknown. Each of these is a diagnostic on the run:
 | `TS_ROUTE_PATH_UNREAD`, `TS_ROUTE_VERSION_UNREAD` | one route's path or version in a variable, or in options a spread may change (`@Controller({ ...base })`) | that route is not made |
 | `TS_MODULE_UNREAD` | module options not written as an object this engine can read whole (a variable, a spread that may replace a list) | nothing that module imports or registers is served here |
 | `TS_MODULE_IMPORT_UNREAD` | a module list holding a variable (`isDocumentDb ? A : B`) or a spread | the modules it may hold are not walked |
+| `TS_CONTROLLER_UNREAD` | a module's `controllers` names a class this engine does not read (a package's, or one in a file the run left out), or holds something that is not a class name | that controller's routes are not served here |
 | `TS_ROUTES_WITHOUT_CONTROLLER` | a class whose methods declare routes and that no Nest controller decorator marks (a decorator of the project's own that wraps `Controller`) | its routes are not served here |
 | `TS_PREFIX_EXCLUDE_UNREAD` | an exclude entry this engine cannot read: a template, a spread of a list, a pattern in another syntax | every route under the prefix is made at the prefixed address and graded HEURISTIC, since the entry may name it; `tsBackend.globalPrefixExclude` declares the list and makes them EXACT |
 | `TS_PREFIX_DECLARED` | the profile's `tsBackend.globalPrefix` differs from the literal the bootstrap sets | the profile's is used |
@@ -148,6 +149,12 @@ chain through a field): the first is no gap in the project's links, the second
 is. A decorator is not a call its method makes; it runs once, when the class is
 defined.
 
+Two more calls are guesses. A function whose name the file writes again
+(`let f = ...; f = other`) may be another function when the call runs: the edge
+is HEURISTIC and `evidence.incomplete` says so. And in a package that may be
+published, even a `this.m()` with one target is `ts-this-dispatch`, HEURISTIC,
+because a class outside the tree may extend it.
+
 ### A call through an abstract class or an interface
 
 `this.users.findById(id)` on a field typed with an abstract class runs the
@@ -159,21 +166,35 @@ type and for each such class (directly or through another class or interface),
 the nearest declaration of the method. An abstract method is never a target.
 `evidence.dispatch` names the type and how many methods the set holds
 (`candidates`). A type no class of the project extends or implements is linked
-as before, unless the modules bind it to something else or its parameter's
-decorator says it is filled another way (below).
+as before only when nothing this engine could not read may add a member to its
+set (below).
 
-Two more things decide what `this.m()` runs:
+Three more things decide what `this.m()` runs:
 
 - A property that holds a function (`handle = () => {...}`) is set on the
   object when it is made, so it runs over any method of that name in the chain.
   It is a symbol of its own (`property: true`), and the nearest such property
   wins over every method.
+- A member written where the method would be leaves no link to the method: a
+  property whose value is not a function, `this.m = ...` anywhere in the class,
+  `X.prototype.m = ...`, `Object.assign(this, ...)`, a computed member. The set
+  is HEURISTIC and says which write. Where no other class of the set runs the
+  method, the call has no edge at all, and is counted with the calls on a
+  receiver not typed here; no diagnostic names it. `this.m.bind(this)` of itself
+  changes nothing.
 - A mixin is followed. `class Loud extends Shout(Base)`, where the project's
   `function Shout(B)` returns a class that extends `B`, has that class and then
   `Base` in its chain, so a method the mixin's class declares overrides `Base`'s.
-  A class that extends a call this engine cannot follow (a package's function,
-  an expression) and is handed a type of the project may override any method of
-  it: a set through that type is HEURISTIC, and says which class.
+  A class whose `extends` this engine cannot take for a class is an open end: a
+  call it cannot follow, an expression (`extends (on ? A : B)`), a value the
+  file makes (`const B = makeBase()`), or a name from a file the run did not
+  read. If it, or a class below it, declares the method, it may be one more
+  member of a set for that method, whichever type the set is for (the match is
+  by method name), so the set is HEURISTIC and names the class; a class of the
+  set that inherits the method from an open end makes the set short too.
+  `extends ns.Base` through `import * as ns`, a class a module `const` holds,
+  and a class declared inside a function (recorded as `<Name>$<line>`) are
+  classes. A package's class, or a global such as `Error`, is not an open end.
 
 The set rests on the project's own `extends` and `implements` clauses.
 TypeScript also accepts an object of the right shape that names neither, so the
@@ -185,18 +206,24 @@ set is complete only when something settles it:
   The modules read first are the ones the application loads, from its root
   module through each one's imports: a module class, `forwardRef(() => X)`, a
   constant of the file that holds one module or another
-  (`const Db = flag ? A : B`), and `X.forRoot()`, read from the object the
-  static method returns. When that walk is read whole and Nest makes the class
-  that holds the field (a provider or a registered controller), those modules
-  settle it. Otherwise every module of the tree is read, every static method's
-  module included, and its bindings settle the set only when the whole tree is
-  read too. When the bindings settle it, the edges go to the bound classes
+  (`const Db = flag ? A : B`), `X.forRoot()`, read from the object the static
+  method returns, the `module:` class of a dynamic module, and a list spread
+  under a condition and written out (`...(on ? [A] : [])`), read as what it
+  holds; a spread of a name is still a gap. When that walk is read whole and
+  Nest makes the class that holds the field (a provider or a registered
+  controller), those modules settle it, and a gap elsewhere in the tree does
+  not open the set. Otherwise every module of the tree is read, every static
+  method's module included, and its bindings settle the set only when the whole
+  tree is read too. When the bindings settle it, the edges go to the bound classes
   only, and `evidence.dispatch` says which modules bound it (`bound`), which
   reading settled it (`boundBy`), and how many candidates it narrowed from
   (`narrowedFrom`). A set they do not settle keeps every class they were read
   to bind, beside the hierarchy.
 - A field typed with a class no class extends is settled the same way. Bound to
-  itself, or bound by no module, it is linked as before. Bound to another class
+  itself, or bound by no module, it is linked as before, unless a providers or
+  imports list of the modules that settle it is not read whole: another class
+  may then be bound in its place, and the edge is HEURISTIC with that gap as the
+  reason. Bound to another class
   (`{ provide: UsersService, useClass: CachedUsersService }`), the call reaches
   that class, SOUND_SET. Bound by `useFactory`, `useValue` or `useExisting`, it
   is HEURISTIC, with the reason.
@@ -208,11 +235,14 @@ is HEURISTIC, with the reason in `evidence.dispatch.incomplete`:
 
 - a binding made by `useFactory`, `useValue` or `useExisting`, which is not
   read;
-- a provider, a providers list or a module this engine cannot read, anywhere in
-  the tree: an import it cannot name (a module an ordinary function builds), a
-  class loaded as a module that no `@Module` decorates and whose static methods
-  return none, a static method whose return is not read, or a root module the
-  bootstrap does not name;
+- a provider, a providers list or a module this engine cannot read, in the
+  modules the application loads (anywhere in the tree when Nest does not make
+  the holder from them): an import it cannot name (a module an ordinary
+  function builds), a class loaded as a module that carries a decorator this
+  engine does not read (a project's own wrapper of `@Module`), static methods or
+  not, or that carries none and whose static methods return no module, a
+  dynamic module whose `module:` class this engine cannot name, a static method
+  whose return is not read, or a root module the bootstrap does not name;
 - a package's module handed the type anywhere in the tree, which may bind it.
   What a package module's async options only read (`imports`, `inject`,
   `useClass`, `useExisting`, `useFactory`) is not handed to it;
@@ -228,8 +258,9 @@ is HEURISTIC, with the reason in `evidence.dispatch.incomplete`:
 - a type declared in a package that may be published: one that is not the
   application's own package and is not marked `"private": true`, so a class
   outside this tree may extend it;
-- a class that extends a call this engine cannot follow, handed the type (see
-  the mixins above).
+- an open end: a class whose `extends` this engine cannot take for a class,
+  that declares the method (see the mixins above);
+- a member written over the method (see above).
 
 `TS_DISPATCH_INCOMPLETE` counts the HEURISTIC calls and names the commonest
 reasons. `TS_BINDING_NOT_READ` names each type bound in a way this engine does
@@ -245,18 +276,25 @@ new. An import is resolved exactly as the bridge resolves it, so the file read
 for an import is the file the bridge takes it to mean. It never reads
 `node_modules`, a file outside the analyzed root, or a file whose bytes are
 outside it: a link (`libs/shared -> ../../elsewhere`) that leads out of the
-root is not read, whatever its path says. A name imported from such a library
-is linked like the application's own, not counted as a package's.
+root is not read, whatever its path says, and is said (`TS_FILES_LEFT_OUT`). A
+name imported from a library the run reads is linked like the application's
+own, not counted as a package's; one imported from a file the run left out is
+not a package's either: it means nothing here.
 
-Test support is left out too, in the application's own root and in a shared
-library alike: a spec, a mock, a stub, a story, and every file under a
-directory such as `__mocks__`, `testing` or `e2e`. Which names mark a file as
-test support is the `typescript.test-support` rule
-(`src/core/rules/packs/typescript.json`, kind `ts.test-support`). A mock read
-as the application's is one more class a call through an abstract type may
-reach, and a library's barrel may re-export its mocks. On ghostfolio the four
-`*.service.mock.ts` files under `apps/api` are left out: 492 files read where
-496 were.
+Test support is left out unless a file the run reads imports it, in the
+application's own root and in a shared library alike: a spec, a mock, a stub, a
+story, and every file under a directory such as `__mocks__`, `testing` or
+`e2e`. The application runs what it imports, so a `testing` feature module the
+app module imports is read, and its controller served. A barrel's
+`export * from './x.mock'` alone does not make a mock the application's. Which
+names mark a file as test support is the `typescript.test-support` rule
+(`src/core/rules/packs/typescript.json`, kind `ts.test-support`); the worker
+keeps no list of its own. A mock read as the application's is one more class a
+call through an abstract type may reach, and a library's barrel may re-export
+its mocks. What the run leaves out is said: `TS_FILES_LEFT_OUT` counts the test
+support no read file imports and the files whose bytes are outside the root,
+and names the read files that import or re-export one of them. On ghostfolio
+492 files are read, and 58 test support files are left out and said.
 
 The files read outside the application are listed on
 `meta.laneStats.ts.reached`, and the lane line counts them. They are analysis
@@ -380,6 +418,11 @@ columns that hold it, on whichever side they sit, or inserts or deletes rows of
 the implicit table. Every such edge names the relation in `evidence.relation`.
 The names are pack data (`prisma.json`: `relationFilters`,
 `relationNullFilters`, `relationCount`, `nestedWrites`).
+
+An update whose `data` sets no field of its own model, only relation writes,
+reads its row and writes none of it, as Prisma 6.19 sends it: its own table's
+`EXECUTES` is a read. Data not written out (a variable) may set a field, so the
+write is SOUND_SET.
 
 A relation is part of the call's own statement, not a statement of its own.
 Which SQL Prisma sends for it depends on things the call site does not settle:
@@ -535,7 +578,9 @@ are read the same way, fact by fact:
   `new DataSource(options)` inside a `dataSourceFactory` is the same options,
   not another place. A value given through a `const` of the same file is read
   as the literal it holds (`const PREFIX = 'app_'`,
-  `const naming = new SnakeNamingStrategy()`); one written again is not.
+  `const naming = new SnakeNamingStrategy()`); one written again is not, and
+  neither is a module-level name written again anywhere in the file. A value
+  imported from another file is not followed, and the reading says so.
 - Options that name no strategy mean `DefaultNamingStrategy`.
   `new SnakeNamingStrategy()` from typeorm-naming-strategies is the other
   strategy the pack knows.
@@ -552,12 +597,20 @@ are read the same way, fact by fact:
 - What goes before a table name is the driver's, the options' `type`, as each
   TypeORM driver builds a table path (`tablePath` in the pack): the schema on
   PostgreSQL, CockroachDB, Oracle and SAP, the entity's own database on MySQL,
-  MariaDB and Spanner, both on SQL Server, and nothing on SQLite. So on MySQL
+  MariaDB and Spanner, both on SQL Server. On `sqlite`, `better-sqlite3` and
+  `react-native` it is a handle the driver makes for a database file an entity
+  names (`attached` in the pack); this lane does not make that handle, so such a
+  table is keyed by its bare name and graded HEURISTIC, with the reason on its
+  edges only. `sqljs`, `capacitor`, `cordova`, `nativescript` and `expo` put
+  nothing before a table name. So on MySQL
   the options' `schema: 'billing'` puts nothing before `users`, and
   `@Entity('orders', { database: 'shop' })` is `shop.orders`. The table is keyed
   that way, as the SQL lane keys one. A driver the pack does not name leaves
   the table name HEURISTIC. So does a `type` the options do not write out, for
-  a table that a schema or a database could qualify. A schema the profile
+  a table that a schema or a database could qualify, unless the profile
+  declares it (`tsBackend.typeorm.type`). Where the driver leaves a name in
+  doubt, the lane line says `type not known` and `TS_TYPEORM_NAMING_ASSUMED`
+  gives the driver as the reason. A schema the profile
   declares goes before the name of an entity that names neither a schema nor a
   database, whatever the driver.
 - TypeORM's `snakeCase` changed at 0.2.35 and again at 0.2.38. A derived name
@@ -570,7 +623,12 @@ are read the same way, fact by fact:
 
 `tsBackend.typeorm` in the profile declares what the options leave to run time:
 `namingStrategy` (by the name the pack gives it, `default` or `snake`),
-`entityPrefix` and `schema`. `null` is not declared, and `""` is declared none.
+`entityPrefix`, `schema`, and `type`, the driver by TypeORM's own name for it.
+`null` is not declared, and `""` is declared none for the first three. The
+values of `type` that settle a table path are the driver names the pack's
+`tablePath` knows (`postgres`, `mysql`, `mssql`, `sqlite` and the rest); a
+`type` the pack does not name does not stop the analysis, and the names it would
+qualify stay HEURISTIC.
 A declared fact is used instead of what the options say, and a declaration that
 differs from what the options write is said in `TS_TYPEORM_NAMING_DECLARED`.
 Every table name waits for the prefix, so an application whose options are not
@@ -606,7 +664,10 @@ the same: a local declared with no value and given one once
 (`let r; r = this.ds.getRepository(User)`), and a local given a field or
 another local that holds one (`const r = this.users`). A local a condition
 fills (`flag ? getRepository(Tag) : getRepository(Label)`) holds one of them
-only the running program picks, so its calls are said, not read.
+only the running program picks, so its calls are said, not read. A local taken
+from the object by destructuring (`const { users } = this`) holds what that
+field holds; one given by `||`, `??` or `&&` may hold either value, so its
+calls are said too.
 
 An operation is read by the part each argument plays (`typeorm.operations`):
 
@@ -628,15 +689,27 @@ An operation is read by the part each argument plays (`typeorm.operations`):
   SOUND_SET, and the statement says `columnsRuntimeOnly`.
 - `softDelete`, `restore`, `softRemove` and `recover` write the entity's
   `@DeleteDateColumn`.
+- A select (a find, `count`, `exists`, an aggregate) on an entity with a
+  `@DeleteDateColumn` reads that column, because TypeORM filters out the rows
+  it marks, unless the options ask for them (`withDeleted`, role
+  `with-deleted`). A `withDeleted` that is not a literal, or options not written
+  out, make the read SOUND_SET. A relation or an eager join reads the target's
+  delete date the same way (`typeorm-soft-delete`).
 - `count`, `exists` and the aggregates (`sum`, `average`, `minimum`,
   `maximum`) join the eager relations in TypeORM 0.3 without selecting them, so
-  their tables and join columns are SOUND_SET, with no column of the relation's
-  row. 0.2 does not join them, and this lane does not read which version is
-  installed, so the join is a candidate, not a fact.
+  their tables and the columns the joins match on are SOUND_SET (for a
+  many-to-many, the join table's columns and the keys they reference on both
+  sides), with no other column of the relation's row. 0.2 does not join them,
+  and this lane does not read which version is installed, so the join is a
+  candidate, not a fact.
 - A write also sets the columns TypeORM sets on its own, as its query builders
   do from 0.2.24 to 0.3.28, though the call names none of them. An update
   (`update`, `increment`, `decrement`, the update `save` makes) sets the
-  `@UpdateDateColumn` and adds one to the `@VersionColumn`, which reads it. A
+  `@UpdateDateColumn` and adds one to the `@VersionColumn`, which reads it.
+  Values that name one of these columns write it themselves: from 0.2.34
+  TypeORM then adds nothing, and before 0.2.34 it still added one, so the read
+  of the old version is SOUND_SET; values not written out may name it, so the
+  read is SOUND_SET there too. A
   soft delete or a restore sets both beside the delete date. An insert
   (`insert`, `upsert`, the insert `save` makes) lists the create date, the
   update date and the version, unless the column's `insert` option is false.
@@ -656,7 +729,8 @@ returns that table's row. `select` narrows what is returned; `update`,
 `delete` and `insert` make it that statement; `set` and `values` write what
 they name. `update`, `insert`, `softDelete` and `restore` set the date and
 version columns as the operations above do; an insert whose `into` lists its
-columns inserts those alone. A step written under a condition, in a loop or in
+columns inserts those alone. A select or a join of an entity with a delete date
+column reads it, unless `withDeleted` came before. A step written under a condition, in a loop or in
 a callback MAY run, so what it reads is SOUND_SET, and a `select` there keeps
 the selection it may leave in place as candidates. A step this rule cannot
 place (a condition built with `Brackets`, a method the pack does not name) is
@@ -664,13 +738,21 @@ place (a condition built with `Brackets`, a method the pack does not name) is
 query where it is made says `builder-not-run-here`, and its edges are
 SOUND_SET.
 
-A builder whose local goes anywhere else (handed to a call, held in a second
-name or a field, returned) may be given steps this reading does not see: a
-`select` that narrows its rows, a `where` that replaces its filter. What it
-reads is then SOUND_SET, and the statement says where it went
-(`builder-escapes`) and that its columns are known only at run time. `clone()`
-makes another builder: the one it copies keeps what it reads, and the copy's
-steps are not read, which the statement says (`builder-step-not-read`).
+A builder is read whole only where every use of its local is a step whose
+value is thrown away, or a chain that ends in a step that runs the query or
+makes another builder. Any other use may give it steps this reading does not
+see (a `select` that narrows its rows, a `where` that replaces its filter):
+handed to a call or a `new`, put in an object or a list, a branch of a
+condition or of `&&` or `||`, captured in a function, held in a second name by
+a step that returns the builder (`const q2 = qb.where(...)`), returned. The
+worker records every such use of the local. What the builder reads is then
+SOUND_SET, and the statement says where it went (`builder-escapes`) and that
+its columns are known only at run time; `column_impact` gives such a column's
+list as a lower bound, in the statement's own words. A `let` given a step on
+itself (`q = q.andWhere(...)`) stays one builder; given anything else, the
+builder escapes. `clone()` and `subQuery()` make another builder: the one it
+copies keeps what it reads, and the copy's steps are not read, which the
+statement says (`builder-step-not-read`).
 
 What is not read is said:
 
@@ -679,7 +761,7 @@ What is not read is said:
 | `TS_TYPEORM_CALL_UNREAD` | raw SQL (`query()`), an operation the pack does not name, or a call on no entity this engine read |
 | `TS_TYPEORM_RECEIVER_UNREAD` | an operation that names an entity, on a receiver not known to be a repository or an entity manager, or on a local that holds one but may hold another value at the call: one assigned again, or one a condition fills |
 | `TS_TYPEORM_MAPPING_UNREAD` | mapping this engine does not read: an embedded entity (`@Column(() => Address)`), a class `@ChildEntity`, `@ViewEntity`, `@TableInheritance` or `@Tree` marks, join options not written out, a relation whose target is not an entity this engine read |
-| `TS_TYPEORM_NAMING_ASSUMED` | options this engine could not read, so the naming strategy, the prefix or the schema is not known, and the names that depend on it are HEURISTIC |
+| `TS_TYPEORM_NAMING_ASSUMED` | options this engine could not read, so the naming strategy, the prefix or the schema is not known, or the driver leaves a table name in doubt (not written out, or not one the pack names), and the names that depend on it are HEURISTIC. It says that declaring `tsBackend.typeorm` (`namingStrategy`, `entityPrefix`, `schema`, `type`) settles it |
 | `TS_TYPEORM_NAMING_DECLARED` | the profile's `tsBackend.typeorm` declares a fact other than the one the options write; the profile's is used |
 | `TS_TYPEORM_TABLE_MISSES_DDL` | a DDL was read, and a table only the entities declare meets none of its tables; the DDL's tables of that name under another schema are named, with `schema.default` as the way to join them |
 
@@ -699,8 +781,11 @@ degraded, with the reason, and a DDL beside the entities does not lift that.
 ```json
 "frameworkPacks": ["nestjs"],
 "tsBackend": { "app": "../apps/api/src", "prismaSchema": null, "globalPrefix": null, "globalPrefixExclude": null,
-               "typeorm": { "namingStrategy": null, "entityPrefix": null, "schema": null } }
+               "typeorm": { "namingStrategy": null, "entityPrefix": null, "schema": null, "type": null } }
 ```
+
+Every key a profile can hold, with an example of each, is listed in
+[concepts.md](../concepts.md#9-the-profile-key-by-key).
 
 - `tsBackend.app`: the application root, manifest-relative. Read when
   `frameworkPacks` declares `nestjs`.
@@ -710,15 +795,17 @@ degraded, with the reason, and a DDL beside the entities does not lift that.
 - `tsBackend.globalPrefixExclude`: the route patterns that prefix excludes, in
   Nest's own syntax (`["health", "docs{/*rest}"]`), for a bootstrap that builds
   the list at run time. Declared, it replaces the bootstrap's list.
-- `tsBackend.typeorm`: the TypeORM `namingStrategy`, `entityPrefix` and
-  `schema` the DataSource runs with, for options the source does not write out
-  (see *Names follow TypeORM's naming strategy, prefix and schema*).
+- `tsBackend.typeorm`: the TypeORM `namingStrategy`, `entityPrefix`, `schema`
+  and driver `type` the DataSource runs with, for options the source does not
+  write out (see *Names follow TypeORM's naming strategy, prefix and schema*).
 
 A project that sets none of these keeps the profile digest it had before they
 existed, so upgrading does not look to the calibration gate like a change of
 target. The `typeorm` block came after the others, so it is left out of the
-digest on its own while all three are `null`: a project that set `tsBackend`
-before the block existed keeps its digest too. Reading another application does
+digest on its own while all four are `null`: a project that set `tsBackend`
+before the block existed keeps its digest too. `type` came later still, and is
+left out on its own while it is `null`, so a block set before it existed keeps
+its digest as well. Reading another application does
 move it:
 the root read is part of the pin.
 
@@ -751,9 +838,10 @@ writes nothing to it:
 - A file whose bytes still key its shard is read from the shard. An edited file
   is read again by the worker (`parsedTsFiles`).
 - Which files are read is decided again: the files under the application's
-  root, and every file their imports reach now. A file an edit starts to import
-  is read for the first time; one no import reaches any more is left out
-  (`droppedTsFiles`), as the next `analyze` would leave it out.
+  root, and every file their imports reach now, with test support left out as
+  `analyze` leaves it out. A file an edit starts to import, test support
+  included, is read for the first time; one no import reaches any more is left
+  out (`droppedTsFiles`), as the next `analyze` would leave it out.
 - The tsconfig chain, `schema.prisma` and the `package.json` files are read
   again whole, as every run reads them. The ones that changed are listed in
   `tsConfigFiles`.

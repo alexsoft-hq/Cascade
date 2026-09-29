@@ -82,7 +82,9 @@ Two rules apply under every row.
 or `exact`. The default, `null`, takes the dialect's own rule. Use `exact` for a
 case-sensitive MySQL deployment (`lower_case_table_names=0`) whose schema really
 does tell `Item` from `ITEM`. Changing the key changes what matches, so it
-invalidates the cached lineage of every statement.
+invalidates the cached lineage of every statement. Every key a profile can
+hold, with an example of each, is listed in
+[concepts.md](../concepts.md#9-the-profile-key-by-key).
 
 If two catalog names fold onto one key, the run prints a
 `folded_identifier_collision` warning naming both, the first declaration keeps
@@ -92,8 +94,12 @@ the key, and both tables stay in the pack. Nothing is merged in silence.
 
 The DDL reader (`catalog_ddl.py`) parses the files with the same grammar the
 statement lane uses, the standard grammar for H2 and HSQLDB included
-(`--dialect`), and it is told which database they are for (`--database`, the
-database `sqlDialects.main` names). Both are part of the cached catalog's key.
+(`--dialect`); for H2 and HSQLDB a `CREATE TABLE` that grammar cannot read is
+read by one of their compatibility modes' grammars (see below). It is told which
+database the files are for (`--database`, the database `sqlDialects.main`
+names, when that is not the grammar's own name), and, when `sqlDialects.main`
+is not declared, that the database is only assumed (`--database-assumed`). Each
+of these is part of the cached catalog's key.
 The second matters because a migration's `ALTER` depends on rules the file does
 not write, and those rules belong to the database, not to the grammar it was
 parsed with. `DROP CONSTRAINT x` drops the primary key only if `x` is the key's
@@ -105,6 +111,14 @@ name, and the `CREATE` often never gave it one.
 | dropping one column of a key | drops the whole key | the column leaves the key, the rest stays | drops the whole key |
 | `ALTER INDEX a RENAME TO b` | renames the key `a` is the index of | | |
 | `MODIFY c ...` | | restates the whole column, so what it leaves out (`NOT NULL`, a comment) is gone | changes only what it says |
+
+With no database declared, the MySQL column applies, as an assumption: each
+conclusion that rests on one of its rules (a key's name is `PRIMARY`, one column
+dropped from a key of several, what a `MODIFY` leaves out) is said as
+`alter_rule_assumed`, whose sentence ends by asking to declare
+`sqlDialects.main` if the files are for another database. The overview counts
+them in its `catalog-rules-assumed` gap, the catalog axis is degraded with the
+cause `rules-assumed`, and the fix it names is to declare `sqlDialects`.
 
 A blank cell is a rule this reader does not hold for that database. A database
 with no rules of its own here (H2, HSQLDB, CUBRID, Tibero, Altibase,
@@ -124,9 +138,84 @@ without `COLUMN` (a column, not the table), `DROP c` without `COLUMN`, Oracle's
 `DROP (c, d)`, the `USING INDEX ... ENABLE` an Oracle export writes after a key
 and `MODIFY c NOT NULL ENABLE`, H2's `ALTER COLUMN c RENAME TO d`, MariaDB's
 `MODIFY` and `CHANGE COLUMN IF EXISTS`, and clauses sqlglot keeps as one piece
-of text (`DROP c, DROP d`). An option the grammar splits off, such as
-`SET STATISTICS`, is named as written in `alter_clause_unsupported`. The
-catalog worker is `catalog-ddl/9`, so a cached catalog is read again once.
+of text (`DROP c, DROP d`). It also applies MySQL's `ALTER TABLE ... COMMENT`
+(the table comment), H2's `DROP COLUMN (c, d)` (each column), and H2's and
+HSQLDB's `ALTER COLUMN c <definition>`, read as `MODIFY` is: what it leaves out
+is kept and said (`alter_modify_unsaid_unknown`). An Oracle constraint state in
+an `ALTER` clause (`NOT DEFERRABLE ... VALIDATE`) is read without it. An option
+the grammar splits off, such as `SET STATISTICS`, or a MySQL table option
+(`ENGINE`, `CHARSET`), is named as written in `alter_clause_unsupported`; a
+clause that cannot be read is quoted as written. `IF EXISTS` on a column the
+table does not have changes nothing, as in the database, and is said as
+`alter_if_exists_absent`. A `RENAME` it cannot read is `alter_unreadable`.
+
+### A `CREATE TABLE` the grammar cannot read
+
+An Oracle export (`NOT NULL ENABLE`, storage clauses), an HSQLDB `.script`, an
+H2 file written for `MODE=MySQL`: a `CREATE TABLE` the grammar cannot read as
+written used to be lost without a word. Now it is read, or named.
+
+- A statement the grammar reads as written is not touched.
+- One it cannot read is read again with as little set aside as reads it: first
+  how its constraints are checked and built (`ENABLE`, `VALIDATE`,
+  `NOVALIDATE`, `RELY`, `DEFERRABLE`, `INITIALLY ...`, `USING INDEX ...`,
+  `EXCEPTIONS INTO`) and HSQLDB's `CACHED`, `MEMORY` and `TEXT`; then what
+  follows the column list, only when every word of it is a table option the
+  reader knows (`PCTFREE`, `STORAGE`, `TABLESPACE`, `SEGMENT CREATION`,
+  `ENGINE` and the like; a MySQL table `COMMENT` is kept); then the table
+  constraints the catalog holds nothing of, each set aside only when its whole
+  shape is one (`KEY`, `INDEX`, `UNIQUE`, `FULLTEXT` or `SPATIAL` with a list of
+  columns, `CHECK (...)`, `FOREIGN KEY (...) REFERENCES`, `EXCLUDE`), never the
+  primary key. What was set aside is said (`create_clause_not_held`).
+- A column named `key` or `index` (PostgreSQL, HSQLDB, H2, Oracle allow it) is a
+  column, and the primary key it carries stays. MySQL's `KEY idx (c)`, which
+  H2's own grammar reads as a column named `KEY`, is not a column.
+- A constraint marked `DISABLE` is not enforced, so it is not read: a disabled
+  `NOT NULL` leaves the column nullable, a disabled key is no key
+  (`create_constraint_disabled`).
+- `INHERITS` is no table option. A PostgreSQL child table holds its parent's
+  columns first, `NOT NULL` with them, the key and comments not inherited; a
+  parent no earlier file declared is said (`create_parent_unknown`).
+- H2's and HSQLDB's compatibility modes are data in the reader
+  (`_DATABASE_RULES`): H2's `MySQL`, `PostgreSQL`, `Oracle` and `MSSQLServer`,
+  HSQLDB's `sql.syntax_mys`, `_pgs`, `_ora` and `_mss`. A `CREATE TABLE` the
+  database's own grammar cannot read, even with parts set aside, is read by a
+  mode's grammar when every mode that reads it agrees on its columns and key,
+  and said (`create_read_in_mode`). The mode a project declares is not read,
+  and a mode lends none of that database's `ALTER` rules.
+- Statements written with no semicolons after a leading statement (an HSQLDB
+  `.script` that starts with `SET`) are read one by one: text that runs on is
+  cut where a statement word starts a line.
+- A `CREATE TABLE` that still cannot be read is named once
+  (`create_table_unreadable`), in every dialect, and one folded into another
+  statement is named with its line (`create_table_unread`). A file the grammar
+  library itself fails on no longer ends the run: the reader reads that file
+  one statement at a time, and keeps the statement it fails on as text, which it
+  reads again or names like any other. A parse that stopped only in statements
+  that declare and change no table (H2's `DROP TABLE t IF EXISTS`, a `GO`
+  script's `DROP`) says the catalog may have lost nothing by it
+  (`parse_error_not_held`); one that stopped where an `ALTER` or a `RENAME` is,
+  or where the reader cannot tell, stays `parse_error`.
+
+**What the reader said is in the pack.** The reader's diagnostics used to go
+to the terminal only. Its header now carries them, so a catalog read back from
+the cache says them too. The pack groups them by code
+(`meta.laneStats.catalog`: each code's count, the first ten tables it named
+and its first five sentences) with one diagnostic per kind in
+`meta.diagnostics` (`CATALOG_CREATE_TABLE_UNREADABLE`, `CATALOG_RULE_ASSUMED`,
+`CATALOG_FILE_PART_NOT_HELD`, `CATALOG_IF_EXISTS_ABSENT` and the rest), so a
+schema that gives three hundred of one is one line with its count. The overview
+counts them into three gaps: `catalog-tables-unread`, `catalog-rules-assumed`
+and `catalog-read-in-part`; a clause the catalog does not hold and the reader's
+notes count into none. Tables lost or a database assumed make the catalog axis
+degraded, with the cause (`tables-unread`, `rules-assumed`); the fix named is
+`sqlDialects` for an assumed database and none for lost tables.
+ruoyi-vue-pro's SQL Server schema read with MySQL's grammar gave 0 of its 60
+tables and the axis said shipped; it now says degraded, cause `tables-unread`.
+dolphinscheduler's H2 schema went from 57 to 64 tables and from 583 to 622
+columns.
+
+The catalog worker is `catalog-ddl/13`, so a cached catalog is read again once.
 
 ### One schema, shipped once per vendor
 
@@ -189,7 +278,9 @@ dialect a profile already declares, then a MySQL marker in the DDL itself
 (backquotes, `ENGINE=`), then the vendor every
 jdbc url agrees on, then the dialect the schema file's own text is written in
 (`SERIAL`, a `::type` cast or `OWNER TO` for PostgreSQL; `VARCHAR2(` or `NUMBER(`
-for Oracle). With none of them the key stays empty. Measured on a PostgreSQL MES
+for Oracle). With none of them the key stays empty, and the run reads the SQL as MySQL and
+says so: `PROFILE_DEFAULT_ASSUMED` when `sqlDialects` is empty, and
+`alter_rule_assumed` wherever an `ALTER` is decided by one of MySQL's rules. Measured on a PostgreSQL MES
 whose schema is one `pg_dump`: before this rule its catalog was parsed as MySQL
 and not one of its tables was read.
 

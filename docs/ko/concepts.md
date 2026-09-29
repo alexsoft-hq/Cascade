@@ -2,7 +2,7 @@
 
 # 개념
 
-이 엔진을 붙들고 있는 생각은 일곱 개입니다. 하나하나가 태도가 아니라 코드 안의
+이 엔진을 붙들고 있는 생각을 모았습니다. 하나하나가 태도가 아니라 코드 안의
 기제이므로, 그 생각을 구현한 파일 이름을 옆에 적어 둡니다.
 
 ## 1. 등급: 사실, 후보 집합, 추측
@@ -37,11 +37,42 @@
 걷기의 등급은 **가장 약한 고리**를 따릅니다. `SOUND_SET` 호출을 하나라도 지나는
 체인은, 나머지가 아무리 exact 여도 `SOUND_SET` 입니다.
 
+**연결이 얼마나 확실한지는 규칙 네 개로 정합니다.** 리뷰를 할 때마다 방금 고친
+곳에서 모양만 조금 다른 같은 종류의 결함이 나왔습니다. 그래서 규칙을 사례가 아니라
+종류에 맞춰 적었고, 모든 레인이 이 규칙을 지킵니다.
+
+- **"아무것도 바꾸지 않는다"는 판단은 기본 거부로 합니다.** 무언가가 안전하다는
+  판단이 여기에 해당합니다. 래퍼 단계가 URL 을 손대지 않고 넘긴다, 쿼리 빌더가 밖으로
+  새지 않는다, 애너테이션이 컬럼을 그대로 둔다, 이 문장은 `CREATE TABLE` 이 아니다
+  같은 판단입니다. 이런 판단은 코드가 분명히 알아보는 모양에서만 성립합니다. 다른
+  모양은 정해지지 않은 것으로 두고, 이유를 엣지나 진단에 적습니다.
+- **`SOUND_SET` 은 닫힌 집합입니다.** 엔진이 읽지 못한 무언가가 후보를 하나라도
+  더할 수 있으면 `SOUND_SET` 이 아닙니다. 끝까지 읽지 못한 providers 목록, 읽을 수
+  없는 모듈 클래스, 배포될 수 있는 패키지, 따라갈 수 없는 `extends`, 람다가 구현할
+  수 있는 인터페이스가 그런 빈틈입니다. 빈틈이 있으면 집합은 `HEURISTIC` 이 되고,
+  그 빈틈을 이름으로 말합니다.
+- **한 질문에는 답이 하나입니다.** 위로 걷는 Trace, impact 도구, 집계는 같은 질문에
+  답합니다. 그래서 같은 걷기 하나를 읽습니다(아래 *한 질문, 한 답* 참고).
+- **기본값에 기댄 결론은 `HEURISTIC` 입니다.** 트리가 말하지 않아서 엔진이
+  프레임워크의 기본값을 쓰면, 결론은 어떤 기본값을 가정했는지 말합니다. JPA 의 key
+  `id` 와 discriminator `dtype`, Spring Boot 의 포트 8080(`url.guess: "port-default"`)이
+  그렇습니다. 데이터베이스를 선언하지 않아서 `ALTER` 를 MySQL 규칙으로 읽을 때도
+  같은 방식으로 말합니다(`alter_rule_assumed`, overview 의 `catalog-rules-assumed`
+  빈 곳에 셉니다). 소스가 말하지 않는 것은 프로필로 사람이 적을 수 있습니다(9절).
+
+고칠 때 틀린 결론을 감추려고 등급만 내리는 일은 없습니다. 소스가 말하지 않는 것을
+말하지 않게 하거나, 무엇을 못 읽었는지 말하게 합니다.
+
 **라우트에서 핸들러로 가는 연결도 고리 하나입니다.** `HANDLES` 엣지는 대부분
 `EXACT` 지만 전부는 아닙니다. 룰이 코드 생성기의 이름 규칙만 보고 라우트에 짝지은
 핸들러는 `HEURISTIC` 입니다. 엔진이 읽지 못한 exclude 가 주소를 바꿀 수 있는
 NestJS 라우트도 `HEURISTIC` 입니다. 인터페이스 타입 필드를 거쳐 핸들러에 닿는
-Spring 함수형 라우트는 `SOUND_SET` 입니다. 그래서 라우트에서 걷기는 모드가 그
+Spring 함수형 라우트는, 그 객체가 될 수 있는 클래스를 트리가 다 보여 줄 때
+`SOUND_SET` 입니다. 다 보여 주지 못하면 `HEURISTIC` 입니다. 추상 메서드가 하나뿐인
+인터페이스라 어떤 람다든 구현할 수 있을 때, 또는 이번 실행이 읽지 못한 타입이나
+상위 클래스가 있을 때가 그렇습니다. OpenAPI 문서나 코드 생성기의 이름 규칙으로
+놓인 연결은 `HEURISTIC` 입니다. 단, 그 문서가 코드와 맞는다고 프로필이 말하면
+다릅니다(9절). 그래서 라우트에서 걷기는 모드가 그
 연결을 받아들일 때만 핸들러에서 시작합니다. 깊이는 핸들러부터 세고, 그 아래의
 행·테이블·페이지는 어느 것도 그 연결보다 높은 등급을 받지 않습니다
 (`src/core/walks.mjs`). pack 전체 집계(overview, map, coupling, summary)와
@@ -52,6 +83,14 @@ Spring 함수형 라우트는 `SOUND_SET` 입니다. 그래서 라우트에서 �
 때는, 연결이 모드 하한 아래인 라우트를 그 모드의 엔드포인트 행으로 내놓지
 않습니다. 대신 모드가 걷지 않은 다른 연결과 함께 `walk.cut.byMode` 에 셉니다.
 `map` 은 라우트에 그 모드가 실제로 걷는 핸들러 이름을 붙입니다.
+
+**라우트의 주소와 핸들러는 다른 문제입니다.** 레인이 라우트 주소를 확정하지 못하면
+(엔진이 읽지 못하는 exclude 목록이 있는 NestJS 전역 접두사), 그 사실을 `HANDLES`
+증거에 적습니다(`address: {grade, why}`). 라우트 아래 코드는 `HANDLES` 연결로
+등급을 받습니다. 위로 걸을 때 라우트를 부르는 쪽은 라우트로 가는 자기 연결로
+등급을 받습니다. 웹 레인은 그런 라우트에 맞춘 호출을 주소 등급보다 높게 매기지
+않고, 호출에도 이유를 적습니다(`evidence.address`). 그래서 어느 걷기든 의심을 제
+자리에서 읽습니다.
 
 **문장이 닿는 곳은 어디서나 같은 규칙으로 셉니다.** 문장의 테이블과 컬럼은 그 문장의
 `EXECUTES`, `READS`, `WRITES` 엣지 가운데 모드 하한이 받아들이는 것입니다
@@ -68,10 +107,27 @@ map, coupling, summary, browse, 위아래 두 방향의 `flow`, impact 도구 �
 다르면 같은 질문에 답이 둘이 되기 때문입니다. 실제로 mall 의 `pms_product.name` 은
 9 hop 을 가야 화면에 닿습니다. 그때 8 에서 끊던 뷰어의 걷기는 그 화면을 하나도
 못 보여 줬고, `screen_impact` 는 12 개를 보여 줬습니다. 깊이 대신 노드 상한이
-안전장치입니다. 노드를 4000 개(`WALK_NODE_CAP`) 기록하면 걷기를 멈추고
-`limits` 에 그렇게 적습니다.
+안전장치입니다. 노드를 4000 개(`WALK_NODE_CAP`) 기록하면 걷기를 멈춥니다. 그
+걷기로 만든 답은 멈췄다고 말합니다. `flow`, `endpoint_impact`, `screen_impact`,
+`browse`, `summary`, `map`, `coupling` 은 `limits` 에 적고, `overview` 는
+`node-cap` 빈 곳으로 적습니다.
 `depth` 를 직접 주면(1~8) 그만큼 좁힐 뿐이고, 답은 거기서 무엇을 잘랐는지
-말합니다. 답은 깊이를 `depth 4` 나 `no depth cap` 으로 적습니다.
+말합니다. impact 도구와 `browse` 는 depth 를 받지 않습니다. 답은 깊이를
+`depth 4` 나 `no depth cap` 으로 적습니다.
+
+**한 질문, 한 답.** 컬럼 하나를 바꾸면 어느 라우트와 화면에 닿는가. 이 질문을 위로
+걷는 Trace, `endpoint_impact` 와 `screen_impact`, 작업 트리 오버레이의 위쪽 라우트,
+다른 프로젝트로 건너가기가 모두 묻습니다. 이들은 모두 위로 걷는 걷기 하나를
+읽습니다(`src/core/chain.mjs` 의 `walkUp`, `src/core/walks.mjs` 의 `affectedBy` 를
+거쳐서). 너비 우선 걷기도 같고, Trace 의 엔드포인트 레인과 화면 레인을 만드는 기록
+두 개도 같습니다. pack 전체 집계는 같은 규칙을 뒤집어 아래로 걷습니다.
+`src/core/walk_agreement.mjs` 가 모든 컬럼과 테이블에서 답을 행 단위로 비교합니다.
+impact 도구와 Trace 를, impact 도구와 집계를 맞춰 봅니다. 테스트 묶음은 이 비교를
+손으로 만든 그래프, 골든 픽스처 트리 세 개(모든 모드), 그리고 체크아웃이 있을 때
+spring-petclinic, jpetstore-6, mall pack 에서 돌립니다. 이전에는 spring-petclinic
+컬럼 24 개 중 17 개, jpetstore-6 컬럼 86 개 중 49 개에서 한 답이 말한 화면을 다른
+답은 말하지 않았습니다. 지금은 Java 코퍼스 pack 26 개와 TypeScript pack 4 개 어디에도
+그런 컬럼이 없습니다.
 
 질의 모드가 하한을 고릅니다. `strict` 는 확인된 엣지만 쓰고, `conservative` 는
 후보 호출을 더하고, `heuristic` 은 추측 규칙까지 허용합니다. `conservative` 에서
@@ -179,7 +235,11 @@ GREEN 이나 BOOTSTRAP 이 아니면 `UNCERTIFIED`, 승인된 골든 사례가 �
 그렇습니다. 지금 파일로 계산한 카탈로그 샤드 키가 실행이 쓴 키와 다르면 거절하고
 파일 이름을 댑니다(루트 밖의 DDL, 다시 받아 온 스냅샷). 따로 저장소에 있는
 프런트엔드가 `analyze` 가 기록한 커밋보다 앞으로 갔으면 답은 `behind` 입니다.
-자세한 내용은 [cli.md](../cli.md#cascade-impact) 에 있습니다.
+따로 저장소에 있는 프런트엔드는, 분석한 루트 옆에 있든 그 안에 들어 있든 pack 이
+읽은 것의 일부입니다. 그 커밋은 pack 의 핀에 들어갑니다. 그 저장소의 커밋하지 않은
+파일은 pack 의 더러운 파일이 되고, 오버레이는 그 파일을 매번 다시 읽습니다. 그래서
+고쳤다가 되돌린 편집도 되돌린 것으로 보입니다. 자세한 내용은
+[cli.md](../cli.md#cascade-impact) 에 있습니다.
 
 오버레이는 베이스 pack 이 읽은 OpenAPI 문서를 지금 디스크에 있는 그대로 다시
 읽고, `analyze` 와 똑같이 OpenAPI 브리지에 넘깁니다. 그래서 파일을 고쳐도 문서가
@@ -189,9 +249,10 @@ GREEN 이나 BOOTSTRAP 이 아니면 `UNCERTIFIED`, 승인된 골든 사례가 �
 베이스 pack 이 읽은 프런트엔드 패키지와 서버 포트를 `analyze` 와 똑같이 넘깁니다.
 그래서 아무것도 고치지 않은 트리에 얹은 오버레이는 분석한 그래프와 똑같은 그래프를
 만듭니다(`test/overlay_equivalence.test.mjs`). 다시 읽지 않는 입력도 몇 가지 있고,
-그럴 때는 그렇다고 말합니다. 프런트엔드 근처의 `package.json` 을 고쳤거나, 포트를
-읽은 pack 에서 Spring 설정을 고쳤으면 `limits` 에 적습니다. 오버레이는 베이스 pack 이
-읽은 패키지와 포트를 그대로 쓰기 때문입니다. Spring XML 이 선언한
+그럴 때는 그렇다고 말합니다. 프런트엔드 근처의 `package.json` 을 고쳤으면
+`limits` 에 적습니다. 포트를 읽은 pack 에서 Spring 설정을 고쳤거나, 다른 설정 파일이
+이제 포트를 말하거나, Java 소스가 이제 포트를 정하면 그것도 적습니다. 오버레이는
+베이스 pack 이 읽은 패키지와 포트를 그대로 쓰기 때문입니다. Spring XML 이 선언한
 테이블 id 생성기는 트리 전체를 훑어서 찾는 것이라 다시 읽지 않습니다. 베이스
 pack 이 그 생성기에 호출을 묶어 둔 적이 있으면, 답의 `limits` 에 그 호출이 여기서는
 생성기 문장에 닿지 않는다고 적습니다. TypeScript 백엔드도 `analyze` 와 같은 방식으로
@@ -212,7 +273,8 @@ pack 이 그 생성기에 호출을 묶어 둔 적이 있으면, 답의 `limits`
 고정 PRNG 로 파일의 무작위 부분집합을 변형합니다). 이 경로가 조용히 넘어가기를
 거부하는 것이 넷 있습니다. 모른다는 것은 절대 "바뀐 것 없음"이 아닙니다. 손상된
 샤드는 절대 적재되지 않습니다(`SHARD_UNUSABLE` 로 보고하고 그 단위만 다시
-계산합니다). 더러운 트리는 `meta.base.dirty` 에 명시됩니다. pack 은 자신이 어떤
+계산합니다). 더러운 트리는 `meta.base.dirty` 에 명시됩니다. 따로 저장소에 있는
+프런트엔드의 커밋하지 않은 파일도 여기에 들어갑니다. pack 은 자신이 어떤
 모드로 무엇을 다시 읽고 무엇을 재사용했는지 기록합니다.
 
 ## 4. 부분 pack: 없는 축은 치명적 오류가 아니라 선언
@@ -239,9 +301,11 @@ import 된 컴포넌트의 어느 함수가 실제로 도는지는 런타임 질
 
 `degraded` 는 입력이 빠진 경우에만 붙는 것이 아닙니다. `web` 축은 프런트엔드에
 대해 **아무것도 추측하지 않았을 때만** `shipped` 입니다. 엔진이 매칭 개수를 세어
-알아낸 URL 접두사, 프로젝트가 선언하지 않아서 가정한 경로 별칭, 어떤 `.env`
-파일도 정하지 않은 기본값이나, 이 머신이 아닌 호스트에만 기댄 base URL 이 있으면 축은
-`degraded` 가 됩니다. 이유는 무엇을 선언하면 되는지 알려 줍니다. 클라이언트까지
+알아낸 URL 접두사(룰 팩이 이름을 댄 래퍼 단계가 URL 앞에 붙이는 접두사도
+포함), 프로젝트가 선언하지 않아서 가정한 경로 별칭, 어떤 `.env` 파일도 정하지 않은
+기본값이나 이 머신이 아닌 호스트에만 기댄 base URL, 어떤 파일도 말하지 않는 포트로
+이 머신에 가는 호출이 있으면 축은 `degraded` 가 됩니다. 축의 `causes` 가 그중 무엇인지
+말하고, 이유는 무엇을 선언하면 되는지 알려 줍니다. 클라이언트까지
 추적하지 못한 호출이 추적한 호출만큼 많아도 `degraded` 입니다. 그보다 적으면 축을
 내리지 않습니다. 대신 몇 개가 추적되지 않았고 대부분 왜 그런지를 note 로 달아
 모든 답에 실어 보냅니다.
@@ -250,7 +314,17 @@ import 된 컴포넌트의 어느 함수가 실제로 도는지는 런타임 질
 만들어집니다. 매핑이 테이블을 선언했으면 축의 `sources` 에 그 출처를
 적습니다(`schema.prisma`, 또는 TypeORM 엔티티와 그 개수). TypeORM 테이블·컬럼
 이름이 이번 실행이 확인하지 못한 것에 기대면 축은 `degraded` 입니다. 옵션이 네이밍
-전략이나 테이블 prefix 를 실행 시점에 맡긴 경우가 그렇습니다.
+전략이나 테이블 prefix 를 실행 시점에 맡긴 경우가 그렇습니다. DDL 리더가 읽지 못했거나
+가정해야 했던 것도 pack 에 들어갑니다(`meta.laneStats.catalog`, 종류마다 진단 하나와
+개수). overview 는 이것을 빈 곳 세 가지로 셉니다. 읽지 못한 `CREATE TABLE` 은
+`catalog-tables-unread`, 아무도 선언하지 않은 데이터베이스의 규칙에 기댄 결론은
+`catalog-rules-assumed`, 파일에 적힌 대로 적용하지 못한 문장은
+`catalog-read-in-part` 입니다. 앞의 두 가지는 축도 `degraded` 로 만들고, 축의
+`causes` 가 어느 쪽인지 말합니다(`tables-unread`, `rules-assumed`. 위의 TypeORM
+이름은 `typeorm-names-heuristic`). 일부만 읽은 테이블은 축을 내리지 않습니다.
+overview 는 원인마다 해결책을 하나씩 줍니다. 가정한 데이터베이스는 `sqlDialects` 선언,
+TypeORM 이름은 `tsBackend.typeorm` 선언입니다. 잃은 테이블에는 해결책이 없고, 원인이
+둘이면 하나로 정할 해결책이 없습니다.
 
 **축이 보기보다 일찍 끝난다**는 뜻일 수도 있습니다. 라우트가 소스가 아니라
 OpenAPI 문서에서 온 pack 은 엔드포인트는 있는데 그 아래에는 아무것도 없습니다.
@@ -275,8 +349,13 @@ so a frontend call reaches an endpoint and stops there"* 라고 적힙니다. �
 않았습니다.
 fan-out 천장이 잡으려고 있는 옆으로 번지기의 정확히 그 모양입니다. 빼면 모든
 프로젝트가 기준 쌍 개수로 정확히 돌아오므로, 그 엣지가 차이의 전부입니다. 대신
-한 걸음만 갑니다. 그것을 묻는 두 질문 — 컬럼 변경이 어느 페이지에서 느껴지는가,
-어느 페이지가 이 라우트를 보여 주는가 — 에서입니다.
+한 걸음만 가고, 어느 걷기든 같은 한 걸음을 갑니다. 위로 걸을 때는 걷기가 닿은
+메서드가 그리는 페이지를 한 걸음 옆에서 붙입니다. 그래서 위로 걷는 Trace,
+`endpoint_impact` 의 화면, `screen_impact`, 화면 집계가 같은 페이지를 말합니다.
+`screen_impact` 는 페이지를 그리는 라우트도 그 페이지가 거치는 라우트에 넣습니다.
+페이지에서 아래로 걸을 때는 그 페이지를 그리는 메서드에서 시작합니다. 시작할 때만
+그렇고, 걷는 중간에는 그러지 않습니다. 라우트의 그림에는 그 핸들러가 그리는
+페이지가 나옵니다.
 
 브라우저 기록(`--har`)은 **종류가 다른** 사실입니다. 등급도 그렇게 매겨집니다.
 `RUNTIME_ONLY` 는 모든 모드의 하한 아래이므로 기록된 `screen → route` 호출은
@@ -298,7 +377,7 @@ shipped, degraded, not-shipped 로 내놓을지입니다.
 | `NO_SEAL` | 기준선이 아직 없음. 이번 실행이 기준선이 됩니다 (`BOOTSTRAP`) |
 | `NO_CHANGE` | 같은 엔진, 같은 커밋 핀 |
 | `ENGINE_MOVED` | 엔진 지문이 움직임. 업그레이드 |
-| `REPIN` | 분석 대상 커밋이 움직임 |
+| `REPIN` | 분석 대상이 움직임: 커밋(따로 저장소에 있는 프런트엔드의 커밋 포함), 읽은 입력, 프로필, 카탈로그 |
 | `BOTH_MOVED` | 둘 다 |
 
 `ENGINE_MOVED` 가 가장 엄격합니다. "분석기가 바뀌었다"는 바로 손실이 스며들면
@@ -469,3 +548,73 @@ Java 클라이언트 URL 의 호스트, 또는 게이트웨이 라우트가 넘�
 
 전송 형태, `basis.siblings`, `federate` 인자 같은 나머지는 [mcp.md](../mcp.md)
 에 있습니다.
+
+## 9. 프로필 키 하나하나
+
+`.cascade/profile.json` 은 읽기 규약입니다. 파서가 알 수 없는 자리에서 이
+프로젝트의 코드가 무슨 뜻인지, 그리고 소스가 말하지 않는 것을 사람이 적어 두는
+곳입니다. `cascade init` 이 쓰고, 그다음은 여러분이 고칩니다. 모든 키는 엔진의
+동작을 바꾸거나(consumed), 설정하는 순간 기록되고 그렇다고 알려집니다. 죽은 키가
+없다는 것은 테스트가 지킵니다(`src/core/profile.mjs` 의 `PROFILE_KEY_CONSUMERS`).
+경로는 프로필이 있는 디렉터리 `.cascade/` 기준입니다. 그래서 저장소 맨 위의 파일은
+`../file` 입니다. `servers` 만 분석한 루트 기준으로 이름을 씁니다. 프로필 digest 를
+처음 기록한 뒤에 생긴 키(`tsBackend`, `pathPrefixes`, `servers`, `tsBackend.typeorm`
+과 그 `type`, `openapi.generatedFromCode`, `openapi.generatesCode`)는 기본값인 동안
+digest 에서 빠집니다. 그래서 엔진을 올려도 보정 게이트가 대상이 바뀐 것으로 보지
+않습니다. 검증기는 모양이 틀린 값은 거부하지만, 모르는 키는 거부하지 않습니다.
+그래서 철자가 틀린 키는 아무것도 말하지 않습니다.
+
+| 키 | 무엇을 말하나 | 예 |
+|---|---|---|
+| `build.tool` | 빌드 도구입니다. 기록만 합니다. Gradle 이나 Maven 을 돌리지 않습니다 | `"maven"` |
+| `build.javaRelease` | Java 언어 수준입니다. 기록만 합니다 | `17` |
+| `build.profiles` | 빌드 프로필입니다. 기록만 합니다. 의존성을 풀지 않습니다 | `["prod"]` |
+| `packagePrefixes` | 프로젝트 자신의 최상위 패키지입니다. 그 밖의 타입은 외부 것이고, 그리로 가는 호출은 풀지 못한 호출이 아니라 외부 호출로 셉니다 | `["com.macro.mall"]` |
+| `schema.default` | 스키마를 적지 않은 테이블의 스키마입니다. `null` 이면 모르는 것으로 둡니다 | `"public"` |
+| `schema.propertyNames` | MyBatis SQL 의 `${prop}.table` 에서 raw 치환이 아니라 스키마 한정자인 속성 이름입니다 | `["db.schema"]` |
+| `schema.rewriteLayer` | SQL 재작성 계층입니다. 모델링하지 않으므로 값을 넣으면 not shipped 로 알립니다 | `null` |
+| `sqlDialects` | SQL 이 어느 데이터베이스용인지 `main` 에 적습니다([sql-lane.md](../setup/sql-lane.md)). 선언하지 않으면 MySQL 로 가정하고 그렇다고 알립니다 | `{ "main": "postgresql" }` |
+| `sqlIdentifierCase` | 두 철자가 같은 테이블인지 정하는 규칙입니다: `fold-lower`, `fold-upper`, `exact`. `null` 이면 방언의 규칙을 씁니다(7절) | `"fold-lower"` |
+| `gatewayRoutes` | 프런트엔드가 쓰는 접두사와 백엔드가 서빙하는 접두사입니다. `"*"` 는 모든 호출에 적용됩니다([web-lane.md](setup/web-lane.md)) | `{ "/dev-api": "" }` |
+| `pathPrefixes` | 설정 코드가 컨트롤러 라우트 앞에 붙이는 경로 접두사입니다([java-lane.md](../setup/java-lane.md#a-prefix-set-in-configuration-code-pathprefixes)) | `[{ "prefix": "/admin-api", "packages": "**.controller.admin.**" }]` |
+| `servers` | 소스가 말하지 않는 애플리케이션 포트입니다. 키는 `src/main/resources` 를 가진 디렉터리이고, 분석한 루트 기준입니다([web-lane.md](setup/web-lane.md)) | `{ "mall-admin": { "port": 8080 } }` |
+| `serviceNames` | 이 프로젝트가 불리는 이름(`spring.application.name`)입니다. 건너가기가 이 이름으로 프로젝트를 고릅니다(8절) | `["mall-admin"]` |
+| `webRoots` | `package.json` 이 선언하지 않은 프런트엔드 루트입니다. `{root, kind, from}` 모양입니다 | `[{ "root": "../src/main/resources/static", "kind": "declared", "from": "user" }]` |
+| `templateRoots` | 뷰 이름이 서버에서 그리는 페이지가 되는 곳입니다. `{root, engine, suffix, from}` 모양입니다 | `[{ "root": "../src/main/resources/templates", "engine": "thymeleaf", "suffix": ".html", "from": "default" }]` |
+| `screenAxis.enabled` | 라우터 선언을 화면으로 만들지 정합니다. `true`, `false`, 또는 실행이 읽은 것으로 정하는 `null` 입니다 | `true` |
+| `screenAxis.nameSource` | 화면 제목을 어디서 가져올지 정합니다: `route-meta` 또는 `none` | `"route-meta"` |
+| `screenAxis.pathRule` | 화면의 짧은 라벨을 경로에서 자르는 방식입니다. 경로 자체는 바뀌지 않습니다 | `"last-segment"` |
+| `screenAxis.codeRegex` | 화면 코드를 읽는 패턴입니다 | `"([A-Z]{2}\\d{4})"` |
+| `moduleAttribution.packageDepth` | 라우트를 경로 첫 구간 대신 핸들러 패키지를 이 단계까지 자른 것으로 묶습니다 | `4` |
+| `moduleAttribution.codeLength` | 화면 코드의 앞 몇 글자가 묶음 이름인지 정합니다 | `2` |
+| `frameworkPacks` | 플래그 없는 `analyze` 가 돌릴 레인입니다 | `["spring-mvc", "mybatis-xml", "jpa", "web"]` |
+| `tsBackend.app` | TypeScript 레인이 읽는 NestJS 애플리케이션 루트입니다([ts-lane.md](setup/ts-lane.md)) | `"../apps/api/src"` |
+| `tsBackend.prismaSchema` | Prisma 가 먼저 찾는 자리에 없을 때 읽을 `schema.prisma` 입니다 | `"../prisma/schema.prisma"` |
+| `tsBackend.globalPrefix` | 설정에서 읽는 부트스트랩을 위한, 애플리케이션이 배포되는 접두사입니다. `""` 는 접두사 없음입니다 | `"api"` |
+| `tsBackend.globalPrefixExclude` | 그 접두사에서 빼는 라우트 패턴입니다. Nest 문법으로 씁니다 | `["health", "docs{/*rest}"]` |
+| `tsBackend.typeorm.namingStrategy` | TypeORM 네이밍 전략입니다. typeorm 팩의 이름(`default`, `snake`)으로 씁니다 | `"snake"` |
+| `tsBackend.typeorm.entityPrefix` | TypeORM 이 모든 테이블 이름 앞에 붙이는 접두사입니다 | `""` |
+| `tsBackend.typeorm.schema` | 스키마를 적지 않은 엔티티의 스키마입니다 | `"public"` |
+| `tsBackend.typeorm.type` | TypeORM 드라이버입니다. 테이블 이름 앞에 무엇이 붙는지를 드라이버가 정합니다. 통하는 값은 typeorm 팩의 드라이버 이름이고, 다른 값이면 그 이름들은 HEURISTIC 으로 남습니다 | `"postgres"` |
+| `jpa.namingStrategy` | `@Table` 이나 `@Column` 이 없는 JPA 이름이 물리 이름이 되는 규칙입니다. `null` 이면 Spring Boot 기본값을 가정하고 HEURISTIC 으로 매깁니다 | `"spring-snake-case"` |
+| `mybatisPlus.namingStrategy` | `@TableName` 이나 `@TableField` 가 없는 MyBatis-Plus 이름에 대한 같은 규칙입니다 | `"underscore"` |
+| `mybatisPlus.tablePrefix` | MyBatis-Plus 가 유도한 테이블 이름 앞에 붙이는 전역 접두사입니다 | `"tb_"` |
+| `mybatisPlus.logicDeleteValue` | 논리 삭제가 `@TableLogic` 컬럼에 쓰는 값입니다 | `"1"` |
+| `mybatisPlus.logicNotDeleteValue` | "삭제 안 됨" 값입니다. 기록만 합니다 | `"0"` |
+| `generatedSources.annotations` | 생성된 타입을 표시하는 애너테이션 이름입니다. 걷기는 생성 코드끼리의 엣지를 건너뛰고 그렇다고 말합니다 | `["Generated"]` |
+| `generatedSources.pathGlobs` | 애너테이션을 남기지 않는 생성기를 위한, 생성된 타입의 소스 파일 glob 입니다 | `["mall-mbg/**"]` |
+| `openapi.documents` | 선언된 라우트로 읽을 OpenAPI 나 Swagger 문서입니다 | `["../api/openapi.yaml"]` |
+| `openapi.generatedFromCode` | 빌드가 지금 코드로 쓰는 문서입니다. 이 문서로 놓인 라우트는 핸들러를 읽은 만큼 등급을 받습니다([web-lane.md](setup/web-lane.md)) | `["../docs/openapi.json"]` |
+| `openapi.generatesCode` | 빌드가 이 코드의 인터페이스를 만들어 내는 문서입니다. 이 문서 위의 계약 연결은 EXACT 가 될 수 있습니다 | `["../src/main/resources/openapi.yml"]` |
+| `runtimeEvidence.har` | RUNTIME_ONLY 증거로 읽을 브라우저 기록입니다([runtime-evidence.md](setup/runtime-evidence.md)) | `["../evidence/admin-session.har"]` |
+| `runtimeEvidence.otel` | 런타임 증거로 읽을 OpenTelemetry 트레이스 파일입니다 | `["../evidence/checkout-smoke.json"]` |
+| `modelPacks` | 오염 분석 모델 팩입니다. 그 레인은 없으므로 값을 넣으면 not shipped 로 알립니다 | `[]` |
+| `catalog.source` | 카탈로그를 어디서 가져올지 정합니다: `file`, `jdbc`, `none`([db-catalog.md](../setup/db-catalog.md)) | `"file"` |
+| `catalog.connectionFrom` | `file` 이면 DDL 경로이고, `jdbc` 나 `none` 이면 discovery 가 찾은 접속 정보 파일입니다 | `"../document/sql/mall.sql"` |
+| `catalog.ddl` | `connectionFrom` 대신 적은 순서대로 읽을 DDL 파일입니다 | `["../db/schema.sql", "../db/data.sql"]` |
+| `catalog.ddlAlternatives` | `init` 이 찾았지만 고르지 않은 다른 벤더의 DDL 입니다. 기록만 합니다 | `{ "oracle": ["../db/oracle/schema.sql"] }` |
+| `mappers.alternatives` | 다른 벤더용 매퍼 XML 입니다. statement 레인에서 뺍니다 | `{ "oracle": ["../src/main/resources/mapper/oracle/UserMapper.xml"] }` |
+| `calibration.firstRun` | 봉인된 기준이 없을 때: `bootstrap`(이번 실행이 기준이 됨) 또는 `require-baseline`(RED) | `"bootstrap"` |
+| `calibration.maxRelativeDrop` | 엔진이 바뀐 실행이 RED 가 되기 전까지 잃어도 되는 지표의 비율입니다 | `0.05` |
+| `calibration.maxRelativeDropOnRepin` | `REPIN` 일 때의 같은 값입니다 | `0.25` |
+| `calibration.receiptTtlDays` | 배포 영수증이 `cascade verify` 에 유효한 날 수입니다 | `30` |

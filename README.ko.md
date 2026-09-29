@@ -26,7 +26,7 @@ AI 코딩 에이전트와 그 옆에서 일하는 사람을 위한, 코드에서
 ![litemall 에서 Cascade 가 그린 컬럼 하나와 그 위의 모든 것. litemall_admin.username
 을 SQL statement 10개, 서비스 메서드 11개, POST /admin/auth/login 을 포함한 API
 엔드포인트 6개, 프론트엔드 함수 12개, 화면 4개가 쓰고, 층마다 등급이 붙어 있으며,
-아래에 이 답의 한계 세 가지가 원문 그대로 적혀 있습니다](docs/assets/impact-card-ko.svg)
+아래에 이 답의 한계 네 가지가 원문 그대로 적혀 있습니다](docs/assets/impact-card-ko.svg)
 
 이 카드는 손으로 그린 그림이 아니라 Cascade 가 낸 답입니다.
 [litemall](https://github.com/linlinjava/litemall) `a1ef964a718b` 에서
@@ -85,14 +85,14 @@ SAST 와 CodeQL 은 취약점을 찾습니다. Cascade 는 변경이 어디까�
 
 | 스택 | 무엇을 읽는가 | 등급 상한 | 읽지 않는 것 |
 |---|---|---|---|
-| Java Spring MVC 컨트롤러 | `@RestController` / `@Controller` 의 매핑 애너테이션과, `RouterFunction` 을 돌려주는 메서드가 호출로 만드는 라우트를 JDK 자체 컴파일러의 파싱 전용 모드로 읽습니다. Gradle 도 Maven 도 의존성 classpath 도 쓰지 않습니다. 설정 코드가 붙이는 경로 prefix 는 프로필에 선언하면(`pathPrefixes`) 적용합니다. openapi-generator 가 만드는 인터페이스를 구현한 컨트롤러는 OpenAPI 문서가 선언한 라우트를 처리합니다 | 구체 컨트롤러 메서드의 매핑과, 소스가 핸들러를 직접 가리킨 함수형 라우트는 `EXACT`. 인터페이스 선언의 매핑을 구현체가 서빙하는 경우와, 선언 타입을 거쳐 핸들러에 닿는 함수형 라우트는 `SOUND_SET`. openapi-generator 의 이름 규칙만으로 문서의 라우트에 짝지은 핸들러와, 문서가 operation id 를 선언한 자리에만 놓은 함수형 라우트는 `HEURISTIC` | 런타임에 조립되는 컨트롤러, 다른 호출로 등록되는 핸들러. 경로가 변수에 든 함수형 라우트와, 핸들러가 메서드 하나를 부르는 것보다 많은 일을 하는 함수형 라우트. 뒤쪽은 핸들러 없이 남기고 그렇다고 알립니다. 코드로 정한 경로 prefix 는 프로필에 선언할 때까지 `SETTING_IN_CODE` 로 알립니다 |
+| Java Spring MVC 컨트롤러 | `@RestController` / `@Controller` 의 매핑 애너테이션과, `RouterFunction` 을 돌려주는 메서드가 호출로 만드는 라우트를 JDK 자체 컴파일러의 파싱 전용 모드로 읽습니다. Gradle 도 Maven 도 의존성 classpath 도 쓰지 않습니다. 설정 코드가 붙이는 경로 prefix 는 프로필에 선언하면(`pathPrefixes`) 적용합니다. openapi-generator 가 만드는 인터페이스를 구현한 컨트롤러는 OpenAPI 문서가 선언한 라우트를 처리합니다 | 구체 컨트롤러 메서드의 매핑과, 소스가 핸들러를 직접 가리킨 함수형 라우트는 `EXACT`. 인터페이스 선언의 매핑을 구현체가 서빙하는 경우와, 선언 타입을 거쳐 핸들러에 닿는 함수형 라우트는 `SOUND_SET`. openapi-generator 의 이름 규칙만으로 문서의 라우트에 짝지은 핸들러, 문서가 operation id 를 선언한 자리에만 놓은 함수형 라우트(프로필이 그 문서가 코드와 맞는다고 말하기 전까지), 트리가 닫을 수 없는 타입을 거친 함수형 라우트, 트리가 선언하지 않은 JPA key(가정한 `id`)는 `HEURISTIC` | 런타임에 조립되는 컨트롤러, 다른 호출로 등록되는 핸들러. 경로가 변수에 든 함수형 라우트와, 핸들러가 메서드 하나를 부르는 것보다 많은 일을 하는 함수형 라우트. 뒤쪽은 핸들러 없이 남기고 그렇다고 알립니다. 코드로 정한 경로 prefix 는 프로필에 선언할 때까지 `SETTING_IN_CODE` 로 알립니다 |
 | MyBatis XML 과 애너테이션 | `<mapper namespace>` 파일, 전역 fragment 인덱스로 해석되는 `<include refid>`, 그리고 `@Select` / `@Insert` / `@Update` / `@Delete` 안에 쓰인 SQL | `EXACT`. statement id 는 매퍼 인터페이스 FQN 과 메서드 이름 그 자체이기 때문입니다 | `${}` 치환. 추측하지 않고 진단으로 기록합니다 |
 | MyBatis-Plus | `@TableName`, `@TableField`, `@TableId`, `@TableLogic`, `BaseMapper` / `IService` / `ServiceImpl` 의 빌트인, 그리고 condition wrapper 가 들고 있는 메서드 레퍼런스와 리터럴 | 소스가 테이블이나 컬럼 이름을 직접 쓴 경우 `EXACT`, 네이밍 규칙을 가정해야 했던 경우 `HEURISTIC` | 조건이 HTTP 쿼리 스트링에서 오는 wrapper. 테이블은 사실로 남기고 컬럼은 런타임 결정으로 표시합니다 |
 | JPA 와 Spring Data | `@Entity`, `@Table`, `@Column`, `@Id`, `@JoinColumn`, `@JoinTable`, `@MappedSuperclass`, 파생 쿼리 메서드 이름, JPQL `@Query`, SQL 분석기를 거치는 네이티브 `@Query`, 그리고 호출자가 실제로 도달한 리포지터리 빌트인 | 매핑이 이름을 직접 쓰거나 naming strategy 가 선언된 경우(프로파일의 `jpa.namingStrategy`, 또는 프로젝트 설정의 `spring.jpa.hibernate.naming.physical-strategy`) `EXACT`, 전략을 가정한 경우 `HEURISTIC` | `@Embedded`, `@SecondaryTable`, `@Inheritance`, `@AttributeOverride`, `@Convert`, `@ElementCollection`, named query |
 | SQL DDL 카탈로그 | `CREATE TABLE` 과 `ALTER TABLE` 의 타입, null 허용 여부, 기본키, 주석을 방언별로 읽습니다. MySQL 과 MariaDB, PostgreSQL, Oracle, 그리고 ANSI 파서를 쓰는 H2 와 HSQLDB. 방언마다 식별자 대소문자 규칙이 따로 있습니다 | `EXACT` | 이 엔진이 라우팅할 수 없는 방언. MySQL 로 간주하지 않고 거부합니다 |
 | 라이브 카탈로그 fetch | 읽기 전용 커넥션 하나로 테이블, 컬럼, 주석, 기본키를 읽어 스냅샷으로 고정합니다 | `EXACT` | 메타데이터 이외의 모든 것. 테이블 데이터는 절대 select 하지 않고, 분석 자체는 DB 에 접속하지 않습니다 |
 | NestJS, Prisma, TypeORM | 애플리케이션이 불러오는 모듈이 등록한 컨트롤러를, 부트스트랩이 정한 전역 prefix 와 URI 버전 아래에서 읽습니다. `this`, 주입된 필드, import 한 함수, static 메서드를 거친 메서드 사이 호출을 잇고, 추상 클래스나 인터페이스를 거친 호출은 그 호출에 답하는 클래스까지 잇습니다. import 가 닿는 모노레포 공유 라이브러리 파일도 읽습니다. Prisma·TypeORM 호출은 호출한 자리마다 문장 하나로 읽습니다. Prisma 호출이 이름을 댄 relation 도 따라가고, `schema.prisma` 나 TypeORM 엔티티를 카탈로그로 삼아 맞춰 봅니다 | 부트스트랩이 주소를 밝힌 라우트, `PrismaClient` 나 그 하위 클래스로 부른 Prisma 호출, naming strategy·테이블 prefix·schema 를 아는 TypeORM 이름은 `EXACT`. 메서드 사이 호출, 모듈 바인딩이 후보를 확정한 추상 타입 경유 호출, `nestjs-prisma` 클라이언트, `select` 가 뺄 수도 있는 컬럼은 `SOUND_SET`. 실행 중에 만든 exclude 목록이 주소를 바꿀 수 있는 라우트, 소스가 실행 시점에 맡긴 전략·prefix·schema 에 기대는 TypeORM 이름, 후보가 빠졌을 수 있는 추상 타입 경유 호출은 `HEURISTIC` | 소스가 실행 중에 만드는 prefix 나 모듈 목록. 라우트를 만들지 않고 그렇다고 알립니다. raw SQL, Prisma 의 fluent relation API, TypeORM 의 embedded 엔티티·테이블 상속·Active Record 호출, guard 와 interceptor, Mongoose |
-| 프런트엔드 | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` 와 `.vue` 단일 파일 컴포넌트의 `<script>` 블록. `axios`, `fetch`, `XMLHttpRequest`, 필드의 선언 타입으로 알아보는 Angular `HttpClient`, 그리고 객체의 메서드로 만든 것까지 포함해 프로젝트가 직접 만든 래퍼를 실제로 요청을 보내는 지점까지 추적합니다. base URL 은 빌드 도구가 읽는 `.env` 파일에서 빌드마다 읽습니다. `vue-router`, `react-router`, Angular `Routes` 선언은 화면으로 합성되고, OpenAPI 3 과 Swagger 2 문서는 선언된 라우트로, HAR 기록은 런타임 증거로 읽습니다 | 요청을 보내는 클라이언트까지 추적된 호출은 `SOUND_SET`, 라우트가 선언한 파일로 가는 `RENDERS` 엣지는 `EXACT`. 어떤 `.env` 파일도 정하지 않은 기본값이나, 이 머신이 아닌 호스트에만 기댄 base URL 위의 호출은 `HEURISTIC` | import 된 컴포넌트의 어느 함수가 실제로 실행되는지. 이것은 런타임 질문이므로 `SOUND_SET` 에 머무릅니다 |
+| 프런트엔드 | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` 와 `.vue` 단일 파일 컴포넌트의 `<script>` 블록. `axios`, `fetch`, `XMLHttpRequest`, 필드의 선언 타입으로 알아보는 Angular `HttpClient`, 그리고 객체의 메서드로 만든 것까지 포함해 프로젝트가 직접 만든 래퍼를 실제로 요청을 보내는 지점까지 추적합니다. base URL 은 빌드 도구가 읽는 `.env` 파일에서 빌드마다 읽습니다. `vue-router`, `react-router`, Angular `Routes` 선언은 화면으로 합성되고, OpenAPI 3 과 Swagger 2 문서는 선언된 라우트로, HAR 기록은 런타임 증거로 읽습니다 | 요청을 보내는 클라이언트까지 추적된 호출은 `SOUND_SET`, 라우트가 선언한 파일로 가는 `RENDERS` 엣지는 `EXACT`. 어떤 `.env` 파일도 정하지 않은 기본값이나, 이 머신이 아닌 호스트에만 기댄 base URL 위의 호출, 어떤 파일도 말하지 않는 포트로 이 머신에 가는 호출, URL·메서드·base URL 을 코드가 정하지 못하는 래퍼 단계를 지나는 호출은 `HEURISTIC` | import 된 컴포넌트의 어느 함수가 실제로 실행되는지. 이것은 런타임 질문이므로 `SOUND_SET` 에 머무릅니다 |
 
 **지원하지 않는 것, 그리고 엔진이 추측 대신 그렇다고 말하는 것.** Kotlin
 소스입니다. 레인이 없는 백엔드는 OpenAPI 문서를 발행하지 않는 한 지원하지
@@ -803,10 +803,10 @@ axes: catalog=not-shipped statements=shipped jpa=not-shipped mybatisPlus=not-shi
 다른 답을 받는 일은 없습니다. `127.0.0.1` 에만 바인딩하고 인증은 하지 않습니다.
 다른 곳에서 접속하라고 만든 것이 아니기 때문입니다.
 
-머리글에는 데이트라인(어느 프로젝트가 답했는지와 어떤 레인이 팩을 만들었는지,
-다이제스트와 커밋은 한 번 누르면 보임), 단계마다 개수가 붙은 체인, 최신성과
-신뢰도와 한계 개수를 보여 주는 칩, 프로젝트 선택기, 언어 토글, 테마 토글이
-있습니다. 테마 두 개는 하나의 토큰 위에 있습니다. **어둡게**는 신호실이고
+머리글은 한 줄입니다. 데이트라인(어느 프로젝트가 답했는지와 어떤 레인이 팩을
+만들었는지), 누르면 단계마다 개수가 붙은 체인과 다이제스트, 커밋이 열리는 **counts and
+build**(개수와 빌드), 최신성과 신뢰도와 프로젝트 한계 개수를 보여 주는 칩, 프로젝트
+선택기, 언어 토글, 테마 토글이 있습니다. 테마 두 개는 하나의 토큰 위에 있습니다. **어둡게**는 신호실이고
 기본값입니다. **밝게**는 흑백으로 인쇄해도 읽히는 도면입니다.
 
 그 아래에 자리(place)가 다섯 개 있습니다. 자리마다 읽는 사람이 들고 오는 질문이
@@ -820,18 +820,21 @@ axes: catalog=not-shipped statements=shipped jpa=not-shipped mybatisPlus=not-shi
 ![밝은 테마의 첫 화면. 체인이 얼마나 이어져 있는지와 프로젝트 전체 지도가 종이
 위의 잉크처럼 그려져 있습니다](docs/assets/screens/overview-light.png)
 
-Start 는 먼저 묻습니다. 입력창 하나로 API 라우트, 화면, 테이블, 컬럼, SQL
-statement, 메서드를 모두 찾습니다. 그다음 세 질문이 있습니다. 바꾸면 무엇이
+Start 는 먼저 묻습니다. 집계 모드에서 SQL 에 닿는 API 가 하나도 없으면 첫 줄이 그
+이유를 엔진의 해결책과 함께 말합니다. 입력창 하나로 API 라우트, 화면, 테이블, 컬럼,
+SQL statement, 메서드를 모두 찾습니다. 그다음 세 질문이 있습니다. 바꾸면 무엇이
 깨지나, 어디까지 닿나, 분석이 무엇을 못 봤나입니다. 대상이 답할 수 없는 질문은
 흐리게 막지 않고 이유를 말합니다. 그 아래에 이 분석이 볼 수 있는 것(레인, 집계
-모드, 축마다 어디서 읽었는지), 답을 바꾸는 빈 곳, 그리고 `overview` 답의 `reach`
-에서 온 비율이 나옵니다. SQL 에 닿는 엔드포인트, 닿은 statement 와 테이블과
-컬럼, 테이블에 닿는 화면의 수입니다. 함께 봐야 할 한계가 있는 비율은 그 한계를
-카드에 같이 적습니다. 스키마를 읽지 않은 프로젝트에서 "tables reached 100%" 는
-데이터베이스 전체라는 뜻이 아니기 때문입니다. 그다음이 지도입니다. 팩 전체를
-한쪽에 상자 열 개 안팎으로 그립니다. 왼쪽은 라우트 묶음, 오른쪽은 테이블
-계열입니다. 상자는 그 자리에서 열리고, 안에서 라우트나 테이블을 고르면 그
-노드를 지나는 경로만 보입니다.
+모드, 축마다 어디서 읽었는지)과 답을 바꾸는 빈 곳이 나옵니다. 빈 곳마다 **할 일**이
+붙습니다. 엔진이 아는 해결책 하나이고, 예가 붙은 프로필 키, 옵션, 명령, 모드 중
+하나입니다. 그다음이 지도입니다. 팩 전체를 한쪽에 상자 열 개 안팎으로 그립니다.
+왼쪽은 코드 영역(또는 선언한 모듈, API 그룹)에 담은 라우트, 오른쪽은 테이블
+계열입니다. 상자는 그 자리에서 열리고, 안에서 라우트나 테이블을 고르면 그 노드를
+지나는 경로만 보입니다. 마지막이 `overview` 답의 `reach` 에서 온 비율입니다. SQL 에
+닿는 엔드포인트, 닿은 statement 와 테이블과 컬럼, 테이블에 닿는 화면의 수이고, 어느
+모드로 셌는지 적습니다. 함께 봐야 할 한계가 있는 비율은 그 한계를 카드에 같이
+적습니다. 스키마를 읽지 않은 프로젝트에서 "tables reached 100%" 는 데이터베이스
+전체라는 뜻이 아니기 때문입니다.
 
 ### Trace
 
@@ -846,12 +849,14 @@ statement, 메서드를 모두 찾습니다. 그다음 세 질문이 있습니�
 **Details**(상세)는 대상이 무엇인지 목록으로 보여 줍니다. 위 카드는 화면입니다.
 라우트가 선언한 `.vue` 파일, 그 위의 함수(각각 `leads to` 인지 `sends` 인지),
 그리고 함수들이 닿는 라우트가 등급과 함께 나옵니다. 대상 종류마다 가능한 방향만
-나오고, 없는 방향은 이유를 한 문장으로 말합니다. **My edits** 는 커밋하지 않은
-변경에 같은 질문을 던집니다.
+나오고, 없는 방향은 이유를 한 문장으로 말합니다. 그림 위에서 Trace 가 먼저 한 문장으로
+답하고("이걸 바꾸면 API 31개, 화면 12개에 닿습니다."), 어떤 모드와 깊이로 셌는지와 끝
+레인의 첫 이름들을 붙입니다. Options 안의 **What my uncommitted edits touch**(내 변경이
+닿는 곳)는 커밋하지 않은 변경에 같은 질문을 던집니다.
 
-![화면에서 아래로 따라간 체인. 프런트엔드 함수, 엔드포인트, 서비스 메서드, 매퍼
-statement 가 홉 이름이 붙은 열로 늘어서
-있습니다](docs/assets/screens/flow-from-screen-ko.png)
+![화면에서 아래로 따라간 체인. 답이 먼저 나오고, 프런트엔드 함수, 엔드포인트, 서비스
+메서드가 홉 이름이 붙은 열로 늘어서 있습니다. 매퍼 statement 와 테이블은 그림 위 레인
+띠에 이름이 나옵니다](docs/assets/screens/flow-from-screen-ko.png)
 
 그림은 단계마다 레인 하나입니다. 레인 안의 노드는 모두 개발자가 읽는 이름으로
 적습니다(`Class.method`, `Mapper.id`, HTTP 메서드가 붙은 라우트). 실선은 엔진이
@@ -859,8 +864,9 @@ statement 가 홉 이름이 붙은 열로 늘어서
 **by hop** 은 같은 행을 한 단계씩 묶어 홉마다 집계를 보여 줍니다. 그림 옆에는 이
 답을 제한한 것과, 모드가 뺀 것을 등급별로 보여 주는 패널이 있습니다.
 
-![컬럼에서 위로 따라간 체인. 매퍼 statement, 서비스 메서드, 엔드포인트,
-프런트엔드 함수를 거꾸로 걸어 올라갑니다](docs/assets/screens/impact-column.png)
+![컬럼에서 위로 따라간 체인. 답이 먼저 나오고, 매퍼 statement, 서비스 메서드,
+엔드포인트를 거꾸로 걸어 올라갑니다. 프런트엔드 함수와 화면은 그림 위 레인 띠에
+이름이 나옵니다](docs/assets/screens/impact-column.png)
 
 Trace 는 빈 검색창이 아니라 **목록**으로 열립니다. 고를 수 있는 종류와 개수,
 필터, 정렬, 그리고 고를 때 기준이 될 숫자가 붙은 행이 있습니다. 모든 행은
@@ -929,7 +935,9 @@ Trace 는 빈 검색창이 아니라 **목록**으로 열립니다. 고를 수 �
 분석이 무엇을 봤고 무엇을 못 봤는지 한 자리에 모았습니다. 팩이 얼마나 최신인지,
 신뢰 수준이 무엇에 기대는지, 집계를 어떤 모드로 걸었는지, 축마다 어디서 읽었고
 무엇에 영향을 주는지가 나옵니다. 못 본 것은 모두 한 줄씩, 원인, 영향, 할 일을
-적습니다. 레인의 진단은 종류마다 한 줄입니다. 둘째 뷰는 **Rules** 입니다.
+적습니다. 분석기가 남긴 경고는 종류마다 한 줄이고, 읽는 사람의 언어로 된 제목과 옆의
+코드가 붙습니다. 한계마다 페이지 말로 된 짧은 제목이 있고, 엔진의 문장은 한 번 누르면
+그 아래에 나옵니다. 둘째 뷰는 **Rules** 입니다.
 엔진이 쓴 룰 팩을, 이 프로젝트에서 무언가를 만든 룰부터 보여 주고, 룰마다 만든
 링크를 보여 줍니다.
 
@@ -1013,9 +1021,17 @@ editor** 는 그 파일과 줄을 VS Code 나 IntelliJ 로 넘깁니다.
 
 **`openapi.documents`** 는 선언된 라우트로 읽을 OpenAPI 3 또는 Swagger 2 문서를
 지정합니다. 코드도 서빙하는 라우트는 교차 확인되고, 이곳의 무엇도 서빙하지 않는
-라우트는 **핸들러 엣지 없이** 추가됩니다. 선언은 라우트가 있다는 말일 뿐 그 아래에
-무엇이 도는지는 말하지 않기 때문입니다. 선언했지만 서빙하지 않는 것과 서빙하지만
-선언하지 않은 것, 양쪽 드리프트를 모두 보고하고 어느 쪽도 판단하지 않습니다.
+라우트는 자기 **핸들러 엣지 없이** 추가됩니다. 선언은 라우트가 있다는 말일 뿐 그
+아래에 무엇이 도는지는 말하지 않기 때문입니다. 선언했지만 서빙하지 않는 것과
+서빙하지만 선언하지 않은 것, 양쪽 드리프트를 모두 보고하고 어느 쪽도 판단하지 않습니다.
+그래도 룰이 그런 라우트를 핸들러와 짝지을 수는 있습니다(계약 우선 컨트롤러, operation
+id 로 놓은 함수형 라우트). 이런 연결은 **`openapi.generatesCode`** 나
+**`openapi.generatedFromCode`** 가 그 문서가 코드와 맞는다고 말하기 전까지 HEURISTIC
+입니다.
+
+**`servers`** 는 소스가 말하지 않는 애플리케이션 포트를 적습니다. 어떤 파일도 말하지
+않는 포트로 이 머신에 가는 호출은, 이 키가 말해 주기 전까지 추측입니다
+([웹 레인](docs/ko/setup/web-lane.md)).
 
 **`runtimeEvidence.har`** 는 브라우저 기록을 지정합니다. 그 안에서 이 pack 이
 서빙하는 라우트와 맞는 요청은 `RUNTIME_ONLY` 등급의 `screen` 에서 `endpoint` 로
@@ -1040,6 +1056,8 @@ editor** 는 그 파일과 줄을 VS Code 나 IntelliJ 로 넘깁니다.
 숫자와 함께 정리한 전체 레시피는
 [`docs/ko/setup/runtime-evidence.md`](docs/ko/setup/runtime-evidence.md) 에 있습니다.
 
+프로필이 가질 수 있는 모든 키와 그 예는
+[`docs/ko/concepts.md`](docs/ko/concepts.md#9-프로필-키-하나하나) 에 있습니다.
 레인별 상세는 [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
 [`docs/setup/java-lane.md`](docs/setup/java-lane.md),
 [`docs/ko/setup/web-lane.md`](docs/ko/setup/web-lane.md),

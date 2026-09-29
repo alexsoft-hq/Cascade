@@ -452,6 +452,126 @@ Each dated section below is one round of work. The round protocol is in
   it. The lanes' diagnostics are one row per kind with its count: a moved cache
   had left 866 `SHARD_UNUSABLE` rows in the list.
 
+- **`servers`: the port an application listens on, stated where the source
+  does not.** A call on this machine to a port no file states is a guess while
+  an application's port rests on Spring Boot's default or is not known (see the
+  entry on ports and wrapper steps below). The profile's `servers` maps the
+  directory that holds an application's `src/main/resources` to `{port, from}`;
+  the declared port is used instead of what the tree says about that
+  application, as a stated port. An entry that names no application this run
+  read is not applied (`SERVERS_UNUSED`), `analyze` prints each declaration,
+  and `laneStats.web.ports` records `declared`, `unused` and `assumed`. A
+  degraded web axis carries `causes`, and when every cause is a port guess the
+  overview's fix is this key, naming the application. On mall with
+  mall-admin-web, `{"mall-admin": {"port": 8080}}` takes 166 `CALLS_HTTP` edges
+  from HEURISTIC to SOUND_SET and conservative screens reaching a table from 0
+  to 44 of 54, the pack mall had before the port guess. The profile's digest
+  does not change while the key is unset
+  ([docs/setup/web-lane.md](docs/setup/web-lane.md#this-machine-another-port)).
+
+- **`openapi.generatedFromCode` and `openapi.generatesCode`: a document in step
+  with the code.** A Spring functional route placed through an OpenAPI
+  document's operation id, and a contract link that pairs a controller with a
+  generated `*Api` interface, are HEURISTIC because the source cannot say the
+  document is current. Two keys, one per direction, let a person say it. On a
+  document a build writes from the code (`openapi.generatedFromCode`,
+  springdoc), a functional route placed through it is graded as its handler is
+  read. On a document the build generates the interfaces from
+  (`openapi.generatesCode`, openapi-generator), a contract link is EXACT when
+  the interface's name holds whatever the generator groups operations by (tag
+  or path, a setting not read); the link records `namedBy` and `nameFrom`, and
+  one that depends on the grouping stays HEURISTIC and says so. A declaration
+  the other way settles nothing, and the validator refuses a document written
+  the same way in both lists. Without the keys, `analyze` names what rests on
+  an undeclared document (`ROUTE_MOUNT_FROM_DOCUMENT`,
+  `CONTRACT_FROM_DOCUMENT`), and an entry that names no document read is
+  `OPENAPI_DECLARATION_UNUSED`. halo, declared: its 176 functional routes with
+  a handler go from EXACT 12 and HEURISTIC 164 to EXACT 168 and SOUND_SET 8.
+  spring-petclinic-rest, declared: 37 EXACT links, and 13 routes reach SQL at
+  `conservative` where none did. Digests do not change while the keys are unset
+  ([docs/setup/java-lane.md](docs/setup/java-lane.md#a-controller-that-implements-a-generated-interface)).
+
+- **A framework's own wrapper step, read as a rule pack says: `web.wrapper-hop`
+  and the `vben-admin` pack.** vue-vben-admin's client class hands the request
+  through a local its hooks assign again, which the web lane rightly cannot
+  settle, so every call through `VAxios.request` was HEURISTIC and named that
+  step (jeecg-boot: 799). The new kind names such a step by the shape of its
+  class (the client its field is built by, the methods it declares, the step's
+  parameters), never by a name, and says what the step does to each key:
+  `keep`, `set`, `prefix`, `append`, `query`, `change`. A call whose options may
+  set the prefix, or whose `params` may be text the step appends, stays
+  unsettled and says why (`hop-option`, `hop-append`). The prefix the step's
+  request options decide is not read: it is chosen by match count until
+  `gatewayRoutes` declares `"*"`. `webfacts/22` records the keys an object
+  argument writes. On jeecg-boot 800 calls go through the step and 278 are
+  settled; HEURISTIC `CALLS_HTTP` edges go from 643 to 602 now that the verb
+  arrives, and the web axis is degraded since the prefix is no longer taken as
+  empty. With `gatewayRoutes {"*": ""}`, SOUND_SET `CALLS_HTTP` edges go from
+  119 to 287 and conservative screens reaching a table from 8 to 23 of 181.
+  ruoyi-vue-pro, eladmin, mall and ruoyi-vue keep their digests
+  ([docs/rules.md](docs/rules.md#a-frameworks-own-wrapper-step)).
+
+- **The fix beside every gap, one word per grouping, and one table family
+  rule.** Every gap and diagnostic of the overview carries `remedy`, and the
+  answer carries `axisRemedies` and `routeRemedy`: a profile key with a short
+  example, a flag, a command or a mode, or `null` where the engine knows no
+  single fix (`src/core/remedies.mjs`; a test holds every key to the profile
+  validator and every flag to `cascade analyze`). The viewer shows it as
+  **What to do** under every gap on Start, under each share's limit, on the
+  empty map and on Analysis status, and writes no fix of its own. On ghostfolio
+  the first row says to declare `tsBackend.globalPrefixExclude`; declaring its
+  exclude list turns all 118 routes EXACT, and the conservative census goes
+  from 0 of 118 endpoints reaching SQL to 104, and from 0 to 21 of 21 tables.
+  The masthead's "api groups" and the map's groups were two numbers for one
+  word (ghostfolio: 32 and 21): the masthead now reads **api groups by path**
+  (or **modules, as declared**), the overview says which in `groupRule`, and
+  the map names its boxes by their rule: code areas, modules, API groups or
+  path areas. The ERD read a family from the name's first token, which gave
+  ghostfolio's 21 Prisma tables and 7 of jeecg-boot's none; the engine now
+  reads every table's family once (`tableFamilies`), and the map and `erd`
+  both carry it ([docs/viewer.md](docs/viewer.md#start)).
+
+- **Trace answers first, and every number says its mode.** Trace opens on one
+  sentence ("Change this and it reaches 31 APIs and 12 screens."), with the mode
+  and depth it counted in and the first names of the end lanes. Every count on
+  the page says the mode it was walked in (`browse` answers with `census`), and
+  the map's mode control moves the shares and the busiest tables and APIs with
+  it. Where no API reaches SQL in the census mode, Start opens on the cause and
+  the fix. Gaps and diagnostics are titled in the reader's words, English and
+  Korean, with the engine's sentence one click under them. The masthead is one
+  line, with the chain counts behind **counts and build**. The directions carry
+  arrows, and My edits and Start over move under Options. An ORM statement is
+  named by the call it makes (`UserService.deleteUser → Access.deleteMany`;
+  `flow` statement rows and a statement entry gain `call`), and Rules open on
+  what applies here. Pack digests do not change
+  ([docs/viewer.md](docs/viewer.md#trace)).
+
+- **A limit says what it is before the engine's sentence.** The evidence box
+  listed each limit as its scope and the engine's English sentence, so a Korean
+  page read "axis:jpa the jpa axis of this pack is not-shipped: ...". Each limit
+  now has a short title in the reader's language (`JPA mappings: not
+  collected`, `stopped at the depth limit`), chosen by
+  `src/viewer/limit_titles.mjs`, with the scope and the sentence one click
+  under it; `test/i18n.test.mjs` fails on a limit scope the engine can emit that
+  has no title. The Start map's counts sit on a ground of their own over their
+  line, clear of every other count: on mall 10 of 11 lines are counted in
+  English and 9 of 11 in Korean, where 6 were.
+
+- **What the schema reader could not read, or had to assume, is in the pack.**
+  The DDL reader named every table it lost and every rule of a database it
+  assumed on the terminal only, so ruoyi-vue-pro's SQL Server schema, read with
+  MySQL's grammar, gave 0 of its 60 tables and no answer said so. The reader's
+  header now carries its diagnostics (`catalog-ddl/12`), so a catalog read back
+  from the cache says them too. The pack groups them by code
+  (`meta.laneStats.catalog`, with the first tables and sentences) and one
+  diagnostic per kind (`CATALOG_*`, with `count` and `examples`), and the
+  overview counts them into three gaps: `catalog-tables-unread`,
+  `catalog-rules-assumed` (fix: declare `sqlDialects`) and
+  `catalog-read-in-part`. Every diagnostic kind and gap kind has a title in
+  English and Korean, held by a test that reads the kinds out of the engine.
+  Pack digests do not change: the diagnostics are meta
+  ([docs/setup/sql-lane.md](docs/setup/sql-lane.md#a-create-table-the-grammar-cannot-read)).
+
 ### Changed
 
 - **Which types are MyBatis-Plus mappers and services is a rule pack, not the
@@ -552,20 +672,67 @@ Each dated section below is one round of work. The round protocol is in
   eladmin 5 of 103, mall 3 of 151.
 
 - **Every cached fact of the Java, web and TypeScript workers is read again
-  once.** The workers are now `javafacts/21` (a method that returns a
+  once.** The workers are now `javafacts/22` (a method that returns a
   `RouterFunction`, the locals it assigns, the calls each file makes with
   their receivers, every method and path a mapping names, interface default
   bodies and anonymous classes, entity inheritance, element collections and
-  every attribute annotation, and a receiver a superclass field or
-  `var x = new X()` types), `webfacts/20`
+  every attribute annotation, a receiver a superclass field or
+  `var x = new X()` types, local classes, the constants a type declares, a
+  mapping path written in parts, and a composed mapping annotation), `webfacts/22`
   (build-decided base URLs, Angular routes, typed fields and providers, what
   each call in a function hands on, reads and writes, the class a provider
-  extends, index routes, and a route's column and its parent's) and `tsfacts/8`
+  extends, index routes, a route's column and its parent's, the keys a copy
+  writes, the spread sets a call carries, and the keys an object argument
+  writes) and `tsfacts/9`
   (what a method returns, type arguments, where each local is declared,
   interfaces, a property that holds a function, a mixin's class, a class that
-  extends a call, module aliases, const literals and what a local is given
-  later), and the catalog worker is `catalog-ddl/9`. A worker's version is part of every cached fact's
+  extends a call, module aliases, const literals, what a local is given
+  later, and every use of a local the TypeORM builder reading needs), and the
+  catalog worker is `catalog-ddl/13`. A worker's version is part of every cached fact's
   key, so the first analyze after upgrading re-reads each file once.
+
+- **Four rules decide how sure a link is, for every lane.** The fourth review
+  found each earlier fix held for the input it was written for and failed one
+  shape away. So the rules are now written for the kind of defect
+  ([docs/concepts.md](docs/concepts.md#1-grades--fact-candidate-set-guess)):
+  a judgment that something is safe (a hop is settled, a builder did not
+  escape, an annotation changes nothing, a statement is not a `CREATE TABLE`)
+  is made by default-deny, for the shapes the code recognizes only; a
+  `SOUND_SET` is a closed set, and a gap that could add a member makes it
+  HEURISTIC with the gap named; one question gets one answer (the next entry);
+  and a conclusion that rests on a default (JPA's `id`, port 8080, MySQL's
+  `ALTER` rules) is HEURISTIC, or said, with what it assumed. The entries under
+  Fixed below apply them lane by lane.
+
+- **One walk up for Trace, the impact tools, the overlay and the crossings.**
+  `endpoint_impact`, `screen_impact`, the overlay's upstream routes and the
+  federation crossings now read the walk Trace draws up (`walkUp`,
+  `affectedBy`), and the census walks down by the mirror rules.
+  `src/core/walk_agreement.mjs` compares the answers row by row on every column
+  and table, and the suite runs it on hand-built graphs, the golden trees and
+  the checked-out corpus. Before, 17 of spring-petclinic's 24 columns and 49 of
+  jpetstore-6's 86 (forest-blog 77, jeecg-boot 42, xxl-job 31, jeepay 4) had
+  screens one answer named and another did not; after, none on the 26 Java
+  corpus packs and the 4 TypeScript ones. A page is affected when a reached
+  method renders it, and a walk down from a page starts with the methods that
+  render it; a handler that sends its SQL itself makes its route; an endpoint
+  row walking up carries the link it is drawn with (`link`); the impact tools
+  say when the node cap cut them; a caller of a route is graded by its own link,
+  and a route whose address its lane could not settle says so on its `HANDLES`
+  evidence (`address`), which the web lane carries onto the call; a method
+  whose send the mode's floor does not admit is no service; `browse` counts
+  statements in the census mode; `summary` takes a depth from 1 to 8
+  ([docs/concepts.md](docs/concepts.md#1-grades--fact-candidate-set-guess)).
+
+- **A catalog that lost tables says degraded, with the fix for its cause.** The
+  catalog axis said shipped while the reader lost most tables (ruoyi-vue-pro's
+  SQL Server schema read as MySQL: 0 of 60). It is degraded now when the reader
+  lost tables (`tables-unread`) or read by a database it assumed
+  (`rules-assumed`), and TypeORM names a rule guessed are
+  `typeorm-names-heuristic`; a table read in part stays a gap and leaves the
+  axis whole. The overview gives one fix per cause: `sqlDialects` for an assumed
+  database, `tsBackend.typeorm` for TypeORM names, none for lost tables, and
+  none for two causes at once. Pack digests do not change.
 
 ### Fixed
 
@@ -741,7 +908,8 @@ Each dated section below is one round of work. The round protocol is in
   file whose bytes are outside the analyzed root through a link is not read,
   and test support (the new `typescript` pack, kind `ts.test-support`:
   `__mocks__`, `testing`, `*.mock.ts`, `*.spec.ts` and the like) is left out of
-  the application's files and of a shared library's alike. On ghostfolio the
+  the application's files and of a shared library's alike, unless a file the
+  run reads imports it (see the entry on candidate sets below). On ghostfolio the
   run reads 492 files where it read 496 (its four `*.service.mock.ts`), and
   1,688 calls are linked where 1,711 were
   ([docs/setup/ts-lane.md](docs/setup/ts-lane.md)).
@@ -908,7 +1076,9 @@ Each dated section below is one round of work. The round protocol is in
   the tree like a configuration file: one that sets no port changes nothing.
   One application whose port is unknown still leaves every call undecided by
   port, and the ports the other applications state are now read and printed. A
-  port that rests on Spring Boot's default decides nothing. ruoyi-vue's ports
+  port that rests on Spring Boot's default decides nothing, and a call that
+  rests on it is a guess (see the entry on ports and wrapper steps below).
+  ruoyi-vue's ports
   are now known (8080), because its `@PropertySource(classpath:generator.yml)`
   sets none; jeecg-boot's stay unknown (`spring.config.import`, Nacos) and now
   list the ports its other applications state.
@@ -977,6 +1147,128 @@ Each dated section below is one round of work. The round protocol is in
   longer has in `overlay.removedIds.endpoints`
   ([docs/cli.md](docs/cli.md#cascade-impact)). No pack digest moves: the record
   is in `facts-index.json` only.
+
+- **Ports and wrapper steps count as known only where the source says so.** A
+  wrapper step is settled by default-deny (`adapters/web/lib/uses.mjs`): every
+  place a function reads a name is a read only in shapes known to leave the
+  object as it was, a write where the key is named, and a hand everywhere else,
+  so `{ ...option, params: qs(option) }` is no longer taken as handing the URL on untouched. A
+  method or a base URL a step may have written without saying what is not
+  known: every method at the path is a candidate, HEURISTIC, never the
+  library's GET. A copy that puts the URL back from the parameter carries it (a
+  regression of the last round), and a URL this lane never read is never said
+  to be dropped. A method handed on at a parameter is what the caller put
+  there. A call on this machine on a port no file states is HEURISTIC while a
+  port rests on Spring Boot's default (`url.guess: "port-default"`) or is not
+  known (`port-unknown`); `server.port=0` is no known port; a Dockerfile or
+  compose file that starts the application on a port is read like a profile;
+  a string naming `server.port` anywhere in Java or Kotlin code makes the port
+  not known unless it is the argument of a read. `webfacts/21`. On mall with
+  mall-admin-web, 166 edges went from SOUND_SET to HEURISTIC and conservative
+  screens reaching a table from 44 of 54 to 0, until `servers` declares the
+  port (see Added); on jeecg-boot, 544 edges through the reassigned request step
+  say the method is not known, and conservative screens went from 12 to 6
+  ([docs/setup/web-lane.md](docs/setup/web-lane.md#what-a-wrapper-is)).
+
+- **A call that only a catch-all matches, under a path prefix nobody declared,
+  is a guess.** In a pack whose controllers get a prefix set in code that the
+  profile does not declare (`SETTING_IN_CODE`), a call that only `/**`
+  catch-alls match is HEURISTIC, and the concrete route it matches with its
+  leading segments dropped is a HEURISTIC candidate too (`catchAll`,
+  `prefixShift`). On ruoyi-vue-pro, 2,388 of 2,400 calls onto
+  `DefaultController`'s catch-alls moved from SOUND_SET to HEURISTIC and gained
+  2,390 candidates on the concrete controllers; the 12 with no more specific
+  route stayed SOUND_SET.
+
+- **A TypeScript candidate set is SOUND_SET only when nothing unread may add a
+  member.** A class listed alone is no longer its own set when a providers or
+  imports list the application loads is not read whole; a list spread under a
+  condition and written out is read. A dynamic module's `module:` class is
+  walked; a module class with a decorator this engine does not read is a gap.
+  A member written over a method (a property, `this.x = ...`, a prototype write,
+  `Object.assign(this, ...)`, a computed member) leaves no link to it. An
+  `extends` this engine cannot take for a class is an open end any class under
+  it may add to. A `this` call in a package that may be published, and a module
+  function the file writes again, are HEURISTIC. Test support a read file
+  imports is read as the application's (a `testing` feature module), one a
+  barrel only re-exports is left out, and what is left out is said
+  (`TS_FILES_LEFT_OUT`); an unreadable controller entry is
+  `TS_CONTROLLER_UNREAD`. A Prisma update whose data sets no field of its model
+  reads its row. TypeORM: a builder escapes unless every use of its local is a
+  step (`subQuery` makes another builder, a `let` given anything but its own
+  steps escapes); a module-level name written again is not the strategy; the
+  driver is said where it leaves a table name in doubt, and
+  `tsBackend.typeorm.type` declares it; a destructured or `||`/`??` local is a
+  bind; values that name the version make its read a candidate; a select of an
+  entity with a delete date column reads it unless `withDeleted`; SQLite
+  attaches an entity's database under its own handle (`attached`); a count's
+  eager many-to-many join reads the target key. `tsfacts/9`, and its mirror
+  the shard keys read, which had stayed at `tsfacts/8`, so an old cache would
+  have been reused. ghostfolio: 7 Prisma updates with variable data go from an
+  EXACT to a SOUND_SET write; nestjs-boilerplate reads `user.deletedAt` twice
+  more ([docs/setup/ts-lane.md](docs/setup/ts-lane.md)).
+
+- **Java routes and JPA keys stop stating what the source does not.** A mapping
+  path written with a constant is read where the tree states it, else said as
+  `path-not-literal` (ruoyi-vue-pro's five `IoTDeviceApiImpl` methods move from
+  `POST /` to `POST /rpc-api/iot/...`); a composed mapping annotation of the
+  tree serves its route (eladmin gains `POST /auth/login` and five more); a
+  class-level `method` joins the method's; a `method` that is no HTTP method is
+  `ANY`, HEURISTIC; handlers a request condition splits are SOUND_SET; a
+  functional route's handler set through a one-abstract-method interface, an
+  unread type or an unread superclass is HEURISTIC, and local classes are
+  members. `javafacts/22`. JPA: an `@Id` the tree does not declare is the
+  assumed default `id`, HEURISTIC on every column and join named after it; a
+  foreign key toward a composite key is one column per key column;
+  `@OrderColumn`, map keys and `@Embedded` are said; a SINGLE_TABLE
+  discriminator is drawn as the assumed `dtype`; an annotation the lane does not
+  know makes its column HEURISTIC; and the unresolved-statement sentences name
+  every reason the lane gives. 23 of 26 Java corpus packs keep their digests
+  ([docs/setup/java-lane.md](docs/setup/java-lane.md)).
+
+- **Every `CREATE TABLE` of a DDL file is read or named.** sqlglot keeps a
+  `CREATE TABLE` it cannot parse as text, or stops the file's parse at it, and
+  the reader lost the table without a word: an Oracle export lost every table
+  (ruoyi-vue-pro's `sql/oracle/quartz.sql`: 0 of 11), and egovframe's MySQL DDL
+  54 of 182. Such a statement is read again with as little set aside as reads
+  it (constraint states, table options every word of which the reader knows,
+  table constraints the catalog holds nothing of, each by its whole shape,
+  never the primary key), a `DISABLE`d constraint is not read, and one that
+  still cannot be read is named (`create_table_unreadable`,
+  `create_table_unread`). A column named `key` or `index` is a column; MySQL's
+  `KEY idx (c)` that H2's grammar reads as a column is not; `INHERITS` gives a
+  child its parent's columns; H2's and HSQLDB's compatibility modes read a
+  `CREATE TABLE` their own grammar cannot, when every mode that reads it agrees;
+  an HSQLDB script with no semicolons is read statement by statement. With
+  `sqlDialects.main` undeclared, each conclusion that rests on MySQL's rules
+  says so (`alter_rule_assumed`). A statement the grammar library itself fails
+  on no longer ends the run with a stack trace (`CREATE TABLE [dbo].[b] ...
+  ON [PRIMARY]` read as MySQL); a parse that stopped only where no table is
+  declared or changed is `parse_error_not_held`, and `IF EXISTS` on a missing
+  column is `alter_if_exists_absent`, both info. `catalog-ddl/13`, so the first
+  run after upgrading reads the catalog cold. dolphinscheduler's H2 schema: 57
+  to 64 tables, 583 to 622 columns; egov-common-components' endpoint-to-column
+  pairs 10131 to 15667, all from tables that were stubs
+  ([docs/setup/sql-lane.md](docs/setup/sql-lane.md#a-create-table-the-grammar-cannot-read)).
+
+- **A frontend repository's own state is part of what a pack read.** A frontend
+  in a repository of its own, beside the root or nested in it: its uncommitted
+  files are the pack's dirty files, so the pin is dirty and the overlay reads
+  them again and sees an edit undone; its commit is in the pin, so a frontend
+  at another commit is a `REPIN`, not a nondeterminism. `cascade impact` says
+  why an overlay was declined instead of "no changed files", prints the routes
+  an edit removed, and names in the port limit a configuration file that now
+  states a port ([docs/cli.md](docs/cli.md#cascade-impact)).
+
+- **The source pane opens a frontend analyzed beside the project.** With
+  `--web-src ../mall-admin-web`, every frontend function and screen is recorded
+  as `../mall-admin-web/...`, and the source pane answered "cannot read" for all
+  of them (mall: 0 of 299 functions and 0 of 54 screens; now 299 and 54). It
+  now opens a file under any root the pack records as analyzed, and nothing
+  outside them, a link out of a root included; each refusal says why. A route
+  only the frontend calls says that no handler answers it, where it answered
+  500. A target picked from outside Trace's list is brought to the list's
+  middle, and the sort control reads whole.
 
 ## [0.8.11] - 2026-09-15
 

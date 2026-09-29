@@ -26,7 +26,7 @@ people who work beside them. Apache-2.0.
 ![One column and everything above it, drawn by Cascade from litemall:
 litemall_admin.username is used by 10 SQL statements, 11 service methods, 6 API
 endpoints including POST /admin/auth/login, 12 frontend functions and 4 screens,
-each layer with its grades, and the answer's three limits written out
+each layer with its grades, and the answer's four limits written out
 below](docs/assets/impact-card.svg)
 
 That card is Cascade's own answer, not a drawing:
@@ -86,14 +86,14 @@ surface; these are the six worth learning first.
 
 | Stack | What is read | Grade ceiling | What is not read |
 |---|---|---|---|
-| Java Spring MVC controllers | `@RestController` / `@Controller` mapping annotations, and the routes a method returning a `RouterFunction` builds with calls, parsed with the JDK's own compiler in parse-only mode. No Gradle, no Maven, no dependency classpath. A path prefix configuration code sets is applied once the profile declares it (`pathPrefixes`), and a controller implementing an interface openapi-generator writes handles the routes its OpenAPI document declares | `EXACT` for a mapping on a concrete controller method, and for a functional route whose handler the source names; `SOUND_SET` for a mapping on an interface the implementer serves, and for a functional route reached through a declared type; `HEURISTIC` for a handler paired with a document's route only by openapi-generator's naming, and for a functional route placed only where a document declares its operation id | a controller assembled at run time; a handler registered by any other call; a functional route whose path is in a variable, or whose handler does more than call one method, which is kept with no handler and said; a path prefix set in code, which is said (`SETTING_IN_CODE`) until the profile declares it |
+| Java Spring MVC controllers | `@RestController` / `@Controller` mapping annotations, and the routes a method returning a `RouterFunction` builds with calls, parsed with the JDK's own compiler in parse-only mode. No Gradle, no Maven, no dependency classpath. A path prefix configuration code sets is applied once the profile declares it (`pathPrefixes`), and a controller implementing an interface openapi-generator writes handles the routes its OpenAPI document declares | `EXACT` for a mapping on a concrete controller method, and for a functional route whose handler the source names; `SOUND_SET` for a mapping on an interface the implementer serves, and for a functional route reached through a declared type; `HEURISTIC` for a handler paired with a document's route only by openapi-generator's naming, for a functional route placed only where a document declares its operation id (until the profile says the document is in step with the code), for a functional route through a type the tree cannot close, and for a JPA key the tree does not declare (the assumed `id`) | a controller assembled at run time; a handler registered by any other call; a functional route whose path is in a variable, or whose handler does more than call one method, which is kept with no handler and said; a path prefix set in code, which is said (`SETTING_IN_CODE`) until the profile declares it |
 | MyBatis XML and annotations | `<mapper namespace>` files, `<include refid>` fragments resolved through a global index, and SQL written in `@Select` / `@Insert` / `@Update` / `@Delete` | `EXACT`: a statement id **is** the mapper interface FQN plus the method | a `${}` substitution, which is recorded as a diagnostic rather than guessed at |
 | MyBatis-Plus | `@TableName`, `@TableField`, `@TableId`, `@TableLogic`, the `BaseMapper` / `IService` / `ServiceImpl` built-ins, and condition wrappers down to the method references and literals they carry | `EXACT` where the source names the table or column; `HEURISTIC` where a naming rule had to be assumed | a wrapper whose conditions come from an HTTP query string: the table stays a fact, the columns are marked decided at run time |
 | JPA and Spring Data | `@Entity`, `@Table`, `@Column`, `@Id`, `@JoinColumn`, `@JoinTable`, `@MappedSuperclass`, derived query method names, JPQL `@Query`, native `@Query` through the SQL analyzer, and the repository built-ins a caller reached | `EXACT` where the mapping spells the name out or the naming strategy is declared, in the profile (`jpa.namingStrategy`) or in the project's own `spring.jpa.hibernate.naming.physical-strategy`; `HEURISTIC` where the strategy was assumed | `@Embedded`, `@SecondaryTable`, `@Inheritance`, `@AttributeOverride`, `@Convert`, `@ElementCollection`, named queries |
 | SQL DDL catalogs | `CREATE TABLE` and `ALTER TABLE` with types, nullability, primary keys and comments, per dialect: MySQL and MariaDB, PostgreSQL, Oracle, and H2 and HSQLDB through the ANSI parser. Each dialect brings its own identifier-case rule | `EXACT` | a dialect this engine cannot route, which is refused rather than parsed as MySQL |
 | Live catalog fetch | one read-only connection that reads tables, columns, comments and primary keys and writes a pinned snapshot | `EXACT` | anything but metadata: no table data is ever selected, and analysis itself never connects |
 | NestJS, Prisma and TypeORM | the controllers a module the application loads registers, under the global prefix and URI version its bootstrap sets; the calls between methods through `this`, injected fields, imported functions and static methods, and through an abstract class or an interface to the classes that answer it; the files of a monorepo's shared library the imports reach; every Prisma or TypeORM call as a statement of its own, with the relations a Prisma call names, read against `schema.prisma` or the TypeORM entities, which are the catalog | `EXACT` for a route whose address the bootstrap states, for a Prisma call on `PrismaClient` or a class extending it, and for a TypeORM name whose naming strategy, table prefix and schema are known; `SOUND_SET` for a call between methods, a call through an abstract type whose set the module bindings settle, the `nestjs-prisma` client, and a column a `select` may leave out; `HEURISTIC` for a route an exclude built at run time may move, a TypeORM name that depends on a strategy, prefix or schema the source leaves to run time, and a call through an abstract type whose set may be short | a prefix or a module list the source builds at run time, which makes no route and says so; raw SQL; Prisma's fluent relation API; TypeORM embedded entities, table inheritance and Active Record calls; guards and interceptors; Mongoose |
-| Frontends | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` and the `<script>` blocks of `.vue` single-file components; `axios` and `fetch` and `XMLHttpRequest`, Angular's `HttpClient` known by the type a field is declared with, and the project's own wrappers, an object's methods included, traced to whichever of them sends the request; a base URL read per build from the `.env` files the build tool reads; `vue-router`, `react-router` and Angular `Routes` declarations composed into screens; OpenAPI 3 and Swagger 2 documents as declared routes; HAR recordings as runtime evidence | `SOUND_SET` for a call traced to a client that sends it; `EXACT` for a `RENDERS` edge onto the file a route declares; `HEURISTIC` for a call whose base URL rests on a default no `.env` file sets, or only on hosts that are not this machine | which of an imported component's functions really runs, which is a run-time question and stays `SOUND_SET` |
+| Frontends | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` and the `<script>` blocks of `.vue` single-file components; `axios` and `fetch` and `XMLHttpRequest`, Angular's `HttpClient` known by the type a field is declared with, and the project's own wrappers, an object's methods included, traced to whichever of them sends the request; a base URL read per build from the `.env` files the build tool reads; `vue-router`, `react-router` and Angular `Routes` declarations composed into screens; OpenAPI 3 and Swagger 2 documents as declared routes; HAR recordings as runtime evidence | `SOUND_SET` for a call traced to a client that sends it; `EXACT` for a `RENDERS` edge onto the file a route declares; `HEURISTIC` for a call whose base URL rests on a default no `.env` file sets, or only on hosts that are not this machine, for a call to this machine on a port no file states, and for a call through a wrapper step whose URL, method or base URL the code does not settle | which of an imported component's functions really runs, which is a run-time question and stays `SOUND_SET` |
 
 **Not supported, and the engine says so rather than guessing.** Kotlin sources.
 Any backend this engine has no lane for, unless it publishes an OpenAPI
@@ -809,10 +809,10 @@ a contract-valid answer from the engine, so the page and a model asking over MCP
 can never be told different things. It binds `127.0.0.1` and authenticates
 nothing, because it is not meant to be reachable from anywhere else.
 
-The masthead carries the dateline (which project answered and which lanes built
-its pack, with the digest and the commit one click away), the chain with a count
-on each step, chips for freshness, trust and the limit count, a project
-selector, a language toggle and a theme toggle. Two themes sit on one set of
+The masthead is one line: the dateline (which project answered and which lanes
+built its pack), **counts and build**, which opens the chain with a count on
+each step and the digest and the commit, chips for freshness, trust and the
+project's limit count, a project selector, a language toggle and a theme toggle. Two themes sit on one set of
 tokens: **dark** is the signal room and the default, **light** is the
 engineering drawing that still reads when printed in greyscale.
 
@@ -827,19 +827,23 @@ for the tabs they replaced still lands where it did.
 ![The landing page in the light theme: how much of the chain is wired, and a
 map of the whole project, drawn as ink on paper](docs/assets/screens/overview-light.png)
 
-Start asks first. One box finds any API route, screen, table, column, SQL
-statement or method, and three questions follow: what breaks if I change it,
-how far it reaches, and what the analysis did not see. A question the target
-cannot answer says why instead of going grey. Under them are what this analysis
-can see (the lanes, the census mode, each axis and where it was read from), the
-gaps that change an answer, and the shares from the `overview` answer's own
-`reach`: how many endpoints reach SQL, how many statements, tables and columns
-are reached, and how many screens reach a table. A share that has to be read
-with a limit carries it on its card, because "tables reached 100%" on a project
-whose schema was never read is not the whole database. Then the map: the whole pack
-in about ten boxes a side, route groups on the left and table families on the
+Start asks first. Where no API reaches SQL in the census mode, its first line
+says why, with the engine's fix. One box finds any API route, screen, table,
+column, SQL statement or method, and three questions follow: what breaks if I
+change it, how far it reaches, and what the analysis did not see. A question the
+target cannot answer says why instead of going grey. Under them are what this
+analysis can see (the lanes, the census mode, each axis and where it was read
+from) and the gaps that change an answer, each with **What to do**: the one fix
+the engine knows, a profile key with an example, a flag, a command or a mode.
+Then the map: the whole pack in about ten boxes a side, routes in code areas
+(or declared modules, or API groups) on the left and table families on the
 right. A box opens in place, and a route or a table inside it shows only the
-paths through it.
+paths through it. Last come the shares from the `overview` answer's own
+`reach`: how many endpoints reach SQL, how many statements, tables and columns
+are reached, and how many screens reach a table, each saying the mode it was
+counted in. A share that has to be read with a limit carries it on its card,
+because "tables reached 100%" on a project whose schema was never read is not
+the whole database.
 
 ### Trace
 
@@ -855,11 +859,15 @@ up from a route it is the frontend functions and screens that call it.
 **Details** says what it is, as lists: the card above is a screen, with the
 `.vue` file the route declares, the functions on it, each marked `leads to` or
 `sends`, and the routes they reach with the grade on each. A target offers only
-the directions it has, and a missing one is said in a sentence. **My edits**
-asks the same questions about your uncommitted changes.
+the directions it has, and a missing one is said in a sentence. Over the
+picture, Trace answers in one sentence ("Change this and it reaches 31 APIs and
+12 screens."), with the mode and depth it counted in and the first names of the
+ends. **What my uncommitted edits touch**, under Options, asks the same
+questions about your uncommitted changes.
 
-![A screen traced down: frontend functions, endpoints, service methods and
-mapper statements in labelled hop columns](docs/assets/screens/flow-from-screen.png)
+![A screen traced down: the answer first, then frontend functions, endpoints and
+service methods in labelled hop columns; the mapper statements and tables are
+named in the lane strip above the picture](docs/assets/screens/flow-from-screen.png)
 
 The picture is one lane per step, and every node in it is named the way a
 developer reads it (`Class.method`, `Mapper.id`, a route with its verb). A
@@ -868,8 +876,9 @@ could not narrow, a dash-dot one a guess. **by hop** groups the same rows one
 step at a time with a census per hop. Beside the picture, one panel says what
 limited this answer and another what the mode left out, grade by grade.
 
-![A column traced up: mapper statements, service methods, endpoints and
-frontend functions walked backwards](docs/assets/screens/impact-column.png)
+![A column traced up: the answer first, then mapper statements, service methods
+and endpoints walked backwards; the frontend functions and screens are named in
+the lane strip above the picture](docs/assets/screens/impact-column.png)
 
 Trace opens on a **list**, not on an empty search box: the kinds you can pick
 with their counts, a filter, a sort, and the rows with the numbers you would
@@ -942,8 +951,10 @@ Markdown with its base, conditions and cut-list totals.
 What this analysis could and could not see, in one place: how fresh the pack
 is, what the trust level rests on, the mode the census was walked in, every
 axis with where it was read from and what it changes, every blind spot as a row
-that says its cause, what it touches and what to do, and the lanes'
-diagnostics, one row per kind. Its second view is **Rules**: the rule packs the
+that says its cause, what it touches and what to do, and the analyzers'
+warnings, one row per kind, each titled in the reader's language with its code
+beside it. Every limit carries a short title in the page's words, with the
+engine's sentence one click under it. Its second view is **Rules**: the rule packs the
 engine ran, starting with the ones that gave something in this project, each
 with the links it gave.
 
@@ -1037,9 +1048,17 @@ path.
 
 **`openapi.documents`** names OpenAPI 3 or Swagger 2 documents to read as
 declared routes. A route the code also serves is corroborated; a route nothing
-here serves is added with **no handler edge**, because a declaration says a route
-exists and says nothing about what runs below it. Both drift lists, declared and
-not served, served and not declared, are reported and neither is judged.
+here serves is added with **no handler edge** of its own, because a declaration
+says a route exists and says nothing about what runs below it. Both drift lists,
+declared and not served, served and not declared, are reported and neither is
+judged. A rule may still pair such a route with a handler (a contract-first
+controller, a functional route placed by its operation id), graded HEURISTIC
+until **`openapi.generatesCode`** or **`openapi.generatedFromCode`** says the
+document is in step with the code.
+
+**`servers`** states the port an application listens on, for one the source does
+not state: a call to this machine on a port no file states is a guess until it
+does ([web lane](docs/setup/web-lane.md#this-machine-another-port)).
 
 **`runtimeEvidence.har`** names browser recordings. Every request in one that
 matches a route this pack serves becomes a `screen` to `endpoint` edge graded
@@ -1065,7 +1084,9 @@ caller spans at all. The worked recipe, with the numbers a real petclinic run
 produced, is on
 [`docs/setup/runtime-evidence.md`](docs/setup/runtime-evidence.md).
 
-Per-lane detail: [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
+Every key the profile can hold, with an example of each:
+[`docs/concepts.md`](docs/concepts.md#9-the-profile-key-by-key). Per-lane
+detail: [`docs/setup/sql-lane.md`](docs/setup/sql-lane.md),
 [`docs/setup/java-lane.md`](docs/setup/java-lane.md),
 [`docs/setup/web-lane.md`](docs/setup/web-lane.md),
 [`docs/setup/ts-lane.md`](docs/setup/ts-lane.md),

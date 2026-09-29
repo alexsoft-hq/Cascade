@@ -24,7 +24,9 @@ project come first, each with its description, why it is there, its params and
 examples, and how many links of the project's pack it gave. A link a rule gave
 names that rule in its evidence (`evidence.rule`, with a sentence in
 `evidence.basis`), so the path **Trace** draws, either way, says which rule
-made each step.
+made each step. A `web.wrapper-hop` rule reads a step of a call's way rather
+than giving the call, so it is named where the step is, in
+`evidence.sink.hop.rule`.
 
 ## Where they are
 
@@ -44,6 +46,7 @@ judged as an engine change, like changing code.
 | `nestjs` | the NestJS decorators and bootstrap calls that make routes, what a module's `providers` bind, and what a constructor parameter's decorator does to what fills it | `ts.route-decorator`, `ts.provider-binding` |
 | `prisma` | the Prisma client types, what each client call reads and writes, and the table Prisma makes for an implicit many-to-many relation | `ts.type-role`, `prisma.operation`, `table.join-table` |
 | `typeorm` | TypeORM entities and naming strategies, the objects a call is made on, each repository operation and each query builder | `typeorm.entity`, `typeorm.receiver`, `typeorm.operation`, `typeorm.query-builder` |
+| `vben-admin` | vue-vben-admin's HTTP client class: which of its methods is the step every call goes through, and what that step does to the URL, the method and the base URL | `web.wrapper-hop` |
 
 ## The format
 
@@ -93,15 +96,16 @@ stop the run: which one wins is never decided by the order the packs load in.
 | `java.contract-link` | in the OpenAPI bridge, once the documents' routes are on the graph | a class's own annotations and implements clause, what its file's imports make of each name, the methods it declares, and each OpenAPI document's operations (method, path, the path as written, operationId, tags), document by document | which method handles which declared route when the class implements an interface a code generator writes from the document at build time, which the source tree does not hold. Each link is a HANDLES edge | HEURISTIC |
 | `sql.dialect-path` | while discovering the tree | a file's path | which database a DDL or mapper file is for, from a whole word of its path. The first entry of a rule whose word is in the path wins, so a rule lists first the entry it prefers | none: it only classifies |
 | `ts.route-decorator` | in the TypeScript lane's bridge | a class's decorators and its methods' decorators, as the TypeScript worker recorded them | which class is a controller and which method a route, with its path and versions; which class is a module, with the modules it imports and the controllers it lists; and the names the bootstrap calls (`NestFactory.create`, `setGlobalPrefix`, `enableVersioning`, `RouterModule.register`). Whether a controller is served is the bridge's question, read from the module graph | EXACT |
-| `ts.provider-binding` | in the TypeScript lane's bridge | a module's `providers` list, in its `@Module` options or in the object a static method of the module returns (`X.forRoot()`) | which class a module binds to a type (a class listed alone binds itself; `{ provide: T, useClass: C }` binds T to C), which binding it does not read (`useFactory`, `useValue`, `useExisting`), and which entry it cannot read at all (a spread, a computed key); what a constructor parameter's decorator does to what fills it (`injectByToken` fills it by a token, `harmless` changes nothing, any other is not known); and which keys of a package module's options it only reads (`consumed`), so a type named there is not handed to it. Which modules count, and what that does to a call, is the bridge's question | none: it draws no edge |
-| `ts.test-support` | when the TypeScript lane chooses the files it reads | a file's path under the analyzed root | whether the file is test support (a spec, a mock, a stub, a helper only a test runs): a directory matched by its whole name, a file by the end of its name. The lane leaves such a file out, under the application's root and in a shared library alike | none: it only classifies |
+| `ts.provider-binding` | in the TypeScript lane's bridge | a module's `providers` list, in its `@Module` options or in the object a static method of the module returns (`X.forRoot()`) | which class a module binds to a type (a class listed alone binds itself; `{ provide: T, useClass: C }` binds T to C), which binding it does not read (`useFactory`, `useValue`, `useExisting`), and which entry it cannot read at all (a spread of anything but a list written out, a computed key; a list spread under a condition and written out, `...(on ? [A] : [])`, binds what it holds); what a constructor parameter's decorator does to what fills it (`injectByToken` fills it by a token, `harmless` changes nothing, any other is not known); and which keys of a package module's options it only reads (`consumed`), so a type named there is not handed to it. Which modules count, and what that does to a call, is the bridge's question | none: it draws no edge |
+| `ts.test-support` | when the TypeScript lane chooses the files it reads | a file's path under the analyzed root | whether the file is test support (a spec, a mock, a stub, a helper only a test runs): a directory matched by its whole name, a file by the end of its name. The lane leaves such a file out unless a file it reads imports it, under the application's root and in a shared library alike, and says what it left out (`TS_FILES_LEFT_OUT`) | none: it only classifies |
 | `ts.type-role` | in the TypeScript lane's bridge | the package and the exported name a type is imported from | which role a type plays (a Prisma client). A project class that extends it plays it too | EXACT |
 | `prisma.operation` | in the TypeScript lane's bridge | a Prisma call's operation and its argument, key by key | the statement it sends (select, insert, update, upsert, delete), the fields it reads and writes, and whether it returns the whole row. A relation the call names is followed into the model it reaches: in `include` or `select`, in a relation filter, as a `_count`, and as a nested write. A relation filtered on null only checks the link, and a nested write handed a literal that changes nothing draws only what Prisma still sends (the pack's `idle` entries). A nested write that has to find rows before it changes them reads their table and key first (`lookup`). `extensions` names the call that makes a client of a client (`$extends`) and the part of an extension that may change what a call sends. What it cannot follow it says: a relation into a model it was not handed, a key it does not know, an argument held in a variable | EXACT |
 | `table.join-table` | when the summary map sorts the reached tables into families | a table's name and the columns its catalog declares | whether a framework made the table only to join two others: its name starts with `params.prefix` and, when the rule lists `params.columns`, its columns are exactly those. The summary then puts it with the tables the graph joins it to, not in a family of its own name | none: it only classifies |
-| `typeorm.entity` | in the TypeScript lane's bridge | the classes TypeORM's decorators mark, the columns and relations their properties declare, the classes they extend, and the DataSource options wherever the application writes them | which classes are entities, and the tables, columns and join tables they map, each named as the naming strategy, table prefix and schema in the options name it. A name a strategy derives is EXACT only when the strategy is known and every TypeORM version spells it the same; a table name, a written one included, only when the prefix is known and, for an entity that names no schema, the schema is; else HEURISTIC with why. Which of the schema and the entity's own database go before a table name is the driver's (`tablePath`): a driver the pack does not name leaves the name HEURISTIC, and so does a driver the options do not write out, for a table one could qualify. It also says which columns TypeORM sets on its own (`autoColumns`: the create date, the update date, the version) | none: it draws no edge, and its names carry their own grade |
+| `typeorm.entity` | in the TypeScript lane's bridge | the classes TypeORM's decorators mark, the columns and relations their properties declare, the classes they extend, and the DataSource options wherever the application writes them | which classes are entities, and the tables, columns and join tables they map, each named as the naming strategy, table prefix and schema in the options name it. A name a strategy derives is EXACT only when the strategy is known and every TypeORM version spells it the same; a table name, a written one included, only when the prefix is known and, for an entity that names no schema, the schema is; else HEURISTIC with why. Which of the schema and the entity's own database go before a table name is the driver's (`tablePath`): a driver the pack does not name leaves the name HEURISTIC, and so does a driver the options do not write out, for a table one could qualify, unless the profile declares it (`tsBackend.typeorm.type`); a SQLite driver's attached database (`attached`) leaves the name of a table in it HEURISTIC. It also says which columns TypeORM sets on its own (`autoColumns`: the create date, the update date, the version) | none: it draws no edge, and its names carry their own grade |
 | `typeorm.receiver` | in the TypeScript lane's bridge | the fields of a class, their types and injection decorators, the functions and members a call chain goes through, and a transaction callback's parameter | which object a TypeORM call is made on (a repository of an entity, an entity manager, a data source) and which entity it names. A local given one after its declaration, or given a field that holds one, holds it; a local a condition fills may hold another value, and a call on it is not read | none: it only classifies |
-| `typeorm.operation` | in the TypeScript lane's bridge | a repository or entity manager operation's name and its arguments, part by part | the statement it sends, the columns it filters by, returns, orders by and writes, whether it returns the whole row with the relations marked eager, and what an argument not written out leaves to the running program. A count, an exists or an aggregate joins the eager relations without their rows (TypeORM 0.3), so those tables and join columns are SOUND_SET. A write sends one of TypeORM's statements (`sends`), which set the date and version columns on their own: a column every statement it may send sets is written, one only some set is SOUND_SET | EXACT |
-| `typeorm.query-builder` | in the TypeScript lane's bridge | a `createQueryBuilder` chain and the later calls on the name that holds it, step by step, with a condition's text | the aliases the query names, the columns `alias.property` names in a condition, the tables a join adds, what `select` narrows, and whether it is a select, an update, a delete or an insert, with the date and version columns that statement sets on its own. A step written under a condition MAY run, so what it reads is SOUND_SET. `clone` makes another builder, whose steps are not read | EXACT |
+| `typeorm.operation` | in the TypeScript lane's bridge | a repository or entity manager operation's name and its arguments, part by part | the statement it sends, the columns it filters by, returns, orders by and writes, whether it returns the whole row with the relations marked eager, and what an argument not written out leaves to the running program. A count, an exists or an aggregate joins the eager relations without their rows (TypeORM 0.3), so those tables and join columns are SOUND_SET. A write sends one of TypeORM's statements (`sends`), which set the date and version columns on their own: a column every statement it may send sets is written, one only some set is SOUND_SET, unless the values name it: then the values write it, and the read of the old version is SOUND_SET (TypeORM from 0.2.34 adds nothing to a version the values name, and before that it still added one). A select on an entity with a delete date column reads that column, unless the find asks for deleted rows (`withDeleted`) | EXACT |
+| `typeorm.query-builder` | in the TypeScript lane's bridge | a `createQueryBuilder` chain and the later calls on the name that holds it, step by step, with a condition's text | the aliases the query names, the columns `alias.property` names in a condition, the tables a join adds, what `select` narrows, and whether it is a select, an update, a delete or an insert, with the date and version columns that statement sets on its own. A step written under a condition MAY run, so what it reads is SOUND_SET. `clone` and `subQuery` make another builder, whose steps are not read. A builder is read whole only where every use of its local is a step whose value is thrown away or a chain that ends in a step that runs the query; any other use (handed on, held in a second name, captured, returned) makes what it reads SOUND_SET (`builder-escapes`). A select or a join of an entity with a delete date column reads it unless `withDeleted` came first | EXACT |
+| `web.wrapper-hop` | in the web lane's bridge, as it traces a wrapper chain and then walks it | the classes the web worker recorded (the methods each declares, the fields it sets and what builds them), the step's own client call, and, per call, what the caller hands the step (every key an object argument writes, and whether `params` is written as an object) | which method of a framework's client class is a wrapper step the rule describes, and what that step does to each key of the request it hands on: `keep`, `set` (a value of the step's own, not settled), `prefix` (behind a prefix the request options named in `by` decide), `append` (a key of the request appended to the URL when it holds text), `query` (a query string added) and, for a key other than the URL, `change` (a key the route does not depend on, which the walk does not follow). A step no rule names is read as its code reads | none: it draws no edge; a call through the step is graded as any wrapper's, SOUND_SET at most |
 
 ### Supertypes written in full
 
@@ -242,7 +246,10 @@ Where a route is served is the Java bridge's question:
 - Such a route is placed only where an OpenAPI document declares the operation
   id it names, with its verb, at a path that ends with its own. Its HANDLES
   edge is then HEURISTIC: no mount the source states puts it there, only a
-  document that may be stale. Two routes of the code that name one operation,
+  document that may be stale. When the profile declares that document written
+  from this code as it is now (`openapi.generatedFromCode`), the document says
+  where the code serves the route, and the edge is graded as its handler is
+  read. Two routes of the code that name one operation,
   or an operation id the documents declare on two routes, are placed by
   neither. The operation id is the one the builder was given last; a last one
   that is not a literal leaves it unknown.
@@ -306,6 +313,19 @@ HEURISTIC, the kind's cap: neither the interface nor any generator
 configuration is read, so all that joins the two is a naming convention. Its
 evidence names the rule, the operationId, the documents and the interface.
 
+What the tree cannot show, that the build really generates the interfaces from
+that document, the profile can say: `openapi.generatesCode`. On a document
+declared there, the bridge grades a link EXACT, the method its class declares,
+when the interface's name does not depend on how the generator groups
+operations. The kind records two sets on each link: the schemes (`tag`,
+`path`) that put this operation into the interface (`namedBy`), and the schemes
+that give the interface's name to any operation of the documents (`nameFrom`).
+The link holds whatever the build uses only when the first covers the second.
+Otherwise it stays HEURISTIC, and its evidence says which grouping it depends
+on (`naming`). Either way the evidence names the declaration
+(`declared: {key, document}`). A document declared the other way
+(`openapi.generatedFromCode`) settles no link.
+
 What is not linked is said when it is a near miss (`CONTRACT_NOT_LINKED`): an
 operationId the interface's name fits on two different routes (two documents
 with different base paths), and a method named like an operationId whose
@@ -317,16 +337,104 @@ A route the code already maps to the same method gets no second edge; it is
 counted as `alreadyHandled`, not as a link.
 
 `analyze` prints how many routes the rules gave a handler, and
-`laneStats.openapi.contractLinks` lists them with the methods not linked. The
-overview names them in its `contract-links` gap. The drift census still counts
-these routes as declared and not served, because no mapping in the source
-serves them.
+`laneStats.openapi.contractLinks` lists them with the methods not linked, and
+how many links rest on no declaration (`undeclared`). The overview's
+`contract-links` gap counts the links that are guesses; while some rest on no
+declaration, its fix is to declare `openapi.generatesCode`, and `analyze` says
+so as `CONTRACT_FROM_DOCUMENT`. The drift census still counts these routes as
+declared and not served, because no mapping in the source serves them.
 
 A walk treats a route's link to its handler as a link. The whole-pack views
 start only from a handler the mode admits and grade what they reach no higher
 than that link, and `flow` does the same. So these routes reach their SQL at
 `mode=heuristic` and not at the default `conservative`, where the walk stops at
-the route and says why.
+the route and says why, until a declaration makes them EXACT.
+
+### A framework's own wrapper step
+
+The web lane settles a wrapper step only where its code shows it hands the URL,
+the method and the base URL on as the caller gave them
+([the web lane setup page](setup/web-lane.md#what-a-wrapper-is)). A framework's
+client class can pass the request through a local its hooks assign again, which
+that reading rightly does not settle, while the framework's own source says what
+the step does. vue-vben-admin's `VAxios.request(config, options)` copies the
+request, lets the template's `beforeRequestHook` return it again, writes
+`requestOptions` on it, lets `supportFormData` rewrite its body, and hands it to
+the axios instance it holds.
+
+A `web.wrapper-hop` rule names such a step by the shape of its class, never by a
+name, and says what the step does to each key. The `vben-admin` pack's rule:
+
+```json
+"params": {
+  "client": { "module": "axios", "factory": "create" },
+  "class": { "methods": ["getTransform", "setupInterceptors", "supportFormData", "uploadFile", "get", "post", "put", "delete", "request"] },
+  "hop": { "method": "request", "config": 0, "options": 1 },
+  "keys": {
+    "url": [
+      { "does": "prefix", "by": ["apiUrl", "urlPrefix", "joinPrefix"] },
+      { "does": "append", "from": "params", "when": "text" },
+      { "does": "query", "by": ["joinTime", "joinParamsToUrl"] }
+    ],
+    "method": [{ "does": "keep" }],
+    "baseURL": [{ "does": "keep" }],
+    ...
+  },
+  "framework": { "name": "...", "declares": "...", "source": "..." }
+}
+```
+
+- `client`, `class` and `hop` are the shape: a class with a field built by the
+  client's factory (`axios.create`, from `axios`) that declares every method
+  `class.methods` lists. `hop.method` is the step, `hop.config` the parameter
+  the request comes in at and `hop.options` the one the call's own options come
+  in at; the step's function has to take both. The class's name is never read.
+  The step's client call must go through the instance the class holds, and the
+  walk reads the step as the rule says only where that call hands the client a
+  local the step assigns again and the caller's URL arrives in the object at
+  `hop.config`. Any other shape is read as its code reads.
+- `keys` says what the step does to each key, one word per effect. The URL
+  takes `keep`, `set`, `prefix`, `append` and `query`; any other key takes
+  `keep`, `set` and `change`. `keep` hands the key on; `set` writes a value of
+  the step's own, which is not settled; `prefix` hands the URL on behind a
+  prefix the request options named in `by` decide; `append` appends the value
+  the request carries under `from` to the URL's path when it is text; `query`
+  adds a query string, so the path is what it was; `change` changes a key the
+  route does not depend on (a body, a header), and the walk does not follow it.
+  `keep` and `set` stand alone. `url` and `method` must be stated.
+- `framework` says which framework, what the rule relies on its step doing, and
+  where anyone can check it. All three are required.
+
+What the rule does not settle is said on the edge, and the edge stays
+HEURISTIC: a call whose own options set, or may set, one of the `prefix` keys
+(`evidence.sink.unsettled.why: "hop-option"`, with the option when it is
+known; an object literal that names none of them changes nothing, a name or a
+spread may carry one), and a call that may hand text under an `append` key
+(`"hop-append"`; `params` written as an object or an array is never text, a
+name may be).
+
+The prefix a `prefix` step puts before the URL is decided by request options
+the client class is handed when it is built, which this lane does not read. So
+a call through such a step has its prefix chosen by match count among the
+client's own base URL and none (`evidence.prefix.from: "auto"`, with
+`evidence.prefix.hop` naming the rule and the option keys), the web axis is
+degraded and says so, and only `gatewayRoutes` with the key `"*"` declares it.
+With the prefix declared, a call the rule settles is SOUND_SET.
+
+The edge names the rule and the step (`evidence.sink.hop`). The prefix census
+(`laneStats.web.prefix`) lists the step's view of the client beside the client,
+and `laneStats.web.calls.throughNamedStep` counts, per rule, the calls that went
+through a named step and how many of them it settled. `analyze` prints one line
+per rule. Two rules that name one step stop the run. The examples are small
+frontends, read by the real web worker and walked by the web lane with that
+rule alone.
+
+The `vben-admin` pack was written from jeecg-boot's copy of the framework
+(`jeecgboot-vue3/src/utils/http/axios`). The hooks the step runs are the
+framework template's, written into the project's own
+`src/utils/http/axios/index.ts`: a project whose `beforeRequestHook` does more
+to the URL than a prefix, text params and a query string is not what the rule
+describes.
 
 ### The TypeScript backend's kinds
 
@@ -372,7 +480,10 @@ SOUND_SET.
   endings (`.spec.ts`, `.mock.ts`, `.stub.ts`, `.stories.ts`, ...) that mark a
   file as test support. The lane leaves such a file out, under the
   application's root and in a shared library alike, because a mock class read
-  as the application's is one more class a call may reach.
+  as the application's is one more class a call may reach. A file the lane
+  reads that imports one makes it the application's (the application runs what
+  it imports, a `testing` feature module included); one a barrel only
+  re-exports stays out. What is left out is said (`TS_FILES_LEFT_OUT`).
 - The `typeorm` pack has one rule per kind. `typeorm.entities` names the entity,
   column and relation decorators, the decorators it does not read
   (`@ChildEntity`, `@ViewEntity`, `@TableInheritance`, `@Tree`), where an
@@ -384,8 +495,11 @@ SOUND_SET.
   A project that declares `tsBackend.typeorm.namingStrategy` names one of
   these. `tablePath` says, per driver `type`, what goes before a table name:
   the schema (PostgreSQL, CockroachDB, Oracle, SAP), the database (MySQL,
-  MariaDB, Spanner), both (SQL Server) or nothing (SQLite and the drivers built
-  on it).
+  MariaDB, Spanner), both (SQL Server), a handle the driver makes for a
+  database file an entity names (`attached`: `sqlite`, `better-sqlite3`,
+  `react-native`), or nothing (`sqljs`, `capacitor`, `cordova`, `nativescript`,
+  `expo`). A project that declares `tsBackend.typeorm.type` names one of these
+  drivers.
   `autoColumns` says which statement sets the create date, the update date and
   the version on its own, and `insertKey` is the column option that keeps a
   column out of an insert.
@@ -395,10 +509,11 @@ SOUND_SET.
   part each argument plays, and TypeORM 0.2's test that tells a find's options
   from its conditions; `eagerJoined` marks the ones that join the eager
   relations without selecting them (count, exists, the aggregates), and
-  `sends` the statements a write goes through (`save` inserts or updates).
+  `sends` the statements a write goes through (`save` inserts or updates); the
+  find option `withDeleted` plays the role `with-deleted`.
   `typeorm.query-builder` names the part each builder method plays (`clone`
-  makes another builder), and the words of a condition that are SQL's and not
-  a column.
+  and `subQuery` make another builder, `withDeleted` plays `with-deleted`), and
+  the words of a condition that are SQL's and not a column.
 
 See [the TypeScript lane setup page](setup/ts-lane.md).
 

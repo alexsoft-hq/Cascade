@@ -873,6 +873,37 @@ fell 50 -> 31: the 19 that went were children composed under a wildcard
 found by line and column they compose to `/mdm/defect` and the rest, which were
 already there. Its screens reaching a table stay 0.
 
+## RM67: one question, one answer, and the fourth review
+
+Trace walked up, `endpoint_impact` and `screen_impact` now read one walk up, and
+`src/core/walk_agreement.mjs` compares their rows, column by column and table by
+table, with each other and with the census. Before the walks were merged,
+spring-petclinic had 17 of its 24 columns, and jpetstore-6 49 of its 86, whose
+screens one answer named and another did not (forest-blog 77, jeecg-boot 42,
+xxl-job 31, jeepay 4). After it, no column of the 26 Java corpus packs or the 4
+TypeScript ones does. The suite runs the check on hand-built graphs, on the
+three golden fixture trees in every mode, and on spring-petclinic, jpetstore-6
+and the mall pack when they are checked out.
+
+The gate baseline was recorded again after the round. Each number that moved
+past its budget was bisected to one commit and read against the source:
+
+- egov-common-components endpoint-to-column pairs 10131 -> 15667: the DDL reader
+  now holds 54 `CREATE TABLE`s it could not read before (51 stub tables become
+  1). The common code table `COMTCCMMNDETAILCODE` is one of them, and 424 routes
+  join it. Pairs on columns the old pack also had rose by 5384, all from tables
+  that were stubs; no column was lost. Real reach, not inflation.
+- egov-msa-edu pairs 394 -> 447 and 12 more columns: composite keys now draw
+  their key columns. The same shapes also show names the source does not have,
+  all HEURISTIC.
+- ngrinder columns reached at `conservative` 78 -> 52: 27 `PerfTest` columns
+  carry the project's own `@Cloneable` marker, which the JPA lane does not know,
+  so their columns became guesses. Pairs are unchanged.
+- mall screens reaching a table at `conservative` 44 -> 0: every call rests on
+  the default port 8080. Declaring `servers` restores 44 of 54.
+- jeecg-boot screens 12 -> 8: request steps whose method or base URL the source
+  does not settle. With `gatewayRoutes {"*": ""}` it is 23 of 181.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

@@ -28,8 +28,8 @@ Each place is a question a reader comes with:
 | **Compare** | What changed since an earlier build of this project. It appears only when there is one. |
 | **Analysis status** | What this analysis could and could not see, what each gap touches and what to do about it, and the Rules it ran with. |
 
-A place that holds more than one view (Structure, Analysis status) shows a
-second row under the first, one entry per view. Opening a place lands on the
+A place that holds more than one view (Structure, Analysis status) lists its
+views on the places' own row, after a hairline, one entry per view. Opening a place lands on the
 view you were last on there. Clicking the place you are already on puts a view
 that can narrow back to how it opened, as **Show all** does.
 
@@ -41,18 +41,25 @@ written before still lands where it did ([The URL](#the-url)).
 
 ### The masthead
 
-The top line is the dateline: which project answered (the project selector when
-the server holds several), and which lanes built its pack. **build** beside them
-opens the pack's digest and the commit it was built from. They stay one click
-away because a reader needs them when two builds disagree, and has to look past
-them every other day.
+The masthead is one line: the brand, the dateline, the chips, and under it the
+places. The dateline says which project answered (the project selector when the
+server holds several) and which lanes built its pack. **counts and build**
+beside them opens the chain this engine follows, step by step, with a count on
+each step (screens, api groups by path, endpoints, services, SQL, tables,
+columns), and the pack's digest and the commit it was built from. They stay one
+click away because a reader needs them when two builds disagree, and has to
+look past them every other day. The counts are the `overview` answer's own; the
+page counts nothing itself. The header is opaque, so nothing shows through it
+while the page scrolls.
 
-Under it runs the chain this engine follows, step by step, with a count on each
-step: screens, api groups, endpoints, services, SQL, tables, columns. The counts
-are the `overview` answer's own; the page counts nothing itself.
-
-- **api groups** is `reach.groups`, counted by the rule the map groups routes by,
-  so it is right whichever place a page opens on.
+- **api groups by path** is `reach.groups`: the routes counted by the first
+  segment of their path, or, where the lane knows the prefix the application is
+  deployed under (a NestJS global prefix and version, a declared `pathPrefixes`
+  entry), by the first segment after it. It is the unit Structure, Coupling and
+  Trace group by, and the overview names its rule in `groupRule`. Where the
+  profile declares `moduleAttribution.packageDepth`, the step reads **modules,
+  as declared** instead, and counts the handler packages cut to that depth. The
+  map on Start may group routes another way, and names its own boxes.
 - **services** is `code.services`: the methods the routes' walks pass through
   between a controller and the SQL, each counted once. A controller method, a
   frontend function, a library method and a mapper method that only declares a
@@ -64,7 +71,13 @@ are the `overview` answer's own; the page counts nothing itself.
 
 Beside them are up to four chips.
 
-- **freshness** says whether the pack still matches your working tree.
+- **freshness** says whether the pack still matches your working tree, and
+  appears only when the page has words for the verdict (`older than the code you
+  have now`, `edits folded in on top of this build`, `up to date`). An `unknown`
+  verdict, which is what the viewer gives a pack, since it serves a pack as it
+  was built and never compares it with the working tree, draws no chip, since a dot with no word said nothing a reader could read. It stays
+  in the evidence rail, as `not compared with your working tree`, and on Analysis
+  status.
 - **trust** is the computed trust level, never a typed-in one, and it appears
   only when there is something to say. A project with no approved golden set gets
   **no chip at all**: `not certified` was true of nearly every project anybody
@@ -77,9 +90,16 @@ Beside them are up to four chips.
   cover.
 - **trace** appears only when a recording of the program running was read into
   the pack. It names the recording's source and how many spans it held.
-- **limits** is a count. Click it and every limit the engine wrote opens
-  underneath, word for word. It is the same fold the evidence rail on Analysis
-  status carries, so the sentences appear once and in one voice.
+- **project limits** is a count of every limit the project's pack carries. Click
+  it and every limit opens underneath, each under a short title in the page's
+  words (`JPA mappings: not collected`, `stopped at the depth limit`, `how the
+  boxes on the left are made`); click a title and the engine's sentence opens
+  under it, word for word, after the scope it was written for (`axis:jpa`,
+  `flow`, `summary:groups`). It is the same fold the evidence rail on Analysis
+  status carries, so the sentences appear once and in one voice (see *How a
+  limit gets its title* under Analysis status). The rail beside an answer
+  counts that answer's own limits and says the project's count beside it, so
+  the two numbers never read as one.
 
 Then the language toggle and the theme toggle, which are described below.
 
@@ -112,6 +132,14 @@ rather than the operating system deciding what this page looks like.
 Start asks first. It used to be the Overview, which opened on the shares and a
 drawing of the whole pack before you had said what you came for.
 
+**The cause first.** Where no API reaches a SQL statement in the mode the census
+was walked in, Start opens on one line that says why, before the search box and
+the shares. On ghostfolio it reads "117 of 118 routes graded HEURISTIC: mode
+conservative stops at them. Nothing on this page reaches SQL in this mode until
+their address is sure.", with the engine's fix under it (declare
+`tsBackend.globalPrefixExclude`) and a button, **Look in heuristic**. The gaps
+list under it does not say the same thing a second time.
+
 **Ask about one thing.** The box finds any API route, screen, table, column, SQL
 statement or method, with the same typeahead Trace uses, and says the kind of
 each row. `/` puts the cursor in it from anywhere on Start. Pick a target, then
@@ -143,10 +171,27 @@ Analysis status.
 **Gaps that change an answer.** An input the run did not have, something it
 could not read, an axis read in part, a kind of diagnostic a lane reported: each
 changes what an answer says, so they are listed here, inputs first, six and then
-a count, each a way to its row on Analysis status. A walk's own bound or a table
-no route reaches changes no answer and is left to Analysis status. When some
+a count, each a way to its row on Analysis status. A row is named in the page's
+words, with the engine's code on its tooltip. A walk's own bound or a table no
+route reaches changes no answer and is left to Analysis status. When some
 routes' own addresses rest on a guess, that is the first line, and it says
-whether the mode on screen stops at them.
+whether the census mode stops at them; where that is why no API reaches SQL,
+Start's opening line says it instead, and this list does not repeat it.
+
+Under every row is **What to do**: the one thing the engine knows would close
+that gap, taken from the answer's `remedy` and never written by the page. It is
+a profile key with a short example ("Declare tsBackend.globalPrefixExclude in
+the profile, for example ["health", "docs{/*rest}"]."), a flag to analyze
+again with, a command, or a mode to ask in. A web axis whose only guess is a
+port names `servers` with the application to declare, and routes placed through
+an OpenAPI document nobody declared name `openapi.generatedFromCode` or
+`openapi.generatesCode`. Where the engine knows no single fix, the line says so:
+"No fix the engine knows of. It can only say what it could not read." A server
+from before remedies sends none, and then there is no line. On ghostfolio the
+fix is to declare `tsBackend.globalPrefixExclude`: declaring its own exclude
+list and analyzing again turns all 118 routes EXACT, and a conservative census
+goes from 0 of 118 endpoints reaching SQL to 104 of 118, and from 0 to 21 of 21
+tables.
 
 **The shares.** One card per step of the chain, from the `overview` answer's
 `reach`: how many endpoints reach SQL, how many statements, tables and columns
@@ -157,7 +202,10 @@ with, in the same card: the step's axis when it was not built or only partly
 read ("no database schema was read: these are the tables the SQL named"), and
 on the endpoints, how many routes' own addresses are guesses. The limit is a
 button to the row that explains it. "tables reached 100%" on a project whose
-schema was never read would otherwise read as "the whole database".
+schema was never read would otherwise read as "the whole database". Under the
+limit is the same **What to do** line as on the gap it comes from: the fix for
+the axis (`axisRemedies`), or for the routes whose own address is a guess
+(`routeRemedy`).
 
 On a project whose requests are answered somewhere else, the remainder is the
 wrong sentence: a gateway's nine screens reach no table it owns, because it owns
@@ -166,20 +214,48 @@ carries `reach.viaFederation`, the endpoint and screen cards say both numbers
 instead: `0 here, 8 in connected projects`. The share itself stays this
 project's own ratio, because that is what a share of this project means.
 
-Under the shares is the map, and under the map the busiest tables (by how many
-APIs reach them), APIs (by how many tables they touch) and screens (by how many
-tables they reach). A table opens Trace walked up; an API or a screen, walked
-down.
+Under the questions come what this analysis can see and the gaps that change an
+answer, then the map, then the shares and the busiest tables (by how many APIs
+reach them), APIs (by how many tables they touch) and screens (by how many
+tables they reach). The map comes before the shares because it is the way in
+for a reader with no target yet. A table opens Trace walked up; an API or a
+screen, walked down. A name in a ranking gives way in the middle, so the tail
+that tells two routes or tables apart stays.
+
+**The mode Start counts in.** The map's mode control moves the map, the shares
+and the busiest tables and APIs together: the page asks the `overview` once in
+that mode and draws them from it. A line over the shares says the mode and
+depth they were counted in ("The shares and the busiest lists below are
+counted in {mode}, depth {depth}."), and each busiest list says its own
+("counted in heuristic"). The busiest screens come from the census `browse
+kind=screen` walks, and say that census's mode, which the control does not
+move. While Start looks in a mode other than the census's, its first line says
+so ("The map, the shares and the busiest lists are counted in heuristic now.
+The gaps and Analysis status stay in conservative.") with a button back.
 
 ### The map
 
-The map is the whole pack in about ten boxes a side: groups of routes on the
-left, families of tables on the right, and one line per group and family, as
+The map is the whole pack in about ten boxes a side: routes in boxes on the
+left, families of tables on the right, and one line per box and family, as
 thick as the tables behind it and dashed by the weakest grade on the way. It is
 the `summary` tool's answer, asked once Start is on screen, so a page opened
-straight on Trace never waits for it. Boxes past ten are folded into one
-`(others)` box on each side, and their lines go to it, so nothing the walk
-reached is left off.
+straight on Trace never waits for it. A box on the left is kept for how many
+routes it holds, a family for how many routes reach it and then for its size,
+so a one-table family the code touches from many routes stays on the map ahead
+of a big one few reach. The rest fold into one `(others)` box on each side,
+which says what it folded by ("{n} code areas with fewer routes, {routes} route(s)"),
+and their lines go to it, so nothing the walk reached is left off. Each family
+box says how many routes reach it.
+
+**A line says what it carries.** Where the lines are few enough to read (a
+dozen, or the lines of one open box or a picked node), each carries its count,
+`41 → 12 tables` on the whole map (in Korean, "API 41 → 테이블 12"), on a ground
+of its own laid over its line. Every line is drawn first and every count after,
+so no line runs over a count. A count stands on its own curve at the first
+point, tried from the middle outwards, where its ground stays inside the band
+between the two columns and clears every other count, so it never covers a box
+or another count; the heaviest line is placed first. A line with no free point,
+and every line of a big map, keeps its count in its hover title.
 
 - **A box opens in place.** Click a group and its routes list under its name,
   twenty and then all of them; click a family and its tables do. The picture
@@ -195,28 +271,40 @@ reached is left off.
   picked node.
 - Every route and table in an open box has a **Trace** button beside it: a route
   walked down, a table walked up.
-- The mode select over the map asks the walk again in another mode. A map with
-  no line says why in its own numbers: how many links the mode left out and of
-  which grades, with the wider mode that would walk them. On a pack whose
-  routes' own addresses are guesses (ghostfolio's, until its exclude list is
-  declared), a conservative map has no line, and that is the first thing it
-  says.
+- The mode select over the map asks the walk again in another mode, and moves
+  the shares and the busiest tables and APIs with it (see *The mode Start
+  counts in*). A map with no line says why in its own numbers: how many links
+  the mode left out and of which grades, with the wider mode that would walk
+  them. On a pack whose routes' own addresses are guesses (ghostfolio's, until
+  its exclude list is declared), a conservative map has no line. In the census
+  mode, where Start's first line already names the guessed routes, the map does
+  not say them again; in another mode it says how many routes are guesses, with
+  the same **What to do** line.
 
-**The boxes are read, not declared**, and the line over the picture says which
-rule made them:
+**The boxes are read, not declared**, and each rule gives its boxes their own
+name, so the map never says "group" for something the masthead counts another
+way. The line over the picture says which rule made them:
 
-- a group is the handler's package cut to `moduleAttribution.packageDepth`
-  segments when the profile declares it;
-- otherwise it is where the handler code sits, read below every package level
-  that one branch holds four in five of the routes of (`egovframework.com` in
-  eGovFrame, `org.jeecg.modules` in jeecg-boot), with a stray branch beside it
-  as a box of its own;
-- when every handler sits in one package, or there is no handler, it is the
-  route path, read the same way (`/api/mdm/...` under a shared `/api` is `mdm`).
-  Where every route's lane wrote the group its deployment prefix leaves (a
-  NestJS global prefix and version), that is the group, and nothing is guessed;
+- a **module** is the handler's package cut to `moduleAttribution.packageDepth`
+  segments when the profile declares it; the masthead counts the same modules;
+- otherwise a **code area** is where the handler code sits, read below every
+  package level that one branch holds four in five of the routes of
+  (`egovframework.com` in eGovFrame, `org.jeecg.modules` in jeecg-boot), with a
+  stray branch beside it as a box of its own. It answers "which part of the
+  code reaches which tables", which is what someone who changes the code owns.
+  It is not the masthead's API groups: ghostfolio has 32 API groups by path and
+  21 code areas, jeecg-boot 26 and 14, mall 32 and 4;
+- when every handler sits in one package, or there is no handler, the boxes are
+  the route path. With nothing shared to read below, they are the masthead's own
+  **API groups**. Below a prefix every route shares (`/api/mdm/...` under
+  `/api`), they are **path areas**, the segments below that prefix, where the
+  masthead's API groups stop at the first segment. Where every route's lane
+  wrote the group its deployment prefix leaves (a NestJS global prefix and
+  version), they are API groups too, and nothing is guessed;
 - a table family is the tables whose names start with the same word below a
-  shared prefix (`t_ds_task` under `t_ds`). A word ends at an underscore, a
+  shared prefix (`t_ds_task` under `t_ds`), read over every table in the pack,
+  not only the ones a walk reached, so a table is in the same family on the map
+  in every mode and on Table links. A word ends at an underscore, a
   hyphen or a change of case, so `SymbolProfile` is symbol, profile and
   `MARKET_QUOTE` is market, quote. Only where most names are one word and most
   of them start with the same letters is a family read by its letters
@@ -236,9 +324,9 @@ Trace is one place to ask about one thing: an API route, a screen, a table, a
 column, a SQL statement or a method. Pick it once, then read it one of three
 ways.
 
-- **What it uses** follows it down: the code a route or a screen runs through,
+- **↓ What it uses** follows it down: the code a route or a screen runs through,
   the SQL that code sends and the tables at the end.
-- **Where it is used** follows it up: the SQL, the methods, the routes and the
+- **↑ Where it is used** follows it up: the SQL, the methods, the routes and the
   screens that reach it, which is what a change here would touch. Up from a
   route it is the frontend functions that call the route and the screens that
   render them.
@@ -268,7 +356,16 @@ one of them still opens here ([The URL](#the-url)).
 
 Trace opens on a LIST, not on an empty search box: a column down the left with
 the kinds you can pick and their counts, a sort, the count line, and the rows
-themselves with the numbers you would pick by. Routes and screens sit under
+themselves with the numbers you would pick by. Each row is its name on the
+first line, with the whole width, so a name keeps the tail that tells two rows
+apart; under it the numbers, spelled out in the reader's language
+(`reads 7  writes 8  API 22  screens 12`), then the row's own comment. A
+number's title says what it counts. Beside the count line the list says the
+mode its numbers were walked in ("counted in conservative"): they come from one
+walk of the whole project, which `browse` names in `census` (`{mode, depth}`),
+while Trace counts in the mode on its own control, so the two can differ.
+jeecg-boot's `sys_user` reads `API 124` on the list and 186 APIs in a heuristic
+Trace, and each says which walk it is. Routes and screens sit under
 their API group, and a table has a caret that opens it into its own columns, so
 you can walk from a table down to the column you are about to change. Every row
 and every number is one `browse` answer, so the page counts nothing. The kind
@@ -313,8 +410,49 @@ direction keeps the start.
   fetched and total apart, and **fetch N more** asks the tool for the lane's next
   rows in the walk's own order (`flow` pages a lane with `offset`).
 
-Depth, the drawing and the motion sit under **Options**; the mode stays on the
-toolbar.
+Depth, the drawing and the motion sit under **Options**, and so do the two
+questions that are not about a target, **What my uncommitted edits touch** and
+**Start over: nothing picked**, so the toolbar is one line; the mode stays on
+the toolbar.
+
+### The answer, first
+
+Over the picture, under the line that says what was asked, Trace answers in one
+sentence, with the mode and depth it was counted in:
+
+- walked up: "Change this and it reaches 31 APIs and 12 screens." (Korean:
+  "이걸 바꾸면 API 31개, 화면 12개에 닿습니다.");
+- walked down: "From here it reaches ..." the SQL statements and the tables from
+  a route or a method, the APIs and the tables from a screen, and the SQL and the
+  tables from a page a route renders on the server.
+
+Each count is the lane's whole count from the answer's `truncated`, not the rows
+fetched. A walk a depth you chose cut says "The walk stopped at depth {depth},
+so there may be more." beside it, with **Follow it all the way**, and the lane
+chips of such a walk carry a `+` (`0+`, `12+`).
+
+Under the sentence are **the ends**: one box per end lane with its count and its
+first five names. A name picks that row in the picture and brings it into view;
+the lane heading brings the lane into view. So the APIs and screens a reader came
+for are on screen before the picture is scrolled, and the picture stays below as
+the evidence.
+
+Where the mode stops the walk at its start (a route whose own address is graded
+below the mode's floor, walked down), the sentence says that instead, once,
+with the wider mode as a button ("In conservative this reaches nothing: this
+route's own address is graded HEURISTIC, and conservative stops at it."), and
+the empty lanes only say they are empty in that mode. Walked up, a route's own
+address does not stop the walk; if it is a guess, a line beside the answer says
+every caller found by that address carries the same grade.
+
+A row a call reached through an address that is not sure carries **address
+unsure**, and its title says why: the route's own address is a guess, the front
+of a frontend call's URL rests on a guess (`url.guess`: the port rests on
+Spring Boot's default, the port is not known, a fallback literal, a deployment
+host, an assumed import alias), the call went to a catch-all route a more
+specific one may shadow, or it matched only after a prefix was dropped. It is a
+tag, never a grade. A page a route renders on the server stands among the
+screens, tagged **page** and named by its template.
 
 ### The picture
 
@@ -322,8 +460,11 @@ The chain is drawn as lanes, one per step, from the target outwards, left to
 right. Each lane names every node in it, in the words a developer uses:
 
 - a method is `Class.method`, a MyBatis statement `Mapper.id`, an ORM call site
-  `Service.method #n`, a web function `module.function` (an index file is its
-  folder), a column `table.column`;
+  the call it makes, `UserService.deleteUser → Access.deleteMany` (from the
+  statement row's `call`, `{model, operation}`; two sites of one method that
+  make the same call grow by their ordinal first,
+  `UserService.deleteUser #0 → Access.deleteMany`), a web function
+  `module.function` (an index file is its folder), a column `table.column`;
 - a route keeps its verb and the segments that tell it apart, and gives up its
   middle;
 - two nodes that would read the same get more of what tells them apart
@@ -362,12 +503,21 @@ groups the same rows one step at a time, with a census per hop.
 ### Beside the answer
 
 Before the legend and the evidence rail, a panel says **what limited this
-answer**, each line with its count from the answer: how many rows stopped at a
-depth you asked for (with **Follow it all the way**), the node cap, the steps
+answer**, each count inside its sentence ("**{n}** rows stopped at depth {depth},
+and what lies past them was not followed."), so no language starts a line with a
+bare counter word: how many rows stopped at a depth you asked for (with
+**Follow it all the way**; walked up, it adds that Details lists every screen a
+change here is felt on, with no depth cap), the node cap, the steps
 inside generated code the profile skips, rows named just past the depth cap, every
 lane shown in part (`shown of total`), and a pack with no frontend, where which
 screens call a route is unknown rather than none. When nothing cut the answer,
-it says that.
+it says that. It never says a walk cannot go deeper: every walk's own rule is no
+cap.
+
+**How to read the lines** counts two things per grade, and says so:
+`lines {links}, row badges {rows}`. A line is the grade of that one link; a row's badge is the
+weakest link on its way from the start. RUNTIME_ONLY and UNRESOLVED are listed
+too, with what they mean, so no badge on the page is an unexplained code.
 
 **What this walk left out** is its own panel, shown when the mode floor left
 links out. It lists each grade it left out with its count and what that grade
@@ -375,7 +525,8 @@ means, offers the wider mode that would walk them, or says no mode walks them
 (a link decided at run time, or one the analysis could not tell). When a route's
 own link to its handler is below the floor, it says first that the walk stopped
 at the route. Under that are the analysis's diagnostics, one row per kind with
-its count, as on Analysis status.
+its count, as on Analysis status: each named in the page's words, with its code
+beside it and the engine's own sentences folded ("the engine's own words").
 
 ### Details
 
@@ -397,8 +548,9 @@ a change there is felt on (`screen_impact`), followed all the way up in the mode
 on screen, whatever depth the picture was asked at. Each is a way into Trace,
 walked down.
 
-**My edits** asks the same questions about your uncommitted git changes: what
-they touch below and the endpoints and screens above.
+**What my uncommitted edits touch**, under Options, asks the same questions
+about your uncommitted git changes: what they touch below and the endpoints and
+screens above.
 
 ### Exporting one answer
 
@@ -449,7 +601,14 @@ draw its own little code box now opens this one: a row's card on Trace, the
 **Source** button on a Details card, the same button on the graph's node cards,
 a statement in Coupling, and the Transactions boundary. It reads the file on
 disk through `GET /api/source`, so it shows what is there right now, not a copy
-baked into the pack.
+baked into the pack. It opens a file only under a root the pack records as
+analyzed: the project root and every root the run read (the Java roots, the
+mapper directories, the frontend roots, a TypeScript root, the template roots,
+the DDL files), so a frontend analyzed beside the project (`--web-src
+../mall-admin-web`) opens too. A path outside them, written with `..` or
+reached through a link, is refused, and the pane says why. A route only the
+frontend calls, which no analyzed code answers, says that no handler here
+answers it and opens nothing.
 
 It carries the file's own line numbers, marks the lines the answer is about with
 a bar and a tint, and scrolls to them with three lines of context above. The
@@ -470,8 +629,9 @@ closed until you ask again.
 
 ## Getting back to the whole
 
-Trace, Graph and Table links can narrow, and each carries a **Show all** at the
-right end of its toolbar. It is greyed out while the view already is its opening
+Trace, Graph and Table links can narrow. Graph and Table links carry a **Show
+all** at the right end of the toolbar, and Trace carries **Start over: nothing
+picked** under Options. **Show all** is greyed out while the view already is its opening
 state, so the button also tells you whether anything is narrowed. Pressing it
 clears the filter and the target, puts Trace's list back on the tables and
 clears its picture, folds the Graph map and fits it, drops the table highlight,
@@ -543,9 +703,14 @@ The whole schema, laid out by the joins the mapper SQL makes between tables. It
 used to be called the ERD. It is named for what it draws, because we do not read
 foreign keys: a relationship here is a join some statement makes. A table's size
 follows its relationship count on the same square-root rule as the map, and its
-label scales with it. A thicker line means more statements make that join. In
-the dark theme, tables sharing a name prefix take a desaturated tint of their
-kind's hue and the legend keys it; the light theme stays ink. Tables no SQL
+label scales with it. A thicker line means more statements make that join. A
+table's family is the one the map reads (`erd` carries it per table, with
+`familyRule`), not the name's prefix before its first underscore, so
+ghostfolio's Prisma models, which have no underscore, are grouped at all, and a
+table is never in one family here and another on the map. In the dark theme
+the five largest families each take a tint (a kind hue pulled towards the
+sheet) and the rest stay ink; the legend lists every family with its count and
+a swatch where it has a tint. The light theme stays ink. Tables no SQL
 joins to anything sit in a strip under the map, named as such rather than
 dropped. A table opens its Details on Trace, and its card has a way to walk it
 up.
@@ -586,7 +751,10 @@ build by its commit and build time; the place asks `pack_diff` with it as the
 base ([cli.md](cli.md#cascade-diff) has what is compared). It never offers
 another project, because two codebases differ in everything. For a commit the
 history does not hold, `cascade diff --base-commit <rev>` builds the base from
-the repository.
+the repository. An old link to Compare on a project with nothing to compare
+keeps the place marked while it is on screen, says "this project has no earlier
+build kept yet", and leaves Draw off; once the reader leaves, the place is
+hidden again.
 
 What the place draws is one report, read from the top. The title names the
 project, the base and the head (commit, build time, pack digest, and whether the
@@ -651,35 +819,91 @@ from, so the two can never disagree. The first view is **Scope and gaps**; the
 second is **Rules**.
 
 - **How fresh**: whether the pack still matches your working tree, in the
-  masthead chip's words, with when, from which commit and with which digest it
-  was built.
-- **Verification**: the computed trust level, what it means, the two things
-  that move it where there is no golden set, and every gate and known gap it
-  names.
+  masthead chip's words (`not compared with your working tree` where the verdict is
+  `unknown`), with when, from which commit and with which digest it was built.
+- **Verification**: the computed trust level, what it means, and every gate and
+  known gap it names. Where there is no golden set, the two things that move it
+  are folded under "How to change this". A known gap about a Java bridge on a
+  stack with no Java lane (`jpa-axis-not-shipped` on a NestJS project) is not
+  listed, for the reason the axes row leaves those bridges out.
 - **How it was counted**: the mode and depth of the census every share on Start
   and every count here was walked in, and the grades that mode follows.
 - **The axes**: one row per axis (schema, SQL, columns, code, frontend calls,
   screens, and the Java bridges where they ran): collected, only partly read or
   not collected; where it was read from; what it changes when it is not whole;
   and the engine's own reason.
-- **What we could not see**: every blind spot the overview names, as a row,
-  grouped by what you can do about it: inputs it did not have, what it could not
-  read, what this walk left out, what nothing reaches (worth a look, not an
-  error), and what is said for the record. Each row says three things: the
-  **cause**, the engine's own sentence, cut to its first line and opening to the
-  whole; what it **touches**, in the page's words and, where the answer names
-  them, the routes, statements or tables themselves, each a way into Trace; and
-  **what to do**. A kind the page has no words for is still listed, in its
-  group's words.
-- **What the lanes reported**: the lanes' diagnostics, one row per kind with its
-  count, and inside it one line per thing the rows say (names, paths and counts
-  taken out, so two ways of failing stay two lines), the first few in full, and
-  what to do. A moved cache once left 866 rows of one kind in this list; now it
-  is one row with its count.
+- **What the analysis did not see**: every blind spot the overview names, as a
+  row, grouped by what you can do about it: inputs it did not have, what it could
+  not read, what this walk left out, what nothing reaches (worth a look, not an
+  error), and what is said for the record. Each row has a title in the page's
+  words, and says three things: the **cause**, in the page's words with the
+  engine's count in it where the page has words for that kind, and the engine's
+  own sentence one click under it ("the engine's own words"); what it
+  **touches**, in the page's words and, where the answer names them, the routes,
+  statements or tables themselves, each a way into Trace; and **what to do**:
+  the engine's remedy where it gave one, the same line as on Start, that it
+  knows none for a gap that changes answers, and for a walk's own bound or a
+  place nothing reaches, the page's words on how to look. A title does not
+  settle a cause the engine leaves open: jeecg-boot's outbound targets read
+  **API calls no route here answers**, and the cause says each is another
+  service's, or a route of this project behind a prefix nobody declared. A
+  result of the mode's floor (endpoints that reach no SQL, SQL and tables
+  nothing reaches) carries a button to its cause ("cause: {n} links
+  conservative does not follow").
+- **What the analyzers warned about**: the diagnostics, one row per kind, titled
+  in the page's words (`TS_PREFIX_EXCLUDE_UNREAD` reads "unread setting: API
+  prefix exclude list"), with the code beside it and the count. Inside it, one
+  line per thing the rows say (names, paths and counts taken out, so two ways of
+  failing stay two lines), the first few in full, how many there are and how
+  many differ, and what to do outside the fold. A diagnostic that stands for many
+  (the schema reader's, one per kind) counts as all it stands for, and shows its
+  first sentences. Every diagnostic kind and every gap kind the engine can emit
+  has a title in English and Korean, and `test/i18n.test.mjs` reads the kinds
+  out of the engine's source, so a kind added without one fails the suite. An
+  axis's notes are folded the same way. A moved cache once left 866 rows of one
+  kind in this list; now it is one row with its count.
 - Connected projects, the ribbon that shows how far the chain gets, and the
   census: edges by type and grade, nodes by kind, and the Java side.
-- The evidence rail beside it carries every limit, word for word; the masthead's
-  limits chip opens the same list.
+- The evidence rail beside it carries every limit, each under its title and
+  word for word under that; the masthead's limits chip opens the same list.
+  **What this answer is based on** stands once per place, in the page's words:
+  `verification: not certified` with the level's chip, the freshness in words,
+  "{n} limits on this answer (the project has {n})", "cut short:" with the
+  lists and their shown and total, then the folds "what it was built from" and
+  "what the trust level rests on", each row naming on its title the contract
+  field it relays (`basis.builtAt`). Trace's Details, which ask two tools, merge
+  the second answer's limits into the one box.
+
+### How a limit gets its title
+
+A limit is two things the engine wrote: its scope (which answer, or which part
+of the pack, it is about) and a sentence. The page puts a title over the
+sentence and never rewrites it. The title is, in turn:
+
+- a diagnostic's own title, for `diagnostic:<KIND>`;
+- for `axis:<name>`, what the axis says of itself, in the words Start and
+  Analysis status use: `JPA mappings: not collected`, `frontend calls: only
+  partly read`, or, for a note on an axis that was collected, `code: one thing
+  it did not see`;
+- for a gap the overview relays, the gap's own label;
+- a topic, when the sentence opens the way one kind of sentence does in every
+  tool: a depth cap, a node cap, a cut to fit the answer, a walk that reached no
+  SQL, links below the mode's floor, links no mode follows, steps inside
+  generated code, a route with several handlers, how sure a route's address or
+  its handler link is, what a group is, what the counts rest on, calls traced to
+  no client, calls into a module that was not analyzed. A depth cap reads the
+  same on the map, in a trace and in the sharing matrix;
+- otherwise the scope's own title.
+
+The rules are `src/viewer/limit_titles.mjs`, served to the page at
+`GET /viewer/lib/limit_titles.js` like the catalogue. `test/i18n.test.mjs` reads
+every limit scope the engine can emit out of `src/` and fails when one has no
+title in English and Korean; it also fails when a topic's opening no longer
+starts any sentence in `src/`, so a reworded sentence loses its title in a red
+test rather than quietly. A scope the page has no words for (one a newer engine
+wrote) is shown as before: the scope, and the first words of its sentence. A
+flood of one diagnostic is titled by the kind's title, and its code moves under
+the fold beside the sentences.
 
 The limits that change ONE answer are also said beside that answer on Trace
 (what limited this answer, and what this walk left out): this place holds the
@@ -701,10 +925,13 @@ panel saying zero about something this pack does not do is noise.
 
 What the engine knows about frameworks is in rule packs ([rules.md](rules.md)),
 and this view reads them through the `rules` tool, the same answer a model gets
-over MCP ([mcp.md](mcp.md#rules)). It opens on the rules that gave something in
-this project, the biggest first, with the rest one click away (**applies here**
-or **all**). A NestJS project used to open on a MyBatis-Plus-Join rule that did
-nothing for it.
+over MCP ([mcp.md](mcp.md#rules)). It opens on what applies here, the rules that
+gave something in this project, the biggest first, with the rest one click away
+(**applies here** or **all**), even when that is nothing: a project no rule pack
+drew a link or a node for says so in one line ("No rule in the rule packs drew a
+link or a node in this project. That is normal where the project uses no
+framework a pack describes. ...") and opens no rule about another stack. A
+NestJS project used to open on a MyBatis-Plus-Join rule that did nothing for it.
 
 A search box and a kind and a lane filter narrow the rows the answer already
 holds, and ask the server nothing. A rule shows its description, why it is
@@ -803,13 +1030,20 @@ Translated: the **chrome**, meaning every word the *page* wrote for itself.
 - buttons, toggles, select options, input placeholders, tooltips
 - the lead and the paragraph under each view's fold
 - loading lines, empty states and the frame around an error banner
+- the words the page puts around the engine's: a gap's and a diagnostic's title
+  and cause, a limit's title, the rail's labels (verification, limits on this
+  answer, cut short, what it was built from), the column headings of every
+  table, the list's number labels
 
 Not translated: everything the *engine* said.
 
 - edge grades (`EXACT`, `SOUND_SET`, `HEURISTIC`, `RUNTIME_ONLY`, `UNRESOLVED`)
 - trust levels and trust axes, freshness verdicts
-- `limits`, truncation notes, `empty` reasons (`not-shipped`, `not-in-this-axis`)
+- `limits`, truncation notes, `empty` reasons (`not-shipped`, `not-in-this-axis`):
+  a limit gets a title in the page's words, and its sentence stays the engine's,
+  one click under it
 - every tool's error message, node id, column name, SQL text and comment
+- a diagnostic's code and a gap's kind, which stay beside the page's title
 
 That split is the honesty contract. A translated grade is a grade
 this project invented: no reader could check it against the engine's own answer,
@@ -826,6 +1060,9 @@ the SVG legend and what this walk left out.
   so the local server hands it this very module at `GET /viewer/lib/i18n.js`,
   minus its `export ` keywords. One file: there is no copy to drift, and
   `test/i18n.test.mjs` checks that what is served is the module.
+- `src/viewer/limit_titles.mjs` names which catalogue key a limit's title comes
+  from. The page gets it at `GET /viewer/lib/limit_titles.js`, minus its
+  `export ` keywords, the same way it gets the catalogue.
 - `viewer/i18n/<lang>.json` is one file per other language, served by
   `GET /i18n/<lang>.json` from an allowlisted directory, like `/vendor`: only
   `.json`, only out of that directory, and every escape a 404.

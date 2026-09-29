@@ -525,7 +525,7 @@ nothing across files; that is the bridge's job):
 | `binding` | a top-level `const` whose initializer is a call, a `new`, or another name, plus the `baseURL` when one is built there |
 | `class` | a class, with the methods and fields it declares (a client written as a class is as common as one written as a function), and the class it extends (`extends`). `component: true` when a decorator a router pack names marks it (Angular's `@Component`) |
 | `assign` | `this.<field> = …` anywhere in a class body, with the same `init` shape a `binding` carries — this is where a class puts the client it sends through. A field whose TYPE the class states (a constructor parameter property, a field set from a declared injector) is an `assign` too, with a `typed` init |
-| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`, with `minus` or `part` when it hands on less than a whole parameter, and `written` or `handed` when the function writes the object or hands it to another call), what it writes under a method key or a client's base URL key (`sets`), and what it reads apart from that (`reads`, with `open` and why when a name there is not settled, and `under` for what lands under one key of an object argument) |
+| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`, with `minus` or `part` when it hands on less than a whole parameter, and `written` or `handed` when the function writes the object or hands it anywhere else), what it writes under a method key or a client's base URL key (`sets`), and what it reads apart from that (`reads`, with `open` and why when a name there is not settled, and `under` for what lands under one key of an object argument) |
 | `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`, wherever it is written, a class decorator's argument included, and `@Injectable({ useClass, … })` for the class it decorates |
 | `route` | a route declaration, with its path AS WRITTEN, its component, its parent and its child count, and where on its line it and its parent are (`col`, `parentCol`), since two routes can share a line. A route of a module pack also carries what joins it to other files: the list it sits in (`list`), a path written as a constant (`pathRef`), the list it loads lazily (`childrenFrom`), the export a lazy component names (`componentExport`), and `grouping` / `outlet` |
 | `routeRef` | a route or a list named by NAME inside a list or under `children`, and a list a child registrar (`forChild`) registers |
@@ -545,7 +545,11 @@ literal, a template (`'/things/' + id` and `` `/things/${id}` `` both become
 `/things/{*}`), a member of a constant declared in the same file, or a local
 `const` followed once. Anything it cannot resolve says why:
 `parameter`, `expression` or `imported-constant`, and an imported constant keeps
-the binding so the bridge can go and look.
+the binding so the bridge can go and look. An object argument lists the keys it
+writes (`names`, and `computed` when a key is written by an expression), and a
+call says whether its `params` is written as an object or an array
+(`params: "object"`), which a wrapper step a rule pack names is read by
+(`webfacts/22`).
 
 ## The flags
 
@@ -941,15 +945,15 @@ and turns each call site into one edge per route it can be shown to reach.
 | an HTTP client library instance (a declaration pack names the library) called through one of its verbs, including a field whose TYPE the class declares as that client | **SOUND_SET** | the library sends the request, and the URL is the argument the library reads |
 | a **wrapper** traced back to one of those, by following what each name is bound to | **SOUND_SET** | every hop is a binding the lane read, and the hops are on the edge (`evidence.sink.chain`) |
 | a URL-shaped argument handed to a call the lane could **not** trace to any sink | **HEURISTIC** | the call may send this URL or may only build it: a rule guessed |
-| any of the above where the prefix was chosen by match count, a path alias was assumed, the base URL rests on a guess (see *A base URL the build decides*), or the call has no method at all | **HEURISTIC** | one part of the answer is a guess, so the whole edge is |
+| any of the above where the prefix was chosen by match count, a path alias was assumed, the base URL or the port rests on a guess (see *A base URL the build decides* and *This machine, another port*), a wrapper step may have changed the URL, the method or the base URL without the code saying how (`evidence.sink.unsettled`), the method is not known, the call reached a catch-all route a more specific one may shadow (`catchAll`, `prefixShift`), or the route's own address is a guess (`address`) | **HEURISTIC** | one part of the answer is a guess, so the whole edge is |
 | a browser recording (HAR) | **RUNTIME_ONLY** | a recording proves a request happened once and proves nothing about what the code can do, so the edge sits below every query mode's floor: it is **shown** (`observed: true`) and **never walked**, and it never raises the grade of the static edge beside it. An APM trace or an access log is still not read. See *Recordings (HAR)* below |
-| a URL that resolved but no route here answers, one naming another host, or one on this machine on a port no application of this pack listens on | **UNRESOLVED** | the edge is below every mode's floor, so no walk follows it. The route is a node marked `outbound`, `source: "web"`, exactly as a Feign call that leaves the pack is |
+| a URL that resolved but no route here answers, one naming another host, or one on this machine on a port no application of this pack listens on, while every application's port is stated | **UNRESOLVED** | the edge is below every mode's floor, so no walk follows it. The route is a node marked `outbound`, `source: "web"`, exactly as a Feign call that leaves the pack is |
 
 A call whose URL never resolved at all gets **no edge** and is counted by the
-reason the worker gave (`parameter`, `expression`, `importedConstant`). Two more
+reason the worker gave (`parameter`, `expression`, `importedConstant`). Four more
 reasons come from the bridge: `noMatch` (it resolved, nothing here serves it),
-`outsidePack` (another host) and `allHoles` (see below). Nothing is dropped in
-silence.
+`outsidePack` (another host), `allHoles` (see below) and `noBuild` (see *A base
+URL the build decides*). Nothing is dropped in silence.
 
 ### What a wrapper is
 
@@ -973,7 +977,9 @@ So a class whose `get(config)` returns `this.request({ …config, method: 'GET' 
 and whose `request(config)` returns `this.inner.request(config)` is followed all
 the way to `axios.create`, and the edge records the chain and the depth. The
 method comes from the wrapper's own verb where it has one, then from the call's
-config, then from the library's documented default (`method.from` says which).
+config, then from the library's documented default, but the default only where
+no step on the way may have written a method (`method.from` says which).
+Otherwise the method is not known.
 A verb whose name is not a method (`jsonp`, superagent's `del`) takes its method
 from the library's verb table in the pack (`library-verb`).
 
@@ -1039,31 +1045,53 @@ as a key's value is a hand too) and what it reads apart from that (`reads`).
 
 - A hop whose hands carry the URL's part moves it along. A rest or a copy that
   does not name the caller's `url` carries it.
-- A hop that names it and hands it on no other way has dropped it. The request
-  that call makes does not ask for the caller's URL, so the call draws **no
-  edge**. It is counted in `laneStats.web.calls.urlNotHandedOn`, and the run
-  prints `WEB_URL_NOT_HANDED_ON` when there are any.
+- A hop that names it and hands it on no other way, and writes a URL there that
+  reads nothing of its parameters, has dropped it. The request that call makes
+  does not ask for the caller's URL, so the call draws **no edge**. It is
+  counted in `laneStats.web.calls.urlNotHandedOn`, and the run prints
+  `WEB_URL_NOT_HANDED_ON` when there are any.
+- A copy that writes the URL back as the parameter's own value
+  (`{ ...option, url: option.url }`) carries it. One that builds it from the
+  parameter (`` url: `${option.url}` ``, `option.url || ''`) wrote it, so the
+  hop is not settled (see below), and the edge says so.
+- A URL this lane never read (`api.post(cfg)` with `cfg` a local) is never said
+  to be dropped: it is counted where an unread URL is counted
+  (`unresolved.byReason`), not under `urlNotHandedOn`. Neither is one kept in a
+  module `let` or a page global: that hop is not settled, and the edge says so.
 
 **Where the method comes from.** `method.from` on the edge says which of these
 it was:
 
 - `config`: the caller's object names a verb, and every step hands that key on.
-  A method the caller wrote that a step drops does not arrive.
+  A method the caller wrote that a step drops does not arrive. A step that
+  writes what it was handed at one of its parameters
+  (`axios({ url, method: m })`, `axios({ method: o.method })`) sends what the
+  caller put there, when the walk carried it that far and the step is settled:
+  `req('/items', 'DELETE')` is a DELETE. Where nothing was carried in, the
+  method is not known.
 - `wrapper-verb`: a step writes a verb after what it was handed. So does a
   write on the object before it is handed on, `cfg.method = 'POST'` or
   `Object.assign(cfg, { method: 'DELETE' })`, when it always runs (not under an
-  `if`, a loop, a `&&` or a callback).
+  `if`, a loop, a `&&` or a callback), puts a string there, is the only write
+  that can reach the key, and the object is handed nowhere else.
 - `wrapper-default`: a step writes a default, and nothing the caller handed in
   carries a method.
 - `library-verb`: the verb the client is called through (`service.get(…)`), as
   the HTTP client pack's verb table states it.
-- `library-default`: no method arrives, so the client sends its documented
-  default.
-- `absent`: the method is not known, and the edge is HEURISTIC. That is a method
-  written as something other than a verb (`{ method: verb }`), which is never
-  read as the library's default, or a caller's options that could carry one the
-  lane cannot see (a spread, a name, an argument past the three a call record
-  reads), with the step's default beside it as `wrapperDefault`.
+- `library-default`: no method arrives and no step on the way may have written
+  one, so the client sends its documented default.
+- `absent`: the method is not known. Every method the path is served with is a
+  candidate, each edge HEURISTIC, and the library's default is never taken for
+  it. That is a method written as something other than a verb
+  (`{ method: verb }`, `written: "variable"`); a caller's options that could
+  carry one the lane cannot see (a spread, a name, an argument past the three a
+  call record reads), with the step's default beside it as `wrapperDefault`;
+  and a step that may have written the method without saying what: it writes
+  the object under a method key or a key it cannot name, hands it anywhere
+  else, or passes the URL on through an expression, a `let` or `this`. A spread
+  of an object that is not one of the function's parameters
+  (`axios({ ...defaults, ...o })`) may carry a method too: when nothing after
+  it replaces it, the method is not known, with `written: "spread"`.
 
 A step that makes more than one client call
 (`if (o.upload) return axios({ ...o, method: 'POST' }); return axios({ ...o, method: 'GET' })`)
@@ -1073,31 +1101,77 @@ branch: the edge is HEURISTIC and says so (`branches`).
 
 **Where the base URL comes from.** A base URL the request carries of its own
 replaces the client instance's: one the caller writes under the client's base
-URL key (`baseURL` for axios, from the HTTP client pack), one a step writes, or
-one written into a client call's own options. When it is a path, it is the
-prefix, `evidence.prefix.from: "request"`. When it is not a path this lane can
-read (an absolute address, a name), the edge is HEURISTIC and says so
-(`request-base`).
+URL key (`baseURL` for axios, from the HTTP client pack), one a step writes
+where the write always runs, puts a string there and is the only one that can
+reach the key, or one written into a client call's own options. When it is a
+path, it is the prefix, `evidence.prefix.from: "request"`. When it is not a path
+this lane can read (an absolute address, a name), the edge is HEURISTIC and says
+so (`request-base`). A step that writes the base URL key in a way the code does
+not settle (`if (o.alt) cfg.baseURL = '/v2'`, `cfg.baseURL = b`, the key written
+twice) leaves the base not known: the edge is HEURISTIC and names the step and
+the key (`evidence.sink.unsettled` with `why: "written"`, `key: "baseURL"`). A
+spread of an object that is not a parameter (`{ ...defaults, ...o }`) leaves it
+not known too, said as `request-base`.
 
-**Settled means nothing writes the key.** A hop that hands the object on is
-settled only while nothing changes it on the way. The worker reads each named
-function once for the writes it makes through a name
-(`adapters/web/lib/writes.mjs`): a member assignment, `delete`, `++`,
-`Object.assign`, and every call the name is handed to. A hand says which keys
-its object had written (`written`) and whether it was also handed to another
-call (`handed`). A step that writes the key the URL, the method or the base URL
-is under, or hands the object to another call, leaves that key unsettled. A
-write under another key unsettles nothing, and what a call reads under one key
-of an object argument can only land under that key (`reads.under`), so
-`{ ...option, params: qs(option) }` still hands the URL on.
+**Settled means nothing may have written the key.** A hop that hands the object
+on is settled only while nothing changes it on the way, and that is decided by
+default-deny (`adapters/web/lib/uses.mjs`, with `writes.mjs` built on it): an
+object is left as it was only in the shapes the code knows leave it so. Every
+place a named function reads a name is classified.
+
+- It is a READ only in those shapes: a key read as a value (`cfg.url`,
+  `cfg.url.startsWith(...)`), a test or an operand (`if (!cfg.url)`,
+  `typeof cfg`), a spread copy (`{ ...cfg }`), a destructuring declaration
+  (`const { url } = cfg`), a `const` alias, and a read-only builtin
+  (`Object.keys`, `JSON.stringify`).
+- A WRITE says the key it names: a member assignment, `delete`, `++`, a target
+  of a destructuring assignment or of a for-of (`({ u: cfg.url } = ...)`), and
+  `Object.assign(cfg, ...)`. A method called on the object (`cfg.move()`), and
+  `Object.defineProperty` or `Reflect.set` on it, may write any key.
+- Every other place HANDS the object on: a call's argument, a container
+  (`[cfg]`, `{ cfg }`), a store on another object (`other.cfg = cfg`), a copy
+  through `? :`, `||` or `??` that is kept or passed on, a `let`, a tagged
+  template. Code this reader does not follow may change it there.
+
+A hand says which keys its object had written (`written`) and whether it was
+also handed anywhere else (`handed`). A step that writes the key the URL, the
+method or the base URL is under, or hands the object anywhere else, leaves that
+key unsettled. A write under another key unsettles nothing, and what a call
+reads under one key of an object argument can only land under that key
+(`reads.under`), so `{ ...option, params: option.params }` and
+`{ ...option, params: qs(option.params) }` still hand the URL on.
+`{ ...option, params: qs(option) }` does not: it hands the whole object to
+`qs`, which may write any key of it.
 
 A hop the code does not settle (a local assigned again, a parameter the body
-writes over, a key the step writes, an object handed to another call, `this`,
+writes over, a key the step writes, an object handed anywhere else, `this`,
 `arguments`, a call on the options, a return whose arguments were not read) is
 taken as reaching the client, as a wrapper always was, but the edge is graded
-HEURISTIC and names the step, the key and why (`evidence.sink.unsettled`). Such
-calls are counted in `calls.urlThroughUnreadHop`, by why in
-`calls.unreadHopBy`, and the run prints `WEB_URL_THROUGH_UNREAD_HOP`.
+HEURISTIC and names the step, the key and why (`evidence.sink.unsettled`; `why`
+is one of `reassigned`, `this`, `arguments`, `unbound`, `deep`, `computed`,
+`unrecorded`, `written`, `handed`, `branches`, `request-base`, `hop-option`,
+`hop-append`). The method and the base URL behind such a step are not known
+either, never a default. Such calls are counted in `calls.urlThroughUnreadHop`,
+by why in `calls.unreadHopBy`, and the run prints `WEB_URL_THROUGH_UNREAD_HOP`.
+
+**A step a rule pack names.** A framework's own client class may pass the
+request through a local its hooks assign again, which the reading above rightly
+does not settle, while the framework's own source says what the step does.
+vue-vben-admin's `VAxios.request` is one: every call through it was HEURISTIC
+and named that step (jeecg-boot: 799). A `web.wrapper-hop` rule
+([rules.md](../rules.md#a-frameworks-own-wrapper-step)) names such a step by the
+shape of its class, never by a name, and says what it does to the URL, the
+method and the base URL; the `vben-admin` pack holds the one for
+vue-vben-admin. The walk reads the step as the rule says only where its client
+call hands the client a local the step assigns again. Then the verb the
+caller's verb method writes arrives (`method.from: "wrapper-verb"`), and the
+URL arrives behind the prefix the step's request options decide (see *The
+prefix, and how to declare it*). A call whose own options may set that prefix,
+or whose `params` may be text the step appends to the path, is not settled and
+says why (`hop-option`, `hop-append`). The edge names the rule and the step
+(`evidence.sink.hop`), and `laneStats.web.calls.throughNamedStep` counts, per
+rule, the calls through a named step and how many of them it settled. A step no
+rule names stays as its code reads.
 
 ### The prefix, and how to declare it
 
@@ -1115,7 +1189,9 @@ client instance, in this order, and the answer is on every edge as
    with an empty prefix, because that is what the library does, not a guess.
 3. **`auto`** — nothing in the source states it: the base URL names an env value
    no `.env` file declares, the modes disagree with no proxy rule to settle
-   them, or a relative prefix has no proxy rule at all. Every candidate is then
+   them, a relative prefix has no proxy rule at all, or the call goes through a
+   wrapper step a rule pack names, whose prefix request options decide that this
+   lane does not read. Every candidate is then
    matched against the routes this pack serves and the one with the most exact
    hits wins. **That is a guess**, so every edge through it is HEURISTIC and the
    candidate counts are on the edge.
@@ -1131,6 +1207,19 @@ The key is the prefix the FRONTEND writes, the value the prefix the BACKEND
 serves. `"/dev-api": ""` says "the dev server strips it". A key of `"*"` applies
 to every call in the project. Declaring it moves the axis from `degraded` to
 `shipped` and the edges from HEURISTIC to SOUND_SET.
+
+The prefix a named wrapper step puts before the URL is only declared by `"*"`.
+Until it is, a call through the step is placed behind the step's view of the
+client with the prefix chosen by match count (`evidence.prefix.from: "auto"`,
+with `evidence.prefix.hop` naming the rule and the option keys), and the prefix
+census (`laneStats.web.prefix`) lists that view beside the client. On
+jeecg-boot, 800 calls go through the named step and 278 of them are settled.
+With the default profile its web axis went from shipped to degraded, because
+the prefix is no longer taken as empty, and 41 fewer `CALLS_HTTP` edges are
+HEURISTIC (643 to 602) now that the verb arrives. With
+`gatewayRoutes {"*": ""}` declared, the named step took SOUND_SET `CALLS_HTTP`
+edges from 119 to 287, and conservative screens reaching a table from 8 to 23
+of 181.
 
 The key is applied in both places a prefix can sit: on the client's base URL,
 and on the CALL PATH itself when the call carries the prefix (`$http.get(
@@ -1190,16 +1279,18 @@ server (the pack's `localHosts`). A call to one is matched against this pack
 instead of being left outside it. Which port means which service is the next
 section.
 
-**Three things a base URL can rest on are guesses.** Every edge built on one is
-HEURISTIC, with `guess` on `evidence.prefix` (a client's base URL) or on
-`evidence.url` (the front of a call's URL), and the `web` axis is `degraded`
-with a reason that says what to do:
+**Five things a base URL or an address can rest on are guesses.** Every edge
+built on one is HEURISTIC, with `guess` on `evidence.prefix` (a client's base
+URL) or on `evidence.url` (a call's own address, or the front of its URL), and
+the `web` axis is `degraded` with a reason that says what to do:
 
 | `guess` | what the value rests on | what the axis tells you to do |
 |---|---|---|
 | `fallback` | in at least one build, the literal of `X \|\| 'lit'`, because no `.env` file that build reads sets X, or one writes it empty (`X=`: the empty string is falsy, where `X ?? 'lit'` keeps it). A shell, a CI job or a container may set it, and nothing in the tree can show that nothing does | set the value in a `.env` file the build reads |
 | `deployment-host` | every build names a host that is not this machine, and which code answers there is not in the source. When one build opens the same path on this machine, the remote builds are read as that backend deployed, and there is no guess | give the development build an address on this machine in a `.env` file, or declare `gatewayRoutes {"*": "<back>"}` |
 | `assumed-alias` | the base URL was read from a module reached through an import alias this engine assumed | declare the alias |
+| `port-default` | this machine, on a port no file states, while an application's port rests on Spring Boot's default (see the next section) | state `server.port` in that application's configuration, or declare its port in the profile's `servers` |
+| `port-unknown` | this machine, on a port no file states, while an application's port is not known | declare that application's port in `servers` |
 
 ### This machine, another port
 
@@ -1212,21 +1303,38 @@ application runs. An application is the `resources` directory its configuration
 sits in. Where no document that applies without a profile sets the port, the
 application also listens on Spring Boot's documented default, 8080.
 
-A call to this machine on a port it WRITES that no application of this pack
-listens on is another service's call: in its own address, in its client's base
-URL in every build, or in an environment value at its front. It stays outbound,
-graded UNRESOLVED with `target: "outside-pack"`, and `evidence.away` names both
-ports and the file that set them. When its path is one this pack also serves,
-the edge lands on that route's node, still UNRESOLVED, so no walk follows it.
-The same port, no port written, or ports that are not known: as before.
+**A deployment file is one more way the application runs**, like a profile
+(`src/core/server_ports_deploy.mjs`). A `Dockerfile` (also `Dockerfile.x` and
+`*.dockerfile`) that starts it with `--server.port=9090`, `-Dserver.port=9090`
+or `ENV SERVER_PORT 9090`, and a compose file (`compose.yml`,
+`docker-compose.yml` and their variants) that sets `SERVER_PORT: 9090`, give a
+port read beside the configuration's. A line that starts with `#` is a comment,
+and a file under a test path is not read. A deployment file speaks for the
+applications under its directory, or for every application when it sits beside
+none. One that sets the port from elsewhere (`--server.port=${ADMIN_PORT}`)
+makes it not known. A port a deployment file states does not take away the
+default: without it, the application still listens on 8080.
+
+While every application's port is stated, a call to this machine on a port it
+WRITES that no application of this pack listens on is another service's call:
+in its own address, in its client's base URL in every build, or in an
+environment value at its front. It stays outbound, graded UNRESOLVED with
+`target: "outside-pack"`, and `evidence.away` names both ports and the file that
+set them. When its path is one this pack also serves, the edge lands on that
+route's node, still UNRESOLVED, so no walk follows it. The same port, or no port
+written: as before. When a port is not known or rests on the default, see *What
+decides nothing* below.
 
 **Code can set the port too.** A Java or Kotlin source is read with its comments
 taken out (`src/core/server_ports_java.mjs`), and it belongs to the application
 whose `src/main/resources` sits beside its `src/main/java` or `src/main/kotlin`,
 the top of the repository included. What sets a port in code is a list of data,
 `PORT_SET_IN_CODE`: `setPort` on a web server factory, `setDefaultProperties`
-on the application, and `server.port` put in as a property (a map entry, a
-system property, a builder argument). A hit makes that application's port
+on the application, and a string that names the key as it is set
+(`"server.port"`, `"--server.port=..."`, `"-Dserver.port=..."`) anywhere in the
+code: a map entry at any place, a constant, a system property, a builder
+argument. The one exception is the argument of a read (`getProperty`,
+`getRequiredProperty`, `containsProperty`). A hit makes that application's port
 unknown, with the rule's own words as the reason. A `@PropertySource` that
 names a file on the classpath is looked for in the tree, under that
 application's `resources`, and read like any configuration file: one that sets
@@ -1234,7 +1342,9 @@ no port changes nothing. One outside the classpath, one written with a
 placeholder, or one the tree does not hold makes the port unknown.
 
 An application's port is not known when a `server.port` is a placeholder
-(`${PORT:8080}`) or not a number, when the application takes its configuration
+(`${PORT:8080}`) or not a number, when it is `0` (the application picks a port
+when it starts), when a deployment file sets it from elsewhere, when the
+application takes its configuration
 from outside the tree (a config server, Nacos, Consul, ZooKeeper), when it
 points at configuration this reader does not follow (any
 `spring.config.import`, a classpath file included, `spring.config.location`,
@@ -1242,22 +1352,58 @@ points at configuration this reader does not follow (any
 code sets it as above. With no Spring configuration read at all, no port is
 known either.
 
-**What decides nothing.** Two things leave every call where its path puts it,
-whatever port it writes:
+**What decides nothing, and what is then not settled.** Two things leave a call
+where its path puts it, whatever port it writes, but not as a fact:
 
-- One application whose port is not known. A call on "another" port may be that
-  application's, so the pack's ports are not known. The ports the other
-  applications state are still read and printed beside the reason.
+- One application whose port is not known. A call on a port no application
+  states may be that application's or another service's. It stays this pack's
+  candidate, HEURISTIC, with `url.guess: "port-unknown"`. The ports the other
+  applications state are still read and printed beside the reason, and a call
+  on one of them is settled.
 - A port that rests on Spring Boot's default. Whatever starts the application
   may set another, so no call is another service's on the strength of 8080
-  alone.
+  alone, and a call on a port no file states, 8080 included, is this pack's
+  only on an assumed default: HEURISTIC, with `url.guess: "port-default"`.
+
+A call on a port some configuration or deployment file states is settled as
+before. The web axis names the base URLs and call URLs that rest on a port
+guess (`causes: ["port-default"]` or `["port-unknown"]`) and says which
+application to declare.
+
+**Saying the port the source does not.** When an application states no
+`server.port`, or states one a deployment fills in, its port is what whoever
+starts it chooses, and the tree cannot say it. The profile can:
+
+```json
+"servers": { "mall-admin": { "port": 8080, "from": "the deployment runbook" } }
+```
+
+The key is the directory that holds the application's `src/main/resources`,
+relative to the analyzed root (`"."` for its top); that resources directory
+itself (`mall-admin/src/main/resources`) is taken too. `port` is 1 to 65535 and
+`from` is a note for the reader; an entry takes no other key. The declared port
+is used INSTEAD of what the tree says about that application, including a port
+the tree leaves not known, and it is a STATED port: a call on this machine to it
+is settled (SOUND_SET where the route matches), and a call to another port is
+another service's, with `servers["mall-admin"] in the profile` named as where
+the port came from, while no other application rests on the default or is not
+known. An entry that names no application this run read is not applied and is
+warned as `SERVERS_UNUSED`. `laneStats.web.ports` records `declared` (with the
+ports the tree states), `unused`, and `assumed` (the applications whose port
+still rests on the default, by the key an entry would name them with), and
+`stated` lists every port a file or the profile states, never the default. On
+mall with mall-admin-web, the port guess took 166 `CALLS_HTTP` edges from
+SOUND_SET to HEURISTIC and conservative screens reaching a table from 44 of 54
+to 0; declaring `servers {"mall-admin": {"port": 8080}}` brings back all 166
+SOUND_SET and 44 of 54, with the pack digest mall had before.
 
 `cascade analyze` prints the ports and the files they came from, or why they are
-not known, and warns `WEB_OTHER_PORT` with the count when a call went to another
-port:
+not known, one line per declared port, and warns `WEB_OTHER_PORT` with the count
+when a call went to another port:
 
 ```
 Web lane: this pack listens on port(s) 8080 (server.port in src/main/resources/application.properties)
+Web lane: mall-admin/src/main/resources listens on port 8080, as servers["mall-admin"] in the profile states
 ```
 
 ### Gateway routes you do not have to type
@@ -1512,6 +1658,26 @@ matches by path and is HEURISTIC for it.
 A call that matches several routes gets an edge to each, and every one of them
 carries `evidence.candidates` saying how many.
 
+**A catch-all a path prefix nobody declared may shadow.** In a pack whose
+controllers get a path prefix that configuration code sets and the profile does
+not declare (`pathPrefixes`, see [the Java lane](java-lane.md)), a call that
+only `/**` catch-all routes match may really be meant for a concrete route
+behind that prefix. So the call's leading segments are taken off, the shortest
+drop first, and a concrete route that then matches is a candidate too. Both
+edges are HEURISTIC: the catch-all's says so in `evidence.catchAll`, the other's
+in `evidence.prefixShift` (the segments dropped), with `match: "exact-shifted"`
+or `"template-shifted"`. A call no drop finds a concrete route for keeps the
+catch-all as its only candidate, graded as before. Declaring `pathPrefixes`
+settles it. On ruoyi-vue-pro, 2,388 of 2,400 calls onto `DefaultController`'s
+catch-alls moved from SOUND_SET to HEURISTIC and gained 2,390 candidates on the
+concrete controllers; the 12 with no more specific route stayed SOUND_SET.
+
+**A route whose own address is a guess.** A route whose lane could not settle
+its address (a NestJS global prefix with an exclude this engine cannot read)
+says so on its `HANDLES` evidence (`address`). A call matched to it is graded
+no higher than that, and says why in its own `evidence.address`, so every walk
+reads the doubt on the call's link.
+
 ## The lane lines
 
 ```
@@ -1525,10 +1691,12 @@ Web lane: 1 client instance(s), 0 wrapper(s) (deepest 0), 121 exact and 0 templa
 
 The first line is the worker's, the other two the bridge's. The same counts go
 into `pack.meta.laneStats.web`, so what was printed and what was recorded cannot
-disagree. Below them come the ports this pack listens on, or why they are not
-known (see *This machine, another port*), `WEB_URL_NOT_HANDED_ON` when a
-wrapper did not hand a call's URL on, and `WEB_URL_THROUGH_UNREAD_HOP` when a
-URL, a method or a base URL passed a wrapper step the code does not settle.
+disagree. Below them come `WEB_URL_NOT_HANDED_ON` when a wrapper did not hand a
+call's URL on, `WEB_URL_THROUGH_UNREAD_HOP` when a URL, a method or a base URL
+passed a wrapper step the code does not settle, one line per rule that names a
+wrapper step with the calls it settled, and the ports this pack listens on, or
+why they are not known, with one line per port the profile declares (see *This
+machine, another port*).
 
 ### What the web axis says
 
@@ -1536,10 +1704,23 @@ The `web` axis is `shipped` when nothing about the frontend had to be guessed.
 It is `degraded` when no call reached a route this pack serves, or when part of
 what did rests on a guess:
 
-- a prefix chosen by match count, or not found even that way (`auto`, `none`);
+- a prefix chosen by match count, or not found even that way (`auto`, `none`),
+  the prefix a wrapper step a rule pack names puts before the URL included
+  (declare `gatewayRoutes {"*": ...}`);
 - a call through an alias this engine assumed;
-- a base URL that rests on a guess (the table in *A base URL the build decides*);
+- a base URL or an address that rests on a guess (the table in *A base URL the
+  build decides*), a port on this machine that no file states included (declare
+  the port in `servers`);
 - calls traced to no client at least as many as the calls traced.
+
+A degraded axis carries `causes`, one word per thing that degrades it:
+`prefix-by-count`, `alias-assumed`, each guess a base URL or an address rests on
+(`fallback`, `deployment-host`, `assumed-alias`, `port-default`,
+`port-unknown`), and `untraced`. Its reason names the fix, for a port guess the
+application to declare (`declare servers {"mall-admin": {"port": 8080}}`), and
+where every cause is a port guess, the overview's `axisRemedies.web` gives the
+`servers` key with that example. An axis degraded because no call reached a
+route this pack serves carries no `causes`.
 
 A few untraced calls do not degrade the axis. Each is still an edge, graded
 HEURISTIC and saying so on itself. They are said in a **note** on the axis
@@ -1629,8 +1810,13 @@ the `gatewayRoutes` of the profile the base pack was built with, as `analyze`
 does, so an overlay over no edit builds the graph the pack holds, and a call the
 pack left outbound because of its port stays outbound.
 
-- **A frontend in a repository of its own.** `analyze` records the commit it
-  read that repository at, beside the fact index. When that repository has
+- **A frontend in a repository of its own**, beside the analyzed root or nested
+  inside it. `analyze` records the commit it read that repository at, beside
+  the fact index, and that commit is part of the pack's pin, so a run over the
+  same backend and a frontend at another commit is a `REPIN` to the calibration
+  gate, not a nondeterminism. Its uncommitted files are the pack's dirty files
+  (`meta.base.dirtyFiles`), so the pin says dirty, and the overlay always reads
+  them again: an edit you then undo is seen as undone. When that repository has
   moved on, the overlay is discarded and the answer is `behind`, as when the
   backend's HEAD moves. A frontend outside the analyzed root that is in no
   repository at all is said in `limits`: the overlay cannot tell what changed
@@ -1641,9 +1827,11 @@ pack left outbound because of its port stays outbound.
 - **Packages and ports are not decided again.** An edited `package.json` near a
   frontend is named in the answer's `limits`. So is, when the pack read ports,
   an edited Spring configuration, a file the base pack read a port from, a file
-  it named as the reason a port is unknown, and a Java source that now loads
-  configuration (`@PropertySource`) or sets the port in code. A pack built
-  before it recorded its packages says so too.
+  it named as the reason a port is unknown, any other `.properties`, `.yml` or
+  `.yaml` file outside the test tree that now states a port, and a Java source
+  that now loads configuration (`@PropertySource`) or sets the port in code. The
+  ports the profile's `servers` declares are kept as the base pack read them. A
+  pack built before it recorded its packages says so too.
 
 Measured on the integration fixture, one edited `.vue`: **67 ms** total for the
 lanes (web 63, sql 1, graph 3), against a one-second gate.
@@ -1660,6 +1848,28 @@ Swagger 2 takes its prefix from `basePath`; OpenAPI 3 from the path part of
 substituting its default would invent a base path the document did not state).
 Each `(method, path)` becomes an endpoint; a path item with no verb at all still
 declares the path, with the method `ANY`.
+
+**Saying a document is in step with the code.** The source cannot say that a
+document is current. Two profile keys say it, one per direction, each a list of
+documents named as `openapi.documents` names them:
+
+- `openapi.generatedFromCode`: a build writes the document from this code as it
+  is now (springdoc does). A Spring functional route that only the document's
+  operation id places is then graded as its handler is read (see [the Java
+  lane](java-lane.md#routes-built-with-calls-functional-endpoints)).
+- `openapi.generatesCode`: the build generates this code's interfaces from the
+  document (openapi-generator does). A contract link on it is then EXACT when
+  the interface's name holds whatever the generator groups operations by (see
+  *Contract-first backends* below).
+
+A declaration the other way settles nothing: a document written from the code
+says nothing about generated interfaces, and one that generates them says
+nothing about where hand-written code mounts a route. The validator refuses a
+document written the same way in both lists. An entry that names no document the
+run read is warned as `OPENAPI_DECLARATION_UNUSED`. Without either key, `cascade
+analyze` names what rests on an undeclared document, `ROUTE_MOUNT_FROM_DOCUMENT`
+for the functional routes and `CONTRACT_FROM_DOCUMENT` for the contract links,
+each with the key that settles it.
 
 **The YAML subset.** This engine has no runtime dependencies, so the YAML reader
 is written here (`src/adapters/openapi_bridge.mjs`) and it is deliberately small:
@@ -1682,7 +1892,8 @@ without the construct.
 about the same routes. A route both name is CORROBORATED: the endpoint node gains
 `declaredBy` (the documents that declare it, sorted) plus `operationId` and
 `summary` when the document carries them, and keeps whatever grade the code lane
-gave it. A route only the document names is added with **no handler edge**. The
+gave it. A route only the document names is added with **no handler edge** of
+its own; a rule may still give it one, as the next paragraphs say. The
 drift census is on `meta.laneStats.openapi` and in the overview's
 `openapi-drift` gap, in both directions:
 
@@ -1700,18 +1911,24 @@ controllers with no mapping, and the document's routes have nothing under them.
 The rule `openapi-generator.spring-interface` pairs the two by the generator's
 naming, for a class the framework serves (`@RestController`, `@Controller`)
 only, and draws a HANDLES edge graded **HEURISTIC**, with the rule, the
-operationId, the documents and the interface on its evidence. How the rule
-reads the names is in [the rule packs page](../rules.md).
+operationId, the documents and the interface on its evidence. With the document
+declared in `openapi.generatesCode`, the link is EXACT when every way the
+generator may group operations (by tag or by path, a setting not read) that
+gives some operation the interface's name puts this operation into it;
+otherwise it stays HEURISTIC and its evidence says which grouping it depends on.
+How the rule reads the names is in [the rule packs page](../rules.md).
 
 `cascade analyze` prints how many declared routes the rule gave a handler, warns
 `CONTRACT_NOT_LINKED` for a method it would not link, and prints no
 `OPENAPI_NOT_SERVED` for a route it linked. `laneStats.openapi.contractLinks`
 lists the links and the methods left unlinked; a pairing whose route the code
 already maps to the same method is counted apart (`alreadyHandled`), never as a
-link. The overview says the same in a `contract-links` gap. The drift census
-still counts those routes as declared and not served, because no mapping in the
-source serves them. A walk at the default `conservative` mode does not follow a
-HEURISTIC link; `mode=heuristic` does.
+link. The overview's `contract-links` gap counts the links that are guesses,
+and its fix is to declare `openapi.generatesCode` while any rests on no
+declaration. The drift census still counts those routes as declared and not
+served, because no mapping in the source serves them. A walk at the default
+`conservative` mode does not follow a HEURISTIC link; `mode=heuristic` does, and
+so does every mode once the declaration makes the link EXACT.
 
 **Without a Java lane.** This is what the layer is really for. A backend written
 in something this engine has no lane for — Node, Go, Python, .NET — still
@@ -2035,6 +2252,11 @@ still builds every declared screen. Set `screenAxis.enabled: false` if you would
 rather have no screen axis than a partial one.
 
 ### The profile keys
+
+These are the keys that shape screens. Every key a profile can hold, with an
+example of each, is listed in [concepts.md](../concepts.md#9-the-profile-key-by-key);
+the web lane also reads `gatewayRoutes` (above), `servers` (see *This machine,
+another port*), `webRoots` and the `openapi` keys (see *OpenAPI documents*).
 
 ```json
 {

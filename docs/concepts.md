@@ -1,7 +1,7 @@
 # Concepts
 
-Six ideas hold this engine together. Each is a mechanism in the code, not a
-posture: the file that implements it is named beside it.
+The ideas that hold this engine together. Each is a mechanism in the code, not
+a posture: the file that implements it is named beside it.
 
 ## 1. Grades — fact, candidate set, guess
 
@@ -36,11 +36,44 @@ anything weaker on the way, like every other edge.
 A walk is graded by its **weakest link**: a chain that passes through one
 `SOUND_SET` call is `SOUND_SET`, however exact the rest of it was.
 
+**Four rules decide how sure a link is.** Each review of this engine found the
+same kind of defect one shape away from the last fix, so the rules are written
+for the kind, and every lane keeps them:
+
+- **"Nothing changes it" is decided by default-deny.** A judgment that something
+  is safe (a wrapper step hands the URL on untouched, a query builder does not
+  escape, an annotation leaves a column as it was, a statement is not a
+  `CREATE TABLE`) holds only for the shapes the code positively recognizes. Any
+  other shape is not settled, and its reason is on the edge or in a diagnostic.
+- **A `SOUND_SET` is closed.** A candidate set is `SOUND_SET` only when nothing
+  the engine could not read may add a member: a providers list it did not read
+  whole, a module class it cannot read, a package that may be published, an
+  `extends` it cannot follow, an interface a lambda may implement. Where such a
+  gap exists, the set is `HEURISTIC` and names the gap.
+- **One question gets one answer.** Trace walked up, the impact tools and the
+  census answer the same question, so they read one walk (see *One question,
+  one answer* below).
+- **A conclusion that rests on a default is `HEURISTIC`.** When the tree does
+  not state something and the engine takes the framework's default, the
+  conclusion says which default it assumed: JPA's key `id` and discriminator
+  `dtype`, Spring Boot's port 8080 (`url.guess: "port-default"`). MySQL's rules
+  for an `ALTER` when no database is declared are said the same way
+  (`alter_rule_assumed`, counted in the overview's `catalog-rules-assumed` gap).
+  The profile lets a person state what the source does not (see §9).
+
+A fix never lowers a grade to hide a wrong conclusion. It stops stating what
+the source does not state, or says what it did not read.
+
 **A route's link to its handler is a link too.** Most `HANDLES` edges are
 `EXACT`, but not all. A handler a rule paired with a route by a code
 generator's naming is `HEURISTIC`. So is a NestJS route an exclude the engine
 could not read may move. A Spring functional route whose handler is reached
-through a field typed with an interface is `SOUND_SET`. So a walk from a route
+through a field typed with an interface is `SOUND_SET` when the tree shows every
+class that may be the object, and `HEURISTIC` when it cannot: an interface with
+one abstract method, which any lambda may implement, or a type or a superclass
+the run did not read. A link placed through an OpenAPI document or a code
+generator's naming is `HEURISTIC` unless the profile says the document is in
+step with the code (§9). So a walk from a route
 starts at its handler only when the mode admits that link. Depth counts from the
 handler, and no row, table or page below it is graded above the link
 (`src/core/walks.mjs`). The whole-pack census (overview, map, coupling,
@@ -51,6 +84,14 @@ the route, the picture stops at the route and says which grade kept it out.
 Walking up, a route whose link is below the mode's floor is not an endpoint row
 of that mode; it is counted in `walk.cut.byMode` with the other links the mode
 did not walk. The `map` names a route after the handler its mode walks.
+
+**A route's address is not its handler.** A route whose lane could not settle
+its address (a NestJS global prefix with an exclude list this engine cannot
+read) says so on its `HANDLES` evidence (`address: {grade, why}`). The code
+below the route is graded by the `HANDLES` link. A caller of the route, walking
+up, is graded by its own link to it: the web lane grades a call matched to such
+a route no higher than the address, and names it on the call
+(`evidence.address`). So every walk reads the doubt where it belongs.
 
 **What a statement reaches is counted the same way everywhere.** A statement's
 tables and columns are its `EXECUTES`, `READS` and `WRITES` edges that the
@@ -68,10 +109,27 @@ the impact tools walk with no hop cap unless asked for one
 get two answers because two tools stopped at two depths: mall's
 `pms_product.name` reaches its screens in 9 hops, and the viewer's walk, then
 capped at 8, showed none of them where `screen_impact` showed 12. The guard is a node cap
-instead: a walk that has recorded 4000 nodes (`WALK_NODE_CAP`) stops and says
-so in `limits`. A `depth` you ask for (1 to 8) only narrows a walk, and the
-answer says what it cut there. An answer names its depth as `depth 4` or
-`no depth cap`.
+instead: a walk that has recorded 4000 nodes (`WALK_NODE_CAP`) stops, and the
+answer built on it says so: in `limits` for `flow`, `endpoint_impact`,
+`screen_impact`, `browse`, `summary`, `map` and `coupling`, and as the
+`node-cap` gap in `overview`. A `depth` you ask for (1 to 8) only narrows a walk,
+and the answer says what it cut there; the impact tools and `browse` take no
+depth. An answer names its depth as `depth 4` or `no depth cap`.
+
+**One question, one answer.** Which routes and screens a change to a column
+reaches is asked by Trace walked up, by `endpoint_impact` and `screen_impact`,
+by the working-tree overlay's upstream routes and by a crossing into another
+project. They all read one walk up (`walkUp` in `src/core/chain.mjs`, through
+`affectedBy` in `src/core/walks.mjs`): the same breadth-first walk and the same
+two records Trace's endpoints and screens lanes are built from. The whole-pack
+census walks down by the mirror rules. `src/core/walk_agreement.mjs` compares
+the answers row by row, on every column and table: the impact tools against
+Trace, and the impact tools against the census. The suite runs it on
+hand-built graphs, on the three golden fixture trees in every mode, and on
+spring-petclinic, jpetstore-6 and the mall pack when those are checked out.
+Before this, 17 of spring-petclinic's 24 columns and 49 of jpetstore-6's 86 had
+screens one answer named and another did not; after it, no column of the 26
+Java corpus packs and the 4 TypeScript ones does.
 
 Query modes pick a floor: `strict` uses confirmed edges only, `conservative`
 adds candidate calls, `heuristic` also admits guessed rules. A question that
@@ -179,8 +237,11 @@ than the one the pack recorded declines, on a clean tree too; a catalog whose
 shard key, computed from the files now, differs from the one the run wrote
 declines and names the files (a DDL outside the root, a snapshot fetched again);
 a frontend in a repository of its own that moved past the commit `analyze`
-recorded makes the answer `behind`. The details are in
-[cli.md](cli.md#cascade-impact).
+recorded makes the answer `behind`. Such a frontend, beside the analyzed root or
+nested inside it, is part of what the pack read: its commit is in the pack's
+pin, and its uncommitted files are the pack's dirty files, which the overlay
+always reads again, so an edit you then undo is seen as undone. The details are
+in [cli.md](cli.md#cascade-impact).
 
 The overlay reads the OpenAPI documents the base pack read, as they are on disk
 now, and runs the OpenAPI bridge on them as `analyze` does, so a document's
@@ -190,9 +251,10 @@ any catalog file the run read declines the overlay. It hands the web
 bridge the frontend packages and the server ports the base pack read, as
 `analyze` does, so an overlay over no edit at all builds the analyzed graph
 (`test/overlay_equivalence.test.mjs`). A few inputs it does not read again, and
-it says so. An edited `package.json` near a frontend, or an edited Spring
-configuration when ports were read, is named in `limits`: the overlay keeps the
-packages and ports the base pack read. The table id generators a Spring XML
+it says so. An edited `package.json` near a frontend is named in `limits`, and so
+is, when ports were read, an edited Spring configuration, any other
+configuration file that now states a port, or a Java source that now sets the
+port: the overlay keeps the packages and ports the base pack read. The table id generators a Spring XML
 declares come from a walk of the whole tree; when the base pack bound any, the
 answer carries a `limits` sentence saying those calls reach no generator here. A
 TypeScript backend is walked again the way `analyze` walks it, over a fact
@@ -214,8 +276,8 @@ equal a cold run of the same state **byte for byte** (invariant I-9,
 with a seeded PRNG). Four things it refuses to do quietly: unknown is never
 "nothing changed"; a damaged shard is never loaded (it is reported
 `SHARD_UNUSABLE` and that unit alone is recomputed); a dirty tree is stated in
-`meta.base.dirty`; and the pack records the mode, the base commit and the
-reparsed/reused counts.
+`meta.base.dirty`, a frontend repository's uncommitted files included; and the
+pack records the mode, the base commit and the reparsed/reused counts.
 
 ## 4. Partial packs — a missing axis is declared, not fatal
 
@@ -269,9 +331,14 @@ edge walkable, what ONE endpoint reaches inflated by 81% on jpetstore-6 (243 to
 439 endpoint-to-column pairs) and by 14% on xxl-job, while not one union count
 moved by one — the exact shape of smear the fan-out ceiling exists to catch;
 with it out, every project returns to its baseline pair count exactly, so the
-edge is the whole of the difference. It is taken one step instead, in the two
-questions that ask it: which pages a column change is felt on, and which page a
-route shows.
+edge is the whole of the difference. It is taken one step instead, and the same
+step in every walk. Walking up, a page is reached one step off each method a
+walk reached that renders it, so Trace up, `endpoint_impact`'s screens,
+`screen_impact` and the screen census name the same pages, and `screen_impact`
+names the route that renders a page among the routes it goes through. Walking
+down from a page, the walk starts at the methods that render it, and only
+there, never in the middle of a walk. A route's picture lists the page its
+handler renders.
 
 A browser recording (`--har`) is a different KIND of fact and is graded as one:
 `RUNTIME_ONLY` sits below every mode's floor, so a recorded `screen → route` call
@@ -281,10 +348,12 @@ it proves nothing about what the code can do.
 
 `degraded` is not only about a missing input. The `web` axis is `shipped` only
 when nothing about the frontend had to be guessed: a URL prefix this engine
-worked out by counting matches, a path alias it assumed because the project
-declares none, or a base URL resting on a default no `.env` file sets or only
-on hosts that are not this machine, makes the axis `degraded` and the reason names
-what to declare to fix it. So does a lane that traced as many calls to no client
+worked out by counting matches (the prefix a wrapper step a rule pack names puts
+before the URL included), a path alias it assumed because the project declares
+none, a base URL resting on a default no `.env` file sets or only on hosts that
+are not this machine, or a call on this machine to a port no file states, makes
+the axis `degraded`, its `causes` say which, and the reason names what to
+declare to fix it. So does a lane that traced as many calls to no client
 as it traced to one. Fewer untraced calls do not degrade the axis; they ride on
 every answer as a note that says how many, and why most of them were not traced.
 
@@ -293,7 +362,17 @@ TypeORM entities. When a mapping declared the tables, the axis names it in its
 `sources` (`schema.prisma`, or the TypeORM entities with their counts). It is
 `degraded` when a TypeORM table or column name rests on what the run could not
 confirm, such as a naming strategy or a table prefix the options leave to run
-time.
+time. What the DDL reader could not read or had to assume is in the pack too
+(`meta.laneStats.catalog`, one diagnostic per kind with its count), and the
+overview counts it into three gaps: `catalog-tables-unread` (a `CREATE TABLE`
+it could not read), `catalog-rules-assumed` (a conclusion that rests on the
+rules of a database nobody declared) and `catalog-read-in-part` (a statement not
+applied as the file wrote it). The first two degrade the axis too, and its
+`causes` say which (`tables-unread`, `rules-assumed`, beside
+`typeorm-names-heuristic` for the TypeORM names above); a table read in part
+leaves the axis whole. The overview gives one fix per cause: declare
+`sqlDialects` for an assumed database, `tsBackend.typeorm` for TypeORM names,
+none for lost tables, and none when two causes hold at once.
 
 It can also mean **the axis stops earlier than it looks**. A pack whose routes
 came from an OpenAPI document and not from source has endpoints and nothing under
@@ -317,7 +396,7 @@ gate first asks *why* this run differs:
 | `NO_SEAL` | no baseline yet — this run becomes it (`BOOTSTRAP`) |
 | `NO_CHANGE` | same engine, same commit pins |
 | `ENGINE_MOVED` | the engine fingerprint moved — an upgrade |
-| `REPIN` | the analyzed commits moved |
+| `REPIN` | the analyzed target moved: a commit (a frontend repository's own included), the inputs read, the profile or the catalog |
 | `BOTH_MOVED` | both |
 
 `ENGINE_MOVED` is the strict one: "the analyzer changed" is exactly when a loss
@@ -493,3 +572,76 @@ joining the two clusters is the HTTP call itself.
 
 The wire shapes, `basis.siblings`, the `federate` argument and the rest are in
 [mcp.md](mcp.md).
+
+## 9. The profile, key by key
+
+`.cascade/profile.json` is the reading convention: what this project's code
+means where a parser cannot tell, and what a person states that the source does
+not. `cascade init` writes it and you edit it. Every key is either consumed (it
+changes what the engine does) or recorded and said the moment you set it: a
+test holds that no key is dead (`PROFILE_KEY_CONSUMERS` in
+`src/core/profile.mjs`). Paths are relative to the directory the profile is in,
+`.cascade/`, so a file at the top of the repository is `../file`; `servers` is
+the one key named from the analyzed root. The keys added after the profile's
+digest was first recorded (`tsBackend`, `pathPrefixes`, `servers`,
+`tsBackend.typeorm` and its `type`, `openapi.generatedFromCode`,
+`openapi.generatesCode`) are left out of that digest while they hold their
+default, so upgrading does not look like a change of target to the calibration
+gate. The validator refuses a value
+of the wrong shape; it does not refuse a key it does not know, so a misspelt key
+states nothing.
+
+| key | what it says | example |
+|---|---|---|
+| `build.tool` | the build tool. Recorded only: no Gradle or Maven is ever run | `"maven"` |
+| `build.javaRelease` | the Java language level. Recorded only | `17` |
+| `build.profiles` | build profiles. Recorded only: no dependency is resolved | `["prod"]` |
+| `packagePrefixes` | the project's own top-level packages. A type outside them is external, and a call to it is counted as external, not unresolved | `["com.macro.mall"]` |
+| `schema.default` | the schema an unqualified table belongs to. `null` leaves it unknown | `"public"` |
+| `schema.propertyNames` | property names whose `${prop}.table` qualifier in MyBatis SQL is a schema, not a raw substitution | `["db.schema"]` |
+| `schema.rewriteLayer` | a SQL rewrite layer. Not modelled: a value is said as not shipped | `null` |
+| `sqlDialects` | the database the SQL is written for, under `main` ([sql-lane.md](setup/sql-lane.md)). Undeclared, MySQL is assumed and said | `{ "main": "postgresql" }` |
+| `sqlIdentifierCase` | when two spellings name one table: `fold-lower`, `fold-upper` or `exact`. `null` takes the dialect's rule (§7) | `"fold-lower"` |
+| `gatewayRoutes` | the prefix a frontend writes and the prefix the backend serves; `"*"` applies to every call ([web-lane.md](setup/web-lane.md#the-prefix-and-how-to-declare-it)) | `{ "/dev-api": "" }` |
+| `pathPrefixes` | the path prefixes configuration code puts before controllers' routes ([java-lane.md](setup/java-lane.md#a-prefix-set-in-configuration-code-pathprefixes)) | `[{ "prefix": "/admin-api", "packages": "**.controller.admin.**" }]` |
+| `servers` | the port an application listens on, by the directory that holds its `src/main/resources` from the analyzed root, for a port the source does not state ([web-lane.md](setup/web-lane.md#this-machine-another-port)) | `{ "mall-admin": { "port": 8080 } }` |
+| `serviceNames` | the names this project answers to (`spring.application.name`), so a crossing picks it (§8) | `["mall-admin"]` |
+| `webRoots` | frontend roots no `package.json` declares, as `{root, kind, from}` | `[{ "root": "../src/main/resources/static", "kind": "declared", "from": "user" }]` |
+| `templateRoots` | where a view name becomes a server-rendered page, as `{root, engine, suffix, from}` | `[{ "root": "../src/main/resources/templates", "engine": "thymeleaf", "suffix": ".html", "from": "default" }]` |
+| `screenAxis.enabled` | whether router declarations become screens: `true`, `false`, or `null` to decide from what the run reads | `true` |
+| `screenAxis.nameSource` | where a screen's title comes from: `route-meta` or `none` | `"route-meta"` |
+| `screenAxis.pathRule` | how a screen's short label is cut from its path; the path never changes | `"last-segment"` |
+| `screenAxis.codeRegex` | the pattern a screen's own code is read with | `"([A-Z]{2}\\d{4})"` |
+| `moduleAttribution.packageDepth` | group routes by the handler's package cut to this many segments, instead of the first path segment | `4` |
+| `moduleAttribution.codeLength` | how many leading characters of a screen code name its group | `2` |
+| `frameworkPacks` | which lanes an `analyze` without flags runs | `["spring-mvc", "mybatis-xml", "jpa", "web"]` |
+| `tsBackend.app` | the NestJS application root the TypeScript lane reads ([ts-lane.md](setup/ts-lane.md#the-profile)) | `"../apps/api/src"` |
+| `tsBackend.prismaSchema` | the `schema.prisma` to read, when it is not where Prisma looks first | `"../prisma/schema.prisma"` |
+| `tsBackend.globalPrefix` | the prefix the application is deployed under, for a bootstrap that reads it from configuration. `""` is no prefix | `"api"` |
+| `tsBackend.globalPrefixExclude` | the route patterns that prefix excludes, in Nest's syntax | `["health", "docs{/*rest}"]` |
+| `tsBackend.typeorm.namingStrategy` | the TypeORM naming strategy, by the name the typeorm pack gives it (`default`, `snake`) | `"snake"` |
+| `tsBackend.typeorm.entityPrefix` | the prefix TypeORM puts before every table name | `""` |
+| `tsBackend.typeorm.schema` | the schema of every entity that names none | `"public"` |
+| `tsBackend.typeorm.type` | the TypeORM driver, which decides what goes before a table name. The values that work are the typeorm pack's driver names; another leaves those names HEURISTIC | `"postgres"` |
+| `jpa.namingStrategy` | how a JPA name with no `@Table` or `@Column` becomes a physical name. `null` assumes Spring Boot's default and grades HEURISTIC | `"spring-snake-case"` |
+| `mybatisPlus.namingStrategy` | the same for a MyBatis-Plus name with no `@TableName` or `@TableField` | `"underscore"` |
+| `mybatisPlus.tablePrefix` | the global table prefix MyBatis-Plus puts before a derived table name | `"tb_"` |
+| `mybatisPlus.logicDeleteValue` | the value a logical delete writes into a `@TableLogic` column | `"1"` |
+| `mybatisPlus.logicNotDeleteValue` | the "not deleted" value. Recorded only | `"0"` |
+| `generatedSources.annotations` | annotation names that mark a type as generated; walks skip generated-to-generated edges and say so | `["Generated"]` |
+| `generatedSources.pathGlobs` | source file globs that mark a type as generated, for a generator that leaves no annotation | `["mall-mbg/**"]` |
+| `openapi.documents` | OpenAPI or Swagger documents to read as declared routes | `["../api/openapi.yaml"]` |
+| `openapi.generatedFromCode` | documents a build writes from this code as it is now, so a route placed through one is graded as its handler is read ([web-lane.md](setup/web-lane.md#openapi-documents)) | `["../docs/openapi.json"]` |
+| `openapi.generatesCode` | documents the build generates this code's interfaces from, so a contract link on one can be EXACT | `["../src/main/resources/openapi.yml"]` |
+| `runtimeEvidence.har` | browser recordings to read as RUNTIME_ONLY evidence ([runtime-evidence.md](setup/runtime-evidence.md)) | `["../evidence/admin-session.har"]` |
+| `runtimeEvidence.otel` | OpenTelemetry trace exports to read as runtime evidence | `["../evidence/checkout-smoke.json"]` |
+| `modelPacks` | taint model packs. The taint lane is not shipped: a value is said as not shipped | `[]` |
+| `catalog.source` | where the catalog comes from: `file`, `jdbc` or `none` ([db-catalog.md](setup/db-catalog.md)) | `"file"` |
+| `catalog.connectionFrom` | with `file`, the DDL path or paths; with `jdbc` or `none`, the connection file discovery found | `"../document/sql/mall.sql"` |
+| `catalog.ddl` | the DDL files to read in the order written, instead of `connectionFrom` | `["../db/schema.sql", "../db/data.sql"]` |
+| `catalog.ddlAlternatives` | other vendors' DDL `init` found and did not choose. Recorded only | `{ "oracle": ["../db/oracle/schema.sql"] }` |
+| `mappers.alternatives` | mapper XML written for other database vendors, left out of the statement lane | `{ "oracle": ["../src/main/resources/mapper/oracle/UserMapper.xml"] }` |
+| `calibration.firstRun` | with no sealed baseline: `bootstrap` (this run becomes it) or `require-baseline` (RED) | `"bootstrap"` |
+| `calibration.maxRelativeDrop` | how much of a metric a run whose engine moved may lose before RED | `0.05` |
+| `calibration.maxRelativeDropOnRepin` | the same for a `REPIN` | `0.25` |
+| `calibration.receiptTtlDays` | how many days a deployment receipt stays valid for `cascade verify` | `30` |

@@ -291,12 +291,19 @@ both apply; otherwise it is cold **and says why**.
   COLUMN`, `ALTER COLUMN SET/DROP NOT NULL` and `TYPE`, adding or dropping a
   primary key, and `RENAME TABLE` amend; and two files declaring the same table
   are reported (`DUPLICATE_TABLE_DECLARATION`) with the first kept, never
-  merged. An `ALTER` clause not applied is named (`alter_clause_unsupported`,
+  merged. A `CREATE TABLE` the grammar cannot read is read again with what the
+  catalog does not hold set aside, or named (`create_table_unreadable`,
+  `create_table_unread`;
+  [sql-lane.md](setup/sql-lane.md#a-create-table-the-grammar-cannot-read)). An
+  `ALTER` clause not applied is named (`alter_clause_unsupported`,
   `alter_unreadable`). Each `ALTER` is read by the rules of the database
-  `sqlDialects.main` names; where that database has no rule a statement depends
-  on, the statement keeps what the catalog had and says so
-  (`alter_primary_key_unknown`, `alter_modify_unsaid_unknown`;
+  `sqlDialects.main` names, and with none declared by MySQL's, each conclusion
+  that rests on one of them saying so (`alter_rule_assumed`); where that database
+  has no rule a statement depends on, the statement keeps what the catalog had
+  and says so (`alter_primary_key_unknown`, `alter_modify_unsaid_unknown`;
   [sql-lane.md](setup/sql-lane.md#what-an-alter-leaves-unsaid-is-the-databases)).
+  What the reader said is in the pack, one diagnostic per kind with its count
+  (`meta.laneStats.catalog`), and the overview counts it into its catalog gaps.
 
   With no `--ddl` at all, discovery classifies every `.sql` it found by
   **dialect** (from the path — `db/mysql/…`, `schema_h2.sql` — and otherwise from
@@ -320,7 +327,10 @@ both apply; otherwise it is cold **and says why**.
   it, derives the prefix that client goes through, matches the URL against the
   routes this pack knows, and adds a graded `CALLS_HTTP` edge from the frontend
   function to the endpoint. The `web` axis says what had to be guessed. Its facts
-  are cached per file, so a second run re-reads only what changed.
+  are cached per file, so a second run re-reads only what changed. A frontend in
+  a repository of its own, beside the root or nested in it, is part of the pin:
+  its commit is in it, so a frontend at another commit is a `REPIN`, and its
+  uncommitted files are the pack's dirty files (`meta.base.dirtyFiles`).
   See [the web lane setup page](setup/web-lane.md).
 - `--no-web` — do not read the frontend even when the profile declares it.
 - `--ts-src <dir>` — the root of a NestJS application. The TypeScript lane reads
@@ -650,7 +660,9 @@ cascade impact [--pack <dir> | --project <id> | --root <dir>] [--file <path>...]
 
 The edit loop, from the shell: what did my uncommitted edits touch? By default
 the dirty files (the working-tree diff against the commit the pack was built
-from, plus untracked ones) are **re-parsed on every call**, so the answer
+from, plus untracked ones, plus the files the pack itself read uncommitted, and,
+for a frontend in a repository of its own, the files that differ from that
+repository's HEAD) are **re-parsed on every call**, so the answer
 describes the bytes on disk rather than the last analysis. Nothing is written —
 not the pack, not the fact cache.
 
@@ -666,6 +678,15 @@ A row marked `PROVISIONAL` exists only in the overlay — no certified run has
 seen it. After a commit the overlay is discarded and the answer is `behind`,
 naming `cascade analyze` as the cure.
 
+With nothing to ask about, the command says why rather than "no changed
+files" alone. When the overlay was not laid (declined, or its base commit is
+stale), it prints `overlay NOT applied (<state>): <reason>` and how to ask
+anyway (`--file`, or `--mode base-only`); on a clean tree it prints
+`no changed files. Pass --file <path> [--file …], or edit the repo the pack was built from`.
+Both go to stderr and exit 2. With files to ask about and an overlay that was
+declined, the answer goes on from the base pack, under the same
+`overlay NOT applied` line.
+
 The overlay builds from the inputs the pack was built from, so a change that no
 diff of the analyzed root reports never reads as your edit. An input that moved
 since is declined, behind or said, never read again silently:
@@ -676,8 +697,12 @@ since is declined, behind or said, never read again silently:
 - the catalog: its shard key, computed from the files as they are now, against
   the one the run wrote. Another one declines and names the files, which covers
   a DDL outside the analyzed root and a catalog snapshot fetched again;
-- a frontend in a repository of its own: `analyze` records the commit it read it
-  at, and one that moved on makes the answer `behind`, as a moved HEAD does. A
+- a frontend in a repository of its own, beside the analyzed root or nested in
+  it: `analyze` records the commit it read it at, and one that moved on makes
+  the answer `behind`, as a moved HEAD does. That commit is in the pack's pin, so
+  a rerun with the frontend at another commit is a `REPIN` for the calibration
+  gate, and the repository's uncommitted files are the pack's dirty files, which
+  the overlay always reads again: an edit you then undo is seen as undone. A
   frontend outside the analyzed root that is in no repository is said in
   `limits`;
 - `mappers.alternatives`, `tsBackend.prismaSchema` and `tsBackend.app` are read
@@ -691,15 +716,17 @@ The overlay reads the OpenAPI documents the pack read, as they are on disk now,
 so a document's routes and the handlers a rule linked to them are still there;
 an edited document is an edit to the routes it declares, and the answer names
 the routes the edited files gave the pack that the overlay no longer has
-(`overlay.removedIds.endpoints`). It reads the catalog as `analyze` did (the
+(`overlay.removedIds.endpoints`), which the command line prints after its
+timings line (`routes the edit removed (<n>):`, one id per line). It reads the catalog as `analyze` did (the
 same DDL files with their dialect, or the snapshot), and declines when any of
 those files is edited. It hands the web lane the frontend packages and server
 ports the pack read, so with no edit it answers as the pack does. What it does
 not read again it says in the answer: the table id generators a Spring XML
 declares, when the pack bound any, an edited `package.json` near a frontend,
 and, when the pack read ports, an edited Spring configuration, a file the pack
-read a port from or named as the reason a port is unknown, or a Java source
-that now loads configuration or sets the port in code: the overlay keeps the
+read a port from or named as the reason a port is unknown, any other
+`.properties`, `.yml` or `.yaml` file outside the test tree that now states a
+port, or a Java source that now loads configuration or sets the port in code: the overlay keeps the
 packages and ports as the pack read them. A pack that reads a TypeScript backend is
 overlaid too: the edited files are read again, the imports followed as they
 are now, and the tsconfig, `schema.prisma` and `package.json` files read again

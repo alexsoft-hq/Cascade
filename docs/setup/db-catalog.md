@@ -71,6 +71,18 @@ Nothing else to install, nothing to connect to.
 node bin/cascade.mjs analyze --root /path/to/repo --ddl document/sql/mall.sql
 ```
 
+A dump the grammar cannot read as written (an Oracle export with
+`NOT NULL ENABLE` and storage clauses, an HSQLDB `.script`, an H2 file written
+for `MODE=MySQL`) is read without what the catalog does not hold, and a table
+that still cannot be read is named, never dropped
+([sql-lane.md](sql-lane.md#a-create-table-the-grammar-cannot-read)). What the
+reader could not read or had to assume is in the pack
+(`meta.laneStats.catalog`, one diagnostic per kind with its count and first
+sentences) and in three gaps of the overview: `catalog-tables-unread`,
+`catalog-rules-assumed` and `catalog-read-in-part`. Lost tables or an assumed
+database make the catalog axis degraded, with the cause; declaring
+`sqlDialects.main` settles the second.
+
 ## Path B — a live read-only fetch
 
 ### 1. See where the database might be
