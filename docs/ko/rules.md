@@ -18,10 +18,12 @@ MCP 도구 `rules`는 pack을 보고 답합니다. 모든 팩과 룰을 보여 �
 룰 하나를 물으면 그 룰 전체와, 그 룰이 만든 연결과 노드를 보여 줍니다
 ([mcp.md](../mcp.md#rules)). 예제는 돌리지 않습니다. 예제를 돌리려면 워커가 있어야
 해서, 그건 `cascade rules test`가 맡습니다.
-뷰어(`cascade view`)의 **룰** 탭은 같은 팩을 읽기 전용으로 보여 줍니다. 룰마다 설명,
-왜 있는지, 인자와 예제, 그리고 이 프로젝트의 pack에서 그 룰이 만든 연결 수가 나옵니다.
-룰이 만든 연결은 근거에 그 룰 이름을 남기므로(`evidence.rule`, 이유 한 문장은
-`evidence.basis`), 흐름·영향 탭의 경로에서 어느 룰이 그 단계를 만들었는지 볼 수 있습니다.
+뷰어(`cascade view`)도 같은 팩을 읽기 전용으로 보여 줍니다. 자리는 **Analysis
+status**(분석 상태)의 둘째 보기인 **Rules**(룰)입니다. 이 프로젝트에서 무언가를 만든 룰이
+먼저 나옵니다. 룰마다 설명, 왜 있는지, 인자와 예제, 그리고 이 프로젝트의 pack에서 그
+룰이 만든 연결 수가 나옵니다. 룰이 만든 연결은 근거에 그 룰 이름을 남깁니다
+(`evidence.rule`, 이유 한 문장은 `evidence.basis`). 그래서 **Trace**(추적)가 그리는
+경로에서, 어느 방향이든, 어느 룰이 그 단계를 만들었는지 볼 수 있습니다.
 
 ## 위치
 
@@ -37,8 +39,9 @@ MCP 도구 `rules`는 pack을 보고 답합니다. 모든 팩과 룰을 보여 �
 | `spring-mvc` | Spring 설정 코드에서 경로 prefix를 정하는 호출, 그리고 대신 선언할 프로필 키 | `java.code-setting` |
 | `spring-functional` | `RouterFunction`을 돌려주는 메서드가 라우트를 만들 때 쓰는 호출 | `java.route-function` |
 | `openapi-generator` | openapi-generator가 인터페이스에 붙이는 이름. 그 인터페이스를 구현한 컨트롤러가 문서의 라우트를 처리합니다 | `java.contract-link` |
-| `nestjs` | 라우트를 만드는 NestJS 데코레이터와 부트스트랩 호출, 모듈의 `providers`가 묶는 것 | `ts.route-decorator`, `ts.provider-binding` |
-| `prisma` | Prisma 클라이언트 타입, 클라이언트 호출마다 읽고 쓰는 것 | `ts.type-role`, `prisma.operation` |
+| `typescript` | 어느 TypeScript 파일이 애플리케이션이 아니라 테스트의 것인지 | `ts.test-support` |
+| `nestjs` | 라우트를 만드는 NestJS 데코레이터와 부트스트랩 호출, 모듈의 `providers`가 묶는 것, 생성자 매개변수의 데코레이터가 무엇으로 채우는지 | `ts.route-decorator`, `ts.provider-binding` |
+| `prisma` | Prisma 클라이언트 타입, 클라이언트 호출마다 읽고 쓰는 것, 암묵적 다대다 관계에 Prisma 가 만드는 테이블 | `ts.type-role`, `prisma.operation`, `table.join-table` |
 | `typeorm` | TypeORM 엔티티와 naming strategy(이름 규칙), 호출을 받는 객체, repository 연산과 query builder | `typeorm.entity`, `typeorm.receiver`, `typeorm.operation`, `typeorm.query-builder` |
 
 ## 형식
@@ -64,18 +67,20 @@ MCP 도구 `rules`는 pack을 보고 답합니다. 모든 팩과 룰을 보여 �
 | 종류 | 실행 시점 | 읽는 것 | 결론 | 가장 강한 등급 |
 |---|---|---|---|---|
 | `java.type-role` | Java 워커의 레코드를 모은 뒤, 레인을 고르기 전 | 타입 자신의 extends·implements 절이 적은 상위 타입과 그 타입 인자 | 타입이 맡는 역할(MyBatis-Plus 매퍼·서비스)과, 몇 번째 타입 인자가 엔티티·매퍼인지. 사슬의 뿌리만 맞춥니다. 프로젝트 자체 타입을 거쳐 닿는 타입은 역할을 읽는 브리지가 찾습니다 | EXACT |
-| `java.code-setting` | `analyze`에서 레인이 다 돈 뒤, Java 워커의 레코드를 보고 | Java 파일마다의 호출과, 파일이 선언한 대로의 각 호출의 수신자(Java 워커의 `invocations` 레코드), 그리고 파일의 import | 설정 코드가 한 호출 중, 프로필에 대신 선언해야 할 설정(`params.setting`)을 정하는 호출이 무엇인지. 프로필 키가 비어 있으면 `SETTING_IN_CODE`로 알립니다 | 없음. 엣지를 긋지 않습니다 |
+| `java.code-setting` | `analyze`에서 레인이 다 돈 뒤, Java 워커의 레코드를 보고 | Java 파일마다의 호출과, 파일이 선언한 대로의 각 호출의 수신자(Java 워커의 `invocations` 레코드), 파일의 import, 그리고 트리가 선언한 타입과 필드 | 설정 코드가 한 호출 중, 프로필에 대신 선언해야 할 설정(`params.setting`)을 정하는 호출이 무엇인지. 프로필 키가 비어 있으면 `SETTING_IN_CODE`로 알립니다 | 없음. 엣지를 긋지 않습니다 |
 | `java.route-function` | Java 레인 브리지에서, 매핑 애너테이션과 나란히 | `RouterFunction`(또는 그걸 담은 `Supplier`)을 돌려준다고 선언한 메서드의 본문. 워커가 호출의 트리로 기록한 것입니다(`routeFunction` 레코드) | 어느 호출이 빌더를 시작하는지, 라우트를 더하는지(메서드, 경로, predicate, 핸들러, springdoc operation id), 라우트를 경로 아래에 넣는지, 다른 router function의 라우트를 합치는지, 그대로 두는지. 그리고 메서드가 애너테이션(`@Bean`)으로 등록되는지, 다른 곳의 코드가 붙이는지. 핸들러가 어느 Java 메서드인지, 다른 곳에서 붙이는 라우트가 어디서 서빙되는지는 브리지가 정합니다 | EXACT |
 | `java.contract-link` | OpenAPI 브리지에서, 문서의 라우트가 그래프에 올라간 뒤 | 클래스 자신의 애너테이션과 implements 절, 파일의 import로 본 각 이름의 뜻, 클래스가 선언한 메서드, 그리고 문서마다 따로 읽은 operation(메서드, 경로, 적힌 그대로의 경로, operationId, tag) | 코드 생성기가 빌드 때 문서로 만드는 인터페이스를 클래스가 구현할 때, 어느 메서드가 어느 선언된 라우트를 처리하는지. 그 인터페이스는 소스 트리에 없습니다. 연결 하나가 HANDLES 엣지 하나입니다 | HEURISTIC |
 | `sql.dialect-path` | 트리를 발견할 때 | 파일 경로 | 경로의 온전한 단어로 DDL·매퍼 파일이 어느 DB용인지. 경로에 단어가 있는 첫 항목이 이기므로, 룰은 선호하는 항목을 먼저 적습니다 | 없음. 분류만 합니다 |
 | `ts.route-decorator` | TS 레인 브리지에서 | TS 워커가 기록한 클래스·메서드의 데코레이터 | 어느 클래스가 컨트롤러이고 어느 메서드가 라우트인지, 그 경로와 버전. 어느 클래스가 모듈이고 무엇을 import하며 어떤 컨트롤러를 등록하는지. 부트스트랩이 부르는 이름(`NestFactory.create`, `setGlobalPrefix`, `enableVersioning`, `RouterModule.register`)도 여기 있습니다. 컨트롤러가 실제로 서비스되는지는 브리지가 모듈 그래프를 따라가서 정합니다 | EXACT |
-| `ts.provider-binding` | TS 레인 브리지에서 | 모듈의 `providers` 목록. `@Module` 옵션에 있든, 모듈의 static 메서드가 돌려주는 객체(`X.forRoot()`)에 있든 읽습니다 | 모듈이 타입에 어느 클래스를 묶는지. 클래스만 적으면 자기 자신을, `{ provide: T, useClass: C }`는 T에 C를 묶습니다. 읽지 않는 바인딩(`useFactory`, `useValue`, `useExisting`)과 아예 읽을 수 없는 항목(spread, 계산된 키)도 가려냅니다. 어느 모듈을 셀지, 그게 호출에 어떤 영향을 주는지는 브리지가 정합니다 | 없음. 엣지를 긋지 않습니다 |
+| `ts.provider-binding` | TS 레인 브리지에서 | 모듈의 `providers` 목록. `@Module` 옵션에 있든, 모듈의 static 메서드가 돌려주는 객체(`X.forRoot()`)에 있든 읽습니다 | 모듈이 타입에 어느 클래스를 묶는지. 클래스만 적으면 자기 자신을, `{ provide: T, useClass: C }`는 T에 C를 묶습니다. 읽지 않는 바인딩(`useFactory`, `useValue`, `useExisting`)과 아예 읽을 수 없는 항목(spread, 계산된 키)도 가려냅니다. 생성자 매개변수의 데코레이터가 무엇으로 채우는지도 정합니다. `injectByToken`은 토큰으로 채우고, `harmless`는 아무것도 바꾸지 않고, 그 밖의 데코레이터는 모르는 것입니다. 패키지 모듈의 옵션에서 패키지가 읽기만 하는 키(`consumed`)도 적습니다. 거기 적힌 타입은 패키지에 넘긴 것으로 치지 않습니다. 어느 모듈을 셀지, 그게 호출에 어떤 영향을 주는지는 브리지가 정합니다 | 없음. 엣지를 긋지 않습니다 |
+| `ts.test-support` | TS 레인이 읽을 파일을 고를 때 | 분석 루트 아래 파일 경로 | 그 파일이 테스트 지원 파일(spec, mock, stub, 테스트만 돌리는 도우미)인지. 폴더는 이름 전체로, 파일은 이름 끝으로 맞춥니다. 레인은 그런 파일을 뺍니다. 애플리케이션 루트 안이든 공유 라이브러리 안이든 같습니다 | 없음. 분류만 합니다 |
 | `ts.type-role` | TS 레인 브리지에서 | 타입을 가져온 패키지와 export 이름 | 그 타입이 맡는 역할(Prisma 클라이언트). 그 타입을 상속한 프로젝트 클래스도 같은 역할을 맡습니다 | EXACT |
-| `prisma.operation` | TS 레인 브리지에서 | Prisma 호출의 연산과 인자의 키 하나하나 | 보내는 문장(select, insert, update, upsert, delete), 읽고 쓰는 필드, 행 전체를 돌려주는지. 호출이 적은 relation(연관 관계)은 닿는 모델까지 따라갑니다. `include`·`select` 안, relation 필터, `_count`, 중첩 쓰기(nested write)가 여기 해당합니다. null로 거르는 relation은 연결만 확인하고, 아무것도 바꾸지 않는 값을 받은 중첩 쓰기는 Prisma가 그래도 보내는 것만 그립니다(팩의 `idle` 항목). `extensions`에는 클라이언트로 클라이언트를 만드는 호출(`$extends`)과, 호출이 보내는 것을 바꿀 수 있는 확장 부분이 적혀 있습니다. 따라가지 못한 것(넘겨받지 않은 모델로 가는 relation, 모르는 키, 변수에 담긴 인자)은 그렇다고 남깁니다 | EXACT |
-| `typeorm.entity` | TS 레인 브리지에서 | TypeORM 데코레이터가 붙은 클래스, 그 속성이 선언한 컬럼과 relation, 상속한 클래스, 애플리케이션이 어디에 적었든 DataSource 옵션 | 어느 클래스가 엔티티인지, 그리고 매핑하는 테이블·컬럼·조인 테이블. 이름은 옵션이 정한 naming strategy, 테이블 prefix, schema대로 짓습니다. 전략으로 만든 이름은 전략을 알고, 모든 TypeORM 버전이 같은 철자로 쓸 때만 EXACT입니다. 테이블 이름은 소스에 적힌 것까지 포함해서, prefix를 알고 schema를 적지 않은 엔티티라면 schema도 알 때만 EXACT입니다. 아니면 이유와 함께 HEURISTIC입니다 | 없음. 엣지를 긋지 않고, 이름마다 등급이 따로 붙습니다 |
-| `typeorm.receiver` | TS 레인 브리지에서 | 클래스의 필드와 그 타입·주입 데코레이터, 호출 사슬이 거치는 함수와 멤버, 트랜잭션 콜백의 매개변수 | TypeORM 호출을 받는 객체가 무엇인지(엔티티의 repository, entity manager, data source), 그리고 어느 엔티티를 가리키는지 | 없음. 분류만 합니다 |
-| `typeorm.operation` | TS 레인 브리지에서 | repository·entity manager 연산의 이름과 인자, 부분 하나하나 | 보내는 문장, 거르고 돌려주고 정렬하고 쓰는 컬럼, eager로 표시된 relation까지 행 전체를 돌려주는지, 그리고 소스에 적히지 않은 인자라서 실행 때만 알 수 있는 것 | EXACT |
-| `typeorm.query-builder` | TS 레인 브리지에서 | `createQueryBuilder` 사슬과 그걸 담은 이름에 뒤이어 부른 호출, 단계 하나하나와 조건의 텍스트 | 쿼리가 쓰는 alias, 조건 안의 `alias.property`가 가리키는 컬럼, join이 더하는 테이블, `select`가 좁힌 것, 그리고 select·update·delete·insert 중 무엇인지. 조건문 안에 적힌 단계는 실행될 수도 있는(MAY) 것이라, 거기서 읽는 것은 SOUND_SET입니다 | EXACT |
+| `prisma.operation` | TS 레인 브리지에서 | Prisma 호출의 연산과 인자의 키 하나하나 | 보내는 문장(select, insert, update, upsert, delete), 읽고 쓰는 필드, 행 전체를 돌려주는지. 호출이 적은 relation(연관 관계)은 닿는 모델까지 따라갑니다. `include`·`select` 안, relation 필터, `_count`, 중첩 쓰기(nested write)가 여기 해당합니다. null로 거르는 relation은 연결만 확인하고, 아무것도 바꾸지 않는 값을 받은 중첩 쓰기는 Prisma가 그래도 보내는 것만 그립니다(팩의 `idle` 항목). 바꾸기 전에 행을 먼저 찾아야 하는 중첩 쓰기는 그 테이블과 키를 먼저 읽습니다(`lookup`). `extensions`에는 클라이언트로 클라이언트를 만드는 호출(`$extends`)과, 호출이 보내는 것을 바꿀 수 있는 확장 부분이 적혀 있습니다. 따라가지 못한 것(넘겨받지 않은 모델로 가는 relation, 모르는 키, 변수에 담긴 인자)은 그렇다고 남깁니다 | EXACT |
+| `table.join-table` | 요약 지도가 닿은 테이블을 계열로 나눌 때 | 테이블 이름과 카탈로그가 선언한 컬럼 | 프레임워크가 두 테이블을 잇기 위해서만 만든 테이블인지. 이름이 `params.prefix` 로 시작하고, 룰이 `params.columns` 를 적었으면 컬럼이 정확히 그것이어야 합니다. 요약은 그런 테이블을 이름으로 묶지 않고, 그래프가 잇는 테이블 쪽에 둡니다 | 없음. 분류만 합니다 |
+| `typeorm.entity` | TS 레인 브리지에서 | TypeORM 데코레이터가 붙은 클래스, 그 속성이 선언한 컬럼과 relation, 상속한 클래스, 애플리케이션이 어디에 적었든 DataSource 옵션 | 어느 클래스가 엔티티인지, 그리고 매핑하는 테이블·컬럼·조인 테이블. 이름은 옵션이 정한 naming strategy, 테이블 prefix, schema대로 짓습니다. 전략으로 만든 이름은 전략을 알고, 모든 TypeORM 버전이 같은 철자로 쓸 때만 EXACT입니다. 테이블 이름은 소스에 적힌 것까지 포함해서, prefix를 알고 schema를 적지 않은 엔티티라면 schema도 알 때만 EXACT입니다. 아니면 이유와 함께 HEURISTIC입니다. 테이블 이름 앞에 schema와 엔티티 자신의 database 중 무엇이 붙는지는 드라이버가 정합니다(`tablePath`). 팩이 모르는 드라이버면 이름은 HEURISTIC이고, 옵션에 드라이버가 적혀 있지 않을 때도 앞에 무언가 붙을 수 있는 테이블이면 HEURISTIC입니다. TypeORM이 스스로 채우는 컬럼(`autoColumns`: 생성 날짜, 수정 날짜, 버전)도 여기서 정합니다 | 없음. 엣지를 긋지 않고, 이름마다 등급이 따로 붙습니다 |
+| `typeorm.receiver` | TS 레인 브리지에서 | 클래스의 필드와 그 타입·주입 데코레이터, 호출 사슬이 거치는 함수와 멤버, 트랜잭션 콜백의 매개변수 | TypeORM 호출을 받는 객체가 무엇인지(엔티티의 repository, entity manager, data source), 그리고 어느 엔티티를 가리키는지. 선언한 뒤 한 번 받았거나, 그런 객체를 담은 필드를 받은 지역 변수는 그 객체를 담습니다. 조건이 값을 고르는 지역 변수는 다른 값을 담을 수 있어서, 그 변수로 부른 호출은 읽지 않습니다 | 없음. 분류만 합니다 |
+| `typeorm.operation` | TS 레인 브리지에서 | repository·entity manager 연산의 이름과 인자, 부분 하나하나 | 보내는 문장, 거르고 돌려주고 정렬하고 쓰는 컬럼, eager로 표시된 relation까지 행 전체를 돌려주는지, 그리고 소스에 적히지 않은 인자라서 실행 때만 알 수 있는 것. count, exists, 집계 연산은 eager relation을 행 없이 조인하므로(TypeORM 0.3) 그 테이블과 조인 컬럼은 SOUND_SET입니다. 쓰기는 TypeORM의 문장 중 하나를 보내고(`sends`), 그 문장이 날짜·버전 컬럼을 스스로 채웁니다. 보낼 수 있는 문장 모두가 채우는 컬럼은 쓰는 것이고, 일부만 채우는 컬럼은 SOUND_SET입니다 | EXACT |
+| `typeorm.query-builder` | TS 레인 브리지에서 | `createQueryBuilder` 사슬과 그걸 담은 이름에 뒤이어 부른 호출, 단계 하나하나와 조건의 텍스트 | 쿼리가 쓰는 alias, 조건 안의 `alias.property`가 가리키는 컬럼, join이 더하는 테이블, `select`가 좁힌 것, 그리고 select·update·delete·insert 중 무엇인지와 그 문장이 스스로 채우는 날짜·버전 컬럼. 조건문 안에 적힌 단계는 실행될 수도 있는(MAY) 것이라, 거기서 읽는 것은 SOUND_SET입니다. `clone`은 builder를 하나 더 만들고, 그 단계는 읽지 않습니다 | EXACT |
 
 ### 전체 이름으로 적은 상위 타입
 
@@ -151,12 +156,20 @@ predicate가 고른 컨트롤러 앞에 경로 prefix를 붙일 수 있습니다
 - `types`에는 그 메서드를 선언한 타입을 전체 이름으로 모두 적습니다. 룰은 메서드를
   이름만이 아니라 선언한 타입으로 가리킵니다.
 - Java 워커는 호출마다 수신자(메서드를 받는 객체)를 파일이 선언한 대로 기록합니다.
-  지역 변수, 매개변수, 필드, `new X()`, 캐스트, `this`입니다. 그 타입이 `types`에
-  있는 타입이면(전체 이름으로 적었든, 파일이 부를 수 있는 이름으로 적었든), 또는
-  `extends`나 `implements`에 그런 타입을 적은 클래스면 그 호출은 설정입니다. 파일이
-  수신자의 타입을 밝히지 않았는데 그런 타입을 import한 파일이면, 증명된 게 없으니 한
-  단계 낮은 알림(severity `info`)으로만 말합니다. 다른 타입으로 선언한 수신자에 부른
-  호출은 다른 메서드이고, 알리지 않습니다.
+  지역 변수, 매개변수, 필드, `new X()`, 캐스트, `this`, `new`로 타입이 정해지는
+  `var`(`var m = new X()`), 그리고 클래스가 어디서도 선언하지 않은 이름입니다. 마지막은
+  상위 클래스가 선언한 필드일 수 있습니다. 그 타입이 `types`에 있는 타입이거나, 그런
+  타입을 몇 단계 위에서든 상속·구현한 트리 안의 클래스면 그 호출은 설정입니다.
+- 타입 이름은 javac가 그 파일에서 읽는 방식대로 읽습니다. 전체 이름으로 적었으면 그
+  이름입니다. 아니면 파일이 선언한 타입, 단일 타입 import, 같은 패키지의 타입을 먼저
+  보고, 패키지 전체 import는 그다음에 봅니다. 그래서 룰의 타입보다 두 단계 아래
+  클래스에서 `this`로 부른 호출도 설정이고, 상위 클래스가 선언한 필드로 부른 호출도
+  설정입니다.
+- 파일이 수신자의 타입을 밝히지 않았는데 그 파일에서 그 이름이 룰의 타입을 가리키면,
+  증명된 게 없으니 한 단계 낮은 알림(severity `info`)으로만 말합니다. 다른 타입으로
+  선언한 수신자에 부른 호출은 다른 메서드이고, 알리지 않습니다. 트리 어디서도, 상위
+  클래스에서도 선언하지 않은 이름은 타입을 밝히지 않은 수신자로 봅니다. 상속 사슬이
+  `types`에 닿기 전에 트리 밖으로 나가는 클래스는 놓칩니다. 짐작하지 않습니다.
 - Java facts에 그런 호출이 있는데 프로필 키가 비어 있으면, `cascade analyze`가
   `SETTING_IN_CODE` 경고로 파일, 줄, 채울 키를 알려 줍니다. 키를 선언했으면 그게
   프로젝트의 말이므로 아무것도 알리지 않습니다.
@@ -296,15 +309,30 @@ NestJS, Prisma, TypeORM 팩(`nestjs.json`, `prisma.json`, `typeorm.json`)에는 
   (`relationNullFilters`), `_count`가 읽는 것, 중첩 쓰기마다 관련 행과 연결에 하는 일,
   그리고 중첩 쓰기가 아무것도 바꾸지 않게 만드는 리터럴 값(`idle`)입니다. 항목마다
   값, 적용되는 relation, 그리고 엣지를 전부 빼는지 쓰기만 빼는지를 적습니다.
-  `delete: []`도 관련 행을 찾아보기는 하기 때문입니다. `extensions`에는 `$extends`, 호출이 보내는 것을 바꿀
+  `delete: []`도 관련 행을 찾아보기는 하기 때문입니다. `lookup`에는 중첩 쓰기와
+  relation 종류마다, Prisma가 쓰기 전에 어떤 행을 SELECT하는지 적습니다. 값이 이름을 댄
+  행(`named`, connect가 찾는 행)과, 매달린 행에 연결된 행(`linked`, delete가 찾는
+  행)입니다. `nests`와 `argumentRows`는 어느 행이 새로 만드는 행인지 적습니다. 새 행에는
+  아직 연결된 것이 없기 때문입니다. `extensions`에는 `$extends`, 호출이 보내는 것을 바꿀
   수 있는 부분(`query`), `Prisma.defineExtension`, 그리고 `result` 부분에서 계산 필드가
   어떤 필드를 필요로 하는지 적는 곳이 들어 있습니다.
 - `nestjs.providers`(종류 `ts.provider-binding`)는 모듈이 타입에 묶는 것을 읽습니다.
   클래스만 적으면 자기 자신을 묶고, `{ provide: T, useClass: C }`는 T에 C를 묶습니다.
   `useFactory`, `useValue`, `useExisting`으로 한 바인딩은 이름만 남기고 읽지 않습니다.
-  `@Inject(token)`이 붙은 생성자 매개변수는 타입이 아니라 그 토큰으로 채워집니다.
-  레인은 이 바인딩으로, 추상 클래스나 인터페이스를 거친 호출이 어느 클래스에 닿을 수
-  있는지 좁힙니다.
+  생성자 매개변수의 데코레이터가 하는 일도 적습니다. `@Inject(token)`은 타입이 아니라
+  그 토큰으로 채웁니다(`injectByToken`). `@Optional`, `@Self`, `@SkipSelf`, `@Host`는
+  아무것도 바꾸지 않습니다(`harmless`). 그 밖의 데코레이터는 모르는 것이라, 무엇으로
+  채우는지 정하지 않습니다. `@Inject`를 감싼 프로젝트 자체 데코레이터도 여기
+  해당합니다. `consumed`에는 패키지 모듈의 async 옵션에서 패키지가 읽기만 하는
+  키(`imports`, `inject`, `useClass`, `useExisting`, `useFactory`)를 적습니다. 거기 적힌
+  타입은 패키지에 넘겨 묶게 한 것으로 치지 않습니다. 레인은 이 바인딩으로, 추상
+  클래스나 인터페이스를 거친 호출이 어느 클래스에 닿을 수 있는지 좁힙니다. 클래스를
+  거친 호출이 그 자리에 묶인 다른 클래스로 가는지도 이것으로 정합니다.
+- `typescript.test-support`(종류 `ts.test-support`, 팩 `typescript.json`)에는 파일을
+  테스트 지원 파일로 만드는 폴더 이름(`__mocks__`, `testing`, `e2e` 등)과 파일 이름
+  끝(`.spec.ts`, `.mock.ts`, `.stub.ts`, `.stories.ts` 등)이 있습니다. 레인은 그런
+  파일을 뺍니다. 애플리케이션 루트 안이든 공유 라이브러리 안이든 같습니다. mock
+  클래스를 애플리케이션 코드로 읽으면, 호출이 닿을 클래스가 하나 더 생기기 때문입니다.
 - `typeorm` 팩은 종류마다 룰이 하나씩입니다. `typeorm.entities`에는 엔티티·컬럼·
   relation 데코레이터, 읽지 않는 데코레이터(`@ChildEntity`, `@ViewEntity`,
   `@TableInheritance`, `@Tree`), 애플리케이션이 DataSource 옵션을 적는 곳
@@ -313,11 +341,18 @@ NestJS, Prisma, TypeORM 팩(`nestjs.json`, `prisma.json`, `typeorm.json`)에는 
   `DefaultNamingStrategy`)와 `snake`(typeorm-naming-strategies의 `SnakeNamingStrategy`)이고,
   테이블, 컬럼, 조인 컬럼, 조인 테이블과 그 컬럼에 각각 어떤 변환을 하는지 적혀
   있습니다. 프로필의 `tsBackend.typeorm.namingStrategy`에는 이 둘 중 하나를 적습니다.
+  `tablePath`에는 드라이버 `type`마다 테이블 이름 앞에 무엇이 붙는지 적습니다.
+  스키마(PostgreSQL, CockroachDB, Oracle, SAP), database(MySQL, MariaDB, Spanner),
+  둘 다(SQL Server), 아무것도 없음(SQLite와 그 위에 만든 드라이버)입니다.
+  `autoColumns`에는 어느 문장이 생성 날짜, 수정 날짜, 버전을 스스로 채우는지 적고,
+  `insertKey`는 컬럼을 insert에서 빼는 컬럼 옵션입니다.
   `typeorm.receivers`에는 repository, entity manager, data source를 주는 타입, 주입
   데코레이터, 함수, 멤버가 있습니다. `typeorm.operations`에는 모든 연산과 그 연산이
   보내는 문장, 인자 부분마다의 역할, 그리고 TypeORM 0.2에서 find의 옵션과 조건을
-  구별하는 방법이 있습니다. `typeorm.query-builder`에는 builder 메서드마다의 역할과,
-  조건 안에서 컬럼이 아니라 SQL 단어인 것들이 있습니다.
+  구별하는 방법이 있습니다. `eagerJoined`는 eager relation을 고르지 않고 조인하는
+  연산(count, exists, 집계)을 표시하고, `sends`는 쓰기가 거치는 문장을 적습니다(`save`는
+  insert 아니면 update). `typeorm.query-builder`에는 builder 메서드마다의 역할(`clone`은
+  builder를 하나 더 만듭니다)과, 조건 안에서 컬럼이 아니라 SQL 단어인 것들이 있습니다.
 
 자세한 내용은 [TS 레인 설정](setup/ts-lane.md)에 있습니다.
 

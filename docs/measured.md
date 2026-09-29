@@ -841,6 +841,38 @@ it takes the third, which no declaration restores:
   the code, and those calls are HEURISTIC, each edge naming the step
   (`evidence.sink.unsettled`). `mode=heuristic` still reaches 27.
 
+## RM67: one depth rule for every walk
+
+Until this round the census walked 8 hops from a handler and stopped, and a
+walk that had more to go counted it as cut. Now every walk goes as far as the
+graph goes, and a node cap of 4000 is the guard ([concepts.md](concepts.md)).
+On the pinned corpus no census walk reached the node cap, the slowest census
+took the same time uncapped (130 ms on ruoyi-vue-pro), and these counts rose:
+
+| Repository | What rose |
+|---|---|
+| dolphinscheduler | endpoints reaching a statement 204 -> 215, statements 259 -> 265, tables 42 -> 43, columns 444 -> 451 |
+| ruoyi-vue-pro | endpoints reaching a statement 2638 -> 2671, statements 2525 -> 2548 |
+| egovframe-msa-edu | endpoints reaching a statement 90 -> 91 |
+| egov-business-template | screens reaching a table 77 -> 78 |
+| ruoyi-vue | screens reaching a table 8 -> 9 |
+| jeecg-boot | statements reached 748 -> 749 |
+
+The same round reads every method and path a Spring mapping annotation names
+([java-lane.md](setup/java-lane.md#one-mapping-several-routes)), which moved
+jeecg-boot's own test pins: routes with one handler 969 -> 1016, endpoints
+970 -> 1017, endpoints reaching a statement 744 -> 790. When the gate baseline
+was recorded again after the round, three numbers moved for a reason other than
+a gain. Endpoint-to-column pairs rose past the 5% budget on jeepay (3554 ->
+3824), jeecg-boot (15997 -> 17231) and ngrinder (900 -> 1082), because the
+routes a multi-value mapping names are routes of their own (endpoints 134 ->
+138, 970 -> 1017, 124 -> 136) and each reaches what its sibling reaches; per
+route the pairs move 26.5 -> 27.7, 16.5 -> 16.9 and 7.3 -> 8.0. mes4u's screens
+fell 50 -> 31: the 19 that went were children composed under a wildcard
+(`/*/dashboard`, `/*/defect`) because their parent was found by line only;
+found by line and column they compose to `/mdm/defect` and the rest, which were
+already there. Its screens reaching a table stay 0.
+
 ## The goldens
 
 Three real projects, each pinned to a commit and checked end to end.

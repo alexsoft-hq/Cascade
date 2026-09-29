@@ -523,11 +523,11 @@ nothing across files; that is the bridge's job):
 | `function` | the named functions, with the rule that a callback gets no name of its own and is attributed to the nearest named function |
 | `constant` | an enum or object literal of string members, and `export const X = '/x'`. A constant whose value the build decides (an env read, a default, env reads joined, a condition over them) keeps that expression as `expr`, or `exprMembers` for an object's members |
 | `binding` | a top-level `const` whose initializer is a call, a `new`, or another name, plus the `baseURL` when one is built there |
-| `class` | a class, with the methods and fields it declares (a client written as a class is as common as one written as a function). `component: true` when a decorator a router pack names marks it (Angular's `@Component`) |
+| `class` | a class, with the methods and fields it declares (a client written as a class is as common as one written as a function), and the class it extends (`extends`). `component: true` when a decorator a router pack names marks it (Angular's `@Component`) |
 | `assign` | `this.<field> = …` anywhere in a class body, with the same `init` shape a `binding` carries — this is where a class puts the client it sends through. A field whose TYPE the class states (a constructor parameter property, a field set from a declared injector) is an `assign` too, with a `typed` init |
-| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`, with `minus` or `part` when it hands on less than a whole parameter) and what it reads apart from that (`reads`, with `open` and why when a name there is not settled) |
-| `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`, wherever it is written, a class decorator's argument included |
-| `route` | a route declaration, with its path AS WRITTEN, its component, its parent and its child count. A route of a module pack also carries what joins it to other files: the list it sits in (`list`), a path written as a constant (`pathRef`), the list it loads lazily (`childrenFrom`), the export a lazy component names (`componentExport`), and `grouping` / `outlet` |
+| `call` | a call site that goes through an import or a local binding, carries a URL-looking argument, or is `fetch` / `XMLHttpRequest.open`. Its URL says which argument, and which key of it, it was read from (`url.at`). Inside a named function it also says what it hands on (`hands`, with `minus` or `part` when it hands on less than a whole parameter, and `written` or `handed` when the function writes the object or hands it to another call), what it writes under a method key or a client's base URL key (`sets`), and what it reads apart from that (`reads`, with `open` and why when a name there is not settled, and `under` for what lands under one key of an object argument) |
+| `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`, wherever it is written, a class decorator's argument included, and `@Injectable({ useClass, … })` for the class it decorates |
+| `route` | a route declaration, with its path AS WRITTEN, its component, its parent and its child count, and where on its line it and its parent are (`col`, `parentCol`), since two routes can share a line. A route of a module pack also carries what joins it to other files: the list it sits in (`list`), a path written as a constant (`pathRef`), the list it loads lazily (`childrenFrom`), the export a lazy component names (`componentExport`), and `grouping` / `outlet` |
 | `routeRef` | a route or a list named by NAME inside a list or under `children`, and a list a child registrar (`forChild`) registers |
 | `config` | the env values, the proxy rules and the aliases described above. An alias read from a nested `tsconfig.json` carries the directory it governs (`scope`), and each package prints one `what: "package"` record with the dependencies its `package.json` names |
 
@@ -535,8 +535,8 @@ A `function` also carries what it RETURNS, when the last `return` at the top
 level of its body is a call or a `new` — that is how a factory (`return new
 Client(opts)`) and a forwarding method (`return this.request(…)`) are followed.
 It also carries its `forwards`: the calls on a name the file declares that hand
-on one of the function's own parameters, with what each hands on and the method
-it writes (see *What a wrapper is* below). A `this`-rooted callee inside a class body says which class it belongs to
+on one of the function's own parameters, with what each hands on and what it
+writes under a method or base URL key (see *What a wrapper is* below). A `this`-rooted callee inside a class body says which class it belongs to
 (`binding: {kind: "this", class: "…"}`), so `this.inner.request(cfg)` can be
 traced to the field the constructor assigned.
 
@@ -696,7 +696,10 @@ somewhere else.
 
 A `jsx` block (as `react-router.json` has) says which JSX element is a route and
 which attributes name its path and its component, so a `<Routes><Route …>` tree
-is read as the same tree.
+is read as the same tree. An index route (`{ index: true, element }`, or
+`<Route index element>` through the block's `indexAttr`) has no path of its own:
+it is what its parent shows at the parent's path, so it is read with the path
+`''`.
 
 When two packs could both claim one object, the one whose **distinctive** keys
 the object carries wins (`meta`/`hidden`/`redirect`/`name` against
@@ -1010,24 +1013,22 @@ first. Such a chain is SOUND_SET, never EXACT, like every wrapper, and
 `this` inside such a method is not a forward: only a call on a name the file
 declares is.
 
-**Where the method comes from, through a forward.** The method is the one the
-request finally goes out with, so the chain is walked hop by hop, from the
-caller to the client. A verb a hop writes AFTER what it was handed
-(`{ ...option, method: 'GET' }`) sets it (`method.from: "wrapper-verb"`). One
-written BEFORE (`{ method: 'GET', ...option }`) is a default that a method
-already on the way in, or the caller's own `method` key, replaces:
+**The URL, the method and the base URL, walked hop by hop.** A call through the
+project's wrappers sends what the LAST call sends, and three things in it come
+from the caller or from a step on the way: the URL, the method and the base URL.
+Each is followed the same way, from the caller to the client
+(`src/adapters/web/chain.mjs`). A step's hands move it into the next step's
+parameters, or drop it. A step's sets write over it
+(`adapters/web/lib/sets.mjs`): a key written AFTER what the step was handed
+(`{ ...option, method: 'GET' }`) is what goes on, and one written BEFORE a
+spread of a parameter (`{ method: 'GET', ...option }`) is a default that what
+came in at that parameter replaces.
 
-- the caller's object literal names a method: that one (`config`);
-- it names none, and has no spread of its own: the wrapper's (`wrapper-default`);
-- the caller's options could carry one the lane cannot see (a spread in them, a
-  name, an argument past the three a call record reads): no method,
-  `from: "absent"` with `wrapperDefault` beside it, and the edge is HEURISTIC.
-
-**Where the URL comes from, through a forward.** The URL is the caller's, read
-where the call record says it was (`url.at`: the argument, and the key when the
-argument is an object). It reaches the client only if every hop down to it
-hands on the part of its parameters the URL is in. A wrapper rarely hands its
-options on as they came in: ruoyi-vue-pro's writes
+**Where the URL comes from.** The URL is the caller's, read where the call
+record says it was (`url.at`: the argument, and the key when the argument is an
+object). It reaches the client only if every hop down to it hands on the part of
+its parameters the URL is in. A wrapper rarely hands its options on as they came
+in: ruoyi-vue-pro's writes
 `const { headersType, headers, ...otherOption } = option; service({ ...otherOption })`.
 So the worker follows a parameter through what the syntax settles: a `const`
 alias, a rest, a spread copy, a pattern in the signature
@@ -1038,18 +1039,65 @@ as a key's value is a hand too) and what it reads apart from that (`reads`).
 
 - A hop whose hands carry the URL's part moves it along. A rest or a copy that
   does not name the caller's `url` carries it.
-- A hop that names it and hands it on no other way has dropped it, and would
-  send a URL this call did not write. The call is not traced through that
-  chain: it is graded as untraced, counted in
-  `laneStats.web.calls.urlNotHandedOn`, and the run prints
-  `WEB_URL_NOT_HANDED_ON` when there are any.
-- A hop the code does not settle (a local assigned again, a parameter the body
-  writes over, `this`, `arguments`, a call on the options, a return whose
-  arguments were not read) is taken as reaching the client, as a wrapper always
-  was, but the edge is graded HEURISTIC and names the step and why
-  (`evidence.sink.unsettled`). Such calls are counted in
-  `calls.urlThroughUnreadHop`, by why in `calls.unreadHopBy`, and the run
-  prints `WEB_URL_THROUGH_UNREAD_HOP`.
+- A hop that names it and hands it on no other way has dropped it. The request
+  that call makes does not ask for the caller's URL, so the call draws **no
+  edge**. It is counted in `laneStats.web.calls.urlNotHandedOn`, and the run
+  prints `WEB_URL_NOT_HANDED_ON` when there are any.
+
+**Where the method comes from.** `method.from` on the edge says which of these
+it was:
+
+- `config`: the caller's object names a verb, and every step hands that key on.
+  A method the caller wrote that a step drops does not arrive.
+- `wrapper-verb`: a step writes a verb after what it was handed. So does a
+  write on the object before it is handed on, `cfg.method = 'POST'` or
+  `Object.assign(cfg, { method: 'DELETE' })`, when it always runs (not under an
+  `if`, a loop, a `&&` or a callback).
+- `wrapper-default`: a step writes a default, and nothing the caller handed in
+  carries a method.
+- `library-verb`: the verb the client is called through (`service.get(…)`), as
+  the HTTP client pack's verb table states it.
+- `library-default`: no method arrives, so the client sends its documented
+  default.
+- `absent`: the method is not known, and the edge is HEURISTIC. That is a method
+  written as something other than a verb (`{ method: verb }`), which is never
+  read as the library's default, or a caller's options that could carry one the
+  lane cannot see (a spread, a name, an argument past the three a call record
+  reads), with the step's default beside it as `wrapperDefault`.
+
+A step that makes more than one client call
+(`if (o.upload) return axios({ ...o, method: 'POST' }); return axios({ ...o, method: 'GET' })`)
+is walked once per call, and the call gets one edge for each method any of them
+sends. A step whose calls lead on to different clients is not followed branch by
+branch: the edge is HEURISTIC and says so (`branches`).
+
+**Where the base URL comes from.** A base URL the request carries of its own
+replaces the client instance's: one the caller writes under the client's base
+URL key (`baseURL` for axios, from the HTTP client pack), one a step writes, or
+one written into a client call's own options. When it is a path, it is the
+prefix, `evidence.prefix.from: "request"`. When it is not a path this lane can
+read (an absolute address, a name), the edge is HEURISTIC and says so
+(`request-base`).
+
+**Settled means nothing writes the key.** A hop that hands the object on is
+settled only while nothing changes it on the way. The worker reads each named
+function once for the writes it makes through a name
+(`adapters/web/lib/writes.mjs`): a member assignment, `delete`, `++`,
+`Object.assign`, and every call the name is handed to. A hand says which keys
+its object had written (`written`) and whether it was also handed to another
+call (`handed`). A step that writes the key the URL, the method or the base URL
+is under, or hands the object to another call, leaves that key unsettled. A
+write under another key unsettles nothing, and what a call reads under one key
+of an object argument can only land under that key (`reads.under`), so
+`{ ...option, params: qs(option) }` still hands the URL on.
+
+A hop the code does not settle (a local assigned again, a parameter the body
+writes over, a key the step writes, an object handed to another call, `this`,
+`arguments`, a call on the options, a return whose arguments were not read) is
+taken as reaching the client, as a wrapper always was, but the edge is graded
+HEURISTIC and names the step, the key and why (`evidence.sink.unsettled`). Such
+calls are counted in `calls.urlThroughUnreadHop`, by why in
+`calls.unreadHopBy`, and the run prints `WEB_URL_THROUGH_UNREAD_HOP`.
 
 ### The prefix, and how to declare it
 
@@ -1124,6 +1172,11 @@ host, and what it rests on.
   environment value at the front of a call's path are joined only in a build
   that sets both; when they hold in disjoint builds, the call is unresolved
   (`unresolved.byReason.noBuild`), never a path mixed from two builds.
+- A base URL some builds set and others set nowhere is a candidate per build.
+  When every value read comes from a build's own `.env` file, a build whose
+  files do not set it makes the client with no base URL, and sends the path as
+  written. So the call is placed twice: behind the value for the builds that set
+  it, and bare for the others, each a candidate only for its own builds.
 - A base URL written as a name (`baseURL: API_BASE`) is followed to where the
   name is declared, through imports.
 - An environment value at the FRONT of a call's own URL
@@ -1167,17 +1220,41 @@ ports and the file that set them. When its path is one this pack also serves,
 the edge lands on that route's node, still UNRESOLVED, so no walk follows it.
 The same port, no port written, or ports that are not known: as before.
 
-The ports are not known, and nothing is decided by port, when a `server.port` is
-a placeholder (`${PORT:8080}`) or not a number, when an application takes its
-configuration from outside the tree (a config server, Nacos, Consul,
-ZooKeeper), when it points at configuration this reader does not follow (any
+**Code can set the port too.** A Java or Kotlin source is read with its comments
+taken out (`src/core/server_ports_java.mjs`), and it belongs to the application
+whose `src/main/resources` sits beside its `src/main/java` or `src/main/kotlin`,
+the top of the repository included. What sets a port in code is a list of data,
+`PORT_SET_IN_CODE`: `setPort` on a web server factory, `setDefaultProperties`
+on the application, and `server.port` put in as a property (a map entry, a
+system property, a builder argument). A hit makes that application's port
+unknown, with the rule's own words as the reason. A `@PropertySource` that
+names a file on the classpath is looked for in the tree, under that
+application's `resources`, and read like any configuration file: one that sets
+no port changes nothing. One outside the classpath, one written with a
+placeholder, or one the tree does not hold makes the port unknown.
+
+An application's port is not known when a `server.port` is a placeholder
+(`${PORT:8080}`) or not a number, when the application takes its configuration
+from outside the tree (a config server, Nacos, Consul, ZooKeeper), when it
+points at configuration this reader does not follow (any
 `spring.config.import`, a classpath file included, `spring.config.location`,
-`additional-location` or `name`, a profile key with a placeholder, or a Java
-source with `@PropertySource`), or when no Spring configuration was read. One application whose
-port is not known makes the whole pack's unknown, because a call on "another"
-port may be that application's. `cascade analyze` prints the ports and the files
-they came from, or why they are not known, and warns `WEB_OTHER_PORT` with the
-count when a call went to another port:
+`additional-location` or `name`, a profile key with a placeholder), or when
+code sets it as above. With no Spring configuration read at all, no port is
+known either.
+
+**What decides nothing.** Two things leave every call where its path puts it,
+whatever port it writes:
+
+- One application whose port is not known. A call on "another" port may be that
+  application's, so the pack's ports are not known. The ports the other
+  applications state are still read and printed beside the reason.
+- A port that rests on Spring Boot's default. Whatever starts the application
+  may set another, so no call is another service's on the strength of 8080
+  alone.
+
+`cascade analyze` prints the ports and the files they came from, or why they are
+not known, and warns `WEB_OTHER_PORT` with the count when a call went to another
+port:
 
 ```
 Web lane: this pack listens on port(s) 8080 (server.port in src/main/resources/application.properties)
@@ -1451,7 +1528,7 @@ into `pack.meta.laneStats.web`, so what was printed and what was recorded cannot
 disagree. Below them come the ports this pack listens on, or why they are not
 known (see *This machine, another port*), `WEB_URL_NOT_HANDED_ON` when a
 wrapper did not hand a call's URL on, and `WEB_URL_THROUGH_UNREAD_HOP` when a
-URL passed a wrapper step the code does not settle.
+URL, a method or a base URL passed a wrapper step the code does not settle.
 
 ### What the web axis says
 
@@ -1478,7 +1555,9 @@ reason on `untraced.callees`:
 | `external` | comes from a package the HTTP client pack does not name |
 | `not-a-wrapper` | is the project's own, and hands the request to no client this lane knows |
 | `not-a-verb` | is a client, called through a method that is not one of its verbs |
-| `url-not-handed-on` | is a wrapper that does not hand the argument the URL is in on to the client |
+
+A call whose wrapper drops its URL is not among them: it draws no edge at all,
+and `WEB_URL_NOT_HANDED_ON` counts it.
 
 ## Incremental: what is cached, and what never is
 
@@ -1539,16 +1618,32 @@ grade. That is a MARKER, not a grade: the lattice is untouched.
 `frontendCalls`: how many frontend functions call it. That is the half of the
 blast radius that is not below the edit.
 
-**What else the overlay reads, and what it does not.** It reads the OpenAPI
-documents the base pack read, as they are on disk now, and runs the OpenAPI
-bridge on them as `analyze` does, so a document's routes and the contract links
-on them (see *OpenAPI documents* below) survive an edit. It hands the bridge the
-frontend packages and the server ports the base pack read, as `analyze` does,
-so an overlay over no edit builds the graph the pack holds, and a call the pack
-left outbound because of its port stays outbound. It does not decide those two
-again: an edited `package.json` near a frontend, or an edited Spring
-configuration when the pack read ports, is named in the answer's `limits`. A
-pack built before it recorded its packages says so too.
+**What else the overlay reads, and what it does not.** It builds from the
+inputs the base pack was built from, so a change no diff of the analyzed root
+reports never reads as your edit. It reads the OpenAPI documents the base pack
+read, as they are on disk now, and runs the OpenAPI bridge on them as `analyze`
+does, so a document's routes and the contract links on them (see *OpenAPI
+documents* below) survive an edit; an edited document is an edit to the routes
+it declares. It hands the bridge the frontend packages, the server ports and
+the `gatewayRoutes` of the profile the base pack was built with, as `analyze`
+does, so an overlay over no edit builds the graph the pack holds, and a call the
+pack left outbound because of its port stays outbound.
+
+- **A frontend in a repository of its own.** `analyze` records the commit it
+  read that repository at, beside the fact index. When that repository has
+  moved on, the overlay is discarded and the answer is `behind`, as when the
+  backend's HEAD moves. A frontend outside the analyzed root that is in no
+  repository at all is said in `limits`: the overlay cannot tell what changed
+  there.
+- **A profile that changed since** (a new `gatewayRoutes` entry, say) declines
+  the overlay and names the profile, because over another profile a changed
+  prefix would read as your edit. Run `cascade analyze`.
+- **Packages and ports are not decided again.** An edited `package.json` near a
+  frontend is named in the answer's `limits`. So is, when the pack read ports,
+  an edited Spring configuration, a file the base pack read a port from, a file
+  it named as the reason a port is unknown, and a Java source that now loads
+  configuration (`@PropertySource`) or sets the port in code. A pack built
+  before it recorded its packages says so too.
 
 Measured on the integration fixture, one edited `.vue`: **67 ms** total for the
 lanes (web 63, sql 1, graph 3), against a one-second gate.
@@ -1644,6 +1739,24 @@ The composition rules, in full:
 - when two declarations compose to the same path they are ONE node, the first in
   (file, line) order, and every declaration is listed in `declaredAt`.
 
+What the second declaration MEANS depends on where it is written. A router
+draws a parent and, in its outlet, the child whose path adds nothing, both at
+the parent's own path: `{path: 'account', component: Shell, children: [{path:
+'', component: Settings}]}` shows Shell and Settings together at `/account`. So
+a declaration written under or above every declaration already drawing that
+path (a child with the path `''`, a react-router index route, a ui-router state
+with an empty `url`, a lazily loaded list whose first route is `''`, across
+files too) joins the screen: its component renders there as well, and the node
+lists every such file in `components`. These are counted as
+`laneStats.web.screens.nestedSamePath`. Two declarations that are not on one
+nesting chain (two `''` siblings, two unrelated routes) keep the rule above:
+the first is the screen, the other renders nothing there, and they are counted
+as `duplicatePaths`.
+
+A route's parent in the same file is found by its place, line and column,
+because `{ path: 'team', children: [{ path: '', component: T }] }` is two
+routes on one line, and a parent found by its line alone was the child itself.
+
 The node id is `screen:<the composed path>`, which is also what `flow screen=`
 and `browse kind=screen` name it by.
 
@@ -1736,6 +1849,7 @@ allowed to read.
 | `code` | the first match of `screenAxis.codeRegex` against the name, then the title, then the path |
 | `group` | the first `moduleAttribution.codeLength` characters of the code when both exist, otherwise the first path segment |
 | `component` | the root-relative file the route's component resolved to |
+| `components` | every component file drawn at this path, when a nested route with a path that adds nothing draws one here too |
 | `file` / `line` / `pack` | the declaration itself, and which router pack recognized it |
 | `params` | true when the composed path has a `:x` or a `*` in it |
 | `hidden` | present only when the declaration says so |
@@ -1747,7 +1861,9 @@ allowed to read.
 Nothing about it is guessed from a name:
 
 - **EXACT** onto every function of the file the route DECLARES as its component.
-  The route says which file it is; the function is in that file.
+  The route says which file it is; the function is in that file. A component
+  declared at the same path on the route's nesting chain (see above) is drawn
+  the same way, with the rule `route-nested-component`.
 - **SOUND_SET** onto the functions of a file that component **imports**, directly
   or through other components, up to four levels deep, cycles cut. The edge
   carries `evidence.via`, the import chain that reached it. It is a candidate
@@ -1818,7 +1934,7 @@ how the name was followed:
 | `EXACT` | a static import with a named or default specifier, followed through a relative path or a DECLARED alias to a function this lane read; or a call by name inside one file (`getList()`, `this.getList()`) |
 | `SOUND_SET` | the same, but the name came through an `export *` barrel or a re-export chain, so WHICH file it came from was a choice |
 | `SOUND_SET` | the function was never called here at all: it was PASSED AS A VALUE to some other call, and the receiver may call it |
-| `SOUND_SET` | `this.orders.list()` through a field whose TYPE the class states (a constructor parameter property, or `orders = inject(OrderService)`), onto the method of the class that type names and of every class a provider puts behind it (rule `typed-field`). Never EXACT: a provider may put another class in the type's place. HEURISTIC when the set may be short: a provider made by `useFactory` or `useValue`, or one naming a class this lane did not read |
+| `SOUND_SET` | `this.orders.list()` through a field whose TYPE the class states (a constructor parameter property, or `orders = inject(OrderService)`), onto the method of the class that type names and of every class a provider puts behind it (rule `typed-field`). A provider is a `providers` entry, or `@Injectable({ providedIn: 'root', useClass: Mock })` on the type's own class, which puts a Mock behind it (`adapters/web/packs/injection.json`). A class that does not declare the method runs the one the nearest class up what it `extends` declares. Never EXACT: a provider may put another class in the type's place. HEURISTIC when the set may be short: a provider made by `useFactory` or `useValue`, one naming a class this lane did not read, or a class whose method this lane found nowhere up what it extends |
 | `HEURISTIC` | an ASSUMED alias was on the path |
 
 A call onto an imported name that is **not** a function (a constant, a

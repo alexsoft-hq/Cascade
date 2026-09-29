@@ -5,10 +5,10 @@ people who work beside them. Apache-2.0.
 
 [English README](../README.md) | [한국어 README](../README.ko.md)
 
-![A tour of the Cascade viewer: the overview dials, a column fanning out to the
-SQL statements and HTTP endpoints it touches, the source of one statement, the
-whole-project graph, and the schema recovered from the joins the SQL
-makes](assets/cascade-demo.gif)
+![A tour of the Cascade viewer: how much of the project is wired end to end, a
+column traced up to the SQL statements and HTTP endpoints it touches, the source
+of one statement, the whole-project graph, and the schema recovered from the
+joins the SQL makes](assets/cascade-demo.gif)
 
 ## The round trip
 
@@ -110,7 +110,7 @@ server into an AI client and reads the answers:
 | [concepts.md](concepts.md) | grades, the four contract fields, the two speeds, partial packs, calibration |
 | [cli.md](cli.md) | every command and every flag, checked against the binary by a test |
 | [mcp.md](mcp.md) | the tool catalog, the `project` argument, both transports, the error table |
-| [viewer.md](viewer.md) | the local web viewer: tabs, deep links, the language toggle |
+| [viewer.md](viewer.md) | the local web viewer: its five places, deep links, the language toggle |
 | [rules.md](rules.md) | the rule packs: what the engine knows about frameworks, as data with examples |
 | [measured.md](measured.md) | the generality gate's corpus table, the goldens, and what is **not** verified |
 | [setup/agents.md](setup/agents.md) | the MCP client configurations in full: Claude Code, Claude Desktop, Cursor, a generic stdio client |

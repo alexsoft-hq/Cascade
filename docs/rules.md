@@ -18,11 +18,13 @@ every pack and rule with what each gave in that project (links by type and
 grade, nodes by kind), or one rule whole with the links and nodes it gave
 ([mcp.md](mcp.md#rules)). It does not run the examples; that needs the
 workers, so it stays `cascade rules test`'s job.
-The viewer's **Rules** tab (`cascade view`) shows the same packs, read-only:
-each rule's description, why it is there, its params and examples, and how many
-links of the project's pack it gave. A link a rule gave names that rule in its
-evidence (`evidence.rule`, with a sentence in `evidence.basis`), so a walked
-path in Flow or Impact says which rule made that step.
+The viewer (`cascade view`) shows the same packs, read-only, in **Rules**, the
+second view of **Analysis status**. The rules that gave something in this
+project come first, each with its description, why it is there, its params and
+examples, and how many links of the project's pack it gave. A link a rule gave
+names that rule in its evidence (`evidence.rule`, with a sentence in
+`evidence.basis`), so the path **Trace** draws, either way, says which rule
+made each step.
 
 ## Where they are
 
@@ -38,8 +40,9 @@ judged as an engine change, like changing code.
 | `spring-mvc` | the calls that set a path prefix in Spring configuration code, and the profile key that declares it instead | `java.code-setting` |
 | `spring-functional` | the calls a method that returns a `RouterFunction` builds its routes with | `java.route-function` |
 | `openapi-generator` | how openapi-generator names the interfaces it writes, so a controller that implements one handles the document's routes | `java.contract-link` |
-| `nestjs` | the NestJS decorators and bootstrap calls that make routes, and what a module's `providers` bind | `ts.route-decorator`, `ts.provider-binding` |
-| `prisma` | the Prisma client types, and what each client call reads and writes | `ts.type-role`, `prisma.operation` |
+| `typescript` | which TypeScript files are a test's, not the application's | `ts.test-support` |
+| `nestjs` | the NestJS decorators and bootstrap calls that make routes, what a module's `providers` bind, and what a constructor parameter's decorator does to what fills it | `ts.route-decorator`, `ts.provider-binding` |
+| `prisma` | the Prisma client types, what each client call reads and writes, and the table Prisma makes for an implicit many-to-many relation | `ts.type-role`, `prisma.operation`, `table.join-table` |
 | `typeorm` | TypeORM entities and naming strategies, the objects a call is made on, each repository operation and each query builder | `typeorm.entity`, `typeorm.receiver`, `typeorm.operation`, `typeorm.query-builder` |
 
 ## The format
@@ -85,18 +88,20 @@ stop the run: which one wins is never decided by the order the packs load in.
 | kind | runs | reads | concludes | strongest grade |
 |---|---|---|---|---|
 | `java.type-role` | after the Java worker's records are assembled, before the lanes are chosen | the supertypes a type's own extends and implements clauses name, and their type arguments | which role a type plays (a MyBatis-Plus mapper or service) and which of its type arguments is the entity or the mapper. Only the roots of a chain are matched: a type that reaches one through a type of the project's own is found by the bridge that reads the role | EXACT |
-| `java.code-setting` | in `analyze`, over the Java worker's records, once the lanes have run | the calls each Java file makes, each with its receiver as the file declares it (the Java worker's `invocations` record), and what the file imports | which call makes, in configuration code, a setting the profile declares instead (`params.setting`). It is said as `SETTING_IN_CODE` while the profile key is empty | none: it draws no edge |
+| `java.code-setting` | in `analyze`, over the Java worker's records, once the lanes have run | the calls each Java file makes, each with its receiver as the file declares it (the Java worker's `invocations` record), what the file imports, and the types and fields the tree declares | which call makes, in configuration code, a setting the profile declares instead (`params.setting`). It is said as `SETTING_IN_CODE` while the profile key is empty | none: it draws no edge |
 | `java.route-function` | in the Java lane's bridge, beside the mapping annotations | the body of a method declared to return a `RouterFunction` (or a `Supplier` of one), as a tree of the calls it is written with (the worker's `routeFunction` record) | which call starts a builder, adds a route (its verb, path, predicate, handler and springdoc operation id), puts routes under a path, joins another router function's routes, or leaves them as they are; and whether the method is registered by an annotation (`@Bean`) or mounted by code elsewhere. Which Java method a handler names, and where a route mounted elsewhere is served, are the bridge's questions | EXACT |
 | `java.contract-link` | in the OpenAPI bridge, once the documents' routes are on the graph | a class's own annotations and implements clause, what its file's imports make of each name, the methods it declares, and each OpenAPI document's operations (method, path, the path as written, operationId, tags), document by document | which method handles which declared route when the class implements an interface a code generator writes from the document at build time, which the source tree does not hold. Each link is a HANDLES edge | HEURISTIC |
 | `sql.dialect-path` | while discovering the tree | a file's path | which database a DDL or mapper file is for, from a whole word of its path. The first entry of a rule whose word is in the path wins, so a rule lists first the entry it prefers | none: it only classifies |
 | `ts.route-decorator` | in the TypeScript lane's bridge | a class's decorators and its methods' decorators, as the TypeScript worker recorded them | which class is a controller and which method a route, with its path and versions; which class is a module, with the modules it imports and the controllers it lists; and the names the bootstrap calls (`NestFactory.create`, `setGlobalPrefix`, `enableVersioning`, `RouterModule.register`). Whether a controller is served is the bridge's question, read from the module graph | EXACT |
-| `ts.provider-binding` | in the TypeScript lane's bridge | a module's `providers` list, in its `@Module` options or in the object a static method of the module returns (`X.forRoot()`) | which class a module binds to a type (a class listed alone binds itself; `{ provide: T, useClass: C }` binds T to C), which binding it does not read (`useFactory`, `useValue`, `useExisting`), and which entry it cannot read at all (a spread, a computed key). Which modules count, and what that does to a call, is the bridge's question | none: it draws no edge |
+| `ts.provider-binding` | in the TypeScript lane's bridge | a module's `providers` list, in its `@Module` options or in the object a static method of the module returns (`X.forRoot()`) | which class a module binds to a type (a class listed alone binds itself; `{ provide: T, useClass: C }` binds T to C), which binding it does not read (`useFactory`, `useValue`, `useExisting`), and which entry it cannot read at all (a spread, a computed key); what a constructor parameter's decorator does to what fills it (`injectByToken` fills it by a token, `harmless` changes nothing, any other is not known); and which keys of a package module's options it only reads (`consumed`), so a type named there is not handed to it. Which modules count, and what that does to a call, is the bridge's question | none: it draws no edge |
+| `ts.test-support` | when the TypeScript lane chooses the files it reads | a file's path under the analyzed root | whether the file is test support (a spec, a mock, a stub, a helper only a test runs): a directory matched by its whole name, a file by the end of its name. The lane leaves such a file out, under the application's root and in a shared library alike | none: it only classifies |
 | `ts.type-role` | in the TypeScript lane's bridge | the package and the exported name a type is imported from | which role a type plays (a Prisma client). A project class that extends it plays it too | EXACT |
-| `prisma.operation` | in the TypeScript lane's bridge | a Prisma call's operation and its argument, key by key | the statement it sends (select, insert, update, upsert, delete), the fields it reads and writes, and whether it returns the whole row. A relation the call names is followed into the model it reaches: in `include` or `select`, in a relation filter, as a `_count`, and as a nested write. A relation filtered on null only checks the link, and a nested write handed a literal that changes nothing draws only what Prisma still sends (the pack's `idle` entries). `extensions` names the call that makes a client of a client (`$extends`) and the part of an extension that may change what a call sends. What it cannot follow it says: a relation into a model it was not handed, a key it does not know, an argument held in a variable | EXACT |
-| `typeorm.entity` | in the TypeScript lane's bridge | the classes TypeORM's decorators mark, the columns and relations their properties declare, the classes they extend, and the DataSource options wherever the application writes them | which classes are entities, and the tables, columns and join tables they map, each named as the naming strategy, table prefix and schema in the options name it. A name a strategy derives is EXACT only when the strategy is known and every TypeORM version spells it the same; a table name, a written one included, only when the prefix is known and, for an entity that names no schema, the schema is; else HEURISTIC with why | none: it draws no edge, and its names carry their own grade |
-| `typeorm.receiver` | in the TypeScript lane's bridge | the fields of a class, their types and injection decorators, the functions and members a call chain goes through, and a transaction callback's parameter | which object a TypeORM call is made on (a repository of an entity, an entity manager, a data source) and which entity it names | none: it only classifies |
-| `typeorm.operation` | in the TypeScript lane's bridge | a repository or entity manager operation's name and its arguments, part by part | the statement it sends, the columns it filters by, returns, orders by and writes, whether it returns the whole row with the relations marked eager, and what an argument not written out leaves to the running program | EXACT |
-| `typeorm.query-builder` | in the TypeScript lane's bridge | a `createQueryBuilder` chain and the later calls on the name that holds it, step by step, with a condition's text | the aliases the query names, the columns `alias.property` names in a condition, the tables a join adds, what `select` narrows, and whether it is a select, an update, a delete or an insert. A step written under a condition MAY run, so what it reads is SOUND_SET | EXACT |
+| `prisma.operation` | in the TypeScript lane's bridge | a Prisma call's operation and its argument, key by key | the statement it sends (select, insert, update, upsert, delete), the fields it reads and writes, and whether it returns the whole row. A relation the call names is followed into the model it reaches: in `include` or `select`, in a relation filter, as a `_count`, and as a nested write. A relation filtered on null only checks the link, and a nested write handed a literal that changes nothing draws only what Prisma still sends (the pack's `idle` entries). A nested write that has to find rows before it changes them reads their table and key first (`lookup`). `extensions` names the call that makes a client of a client (`$extends`) and the part of an extension that may change what a call sends. What it cannot follow it says: a relation into a model it was not handed, a key it does not know, an argument held in a variable | EXACT |
+| `table.join-table` | when the summary map sorts the reached tables into families | a table's name and the columns its catalog declares | whether a framework made the table only to join two others: its name starts with `params.prefix` and, when the rule lists `params.columns`, its columns are exactly those. The summary then puts it with the tables the graph joins it to, not in a family of its own name | none: it only classifies |
+| `typeorm.entity` | in the TypeScript lane's bridge | the classes TypeORM's decorators mark, the columns and relations their properties declare, the classes they extend, and the DataSource options wherever the application writes them | which classes are entities, and the tables, columns and join tables they map, each named as the naming strategy, table prefix and schema in the options name it. A name a strategy derives is EXACT only when the strategy is known and every TypeORM version spells it the same; a table name, a written one included, only when the prefix is known and, for an entity that names no schema, the schema is; else HEURISTIC with why. Which of the schema and the entity's own database go before a table name is the driver's (`tablePath`): a driver the pack does not name leaves the name HEURISTIC, and so does a driver the options do not write out, for a table one could qualify. It also says which columns TypeORM sets on its own (`autoColumns`: the create date, the update date, the version) | none: it draws no edge, and its names carry their own grade |
+| `typeorm.receiver` | in the TypeScript lane's bridge | the fields of a class, their types and injection decorators, the functions and members a call chain goes through, and a transaction callback's parameter | which object a TypeORM call is made on (a repository of an entity, an entity manager, a data source) and which entity it names. A local given one after its declaration, or given a field that holds one, holds it; a local a condition fills may hold another value, and a call on it is not read | none: it only classifies |
+| `typeorm.operation` | in the TypeScript lane's bridge | a repository or entity manager operation's name and its arguments, part by part | the statement it sends, the columns it filters by, returns, orders by and writes, whether it returns the whole row with the relations marked eager, and what an argument not written out leaves to the running program. A count, an exists or an aggregate joins the eager relations without their rows (TypeORM 0.3), so those tables and join columns are SOUND_SET. A write sends one of TypeORM's statements (`sends`), which set the date and version columns on their own: a column every statement it may send sets is written, one only some set is SOUND_SET | EXACT |
+| `typeorm.query-builder` | in the TypeScript lane's bridge | a `createQueryBuilder` chain and the later calls on the name that holds it, step by step, with a condition's text | the aliases the query names, the columns `alias.property` names in a condition, the tables a join adds, what `select` narrows, and whether it is a select, an update, a delete or an insert, with the date and version columns that statement sets on its own. A step written under a condition MAY run, so what it reads is SOUND_SET. `clone` makes another builder, whose steps are not read | EXACT |
 
 ### Supertypes written in full
 
@@ -172,12 +177,21 @@ key:
 - `types` writes in full every type that declares the method, so the rule
   names the method it means by its declaring type, not by its name alone.
 - The Java worker records each call's receiver as the file declares it: a
-  local, a parameter, a field, `new X()`, a cast, or `this`. A call is the
-  setting when that type is one `types` lists, written in full or by a name the
-  file can name, or a class whose `extends` or `implements` names one. A call
-  whose receiver's type the file does not state, in a file that imports such a
-  type, is only a lower note (severity `info`), since nothing proves it. A call
-  on a receiver declared as another type is some other method, and is not said.
+  local, a parameter, a field, `new X()`, a cast, `this`, a `var` its `new`
+  types (`var m = new X()`), and a name the class binds nowhere, which may be a
+  field a superclass declares. A call is the setting when that type is one
+  `types` lists, or a class of the tree that extends or implements one, however
+  far up. A type name is read the way javac reads it in its file: written in
+  full, else a type the file declares, a single-type import or a type of the
+  file's own package, and only then a package imported whole. So a call on
+  `this` in a class two levels below the rule's type is the setting, and so is
+  one on a field its superclass declares. A call whose receiver's type the file
+  does not state, in a file whose name for the type means the rule's, is only a
+  lower note (severity `info`), since nothing proves it. A call on a receiver
+  declared as another type is some other method, and is not said. A name no
+  class of the tree binds, not even a superclass, counts as a receiver the file
+  does not state; a class whose chain leaves the tree before it reaches one of
+  `types` is missed, never guessed.
 - When the Java facts show such a call and the profile key is still empty,
   `cascade analyze` warns `SETTING_IN_CODE` with the file, the line and the key
   to fill in. A declared key is the project's word, and nothing is said.
@@ -332,15 +346,33 @@ SOUND_SET.
   nested write does to the related rows and to the link, and the literal values
   that make a nested write change nothing (`idle`: each entry names the value,
   the relations it applies on, and whether it drops every edge or only the
-  writes, since `delete: []` still looks the related rows up). `extensions` names `$extends`, the component that may rewrite what a
+  writes, since `delete: []` still looks the related rows up). `lookup` names,
+  per nested write and per kind of relation, when Prisma selects rows before it
+  writes: the rows the value names (`named`, a connect's) and the rows linked to
+  the row it hangs from (`linked`, a delete's). `nests` and `argumentRows` say
+  which rows are new, since a row the call creates has nothing linked yet.
+  `extensions` names `$extends`, the component that may rewrite what a
   call sends (`query`), `Prisma.defineExtension`, and where a `result` component
   says which fields a computed field needs.
 - `nestjs.providers` (kind `ts.provider-binding`) reads what a module binds to a
   type: a class listed alone binds itself, `{ provide: T, useClass: C }` binds T
   to C, and a binding by `useFactory`, `useValue` or `useExisting` is named and
-  not read. A constructor parameter marked `@Inject(token)` is filled by the
-  token, not its type. The lane uses these bindings to settle which classes a
-  call through an abstract class or an interface can reach.
+  not read. It also names what a constructor parameter's decorator does:
+  `@Inject(token)` fills it by that token, not by its type (`injectByToken`);
+  `@Optional`, `@Self`, `@SkipSelf` and `@Host` change nothing (`harmless`); any
+  other, a project's own that wraps `@Inject` among them, is not known, so what
+  fills the parameter is not settled. `consumed` lists the keys of a package
+  module's async options that the package only reads (`imports`, `inject`,
+  `useClass`, `useExisting`, `useFactory`): a type named there is not handed to
+  the package to bind. The lane uses these bindings to settle which classes a
+  call through an abstract class or an interface can reach, and whether a call
+  through a class goes to another class bound in its place.
+- `typescript.test-support` (kind `ts.test-support`, pack `typescript.json`)
+  names the directories (`__mocks__`, `testing`, `e2e`, ...) and the file
+  endings (`.spec.ts`, `.mock.ts`, `.stub.ts`, `.stories.ts`, ...) that mark a
+  file as test support. The lane leaves such a file out, under the
+  application's root and in a shared library alike, because a mock class read
+  as the application's is one more class a call may reach.
 - The `typeorm` pack has one rule per kind. `typeorm.entities` names the entity,
   column and relation decorators, the decorators it does not read
   (`@ChildEntity`, `@ViewEntity`, `@TableInheritance`, `@Tree`), where an
@@ -350,13 +382,23 @@ SOUND_SET.
   (`SnakeNamingStrategy` of typeorm-naming-strategies), each as the transform it
   applies to a table, a column, a join column, a join table and its columns.
   A project that declares `tsBackend.typeorm.namingStrategy` names one of
-  these.
+  these. `tablePath` says, per driver `type`, what goes before a table name:
+  the schema (PostgreSQL, CockroachDB, Oracle, SAP), the database (MySQL,
+  MariaDB, Spanner), both (SQL Server) or nothing (SQLite and the drivers built
+  on it).
+  `autoColumns` says which statement sets the create date, the update date and
+  the version on its own, and `insertKey` is the column option that keeps a
+  column out of an insert.
   `typeorm.receivers` names the types, injection decorators, functions and
   members that give a repository, an entity manager or a data source.
   `typeorm.operations` names every operation, the statement it sends and the
   part each argument plays, and TypeORM 0.2's test that tells a find's options
-  from its conditions. `typeorm.query-builder` names the part each builder
-  method plays, and the words of a condition that are SQL's and not a column.
+  from its conditions; `eagerJoined` marks the ones that join the eager
+  relations without selecting them (count, exists, the aggregates), and
+  `sends` the statements a write goes through (`save` inserts or updates).
+  `typeorm.query-builder` names the part each builder method plays (`clone`
+  makes another builder), and the words of a condition that are SQL's and not
+  a column.
 
 See [the TypeScript lane setup page](setup/ts-lane.md).
 

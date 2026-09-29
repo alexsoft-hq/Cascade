@@ -50,15 +50,15 @@ Each dated section below is one round of work. The round protocol is in
   does. On eladmin it says why `AppMapper extends BaseMapper<AppDto, App>` is
   no MyBatis-Plus mapper: the file imports eladmin's own `BaseMapper`.
 
-- **The viewer's Rules tab, and the rule named on each link it gave.** A
-  read-only tab lists the rule packs this engine runs: each rule's description,
+- **The viewer's Rules view, and the rule named on each link it gave.** A
+  read-only view (now under Analysis status) lists the rule packs this engine runs: each rule's description,
   why it is there, its params and examples, what a library rule relies on and
   where that is written, and how many links of the project's pack it gave
   (`GET /api/rules`, `src/core/rules/catalog.mjs`). The link from a mapper or
   service method to its MyBatis-Plus generic statement now names, in its
   evidence, the rule that gave the role, and when that rule relies on a
   library's declaration, the library type and why the link is only SOUND_SET;
-  a walked path in Flow or Impact shows it. On ruoyi-vue-pro the tab counts
+  a path Trace draws shows it. On ruoyi-vue-pro the view counts
   2,718 links from `mybatis-plus-join.mapper` and 3 from `mybatis-plus.mapper`.
   Packs of MyBatis-Plus projects change once, by that evidence alone.
 
@@ -271,11 +271,12 @@ Each dated section below is one round of work. The round protocol is in
   Consul or ZooKeeper, or when no Spring configuration was read; one unknown
   application makes the whole pack's ports unknown. So does configuration the
   reader does not follow: any `spring.config.import`, `spring.config.location`,
-  `additional-location` or `name`, a profile key with a placeholder, or a Java
-  source with `@PropertySource`, which never falls back to 8080. Ports read:
-  polls-app 8080, eladmin 8000, ruoyi-vue-pro 8080 and 48080, mall 8080, 8081,
-  8082 and 8085; petclinic-ms, jeecg-boot and ruoyi-vue unknown (a config
-  server, Nacos, an `@PropertySource`). No measured call went to another port.
+  `additional-location` or `name`, a profile key with a placeholder, an
+  `@PropertySource` whose file is not in the tree, or code that sets the port
+  (see the entry on ports below). Ports read: polls-app 8080, eladmin 8000,
+  ruoyi-vue-pro 8080 and 48080, mall 8080, 8081, 8082 and 8085, ruoyi-vue 8080;
+  petclinic-ms and jeecg-boot unknown (a config server, Nacos). No measured
+  call went to another port.
 
 - **`schema.prisma` is the catalog, a Prisma call follows its relations, and a
   client `$extends` makes is a client.** Every model of `schema.prisma` is now a
@@ -343,7 +344,8 @@ Each dated section below is one round of work. The round protocol is in
   the set complete, and HEURISTIC, with the reason on `evidence.dispatch`, when
   it may be short. The lane also reads, round by round, every file the
   application's imports reach inside the analyzed root, never `node_modules` or
-  a test file; the files it read are on `meta.laneStats.ts.reached`. On
+  test support (see the entry on the dispatch follow-up below); the files it
+  read are on `meta.laneStats.ts.reached`. On
   nestjs-boilerplate, whose services call their repositories through abstract
   classes, endpoints reaching a statement go from 0 to 19 of 20, all at
   `conservative`. ghostfolio's run reads 496 files, 175 of them in `libs/common`,
@@ -381,6 +383,75 @@ Each dated section below is one round of work. The round protocol is in
   part of the group), where the first path segment used to put every route
   under `/api` in one group.
 
+- **The viewer is five places: Start, Trace, Structure, Compare and Analysis
+  status.** The tab bar held ten things of three sorts on one line: questions
+  (Explore, Flow, Impact), drawings (Graph, ERD, Coupling) and the analysis's
+  own state (Rules). Each place is now a question a reader comes with
+  ([docs/viewer.md](docs/viewer.md)). Start asks first: one box finds any
+  target, then three questions (what breaks if I change it, how far it reaches,
+  what the analysis did not see), and a question the target has no answer to
+  says why instead of going grey. Under them are what this analysis can see
+  (the lanes, the census mode, each axis and where it was read from), the gaps
+  that change an answer, the shares, each card with the one limit that bounds
+  it where the dial ring used to draw the share a second time, and the map. The
+  map, the summary that was a closed fold on the Overview, is the way in: a box
+  opens in place and keeps only its own lines, a route or a table inside it
+  shows only the paths through it, a breadcrumb goes back, and a mode that
+  walks nothing says why in its own numbers. Structure holds the Graph, "Table
+  links, by SQL joins" (the ERD, named for what it draws), Coupling and
+  Transactions; the Graph's 3D and moving dots sit behind one Advanced view
+  switch, off by default. Analysis status reads the analysis's own state from
+  the top: freshness, verification, the census mode, the axes, every blind spot
+  as a row with its cause, what it touches and what to do, the lanes'
+  diagnostics grouped by kind, and the Rules, which now open on the rules that
+  gave something in this project. A `tab=` link written before lands where it
+  did. The `summary` tool takes `endpoint` or `table` and adds
+  `answer.through`, the paths through that one node from the same walk as the
+  boxes ([docs/mcp.md](docs/mcp.md#the-paths-through-one-node)); the pack does
+  not change.
+
+- **Trace: one target, read by what it uses, where it is used, or what it is.**
+  Explore, Flow and Impact were three tabs over one question, each with its own
+  pick, so a switch lost the target. Trace picks the target once (the box
+  searches every kind, the list shows them) and reads it one of three ways. A
+  target offers only the directions it has, the `flow` tool's own
+  `FLOW_DIRECTIONS`, and one it lacks is said in a sentence, never a disabled
+  button. A row clicked in the picture is only looked at; "Trace from here"
+  moves the start. Mode, depth and rows per lane are three named settings. An
+  answer is remembered under everything that shaped it, and the URL carries the
+  whole question (`dir`, `mode`, `depth`); a link to `tab=explore`, `flow` or
+  `impact` lands on the same target. Beside a walk, one panel says what limited
+  this answer and another what the mode left out, grade by grade, with the
+  wider mode. Details lists a table's SQL and columns, a column's statements
+  with read or write on each row, and a route's or a method's transactions,
+  and under the card the screens a change is felt on. `flow direction=up` from
+  an endpoint is now a walk of its own, "where is this API used": the frontend
+  functions that call the route and the screens that render them, every row
+  capped by the route's own address grade
+  ([docs/mcp.md](docs/mcp.md#up-from-a-route)), and
+  `cascade export --tab impact --endpoint` saves it. The overview counts API
+  groups by the map's rule (`reach.groups`), so the masthead's count is right
+  whichever place opens first.
+
+- **Chain lanes that name every node, and modes named by what they admit.** The
+  Flow and Impact lanes cut every name to what a 180px column held
+  (`PmsProd...`), and their lines crossed in a knot. `src/viewer/chainlayout.mjs`
+  now names, orders, sizes and folds a chain for the live lanes and the saved
+  SVG alike: a method is `Class.method`, a MyBatis statement `Mapper.id`, an ORM
+  call site `Service.method #n`, a route keeps its verb and the segments that
+  tell it apart. A lane is as wide as its names need, 200 to 360px; rows are
+  ordered to cut crossings inside their hop and grade (mall's Impact of
+  `pms_product` from 200 crossings between lanes to 22, jeecg-boot's
+  `sys_user` from 289 to 0, ghostfolio's `User` from 404 to 65); a lane over 14
+  rows folds one owner's rows into one. A line is dashed by the grade of that
+  one link, HEURISTIC dash-dot everywhere, and a strip over the picture names
+  every lane and finds a row. `flow` takes `offset` in chain mode, so "fetch N
+  more" pages one lane. Each mode says what it admits, with its grade (strict:
+  proven links only (EXACT)), where the middle one was "likely calls". A
+  Korean particle is written onto the Latin word before it, and a test holds
+  it. The lanes' diagnostics are one row per kind with its count: a moved cache
+  had left 866 `SHARD_UNUSABLE` rows in the list.
+
 ### Changed
 
 - **Which types are MyBatis-Plus mappers and services is a rule pack, not the
@@ -416,9 +487,9 @@ Each dated section below is one round of work. The round protocol is in
   stops at the route and says why. A table in the picture is graded by every
   link on its path, the statement's own `EXECUTES` included, so one reached
   through a candidate-set `EXECUTES` is no longer drawn EXACT or kept in
-  `strict`. Every walk from a route now has one default depth, 8: `flow`
-  walked 6 and the census 8, so one route could show a statement in the census
-  and none in `flow`. Walking up, a route below the mode's floor is
+  `strict`. `flow` walked 6 hops and the census 8, so one route could show a
+  statement in the census and none in `flow`; every walk now follows one depth
+  rule (see the entry on it below). Walking up, a route below the mode's floor is
   no longer an endpoint row of that mode and is counted with what the mode cut,
   and the map labels a route with the handler its mode walks. Packs whose
   `HANDLES` edges are all EXACT answer as before: six real packs were compared
@@ -434,7 +505,10 @@ Each dated section below is one round of work. The round protocol is in
   drew 4. Now one rule (`sqlEdgesOf`) gives both: the statement's `EXECUTES`,
   `READS` and `WRITES` edges the mode's floor admits, in the overview, the map,
   the summary, coupling, browse, the screen census's columns, transactions and
-  `flow`'s own statement rows. A table or column whose name a rule only assumed
+  `flow`'s own statement rows, the statement a `flow` starts from and each
+  statement row `browse` lists included; a SQL edge below the floor is counted
+  once even when its statement is reached again, and `services` counts every
+  sender of a shared statement. A table or column whose name a rule only assumed
   is therefore not counted at `conservative`, and the pinned corpus shows it:
   ruoyi-vue-pro's columns reached go from 8,010 to 15, jeecg-boot's tables from
   73 to 67 and columns from 836 to 467, egovframe-msa-edu's tables from 20 to 0,
@@ -447,6 +521,20 @@ Each dated section below is one round of work. The round protocol is in
   those names EXACT and restores the conservative counts. egovframe-msa-edu's
   screens reaching a table fall from 33 to 0 for the same reason, and come back
   the same way.
+
+- **Every walk goes as far as the graph goes.** The census, the map, coupling,
+  the summary, browse, `flow` and Trace both ways and the impact tools now walk
+  with no hop cap unless a depth is asked for (`DEFAULT_WALK_DEPTH` is `null`),
+  so one question never gets two answers because two tools stopped at two
+  depths: mall's `pms_product.name` reaches its screens at hop 9, which Trace,
+  capped at 8, dropped while `screen_impact` showed them. A node cap of 4000
+  (`WALK_NODE_CAP`) is the guard, and a walk that reaches it says so; a `depth`
+  of 1 to 8 only narrows, and an answer names its depth as `depth 4` or
+  `no depth cap`. On the pinned corpus no census walk reached the node cap and
+  the slowest census took the same time uncapped. dolphinscheduler's endpoints
+  reaching a statement go from 204 to 215 and ruoyi-vue-pro's from 2,638 to
+  2,671, and jeecg-boot reaches 749 statements where it reached 748
+  ([docs/measured.md](docs/measured.md#rm67-one-depth-rule-for-every-walk)).
 
 - **The catalog axis follows one rule for every source.** A DDL, a snapshot,
   `schema.prisma` and TypeORM entities ship the catalog when every table and
@@ -464,13 +552,19 @@ Each dated section below is one round of work. The round protocol is in
   eladmin 5 of 103, mall 3 of 151.
 
 - **Every cached fact of the Java, web and TypeScript workers is read again
-  once.** The workers are now `javafacts/19` (a method that returns a
-  `RouterFunction`, the locals it assigns, and the calls each file makes with
-  their receivers), `webfacts/18`
-  (build-decided base URLs, Angular routes, typed fields and providers, and
-  what each call in a function hands on and reads) and `tsfacts/6` (what a method returns,
-  type arguments, where each local is declared, interfaces), and the catalog
-  worker is `catalog-ddl/8`. A worker's version is part of every cached fact's
+  once.** The workers are now `javafacts/21` (a method that returns a
+  `RouterFunction`, the locals it assigns, the calls each file makes with
+  their receivers, every method and path a mapping names, interface default
+  bodies and anonymous classes, entity inheritance, element collections and
+  every attribute annotation, and a receiver a superclass field or
+  `var x = new X()` types), `webfacts/20`
+  (build-decided base URLs, Angular routes, typed fields and providers, what
+  each call in a function hands on, reads and writes, the class a provider
+  extends, index routes, and a route's column and its parent's) and `tsfacts/8`
+  (what a method returns, type arguments, where each local is declared,
+  interfaces, a property that holds a function, a mixin's class, a class that
+  extends a call, module aliases, const literals and what a local is given
+  later), and the catalog worker is `catalog-ddl/9`. A worker's version is part of every cached fact's
   key, so the first analyze after upgrading re-reads each file once.
 
 ### Fixed
@@ -624,6 +718,265 @@ Each dated section below is one round of work. The round protocol is in
   `"role" "Role" NOT NULL` became a column with an empty name beside the real
   ones. A `CREATE`, an `ALTER ADD` or a `MODIFY` now leaves such a column out with
   a `column_unnamed` diagnostic that names the dialect setting to check.
+
+- **A TypeScript call's candidate set is settled only by bindings the tree
+  holds whole, and a class bound in another's place is reached.** The modules
+  an application loads are walked through a constant that names one module or
+  another and through `X.forRoot()`, read from the object the static method
+  returns. When that walk is not whole, every module of the tree settles a set
+  only if the whole tree is read too: an import this engine cannot name, a
+  class loaded as a module that no `@Module` decorates and whose static methods
+  return no module, a static method whose return is not read, a providers list
+  not read, a root module the bootstrap does not name, or a package's module
+  handed the type anywhere leaves the set HEURISTIC with that reason. A class
+  no class extends consults the bindings of its token too: bound to another
+  class, the call reaches that class (SOUND_SET); bound by `useValue`,
+  `useFactory` or `useExisting`, it is HEURISTIC with the reason. Parameter
+  decorators are pack data in `nestjs.providers`: `@Inject` fills a parameter
+  by its token, `@Optional`, `@Self`, `@SkipSelf` and `@Host` change nothing,
+  and any other decorator leaves the set HEURISTIC. A property that holds a
+  function overrides a method of its name, a mixin's class sits in the chain of
+  a class that extends `Mixin(Base)`, and a class that extends a call this
+  engine cannot follow makes a set through the type it is handed HEURISTIC. A
+  file whose bytes are outside the analyzed root through a link is not read,
+  and test support (the new `typescript` pack, kind `ts.test-support`:
+  `__mocks__`, `testing`, `*.mock.ts`, `*.spec.ts` and the like) is left out of
+  the application's files and of a shared library's alike. On ghostfolio the
+  run reads 492 files where it read 496 (its four `*.service.mock.ts`), and
+  1,688 calls are linked where 1,711 were
+  ([docs/setup/ts-lane.md](docs/setup/ts-lane.md)).
+
+- **TypeORM: a builder that escapes, a repository given later, the eager joins
+  of a count, the driver's table path and const options.** A query builder
+  handed to a helper or held in a second name may be narrowed by steps not read
+  here: its rows are SOUND_SET and the statement says `builder-escapes`; a
+  `clone()` is another builder, and the copy's steps are said as not read. A
+  local given a repository once after its declaration, or a field that holds
+  one, is read; one a condition fills is said in
+  `TS_TYPEORM_RECEIVER_UNREAD`. `count`, `exists` and the aggregates join the
+  eager relations in TypeORM 0.3, so their tables and join columns are
+  SOUND_SET. What goes before a table name is the driver's (`tablePath` in the
+  pack): the schema on PostgreSQL, CockroachDB, Oracle and SAP, the database on
+  MySQL, MariaDB and Spanner, both on SQL Server, nothing on SQLite; a driver
+  the pack does not name leaves the name HEURISTIC. A TypeORM table that meets
+  no DDL table of its name is said in `TS_TYPEORM_TABLE_MISSES_DDL`, and one in
+  the schema the profile declares as `schema.default` is the DDL's unqualified
+  table. `entityPrefix`, `schema`, the naming strategy and the driver `type`
+  given through a `const` of the same file are read. A lane whose entities all
+  use `@TableInheritance` or `@ChildEntity` says what it did not read instead of
+  returning nothing. On nestjs-boilerplate, two `count` calls in its user seed
+  now reach the three tables their eager relations join (6 SOUND_SET
+  `EXECUTES`, 12 SOUND_SET `READS`).
+
+- **The date and version columns TypeORM writes on its own are drawn.** Every
+  TypeORM write goes through a query builder that sets the entity's
+  `@UpdateDateColumn`, `@VersionColumn` and, on an insert, `@CreateDateColumn`
+  though the call names none of them, the same at 0.2.24, 0.2.34, 0.2.45 and
+  0.3.28: an update sets the update date and the version plus one, which reads
+  the version; a soft delete or a restore sets both beside the delete date; an
+  insert lists all three unless the column's `insert` option is false or
+  `into` names the columns. Which statement sets which column is pack data
+  (`autoColumns` and `insertKey` on the entities rule, `sends` on each
+  operation). A column every statement an operation may send sets is written;
+  one only some set is SOUND_SET (`save`'s create date). The edges say
+  `typeorm-auto-column` and why. On nestjs-boilerplate, EXACT `WRITES` go from
+  5 to 16 and SOUND_SET `WRITES` from 72 to 66.
+
+- **A Prisma nested write that has to find its rows reads them first.** Before
+  a nested write changes related rows, Prisma selects them, and that read was
+  not drawn. Each nested write in `prisma.json` now says where it looks rows up
+  (`lookup`): the rows its value names (`named`, as a `connect` does) and the
+  rows linked to the one it hangs from (`linked`, as a `delete` does), per kind
+  of relation, as measured on Prisma 6.19.0 over SQLite. A lookup reads the
+  related table and its key, and the implicit table when it finds the linked
+  rows of a many-to-many. A row the call creates has nothing linked yet, so no
+  linked lookup is drawn under a create. On ghostfolio, two edges are added:
+  `_OrderToTag` read by `ActivitiesService.assignTags` and `_UserWatchlist`
+  read by `deleteWatchlistItem`, each the implicit table Prisma reads first.
+  nestjs-prisma-starter, nestjs-realworld-example-app, petclinic-rest,
+  polls-app and realworld-mybatis keep their digests.
+
+- **A mapping annotation that names several methods or paths serves each of
+  them.** `@RequestMapping(method = {PUT, POST})` and `value = {"/a", "/b"}`,
+  at the method or on the class: the Java worker read only the first entry of
+  each list, so a route Spring serves was missing and a frontend call to it
+  stayed unresolved. Each is now a route of its own, EXACT. jeecg-boot gains 47
+  routes (40 PUT and POST handlers now answer POST too, and
+  `OpenApiController#call` all eight methods), and 29 frontend calls resolve,
+  `POST /sys/user/edit` among them. ruoyi-vue-pro gains 16 (14 `simple-list`
+  paths, and the catch-all for its disabled trade and promotion modules, which
+  151 frontend calls now reach as its product calls already did), ruoyi-vue 1,
+  jeepay 4 and ngrinder 12, and each new route reaches what its sibling route
+  reaches. mall, jpetstore-6, halo, spring-petclinic, litemall, eladmin and
+  spring-petclinic-microservices keep their digests.
+
+- **A functional route's handler set holds interface defaults and anonymous
+  classes, and an operation id the code may change later is not known.**
+  Through a declared type, the candidate set now holds the interface default
+  body an implementor inherits (the default that runs, not a method the class
+  never declares), the interface's own default, and every anonymous class the
+  tree writes that overrides the method. An operation id a later statement may
+  set where the reader does not follow (under an `if`, in a loop, inside
+  another call) is unknown, so no route is placed by it.
+
+- **An `ALTER` is read by the rules of the database the files are for.** The
+  catalog worker was run without `--dialect` when the profile's database routes
+  to sqlglot's standard grammar (H2, HSQLDB), so it read those files as MySQL
+  while the statements were read as ANSI, and it read every `ALTER` by the rules
+  of the grammar: H2 took MySQL's "the primary key is always PRIMARY", so
+  dropping a key by the name its `CREATE` gave it left the key in place. The
+  catalog now gets the lineage's dialect, the empty one included, and
+  `--database`, the database `sqlDialects.main` names; both are in the shard
+  key. What an `ALTER` leaves unsaid (the key's name, whether dropping a key
+  column drops the key, whether `ALTER INDEX ... RENAME` renames it, what
+  `MODIFY` keeps) is keyed by database: PostgreSQL, MySQL, MariaDB and Oracle.
+  A database with no rules of its own here (H2, HSQLDB, CUBRID, Tibero and the
+  like) borrows none: an unnamed key's name is not known, and a statement that
+  depends on a missing rule is said (`alter_primary_key_unknown`,
+  `alter_modify_unsaid_unknown`). PostgreSQL's `RENAME c TO d` without
+  `COLUMN` renames the column, not the table; `DROP c` without `COLUMN`,
+  Oracle's `DROP (c, d)`, `USING INDEX ... ENABLE` and `MODIFY c NOT NULL
+  ENABLE`, H2's `ALTER COLUMN c RENAME TO d`, MariaDB's `MODIFY` and
+  `CHANGE COLUMN IF EXISTS` (read before as a column named
+  `CASE WHEN EXISTS ...`) and clauses sqlglot keeps as one piece of text are
+  applied ([docs/setup/sql-lane.md](docs/setup/sql-lane.md)).
+
+- **JPA hierarchies, map values, default join tables and element collections
+  are read, or said.** `SINGLE_TABLE` (the default) puts a subclass on its
+  root's table; `JOINED` keeps inherited columns on the parent's table, gives
+  the subclass's table the key that joins it (`@PrimaryKeyJoinColumn` read) and
+  marks both tables for every statement on the row; `TABLE_PER_CLASS` is as
+  before; a strategy not read is said and graded HEURISTIC. A statement on an
+  entity with subclasses says it does not follow them. A to-many's other side
+  is its last type argument, so `Map<PetType, Pet>` holds pets. A join table
+  nobody names is named by Spring Boot's implicit rule (the owning table, `_`,
+  the attribute) with JPA's column defaults, and a unidirectional `@OneToMany`
+  with no `@JoinColumn` crosses one. `@Entity(name)` names the default table and
+  a JPQL `FROM`. An `@ElementCollection` is no longer a column of its owner: it
+  is said as not read. An attribute or entity mapped with an annotation the lane
+  does not read (`@JoinColumns`, `@MapsId` without `@JoinColumn`, formulas,
+  overrides, `@SecondaryTable`) is HEURISTIC and said. petclinic-rest,
+  polls-app, jhipster-sample-app, eladmin, spring-petclinic,
+  spring-petclinic-microservices, egovframe-msa-edu, mes4u and ngrinder keep
+  their digests; shopizer's four join table columns take JPA's default names
+  (`MERCHANT_LANGUAGE.stores_merchant_id` and `languages_language_id` among
+  them) ([docs/setup/java-lane.md](docs/setup/java-lane.md)).
+
+- **A code-setting call's receiver is read the way javac reads a name.** The
+  `java.code-setting` kind reads a receiver's type name in its file as javac
+  does (the file's own types, a single-type import and a type of its own
+  package all come before a package imported whole), and follows a receiver the
+  tree states: a project subclass of the rule's type however far down, a call
+  on `this` two classes below it, `var m = new X()`, and a field a superclass
+  declares. A name no class in the tree declares stays unstated, as before.
+
+- **A wrapper chain carries the method and the base URL the way it carries the
+  URL, and a step settles a key only when nothing writes it.** A call through
+  the project's wrappers sends what the last call sends. The URL, the method and
+  the base URL are now each followed hop by hop the same way: a step's hands
+  move a key on or drop it, and a step's sets write it over or write a default
+  the caller's value replaces (`adapters/web/lib/sets.mjs`). So a method the
+  caller wrote reaches the client only when every step hands its key on; a
+  method written as a variable is unknown, never the library's default; a step
+  that makes two client calls is walked once per call; and
+  `cfg.method = 'POST'` or `Object.assign(o, { method: 'DELETE' })` that always
+  runs is the method. A per-request base URL, written by the caller, by a step
+  or into a client call's own options, replaces the instance's. Settled now
+  means nothing writes the key (`adapters/web/lib/writes.mjs`): a step that
+  writes the key the URL, the method or the base URL is under, or hands the
+  object to another call, leaves it HEURISTIC with the step, the key and why on
+  the edge. A URL the chain drops draws no edge at all. A base URL some builds
+  set and others set nowhere is a candidate per build: the builds that set it
+  nowhere send the path bare. Angular's `@Injectable({ providedIn, useClass })`
+  is a provider for the class it decorates (`packs/injection.json`), a provider
+  class that inherits the method reaches the inherited one, and a class whose
+  method is found nowhere grades the set HEURISTIC. On jeecg-boot the 799 steps
+  unsettled at `VAxios.request` now name the key `url`; three edges from
+  `OnlineForm` and its two siblings go from GET to any method, because the call
+  sends `isUpdate ? 'put' : 'post'`; calls go from 936 to 935 (the one whose URL
+  the chain drops had no edge); screens reaching a table stay 11 of 181 at
+  `conservative` and 27 at `heuristic`. ruoyi-vue-pro's counts and screens are
+  unchanged (61 of 100), polls-app's 11 unsettled steps name their key, and
+  eladmin and mall keep their digests
+  ([docs/setup/web-lane.md](docs/setup/web-lane.md)).
+
+- **A port rests on what the tree states.** Code that sets the port (`setPort`
+  on a web server factory, `setDefaultProperties`, a `server.port` property)
+  makes that application's port unknown, as data (`PORT_SET_IN_CODE`). Java is
+  read without its comments, a source root at the top of the repository belongs
+  to its application, and an `@PropertySource` on the classpath is read from
+  the tree like a configuration file: one that sets no port changes nothing.
+  One application whose port is unknown still leaves every call undecided by
+  port, and the ports the other applications state are now read and printed. A
+  port that rests on Spring Boot's default decides nothing. ruoyi-vue's ports
+  are now known (8080), because its `@PropertySource(classpath:generator.yml)`
+  sets none; jeecg-boot's stay unknown (`spring.config.import`, Nacos) and now
+  list the ports its other applications state.
+
+- **A child route whose path adds nothing renders on its parent's screen.** A
+  router draws a parent route and, in its outlet, the child whose path is `''`,
+  both at the parent's path, and the rule that the first declaration of a path
+  is the screen dropped the child: ghostfolio's `/account` settings page, and
+  the `DELETE /api/v1/user` it calls, had no screen. A declaration that composes
+  to a path a screen already has now joins that screen when it is nested with
+  the declarations drawing it, across files too: its component renders there,
+  EXACT, rule `route-nested-component`, and the node lists `components`. Two
+  declarations of one path not on one chain keep the old rule. The same holds
+  for a vue-router child with path `''`, a react-router index route (now read,
+  `indexAttr` in the pack), a ui-router state with an empty `url` and a lazily
+  loaded list whose first route is `''`. A route's parent is found by its line
+  and column, so a child written on its parent's line no longer composes to
+  `/`: mes4u's screens go from 50 to 31, the 19 that went being children
+  composed under a wildcard (`/*/dashboard`, `/*/defect`) whose real paths
+  (`/mdm/defect` and the rest) were already screens. On ghostfolio, screens with `RENDERS` go from 31 to 35, EXACT `RENDERS`
+  from 122 to 151, screens reaching a table at `heuristic` from 30 to 34, and
+  `DELETE /api/v1/user` is reached from `screen:/account`. jhipster-sample-app,
+  mall and ruoyi-vue keep their digests.
+
+- **The summary map's table families read words in every naming style, and a
+  Prisma join table goes with the tables it joins.** The map grouped
+  ghostfolio's Prisma tables into families named "a", "s" and "_": a name with
+  no underscore was read by its letters. Every name is now read as words: a
+  word ends at an underscore, a hyphen or a change of case (`SymbolProfile` is
+  symbol, profile; `MARKET_QUOTE` is market, quote), and a digit stays with its
+  word. Letters are read only where most names are one word and most of them
+  start with the same letters (eGovFrame's `COMTN...`), the case that reading
+  was made for. A table a rule names as one a framework made only to join two
+  others is not read by its name: it goes with the tables the graph joins it to
+  when they sit in one family, and into `(join tables)` when they do not. Which
+  tables those are is data: a new kind, `table.join-table` (a name prefix and,
+  optionally, the exact columns), and the rule `prisma.relation-tables`
+  (prefix `_`, columns `A` and `B`), with examples. The summary answer's
+  `rule.tables.joinTables` names the rules it read. On ghostfolio, at
+  `heuristic`, the families go from a, s, _, p, tag, marketdata, order and user
+  to account, asset, symbol, `(join tables)` (`_OrderToTag`, `_UserWatchlist`)
+  and thirteen families of one table each; nestjs-boilerplate's `s` (session,
+  status) becomes session and status; spring-petclinic's `v` becomes vet, vets
+  and visits, and vhr's, egovframe-msa-edu's, polls-app's and
+  petclinic-rest's letter families become words. mall, jeecg-boot, shopizer,
+  eladmin, ruoyi-vue-pro, mes4u, ngrinder, jhipster-sample-app,
+  dolphinscheduler, egov-business-template and egov-common-components keep
+  their families. No pack digest moves: the families are computed when asked.
+
+- **The working-tree overlay builds from the base pack's inputs.** It read some
+  inputs from the pack, some from the live profile and some from disk, so a
+  change no diff of the analyzed root reports landed in its answer as if the
+  edit had made it. Now a profile other than the one the pack recorded
+  declines, on a clean tree too; a catalog whose shard key, computed from the
+  files now, differs from the one the run wrote declines and names the files (a
+  DDL outside the root, a snapshot fetched again); `analyze` records the commit
+  a frontend in its own repository was read at, and one that moved on makes the
+  answer `behind`, while a frontend in no repository is said as a limit; an
+  edited Java source that now loads configuration or sets the port, or a file
+  the pack read a port from or named as the reason one is unknown, is said as a
+  limit; `mappers.alternatives`, `tsBackend.prismaSchema` and `tsBackend.app`
+  resolve against the directory the run recorded; the session id holds those
+  inputs, so a long-running server does not answer from an overlay built over
+  the old ones; and an edit to an OpenAPI document is an edit to the routes it
+  declares, with the routes the edited files gave the pack and the overlay no
+  longer has in `overlay.removedIds.endpoints`
+  ([docs/cli.md](docs/cli.md#cascade-impact)). No pack digest moves: the record
+  is in `facts-index.json` only.
 
 ## [0.8.11] - 2026-09-15
 

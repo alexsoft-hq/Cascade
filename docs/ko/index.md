@@ -7,9 +7,9 @@ AI 코딩 에이전트와 그 옆에서 일하는 사람을 위한, 코드에서
 
 [한국어 README](../../README.ko.md) | [English README](../../README.md)
 
-![Cascade 뷰어 둘러보기. 개요 다이얼, 컬럼 하나가 닿는 SQL statement 와 HTTP
-엔드포인트로 뻗어 나가는 모습, statement 하나의 소스, 프로젝트 전체 그래프,
-그리고 SQL 의 조인으로 복원한 스키마](../assets/cascade-demo.gif)
+![Cascade 뷰어 둘러보기. 프로젝트가 끝까지 얼마나 이어져 있는지, 컬럼 하나에서
+위로 따라가 닿는 SQL statement 와 HTTP 엔드포인트, statement 하나의 소스, 프로젝트
+전체 그래프, 그리고 SQL 의 조인으로 복원한 스키마](../assets/cascade-demo.gif)
 
 ## 왕복
 
@@ -86,7 +86,7 @@ node bin/cascade.mjs view --project <id>     # http://127.0.0.1:4319/
 | 문서 | 무엇이 있는가 |
 |---|---|
 | [concepts.md](concepts.md) | 등급, 답이 달고 다니는 네 필드, 두 개의 속도, 부분 pack, 보정 |
-| [viewer.md](viewer.md) | 로컬 웹 뷰어. 탭, 딥 링크, 언어 토글, 무엇이 번역되고 무엇이 되지 않는가 |
+| [viewer.md](viewer.md) | 로컬 웹 뷰어. 다섯 자리(place), 딥 링크, 언어 토글, 무엇을 번역하고 무엇을 번역하지 않는지 |
 | [rules.md](rules.md) | 룰 팩. 엔진이 프레임워크에 대해 아는 것을 예제 달린 데이터로 |
 | [setup/agents.md](setup/agents.md) | MCP 클라이언트 설정 전체. Claude Code, Claude Desktop, Cursor, 일반 stdio 클라이언트 |
 | [setup/web-lane.md](setup/web-lane.md) | 프런트엔드 레인. 동봉 파서, 래퍼, 접두사, 화면, OpenAPI, 기록 |

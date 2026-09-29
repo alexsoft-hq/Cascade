@@ -59,8 +59,19 @@ that way, and every census counts them that way: the overview, the map, the
 summary, coupling, browse, the screen census's columns and transactions. So a table or a
 column whose name a rule only assumed (an entity with no `@Table` under no
 declared naming strategy) is not reached at `conservative`; `mode=heuristic`
-reaches it, and declaring the strategy makes it EXACT. Every walk from a route
-has one default depth, 8 (`DEFAULT_WALK_DEPTH`).
+reaches it, and declaring the strategy makes it EXACT.
+
+**One depth rule for every walk.** A walk goes as far as the graph goes. The
+census, the map, coupling, the summary, browse, `flow` in both directions and
+the impact tools walk with no hop cap unless asked for one
+(`DEFAULT_WALK_DEPTH` is `null` in `src/core/graph.mjs`). One question must not
+get two answers because two tools stopped at two depths: mall's
+`pms_product.name` reaches its screens in 9 hops, and the viewer's walk, then
+capped at 8, showed none of them where `screen_impact` showed 12. The guard is a node cap
+instead: a walk that has recorded 4000 nodes (`WALK_NODE_CAP`) stops and says
+so in `limits`. A `depth` you ask for (1 to 8) only narrows a walk, and the
+answer says what it cut there. An answer names its depth as `depth 4` or
+`no depth cap`.
 
 Query modes pick a floor: `strict` uses confirmed edges only, `conservative`
 adds candidate calls, `heuristic` also admits guessed rules. A question that
@@ -161,6 +172,16 @@ re-analysis of the same bytes. Commit your edit and the overlay is *discarded*,
 answering `behind` and naming `cascade analyze` as the cure — never a quiet fall
 back to the pre-edit answer.
 
+The overlay builds from the inputs the base pack was built from, so a change no
+diff of the analyzed root reports never reads as your edit. An input that moved
+since is declined, behind or said, never read again silently: a profile other
+than the one the pack recorded declines, on a clean tree too; a catalog whose
+shard key, computed from the files now, differs from the one the run wrote
+declines and names the files (a DDL outside the root, a snapshot fetched again);
+a frontend in a repository of its own that moved past the commit `analyze`
+recorded makes the answer `behind`. The details are in
+[cli.md](cli.md#cascade-impact).
+
 The overlay reads the OpenAPI documents the base pack read, as they are on disk
 now, and runs the OpenAPI bridge on them as `analyze` does, so a document's
 routes and the handlers a rule linked to them survive an edit. It reads the
@@ -182,8 +203,8 @@ files the lane rests on are read again, as every run reads them. A table or
 column only an edit declares (a renamed entity column, a new `schema.prisma`
 field) is `provisional` like a new statement. A TypeScript shard that no longer
 applies to a file git calls unchanged declines the overlay (`overlay-stale`),
-and a profile that names another application than the one the pack read is
-said in `limits`. Run traces and recordings are not read again and not
+and a profile that names another application than the one the run read (a run
+given `--ts-src`) is said in `limits`. Run traces and recordings are not read again and not
 said: they only add `RUNTIME_ONLY` marks, which no walk follows.
 
 The second speed also covers *reruns*: a run after a small edit reuses the

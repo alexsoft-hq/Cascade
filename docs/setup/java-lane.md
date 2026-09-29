@@ -357,6 +357,28 @@ one handler, and the 116 mapped methods across the 6 `@FeignClient` interfaces
 become 116 CALLS_HTTP edges: 107 to a route this pack also serves, 9 to a route
 it does not.
 
+### One mapping, several routes
+
+A mapping annotation can name more than one HTTP method or more than one path:
+`method = {RequestMethod.PUT, RequestMethod.POST}`,
+`@GetMapping({"/list-all-simple", "simple-list"})`, or a list of paths on the
+class's own `@RequestMapping`. Spring serves the handler at every one of them,
+so the Java worker (`javafacts/20`) records one route for each class path,
+method and path the annotations name, and two spellings of one route are one.
+Each is a route the source states, so it is classified as above and its
+`HANDLES` edge is EXACT like any other mapping's. The worker used to read only
+the first entry of each list, which left routes Spring serves off the graph and
+a frontend call to one of them with nothing to land on.
+
+Measured: jeecg-boot serves 47 more routes (40 handlers mapped with
+`method = {PUT, POST}` now answer POST too, and `OpenApiController#call` all
+eight methods), and 29 of its frontend calls now reach a route, `POST
+/sys/user/edit` among them. ruoyi-vue-pro serves 16 more: 14 `simple-list`
+paths, and the catch-all for its disabled trade and promotion modules, which
+151 frontend calls now reach, as calls to its product module already did.
+ruoyi-vue serves one more. mall, jpetstore-6, halo, spring-petclinic, litemall,
+eladmin and spring-petclinic-microservices give the pack they gave before.
+
 ### A prefix set in configuration code (`pathPrefixes`)
 
 Spring can serve controllers under a prefix that no mapping writes:
@@ -411,11 +433,17 @@ Java lane: 2 declared path prefix(es) (pathPrefixes): /admin-api on 3101 route(s
 ```
 
 - `SETTING_IN_CODE`: the Java facts show a call to Spring's `setPathPrefixes`
-  or `addPathPrefix` on a receiver the file declares as that Spring type (or a
-  class that extends or implements it), and `pathPrefixes` is empty. It names
-  the file, the line and this key. A call whose receiver's type the file does
-  not state, in a file that imports the Spring type, is said at severity
-  `info`, since nothing proves it is Spring's. The calls are named by the `spring-mvc` rule pack, through the
+  or `addPathPrefix` on a receiver declared as that Spring type, or as a type of
+  the tree that extends or implements it however far up, and `pathPrefixes` is
+  empty. It names the file, the line and this key. The type name is read the
+  way javac reads it in that file: a type the file declares, a single-type
+  import and a type of the file's own package all come before a package
+  imported whole. A call on `this`, on a field a superclass declares, and on a
+  `var` whose `new` names the type is read the same way. A call whose
+  receiver's type the file does not state, in a file where that type's name
+  means Spring's, is said at severity `info`, since nothing proves it is
+  Spring's; a receiver declared as another type is not the setting. The calls
+  are named by the `spring-mvc` rule pack, through the
   `java.code-setting` kind ([rules.md](../rules.md#a-setting-made-in-code)).
 - `PATH_PREFIX_UNUSED`: an entry no controller class passed. A typo, or a
   package that moved.
@@ -471,7 +499,11 @@ a pack entry.
   then has the document's full path, its HANDLES edge is HEURISTIC (no mount
   the source states puts it there, only a document that may be stale), and the
   evidence names the document. Two routes of the code that name one operation
-  are placed by neither.
+  are placed by neither. The operation id is the one the builder was given
+  last. A later statement that may set it where this reader does not follow
+  (under an `if`, in a loop, inside another call's argument) leaves it not
+  known, and such a route, which only its id could place, is not placed
+  (`unmounted` in `laneStats.functionalRoutes`).
 - **One node per route.** A route gets the endpoint id every lane uses, so a
   route a document declares is corroborated, not duplicated, and a frontend
   call lands on it as on a mapped one. The operation id rides on the endpoint.
@@ -480,8 +512,14 @@ a pack entry.
   `OwnerHandler::list` of a type the tree declares with that method). Through
   a declared type (a field, a parameter, a local, or `this` with an override
   below it) it is SOUND_SET, over every method an object of that type may run:
-  the type's own or inherited one and every override below it. A lambda that
-  calls one method names that method.
+  the type's own or inherited one, every override below it, an interface's
+  default body where a class and the classes above it declare none (the default
+  it inherits runs, not a method the class never declares), the interface's own
+  default, which an implementor outside the tree may keep, and every anonymous
+  class the tree writes from the type (`new Handler() { ... }`) that overrides
+  the method. The worker records which interface methods have a body and one
+  record per anonymous class (`javafacts/20`). A lambda that calls one method
+  names that method.
 - **What is not read is said.** A handler this lane cannot name (a lambda that
   does more than call one method, a handler held in a variable) leaves the
   route as an endpoint node with `handlerUnread: true` and no HANDLES edge. A
@@ -713,13 +751,13 @@ as SQL.
 | From | To | Grade |
 |---|---|---|
 | `@Entity` + `@Table(name="owners")` | the table `owners` | **EXACT** — the source says so |
-| `@Entity` with no `@Table` | the table the naming strategy gives | **EXACT** if the naming strategy is declared (in the profile or the project's Spring configuration), else **HEURISTIC** |
+| `@Entity` with no `@Table` | the table the naming strategy gives, from the entity's name: the class's, or the one `@Entity(name = …)` gives it | **EXACT** if the naming strategy is declared (in the profile or the project's Spring configuration), else **HEURISTIC** |
 | `@Column(name="visit_date")` | that column | **EXACT** |
 | a field with no `@Column` | the column the naming strategy gives | as above |
 | `@Id` | the primary-key column | **EXACT** |
 | `@ManyToOne`/`@OneToOne` + `@JoinColumn(name=…)` | that foreign-key column, plus a `JOINS` edge | weakest of the two entity mappings |
 | `@OneToMany(@JoinColumn)` | the foreign key on the **target** table, plus a `JOINS` edge | as above |
-| `@ManyToMany` + `@JoinTable` | the join table and its two columns, plus two `JOINS` edges | as above |
+| `@ManyToMany`, and a `@OneToMany` with neither `@JoinColumn` nor `mappedBy` | a join table and its two columns, plus two `JOINS` edges. `@JoinTable` names them; what it leaves unnamed is named as Spring Boot and JPA name it: the table is the owning table's name, `_`, the attribute (`owners` and `specialTags` give `owners_special_tags`), one column is the inverse attribute's name (or the owning entity's name when nothing maps the association back), `_`, the owner's key, and the other is the attribute's name, `_`, the target's key | a written name **EXACT**; a derived one by the naming strategy, as above |
 | an inverse `@OneToMany`/`@ManyToMany(mappedBy = …)` | no column and no join table of its own: the owning side maps them | **EXACT** |
 | `@MappedSuperclass` | its attributes are inherited by every subclass entity | as above |
 | a derived query (`findByLastNameStartingWith`) | `select` reading the predicate and ordering columns | the statement's table by the table's name, each column by its own |
@@ -733,6 +771,34 @@ rows. `delete*` removes the row and follows `cascade = ALL/REMOVE` the same way.
 A cascaded reach is capped at **SOUND_SET**: the cascade is declared in the
 source, but whether a given call has a child to write or remove is a runtime
 fact. `orphanRemoval` is not read.
+
+A to-many's other side is its element type, the last type argument: a
+`List<Pet>` and a `Map<PetType, Pet>` both hold pets. `targetEntity` wins over
+either. `@Entity(name = "Hound")` renames the entity: its default table is
+derived from that name, and a JPQL `FROM Hound` finds it. Re-measured with
+these rules and the hierarchies below, nine JPA packs keep their digest (petclinic-rest,
+polls-app, jhipster-sample-app, eladmin, spring-petclinic,
+spring-petclinic-microservices, egovframe-msa-edu, mes4u, ngrinder), and
+shopizer's four join table columns take JPA's default names
+(`MERCHANT_LANGUAGE.stores_merchant_id` and `languages_language_id` among them).
+
+### An entity that extends another entity
+
+An entity can extend another entity, through any `@MappedSuperclass` between
+them. The root's `@Inheritance` says where the hierarchy's rows live, and the
+lane reads it the way JPA applies it:
+
+| The root's strategy | Where a subclass's rows and columns are |
+|---|---|
+| `SINGLE_TABLE`, or no `@Inheritance` at all (JPA's default) | the root's table. The subclass has no table of its own, and a `@Table` on it is ignored, as Hibernate ignores it |
+| `JOINED` | each class's own table holds the columns that class declares, and an inherited column stays on its parent's table. The subclass's table carries the key that joins it to its parent's (the column `@PrimaryKeyJoinColumn` names, else the parent key's name), with a `JOINS` edge between the two, and a statement on the subclass reads or writes every table its row spans |
+| `TABLE_PER_CLASS` | the subclass's own table, with every column, inherited ones too |
+| anything else | not read. The run says so (`inheritance-strategy-unread`), and the subclass's table is **HEURISTIC** |
+
+A statement on an entity that has subclass entities may read or write one of
+their rows, which carry columns (and under `JOINED` or `TABLE_PER_CLASS`,
+tables) of their own. Those are not followed, and the statement says so
+(`polymorphic-subclasses-not-read`).
 
 ### The fetch plan: what a query really reads
 
@@ -871,8 +937,18 @@ the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
 ### What it does NOT resolve
 
 - `@Embedded` / `@Embeddable` attributes produce no column (recorded, not guessed).
-- `@SecondaryTable`, `@Inheritance` strategies, `@AttributeOverride`,
-  `@Convert`, `@ElementCollection` are not modelled.
+- An `@ElementCollection` keeps its values in a table of its own, which this
+  lane does not read. The attribute is no column of its owner, no statement
+  here reaches that table, and the run says so (`element-collection-not-read`).
+- A mapping annotation that can name or place a column otherwise than the
+  plain reading is not read, and its column is not trusted: an attribute with
+  `@JoinColumns`, a formula (`@Formula`, `@JoinFormula` and their kin), an
+  override (`@AttributeOverride`, `@AssociationOverride`), or `@MapsId` with no
+  `@JoinColumn`; and on the class, `@SecondaryTable` or an override, which
+  covers every column of the entity. Such a column keeps its plain reading,
+  graded **HEURISTIC**, and the run names the annotation it did not read
+  (`jpa-mapping-unread`).
+- `@Convert` is not modelled.
 - Hibernate's own `@Fetch` and `@BatchSize` are not read: they change how a fetch
   is issued, not whether it happens.
 - A named query (`@Query(name = "…")`, `@NamedQuery`) is not read.

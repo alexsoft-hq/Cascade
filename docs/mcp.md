@@ -85,21 +85,21 @@ above.
 
 | tool | the question it answers | arguments (`*` = required) |
 |---|---|---|
-| `overview` | **Start here.** What is in this pack, how much of it is wired end to end from an HTTP route down to a table, and what the engine could not see. `screens.byKind` splits the screens into `router` (a frontend router declared them) and `page` (a controller renders them). `reach.routeGrades` counts the served routes by the grade of their link to a handler, `code.services` counts the methods between a handler and its SQL (the ones the walks pass through, and a method that sends SQL from a call in its own body, such as a NestJS service calling Prisma), `diagnostics` lists the run's warn and error diagnostics (each is a `limits` entry too), and every entry of `gaps` carries a `class` saying what a reader can do about it: `input`, `unresolved`, `query`, `unreached` or `info` | `mode` `depth` |
+| `overview` | **Start here.** What is in this pack, how much of it is wired end to end from an HTTP route down to a table, and what the engine could not see. `screens.byKind` splits the screens into `router` (a frontend router declared them) and `page` (a controller renders them). `reach.groups` is how many API groups the served routes fall into, by the rule `map` groups them by (the first segment of a route's path, read below the prefix the application is deployed under where its lane knows one, or the handler's package cut to `moduleAttribution.packageDepth` when the profile declares it), `reach.routeGrades` counts the served routes by the grade of their link to a handler, `code.services` counts the methods between a handler and its SQL (the ones the walks pass through, and a method that sends SQL from a call in its own body, such as a NestJS service calling Prisma), `diagnostics` lists the run's warn and error diagnostics (each is a `limits` entry too), and every entry of `gaps` carries a `class` saying what a reader can do about it: `input`, `unresolved`, `query`, `unreached` or `info` | `mode` `depth` |
 | `projects` | Which projects does this server serve, and what is in memory? Answers from the registry alone — no pack is loaded | — |
 | `search` | Find a table, column or statement by a name substring. Matches names and business comments, **not** source full text | `query*` `limit` |
-| `browse` | List one kind (table, column, statement, endpoint, symbol, screen) with the numbers to pick by on each row, for when you have no name yet. `endpoints` per row comes from one per-pack walk at `conservative`/depth 8; `kind=symbol` needs a `query`. `kind=screen` gives `{screen, path, label, title, group, component, source, endpoints, tables, observed}`, and a page the server renders adds `{kind: "page", template, engine, routes}` | `kind*` `query` `table` `sort` `limit` `offset` |
+| `browse` | List one kind (table, column, statement, endpoint, symbol, screen) with the numbers to pick by on each row, for when you have no name yet. `endpoints` per row comes from one per-pack walk at `conservative` with no hop cap; `kind=symbol` needs a `query`. `kind=screen` gives `{screen, path, label, title, group, component, source, endpoints, tables, observed}`, and a page the server renders adds `{kind: "page", template, engine, routes}` | `kind*` `query` `table` `sort` `limit` `offset` |
 | `column_impact` | If I change this column, which SQL statements read or write it? The statement axis; these edges are `EXACT` | `column*` `mode` `limit` `offset` |
 | `endpoint_impact` | If I change this column, which HTTP endpoints are affected? Walks the code axis; each endpoint carries the weakest grade on its path. On a pack with a screen axis every row also carries `screens: {count, sample}` | `column*` `mode` `limit` `offset` |
 | `screen_impact` | If I change this column, table, statement or method, which **screens** are affected? The same walk two lanes further out, through the frontend's own calls and the `RENDERS` edge, plus one step off `RENDERS_PAGE` so a server-rendered page whose HANDLER touches the column is listed too. Each row names the routes it goes through, and `observed` says whether a recording confirms the call | `column` `table` `statement` `symbol` `mode` `limit` `offset` |
 | `table_usage` | Which statements touch this table, with access, and per-column read/write counts | `table*` `limit` `offset` |
-| `flow` | The chain behind one API call: entry → services → statements → tables, with hops and the walked path. `screen=<router path>` starts at the other end of the round trip (screen → its component functions → the routes they call → services → statements → tables), and `screen=view:<view name>` starts at a page the server renders; walking up, a pack with a frontend gains `webFunctions` and `screens` at the far end, and walking DOWN from a route the `screens` lane lists the page that route shows. `walk.laneNames` says which lanes the answer has. From a route, the picture starts at the first handler the mode admits and no row is graded above that link, which `entry.link` names; when the mode admits none, it stops at the route and says why (see [concepts.md](concepts.md)). In chain mode `offset` cuts every lane from that place in the walk's order, to fetch the next page of one lane. List mode takes `kind=endpoint` (default) or `kind=screen` | `endpoint` `screen` `symbol` `column` `table` `statement` `direction` `kind` `mode` `depth` `limit` `query` `offset` |
+| `flow` | The chain behind one API call: entry → services → statements → tables, with hops and the walked path. `screen=<router path>` starts at the other end of the round trip (screen → its component functions → the routes they call → services → statements → tables), and `screen=view:<view name>` starts at a page the server renders; walking up, a pack with a frontend gains `webFunctions` and `screens` at the far end, and walking DOWN from a route the `screens` lane lists the page that route shows. `walk.laneNames` says which lanes the answer has. From a route, the picture starts at the first handler the mode admits and no row is graded above that link, which `entry.link` names; when the mode admits none, it stops at the route and says why (see [concepts.md](concepts.md)). `direction=up` from an `endpoint` is "where is this API used": see [Up from a route](#up-from-a-route). Which kinds walk which way is one table, `FLOW_DIRECTIONS`: down from an endpoint, a screen or a symbol; up from an endpoint, a column, a table, a statement or a symbol; a screen walked up and a column, table or statement walked down are refused by name. With no `depth` a walk has no hop cap, and a node cap guards it ([concepts.md](concepts.md)). In chain mode `offset` cuts every lane from that place in the walk's order, to fetch the next page of one lane. List mode takes `kind=endpoint` (default) or `kind=screen` | `endpoint` `screen` `symbol` `column` `table` `statement` `direction` `kind` `mode` `depth` `limit` `query` `offset` |
 | `transactions` | The `@Transactional` boundaries and each one's atomic read/write footprint | `method` `limit` `offset` |
 | `erd` | An ERD recovered from the joins the mapper SQL witnesses — foreign keys are never read | `table` `hops` `limit` |
 | `coupling` | Which API group writes what another group reads — the DB sharing no call edge shows | `axis` `mode` `depth` `limit` `offset` |
 | `map` | The whole pack as one relation map: groups, endpoints, the tables they reach, and the joins between them | `mode` `depth` `layers` `limit` `maxBytes` |
 | `neighborhood` | The graph slice around one focus node, for a visual view | `node` `column` `table` `statement` `endpoint` `symbol` `direction` `hops` `limit` |
-| `summary` | The whole pack in about ten boxes a side: groups of routes by where their handler code sits, the table families they reach, and the links between them with the tables, routes and weakest grade behind each. Every box lists its members. Read `limits`: an undeclared group is read from the package tree and a family from the table names | `mode` `depth` `limit` |
+| `summary` | The whole pack in about ten boxes a side: groups of routes by where their handler code sits, the table families they reach, and the links between them with the tables, routes and weakest grade behind each. Every box lists its members. Read `limits`: an undeclared group is read from the package tree and a family from the words of the table names, and a table a `table.join-table` rule names goes with the tables it joins (`rule.tables.joinTables`). Name one `endpoint` or one `table` and `answer.through` carries the paths through it; see [The paths through one node](#the-paths-through-one-node) | `mode` `depth` `limit` `endpoint` `table` |
 | `pack_diff` | What changed between two packs of ONE project: nodes and edges added, removed or regraded; changed node attributes (for example column type or transaction marker); changed edge evidence (for example access); and location-only moves separately. Each changed field retains its base/head value and whether it was absent, and duplicate edge records remain distinct. Affected endpoints/screens are static candidates from both recorded graphs, including candidate-grade edges, for additions, removals, regrades and content changes; moves alone do not inflate them. They are not runtime or behaviour proof. This is recorded graph change, not every source/body change or a safety verdict. The additive schema remains `cascade:pack-diff:1`; `comparisonVersion: 2` identifies this expanded comparator. The addressed project is the head; the base is an earlier build from its pack history (`base_commit`, `base_history`) or another served pack of the same repository (`base`). Packs of different repositories are refused. Read `answer.conditions` first | `base_commit` `base_history` `base` `limit` |
 | `changed_impact` | The working-tree overlay: I edited these files — what is the blast radius? Re-parses the dirty files on each call, Java, frontend and TypeScript alike (`parsedFiles`, `parsedWebFiles`, `parsedTsFiles`). An edited component file also reports `touched.screens`, the screens its functions are drawn on | `files` `mode` `limit` `offset` |
 | `rules` | Which rules does this engine run, and what did each give in this pack? With no `rule`: every kind, pack and rule, each rule with `gave: {edges, nodes}` here, sorted by what it gave. With `rule`: that rule whole, and the links and nodes it gave, a page at a time. See [Rules](#rules) | `rule` `query` `kind` `lane` `here` `limit` `offset` |
@@ -121,9 +121,9 @@ that way.
 // tools/call {"name":"rules","arguments":{"here":true}}
 { "answer": {
     "rules": [ { "id": "prisma.client", "pack": "prisma", "kind": "ts.type-role", "lane": "ts",
-                 "grade": "EXACT", "gave": { "edges": 151, "nodes": 0 }, "here": true, … },
-               { "id": "prisma.operations", "gave": { "edges": 0, "nodes": 151 }, "here": true, … } ],
-    "totals": { "packs": 9, "rules": 17, "here": 3 }, … } }
+                 "grade": "EXACT", "gave": { "edges": 152, "nodes": 0 }, "here": true, … },
+               { "id": "prisma.operations", "gave": { "edges": 0, "nodes": 152 }, "here": true, … } ],
+    "totals": { "packs": 10, "rules": 19, "here": 3 }, … } }
 ```
 
 - The list puts what gave something in THIS pack first, the biggest first, and
@@ -140,7 +140,64 @@ that way.
   `gave.byKind` count them whole (the list carries the same counts).
 - It does not run a rule's examples: that needs the workers, and an answer must
   not depend on the machine that asked. `cascade rules test` runs them, and the
-  viewer's Rules tab shows each example's verdict from the same run.
+  viewer's Rules view, under Analysis status, shows each example's verdict from
+  the same run.
+
+## Up from a route
+
+`flow direction=up endpoint="DELETE /api/v1/user"` asks "where is this API
+used?". The walk starts at the route, not at its handler, and climbs what calls
+it over HTTP: the frontend functions that call it, the functions that call
+those, and the screens that render them, plus any client in this pack that
+calls the route. It is the walk every other target gets: the same mode floor
+(`walk.cut.byMode`, split by grade in `byModeGrades`), the same depth and depth
+cut, the same weakest-link grade on every row, the same lanes paged by
+`offset`. There is no `statements` lane, because what calls a route is code,
+never SQL.
+
+The route's own address is the first link. A caller is matched to the route by
+its address, and the address is only as sure as the route's link to the code
+that declares it (its `HANDLES` edge). So the strongest such link the mode
+admits caps every row, and a route whose address the mode does not admit is
+walked no further: its links are counted as the floor's, and `walk.note` says
+so. On a pack with no frontend the `webFunctions` and `screens` lanes are still
+this answer's, empty with their reason (`not-shipped` where the pack has no
+screen axis), so "no screen calls this" is never read off a pack that read no
+screen. On a server with several projects, another
+project that calls the route is crossed into as it is from any walk up. The
+viewer's Trace asks this when a route is read "Where it is used", and
+`cascade export --tab impact --endpoint` saves it.
+
+## The paths through one node
+
+`summary` draws the whole pack as boxes. Name one `endpoint` (`"VERB /path"`)
+or one `table` and `answer.through` also carries the paths through that node,
+from the same walk as the boxes:
+
+```jsonc
+// tools/call {"name":"summary","arguments":{"table":"pms_product"}}   (mall)
+{ "answer": { …, "through": {
+    "node": "table:pms_product", "family": "pms",
+    "links": [ { "group": "controller", "grade": "SOUND_SET",
+                 "endpoints": ["endpoint:GET /flashProductRelation/list", "endpoint:GET /product/list", …] },
+               { "group": "portal", … }, { "group": "search", … } ] } } }
+```
+
+- For a route: `{node, group, links: [{family, tables, grade}]}`, the families
+  it reaches, each with the tables it reaches there and the weakest grade on
+  the way.
+- For a table: `{node, family, links: [{group, endpoints, grade}]}`, the groups
+  whose routes reach it, each with those routes and the weakest grade.
+- Each is named by the box it is drawn in, `(others)` included, so a reader
+  lights exactly the lines the summary draws. A route the walk did not start
+  from, or a table no route reaches, has no line: `links` is empty and its box
+  is `null`.
+- A name the pack does not hold is refused with `unknown-node`, because an
+  empty set of lines would read as "nothing runs through it". Naming both is
+  `bad-input`. The pack does not change.
+
+The viewer's map on Start asks this when a route or a table is picked inside an
+open box.
 
 ## Federation — one answer across several projects
 
@@ -305,8 +362,8 @@ picture, built by the same walk with the same mode, depth and layers.
 - `via[].fromEndpoint` is the endpoint the request left from, namespaced
   `<project>|<id>` when a chained crossing means the caller is itself in another
   pack.
-- The crossing walk runs at `mode=conservative, depth 8` (the default `map` and
-  `flow` walk), because `erd` takes no mode or depth of its own. `limits` says
+- The crossing walk runs at `mode=conservative` with no hop cap (the default
+  `map` and `flow` walk), because `erd` takes no mode or depth of its own. `limits` says
   so, so a table a wider walk would reach is unknown rather than absent.
 - `erd table=<name>` answers one table's join neighbourhood in **this** pack and
   does not federate. Ask a sibling's table of that project (`erd` with its

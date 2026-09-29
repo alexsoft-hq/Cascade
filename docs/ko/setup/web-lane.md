@@ -502,11 +502,11 @@ the file tree: 62 page(s) declared by where they sit, 9 file(s) under the router
 | `function` | 이름 있는 함수들. 콜백은 자기 이름을 갖지 않고 가장 가까운 이름 있는 함수에 귀속됩니다 |
 | `constant` | 문자열 멤버로 된 enum 이나 객체 리터럴, 그리고 `export const X = '/x'`. 값이 빌드에 따라 정해지는 상수(env 읽기, 기본값, env 끼리 이어 붙인 것, 그 위의 조건식)는 그 식을 `expr` 로, 객체 멤버라면 `exprMembers` 로 남깁니다 |
 | `binding` | 초기화가 호출이나 `new` 또는 다른 이름인 최상위 `const`, 그리고 거기서 만들어진 `baseURL` |
-| `class` | 클래스와 그것이 선언하는 메서드와 필드. 클라이언트를 클래스로 쓰는 것은 함수로 쓰는 것만큼 흔합니다. 라우터 팩이 이름 댄 데코레이터(Angular 의 `@Component`)가 붙어 있으면 `component: true` 입니다 |
+| `class` | 클래스와 그것이 선언하는 메서드와 필드, 그리고 상속하는 클래스(`extends`). 클라이언트를 클래스로 쓰는 것은 함수로 쓰는 것만큼 흔합니다. 라우터 팩이 이름 댄 데코레이터(Angular 의 `@Component`)가 붙어 있으면 `component: true` 입니다 |
 | `assign` | 클래스 본문 어디서든 나오는 `this.<field> = …`. `binding` 과 같은 `init` 모양을 갖습니다. 클래스가 요청을 보낼 클라이언트를 넣어 두는 자리입니다. 클래스가 **타입**을 밝힌 필드(생성자 매개변수 프로퍼티, 선언된 인젝터로 채우는 필드)도 `typed` init 을 가진 `assign` 입니다 |
-| `call` | import 나 지역 바인딩을 거치거나, URL 처럼 생긴 인자를 들고 있거나, `fetch` 또는 `XMLHttpRequest.open` 인 호출 지점. URL 을 몇 번째 인자의 어느 키에서 읽었는지도 적습니다(`url.at`). 이름 있는 함수 안의 호출이면 무엇을 넘기는지(`hands`. 매개변수 전체보다 덜 넘기면 `minus` 나 `part`)와 그 밖에 무엇을 읽는지(`reads`. 거기 쓴 이름이 정해지지 않으면 `open` 과 그 이유)도 적습니다 |
-| `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`. 어디에 적었든 읽고, 클래스 데코레이터의 인자에 적은 것도 포함합니다 |
-| `route` | 라우트 선언. **쓰인 그대로의** 경로, 컴포넌트, 부모, 자식 수. 모듈 팩의 라우트는 다른 파일과 잇는 정보도 들고 있습니다. 자기가 들어 있는 목록(`list`), 상수로 쓴 경로(`pathRef`), 지연 로딩하는 목록(`childrenFrom`), 지연 컴포넌트가 가리키는 export(`componentExport`), 그리고 `grouping` / `outlet` 입니다 |
+| `call` | import 나 지역 바인딩을 거치거나, URL 처럼 생긴 인자를 들고 있거나, `fetch` 또는 `XMLHttpRequest.open` 인 호출 지점. URL 을 몇 번째 인자의 어느 키에서 읽었는지도 적습니다(`url.at`). 이름 있는 함수 안의 호출이면 무엇을 넘기는지(`hands`. 매개변수 전체보다 덜 넘기면 `minus` 나 `part`, 함수가 그 객체에 값을 쓰거나 다른 호출에도 넘기면 `written` 이나 `handed`), 메서드 키나 클라이언트의 base URL 키에 무엇을 쓰는지(`sets`), 그 밖에 무엇을 읽는지(`reads`. 거기 쓴 이름이 정해지지 않으면 `open` 과 그 이유, 객체 인자의 한 키 아래로만 들어가는 것은 `under`)도 적습니다 |
+| `provider` | `{ provide: T, useClass \| useExisting \| useFactory \| useValue }`. 어디에 적었든 읽고, 클래스 데코레이터의 인자에 적은 것도 포함합니다. 클래스에 붙은 `@Injectable({ useClass, … })` 은 그 클래스 자신의 provider 로 읽습니다 |
+| `route` | 라우트 선언. **쓰인 그대로의** 경로, 컴포넌트, 부모, 자식 수, 그리고 줄 안에서 자기와 부모가 놓인 칸(`col`, `parentCol`). 한 줄에 라우트 둘이 있을 수 있기 때문입니다. 모듈 팩의 라우트는 다른 파일과 잇는 정보도 들고 있습니다. 자기가 들어 있는 목록(`list`), 상수로 쓴 경로(`pathRef`), 지연 로딩하는 목록(`childrenFrom`), 지연 컴포넌트가 가리키는 export(`componentExport`), 그리고 `grouping` / `outlet` 입니다 |
 | `routeRef` | 목록 안이나 `children` 에 **이름**으로 적힌 라우트와 목록, 그리고 자식 등록자(`forChild`)가 등록한 목록 |
 | `config` | 위에서 말한 env 값, 프록시 규칙, 별칭. 안쪽 `tsconfig.json` 에서 읽은 별칭은 자기가 다스리는 디렉터리(`scope`)를 달고 있고, 패키지마다 `package.json` 의 의존성을 담은 `what: "package"` 레코드가 하나씩 나옵니다 |
 
@@ -514,8 +514,8 @@ the file tree: 62 page(s) declared by where they sit, 9 file(s) under the router
 **반환하는지**도 함께 기록합니다. 팩토리(`return new Client(opts)`)와 전달
 메서드(`return this.request(…)`)를 이렇게 따라갑니다. `forwards` 도 기록합니다.
 파일이 선언한 이름을 부르면서 함수가 받은 매개변수를 그대로 넘기는 호출들이고,
-무엇을 어떻게 넘기는지와 그 호출이 적은 메서드가 함께 들어갑니다(아래 *래퍼란
-무엇인가* 참조). 클래스 본문 안의
+무엇을 어떻게 넘기는지와, 그 호출이 메서드 키나 base URL 키에 쓴 값이 함께
+들어갑니다(아래 *래퍼란 무엇인가* 참조). 클래스 본문 안의
 `this` 로 시작하는 피호출자는 자기가 어느 클래스에 속하는지 밝히므로
 (`binding: {kind: "this", class: "…"}`), `this.inner.request(cfg)` 를 생성자가
 대입한 필드까지 추적할 수 있습니다.
@@ -672,7 +672,9 @@ export 하고 등록은 다른 데서 하는 프로젝트가 아주 많기 때�
 
 `jsx` 블록(`react-router.json` 이 갖고 있습니다)은 어느 JSX 엘리먼트가 라우트이고
 어느 속성이 경로와 컴포넌트를 이름 대는지 말하므로, `<Routes><Route …>` 트리를
-같은 트리로 읽습니다.
+같은 트리로 읽습니다. index 라우트(`{ index: true, element }`, 또는 블록의
+`indexAttr` 로 읽는 `<Route index element>`)는 자기 경로가 없습니다. 부모 경로에서
+부모가 보여 주는 화면이므로, 경로를 `''` 로 두고 읽습니다.
 
 두 팩이 한 객체를 함께 주장할 수 있을 때는, 그 객체가 들고 있는 **구별되는** 키를
 가진 쪽이 이깁니다(`meta`/`hidden`/`redirect`/`name` 대
@@ -978,23 +980,19 @@ request.get({ url: '/system/user/page', params })
 안에서 `this` 를 부르는 호출은 forward 가 아닙니다. 파일이 선언한 이름을 부르는
 호출만 forward 입니다.
 
-**forward 를 거칠 때 메서드는 어디서 오는가.** 메서드는 요청이 마지막에 실제로
-나가는 메서드입니다. 그래서 호출자에서 클라이언트까지 사슬을 한 홉씩 따라갑니다.
-홉이 넘겨받은 것 **뒤에** 쓴 동사(`{ ...option, method: 'GET' }`)가 메서드를
-정합니다(`method.from: "wrapper-verb"`). **앞에** 쓴 동사(`{ method: 'GET',
-...option }`)는 기본값입니다. 이미 넘어오던 메서드나 호출자 자신의 `method` 키가
-있으면 그게 이깁니다.
+**URL, 메서드, base URL 을 한 홉씩 따라갑니다.** 프로젝트 래퍼를 거치는 호출은
+**마지막** 호출이 보내는 것을 보냅니다. 그 안의 세 가지는 호출자나 중간 단계에서
+옵니다. URL, 메서드, base URL 입니다. 셋 다 같은 방식으로, 호출자에서
+클라이언트까지 따라갑니다(`src/adapters/web/chain.mjs`). 단계가 넘기는 것
+(hands)은 그 값을 다음 단계의 매개변수로 옮기거나 버립니다. 단계가 쓰는 것
+(sets)은 그 값을 덮어씁니다(`adapters/web/lib/sets.mjs`). 넘겨받은 것 **뒤에**
+쓴 키(`{ ...option, method: 'GET' }`)는 그대로 나갑니다. 매개변수를 spread 하기
+**앞에** 쓴 키(`{ method: 'GET', ...option }`)는 기본값이고, 그 매개변수로 들어온
+값이 있으면 그게 이깁니다.
 
-- 호출자의 객체 리터럴이 메서드를 적었으면 그 메서드입니다(`config`).
-- 적지 않았고 자기 spread 도 없으면 래퍼의 값입니다(`wrapper-default`).
-- 레인이 볼 수 없는 메서드가 호출자 옵션에 들어 있을 수 있으면(옵션 안의
-  spread, 이름, call 레코드가 읽는 세 인자 뒤의 인자) 메서드를 정하지 않습니다.
-  `from: "absent"` 로 두고 옆에 `wrapperDefault` 를 적으며, 엣지는 HEURISTIC
-  입니다.
-
-**forward 를 거칠 때 URL 은 어디서 오는가.** URL 은 호출자의 것이고, call 레코드가
-말하는 자리에서 읽습니다(`url.at`: 몇 번째 인자인지, 객체라면 어느 키인지). 이
-URL 은 클라이언트까지 가는 홉이 모두 URL 이 든 매개변수 부분을 넘겨야 클라이언트에
+**URL 은 어디서 오는가.** URL 은 호출자의 것이고, call 레코드가 말하는 자리에서
+읽습니다(`url.at`: 몇 번째 인자인지, 객체라면 어느 키인지). 이 URL 은
+클라이언트까지 가는 홉이 모두 URL 이 든 매개변수 부분을 넘겨야 클라이언트에
 닿습니다. 그런데 래퍼는 받은 옵션을 그대로 넘기는 일이 드뭅니다. ruoyi-vue-pro 의
 래퍼는 `const { headersType, headers, ...otherOption } = option; service({ ...otherOption })`
 처럼 씁니다. 그래서 워커는 문법이 정해 주는 범위에서 매개변수를 따라갑니다. `const`
@@ -1005,16 +1003,62 @@ URL 은 클라이언트까지 가는 홉이 모두 URL 이 든 매개변수 부�
 
 - 넘기는 것에 URL 부분이 들어 있는 홉은 URL 을 다음으로 옮깁니다. 호출자의 `url` 을
   이름으로 빼지 않은 rest 나 복사본은 URL 을 그대로 담아 갑니다.
-- `url` 을 이름으로 빼놓고 다른 방법으로도 넘기지 않는 홉은 URL 을 버린 것이고, 이
-  호출이 쓰지 않은 URL 을 보내게 됩니다. 그래서 그 사슬로는 추적하지 않습니다. 추적 안
-  된 호출로 등급을 매기고 `laneStats.web.calls.urlNotHandedOn` 으로 세며, 하나라도
-  있으면 실행이 `WEB_URL_NOT_HANDED_ON` 을 출력합니다.
-- 코드만으로 정해지지 않는 홉(다시 대입되는 지역 변수, 본문이 덮어쓰는 매개변수,
-  `this`, `arguments`, 옵션에 대고 부른 호출, 인자를 읽지 못한 return)은, 래퍼가 늘
-  그랬듯 클라이언트까지 닿는다고 봅니다. 다만 엣지는 HEURISTIC 이고, 어느 단계에서
-  왜 정해지지 않았는지를 적습니다(`evidence.sink.unsettled`). 이런 호출은
-  `calls.urlThroughUnreadHop` 에 세고, 이유별로 `calls.unreadHopBy` 에 나누며, 실행이
-  `WEB_URL_THROUGH_UNREAD_HOP` 을 출력합니다.
+- `url` 을 이름으로 빼놓고 다른 방법으로도 넘기지 않는 홉은 URL 을 버린 것입니다.
+  그 호출이 보내는 요청은 호출자의 URL 을 묻지 않습니다. 그래서 엣지를 **하나도**
+  만들지 않습니다. 이런 호출은 `laneStats.web.calls.urlNotHandedOn` 으로 세고,
+  하나라도 있으면 실행이 `WEB_URL_NOT_HANDED_ON` 을 출력합니다.
+
+**메서드는 어디서 오는가.** 엣지의 `method.from` 이 다음 중 어느 것인지 말합니다.
+
+- `config`: 호출자의 객체가 동사를 적었고, 모든 단계가 그 키를 넘겼습니다. 호출자가
+  적은 메서드라도 중간 단계가 버리면 클라이언트에 닿지 않습니다.
+- `wrapper-verb`: 어떤 단계가 넘겨받은 것 뒤에 동사를 적었습니다. 객체를 넘기기 전에
+  값을 써 넣는 것도 같습니다. `cfg.method = 'POST'` 나
+  `Object.assign(cfg, { method: 'DELETE' })` 이 늘 실행되는 자리(`if`, 반복문,
+  `&&`, 콜백 안이 아닌 곳)에 있으면 그게 메서드입니다.
+- `wrapper-default`: 어떤 단계가 기본값을 적었고, 호출자가 넘긴 것에는 메서드가
+  없습니다.
+- `library-verb`: 클라이언트를 부른 동사(`service.get(…)`)입니다. HTTP 클라이언트
+  팩의 동사 표가 정합니다.
+- `library-default`: 닿는 메서드가 없어서, 클라이언트가 문서에 적힌 기본값으로
+  보냅니다.
+- `absent`: 메서드를 모릅니다. 엣지는 HEURISTIC 입니다. 동사가 아닌 것으로 적은
+  메서드(`{ method: verb }`)가 여기 들고, 이것을 라이브러리 기본값으로 읽지는
+  않습니다. 레인이 볼 수 없는 메서드가 호출자 옵션에 들어 있을 수 있을 때(옵션 안의
+  spread, 이름, call 레코드가 읽는 세 인자 뒤의 인자)도 여기이고, 그 단계의 기본값을
+  옆에 `wrapperDefault` 로 적습니다.
+
+클라이언트 호출을 둘 이상 하는 단계
+(`if (o.upload) return axios({ ...o, method: 'POST' }); return axios({ ...o, method: 'GET' })`)는
+호출마다 한 번씩 따라갑니다. 그중 어느 하나라도 보내는 메서드마다 엣지가 하나씩
+생깁니다. 호출들이 서로 다른 클라이언트로 이어지는 단계는 갈래마다 따라가지
+않습니다. 엣지는 HEURISTIC 이고 그렇다고 적습니다(`branches`).
+
+**base URL 은 어디서 오는가.** 요청이 자기 base URL 을 들고 가면 클라이언트
+인스턴스의 것을 대신합니다. 호출자가 클라이언트의 base URL 키(axios 는 `baseURL`.
+HTTP 클라이언트 팩이 정합니다)에 적은 것, 중간 단계가 적은 것, 클라이언트 호출의
+옵션에 직접 적은 것이 모두 그렇습니다. 그 값이 경로면 그게 접두사이고
+`evidence.prefix.from: "request"` 입니다. 이 레인이 읽을 수 있는 경로가 아니면(절대
+주소, 이름) 엣지는 HEURISTIC 이고 그렇다고 적습니다(`request-base`).
+
+**정해졌다는 것은 아무도 그 키를 쓰지 않는다는 뜻입니다.** 객체를 넘기는 홉은
+넘기는 사이에 아무것도 그 객체를 바꾸지 않을 때만 정해진 것입니다. 워커는 이름
+있는 함수마다, 이름을 통해 쓰는 곳을 한 번 읽습니다(`adapters/web/lib/writes.mjs`).
+멤버 대입, `delete`, `++`, `Object.assign`, 그리고 그 이름을 넘겨받는 모든
+호출입니다. 넘기는 쪽 레코드는 그 객체에 어떤 키를 썼는지(`written`), 다른
+호출에도 넘겼는지(`handed`)를 적습니다. URL, 메서드, base URL 이 들어 있는 키를
+쓰는 단계, 또는 그 객체를 다른 호출에 넘기는 단계는 그 키를 정하지 못한 것으로
+둡니다. 다른 키에 쓰는 것은 아무것도 흔들지 않습니다. 객체 인자의 한 키 아래로
+읽는 것은 그 키 아래로만 들어갑니다(`reads.under`). 그래서
+`{ ...option, params: qs(option) }` 는 여전히 URL 을 넘깁니다.
+
+코드만으로 정해지지 않는 홉(다시 대입되는 지역 변수, 본문이 덮어쓰는 매개변수,
+단계가 쓰는 키, 다른 호출에도 넘긴 객체, `this`, `arguments`, 옵션에 대고 부른
+호출, 인자를 읽지 못한 return)은, 래퍼가 늘 그랬듯 클라이언트까지 닿는다고 봅니다.
+다만 엣지는 HEURISTIC 이고, 어느 단계의 어느 키가 왜 정해지지 않았는지를
+적습니다(`evidence.sink.unsettled`). 이런 호출은 `calls.urlThroughUnreadHop` 에
+세고, 이유별로 `calls.unreadHopBy` 에 나누며, 실행이
+`WEB_URL_THROUGH_UNREAD_HOP` 을 출력합니다.
 
 ### 접두사, 그리고 그것을 선언하는 법
 
@@ -1089,6 +1133,11 @@ Vite, Vue CLI, Angular CLI 입니다(Angular CLI 는 `.env` 파일을 아예 읽
   앞의 환경 값은 둘 다 정하는 빌드에서만 합칩니다. 둘이 서로 다른 빌드에서만 값을
   가지면, 두 빌드를 섞은 경로를 만들지 않고 그 호출을 풀지 못한 것으로
   둡니다(`unresolved.byReason.noBuild`).
+- 어떤 빌드는 base URL 을 정하고 어떤 빌드는 어디서도 정하지 않으면, 빌드마다 후보를
+  따로 둡니다. 읽은 값이 모두 빌드 자신의 `.env` 파일에서 왔을 때, 그 파일들이 값을
+  정하지 않는 빌드는 base URL 없이 클라이언트를 만들고 경로를 쓰인 그대로 보냅니다.
+  그래서 호출을 두 번 놓습니다. 값을 정하는 빌드를 위해 그 값 뒤에 한 번, 나머지
+  빌드를 위해 맨 경로로 한 번입니다. 각각은 자기 빌드에서만 후보입니다.
 - 이름으로 쓴 base URL(`baseURL: API_BASE`)은 import 를 따라가 그 이름이 선언된
   자리에서 읽습니다.
 - 호출 URL **맨 앞**의 환경 값(`API_BASE_URL + '/polls'`)은 호출 자리에서 쓴
@@ -1131,14 +1180,35 @@ pack 도 서빙하는 경로면 엣지는 그 라우트 노드에 붙되 여전�
 어떤 걷기도 따라가지 않습니다. 포트가 같거나, 포트를 적지 않았거나, 포트를
 모르면 전과 같습니다.
 
-`server.port` 가 자리표시자(`${PORT:8080}`)이거나 숫자가 아닐 때, 애플리케이션이
-설정을 트리 밖(config server, Nacos, Consul, ZooKeeper)에서 가져올 때, 이 리더가
-따라가지 않는 설정을 가리킬 때(클래스패스 파일까지 포함한 모든
-`spring.config.import`, `spring.config.location`, `additional-location`, `name`,
-자리표시자가 든 프로필 키, `@PropertySource` 가 붙은 Java 소스), Spring 설정을
-하나도 읽지 못했을 때는 포트를 모르는 것으로 보고, 포트로는 아무것도 정하지
-않습니다. 애플리케이션 하나라도 포트를 모르면 pack 전체의 포트를 모르는 것으로
-봅니다. "다른" 포트로 가는 호출이 바로 그 애플리케이션의 것일 수 있기 때문입니다.
+**코드가 포트를 정하기도 합니다.** Java 나 Kotlin 소스는 주석을 빼고
+읽습니다(`src/core/server_ports_java.mjs`). 소스는 자기 `src/main/java` 나
+`src/main/kotlin` 옆의 `src/main/resources` 가 가리키는 애플리케이션에 속합니다.
+저장소 맨 위에 있어도 마찬가지입니다. 코드에서 포트를 정하는 방법은 데이터 목록
+`PORT_SET_IN_CODE` 에 있습니다. 웹 서버 팩토리의 `setPort`, 애플리케이션의
+`setDefaultProperties`, 프로퍼티로 넣은 `server.port`(맵 항목, 시스템 프로퍼티,
+빌더 인자)입니다. 하나라도 걸리면 그 애플리케이션의 포트는 모르는 것이 되고,
+규칙에 적힌 문장이 그대로 이유가 됩니다. `@PropertySource` 가 클래스패스의 파일을
+가리키면, 그 애플리케이션의 `resources` 아래에서 파일을 찾아 다른 설정 파일처럼
+읽습니다. 포트를 정하지 않는 파일이면 아무것도 바뀌지 않습니다. 클래스패스 밖의
+파일, 자리표시자로 쓴 파일, 트리에 없는 파일이면 포트를 모르는 것이 됩니다.
+
+애플리케이션의 포트를 모르는 경우는 이렇습니다. `server.port` 가
+자리표시자(`${PORT:8080}`)이거나 숫자가 아닐 때, 애플리케이션이 설정을 트리
+밖(config server, Nacos, Consul, ZooKeeper)에서 가져올 때, 이 리더가 따라가지 않는
+설정을 가리킬 때(클래스패스 파일까지 포함한 모든 `spring.config.import`,
+`spring.config.location`, `additional-location`, `name`, 자리표시자가 든 프로필
+키), 그리고 위처럼 코드가 포트를 정할 때입니다. Spring 설정을 하나도 읽지 못했으면
+아는 포트도 없습니다.
+
+**포트로 아무것도 정하지 않는 경우.** 다음 둘 중 하나면, 호출이 어떤 포트를 적었든
+경로가 가리키는 대로 둡니다.
+
+- 포트를 모르는 애플리케이션이 하나라도 있을 때. "다른" 포트로 가는 호출이 바로 그
+  애플리케이션의 것일 수 있으므로, pack 의 포트는 모르는 것으로 둡니다. 다른
+  애플리케이션들이 밝힌 포트는 그래도 읽어서 이유 옆에 출력합니다.
+- 포트가 Spring Boot 기본값에 기댈 때. 애플리케이션을 띄우는 쪽이 다른 값을 줄 수
+  있으므로, 8080 하나만 보고 다른 서비스의 호출이라고 정하지 않습니다.
+
 `cascade analyze` 는 포트와 그 포트를 읽은 파일을, 모르면 그 이유를 출력합니다.
 다른 포트로 간 호출이 있으면 그 수와 함께 `WEB_OTHER_PORT` 를 경고합니다.
 
@@ -1410,8 +1480,8 @@ Web lane: 1 client instance(s), 0 wrapper(s) (deepest 0), 121 exact and 0 templa
 `pack.meta.laneStats.web` 으로도 들어가므로, 출력된 것과 기록된 것이 어긋날 수
 없습니다. 그 아래에는 이 pack 이 듣는 포트, 또는 모르는 이유가 나오고(*이 머신,
 다른 포트* 참조), 래퍼가 호출의 URL 을 넘기지 않은 경우가 있으면
-`WEB_URL_NOT_HANDED_ON` 이, URL 이 코드만으로 정해지지 않는 래퍼 단계를 지났으면
-`WEB_URL_THROUGH_UNREAD_HOP` 이 나옵니다.
+`WEB_URL_NOT_HANDED_ON` 이, URL, 메서드, base URL 중 하나가 코드만으로 정해지지
+않는 래퍼 단계를 지났으면 `WEB_URL_THROUGH_UNREAD_HOP` 이 나옵니다.
 
 ### web 축이 말하는 것
 
@@ -1438,7 +1508,9 @@ Web lane: 1 client instance(s), 0 wrapper(s) (deepest 0), 121 exact and 0 templa
 | `external` | HTTP 클라이언트 팩이 이름 대지 않은 패키지에서 왔습니다 |
 | `not-a-wrapper` | 프로젝트 자신의 함수이고, 이 레인이 아는 어떤 클라이언트에도 요청을 넘기지 않습니다 |
 | `not-a-verb` | 클라이언트이지만, 그 클라이언트의 동사가 아닌 메서드로 불렸습니다 |
-| `url-not-handed-on` | URL 이 든 인자를 클라이언트로 넘기지 않는 래퍼입니다 |
+
+래퍼가 URL 을 버린 호출은 여기 들지 않습니다. 그런 호출은 엣지를 아예 만들지 않고,
+`WEB_URL_NOT_HANDED_ON` 이 셉니다.
 
 ## 증분: 무엇이 캐시되고 무엇은 절대 안 되는가
 
@@ -1497,15 +1569,30 @@ Java 쪽과 같은 이유로 안전합니다. 워커는 **파일을 넘나드는
 `frontendCalls` 가 붙습니다. 프런트엔드 함수 몇 개가 그것을 부르는지입니다. 그것이
 편집 아래쪽이 아닌 폭발 반경의 나머지 절반입니다.
 
-**오버레이가 더 읽는 것과 읽지 않는 것.** base pack 이 읽은 OpenAPI 문서를 지금
-디스크에 있는 그대로 읽고, `analyze` 처럼 OpenAPI 브리지를 돌립니다. 그래서
-문서가 선언한 라우트와 그 위의 계약 링크(아래 *OpenAPI 문서* 참조)가 편집 뒤에도
-남습니다. 브리지에는 base pack 이 읽은 프런트엔드 패키지와 서버 포트를 `analyze` 와
-똑같이 넘깁니다. 그래서 아무것도 고치지 않은 트리에 얹은 오버레이는 pack 과 같은
-그래프를 만들고, pack 이 포트 때문에 밖으로 남긴 호출은 오버레이에서도 밖에 남습니다.
-이 둘을 다시 정하지는 않습니다. 프런트엔드 근처의 `package.json` 을 고쳤거나, 포트를
-읽은 pack 에서 Spring 설정을 고쳤으면 답의 `limits` 에 적습니다. 패키지 목록을 기록하기
-전에 만든 pack 이면 그것도 알립니다.
+**오버레이가 더 읽는 것과 읽지 않는 것.** 오버레이는 base pack 을 만들 때 쓴
+입력으로 만듭니다. 그래서 분석한 루트의 diff 에 잡히지 않는 변화가 여러분의 편집인
+것처럼 보이지 않습니다. base pack 이 읽은 OpenAPI 문서를 지금 디스크에 있는 그대로
+읽고, `analyze` 처럼 OpenAPI 브리지를 돌립니다. 그래서 문서가 선언한 라우트와 그
+위의 계약 링크(아래 *OpenAPI 문서* 참조)가 편집 뒤에도 남습니다. 문서를 고치면 그
+문서가 선언한 라우트를 고친 것으로 봅니다. 브리지에는 base pack 이 읽은 프런트엔드
+패키지와 서버 포트, 그리고 base pack 을 만든 프로파일의 `gatewayRoutes` 를
+`analyze` 와 똑같이 넘깁니다. 그래서 아무것도 고치지 않은 트리에 얹은 오버레이는
+pack 과 같은 그래프를 만들고, pack 이 포트 때문에 밖으로 남긴 호출은 오버레이에서도
+밖에 남습니다.
+
+- **따로 떨어진 저장소의 프런트엔드.** `analyze` 가 그 저장소를 어느 커밋에서
+  읽었는지 fact index 옆에 적어 둡니다. 그 저장소가 그 뒤로 움직였으면 오버레이를
+  버리고, 백엔드의 HEAD 가 움직였을 때처럼 답은 `behind` 입니다. 분석한 루트 밖에
+  있으면서 어떤 저장소에도 속하지 않는 프런트엔드는 `limits` 에 적습니다. 거기서
+  무엇이 바뀌었는지 오버레이가 알 수 없기 때문입니다.
+- **그 뒤로 바뀐 프로파일**(예를 들어 새로 넣은 `gatewayRoutes` 항목)은 오버레이를
+  거절하고 프로파일을 짚어 줍니다. 다른 프로파일 위에서는 바뀐 접두사가 여러분의
+  편집처럼 읽히기 때문입니다. `cascade analyze` 를 돌리면 됩니다.
+- **패키지와 포트는 다시 정하지 않습니다.** 프런트엔드 근처의 `package.json` 을
+  고쳤으면 답의 `limits` 에 적습니다. 포트를 읽은 pack 이라면 Spring 설정, base
+  pack 이 포트를 읽은 파일, 포트를 모르는 이유로 짚었던 파일, 이제 설정을 불러오거나
+  (`@PropertySource`) 코드에서 포트를 정하는 Java 소스를 고쳤을 때도 적습니다.
+  패키지 목록을 기록하기 전에 만든 pack 이면 그것도 알립니다.
 
 통합 픽스처에서 측정: `.vue` 하나를 고쳤을 때 레인 전체 **67 ms**(web 63, sql 1,
 graph 3), 기준선은 1 초입니다.
@@ -1596,6 +1683,23 @@ and stops there"* 이며, 컬럼 질문은 "찾아봤다"로 읽힐 빈 목록 �
 - 두 선언이 같은 경로로 합성되면 하나의 노드이고, (파일, 줄) 순서로 첫 번째가
   대표가 되며 모든 선언이 `declaredAt` 에 나열됩니다.
 
+두 번째 선언이 무슨 뜻인지는 어디에 적혔느냐에 달려 있습니다. 라우터는 부모를
+그리고, 그 outlet(자식이 그려지는 자리) 안에 경로를 더하지 않는 자식을 함께
+그립니다. 둘 다 부모 경로에서입니다. `{path: 'account', component: Shell,
+children: [{path: '', component: Settings}]}` 는 `/account` 에서 Shell 과
+Settings 를 같이 보여 줍니다. 그래서 이미 그 경로를 그리는 선언 모두의 아래나 위에
+적힌 선언은 그 화면에 합류합니다. 경로가 `''` 인 자식, react-router 의 index
+라우트, `url` 이 빈 ui-router state, 첫 라우트가 `''` 인 지연 로딩 목록이 그렇고,
+파일을 넘어가도 마찬가지입니다. 합류한 선언의 컴포넌트도 그 화면에 그려지고,
+노드는 그런 파일을 모두 `components` 에 적습니다. 이것은
+`laneStats.web.screens.nestedSamePath` 로 셉니다. 한 중첩 사슬 위에 있지 않은 두
+선언(`''` 형제 둘, 서로 무관한 라우트 둘)은 위 규칙 그대로입니다. 첫 번째가 화면이고
+다른 하나는 거기 아무것도 그리지 않으며, `duplicatePaths` 로 셉니다.
+
+같은 파일 안에서 라우트의 부모는 줄과 칸으로 찾습니다.
+`{ path: 'team', children: [{ path: '', component: T }] }` 는 한 줄에 라우트가
+둘이고, 줄로만 찾으면 자식이 곧 자기 부모가 됐기 때문입니다.
+
 노드 id 는 `screen:<합성된 경로>` 이며, `flow screen=` 과 `browse kind=screen`
 이 그것으로 부릅니다.
 
@@ -1685,6 +1789,7 @@ suffix 를 그 이름에 붙여 파일을 찾습니다. 핸들러가 이름 대�
 | `code` | `screenAxis.codeRegex` 를 이름, 제목, 경로 순으로 대조한 첫 결과 |
 | `group` | 코드와 `moduleAttribution.codeLength` 가 둘 다 있으면 코드의 앞 그만큼, 아니면 경로의 첫 세그먼트 |
 | `component` | 라우트의 컴포넌트가 해석된 루트 상대 파일 |
+| `components` | 이 경로에 그려지는 모든 컴포넌트 파일. 경로를 더하지 않는 중첩 라우트가 여기에 하나를 더 그릴 때 붙습니다 |
 | `file` / `line` / `pack` | 선언 그 자체와, 어느 라우터 팩이 그것을 알아봤는지 |
 | `params` | 합성된 경로에 `:x` 나 `*` 가 있으면 true |
 | `hidden` | 선언이 그렇게 말할 때만 실립니다 |
@@ -1696,7 +1801,9 @@ suffix 를 그 이름에 붙여 파일을 찾습니다. 핸들러가 이름 대�
 잇습니다. 이름으로 추측하는 부분은 하나도 없습니다.
 
 - 라우트가 컴포넌트로 **선언한** 파일의 모든 함수에 대해 **EXACT** 입니다.
-  라우트가 어느 파일인지 말했고, 함수는 그 파일 안에 있습니다.
+  라우트가 어느 파일인지 말했고, 함수는 그 파일 안에 있습니다. 라우트의 중첩
+  사슬에서 같은 경로에 선언된 컴포넌트(위 참조)도 같은 방식으로 그리고, 규칙은
+  `route-nested-component` 입니다.
 - 그 컴포넌트가 **import** 하는 파일의 함수에 대해서는, 직접이든 다른 컴포넌트를
   거치든 4 단계까지, 순환은 끊고 **SOUND_SET** 입니다. 엣지는 거기에 도달한
   import 사슬을 `evidence.via` 로 들고 있습니다. import 된 컴포넌트의 어느 함수가
@@ -1764,7 +1871,7 @@ import 가 파일을 이름 대는 것과 같기 때문입니다. 이름이 두 
 | `EXACT` | named 나 default 지정자를 쓴 정적 import 를 상대 경로나 **선언된** 별칭을 통해 이 레인이 읽은 함수까지 따라간 경우, 또는 한 파일 안에서 이름으로 부른 경우(`getList()`, `this.getList()`) |
 | `SOUND_SET` | 같은 경우이되 이름이 `export *` 배럴이나 재export 사슬을 거쳐 왔고, 그래서 어느 파일에서 왔는지가 선택이었던 경우 |
 | `SOUND_SET` | 여기서는 아예 호출되지 않았고, 다른 호출에 **값으로 넘겨진** 경우. 받은 쪽이 그것을 부를 수 있습니다 |
-| `SOUND_SET` | 클래스가 **타입**을 밝힌 필드(생성자 매개변수 프로퍼티, 또는 `orders = inject(OrderService)`)를 거친 `this.orders.list()` 를, 그 타입이 가리키는 클래스와, provider 가 그 타입 자리에 넣는 모든 클래스의 메서드로 이은 경우(룰 `typed-field`). provider 가 그 타입 자리에 다른 클래스를 넣을 수 있으므로 EXACT 는 되지 않습니다. `useFactory` 나 `useValue` 로 만든 provider, 이 레인이 읽지 않은 클래스를 가리키는 provider 가 있어 후보가 빠졌을 수 있으면 HEURISTIC 입니다 |
+| `SOUND_SET` | 클래스가 **타입**을 밝힌 필드(생성자 매개변수 프로퍼티, 또는 `orders = inject(OrderService)`)를 거친 `this.orders.list()` 를, 그 타입이 가리키는 클래스와, provider 가 그 타입 자리에 넣는 모든 클래스의 메서드로 이은 경우(룰 `typed-field`). provider 는 `providers` 항목이거나, 타입 자신의 클래스에 붙은 `@Injectable({ providedIn: 'root', useClass: Mock })` 입니다. 후자는 그 타입 자리에 Mock 을 넣습니다(`adapters/web/packs/injection.json`). 메서드를 직접 선언하지 않은 클래스는 `extends` 를 따라 올라가 가장 가까운 클래스가 선언한 메서드를 실행합니다. provider 가 그 타입 자리에 다른 클래스를 넣을 수 있으므로 EXACT 는 되지 않습니다. `useFactory` 나 `useValue` 로 만든 provider, 이 레인이 읽지 않은 클래스를 가리키는 provider, `extends` 를 따라 올라가도 메서드를 찾지 못한 클래스가 있어 후보가 빠졌을 수 있으면 HEURISTIC 입니다 |
 | `HEURISTIC` | 경로 위에 **가정된** 별칭이 있었던 경우 |
 
 함수가 **아닌** import 된 이름(상수, 컴포넌트) 위의 호출은 엣지를 만들지 않고

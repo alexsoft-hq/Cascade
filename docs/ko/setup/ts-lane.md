@@ -150,7 +150,21 @@ Nest가 주입한 객체의 `findById`입니다. 본문 없는 추상 선언은 
 거친 호출은, 그 타입 자신과 그런 클래스 각각(직접이든 다른 클래스·인터페이스를 거쳐서든)
 에서 가장 가까운 메서드 선언으로 이어집니다. 추상 메서드는 대상이 되지 않습니다.
 `evidence.dispatch`에 타입과 후보 메서드 수(`candidates`)가 남습니다. 프로젝트 안에서
-아무 클래스도 상속·구현하지 않는 타입은 예전처럼 잇습니다.
+아무 클래스도 상속·구현하지 않는 타입은 예전처럼 잇습니다. 다만 모듈이 그 타입에 다른
+것을 묶었거나, 매개변수의 데코레이터가 다른 방식으로 채운다고 말하면 달라집니다(아래).
+
+`this.m()`이 무엇을 부르는지는 두 가지가 더 정합니다.
+
+- 함수를 담은 속성(`handle = () => {...}`)은 객체를 만들 때 그 객체에 바로 붙습니다.
+  그래서 사슬 어디에 있든 같은 이름의 메서드보다 먼저 돕니다. 이런 속성도 따로 심볼이
+  되고(`property: true`), 가장 가까운 속성이 모든 메서드를 이깁니다.
+- mixin(클래스를 돌려주는 함수)도 따라갑니다. 프로젝트의 `function Shout(B)`가 `B`를
+  상속한 클래스를 돌려주면, `class Loud extends Shout(Base)`의 사슬에는 그 클래스가
+  들어가고 그다음이 `Base`입니다. 그래서 mixin 클래스가 선언한 메서드가 `Base`의
+  메서드를 덮어씁니다. 이 엔진이 따라갈 수 없는 호출(패키지 함수, 식)을 상속한 클래스도
+  있습니다. 그 호출이 프로젝트 타입을 넘겨받으면, 그 클래스가 타입의 어떤 메서드든
+  덮어쓸 수 있습니다. 그래서 그 타입을 거친 집합은 HEURISTIC이고, 어느 클래스 때문인지
+  적습니다.
 
 후보 집합은 프로젝트 소스의 `extends`, `implements` 절만 보고 만듭니다. 그런데
 TypeScript는 둘 다 적지 않은 객체도 모양만 맞으면 그 타입으로 받아 줍니다. 그래서
@@ -160,11 +174,21 @@ TypeScript는 둘 다 적지 않은 객체도 모양만 맞으면 그 타입으�
   `nestjs.providers`, 종류 `ts.provider-binding`). `providers`에 클래스만 적으면 그
   클래스 자신이 묶이고, `{ provide: T, useClass: C }`는 `T`에 `C`를 묶습니다. 먼저
   애플리케이션이 실제로 불러오는 모듈을 읽습니다. 루트 모듈에서 시작해 각 모듈의
-  imports를 따라가고, 이 길을 빠짐없이 읽었을 때만 이것으로 정합니다. 그러지 못하면
-  트리 안의 모든 모듈을 읽고, 모듈의 static 메서드(`forRoot()`)가 돌려주는 모듈도 함께
-  봅니다. 바인딩이 집합을 확정하면 엣지는 묶인 클래스로만 갑니다. 이때
+  imports를 따라갑니다. 모듈 클래스, `forwardRef(() => X)`, 이 모듈 아니면 저 모듈을
+  담은 파일의 상수(`const Db = flag ? A : B`), 그리고 `X.forRoot()`를 따라갑니다.
+  `X.forRoot()`는 static 메서드가 돌려주는 객체로 읽습니다. 이 길을 빠짐없이 읽었고,
+  필드를 가진 클래스를 Nest가 만든다면(provider나 등록된 컨트롤러) 이 모듈들로
+  정합니다. 그러지 못하면 트리 안의 모든 모듈을 읽습니다. static 메서드가 돌려주는
+  모듈도 모두 넣습니다. 이때는 트리 전체를 빠짐없이 읽었을 때만 바인딩으로 집합을
+  확정합니다. 바인딩이 집합을 확정하면 엣지는 묶인 클래스로만 갑니다. 이때
   `evidence.dispatch`에 바인딩한 모듈(`bound`), 어느 쪽 읽기로 정했는지(`boundBy`),
-  원래 후보가 몇 개였는지(`narrowedFrom`)가 남습니다.
+  원래 후보가 몇 개였는지(`narrowedFrom`)가 남습니다. 확정하지 못한 집합에는 상속
+  계층의 클래스와 함께, 모듈이 묶는다고 읽힌 클래스도 모두 남깁니다.
+- 아무 클래스도 상속하지 않는 클래스로 타입을 적은 필드도 같은 방식으로 정합니다.
+  자기 자신에 묶였거나 어느 모듈도 묶지 않았으면 예전처럼 잇습니다. 다른 클래스에
+  묶였으면(`{ provide: UsersService, useClass: CachedUsersService }`) 호출은 그
+  클래스로 가고, SOUND_SET입니다. `useFactory`, `useValue`, `useExisting`으로
+  묶였으면 HEURISTIC이고, 이유를 적습니다.
 - `this.m()`이라면 `this`는 늘 이 트리 안 클래스의 인스턴스입니다. 다만 그 타입의
   패키지가 배포될 수 있으면 그렇게 볼 수 없습니다.
 
@@ -172,15 +196,26 @@ TypeScript는 둘 다 적지 않은 객체도 모양만 맞으면 그 타입으�
 `evidence.dispatch.incomplete`에 적습니다.
 
 - `useFactory`, `useValue`, `useExisting`으로 묶었습니다. 이 방식은 읽지 않습니다.
-- 이 엔진이 읽지 못하는 provider, providers 목록, 모듈이 있습니다.
-- imports에서 패키지 모듈에 그 타입을 넘겼습니다. 그 모듈이 타입을 묶을 수 있습니다.
+- 이 엔진이 읽지 못하는 provider, providers 목록, 모듈이 트리 어딘가에 있습니다.
+  이름을 알 수 없는 import(평범한 함수가 만드는 모듈), `@Module`이 붙지 않았고 static
+  메서드도 모듈을 돌려주지 않는데 모듈로 불러온 클래스, 돌려주는 값을 읽지 못한 static
+  메서드, 부트스트랩이 이름을 대지 않은 루트 모듈이 여기 해당합니다.
+- 트리 어딘가에서 패키지 모듈에 그 타입을 넘겼습니다. 그 모듈이 타입을 묶을 수
+  있습니다. 다만 패키지 모듈의 async 옵션에서 패키지가 읽기만 하는 키(`imports`,
+  `inject`, `useClass`, `useExisting`, `useFactory`)에 적힌 타입은 넘긴 것으로 치지
+  않습니다.
 - 어느 모듈도 그 타입을 묶지 않았습니다.
-- 생성자 매개변수에 `@Inject(token)`이 붙었습니다. 무엇을 넣을지는 타입이 아니라 토큰이
-  정합니다.
+- 생성자 매개변수에 타입이 아닌 다른 토큰으로 `@Inject(token)`이 붙었습니다. 무엇을
+  넣을지는 그 토큰이 정합니다. `nestjs` 팩이 모르는 데코레이터(`@Inject`를 감싼
+  프로젝트 자체 데코레이터)가 붙어도 마찬가지입니다. 토큰으로 채울 수도 있기
+  때문입니다. `@Optional`, `@Self`, `@SkipSelf`, `@Host`는 아무것도 바꾸지 않고,
+  타입 자신을 가리키는 `@Inject(T)`도 그렇습니다.
 - 필드가 그 클래스 자신의 생성자 매개변수가 아닙니다. Nest는 그런 필드를 채우지 않습니다.
 - 코드가 그 클래스를 `new`로 직접 만듭니다. 그러면 무엇이든 넘길 수 있습니다.
 - 타입을 선언한 패키지가 배포될 수 있습니다. 애플리케이션 자신의 패키지도 아니고
   `"private": true`도 아니면, 이 트리 밖의 클래스가 그 타입을 상속할 수 있습니다.
+- 이 엔진이 따라갈 수 없는 호출을 상속한 클래스가 그 타입을 넘겨받았습니다(위 mixin
+  설명).
 
 `TS_DISPATCH_INCOMPLETE`는 HEURISTIC이 된 호출 수와 가장 흔한 이유를 알려 줍니다.
 `TS_BINDING_NOT_READ`는 이 엔진이 읽지 못하는 방식으로 묶인 타입을 하나씩 알려 줍니다.
@@ -192,9 +227,18 @@ TypeScript는 둘 다 적지 않은 객체도 모양만 맞으면 그 타입으�
 읽은 다음, 그 파일들의 import와 re-export가 닿는 파일을 분석 루트 안에서 한 바퀴씩 더
 읽습니다. 새 파일이 나오지 않을 때까지 되풀이합니다. import 경로는 브리지와 똑같은
 방식으로 풉니다. 그래서 import 하나를 두고 이 단계가 읽는 파일과 브리지가 그 import의
-뜻으로 보는 파일이 같습니다. `node_modules`, 테스트 파일과 테스트 폴더, 분석 루트 밖
-파일은 읽지 않습니다. 이런 라이브러리에서 가져온 이름은 애플리케이션 자신의 코드처럼
-잇고, 패키지로 세지 않습니다.
+뜻으로 보는 파일이 같습니다. `node_modules`, 분석 루트 밖 파일, 바이트가 루트 밖에
+있는 파일은 읽지 않습니다. 루트 밖으로 이어지는 링크(`libs/shared -> ../../elsewhere`)는
+경로가 어떻게 생겼든 읽지 않습니다. 이런 라이브러리에서 가져온 이름은 애플리케이션
+자신의 코드처럼 잇고, 패키지로 세지 않습니다.
+
+테스트 지원 파일(test support)도 뺍니다. 애플리케이션 루트 안이든 공유 라이브러리
+안이든 같습니다. spec, mock, stub, story 파일, 그리고 `__mocks__`, `testing`, `e2e` 같은
+폴더 아래 파일입니다. 어떤 이름이 테스트 지원 파일인지는 `typescript.test-support` 룰
+(`src/core/rules/packs/typescript.json`, 종류 `ts.test-support`)이 정합니다. mock을
+애플리케이션 코드로 읽으면, 추상 타입을 거친 호출이 닿을 클래스가 하나 더 생깁니다.
+라이브러리의 barrel(re-export를 모은 파일)이 mock까지 내보내기도 합니다. ghostfolio에서는
+`apps/api` 아래의 `*.service.mock.ts` 네 개가 빠져서, 496개 대신 492개를 읽습니다.
 
 애플리케이션 밖에서 읽은 파일은 `meta.laneStats.ts.reached`에 남고, 레인 요약 줄에도
 개수가 나옵니다. 이 파일도 다른 파일처럼 분석 입력이라, 하나라도 HEAD와 다르면 pack이
@@ -332,6 +376,21 @@ relation은 `relation-not-followed`로 남기고 이유를 적습니다. 반대�
 `A`인지 schema가 말하지 않습니다), 필드 하나짜리 id가 없는 모델 사이, 서로 다른
 `@@schema` 블록에 걸친 경우입니다.
 
+**Prisma가 먼저 찾는 것.** 중첩 쓰기는 관련 행을 바꾸기 전에 그 행을 먼저 찾아야 할
+때가 있습니다. 그때 Prisma는 SELECT를 보내고, 이 읽기도 그립니다. 값이 이름을 댄 행을
+찾기도 하고(`named`: connect의 `SELECT Tag.id ... WHERE Tag.id = ?`), 매달린 행에
+연결된 행을 찾기도 합니다(`linked`: delete의
+`SELECT Post.id, Post.authorId ... WHERE Post.authorId IN (?)`). 이런 조회(lookup)는
+관련 테이블, 그 키, 조인이 맞추는 컬럼을 읽습니다. 다대다에서 연결된 행을 찾을 때는
+암묵적 테이블(`_TagToUser`)도 읽습니다. 어느 쓰기가 어느 행을 찾는지는 relation
+종류마다 다릅니다. 일대다의 목록 쪽과 to-one 쪽, 키가 이쪽 또는 저쪽에 있는 일대일,
+다대다입니다. 팩이 중첩 쓰기마다 이를 적어 둡니다(`prisma.json`: `lookup`). Prisma
+6.19.0을 SQLite 위에서 돌려 잰 결과입니다. 호출이 지금 만드는 행에는 연결된 것이 아직
+없습니다. 그래서 create 아래에서는 연결된 행 조회를 그리지 않습니다. 호출 자신의 create,
+upsert의 `create`, 중첩 `create`가 해당합니다(팩의 `argumentRows`와 `nests`).
+ghostfolio에서는 암묵적 테이블 읽기가 두 개 늘었습니다. `tags: { set }` 아래의
+`_OrderToTag`, `watchlist: { disconnect }` 아래의 `_UserWatchlist`입니다.
+
 **리터럴 값이 바꾸는 것.** null로 거르는 relation(`author: null`, `{ is: null }`,
 `{ isNot: null }`. 어느 키인지는 팩의 `relationNullFilters`에 있습니다)은 연결만
 확인합니다. 외래키가 거르는 모델 자신의 테이블에 있으면, 문장은 그 키 컬럼만 읽고
@@ -415,7 +474,17 @@ TypeORM에 대해 아는 것은 `typeorm` 룰 팩(`src/core/rules/packs/typeorm.
 
 엔티티만 선언한 테이블은 `declaredBy: "typeorm"`인 stub 노드입니다. 엔티티는
 애플리케이션이 선언한 것이지, DB에 실제로 있는 것이 아니기 때문입니다. DDL이 선언한
-테이블은 같은 노드가 되고, `typeormCatalogMatch` 표시가 붙습니다.
+테이블은 같은 노드가 되고, `typeormCatalogMatch` 표시가 붙습니다. DDL을 읽었는데
+엔티티만 선언한 테이블이 DDL의 어느 테이블과도 맞지 않으면
+`TS_TYPEORM_TABLE_MISSES_DDL`로 알립니다. 이름은 같은데 스키마가 다르거나 없는 DDL
+테이블도 함께 적습니다. DDL은 보통 스키마 없이 테이블을 적고, TypeORM은 그 앞에
+DataSource의 스키마를 붙입니다(`users`와 `public.users`). 그 스키마를 프로필의
+`schema.default`로 선언하면, DDL의 스키마 없는 테이블과 TypeORM의 테이블이 같은 테이블이
+됩니다.
+
+엔티티가 모두 테이블 상속(`@TableInheritance`, `@ChildEntity`)을 쓰는 프로젝트도
+있습니다. 이 레인은 테이블 상속을 읽지 않습니다. 그래도 아무것도 내놓지 않는 대신,
+레인 요약 줄을 내고 `TS_TYPEORM_MAPPING_UNREAD`로 그 엔티티들을 알립니다.
 
 ### 이름은 TypeORM의 naming strategy, prefix, schema를 따릅니다
 
@@ -429,7 +498,9 @@ TypeORM에 대해 아는 것은 `typeorm` 룰 팩(`src/core/rules/packs/typeorm.
   `forRootAsync`의 `useFactory`가 돌려주는 것, 그 `useClass`나 `useExisting`의
   `createTypeOrmOptions()`, `createConnection({...})`, `new DataSource({...})`입니다.
   `dataSourceFactory` 안의 `new DataSource(options)`는 같은 옵션이지 다른 자리가
-  아닙니다.
+  아닙니다. 같은 파일의 `const`로 넘긴 값은 그 상수가 담은 리터럴로 읽습니다
+  (`const PREFIX = 'app_'`, `const naming = new SnakeNamingStrategy()`). 다시 대입한
+  변수는 읽지 않습니다.
 - 전략을 적지 않은 옵션은 `DefaultNamingStrategy`입니다. typeorm-naming-strategies의
   `new SnakeNamingStrategy()`가 팩이 아는 나머지 전략입니다.
 - 모든 자리를 읽었고 서로 같으면 그 값을 아는 것입니다.
@@ -440,7 +511,16 @@ TypeORM에 대해 아는 것은 `typeorm` 룰 팩(`src/core/rules/packs/typeorm.
   `TS_TYPEORM_NAMING_ASSUMED`가 그 때문에 HEURISTIC이 된 이름을 알려 줍니다.
 - 만든 이름은 전략을 알 때만 EXACT입니다. 테이블 이름은 데코레이터가 적은 것까지
   포함해서, prefix를 알고, schema를 적지 않은 엔티티라면 schema도 알 때만 EXACT입니다.
-  옵션의 schema가 있으면 테이블은 SQL 레인처럼 `schema.table`로 구분합니다.
+- 테이블 이름 앞에 무엇이 붙는지는 드라이버, 즉 옵션의 `type`이 정합니다. TypeORM
+  드라이버마다 테이블 경로를 만드는 방식이 다르고, 팩의 `tablePath`에 적혀 있습니다.
+  PostgreSQL, CockroachDB, Oracle, SAP은 스키마를 붙입니다. MySQL, MariaDB, Spanner는
+  엔티티 자신의 database를 붙입니다. SQL Server는 둘 다 붙이고, SQLite는 아무것도
+  붙이지 않습니다. 그래서 MySQL에서는 옵션의 `schema: 'billing'`이 `users` 앞에
+  아무것도 붙이지 않고, `@Entity('orders', { database: 'shop' })`는 `shop.orders`입니다.
+  테이블은 SQL 레인처럼 이렇게 만든 이름으로 구분합니다. 팩이 모르는 드라이버면 테이블
+  이름은 HEURISTIC입니다. 옵션에 `type`이 적혀 있지 않을 때도, 스키마나 database가 붙을
+  수 있는 테이블이면 HEURISTIC입니다. 프로필에 선언한 스키마는, 스키마도 database도
+  적지 않은 엔티티라면 드라이버와 상관없이 이름 앞에 붙습니다.
 - TypeORM의 `snakeCase`는 0.2.35와 0.2.38에서 바뀌었습니다. 버전마다 철자가 다른
   이름은 전략을 알아도 HEURISTIC입니다. 설치된 버전이 정하기 때문입니다. 만든 조인
   테이블 이름이 29자를 넘어도 HEURISTIC입니다. 0.3의 드라이버가 줄일 수 있기
@@ -475,7 +555,12 @@ SQL을 보내는 TypeORM 호출은 따로 문장이 됩니다.
 repository나 manager를 담은 지역 변수(`const repo = this.ds.getRepository(User)`)는
 Prisma 클라이언트 변수처럼 선언한 자리로 묶습니다. 안쪽 블록에서 같은 이름으로 선언한
 것은 다른 지역 변수입니다. 다시 대입되는 지역 변수는 호출 시점에 무엇을 담고 있을지
-모르므로 그 호출을 읽지 않고, `TS_TYPEORM_RECEIVER_UNREAD`로 알립니다.
+모르므로 그 호출을 읽지 않고, `TS_TYPEORM_RECEIVER_UNREAD`로 알립니다. 다만 두 경우는
+읽습니다. 값 없이 선언했다가 한 번만 대입한 지역 변수
+(`let r; r = this.ds.getRepository(User)`), 그리고 repository를 담은 필드나 다른 지역
+변수를 받은 지역 변수(`const r = this.users`)입니다. 조건에 따라 값이 정해지는 지역
+변수(`flag ? getRepository(Tag) : getRepository(Label)`)는 둘 중 무엇을 담을지 실행해야
+압니다. 그래서 그 호출은 읽지 않고 알리기만 합니다.
 
 연산은 인자마다 맡은 역할로 읽습니다(`typeorm.operations`).
 
@@ -496,6 +581,22 @@ Prisma 클라이언트 변수처럼 선언한 자리로 묶습니다. 안쪽 블
   `columnsRuntimeOnly`를 적습니다.
 - `softDelete`, `restore`, `softRemove`, `recover`는 엔티티의 `@DeleteDateColumn`을
   씁니다.
+- `count`, `exists`와 집계 연산(`sum`, `average`, `minimum`, `maximum`)은 TypeORM
+  0.3에서 eager relation을 조인하지만 그 행은 고르지 않습니다. 그래서 그 테이블과 조인
+  컬럼은 SOUND_SET이고, relation 행의 컬럼은 읽지 않습니다. 0.2는 조인하지
+  않는데, 이 레인은 설치된 버전을 읽지 않습니다. 그래서 조인은 사실이 아니라 후보입니다.
+- 쓰기는 호출이 이름을 대지 않은 컬럼도 씁니다. TypeORM이 스스로 채우는 날짜·버전
+  컬럼입니다. 0.2.24부터 0.3.28까지 query builder가 똑같이 그렇게 합니다.
+  update(`update`, `increment`, `decrement`, `save`가 하는 update)는
+  `@UpdateDateColumn`을 채우고 `@VersionColumn`에 1을 더합니다. 1을 더하려면 버전을
+  읽어야 하므로 읽기도 그립니다. soft delete와 restore는 삭제 날짜 옆에 이 둘을
+  채웁니다. insert(`insert`, `upsert`, `save`가 하는 insert)는 생성 날짜, 수정 날짜,
+  버전을 모두 넣습니다. 다만 컬럼의 `insert` 옵션이 false면 넣지 않습니다. 어느 문장이
+  어느 컬럼을 채우는지는 팩 데이터입니다(엔티티 룰의 `autoColumns`와 `insertKey`,
+  연산마다의 `sends`). 호출이 보낼 수 있는 문장 모두가 채우는 컬럼은 쓰는 것으로 봅니다.
+  일부만 채우는 컬럼은 SOUND_SET입니다. `save`의 생성 날짜가 그렇습니다. `save`는 찾지
+  못한 행만 insert하기 때문입니다. 이런 엣지에는 모두 `typeorm-auto-column`과 이유가
+  남습니다.
 
 `createQueryBuilder` 사슬은 그걸 만든 호출 자리에서 읽습니다. 사슬에 적힌 단계와,
 같은 메서드에서 그 사슬을 담은 지역 변수에 나중에 부른 호출까지 함께 읽습니다. 그
@@ -505,22 +606,32 @@ SQL을 만들기 때문입니다. 쿼리를 실행할 때마다 그 시점에 �
 `alias.property`는 그 alias가 가리키는 엔티티의 컬럼입니다. join은 그 테이블을 더하고,
 `...AndSelect` join은 그 테이블의 행을 돌려줍니다. `select`는 돌려줄 것을 좁히고,
 `update`, `delete`, `insert`는 그 종류의 문장으로 만들고, `set`과 `values`는 적은
-것을 씁니다. 조건문, 반복문, 콜백 안에 적은 단계는 실행될 수도 있는(MAY) 것이라,
+것을 씁니다. `update`, `insert`, `softDelete`, `restore`는 위 연산처럼 날짜·버전 컬럼을
+채웁니다. `into`에 컬럼 목록을 적은 insert는 그 컬럼만 넣습니다. 조건문, 반복문, 콜백
+안에 적은 단계는 실행될 수도 있는(MAY) 것이라,
 거기서 읽는 것은 SOUND_SET입니다. 그런 자리의 `select`는, 그대로 남을 수도 있는
 원래 선택을 후보로 함께 남깁니다. 이 룰이 자리를 정하지 못한 단계(`Brackets`로 만든
 조건, 팩이 모르는 메서드)는 문장에 `builder-step-not-read`로 남습니다. 만든 자리에서
 쿼리를 실행하는 단계가 하나도 없는 builder는 `builder-not-run-here`를 남기고, 그
 엣지는 SOUND_SET입니다.
 
+builder를 담은 지역 변수가 다른 곳으로 가기도 합니다. 호출에 넘기거나, 다른 이름이나
+필드에 담거나, 돌려주는 경우입니다. 그러면 이 엔진이 보지 못한 단계가 붙을 수 있습니다.
+행을 좁히는 `select`나 조건을 바꾸는 `where`입니다. 그래서 이 builder가 읽는 것은
+SOUND_SET이고, 문장에 어디로 갔는지(`builder-escapes`)와 컬럼은 실행해야 안다는 것을
+적습니다. `clone()`은 builder를 하나 더 만듭니다. 복사한 원래 builder는 읽던 것을 그대로
+읽고, 복사본의 단계는 읽지 않습니다. 문장에 그렇다고 적습니다(`builder-step-not-read`).
+
 읽지 못한 것은 알립니다.
 
 | 진단 | 소스가 한 일 |
 |---|---|
 | `TS_TYPEORM_CALL_UNREAD` | raw SQL(`query()`), 팩이 모르는 연산, 이 엔진이 읽은 엔티티가 없는 호출 |
-| `TS_TYPEORM_RECEIVER_UNREAD` | 엔티티를 댄 연산인데, 받는 쪽이 repository나 entity manager인지 모르는 경우. 그런 객체를 담았다가 다시 대입된 지역 변수에 부른 경우도 여기 들어갑니다 |
+| `TS_TYPEORM_RECEIVER_UNREAD` | 엔티티를 댄 연산인데, 받는 쪽이 repository나 entity manager인지 모르는 경우. 그런 객체를 담았지만 호출 시점에 다른 값을 담을 수 있는 지역 변수(다시 대입했거나, 조건이 값을 고르는 변수)에 부른 경우도 여기 들어갑니다 |
 | `TS_TYPEORM_MAPPING_UNREAD` | 이 엔진이 읽지 않는 매핑. embedded 엔티티(`@Column(() => Address)`), `@ChildEntity`, `@ViewEntity`, `@TableInheritance`, `@Tree`가 붙은 클래스, 소스에 적히지 않은 조인 옵션, 대상이 이 엔진이 읽은 엔티티가 아닌 relation |
 | `TS_TYPEORM_NAMING_ASSUMED` | 이 엔진이 옵션을 읽지 못해서 naming strategy, prefix, schema 중 무엇을 모르고, 그 값에 기대는 이름이 HEURISTIC인 경우 |
 | `TS_TYPEORM_NAMING_DECLARED` | 프로필의 `tsBackend.typeorm`이 옵션에 적힌 것과 다른 값을 선언한 경우. 프로필 값을 씁니다 |
+| `TS_TYPEORM_TABLE_MISSES_DDL` | DDL을 읽었는데, 엔티티만 선언한 테이블이 DDL의 어느 테이블과도 맞지 않는 경우. 이름이 같고 스키마가 다른 DDL 테이블을 적고, 둘을 잇는 방법으로 `schema.default`를 알려 줍니다 |
 
 `where` 안의 relation은 문장에 `relation-not-followed`로 남고, 엔티티에 없는 키는
 `argument-not-read`로 남습니다.
@@ -609,9 +720,14 @@ column 축은 이유와 함께 degraded입니다. 엔티티 옆에 DDL이 있어
   오버레이를 거절합니다. pack을 만든 뒤 TypeScript 워커가 바뀌었거나, 샤드가 캐시에서
   사라졌거나, git이 보지 않는 곳에서 파일이 바뀐 경우입니다. `cascade analyze`를
   돌리면 됩니다.
-- 오버레이는 pack이 읽은 애플리케이션을 읽습니다. facts 인덱스에 적힌 그대로입니다.
-  그 뒤 프로필이 다른 애플리케이션을 가리키게 됐으면 `limits`에 적고, 다음
-  `analyze`가 그 애플리케이션을 읽습니다.
+- 오버레이는 pack을 만들 때 쓴 입력으로 만듭니다. 프로필 digest를 pack에 적힌 것과
+  비교해서, 그 뒤 프로필이 바뀌었으면 오버레이를 거절합니다. 고친 파일이 없는 트리여도
+  마찬가지입니다. 다른 `tsBackend.app`, prefix, 제외 목록, `tsBackend.typeorm` 값이
+  편집한 결과처럼 보일 수 있기 때문입니다. `cascade analyze`를 돌리면 됩니다.
+  `tsBackend.app`과 `tsBackend.prismaSchema`는 pack 폴더가 아니라 실행이 기록한
+  폴더(프로젝트의 `.cascade`)를 기준으로 풉니다. 오버레이가 읽는 애플리케이션은 pack이
+  읽은 것이고, facts 인덱스에 적힌 그대로입니다. 실행이 프로필과 다른 애플리케이션을
+  읽었으면(`--ts-src`) `limits`에 그렇다고 적습니다.
 - Prisma·TypeORM 문장 번호는 메서드 안 호출 순서로 붙습니다. 그래서 앞쪽에 호출을
   하나 넣으면 뒤 번호가 밀립니다. `provisional`은 pack에 없던 id에만 붙습니다. 번호가
   밀린 문장의 엣지는, 고친 파일에서 나온 다른 엣지처럼 오버레이의 세션 id를 답니다.

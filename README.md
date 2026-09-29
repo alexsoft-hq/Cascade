@@ -37,10 +37,10 @@ screens, with how sure each layer is. A solid line is seen in the code; a dashed
 one is a call that may happen but that no static read can confirm, which is as
 far as a parser honestly gets through Spring's dependency injection.
 
-![A tour of the Cascade viewer: the overview dials on litemall, then a column
-fanning out to the SQL statements and HTTP endpoints it touches, the source of
-one statement, the whole-project graph, and the schema recovered from the joins
-the SQL makes on mall](docs/assets/cascade-demo.gif)
+![A tour of the Cascade viewer: how much of litemall is wired end to end, then
+a column traced up to the SQL statements and HTTP endpoints it touches, the
+source of one statement, the whole-project graph, and the schema recovered from
+the joins the SQL makes on mall](docs/assets/cascade-demo.gif)
 
 That is one column changed and the answer read in both directions, on two real
 open-source projects. The still shots below walk the same views one at a time.
@@ -651,10 +651,10 @@ asked, from the small `routes.json` that `analyze` writes beside each pack; the
 packs and their digests do not change. A crossing is SOUND_SET at best,
 HEURISTIC when several projects serve the same route, and never invented: a
 call nobody serves stays "leaves the pack". `federate: false` asks one pack
-alone. The three whole-project pictures follow the same rule: the Overview
-lists the connected projects and the routes that go to each, the Graph draws
-what a request reaches in a sibling as a cluster beside this project's map,
-and the ERD frames each sibling's tables in their own cluster, joined to this
+alone. The viewer's whole-project views follow the same rule: Analysis
+status lists the connected projects and the routes that go to each, the Graph
+draws what a request reaches in a sibling as a cluster beside this project's
+map, and Table links frames each sibling's tables in their own cluster, joined to this
 project by a dashed HTTP line and never by a key. Measured on
 spring-petclinic-microservices split into five projects, the gateway's
 `GET /api/gateway/owners/{ownerId}` reaches `owners` in customers-service and
@@ -809,113 +809,126 @@ a contract-valid answer from the engine, so the page and a model asking over MCP
 can never be told different things. It binds `127.0.0.1` and authenticates
 nothing, because it is not meant to be reachable from anywhere else.
 
-The masthead carries the dateline (which project answered, its digest, which
-lanes ran, the commit it was built from), the chain with a count on each step,
-three chips for freshness, trust and the limit count, a project selector, a
-language toggle and a theme toggle. Two themes sit on one set of tokens: **dark**
-is the signal room and the default, **light** is the engineering drawing that
-still reads when printed in greyscale.
+The masthead carries the dateline (which project answered and which lanes built
+its pack, with the digest and the commit one click away), the chain with a count
+on each step, chips for freshness, trust and the limit count, a project
+selector, a language toggle and a theme toggle. Two themes sit on one set of
+tokens: **dark** is the signal room and the default, **light** is the
+engineering drawing that still reads when printed in greyscale.
 
-### Overview
+Under it are five places, each a question a reader comes with: **Start** (where
+do I begin), **Trace** (one target, read either way), **Structure** (the whole
+pack as drawings), **Compare** (what changed since an earlier build) and
+**Analysis status** (what the analysis could and could not see). A link written
+for the tabs they replaced still lands where it did.
 
-![The Overview tab in the light theme: the same five dials and whole-project map
-rendered as ink on paper](docs/assets/screens/overview-light.png)
+### Start
 
-Five dials across the top, from the `overview` answer's own `reach` field: how
-many endpoints reach SQL, how many statements, tables and columns are reached,
-and how many screens reach a table. Under each number is what it leaves out, in
-that step's own terms, because a share only means something beside its
-remainder. Beside them is the live whole-project map, asked once and shared with
-the Graph tab. Below that: the cascade ribbon, what is in the pack, edges by
-type and grade, the hub tables and endpoints, and a panel of what the engine
-could not see.
+![The landing page in the light theme: how much of the chain is wired, and a
+map of the whole project, drawn as ink on paper](docs/assets/screens/overview-light.png)
 
-### Explore
+Start asks first. One box finds any API route, screen, table, column, SQL
+statement or method, and three questions follow: what breaks if I change it,
+how far it reaches, and what the analysis did not see. A question the target
+cannot answer says why instead of going grey. Under them are what this analysis
+can see (the lanes, the census mode, each axis and where it was read from), the
+gaps that change an answer, and the shares from the `overview` answer's own
+`reach`: how many endpoints reach SQL, how many statements, tables and columns
+are reached, and how many screens reach a table. A share that has to be read
+with a limit carries it on its card, because "tables reached 100%" on a project
+whose schema was never read is not the whole database. Then the map: the whole pack
+in about ten boxes a side, route groups on the left and table families on the
+right. A box opens in place, and a route or a table inside it shows only the
+paths through it.
 
-![The Explore tab showing a screen card: the component file it mounts, the
-fourteen frontend functions it runs, and the seven API routes those
+### Trace
+
+![The details of one screen: the component file it mounts, the fourteen
+frontend functions it runs, and the seven API routes those
 reach](docs/assets/screens/explore-screen-card.png)
 
-Pick a table, column, statement, endpoint, method or screen and see what it
-touches. The card above is a screen: the `.vue` file the route declares, the
-functions on it, each marked `leads to` or `sends`, and the routes they reach
-with the grade on each. **My edits** asks the same question about your
-uncommitted changes.
+Pick one target, then read it one of three ways. **What it uses** follows it
+down: the code a route or a screen runs through, the SQL it sends and the
+tables at the end. **Where it is used** follows it up: the SQL, the code, the
+routes and the screens that reach it, which is what a change there would touch;
+up from a route it is the frontend functions and screens that call it.
+**Details** says what it is, as lists: the card above is a screen, with the
+`.vue` file the route declares, the functions on it, each marked `leads to` or
+`sends`, and the routes they reach with the grade on each. A target offers only
+the directions it has, and a missing one is said in a sentence. **My edits**
+asks the same questions about your uncommitted changes.
 
-### Flow
+![A screen traced down: frontend functions, endpoints, service methods and
+mapper statements in labelled hop columns](docs/assets/screens/flow-from-screen.png)
 
-![The Flow tab: a screen on the left, then frontend functions, endpoints,
-service methods and mapper statements in labelled hop
-columns](docs/assets/screens/flow-from-screen.png)
+The picture is one lane per step, and every node in it is named the way a
+developer reads it (`Class.method`, `Mapper.id`, a route with its verb). A
+solid connector is a call the engine can prove, a dashed one a candidate set it
+could not narrow, a dash-dot one a guess. **by hop** groups the same rows one
+step at a time with a census per hop. Beside the picture, one panel says what
+limited this answer and another what the mode left out, grade by grade.
 
-One call read left to right: the entry, the frontend functions, the endpoint,
-the service methods it may run through, the mapper statements those reach, and
-the tables at the end. A solid connector is a call the engine can prove, a
-dashed one a call it thinks happens but could not confirm. **by hop** groups the
-same rows one step at a time with a census per hop.
+![A column traced up: mapper statements, service methods, endpoints and
+frontend functions walked backwards](docs/assets/screens/impact-column.png)
 
-### Impact
+Trace opens on a **list**, not on an empty search box: the kinds you can pick
+with their counts, a filter, a sort, and the rows with the numbers you would
+pick by. Every row is one `browse` answer, so the page counts nothing itself;
+typing filters the rows it already holds and sends no request. A table has a
+caret that opens it into its own columns, so you can walk from a table down to
+the column you are about to change. `/` puts the cursor in the filter, the
+arrow keys move the highlight, Enter picks. Under 1100px the list becomes a
+drawer behind a **Browse** button.
 
-![The Impact tab: a column on the left, then mapper statements, service methods,
-endpoints and frontend functions walked
-backwards](docs/assets/screens/impact-column.png)
+### Structure
 
-The same machinery run backwards from a column, table, statement or method, up
-to the endpoints and screens that can reach it. The rail on the left gives every
-table a caret that opens it into its own columns, so you can walk from a table
-down to the column you are about to change.
+The whole pack as four drawings: the Graph, Table links, Coupling and
+Transactions.
 
-### Coupling
-
-![The Coupling tab: a writer-by-reader matrix of API groups with the shared
-column counts in the cells, and the ranked list of coupled pairs
+![Coupling: a writer-by-reader matrix of API groups with the shared column
+counts in the cells, and the ranked list of coupled pairs
 beside it](docs/assets/screens/coupling.png)
 
-Two API groups can depend on each other without ever calling each other: one
-writes a column, the other reads it. The matrix shows those pairs, writer down
-the side and reader across the top. On mall that is 61 pairs across 32 groups,
-267 coupled columns, and 93 columns only one group touches. Click a cell for the
-columns the two share and the statements that carry them.
+**Coupling.** Two API groups can depend on each other without ever calling each
+other: one writes a column, the other reads it. The matrix shows those pairs,
+writer down the side and reader across the top. On mall that is 63 pairs across
+32 groups, 267 coupled columns, and 93 columns only one group touches. Click a
+cell for the columns the two share and the statements that carry them.
 
-### Graph
-
-![The Graph tab: the whole project as one map, API groups at the centre with
+![The Graph: the whole project as one map, API groups at the centre with
 their endpoints and the tables those reach around
 them](docs/assets/screens/graph-map.png)
 
-The whole pack as one picture. At rest it draws API groups and tables only, with
-each group-to-table line standing for every endpoint in that group that touches
-the table; click a group and its endpoints unfold as satellites. A node's radius
-follows the square root of its degree, line colour is what the endpoint does to
-the table, and thickness is how many statements carry it. The map does not move
-at rest. Double-click a node for **Around \<node\>**: that node in the middle,
-what touches it on ring 1, what touches those on ring 2.
+**Graph.** The whole pack as one picture. At rest it draws API groups and tables
+only, with each group-to-table line standing for every endpoint in that group
+that touches the table; click a group and its endpoints unfold as satellites. A
+node's radius follows the square root of its degree, line colour is what the
+endpoint does to the table, and thickness is how many statements carry it. The
+map is flat and still; 3D and the moving dots sit behind one **Advanced view**
+switch, off by default. Double-click a node for **Around \<node\>**: that node in
+the middle, what touches it on ring 1, what touches those on ring 2.
 
-### ERD
+![Table links, by SQL joins: the whole schema laid out by the joins the mapper
+SQL makes, with the hub tables ranked beside it](docs/assets/screens/erd.png)
 
-![The ERD tab: the whole schema laid out by the joins the mapper SQL makes,
-with the hub tables ranked beside it](docs/assets/screens/erd.png)
+**Table links, by SQL joins.** The whole schema, laid out by the joins the
+mapper SQL makes between tables. It used to be called the ERD; foreign keys are
+never read, so a relationship here is a join some statement actually makes. On
+mall that is 27 relationships over 76 tables, joining 32 of them; the other 44
+sit in a strip under the map, named as such rather than dropped.
 
-The whole schema, laid out by the joins the mapper SQL makes between tables.
-Foreign keys are never read, so a relationship here is a join some statement
-actually makes. On mall that is 27 relationships over 76 tables, joining 32 of
-them; the other 44 sit in a strip under the map, named as such rather than
-dropped.
-
-### Transactions
-
-![The Transactions tab: each @Transactional method with its write count, read
+![Transactions: each @Transactional method with its write count, read
 count and the number of tables one commit can
 touch](docs/assets/screens/transactions.png)
 
-Every `@Transactional` method, and what one commit can touch through it. mall
-has 35 of them, and the largest reaches 15 tables.
+**Transactions.** Every `@Transactional` method, and what one commit can touch
+through it. mall has 35 of them, and the largest reaches 15 tables.
 
 ### Compare
 
 What changed in this project since an earlier build of it. Every certified
 `analyze` keeps the pack it replaces in `.cascade/history/`, the five most
-recent, and the tab appears once the project has one. It never offers another
+recent, and the place appears once the project has one. It never offers another
 project as a base, because two codebases differ in everything. The first panel
 says whether the two builds were analyzed the same way; read it before the
 lists, because a difference is a code change only when the analysis did not
@@ -924,9 +937,19 @@ builds the base from the repository. The same report separates attribute and
 evidence changes from location-only moves, and can be printed or downloaded as
 Markdown with its base, conditions and cut-list totals.
 
+### Analysis status
+
+What this analysis could and could not see, in one place: how fresh the pack
+is, what the trust level rests on, the mode the census was walked in, every
+axis with where it was read from and what it changes, every blind spot as a row
+that says its cause, what it touches and what to do, and the lanes'
+diagnostics, one row per kind. Its second view is **Rules**: the rule packs the
+engine ran, starting with the ones that gave something in this project, each
+with the links it gave.
+
 ### The source pane
 
-![The source pane docked to the right of the Flow tab, showing the component
+![The source pane docked to the right of a traced chain, showing the component
 file on disk with its own line numbers and the answer's lines
 marked](docs/assets/screens/source-pane.png)
 
@@ -937,26 +960,19 @@ than a copy baked into the pack. It carries the file's own line numbers, marks
 the lines the answer is about, and **Open in editor** hands the file and the line
 to VS Code or IntelliJ.
 
-### The browse rail
-
-Explore, Flow and Impact open on a **list**, not on an empty search box: the
-kinds that tab can show with their counts, a filter, a sort, and the rows with
-the numbers you would pick by. Every row is one `browse` answer, so the page
-counts nothing itself; typing filters the rows it already holds and sends no
-request. `/` puts the cursor in the filter, the arrow keys move the highlight,
-Enter picks. Under 1100px the rail becomes a drawer behind a **Browse** button.
+### Language
 
 The interface language toggle switches the **chrome only**. Grades, trust,
 limits, empty reasons and every tool's own message stay exactly as the engine
 wrote them, because a translated grade is a grade this project invented and no
 reader could check it against the engine's own answer.
 
-![The Overview tab with the interface language set to Korean, showing that the
+![The landing page with the interface language set to Korean, showing that the
 grades, trust level and limit names stay in the engine's own
 words](docs/assets/screens/overview-ko.png)
 
-![The Flow tab in Korean: the tab names and hop labels are translated, the node
-ids and grades are not](docs/assets/screens/flow-from-screen-ko.png)
+![A traced chain in Korean: the page's own labels and the hop labels are
+translated, the node ids and grades are not](docs/assets/screens/flow-from-screen-ko.png)
 
 Full detail, including how to add a language:
 [`docs/viewer.md`](docs/viewer.md).
@@ -1163,7 +1179,7 @@ adapters/java/           the Java worker: JavaFacts, the parse-only javac Tree A
 adapters/web/            the frontend worker (webfacts) and its declaration packs: one JSON file per
                          router convention and one for the HTTP client libraries
 viewer/index.html        the viewer page's markup and CSS, served by `cascade view`
-viewer/js/               the page's own code: thirteen classic scripts, one shared scope, in the
+viewer/js/               the page's own code: classic scripts sharing one scope, in the
                          order their numbers give them
 viewer/i18n/             one JSON catalogue per non-English interface language
 viewer/vendor/           the two vendored MIT browser bundles every graph picture renders with
@@ -1175,7 +1191,7 @@ docs/                    the docs site: concepts, cli, mcp, viewer, measured, se
 <project>/.cascade/      per-project state: manifest.json (repositories pinned to full commits),
                          profile.json (the reading convention), pack/ and catalog/, both
                          gitignored because they carry your SQL text and column comments, and
-                         history/, the last five certified packs, for `diff` and the Compare tab
+                         history/, the last five certified packs, for `diff` and the viewer's Compare
 ~/.cascade/registry.json where the tool remembers which project lives where
 $XDG_CACHE_HOME/cascade/  the regenerable fact shards, always outside your source tree. Delete it
                          and the next run is cold

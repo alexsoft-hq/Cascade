@@ -88,6 +88,46 @@ If two catalog names fold onto one key, the run prints a
 `folded_identifier_collision` warning naming both, the first declaration keeps
 the key, and both tables stay in the pack. Nothing is merged in silence.
 
+### What an `ALTER` leaves unsaid is the database's
+
+The DDL reader (`catalog_ddl.py`) parses the files with the same grammar the
+statement lane uses, the standard grammar for H2 and HSQLDB included
+(`--dialect`), and it is told which database they are for (`--database`, the
+database `sqlDialects.main` names). Both are part of the cached catalog's key.
+The second matters because a migration's `ALTER` depends on rules the file does
+not write, and those rules belong to the database, not to the grammar it was
+parsed with. `DROP CONSTRAINT x` drops the primary key only if `x` is the key's
+name, and the `CREATE` often never gave it one.
+
+| Rule | PostgreSQL | MySQL, MariaDB | Oracle |
+|---|---|---|---|
+| a key's name when the DDL gives none | `<table>_pkey`, the server's convention, so a drop matched through it says so; a name past 63 bytes is not known | always `PRIMARY`, whatever the DDL wrote | not known: the server numbers it (`SYS_C...`) |
+| dropping one column of a key | drops the whole key | the column leaves the key, the rest stays | drops the whole key |
+| `ALTER INDEX a RENAME TO b` | renames the key `a` is the index of | | |
+| `MODIFY c ...` | | restates the whole column, so what it leaves out (`NOT NULL`, a comment) is gone | changes only what it says |
+
+A blank cell is a rule this reader does not hold for that database. A database
+with no rules of its own here (H2, HSQLDB, CUBRID, Tibero, Altibase,
+Goldilocks) borrows none from the grammar it is parsed with: speaking MySQL's or
+Oracle's SQL does not show that a database follows MySQL's or Oracle's other
+rules. Wherever a rule is missing, a key the DDL did not name has no known
+name, and a statement whose effect hangs on the missing rule keeps what the
+catalog had and says so: `alter_primary_key_unknown` (a drop or a rename that
+may hit the key, one column dropped from a key of several) and
+`alter_modify_unsaid_unknown` (a `MODIFY` that leaves out the type, the
+nullability or the comment). Before this, H2 and HSQLDB files were read as
+MySQL, rules included, so dropping an H2 key by the name its `CREATE` gave it
+left the key in place, said as changing nothing.
+
+The reader also applies what it used to skip: PostgreSQL's `RENAME c TO d`
+without `COLUMN` (a column, not the table), `DROP c` without `COLUMN`, Oracle's
+`DROP (c, d)`, the `USING INDEX ... ENABLE` an Oracle export writes after a key
+and `MODIFY c NOT NULL ENABLE`, H2's `ALTER COLUMN c RENAME TO d`, MariaDB's
+`MODIFY` and `CHANGE COLUMN IF EXISTS`, and clauses sqlglot keeps as one piece
+of text (`DROP c, DROP d`). An option the grammar splits off, such as
+`SET STATISTICS`, is named as written in `alter_clause_unsupported`. The
+catalog worker is `catalog-ddl/9`, so a cached catalog is read again once.
+
 ### One schema, shipped once per vendor
 
 A repository that has to run on seven databases ships its schema seven times:

@@ -292,7 +292,11 @@ both apply; otherwise it is cold **and says why**.
   primary key, and `RENAME TABLE` amend; and two files declaring the same table
   are reported (`DUPLICATE_TABLE_DECLARATION`) with the first kept, never
   merged. An `ALTER` clause not applied is named (`alter_clause_unsupported`,
-  `alter_unreadable`).
+  `alter_unreadable`). Each `ALTER` is read by the rules of the database
+  `sqlDialects.main` names; where that database has no rule a statement depends
+  on, the statement keeps what the catalog had and says so
+  (`alter_primary_key_unknown`, `alter_modify_unsaid_unknown`;
+  [sql-lane.md](setup/sql-lane.md#what-an-alter-leaves-unsaid-is-the-databases)).
 
   With no `--ddl` at all, discovery classifies every `.sql` it found by
   **dialect** (from the path — `db/mysql/…`, `schema_h2.sql` — and otherwise from
@@ -662,16 +666,41 @@ A row marked `PROVISIONAL` exists only in the overlay — no certified run has
 seen it. After a commit the overlay is discarded and the answer is `behind`,
 naming `cascade analyze` as the cure.
 
+The overlay builds from the inputs the pack was built from, so a change that no
+diff of the analyzed root reports never reads as your edit. An input that moved
+since is declined, behind or said, never read again silently:
+
+- the profile: another one than the pack recorded (its digest) declines, a
+  changed `pathPrefixes`, `gatewayRoutes` entry or SQL convention alike, on a
+  clean tree too;
+- the catalog: its shard key, computed from the files as they are now, against
+  the one the run wrote. Another one declines and names the files, which covers
+  a DDL outside the analyzed root and a catalog snapshot fetched again;
+- a frontend in a repository of its own: `analyze` records the commit it read it
+  at, and one that moved on makes the answer `behind`, as a moved HEAD does. A
+  frontend outside the analyzed root that is in no repository is said in
+  `limits`;
+- `mappers.alternatives`, `tsBackend.prismaSchema` and `tsBackend.app` are read
+  against the directory the run resolved them in (the project's `.cascade`), not
+  the pack's own.
+
+A long-running server keys its overlay on those inputs as they are now, so it
+never answers from one built over the old ones.
+
 The overlay reads the OpenAPI documents the pack read, as they are on disk now,
-so a document's routes and the handlers a rule linked to them are still there.
-It reads the catalog as `analyze` did (the same DDL files with their dialect,
-or the snapshot), and declines when any of those files is edited.
-It hands the web lane the frontend packages and server ports the pack read, so
-with no edit it answers as the pack does. What it does not read again it says
-in the answer: the table id generators a Spring XML declares, when the pack
-bound any, an edited `package.json` near a frontend, and an edited Spring
-configuration when the pack read ports: the overlay keeps the packages and
-ports as the pack read them. A pack that reads a TypeScript backend is
+so a document's routes and the handlers a rule linked to them are still there;
+an edited document is an edit to the routes it declares, and the answer names
+the routes the edited files gave the pack that the overlay no longer has
+(`overlay.removedIds.endpoints`). It reads the catalog as `analyze` did (the
+same DDL files with their dialect, or the snapshot), and declines when any of
+those files is edited. It hands the web lane the frontend packages and server
+ports the pack read, so with no edit it answers as the pack does. What it does
+not read again it says in the answer: the table id generators a Spring XML
+declares, when the pack bound any, an edited `package.json` near a frontend,
+and, when the pack read ports, an edited Spring configuration, a file the pack
+read a port from or named as the reason a port is unknown, or a Java source
+that now loads configuration or sets the port in code: the overlay keeps the
+packages and ports as the pack read them. A pack that reads a TypeScript backend is
 overlaid too: the edited files are read again, the imports followed as they
 are now, and the tsconfig, `schema.prisma` and `package.json` files read again
 (see [the TypeScript lane](setup/ts-lane.md)). The overlay line counts the
@@ -708,13 +737,17 @@ network, and it draws the same grades, limits and cut lists the live page does.
 The viewer's **Export** button writes the same file for the same question. See
 [viewer.md](viewer.md#exporting-one-answer).
 
-- `--tab flow|impact` — which tab's picture (default `flow`).
+- `--tab flow|impact` — which picture: `flow` walks down from the entry, `impact`
+  walks up to it (default `flow`). The viewer's Trace saves a walk down as a Flow
+  file and a walk up as an Impact one.
 - `--endpoint`, `--screen`, `--symbol` start a Flow picture; `--table`, `--column`,
-  `--statement`, `--symbol` start an Impact one. Give exactly one.
+  `--statement`, `--symbol` and `--endpoint` start an Impact one. An endpoint
+  walked up answers "where is this API used": the frontend functions that call
+  it and the screens that render them. Give exactly one.
 - `--mode strict|conservative|heuristic` — which edge grades the walk may use
   (default `conservative`).
 - `--depth 1-8` — how many calls deep. Left out (the default), the walk follows
-  every call, the one rule every walk uses, as both tabs open; a number narrows it.
+  every call, the one rule every walk uses, as Trace opens; a number narrows it.
 - `--limit <n>` — rows per lane before the list is cut (default 40). A cut list
   says so in the file.
 - `--format html|svg|card` — `html` (default) writes the page with the answer inside;
@@ -839,7 +872,7 @@ wait, saying for which process, for up to ten minutes. It is never broken
 automatically, because two runs that both judged it abandoned would both
 publish: a lock whose process is not running on this machine (an analyze that
 was killed) is refused at once, with its process id, and is removed by hand. A build made with uncommitted edits is kept
-but never chosen by its commit. The viewer's Compare tab and the MCP tool
+but never chosen by its commit. The viewer's Compare and the MCP tool
 `pack_diff { base_commit }` choose their base from here, and a server notices a
 pack republished under it and reads the new one.
 
