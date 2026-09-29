@@ -798,7 +798,7 @@ async function renderErdSideTable(id){
     el('button',{textContent:t('erd.side.clear'),onclick:()=>erdClearFn&&erdClearFn()}) ]);
   const relPanel=el('div',{className:'panel'},[ header,
     el('div',{className:'comment',textContent:[ fam?t('erd.side.family',{name:fam}):null, t0&&t0.comment?('“'+t0.comment+'”'):null,
-      rels.length+' relationship(s)' ].filter(Boolean).join('\u00a0\u00a0')}),
+      rels.length+' '+plural(rels.length,'relationship','relationships') ].filter(Boolean).join('\u00a0\u00a0')}),
     el('div',{style:'margin-top:7px;display:flex;gap:6px;flex-wrap:wrap'},[
       el('button',{className:'mini',textContent:'Table',title:t('btn.table.title'),
         onclick:()=>openTrace({kind:'table', id}, 'detail')}),
@@ -811,7 +811,7 @@ async function renderErdSideTable(id){
         el('a',{className:'id clickable',textContent:r.other,title:'spotlight '+r.other,onclick:()=>erdSelectFn&&erdSelectFn(r.other)}) ]),
       el('span',{style:'display:flex;align-items:center;gap:6px;flex:none'},[
         el('span',{className:'card',title:t('erd.card.title'),textContent:r.card}),
-        el('span',{className:'count',title:r.statements+' statement(s) witness this join',textContent:r.statements+'×'}) ]) ]))
+        el('span',{className:'count',title:r.statements+' '+plural(r.statements,'statement witnesses','statements witness')+' this join',textContent:r.statements+'×'}) ]) ]))
       : [el('li',{className:'empty',textContent:t('erd.side.rels.none')})]),
     // the join columns are the evidence: one line per relationship, under the list
     rels.length? el('div',{className:'comment',style:'margin-top:7px'},

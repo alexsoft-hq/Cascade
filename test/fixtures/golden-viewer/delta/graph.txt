@@ -158,25 +158,25 @@
           <div class="gover gover-tl">
             <div id="gchips" class="chips">
               <span class="count">show:</span>
-              <button class="chip" aria-pressed="true" onclick title="hide the 1 group node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 1 group node. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#C4B5FD" r="3.3"></circle>
                 </svg>
                 group 1
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 1 screen node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 1 screen node. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#F9A8D4" r="3.3"></circle>
                 </svg>
                 screen 1
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 2 endpoint node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 2 endpoint nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#22D3EE" r="3.3"></circle>
                 </svg>
                 endpoint 2
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 1 table node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 1 table node. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#4ADE80" r="3.3"></circle>
                 </svg>
@@ -266,11 +266,11 @@
               </span>
               <span>
                 <b>1</b>
-                / 1 tables touched
+                / 1 table touched
               </span>
               <span>
                 <b>1</b>
-                / 2 screens reach a route
+                / 2 screens reaches a route
               </span>
               <span>
                 <b>2</b>
@@ -305,7 +305,7 @@
               tables, by API groups reaching them
             </h2>
             <div class="ovchips">
-              <button class="ovchip" onclick title="table:delta_rows, 1 connections drawn">delta_rows 1</button>
+              <button class="ovchip" onclick title="table:delta_rows, 1 connection drawn">delta_rows 1</button>
             </div>
             <h2 style="margin-top: 12px">
               largest groups

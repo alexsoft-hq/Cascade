@@ -57,17 +57,23 @@ test('the band says the question and the worth, every limit is written out, and 
   const flow = out.snapshot.calls.find((c) => c.name === 'flow').answer;
   const cut = flow.truncated.fields.filter((f) => f.shown < f.total);
   assert.ok(cut.length > 0);
-  assert.match(out.svg, /What it uses: screen \/rows, mode conservative, depth not capped, up to 1 rows/);
+  assert.match(out.svg, /What it uses: screen \/rows, mode conservative, depth not capped, up to 1 row/);
   assert.match(out.svg, new RegExp(`exported ${AT.replace(/\./g, '\\.')} from pack [0-9a-f]{12}`));
-  assert.match(out.svg, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} limit\\(s\\), ${cut.length} cut list\\(s\\), each one named under the picture`));
-  for (const f of cut) assert.match(out.svg, new RegExp(`${f.total - f.shown} more row\\(s\\) here did not fit\\.`));
+  const limitWord = flow.limits.length === 1 ? 'limit' : 'limits';
+  const cutWord = cut.length === 1 ? 'cut list' : 'cut lists';
+  assert.match(out.svg, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} ${limitWord}, ${cut.length} ${cutWord}, each one named under the picture`));
+  for (const f of cut) {
+    const rowWord = f.total - f.shown === 1 ? 'row' : 'rows';
+    assert.match(out.svg, new RegExp(`${f.total - f.shown} more ${rowWord} here did not fit\\.`));
+  }
   for (const lim of flow.limits) assert.ok(out.svg.includes(lim.scope), `limit ${lim.scope} is written out`);
   // A link whose other end was cut is left out, never drawn to the nearest row,
   // and the picture says how many are missing and why.
   const model = chainModel(flow, 'down');
   assert.equal(count(out.svg, /<path [^>]*data-grade=/g), model.links.length);
   assert.ok(model.dropped.length > 0, 'the fixture cut a row some link came from');
-  assert.match(out.svg, new RegExp(`${model.dropped.length} link\\(s\\) are not drawn: the row each one comes from is in a list that was cut`));
+  const droppedWord = model.dropped.length === 1 ? 'link is' : 'links are';
+  assert.match(out.svg, new RegExp(`${model.dropped.length} ${droppedWord} not drawn: the row each one comes from is in a list that was cut`));
 });
 
 test('a picture exported in Korean is written in Korean, from the same catalogue the page reads', async (t) => {

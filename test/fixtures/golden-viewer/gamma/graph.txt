@@ -158,19 +158,19 @@
           <div class="gover gover-tl">
             <div id="gchips" class="chips">
               <span class="count">show:</span>
-              <button class="chip" aria-pressed="true" onclick title="hide the 2 group node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 2 group nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#C4B5FD" r="3.3"></circle>
                 </svg>
                 group 2
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 3 endpoint node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 3 endpoint nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#22D3EE" r="3.3"></circle>
                 </svg>
                 endpoint 3
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 2 table node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 2 table nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#4ADE80" r="3.3"></circle>
                 </svg>
@@ -289,18 +289,18 @@
               tables, by API groups reaching them
             </h2>
             <div class="ovchips">
-              <button class="ovchip" onclick title="table:gamma_item, 1 connections drawn">gamma_item 1</button>
-              <button class="ovchip" onclick title="table:gamma_order, 1 connections drawn">gamma_order 1</button>
+              <button class="ovchip" onclick title="table:gamma_item, 1 connection drawn">gamma_item 1</button>
+              <button class="ovchip" onclick title="table:gamma_order, 1 connection drawn">gamma_order 1</button>
             </div>
             <h2 style="margin-top: 12px">
               largest groups
             </h2>
             <div class="ovchips">
               <button class="ovchip" onclick title="group:order, 2 connections drawn">order 2</button>
-              <button class="ovchip" onclick title="group:admin, 1 connections drawn">admin 1</button>
+              <button class="ovchip" onclick title="group:admin, 1 connection drawn">admin 1</button>
             </div>
             <div class="cpnote">
-              In conservative, 1 of the 3 tables here are on no endpoint's line, so they are not drawn. They are in the schema, and nothing this mode walks reaches them.
+              In conservative, 1 of the 3 tables here is on no endpoint's line, so they are not drawn. They are in the schema, and nothing this mode walks reaches them.
             </div>
           </div>
           <div class="rail">

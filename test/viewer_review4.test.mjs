@@ -254,7 +254,7 @@ test('the map comes before the shares on Start, and a line says what it carries'
   const labels = () => svg().querySelectorAll('text').map((x) => x.textContent);
   const links = JSON.parse(ev(ctx, 'JSON.stringify(SUM.resp.answer.links)'));
   assert.ok(links.length > 0 && links.length <= 12, 'a small map');
-  assert.deepEqual(labels().sort(), links.map((l) => `${l.endpoints} → ${l.tables} tables`).sort(), 'every line of a small map carries its counts');
+  assert.deepEqual(labels().sort(), links.map((l) => `${l.endpoints} → ${l.tables} ${l.tables === 1 ? 'table' : 'tables'}`).sort(), 'every line of a small map carries its counts');
   ev(ctx, "setLang('ko')");
   await settle(ctx, 6);
   ev(ctx, 'summaryRedraw()');

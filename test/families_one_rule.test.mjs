@@ -108,7 +108,7 @@ test('the map says what a family box and the folded box are counted by', async (
   const { ctx, byId } = await bootPage({ html, hash: '#p=gamma', origin: base, answer });
   await settle(ctx, 20);
   const heads = byId.get('ovsummary').querySelectorAll('.sumhead').map((h) => h.textContent);
-  assert.ok(heads.includes('order1 table(s), 2 route(s) reach it'), heads.join(' | '));
-  assert.equal(ev(ctx, "t('summary.others.families', {n:7, tables:7})"), '7 families fewer routes reach, 7 table(s)');
-  assert.equal(ev(ctx, "t('summary.others.groups', {n:11, routes:18, ...summaryNouns()})"), '11 API groups with fewer routes, 18 route(s)');
+  assert.ok(heads.includes('order1 table, 2 routes reach it'), heads.join(' | '));
+  assert.equal(ev(ctx, "t('summary.others.families', {n:7, tables:7})"), '7 families fewer routes reach, 7 tables');
+  assert.equal(ev(ctx, "t('summary.others.groups', {n:11, routes:18, ...summaryNouns()})"), '11 API groups with fewer routes, 18 routes');
 });

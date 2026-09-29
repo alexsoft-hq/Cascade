@@ -247,7 +247,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 APIs reach no SQL in conservative. Some use no database at all; others stop at a link this mode does not follow.</span>
+                        <span>1 API reaches no SQL in conservative. Some use no database at all; others stop at a link this mode does not follow.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
@@ -288,7 +288,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 tables are reached from no API. Some SQL may still run on them.</span>
+                        <span>1 table is reached from no API. Some SQL may still run on them.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">

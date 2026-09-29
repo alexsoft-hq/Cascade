@@ -498,7 +498,7 @@ src/views/rows.vue">
           <div class="panel leftout">
             <h2>What this mode did not follow</h2>
             <div class="comment">
-              Mode conservative did not follow 1 link(s) of a grade it does not admit
+              Mode conservative did not follow 1 link of a grade it does not admit
             </div>
             <ul class="list leftgrades">
               <li>

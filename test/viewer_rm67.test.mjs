@@ -74,7 +74,7 @@ test('the Rules tab opens on the rules that gave something here, biggest first, 
   const rows = byId.get('rulesview').querySelectorAll('button.rulerow');
   assert.deepEqual(rows.map((r) => r.querySelector('.ruleid').textContent), ['nestjs.routes', 'prisma.client', 'prisma.operations']);
   // The rule that made the statement reads as having made it, not as "0 links".
-  assert.equal(rows[2].querySelector('.rulegave').textContent, '1 statement nodes');
+  assert.equal(rows[2].querySelector('.rulegave').textContent, '1 statement node');
   // The grades a rule GAVE, not only its cap: one of the two routes is a guess.
   assert.deepEqual(texts(rows[0].querySelectorAll('.rulegrade')), ['EXACT1', 'HEURISTIC1']);
   const idle = builtinRegistry().rules.size - 3;
@@ -188,7 +188,7 @@ test('Trace says when this mode stopped at the route itself, and how to go furth
   const panel = ev(ctx, `chainLeftOut(TRACEV, ${JSON.stringify(answer)}).textContent`);
   assert.match(panel, /This route's own link to its handler is graded HEURISTIC, so mode conservative stops at the route\./);
   // Each grade left out is named, counted and said in the legend's words (RM67).
-  assert.match(panel, /did not follow 1 link\(s\) of a grade it does not admit/);
+  assert.match(panel, /did not follow 1 link of a grade it does not admit/);
   assert.match(panel, /HEURISTIC\s*1\s*a guess from a convention or an incomplete reading; check it/);
   assert.match(panel, /Switch to heuristic/);
   answer.answer.walk.mode = 'heuristic';

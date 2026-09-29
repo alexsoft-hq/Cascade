@@ -276,7 +276,7 @@
                 <span class="count">(4)</span>
               </h2>
               <div class="panelsub">Each row says its cause in plain words, what it touches, and what to do. The engine's own sentence is under the cause, folded.</div>
-              <div class="panelsub">1 call(s) leave this project, 0 answered by a registered project and 1 not.</div>
+              <div class="panelsub">1 call leaves this project, 0 answered by a registered project and 1 not.</div>
               <div class="stgrp">
                 <div class="ovgaplbl">Inputs it did not have</div>
                 <div id="st-ov-gap-http-calls-leaving-pack" class="stitem warn">
@@ -289,7 +289,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 call targets have no route in this project to answer them. Each is another service, or a route of this project behind a prefix nobody declared.</span>
+                        <span>1 call target has no route in this project to answer them. Each is another service, or a route of this project behind a prefix nobody declared.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
@@ -377,7 +377,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 links are graded below what conservative follows, so every count here stops before them.</span>
+                        <span>1 link is graded below what conservative follows, so every count here stops before them.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
@@ -422,7 +422,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 SQL statements are reached from no API here. That does not make them dead: a job, another service or reflection may call them.</span>
+                        <span>1 SQL statement is reached from no API here. That does not make them dead: a job, another service or reflection may call them.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
@@ -435,7 +435,7 @@
                           <div class="foldbody"></div>
                         </div>
                       </div>
-                      <button class="mini stcauselink" onclick type="button">cause: 1 links conservative does not follow</button>
+                      <button class="mini stcauselink" onclick type="button">cause: 1 link conservative does not follow</button>
                     </div>
                   </div>
                   <div class="stline">
@@ -470,7 +470,7 @@
             <div class="panel">
               <h2>
                 Connected projects
-                <span class="count">(0 connected, 1 routes nobody here serves)</span>
+                <span class="count">(0 connected, 1 route nobody here serves)</span>
               </h2>
               <div class="panelsub">the routes this project calls and does not serve, and the registered project that answers each one. Click a row to go there.</div>
               <div class="ovconn ovconn-none">
@@ -478,10 +478,10 @@
                   <span class="grow">
                     <span class="tag warn">nobody serves these</span>
                   </span>
-                  <span class="count">1 call site(s) over 1 route(s)</span>
+                  <span class="count">1 call site over 1 route</span>
                 </div>
                 <div class="ovchips">
-                  <span class="ovchip" title="1 method(s) in this project make this call">POST /health/ping</span>
+                  <span class="ovchip" title="1 method makes this call">POST /health/ping</span>
                 </div>
                 <div class="cpnote">these routes leave this project and no registered project serves them, so the chain stops at the call. Register the project that serves them and ask again.</div>
               </div>

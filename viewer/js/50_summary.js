@@ -231,8 +231,12 @@ function summaryLit(a){
 }
 function summaryGroupBoxes(a, boxes, lit){
   const out=a.groups.map((g)=> summaryBox(boxes, lit, 'g', g.name, t('summary.group.sub',{routes:g.endpoints.length, tables:g.tables}), g.endpoints));
-  if(a.otherGroups.groups) out.push(summaryBox(boxes, lit, 'g', SUM_OTHERS,
-    t('summary.others.groups',{n:a.otherGroups.groups, routes:a.otherGroups.endpoints.length, ...summaryNouns()}), a.otherGroups.endpoints, 'sumothers'));
+  if(a.otherGroups.groups){
+    const sn=summaryNouns();
+    out.push(summaryBox(boxes, lit, 'g', SUM_OTHERS,
+      t('summary.others.groups',{n:a.otherGroups.groups, routes:a.otherGroups.endpoints.length, nouns:a.otherGroups.groups===1?sn.noun:sn.nouns}),
+      a.otherGroups.endpoints, 'sumothers'));
+  }
   return out;
 }
 function summaryFamilyBoxes(a, boxes, lit){
@@ -400,8 +404,9 @@ function summaryAnchor(node){
 function summaryDetail(a){
   if(SUM.node) return summaryNodeCard();
   if(SUM.sel) return summaryBoxCard(a);
+  const sn=summaryNouns();
   return el('div',{className:'panel'},[ el('div',{className:'comment',textContent:t('summary.pick')}),
-    el('div',{className:'count',style:'margin-top:6px',textContent:t('summary.totals',{...summaryNouns(), routes:ovNum(a.totals.endpoints),
+    el('div',{className:'count',style:'margin-top:6px',textContent:t('summary.totals',{nouns:a.totals.groups===1?sn.noun:sn.nouns, routes:ovNum(a.totals.endpoints),
       groups:ovNum(a.totals.groups), families:ovNum(a.totals.families), tables:ovNum(a.totals.tablesReached)})}) ]);
 }
 /** An open box: the boxes across from it that its lines reach, each a way to open that one. */

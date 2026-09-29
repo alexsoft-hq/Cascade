@@ -514,7 +514,7 @@ function renderChainLayers(v, r, tf){
   const beyond=(a.walk&&a.walk.beyond)||{};
   if(beyond[endField]>0){
     end.append(el('div',{className:'count',style:'margin-bottom:8px',
-      textContent:t('chain.beyond',{n:beyond[endField], unit:endField.replace(/s$/,'')})}));
+      textContent:t('chain.beyond',{n:beyond[endField], unit: beyond[endField]===1 ? endField.replace(/s$/,'') : endField})}));
   }
   if(!endRows.length) end.append(flowEmptyNote(v,a,endField));
   else for(const t of endRows) end.append(endRow(v,t));
@@ -554,7 +554,7 @@ function layerBar(l, scale, derived){
   }
   // a node whose link carries another grade still takes up its share of the bar
   if(l.nodes>drawn) fill.append(el('i',{style:'flex:'+(l.nodes-drawn)+';background:'+gradeFill('RUNTIME_ONLY'), title:'other '+(l.nodes-drawn)}));
-  return el('div',{className:'lyrbar', title:l.nodes+' node(s) at hop '+l.hops}, [fill]);
+  return el('div',{className:'lyrbar', title:l.nodes+' '+plural(l.nodes,'node','nodes')+' at hop '+l.hops}, [fill]);
 }
 // The rows at one hop, drawn by the SAME renderers the lanes use, so hover,
 // select and the card keep working. `shown / total` is honest per group: the

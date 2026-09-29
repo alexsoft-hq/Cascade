@@ -470,5 +470,11 @@ function camelCut(s){
   for(let i=1;i<s.length;i++) if(/[A-Z]/.test(s[i]) && /[a-z0-9]/.test(s[i-1])) at.push(i);
   return at.length>=2 ? at[at.length-2]-1 : -1;
 }
+/**
+ * The English word for a count, so a renderer never writes "node(s)": 1 gets
+ * `one`, anything else gets `many`. Mirrors `{n|one|other}` in i18n.mjs, for
+ * the plain JS literals a few renderers still write for themselves.
+ */
+const plural=(n,one,many)=>n===1?one:many;
 const byId=(id)=>document.getElementById(id);
 const vwrap=(v)=>byId(v.wrapId), vside=(v)=>byId(v.sideId), vsvg=(v)=>vwrap(v).querySelector('svg.flowsvg');

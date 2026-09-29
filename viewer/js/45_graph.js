@@ -462,7 +462,7 @@ function renderGraphChips(kinds){
   byId('gchips').replaceChildren(el('span',{className:'count',textContent:t('chip.kinds')}), ...rows.map(([k,n])=>{
     const off=GRAPHV.hidden.has(k);
     const b=el('button',{className:'chip'+(off?' off':''),
-      title:(off?'show the ':'hide the ')+n+' '+k+' node(s)',
+      title:(off?'show the ':'hide the ')+n+' '+k+' '+plural(n,'node','nodes'),
       onclick:()=>{ if(off) GRAPHV.hidden.delete(k); else GRAPHV.hidden.add(k); renderGraph(); }},
       [ kindDot(k, 11), k+' '+n ]);
     b.setAttribute('aria-pressed', String(!off));
@@ -759,12 +759,12 @@ function mapLinkTip(l){
   // An aggregate line stands for several endpoint touches, so it must say how
   // many — and how the access splits, because "dominant write" is a colour and
   // a colour is not evidence.
-  if(l.kind==='aggregate') bits.push(l.endpoints+' endpoint(s) — reads '+l.reads+' / writes '+l.writes);
+  if(l.kind==='aggregate') bits.push(l.endpoints+' '+plural(l.endpoints,'endpoint','endpoints')+' — reads '+l.reads+' / writes '+l.writes);
   if(l.kind==='calls' && l.federated) bits.push(esc(t('tip.crossing',{p:l.project})),
     ...(l.route ? [esc(l.route)] : []), ...(l.ambiguous ? [esc(t('tip.crossing.ambiguous'))] : []));
   else if(l.kind==='calls' && l.routes!=null) bits.push(esc(t('tip.screenapi',{n:l.routes})));
-  if(l.statements!=null) bits.push(l.statements+' statement(s) carry it');
-  if(l.witness!=null) bits.push(l.witness+' statement(s) witness this join');
+  if(l.statements!=null) bits.push(l.statements+' '+plural(l.statements,'statement carries','statements carry')+' it');
+  if(l.witness!=null) bits.push(l.witness+' '+plural(l.witness,'statement witnesses','statements witness')+' this join');
   bits.push('grade '+esc(l.grade)+(l.grade==='SOUND_SET'?' — a candidate chain, not a proof':''));
   return bits.join('<br>');
 }

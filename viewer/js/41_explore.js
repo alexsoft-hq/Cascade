@@ -595,8 +595,8 @@ async function showEdits() {
     const ovPanel = o ? el('div',{className:'panel'},[
       el('h2',{textContent: o.applied ? 'working-tree overlay '+String(o.overlaySessionId||'').slice(0,12) : 'overlay NOT applied ('+o.state+')'}),
       el('p',{className:'hint', textContent: o.applied
-        ? ('re-parsed '+oc.parsed.length+' file(s), dropped '+oc.dropped+' — '+oc.provisional
-           +' provisional node(s), '+o.provisionalEdges+' provisional edge(s)'
+        ? ('re-parsed '+oc.parsed.length+' '+plural(oc.parsed.length,'file','files')+', dropped '+oc.dropped+' — '+oc.provisional
+           +' provisional '+plural(oc.provisional,'node','nodes')+', '+o.provisionalEdges+' provisional '+plural(o.provisionalEdges,'edge','edges')
            +(o.timingsMs? '  ['+o.timingsMs.total+' ms: java '+o.timingsMs.java+', web '+(o.timingsMs.web||0)+', ts '+(o.timingsMs.ts||0)+', sql '+o.timingsMs.sql+', graph '+o.timingsMs.build+']':''))
         : (o.reason||'')}),
       o.applied && oc.parsed.length ? el('ul',{className:'list'}, oc.parsed.map(f=>el('li',{},[

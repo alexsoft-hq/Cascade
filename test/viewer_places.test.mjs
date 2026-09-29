@@ -381,7 +381,7 @@ test('a mode that walks nothing says why in its own numbers, and offers the mode
   assert.equal(lines(byId).length, 0);
   const note = byId.get('ovsummary').querySelector('.sumempty');
   assert.ok(note, 'an empty map is said, not left blank');
-  assert.match(note.textContent, /No route reaches a table in mode strict\. The walks left \d+ link\(s\) graded SOUND_SET out/);
+  assert.match(note.textContent, /No route reaches a table in mode strict\. The walks left \d+ links? graded SOUND_SET out/);
   click(note.querySelector('button'));
   await settle(ctx, 6);
   assert.equal(ev(ctx, 'SUM.mode'), 'conservative');

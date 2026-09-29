@@ -155,19 +155,19 @@
           <div class="gover gover-tl">
             <div id="gchips" class="chips">
               <span class="count">show:</span>
-              <button class="chip" aria-pressed="true" onclick title="hide the 4 group node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 4 group nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#C4B5FD" r="3.3"></circle>
                 </svg>
                 group 4
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 10 endpoint node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 10 endpoint nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#22D3EE" r="3.3"></circle>
                 </svg>
                 endpoint 10
               </button>
-              <button class="chip" aria-pressed="true" onclick title="hide the 2 table node(s). The count stays either way.">
+              <button class="chip" aria-pressed="true" onclick title="hide the 2 table nodes. The count stays either way.">
                 <svg class="kglyph" aria-hidden="true" height="11" viewBox="0 0 11 11" width="11">
                   <circle cx="5.5" cy="5.5" fill="#4ADE80" r="3.3"></circle>
                 </svg>
@@ -293,7 +293,7 @@
             </h2>
             <div class="ovchips">
               <button class="ovchip" onclick title="table:thing, 4 connections drawn">thing 4</button>
-              <button class="ovchip" onclick title="table:thing_tag, 1 connections drawn">thing_tag 1</button>
+              <button class="ovchip" onclick title="table:thing_tag, 1 connection drawn">thing_tag 1</button>
             </div>
             <h2 style="margin-top: 12px">
               largest groups
@@ -302,7 +302,7 @@
               <button class="ovchip" onclick title="group:things, 4 connections drawn">things 4</button>
               <button class="ovchip" onclick title="group:catalog, 3 connections drawn">catalog 3</button>
               <button class="ovchip" onclick title="group:page, 2 connections drawn">page 2</button>
-              <button class="ovchip" onclick title="group:orders, 1 connections drawn">orders 1</button>
+              <button class="ovchip" onclick title="group:orders, 1 connection drawn">orders 1</button>
             </div>
             <div class="cpnote">
               every table in this project is reached from an endpoint.

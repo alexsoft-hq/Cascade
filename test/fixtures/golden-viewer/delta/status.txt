@@ -225,7 +225,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 links are graded below what conservative follows, so every count here stops before them.</span>
+                        <span>1 link is graded below what conservative follows, so every count here stops before them.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
@@ -270,7 +270,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 screens are known partly from a recording. They are shown beside the counts, never inside them.</span>
+                        <span>1 screen is known partly from a recording. They are shown beside the counts, never inside them.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">

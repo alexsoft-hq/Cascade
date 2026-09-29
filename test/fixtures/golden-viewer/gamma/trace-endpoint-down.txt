@@ -248,7 +248,7 @@
             </button>
             <button class="brgroup" onclick>
               <span class="brgname">▾ admin</span>
-              <span class="brgn">1 endpoints</span>
+              <span class="brgn">1 endpoint</span>
               <span class="brgn">0 reach SQL</span>
             </button>
             <button class="brrow" aria-selected="false" onclick role="option" title="GET /admin/ping">
@@ -648,7 +648,7 @@ read">
                   <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                 </svg>
                 <span class="foldtext">
-                  1 limits on this answer
+                  1 limit on this answer
                 </span>
               </button>
               <span class="count railwhole">(the project has 4)</span>

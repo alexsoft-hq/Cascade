@@ -122,7 +122,8 @@ test('the file boots with no network, draws the chain, and says in its band what
   assert.match(text, /What it uses: screen \/rows, mode conservative, depth not capped, up to 40 rows/);
   assert.match(text, new RegExp(`exported ${AT.replace(/\./g, '\\.')} from pack [0-9a-f]{12}`));
   const flow = carried(out.html).calls.find((c) => c.name === 'flow').answer;
-  assert.match(text, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} limit\\(s\\), 0 cut list\\(s\\)`),
+  const limitWord = flow.limits.length === 1 ? 'limit' : 'limits';
+  assert.match(text, new RegExp(`this answer: trust UNCERTIFIED, ${flow.limits.length} ${limitWord}, 0 cut lists`),
     'a list shown whole is not counted as cut');
 });
 
@@ -133,7 +134,8 @@ test('a list the answer really cut is counted as cut, in the band and on the com
   const cut = flow.truncated.fields.filter((f) => f.shown < f.total);
   assert.ok(cut.length > 0, `the fixture has a lane longer than one row: ${JSON.stringify(flow.truncated.fields)}`);
   const page = await bootFile(out.html);
-  assert.match(page.byId.get('snapbar').textContent, new RegExp(`${cut.length} cut list\\(s\\)`));
+  const cutWord = cut.length === 1 ? 'cut list' : 'cut lists';
+  assert.match(page.byId.get('snapbar').textContent, new RegExp(`${cut.length} ${cutWord}`));
 });
 
 test('a question the file does not hold is answered with a sentence, not a guess', async (t) => {

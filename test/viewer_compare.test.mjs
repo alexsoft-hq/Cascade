@@ -233,12 +233,12 @@ test('a changed attribute is shown before and after, a missing value is said to 
   assert.ok(text.indexOf('Moved nodes (1)') > text.indexOf('Changed attributes (3)'), 'the moves come after the changes');
   assert.match(text, /Only the file, line or declaration position differs/);
   // The summary groups: content, relationships, evidence, source location only.
-  assert.match(text, /Content: 0 node\(s\) added, 1 removed, 3 with a changed attribute/);
-  assert.match(text, /Source location only: 1 node\(s\) and 0 edge\(s\) moved/);
+  assert.match(text, /Content: 0 nodes added, 1 removed, 3 with a changed attribute/);
+  assert.match(text, /Source location only: 1 node and 0 edges moved/);
   assert.match(text, /by kind: .*statement >1/);
   // What to check is drawn from the counts, and claims nothing more.
-  assert.match(text, /Read the 3 changed attribute record\(s\) value by value/);
-  assert.match(text, /1 record\(s\) moved in the source only/);
+  assert.match(text, /Read the 3 changed attribute records value by value/);
+  assert.match(text, /1 record moved in the source only/);
   assert.doesNotMatch(text, /risk score|safe to|coverage/i);
 });
 
@@ -411,7 +411,7 @@ test('an answer from an older server, without attributes or evidence, is said so
   await drawn(page);
   const text = view(page).textContent;
   assert.match(text, /This server compared ids and grades only/);
-  assert.match(text, /Content: 0 node\(s\) added, 1 removed, not compared by this server with a changed attribute/);
+  assert.match(text, /Content: 0 nodes added, 1 removed, not compared by this server with a changed attribute/);
   assert.match(text, /Source location only: not compared by this server/);
   assert.doesNotMatch(text, /Changed attributes|Moved nodes/);
   assert.match(text, /This server did not compare attributes or evidence/);
@@ -451,16 +451,16 @@ test('a cut list says how many rows it left out, on screen and in the file, and 
   await drawn(page);
   const text = view(page).textContent;
   assert.match(text, /Read before the counts/);
-  assert.match(text, /nodes\.changed: 1 of 5 rows are shown; the total is whole/);
+  assert.match(text, /nodes\.changed: 1 of 5 rows is shown; the total is whole/);
   assert.match(text, /Changed attributes \(5\)/);
-  assert.match(text, /4 more row\(s\) here did not fit/);
+  assert.match(text, /4 more rows here did not fit/);
   assert.match(text, /A list is cut at the limit/);
   ev(page.ctx, 'var SAVED=null; snapshotSave=function(name, data){ SAVED=data; };');
   view(page).querySelector('#cmpsave').onclick();
   const md = ev(page.ctx, 'SAVED');
   assert.ok(md.includes('## Rows not shown\n\n- `nodes.changed`: 1 of 5 shown, in `kind, id asc` order'));
   assert.ok(md.includes('## Changed attributes (5)'));
-  assert.ok(md.includes('4 more row(s) here did not fit'));
+  assert.ok(md.includes('4 more rows here did not fit'));
 });
 
 test('an edge whose evidence only points elsewhere in the source is a moved edge, said with its own note; a changed screen offers Trace', async (t) => {
@@ -477,7 +477,7 @@ test('an edge whose evidence only points elsewhere in the source is a moved edge
   assert.match(moved[0].textContent, /^screen:\/rows → endpoint:GET \/rowsCALLS_HTTP \[har\]evidence\.file \(source location\)"old-session\.har"→"session\.har"records: base 1, head 1/);
   assert.match(text, /Only the source location fields of the evidence differ\. A grade change on the same relation/);
   assert.doesNotMatch(text, /compare\.[a-z.]+/, 'no catalogue key stands in for its text');
-  assert.match(text, /Source location only: 0 node\(s\) and 1 edge\(s\) moved/);
+  assert.match(text, /Source location only: 0 nodes and 1 edge moved/);
   // The screen whose title changed is above its own change, in the head, so it opens on Trace, walked down.
   const screen = panelRows(page, 'Screens above the change (1)')[0];
   assert.match(screen.textContent, /^\/rows↓ What it uses$/);
@@ -528,7 +528,7 @@ test('the empty states are told apart: the same pack, and a move in the source o
   const moved = await bootWith(t, { ids: ['beta'], earlier: ['beta'], mutate: movedOnly, hash: '#p=beta&tab=compare' });
   await drawn(moved);
   const text = view(moved).textContent;
-  assert.match(text, /Only source locations differ: 1 node\(s\) and 0 edge\(s\) moved and mean the same/);
+  assert.match(text, /Only source locations differ: 1 node and 0 edges moved and mean the same/);
   assert.match(text, /Moved nodes \(1\)/);
   assert.doesNotMatch(text, /Changed attributes|Endpoints above/);
 });

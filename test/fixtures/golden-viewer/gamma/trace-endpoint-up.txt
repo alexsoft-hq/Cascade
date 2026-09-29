@@ -248,7 +248,7 @@
             </button>
             <button class="brgroup" onclick>
               <span class="brgname">▾ admin</span>
-              <span class="brgn">1 endpoints</span>
+              <span class="brgn">1 endpoint</span>
               <span class="brgn">0 reach SQL</span>
             </button>
             <button class="brrow" aria-selected="false" onclick role="option" title="GET /admin/ping">

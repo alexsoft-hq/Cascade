@@ -1593,7 +1593,7 @@ test('the count line says what the picture folded away, and the control names th
   assert.deepEqual(seg(), ['folded']);
 
   ev(ctx, 'mapUnfoldAll(); buildMapModel(); renderMapCounts(); renderMapFoldNote();');
-  assert.match(line(), /3 endpoints in 2 open group\(s\), 0 still folded/);
+  assert.match(line(), /3 endpoints in 2 open groups, 0 still folded/);
   assert.deepEqual(seg(), ['endpoints']);
 
   ev(ctx, 'mapFoldAll(); buildMapModel(); renderMapCounts(); renderMapFoldNote();');
@@ -3180,8 +3180,8 @@ test('a project whose requests end elsewhere says both numbers under the dial', 
   const { ctx, byId } = await bootPage(t, { ids: ['delta'], hash: '#p=delta&tab=overview' });
   // Before: this project's own share, and what is left of it.
   const before = byId.get('ovcards').querySelectorAll('.kpiden').map((x) => x.textContent);
-  assert.match(before[4], /reach none$/, before[4]);
-  assert.match(before[0], /reach no SQL$/, before[0]);
+  assert.match(before[4], /reach(?:es)? none$/, before[4]);
+  assert.match(before[0], /reach(?:es)? no SQL$/, before[0]);
 
   // A gateway whose screens and routes are answered in a connected project.
   // The DIAL is untouched, because this project's share is what it measures;
@@ -3332,7 +3332,7 @@ test('Trace lists either end of the round trip, and remembers which one per proj
   assert.deepEqual(byId.get('tlist').querySelectorAll('.brgname').map((g) => g.textContent),
     ['▾ rows', '▾ quiet']);
   assert.deepEqual(byId.get('tlist').querySelectorAll('.brgn').map((g) => g.textContent),
-    ['1 screens', '1 reach an API', '1 screens', '0 reach an API']);
+    ['1 screen', '1 reaches an API', '1 screen', '0 reach an API']);
   assert.equal(store.get('cascade.viewer.tracekind.delta'), 'screen');
 
   // A pick draws `flow screen=`.
@@ -3907,8 +3907,8 @@ test('Analysis status says how many calls leave this project, and says nothing w
   // The blind-spot panel on Analysis status is where the count is said.
   const panel = (fed) => ev(ctx, `statusGapsPanel({gaps: [], empty: {gaps: 'none'}, federation: ${JSON.stringify(fed)}}).textContent`);
   assert.match(panel({ calls: 3, answered: 2, unmatched: 1, projects: ['served'] }),
-    /3 call\(s\) leave this project, 2 answered by a registered project and 1 not\./);
-  assert.equal(/call\(s\) leave/.test(panel({ calls: 0, answered: 0, unmatched: 0, projects: [] })), false,
+    /3 calls leave this project, 2 answered by a registered project and 1 not\./);
+  assert.equal(/calls? leaves? this project/.test(panel({ calls: 0, answered: 0, unmatched: 0, projects: [] })), false,
     'a project that talks to nobody says nothing');
 });
 
@@ -4064,7 +4064,7 @@ test('Analysis status lists the connected projects, their routes, and the calls 
   // The project's name, and the two numbers behind it: how many methods make
   // the call, over how many routes.
   assert.match(rows[0].textContent, /beta/);
-  assert.match(rows[0].textContent, /8 call site\(s\) over 6 route\(s\)/);
+  assert.match(rows[0].textContent, /8 call sites over 6 routes/);
   // FIVE ROUTES, THEN A COUNT. A row that printed all of them would be a list,
   // not a row, on a project that calls twenty.
   const chips = rows[0].querySelectorAll('.ovchip').map((c) => c.textContent);
@@ -4446,7 +4446,7 @@ test('the ERD builds one cluster per connected project, dashed connectors, and n
   // The side panel lists the projects, and the empty state does not say "none".
   const side = byId.get('erdside').textContent;
   assert.match(side, /this project has no table of its own/);
-  assert.match(side, /2 table\(s\), 1 relationship\(s\)/);
+  assert.match(side, /2 tables, 1 relationship/);
 });
 
 test('the ERD switch is remembered, and a project WITH tables of its own opens without the clusters', async (t) => {
@@ -4553,7 +4553,7 @@ test('a connected-projects row keeps its name and lets the counts give way', asy
     ['fedring', 'id clickable fedname']);
   // The whole id is in the tooltip, because the name is the thing that gets cut.
   assert.match(row.querySelector('.fedname').title, /^beta {2}open the ERD of beta$/);
-  assert.match(row.querySelector('.fedcount').title, /2 table\(s\), 1 relationship\(s\)/);
+  assert.match(row.querySelector('.fedcount').title, /2 tables, 1 relationship/);
 });
 
 test('a drawing smaller than the pane is centred at 1:1, not blown up to fill it', async (t) => {

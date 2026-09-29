@@ -242,7 +242,7 @@
                   <span class="cpg">things</span>
                 </a>
                 <span style="display: flex; align-items: center; gap: 6px; flex: none">
-                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag warn" title="1 of them, on at least one side, is carried only by statements that three or more groups reach">⇢ 1</span>
                   <span class="tag">2</span>
                 </span>
               </li>
@@ -263,7 +263,7 @@
                   <span class="cpg">page</span>
                 </a>
                 <span style="display: flex; align-items: center; gap: 6px; flex: none">
-                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag warn" title="1 of them, on at least one side, is carried only by statements that three or more groups reach">⇢ 1</span>
                   <span class="tag">1</span>
                 </span>
               </li>
@@ -274,7 +274,7 @@
                   <span class="cpg">catalog</span>
                 </a>
                 <span style="display: flex; align-items: center; gap: 6px; flex: none">
-                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag warn" title="1 of them, on at least one side, is carried only by statements that three or more groups reach">⇢ 1</span>
                   <span class="tag">1</span>
                 </span>
               </li>
@@ -295,7 +295,7 @@
                   <span class="cpg">page</span>
                 </a>
                 <span style="display: flex; align-items: center; gap: 6px; flex: none">
-                  <span class="tag warn" title="1 of them, on at least one side, are carried only by statements that three or more groups reach">⇢ 1</span>
+                  <span class="tag warn" title="1 of them, on at least one side, is carried only by statements that three or more groups reach">⇢ 1</span>
                   <span class="tag">1</span>
                 </span>
               </li>

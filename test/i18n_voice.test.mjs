@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VIEWER_STRINGS } from '../src/viewer/i18n.mjs';
+import { VIEWER_STRINGS, makeT } from '../src/viewer/i18n.mjs';
 
 // The VOICE of the catalogue (RM23), held mechanically.
 //
@@ -36,6 +36,128 @@ test('no catalogue string uses an em dash or a middle dot', () => {
       assert.equal(v.includes(' · '), false, `${lang}/${k} carries a middle dot: ${v}`);
     }
   }
+});
+
+// AN ENGLISH COUNT WRITES THE WORD, NEVER "word(s)" (RM67-U2g). "1 route" and
+// "2 routes" are both real sentences; "1 route(s)" reads like nobody checked.
+// `interpolate`'s `{n|one|other}` syntax exists so a catalogue string can say
+// the right word for its own count instead of hedging with a parenthesis, and
+// this test holds the whole English catalogue AND every string literal the
+// renderers write for themselves to that: no letter is ever followed by a
+// literal `(s)`. `(s)=>` and `function f(s){` are code, not text, so this
+// check runs on the CONTENT of a string literal, never on the source at large.
+const PAREN_S = /[A-Za-z]\(s\)/;
+
+test('no English catalogue value writes a word followed by "(s)"', () => {
+  const offenders = [];
+  for (const [k, v] of Object.entries(EN)) {
+    if (PAREN_S.test(v)) offenders.push(`${k}: ${v}`);
+  }
+  assert.deepEqual(offenders, [], `these catalogue lines still hedge with "word(s)":\n${offenders.join('\n')}`);
+});
+
+/** Every `.js` file directly under viewer/js (not a subdirectory). */
+function viewerJsFiles() {
+  return fs.readdirSync(path.join(ROOT, 'viewer', 'js'), { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.js'))
+    .map((e) => `viewer/js/${e.name}`).sort();
+}
+
+/**
+ * The content of every quoted string literal in JS source: the same
+ * character-by-character walk as `stripJsComments` (comments and regex
+ * literals skipped, escapes honoured), but collecting a literal's BODY
+ * instead of rebuilding the source around it. A separate regex pass over
+ * already-stripped text can lose track of which quote opens and which
+ * closes once a backslash or a nested quote appears, so this walks the
+ * source itself rather than re-parsing stripJsComments's output.
+ */
+function stringLiteralsOf(src) {
+  const out = [];
+  let i = 0;
+  const n = src.length;
+  let prev = '';
+  while (i < n) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') i++; continue; }
+    if (c === '/' && d === '*') { i += 2; while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      let body = '';
+      i++;
+      while (i < n) {
+        if (src[i] === '\\') { body += src[i + 1] ?? ''; i += 2; continue; }
+        if (src[i] === c) { i++; break; }
+        body += src[i];
+        i++;
+      }
+      out.push(body);
+      prev = c;
+      continue;
+    }
+    if (c === '/' && /[=(,:[!&|?{};+\-*%<>~^]/.test(prev)) {
+      i++;
+      let inClass = false;
+      while (i < n) {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === '[') inClass = true;
+        else if (src[i] === ']') inClass = false;
+        else if (src[i] === '/' && !inClass) { i++; break; }
+        i++;
+      }
+      prev = '/';
+      continue;
+    }
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out;
+}
+
+test('the "(s)" check itself: text is caught, an arrow param and a function param are not', () => {
+  assert.equal(PAREN_S.test('1 node(s) drawn'), true);
+  assert.equal(PAREN_S.test('(s)=>s.trim()'), false, 'no string literal holds this: it is code');
+  const literals = stringLiteralsOf("const f=(s)=>String(s)+' node';\nfunction g(s){ return 'x'; }");
+  assert.deepEqual(literals.filter((t) => PAREN_S.test(t)), []);
+});
+
+test('no string literal in viewer/js writes a word followed by "(s)"', () => {
+  const offenders = [];
+  for (const rel of viewerJsFiles()) {
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    for (const lit of stringLiteralsOf(src)) {
+      if (PAREN_S.test(lit)) offenders.push(`${rel}: ${lit}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `these viewer/js string literals still hedge with "word(s)":\n${offenders.join('\n')}`);
+});
+
+// TEN LINES THIS ROUND REWROTE, READ AT n=1 AND n=2. Each pair below is a
+// sentence a reader actually sees, not just a pattern match on the source.
+test('render check: ten catalogue lines this round rewrote read right at 1 and at 2', () => {
+  const t = makeT(VIEWER_STRINGS, 'en');
+  assert.equal(t('summary.group.sub', { routes: 1, tables: 5 }), '1 route → 5 tables');
+  assert.equal(t('summary.group.sub', { routes: 2, tables: 1 }), '2 routes → 1 table');
+  assert.equal(t('ov.code.nomapper', { n: 1 }), '1 statement has no mapper method');
+  assert.equal(t('ov.code.nomapper', { n: 3 }), '3 statements have no mapper method');
+  assert.equal(t('ov.federation.note', { n: 1, k: 0, m: 1 }), '1 call leaves this project, 0 answered by a registered project and 1 not.');
+  assert.equal(t('ov.federation.note', { n: 4, k: 1, m: 3 }), '4 calls leave this project, 1 answered by a registered project and 3 not.');
+  assert.equal(t('chain.svg.dropped', { n: 1 }), '1 link is not drawn: the row each one comes from is in a list that was cut');
+  assert.equal(t('chain.svg.dropped', { n: 2 }), '2 links are not drawn: the row each one comes from is in a list that was cut');
+  assert.equal(t('gap.cause.http-calls-leaving-pack', { n: 1 }),
+    '1 call target has no route in this project to answer them. Each is another service, or a route of this project behind a prefix nobody declared.');
+  assert.equal(t('gap.cause.http-calls-leaving-pack', { n: 2 }),
+    '2 call targets have no route in this project to answer them. Each is another service, or a route of this project behind a prefix nobody declared.');
+  assert.equal(t('gap.cause.no-catalog', { n: 1 }), 'No database schema was read. The 1 table here is the one a statement named.');
+  assert.equal(t('gap.cause.no-catalog', { n: 3 }), 'No database schema was read. The 3 tables here are the ones a statement named.');
+  assert.equal(t('ribbon.say.endpoints', { reached: 1, total: 1, rest: 0 }),
+    '1 of 1 endpoint reaches a SQL statement. The other 0 reach none. They may touch no database at all, or we could not tell what one of their calls points to.');
+  assert.equal(t('ribbon.say.endpoints', { reached: 3, total: 10, rest: 7 }),
+    '3 of 10 endpoints reach a SQL statement. The other 7 reach none. They may touch no database at all, or we could not tell what one of their calls points to.');
+  assert.equal(t('mast.trace', { source: 'otel', n: 1 }), 'trace: otel, 1 span');
+  assert.equal(t('mast.trace', { source: 'otel', n: 9 }), 'trace: otel, 9 spans');
+  assert.equal(t('erdleg.somelabelled', { m: 1, n: 1 }), '1 of 1 table named');
+  assert.equal(t('erdleg.somelabelled', { m: 2, n: 9 }), '2 of 9 tables named');
 });
 
 test('a tab hint LEAD is one line: at most 90 characters, in both languages', () => {

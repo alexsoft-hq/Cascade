@@ -206,8 +206,8 @@
           <div id="tlist" class="brlist" role="listbox" tabindex="-1">
             <button class="brgroup" onclick>
               <span class="brgname">▾ rows</span>
-              <span class="brgn">1 screens</span>
-              <span class="brgn">1 reach an API</span>
+              <span class="brgn">1 screen</span>
+              <span class="brgn">1 reaches an API</span>
             </button>
             <button class="brrow on cur" aria-selected="true" onclick role="option" title="/rows">
               <div class="brline">
@@ -232,7 +232,7 @@
             </button>
             <button class="brgroup" onclick>
               <span class="brgname">▾ quiet</span>
-              <span class="brgn">1 screens</span>
+              <span class="brgn">1 screen</span>
               <span class="brgn">0 reach an API</span>
             </button>
             <button class="brrow" aria-selected="false" onclick role="option" title="/quiet">

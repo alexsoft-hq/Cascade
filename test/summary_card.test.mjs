@@ -87,7 +87,9 @@ test('a cut layer counts from the whole total, says its grades cover only the ro
     assert.ok(seg.includes(`(grades of the ${lane.shown} shown)`), `${lane.field} says its grades are the shown rows'`);
     assert.ok(seg.includes(`>+${lane.total - chipCount(seg)} more</text>`), `${lane.field}'s "+N more" counts from the whole total`);
   }
-  assert.ok(out.svg.includes(`fill="${WARN}">trust UNCERTIFIED, ${flow.limits.length} limit(s), ${cut.length} cut list(s)</text>`));
+  const limitWord = flow.limits.length === 1 ? 'limit' : 'limits';
+  const cutWord = cut.length === 1 ? 'cut list' : 'cut lists';
+  assert.ok(out.svg.includes(`fill="${WARN}">trust UNCERTIFIED, ${flow.limits.length} ${limitWord}, ${cut.length} ${cutWord}</text>`));
 });
 
 test('a walk that stopped early says so in the warning ink, and a layer it never reached reads "none reached"', async (t) => {

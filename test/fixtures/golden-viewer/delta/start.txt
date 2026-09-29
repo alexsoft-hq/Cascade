@@ -172,13 +172,13 @@
               <div class="sumbox">
                 <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
                   <span class="sumname">rows</span>
-                  <span class="count">1 route(s) → 1 table(s)</span>
+                  <span class="count">1 route → 1 table</span>
                 </button>
               </div>
               <div class="sumbox">
                 <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
                   <span class="sumname">save</span>
-                  <span class="count">1 route(s) → 1 table(s)</span>
+                  <span class="count">1 route → 1 table</span>
                 </button>
               </div>
             </div>
@@ -187,31 +187,31 @@
               <div class="sumbox">
                 <button class="sumhead" aria-expanded="false" onclick title="open this box in place: only its lines stay" type="button">
                   <span class="sumname">rows</span>
-                  <span class="count">1 table(s), 2 route(s) reach it</span>
+                  <span class="count">1 table, 2 routes reach it</span>
                 </button>
               </div>
             </div>
             <svg class="sumlinks" height="620" width="900">
               <path d="M900,310 C450,310 450,310 0,310" data-family="rows" data-grade="SOUND_SET" data-group="rows" fill="none" opacity="0.85" stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="2">
-                <title>1 route(s) → 1 table(s), weakest grade SOUND_SET</title>
+                <title>1 route → 1 table, weakest grade SOUND_SET</title>
               </path>
               <path d="M900,310 C450,310 450,310 0,310" data-family="rows" data-grade="SOUND_SET" data-group="save" fill="none" opacity="0.85" stroke="#7C89AD" stroke-dasharray="6 3" stroke-width="2">
-                <title>1 route(s) → 1 table(s), weakest grade SOUND_SET</title>
+                <title>1 route → 1 table, weakest grade SOUND_SET</title>
               </path>
               <g class="sumlblg">
-                <rect class="sumlblbg" height="16" rx="3" width="90.40000000000002" x="404.8" y="302"></rect>
-                <text class="sumlbl" dominant-baseline="central" text-anchor="middle" x="450" y="310">1 → 1 tables</text>
+                <rect class="sumlblbg" height="16" rx="3" width="83.70000000000002" x="408.15" y="302"></rect>
+                <text class="sumlbl" dominant-baseline="central" text-anchor="middle" x="450" y="310">1 → 1 table</text>
               </g>
               <g class="sumlblg">
-                <rect class="sumlblbg" height="16" rx="3" width="90.40000000000002" x="579.2415999999998" y="301.99999999999994"></rect>
-                <text class="sumlbl" dominant-baseline="central" text-anchor="middle" x="624.4415999999999" y="309.99999999999994">1 → 1 tables</text>
+                <rect class="sumlblbg" height="16" rx="3" width="83.70000000000002" x="582.5915999999999" y="301.99999999999994"></rect>
+                <text class="sumlbl" dominant-baseline="central" text-anchor="middle" x="624.4415999999999" y="309.99999999999994">1 → 1 table</text>
               </g>
             </svg>
           </div>
           <div class="flowside">
             <div class="panel">
               <div class="comment">Open a box to see its routes and tables. Pick one to keep only the lines through it; its button goes straight into Trace.</div>
-              <div class="count" style="margin-top: 6px">2 routes in 2 path areas reach 1 tables in 1 families.</div>
+              <div class="count" style="margin-top: 6px">2 routes in 2 path areas reach 1 table in 1 family.</div>
             </div>
             <div class="rail">
               <div class="railhead">
@@ -337,7 +337,7 @@
           </div>
           <div class="kpiden">
             <b>1 / 2</b>
-            1 reach none
+            1 reaches none
           </div>
         </div>
       </div>

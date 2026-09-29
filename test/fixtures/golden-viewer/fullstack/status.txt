@@ -299,7 +299,7 @@
                 <span class="count">(5)</span>
               </h2>
               <div class="panelsub">Each row says its cause in plain words, what it touches, and what to do. The engine's own sentence is under the cause, folded.</div>
-              <div class="panelsub">4 call(s) leave this project, 0 answered by a registered project and 4 not.</div>
+              <div class="panelsub">4 calls leave this project, 0 answered by a registered project and 4 not.</div>
               <div class="stgrp">
                 <div class="ovgaplbl">Inputs it did not have</div>
                 <div id="st-ov-gap-http-calls-leaving-pack" class="stitem warn">
@@ -485,7 +485,7 @@
                     <span class="stlbl">cause</span>
                     <div class="stval">
                       <div>
-                        <span>1 SQL statements are reached from no API here. That does not make them dead: a job, another service or reflection may call them.</span>
+                        <span>1 SQL statement is reached from no API here. That does not make them dead: a job, another service or reflection may call them.</span>
                         <div class="fold">
                           <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
                             <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
@@ -541,13 +541,13 @@
                   <span class="grow">
                     <span class="tag warn">nobody serves these</span>
                   </span>
-                  <span class="count">5 call site(s) over 4 route(s)</span>
+                  <span class="count">5 call sites over 4 routes</span>
                 </div>
                 <div class="ovchips">
-                  <span class="ovchip" title="2 method(s) in this project make this call">GET /v/items</span>
-                  <span class="ovchip" title="1 method(s) in this project make this call">POST /health</span>
-                  <span class="ovchip" title="1 method(s) in this project make this call">GET /legacy/ping</span>
-                  <span class="ovchip" title="1 method(s) in this project make this call">POST /u/thing</span>
+                  <span class="ovchip" title="2 methods make this call">GET /v/items</span>
+                  <span class="ovchip" title="1 method makes this call">POST /health</span>
+                  <span class="ovchip" title="1 method makes this call">GET /legacy/ping</span>
+                  <span class="ovchip" title="1 method makes this call">POST /u/thing</span>
                 </div>
                 <div class="cpnote">these routes leave this project and no registered project serves them, so the chain stops at the call. Register the project that serves them and ask again.</div>
               </div>

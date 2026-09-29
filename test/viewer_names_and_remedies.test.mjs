@@ -60,7 +60,7 @@ test('the header counts API groups by path, and says modules where the profile d
   assert.match(lane(byId).title, /map on Start says what its own boxes are/, 'the map may group another way, and says so there');
   ev(ctx, "OV.resp.answer.groupRule={kind:'declared', packageDepth:4}; renderCascadeRail()");
   assert.equal(lane(byId).textContent, `modules, as declared ${ev(ctx, 'OV.resp.answer.reach.groups')}`);
-  assert.match(lane(byId).title, /cut to 4 segment\(s\)/);
+  assert.match(lane(byId).title, /cut to 4 segments/);
   ev(ctx, "setLang('ko')");
   await settle(ctx, 6);
   assert.match(lane(byId).textContent, /^모듈\(프로필 선언\) \d+$/);
@@ -86,7 +86,7 @@ test('the map names its boxes by the rule that made them, and never calls one a 
   assert.equal(say({ kind: 'code-path', commonPrefix: 'apps/api/src/app', by: 'directory' }),
     'Code areas are where the handler code sits, below apps/api/src/app. They are not modules anyone declared, nor the API groups the header counts by path. Families are tables whose names start with the same word.');
   assert.match(say({ kind: 'code-path', commonPrefix: '' }), /^Code areas are where the handler code sits\. They are not modules/, 'no shared package to name, and still a code area');
-  assert.match(say({ kind: 'declared', packageDepth: 4 }), /^Modules are handler packages cut to 4 segment\(s\), as the profile declares\. The header counts the same ones\./);
+  assert.match(say({ kind: 'declared', packageDepth: 4 }), /^Modules are handler packages cut to 4 segments, as the profile declares\. The header counts the same ones\./);
   assert.match(say({ kind: 'lane' }), /^API groups are the first segment of a route below the prefix the application is deployed under, the same ones the header counts\./);
   assert.match(say({ kind: 'path', commonPath: '/api' }), /^Path areas are route path segments below \/api\. The API groups the header counts stop at the first segment\./);
 });
@@ -206,7 +206,7 @@ test('the map\'s empty notice says why in the routes\' own grade, and carries th
   const stopped = (r) => { r.answer.links = []; r.answer.walk.byMode = 117; r.answer.walk.byModeGrades = { HEURISTIC: 117 }; return r; };
   const { byId } = await boot(t, { rewrite: { overview: ghostLike, summary: stopped } });
   const note = byId.get('ovsummary').querySelector('.sumempty');
-  assert.match(note.textContent, /No route reaches a table in mode conservative\. The walks left 117 link\(s\) graded HEURISTIC out/);
+  assert.match(note.textContent, /No route reaches a table in mode conservative\. The walks left 117 links graded HEURISTIC out/);
   assert.match(note.textContent, /117 of 118 routes graded HEURISTIC: mode conservative stops at them/);
   assert.equal(note.querySelector('.remedy').textContent, 'What to do: Declare tsBackend.globalPrefixExclude in the profile, for example ["health", "docs{/*rest}"].');
   assert.ok(note.querySelectorAll('button').some((b) => /heuristic/.test(b.textContent)), 'and still offers the mode that looks');
