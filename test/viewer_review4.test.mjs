@@ -571,3 +571,15 @@ test('a ranking name gives way in the middle inside a fixed table, so a long scr
   assert.ok(id.endsWith(name.querySelector('.ptail').textContent.split('/').pop()), 'the tail keeps the last segment');
   void ctx;
 });
+
+test('the map\'s node cap tag says what survived in the page\'s words, in both languages', async (t) => {
+  const { ctx } = await boot(t);
+  const s = "{shown:{endpoints:10, tables:49, statements:1}, endpoints:239, tablesTouched:49, statements:1, screens:null}";
+  assert.equal(ev(ctx, `mapNodeCapTag({limits:[]}, ${s}).textContent`), 'node cap: 10 of 239 endpoints');
+  assert.equal(ev(ctx, `mapNodeCapTag({limits:[]}, {shown:{endpoints:1, tables:0}, endpoints:1, tablesTouched:1})`).textContent,
+    'node cap: 0 of 1 table');
+  assert.equal(ev(ctx, `mapNodeCapTag({limits:[]}, {shown:{endpoints:5, tables:5}, endpoints:5, tablesTouched:5})`), null, 'nothing cut, no tag');
+  ev(ctx, "setLang('ko')");
+  await settle(ctx, 6);
+  assert.equal(ev(ctx, `mapNodeCapTag({limits:[]}, ${s}).textContent`), '노드 상한: 엔드포인트 239개 중 10개');
+});

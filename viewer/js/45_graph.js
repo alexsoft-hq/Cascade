@@ -2667,14 +2667,15 @@ function mapLinkKinds(){
 // are what SURVIVED it, per kind.
 function mapNodeCapTag(r, s){
   const cut=[];
-  if(s.shown.endpoints<s.endpoints) cut.push('endpoints '+s.shown.endpoints+' / '+s.endpoints);
-  if(s.shown.tables<s.tablesTouched) cut.push('tables '+s.shown.tables+' / '+s.tablesTouched);
-  if(s.statements!=null && s.shown.statements<s.statements) cut.push('statements '+s.shown.statements+' / '+s.statements);
-  if(s.screens!=null && s.shown.screens<s.screens) cut.push('screens '+s.shown.screens+' / '+s.screens);
+  const kept=(say, shown, total)=>{ if(total!=null && shown<total) cut.push(say(shown, total)); };
+  kept((shown, total)=> t('graph.nodecap.endpoints',{shown, total}), s.shown.endpoints, s.endpoints);
+  kept((shown, total)=> t('graph.nodecap.tables',{shown, total}), s.shown.tables, s.tablesTouched);
+  kept((shown, total)=> t('graph.nodecap.statements',{shown, total}), s.shown.statements, s.statements);
+  kept((shown, total)=> t('graph.nodecap.screens',{shown, total}), s.shown.screens, s.screens);
   if(!cut.length) return null;
   const why=(r.limits||[]).find(l=>/node cap/.test(l.reason||''));
   return el('span',{className:'gci tag warn',
-    title:(why&&why.reason)||t('graph.nodecap.title'), textContent:'node cap: '+cut.join(', ')});
+    title:(why&&why.reason)||t('graph.nodecap.title'), textContent:t('graph.nodecap.say',{cut:cut.join(', ')})});
 }
 function renderMapSide(){
   refreshShowAll();

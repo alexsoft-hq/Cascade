@@ -1057,6 +1057,11 @@ export const VIEWER_STRINGS = {
     'graph.norenderer': 'the map renderer did not load',
     'graph.empty': 'Pick a node above: a table, a column, a statement, an endpoint, or a method as owner#name.',
     'graph.nodecap.title': 'the answer was cut at the node limit',
+    'graph.nodecap.say': 'node cap: {cut}',
+    'graph.nodecap.endpoints': '{shown} of {total} {total|endpoint|endpoints}',
+    'graph.nodecap.tables': '{shown} of {total} {total|table|tables}',
+    'graph.nodecap.statements': '{shown} of {total} {total|statement|statements}',
+    'graph.nodecap.screens': '{shown} of {total} {total|screen|screens}',
     'load.map': 'reading the map…',
     'load.around': 'reading the neighborhood…',
     // ---- Graph: the buttons every card offers -----------------------------
