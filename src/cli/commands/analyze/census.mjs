@@ -300,7 +300,7 @@ export function sayJpaLane(jpaStats) {
     process.stderr.write(`  [warn] JPA_UNRESOLVED ${u.statement ?? '(mapping)'}: ${u.reason} (${u.detail})\n`);
   }
   if (jpaStats.unresolved.length > 10) {
-    process.stderr.write(`  … ${jpaStats.unresolved.length - 10} more JPA_UNRESOLVED (all of them are on the statement nodes)\n`);
+    process.stderr.write(`  … ${jpaStats.unresolved.length - 10} more JPA_UNRESOLVED (a statement's own are on its node, a mapping's in meta.laneStats.jpa.unresolved)\n`);
   }
 }
 

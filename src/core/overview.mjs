@@ -777,7 +777,7 @@ function restGaps(o, say) {
   if (jpaUnresolved > 0) {
     say({
       kind: 'jpa-statements-unresolved', count: jpaUnresolved,
-      note: `${jpaUnresolved} of ${jpaStatements} JPA statement(s) carry a part we could not resolve: a derived method name, or a JPQL fragment the bridge could not tie to a column. The statement is KEPT with its reason, and its column list holds what we could read rather than the whole truth`,
+      note: `${jpaUnresolved} of ${jpaStatements} JPA statement(s) carry a part we could not resolve: a derived method name, a JPQL fragment the bridge could not tie to a column, or a mapping this lane does not read, such as the subclasses a query on a polymorphic entity also returns. The statement is KEPT with its reason, and its column list holds what we could read rather than the whole truth`,
     });
   }
   if (mpRuntimeOnly > 0) {
