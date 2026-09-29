@@ -160,7 +160,7 @@ export const VIEWER_STRINGS = {
     'mast.fresh.overlay.title': 'your working edits sit on top of the last full analysis, so anything they touch is provisional until you build again.',
     'mast.fresh.current': 'up to date',
     'mast.fresh.current.title': 'this pack was built from the commit you have checked out, so nothing here is older than your code.',
-    'mast.fresh.unknown.title': 'there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.',
+    'mast.fresh.unknown.title': 'this page shows the pack as it was built and does not compare it with your working tree, so it cannot say whether the build is behind. It is not an error.',
     // TRUST, in the reader's words. The level itself is computed by the engine
     // and is relayed verbatim in the tooltip; these strings only say what it
     // means, at speaking volume instead of shouting volume. Each key is the
@@ -1336,7 +1336,7 @@ export const VIEWER_STRINGS = {
     'hint.status.lead': 'What this analysis could and could not see, and what to do about each gap.',
     'hint.status.more': 'Every row here comes from the one `overview` answer Start is drawn from. A blind spot is set out by what you can do about it: an input to give, something to declare, a wider walk, or a place worth a look. The limits that change one answer are also said beside that answer on Trace. Rules, the framework knowledge the analysis ran with, is this place\'s second view.',
     'status.fresh.title': 'How fresh',
-    'status.fresh.unknown': 'not checked against a commit',
+    'status.fresh.unknown': 'not compared with your working tree',
     'status.fresh.built': 'built {built} from commit {commit}, digest {digest}',
     'status.trust.title': 'Verification',
     'status.trust.none': 'no trust level',

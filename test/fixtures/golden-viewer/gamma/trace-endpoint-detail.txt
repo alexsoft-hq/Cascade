@@ -35,7 +35,7 @@
     </div>
     <div id="crail" class="crail hidden" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">…</div>
     <div id="mchips" class="mchips">
-      <span id="mfreshchip" class="mchip quiet hidden" title="there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.  freshness unknown  basis.freshness.verdict">…</span>
+      <span id="mfreshchip" class="mchip quiet hidden" title="this page shows the pack as it was built and does not compare it with your working tree, so it cannot say whether the build is behind. It is not an error.  freshness unknown  basis.freshness.verdict">…</span>
       <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
@@ -419,7 +419,7 @@ GController.get">
               <div class="railchips">
                 <span class="raillbl">verification: not certified</span>
                 <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">UNCERTIFIED</span>
-                <span class="railchip" title="freshness unknown  basis.freshness.verdict">not checked against a commit</span>
+                <span class="railchip" title="freshness unknown  basis.freshness.verdict">not compared with your working tree</span>
                 <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
                   <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
                     <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
