@@ -1003,14 +1003,35 @@ function baseUrlGuesses(web) {
   }
   const alias = where('assumed-alias');
   if (alias !== '') out.push(`${alias} were read through an import alias this engine assumed: declare the alias`);
-  // A port on this machine no file states (review 4, W-7).
+  out.push(...portGuesses(web, where));
+  return out;
+}
+
+/**
+ * A port on this machine no file states (review 4, W-7), and the declaration
+ * that settles it: the profile's `servers`, with the application it would name.
+ */
+function portGuesses(web, where) {
+  const out = [];
   const assumedPort = where('port-default');
   if (assumedPort !== '') {
-    out.push(`${assumedPort} name a port on this machine while this pack's port rests on Spring Boot's default 8080: set server.port in the application's configuration`);
+    const app = (web.ports?.assumed ?? [])[0] ?? '<application>';
+    out.push(`${assumedPort} name a port on this machine while this pack's port rests on Spring Boot's default 8080: `
+      + `declare servers {${JSON.stringify(app)}: {"port": 8080}} in the profile with the port it listens on, or set server.port in its configuration`);
   }
   const unknownPort = where('port-unknown');
-  if (unknownPort !== '') out.push(`${unknownPort} name a port on this machine no application of this pack states: state server.port where the ports line says it is not known`);
+  if (unknownPort !== '') {
+    out.push(`${unknownPort} name a port on this machine no application of this pack states: `
+      + 'declare servers {"<application>": {"port": <port>}} in the profile for the one the ports line says is not known');
+  }
   return out;
+}
+
+/** The guesses a base URL or a call's front rests on, by kind (base_url.mjs WEB_BASE_GUESS). */
+function guessKinds(web) {
+  const kinds = new Set(Object.keys((web.url && web.url.guessed) || {}));
+  for (const p of Object.values(web.prefix ?? {})) for (const i of p.instances ?? []) if (i.guess) kinds.add(i.guess);
+  return [...kinds].sort();
 }
 
 /**
@@ -1081,8 +1102,21 @@ function webAxis(web) {
     status: 'degraded',
     reason: `${inPack} frontend call(s) reached a route this pack serves, and part of that rested on a guess or on calls traced to no client: ${why.join('; ')}. `
       + 'Every edge that rests on one is graded HEURISTIC, so a conservative answer leaves it out',
+    causes: webCauses(web, { autoPrefixes, assumedAliases, untraced: mostlyUntraced(calls, untraced) }),
     ...notes,
   };
+}
+
+/**
+ * WHAT DEGRADES THE WEB AXIS, one word each, so a remedy can tell whether one
+ * declaration would make it whole (src/core/remedies.mjs): a prefix chosen by
+ * count, an assumed alias, each guess a base URL rests on, most calls untraced.
+ */
+function webCauses(web, { autoPrefixes, assumedAliases, untraced }) {
+  return [
+    ...(autoPrefixes.length > 0 ? ['prefix-by-count'] : []), ...(assumedAliases > 0 ? ['alias-assumed'] : []),
+    ...guessKinds(web), ...(untraced ? ['untraced'] : []),
+  ];
 }
 
 /** The rule: untraced calls at least as many as traced ones degrade the web axis. */

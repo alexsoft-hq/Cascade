@@ -337,9 +337,14 @@ function readPorts(opts, stats) {
   if (!ports) return null;
   stats.ports = {
     known: ports.known === true, ports: ports.ports ?? [], stated: ports.stated ?? [], files: ports.files ?? [],
-    defaulted: ports.defaulted === true, why: ports.why ?? null, otherPortCalls: 0,
+    defaulted: ports.defaulted === true, why: ports.why ?? null, otherPortCalls: 0, ...declarationsOf(ports),
   };
   return ports;
+}
+
+/** What the profile's `servers` declared, named and did not find, and the applications still on the default. */
+function declarationsOf(ports) {
+  return { declared: ports.declared ?? [], unused: ports.unused ?? [], assumed: ports.assumed ?? [] };
 }
 
 /**

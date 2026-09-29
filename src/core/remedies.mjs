@@ -34,6 +34,7 @@ export const REMEDY_EXAMPLES = Object.freeze({
   'mybatisPlus.namingStrategy': '"underscore"',
   pathPrefixes: '[{ "prefix": "/admin-api", "packages": "**.controller.admin.**" }]',
   gatewayRoutes: '{ "/dev-api": "" }',
+  servers: '{ "mall-admin": { "port": 8080 } }',
 });
 
 /** The narrowest to the widest: a wider mode admits every grade a narrower one does. */
@@ -77,6 +78,10 @@ export const DIAGNOSTIC_REMEDIES = Object.freeze({
 /**
  * Per axis and state. `follows` is an axis this state is the consequence of:
  * columns read in part because no schema was read are fixed by the schema.
+ * `onlyCauses` holds a fix only when every cause the axis names (`causes`) is
+ * one of these: a web axis degraded by nothing but a port on this machine no
+ * file states is made whole by declaring that port, and one degraded by
+ * anything else has no single fix.
  */
 export const AXIS_REMEDIES = Object.freeze({
   'catalog:not-shipped': CATALOG_FETCH,
@@ -84,6 +89,7 @@ export const AXIS_REMEDIES = Object.freeze({
   'statements:not-shipped': { action: 'flag', flag: '--mappers', example: '--mappers <dir>' },
   'code:not-shipped': JAVA_SRC,
   'web:not-shipped': { action: 'flag', flag: '--web-src', example: '--web-src <dir>' },
+  'web:degraded': { action: 'declare', key: 'servers', onlyCauses: ['port-default', 'port-unknown'] },
   'jpa:degraded': { action: 'declare', key: 'jpa.namingStrategy' },
   'mybatisPlus:degraded': { action: 'declare', key: 'mybatisPlus.namingStrategy' },
   'column:degraded': { follows: ['catalog', 'jpa', 'mybatisPlus'] },
@@ -132,6 +138,13 @@ export function diagnosticRemedy(d) {
   return resolve(DIAGNOSTIC_REMEDIES[d && d.kind], { key: d && d.key });
 }
 
+/** Whether an axis entry's fix holds for this axis: always, or, with `onlyCauses`, when every cause it names is one of them. */
+function causedOnlyBy(entry, axis) {
+  if (!entry || !entry.onlyCauses) return true;
+  const causes = axis && Array.isArray(axis.causes) ? axis.causes : [];
+  return causes.length > 0 && causes.every((c) => entry.onlyCauses.includes(c));
+}
+
 /**
  * A remedy per axis that is not whole (degraded or not-shipped), null where the
  * engine knows none. A whole axis has no entry.
@@ -141,7 +154,7 @@ export function axisRemedies(axes) {
   const out = {};
   const statusOf = (axis) => axes && axes[axis] && axes[axis].status;
   const broken = (axis) => ['degraded', 'not-shipped'].includes(statusOf(axis));
-  const own = (axis) => resolve(AXIS_REMEDIES[`${axis}:${statusOf(axis)}`]);
+  const own = (axis) => (causedOnlyBy(AXIS_REMEDIES[`${axis}:${statusOf(axis)}`], axes[axis]) ? resolve(AXIS_REMEDIES[`${axis}:${statusOf(axis)}`]) : null);
   for (const axis of Object.keys(axes || {}).filter(broken)) {
     const entry = AXIS_REMEDIES[`${axis}:${statusOf(axis)}`];
     const from = entry && entry.follows ? entry.follows.find((x) => broken(x) && own(x)) : null;

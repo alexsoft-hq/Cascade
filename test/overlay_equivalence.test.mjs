@@ -460,7 +460,7 @@ test('the packages and ports the base pack read are handed back as it recorded t
   const inputs = baseWebInputsOf(packWith({ packages: ['front/package.json', 'gone/package.json'], ports: PORTS_8081 }), root);
   assert.deepEqual(inputs.packages, [{ path: 'front/package.json' }]);
   assert.deepEqual(inputs.serverPorts, {
-    known: true, ports: [8081], stated: [8081], files: ['src/main/resources/application.yml'], defaulted: false, why: null,
+    known: true, ports: [8081], stated: [8081], files: ['src/main/resources/application.yml'], defaulted: false, why: null, declared: [],
   });
   assert.equal(inputs.recorded, true);
   const old = baseWebInputsOf(packWith({}), root);

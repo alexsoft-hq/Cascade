@@ -100,12 +100,19 @@ export function otherPortOf(host, ports) {
   if (!ports || ports.known !== true || ports.defaulted === true || !isLocalHost(host)) return null;
   const called = portOf(host);
   if (called === null || ports.ports.includes(called)) return null;
-  const where = (ports.files ?? []).length > 0
-    ? `server.port in ${ports.files.join(', ')}` : 'Spring Boot\'s default, as no file sets server.port';
   return {
     host, called, served: ports.ports,
-    reason: `${host} is this machine on port ${called}, and this pack listens on ${ports.ports.join(', ')} (${where}), so another service answers it`,
+    reason: `${host} is this machine on port ${called}, and this pack listens on ${ports.ports.join(', ')} (${portSources(ports)}), so another service answers it`,
   };
+}
+
+/** Where the ports came from, in words: the files that set server.port, and the profile's `servers` entries. */
+function portSources(ports) {
+  const said = [
+    (ports.files ?? []).length > 0 ? `server.port in ${ports.files.join(', ')}` : null,
+    ...(ports.declared ?? []).map((d) => `servers[${JSON.stringify(d.key)}] in the profile`),
+  ].filter(Boolean);
+  return said.length > 0 ? said.join('; ') : 'Spring Boot\'s default, as no file sets server.port';
 }
 
 /**

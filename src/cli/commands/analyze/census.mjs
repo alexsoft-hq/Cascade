@@ -590,15 +590,28 @@ function sayServerPorts(p) {
   if (!p) return;
   const read = `port(s) ${p.ports.join(', ')} (${[
     p.files.length > 0 ? `server.port in ${p.files.join(', ')}` : null,
-    p.defaulted ? 'Spring Boot\'s default where no file that applies without a profile sets it, which whatever starts the application may override, so no call is placed by its port' : null,
+    (p.declared ?? []).length > 0 ? 'servers in the profile' : null,
+    p.defaulted ? 'Spring Boot\'s default where no file that applies without a profile sets it, which whatever starts the application may override, so a call on a port no file states is a guess until servers in the profile states it' : null,
   ].filter(Boolean).join('; ')})`;
   if (p.known) process.stderr.write(`Web lane: this pack listens on ${read}\n`);
   else {
-    process.stderr.write(`Web lane: the ports this pack listens on are not known (${p.why}), so no call is placed by its port${
+    process.stderr.write(`Web lane: the ports this pack listens on are not known (${p.why}), so no call is placed by its port, and one on a port no file states is a guess until servers in the profile states it${
       p.ports.length > 0 ? `; the other applications listen on ${read}` : ''}\n`);
   }
   if (p.otherPortCalls > 0) {
     process.stderr.write(`  [warn] WEB_OTHER_PORT ${p.otherPortCalls} call site(s) go to this machine on a port this pack does not listen on, so another service answers them: they stay outbound\n`);
+  }
+  sayDeclaredPorts(p);
+}
+
+/** What the profile's `servers` did: each port it states, one the tree states otherwise, and an entry that named nothing. */
+function sayDeclaredPorts(p) {
+  for (const d of p.declared ?? []) {
+    const differs = d.tree.length > 0 && !d.tree.includes(d.port) ? `, where the tree states ${d.tree.join(', ')}` : '';
+    process.stderr.write(`Web lane: ${d.app} listens on port ${d.port}, as servers[${JSON.stringify(d.key)}] in the profile states${differs}\n`);
+  }
+  for (const key of p.unused ?? []) {
+    process.stderr.write(`  [warn] SERVERS_UNUSED servers[${JSON.stringify(key)}] in the profile names no application this run read, so it states nothing: name the directory that holds its src/main/resources\n`);
   }
 }
 

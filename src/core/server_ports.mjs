@@ -25,6 +25,11 @@
 // ports not KNOWN: a call on a port none of them states may be that
 // application's (review 3, design 4).
 //
+// WHAT A PERSON STATES. The profile's `servers` names an application by the
+// directory that holds it and says its port, for what the source does not
+// state: that port is used instead of what the tree says, and is stated. An
+// entry that names no application this run read is not applied, and said.
+//
 // Pure: records in, one answer out. Discovery reads the files
 // (src/core/discover.mjs); `cascade analyze` hands the answer to the web bridge.
 
@@ -105,6 +110,50 @@ export function serverPortsOfFile(file) {
   return out;
 }
 
+/**
+ * What a person names an application by in the profile's `servers`: the
+ * directory that holds its `src/main/resources` ("." for the top of the tree).
+ */
+export function applicationKeyOf(app) {
+  const tail = 'src/main/resources';
+  if (app === tail) return '.';
+  return app.endsWith(`/${tail}`) ? app.slice(0, -tail.length - 1) : app;
+}
+
+/** The profile's `servers`, by the key as written with `./` and a trailing `/` taken off. */
+function declaredServers(servers) {
+  const out = new Map();
+  for (const [key, entry] of Object.entries(servers ?? {})) {
+    const k = key.replace(/^\.\//, '').replace(/\/+$/, '');
+    out.set(k === '' ? '.' : k, { key, port: entry.port });
+  }
+  return out;
+}
+
+/** The `servers` entry one application is declared by, under its directory or its resources directory, or null. */
+function declaredFor(app, wanted) {
+  return wanted.get(applicationKeyOf(app)) ?? wanted.get(app) ?? null;
+}
+
+/**
+ * An application whose port a person declared: that port, used INSTEAD of what
+ * the tree says, and STATED, so no call to it rests on a default. What the tree
+ * states is kept beside it (`tree`), so a difference can be said.
+ */
+function declaredApplication(app, files, d) {
+  const tree = [...new Set(files.flatMap((f) => f.ports.map((p) => p.port)))].sort((a, b) => a - b);
+  return {
+    app, ports: [d.port], stated: [d.port], files: [], defaulted: false,
+    declared: { key: d.key, app, port: d.port, tree },
+  };
+}
+
+/** One application's ports: the declared port when the profile's `servers` names it, else what the tree says. */
+function applicationPorts(app, files, wanted) {
+  const byProfile = declaredFor(app, wanted);
+  return byProfile !== null ? declaredApplication(app, files, byProfile) : portsOfApplication(app, files);
+}
+
 /** One application's ports, or why they are not known. */
 function portsOfApplication(app, files) {
   const unreadable = files.flatMap((f) => f.unreadable.map((u) => `${f.file}:${u.line} (${u.raw})`));
@@ -140,21 +189,43 @@ function byApplication(records) {
 }
 
 /**
+ * What the profile's `servers` did: the applications it declared (`declared`,
+ * each with what the tree states beside it), the entries that name no
+ * application this run read and so were not applied (`unused`), and the
+ * applications whose port still rests on Spring Boot's default, by the key an
+ * entry would name them with (`assumed`).
+ */
+function declarationsOf(applications, wanted) {
+  const declared = applications.filter((a) => a.declared).map((a) => a.declared);
+  const used = new Set(declared.map((d) => d.key));
+  return {
+    declared,
+    unused: [...wanted.values()].map((d) => d.key).filter((k) => !used.has(k)).sort(cmp),
+    assumed: applications.filter((a) => a.defaulted).map((a) => applicationKeyOf(a.app)),
+  };
+}
+
+/**
  * THE PORTS THIS PACK LISTENS ON: known only when every application's are.
  * The ports read are listed either way, those of the applications whose port
  * is known; `defaulted` says one of them rests on Spring Boot's default, and
- * `stated` holds the ports a file states, without that default: a call on a
- * port only the default gives is not settled (review 4, W-7).
+ * `stated` holds the ports a file or the profile states, without that
+ * default: a call on a port only the default gives is not settled (review 4,
+ * W-7). `servers` is the profile's declaration of what the source does not
+ * state (declarationsOf).
  *
  * @param {object[]} records  serverPortsOfFile results, one per configuration file
+ * @param {Object<string,{port:number}>} [servers]  the profile's `servers`
  * @returns {{known:boolean, ports:number[], stated:number[], files:string[], why:(string|null),
- *            applications:object[]}}
+ *            applications:object[], declared:object[], unused:string[], assumed:string[]}}
  */
-export function serverPortsOf(records) {
+export function serverPortsOf(records, servers = {}) {
   const byApp = byApplication(records);
-  const applications = [...byApp.keys()].sort(cmp).map((app) => portsOfApplication(app, byApp.get(app)));
+  const wanted = declaredServers(servers);
+  const applications = [...byApp.keys()].sort(cmp).map((app) => applicationPorts(app, byApp.get(app), wanted));
+  const said = declarationsOf(applications, wanted);
   if (applications.length === 0) {
-    return { known: false, ports: [], stated: [], files: [], why: 'no Spring application configuration was read', applications };
+    return { known: false, ports: [], stated: [], files: [], why: 'no Spring application configuration was read', applications, ...said };
   }
   const known = applications.filter((a) => a.ports !== null);
   const unknown = applications.filter((a) => a.ports === null);
@@ -166,5 +237,6 @@ export function serverPortsOf(records) {
     defaulted: known.some((a) => a.defaulted),
     why: unknown.length === 0 ? null : unknown.map((a) => `${a.app}: ${a.why}`).join('; '),
     applications,
+    ...said,
   };
 }

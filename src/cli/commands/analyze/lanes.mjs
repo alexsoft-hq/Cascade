@@ -417,12 +417,13 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     // The list the working-tree overlay builds too (src/core/assemble.mjs), with
     // what discovery walked: the frontend packages, paths relative to the root
     // the web facts are keyed by, and the ports this pack's applications listen
-    // on (src/core/server_ports.mjs). With no discovery the ports are unknown,
-    // and nothing is decided by port. The web bridge records both in its stats,
-    // which is where the overlay reads them back.
+    // on (src/core/server_ports.mjs), with the ones the profile's `servers`
+    // states. With no discovery the ports are unknown, and nothing is decided
+    // by port. The web bridge records both in its stats, which is where the
+    // overlay reads them back.
     web: webWorkerStats ? webLaneOptions(profile, {
       packages: discovery?.webPackages ?? [],
-      serverPorts: discovery ? serverPortsOf(discovery.serverPorts ?? []) : null,
+      serverPorts: discovery ? serverPortsOf(discovery.serverPorts ?? [], profile.servers) : null,
       screenAxisEnabled: screenGate.enabled,
     }) : null,
     // The runtime evidence lane runs LAST: it annotates the dispatch edges,

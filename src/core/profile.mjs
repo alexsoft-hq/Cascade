@@ -43,6 +43,11 @@ export const PROFILE_DEFAULTS = deepFreeze({
   // first one a controller class passes is the one it is served under. Empty is
   // the honest default: a project that sets none has none to declare.
   pathPrefixes: [],
+  // The port each application listens on, by the directory that holds it
+  // (`{ "mall-admin": { "port": 8080 } }`), for what the source does not state:
+  // no server.port, one a deployment sets, one read from elsewhere. Empty is
+  // the honest default: every port is then what the tree states, or not known.
+  servers: {},
   // The logical names this deployable answers to (`spring.application.name`).
   // Empty is the honest default: a project that never says its name is matched
   // by its project id alone.
@@ -111,7 +116,7 @@ export const PROFILE_DEFAULTS = deepFreeze({
  * block is left out of the digest (`digestedProfile`); set to anything else,
  * it is in. A block added from now on goes here.
  */
-export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixes']);
+export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixes', 'servers']);
 
 /**
  * THE KEYS ADDED TO A BLOCK AFTER IT WAS FIRST DIGESTED, the same promise one
@@ -276,6 +281,10 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   pathPrefixes: {
     status: 'consumed', where: 'src/adapters/java/routes.mjs',
     note: 'the path prefixes configuration code puts before a controller\'s routes: Spring\'s RequestMappingHandlerMapping.setPathPrefixes and PathMatchConfigurer.addPathPrefix, whose prefix is usually a property and whose predicate is a lambda. This engine reads neither from the source (a prefix written as a constant is readable in principle, and is not read either), so the profile says what they are. Each entry is {prefix, packages, annotation, from}: `packages` is an Ant pattern over the controller class\'s package with "." between segments (`**.controller.admin.**`, as AntPathMatcher(".") reads it), `annotation` the simple name of an annotation the class itself carries (`RestController`), and `from` a note of where the value was read. Either test may be left out; an entry with neither applies to every controller. The Java lane serves a route behind the FIRST entry its class passes, as Spring does, before the route is keyed, and the endpoint says so (`pathPrefix`, with the first segment after it as `apiGroup`). A client\'s route (@FeignClient) is the address it calls and takes no prefix. When the Java facts show one of those calls, in a file that imports the type that declares it, and this list is empty, `cascade analyze` says so (SETTING_IN_CODE, from the spring-mvc rule pack)',
+  },
+  servers: {
+    status: 'consumed', where: 'src/core/server_ports.mjs',
+    note: 'the port an application listens on, stated by a person for what the source does not state (no server.port, so Spring Boot\'s default 8080; a placeholder a deployment fills; configuration read from elsewhere). A map from the directory that holds the application (the one with its src/main/resources, manifest-relative, "." for the top of the tree; its resources directory is taken too) to {port, from}: `port` 1 to 65535, `from` a note of where it was read. The declared port is used INSTEAD of what the tree says about that application, and is a STATED port: the web lane settles a call on this machine to it, where a port that rests on the default or is not known leaves such a call HEURISTIC (url.guess port-default / port-unknown). One the tree states differently is used and said on the ports line; an entry that names no application this run read is not applied, and is said there too (laneStats.web.ports.unused)',
   },
   serviceNames: {
     status: 'consumed', where: 'src/mcp/federation.mjs',
@@ -1147,7 +1156,41 @@ export function validateProfile(obj) {
   validateProfileBlocks(obj);
   validatePathPrefixes(obj);
   validateTypeormNaming(obj);
+  validateServers(obj);
   return obj;
+}
+
+/** The keys a `servers` entry may have. Closed, because a misspelt `port` would state nothing and look like it did. */
+const SERVER_KEYS = Object.freeze(['port', 'from']);
+
+/** What is wrong with one `servers` entry, as a sentence, or null. */
+function serverEntryError(dir, entry) {
+  if (dir === '' || dir.startsWith('/') || dir.includes('${') || dir.split('/').includes('..')) {
+    return ' names the directory that holds the application, relative to the manifest ("mall-admin", "." for the top of the tree)';
+  }
+  if (!isObject(entry)) return ' must be an object {port, from}';
+  const unknown = Object.keys(entry).find((k) => !SERVER_KEYS.includes(k));
+  if (unknown !== undefined) return ` has the key "${unknown}", and an entry knows only ${SERVER_KEYS.join(', ')}`;
+  if (!Number.isInteger(entry.port) || entry.port < 1 || entry.port > 65535) {
+    return '.port must be a whole number from 1 to 65535: the port the application listens on (0 is one it picks when it starts, which no one can state)';
+  }
+  return entry.from != null && typeof entry.from !== 'string' ? '.from must be null or a note of where this port was read' : null;
+}
+
+/**
+ * THE DECLARED PORTS (`servers`). Which directories hold an application is the
+ * tree's to say, and src/core/server_ports.mjs says it where the entries are
+ * applied; the shape of each entry is refused here.
+ */
+function validateServers(obj) {
+  if (!('servers' in obj)) return;
+  if (!isObject(obj.servers)) {
+    throw new ProfileError('profile.servers must be an object from an application\'s directory to {port, from}, e.g. { "mall-admin": { "port": 8080 } }');
+  }
+  for (const [dir, entry] of Object.entries(obj.servers)) {
+    const error = serverEntryError(dir, entry);
+    if (error) throw new ProfileError(`profile.servers[${JSON.stringify(dir)}]${error}`);
+  }
 }
 
 /**

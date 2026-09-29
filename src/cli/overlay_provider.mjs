@@ -403,7 +403,7 @@ export function baseWebInputsOf(pack, rootAbs) {
   // A pack from before `stated` was recorded states every port it did not take from the default.
   const serverPorts = p && {
     known: p.known === true, ports: p.ports ?? [], stated: p.stated ?? (p.defaulted === true ? [] : p.ports ?? []),
-    files: p.files ?? [], defaulted: p.defaulted === true, why: p.why ?? null,
+    files: p.files ?? [], defaulted: p.defaulted === true, why: p.why ?? null, declared: p.declared ?? [],
   };
   return { packages, serverPorts, recorded };
 }
