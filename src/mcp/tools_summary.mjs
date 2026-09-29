@@ -6,7 +6,7 @@
 // and when one box still holds most of the routes.
 
 import { DEFAULT_WALK_DEPTH } from '../core/graph.mjs';
-import { buildSummary, SUMMARY_LIMIT } from '../core/summary.mjs';
+import { buildSummary, JOIN_TABLES, SUMMARY_LIMIT } from '../core/summary.mjs';
 import { NO_STATE_TRUST_LEVEL } from '../core/trust.mjs';
 import { makeResponse } from './contract.mjs';
 import { ToolError } from './tools.mjs';
@@ -35,9 +35,12 @@ function groupLimit(rule) {
 /** The sentence for the rule that made the table families. */
 function familyLimit(rule) {
   const under = rule.commonPrefix ? ` below the shared ${JSON.stringify(rule.commonPrefix)}` : '';
-  return rule.kind === 'name-words'
-    ? `a table family is the tables whose names start with the same word${under}. It is a naming pattern, not a schema`
-    : `a table family is the tables whose names start with the same letters${under}, because the names here carry no underscore. It is a naming pattern, not a schema`;
+  const how = rule.kind === 'name-words'
+    ? `a table family is the tables whose names start with the same word${under}, and a word ends at an underscore, a hyphen or a change of case (SymbolProfile is symbol, profile)`
+    : `a table family is the tables whose names start with the same letters${under}, because most names here are one word and most of them start with the same letters`;
+  const j = rule.joinTables;
+  const joins = j ? `. ${j.tables} table(s) named as a join table by ${j.rules.join(', ')} go with the tables they join where those sit in one family, and into ${JOIN_TABLES} where they do not` : '';
+  return `${how}${joins}. It is a naming pattern, not a schema`;
 }
 
 function readArgs(args, graph) {

@@ -23,9 +23,15 @@
 //   path        a pack with no handler, or whose handlers all sit in one package:
 //               the route's first path segment.
 //
-// Table families follow the same descent over the table names: by words where
-// the names are mostly written with underscores (`t_ds_task` under a shared
-// `t_ds`), by letters where they are not (eGovFrame's `COMTNxxx`, `COMTHxxx`).
+// Table families follow the same descent over the words of the table names
+// (`t_ds_task` under a shared `t_ds` is `task`; `SymbolProfile` is `symbol`):
+// a word ends at an underscore, a hyphen or a change of case, however the
+// project writes its names. Where most names are one word and most of them
+// start with the same letters, the letters are read instead (eGovFrame's
+// `COMTNxxx`, `COMTHxxx`). A table a rule pack names as one a framework made
+// to join two others (Prisma's `_OrderToTag`, kind `table.join-table`) is not
+// read by its name at all: it goes with the tables the graph joins it to, when
+// they sit in one family, and into `(join tables)` when they do not.
 // When one group still holds most of the routes the answer says so, because a
 // summary with one box in it summarizes nothing, and names the profile key.
 //
@@ -35,12 +41,16 @@
 
 import { sqlEdgesOf } from './graph.mjs';
 import { walkEndpoints, handlersOf, laneGroupOf } from './walks.mjs';
+import { builtinRegistry } from './rules/registry.mjs';
 
 /** How many groups and table families are drawn before the rest are folded into one box. */
 export const SUMMARY_LIMIT = 10;
 
 /** The folded box's name, on both sides. */
 export const OTHERS = '(others)';
+
+/** The family of the join tables whose tables are not in one family on the map. */
+export const JOIN_TABLES = '(join tables)';
 
 /** A route whose handler cannot be read. */
 const NO_HANDLER = '(no handler)';
@@ -168,23 +178,98 @@ export function groupRule(graph, endpoints, packageDepth, limit = SUMMARY_LIMIT)
   return { rule: { kind: 'code-path', commonPrefix: d.prefix.join(sep), ...(sep === '/' ? { by: 'directory' } : {}) }, groupOf };
 }
 
-/** A table's bare name, lower case, schema dropped. */
+/** A table's bare name as it is written, schema dropped. */
 const bareTable = (tableId) => {
   const name = String(tableId).replace(/^table:/, '');
-  return (name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name).toLowerCase();
+  return name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
 };
 
 /**
- * The family of every reached table. Names that are mostly written in words
- * (`pms_product`, `t_ds_task`) split at the underscore; names that are not
- * (`comtnbbs`) split by letters, and a family is then named in full.
+ * The words of a name, lower case. A word ends at an underscore or a hyphen, and
+ * where the case changes: before a capital that follows a small letter
+ * (`symbolProfile`), and before the last capital of a run that a small letter
+ * follows (`HTTPRequest` is http, request). A digit stays with its word
+ * (`demo01`). A separator at either end makes no word, so `_OrderToTag` is
+ * order, to, tag and never a family "_".
  */
-export function familyRule(tableIds, limit = SUMMARY_LIMIT) {
-  const names = tableIds.map((id) => [id, bareTable(id)]);
-  const words = names.filter(([, n]) => n.indexOf('_') > 0).length >= names.length / 2;
-  const items = names.map(([id, n]) => ({ key: id, tokens: words ? n.split('_').filter(Boolean) : [...n] }));
-  const d = descendGroups(items, { sep: words ? '_' : '', wide: limit * 2, fullNames: !words });
-  return { rule: words ? { kind: 'name-words', separator: '_', commonPrefix: d.prefix.join('_') } : { kind: 'name-letters', commonPrefix: d.prefix.join('') }, familyOf: d.groupOf };
+export function nameWords(name) {
+  return String(name ?? '').split(/[_-]+/)
+    .flatMap((part) => part.split(/(?<=[a-z])(?=[A-Z])|(?<=[A-Z0-9])(?=[A-Z][a-z])/))
+    .filter(Boolean)
+    .map((w) => w.toLowerCase());
+}
+
+/**
+ * The families of tables read by their names. Most names one word each, and
+ * most of them starting with the same letters (`COMTNBBS`, `COMTNUSER`,
+ * `COMTHLOG`): the letters after that start tell them apart, and a family is
+ * named in full. Otherwise the words do (`pms_product`, `SymbolProfile`).
+ */
+function familiesByName(tableIds, limit) {
+  const named = tableIds.map((id) => ({ key: id, words: nameWords(bareTable(id)) }));
+  const wide = limit * 2;
+  if (named.filter((n) => n.words.length <= 1).length > named.length / 2) {
+    const d = descendGroups(named.map((n) => ({ key: n.key, tokens: [...n.words.join('')] })), { sep: '', wide, fullNames: true });
+    if (d.prefix.length > 0) return { rule: { kind: 'name-letters', commonPrefix: d.prefix.join('') }, familyOf: d.groupOf };
+  }
+  const d = descendGroups(named.map((n) => ({ key: n.key, tokens: n.words })), { sep: '_', wide });
+  return { rule: { kind: 'name-words', separator: '_', commonPrefix: d.prefix.join('_') }, familyOf: d.groupOf };
+}
+
+/**
+ * Where each join table goes: with the tables it joins when every one of them
+ * is on the map in one family, else into JOIN_TABLES. Read against the families
+ * of the tables placed by name only, so the order of the join tables decides nothing.
+ */
+function placeJoinTables(joinTables, familyOf) {
+  const placed = [...joinTables].map(([id, j]) => {
+    const families = new Set(j.joins.map((t) => familyOf.get(t) ?? null));
+    const [only] = families;
+    return [id, families.size === 1 && only !== null ? only : JOIN_TABLES];
+  });
+  for (const [id, family] of placed) familyOf.set(id, family);
+}
+
+/**
+ * THE FAMILY RULE: the family of every reached table. The join tables a rule
+ * names (`joinTables`, each with that rule and the tables the graph joins it
+ * to) are placed by what they join; every other table by its name.
+ *
+ * @param {string[]} tableIds
+ * @param {{limit?:number, joinTables?:Map<string,{rule:string, joins:string[]}>}} [opts]
+ */
+export function familyRule(tableIds, { limit = SUMMARY_LIMIT, joinTables = new Map() } = {}) {
+  const fam = familiesByName(tableIds.filter((id) => !joinTables.has(id)), limit);
+  placeJoinTables(joinTables, fam.familyOf);
+  if (joinTables.size > 0) {
+    fam.rule.joinTables = { rules: [...new Set([...joinTables.values()].map((j) => j.rule))].sort(cmp), tables: joinTables.size };
+  }
+  return fam;
+}
+
+/** A table's column names, as the catalog that declared it writes them. */
+const columnsOf = (graph, tableId) => graph.outEdges(tableId).filter((e) => e.type === 'DECLARES')
+  .map((e) => graph.nodes.get(e.to)?.name ?? e.to.slice(e.to.lastIndexOf('.') + 1));
+
+/** The other tables the graph joins one table to, either way round. */
+const joinedTables = (graph, tableId) => [...new Set([
+  ...graph.outEdges(tableId).filter((e) => e.type === 'JOINS').map((e) => e.to),
+  ...graph.inEdges(tableId).filter((e) => e.type === 'JOINS').map((e) => e.from),
+])].filter((t) => t !== tableId).sort(cmp);
+
+/**
+ * The reached tables a `table.join-table` rule names, each with the first rule
+ * that names it and the tables the graph joins it to.
+ */
+function joinTablesOf(graph, tableIds, rules) {
+  const out = new Map();
+  if (rules.length === 0) return out;
+  for (const id of tableIds) {
+    const table = { name: bareTable(id), columns: columnsOf(graph, id) };
+    const hit = rules.find((r) => r.compiled(table));
+    if (hit) out.set(id, { rule: hit.id, joins: joinedTables(graph, id) });
+  }
+  return out;
 }
 
 /** Every table one route reaches, with the weakest grade on the way to each. */
@@ -211,8 +296,9 @@ function foldRanked(rows, size, limit) {
  * THE SUMMARY of one pack.
  *
  * @param {import('./graph.mjs').Graph} graph
- * @param {{mode?:string, depth?:number, packageDepth?:number|null, limit?:number, through?:string}} [opts]
- *        `through` names one route or table (a node id) whose paths the answer also carries.
+ * @param {{mode?:string, depth?:number, packageDepth?:number|null, limit?:number, through?:string, joinRules?:object[]}} [opts]
+ *        `through` names one route or table (a node id) whose paths the answer also carries;
+ *        `joinRules` the `table.join-table` rules read (the engine's own packs when left out).
  */
 export function buildSummary(graph, opts = {}) {
   const limit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : SUMMARY_LIMIT;
@@ -221,7 +307,8 @@ export function buildSummary(graph, opts = {}) {
   const stmtTables = new Map();
   const reach = endpoints.map((ep) => [ep, tablesOfEndpoint(graph, ep, stmtTables, opts.mode ?? 'conservative')]);
   const allTables = [...new Set(reach.flatMap(([, t]) => [...t.keys()]))].sort(cmp);
-  const fam = familyRule(allTables, limit);
+  const joinTables = joinTablesOf(graph, allTables, opts.joinRules ?? builtinRegistry().ofKind('table.join-table'));
+  const fam = familyRule(allTables, { limit, joinTables });
   const groups = new Map();
   const families = new Map();
   const pairs = new Map();

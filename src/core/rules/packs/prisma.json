@@ -1,7 +1,7 @@
 {
   "pack": "prisma",
   "version": 1,
-  "description": "Prisma Client: which types are clients of the database, and what each client operation reads and writes.",
+  "description": "Prisma Client: which types are clients of the database, what each client operation reads and writes, and which tables Prisma makes for a many-to-many relation.",
   "rules": [
     {
       "id": "prisma.client",
@@ -265,6 +265,21 @@
           "expect": { "reads": ["firstName", "id", "lastName"] },
           "why": "a field the client's result extension computes reads what it needs, and is no column of its own"
         }
+      ]
+    },
+    {
+      "id": "prisma.relation-tables",
+      "kind": "table.join-table",
+      "description": "The table Prisma makes for an implicit many-to-many relation: its name is an underscore and the relation's name, and its only columns are A and B. It holds nothing but the links between the two models' rows, so it belongs with those models, not in a family of its own name.",
+      "why": "Prisma's convention (prisma.io/docs, \"Conventions for relation tables in implicit m-n relations\"): the table is named _ and the relation's name, which with no @relation name is the two model names in alphabetical order joined by To (_OrderToTag), and its columns are A, pointing at the id of the model first in that order, and B, pointing at the other's. The TypeScript lane makes the table that way (src/adapters/ts/prisma_relations.mjs). On ghostfolio the summary map put _OrderToTag and _UserWatchlist in a family named \"_\".",
+      "params": { "prefix": "_", "columns": ["A", "B"] },
+      "examples": [
+        { "table": "_OrderToTag", "columns": ["A", "B"], "expect": true },
+        { "table": "_UserWatchlist", "columns": ["B", "A"], "expect": true, "why": "a relation named in @relation(\"UserWatchlist\") names its table, and the columns are read in any order" },
+        { "table": "__subst__", "columns": [], "expect": false, "why": "a leading underscore alone is not the convention: this is the SQL lane's placeholder for a table a ${} string names" },
+        { "table": "_prisma_migrations", "columns": ["id", "checksum", "finished_at", "migration_name", "logs", "rolled_back_at", "started_at", "applied_steps_count"], "expect": false, "why": "Prisma's own record of the migrations it applied" },
+        { "table": "TagsOnAccounts", "columns": ["accountId", "tagId", "userId"], "expect": false, "why": "an explicit relation table is a model of the project's own, read by the words of its name" },
+        { "table": "OrderToTag", "columns": ["A", "B"], "expect": false, "why": "no underscore before it" }
       ]
     }
   ]

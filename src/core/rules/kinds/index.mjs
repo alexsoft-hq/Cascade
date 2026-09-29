@@ -6,7 +6,8 @@
 // with its own tests, never an expression written inside a rule.
 //
 // Every kind answers the same things: its `name`, the `lane` whose analysis runs
-// it (java, ts, sql), the `stage` of an analysis it runs in, the strongest grade it may give (`gradeCap`, null for a
+// it (java, ts, sql), the `stage` of an analysis it runs in (or `summary`, for one read
+// when a whole-pack view asks), the strongest grade it may give (`gradeCap`, null for a
 // classification that draws no edge), `validateParams` (handed the whole rule
 // too, for a param whose rules depend on the rule's grade), `validateExample`,
 // `compile`, and either `runExample` (one example at a time) or `runExamples`
@@ -18,6 +19,7 @@ import { javaRouteFunction } from './java_route_function.mjs';
 import { javaTypeRole } from './java_type_role.mjs';
 import { prismaOperation } from './prisma_operation.mjs';
 import { sqlDialectPath } from './sql_dialect_path.mjs';
+import { tableJoinTable } from './table_join_table.mjs';
 import { tsProviderBinding } from './ts_provider_binding.mjs';
 import { tsRouteDecorator } from './ts_route_decorator.mjs';
 import { tsTestSupport } from './ts_test_support.mjs';
@@ -34,6 +36,7 @@ export const KINDS = Object.freeze({
   [javaTypeRole.name]: javaTypeRole,
   [prismaOperation.name]: prismaOperation,
   [sqlDialectPath.name]: sqlDialectPath,
+  [tableJoinTable.name]: tableJoinTable,
   [tsProviderBinding.name]: tsProviderBinding,
   [tsRouteDecorator.name]: tsRouteDecorator,
   [tsTestSupport.name]: tsTestSupport,

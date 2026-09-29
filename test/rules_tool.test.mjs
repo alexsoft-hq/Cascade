@@ -66,6 +66,7 @@ test('the list: every rule, what applies HERE first and biggest first, and a cla
   const lanes = Object.fromEntries(r.answer.kinds.map((k) => [k.name, [k.lane, k.draws]]));
   assert.deepEqual(lanes['java.type-role'], ['java', 'links']);
   assert.deepEqual(lanes['sql.dialect-path'], ['sql', 'classifies']);
+  assert.deepEqual(lanes['table.join-table'], ['sql', 'classifies'], 'it reads table and column names, whichever lane declared them');
   assert.deepEqual(lanes['prisma.operation'], ['ts', 'links']);
 });
 

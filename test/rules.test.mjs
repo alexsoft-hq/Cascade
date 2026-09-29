@@ -215,7 +215,7 @@ test('a pack with problems is refused with every problem, each named by its file
   has(/^bad\.json: names "id" must be "p\.<name>"/);
   has(/^bad\.json: p\.empty needs at least one example/);
   has(/^bad\.json: p\.graded gives a grade, but a sql\.dialect-path rule draws no edge to grade$/);
-  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.route-function, java\.type-role, prisma\.operation, sql\.dialect-path, ts\.provider-binding, ts\.route-decorator, ts\.test-support, ts\.type-role, typeorm\.entity, typeorm\.operation, typeorm\.query-builder, typeorm\.receiver, got "java\.nothing"$/);
+  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.route-function, java\.type-role, prisma\.operation, sql\.dialect-path, table\.join-table, ts\.provider-binding, ts\.route-decorator, ts\.test-support, ts\.type-role, typeorm\.entity, typeorm\.operation, typeorm\.query-builder, typeorm\.receiver, got "java\.nothing"$/);
 });
 
 test('a dialect rule refuses words that are not plain words, one word naming two databases, and an example it does not declare', () => {
@@ -232,6 +232,33 @@ test('a dialect rule refuses words that are not plain words, one word naming two
     params: { dialects: [{ dialect: 'mysql', names: ['mysql'] }, { dialect: 'maria', names: ['mysql'] }] },
   })]) }]);
   assert.ok(again.some((m) => /names has "mysql", which dialects\[0\] already names: one word cannot name two databases/.test(m)));
+});
+
+test('a join-table rule refuses a prefix that is no text, a column it lists twice, and an example that is not a yes or a no', () => {
+  const rule = (over = {}) => ({
+    id: 'p.joins', kind: 'table.join-table', description: 'Join tables.',
+    params: { prefix: '_', columns: ['A', 'B'] },
+    examples: [{ table: '_AToB', columns: ['A', 'B'], expect: true }],
+    ...over,
+  });
+  const problems = refusal([{ where: 'j.json', pack: packOf([rule({
+    params: { prefix: ' ', columns: ['A', 'A'], family: 'x' },
+    examples: [{ table: '_AToB', columns: 'A', expect: 'yes' }],
+  })]) }]);
+  const has = (re) => assert.ok(problems.some((m) => re.test(m)), `a problem matching ${re}: ${problems.join(' | ')}`);
+  has(/params has an unknown key "family"/);
+  has(/params\.prefix must be the text a name starts with/);
+  has(/params\.columns lists "A" twice/);
+  has(/an example's columns must be a list of column names/);
+  has(/an example's expect must be true or false/);
+  assert.ok(problems.every((m) => m.startsWith('j.json: p.joins ')));
+  assert.ok(refusal([{ where: 'j.json', pack: packOf([rule({ grade: 'EXACT' })]) }]).some((m) => /draws no edge to grade/.test(m)));
+  // A rule that holds is a test on a table's name and columns, in any order.
+  const [entry] = buildRegistry([{ where: 'j.json', pack: packOf([rule()]) }]).ofKind('table.join-table');
+  assert.equal(entry.compiled({ name: '_AToB', columns: ['B', 'A'] }), true);
+  assert.equal(entry.compiled({ name: '_AToB', columns: ['A', 'B', 'C'] }), false);
+  assert.equal(entry.compiled({ name: '__subst__', columns: [] }), false);
+  assert.equal(entry.compiled({ name: 'AToB', columns: ['A', 'B'] }), false);
 });
 
 test('the same rule id in two packs is refused, naming where it was first defined', () => {

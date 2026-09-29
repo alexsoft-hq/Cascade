@@ -10,11 +10,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Graph, nodeId } from '../src/core/graph.mjs';
-import { OTHERS, buildSummary, descendGroups, familyRule } from '../src/core/summary.mjs';
+import { JOIN_TABLES, OTHERS, buildSummary, descendGroups, familyRule, nameWords } from '../src/core/summary.mjs';
+import { readPrismaSchema } from '../src/adapters/ts/prisma_schema.mjs';
+import { addPrismaCatalog } from '../src/adapters/ts/prisma_catalog.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
 import { assertContract } from '../src/mcp/contract.mjs';
 import { bootPage as boot, ev, settle } from './helpers/viewer_page.mjs';
 import { startViewer } from './helpers/viewer_fixtures.mjs';
+import { skipUnlessMall, mallGraph } from './helpers/mall_fixture.mjs';
 
 const items = (...keys) => keys.map((k) => ({ key: k, tokens: k.split('.') }));
 
@@ -33,7 +36,7 @@ test('the descent passes every level one branch holds, and a branch left behind 
   assert.deepEqual([...new Set(flat.groupOf.values())].sort(), ['a', 'b']);
 });
 
-test('table families split by words when the names have underscores, by letters when they do not', () => {
+test('table families split by words, and by letters where most names are one word and most start with the same letters', () => {
   const words = familyRule(['table:t_ds_task_a', 'table:t_ds_task_b', 'table:t_ds_process_a', 'table:t_ds_user', 'table:qrtz_jobs']);
   assert.deepEqual(words.rule, { kind: 'name-words', separator: '_', commonPrefix: 't_ds' });
   assert.equal(words.familyOf.get('table:t_ds_task_a'), 'task');
@@ -41,6 +44,119 @@ test('table families split by words when the names have underscores, by letters 
   const letters = familyRule(['table:COMTNBBS', 'table:COMTNUSER', 'table:COMTNLOG', 'table:COMTNMENU', 'table:COMTHLOG', 'table:COMTCCODE']);
   assert.equal(letters.rule.kind, 'name-letters');
   assert.equal(letters.familyOf.get('table:COMTHLOG'), 'comthlog');
+  assert.equal(letters.familyOf.get('table:COMTNUSER'), 'comtn', 'the eGovFrame tables that share COMTN are one family');
+});
+
+/** Each table's family, by bare name. */
+const familiesOf = (names, opts) => {
+  const r = familyRule(names.map((n) => `table:${n}`), opts);
+  return { rule: r.rule, of: (n) => r.familyOf.get(`table:${n}`) };
+};
+
+test('a name is read as words however it is written: snake, kebab, camel, Pascal and UPPER_SNAKE', () => {
+  assert.deepEqual(nameWords('SymbolProfileOverrides'), ['symbol', 'profile', 'overrides']);
+  assert.deepEqual(nameWords('assetProfileSplit'), ['asset', 'profile', 'split']);
+  assert.deepEqual(nameWords('market-data'), ['market', 'data']);
+  assert.deepEqual(nameWords('MARKET_QUOTE'), ['market', 'quote']);
+  assert.deepEqual(nameWords('HTTPRequestLog'), ['http', 'request', 'log'], 'a run of capitals is one word, up to the next word\'s capital');
+  assert.deepEqual(nameWords('oauth2Client'), ['oauth2', 'client'], 'a digit stays with the word before it');
+  assert.deepEqual(nameWords('yudao_demo01_contact'), ['yudao', 'demo01', 'contact']);
+  assert.deepEqual(nameWords('_OrderToTag'), ['order', 'to', 'tag'], 'a leading underscore is a marker, not a word');
+  assert.deepEqual(nameWords('__subst__'), ['subst']);
+  assert.deepEqual(nameWords('COMTNBBS'), ['comtnbbs'], 'capitals with nothing between them are one word');
+  // ghostfolio's Prisma models once made the families "a", "s" and "_".
+  const f = familiesOf(['Access', 'Account', 'AccountBalance', 'SymbolProfile', 'SymbolProfileOverrides', 'AssetProfileSplit',
+    'assetProfileResolution', 'market-data', 'MARKET_QUOTE', 'Order']);
+  assert.equal(f.rule.kind, 'name-words');
+  assert.deepEqual(['Account', 'AccountBalance', 'SymbolProfile', 'SymbolProfileOverrides', 'AssetProfileSplit', 'assetProfileResolution', 'market-data', 'MARKET_QUOTE', 'Access', 'Order'].map(f.of),
+    ['account', 'account', 'symbol', 'symbol', 'asset', 'asset', 'market', 'market', 'access', 'order']);
+});
+
+test('names of one word each are words too, unless most of them start with the same letters', () => {
+  // nestjs-boilerplate once had a family "s" for session and status, and the
+  // petclinic a family "v" for vets, visits and vet_specialties.
+  const boiler = familiesOf(['user', 'role', 'status', 'session', 'file']);
+  assert.equal(boiler.rule.kind, 'name-words');
+  assert.deepEqual(['status', 'session', 'user'].map(boiler.of), ['status', 'session', 'user']);
+  const clinic = familiesOf(['owners', 'pets', 'specialties', 'types', 'vet_specialties', 'vets', 'visits']);
+  assert.deepEqual(['vets', 'visits', 'vet_specialties'].map(clinic.of), ['vets', 'visits', 'vet']);
+});
+
+test('snake_case families stay as they were: mall\'s module prefixes and jeecg-boot\'s', () => {
+  const mall = familiesOf(['pms_product', 'pms_brand', 'oms_order', 'oms_order_item', 'sms_coupon', 'cms_subject', 'cms_prefrence_area_product_relation', 'ums_admin', 'ums_role']);
+  assert.deepEqual(mall.rule, { kind: 'name-words', separator: '_', commonPrefix: '' });
+  assert.deepEqual(['pms_product', 'oms_order_item', 'sms_coupon', 'cms_prefrence_area_product_relation', 'ums_role'].map(mall.of), ['pms', 'oms', 'sms', 'cms', 'ums']);
+  const jeecg = familiesOf(['sys_user', 'sys_role', 'sys_user_role', 'onl_cgform_head', 'onl_cgform_field', 'jmreport_big_screen', 'jmreport_data_source', 'p_order', '__subst__', 'demo']);
+  assert.deepEqual(['sys_user_role', 'onl_cgform_field', 'jmreport_big_screen', 'p_order', '__subst__', 'demo'].map(jeecg.of), ['sys', 'onl', 'jmreport', 'p', 'subst', 'demo']);
+});
+
+test('the pinned mall pack keeps its five families, pms oms sms cms ums, with every table it had', { skip: skipUnlessMall() }, () => {
+  const s = buildSummary(mallGraph(), { limit: 30 });
+  assert.deepEqual(s.rule.tables, { kind: 'name-words', separator: '_', commonPrefix: '' });
+  assert.deepEqual(s.families.map((f) => [f.name, f.tables.length]), [['ums', 13], ['pms', 12], ['sms', 12], ['oms', 8], ['cms', 4]]);
+});
+
+/**
+ * A Prisma project's catalog, as the TypeScript lane makes it, with one route
+ * reading each table. `_OrderToTag` joins two families, `_UserWatchlist` (a
+ * named relation) too, and `_AccountToAccountTag` joins two tables of one.
+ */
+function prismaPack() {
+  const g = new Graph();
+  addPrismaCatalog(g, readPrismaSchema([
+    'model Account {', '  id String @id', '  tags AccountTag[]', '  balances AccountBalance[]', '  orders Order[]', '}',
+    'model AccountBalance {', '  id String @id', '  accountId String', '  account Account @relation(fields: [accountId], references: [id])', '}',
+    'model AccountTag {', '  id String @id', '  accounts Account[]', '}',
+    'model Order {', '  id String @id', '  tags Tag[]', '  accountId String', '  account Account @relation(fields: [accountId], references: [id])', '}',
+    'model Tag {', '  id String @id', '  activities Order[]', '}',
+    'model SymbolProfile {', '  id String @id', '  watchedBy User[] @relation("UserWatchlist")', '}',
+    'model SymbolProfileOverrides {', '  symbolProfileId String @id', '}',
+    'model User {', '  id String @id', '  watchlist SymbolProfile[] @relation("UserWatchlist")', '}',
+    'model Audit {', '  id String @id', '  userId String', '  @@map("_audit")', '}',
+  ].join('\n')));
+  const tables = [...g.nodes.values()].filter((n) => n.kind === 'table').map((n) => n.id);
+  // The SQL lane's placeholder for a `${}` table: a leading underscore and nothing Prisma made.
+  tables.push(nodeId('table', '__subst__'));
+  tables.forEach((t, i) => {
+    const ep = nodeId('endpoint', `GET /r${i}`);
+    const h = nodeId('symbol', `com.acme.web.C${i}#m`);
+    const st = nodeId('statement', `ns.s${i}`);
+    g.addNode({ id: ep, path: `/r${i}`, httpMethod: 'GET' });
+    g.addNode({ id: h, owner: `com.acme.web.C${i}` });
+    g.addNode({ id: st });
+    g.addEdge({ from: ep, to: h, type: 'HANDLES', grade: 'EXACT' });
+    g.addEdge({ from: h, to: st, type: 'IMPLEMENTS_STMT', grade: 'EXACT' });
+    g.addEdge({ from: st, to: t, type: 'EXECUTES', grade: 'EXACT', evidence: { access: 'read' } });
+  });
+  return g;
+}
+
+test('a table Prisma makes for a many-to-many goes with the tables it joins, or into a family named for what it is', () => {
+  const s = buildSummary(prismaPack(), { limit: 30 });
+  const fam = new Map(s.families.flatMap((f) => f.tables.map((t) => [t.slice('table:'.length), f.name])));
+  assert.equal(s.rule.tables.kind, 'name-words');
+  assert.deepEqual(['Account', 'AccountBalance', 'AccountTag', '_AccountToAccountTag'].map((t) => fam.get(t)), ['account', 'account', 'account', 'account'],
+    'both tables it joins are in account');
+  assert.deepEqual(['_OrderToTag', '_UserWatchlist'].map((t) => fam.get(t)), [JOIN_TABLES, JOIN_TABLES], 'the tables they join are in two families');
+  assert.deepEqual(['SymbolProfile', 'SymbolProfileOverrides', 'Order', 'Tag', 'User'].map((t) => fam.get(t)), ['symbol', 'symbol', 'order', 'tag', 'user']);
+  assert.equal(fam.get('_audit'), 'audit', 'a leading underscore alone does not make a join table');
+  assert.equal(fam.get('__subst__'), 'subst');
+  assert.ok(![...fam.values()].some((f) => f.length === 1 || f === '_'), 'no family is a letter');
+  assert.deepEqual(s.rule.tables.joinTables, { rules: ['prisma.relation-tables'], tables: 3 });
+  // The convention is the rule pack's: with no rule, the same tables are read by their words.
+  const bare = buildSummary(prismaPack(), { limit: 30, joinRules: [] });
+  assert.equal(bare.families.find((f) => f.tables.includes('table:_OrderToTag')).name, 'order');
+  assert.equal(bare.rule.tables.joinTables, undefined);
+});
+
+test('the summary tool says how a name is read into words, and which rule placed the join tables', () => {
+  const basis = { project: 'p', buildDigest: 'x', builtAt: null, freshness: { verdict: 'unknown' } };
+  const r = callTool('summary', { mode: 'strict' }, { graph: prismaPack(), basis, trust: {}, limits: [] });
+  assertContract(r);
+  const reason = r.limits.find((l) => l.scope === 'summary:families').reason;
+  assert.match(reason, /a word ends at an underscore, a hyphen or a change of case/);
+  assert.match(reason, /3 table\(s\) named as a join table by prisma\.relation-tables go with the tables they join where those sit in one family, and into \(join tables\) where they do not/);
+  assert.match(reason, /It is a naming pattern, not a schema$/);
 });
 
 /** A pack of routes under two code areas and one stray, reaching tables of two families. */
